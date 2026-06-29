@@ -15,7 +15,7 @@ use std::fmt;
 /// the optional `name` field, populated at construction time from the
 /// owning `Node::Arg` (or transcript variable). It is metadata only —
 /// `PRef` equality is still ultimately driven by `reference`/`index`.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct PRef {
     pub reference: Ref,
     pub index: usize,

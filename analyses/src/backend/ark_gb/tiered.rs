@@ -1,5 +1,5 @@
-use crate::groebner::ark_gb_adapter::get_local_rank;
-use crate::groebner::sparsepoly::SparsePolynomial;
+use crate::backend::ark_gb::adapter::get_local_rank;
+use crate::backend::ark_gb::sparsepoly::SparsePolynomial;
 use ark_ff::Field;
 use core::cmp::Ordering;
 use core::ops::{Div, Mul, MulAssign};
@@ -8,7 +8,7 @@ use share::Ctx;
 use std::fmt;
 use std::fmt::Debug;
 
-use crate::groebner::monomial::{MonoTerm, Monomial as ZipMonomial};
+use crate::backend::ark_gb::monomial::{MonoTerm, Monomial as ZipMonomial};
 
 /// Strategy that assigns each `PRef` to a tier in a tiered elimination order.
 ///
@@ -18,7 +18,7 @@ use crate::groebner::monomial::{MonoTerm, Monomial as ZipMonomial};
 /// `None` from [`tier`] are excluded from the computation entirely.
 ///
 /// This trait is the zippel-side counterpart to the ark-gb wrapper
-/// [`ZippelTieredElimMono`](crate::groebner::ark_gb_adapter::ZippelTieredElimMono),
+/// [`ZippelTieredElimMono`](crate::backend::ark_gb::adapter::ZippelTieredElimMono),
 /// which encodes the same tiered order into ark-gb's packed-byte key format.
 pub trait TieredElimStrategy: Sized + Send + Sync {
     /// Which tier the variable belongs to, or `None` to exclude it.
@@ -190,7 +190,7 @@ impl<E: TieredElimStrategy> ZipMonomial for TieredElimMono<E> {
     where
         Self: Sized,
     {
-        use crate::groebner::ark_gb_adapter::compute_reduced_gb_with_tiered_elim;
+        use crate::backend::ark_gb::adapter::compute_reduced_gb_with_tiered_elim;
         compute_reduced_gb_with_tiered_elim::<F, Self, E, W>(num_vars, input)
     }
 }

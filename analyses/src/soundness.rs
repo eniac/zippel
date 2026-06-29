@@ -1,12 +1,11 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::TransClos;
+use crate::backend::{GbBackend, ark_gb::ArkGb};
 use crate::error::{AnalysisError, ExtractorRejection};
 use crate::extractor::{extract_locals, valid_extractor};
-use crate::groebner::ark_gb_adapter::LocalRankGuard;
-use crate::groebner::monomial::{GrevLexTerm, Monomial};
-use crate::groebner::tiered::{TieredElimMono, TieredElimStrategy};
-use crate::groebner::{GroebnerBuilder, GroebnerResult, SparsePolynomial};
+use crate::frontend::{MonoOrder, Polynomial};
+use crate::ideal::{IdealBuilder, Ideal};
 use ark_ff::One;
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
@@ -17,42 +16,6 @@ use petgraph::Direction;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use share::Set;
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-/// Elimination strategy for special soundness analysis.
-///
-/// Currently uses a single tier-0 (pure lex) ordering for all variables. This
-/// is correct but may be slower than a multi-tier approach for large instances.
-///
-/// A better strategy (currently disabled for correctness reasons with the GB
-/// reducer's default `cmp_key`) is:
-/// ```ignore
-/// fn tier(v: &PRef) -> Option<usize> {
-///     if v.is_local()         { Some(0) }
-///     else if v.qualifier.is_private() { Some(1) }
-///     else                   { Some(2) }
-/// }
-/// ```
-/// This gives a 3-tier ordering: locals (lex), private witnesses (grevlex),
-/// public args (grevlex). Locals are eliminated first via lex, then the
-/// remaining tiers are reduced via grevlex which is more efficient but
-/// produces the same elimination ideal.
-///
-/// TODO: Once the GB reducer's `cmp_key` becomes efficient, switch back to the
-/// 3-tier strategy and simplify the `rank_map` construction to only include
-/// locals (tier 0) in `get_local_rank`, removing the need to rank-sort public
-/// and private args.
-pub struct SoundnessLex;
-
-impl TieredElimStrategy for SoundnessLex {
-    fn tier(_: &PRef) -> Option<usize> {
-        Some(0)
-    }
-}
-
-pub type SoundnessElimTerm = TieredElimMono<SoundnessLex>;
-
-type Poly<C> = SparsePolynomial<<C as ArkConfig>::F, GrevLexTerm>;
 
 pub struct SpecialSoundnessAnalysis<C: ArkConfig> {
     _marker: std::marker::PhantomData<C>,
@@ -141,17 +104,14 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
     ///
     /// # Phases
     ///
-    /// 1. **Construct** (GrevLexTerm, stable Ord): build all GB inputs —
-    ///    d-equations, copy TCs, relation polys.
-    /// 2. **Install guard**: compute the lex-elimination rank map from
-    ///    var_order and install `LocalRankGuard`.
-    /// 3. **Convert** to `TieredElimMono<SoundnessLex>`: reconstruct all
-    ///    BTreeMaps with the correct ordering now that the guard is active.
-    /// 4. **Inline & run** the search GB under lex ordering.
-    /// 5. **Extract witnesses** from the search basis while the guard is
-    ///    still active.
-    /// 6. **Build validity GB** (also under lex ordering) and verify that
-    ///    all relation polys reduce to zero.
+    /// 1. **Construct**: build all GB inputs — d-equations, copy TCs,
+    ///    relation polys (order-free).
+    /// 2. **Build lex ordering**: compute the lex-elimination var_order from
+    ///    `var_order` as `MonoOrder::lex(var_order)` — runtime data, no TLS.
+    /// 3. **Inline & compute** the search GB via the backend under lex.
+    /// 4. **Extract witnesses** from the search basis.
+    /// 5. **Build validity GB** (also under lex) and verify that all relation
+    ///    polys reduce to zero.
     pub fn analyze(dag: &DQDag<C>, l_vec: Vec<usize>) -> Result<(), AnalysisError<C>> {
         if l_vec.is_empty() || l_vec.iter().any(|l| *l < 2) {
             return Err(AnalysisError::InvalidSoundnessParameter);
@@ -188,13 +148,13 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             })
             .collect();
 
-        // Phase 1: Construct (GrevLexTerm — stable Ord).
-        let mut grev_builder: GroebnerBuilder<C, GrevLexTerm> = GroebnerBuilder::new();
+        // Phase 1: Construct (order-free).
+        let mut grev_builder: IdealBuilder<C> = IdealBuilder::new();
         let mut worklist: Vec<(Vec<usize>, TransClos<C>)> = vec![(vec![], verifier_tc.clone())];
-        let mut all_d_equations: Vec<Poly<C>> = Vec::new();
+        let mut all_d_equations: Vec<Polynomial<C::F>> = Vec::new();
         let mut all_d_prefs: Vec<PRef> = Vec::new();
-        let mut grev_search = GroebnerResult::<C, GrevLexTerm>::new();
-        let mut grev_validity = GroebnerResult::<C, GrevLexTerm>::new();
+        let mut grev_search = Ideal::<C>::new();
+        let mut grev_validity = Ideal::<C>::new();
 
         for (round_idx, &li) in l_vec.iter().enumerate() {
             let mut new_worklist = Vec::new();
@@ -252,15 +212,11 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                     for n in (m + 1)..li {
                         let cm_prefs = &copies_with_challenges[m].1;
                         let cn_prefs = &copies_with_challenges[n].1;
-                        let mut product = Poly::<C>::lit(&C::F::one());
+                        let mut product = Polynomial::<C::F>::lit(&C::F::one());
                         for (k, (cm_ref, cn_ref)) in
                             cm_prefs.iter().zip(cn_prefs.iter()).enumerate()
                         {
                             let d_name = format_d_name(&prefix, m, n, k);
-                            // Use builder.sentinel_pref (not ns.sentinel_pref)
-                            // so the d-var is added to grev_search.var_order.
-                            // Also push to grev_validity.var_order since the
-                            // d-equations appear in both bases.
                             let d = grev_builder.sentinel_pref(
                                 &d_name,
                                 ATyp::scalar(),
@@ -268,11 +224,11 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                             );
                             grev_validity.var_order.push(d.clone());
                             all_d_prefs.push(d.clone());
-                            let d_poly = Poly::<C>::var(&d);
-                            let cm_poly = Poly::<C>::var(cm_ref);
-                            let cn_poly = Poly::<C>::var(cn_ref);
+                            let d_poly = Polynomial::<C::F>::var(&d);
+                            let cm_poly = Polynomial::<C::F>::var(cm_ref);
+                            let cn_poly = Polynomial::<C::F>::var(cn_ref);
                             let factor =
-                                d_poly * (cm_poly - cn_poly) - Poly::<C>::lit(&C::F::one());
+                                d_poly * (cm_poly - cn_poly) - Polynomial::<C::F>::lit(&C::F::one());
                             product *= factor;
                         }
 
@@ -336,53 +292,42 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
         grev_search.merge(&grev_rel_result);
 
-        // Phase 2: Install rank guard assigning lex priority to every variable.
-        // Public args get lowest ranks (lowest elimination priority), private args
-        // next, and all other variables (locals, d-vars, etc.) get highest ranks
-        // (highest elimination priority).
-        //
-        // TODO: grev_search also contains rel_locals because we merged
-        // rel_locals to it. This creates redundancy (though will not
-        // affect the correctness) in the construction of rank_map.
-        // We can think about how to design a better way to retrieve
-        // variable ordering and build the rank map.
-        let rank_map: std::collections::HashMap<usize, usize> = {
-            let mut rel_locals: Vec<PRef> = Vec::new();
-            for pr in grev_rel_result.var_order.iter() {
-                rel_locals.push(pr.clone());
-            }
-            let mut other_locals: Vec<PRef> = Vec::new();
-            for pr in grev_search
-                .var_order
-                .iter()
-                .chain(grev_validity.var_order.iter())
-            {
-                other_locals.push(pr.clone());
-            }
+        // Phase 2: Build lex ordering as runtime data.
+        // Priority: rel_locals > priv_prefs > other_locals > pub_prefs.
+        // In MonoOrder::lex, the first variable has the highest elimination
+        // priority. Within each group, sort by PRef::Ord for determinism.
+        let lex_var_order: Vec<PRef> = {
+            let rel_locals_set: Set<PRef> = grev_rel_result.var_order.iter().cloned().collect();
+            let priv_set: Set<PRef> = priv_prefs.iter().cloned().collect();
+            let pub_set: Set<PRef> = pub_prefs.iter().cloned().collect();
 
-            pub_prefs
-                .iter()
-                .chain(other_locals.iter())
-                .chain(priv_prefs.iter())
-                .chain(rel_locals.iter())
-                .enumerate()
-                .map(|(i, pr)| (pr.reference.node().index(), i))
-                .collect()
+            let all_vars: Set<PRef> = grev_search.vars();
+
+            let mut rel: Vec<PRef> = all_vars.iter().filter(|v| rel_locals_set.contains(v)).cloned().collect();
+            rel.sort();
+            let mut priv_v: Vec<PRef> = all_vars.iter().filter(|v| priv_set.contains(v) && !rel_locals_set.contains(v)).cloned().collect();
+            priv_v.sort();
+            let mut pub_v: Vec<PRef> = all_vars.iter().filter(|v| pub_set.contains(v) && !rel_locals_set.contains(v) && !priv_set.contains(v)).cloned().collect();
+            pub_v.sort();
+            let mut other: Vec<PRef> = all_vars.iter().filter(|v| !rel_locals_set.contains(v) && !priv_set.contains(v) && !pub_set.contains(v)).cloned().collect();
+            other.sort();
+
+            rel.into_iter().chain(priv_v).chain(other).chain(pub_v).collect()
         };
-        let _rank_guard = LocalRankGuard::install(rank_map);
+        let lex_order = MonoOrder::lex(lex_var_order);
 
-        // Phase 3: Convert to lex-elim monomial and inline.
-        let mut lex_search = GroebnerResult::<C, SoundnessElimTerm>::reconstruct_from(&grev_search);
-        let mut lex_validity =
-            GroebnerResult::<C, SoundnessElimTerm>::reconstruct_from(&grev_validity);
+        // Phase 3: Inline & compute the search GB via the backend.
+        grev_search.inline(&Set::new());
 
-        lex_search.inline(&Set::new());
+        let backend = ArkGb::<C>::default();
+        let search_gb = backend
+            .compute_gb(std::mem::take(&mut grev_search.basis), &lex_order, 128)
+            .expect("ark-gb backend should support lex order");
 
-        // Phase 4: Run the search GB under lex ordering.
-        lex_search.run::<128>();
-        factor_group_gcd(&mut lex_search);
+        let mut search_polys = search_gb.polys.clone();
+        factor_group_gcd(&mut search_polys);
 
-        if lex_search.basis.is_unit() {
+        if search_gb.is_unit() {
             eprintln!(
                 "WARNING: soundness analysis (search): Groebner basis reduced to the unit ideal \
                  (contains 1). This indicates the protocol is self-contradictory or that \
@@ -391,15 +336,15 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             );
         }
 
-        // Phase 5: Extract witnesses.
-        let mut extractors: Vec<(PRef, SparsePolynomial<C::F, SoundnessElimTerm>)> = Vec::new();
+        // Phase 4: Extract witnesses.
+        let mut extractors: Vec<(PRef, Polynomial<C::F>)> = Vec::new();
 
         for w in &witness_slots {
             let mut found_extractor = None;
             let mut rejection: Option<ExtractorRejection<C>> = None;
 
-            'poly: for poly in lex_search.basis.iter() {
-                for (term, _coeff) in poly.terms.iter() {
+            'poly: for poly in search_polys.iter() {
+                for term in poly.terms.keys() {
                     let tv = term.vars();
                     let tp = term.powers();
                     let is_witness_term = tv.len() == 1 && tv[0] == *w && tp[0] == 1;
@@ -420,20 +365,17 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
                     let all_visible = other_vars.iter().all(|v| verifier_visible.contains(v));
                     if !all_visible {
-                        rejection = Some(ExtractorRejection::NotVisible(
-                            SparsePolynomial::reconstruct_from(poly),
-                        ));
+                        rejection = Some(ExtractorRejection::NotVisible(poly.clone()));
                         continue;
                     }
-                    if !valid_extractor::<C, _>(&w.typ, poly) {
+                    if !valid_extractor::<C>(&w.typ, poly) {
                         if w.typ.is_scalar() {
                             rejection = Some(ExtractorRejection::FieldDependsOnGroup(
-                                SparsePolynomial::reconstruct_from(poly),
+                                poly.clone(),
                             ));
                         } else {
-                            rejection = Some(ExtractorRejection::MultiGroupTerm(
-                                SparsePolynomial::reconstruct_from(poly),
-                            ));
+                            rejection =
+                                Some(ExtractorRejection::MultiGroupTerm(poly.clone()));
                         }
                         continue;
                     }
@@ -464,18 +406,19 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             witness_slots.len()
         );
 
-        // Phase 6: Build validity GB and verify.
+        // Phase 5: Build validity GB and verify.
         for (_, ext_poly) in &extractors {
-            lex_validity.basis.push(ext_poly.clone());
+            grev_validity.basis.push(ext_poly.clone());
         }
 
-        let lex_rel_locals = GroebnerResult::<C, SoundnessElimTerm>::reconstruct_from(&rel_locals);
-        lex_validity.merge(&lex_rel_locals);
+        grev_validity.merge(&rel_locals);
+        grev_validity.inline(&Set::new());
 
-        lex_validity.inline(&Set::new());
-        lex_validity.run::<128>();
+        let validity_gb = backend
+            .compute_gb(std::mem::take(&mut grev_validity.basis), &lex_order, 128)
+            .expect("ark-gb backend should support lex order");
 
-        if lex_validity.basis.is_unit() {
+        if validity_gb.is_unit() {
             eprintln!(
                 "WARNING: soundness analysis (validity): Groebner basis reduced to the unit ideal \
                  (contains 1). This indicates the protocol is self-contradictory or that \
@@ -484,27 +427,15 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             );
         }
 
-        let lex_rel_polys: Vec<SparsePolynomial<C::F, SoundnessElimTerm>> = grev_rel_result
-            .basis
-            .iter()
-            .filter_map(|p| {
-                if p.is_zero() {
-                    return None;
-                }
-                Some(SparsePolynomial::reconstruct_from(p))
-            })
-            .collect();
-        for r in &lex_rel_polys {
+        for r in grev_rel_result.basis.iter() {
             if r.is_zero() {
                 continue;
             }
-            let rem = lex_validity.basis.reduce(r.clone());
+            let rem = backend.reduce(r.clone(), &validity_gb);
             if !rem.is_zero() {
                 warn!("Relation polynomial does not reduce to zero: {}", r);
                 warn!("Remainder: {}", rem);
-                return Err(AnalysisError::ExtractorInvalid(
-                    SparsePolynomial::reconstruct_from(&rem),
-                ));
+                return Err(AnalysisError::ExtractorInvalid(rem));
             }
         }
 
@@ -570,20 +501,18 @@ fn build_round_map<C: ArkConfig>(
     round_map
 }
 
-fn factor_group_gcd<C: ArkConfig>(result: &mut GroebnerResult<C, SoundnessElimTerm>) {
+fn factor_group_gcd<F: ark_ff::Field>(polys: &mut Vec<Polynomial<F>>) {
     use std::collections::BTreeMap;
 
-    result.basis.basis = result
-        .basis
-        .basis
-        .drain(..)
+    *polys = std::mem::take(polys)
+        .into_iter()
         .filter_map(|p| {
             if p.is_zero() {
                 return None;
             }
 
             let mut common_gcd: Option<BTreeMap<PRef, usize>> = None;
-            for (term, _coeff) in p.terms.iter() {
+            for term in p.terms.keys() {
                 let group_part: BTreeMap<PRef, usize> = term
                     .iter()
                     .filter(|(v, _)| v.typ.is_group())
@@ -615,7 +544,7 @@ fn factor_group_gcd<C: ArkConfig>(result: &mut GroebnerResult<C, SoundnessElimTe
                 Some(g) if !g.is_empty() => g.into_iter().collect(),
                 _ => return Some(p),
             };
-            let divisor_mono: SoundnessElimTerm = divisor.clone().into();
+            let divisor_mono = crate::frontend::Monomial::from(divisor);
 
             let new_terms = p.terms.into_iter().map(|(term, coeff)| {
                 match term.clone() / divisor_mono.clone() {
@@ -624,7 +553,7 @@ fn factor_group_gcd<C: ArkConfig>(result: &mut GroebnerResult<C, SoundnessElimTe
                 }
             });
 
-            let divided: SparsePolynomial<C::F, SoundnessElimTerm> = SparsePolynomial {
+            let divided: Polynomial<F> = Polynomial {
                 terms: new_terms.collect(),
             };
             if divided.is_zero() {

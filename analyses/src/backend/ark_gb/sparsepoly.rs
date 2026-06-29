@@ -1,4 +1,4 @@
-use crate::groebner::monomial::Monomial;
+use crate::backend::ark_gb::monomial::Monomial;
 use ark_ff::Field;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use graph::PRef;
@@ -10,7 +10,7 @@ use std::iter::Sum;
 /// A sparse polynomial is a polynomial represented as a map from terms to their coefficients.
 /// The terms are stored in a sorted order, and the coefficients are stored in a field.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SparsePolynomial<F: Field, T: Monomial> {
+pub(crate) struct SparsePolynomial<F: Field, T: Monomial> {
     pub terms: Ctx<T, F>, // Coefficient and Term pairs
 }
 
@@ -177,20 +177,6 @@ impl<F: Field, T: Monomial> fmt::Display for SparsePolynomial<F, T> {
 impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
     pub fn zero() -> Self {
         SparsePolynomial { terms: Ctx::new() }
-    }
-
-    pub fn reconstruct_from<T2: Monomial>(source: &SparsePolynomial<F, T2>) -> Self
-    where
-        T: From<Vec<(PRef, usize)>>,
-    {
-        let mut poly = SparsePolynomial::zero();
-        for (term, coeff) in source.terms.iter() {
-            let pairs: Vec<(PRef, usize)> = term.vars().into_iter().zip(term.powers()).collect();
-            let new_term: T = pairs.into();
-            *poly.terms.entry(new_term).or_insert(F::zero()) += *coeff;
-        }
-        poly.terms.retain(|_, c| !c.is_zero());
-        poly
     }
 
     pub fn is_zero(&self) -> bool {
@@ -370,92 +356,6 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
         poly_self_scaled
     }
 
-    /// Splits the polynomial `P` (implicitly `P=0`) into `lhs` and `rhs` such that
-    /// `M_gcd * lhs = -rhs`, where `lhs` contains terms derived from the original
-    /// terms having only `factor(v) = true` variables, factored by the monomial GCD (`M_gcd`).
-    /// `rhs` contains the negation of the terms having at least one `eliminate=false` variable.
-    ///
-    /// Assumes the `Monomial` trait provides a `gcd` method.
-    ///
-    /// # Returns
-    ///
-    /// A tuple `(lhs, rhs, divided_vars)` where:
-    /// - `lhs`: The factored polynomial part with `eliminate=true` variables.
-    /// - `rhs`: The negated polynomial part with `eliminate=false` variables.
-    /// - `divided_vars`: A `HashSet` of variables present in the `M_gcd` that was factored out.
-    pub fn isolate_elimination_vars<FF: Fn(&PRef) -> bool>(
-        &self,
-        factor: &FF,
-    ) -> (Self, Self, Set<PRef>) {
-        let mut tmp_lhs_terms: Ctx<T, F> = Ctx::new();
-        let mut tmp_rhs_terms: Ctx<T, F> = Ctx::new();
-
-        // 1. Initial Split
-        for (monomial, coefficient) in self.terms.iter() {
-            let vars = monomial.vars();
-            // Constants assigned to LHS, check if this is desired.
-            let is_lhs_term = vars.is_empty() || vars.iter().any(factor);
-
-            if is_lhs_term {
-                tmp_lhs_terms.insert(monomial, coefficient);
-            } else {
-                tmp_rhs_terms.insert(monomial, coefficient);
-            }
-        }
-
-        // 2. Find LHS Monomial GCD using Monomial::gcd
-        let mut m_gcd = tmp_lhs_terms
-            .keys()
-            .iter()
-            .cloned()
-            .reduce(|acc, item| acc.gcd(&item)) // Use the gcd method
-            .unwrap_or_default(); // Default to constant if tmp_lhs_terms is empty
-
-        // 2.5: Remove factored variables from gcd by dividing
-        for pv in tmp_lhs_terms.keys().iter().flat_map(|pv| pv.vars()) {
-            let m_pv = T::from(vec![(pv.clone(), 1)]);
-            if let Some(new_gcd) = m_gcd.clone() / m_pv {
-                m_gcd = new_gcd;
-            }
-        }
-
-        let mut final_lhs_terms: Ctx<T, F>;
-        let divided_vars: Set<PRef>;
-
-        // 3. Factor LHS & Track Variables (if GCD is not constant)
-        if !m_gcd.is_constant() {
-            final_lhs_terms = Ctx::new();
-            for (monomial, coefficient) in tmp_lhs_terms.into_iter() {
-                // Perform division: monomial / m_gcd
-                match monomial.div(m_gcd.clone()) {
-                    Some(factored_monomial) => {
-                        final_lhs_terms.insert(&factored_monomial, &coefficient)
-                    }
-                    None => panic!("Failed to divide monomial by GCD"),
-                };
-            }
-            divided_vars = m_gcd.vars().into_iter().collect();
-        } else {
-            // No factoring needed if GCD is constant
-            final_lhs_terms = tmp_lhs_terms;
-            divided_vars = Set::new();
-        }
-
-        // 4. Construct final polynomials
-        let final_lhs = SparsePolynomial {
-            terms: final_lhs_terms,
-        };
-
-        let initial_rhs = SparsePolynomial {
-            terms: tmp_rhs_terms,
-        };
-
-        // 5. Negate RHS
-        let final_rhs = -initial_rhs;
-
-        // 6. Return
-        (final_lhs, final_rhs, divided_vars)
-    }
 }
 
 impl<'a, D, A, F, T> Pretty<'a, D, A> for SparsePolynomial<F, T>
@@ -475,154 +375,3 @@ where
     }
 }
 
-/// Export a list of polynomials as a Python (sympy/sage) compatible text file.
-///
-/// Each variable is assigned a unique `x{i}` name based on the full `PRef`
-/// identity (node index, slot, qualifier, distribution, transcript flag, name).
-/// The output file has two sections separated by a newline:
-///
-/// ```text
-/// vars: x0: human_name, x1: other_name, ...
-/// <polynomial 0>
-/// <polynomial 1>
-/// ...
-/// ```
-///
-/// Human names use `name[idx]` when the PRef is a slot of a compound type
-/// (detected by comparing `v.typ` against the parent PRef's `typ` in `prefs`),
-/// or just `name` when index 0 refers to the original object. Falls back to
-/// `str(ref)` when no name exists.
-///
-/// Exponentiation uses `**` (Python convention). Coefficients are printed
-/// using their `Display` impl (field-element representation).
-///
-/// NOTE: Do not remove. This is for debugging.
-#[allow(dead_code)]
-pub fn export_polys_to_python<F: Field, T: Monomial>(
-    polys: &[SparsePolynomial<F, T>],
-    prefs: &std::collections::HashMap<graph::Ref, PRef>,
-    path: &str,
-) -> std::io::Result<()> {
-    use std::collections::HashMap as StdHashMap;
-    use std::io::Write;
-
-    let mut pref_to_idx: StdHashMap<(usize, usize, String, String, bool, String), usize> =
-        StdHashMap::new();
-    let mut idx_to_name: StdHashMap<usize, String> = StdHashMap::new();
-    let mut next_idx: usize = 0;
-
-    let mut register = |v: &PRef| -> usize {
-        let key = (
-            v.reference.node().index(),
-            v.index,
-            format!("{:?}", v.qualifier),
-            format!("{:?}", v.distribution),
-            v.from_transcript,
-            v.name.as_ref().map(|n| n.0.clone()).unwrap_or_default(),
-        );
-        if let Some(&i) = pref_to_idx.get(&key) {
-            i
-        } else {
-            let i = next_idx;
-            next_idx += 1;
-            pref_to_idx.insert(key, i);
-            let is_slot = prefs
-                .get(&v.reference)
-                .map_or(false, |parent| parent.typ != v.typ);
-            let base = if let Some(n) = &v.name {
-                n.0.clone()
-            } else {
-                format!("n{}", v.reference.node().index())
-            };
-            let human = if is_slot {
-                format!("{}[{}]", base, v.index)
-            } else {
-                base
-            };
-            idx_to_name.insert(i, human);
-            i
-        }
-    };
-
-    for poly in polys.iter() {
-        if poly.is_zero() {
-            continue;
-        }
-        for (term, _) in poly.terms.iter() {
-            for v in term.vars() {
-                register(&v);
-            }
-        }
-    }
-
-    let mut lines: Vec<String> = Vec::new();
-    for poly in polys.iter() {
-        if poly.is_zero() {
-            continue;
-        }
-        let mut terms: Vec<String> = Vec::new();
-        let mut first = true;
-        for (term, coeff) in poly.terms.iter() {
-            let vars = term.vars();
-            let powers = term.powers();
-            let mono_parts: Vec<String> = vars
-                .iter()
-                .zip(powers.iter())
-                .map(|(v, &p)| {
-                    let vi = register(v);
-                    if p == 1 {
-                        format!("x{}", vi)
-                    } else {
-                        format!("x{}**{}", vi, p)
-                    }
-                })
-                .collect();
-            let mono_str = mono_parts.join("*");
-            if mono_str.is_empty() {
-                if first {
-                    terms.push(format!("{}", coeff));
-                    first = false;
-                } else {
-                    terms.push(format!("+ {}", coeff));
-                }
-            } else if coeff.is_one() {
-                if first {
-                    terms.push(mono_str);
-                    first = false;
-                } else {
-                    terms.push(format!("+ {}", mono_str));
-                }
-            } else if (-*coeff).is_one() {
-                if first {
-                    terms.push(format!("- {}", mono_str));
-                    first = false;
-                } else {
-                    terms.push(format!("- {}", mono_str));
-                }
-            } else {
-                let coeff_str = format!("{}", coeff);
-                if first {
-                    terms.push(format!("{}*{}", coeff_str, mono_str));
-                    first = false;
-                } else {
-                    terms.push(format!("+ {}*{}", coeff_str, mono_str));
-                }
-            }
-        }
-        lines.push(terms.join(" "));
-    }
-    let var_info: Vec<String> = (0..next_idx)
-        .map(|i| {
-            let name = idx_to_name.get(&i).cloned().unwrap_or_default();
-            format!("x{}: {}", i, name)
-        })
-        .collect();
-    let header = format!("vars: {}", var_info.join(", "));
-
-    let mut file = std::fs::File::create(path)?;
-    writeln!(file, "{}", header)?;
-    for line in &lines {
-        writeln!(file, "{}", line)?;
-    }
-    Ok(())
-}

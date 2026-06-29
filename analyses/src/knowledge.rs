@@ -1,7 +1,8 @@
 use crate::TransClos;
 use crate::error::AnalysisError;
-use crate::groebner::monomial::{ElimMono, ElimStrategy};
-use crate::groebner::{GroebnerBasis, GroebnerBuilder, GroebnerResult, SparsePolynomial};
+use crate::frontend::{Block, BlockKind, MonoOrder, Polynomial};
+use crate::ideal::{IdealBuilder, Ideal};
+use crate::backend::{GbBasis, GbBackend, ark_gb::ArkGb};
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
 #[cfg(test)]
@@ -11,32 +12,53 @@ use graph::{DQDag, PRef};
 use log::debug;
 use log::warn;
 
-/// Knowledge-analysis elimination strategy: Local variables and private-uniform
+/// Knowledge-analysis elimination predicate: Local variables and private-uniform
 /// variables (random masks) are eliminated first.
+fn is_elim_var(v: &PRef) -> bool {
+    v.qualifier == lang::typ::Qualifier::Local
+        || (v.qualifier == lang::typ::Qualifier::Private && v.distribution.is_uniform())
+}
+
+/// Legacy elimination strategy type — retained for external test compatibility.
+/// The new API uses `MonoOrder::block` instead.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Knowledge;
 
-impl ElimStrategy for Knowledge {
+impl crate::backend::ark_gb::monomial::ElimStrategy for Knowledge {
     fn eliminate_var(v: &PRef) -> bool {
-        v.qualifier == lang::typ::Qualifier::Local
-            || (v.qualifier == lang::typ::Qualifier::Private && v.distribution.is_uniform())
+        is_elim_var(v)
     }
 }
 
-/// Knowledge-analysis elimination term. Type alias for the common case.
-pub type ElimTerm = ElimMono<Knowledge>;
+/// Legacy elimination term type — retained for external test compatibility.
+pub type ElimTerm = crate::backend::ark_gb::monomial::ElimMono<Knowledge>;
+
+/// Build the block ordering for knowledge analysis: elim-block (GrevLex) first,
+/// then the remaining vars (GrevLex).
+fn knowledge_order(result: &Ideal<impl ArkConfig>) -> MonoOrder {
+    let elim_vars: Vec<PRef> = result
+        .var_order
+        .iter()
+        .filter(|v| is_elim_var(v))
+        .cloned()
+        .collect();
+    MonoOrder::block(vec![
+        Block { vars: Some(elim_vars), kind: BlockKind::GrevLex },
+        Block { vars: None, kind: BlockKind::GrevLex },
+    ])
+}
 
 /// Perform a knowledge analysis using Groebner bases.
 #[allow(unnameable_types)]
 pub struct KnowledgeAnalysis<C: ArkConfig> {
-    result: GroebnerResult<C, ElimTerm>,
+    result: Ideal<C>,
     /// Gröbner basis of the relation (precondition) alone, used to filter
     /// polynomials that are derivable from the precondition (not real leaks).
-    relation_basis: Option<GroebnerBasis<C::F, ElimTerm>>,
+    relation_basis: Option<GbBasis<C::F>>,
 }
 
 impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
-    pub fn new(gb: GroebnerResult<C, ElimTerm>) -> Self {
+    pub fn new(gb: Ideal<C>) -> Self {
         Self {
             result: gb,
             relation_basis: None,
@@ -48,18 +70,18 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
     }
 
     pub fn from_input_with_w<const W: usize>(dag: &DQDag<C>) -> Self {
-        let mut gb = GroebnerBuilder::new();
+        let mut gb = IdealBuilder::new();
         let mut result = gb.build(TransClos::prover(dag));
 
+        let backend = ArkGb::<C>::default();
+
         let relation_basis = if dag.relation_node().is_some() {
-            // Build a relation-only basis from the same canonical namespace state
-            // as the main relation build, but with a clean division-witness cache.
-            // This preserves generated witness names while ensuring identity rows
-            // are emitted into the relation-only result.
             let mut rel_gb = gb.fork_with_clean_div_witness_cache();
-            let mut rel_result = rel_gb.build(TransClos::relation(dag));
-            rel_result.run::<W>();
-            Some(rel_result.basis)
+            let rel_result = rel_gb.build(TransClos::relation(dag));
+            let order = knowledge_order(&rel_result);
+            backend
+                .compute_gb(rel_result.basis, &order, W)
+                .ok()
         } else {
             None
         };
@@ -77,7 +99,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
 
     #[cfg(test)]
     pub fn from_relation(dag: &DQDag<C>) -> Self {
-        let mut gb = GroebnerBuilder::new();
+        let mut gb = IdealBuilder::new();
         let result = gb.build(TransClos::relation(dag));
         Self {
             result,
@@ -85,7 +107,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
         }
     }
 
-    fn is_leak(p: &SparsePolynomial<C::F, ElimTerm>) -> bool {
+    fn is_leak(p: &Polynomial<C::F>) -> bool {
         let vars = p.vars();
         let has_public = vars.iter().any(|v| v.is_public());
         let has_private = vars.iter().any(|v| v.is_private());
@@ -97,7 +119,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
         !Self::has_private_uniform_linear_mask(p)
     }
 
-    fn has_private_uniform_linear_mask(p: &SparsePolynomial<C::F, ElimTerm>) -> bool {
+    fn has_private_uniform_linear_mask(p: &Polynomial<C::F>) -> bool {
         // A polynomial with a private uniform variable appearing at degree 1
         // alone in its own term is safe — it acts as a one-time pad mask.
         // E.g., r + c*x - z where r is private uniform.
@@ -127,7 +149,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
     }
 
     pub fn eliminate_var(&mut self) {
-        self.result.basis.basis.retain(|p| {
+        self.result.basis.retain(|p| {
             let vars = p.vars();
             if vars.is_empty() {
                 return true;
@@ -161,10 +183,15 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
     /// W is the packed monomial width. Caller must ensure W is appropriate
     /// for the problem size (W=128 supports up to 1023 variables).
     pub fn run<const W: usize>(&mut self) -> Result<(), AnalysisError<C>> {
-        // Compute the Groebner basis
-        self.result.run::<W>();
+        let backend = ArkGb::<C>::default();
+        let order = knowledge_order(&self.result);
 
-        if self.result.basis.is_unit() {
+        // Compute the Groebner basis
+        let gb = backend
+            .compute_gb(std::mem::take(&mut self.result.basis), &order, W)
+            .expect("ark-gb backend should support knowledge block order");
+
+        if gb.is_unit() {
             eprintln!(
                 "WARNING: knowledge analysis: Groebner basis reduced to the unit ideal \
                  (contains 1). This indicates the protocol is self-contradictory or that \
@@ -172,6 +199,8 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
                  developers."
             );
         }
+
+        self.result.basis = gb.polys.clone();
 
         // Delete varieties with elimination variables
         self.eliminate_var();
@@ -184,7 +213,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
                 // Skip polynomials derivable from the relation (precondition).
                 // The verifier already knows these — they're not new leaks.
                 if let Some(ref rel_basis) = self.relation_basis
-                    && rel_basis.contains_poly(p)
+                    && rel_basis.polys.iter().any(|rp| rp == p)
                 {
                     continue;
                 }
@@ -575,7 +604,7 @@ fn zk_multiple_verify_both_safe() {
 ///
 /// Confirms the Phase 8 Part B fixes (trans_clos recursion into
 /// Op::Eval/Coef/Mle/Poly + to_poly dispatch to eval_to_poly) also
-/// cover the `KnowledgeAnalysis` consumer of `GroebnerBuilder`, not
+/// cover the `KnowledgeAnalysis` consumer of `IdealBuilder`, not
 /// just completeness. Pre-fix this panicked with
 /// `Reference l not found in context`. A small univariate shape is
 /// used to keep Buchberger tractable.

@@ -1,5 +1,4 @@
-use crate::groebner::{GrevLexTerm, SparsePolynomial};
-use crate::knowledge::ElimTerm;
+use crate::frontend::Polynomial;
 use backend::ArkConfig;
 use graph::{GraphError, PRef};
 use thiserror::Error;
@@ -9,11 +8,11 @@ pub enum ExtractorRejection<C: ArkConfig> {
     /// No basis polynomial has this witness as leading term.
     NoExtractor,
     /// Extractor depends on variables not visible to the verifier.
-    NotVisible(SparsePolynomial<C::F, GrevLexTerm>),
+    NotVisible(Polynomial<C::F>),
     /// Field witness extractor depends on group variables.
-    FieldDependsOnGroup(SparsePolynomial<C::F, GrevLexTerm>),
+    FieldDependsOnGroup(Polynomial<C::F>),
     /// Group witness extractor has a monomial with >1 group variable.
-    MultiGroupTerm(SparsePolynomial<C::F, GrevLexTerm>),
+    MultiGroupTerm(Polynomial<C::F>),
 }
 
 impl<C: ArkConfig> std::fmt::Debug for ExtractorRejection<C> {
@@ -49,11 +48,11 @@ impl<C: ArkConfig> Clone for ExtractorRejection<C> {
 pub enum AnalysisError<C: ArkConfig> {
     /// A verifier equation that cannot be derived from the prover's Gröbner basis.
     #[error("Incomplete protocol: {0}")]
-    Incomplete(SparsePolynomial<C::F, GrevLexTerm>),
+    Incomplete(Polynomial<C::F>),
 
     /// A polynomial relating public and private variables, leaking knowledge.
     #[error("Knowledge leak: {0}")]
-    KnowledgeLeak(SparsePolynomial<C::F, ElimTerm>),
+    KnowledgeLeak(Polynomial<C::F>),
 
     /// The verifier subgraph is invalid or cannot be projected from the graph.
     #[error("Verifier invalid: {0}")]
@@ -82,5 +81,5 @@ pub enum AnalysisError<C: ArkConfig> {
 
     /// Extractor invalid; relation remainder is non-zero.
     #[error("Extractor invalid; relation remainder: {0}")]
-    ExtractorInvalid(SparsePolynomial<C::F, GrevLexTerm>),
+    ExtractorInvalid(Polynomial<C::F>),
 }

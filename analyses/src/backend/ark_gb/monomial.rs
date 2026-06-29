@@ -1,4 +1,4 @@
-use crate::groebner::sparsepoly::SparsePolynomial;
+use crate::backend::ark_gb::sparsepoly::SparsePolynomial;
 use ark_ff::Field;
 use core::cmp::Ordering;
 use core::ops::{Div, Mul, MulAssign};
@@ -8,7 +8,7 @@ use std::fmt;
 use std::fmt::Debug;
 
 /// A monomial trait that represents a term in a polynomial.
-pub trait Monomial:
+pub(crate) trait Monomial:
     Clone
     + PartialEq
     + Eq
@@ -81,7 +81,7 @@ pub trait ElimStrategy: Sized + Send + Sync {
 
 /// A monomial term with grevlex ordering
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct GrevLexTerm(MonoTerm);
+pub(crate) struct GrevLexTerm(MonoTerm);
 
 /// A monomial term with block-elimination ordering, parameterized by the
 /// elimination strategy `E`.
@@ -486,7 +486,7 @@ impl Monomial for GrevLexTerm {
     where
         Self: Sized,
     {
-        use crate::groebner::ark_gb_adapter::compute_reduced_gb_grevlex;
+        use crate::backend::ark_gb::adapter::compute_reduced_gb_grevlex;
         compute_reduced_gb_grevlex::<F, W>(num_vars, input)
     }
 }
@@ -528,8 +528,8 @@ impl<E: ElimStrategy> Monomial for ElimMono<E> {
     where
         Self: Sized,
     {
-        use crate::groebner::ark_gb_adapter::compute_reduced_gb_with_elim;
-        compute_reduced_gb_with_elim::<F, Self, W>(num_vars, input, E::eliminate_var)
+        use crate::backend::ark_gb::adapter::compute_reduced_gb_with_elim;
+        compute_reduced_gb_with_elim::<F, Self, W>(num_vars, input, &E::eliminate_var)
     }
 }
 

@@ -1,15 +1,4 @@
-pub mod buchberger;
-pub use buchberger::GroebnerBasis;
-
-pub mod monomial;
-pub use monomial::{ElimMono, ElimStrategy, GrevLexTerm, Monomial};
-pub mod tiered;
-pub use tiered::{TieredElimMono, TieredElimStrategy};
-pub mod sparsepoly;
-pub use sparsepoly::SparsePolynomial;
-
-pub(crate) mod ark_gb_adapter;
-
+use crate::frontend::Polynomial;
 use crate::TransClos;
 use graph::pref::PRef;
 use graph::{GOp, HOp, Op, Ref, mk};
@@ -110,16 +99,16 @@ fn index_of(typ: &ATyp, k: &[usize]) -> usize {
 /// set of N linear polynomial equations. The caller is responsible for
 /// providing `ω` such that `ω^N = 1` and `ω` has order exactly `N`
 /// (typically `C::F::get_root_of_unity(N)`).
-fn dft_row<F: Field, T: Monomial>(
-    coeffs: &[SparsePolynomial<F, T>],
-    omega: F,
+fn dft_row<C: ArkConfig>(
+    coeffs: &[Polynomial<C::F>],
+    omega: C::F,
     i: usize,
-) -> SparsePolynomial<F, T> {
+) -> Polynomial<C::F> {
     let w_step = omega.pow([i as u64]);
-    let mut wij = F::one();
-    let mut acc = SparsePolynomial::<F, T>::zero();
+    let mut wij = C::F::one();
+    let mut acc = Polynomial::<C::F>::zero();
     for c in coeffs.iter() {
-        let scalar = SparsePolynomial::<F, T>::lit(&wij);
+        let scalar = Polynomial::<C::F>::lit(&wij);
         acc += c * &scalar;
         wij *= w_step;
     }
@@ -230,17 +219,17 @@ impl<C: ArkConfig + HasOpFactory> GroebnerNamespace<C> {
 /// The result of building a Gröbner basis — the basis polynomials, their
 /// polynomial definitions (pl), and the prefs used in the basis.
 #[derive(Clone)]
-pub struct GroebnerResult<C: ArkConfig, T: Monomial> {
-    pub basis: GroebnerBasis<C::F, T>,
-    pub pl: Ctx<PRef, SparsePolynomial<C::F, T>>,
+pub struct Ideal<C: ArkConfig> {
+    pub basis: Vec<Polynomial<C::F>>,
+    pub pl: Ctx<PRef, Polynomial<C::F>>,
     pub prefs: HashMap<Ref, PRef>,
     pub var_order: Vec<PRef>,
 }
 
-impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
+impl<C: ArkConfig + HasOpFactory> Ideal<C> {
     pub fn new() -> Self {
         Self {
-            basis: GroebnerBasis::empty(0),
+            basis: Vec::new(),
             pl: Ctx::new(),
             prefs: HashMap::new(),
             var_order: Vec::new(),
@@ -253,34 +242,6 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
         self.prefs.insert(pr.reference, pr.clone())
     }
 
-    pub fn reconstruct_from<T2: Monomial>(source: &GroebnerResult<C, T2>) -> Self
-    where
-        T: From<Vec<(PRef, usize)>>,
-    {
-        let basis = GroebnerBasis::reconstruct_from(&source.basis);
-        let mut pl = Ctx::new();
-        for (k, v) in source.pl.iter() {
-            let new_poly = SparsePolynomial::reconstruct_from(v);
-            pl.insert(k, &new_poly);
-        }
-        Self {
-            basis,
-            pl,
-            prefs: source.prefs.clone(),
-            var_order: source.var_order.clone(),
-        }
-    }
-
-    pub fn export_polys_to_python(&self, path: &str) -> std::io::Result<()> {
-        let polys: Vec<_> = self
-            .basis
-            .iter()
-            .filter(|p| !p.is_zero())
-            .cloned()
-            .collect();
-        crate::groebner::sparsepoly::export_polys_to_python(&polys, &self.prefs, path)
-    }
-
     /// Look up a Ref in the namespace. Panics if not found.
     pub fn find_ref(&self, r: &Ref) -> PRef {
         if let Some(v) = self.prefs.get(r) {
@@ -290,19 +251,25 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
     }
 
     pub fn vars(&self) -> Set<PRef> {
-        self.pl.keys().union(self.basis.vars())
+        let mut vars: Set<PRef> = self.pl.keys().into_iter().collect();
+        for p in &self.basis {
+            for v in p.vars() {
+                vars.insert(v);
+            }
+        }
+        vars
     }
 
     /// Filter out variables that satisfy the predicate
     pub fn eliminate_var<F: Fn(&PRef) -> bool>(&mut self, f: &F) {
-        self.basis.eliminate_var(f);
+        self.basis.retain(|p| p.vars().iter().all(|v| !f(v)));
         self.pl.retain(|p, _| !f(p));
     }
 
-    pub fn eliminate_monomial<F: Fn(&T) -> bool>(&mut self, f: &F) {
-        self.basis.eliminate_monomial(f);
-        let vars = self.basis.vars();
-        self.pl.retain(|p, _| vars.contains(p));
+    pub fn eliminate_monomial<F: Fn(&crate::frontend::Monomial) -> bool>(&mut self, f: &F) {
+        self.basis.retain(|p| p.terms.keys().any(|t| !f(t)));
+        let basis_vars: Set<PRef> = self.basis.iter().flat_map(|p| p.vars()).collect();
+        self.pl.retain(|p, _| basis_vars.contains(p));
     }
 
     /// Inline all `pl` definitions into the basis polynomials.
@@ -325,8 +292,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
             .map(|k| {
                 let deps = self.pl[k]
                     .terms
-                    .iter()
-                    .flat_map(|(t, _)| t.vars())
+                    .keys()
+                    .flat_map(|t| t.vars())
                     .filter(|v| inlineable.contains(v))
                     .count();
                 (k.clone(), deps)
@@ -343,8 +310,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
                 } else {
                     let new_deps = self.pl[&k]
                         .terms
-                        .iter()
-                        .flat_map(|(t, _)| t.vars())
+                        .keys()
+                        .flat_map(|t| t.vars())
                         .filter(|v| inlineable.contains(v) && !resolved.contains(v))
                         .count();
                     next_remaining.push((k, new_deps));
@@ -370,7 +337,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
         }
 
         // save transcript vars
-        let mut saved: Vec<(PRef, SparsePolynomial<C::F, T>)> = Vec::new();
+        let mut saved: Vec<(PRef, Polynomial<C::F>)> = Vec::new();
         for k in pl_keys.iter() {
             if transcript_refs.contains(&k.reference)
                 && let Some(v) = self.pl.remove(k)
@@ -385,7 +352,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
             let (new_p, _) = p.clone().inline_vars(&self.pl);
             *p = new_p;
         }
-        self.basis.basis.retain(|p| !p.is_zero());
+        self.basis.retain(|p| !p.is_zero());
 
         for (k, v) in saved {
             self.pl.insert(&k, &v);
@@ -396,19 +363,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
         }
     }
 
-    /// Compute Groebner basis using Buchberger algorithm.
-    ///
-    /// W is the packed monomial width (8 or 16). Caller must ensure W is
-    /// appropriate for the problem size (≤63 vars for W=8, ≤127 vars for W=16).
-    pub fn run<const W: usize>(&mut self) {
-        self.basis = self.basis.clone().buchberger_and_reduce::<W>();
-    }
-
     /// Merge another result's basis and polynomial definitions into this result.
     pub fn merge(&mut self, other: &Self) {
-        for p in other.basis.iter() {
-            self.basis.push(p.clone());
-        }
+        self.basis.extend(other.basis.iter().cloned());
         for (k, v) in other.pl.iter() {
             self.pl.insert(k, v);
         }
@@ -419,16 +376,15 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
     }
 }
 
-impl<C: ArkConfig + HasOpFactory, T: Monomial> Default for GroebnerResult<C, T> {
+impl<C: ArkConfig + HasOpFactory> Default for Ideal<C> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'a, C, D, A, T> Pretty<'a, D, A> for GroebnerResult<C, T>
+impl<'a, C, D, A> Pretty<'a, D, A> for Ideal<C>
 where
     C: ArkConfig,
-    T: Monomial,
     D: DocAllocator<'a, A>,
     D::Doc: Clone,
     A: 'a + Clone,
@@ -451,9 +407,9 @@ where
     }
 }
 
-impl<C: ArkConfig, T: Monomial> fmt::Display for GroebnerResult<C, T> {
+impl<C: ArkConfig> fmt::Display for Ideal<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <GroebnerResult<C, T> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <Ideal<C> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(100, f)
     }
@@ -465,13 +421,13 @@ impl<C: ArkConfig, T: Monomial> fmt::Display for GroebnerResult<C, T> {
 /// zero-padding lifts to wider types (via `lift_to`), all-slot scalar
 /// broadcast (via `broadcast_scalar_to`), and representation-aware
 /// scalar lifting for additive polynomial operations.
-struct PolySource<C: ArkConfig, T: Monomial> {
-    polys: Vec<SparsePolynomial<C::F, T>>,
+struct PolySource<C: ArkConfig> {
+    polys: Vec<Polynomial<C::F>>,
     typ: ATyp,
 }
 
-impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
-    fn new(polys: Vec<SparsePolynomial<C::F, T>>, typ: ATyp) -> Self {
+impl<C: ArkConfig> PolySource<C> {
+    fn new(polys: Vec<Polynomial<C::F>>, typ: ATyp) -> Self {
         PolySource { polys, typ }
     }
 
@@ -479,7 +435,7 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
         &self.typ
     }
 
-    fn polys(&self) -> &[SparsePolynomial<C::F, T>] {
+    fn polys(&self) -> &[Polynomial<C::F>] {
         &self.polys
     }
 
@@ -492,7 +448,7 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
         C: HasOpFactory,
     {
         let typ = op.typ();
-        let polys = GroebnerBuilder::<C, T>::ref_vars(op, prefs);
+        let polys = IdealBuilder::<C>::ref_vars(op, prefs);
         PolySource { polys, typ }
     }
 
@@ -500,18 +456,18 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
         let polys = pref
             .slots()
             .into_iter()
-            .map(|slot| SparsePolynomial::var(&slot))
+            .map(|slot| Polynomial::var(&slot))
             .collect();
         PolySource { polys, typ }
     }
 
     fn embed_multi_indexed_polys(
-        polys: &[SparsePolynomial<C::F, T>],
+        polys: &[Polynomial<C::F>],
         source_indices: &[Vec<usize>],
         target_indices: &[Vec<usize>],
         target_arity: usize,
-    ) -> Vec<SparsePolynomial<C::F, T>> {
-        let mut out = vec![SparsePolynomial::<C::F, T>::zero(); target_indices.len()];
+    ) -> Vec<Polynomial<C::F>> {
+        let mut out = vec![Polynomial::<C::F>::zero(); target_indices.len()];
         for (j, source_index) in source_indices.iter().enumerate() {
             let mut padded = source_index.clone();
             padded.resize(target_arity, 0);
@@ -522,7 +478,7 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
         out
     }
 
-    fn at_index(&self, i: usize) -> Option<PolySource<C, T>> {
+    fn at_index(&self, i: usize) -> Option<PolySource<C>> {
         match &self.typ {
             ATyp::Vec(inner, n) if i < *n => {
                 let elem_len = inner.physical_len();
@@ -578,7 +534,7 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
     /// **Uni(n) → VPoly(n', m')** where `1 ≤ n'` and `n ≤ m'`:
     ///   Same as VPoly(1,n) → VPoly(n',m'). Handled by same-arity prefix or
     ///   cross-arity embedding as above.
-    fn lift_to(&self, target: &ATyp) -> PolySource<C, T> {
+    fn lift_to(&self, target: &ATyp) -> PolySource<C> {
         let src_len = self.typ.physical_len();
         let dst_len = target.physical_len();
         assert!(
@@ -605,7 +561,7 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
 
             (ATyp::Uni(_n1), ATyp::Uni(_n2)) => {
                 let mut out = self.polys.clone();
-                out.resize(dst_len, SparsePolynomial::zero());
+                out.resize(dst_len, Polynomial::zero());
                 PolySource {
                     polys: out,
                     typ: target.clone(),
@@ -614,7 +570,7 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
 
             (ATyp::Mle(_n1), ATyp::Mle(_n2)) => {
                 let mut out = self.polys.clone();
-                out.resize(dst_len, SparsePolynomial::zero());
+                out.resize(dst_len, Polynomial::zero());
                 PolySource {
                     polys: out,
                     typ: target.clone(),
@@ -629,7 +585,7 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
                 );
                 let g0 = self.polys[0].clone();
                 let g1 = self.polys[1].clone();
-                let mut out = vec![SparsePolynomial::<C::F, T>::zero(); dst_len];
+                let mut out = vec![Polynomial::<C::F>::zero(); dst_len];
                 out[0] = g0.clone();
                 out[1] = &g1 - &g0;
                 PolySource {
@@ -641,7 +597,7 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
             (ATyp::VPoly(n1, m1), ATyp::VPoly(n2, m2)) if n1 <= n2 && m1 <= m2 => {
                 if n1 == n2 {
                     let mut out = self.polys.clone();
-                    out.resize(dst_len, SparsePolynomial::zero());
+                    out.resize(dst_len, Polynomial::zero());
                     PolySource {
                         polys: out,
                         typ: target.clone(),
@@ -660,7 +616,7 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
             (ATyp::Uni(m1), ATyp::VPoly(n2, m2)) if *n2 >= 1 && m1 <= m2 => {
                 if *n2 == 1 {
                     let mut out = self.polys.clone();
-                    out.resize(dst_len, SparsePolynomial::zero());
+                    out.resize(dst_len, Polynomial::zero());
                     PolySource {
                         polys: out,
                         typ: target.clone(),
@@ -700,12 +656,12 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
                 let dst_idx = multi_indices(*n2, *m2);
                 let n2_val = *n2;
                 let n1_val = *n1;
-                let mut out = vec![SparsePolynomial::<C::F, T>::zero(); dst_idx.len()];
-                let lit_of = |v: i64| -> SparsePolynomial<C::F, T> {
+                let mut out = vec![Polynomial::<C::F>::zero(); dst_idx.len()];
+                let lit_of = |v: i64| -> Polynomial<C::F> {
                     if v >= 0 {
-                        SparsePolynomial::lit(&C::FOps::from_usize(v as usize))
+                        Polynomial::lit(&C::FOps::from_usize(v as usize))
                     } else {
-                        -SparsePolynomial::lit(&C::FOps::from_usize((-v) as usize))
+                        -Polynomial::lit(&C::FOps::from_usize((-v) as usize))
                     }
                 };
                 for (j, src_b) in src_hcube.iter().enumerate() {
@@ -749,7 +705,7 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
         }
     }
 
-    fn broadcast_scalar_to(&self, poly_typ: &ATyp) -> PolySource<C, T> {
+    fn broadcast_scalar_to(&self, poly_typ: &ATyp) -> PolySource<C> {
         let dst_len = poly_typ.physical_len();
         let scalar_poly = self.polys[0].clone();
         PolySource {
@@ -758,7 +714,7 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
         }
     }
 
-    fn lift_scalar_for_add_sub_to(&self, poly_typ: &ATyp) -> PolySource<C, T> {
+    fn lift_scalar_for_add_sub_to(&self, poly_typ: &ATyp) -> PolySource<C> {
         assert!(
             Self::is_scalar_like(&self.typ),
             "lift_scalar_for_add_sub_to requires a scalar-like source, got {}",
@@ -774,7 +730,7 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
         let polys = match poly_typ {
             ATyp::Base(_) => vec![scalar_poly],
             ATyp::Uni(_) => {
-                let mut out = vec![SparsePolynomial::<C::F, T>::zero(); poly_typ.physical_len()];
+                let mut out = vec![Polynomial::<C::F>::zero(); poly_typ.physical_len()];
                 out[0] = scalar_poly;
                 out
             }
@@ -784,7 +740,7 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
                     .iter()
                     .position(|idx| idx.iter().all(|degree| *degree == 0))
                     .expect("VPoly multi-index enumeration must include the constant slot");
-                let mut out = vec![SparsePolynomial::<C::F, T>::zero(); indices.len()];
+                let mut out = vec![Polynomial::<C::F>::zero(); indices.len()];
                 out[zero_slot] = scalar_poly;
                 out
             }
@@ -818,12 +774,12 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
     }
 }
 
-/// Constructs `GroebnerResult`s from `TransClos` inputs. Owns a
+/// Constructs `Ideal`s from `TransClos` inputs. Owns a
 /// `GroebnerNamespace` for division-witness and sentinel allocation
 /// that persists across `build()` calls. Each call to `build(TransClos)`
-/// returns a fresh `GroebnerResult` with its own `prefs` namespace.
+/// returns a fresh `Ideal` with its own `prefs` namespace.
 #[derive(Clone)]
-pub struct GroebnerBuilder<C: ArkConfig, T: Monomial = GrevLexTerm> {
+pub struct IdealBuilder<C: ArkConfig> {
     pub ns: GroebnerNamespace<C>,
     /// When true, `a / b` where `a`'s op is `Mul(cofactor, b)` (or `Mul(b, cofactor)`)
     /// lowers as the exact-division copy `q = cofactor` instead of the generic
@@ -833,22 +789,20 @@ pub struct GroebnerBuilder<C: ArkConfig, T: Monomial = GrevLexTerm> {
     /// `Mul`-then-`Div` exact-division pattern. Populated only when
     /// `detect_exact_division` is set.
     node_ops: HashMap<Ref, GOp<C>>,
-    _phantom: PhantomData<T>,
 }
 
-impl<C: ArkConfig + HasOpFactory, T: Monomial> Default for GroebnerBuilder<C, T> {
+impl<C: ArkConfig + HasOpFactory> Default for IdealBuilder<C> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
+impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     pub fn new() -> Self {
         Self {
             ns: GroebnerNamespace::new(),
             detect_exact_division: false,
             node_ops: HashMap::new(),
-            _phantom: PhantomData,
         }
     }
 
@@ -882,17 +836,16 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             ns: self.ns.clone(),
             detect_exact_division: self.detect_exact_division,
             node_ops: self.node_ops.clone(),
-            _phantom: PhantomData,
         };
         fork.clear_div_witness_cache();
         fork
     }
 
-    /// Build a `GroebnerResult` from a `TransClos`. Each call returns a
+    /// Build a `Ideal` from a `TransClos`. Each call returns a
     /// fresh result with its own `prefs` namespace, while the builder
     /// namespace keeps generated witness/sentinel allocation stable.
-    pub fn build(&mut self, tc: TransClos<C>) -> GroebnerResult<C, T> {
-        let mut result = GroebnerResult::new();
+    pub fn build(&mut self, tc: TransClos<C>) -> Ideal<C> {
+        let mut result = Ideal::new();
         if self.detect_exact_division {
             self.node_ops.clear();
             for (pr, op) in tc.clos.iter() {
@@ -916,7 +869,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         &mut self,
         name: &str,
         typ: ATyp,
-        result: &mut GroebnerResult<C, T>,
+        result: &mut Ideal<C>,
     ) -> PRef {
         let pr = self.ns.sentinel_pref(name, typ);
         result.var_order.push(pr.clone());
@@ -928,7 +881,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         &mut self,
         quotient_typ: ATyp,
         remainder_typ: ATyp,
-        result: &mut GroebnerResult<C, T>,
+        result: &mut Ideal<C>,
     ) -> (PRef, PRef) {
         let q_name = self.ns.next_name("div_q");
         let r_name = self.ns.next_name("div_r");
@@ -968,7 +921,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     }
 
     fn canonical_div_typ(t: &ATyp) -> Option<CanonPolyTyp> {
-        PolySource::<C, T>::poly_shape_static(t).map(|(num_vars, max_degree)| CanonPolyTyp {
+        PolySource::<C>::poly_shape_static(t).map(|(num_vars, max_degree)| CanonPolyTyp {
             num_vars,
             max_degree,
         })
@@ -976,9 +929,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
 
     fn div_witness_key(
         &self,
-        a: &PolySource<C, T>,
-        b: &PolySource<C, T>,
-        result: &GroebnerResult<C, T>,
+        a: &PolySource<C>,
+        b: &PolySource<C>,
+        result: &Ideal<C>,
     ) -> DivWitnessKey {
         DivWitnessKey {
             dividend_typ: Self::canonical_div_typ(a.typ()).expect("dividend must be polynomial"),
@@ -989,8 +942,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     }
 
     fn canonical_slot_keys(
-        source: &PolySource<C, T>,
-        result: &GroebnerResult<C, T>,
+        source: &PolySource<C>,
+        result: &Ideal<C>,
     ) -> Vec<String> {
         source
             .polys()
@@ -1000,8 +953,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     }
 
     fn canonical_poly_key(
-        poly: &SparsePolynomial<C::F, T>,
-        result: &GroebnerResult<C, T>,
+        poly: &Polynomial<C::F>,
+        result: &Ideal<C>,
         seen: &mut Vec<PRef>,
     ) -> String {
         if poly.is_zero() {
@@ -1024,8 +977,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     }
 
     fn canonical_monomial_key(
-        term: &T,
-        result: &GroebnerResult<C, T>,
+        term: &crate::frontend::Monomial,
+        result: &Ideal<C>,
         seen: &mut Vec<PRef>,
     ) -> String {
         let mut factors: Vec<String> = term
@@ -1041,7 +994,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     fn canonical_factor_key(
         pref: &PRef,
         power: usize,
-        result: &GroebnerResult<C, T>,
+        result: &Ideal<C>,
         seen: &mut Vec<PRef>,
     ) -> String {
         if Self::is_named_source_pref(pref) {
@@ -1101,11 +1054,11 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     fn div_rem_op(
         &mut self,
         target: &PRef,
-        a: &PolySource<C, T>,
-        b: &PolySource<C, T>,
+        a: &PolySource<C>,
+        b: &PolySource<C>,
         is_rem: bool,
         cache_witness: bool,
-        result: &mut GroebnerResult<C, T>,
+        result: &mut Ideal<C>,
     ) {
         match (a.typ(), b.typ()) {
             (ATyp::Vec(_, na), ATyp::Vec(_, nb)) if na == nb => {
@@ -1116,14 +1069,14 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     self.div_rem_op(&t_i, &a_elem, &b_elem, is_rem, cache_witness, result);
                 }
             }
-            (ATyp::Vec(_, na), _) if PolySource::<C, T>::is_scalar_like(b.typ()) => {
+            (ATyp::Vec(_, na), _) if PolySource::<C>::is_scalar_like(b.typ()) => {
                 for i in 0..*na {
                     let t_i = target.with_index(i).unwrap();
                     let a_elem = a.at_index(i).unwrap();
                     self.div_rem_op(&t_i, &a_elem, b, is_rem, cache_witness, result);
                 }
             }
-            (_, ATyp::Vec(_, nb)) if PolySource::<C, T>::is_scalar_like(a.typ()) => {
+            (_, ATyp::Vec(_, nb)) if PolySource::<C>::is_scalar_like(a.typ()) => {
                 if is_rem {
                     unreachable!(
                         "Rem: scalar-left vector remainder is undefined for {} % {} — type checker should prevent this",
@@ -1137,7 +1090,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     self.div_rem_op(&t_i, a, &b_elem, false, cache_witness, result);
                 }
             }
-            _ if a.is_poly() && PolySource::<C, T>::is_scalar_like(b.typ()) => {
+            _ if a.is_poly() && PolySource::<C>::is_scalar_like(b.typ()) => {
                 if is_rem {
                     unreachable!(
                         "Rem: polynomial-like remainder by scalar is undefined for {} % {} — type checker should prevent this",
@@ -1168,8 +1121,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     return;
                 }
 
-                let (na, ma) = PolySource::<C, T>::poly_shape_static(a.typ()).unwrap();
-                let (nb, mb) = PolySource::<C, T>::poly_shape_static(b.typ()).unwrap();
+                let (na, ma) = PolySource::<C>::poly_shape_static(a.typ()).unwrap();
+                let (nb, mb) = PolySource::<C>::poly_shape_static(b.typ()).unwrap();
                 if na != nb {
                     unreachable!(
                         "{}: VPoly num_vars mismatch — dividend has n={} but divisor has n={}",
@@ -1183,7 +1136,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                         let lifted = a.lift_to(&target.typ);
                         for (pf, p) in target.slots().into_iter().zip(lifted.polys) {
                             result.pl.insert(&pf, &p);
-                            result.basis.push(p - SparsePolynomial::var(&pf));
+                            result.basis.push(p - Polynomial::var(&pf));
                         }
                         return;
                     }
@@ -1203,12 +1156,12 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     let a_idx = multi_indices(na, ma);
                     let b_poly = &b.polys()[0];
                     for (ka_pos, _k) in a_idx.iter().enumerate() {
-                        let rhs: SparsePolynomial<C::F, T> =
-                            b_poly * &SparsePolynomial::var(&q_wit.with_slot(ka_pos).unwrap());
+                        let rhs: Polynomial<C::F> =
+                            b_poly * &Polynomial::var(&q_wit.with_slot(ka_pos).unwrap());
                         result.basis.push(&a.polys()[ka_pos] - &rhs);
                     }
                     for rf in r_wit.slots() {
-                        result.basis.push(SparsePolynomial::var(&rf));
+                        result.basis.push(Polynomial::var(&rf));
                     }
                     let wit = if is_rem { &r_wit } else { &q_wit };
                     self.link_to_witness(target, wit, result);
@@ -1246,20 +1199,20 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 );
 
                 for (ka_pos, k) in a_idx.iter().enumerate() {
-                    let mut rhs = SparsePolynomial::<C::F, T>::zero();
+                    let mut rhs = Polynomial::<C::F>::zero();
                     for (i_pos, ki) in b_idx.iter().enumerate() {
                         for (j_pos, kj) in q_idx.iter().enumerate() {
                             let sum: Vec<usize> =
                                 ki.iter().zip(kj.iter()).map(|(x, y)| x + y).collect();
                             if sum == *k {
                                 let qf = q_wit.clone().with_slot(j_pos).unwrap();
-                                rhs = &rhs + &(&b.polys()[i_pos] * &SparsePolynomial::var(&qf));
+                                rhs = &rhs + &(&b.polys()[i_pos] * &Polynomial::var(&qf));
                             }
                         }
                     }
                     if let Some(r_pos) = r_idx.iter().position(|rk| rk == k) {
                         let rf = r_wit.clone().with_slot(r_pos).unwrap();
-                        rhs = &rhs + &SparsePolynomial::var(&rf);
+                        rhs = &rhs + &Polynomial::var(&rf);
                     }
                     result.basis.push(&a.polys()[ka_pos] - &rhs);
                 }
@@ -1305,9 +1258,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     fn broadcast_equ(
         &mut self,
         _pr: &PRef,
-        a: &PolySource<C, T>,
-        b: &PolySource<C, T>,
-        result: &mut GroebnerResult<C, T>,
+        a: &PolySource<C>,
+        b: &PolySource<C>,
+        result: &mut Ideal<C>,
     ) {
         self.emit_equ_diffs(a, b, result);
         // NOTE: We do NOT emit `pr.slots()` as basis polynomials here.
@@ -1317,9 +1270,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
 
     fn emit_equ_diffs(
         &mut self,
-        a: &PolySource<C, T>,
-        b: &PolySource<C, T>,
-        result: &mut GroebnerResult<C, T>,
+        a: &PolySource<C>,
+        b: &PolySource<C>,
+        result: &mut Ideal<C>,
     ) {
         match (a.typ(), b.typ()) {
             (ATyp::Vec(_, na), ATyp::Vec(_, nb)) if na == nb => {
@@ -1353,24 +1306,24 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
 
     fn bind_lifted_alias(
         target: &PRef,
-        source: &PolySource<C, T>,
+        source: &PolySource<C>,
         target_typ: &ATyp,
-        result: &mut GroebnerResult<C, T>,
+        result: &mut Ideal<C>,
     ) {
         let lifted = source.lift_to(target_typ);
         for (pf, p) in target.slots().into_iter().zip(lifted.polys) {
             result.pl.insert(&pf, &p);
-            result.basis.push(p - SparsePolynomial::var(&pf));
+            result.basis.push(p - Polynomial::var(&pf));
         }
     }
 
     fn bind_vec_aliases(
         target: &PRef,
         target_offset: usize,
-        source: &PolySource<C, T>,
+        source: &PolySource<C>,
         source_len: usize,
         elem_typ: &ATyp,
-        result: &mut GroebnerResult<C, T>,
+        result: &mut Ideal<C>,
     ) {
         for source_index in 0..source_len {
             let target_elem = target.with_index(target_offset + source_index).unwrap();
@@ -1382,11 +1335,11 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     fn concat_op(
         &mut self,
         pr: &PRef,
-        a: &PolySource<C, T>,
-        b: &PolySource<C, T>,
+        a: &PolySource<C>,
+        b: &PolySource<C>,
         _a_op: &HOp<C>,
         _b_op: &HOp<C>,
-        result: &mut GroebnerResult<C, T>,
+        result: &mut Ideal<C>,
     ) {
         match (&pr.typ, a.typ(), b.typ()) {
             (ATyp::Vec(r_elem, _), ATyp::Vec(_, na), ATyp::Vec(_, nb)) => {
@@ -1412,10 +1365,10 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     fn emit_slotwise_binop(
         &self,
         pr: &PRef,
-        left: &[SparsePolynomial<C::F, T>],
-        right: &[SparsePolynomial<C::F, T>],
+        left: &[Polynomial<C::F>],
+        right: &[Polynomial<C::F>],
         op: BinOp,
-        result: &mut GroebnerResult<C, T>,
+        result: &mut Ideal<C>,
         context: &str,
     ) {
         let pr_slots = pr.slots();
@@ -1433,18 +1386,18 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         for ((pf, left_poly), right_poly) in pr_slots.iter().zip(left).zip(right) {
             let combined = self.apply_binop(op, left_poly, right_poly);
             result.pl.insert(pf, &combined);
-            result.basis.push(combined - SparsePolynomial::var(pf));
+            result.basis.push(combined - Polynomial::var(pf));
         }
     }
 
     fn broadcast_binop(
         &mut self,
         pr: &PRef,
-        a: &PolySource<C, T>,
-        b: &PolySource<C, T>,
+        a: &PolySource<C>,
+        b: &PolySource<C>,
         r_typ: &ATyp,
         op: BinOp,
-        result: &mut GroebnerResult<C, T>,
+        result: &mut Ideal<C>,
     ) {
         match (a.typ(), b.typ()) {
             (ATyp::Vec(_, na), ATyp::Vec(_, nb)) if na == nb => {
@@ -1467,7 +1420,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             }
             (_, _)
                 if matches!(op, BinOp::Add | BinOp::Sub)
-                    && PolySource::<C, T>::is_scalar_like(b.typ())
+                    && PolySource::<C>::is_scalar_like(b.typ())
                     && a.is_poly() =>
             {
                 let a_lifted = a.lift_to(r_typ);
@@ -1483,7 +1436,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             }
             (_, _)
                 if matches!(op, BinOp::Add | BinOp::Sub)
-                    && PolySource::<C, T>::is_scalar_like(a.typ())
+                    && PolySource::<C>::is_scalar_like(a.typ())
                     && b.is_poly() =>
             {
                 let a_lifted = a.lift_scalar_for_add_sub_to(r_typ);
@@ -1497,7 +1450,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     "Scalar×Poly",
                 );
             }
-            (_, _) if PolySource::<C, T>::is_scalar_like(b.typ()) && a.physical_len() > 1 => {
+            (_, _) if PolySource::<C>::is_scalar_like(b.typ()) && a.physical_len() > 1 => {
                 let b_broadcast = b.broadcast_scalar_to(a.typ());
                 self.emit_slotwise_binop(
                     pr,
@@ -1508,7 +1461,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     "value×scalar",
                 );
             }
-            (_, _) if PolySource::<C, T>::is_scalar_like(a.typ()) && b.physical_len() > 1 => {
+            (_, _) if PolySource::<C>::is_scalar_like(a.typ()) && b.physical_len() > 1 => {
                 let a_broadcast = a.broadcast_scalar_to(b.typ());
                 self.emit_slotwise_binop(
                     pr,
@@ -1540,9 +1493,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     fn apply_binop(
         &self,
         op: BinOp,
-        a: &SparsePolynomial<C::F, T>,
-        b: &SparsePolynomial<C::F, T>,
-    ) -> SparsePolynomial<C::F, T> {
+        a: &Polynomial<C::F>,
+        b: &Polynomial<C::F>,
+    ) -> Polynomial<C::F> {
         match op {
             BinOp::Add => a + b,
             BinOp::Sub => a - b,
@@ -1556,10 +1509,10 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     fn mul_op(
         &mut self,
         target: &PRef,
-        a: &PolySource<C, T>,
-        b: &PolySource<C, T>,
+        a: &PolySource<C>,
+        b: &PolySource<C>,
         r_typ: &ATyp,
-        result: &mut GroebnerResult<C, T>,
+        result: &mut Ideal<C>,
     ) {
         match (a.typ(), b.typ()) {
             (ATyp::Vec(_, na), ATyp::Vec(_, nb)) if na == nb => {
@@ -1601,7 +1554,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 for (ap, pf) in a.polys().iter().zip(&target_slots) {
                     let prod = ap * &b.polys()[0];
                     result.pl.insert(pf, &prod);
-                    result.basis.push(prod - SparsePolynomial::var(pf));
+                    result.basis.push(prod - Polynomial::var(pf));
                 }
             }
             (ATyp::Base(ABase::Scalar), _) if b.is_poly() => {
@@ -1609,7 +1562,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 for (bp, pf) in b.polys().iter().zip(&target_slots) {
                     let prod = &a.polys()[0] * bp;
                     result.pl.insert(pf, &prod);
-                    result.basis.push(prod - SparsePolynomial::var(pf));
+                    result.basis.push(prod - Polynomial::var(pf));
                 }
             }
             (ATyp::Mle(na), ATyp::Mle(nb)) if na == nb => {
@@ -1627,15 +1580,15 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                         [[[1, -2, 1], [0, 1, -1]], [[0, 1, -1], [0, 0, 1]]];
                     C[ba][bb][k]
                 };
-                let lit_of = |v: i64| -> SparsePolynomial<C::F, T> {
+                let lit_of = |v: i64| -> Polynomial<C::F> {
                     if v >= 0 {
-                        SparsePolynomial::lit(&C::FOps::from_usize(v as usize))
+                        Polynomial::lit(&C::FOps::from_usize(v as usize))
                     } else {
-                        -SparsePolynomial::lit(&C::FOps::from_usize((-v) as usize))
+                        -Polynomial::lit(&C::FOps::from_usize((-v) as usize))
                     }
                 };
-                let mut out: Vec<SparsePolynomial<C::F, T>> =
-                    vec![SparsePolynomial::<C::F, T>::zero(); r_idx.len()];
+                let mut out: Vec<Polynomial<C::F>> =
+                    vec![Polynomial::<C::F>::zero(); r_idx.len()];
                 for (ia, ba) in all_b.iter().enumerate() {
                     for (ib, bb) in all_b.iter().enumerate() {
                         let uv = &a.polys()[ia] * &b.polys()[ib];
@@ -1658,7 +1611,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
                 for (pf, poly) in target.slots().into_iter().zip(out) {
                     result.pl.insert(&pf, &poly);
-                    result.basis.push(poly - SparsePolynomial::var(&pf));
+                    result.basis.push(poly - Polynomial::var(&pf));
                 }
             }
             (ATyp::Mle(na), ATyp::VPoly(nb, mb)) | (ATyp::VPoly(nb, mb), ATyp::Mle(na))
@@ -1687,15 +1640,15 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let all_b = hypercube(n);
                 let b_idx = multi_indices(n, *mb);
                 let r_idx = multi_indices(n, *mr);
-                let lit_of = |v: i64| -> SparsePolynomial<C::F, T> {
+                let lit_of = |v: i64| -> Polynomial<C::F> {
                     if v >= 0 {
-                        SparsePolynomial::lit(&C::FOps::from_usize(v as usize))
+                        Polynomial::lit(&C::FOps::from_usize(v as usize))
                     } else {
-                        -SparsePolynomial::lit(&C::FOps::from_usize((-v) as usize))
+                        -Polynomial::lit(&C::FOps::from_usize((-v) as usize))
                     }
                 };
-                let mut out: Vec<SparsePolynomial<C::F, T>> =
-                    vec![SparsePolynomial::<C::F, T>::zero(); r_idx.len()];
+                let mut out: Vec<Polynomial<C::F>> =
+                    vec![Polynomial::<C::F>::zero(); r_idx.len()];
                 // Coefficient of x^k in L_{ba}(x) · x^{kb}, indexed by
                 // [ba][k - kb] (only when k >= kb).  L_0(x)=1-x → x^kb - x^{kb+1};
                 // L_1(x)=x → x^{kb+1}.
@@ -1731,7 +1684,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
                 for (pf, poly) in target.slots().into_iter().zip(out) {
                     result.pl.insert(&pf, &poly);
-                    result.basis.push(poly - SparsePolynomial::var(&pf));
+                    result.basis.push(poly - Polynomial::var(&pf));
                 }
             }
             _ if a.is_poly() && b.is_poly() => {
@@ -1754,8 +1707,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                         let a_idx = multi_indices(*na, *ma);
                         let b_idx = multi_indices(*nb, *mb);
                         let r_idx = multi_indices(*nr, *mr);
-                        let mut out: Vec<SparsePolynomial<C::F, T>> =
-                            vec![SparsePolynomial::<C::F, T>::zero(); r_idx.len()];
+                        let mut out: Vec<Polynomial<C::F>> =
+                            vec![Polynomial::<C::F>::zero(); r_idx.len()];
                         for (ia, ka) in a_idx.iter().enumerate() {
                             for (ib, kb) in b_idx.iter().enumerate() {
                                 let k: Vec<usize> =
@@ -1769,7 +1722,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                         }
                         for (pf, poly) in target.slots().into_iter().zip(out) {
                             result.pl.insert(&pf, &poly);
-                            result.basis.push(poly - SparsePolynomial::var(&pf));
+                            result.basis.push(poly - Polynomial::var(&pf));
                         }
                     }
                     _ => {
@@ -1787,7 +1740,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 for ((ap, bp), pf) in a.polys().iter().zip(b.polys()).zip(&target_slots) {
                     let prod = ap * bp;
                     result.pl.insert(pf, &prod);
-                    result.basis.push(prod - SparsePolynomial::var(pf));
+                    result.basis.push(prod - Polynomial::var(pf));
                 }
             }
             _ => {
@@ -1804,25 +1757,25 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     fn dot_op(
         &mut self,
         pr: &PRef,
-        a: &PolySource<C, T>,
-        b: &PolySource<C, T>,
-        result: &mut GroebnerResult<C, T>,
+        a: &PolySource<C>,
+        b: &PolySource<C>,
+        result: &mut Ideal<C>,
     ) {
         match (a.typ(), b.typ()) {
             (ATyp::Vec(_, na), ATyp::Vec(_, nb)) if na == nb => {
                 let r_elem_len = pr.typ.physical_len();
-                let mut acc: Vec<SparsePolynomial<C::F, T>> =
-                    vec![SparsePolynomial::zero(); r_elem_len];
+                let mut acc: Vec<Polynomial<C::F>> =
+                    vec![Polynomial::zero(); r_elem_len];
                 for i in 0..*na {
                     let acc_name = self.ns.next_name("dot_acc");
                     let acc_pref = self.sentinel_pref(&acc_name, pr.typ.clone(), result);
                     let a_elem = a.at_index(i).unwrap();
                     let b_elem = b.at_index(i).unwrap();
                     self.mul_op(&acc_pref, &a_elem, &b_elem, &pr.typ, result);
-                    let acc_vars: Vec<SparsePolynomial<C::F, T>> = acc_pref
+                    let acc_vars: Vec<Polynomial<C::F>> = acc_pref
                         .slots()
                         .into_iter()
-                        .map(|s| SparsePolynomial::var(&s))
+                        .map(|s| Polynomial::var(&s))
                         .collect();
                     assert_eq!(
                         acc_vars.len(),
@@ -1835,7 +1788,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
                 for (pf, p) in pr.slots().into_iter().zip(acc) {
                     result.pl.insert(&pf, &p);
-                    result.basis.push(p - SparsePolynomial::var(&pf));
+                    result.basis.push(p - Polynomial::var(&pf));
                 }
             }
             (ATyp::Base(_), ATyp::Base(_)) => {
@@ -1845,10 +1798,10 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     1,
                     "Dot: Base·Base result must be single slot"
                 );
-                let sum: SparsePolynomial<C::F, T> =
+                let sum: Polynomial<C::F> =
                     a.polys().iter().zip(b.polys()).map(|(a, b)| a * b).sum();
                 result.pl.insert(&pr_slots[0], &sum);
-                result.basis.push(sum - SparsePolynomial::var(&pr_slots[0]));
+                result.basis.push(sum - Polynomial::var(&pr_slots[0]));
             }
             _ => {
                 unreachable!(
@@ -1863,9 +1816,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     fn pair_op(
         &mut self,
         pr: &PRef,
-        a: &PolySource<C, T>,
-        b: &PolySource<C, T>,
-        result: &mut GroebnerResult<C, T>,
+        a: &PolySource<C>,
+        b: &PolySource<C>,
+        result: &mut Ideal<C>,
     ) {
         match (a.typ(), b.typ(), &pr.typ) {
             (ATyp::Vec(_, na), ATyp::Vec(_, nb), ATyp::Vec(r_inner, _)) if na == nb => {
@@ -1878,7 +1831,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     for (j, pf) in t_i.slots().iter().enumerate() {
                         let e = &a_lifted.polys()[j] * &b_lifted.polys()[j];
                         result.pl.insert(pf, &e);
-                        result.basis.push(&e - &SparsePolynomial::var(pf));
+                        result.basis.push(&e - &Polynomial::var(pf));
                     }
                 }
             }
@@ -1892,7 +1845,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 {
                     let e = e_a * e_b;
                     result.pl.insert(pf, &e);
-                    result.basis.push(&e - &SparsePolynomial::var(pf));
+                    result.basis.push(&e - &Polynomial::var(pf));
                 }
             }
             _ => {
@@ -1906,7 +1859,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         }
     }
 
-    fn pow_op(&mut self, pr: &PRef, a: &HOp<C>, b: &HOp<C>, result: &mut GroebnerResult<C, T>) {
+    fn pow_op(&mut self, pr: &PRef, a: &HOp<C>, b: &HOp<C>, result: &mut Ideal<C>) {
         let a_src = PolySource::from_ref_vars(&result.prefs, a);
         match (a_src.typ(), &b.typ(), &pr.typ) {
             (ATyp::Vec(_, na), ATyp::Vec(_, nb), ATyp::Vec(r_inner, _)) if na == nb => {
@@ -1982,23 +1935,23 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     fn pow_const(
         &mut self,
         target: &PRef,
-        base: &PolySource<C, T>,
+        base: &PolySource<C>,
         _result_typ: &ATyp,
         k: usize,
-        result: &mut GroebnerResult<C, T>,
+        result: &mut Ideal<C>,
     ) {
         if k == 0 {
-            let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
+            let one = Polynomial::<C::F>::lit(&C::F::one());
             for pf in target.slots() {
                 result.pl.insert(&pf, &one);
-                result.basis.push(one.clone() - SparsePolynomial::var(&pf));
+                result.basis.push(one.clone() - Polynomial::var(&pf));
             }
             return;
         }
         if k == 1 {
             for (pf, p) in target.slots().into_iter().zip(base.polys().iter().cloned()) {
                 result.pl.insert(&pf, &p);
-                result.basis.push(p - SparsePolynomial::var(&pf));
+                result.basis.push(p - Polynomial::var(&pf));
             }
             return;
         }
@@ -2013,14 +1966,14 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 next_pref
                     .slots()
                     .into_iter()
-                    .map(|s| SparsePolynomial::var(&s))
+                    .map(|s| Polynomial::var(&s))
                     .collect(),
                 next_typ,
             );
         }
         for (pf, p) in target.slots().into_iter().zip(acc.polys) {
             result.pl.insert(&pf, &p);
-            result.basis.push(p - SparsePolynomial::var(&pf));
+            result.basis.push(p - Polynomial::var(&pf));
         }
     }
 
@@ -2029,15 +1982,15 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     fn slot_wise_div(
         &mut self,
         target: &PRef,
-        a_polys: &[SparsePolynomial<C::F, T>],
-        b_polys: &[SparsePolynomial<C::F, T>],
-        result: &mut GroebnerResult<C, T>,
+        a_polys: &[Polynomial<C::F>],
+        b_polys: &[Polynomial<C::F>],
+        result: &mut Ideal<C>,
     ) {
         let target_slots = target.slots();
         for (j, pf) in target_slots.iter().enumerate() {
             result
                 .basis
-                .push(a_polys[j].clone() - b_polys[j].clone() * SparsePolynomial::var(pf));
+                .push(a_polys[j].clone() - b_polys[j].clone() * Polynomial::var(pf));
         }
     }
 
@@ -2045,35 +1998,35 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     /// slot, for when `pr` aliases a div/rem witness produced by
     /// `div_witnesses`. Emits `var(pr[j]) − var(wit[j]) = 0` for every
     /// `j < pr.typ.physical_len()`, and registers `pl[pr[j]] = var(wit[j])`.
-    fn link_to_witness(&mut self, pr: &PRef, wit: &PRef, result: &mut GroebnerResult<C, T>) {
+    fn link_to_witness(&mut self, pr: &PRef, wit: &PRef, result: &mut Ideal<C>) {
         // Zip to min(pr slots, wit slots) — zip truncates to the shorter iterator.
         // Excess pr slots stay unconstrained (opaque).
         for (pf, wf) in pr.slots().into_iter().zip(wit.slots()) {
-            let wvar = SparsePolynomial::var(&wf);
+            let wvar = Polynomial::var(&wf);
             result.pl.insert(&pf, &wvar);
-            result.basis.push(&wvar - &SparsePolynomial::var(&pf));
+            result.basis.push(&wvar - &Polynomial::var(&pf));
         }
     }
 
     #[allow(clippy::wrong_self_convention)]
-    fn to_poly_value(v: &Value<C>) -> Vec<SparsePolynomial<C::F, T>> {
+    fn to_poly_value(v: &Value<C>) -> Vec<Polynomial<C::F>> {
         match v {
-            Value::Scalar(s) => vec![SparsePolynomial::lit(s)],
-            Value::Bool(b) => vec![SparsePolynomial::lit(&if *b {
+            Value::Scalar(s) => vec![Polynomial::lit(s)],
+            Value::Bool(b) => vec![Polynomial::lit(&if *b {
                 C::F::one()
             } else {
                 C::F::zero()
             })],
-            Value::Index(i) => vec![SparsePolynomial::lit(&C::FOps::from_usize(*i))],
+            Value::Index(i) => vec![Polynomial::lit(&C::FOps::from_usize(*i))],
             Value::Vec(v) => v.iter().flat_map(|v| Self::to_poly_value(v)).collect(),
             Value::VecBool(v) => v
                 .iter()
-                .map(|b| SparsePolynomial::lit(&if *b { C::F::one() } else { C::F::zero() }))
+                .map(|b| Polynomial::lit(&if *b { C::F::one() } else { C::F::zero() }))
                 .collect::<Vec<_>>(),
-            Value::VecScalar(v) => v.iter().map(SparsePolynomial::lit).collect::<Vec<_>>(),
+            Value::VecScalar(v) => v.iter().map(Polynomial::lit).collect::<Vec<_>>(),
             Value::VecIndex(v) => v
                 .iter()
-                .map(|i| SparsePolynomial::lit(&C::FOps::from_usize(*i)))
+                .map(|i| Polynomial::lit(&C::FOps::from_usize(*i)))
                 .collect::<Vec<_>>(),
             _ => unreachable!("Unsupported value: {}", v),
         }
@@ -2088,7 +2041,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         p: &GOp<C>,
         xs: &GOp<C>,
         prefs: &HashMap<Ref, PRef>,
-    ) -> Vec<SparsePolynomial<C::F, T>> {
+    ) -> Vec<Polynomial<C::F>> {
         let p_typ = p.typ();
         let xs_polys = Self::ref_vars(xs, prefs);
         let k = xs_polys.len();
@@ -2100,11 +2053,11 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     k
                 );
                 let p_polys = Self::ref_vars(p, prefs);
-                let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
+                let one = Polynomial::<C::F>::lit(&C::F::one());
                 xs_polys
                     .iter()
                     .map(|xi| {
-                        let mut acc = SparsePolynomial::<C::F, T>::zero();
+                        let mut acc = Polynomial::<C::F>::zero();
                         let mut xi_pow = one.clone();
                         for aj in p_polys.iter() {
                             acc = &acc + &(aj * &xi_pow);
@@ -2123,9 +2076,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let p_polys = Self::ref_vars(p, prefs);
                 let all_k = multi_indices(*n, *mdeg);
                 let mono = |k_fixed: &[usize],
-                            xs_polys: &[SparsePolynomial<C::F, T>]|
-                 -> SparsePolynomial<C::F, T> {
-                    let mut acc = SparsePolynomial::<C::F, T>::lit(&C::F::one());
+                            xs_polys: &[Polynomial<C::F>]|
+                 -> Polynomial<C::F> {
+                    let mut acc = Polynomial::<C::F>::lit(&C::F::one());
                     for (j, &kij) in k_fixed.iter().enumerate() {
                         if kij == 0 {
                             continue;
@@ -2137,7 +2090,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     acc
                 };
                 if k == *n {
-                    let mut acc = SparsePolynomial::<C::F, T>::zero();
+                    let mut acc = Polynomial::<C::F>::zero();
                     for (idx, ki) in all_k.iter().enumerate() {
                         acc = &acc + &(&p_polys[idx] * &mono(ki, &xs_polys));
                     }
@@ -2148,7 +2101,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     result_indices
                         .iter()
                         .map(|kp| {
-                            let mut acc = SparsePolynomial::<C::F, T>::zero();
+                            let mut acc = Polynomial::<C::F>::zero();
                             for (idx, ki) in all_k.iter().enumerate() {
                                 if ki[k..] != kp[..] {
                                     continue;
@@ -2168,13 +2121,13 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 );
                 let p_polys = Self::ref_vars(p, prefs);
                 let all_b = hypercube(*n);
-                let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
-                let eq = |bi: usize, x: &SparsePolynomial<C::F, T>| -> SparsePolynomial<C::F, T> {
+                let one = Polynomial::<C::F>::lit(&C::F::one());
+                let eq = |bi: usize, x: &Polynomial<C::F>| -> Polynomial<C::F> {
                     if bi == 1 { x.clone() } else { &one - x }
                 };
                 let eq_prod = |b_fixed: &[usize],
-                               xs_polys: &[SparsePolynomial<C::F, T>]|
-                 -> SparsePolynomial<C::F, T> {
+                               xs_polys: &[Polynomial<C::F>]|
+                 -> Polynomial<C::F> {
                     let mut acc = one.clone();
                     for (j, &bj) in b_fixed.iter().enumerate() {
                         acc = &acc * &eq(bj, &xs_polys[j]);
@@ -2182,7 +2135,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     acc
                 };
                 if k == *n {
-                    let mut acc = SparsePolynomial::<C::F, T>::zero();
+                    let mut acc = Polynomial::<C::F>::zero();
                     for (idx, b) in all_b.iter().enumerate() {
                         acc = &acc + &(&p_polys[idx] * &eq_prod(b, &xs_polys));
                     }
@@ -2193,7 +2146,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     result_b
                         .iter()
                         .map(|bp| {
-                            let mut acc = SparsePolynomial::<C::F, T>::zero();
+                            let mut acc = Polynomial::<C::F>::zero();
                             for (idx, b) in all_b.iter().enumerate() {
                                 if b[k..] != bp[..] {
                                     continue;
@@ -2234,7 +2187,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         xs: &GOp<C>,
         target_typ: &ATyp,
         prefs: &HashMap<Ref, PRef>,
-    ) -> Vec<SparsePolynomial<C::F, T>> {
+    ) -> Vec<Polynomial<C::F>> {
         let polys = self.eval_to_poly(p, xs, prefs);
         let raw_typ = {
             let k = Self::ref_vars(xs, prefs).len();
@@ -2250,7 +2203,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 other => other,
             }
         };
-        PolySource::<C, T> {
+        PolySource::<C> {
             polys,
             typ: raw_typ,
         }
@@ -2264,7 +2217,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     /// After IR lowering, every child of a compound op is `Op::Ref` or
     /// `Op::Value`. This helper asserts the `Op::Ref` invariant and
     /// returns the slot variables for use in basis row construction.
-    fn ref_vars(op: &GOp<C>, prefs: &HashMap<Ref, PRef>) -> Vec<SparsePolynomial<C::F, T>> {
+    fn ref_vars(op: &GOp<C>, prefs: &HashMap<Ref, PRef>) -> Vec<Polynomial<C::F>> {
         match op {
             Op::Ref(v, typ) => {
                 let pf = prefs
@@ -2277,7 +2230,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 );
                 pf.slots()
                     .into_iter()
-                    .map(|s| SparsePolynomial::var(&s))
+                    .map(|s| Polynomial::var(&s))
                     .collect()
             }
             Op::Value(v) => Self::to_poly_value(v),
@@ -2291,20 +2244,20 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     }
 }
 
-impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
-    fn add_op(&mut self, pr: PRef, op: GOp<C>, result: &mut GroebnerResult<C, T>) {
+impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
+    fn add_op(&mut self, pr: PRef, op: GOp<C>, result: &mut Ideal<C>) {
         match op {
             Op::Ref(r, typ) => {
                 if pr.reference == r && pr.index == 0 && pr.typ == typ {
                     return;
                 }
 
-                let ref_src: PolySource<C, T> =
+                let ref_src: PolySource<C> =
                     PolySource::from_ref_vars(&result.prefs, &Op::Ref(r, typ.clone()));
                 let lifted = ref_src.lift_to(&pr.typ);
                 for (pf, p) in pr.slots().into_iter().zip(lifted.polys) {
                     result.pl.insert(&pf, &p);
-                    result.basis.push(p - SparsePolynomial::var(&pf));
+                    result.basis.push(p - Polynomial::var(&pf));
                 }
             }
             Op::Bin(BinOp::Add, a, b, _) => {
@@ -2338,7 +2291,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     let lifted = cof_src.lift_to(&pr.typ);
                     for (pf, p) in pr.slots().into_iter().zip(lifted.polys) {
                         result.pl.insert(&pf, &p);
-                        result.basis.push(p - SparsePolynomial::var(&pf));
+                        result.basis.push(p - Polynomial::var(&pf));
                     }
                 } else {
                     let a_src = PolySource::from_ref_vars(&result.prefs, a);
@@ -2375,10 +2328,10 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let n_inv = C::F::from(n as u64).inverse().unwrap();
                 let pr_slots = pr.slots();
                 for (j, pf) in pr_slots.iter().enumerate() {
-                    let idft_j = dft_row(&v_polys, omega_inv, j);
-                    let lhs = &idft_j * &SparsePolynomial::lit(&n_inv);
+                    let idft_j = dft_row::<C>(&v_polys, omega_inv, j);
+                    let lhs = &idft_j * &Polynomial::lit(&n_inv);
                     result.pl.insert(pf, &lhs);
-                    result.basis.push(&lhs - &SparsePolynomial::var(pf));
+                    result.basis.push(&lhs - &Polynomial::var(pf));
                 }
             }
             // Op::Fft(p): v = fft(p) — forward DFT. Each evaluation is:
@@ -2391,9 +2344,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     .expect("FFT size must have a root of unity; type checker guarantees this");
                 let pr_slots = pr.slots();
                 for (i, pf) in pr_slots.iter().enumerate() {
-                    let lhs = dft_row(&coeff_polys, omega, i);
+                    let lhs = dft_row::<C>(&coeff_polys, omega, i);
                     result.pl.insert(pf, &lhs);
-                    result.basis.push(&lhs - &SparsePolynomial::var(pf));
+                    result.basis.push(&lhs - &Polynomial::var(pf));
                 }
             }
             // Op::Poly / Op::Mle / Op::Coef: bind the i-th PRef slot of `pr`
@@ -2413,7 +2366,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 );
                 for (pf, p) in pr.slots().into_iter().zip(polys) {
                     result.pl.insert(&pf, &p);
-                    result.basis.push(p - SparsePolynomial::var(&pf));
+                    result.basis.push(p - Polynomial::var(&pf));
                 }
             }
             Op::Vec(vs) => {
@@ -2447,7 +2400,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let polys = self.eval_to_poly_as(p, xs, &pr.typ, &result.prefs);
                 for (pf, poly) in pr.slots().into_iter().zip(polys) {
                     result.pl.insert(&pf, &poly);
-                    result.basis.push(poly - SparsePolynomial::var(&pf));
+                    result.basis.push(poly - Polynomial::var(&pf));
                 }
             }
             Op::Evaluate(ref p, Some(range), Some(ref fixed)) => {
@@ -2455,7 +2408,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     Some(polys) => {
                         for (pf, poly) in pr.slots().into_iter().zip(polys) {
                             result.pl.insert(&pf, &poly);
-                            result.basis.push(poly - SparsePolynomial::var(&pf));
+                            result.basis.push(poly - Polynomial::var(&pf));
                         }
                     }
                     None => Self::uncovered_op("selected-evaluate", &pr),
@@ -2468,9 +2421,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     "Evaluate grid size must have a root of unity; type checker guarantees this",
                 );
                 for (i, pf) in pr.slots().into_iter().enumerate() {
-                    let lhs = dft_row(&coeff_polys, omega, i);
+                    let lhs = dft_row::<C>(&coeff_polys, omega, i);
                     result.pl.insert(&pf, &lhs);
-                    result.basis.push(&lhs - &SparsePolynomial::var(&pf));
+                    result.basis.push(&lhs - &Polynomial::var(&pf));
                 }
             }
             Op::Evaluate(_, Some(_), None) => {
@@ -2502,7 +2455,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 // Currently it supports Scalar / Bool / Index / Vec and
                 // the Vec* flavours; everything else (G1/G2/GT/Poly/Record)
                 // fails explicitly via `uncovered_op`.
-                let polys_opt: Option<Vec<SparsePolynomial<C::F, T>>> = match v {
+                let polys_opt: Option<Vec<Polynomial<C::F>>> = match v {
                     Value::Scalar(_)
                     | Value::Bool(_)
                     | Value::Index(_)
@@ -2516,7 +2469,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     Some(polys) => {
                         for (pf, p) in pr.slots().into_iter().zip(polys) {
                             result.pl.insert(&pf, &p);
-                            result.basis.push(p - SparsePolynomial::var(&pf));
+                            result.basis.push(p - Polynomial::var(&pf));
                         }
                     }
                     None => {
@@ -2546,10 +2499,10 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     };
 
                     for (pf, e) in pr.slots().into_iter().zip(elem_pref.slots()) {
-                        let e_poly = SparsePolynomial::var(&e);
+                        let e_poly = Polynomial::var(&e);
                         result
                             .basis
-                            .push(e_poly.clone() - SparsePolynomial::var(&pf));
+                            .push(e_poly.clone() - Polynomial::var(&pf));
                         result.pl.insert(&pf, &e_poly);
                     }
                 }
@@ -2565,10 +2518,10 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                         let src_pref = array_pref.with_index(*idx).unwrap();
                         let dst_pref = pr.with_index(j).unwrap();
                         for (pf, e) in dst_pref.slots().into_iter().zip(src_pref.slots()) {
-                            let e_poly = SparsePolynomial::var(&e);
+                            let e_poly = Polynomial::var(&e);
                             result
                                 .basis
-                                .push(e_poly.clone() - SparsePolynomial::var(&pf));
+                                .push(e_poly.clone() - Polynomial::var(&pf));
                             result.pl.insert(&pf, &e_poly);
                         }
                     }
@@ -2613,7 +2566,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                             .with_slot(slot_offset + j)
                             .expect("record field slot must be within record physical layout");
                         result.pl.insert(&pf, &p);
-                        result.basis.push(p - SparsePolynomial::var(&pf));
+                        result.basis.push(p - Polynomial::var(&pf));
                     }
                     slot_offset += field_op.typ().physical_len();
                 }
@@ -2647,7 +2600,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                             result.pl.insert(pf, &inner_polys[offset + j]);
                             result
                                 .basis
-                                .push(inner_polys[offset + j].clone() - SparsePolynomial::var(pf));
+                                .push(inner_polys[offset + j].clone() - Polynomial::var(pf));
                         }
                     }
                     _ => {
@@ -2681,12 +2634,12 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         pr: PRef,
         points: &HOp<C>,
         evals: &HOp<C>,
-        result: &mut GroebnerResult<C, T>,
+        result: &mut Ideal<C>,
     ) {
         let evals_polys = Self::ref_vars(evals, &result.prefs);
         let n = evals_polys.len();
 
-        let xs_polys: Vec<SparsePolynomial<C::F, T>> = match points.get() {
+        let xs_polys: Vec<Polynomial<C::F>> = match points.get() {
             Op::Value(v) => Self::to_poly_value(v),
             Op::Ref(r, _) => {
                 let points_pref = result.find_ref(r);
@@ -2698,7 +2651,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                             .pl
                             .get(s)
                             .cloned()
-                            .unwrap_or_else(|| SparsePolynomial::zero())
+                            .unwrap_or_else(Polynomial::zero)
                     })
                     .collect()
             }
@@ -2721,11 +2674,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         if all_constant {
             let xs: Vec<C::F> = xs_polys
                 .iter()
-                .map(|p| {
-                    p.leading_term()
-                        .map(|(c, _)| c)
-                        .expect("constant poly must have a leading term")
-                })
+                .map(|p| p.constant_coeff())
                 .collect();
             for i in 0..xs.len() {
                 for j in (i + 1)..xs.len() {
@@ -2737,15 +2686,15 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             let lag = lagrange_basis::<C::F>(&xs);
             let pr_slots = pr.slots();
             for (k, pf) in pr_slots.iter().enumerate() {
-                let mut acc = SparsePolynomial::<C::F, T>::zero();
+                let mut acc = Polynomial::<C::F>::zero();
                 for (i, y_i) in evals_polys.iter().enumerate() {
                     if k < lag[i].len() && lag[i][k] != C::F::zero() {
-                        let weight = SparsePolynomial::<C::F, T>::lit(&lag[i][k]);
+                        let weight = Polynomial::<C::F>::lit(&lag[i][k]);
                         acc += y_i * &weight;
                     }
                 }
                 result.pl.insert(pf, &acc);
-                result.basis.push(acc - SparsePolynomial::var(pf));
+                result.basis.push(acc - Polynomial::var(pf));
             }
         } else {
             for i in 0..xs_polys.len() {
@@ -2771,25 +2720,25 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     let d_name = self.ns.next_name("interp_inv");
                     let d = self.sentinel_pref(&d_name, ATyp::scalar(), result);
                     result.basis.push(
-                        SparsePolynomial::var(&d) * diff
-                            - SparsePolynomial::<C::F, T>::lit(&C::F::one()),
+                        Polynomial::var(&d) * diff
+                            - Polynomial::<C::F>::lit(&C::F::one()),
                     );
                     denom_inverses[i][j] = Some(d);
                 }
             }
 
             let pr_slots = pr.slots();
-            let mut result_polys = vec![SparsePolynomial::<C::F, T>::zero(); pr_slots.len()];
+            let mut result_polys = vec![Polynomial::<C::F>::zero(); pr_slots.len()];
 
             for (i, y_i) in evals_polys.iter().enumerate() {
-                let mut lag_poly = vec![SparsePolynomial::<C::F, T>::lit(&C::F::one())];
+                let mut lag_poly = vec![Polynomial::<C::F>::lit(&C::F::one())];
 
                 for (j, xj_poly) in xs_polys.iter().enumerate().take(n_pts) {
                     if j == i {
                         continue;
                     }
-                    let neg_xj = xj_poly * &SparsePolynomial::lit(&(-C::F::one()));
-                    let mut new_lag = vec![SparsePolynomial::<C::F, T>::zero(); lag_poly.len() + 1];
+                    let neg_xj = xj_poly * &Polynomial::lit(&(-C::F::one()));
+                    let mut new_lag = vec![Polynomial::<C::F>::zero(); lag_poly.len() + 1];
                     for (deg, c) in lag_poly.iter().enumerate() {
                         let shifted = c * &neg_xj;
                         new_lag[deg] = &new_lag[deg] + &shifted;
@@ -2798,23 +2747,20 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     lag_poly = new_lag;
                 }
 
-                let mut denom_inv = SparsePolynomial::<C::F, T>::lit(&C::F::one());
+                let mut denom_inv = Polynomial::<C::F>::lit(&C::F::one());
                 for j in 0..n_pts {
                     if j == i {
                         continue;
                     }
                     let diff = &xs_polys[i] - &xs_polys[j];
                     if diff.is_constant() {
-                        let c = diff
-                            .leading_term()
-                            .map(|(c, _)| c)
-                            .expect("non-zero constant poly has leading term");
-                        denom_inv *= SparsePolynomial::lit(&c.inverse().unwrap());
+                        let c = diff.constant_coeff();
+                        denom_inv *= Polynomial::lit(&c.inverse().unwrap());
                     } else {
                         let d = denom_inverses[i][j]
                             .as_ref()
                             .expect("d-variable must exist for non-constant diff");
-                        denom_inv *= SparsePolynomial::var(d);
+                        denom_inv *= Polynomial::var(d);
                     }
                 }
 
@@ -2826,7 +2772,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
 
             for (pf, poly) in pr_slots.iter().zip(result_polys) {
                 result.pl.insert(pf, &poly);
-                result.basis.push(poly - SparsePolynomial::var(pf));
+                result.basis.push(poly - Polynomial::var(pf));
             }
         }
     }
@@ -2856,7 +2802,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     ///   in `add_op` which sees a single exponent directly.
     ///
     /// - **Dot**: unreachable (type checker rejects `reduce(dot, _)`).
-    fn reduce_op(&mut self, pr: PRef, rop: BinOp, v: &HOp<C>, result: &mut GroebnerResult<C, T>) {
+    fn reduce_op(&mut self, pr: PRef, rop: BinOp, v: &HOp<C>, result: &mut Ideal<C>) {
         let v_typ = v.typ();
         let (elem_t, n) = match &v_typ {
             ATyp::Vec(box e, n) => (e.clone(), *n),
@@ -2880,9 +2826,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
 
         match rop {
             BinOp::Add => {
-                let mut acc: PolySource<C, T> = PolySource::new(
+                let mut acc: PolySource<C> = PolySource::new(
                     (0..elem_t.physical_len())
-                        .map(|_| SparsePolynomial::zero())
+                        .map(|_| Polynomial::zero())
                         .collect(),
                     elem_t.clone(),
                 );
@@ -2895,7 +2841,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
                 for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
                     result.pl.insert(&pf, &p);
-                    result.basis.push(p - SparsePolynomial::var(&pf));
+                    result.basis.push(p - Polynomial::var(&pf));
                 }
             }
             BinOp::And => {
@@ -2909,13 +2855,13 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                         acc_pref
                             .slots()
                             .into_iter()
-                            .map(|s| SparsePolynomial::var(&s))
+                            .map(|s| Polynomial::var(&s))
                             .collect(),
                         elem_t.clone(),
                     );
                 }
                 for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
-                    result.basis.push(p - SparsePolynomial::var(&pf));
+                    result.basis.push(p - Polynomial::var(&pf));
                 }
             }
             BinOp::Sub => {
@@ -2929,7 +2875,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
                 for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
                     result.pl.insert(&pf, &p);
-                    result.basis.push(p - SparsePolynomial::var(&pf));
+                    result.basis.push(p - Polynomial::var(&pf));
                 }
             }
             BinOp::Mul => {
@@ -2954,12 +2900,12 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             BinOp::Concat => {
                 for (pf, p) in pr.slots().into_iter().zip(v_src.polys) {
                     result.pl.insert(&pf, &p);
-                    result.basis.push(p - SparsePolynomial::var(&pf));
+                    result.basis.push(p - Polynomial::var(&pf));
                 }
             }
             BinOp::Div | BinOp::Rem => {
                 let is_rem = rop == BinOp::Rem;
-                let is_poly = PolySource::<C, T>::poly_shape_static(&elem_t).is_some();
+                let is_poly = PolySource::<C>::poly_shape_static(&elem_t).is_some();
                 let mut acc_src = v_src.at_index(0).unwrap();
                 let mut acc_typ = elem_t.clone();
                 for step in 0..n - 1 {
@@ -3002,23 +2948,23 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     }
 }
 
-impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
+impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     /// Shared fold for `Op::Reduce` and `Op::ReduceMap`: combine the `n`
     /// elements of `v_src` (each of type `elem_t`) under `rop`, binding `pr`.
     fn reduce_polysource(
         &mut self,
         pr: PRef,
         rop: BinOp,
-        v_src: PolySource<C, T>,
+        v_src: PolySource<C>,
         elem_t: ATyp,
         n: usize,
-        result: &mut GroebnerResult<C, T>,
+        result: &mut Ideal<C>,
     ) {
         match rop {
             BinOp::Add => {
-                let mut acc: PolySource<C, T> = PolySource::new(
+                let mut acc: PolySource<C> = PolySource::new(
                     (0..elem_t.physical_len())
-                        .map(|_| SparsePolynomial::zero())
+                        .map(|_| Polynomial::zero())
                         .collect(),
                     elem_t.clone(),
                 );
@@ -3031,7 +2977,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
                 for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
                     result.pl.insert(&pf, &p);
-                    result.basis.push(p - SparsePolynomial::var(&pf));
+                    result.basis.push(p - Polynomial::var(&pf));
                 }
             }
             BinOp::And => {
@@ -3045,13 +2991,13 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                         acc_pref
                             .slots()
                             .into_iter()
-                            .map(|s| SparsePolynomial::var(&s))
+                            .map(|s| Polynomial::var(&s))
                             .collect(),
                         elem_t.clone(),
                     );
                 }
                 for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
-                    result.basis.push(p - SparsePolynomial::var(&pf));
+                    result.basis.push(p - Polynomial::var(&pf));
                 }
             }
             BinOp::Sub => {
@@ -3065,7 +3011,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
                 for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
                     result.pl.insert(&pf, &p);
-                    result.basis.push(p - SparsePolynomial::var(&pf));
+                    result.basis.push(p - Polynomial::var(&pf));
                 }
             }
             BinOp::Mul => {
@@ -3090,12 +3036,12 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             BinOp::Concat => {
                 for (pf, p) in pr.slots().into_iter().zip(v_src.polys) {
                     result.pl.insert(&pf, &p);
-                    result.basis.push(p - SparsePolynomial::var(&pf));
+                    result.basis.push(p - Polynomial::var(&pf));
                 }
             }
             BinOp::Div | BinOp::Rem => {
                 let is_rem = rop == BinOp::Rem;
-                let is_poly = PolySource::<C, T>::poly_shape_static(&elem_t).is_some();
+                let is_poly = PolySource::<C>::poly_shape_static(&elem_t).is_some();
                 let mut acc_src = v_src.at_index(0).unwrap();
                 for step in 0..n - 1 {
                     let is_last = step == n - 2;
@@ -3132,7 +3078,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                         target
                             .slots()
                             .into_iter()
-                            .map(|s| SparsePolynomial::var(&s))
+                            .map(|s| Polynomial::var(&s))
                             .collect(),
                         elem_t.clone(),
                     );
@@ -3156,7 +3102,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         range: &lang::typ::CRange,
         fixed: &GOp<C>,
         prefs: &HashMap<Ref, PRef>,
-    ) -> Option<Vec<SparsePolynomial<C::F, T>>> {
+    ) -> Option<Vec<Polynomial<C::F>>> {
         if range.step != 1 || range.len() != 1 {
             return None;
         }
@@ -3166,7 +3112,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             ATyp::VPoly(n, d) if range.end <= n && fixed_polys.len() == n.saturating_sub(1) => {
                 let p_polys = Self::ref_vars(p, prefs);
                 let all_indices = multi_indices(n, d);
-                let mut out = vec![SparsePolynomial::<C::F, T>::zero(); d + 1];
+                let mut out = vec![Polynomial::<C::F>::zero(); d + 1];
 
                 for (idx, ki) in all_indices.iter().enumerate() {
                     let free_exp = ki[range.start];
@@ -3190,12 +3136,12 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             ATyp::Mle(n) if range.end <= n && fixed_polys.len() == n.saturating_sub(1) => {
                 let p_polys = Self::ref_vars(p, prefs);
                 let all_b = hypercube(n);
-                let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
-                let eq = |bi: usize, x: &SparsePolynomial<C::F, T>| -> SparsePolynomial<C::F, T> {
+                let one = Polynomial::<C::F>::lit(&C::F::one());
+                let eq = |bi: usize, x: &Polynomial<C::F>| -> Polynomial<C::F> {
                     if bi == 1 { x.clone() } else { &one - x }
                 };
                 let free = range.start;
-                let mut out = vec![SparsePolynomial::<C::F, T>::zero(); 2];
+                let mut out = vec![Polynomial::<C::F>::zero(); 2];
                 for (idx, b) in all_b.iter().enumerate() {
                     let mut w = one.clone();
                     let mut fixed_idx = 0usize;
@@ -3246,7 +3192,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         body: &HOp<C>,
         loops: &[PRef],
         loop_vals: &[Option<Value<C>>],
-        result: &mut GroebnerResult<C, T>,
+        result: &mut Ideal<C>,
     ) -> Option<PRef> {
         match body.get() {
             Op::Ref(r, _) => Some(result.find_ref(r)),
@@ -3297,7 +3243,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         child: &HOp<C>,
         loops: &[PRef],
         loop_vals: &[Option<Value<C>>],
-        result: &mut GroebnerResult<C, T>,
+        result: &mut Ideal<C>,
     ) -> Option<HOp<C>> {
         match child.get() {
             Op::Value(_) | Op::Ref(_, _) => Some(child.clone()),
@@ -3318,7 +3264,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         body: &HOp<C>,
         loops: &[PRef],
         loop_vals: &[Option<Value<C>>],
-        result: &mut GroebnerResult<C, T>,
+        result: &mut Ideal<C>,
     ) -> Option<GOp<C>> {
         Some(match body.get() {
             Op::Bin(op, a, b, typ) => Op::Bin(
@@ -3378,7 +3324,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         domain: &HOp<C>,
         loops: &[PRef],
         loop_vals: &[Option<Value<C>>],
-        result: &mut GroebnerResult<C, T>,
+        result: &mut Ideal<C>,
     ) -> Option<Vec<(PRef, Option<Value<C>>)>> {
         let (elem_t, n) = match domain.typ() {
             ATyp::Vec(box e, n) => (e, n),
@@ -3388,14 +3334,14 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             Op::Value(v) => v.clone().into_elements().into_iter().map(Some).collect(),
             _ => vec![None; n],
         };
-        let src: PolySource<C, T> = match domain.get() {
+        let src: PolySource<C> = match domain.get() {
             Op::Ref(_, _) | Op::Value(_) => PolySource::from_ref_vars(&result.prefs, domain.get()),
             _ => {
                 let dp = self.body_to_poly(domain, loops, loop_vals, result)?;
                 PolySource::new(
                     dp.slots()
                         .into_iter()
-                        .map(|s| SparsePolynomial::var(&s))
+                        .map(|s| Polynomial::var(&s))
                         .collect(),
                     dp.typ.clone(),
                 )
@@ -3409,7 +3355,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             result.register(&elem_pf);
             for (slot, poly) in elem_pf.slots().into_iter().zip(es.polys) {
                 result.pl.insert(&slot, &poly);
-                result.basis.push(poly - SparsePolynomial::var(&slot));
+                result.basis.push(poly - Polynomial::var(&slot));
             }
             elems.push((elem_pf, elem_values.get(i).cloned().flatten()));
         }
@@ -3425,7 +3371,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         body: &HOp<C>,
         parent_loops: &[PRef],
         parent_vals: &[Option<Value<C>>],
-        result: &mut GroebnerResult<C, T>,
+        result: &mut Ideal<C>,
     ) {
         let elems = match self.explode_domain(domain, parent_loops, parent_vals, result) {
             Some(e) => e,
@@ -3454,7 +3400,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         body: &HOp<C>,
         parent_loops: &[PRef],
         parent_vals: &[Option<Value<C>>],
-        result: &mut GroebnerResult<C, T>,
+        result: &mut Ideal<C>,
     ) {
         let elems = match self.explode_domain(domain, parent_loops, parent_vals, result) {
             Some(e) => e,
@@ -3483,7 +3429,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         let combined = PolySource::new(
             mapped
                 .iter()
-                .flat_map(|p| p.slots().into_iter().map(|s| SparsePolynomial::var(&s)))
+                .flat_map(|p| p.slots().into_iter().map(|s| Polynomial::var(&s)))
                 .collect(),
             ATyp::vec(&elem_t, n),
         );
@@ -3536,7 +3482,7 @@ mod tests {
         use backend::Value;
 
         let val = Value::Scalar(Fr::from(42u64));
-        let poly = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::to_poly_value(&val);
+        let poly = IdealBuilder::<ArkBls12_381>::to_poly_value(&val);
         assert_eq!(poly.len(), 1);
     }
 
@@ -3545,7 +3491,7 @@ mod tests {
         use backend::Value;
 
         let val = Value::Bool(true);
-        let poly = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::to_poly_value(&val);
+        let poly = IdealBuilder::<ArkBls12_381>::to_poly_value(&val);
         assert_eq!(poly.len(), 1);
     }
 
@@ -3554,7 +3500,7 @@ mod tests {
         use backend::Value;
 
         let val = Value::Bool(false);
-        let poly = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::to_poly_value(&val);
+        let poly = IdealBuilder::<ArkBls12_381>::to_poly_value(&val);
         assert_eq!(poly.len(), 1);
     }
 
@@ -3563,7 +3509,7 @@ mod tests {
         use backend::Value;
 
         let val = Value::Index(5);
-        let poly = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::to_poly_value(&val);
+        let poly = IdealBuilder::<ArkBls12_381>::to_poly_value(&val);
         assert_eq!(poly.len(), 1);
     }
 
@@ -3573,7 +3519,7 @@ mod tests {
         use backend::Value;
 
         let val = Value::VecScalar(vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]);
-        let poly = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::to_poly_value(&val);
+        let poly = IdealBuilder::<ArkBls12_381>::to_poly_value(&val);
         assert_eq!(poly.len(), 3);
     }
 
@@ -3582,7 +3528,7 @@ mod tests {
         use backend::Value;
 
         let val = Value::VecBool(vec![true, false, true]);
-        let poly = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::to_poly_value(&val);
+        let poly = IdealBuilder::<ArkBls12_381>::to_poly_value(&val);
         assert_eq!(poly.len(), 3);
     }
 
@@ -3591,7 +3537,7 @@ mod tests {
         use backend::Value;
 
         let val = Value::VecIndex(vec![0, 1, 2]);
-        let poly = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::to_poly_value(&val);
+        let poly = IdealBuilder::<ArkBls12_381>::to_poly_value(&val);
         assert_eq!(poly.len(), 3);
     }
 
@@ -3644,7 +3590,7 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref_p = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 2),
@@ -3655,7 +3601,7 @@ mod tests {
         gresult.register(&pref_p);
 
         let op: GOp<ArkBls12_381> = Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 2));
-        let polys = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::ref_vars(&op, &gresult.prefs);
+        let polys = IdealBuilder::<ArkBls12_381>::ref_vars(&op, &gresult.prefs);
         assert_eq!(polys.len(), 6);
         for (i, _) in polys.iter().enumerate() {
             let expected = pref_p.clone().with_slot(i).unwrap();
@@ -3675,7 +3621,7 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref_p = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Mle(3),
@@ -3686,7 +3632,7 @@ mod tests {
         gresult.register(&pref_p);
 
         let op: GOp<ArkBls12_381> = Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(3));
-        let polys = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::ref_vars(&op, &gresult.prefs);
+        let polys = IdealBuilder::<ArkBls12_381>::ref_vars(&op, &gresult.prefs);
         assert_eq!(polys.len(), 8);
     }
 
@@ -3702,8 +3648,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         // First: bind Vec of scalars on node 0, then Poly on node 1.
         let pref_v = PRef::from_node(
@@ -3739,7 +3685,7 @@ mod tests {
             assert!(gresult.pl.contains(&slot), "slot {} missing from pl", i);
         }
         // Six basis equations: 3 from Vec binding + 3 from Poly identity.
-        assert_eq!(gresult.basis.basis.len(), 6);
+        assert_eq!(gresult.basis.len(), 6);
     }
 
     #[test]
@@ -3751,8 +3697,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         // First: bind Vec of scalars on node 0, then Poly on node 1.
         let pref_v = PRef::from_node(
@@ -3811,7 +3757,7 @@ mod tests {
             let coef_slot = pref_c.clone().with_slot(i).unwrap();
             let poly_slot = pref_p.clone().with_slot(i).unwrap();
             let stored = gresult.pl.get(&coef_slot).expect("coef slot missing");
-            let expected = SparsePolynomial::<Fr, GrevLexTerm>::var(&poly_slot);
+            let expected = Polynomial::<Fr>::var(&poly_slot);
             assert_eq!(*stored, expected, "coef[{}] did not bind to poly[{}]", i, i);
         }
     }
@@ -3824,8 +3770,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         // First: bind Vec of scalars on node 0, then Mle on node 1.
         let pref_v = PRef::from_node(
@@ -3859,7 +3805,7 @@ mod tests {
         );
 
         // 4 from Vec binding + 4 from Mle identity.
-        assert_eq!(gresult.basis.basis.len(), 8);
+        assert_eq!(gresult.basis.len(), 8);
         for i in 0..4 {
             assert!(
                 gresult.pl.contains(&pref_m.clone().with_slot(i).unwrap()),
@@ -3893,13 +3839,13 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        let g0 = SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(
+        let g0 = Polynomial::<ark_bls12_381::Fr>::var(
             &src.clone().with_slot(0).unwrap(),
         );
-        let g1 = SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(
+        let g1 = Polynomial::<ark_bls12_381::Fr>::var(
             &src.clone().with_slot(1).unwrap(),
         );
-        let lifted = PolySource::<ArkBls12_381, GrevLexTerm> {
+        let lifted = PolySource::<ArkBls12_381> {
             polys: vec![g0.clone(), g1.clone()],
             typ: ATyp::Mle(1),
         }
@@ -3922,8 +3868,8 @@ mod tests {
         // p(x) = a_0 + a_1 x   as VPoly(1,1): 2 coefficient slots on node 0.
         // xs = [x0, x1]        as Uni(1):     degree 1 = 2 slots on node 1.
         // Expected: result[i] = a_0 + a_1 * xs[i].
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let _pref_p = {
             let p = PRef::from_node(
                 NodeIndex::new(0),
@@ -4025,8 +3971,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         // Bind p: Vec of scalars on node 0, then Poly on node 1.
         let pref_vp = PRef::from_node(
@@ -4127,7 +4073,7 @@ mod tests {
         assert!(!slot1.is_zero());
         // 2 Vec bindings * 2 slots each = 4, plus 2 Poly identities * 2 = 4,
         // plus 2 eval results = 2. Total = 10.
-        assert_eq!(gresult.basis.basis.len(), 10);
+        assert_eq!(gresult.basis.len(), 10);
     }
 
     #[test]
@@ -4137,8 +4083,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let _ = {
             let p = PRef::from_node(
                 NodeIndex::new(0),
@@ -4204,8 +4150,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let _ = {
             let p = PRef::from_node(
                 NodeIndex::new(0),
@@ -4268,8 +4214,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let _ = {
             let p = PRef::from_node(
                 NodeIndex::new(0),
@@ -4330,8 +4276,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let _ = {
             let p = PRef::from_node(
                 NodeIndex::new(0),
@@ -4399,8 +4345,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref_a = {
             let p = PRef::from_node(
                 NodeIndex::new(0),
@@ -4455,8 +4401,8 @@ mod tests {
                 .pl
                 .get(&result.clone().with_slot(i).unwrap())
                 .unwrap();
-            let expected = &SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&a_slot)
-                + &SparsePolynomial::var(&b_slot);
+            let expected = &Polynomial::<ark_bls12_381::Fr>::var(&a_slot)
+                + &Polynomial::var(&b_slot);
             assert_eq!(*stored, expected, "vpoly add slot {} mismatch", i);
         }
     }
@@ -4470,8 +4416,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref_a = {
             let p = PRef::from_node(
                 NodeIndex::new(0),
@@ -4517,8 +4463,8 @@ mod tests {
                 .pl
                 .get(&result.clone().with_slot(i).unwrap())
                 .unwrap();
-            let expected = &SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&a_slot)
-                + &SparsePolynomial::var(&b_slot);
+            let expected = &Polynomial::<ark_bls12_381::Fr>::var(&a_slot)
+                + &Polynomial::var(&b_slot);
             assert_eq!(*stored, expected, "mle add slot {} mismatch", i);
         }
     }
@@ -4531,8 +4477,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 2),
@@ -4574,8 +4520,8 @@ mod tests {
                 .pl
                 .get(&result.clone().with_slot(i).unwrap())
                 .unwrap();
-            let expected = &SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&a_slot)
-                - &SparsePolynomial::var(&b_slot);
+            let expected = &Polynomial::<ark_bls12_381::Fr>::var(&a_slot)
+                - &Polynomial::var(&b_slot);
             assert_eq!(*stored, expected, "vpoly sub slot {} mismatch", i);
         }
     }
@@ -4589,8 +4535,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 1),
@@ -4630,7 +4576,7 @@ mod tests {
         let b0 = pref_b.clone().with_slot(0).unwrap();
         let b1 = pref_b.clone().with_slot(1).unwrap();
 
-        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
         let deg0 = gresult
             .pl
             .get(&result.clone().with_slot(0).unwrap())
@@ -4668,8 +4614,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 1),
@@ -4710,7 +4656,7 @@ mod tests {
 
         let a00 = pref_a.clone().with_slot(a_pos_00).unwrap();
         let b00 = pref_b.clone().with_slot(a_pos_00).unwrap();
-        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
         let got = gresult
             .pl
             .get(&result.clone().with_slot(pos_00).unwrap())
@@ -4746,8 +4692,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref_u = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Mle(1),
@@ -4793,7 +4739,7 @@ mod tests {
         let u1 = pref_u.clone().with_slot(1).unwrap();
         let v0 = pref_v.clone().with_slot(0).unwrap();
         let v1 = pref_v.clone().with_slot(1).unwrap();
-        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
 
         let deg0 = gresult
             .pl
@@ -4816,7 +4762,7 @@ mod tests {
 
         // deg1 = -2 u_0 v_0 + u_0 v_1 + u_1 v_0
         let two =
-            SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::lit(&<ark_bls12_381::Fr as From<
+            Polynomial::<ark_bls12_381::Fr>::lit(&<ark_bls12_381::Fr as From<
                 u64,
             >>::from(2u64));
         let expected_deg1 = &(&(&var(&u0) * &var(&v1)) + &(&var(&u1) * &var(&v0)))
@@ -4842,8 +4788,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref_u = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Mle(1),
@@ -4880,7 +4826,7 @@ mod tests {
         let u1 = pref_u.clone().with_slot(1).unwrap();
         let b0 = pref_b.clone().with_slot(0).unwrap();
         let b1 = pref_b.clone().with_slot(1).unwrap();
-        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
 
         let deg0 = gresult
             .pl
@@ -4921,8 +4867,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref_b = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 1),
@@ -4976,8 +4922,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref_u = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Mle(2),
@@ -5012,7 +4958,7 @@ mod tests {
 
         let r_idx = multi_indices(2, 3);
         let v_idx = multi_indices(2, 1);
-        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
 
         // Constant term [0,0]: u_00 * b_00
         let pos_00 = r_idx.iter().position(|k| k == &vec![0, 0]).unwrap();
@@ -5070,8 +5016,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 2),
@@ -5129,7 +5075,7 @@ mod tests {
         // Per-slot witness vars. `div_witnesses` uses `wit.clone().with_slot(j).unwrap()`
         // which sets typ appropriately.
         let wit_slot = |p: &PRef, i: usize| p.clone().with_slot(i).unwrap();
-        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
         let a0 = scl(&pref_a, 0);
         let a1 = scl(&pref_a, 1);
         let a2 = scl(&pref_a, 2);
@@ -5211,8 +5157,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let _pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 2),
@@ -5257,7 +5203,7 @@ mod tests {
         );
         let scl = |p: &PRef, i: usize| p.clone().with_slot(i).unwrap();
         let _ = scl; // kept for parity with the Div test; not used here.
-        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
         // r_wit slots: with_slot computes the correct type.
         let r0 = r_wit.clone().with_slot(0).unwrap();
 
@@ -5297,8 +5243,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let _pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 2),
@@ -5386,8 +5332,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         for (idx, name, typ) in [
             (0, "a", ATyp::VPoly(1, 1)),
@@ -5505,8 +5451,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::scalar(),
@@ -5546,7 +5492,7 @@ mod tests {
             1,
             "scalar fallback emits 1 row"
         );
-        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
         let expected = &var(&pref_a) - &(&var(&pref_b) * &var(&result));
         assert!(
             gresult.basis.iter().any(|row| row == &expected),
@@ -5566,8 +5512,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::scalar(),
@@ -5603,7 +5549,7 @@ mod tests {
         builder.add_op(result.clone(), op, &mut gresult);
 
         assert_eq!(gresult.basis.len() - before, 2);
-        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
         for i in 0..2 {
             let b_i = pref_b.clone().with_index(i).unwrap();
             let r_i = result.clone().with_index(i).unwrap();
@@ -5623,8 +5569,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
@@ -5672,8 +5618,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Mle(2),
@@ -5721,8 +5667,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let vec_typ = ATyp::Vec(Box::new(ATyp::VPoly(1, 2)), 2);
         let div_typ = ATyp::Vec(Box::new(ATyp::VPoly(1, 1)), 2);
         let rem_typ = ATyp::Vec(Box::new(ATyp::VPoly(1, 0)), 2);
@@ -5997,8 +5943,8 @@ mod tests {
         let mut sizes = Ctx::new();
         sizes.insert(&Tid::new("N"), &4);
         let tc = trans_clos_from_src_sized(src, &sizes);
-        let mut builder: GroebnerBuilder<ArkBls12_381, GrevLexTerm> = GroebnerBuilder::new();
-        let mut gr = builder.build(tc);
+        let mut builder: IdealBuilder<ArkBls12_381> = IdealBuilder::new();
+        let gr = builder.build(tc);
 
         // Two div_witnesses calls: inner (a/b) and outer ((a/b)/c).
         // The builder caches one (a,b) entry and one ((a/b),c) entry in div_wit.
@@ -6021,13 +5967,13 @@ mod tests {
         // Basis should contain canonical div identity rows (a = b*q + r)
         // and linking rows for both inner and outer division.
         // Div witness vars (q_wit, r_wit) must appear in basis.vars().
-        gr.run::<8>();
+        // GB computation moved to backend; skipped in unit test();
         assert!(
             !gr.basis.is_empty(),
             "basis should not be empty after nested div"
         );
 
-        let basis_vars = gr.basis.vars();
+        let basis_vars = gr.basis.iter().flat_map(|p| p.vars()).collect::<share::Set<_>>();
         assert!(
             basis_vars.iter().any(|p| p
                 .name
@@ -6054,8 +6000,8 @@ mod tests {
         let mut sizes = Ctx::new();
         sizes.insert(&Tid::new("N"), &4);
         let tc = trans_clos_from_src_sized(src, &sizes);
-        let mut builder: GroebnerBuilder<ArkBls12_381, GrevLexTerm> = GroebnerBuilder::new();
-        let mut gr = builder.build(tc);
+        let mut builder: IdealBuilder<ArkBls12_381> = IdealBuilder::new();
+        let gr = builder.build(tc);
 
         // Single (a, b) pair → one div_witnesses call → 1 div_wit cache entry (q_wit, r_wit).
         assert_eq!(
@@ -6093,7 +6039,7 @@ mod tests {
             gr.pl.len()
         );
 
-        gr.run::<8>();
+        // GB computation moved to backend; skipped in unit test();
         assert!(
             !gr.basis.is_empty(),
             "basis should not be empty after shared div/rem"
@@ -6108,7 +6054,7 @@ mod tests {
                 verify(v[0] == a + c)
             }"#;
         let tc = trans_clos_from_src(src);
-        let mut builder: GroebnerBuilder<ArkBls12_381, GrevLexTerm> = GroebnerBuilder::new();
+        let mut builder: IdealBuilder<ArkBls12_381> = IdealBuilder::new();
         let gr = builder.build(tc);
 
         // Vec add verify: v[0] == a + c
@@ -6140,7 +6086,7 @@ mod tests {
                 verify(m3r0[0] == a + e)
             }"#;
         let tc = trans_clos_from_src(src);
-        let mut builder: GroebnerBuilder<ArkBls12_381, GrevLexTerm> = GroebnerBuilder::new();
+        let mut builder: IdealBuilder<ArkBls12_381> = IdealBuilder::new();
         let gr = builder.build(tc);
 
         // 2d Vec add: the verify expression is m3r0[0] == a+e
@@ -6182,7 +6128,7 @@ mod tests {
                 verify(t3d0r0[0] == a + a)
             }"#;
         let tc = trans_clos_from_src(src);
-        let mut builder: GroebnerBuilder<ArkBls12_381, GrevLexTerm> = GroebnerBuilder::new();
+        let mut builder: IdealBuilder<ArkBls12_381> = IdealBuilder::new();
         let gr = builder.build(tc);
 
         // 3d Vec add: same structure, verify(t3d0r0[0] == a + a)
@@ -6213,8 +6159,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         // v : Vec(F, 3)  →  reduce(+, v) : F
         let pref_v = PRef::from_node(
             NodeIndex::new(0),
@@ -6241,7 +6187,7 @@ mod tests {
         );
         builder.add_op(result.clone(), op, &mut gresult);
 
-        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
         let v0 = pref_v.clone().with_slot(0).unwrap();
         let v1 = pref_v.clone().with_slot(1).unwrap();
         let v2 = pref_v.clone().with_slot(2).unwrap();
@@ -6271,8 +6217,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let poly_t = ATyp::Uni(2);
         let vec_t = ATyp::Vec(Box::new(poly_t.clone()), 3);
         let pref_v = PRef::from_node(
@@ -6297,7 +6243,7 @@ mod tests {
         );
         builder.add_op(result.clone(), op, &mut gresult);
 
-        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
         // Vec(Poly(1,2), 3): element 0 is slots 0,1,2; element 1 is slots 3,4,5; element 2 is slots 6,7,8.
         let v0_c0 = pref_v.clone().with_index(0).unwrap().with_slot(0).unwrap();
         let v0_c1 = pref_v.clone().with_index(0).unwrap().with_slot(1).unwrap();
@@ -6406,8 +6352,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let evals_typ = ATyp::Vec(Box::new(ATyp::scalar()), 2);
         let pref_evals = PRef::from_node(
@@ -6438,7 +6384,7 @@ mod tests {
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
         builder.add_op(pref_result.clone(), op, &mut gresult);
 
-        let var = |p: &PRef| SparsePolynomial::<Fr, GrevLexTerm>::var(p);
+        let var = |p: &PRef| Polynomial::<Fr>::var(p);
 
         let r0 = pref_result.clone().with_slot(0).unwrap();
         let r1 = pref_result.clone().with_slot(1).unwrap();
@@ -6472,7 +6418,7 @@ mod tests {
         );
         assert_eq!(
             gresult.pl.get(&r2).cloned(),
-            Some(SparsePolynomial::<Fr, GrevLexTerm>::zero()),
+            Some(Polynomial::<Fr>::zero()),
             "pl[c2] = 0"
         );
 
@@ -6497,8 +6443,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let evals_typ = ATyp::Vec(Box::new(ATyp::scalar()), 3);
         let pref_evals = PRef::from_node(
@@ -6530,7 +6476,7 @@ mod tests {
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
         builder.add_op(pref_result.clone(), op, &mut gresult);
 
-        let var = |p: &PRef| SparsePolynomial::<Fr, GrevLexTerm>::var(p);
+        let var = |p: &PRef| Polynomial::<Fr>::var(p);
 
         let r0 = pref_result.clone().with_slot(0).unwrap();
         let r1 = pref_result.clone().with_slot(1).unwrap();
@@ -6558,15 +6504,15 @@ mod tests {
 
         let lag = lagrange_basis::<Fr>(&[Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]);
 
-        let expected_c0 = &(&var(&y0) * &SparsePolynomial::lit(&lag[0][0]))
-            + &(&(&var(&y1) * &SparsePolynomial::lit(&lag[1][0]))
-                + &(&var(&y2) * &SparsePolynomial::lit(&lag[2][0])));
-        let expected_c1 = &(&var(&y0) * &SparsePolynomial::lit(&lag[0][1]))
-            + &(&(&var(&y1) * &SparsePolynomial::lit(&lag[1][1]))
-                + &(&var(&y2) * &SparsePolynomial::lit(&lag[2][1])));
-        let expected_c2 = &(&var(&y0) * &SparsePolynomial::lit(&lag[0][2]))
-            + &(&(&var(&y1) * &SparsePolynomial::lit(&lag[1][2]))
-                + &(&var(&y2) * &SparsePolynomial::lit(&lag[2][2])));
+        let expected_c0 = &(&var(&y0) * &Polynomial::lit(&lag[0][0]))
+            + &(&(&var(&y1) * &Polynomial::lit(&lag[1][0]))
+                + &(&var(&y2) * &Polynomial::lit(&lag[2][0])));
+        let expected_c1 = &(&var(&y0) * &Polynomial::lit(&lag[0][1]))
+            + &(&(&var(&y1) * &Polynomial::lit(&lag[1][1]))
+                + &(&var(&y2) * &Polynomial::lit(&lag[2][1])));
+        let expected_c2 = &(&var(&y0) * &Polynomial::lit(&lag[0][2]))
+            + &(&(&var(&y1) * &Polynomial::lit(&lag[1][2]))
+                + &(&var(&y2) * &Polynomial::lit(&lag[2][2])));
 
         assert_eq!(
             gresult.pl.get(&r0).cloned(),
@@ -6585,7 +6531,7 @@ mod tests {
         );
         assert_eq!(
             gresult.pl.get(&r3).cloned(),
-            Some(SparsePolynomial::<Fr, GrevLexTerm>::zero()),
+            Some(Polynomial::<Fr>::zero()),
             "pl[c3] = 0"
         );
     }
@@ -6597,8 +6543,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 2);
         let pref_points = PRef::from_node(
@@ -6642,7 +6588,7 @@ mod tests {
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
         builder.add_op(pref_result.clone(), op, &mut gresult);
 
-        let var = |p: &PRef| SparsePolynomial::<Fr, GrevLexTerm>::var(p);
+        let var = |p: &PRef| Polynomial::<Fr>::var(p);
 
         let r0 = pref_result.clone().with_slot(0).unwrap();
         let r1 = pref_result.clone().with_slot(1).unwrap();
@@ -6676,7 +6622,7 @@ mod tests {
         );
         assert_eq!(
             gresult.pl.get(&r2).cloned(),
-            Some(SparsePolynomial::<Fr, GrevLexTerm>::zero()),
+            Some(Polynomial::<Fr>::zero()),
             "pl[c2] = 0"
         );
     }
@@ -6687,8 +6633,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         // Two symbolic points x0, x1 stored as PRef variables
         let scalar_t = ATyp::scalar();
@@ -6733,10 +6679,10 @@ mod tests {
             .unwrap();
         gresult
             .pl
-            .insert(&x0_slot, &SparsePolynomial::var(&pref_x0));
+            .insert(&x0_slot, &Polynomial::var(&pref_x0));
         gresult
             .pl
-            .insert(&x1_slot, &SparsePolynomial::var(&pref_x1));
+            .insert(&x1_slot, &Polynomial::var(&pref_x1));
 
         // Evals = [y0, y1]
         let pref_y0 = PRef::from_node(
@@ -6778,10 +6724,10 @@ mod tests {
             .unwrap();
         gresult
             .pl
-            .insert(&y0_slot, &SparsePolynomial::var(&pref_y0));
+            .insert(&y0_slot, &Polynomial::var(&pref_y0));
         gresult
             .pl
-            .insert(&y1_slot, &SparsePolynomial::var(&pref_y1));
+            .insert(&y1_slot, &Polynomial::var(&pref_y1));
 
         // Result = interpolate([x0, x1], [y0, y1])
         // p(t) = y0 * (t - x1) / (x0 - x1) + y1 * (t - x0) / (x1 - x0)
@@ -6835,16 +6781,16 @@ mod tests {
         // Expected: p[0] = -y0*d01*x1 - y1*d10*x0, p[1] = y0*d01 + y1*d10
         // evals_polys uses slot PRefs (y0_slot, y1_slot) as monomial variables.
         // xs_polys uses resolved PRefs from pl (pref_x0, pref_x1) as monomial variables.
-        let expected_r0 = SparsePolynomial::var(&y0_slot)
-            * (SparsePolynomial::var(d01)
-                * SparsePolynomial::lit(&neg_one)
-                * SparsePolynomial::var(&pref_x1))
-            + SparsePolynomial::var(&y1_slot)
-                * (SparsePolynomial::var(d10)
-                    * SparsePolynomial::lit(&neg_one)
-                    * SparsePolynomial::var(&pref_x0));
-        let expected_r1 = SparsePolynomial::var(&y0_slot) * SparsePolynomial::var(d01)
-            + SparsePolynomial::var(&y1_slot) * SparsePolynomial::var(d10);
+        let expected_r0 = Polynomial::var(&y0_slot)
+            * (Polynomial::var(d01)
+                * Polynomial::lit(&neg_one)
+                * Polynomial::var(&pref_x1))
+            + Polynomial::var(&y1_slot)
+                * (Polynomial::var(d10)
+                    * Polynomial::lit(&neg_one)
+                    * Polynomial::var(&pref_x0));
+        let expected_r1 = Polynomial::var(&y0_slot) * Polynomial::var(d01)
+            + Polynomial::var(&y1_slot) * Polynomial::var(d10);
 
         assert_eq!(
             r0_poly, expected_r0,
@@ -6857,19 +6803,19 @@ mod tests {
         assert!(r2_poly.is_zero(), "p[2] should be zero");
 
         // Verify: result equations in basis (p[k] - r_k = 0)
-        let r0_eq = &r0_poly - &SparsePolynomial::var(&r0);
-        let r1_eq = &r1_poly - &SparsePolynomial::var(&r1);
-        let r2_eq = &r2_poly - &SparsePolynomial::var(&r2);
+        let r0_eq = &r0_poly - &Polynomial::var(&r0);
+        let r1_eq = &r1_poly - &Polynomial::var(&r1);
+        let r2_eq = &r2_poly - &Polynomial::var(&r2);
         assert!(
-            gresult.basis.iter().any(|p| *p == r0_eq),
+            gresult.basis.contains(&r0_eq),
             "basis should contain p[0] - r0 equation"
         );
         assert!(
-            gresult.basis.iter().any(|p| *p == r1_eq),
+            gresult.basis.contains(&r1_eq),
             "basis should contain p[1] - r1 equation"
         );
         assert!(
-            gresult.basis.iter().any(|p| *p == r2_eq),
+            gresult.basis.contains(&r2_eq),
             "basis should contain p[2] - r2 equation"
         );
     }
@@ -6884,8 +6830,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let evals_typ = ATyp::vec_scalar(3);
         let pref_evals = PRef::from_node(
@@ -6920,8 +6866,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
@@ -6959,7 +6905,7 @@ mod tests {
         );
         builder.add_op(pref_result.clone(), op, &mut gresult);
 
-        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
 
         let a_slot = pref_a.with_slot(0).unwrap();
         let b_slot = pref_b.with_slot(0).unwrap();
@@ -6978,8 +6924,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
@@ -7025,8 +6971,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 3);
         let pref_v = PRef::from_node(
@@ -7085,8 +7031,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 2);
         let pref_v = PRef::from_node(
@@ -7121,8 +7067,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
@@ -7168,8 +7114,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let vec_t = ATyp::Vec(Box::new(ATyp::VPoly(1, 3)), 2);
         let pref_v = PRef::from_node(
@@ -7209,8 +7155,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let elem_t = ATyp::Uni(1);
         let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
@@ -7262,8 +7208,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let elem_t = ATyp::Uni(1);
         let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
@@ -7309,8 +7255,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let elem_t = ATyp::Uni(3);
         let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
@@ -7359,8 +7305,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let dividend_t = ATyp::Uni(1);
         let divisor_t = ATyp::Uni(3);
@@ -7434,8 +7380,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
         // Ctx iterates in key order (alphabetical): "x" < "y"
@@ -7513,8 +7459,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
         let uni_typ = ATyp::Uni(2);
@@ -7596,8 +7542,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
         let v2 = ATyp::Vec(Box::new(s.clone()), 3);
@@ -7664,8 +7610,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
         // Alphabetical: "x" < "y", so "x" is slot 0, "y" is slot 1
@@ -7719,8 +7665,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
         // Use "a" and "b" so alphabetical order is "a" then "b"
@@ -7784,8 +7730,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
         let uni2 = ATyp::Uni(2);
@@ -7856,8 +7802,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let uni2 = ATyp::Uni(2);
         let uni4 = ATyp::Uni(4);
@@ -7927,8 +7873,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
         let uni2 = ATyp::Uni(2);
@@ -7993,8 +7939,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
         let v3 = ATyp::Vec(Box::new(s.clone()), 3);
@@ -8052,14 +7998,14 @@ mod tests {
         graph::PRef,
         graph::PRef,
         graph::PRef,
-        GroebnerResult<ArkBls12_381, GrevLexTerm>,
+        Ideal<ArkBls12_381>,
     ) {
         use graph::{PRef, Ref};
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let scalar_typ = ATyp::scalar();
         let pref_s = PRef::from_node(
@@ -8107,10 +8053,10 @@ mod tests {
     }
 
     fn assert_result_slot(
-        gresult: &GroebnerResult<ArkBls12_381, GrevLexTerm>,
+        gresult: &Ideal<ArkBls12_381>,
         pref_r: &graph::PRef,
         slot: usize,
-        expected: SparsePolynomial<ark_bls12_381::Fr, GrevLexTerm>,
+        expected: Polynomial<ark_bls12_381::Fr>,
     ) {
         let r_slot = pref_r.with_slot(slot).unwrap();
         let stored = gresult.pl.get(&r_slot).unwrap();
@@ -8127,10 +8073,10 @@ mod tests {
             "Scalar + Uni(2) should produce one row per coefficient slot"
         );
 
-        let s = SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&pref_s);
+        let s = Polynomial::<ark_bls12_381::Fr>::var(&pref_s);
         for i in 0..3 {
             let p_slot_pref = pref_p.with_slot(i).unwrap();
-            let p = SparsePolynomial::var(&p_slot_pref);
+            let p = Polynomial::var(&p_slot_pref);
             let expected = if i == 0 { &s + &p } else { p };
             assert_result_slot(&gresult, &pref_r, i, expected);
         }
@@ -8140,10 +8086,10 @@ mod tests {
     fn test_uni_add_scalar_lifts_to_constant_slot_only() {
         let (pref_s, pref_p, pref_r, gresult) =
             scalar_poly_binop_result(BinOp::Add, false, ATyp::Uni(2));
-        let s = SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&pref_s);
+        let s = Polynomial::<ark_bls12_381::Fr>::var(&pref_s);
         for i in 0..3 {
             let p_slot_pref = pref_p.with_slot(i).unwrap();
-            let p = SparsePolynomial::var(&p_slot_pref);
+            let p = Polynomial::var(&p_slot_pref);
             let expected = if i == 0 { &p + &s } else { p };
             assert_result_slot(&gresult, &pref_r, i, expected);
         }
@@ -8153,10 +8099,10 @@ mod tests {
     fn test_uni_sub_scalar_lifts_to_constant_slot_only() {
         let (pref_s, pref_p, pref_r, gresult) =
             scalar_poly_binop_result(BinOp::Sub, false, ATyp::Uni(2));
-        let s = SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&pref_s);
+        let s = Polynomial::<ark_bls12_381::Fr>::var(&pref_s);
         for i in 0..3 {
             let p_slot_pref = pref_p.with_slot(i).unwrap();
-            let p = SparsePolynomial::var(&p_slot_pref);
+            let p = Polynomial::var(&p_slot_pref);
             let expected = if i == 0 { &p - &s } else { p };
             assert_result_slot(&gresult, &pref_r, i, expected);
         }
@@ -8166,10 +8112,10 @@ mod tests {
     fn test_scalar_sub_uni_negates_nonconstant_slots() {
         let (pref_s, pref_p, pref_r, gresult) =
             scalar_poly_binop_result(BinOp::Sub, true, ATyp::Uni(2));
-        let s = SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&pref_s);
+        let s = Polynomial::<ark_bls12_381::Fr>::var(&pref_s);
         for i in 0..3 {
             let p_slot_pref = pref_p.with_slot(i).unwrap();
-            let p = SparsePolynomial::var(&p_slot_pref);
+            let p = Polynomial::var(&p_slot_pref);
             let expected = if i == 0 { &s - &p } else { -p };
             assert_result_slot(&gresult, &pref_r, i, expected);
         }
@@ -8180,14 +8126,14 @@ mod tests {
         let poly_typ = ATyp::VPoly(2, 2);
         let (pref_s, pref_p, pref_r, gresult) =
             scalar_poly_binop_result(BinOp::Add, true, poly_typ.clone());
-        let s = SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&pref_s);
+        let s = Polynomial::<ark_bls12_381::Fr>::var(&pref_s);
         let zero_slot = multi_indices(2, 2)
             .iter()
             .position(|idx| idx.iter().all(|degree| *degree == 0))
             .unwrap();
         for i in 0..poly_typ.physical_len() {
             let p_slot_pref = pref_p.with_slot(i).unwrap();
-            let p = SparsePolynomial::var(&p_slot_pref);
+            let p = Polynomial::var(&p_slot_pref);
             let expected = if i == zero_slot { &s + &p } else { p };
             assert_result_slot(&gresult, &pref_r, i, expected);
         }
@@ -8198,14 +8144,14 @@ mod tests {
         let poly_typ = ATyp::VPoly(2, 2);
         let (pref_s, pref_p, pref_r, gresult) =
             scalar_poly_binop_result(BinOp::Sub, true, poly_typ.clone());
-        let s = SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&pref_s);
+        let s = Polynomial::<ark_bls12_381::Fr>::var(&pref_s);
         let zero_slot = multi_indices(2, 2)
             .iter()
             .position(|idx| idx.iter().all(|degree| *degree == 0))
             .unwrap();
         for i in 0..poly_typ.physical_len() {
             let p_slot_pref = pref_p.with_slot(i).unwrap();
-            let p = SparsePolynomial::var(&p_slot_pref);
+            let p = Polynomial::var(&p_slot_pref);
             let expected = if i == zero_slot { &s - &p } else { -p };
             assert_result_slot(&gresult, &pref_r, i, expected);
         }
@@ -8216,10 +8162,10 @@ mod tests {
         let poly_typ = ATyp::Mle(2);
         let (pref_s, pref_p, pref_r, gresult) =
             scalar_poly_binop_result(BinOp::Add, true, poly_typ.clone());
-        let s = SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&pref_s);
+        let s = Polynomial::<ark_bls12_381::Fr>::var(&pref_s);
         for i in 0..poly_typ.physical_len() {
             let p_slot_pref = pref_p.with_slot(i).unwrap();
-            let p = SparsePolynomial::var(&p_slot_pref);
+            let p = Polynomial::var(&p_slot_pref);
             assert_result_slot(&gresult, &pref_r, i, &s + &p);
         }
     }
@@ -8231,8 +8177,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let uni2 = ATyp::Uni(2);
         let uni4 = ATyp::Uni(4);
@@ -8310,8 +8256,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
         let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
@@ -8373,8 +8319,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let uni2 = ATyp::Uni(2);
         let uni4 = ATyp::Uni(4);
@@ -8439,8 +8385,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
         let vec_s = ATyp::Vec(Box::new(s.clone()), 3);
@@ -8500,8 +8446,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let uni2 = ATyp::Uni(2);
         let uni4 = ATyp::Uni(4);
@@ -8569,8 +8515,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let g1 = ATyp::g1();
         let g2 = ATyp::g2();
@@ -8636,8 +8582,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
         let fin = ATyp::fin(lang::typ::range::CRange::default());
@@ -8693,8 +8639,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let uni2 = ATyp::Uni(2);
         let result_uni4 = ATyp::Uni(4);
@@ -8747,8 +8693,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let uni2 = ATyp::Uni(2);
         let result_uni4 = ATyp::Uni(4);
@@ -8810,8 +8756,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
         let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
@@ -8868,8 +8814,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
         let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
@@ -8927,7 +8873,7 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
@@ -8936,7 +8882,7 @@ mod tests {
             Distribution::default(),
         );
         gresult.register(&pref);
-        let src = PolySource::<ArkBls12_381, GrevLexTerm>::from_ref_vars(
+        let src = PolySource::<ArkBls12_381>::from_ref_vars(
             &gresult.prefs,
             &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2)),
         );
@@ -8948,7 +8894,7 @@ mod tests {
         for i in 0..3 {
             assert_eq!(
                 lifted.polys[i],
-                SparsePolynomial::var(&pref.clone().with_slot(i).unwrap())
+                Polynomial::var(&pref.clone().with_slot(i).unwrap())
             );
         }
         for i in 3..5 {
@@ -8966,7 +8912,7 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Mle(2),
@@ -8975,7 +8921,7 @@ mod tests {
             Distribution::default(),
         );
         gresult.register(&pref);
-        let src = PolySource::<ArkBls12_381, GrevLexTerm>::from_ref_vars(
+        let src = PolySource::<ArkBls12_381>::from_ref_vars(
             &gresult.prefs,
             &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(2)),
         );
@@ -8987,7 +8933,7 @@ mod tests {
         for i in 0..4 {
             assert_eq!(
                 lifted.polys[i],
-                SparsePolynomial::var(&pref.clone().with_slot(i).unwrap())
+                Polynomial::var(&pref.clone().with_slot(i).unwrap())
             );
         }
         for i in 4..8 {
@@ -9005,7 +8951,7 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 2),
@@ -9014,7 +8960,7 @@ mod tests {
             Distribution::default(),
         );
         gresult.register(&pref);
-        let src = PolySource::<ArkBls12_381, GrevLexTerm>::from_ref_vars(
+        let src = PolySource::<ArkBls12_381>::from_ref_vars(
             &gresult.prefs,
             &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 2)),
         );
@@ -9025,7 +8971,7 @@ mod tests {
         for i in 0..6 {
             assert_eq!(
                 lifted.polys[i],
-                SparsePolynomial::var(&pref.clone().with_slot(i).unwrap())
+                Polynomial::var(&pref.clone().with_slot(i).unwrap())
             );
         }
         for i in 6..10 {
@@ -9043,7 +8989,7 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 2),
@@ -9052,7 +8998,7 @@ mod tests {
             Distribution::default(),
         );
         gresult.register(&pref);
-        let src = PolySource::<ArkBls12_381, GrevLexTerm>::from_ref_vars(
+        let src = PolySource::<ArkBls12_381>::from_ref_vars(
             &gresult.prefs,
             &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 2)),
         );
@@ -9069,7 +9015,7 @@ mod tests {
             let pos = dst.iter().position(|dk| dk == &padded).unwrap();
             assert_eq!(
                 lifted.polys[pos],
-                SparsePolynomial::var(&pref.clone().with_slot(j).unwrap()),
+                Polynomial::var(&pref.clone().with_slot(j).unwrap()),
                 "src multi-index {:?} → padded {:?} → dst position {} should have src slot {}",
                 sk,
                 padded,
@@ -9083,12 +9029,12 @@ mod tests {
     fn test_lift_mle_to_vpoly_lagrange() {
         use ark_bls12_381::Fr;
 
-        let src = PolySource::<ArkBls12_381, GrevLexTerm>::new(
+        let src = PolySource::<ArkBls12_381>::new(
             vec![
-                SparsePolynomial::lit(&Fr::from(1u64)),
-                SparsePolynomial::lit(&Fr::from(2u64)),
-                SparsePolynomial::lit(&Fr::from(3u64)),
-                SparsePolynomial::lit(&Fr::from(4u64)),
+                Polynomial::lit(&Fr::from(1u64)),
+                Polynomial::lit(&Fr::from(2u64)),
+                Polynomial::lit(&Fr::from(3u64)),
+                Polynomial::lit(&Fr::from(4u64)),
             ],
             ATyp::Mle(2),
         );
@@ -9124,11 +9070,11 @@ mod tests {
                     ir
                 );
             } else {
-                let expected_poly: SparsePolynomial<ark_bls12_381::Fr, GrevLexTerm> =
+                let expected_poly: Polynomial<ark_bls12_381::Fr> =
                     if expected >= 0 {
-                        SparsePolynomial::lit(&Fr::from(expected as u64))
+                        Polynomial::lit(&Fr::from(expected as u64))
                     } else {
-                        -SparsePolynomial::lit(&Fr::from((-expected) as u64))
+                        -Polynomial::lit(&Fr::from((-expected) as u64))
                     };
                 assert_eq!(
                     *actual, expected_poly,
@@ -9145,7 +9091,7 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
         let pref = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
@@ -9154,7 +9100,7 @@ mod tests {
             Distribution::default(),
         );
         gresult.register(&pref);
-        let src = PolySource::<ArkBls12_381, GrevLexTerm>::from_ref_vars(
+        let src = PolySource::<ArkBls12_381>::from_ref_vars(
             &gresult.prefs,
             &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2)),
         );
@@ -9166,7 +9112,7 @@ mod tests {
         for i in 0..3 {
             assert_eq!(
                 lifted.polys[i],
-                SparsePolynomial::var(&pref.clone().with_slot(i).unwrap())
+                Polynomial::var(&pref.clone().with_slot(i).unwrap())
             );
         }
     }
@@ -9182,8 +9128,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
@@ -9223,16 +9169,16 @@ mod tests {
         let a_slot = pref_a.with_slot(0).unwrap();
         let b_slot = pref_b.with_slot(0).unwrap();
         let r_slot = pref_r.with_slot(0).unwrap();
-        let diff = &SparsePolynomial::var(&a_slot) - &SparsePolynomial::var(&b_slot);
+        let diff = &Polynomial::var(&a_slot) - &Polynomial::var(&b_slot);
         assert!(
-            gresult.basis.iter().any(|p| *p == diff),
+            gresult.basis.contains(&diff),
             "basis should contain a-b diff"
         );
         assert!(
             !gresult
                 .basis
                 .iter()
-                .any(|p| *p == SparsePolynomial::var(&r_slot)),
+                .any(|p| *p == Polynomial::var(&r_slot)),
             "basis should NOT contain var(r) for Bool result (== is an assertion, not a computation)"
         );
     }
@@ -9244,8 +9190,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
@@ -9288,16 +9234,16 @@ mod tests {
             !gresult
                 .basis
                 .iter()
-                .any(|p| *p == SparsePolynomial::var(&r_slot)),
+                .any(|p| *p == Polynomial::var(&r_slot)),
             "basis should NOT contain var(r) for Bool result"
         );
 
         for j in 0..3 {
             let a_j = pref_a.clone().with_slot(j).unwrap();
             let b_j = pref_b.clone().with_slot(j).unwrap();
-            let diff = &SparsePolynomial::var(&a_j) - &SparsePolynomial::var(&b_j);
+            let diff = &Polynomial::var(&a_j) - &Polynomial::var(&b_j);
             assert!(
-                gresult.basis.iter().any(|p| *p == diff),
+                gresult.basis.contains(&diff),
                 "basis should contain a[{}]-b[{}] diff",
                 j,
                 j
@@ -9317,8 +9263,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
@@ -9360,7 +9306,7 @@ mod tests {
             !gresult
                 .basis
                 .iter()
-                .any(|p| *p == SparsePolynomial::var(&r_slot)),
+                .any(|p| *p == Polynomial::var(&r_slot)),
             "basis should NOT contain var(r) for Bool result"
         );
 
@@ -9368,14 +9314,14 @@ mod tests {
         assert_eq!(lub_len, 5);
         for j in 0..lub_len {
             let a_j = if j < 3 {
-                SparsePolynomial::var(&pref_a.clone().with_slot(j).unwrap())
+                Polynomial::var(&pref_a.clone().with_slot(j).unwrap())
             } else {
-                SparsePolynomial::zero()
+                Polynomial::zero()
             };
-            let b_j = SparsePolynomial::var(&pref_b.clone().with_slot(j).unwrap());
+            let b_j = Polynomial::var(&pref_b.clone().with_slot(j).unwrap());
             let diff = a_j - b_j;
             assert!(
-                gresult.basis.iter().any(|p| *p == diff),
+                gresult.basis.contains(&diff),
                 "basis should contain lifted diff at slot {}",
                 j
             );
@@ -9393,8 +9339,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
         let vec2 = ATyp::Vec(Box::new(s.clone()), 2);
@@ -9458,8 +9404,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let poly_t = ATyp::Uni(2);
         let vec_t = ATyp::Vec(Box::new(poly_t.clone()), 2);
@@ -9490,7 +9436,7 @@ mod tests {
             &mut gresult,
         );
 
-        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
         for j in 0..3 {
             let v0_j = pref_v.clone().with_index(0).unwrap().with_slot(j).unwrap();
             let v1_j = pref_v.clone().with_index(1).unwrap().with_slot(j).unwrap();
@@ -9511,8 +9457,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let pref_src = PRef::from_node(
             NodeIndex::new(0),
@@ -9545,7 +9491,7 @@ mod tests {
             let stored = gresult.pl.get(&dst_j).unwrap();
             assert_eq!(
                 *stored,
-                SparsePolynomial::var(&src_j),
+                Polynomial::var(&src_j),
                 "ref lift slot {} should map to src slot {}",
                 j,
                 j
@@ -9569,7 +9515,7 @@ mod tests {
     #[test]
     fn test_broadcast_scalar_to_vpoly() {
         let scalar_poly =
-            SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&PRef::from_node(
+            Polynomial::<ark_bls12_381::Fr>::var(&PRef::from_node(
                 petgraph::graph::NodeIndex::new(0),
                 ATyp::scalar(),
                 0,
@@ -9577,7 +9523,7 @@ mod tests {
                 lang::typ::Distribution::default(),
             ));
         let src =
-            PolySource::<ArkBls12_381, GrevLexTerm>::new(vec![scalar_poly.clone()], ATyp::scalar());
+            PolySource::<ArkBls12_381>::new(vec![scalar_poly.clone()], ATyp::scalar());
         let broadcast = src.broadcast_scalar_to(&ATyp::VPoly(2, 2));
         assert_eq!(broadcast.polys.len(), 6);
         for (i, p) in broadcast.polys.iter().enumerate() {
@@ -9613,13 +9559,13 @@ mod tests {
             Distribution::Nonuniform,
         );
 
-        let mut result = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut result = Ideal::<ArkBls12_381>::new();
         result
             .pl
-            .insert(&pl_ref, &SparsePolynomial::<Fr, GrevLexTerm>::zero());
+            .insert(&pl_ref, &Polynomial::<Fr>::zero());
         result
             .basis
-            .push(SparsePolynomial::<Fr, GrevLexTerm>::var(&basis_ref));
+            .push(Polynomial::<Fr>::var(&basis_ref));
 
         let vars = result.vars();
         assert!(
@@ -9641,8 +9587,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut result = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut result = Ideal::<ArkBls12_381>::new();
         let pref = PRef::from_node(
             NodeIndex::new(100),
             ATyp::scalar(),
@@ -9677,8 +9623,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut result = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut result = Ideal::<ArkBls12_381>::new();
         let pref = PRef::from_node(
             NodeIndex::new(101),
             ATyp::scalar(),
@@ -9710,8 +9656,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut result = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut result = Ideal::<ArkBls12_381>::new();
 
         // Create a challenge PRef
         let challenge_pref = PRef::from_node(
@@ -9766,7 +9712,7 @@ mod tests {
         );
 
         // The challenge should now be visible through basis.vars() and result.vars()
-        let basis_vars = result.basis.vars();
+        let basis_vars = result.basis.iter().flat_map(|p| p.vars()).collect::<share::Set<_>>();
         assert!(
             basis_vars.contains(&challenge_pref),
             "challenge must be visible through basis vars once an equation references it"
@@ -9785,8 +9731,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut result = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut result = Ideal::<ArkBls12_381>::new();
 
         let g1_pref = PRef::from_node(
             NodeIndex::new(300),
@@ -9827,7 +9773,7 @@ mod tests {
 
         // The basis should contain a row: pair_result - g1*g2 = 0
         // (no GT sentinel variable)
-        let basis_vars = result.basis.vars();
+        let basis_vars = result.basis.iter().flat_map(|p| p.vars()).collect::<share::Set<_>>();
         assert!(
             basis_vars.contains(&g1_pref),
             "g1 must be visible through basis vars"
@@ -9862,8 +9808,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
 
@@ -9968,8 +9914,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
         let fin = ATyp::fin(lang::typ::range::CRange::default());
@@ -10028,8 +9974,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut gresult = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
         let fin = ATyp::fin(lang::typ::range::CRange::default());

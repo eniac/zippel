@@ -1,29 +1,11 @@
-use crate::groebner::ark_gb_adapter::get_local_rank;
-use crate::groebner::monomial::{GrevLexTerm, Monomial};
-use crate::groebner::tiered::{TieredElimMono, TieredElimStrategy};
-use crate::groebner::{GroebnerBuilder, GroebnerResult, SparsePolynomial};
-use crate::trans_clos::TransClos;
+use crate::ideal::{IdealBuilder, Ideal};
+use crate::frontend::{Polynomial, TransClos};
 use backend::ATyp;
 use backend::ArkConfig;
 use backend::op::{GOp, HasOpFactory, mk};
 use graph::Op;
 use graph::PRef;
 use lang::ast::BinOp;
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct ExtractLocal;
-
-impl TieredElimStrategy for ExtractLocal {
-    fn tier(v: &PRef) -> Option<usize> {
-        if get_local_rank(v).is_some() {
-            Some(0)
-        } else {
-            Some(1)
-        }
-    }
-}
-
-pub type ExtractLocalTerm = TieredElimMono<ExtractLocal>;
 
 /// Check whether a polynomial's group-variable terms are compatible with
 /// extracting a witness of the given type:
@@ -33,11 +15,11 @@ pub type ExtractLocalTerm = TieredElimMono<ExtractLocal>;
 /// - **G2**: each term may contain at most one G2 var; no G1 or GT vars.
 /// - **GT**: each term may contain either at most one GT var (no G1/G2),
 ///   or at most one G1 and one G2 var (no GT).
-pub(crate) fn valid_extractor<C: ArkConfig, T: Monomial>(
+pub(crate) fn valid_extractor<C: ArkConfig>(
     witness_typ: &ATyp,
-    poly: &SparsePolynomial<C::F, T>,
+    poly: &Polynomial<C::F>,
 ) -> bool {
-    for (term, _coeff) in poly.terms.iter() {
+    for term in poly.terms.keys() {
         let vars = term.vars();
         let pows = term.powers();
         let g1: usize = vars
@@ -106,9 +88,9 @@ pub(crate) fn valid_extractor<C: ArkConfig, T: Monomial>(
 /// `PRef` identities as those allocated by the caller's subsequent build,
 /// keeping division-witness references aligned across the two results.
 pub fn extract_locals<C: ArkConfig + HasOpFactory>(
-    builder: &GroebnerBuilder<C, GrevLexTerm>,
+    builder: &IdealBuilder<C>,
     tc: &TransClos<C>,
-) -> GroebnerResult<C, GrevLexTerm> {
+) -> Ideal<C> {
     let tc_no_equ = strip_equ(tc);
     let mut comp_builder = builder.clone();
     comp_builder.build(tc_no_equ)

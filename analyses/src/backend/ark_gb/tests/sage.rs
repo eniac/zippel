@@ -3,13 +3,12 @@
 //! small-n examples. See `benches/groebner_shared.rs` for the generator code
 //! and `benches/groebner.rs` for the upstream provenance.
 
-use analyses::groebner::{GrevLexTerm, SparsePolynomial};
+use super::super::{GrevLexTerm, SparsePolynomial};
 use ark_bls12_381::Fr;
 use graph::PRef;
 
-#[path = "../benches/groebner_shared.rs"]
-mod shared;
-use shared::{cyclic_polys, katsura_polys, mk_vars, var_poly};
+
+use super::shared::{cyclic_polys, katsura_polys, mk_vars, var_poly};
 
 /// Build a GrevLex polynomial from `(coeff, [(var_index, power), ...])` terms.
 fn grev_poly(

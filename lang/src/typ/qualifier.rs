@@ -6,7 +6,7 @@ use std::fmt;
 use crate::parser::*;
 use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Qualifier {
     Private,
     Local,

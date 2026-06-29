@@ -33,15 +33,14 @@
 //! to grevlex on the full variable set. The pinned `_elim` and `_grevlex`
 //! results therefore should match — that itself is a useful invariant.
 
-use analyses::groebner::{GrevLexTerm, GroebnerBasis, Monomial, SparsePolynomial};
-use analyses::knowledge::ElimTerm;
+use super::super::{GrevLexTerm, GroebnerBasis, Monomial, SparsePolynomial};
+use crate::knowledge::ElimTerm;
 use ark_bls12_381::Fr;
 use ark_ff::{Field, Zero};
 use graph::PRef;
 
-#[path = "../benches/groebner_shared.rs"]
-mod shared;
-use shared::{cyclic_basis, katsura_basis, mk_vars, var_poly};
+
+use super::shared::{cyclic_basis, katsura_basis, mk_vars, var_poly};
 
 // ---------------------------------------------------------------------------
 // Helpers — kept in this file so the bench surface stays bench-only.
@@ -202,7 +201,7 @@ fn run_self_checks_grevlex<F>(
 
     // Layer 1a — ideal inclusion.
     assert!(
-        g.contains(&inputs),
+        inputs.basis.iter().all(|p| g.reduce(p.clone()).is_zero()),
         "[{label}] some input generator does NOT reduce to 0 mod reduced GB"
     );
 
@@ -243,7 +242,7 @@ fn run_self_checks_elim<F>(
     assert_proper(&g, label);
 
     assert!(
-        g.contains(&inputs),
+        inputs.basis.iter().all(|p| g.reduce(p.clone()).is_zero()),
         "[{label}] some input generator does NOT reduce to 0 mod reduced GB"
     );
     assert_s_pair_closure(&g, label);
@@ -369,11 +368,11 @@ fn cross_order_consistency_via_inclusion(label: &str, n: usize) {
     let inputs_grev = katsura_basis::<GrevLexTerm>(n);
     let inputs_elim = katsura_basis::<ElimTerm>(n);
     assert!(
-        g_grev.contains(&inputs_grev),
+        inputs_grev.basis.iter().all(|p| g_grev.reduce(p.clone()).is_zero()),
         "[{label}] grevlex GB doesn't contain its own inputs"
     );
     assert!(
-        g_elim.contains(&inputs_elim),
+        inputs_elim.basis.iter().all(|p| g_elim.reduce(p.clone()).is_zero()),
         "[{label}] elim GB doesn't contain its own inputs"
     );
 }

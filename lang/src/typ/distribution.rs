@@ -5,7 +5,7 @@ use std::fmt;
 use crate::parser::*;
 use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Ord, PartialOrd, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd, Default)]
 pub enum Distribution {
     Uniform,
     UniformNonZero,

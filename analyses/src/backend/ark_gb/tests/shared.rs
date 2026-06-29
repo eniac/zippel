@@ -7,7 +7,7 @@
 
 #![allow(dead_code)]
 
-use analyses::groebner::{GroebnerBasis, Monomial, SparsePolynomial};
+use super::super::{GroebnerBasis, Monomial, SparsePolynomial};
 use ark_bls12_381::Fr;
 use ark_ff::One;
 use backend::ATyp;

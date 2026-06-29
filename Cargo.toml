@@ -67,10 +67,6 @@ test = true
 harness = false
 
 [[bench]]
-name = "groebner"
-harness = false
-
-[[bench]]
 name = "groth16"
 harness = false
 

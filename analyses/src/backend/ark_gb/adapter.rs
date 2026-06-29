@@ -60,11 +60,11 @@ use ark_gb::poly::Poly;
 use ark_gb::ring::Ring;
 use share::{Ctx, Set};
 
-use crate::groebner::monomial::{
+use crate::backend::ark_gb::monomial::{
     ElimMono, ElimStrategy, GrevLexTerm, MonoTerm as ZipMonoTerm, Monomial as ZipMonomial,
 };
-use crate::groebner::sparsepoly::SparsePolynomial;
-use crate::groebner::tiered::{TieredElimMono, TieredElimStrategy};
+use crate::backend::ark_gb::sparsepoly::SparsePolynomial;
+use crate::backend::ark_gb::tiered::{TieredElimMono, TieredElimStrategy};
 use graph::PRef;
 
 /// Max per-variable exponent ark-gb's 7-bit packing supports.
@@ -123,7 +123,7 @@ impl<E: TieredElimStrategy> HasMonoTerm for TieredElimMono<E> {
 /// Takes the variable ordering, validation result, and a function that computes the GB given
 /// a ring and converted polynomials. This consolidates the common setup
 /// and conversion logic between grevlex and elim paths.
-fn compute_gb_pipeline<F, T, M, const W: usize, GbFn>(
+pub(crate) fn compute_gb_pipeline<F, T, M, const W: usize, GbFn>(
     input: Vec<SparsePolynomial<F, T>>,
     var_order: Vec<PRef>,
     exponents_fit: bool,
@@ -386,7 +386,7 @@ impl<F: Field, const W: usize> ArkMonomial<F, W> for ZippelElimMono<W> {
 pub(crate) fn compute_reduced_gb_with_elim<F, T, const W: usize>(
     _num_vars: usize,
     input: Vec<SparsePolynomial<F, T>>,
-    eliminate_fn: fn(&PRef) -> bool,
+    eliminate_fn: &dyn Fn(&PRef) -> bool,
 ) -> Vec<SparsePolynomial<F, T>>
 where
     F: Field,
@@ -418,7 +418,7 @@ where
 
 fn collect_vars_with<F: Field, T: ZipMonomial + HasMonoTerm>(
     input: &[SparsePolynomial<F, T>],
-    eliminate_fn: fn(&PRef) -> bool,
+    eliminate_fn: &dyn Fn(&PRef) -> bool,
 ) -> (Vec<PRef>, Vec<PRef>, bool) {
     let (vars, exponents_fit) = collect_and_validate(input);
     let mut keep: Vec<PRef> = Vec::new();
@@ -457,7 +457,7 @@ fn build_elim_byte_mask<const W: usize>(num_keep: usize, nvars: usize) -> [u64; 
 /// using the elimination strategy's `eliminate_var` predicate.
 /// Collect all PRef variables and validate exponents in a single traversal.
 /// Returns (variable_set, exponents_fit).
-fn collect_and_validate<F: Field, T: ZipMonomial + HasMonoTerm>(
+pub(crate) fn collect_and_validate<F: Field, T: ZipMonomial + HasMonoTerm>(
     input: &[SparsePolynomial<F, T>],
 ) -> (Set<PRef>, bool) {
     let mut vars: Set<PRef> = Set::new();
@@ -555,7 +555,7 @@ fn index_map(var_order: &[PRef]) -> Ctx<PRef, usize> {
 /// Assert that the input fits ark-gb's `W` layout (≤ max_vars variables,
 /// all exponents ≤ 127). Panics with a clear diagnostic if not.
 /// Caller has already handled the `actual_nvars == 0` (constant-only) case.
-fn assert_fits_in_ark_gb<const W: usize>(actual_nvars: usize, exponents_ok: bool) {
+pub(crate) fn assert_fits_in_ark_gb<const W: usize>(actual_nvars: usize, exponents_ok: bool) {
     let max_vars = max_vars_for_w(W);
     assert!(
         actual_nvars <= max_vars,
@@ -571,7 +571,7 @@ fn assert_fits_in_ark_gb<const W: usize>(actual_nvars: usize, exponents_ok: bool
 
 /// All-constant input → unit ideal `[1]` if any constant is nonzero,
 /// else the empty basis. Independent of `T`.
-fn constant_only_basis<F: Field, T: ZipMonomial>(
+pub(crate) fn constant_only_basis<F: Field, T: ZipMonomial>(
     input: &[SparsePolynomial<F, T>],
 ) -> Vec<SparsePolynomial<F, T>> {
     let nonzero = input.iter().any(|p| !p.is_zero());
@@ -640,14 +640,14 @@ impl Drop for LocalRankGuard {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum TierKind {
+pub(crate) enum TierKind {
     Lex,
     GrevLex,
 }
 
 #[derive(Clone)]
 #[allow(dead_code)]
-struct TierBlock {
+pub(crate) struct TierBlock {
     raw_tier: usize,
     start: usize,
     len: usize,
@@ -663,7 +663,7 @@ impl TierBlock {
 
 #[derive(Clone)]
 #[allow(dead_code)]
-struct TierLayout {
+pub(crate) struct TierLayout {
     nvars: usize,
     tiers: Vec<TierBlock>,
     key_bits: usize,
@@ -762,7 +762,7 @@ impl BoundedCompositionTable {
     }
 }
 
-fn build_tier_layout<const W: usize>(group_lens: &[(usize, usize)], nvars: usize) -> TierLayout {
+pub(crate) fn build_tier_layout<const W: usize>(group_lens: &[(usize, usize)], nvars: usize) -> TierLayout {
     let mut start = 0;
     let mut tiers = Vec::new();
 
@@ -824,12 +824,12 @@ fn replace_tier_layout<const W: usize>(layout: Option<TierLayout>) -> Option<Tie
     }
 }
 
-struct TierLayoutGuard<const W: usize> {
+pub(crate) struct TierLayoutGuard<const W: usize> {
     prev: Option<TierLayout>,
 }
 
 impl<const W: usize> TierLayoutGuard<W> {
-    fn install(layout: TierLayout) -> Self {
+    pub(crate) fn install(layout: TierLayout) -> Self {
         let prev = replace_tier_layout::<W>(Some(layout));
         Self { prev }
     }
