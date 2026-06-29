@@ -31,7 +31,7 @@ fn main() {
 
     let inputs = prover_create_inputs();
     let prover_start = Instant::now();
-    let proof = handler.run_prover(inputs).expect("run_prover failed");
+    let proof = handler.run_prover(&inputs).expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
@@ -40,7 +40,7 @@ fn main() {
         proof.len()
     );
     let verifier_start = Instant::now();
-    let verifier_result = handler.run_verifier(proof).expect("run_verifier failed");
+    let verifier_result = handler.run_verifier(&proof).expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     let result = check_verification(verifier_result);
     println!("Verifier time:  {verifier_elapsed:.2?}");
@@ -78,7 +78,7 @@ fn main() {
     }
 }
 
-/// A satisfying ProductCheck instance: leaves `f` of length `num_leaves`,
+/// A satisfying `ProductCheck` instance: leaves `f` of length `num_leaves`,
 /// the product-tree MLE `v` of length `2·num_leaves` (s+1 variables), and
 /// the claimed product `claimed = prod_x f(x)`.
 struct ProductCheckInstance<F> {
@@ -90,11 +90,11 @@ struct ProductCheckInstance<F> {
 /// Build the product-tree MLE ṽ on B_{s+1} (LSB-first) for the given leaves f.
 ///
 /// Structure:
-///   ṽ(0, x_1, ..., x_S) = f(x_1, ..., x_S)                    [leaves]
-///   ṽ(1, x_1, ..., x_S) = ṽ(x_1, ..., x_S, 0) · ṽ(x_1, ..., x_S, 1)
+///   ṽ(0, `x_1`, ..., `x_S`) = `f(x_1`, ..., `x_S`)                    [leaves]
+///   ṽ(1, `x_1`, ..., `x_S`) = `ṽ(x_1`, ..., `x_S`, 0) · `ṽ(x_1`, ..., `x_S`, 1)
 /// with the self-referential top entry ṽ(1, ..., 1) := 0.
 ///
-/// Layout in v[]: idx = X_0 + 2·X_1 + ... + 2^S·X_S. So leaves live at even
+/// Layout in v[]: idx = `X_0` + `2·X_1` + ... + `2^S·X_S`. So leaves live at even
 /// indices (v[2k] = f[k]); internal nodes live at odd indices.
 fn build_product_tree<F: Field + Zero>(f: &[F]) -> Vec<F> {
     let n = f.len();
@@ -136,7 +136,7 @@ fn build_product_tree<F: Field + Zero>(f: &[F]) -> Vec<F> {
     v
 }
 
-/// Build a random satisfying ProductCheck instance.
+/// Build a random satisfying `ProductCheck` instance.
 fn random_productcheck<F, R>(rng: &mut R, num_leaves: usize) -> ProductCheckInstance<F>
 where
     F: Field + Zero,

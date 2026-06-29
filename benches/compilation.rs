@@ -8,19 +8,19 @@ use zippel::*;
 fn compile_protocol<C: backend::ArkConfig + backend::HasOpFactory>(
     name: &str,
     zippel_path: PathBuf,
-    sizes: Ctx<Tid, usize>,
+    sizes: &Ctx<Tid, usize>,
 ) -> f64 {
     let start_total = Instant::now();
     let args = ZippelArgs::new(zippel_path);
     let mut handler: ZippelHandler<C> = ZippelHandler::new(args);
-    handler.compile(&sizes);
+    handler.compile(sizes);
 
     let elapsed = start_total.elapsed().as_secs_f64();
     println!("Compiled {:<25} in {:.4} seconds", name, elapsed);
     elapsed
 }
 
-fn hyrax_split(m: usize) -> (usize, usize) {
+const fn hyrax_split(m: usize) -> (usize, usize) {
     let nw = m - 1;
     let l = nw / 2;
     let m_h = nw - l;
@@ -40,7 +40,7 @@ fn generate_proto(m: usize) -> String {
     assert_eq!(nrows * ncols, two_nw);
 
     format!(
-        r#"fn eq_weights<G: Group, F: Scalar<G>>(public x: [F; 1]) -> [F; 2] {{
+        r"fn eq_weights<G: Group, F: Scalar<G>>(public x: [F; 1]) -> [F; 2] {{
     [(1 - x[0]), x[0]]
 }}
 fn eq_weights<G: Group, F: Scalar<G>, EK: 2..21>(public x: [F; EK]) -> [F; 2^EK] {{
@@ -553,7 +553,7 @@ proto spartan<G: Group, F: Scalar<G>>(
     verify(ipa_ok);
     verify(e_y == (ra * v1 + rb * v2 + rc * v3) * v_z)
 }}
-"#,
+",
         m_lit = m_lit,
         two_m = two_m,
         two_m_vars = two_m_vars,
@@ -581,7 +581,7 @@ fn main() {
     let t_sumcheck = compile_protocol::<ArkBls12_381>(
         "Sumcheck (2^18 vars)",
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/sumcheck/sumcheck.zippel"),
-        sizes_sumcheck,
+        &sizes_sumcheck,
     );
     timings.push(("Sumcheck", t_sumcheck));
 
@@ -591,17 +591,17 @@ fn main() {
     let t_ipa = compile_protocol::<ArkSecp256k1>(
         "Bulletproofs (IPA) (2^18 elements)",
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/ipa/ipa.zippel"),
-        sizes_ipa,
+        &sizes_ipa,
     );
     timings.push(("Bulletproofs (IPA)", t_ipa));
 
     // 3. KZG (N = 2^18)
     let mut sizes_kzg = Ctx::new();
-    sizes_kzg.insert(&Tid::new("N"), &262144);
+    sizes_kzg.insert(&Tid::new("N"), &262_144);
     let t_kzg = compile_protocol::<ArkBls12_381>(
         "KZG (2^18 coefficients)",
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/kzg/kzg.zippel"),
-        sizes_kzg,
+        &sizes_kzg,
     );
     timings.push(("KZG", t_kzg));
 
@@ -609,23 +609,23 @@ fn main() {
     let mut sizes_pari = Ctx::new();
     sizes_pari.insert(&Tid::new("M"), &target_m);
     sizes_pari.insert(&Tid::new("N"), &1);
-    sizes_pari.insert(&Tid::new("KMN"), &262142);
+    sizes_pari.insert(&Tid::new("KMN"), &262_142);
     let t_pari = compile_protocol::<ArkBls12_381>(
         "Pari (2^18 constraints)",
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/pari/pari.zippel"),
-        sizes_pari,
+        &sizes_pari,
     );
     timings.push(("Pari", t_pari));
 
     // 5. Groth16 (M = 33, L = 2^18, H = 2^18)
     let mut sizes_groth16 = Ctx::new();
     sizes_groth16.insert(&Tid::new("M"), &33);
-    sizes_groth16.insert(&Tid::new("L"), &262144);
-    sizes_groth16.insert(&Tid::new("H"), &262144);
+    sizes_groth16.insert(&Tid::new("L"), &262_144);
+    sizes_groth16.insert(&Tid::new("H"), &262_144);
     let t_groth16 = compile_protocol::<ArkBls12_381>(
         "Groth16 (2^18 constraints)",
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/groth16/groth16.zippel"),
-        sizes_groth16,
+        &sizes_groth16,
     );
     timings.push(("Groth16", t_groth16));
 
@@ -635,7 +635,7 @@ fn main() {
     let t_pst13 = compile_protocol::<ArkBls12_381>(
         "PST13 (2^18 coefficients)",
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/pst13/pst13.zippel"),
-        sizes_pst13,
+        &sizes_pst13,
     );
     timings.push(("PST13", t_pst13));
 
@@ -645,7 +645,7 @@ fn main() {
     let t_hyrax = compile_protocol::<ArkBls12_381>(
         "Hyrax (2^18 elements)",
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/hyrax_ipa/hyrax_ipa.zippel"),
-        sizes_hyrax,
+        &sizes_hyrax,
     );
     timings.push(("Hyrax (IPA)", t_hyrax));
 
@@ -663,7 +663,7 @@ fn main() {
     let t_spartan = compile_protocol::<ArkCurve25519>(
         "Spartan (2^18 constraints)",
         spartan_path,
-        sizes_spartan,
+        &sizes_spartan,
     );
     timings.push(("Spartan", t_spartan));
 

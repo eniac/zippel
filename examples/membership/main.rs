@@ -30,7 +30,7 @@ fn main() {
         .filter(|(vid, _)| vid.0 != "f_coeffs")
         .collect::<Ctx<Vid, Value<ArkBls12_381>>>();
     let prover_start = Instant::now();
-    let proof = handler.run_prover(inputs).expect("run_prover failed");
+    let proof = handler.run_prover(&inputs).expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
@@ -45,7 +45,7 @@ fn main() {
     verifier_handler.set_public_inputs(public_inputs);
     let verifier_start = Instant::now();
     let verifier_result = verifier_handler
-        .run_verifier(proof)
+        .run_verifier(&proof)
         .expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     let result = check_verification(verifier_result);
@@ -99,7 +99,7 @@ fn prover_create_inputs(n_size: usize, m_size: usize) -> Ctx<Vid, Value<ArkBls12
     // SRS G1 up to size S
     let ss_g: Value<ArkBls12_381> = Value::VecG1((0..s_size).map(|_| g_input).collect());
     let ss_index = Value::VecScalar((0..s_size).map(|i| tau_input.pow([i as u64])).collect());
-    let ss = ss_g.clone() * ss_index.clone();
+    let ss = ss_g * ss_index;
 
     // SRS G2_s
     let h_val: Value<ArkBls12_381> = Value::G2(h_input * tau_input);

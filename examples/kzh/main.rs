@@ -34,7 +34,7 @@ fn main() {
     };
 
     let inputs = prover_create_inputs();
-    common::run_prover_and_verify(&mut handler, inputs);
+    common::run_prover_and_verify(&mut handler, &inputs);
 
     println!("\n--- Static Analysis ---");
     let analysis_args = ZippelArgs::new(PathBuf::from("examples/kzh/kzh.zippel"));

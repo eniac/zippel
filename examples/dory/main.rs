@@ -5,12 +5,12 @@ use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
 fn main() {
+    const LOG_N: usize = 8;
     env_logger::init();
     println!("=== Dory Evaluation Proof (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/dory/dory.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     println!("Compiling Zippel files...");
-    const LOG_N: usize = 8;
     let mut sizes: Ctx<Tid, usize> = Ctx::new();
     sizes.insert(&Tid::new("S"), &LOG_N);
     handler.compile(&sizes);
@@ -20,7 +20,7 @@ fn main() {
     println!("Generating default schedule for prover...");
     println!("Running prover...");
     let prover_start = Instant::now();
-    let proof = handler.run_prover(inputs).expect("run_prover failed");
+    let proof = handler.run_prover(&inputs).expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
@@ -32,7 +32,7 @@ fn main() {
     println!("Generating default schedule for verifier...");
     println!("Running verifier...");
     let verifier_start = Instant::now();
-    let verifier_result = handler.run_verifier(proof).expect("run_verifier failed");
+    let verifier_result = handler.run_verifier(&proof).expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     let result = check_verification(verifier_result);
     println!("Verifier time:  {verifier_elapsed:.2?}");

@@ -35,7 +35,7 @@ pub(crate) use time_analysis;
 /// `handler` must already be compiled. `inputs` is the prover witness context.
 pub fn run_prover_and_verify<C: ArkConfig + HasOpFactory>(
     handler: &mut ZippelHandler<C>,
-    inputs: Ctx<Vid, Value<C>>,
+    inputs: &Ctx<Vid, Value<C>>,
 ) {
     let prover_start = Instant::now();
     let proof = handler.run_prover(inputs).expect("run_prover failed");
@@ -48,7 +48,7 @@ pub fn run_prover_and_verify<C: ArkConfig + HasOpFactory>(
     );
 
     let verifier_start = Instant::now();
-    let verifier_result = handler.run_verifier(proof).expect("run_verifier failed");
+    let verifier_result = handler.run_verifier(&proof).expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     let result = check_verification(verifier_result);
     println!("Verifier time:  {verifier_elapsed:.2?}");

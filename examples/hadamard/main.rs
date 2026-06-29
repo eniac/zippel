@@ -17,7 +17,7 @@ fn main() {
     handler.compile(&sizes);
 
     let inputs = prover_create_inputs();
-    common::run_prover_and_verify(&mut handler, inputs);
+    common::run_prover_and_verify(&mut handler, &inputs);
 
     println!("\n--- Static Analysis ---");
     let analysis_args = ZippelArgs::new(PathBuf::from("examples/hadamard/hadamard.zippel"));

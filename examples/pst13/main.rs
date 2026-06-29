@@ -29,7 +29,7 @@ fn main() {
     handler.compile(&sizes);
 
     let inputs = prover_create_inputs(n);
-    common::run_prover_and_verify(&mut handler, inputs);
+    common::run_prover_and_verify(&mut handler, &inputs);
 
     println!("\n--- Static Analysis ---");
     let analysis_args = ZippelArgs::new(PathBuf::from("examples/pst13/pst13.zippel"));
@@ -104,6 +104,6 @@ fn prover_create_inputs(n: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("g_gen".to_string()), Value::G1(gen_g)),
         (Vid("h_gen".to_string()), Value::G2(gen_h)),
         (Vid("alpha_H".to_string()), alpha_h),
-        (Vid("alpha".to_string()), Value::VecScalar(alpha.clone())),
+        (Vid("alpha".to_string()), Value::VecScalar(alpha)),
     ])
 }

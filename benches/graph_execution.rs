@@ -4,7 +4,7 @@
 //! via the public `ZippelHandler` API. They are useful for comparing
 //! different `run_graph` implementations and tracking performance regressions.
 //!
-//! Run with: cargo bench --bench graph_execution
+//! Run with: cargo bench --bench `graph_execution`
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::PathBuf;
@@ -45,11 +45,7 @@ fn bench_schnorr_prover(c: &mut Criterion) {
     let inputs = schnorr_inputs();
 
     group.bench_function("prover", |b| {
-        b.iter(|| {
-            handler
-                .run_prover(inputs.clone())
-                .expect("run_prover failed")
-        })
+        b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
     });
 
     group.finish();
@@ -65,14 +61,10 @@ fn bench_schnorr_verifier(c: &mut Criterion) {
     ));
     handler.compile(&Ctx::new());
     let inputs = schnorr_inputs();
-    let proof = handler.run_prover(inputs).expect("run_prover failed");
+    let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
     group.bench_function("verifier", |b| {
-        b.iter(|| {
-            handler
-                .run_verifier(proof.clone())
-                .expect("run_verifier failed")
-        })
+        b.iter(|| handler.run_verifier(&proof).expect("run_verifier failed"));
     });
 
     group.finish();
@@ -138,11 +130,7 @@ fn bench_hadamard_prover(c: &mut Criterion) {
     let inputs = hadamard_inputs();
 
     group.bench_function("prover", |b| {
-        b.iter(|| {
-            handler
-                .run_prover(inputs.clone())
-                .expect("run_prover failed")
-        })
+        b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
     });
 
     group.finish();
@@ -160,14 +148,10 @@ fn bench_hadamard_verifier(c: &mut Criterion) {
     sizes.insert(&Tid::new("S"), &4usize);
     handler.compile(&sizes);
     let inputs = hadamard_inputs();
-    let proof = handler.run_prover(inputs).expect("run_prover failed");
+    let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
     group.bench_function("verifier", |b| {
-        b.iter(|| {
-            handler
-                .run_verifier(proof.clone())
-                .expect("run_verifier failed")
-        })
+        b.iter(|| handler.run_verifier(&proof).expect("run_verifier failed"));
     });
 
     group.finish();
@@ -193,7 +177,7 @@ fn bench_map_comp_prover(c: &mut Criterion) {
     let mut group = c.benchmark_group("map_comp");
     group.sample_size(10);
 
-    for &n in [4usize, 16, 64].iter() {
+    for &n in &[4usize, 16, 64] {
         let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(ZippelArgs::new(
             PathBuf::from("examples/map_comp_bench/map_comp_bench.zippel"),
         ));
@@ -203,11 +187,7 @@ fn bench_map_comp_prover(c: &mut Criterion) {
         let inputs = map_comp_inputs(n);
 
         group.bench_function(format!("prover/N={}", n).as_str(), |b| {
-            b.iter(|| {
-                handler
-                    .run_prover(inputs.clone())
-                    .expect("run_prover failed")
-            })
+            b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
         });
     }
 
@@ -218,7 +198,7 @@ fn bench_map_comp_verifier(c: &mut Criterion) {
     let mut group = c.benchmark_group("map_comp");
     group.sample_size(10);
 
-    for &n in [4usize, 16, 64].iter() {
+    for &n in &[4usize, 16, 64] {
         let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(ZippelArgs::new(
             PathBuf::from("examples/map_comp_bench/map_comp_bench.zippel"),
         ));
@@ -226,14 +206,10 @@ fn bench_map_comp_verifier(c: &mut Criterion) {
         sizes.insert(&Tid::new("S"), &n);
         handler.compile(&sizes);
         let inputs = map_comp_inputs(n);
-        let proof = handler.run_prover(inputs).expect("run_prover failed");
+        let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
         group.bench_function(format!("verifier/N={}", n).as_str(), |b| {
-            b.iter(|| {
-                handler
-                    .run_verifier(proof.clone())
-                    .expect("run_verifier failed")
-            })
+            b.iter(|| handler.run_verifier(&proof).expect("run_verifier failed"));
         });
     }
 
@@ -280,11 +256,7 @@ fn bench_pedersen_eq_prover(c: &mut Criterion) {
     let inputs = pedersen_eq_inputs();
 
     group.bench_function("prover", |b| {
-        b.iter(|| {
-            handler
-                .run_prover(inputs.clone())
-                .expect("run_prover failed")
-        })
+        b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
     });
 
     group.finish();
@@ -299,14 +271,10 @@ fn bench_pedersen_eq_verifier(c: &mut Criterion) {
     ));
     handler.compile(&Ctx::new());
     let inputs = pedersen_eq_inputs();
-    let proof = handler.run_prover(inputs).expect("run_prover failed");
+    let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
     group.bench_function("verifier", |b| {
-        b.iter(|| {
-            handler
-                .run_verifier(proof.clone())
-                .expect("run_verifier failed")
-        })
+        b.iter(|| handler.run_verifier(&proof).expect("run_verifier failed"));
     });
 
     group.finish();
@@ -366,11 +334,7 @@ fn bench_ipa_prover(c: &mut Criterion) {
     let inputs = ipa_inputs(IPA_S);
 
     group.bench_function(format!("prover/S={}", IPA_S).as_str(), |b| {
-        b.iter(|| {
-            handler
-                .run_prover(inputs.clone())
-                .expect("run_prover failed")
-        })
+        b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
     });
 
     group.finish();
@@ -386,14 +350,10 @@ fn bench_ipa_verifier(c: &mut Criterion) {
     sizes.insert(&Tid::new("S"), &IPA_S);
     handler.compile(&sizes);
     let inputs = ipa_inputs(IPA_S);
-    let proof = handler.run_prover(inputs).expect("run_prover failed");
+    let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
     group.bench_function(format!("verifier/S={}", IPA_S).as_str(), |b| {
-        b.iter(|| {
-            handler
-                .run_verifier(proof.clone())
-                .expect("run_verifier failed")
-        })
+        b.iter(|| handler.run_verifier(&proof).expect("run_verifier failed"));
     });
 
     group.finish();
@@ -459,11 +419,7 @@ fn bench_hyrax_ipa_prover(c: &mut Criterion) {
     let inputs = hyrax_ipa_inputs(HYRAX_IPA_S);
 
     group.bench_function(format!("prover/S={}", HYRAX_IPA_S).as_str(), |b| {
-        b.iter(|| {
-            handler
-                .run_prover(inputs.clone())
-                .expect("run_prover failed")
-        })
+        b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
     });
 
     group.finish();
@@ -480,14 +436,10 @@ fn bench_hyrax_ipa_verifier(c: &mut Criterion) {
     sizes.insert(&Tid::new("S"), &HYRAX_IPA_S);
     handler.compile(&sizes);
     let inputs = hyrax_ipa_inputs(HYRAX_IPA_S);
-    let proof = handler.run_prover(inputs).expect("run_prover failed");
+    let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
     group.bench_function(format!("verifier/S={}", HYRAX_IPA_S).as_str(), |b| {
-        b.iter(|| {
-            handler
-                .run_verifier(proof.clone())
-                .expect("run_verifier failed")
-        })
+        b.iter(|| handler.run_verifier(&proof).expect("run_verifier failed"));
     });
 
     group.finish();
@@ -593,11 +545,7 @@ fn bench_dory_prover(c: &mut Criterion) {
     let inputs = dory_inputs(DORY_LOG_N);
 
     group.bench_function(format!("prover/S={}", DORY_LOG_N).as_str(), |b| {
-        b.iter(|| {
-            handler
-                .run_prover(inputs.clone())
-                .expect("run_prover failed")
-        })
+        b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
     });
 
     group.finish();
@@ -613,14 +561,10 @@ fn bench_dory_verifier(c: &mut Criterion) {
     sizes.insert(&Tid::new("S"), &DORY_LOG_N);
     handler.compile(&sizes);
     let inputs = dory_inputs(DORY_LOG_N);
-    let proof = handler.run_prover(inputs).expect("run_prover failed");
+    let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
     group.bench_function(format!("verifier/S={}", DORY_LOG_N).as_str(), |b| {
-        b.iter(|| {
-            handler
-                .run_verifier(proof.clone())
-                .expect("run_verifier failed")
-        })
+        b.iter(|| handler.run_verifier(&proof).expect("run_verifier failed"));
     });
 
     group.finish();
@@ -649,12 +593,12 @@ fn kzg_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
     let ss_g: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|_| g_input).collect());
     let ss_index = Value::VecScalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect());
-    let ss = ss_g.clone() * ss_index.clone();
-    let _s = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng)) * tau.clone();
+    let ss = ss_g * ss_index;
+    let _s = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng)) * tau;
 
     let z_val: Value<ArkBls12_381> =
         Value::Vec((0..n_size).map(|i| z.clone() ^ Value::Index(i)).collect());
-    let y: Value<ArkBls12_381> = p.clone().dot(z_val.clone());
+    let y: Value<ArkBls12_381> = p.clone().dot(z_val);
     let h_val: Value<ArkBls12_381> = Value::G2(h_input * tau_input);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
@@ -680,11 +624,7 @@ fn bench_kzg_prover(c: &mut Criterion) {
     let inputs = kzg_inputs();
 
     group.bench_function("prover", |b| {
-        b.iter(|| {
-            handler
-                .run_prover(inputs.clone())
-                .expect("run_prover failed")
-        })
+        b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
     });
 
     group.finish();
@@ -707,7 +647,7 @@ fn bench_kzg_verifier(c: &mut Criterion) {
         .into_iter()
         .filter(|(vid, _)| vid.0 != "p")
         .collect::<Ctx<Vid, Value<ArkBls12_381>>>();
-    let proof = handler.run_prover(inputs).expect("run_prover failed");
+    let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
     group.bench_function("verifier", |b| {
         b.iter(|| {
@@ -716,9 +656,9 @@ fn bench_kzg_verifier(c: &mut Criterion) {
             verifier_handler.compile(&sizes);
             verifier_handler.set_public_inputs(public_inputs.clone());
             verifier_handler
-                .run_verifier(proof.clone())
+                .run_verifier(&proof)
                 .expect("run_verifier failed")
-        })
+        });
     });
 
     group.finish();

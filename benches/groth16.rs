@@ -1,7 +1,7 @@
 //! Criterion benchmarks comparing arkworks Groth16 prover/verifier with Zippel's
 //! across different circuit sizes (2^10 to 2^12 constraints).
 //!
-//! Supports both noh (matvec + FFT inside zippel) and opt (h_coeffs external) modes.
+//! Supports both noh (matvec + FFT inside zippel) and opt (`h_coeffs` external) modes.
 //!
 //! Run with: `cargo bench --bench groth16`
 
@@ -111,6 +111,8 @@ fn build_dense_matrix_bc(
 }
 
 fn setup_bench(num_constraints: usize) -> BenchData {
+    type D<FF> = GeneralEvaluationDomain<FF>;
+
     let mut rng = rand::rngs::OsRng;
     let circuit = BenchCircuit { num_constraints };
     let pk =
@@ -138,7 +140,6 @@ fn setup_bench(num_constraints: usize) -> BenchData {
     let full_assignment: Vec<F> =
         [instance_assignment.clone(), witness_assignment.clone()].concat();
 
-    type D<FF> = GeneralEvaluationDomain<FF>;
     let h_coeffs = LibsnarkReduction::witness_map_from_matrices::<F, D<F>>(
         &matrices,
         num_inputs,
@@ -210,7 +211,7 @@ fn groth16_bench(c: &mut Criterion) {
         // Arkworks verifier
         {
             let pvk = ark_groth16::prepare_verifying_key(&data.vk);
-            group.bench_with_input(BenchmarkId::new("arkworks_verifier", size), &(), |b, _| {
+            group.bench_with_input(BenchmarkId::new("arkworks_verifier", size), &(), |b, ()| {
                 b.iter(|| {
                     Groth16::<E>::verify_proof(&pvk, &data.ark_proof, &data.public_inputs).unwrap()
                 });
@@ -282,32 +283,36 @@ fn groth16_bench(c: &mut Criterion) {
                 sizes.insert(&Tid::new("L"), &l);
                 sizes.insert(&Tid::new("H"), &h);
                 handler.compile(&sizes);
-                group.bench_with_input(BenchmarkId::new("zippel_opt_prover", size), &(), |b, _| {
-                    b.iter(|| {
-                        let h_coeffs = LibsnarkReduction::witness_map_from_matrices::<
-                            F,
-                            GeneralEvaluationDomain<F>,
-                        >(
-                            &data.matrices,
-                            data.num_inputs,
-                            data.num_constraints,
-                            &[
-                                data.instance_assignment.clone(),
-                                data.witness_assignment.clone(),
-                            ]
-                            .concat(),
-                        )
-                        .unwrap();
-                        let mut h_coeffs_padded = h_coeffs;
-                        h_coeffs_padded.resize(data.h_size, F::zero());
-                        let mut inputs = zippel_inputs.clone();
-                        inputs.insert(
-                            &Vid("h_coeffs".to_string()),
-                            &Value::VecScalar(h_coeffs_padded),
-                        );
-                        handler.run_prover(inputs).unwrap()
-                    });
-                });
+                group.bench_with_input(
+                    BenchmarkId::new("zippel_opt_prover", size),
+                    &(),
+                    |b, ()| {
+                        b.iter(|| {
+                            let h_coeffs = LibsnarkReduction::witness_map_from_matrices::<
+                                F,
+                                GeneralEvaluationDomain<F>,
+                            >(
+                                &data.matrices,
+                                data.num_inputs,
+                                data.num_constraints,
+                                &[
+                                    data.instance_assignment.clone(),
+                                    data.witness_assignment.clone(),
+                                ]
+                                .concat(),
+                            )
+                            .unwrap();
+                            let mut h_coeffs_padded = h_coeffs;
+                            h_coeffs_padded.resize(data.h_size, F::zero());
+                            let mut inputs = zippel_inputs.clone();
+                            inputs.insert(
+                                &Vid("h_coeffs".to_string()),
+                                &Value::VecScalar(h_coeffs_padded),
+                            );
+                            handler.run_prover(&inputs).unwrap()
+                        });
+                    },
+                );
             }
 
             // Zippel opt verifier
@@ -348,8 +353,8 @@ fn groth16_bench(c: &mut Criterion) {
                     &Vid("h_coeffs".to_string()),
                     &Value::VecScalar(h_coeffs_padded),
                 );
-                let proof = handler.run_prover(prover_inputs).unwrap();
-                let verification = check_verification(handler.run_verifier(proof.clone()).unwrap());
+                let proof = handler.run_prover(&prover_inputs).unwrap();
+                let verification = check_verification(handler.run_verifier(&proof).unwrap());
                 assert!(
                     verification.passed,
                     "opt verification failed in bench setup"
@@ -358,10 +363,10 @@ fn groth16_bench(c: &mut Criterion) {
                 group.bench_with_input(
                     BenchmarkId::new("zippel_opt_verifier", size),
                     &(),
-                    |b, _| {
+                    |b, ()| {
                         b.iter_batched(
                             || proof.clone(),
-                            |proof| handler.run_verifier(proof).unwrap(),
+                            |proof| handler.run_verifier(&proof).unwrap(),
                             criterion::BatchSize::SmallInput,
                         );
                     },
@@ -451,13 +456,17 @@ fn groth16_bench(c: &mut Criterion) {
                 sizes.insert(&Tid::new("C"), &c);
                 sizes.insert(&Tid::new("D"), &d);
                 handler.compile(&sizes);
-                group.bench_with_input(BenchmarkId::new("zippel_noh_prover", size), &(), |b, _| {
-                    b.iter_batched(
-                        || noh_inputs.clone(),
-                        |inputs| handler.run_prover(inputs).unwrap(),
-                        criterion::BatchSize::SmallInput,
-                    );
-                });
+                group.bench_with_input(
+                    BenchmarkId::new("zippel_noh_prover", size),
+                    &(),
+                    |b, ()| {
+                        b.iter_batched(
+                            || noh_inputs.clone(),
+                            |inputs| handler.run_prover(&inputs).unwrap(),
+                            criterion::BatchSize::SmallInput,
+                        );
+                    },
+                );
             }
 
             // Zippel noh verifier
@@ -496,8 +505,8 @@ fn groth16_bench(c: &mut Criterion) {
                     .filter(|(vid, _)| public_input_names.contains(&vid.0.as_str()))
                     .collect();
                 handler.set_public_inputs(public_inputs_ctx);
-                let proof = handler.run_prover(noh_inputs.clone()).unwrap();
-                let verification = check_verification(handler.run_verifier(proof.clone()).unwrap());
+                let proof = handler.run_prover(&noh_inputs).unwrap();
+                let verification = check_verification(handler.run_verifier(&proof).unwrap());
                 assert!(
                     verification.passed,
                     "noh verification failed in bench setup"
@@ -506,10 +515,10 @@ fn groth16_bench(c: &mut Criterion) {
                 group.bench_with_input(
                     BenchmarkId::new("zippel_noh_verifier", size),
                     &(),
-                    |b, _| {
+                    |b, ()| {
                         b.iter_batched(
                             || proof.clone(),
-                            |proof| handler.run_verifier(proof).unwrap(),
+                            |proof| handler.run_verifier(&proof).unwrap(),
                             criterion::BatchSize::SmallInput,
                         );
                     },

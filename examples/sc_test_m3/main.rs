@@ -16,6 +16,10 @@ const W_LEN: usize = 1 << (M - 1);
 const IO_LEN: usize = W_LEN - 1;
 
 fn main() {
+    type F = <ArkBls12_381 as ArkConfig>::F;
+    type G1 = <ArkBls12_381 as ArkConfig>::G1;
+    type G2 = <ArkBls12_381 as ArkConfig>::G2;
+
     let zippel_file = PathBuf::from(
         std::env::var("SC_TEST_M3_FILE").unwrap_or_else(|_| "/tmp/sc_test_m3.zippel".to_string()),
     );
@@ -25,9 +29,6 @@ fn main() {
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile(&Ctx::new());
 
-    type F = <ArkBls12_381 as ArkConfig>::F;
-    type G1 = <ArkBls12_381 as ArkConfig>::G1;
-    type G2 = <ArkBls12_381 as ArkConfig>::G2;
     let mut rng = rand::rngs::OsRng;
     let one = F::from(1u64);
 
@@ -57,11 +58,11 @@ fn main() {
         (Vid("f_one".to_string()), Value::Scalar(one)),
     ]);
     let prover_start = Instant::now();
-    let proof = handler.run_prover(inputs).expect("run_prover failed");
+    let proof = handler.run_prover(&inputs).expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
     println!("Prover:   {prover_elapsed:.2?}");
     let verifier_start = Instant::now();
-    let verifier_result = handler.run_verifier(proof).expect("run_verifier failed");
+    let verifier_result = handler.run_verifier(&proof).expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     println!("Verifier: {verifier_elapsed:.2?}");
 

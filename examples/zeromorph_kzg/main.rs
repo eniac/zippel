@@ -27,7 +27,7 @@ fn main() {
         .filter(|(vid, _)| PUBLIC_INPUT_NAMES.contains(&vid.0.as_str()))
         .collect::<Ctx<Vid, Value<ArkBls12_381>>>();
     handler.set_public_inputs(public_inputs);
-    common::run_prover_and_verify(&mut handler, inputs);
+    common::run_prover_and_verify(&mut handler, &inputs);
 
     println!("\n--- Static Analysis ---");
     let analysis_args =

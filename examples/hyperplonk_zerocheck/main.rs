@@ -32,7 +32,7 @@ fn main() {
 
     let inputs = prover_create_inputs();
     let prover_start = Instant::now();
-    let proof = handler.run_prover(inputs).expect("run_prover failed");
+    let proof = handler.run_prover(&inputs).expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
@@ -41,7 +41,7 @@ fn main() {
         proof.len()
     );
     let verifier_start = Instant::now();
-    let verifier_result = handler.run_verifier(proof).expect("run_verifier failed");
+    let verifier_result = handler.run_verifier(&proof).expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     let result = check_verification(verifier_result);
     println!("Verifier time:  {verifier_elapsed:.2?}");
@@ -79,16 +79,16 @@ fn main() {
     }
 }
 
-/// A satisfying ZeroCheck instance: three length-`num_points` MLE evaluation
+/// A satisfying `ZeroCheck` instance: three length-`num_points` MLE evaluation
 /// vectors `a`, `b`, `c` with `c = a ⊙ b` (Hadamard) on every hypercube
-/// point, so that `f(x) = a(x)·b(x) - c(x)` vanishes on B_s.
+/// point, so that `f(x) = a(x)·b(x) - c(x)` vanishes on `B_s`.
 struct ZeroCheckInstance<F> {
     a: Vec<F>,
     b: Vec<F>,
     c: Vec<F>,
 }
 
-/// Build a random satisfying ZeroCheck instance: draw `a` and `b` uniformly,
+/// Build a random satisfying `ZeroCheck` instance: draw `a` and `b` uniformly,
 /// set `c[i] = a[i] · b[i]`.
 fn random_zerocheck<F, R>(rng: &mut R, num_points: usize) -> ZeroCheckInstance<F>
 where

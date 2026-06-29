@@ -4,6 +4,19 @@ exclude = ["sumcheck_compare", "benchmarks"]
 default-members = [".", "lang", "runtime", "share", "graph", "backend", "analyses"]
 resolver = "2"
 
+[lints.rust]
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+wildcard_imports = "allow"
+uninlined_format_args = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+many_single_char_names = "allow"
+
 [package]
 name = "zippel"
 version = "0.1.0"

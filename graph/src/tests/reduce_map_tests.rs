@@ -317,7 +317,7 @@ fn test_reduce_map_fused_optimization_fires() {
             } else {
                 <B as backend::ArkConfig>::F::zero()
             };
-            expected += orig_poly.evaluate_mv(&vec![t, b0, b1]).unwrap();
+            expected += orig_poly.evaluate_mv(&[t, b0, b1]).unwrap();
         }
         assert_eq!(got_poly.evaluate_uv(&t), expected);
     }
@@ -386,7 +386,7 @@ fn test_reduce_map_fused_optimization_skips_non_pow_two() {
             } else {
                 <B as backend::ArkConfig>::F::zero()
             };
-            expected += orig_poly.evaluate_mv(&vec![t, b0, b1]).unwrap();
+            expected += orig_poly.evaluate_mv(&[t, b0, b1]).unwrap();
         }
         assert_eq!(got_poly.evaluate_uv(&t), expected);
     }
@@ -455,7 +455,7 @@ fn test_reduce_map_fused_optimization_skips_multiplicative() {
             } else {
                 <B as backend::ArkConfig>::F::zero()
             };
-            expected *= orig_poly.evaluate_mv(&vec![t, b0, b1]).unwrap();
+            expected *= orig_poly.evaluate_mv(&[t, b0, b1]).unwrap();
         }
         assert_eq!(got_poly.evaluate_uv(&t), expected);
     }
@@ -604,7 +604,7 @@ fn test_reduce_map_fused_optimization_skips_modified_loop_param() {
                 <B as backend::ArkConfig>::F::zero()
             };
             expected += orig_poly
-                .evaluate_mv(&vec![
+                .evaluate_mv(&[
                     t,
                     b0 + <B as backend::ArkConfig>::F::one(),
                     b1 + <B as backend::ArkConfig>::F::one(),
@@ -756,7 +756,7 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_hypercube_domain_with_
     };
     for t_idx in 0..4 {
         let t = <B as backend::ArkConfig>::F::from(t_idx);
-        let expected = orig_poly.evaluate_mv(&vec![t, one, one]).unwrap()
+        let expected = orig_poly.evaluate_mv(&[t, one, one]).unwrap()
             * <B as backend::ArkConfig>::F::from(4u64);
         assert_eq!(got_poly.evaluate_uv(&t), expected);
     }
@@ -823,7 +823,7 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_indices_domain_with_ma
         for &idx in &[3usize, 2usize, 1usize, 0usize] {
             let b0 = <B as backend::ArkConfig>::F::from((idx % 2) as u64);
             let b1 = <B as backend::ArkConfig>::F::from(((idx / 2) % 2) as u64);
-            expected += orig_poly.evaluate_mv(&vec![t, b0, b1]).unwrap();
+            expected += orig_poly.evaluate_mv(&[t, b0, b1]).unwrap();
         }
         assert_eq!(got_poly.evaluate_uv(&t), expected);
     }
@@ -893,7 +893,7 @@ fn test_reduce_map_fused_optimization_skips_arity_mismatch() {
             } else {
                 <B as backend::ArkConfig>::F::zero()
             };
-            expected += orig_poly.evaluate_mv(&vec![t, b0, b1]).unwrap();
+            expected += orig_poly.evaluate_mv(&[t, b0, b1]).unwrap();
         }
         assert_eq!(got_poly.evaluate_uv(&t), expected);
     }

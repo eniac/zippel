@@ -150,7 +150,7 @@ fn zippel_proof_to_ark(proof: &[Value<ArkBls12_381>]) -> ark_groth16::Proof<E> {
 fn run_and_verify(
     zippel_path: &str,
     sizes: &Ctx<Tid, usize>,
-    inputs: Ctx<Vid, Value<ArkBls12_381>>,
+    inputs: &Ctx<Vid, Value<ArkBls12_381>>,
     public_input_names: &[&str],
     vk: &ark_groth16::VerifyingKey<E>,
     instance_assignment: &[F],
@@ -179,7 +179,7 @@ fn run_and_verify(
     verifier_handler.compile(sizes);
     verifier_handler.set_public_inputs(public_inputs_ctx);
     let verifier_start = Instant::now();
-    let verifier_result = verifier_handler.run_verifier(proof.clone()).unwrap();
+    let verifier_result = verifier_handler.run_verifier(&proof).unwrap();
     let verifier_elapsed = verifier_start.elapsed();
     let result = check_verification(verifier_result);
     println!("Zippel verifier time: {verifier_elapsed:.2?}");
@@ -253,7 +253,7 @@ fn run_groth16(
     run_and_verify(
         "examples/groth16/groth16.zippel",
         &sizes,
-        inputs,
+        &inputs,
         &public_input_names,
         vk,
         instance_assignment,
@@ -261,6 +261,7 @@ fn run_groth16(
 }
 
 fn main() {
+    type D<FF> = GeneralEvaluationDomain<FF>;
     println!("=== Groth16 (ArkBls12_381) — constraints: {CONSTRAINT_SIZE} ===");
 
     let circuit = BenchCircuit {
@@ -277,7 +278,7 @@ fn main() {
         construct_matrices: true,
         generate_lc_assignments: false,
     });
-    circuit.clone().generate_constraints(cs.clone()).unwrap();
+    circuit.generate_constraints(cs.clone()).unwrap();
     cs.finalize();
 
     let cs_borrowed = cs.borrow().unwrap();
@@ -299,8 +300,6 @@ fn main() {
         pk.l_query.len(),
         pk.h_query.len()
     );
-
-    type D<FF> = GeneralEvaluationDomain<FF>;
 
     let full_assignment: Vec<F> =
         [instance_assignment.clone(), witness_assignment.clone()].concat();

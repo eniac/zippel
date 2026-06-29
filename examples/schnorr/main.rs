@@ -15,7 +15,7 @@ fn main() {
     handler.compile(&Ctx::new());
 
     let inputs = prover_create_inputs();
-    common::run_prover_and_verify(&mut handler, inputs);
+    common::run_prover_and_verify(&mut handler, &inputs);
 
     // Static analysis (completeness, ZK, & soundness)
     println!("\n--- Static Analysis ---");

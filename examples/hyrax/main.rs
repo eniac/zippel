@@ -23,11 +23,11 @@ fn main() {
 
     let inputs = prover_create_inputs();
     let t = Instant::now();
-    let proof = handler.run_prover(inputs).expect("run_prover failed");
+    let proof = handler.run_prover(&inputs).expect("run_prover failed");
     println!("Prover time:    {:.2?}", t.elapsed());
     println!("Proof items:    {}", proof.len());
     let t = Instant::now();
-    let verifier_result = handler.run_verifier(proof).expect("run_verifier failed");
+    let verifier_result = handler.run_verifier(&proof).expect("run_verifier failed");
     println!("Verifier time:  {:.2?}", t.elapsed());
 
     let result = check_verification(verifier_result);

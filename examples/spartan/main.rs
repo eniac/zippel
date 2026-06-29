@@ -123,7 +123,7 @@ fn main() {
     }
 }
 
-fn hyrax_split(m: usize) -> (usize, usize) {
+const fn hyrax_split(m: usize) -> (usize, usize) {
     let nw = m - 1;
     let l = nw / 2;
     let m_h = nw - l;
@@ -136,16 +136,17 @@ fn run_one(m: usize, invalid: bool, manual_zippel: Option<&str>) -> RunResult {
         "M must be >= 3 (Hyrax needs NW = M-1 >= 2 to split L,M_h both >= 1)"
     );
 
-    let zippel_path = if let Some(path) = manual_zippel {
-        std::path::PathBuf::from(path)
-    } else {
-        let proto = generate_proto(m);
-        let tmp_dir = std::env::temp_dir().join("zippel_spartan");
-        std::fs::create_dir_all(&tmp_dir).expect("create tmp dir");
-        let p = tmp_dir.join(format!("spartan_m{m}.zippel"));
-        std::fs::write(&p, proto).expect("write generated proto");
-        p
-    };
+    let zippel_path = manual_zippel.map_or_else(
+        || {
+            let proto = generate_proto(m);
+            let tmp_dir = std::env::temp_dir().join("zippel_spartan");
+            std::fs::create_dir_all(&tmp_dir).expect("create tmp dir");
+            let p = tmp_dir.join(format!("spartan_m{m}.zippel"));
+            std::fs::write(&p, proto).expect("write generated proto");
+            p
+        },
+        std::path::PathBuf::from,
+    );
 
     let args = ZippelArgs::new(zippel_path);
     let mut handler: ZippelHandler<ArkCurve25519> = ZippelHandler::new(args);
@@ -166,11 +167,11 @@ fn run_one(m: usize, invalid: bool, manual_zippel: Option<&str>) -> RunResult {
         }
     }
     let prover_start = Instant::now();
-    let proof = handler.run_prover(inputs).expect("run_prover failed");
+    let proof = handler.run_prover(&inputs).expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkCurve25519>(&proof);
     let verifier_start = Instant::now();
-    let verifier_result = handler.run_verifier(proof).expect("run_verifier failed");
+    let verifier_result = handler.run_verifier(&proof).expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     if std::env::var("SPARTAN_DEBUG_VERIFIES").is_ok() {
         for (i, v) in verifier_result.iter().enumerate() {
@@ -248,6 +249,7 @@ where
     F: Field,
     R: Rng + ?Sized,
 {
+    const K_NNZ_PER_ROW: usize = 1;
     let num_vars = w.len() + io.len() + 1;
     assert_eq!(num_vars, m, "z = w ++ io ++ [1] must have length m");
 
@@ -257,7 +259,6 @@ where
     z.push(F::from(1u64));
 
     let const_col = m - 1;
-    const K_NNZ_PER_ROW: usize = 1;
     let pick_k_cols = |rng: &mut R, force_include: Option<usize>| -> Vec<usize> {
         let mut cols: Vec<usize> = Vec::with_capacity(K_NNZ_PER_ROW);
         if let Some(c) = force_include {
@@ -446,7 +447,7 @@ fn generate_proto(m: usize) -> String {
     assert_eq!(nrows * ncols, two_nw);
 
     format!(
-        r#"fn eq_weights<G: Group, F: Scalar<G>>(public x: [F; 1]) -> [F; 2] {{
+        r"fn eq_weights<G: Group, F: Scalar<G>>(public x: [F; 1]) -> [F; 2] {{
     [(1 - x[0]), x[0]]
 }}
 fn eq_weights<G: Group, F: Scalar<G>, EK: 2..21>(public x: [F; EK]) -> [F; 2^EK] {{
@@ -981,7 +982,7 @@ proto spartan<G: Group, F: Scalar<G>>(
     verify(ipa_ok);
     verify(e_y == (ra * v1 + rb * v2 + rc * v3) * v_z)
 }}
-"#,
+",
         m_lit = m_lit,
         two_m = two_m,
         two_m_vars = two_m_vars,

@@ -32,7 +32,7 @@ fn main() {
 
     let (inputs, public_inputs) = build_inputs(n_size, b_size, l_chunk, h_deg);
     let prover_start = Instant::now();
-    let proof = handler.run_prover(inputs).expect("run_prover failed");
+    let proof = handler.run_prover(&inputs).expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<C>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
@@ -47,7 +47,7 @@ fn main() {
     verifier_handler.set_public_inputs(public_inputs);
     let verifier_start = Instant::now();
     let verifier_result = verifier_handler
-        .run_verifier(proof.clone())
+        .run_verifier(&proof)
         .expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     let result = check_verification(verifier_result.clone());
@@ -131,10 +131,10 @@ fn build_inputs(
     assert_eq!(z_vals.len(), n_size, "z_vals length must equal n_size");
     for &z in &z_vals {
         assert!(
-            z < (b_size as u64).pow(l_chunk as u32),
+            z < (b_size as u64).pow(u32::try_from(l_chunk).unwrap()),
             "witness value {} exceeds max allowed range {}",
             z,
-            (b_size as u64).pow(l_chunk as u32) - 1
+            (b_size as u64).pow(u32::try_from(l_chunk).unwrap()) - 1
         );
     }
     let mut f_evals = vec![F::zero()];
@@ -148,7 +148,7 @@ fn build_inputs(
         let r_j = F::rand(&mut rng);
         let mut chunk_j = vec![r_j];
         for z in &z_vals {
-            let chunk_val = (z / (b_size as u64).pow(j as u32)) % (b_size as u64);
+            let chunk_val = (z / (b_size as u64).pow(u32::try_from(j).unwrap())) % (b_size as u64);
             chunk_j.push(F::from(chunk_val));
         }
         chunks_evals.push(Value::VecScalar(chunk_j));

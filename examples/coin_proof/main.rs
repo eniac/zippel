@@ -17,7 +17,7 @@ fn main() {
     handler.compile(&Ctx::new());
 
     let inputs = prover_create_inputs();
-    common::run_prover_and_verify(&mut handler, inputs);
+    common::run_prover_and_verify(&mut handler, &inputs);
 
     println!("\n--- Static Analysis ---");
     let analysis_args = ZippelArgs::new(PathBuf::from("examples/coin_proof/coin_proof.zippel"));
@@ -29,9 +29,9 @@ fn main() {
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
-    let mut rng = rand::rngs::OsRng;
     type F = <ArkBls12_381 as ArkConfig>::F;
     type G1 = <ArkBls12_381 as ArkConfig>::G1;
+    let mut rng = rand::rngs::OsRng;
 
     let f = G1::rand(&mut rng);
     let g = G1::rand(&mut rng);

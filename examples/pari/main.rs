@@ -1,7 +1,7 @@
 //! PARI (Square R1CS SNARK) — small sanity check.
 //!
 //! Generates a tiny SR1CS instance (K=16 constraints, N=1 public input,
-//! K_VARS=3 variables) in the upstream "instance outliner" layout, runs
+//! `K_VARS=3` variables) in the upstream "instance outliner" layout, runs
 //! PARI's setup (G), prover (P), and verifier (V), and asserts that
 //! verification passes. Matches the matrix-layout assumptions in
 //! `pari.zippel` so the verifier's Lagrange shortcut is sound.
@@ -45,7 +45,7 @@ fn main() {
 
     let (inputs, public_inputs) = build_inputs();
     let prover_start = Instant::now();
-    let proof = handler.run_prover(inputs).expect("run_prover failed");
+    let proof = handler.run_prover(&inputs).expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<C>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
@@ -69,7 +69,7 @@ fn main() {
     verifier_handler.set_public_inputs(public_inputs);
     let verifier_start = Instant::now();
     let verifier_result = verifier_handler
-        .run_verifier(proof)
+        .run_verifier(&proof)
         .expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     let result = check_verification(verifier_result);
@@ -112,7 +112,7 @@ fn main() {
 
 /// Build a satisfying SR1CS instance in the upstream instance-outliner
 /// layout (matching `pari.zippel`'s Lagrange shortcut requirement) and
-/// return (full_inputs, public_inputs).
+/// return (`full_inputs`, `public_inputs`).
 fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
     let mut rng = test_rng();
 
@@ -283,21 +283,18 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
         (Vid("w".to_string()), w_value),
         (Vid("x".to_string()), x_value.clone()),
         (Vid("omegas".to_string()), omegas_value.clone()),
-        (Vid("sigma_w".to_string()), sigma_w_value.clone()),
-        (Vid("sigma_q".to_string()), sigma_q_value.clone()),
-        (Vid("sigma_a".to_string()), sigma_a_value.clone()),
-        (Vid("sigma_b".to_string()), sigma_b_value.clone()),
-        (
-            Vid("sigma_q_prime".to_string()),
-            sigma_q_prime_value.clone(),
-        ),
+        (Vid("sigma_w".to_string()), sigma_w_value),
+        (Vid("sigma_q".to_string()), sigma_q_value),
+        (Vid("sigma_a".to_string()), sigma_a_value),
+        (Vid("sigma_b".to_string()), sigma_b_value),
+        (Vid("sigma_q_prime".to_string()), sigma_q_prime_value),
         (Vid("alpha_g".to_string()), alpha_g_value.clone()),
         (Vid("beta_g".to_string()), beta_g_value.clone()),
         (Vid("g_g1".to_string()), g_g1_value.clone()),
         (Vid("delta2_h".to_string()), delta2_h_value.clone()),
         (Vid("tau_h".to_string()), tau_h_value.clone()),
         (Vid("h_g2".to_string()), h_g2_value.clone()),
-        (Vid("v_k_coeffs".to_string()), v_k_coeffs_value.clone()),
+        (Vid("v_k_coeffs".to_string()), v_k_coeffs_value),
         (Vid("f_one".to_string()), f_one_value.clone()),
         (Vid("k_inv".to_string()), k_inv_value.clone()),
     ]);
