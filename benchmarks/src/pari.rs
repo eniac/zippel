@@ -440,6 +440,15 @@ pub mod zippel_side {
                 ),
                 (Vid("f_one".to_string()), Value::Scalar(F::one())),
                 (Vid("k_inv".to_string()), Value::Scalar(self.srs.k_inv)),
+                // Relation-only trapdoor witnesses required by the
+                // proto's `where` clause. Body/verifier don't read
+                // them; `with_skip_analyses()` keeps the where out of
+                // the executable graph, but `run_prover` still checks
+                // every formal private input is present. Zeros suffice.
+                (Vid("tau".to_string()), Value::Scalar(F::zero())),
+                (Vid("alpha".to_string()), Value::Scalar(F::zero())),
+                (Vid("beta".to_string()), Value::Scalar(F::zero())),
+                (Vid("delta2".to_string()), Value::Scalar(F::zero())),
             ]);
 
             let public_inputs = Ctx::<Vid, Value<C>>::from_iter([

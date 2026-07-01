@@ -123,7 +123,15 @@ proto hyperplonk_multiset<F: Field, S: Size, N: 2^S>(
     public g_evs:   [F; N],
     public r:       F,
     public v_evs:   [F; 2^(S+1)]
-) where f_evs[0] == f_evs[0] {
+) where
+    // MultiSet check proves the multisets {f_evs} and {g_evs} coincide.
+    // The standard reduction interpolates each side as a polynomial in X:
+    //   Prod_i (X + f_evs[i]) == Prod_i (X + g_evs[i]),
+    // an identity in F[X] that (by Schwartz-Zippel) holds iff the
+    // multisets are equal. Specializing at the FS challenge r gives:
+    reduce(*, [r + f_evs[i] for i in 0..N])
+    == reduce(*, [r + g_evs[i] for i in 0..N])
+{
     let one  = f_evs[0] - f_evs[0] + 1;
     let zero = f_evs[0] - f_evs[0];
 

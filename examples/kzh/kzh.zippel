@@ -25,6 +25,26 @@ fn eq_weights<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 2
     (prev * (1 - a)) ++ (prev * a)
 }
 
+// Private-input variant of eq_weights, used by the proto's `where`
+// clause to expand the trusted-setup trapdoors (tau_x, tau_y) into
+// their Lagrange-basis weights so the SRS tensor identity can be
+// declared structurally. Body is identical; only the qualifier differs
+// (qualifier-poly function dispatch isn't established elsewhere).
+fn eq_weights_priv<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
+    private x: [F; 1]
+) -> [F; 2] {
+    [ (1 - x[0]), x[0] ]
+}
+
+fn eq_weights_priv<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 2..16>(
+    private x: [F; K]
+) -> [F; 2^K] {
+    let x_lo = x[0..(K-1)];
+    let a = x[K-1];
+    let prev = eq_weights_priv(x_lo);
+    (prev * (1 - a)) ++ (prev * a)
+}
+
 proto kzh<
     G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>
 >(
@@ -33,8 +53,32 @@ proto kzh<
     public h_y:     [G1; 4],
     public d_x:     [G1; 4],
     public v_prime: G2,
-    public v_x:     [G2; 4]
-) where true {
+    public v_x:     [G2; 4],
+    // Relation-only trapdoor witnesses (analogous to pst13's private
+    // alpha). Body/verifier don't reference these; the `where` clause
+    // uses them to declare the KZH-2 SRS tensor structure.
+    private g_gen:  G1,
+    private tau_x:  [F; 2],
+    private tau_y:  [F; 2]
+) where
+    // KZH-2 SRS tensor structure at the trapdoor (τ_x, τ_y):
+    //   H^{i,j} = g · eq(τ_x, i_bits) · eq(τ_y, j_bits)
+    //   D^i    = g · eq(τ_x, i_bits)
+    //   H^j    = g · eq(τ_y, j_bits)
+    // This captures the x-marginal (d_x) and y-marginal (h_y) of the
+    // full 2D tensor h_xy under the same generator, which is the
+    // structural identity that makes the Fig. 2 pairing check
+    //   e(C, V') == Σ_x e(D^x, V^x)
+    // succeed for correctly-formed commitments. The V' / V^x tie to a
+    // separate G2 trapdoor is intentionally left off — it would
+    // require exposing h_gen and the y-trapdoor lift, which is more
+    // machinery than the analyzer needs for the primary tensor claim.
+    let eq_x = eq_weights_priv(tau_x);
+    let eq_y = eq_weights_priv(tau_y);
+    reduce(&&, [h_xy[k] == g_gen * (eq_x[k / 4] * eq_y[k % 4]) for k in 0..16])
+    && reduce(&&, [d_x[i] == g_gen * eq_x[i] for i in 0..4])
+    && reduce(&&, [h_y[j] == g_gen * eq_y[j] for j in 0..4])
+{
     // -------- Phase 1: commit --------
     let c = dot(f_evals, h_xy);
     c_commit <- c;

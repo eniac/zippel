@@ -297,6 +297,14 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
         (Vid("v_k_coeffs".to_string()), v_k_coeffs_value),
         (Vid("f_one".to_string()), f_one_value.clone()),
         (Vid("k_inv".to_string()), k_inv_value.clone()),
+        // Relation-only trapdoor witnesses required by the `where`
+        // clause. Body/verifier don't reference them; zeros are fine
+        // at runtime — the where clause is consumed by static analyses,
+        // which don't require cryptographically-meaningful values.
+        (Vid("tau".to_string()), Value::Scalar(F::zero())),
+        (Vid("alpha".to_string()), Value::Scalar(F::zero())),
+        (Vid("beta".to_string()), Value::Scalar(F::zero())),
+        (Vid("delta2".to_string()), Value::Scalar(F::zero())),
     ]);
 
     let public_inputs = Ctx::<Vid, Value<C>>::from_iter([

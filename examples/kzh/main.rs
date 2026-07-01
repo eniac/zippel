@@ -89,6 +89,15 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         })
         .collect();
 
+    // Relation-only trapdoor witnesses required by the `where` clause.
+    // The proto body never reads them; zeros are fine at runtime — the
+    // static analyzer is where they matter, and it consumes them via
+    // the where clause without needing cryptographically-meaningful
+    // values.
+    let g_gen = <ArkBls12_381 as ArkConfig>::G1::zero();
+    let tau_x = vec![<ArkBls12_381 as ArkConfig>::F::zero(); NX];
+    let tau_y = vec![<ArkBls12_381 as ArkConfig>::F::zero(); NY];
+
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("f_evals".to_string()), Value::VecScalar(f_evals)),
         (Vid("h_xy".to_string()), Value::VecG1(h_xy_vals)),
@@ -96,5 +105,8 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("d_x".to_string()), Value::VecG1(d_x_vals)),
         (Vid("v_prime".to_string()), Value::G2(v_prime)),
         (Vid("v_x".to_string()), Value::VecG2(v_x_vals)),
+        (Vid("g_gen".to_string()), Value::G1(g_gen)),
+        (Vid("tau_x".to_string()), Value::VecScalar(tau_x)),
+        (Vid("tau_y".to_string()), Value::VecScalar(tau_y)),
     ])
 }

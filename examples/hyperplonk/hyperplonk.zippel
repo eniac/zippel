@@ -223,7 +223,25 @@ proto hyperplonk<F: Field, S: Size, N: 2^S>(
     public r2:           F,
     public r:            F,
     public v_evs:        [F; 2^(S+1)]
-) where a_evs[0] == a_evs[0] {
+) where
+    // HyperPlonk proves TWO things jointly:
+    //   (1) Gate identity holds on every gate i in 0..N:
+    //         ql[i]*a[i] + qr[i]*b[i] + qo[i]*c[i]
+    //         + qm[i]*a[i]*b[i] + qc[i] == 0
+    //   (2) Copy constraint via Grand-Product PIOP randomized at (r2, r):
+    //         Prod_i (r + s_id[i]    + r2*a[i])
+    //       = Prod_i (r + s_sigma[i] + r2*b[i])
+    //     which holds iff (a, b) respects the permutation encoded by
+    //     (s_id, s_sigma). Mirrors the k=2 fold used by perm_round.
+    let zero_f = a_evs[0] - a_evs[0];
+    reduce(&&, [
+        q_l_evs[i] * a_evs[i] + q_r_evs[i] * b_evs[i] + q_o_evs[i] * c_evs[i]
+        + q_m_evs[i] * a_evs[i] * b_evs[i] + q_c_evs[i] == zero_f
+        for i in 0..N
+    ])
+    && reduce(*, [r + s_id_evs[i]    + r2 * a_evs[i] for i in 0..N])
+    == reduce(*, [r + s_sigma_evs[i] + r2 * b_evs[i] for i in 0..N])
+{
     let one  = a_evs[0] - a_evs[0] + 1;
     let zero = a_evs[0] - a_evs[0];
 
