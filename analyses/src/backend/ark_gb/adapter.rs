@@ -1,6 +1,6 @@
 //! Adapter that hosts ark-gb's Gröbner-basis engine inside zippel.
 //!
-//! Routes zippel `SparsePolynomial`s through ark-gb's `compute_gb`,
+//! Routes zippel `Polynomial<F>`s through ark-gb's `compute_gb`,
 //! which is ~10000× faster than the in-tree Buchberger implementation
 //! on Katsura/Cyclic-n.
 //!
@@ -8,14 +8,13 @@
 //!
 //! Two adapter entry points:
 //!
-//! * [`compute_reduced_gb_grevlex`] — for `GrevLexTerm`. Uses ark-gb's
+//! * [`compute_reduced_gb_grevlex`] — single GrevLex block. Uses ark-gb's
 //!   built-in `ArkGrev<W>`; var-index assignment is just sorted-PRef
 //!   order.
 //!
-//! * [`compute_reduced_gb_with_elim`] — for `ElimMono<E>`. Uses an ark-gb
-//!   monomial wrapper [`ZippelElimMono`] whose `Ord` and `cmp_key` are
-//!   overridden to implement zippel's block-elimination order:
-//!   `(elim_block_grevlex, keep_block_grevlex)` lex.
+//! * [`compute_reduced_gb_with_elim`] — 2-block GrevLex/GrevLex (elim).
+//!   Uses an ark-gb monomial wrapper [`ZippelElimMono`] whose `Ord` and
+//!   `cmp_key` overridden to implement block-elimination order.
 //!
 //!   The block-elim encoding relies on **var-index reordering**: eliminated
 //!   `PRef`s get *high* ark-gb indices (which sit at MSB byte positions in
@@ -30,9 +29,9 @@
 //! 1. Collect the union of `PRef`s used in `input`.
 //! 2. Partition (elim path only) and assign ark-gb indices `0..nvars`.
 //! 3. Build `Arc<Ring<F, W>>` (W = 128 ⇒ ≤ 1023 variables).
-//! 4. Convert each `SparsePolynomial` to `ark_gb::Poly<F, M, W>`.
+//! 4. Convert each `Polynomial<F>` to `ark_gb::Poly<F, M, W>`.
 //! 5. Call `ark_gb::compute_gb(ring, polys)`.
-//! 6. Convert the result back to zippel's `Vec<SparsePolynomial<F, T>>`.
+//! 6. Convert the result back to `Vec<Polynomial<F>>`.
 //!
 //! # Limits
 //!
@@ -46,7 +45,7 @@
 //!
 //! [`compute_reduced_gb_with_elim`] uses a thread-local mask and therefore calls
 //! ark-gb's serial driver directly. This keeps elim ordering independent of
-//! the process-wide `ARK_GB_THREADS` setting. The `GrevLexTerm` path has no
+//! the process-wide `ARK_GB_THREADS` setting. The GrevLex path has no
 //! thread-local ordering state and still uses ark-gb's env-dispatched
 //! `compute_gb`.
 
@@ -60,11 +59,7 @@ use ark_gb::poly::Poly;
 use ark_gb::ring::Ring;
 use share::{Ctx, Set};
 
-use crate::backend::ark_gb::monomial::{
-    ElimMono, ElimStrategy, GrevLexTerm, MonoTerm as ZipMonoTerm, Monomial as ZipMonomial,
-};
-use crate::backend::ark_gb::sparsepoly::SparsePolynomial;
-use crate::backend::ark_gb::tiered::{TieredElimMono, TieredElimStrategy};
+use crate::frontend::{Monomial, Polynomial};
 use graph::PRef;
 
 /// Max per-variable exponent ark-gb's 7-bit packing supports.
@@ -76,62 +71,22 @@ pub(crate) const fn max_vars_for_w(w: usize) -> usize {
 }
 
 // ---------------------------------------------------------------------------
-// Shim trait: borrow the underlying zippel `MonoTerm` from either of the
-// two zippel monomial wrappers. Defined locally so we don't have to extend
-// the public `Monomial` trait in `monomial.rs`.
+// GrevLex path.
 // ---------------------------------------------------------------------------
 
-/// Adapter-local accessor for the underlying zippel `MonoTerm` map.
-///
-/// Implemented for `GrevLexTerm` and `ElimMono<E>` via their `pub(crate)`
-/// `as_mono_term()` inherent methods. This lets the conversion helpers be
-/// generic over the zippel term type without exposing `MonoTerm` outside
-/// the crate.
-pub(crate) trait HasMonoTerm {
-    fn as_mono_term(&self) -> &ZipMonoTerm;
-}
-
-impl HasMonoTerm for GrevLexTerm {
-    #[inline]
-    fn as_mono_term(&self) -> &ZipMonoTerm {
-        GrevLexTerm::as_mono_term(self)
-    }
-}
-
-impl<E: ElimStrategy> HasMonoTerm for ElimMono<E> {
-    #[inline]
-    fn as_mono_term(&self) -> &ZipMonoTerm {
-        ElimMono::as_mono_term(self)
-    }
-}
-
-impl<E: TieredElimStrategy> HasMonoTerm for TieredElimMono<E> {
-    #[inline]
-    fn as_mono_term(&self) -> &ZipMonoTerm {
-        TieredElimMono::as_mono_term(self)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// GrevLexTerm path.
-// ---------------------------------------------------------------------------
-
-/// `GrevLexTerm` backend: fully parametric on W.
-/// Routes through ark-gb's built-in `ArkGrev<W>`.
 /// Shared pipeline for computing a reduced Gröbner basis with ark-gb.
 ///
 /// Takes the variable ordering, validation result, and a function that computes the GB given
 /// a ring and converted polynomials. This consolidates the common setup
 /// and conversion logic between grevlex and elim paths.
-pub(crate) fn compute_gb_pipeline<F, T, M, const W: usize, GbFn>(
-    input: Vec<SparsePolynomial<F, T>>,
+pub(crate) fn compute_gb_pipeline<F, M, const W: usize, GbFn>(
+    input: Vec<Polynomial<F>>,
     var_order: Vec<PRef>,
     exponents_fit: bool,
     gb_fn: GbFn,
-) -> Vec<SparsePolynomial<F, T>>
+) -> Vec<Polynomial<F>>
 where
     F: Field,
-    T: ZipMonomial + HasMonoTerm,
     M: ArkMonomial<F, W>,
     GbFn: FnOnce(Arc<Ring<F, W>>, Vec<Poly<F, M, W>>) -> Vec<Poly<F, M, W>>,
 {
@@ -150,31 +105,24 @@ where
 
     let polys: Vec<Poly<F, M, W>> = input
         .into_iter()
-        .map(|p| zippel_poly_to_ark_gb::<F, T, M, W>(&ring, &var_index, actual_nvars, p))
+        .map(|p| poly_to_ark_gb::<F, M, W>(&ring, &var_index, actual_nvars, p))
         .collect();
 
     let gb = gb_fn(Arc::clone(&ring), polys);
 
-    let mut out: Vec<SparsePolynomial<F, T>> = gb
-        .into_iter()
-        .map(|p| ark_gb_to_zippel::<F, T, M, W>(&ring, &var_order, p))
-        .collect();
-    sort_basis_by_zippel_lt(&mut out);
-    out
+    gb.into_iter()
+        .map(|p| ark_gb_to_poly::<F, M, W>(&ring, &var_order, p))
+        .collect()
 }
 
 pub(crate) fn compute_reduced_gb_grevlex<F: Field, const W: usize>(
-    _num_vars: usize,
-    input: Vec<SparsePolynomial<F, GrevLexTerm>>,
-) -> Vec<SparsePolynomial<F, GrevLexTerm>> {
+    input: Vec<Polynomial<F>>,
+) -> Vec<Polynomial<F>> {
     let (vars, exponents_fit) = collect_and_validate(&input);
     let var_order: Vec<PRef> = vars.iter().cloned().collect();
-    compute_gb_pipeline::<F, GrevLexTerm, ArkGrev<W>, W, _>(
-        input,
-        var_order,
-        exponents_fit,
-        |ring, polys| ark_gb::compute_gb::<F, ArkGrev<W>, W>(ring, polys),
-    )
+    compute_gb_pipeline::<F, ArkGrev<W>, W, _>(input, var_order, exponents_fit, |ring, polys| {
+        ark_gb::compute_gb::<F, ArkGrev<W>, W>(ring, polys)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -381,17 +329,12 @@ impl<F: Field, const W: usize> ArkMonomial<F, W> for ZippelElimMono<W> {
     }
 }
 
-/// Generic elim-ordering backend, parametric on W and the zippel term type.
+/// Generic elim-ordering backend, parametric on W.
 /// Routes to ark-gb with elim-aware monomial ordering.
-pub(crate) fn compute_reduced_gb_with_elim<F, T, const W: usize>(
-    _num_vars: usize,
-    input: Vec<SparsePolynomial<F, T>>,
+pub(crate) fn compute_reduced_gb_with_elim<F: Field, const W: usize>(
+    input: Vec<Polynomial<F>>,
     eliminate_fn: &dyn Fn(&PRef) -> bool,
-) -> Vec<SparsePolynomial<F, T>>
-where
-    F: Field,
-    T: ZipMonomial + HasMonoTerm,
-{
+) -> Vec<Polynomial<F>> {
     let (keep_vars, elim_vars, exponents_fit) = collect_vars_with(&input, eliminate_fn);
     let actual_nvars = keep_vars.len() + elim_vars.len();
 
@@ -408,7 +351,7 @@ where
     let _guard =
         ElimMaskGuard::<W>::install(build_elim_byte_mask::<W>(keep_vars.len(), actual_nvars));
 
-    compute_gb_pipeline::<F, T, ZippelElimMono<W>, W, _>(
+    compute_gb_pipeline::<F, ZippelElimMono<W>, W, _>(
         input,
         var_order,
         exponents_fit,
@@ -416,8 +359,8 @@ where
     )
 }
 
-fn collect_vars_with<F: Field, T: ZipMonomial + HasMonoTerm>(
-    input: &[SparsePolynomial<F, T>],
+fn collect_vars_with<F: Field>(
+    input: &[Polynomial<F>],
     eliminate_fn: &dyn Fn(&PRef) -> bool,
 ) -> (Vec<PRef>, Vec<PRef>, bool) {
     let (vars, exponents_fit) = collect_and_validate(input);
@@ -452,27 +395,17 @@ fn build_elim_byte_mask<const W: usize>(num_keep: usize, nvars: usize) -> [u64; 
 // Shared helpers (generic over zippel term type T and ark-gb monomial M).
 // ---------------------------------------------------------------------------
 
-/// Union of `PRef`s appearing in any term of any input polynomial. Shared
-/// by both backend paths; the elim path additionally partitions the result
-/// using the elimination strategy's `eliminate_var` predicate.
-/// Collect all PRef variables and validate exponents in a single traversal.
+/// Collect all PRef variables from input polynomials and validate exponents.
 /// Returns (variable_set, exponents_fit).
-pub(crate) fn collect_and_validate<F: Field, T: ZipMonomial + HasMonoTerm>(
-    input: &[SparsePolynomial<F, T>],
-) -> (Set<PRef>, bool) {
+pub(crate) fn collect_and_validate<F: Field>(input: &[Polynomial<F>]) -> (Set<PRef>, bool) {
     let mut vars: Set<PRef> = Set::new();
     let mut exponents_fit = true;
     for p in input {
-        for (term, _) in p.terms.iter() {
-            for v in term.vars() {
-                vars.insert(v);
-            }
-            if exponents_fit {
-                for (_, &e) in term.as_mono_term().iter_pairs() {
-                    if e > MAX_EXPONENT {
-                        exponents_fit = false;
-                        break;
-                    }
+        for mono in p.terms.keys() {
+            for (v, &e) in mono.iter() {
+                vars.insert(v.clone());
+                if exponents_fit && e > MAX_EXPONENT {
+                    exponents_fit = false;
                 }
             }
         }
@@ -480,49 +413,39 @@ pub(crate) fn collect_and_validate<F: Field, T: ZipMonomial + HasMonoTerm>(
     (vars, exponents_fit)
 }
 
-/// Convert a zippel polynomial (in the term type `T`) to an ark-gb polynomial
-/// (in the ark-gb monomial type `M`). Caller guarantees every `PRef` in the
-/// term is present in `var_index`, and per-variable exponents fit (checked
-/// by `exponents_fit` before invocation).
-fn zippel_poly_to_ark_gb<
-    F: Field,
-    T: ZipMonomial + HasMonoTerm,
-    M: ArkMonomial<F, W>,
-    const W: usize,
->(
+/// Convert a zippel `Polynomial<F>` to an ark-gb polynomial in monomial type `M`.
+fn poly_to_ark_gb<F: Field, M: ArkMonomial<F, W>, const W: usize>(
     ring: &Ring<F, W>,
     var_index: &Ctx<PRef, usize>,
     nvars: usize,
-    p: SparsePolynomial<F, T>,
+    p: Polynomial<F>,
 ) -> Poly<F, M, W> {
     let pairs: Vec<(F, M)> = p
         .terms
         .iter()
-        .map(|(term, coeff)| {
+        .map(|(mono, coeff)| {
             let mut exps = vec![0u32; nvars];
-            for (v, &e) in term.as_mono_term().iter_pairs() {
+            for (v, &e) in mono.iter() {
                 let idx = *var_index
                     .get(v)
                     .expect("every PRef in input was collected into var_index");
                 exps[idx] = e as u32;
             }
-            let mono = M::from_exponents(ring, &exps)
+            let m = M::from_exponents(ring, &exps)
                 .expect("exponents within ark-gb 7-bit budget (pre-checked)");
-            (*coeff, mono)
+            (*coeff, m)
         })
         .collect();
     Poly::from_terms(ring, pairs)
 }
 
-/// Convert an ark-gb polynomial back to a zippel polynomial in the term
-/// type `T`. `T: From<Vec<(PRef, usize)>>` is implied by the `Monomial`
-/// supertrait, so the bound is automatic.
-fn ark_gb_to_zippel<F: Field, T: ZipMonomial, M: ArkMonomial<F, W>, const W: usize>(
+/// Convert an ark-gb polynomial back to a zippel `Polynomial<F>`.
+fn ark_gb_to_poly<F: Field, M: ArkMonomial<F, W>, const W: usize>(
     ring: &Ring<F, W>,
     var_order: &[PRef],
     p: Poly<F, M, W>,
-) -> SparsePolynomial<F, T> {
-    let mut terms: Ctx<T, F> = Ctx::new();
+) -> Polynomial<F> {
+    let mut terms: HashMap<Monomial, F> = HashMap::new();
     for (coeff, mono) in p.iter() {
         let exps = mono.exponents(ring);
         let pairs: Vec<(PRef, usize)> = exps
@@ -536,10 +459,9 @@ fn ark_gb_to_zippel<F: Field, T: ZipMonomial, M: ArkMonomial<F, W>, const W: usi
                 }
             })
             .collect();
-        let zterm: T = T::from(pairs);
-        terms.insert(&zterm, &coeff);
+        terms.insert(Monomial::from(pairs), coeff);
     }
-    SparsePolynomial { terms }
+    Polynomial { terms }
 }
 
 fn index_map(var_order: &[PRef]) -> Ctx<PRef, usize> {
@@ -570,74 +492,15 @@ pub(crate) fn assert_fits_in_ark_gb<const W: usize>(actual_nvars: usize, exponen
 }
 
 /// All-constant input → unit ideal `[1]` if any constant is nonzero,
-/// else the empty basis. Independent of `T`.
-pub(crate) fn constant_only_basis<F: Field, T: ZipMonomial>(
-    input: &[SparsePolynomial<F, T>],
-) -> Vec<SparsePolynomial<F, T>> {
+/// else the empty basis.
+pub(crate) fn constant_only_basis<F: Field>(input: &[Polynomial<F>]) -> Vec<Polynomial<F>> {
     let nonzero = input.iter().any(|p| !p.is_zero());
     if nonzero {
-        vec![SparsePolynomial::lit(&F::one())]
+        vec![Polynomial::lit(&F::one())]
     } else {
         Vec::new()
     }
 }
-
-/// Sort the basis in zippel's canonical order: ascending by leading
-/// term under `T::cmp` (the same sort used by the test-only legacy
-/// reducer). ark-gb's internal sort uses ark-gb's `Ord` on
-/// the wrapper monomial, which agrees with `T::cmp` *up to* leading
-/// convention; this re-sort makes the basis Vec match the legacy
-/// output element-by-element.
-fn sort_basis_by_zippel_lt<F: Field, T: ZipMonomial>(basis: &mut [SparsePolynomial<F, T>]) {
-    basis.sort_by(|p1, p2| {
-        let lt1 = p1.leading_term().map(|(_, t)| t);
-        let lt2 = p2.leading_term().map(|(_, t)| t);
-        lt1.cmp(&lt2)
-    });
-}
-
-// ---------------------------------------------------------------------------
-// Thread-local local-rank map for ExtractLocal::cmp_vars.
-//
-// Maps NodeIndex.index() → rank (position in var_order) for non-arg
-// PRefs only. Keyed by node index alone because all slots of the same
-// node share the same rank (introduced at the same TC position).
-// ---------------------------------------------------------------------------
-
-thread_local! {
-    static LOCAL_RANK: RefCell<HashMap<usize, usize>> = RefCell::new(HashMap::new());
-}
-
-pub(crate) fn get_local_rank(pref: &PRef) -> Option<usize> {
-    // NOTE: `index` by `pref.reference` to ensure multi-slot and renamed pref
-    // get the same local rank (and they tie break by other fields in `PRef`).
-    LOCAL_RANK.with(|m| m.borrow().get(&pref.reference.node().index()).copied())
-}
-
-pub(crate) struct LocalRankGuard {
-    prev: HashMap<usize, usize>,
-}
-
-impl LocalRankGuard {
-    pub fn install(rank_map: HashMap<usize, usize>) -> Self {
-        let prev = LOCAL_RANK.with(|m| {
-            let mut m = m.borrow_mut();
-            std::mem::take(&mut *m)
-        });
-        LOCAL_RANK.with(|m| *m.borrow_mut() = rank_map);
-        Self { prev }
-    }
-}
-
-impl Drop for LocalRankGuard {
-    fn drop(&mut self) {
-        LOCAL_RANK.with(|m| *m.borrow_mut() = std::mem::take(&mut self.prev));
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Tiered elimination path (for TieredElimMono<E>).
-// ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum TierKind {
@@ -1096,78 +959,6 @@ impl<F: Field, const W: usize> ArkMonomial<F, W> for ZippelTieredElimMono<W> {
 
         key.finish()
     }
-}
-
-pub(crate) fn compute_reduced_gb_with_tiered_elim<F, T, E, const W: usize>(
-    _num_vars: usize,
-    input: Vec<SparsePolynomial<F, T>>,
-) -> Vec<SparsePolynomial<F, T>>
-where
-    F: Field,
-    T: ZipMonomial + HasMonoTerm,
-    E: TieredElimStrategy,
-{
-    let (vars, exponents_fit) = collect_and_validate(&input);
-
-    if vars.is_empty() {
-        return constant_only_basis(&input);
-    }
-
-    let mut tier_map: HashMap<usize, Vec<PRef>> = HashMap::new();
-    for v in vars.iter().cloned() {
-        if let Some(t) = E::tier(&v) {
-            tier_map.entry(t).or_default().push(v);
-        }
-    }
-
-    let mut sorted_tiers: Vec<usize> = tier_map.keys().copied().collect();
-    sorted_tiers.sort();
-
-    if let Some(tier0_vars) = tier_map.get_mut(&0) {
-        tier0_vars.sort_by(|a, b| {
-            let ra = E::lex_rank(a);
-            let rb = E::lex_rank(b);
-            // NOTE: `then_with` to tie break multi-slot and renamed variables
-            rb.cmp(&ra).then_with(|| a.cmp(b))
-        });
-    }
-
-    for t in &sorted_tiers {
-        if *t > 0
-            && let Some(tier_vars) = tier_map.get_mut(t)
-        {
-            tier_vars.sort();
-        }
-    }
-
-    let mut var_order: Vec<PRef> = Vec::new();
-    let mut group_lens: Vec<(usize, usize)> = Vec::new();
-
-    for &raw_tier in &sorted_tiers {
-        if let Some(tier_vars) = tier_map.get(&raw_tier) {
-            let len = tier_vars.len();
-            group_lens.push((raw_tier, len));
-            var_order.extend(tier_vars.iter().cloned());
-        }
-    }
-
-    let actual_nvars = var_order.len();
-
-    if actual_nvars == 0 {
-        return constant_only_basis(&input);
-    }
-
-    assert_fits_in_ark_gb::<W>(actual_nvars, exponents_fit);
-
-    let layout = build_tier_layout::<W>(&group_lens, actual_nvars);
-    let _layout_guard = TierLayoutGuard::<W>::install(layout);
-
-    compute_gb_pipeline::<F, T, ZippelTieredElimMono<W>, W, _>(
-        input,
-        var_order,
-        exponents_fit,
-        |ring, polys| ark_gb::bba::compute_gb_serial::<F, ZippelTieredElimMono<W>, W>(ring, polys),
-    )
 }
 
 #[cfg(test)]

@@ -87,12 +87,9 @@ pub fn reduce<F: Field>(
     order: &MonoOrder,
 ) -> Polynomial<F> {
     use crate::frontend::Monomial;
+    use std::collections::HashMap;
 
-    // Build a variable ordering from the MonoOrder: a Vec<PRef> where index 0
-    // has the highest elimination priority. When a block has `vars: None`,
-    // collect remaining vars from the input polynomials (sorted by PRef::Ord).
-    let mut var_order: Vec<PRef> = Vec::new();
-    let mut seen = std::collections::HashSet::new();
+    // Collect all PRefs from the input polynomials.
     let all_vars: Vec<PRef> = {
         let mut vs: Vec<PRef> = basis_polys.iter().flat_map(|p| p.vars()).collect();
         vs.extend(p.vars());
@@ -100,56 +97,33 @@ pub fn reduce<F: Field>(
         vs.dedup();
         vs
     };
-    for block in order.blocks() {
-        if let Some(vs) = &block.vars {
-            for v in vs {
-                if seen.insert(v.reference) {
-                    var_order.push(v.clone());
-                }
-            }
-        } else {
-            // "Remaining vars" block: add all vars not yet seen.
-            for v in &all_vars {
-                if seen.insert(v.reference) {
-                    var_order.push(v.clone());
-                }
-            }
-        }
-    }
-    // Add any vars not covered by any block.
-    for v in &all_vars {
-        if !seen.contains(&v.reference) {
-            var_order.push(v.clone());
-            seen.insert(v.reference);
-        }
-    }
-    let is_lex = matches!(
-        order.blocks().first().map(|b| &b.kind),
-        Some(BlockKind::Lex)
-    );
 
-    // Compute a sort key for a monomial: a Vec of values that, when compared
-    // lexicographically, gives the correct monomial ordering.
-    // For Lex: exponents in var_order (higher = leading = sorts first → we reverse).
-    // For GrevLex: (total_degree, then revlex) — higher degree = leading.
-    // We use a key where "smaller = leading" (first in sorted order).
+    // Shared block-var assignment (same logic as MonoOrder::compare).
+    let block_assignment = order.block_var_assignment(&all_vars);
+
+    // Block-aware sort key: iterate blocks and append ordering components per
+    // block. Lexicographic comparison of the Vec gives the correct ordering.
     let sort_key = |m: &Monomial| -> Vec<i64> {
-        let exps: Vec<i64> = var_order.iter().map(|v| m.powers_for(v) as i64).collect();
-        if is_lex {
-            // Lex: higher exponent on earlier var = leading = sorts first.
-            // Negate so that higher exponent → smaller key → sorts first.
-            exps.into_iter().map(|e| -e).collect()
-        } else {
-            // GrevLex: higher total degree = leading = sorts first.
-            // Then at the rightmost differing var, smaller exponent = leading.
-            let deg: i64 = exps.iter().sum();
-            let mut key = vec![-deg]; // higher degree → smaller → first
-            // Right-to-left: smaller exponent = leading = smaller key.
-            for e in exps.iter().rev() {
-                key.push(*e);
+        let mut key = Vec::new();
+        for (kind, bv) in &block_assignment {
+            let exps: Vec<i64> = bv.iter().map(|v| m.powers_for(v) as i64).collect();
+            match kind {
+                BlockKind::Lex => {
+                    key.extend(exps.into_iter().map(|e| -e));
+                }
+                BlockKind::GrevLex => {
+                    let deg: i64 = exps.iter().sum();
+                    key.push(-deg);
+                    key.extend(exps.iter().rev());
+                }
+                BlockKind::DegLex | BlockKind::WeightedRevLex(_) | BlockKind::WeightedLex(_) => {
+                    unreachable!(
+                        "DegLex/WeightedRevLex/WeightedLex are not supported by this backend"
+                    );
+                }
             }
-            key
         }
+        key
     };
 
     // Precompute leading terms of basis polynomials.
@@ -166,17 +140,19 @@ pub fn reduce<F: Field>(
         })
         .collect();
 
-    // Convert p to a sorted Vec.
-    let mut work: Vec<(Monomial, F)> = p.terms.into_iter().collect();
-    work.sort_by_key(|a| sort_key(&a.0));
+    // Work set: HashMap for O(1) merge during reduction steps.
+    let mut work: HashMap<Monomial, F> =
+        p.terms.into_iter().filter(|(_, c)| !c.is_zero()).collect();
     let mut remainder: Vec<(Monomial, F)> = Vec::new();
 
     while !work.is_empty() {
-        let (lt_mono, lt_coeff) = work[0].clone();
-        if lt_coeff.is_zero() {
-            work.remove(0);
-            continue;
-        }
+        // Find the leading term: the monomial with the smallest sort key.
+        let (lt_mono, lt_coeff) = work
+            .iter()
+            .min_by_key(|(m, _)| sort_key(m))
+            .expect("work is non-empty");
+        let lt_mono = lt_mono.clone();
+        let lt_coeff = *lt_coeff;
 
         let found = reducers
             .iter()
@@ -186,26 +162,17 @@ pub fn reduce<F: Field>(
             let multiplier_term = (lt_mono.clone() / g_lt.clone()).expect("divisibility checked");
             let multiplier_scalar = lt_coeff * (*g_lc).inverse().expect("leading coeff nonzero");
             // Subtract multiplier_scalar * multiplier_term * g from work.
-            let mut new_terms: Vec<(Monomial, F)> = Vec::new();
+            // The reducer's LT term cancels our LT to 0 (removed by retain).
             for (g_term, g_coeff) in g_terms {
                 let new_term = g_term.clone() * multiplier_term.clone();
                 let new_coeff = *g_coeff * multiplier_scalar;
-                new_terms.push((new_term, new_coeff));
+                let entry = work.entry(new_term).or_insert(F::zero());
+                *entry -= new_coeff;
             }
-            // Merge new_terms into work (subtract).
-            for (nt, nc) in new_terms {
-                if let Some(pos) = work.iter().position(|(m, _)| *m == nt) {
-                    work[pos].1 -= nc;
-                } else {
-                    work.push((nt, -nc));
-                }
-            }
-            // Remove zeros and re-sort.
-            work.retain(|(_, c)| !c.is_zero());
-            work.sort_by_key(|a| sort_key(&a.0));
+            work.retain(|_, c| !c.is_zero());
         } else {
             // No division: move LT to remainder.
-            work.remove(0);
+            work.remove(&lt_mono);
             remainder.push((lt_mono, lt_coeff));
         }
     }

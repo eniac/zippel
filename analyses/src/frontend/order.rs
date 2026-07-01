@@ -90,6 +90,60 @@ impl MonoOrder {
         &self.blocks
     }
 
+    /// Assign each variable in `all_vars` to its block, returning
+    /// `(BlockKind, vars)` pairs in block order.
+    ///
+    /// A block with `vars: None` claims all remaining unassigned variables
+    /// (mirrors Singular's auto-sized last block). Variables not covered by
+    /// any explicit block are appended as a final implicit `GrevLex` block.
+    ///
+    /// Deduplication uses full `PRef` identity (not just `reference`), so
+    /// distinct PRefs sharing the same `Ref`/`NodeIndex` are treated as
+    /// separate variables.
+    ///
+    /// Empty blocks are skipped from the result. The returned Vec is
+    /// self-contained — callers do not need to handle a separate "remaining"
+    /// bucket.
+    pub fn block_var_assignment(&self, all_vars: &[PRef]) -> Vec<(BlockKind, Vec<PRef>)> {
+        let mut result: Vec<(BlockKind, Vec<PRef>)> = Vec::with_capacity(self.blocks.len() + 1);
+        let mut seen: std::collections::HashSet<&PRef> = std::collections::HashSet::new();
+
+        for block in &self.blocks {
+            let mut bv = Vec::new();
+            match &block.vars {
+                Some(vs) => {
+                    for v in vs {
+                        if seen.insert(v) {
+                            bv.push(v.clone());
+                        }
+                    }
+                }
+                None => {
+                    for v in all_vars {
+                        if seen.insert(v) {
+                            bv.push(v.clone());
+                        }
+                    }
+                }
+            }
+            if !bv.is_empty() {
+                result.push((block.kind.clone(), bv));
+            }
+        }
+
+        // Variables not covered by any explicit block: implicit final GrevLex.
+        let remaining: Vec<PRef> = all_vars
+            .iter()
+            .filter(|v| !seen.contains(v))
+            .cloned()
+            .collect();
+        if !remaining.is_empty() {
+            result.push((BlockKind::GrevLex, remaining));
+        }
+
+        result
+    }
+
     /// Compare two monomials under this ordering.
     /// Returns `Ordering::Less` if `a` is the leading monomial (the one that
     /// sorts first), matching zippel's convention.
@@ -104,29 +158,15 @@ impl MonoOrder {
     ) -> core::cmp::Ordering {
         use core::cmp::Ordering;
 
-        // Collect all variables from both monomials.
         let mut all_vars: Vec<PRef> = a.vars();
         all_vars.extend(b.vars());
         all_vars.sort();
         all_vars.dedup();
 
-        // Assign each variable to a block.
-        let mut seen = std::collections::HashSet::new();
-        for block in &self.blocks {
-            if let Some(vs) = &block.vars {
-                for v in vs {
-                    seen.insert(v.reference);
-                }
-            }
-        }
-
-        // For each block, compare the sub-monomials.
-        for block in &self.blocks {
-            let block_vars: &[PRef] = block.vars.as_deref().unwrap_or(&[]);
-
-            match block.kind {
+        for (kind, block_vars) in self.block_var_assignment(&all_vars) {
+            match kind {
                 BlockKind::Lex => {
-                    for v in block_vars {
+                    for v in &block_vars {
                         let ea = a.powers_for(v);
                         let eb = b.powers_for(v);
                         match ea.cmp(&eb) {
@@ -136,7 +176,6 @@ impl MonoOrder {
                     }
                 }
                 BlockKind::GrevLex => {
-                    // Total degree of the block.
                     let da: usize = block_vars.iter().map(|v| a.powers_for(v)).sum();
                     let db: usize = block_vars.iter().map(|v| b.powers_for(v)).sum();
                     match da.cmp(&db) {
@@ -157,26 +196,6 @@ impl MonoOrder {
                 _ => {
                     // Unsupported orderings — fall through.
                 }
-            }
-        }
-
-        // Variables not in any explicit block: treat as a final GrevLex block.
-        let remaining: Vec<&PRef> = all_vars
-            .iter()
-            .filter(|v| !seen.contains(&v.reference))
-            .collect();
-        let da: usize = remaining.iter().map(|v| a.powers_for(v)).sum();
-        let db: usize = remaining.iter().map(|v| b.powers_for(v)).sum();
-        match da.cmp(&db) {
-            Ordering::Equal => {}
-            ord => return ord.reverse(),
-        }
-        for v in remaining.iter().rev() {
-            let ea = a.powers_for(v);
-            let eb = b.powers_for(v);
-            match ea.cmp(&eb) {
-                Ordering::Equal => continue,
-                ord => return ord,
             }
         }
 
