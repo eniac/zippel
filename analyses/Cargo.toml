@@ -28,3 +28,8 @@ arbitrary = { version = "1.4.1", features = ["derive"] }
 arbtest = "0.3.2"
 serial_test = "3.2.0"
 rayon = "1.10.0"
+libtest-mimic = "0.8"
+
+[[test]]
+name = "completeness_examples"
+harness = false

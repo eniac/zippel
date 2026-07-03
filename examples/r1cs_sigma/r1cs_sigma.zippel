@@ -2,28 +2,28 @@
 // Proves knowledge of witness w such that Az ∘ Bz = Cz where z = (x, w)
 // Uses Pedersen vector commitments over a field: Commit(ck, v; ω) = dot(ck, v) + h*ω
 //
-// Hardcoded sizes: N=2 (total), n=1 (public), m=1 (constraints)
-// So w ∈ F^1, z ∈ F^2, A/B/C are 1×2 (stored as [F;2])
+// Generic over: N (total variables), n (public inputs, n < N), m (constraints).
+// w ∈ F^(N-n), z ∈ F^N, A/B/C are m×N (stored flat as [F; m*N]).
 
-// Matrix-vector product for a 1×2 matrix (flat) times a 2-vector
-fn matvec<G: Group, F: Scalar<G>>(
-    public mat: [F; 2],
-    public v: [F; 2]
-) -> [F; 1] {
-    [mat[0] * v[0] + mat[1] * v[1]]
+// Matrix-vector product for an m×N matrix (flat, row-major) times an N-vector.
+fn matvec<G: Group, F: Scalar<G>, N: Size, m: Size>(
+    public mat: [F; m * N],
+    public v: [F; N]
+) -> [F; m] {
+    [reduce(+, [mat[i * N + j] * v[j] for j in 0..N]) for i in 0..m]
 }
 
-proto r1cs_sigma<G: Group, F: Scalar<G>>(
+proto r1cs_sigma<G: Group, F: Scalar<G>, N: Size, n: 1..N, m: Size>(
     // Public inputs
-    public ck: [G; 1],          // Commitment key (m generators)
+    public ck: [G; m],          // Commitment key (m generators)
     public h_base: G,           // Blinding base
-    public mat_A: [F; 2],       // Matrix A (1 × 2, flattened row-major)
-    public mat_B: [F; 2],       // Matrix B
-    public mat_C: [F; 2],       // Matrix C
-    public x: [F; 1],           // Public input portion of z
+    public mat_A: [F; m * N],   // Matrix A (m × N, flattened row-major)
+    public mat_B: [F; m * N],   // Matrix B
+    public mat_C: [F; m * N],   // Matrix C
+    public x: [F; n],           // Public input portion of z
 
     // Private inputs
-    private w: [F; 1]           // Witness portion of z
+    private w: [F; N - n]       // Witness portion of z
 ) where
     matvec(mat_A, x ++ w) * matvec(mat_B, x ++ w)
     == matvec(mat_C, x ++ w)
@@ -46,8 +46,8 @@ proto r1cs_sigma<G: Group, F: Scalar<G>>(
     let omega_B = random<F>;
     let omega_C = random<F>;
 
-    // Build padded randomness (0^n, r) ∈ F^2
-    let padded_r = [r - r] ++ [r];
+    // Build padded randomness (0^n, r) ∈ F^N
+    let padded_r = [r - r for _ in 0..n] ++ [r for _ in 0..(N - n)];
 
     // Compute r_X = X·(0^n, r)
     let r_A = matvec(mat_A, padded_r);
@@ -78,8 +78,8 @@ proto r1cs_sigma<G: Group, F: Scalar<G>>(
 
     // ======== Prover Phase 2: Responses ========
 
-    // s = w + γ·r ∈ F^1
-    t_s       <- [w[0] + gamma * r];
+    // s = w + γ·r ∈ F^(N-n)
+    t_s       <- [w[i] + gamma * r for i in 0..(N - n)];
     t_sigma_A <- omega_A + gamma * omega_A';
     t_sigma_B <- omega_B + gamma * omega_B';
     t_sigma_C <- omega_C + gamma * omega_C';

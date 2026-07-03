@@ -1,7 +1,7 @@
 use ark_ff::Zero;
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, Value};
-use lang::id::Vid;
+use lang::id::{Tid, Vid};
 use share::Ctx;
 use std::path::PathBuf;
 use zippel::*;
@@ -12,12 +12,19 @@ mod common;
 const NX: usize = 2;
 const NY: usize = 2;
 
+fn build_sizes_ctx() -> Ctx<Tid, usize> {
+    let mut ctx = Ctx::new();
+    ctx.insert(&Tid::new("NX"), &NX);
+    ctx.insert(&Tid::new("NY"), &NY);
+    ctx
+}
+
 fn main() {
     println!("=== KZH (ArkBls12_381, NX={}, NY={}) ===", NX, NY);
     let args = ZippelArgs::new(PathBuf::from("examples/kzh/kzh.zippel"));
+    let sizes = build_sizes_ctx();
     let compile_result = std::panic::catch_unwind(|| {
         let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-        let sizes = Ctx::new();
         handler.compile(&sizes);
         handler
     });
@@ -39,7 +46,6 @@ fn main() {
     println!("\n--- Static Analysis ---");
     let analysis_args = ZippelArgs::new(PathBuf::from("examples/kzh/kzh.zippel"));
     let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
-    let sizes = Ctx::new();
     analysis_handler.compile(&sizes);
 
     common::time_analysis!("Completeness", analysis_handler.analyze_completeness());

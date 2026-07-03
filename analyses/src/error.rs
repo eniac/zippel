@@ -82,4 +82,10 @@ pub enum AnalysisError<C: ArkConfig> {
     /// Extractor invalid; relation remainder is non-zero.
     #[error("Extractor invalid; relation remainder: {0}")]
     ExtractorInvalid(Polynomial<C::F>),
+
+    /// A Gröbner basis reduced to the unit ideal (contains 1).
+    /// This indicates the protocol is self-contradictory or the backend
+    /// produced an inconsistent basis.
+    #[error("Unit ideal: {context}")]
+    UnitIdeal { context: &'static str },
 }

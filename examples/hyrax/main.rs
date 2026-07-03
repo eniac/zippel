@@ -1,7 +1,7 @@
 use ark_std::One;
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, Value};
-use lang::id::Vid;
+use lang::id::{Tid, Vid};
 use share::Ctx;
 use std::{path::PathBuf, time::Instant};
 use zippel::*;
@@ -15,11 +15,19 @@ const NTOT: usize = NROWS * NCOLS;
 type F = <ArkBls12_381 as ArkConfig>::F;
 type G1 = <ArkBls12_381 as ArkConfig>::G1;
 
+fn build_sizes_ctx() -> Ctx<Tid, usize> {
+    let mut ctx = Ctx::new();
+    ctx.insert(&Tid::new("L"), &L);
+    ctx.insert(&Tid::new("M"), &M);
+    ctx
+}
+
 fn main() {
     println!("=== Hyrax PCS (ArkBls12_381) — L={L}, M={M}, NTOT={NTOT} ===");
     let args = ZippelArgs::new(PathBuf::from("examples/hyrax/hyrax.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    handler.compile(&Ctx::new());
+    let sizes = build_sizes_ctx();
+    handler.compile(&sizes);
 
     let inputs = prover_create_inputs();
     let t = Instant::now();
@@ -42,7 +50,7 @@ fn main() {
         println!("\n--- Static Analysis ---");
         let analysis_args = ZippelArgs::new(PathBuf::from("examples/hyrax/hyrax.zippel"));
         let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
-        analysis_handler.compile(&Ctx::new());
+        analysis_handler.compile(&sizes);
 
         let completeness_start = Instant::now();
         match analysis_handler.analyze_completeness() {

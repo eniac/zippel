@@ -9,29 +9,29 @@ fn eq_weights<G: Group, F: Scalar<G>, K: 2..21>(public x: [F; K]) -> [F; 2^K] {
     (prev * (1 - a)) ++ (prev * a)
 }
 
-proto hyrax<G: Group, F: Scalar<G>>(
-    private p:     [F; 16],
-    public z_row:  [F; 2],
-    public z_col:  [F; 2],
+proto hyrax<G: Group, F: Scalar<G>, L: Size, M: Size, NR: 2^L, NC: 2^M, NT: 2^(L+M)>(
+    private p:     [F; NT],
+    public z_row:  [F; L],
+    public z_col:  [F; M],
     public y:      F,
-    public g_vec:  [G; 4],
+    public g_vec:  [G; NC],
     public g_base: G,
     public h_base: G
 ) where
     // Hyrax proves y == p̃(z_row, z_col), where p̃ is the multilinear
-    // extension of `p` indexed as a 4×4 matrix (row-major: p[i*4 + j]).
+    // extension of `p` indexed as a NR×NC matrix (row-major: p[i*NC + j]).
     // Flatten the tensored eq-basis over (z_row, z_col) so the relation
     // is a single dot product against `p`, matching how pst13.zippel
     // expresses `y == p̃(z) == dot(eq_mle(z), p)`.
     let l_vec = eq_weights(z_row);
     let r_vec = eq_weights(z_col);
-    let eq_full = [l_vec[i / 4] * r_vec[i % 4] for i in 0..16];
+    let eq_full = [l_vec[i / NC] * r_vec[i % NC] for i in 0..NT];
     y == dot(eq_full, p)
 {
-    let r_rows = [random<F> for i in 0..4];
+    let r_rows = [random<F> for i in 0..NR];
     c_rows <- [
-        h_base * r_rows[i] + dot(g_vec, [p[i*4 + j] for j in 0..4])
-        for i in 0..4
+        h_base * r_rows[i] + dot(g_vec, [p[i*NC + j] for j in 0..NC])
+        for i in 0..NR
     ];
 
     let l_vec = eq_weights(z_row);
@@ -41,12 +41,12 @@ proto hyrax<G: Group, F: Scalar<G>>(
     let r_big_t = dot(l_vec, r_rows);
 
     let u = [
-        dot(l_vec, [p[i*4 + j] for i in 0..4])
-        for j in 0..4
+        dot(l_vec, [p[i*NC + j] for i in 0..NR])
+        for j in 0..NC
     ];
 
     let r_tau   = random<F>;
-    let d_vec   = [random<F> for i in 0..4];
+    let d_vec   = [random<F> for i in 0..NC];
     let r_delta = random<F>;
     let r_beta  = random<F>;
 
@@ -56,7 +56,7 @@ proto hyrax<G: Group, F: Scalar<G>>(
 
     c <- challenge<F>;
 
-    z_vec   <- [c * u[i] + d_vec[i] for i in 0..4];
+    z_vec   <- [c * u[i] + d_vec[i] for i in 0..NC];
     z_delta <- c * r_big_t + r_delta;
     z_beta  <- c * r_tau + r_beta;
 

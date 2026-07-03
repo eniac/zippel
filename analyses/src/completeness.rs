@@ -70,12 +70,9 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
             .expect("GB backend should support grevlex");
 
         if prover_gb.is_unit() {
-            eprintln!(
-                "WARNING: completeness analysis: prover Groebner basis reduced to the unit ideal \
-                 (contains 1). This indicates the protocol is self-contradictory or that \
-                 something went wrong computing the basis. Please report this to the zippel \
-                 developers."
-            );
+            return Err(AnalysisError::UnitIdeal {
+                context: "completeness prover",
+            });
         }
 
         for p in self.verifier.generating_set.iter() {
@@ -95,6 +92,7 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
 mod tests {
     use super::CompletenessAnalysis;
     use crate::backend::GbBackend;
+    use crate::error::AnalysisError;
     use crate::frontend::Polynomial;
     use crate::{QualifierPropagation, UniformityPropagation};
     use backend::ArkBls12_381;
@@ -1103,9 +1101,17 @@ mod tests {
         let mut ca = CompletenessAnalysis::from_input(&g);
         let result = ca.run();
         // A self-contradictory relation (x == x+1) drives the prover ideal
-        // to the unit ideal. The run() method warns and returns Ok since
-        // the verifier equation (t == t) trivially reduces.
-        assert!(result.is_ok() || result.is_err());
+        // to the unit ideal (contains -1, a nonzero constant). run() returns
+        // Err(UnitIdeal) in this case.
+        assert!(
+            matches!(
+                result,
+                Err(AnalysisError::UnitIdeal {
+                    context: "completeness prover"
+                })
+            ),
+            "expected UnitIdeal error, got: {result:?}"
+        );
         // The prover ideal was consumed by run(); we verify the contradiction
         // indirectly: the ideal contained x - (x+1) = -1, a nonzero constant.
         assert!(

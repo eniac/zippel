@@ -361,12 +361,9 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         factor_group_gcd(&mut search_polys);
 
         if search_gb.is_unit() {
-            eprintln!(
-                "WARNING: soundness analysis (search): Groebner basis reduced to the unit ideal \
-                 (contains 1). This indicates the protocol is self-contradictory or that \
-                 something went wrong computing the basis. Please report this to the zippel \
-                 developers."
-            );
+            return Err(AnalysisError::UnitIdeal {
+                context: "soundness search",
+            });
         }
 
         // Phase 4: Extract witnesses.
@@ -452,12 +449,9 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             .expect("GB backend should support lex order");
 
         if validity_gb.is_unit() {
-            eprintln!(
-                "WARNING: soundness analysis (validity): Groebner basis reduced to the unit ideal \
-                 (contains 1). This indicates the protocol is self-contradictory or that \
-                 something went wrong computing the basis. Please report this to the zippel \
-                 developers."
-            );
+            return Err(AnalysisError::UnitIdeal {
+                context: "soundness validity",
+            });
         }
 
         for r in grev_rel_result.generating_set.iter() {

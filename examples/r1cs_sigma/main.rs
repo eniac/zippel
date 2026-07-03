@@ -1,6 +1,6 @@
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, Value};
-use lang::id::Vid;
+use lang::id::{Tid, Vid};
 use share::Ctx;
 use std::path::PathBuf;
 use zippel::*;
@@ -8,11 +8,20 @@ use zippel::*;
 #[path = "../common/analysis.rs"]
 mod common;
 
+fn build_sizes_ctx() -> Ctx<Tid, usize> {
+    let mut ctx = Ctx::new();
+    ctx.insert(&Tid::new("N"), &2);
+    ctx.insert(&Tid::new("n"), &1);
+    ctx.insert(&Tid::new("m"), &1);
+    ctx
+}
+
 fn main() {
     println!("=== R1CS Sigma (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/r1cs_sigma/r1cs_sigma.zippel"));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    handler.compile(&Ctx::new());
+    let sizes = build_sizes_ctx();
+    handler.compile(&sizes);
 
     let inputs = prover_create_inputs();
     common::run_prover_and_verify(&mut handler, &inputs);
@@ -20,7 +29,7 @@ fn main() {
     println!("\n--- Static Analysis ---");
     let analysis_args = ZippelArgs::new(PathBuf::from("examples/r1cs_sigma/r1cs_sigma.zippel"));
     let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
-    analysis_handler.compile(&Ctx::new());
+    analysis_handler.compile(&sizes);
 
     common::time_analysis!("Completeness", analysis_handler.analyze_completeness());
     common::time_analysis!("ZK", analysis_handler.analyze_knowledge());

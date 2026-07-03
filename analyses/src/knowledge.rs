@@ -152,12 +152,9 @@ impl<C: HasOpFactory> KnowledgeAnalysis<C> {
             .expect("GB backend should support knowledge block order");
 
         if gb.is_unit() {
-            eprintln!(
-                "WARNING: knowledge analysis: Groebner basis reduced to the unit ideal \
-                 (contains 1). This indicates the protocol is self-contradictory or that \
-                 something went wrong computing the basis. Please report this to the zippel \
-                 developers."
-            );
+            return Err(AnalysisError::UnitIdeal {
+                context: "knowledge prover-relation",
+            });
         }
 
         self.prover_rel_ideal.generating_set = gb.polys.clone();
