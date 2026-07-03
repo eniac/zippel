@@ -6,7 +6,7 @@
 //! (subset) and a future Singular backend (full set).
 //!
 //! The type is fully expressive. The ark-gb backend implements a subset and
-//! returns [`UnsupportedMonoOrder`] for the rest; see
+//! returns [`BackendError::UnsupportedOrder`] for the rest; see
 //! `analyses/src/backend/ark_gb.rs` (Phase 1).
 
 use graph::PRef;
@@ -44,18 +44,22 @@ pub enum BlockKind {
     /// Degree reverse-lexicographic (`dp`). The reverse-lex tiebreak uses
     /// `PRef::Ord` implicitly.
     GrevLex,
-    /// Degree lexicographic (`Dp`).
-    DegLex,
-    /// Weighted reverse-lexicographic (`wp`). Positive weights only.
-    WeightedRevLex(Vec<i64>),
-    /// Weighted lexicographic (`Wp`). Positive weights only.
-    WeightedLex(Vec<i64>),
 }
 
-/// Error returned by a backend that does not support the requested ordering.
+/// Error returned by a Gröbner-basis backend.
+///
+/// `UnsupportedOrder` is the only structurally-meaningful variant for
+/// cross-backend dispatch (the caller can fall back to another backend).
+/// `Other` carries an opaque message for operational failures (e.g. a
+/// missing binary or a parse glitch in the Singular backend); callers can
+/// log it or surface it without knowing the internal failure taxonomy.
 #[derive(Clone, Debug, thiserror::Error)]
-#[error("the requested monomial ordering is not supported by this backend")]
-pub struct UnsupportedMonoOrder;
+pub enum BackendError {
+    #[error("the requested monomial ordering is not supported by this backend")]
+    UnsupportedOrder,
+    #[error("{0}")]
+    Other(String),
+}
 
 impl MonoOrder {
     /// Single GrevLex block; variables are inferred from the ideal and the
@@ -192,9 +196,6 @@ impl MonoOrder {
                             ord => return ord, // smaller exp = Less = leading
                         }
                     }
-                }
-                _ => {
-                    // Unsupported orderings — fall through.
                 }
             }
         }

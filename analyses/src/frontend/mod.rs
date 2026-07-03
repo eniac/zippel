@@ -11,6 +11,6 @@ pub mod polynomial;
 pub mod trans_clos;
 
 pub use monomial::Monomial;
-pub use order::{Block, BlockKind, MonoOrder, UnsupportedMonoOrder};
+pub use order::{BackendError, Block, BlockKind, MonoOrder};
 pub use polynomial::Polynomial;
 pub use trans_clos::TransClos;

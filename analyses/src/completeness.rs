@@ -3,7 +3,7 @@ use backend::op::HasOpFactory;
 use share::Set;
 
 use crate::TransClos;
-use crate::backend::{GbBackend, ark_gb::ArkGb};
+use crate::backend::GbBackendKind;
 use crate::error::AnalysisError;
 use crate::extractor::extract_locals;
 use crate::frontend::MonoOrder;
@@ -18,10 +18,17 @@ pub struct CompletenessAnalysis<C: ArkConfig> {
     pub prover: Ideal<C>,
     pub verifier: Ideal<C>,
     verifier_locals: Ideal<C>,
+    backend: GbBackendKind,
 }
 
 impl<C: HasOpFactory> CompletenessAnalysis<C> {
     pub fn from_input(dag: &DQDag<C>) -> Self {
+        Self::from_input_with_backend(dag, GbBackendKind::default())
+    }
+
+    /// Like [`from_input`](Self::from_input) but with a user-selected GB
+    /// backend.
+    pub fn from_input_with_backend(dag: &DQDag<C>, backend: GbBackendKind) -> Self {
         let mut builder = IdealBuilder::new();
         builder.enable_exact_division();
 
@@ -45,6 +52,7 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
             prover: prover_result,
             verifier: verifier_result,
             verifier_locals,
+            backend,
         }
     }
 
@@ -53,13 +61,13 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
             self.prover.generating_set.push(p.clone());
         }
 
-        let backend = ArkGb::default();
+        let backend = self.backend.build::<C::F>();
         let prover_gb = backend
             .compute_gb(
                 std::mem::take(&mut self.prover.generating_set),
                 &MonoOrder::grevlex(),
             )
-            .expect("ark-gb backend should support grevlex");
+            .expect("GB backend should support grevlex");
 
         if prover_gb.is_unit() {
             eprintln!(

@@ -1,7 +1,7 @@
 //! ark-gb backend: interprets [`MonoOrder`] and routes through the external
 //! ark-gb crate.
 //!
-//! Supported `MonoOrder` patterns (others return [`UnsupportedMonoOrder`]):
+//! Supported `MonoOrder` patterns (others return [`BackendError::UnsupportedOrder`]):
 //!
 //! | Pattern | ark-gb path |
 //! |---------|-------------|
@@ -9,12 +9,12 @@
 //! | `[Block { Some(..), GrevLex }, Block { .., GrevLex }]` | `ZippelElimMono<W>` serial (2-block elim) |
 //! | `[Block { Some(..), Lex }, Block { .., GrevLex }, …]` | `ZippelTieredElimMono<W>` serial (tiered) |
 //!
-//! `DegLex`, `WeightedRevLex`, `WeightedLex`, and mixed Lex-after-GrevLex are
-//! not supported by ark-gb and reserved for the singular backend.
+//! `GrevLex`-then-`Lex` block combos are not supported by ark-gb and are
+//! handled by the Singular backend.
 
 use std::marker::PhantomData;
 
-use ark_ff::Field;
+use ark_ff::PrimeField;
 use graph::PRef;
 use share::Set;
 
@@ -24,18 +24,18 @@ use crate::backend::ark_gb::adapter::{
     compute_reduced_gb_with_elim, constant_only_basis,
 };
 use crate::backend::{GbBackend, GbBasis};
-use crate::frontend::{BlockKind, MonoOrder, Polynomial, UnsupportedMonoOrder};
+use crate::frontend::{BackendError, BlockKind, MonoOrder, Polynomial};
 
 /// ark-gb backend with a configurable packed monomial width `w`.
 ///
 /// Defaults to `w=128` (supports up to 1023 symbolic variables).
 /// Use [`with_width`](Self::with_width) for smaller problems.
-pub struct ArkGb<F: Field> {
+pub struct ArkGb<F: PrimeField> {
     _phantom: PhantomData<F>,
     w: usize,
 }
 
-impl<F: Field> ArkGb<F> {
+impl<F: PrimeField> ArkGb<F> {
     pub fn with_width(w: usize) -> Self {
         ArkGb {
             _phantom: PhantomData,
@@ -44,7 +44,7 @@ impl<F: Field> ArkGb<F> {
     }
 }
 
-impl<F: Field> Default for ArkGb<F> {
+impl<F: PrimeField> Default for ArkGb<F> {
     fn default() -> Self {
         ArkGb {
             _phantom: PhantomData,
@@ -53,12 +53,12 @@ impl<F: Field> Default for ArkGb<F> {
     }
 }
 
-impl<F: Field> GbBackend<F> for ArkGb<F> {
+impl<F: PrimeField> GbBackend<F> for ArkGb<F> {
     fn compute_gb(
         &self,
         ideal: Vec<Polynomial<F>>,
         order: &MonoOrder,
-    ) -> Result<GbBasis<F>, UnsupportedMonoOrder> {
+    ) -> Result<GbBasis<F>, BackendError> {
         let w = self.w;
         let blocks = order.blocks();
 
@@ -115,7 +115,7 @@ impl<F: Field> GbBackend<F> for ArkGb<F> {
             });
         }
 
-        Err(UnsupportedMonoOrder)
+        Err(BackendError::UnsupportedOrder)
     }
 
     fn reduce(&self, p: Polynomial<F>, basis: &GbBasis<F>) -> Polynomial<F> {
@@ -127,11 +127,11 @@ impl<F: Field> GbBackend<F> for ArkGb<F> {
 // Tiered dispatch
 // -----------------------------------------------------------------------
 
-fn dispatch_tiered<F: Field>(
+fn dispatch_tiered<F: PrimeField>(
     input: Vec<Polynomial<F>>,
     order: &MonoOrder,
     w: usize,
-) -> Result<Vec<Polynomial<F>>, UnsupportedMonoOrder> {
+) -> Result<Vec<Polynomial<F>>, BackendError> {
     let (vars, exponents_fit) = collect_and_validate(&input);
 
     if vars.is_empty() {
@@ -192,13 +192,13 @@ fn dispatch_tiered<F: Field>(
     }
 }
 
-fn compute_tiered_with_layout<F: Field, const W: usize>(
+fn compute_tiered_with_layout<F: PrimeField, const W: usize>(
     input: Vec<Polynomial<F>>,
     var_order: Vec<PRef>,
     group_lens: Vec<(usize, usize)>,
     nvars: usize,
     exponents_fit: bool,
-) -> Result<Vec<Polynomial<F>>, UnsupportedMonoOrder> {
+) -> Result<Vec<Polynomial<F>>, BackendError> {
     assert_fits_in_ark_gb::<W>(nvars, exponents_fit);
 
     let layout = build_tier_layout::<W>(&group_lens, nvars);

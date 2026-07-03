@@ -24,5 +24,7 @@ pub use qualifier::QualifierPropagation;
 pub use soundness::SpecialSoundnessAnalysis;
 pub use uniform::UniformityPropagation;
 
+pub use backend::GbBackendKind;
+
 #[cfg(test)]
 mod tests;

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::TransClos;
-use crate::backend::{GbBackend, ark_gb::ArkGb};
+use crate::backend::GbBackendKind;
 use crate::error::{AnalysisError, ExtractorRejection};
 use crate::extractor::{extract_locals, valid_extractor};
 use crate::frontend::{MonoOrder, Polynomial};
@@ -113,6 +113,15 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
     /// 5. **Build validity GB** (also under lex) and verify that all relation
     ///    polys reduce to zero.
     pub fn analyze(dag: &DQDag<C>, l_vec: Vec<usize>) -> Result<(), AnalysisError<C>> {
+        Self::analyze_with_backend(dag, l_vec, GbBackendKind::default())
+    }
+
+    /// Like [`analyze`](Self::analyze) but with a user-selected GB backend.
+    pub fn analyze_with_backend(
+        dag: &DQDag<C>,
+        l_vec: Vec<usize>,
+        backend: GbBackendKind,
+    ) -> Result<(), AnalysisError<C>> {
         if l_vec.is_empty() || l_vec.iter().any(|l| *l < 2) {
             return Err(AnalysisError::InvalidSoundnessParameter);
         }
@@ -343,10 +352,10 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         // Phase 3: Inline & compute the search GB via the backend.
         grev_search.inline(&Set::new());
 
-        let backend = ArkGb::default();
+        let backend = backend.build::<C::F>();
         let search_gb = backend
             .compute_gb(std::mem::take(&mut grev_search.generating_set), &lex_order)
-            .expect("ark-gb backend should support lex order");
+            .expect("GB backend should support lex order");
 
         let mut search_polys = search_gb.polys.clone();
         factor_group_gcd(&mut search_polys);
@@ -440,7 +449,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                 std::mem::take(&mut grev_validity.generating_set),
                 &lex_order,
             )
-            .expect("ark-gb backend should support lex order");
+            .expect("GB backend should support lex order");
 
         if validity_gb.is_unit() {
             eprintln!(

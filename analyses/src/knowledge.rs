@@ -1,5 +1,5 @@
 use crate::TransClos;
-use crate::backend::{GbBackend, GbBasis, ark_gb::ArkGb};
+use crate::backend::{GbBackendKind, GbBasis};
 use crate::error::AnalysisError;
 use crate::frontend::{Block, BlockKind, MonoOrder, Polynomial};
 use crate::ideal::{Ideal, IdealBuilder};
@@ -43,20 +43,27 @@ pub struct KnowledgeAnalysis<C: ArkConfig> {
     /// Gröbner basis of the relation (precondition) alone, used to filter
     /// polynomials that are derivable from the precondition (not real leaks).
     relation_basis: Option<GbBasis<C::F>>,
+    backend: GbBackendKind,
 }
 
 impl<C: HasOpFactory> KnowledgeAnalysis<C> {
     pub fn from_input(dag: &DQDag<C>) -> Self {
+        Self::from_input_with_backend(dag, GbBackendKind::default())
+    }
+
+    /// Like [`from_input`](Self::from_input) but with a user-selected GB
+    /// backend.
+    pub fn from_input_with_backend(dag: &DQDag<C>, backend: GbBackendKind) -> Self {
         let mut gb = IdealBuilder::new();
         let mut prover_ideal = gb.build(TransClos::prover(dag));
 
-        let backend = ArkGb::default();
+        let gb_backend = backend.build::<C::F>();
 
         let relation_basis = if dag.relation_node().is_some() {
             let mut rel_gb = gb.clone();
             let rel_ideal = rel_gb.build(TransClos::relation(dag));
             let order = knowledge_order(&rel_ideal);
-            backend.compute_gb(rel_ideal.generating_set, &order).ok()
+            gb_backend.compute_gb(rel_ideal.generating_set, &order).ok()
         } else {
             None
         };
@@ -69,6 +76,7 @@ impl<C: HasOpFactory> KnowledgeAnalysis<C> {
         Self {
             prover_rel_ideal: prover_ideal,
             relation_basis,
+            backend,
         }
     }
 
@@ -129,10 +137,10 @@ impl<C: HasOpFactory> KnowledgeAnalysis<C> {
 
     /// Run knowledge analysis.
     ///
-    /// Uses the default packed monomial width (W=128, supports up to 1023
-    /// variables). Use [`ArkGb::with_width`] to override for smaller problems.
+    /// Uses the backend selected at construction (default: ArkGb with W=128,
+    /// supports up to 1023 variables).
     pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
-        let backend = ArkGb::default();
+        let backend = self.backend.build::<C::F>();
         let order = knowledge_order(&self.prover_rel_ideal);
 
         // Compute the Groebner basis
@@ -141,7 +149,7 @@ impl<C: HasOpFactory> KnowledgeAnalysis<C> {
                 std::mem::take(&mut self.prover_rel_ideal.generating_set),
                 &order,
             )
-            .expect("ark-gb backend should support knowledge block order");
+            .expect("GB backend should support knowledge block order");
 
         if gb.is_unit() {
             eprintln!(
