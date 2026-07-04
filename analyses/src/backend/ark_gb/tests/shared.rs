@@ -6,12 +6,11 @@
 
 #![allow(dead_code)]
 
+use crate::PRef;
 use crate::frontend::Polynomial;
 use ark_bls12_381::Fr;
 use ark_ff::One;
 use backend::ATyp;
-use graph::PRef;
-use lang::id::Vid;
 use lang::typ::{Distribution, Qualifier};
 use petgraph::graph::NodeIndex;
 
@@ -34,10 +33,9 @@ pub const CYCLIC_SIZES: &[usize] = &[4, 5];
 
 pub fn mk_var(name: &str) -> PRef {
     PRef::from_var(
-        Vid::new(name),
+        name,
         NodeIndex::new(0),
         ATyp::scalar(),
-        0,
         Qualifier::Private,
         Distribution::Uniform,
     )

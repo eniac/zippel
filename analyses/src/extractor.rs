@@ -1,10 +1,10 @@
+use crate::PRef;
 use crate::frontend::{Polynomial, TransClos};
 use crate::ideal::{Ideal, IdealBuilder};
 use backend::ATyp;
 use backend::ArkConfig;
 use backend::op::{GOp, HasOpFactory, mk};
 use graph::Op;
-use graph::PRef;
 use lang::ast::BinOp;
 
 /// Check whether a polynomial's group-variable terms are compatible with

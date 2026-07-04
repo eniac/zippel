@@ -1,6 +1,7 @@
+use crate::PRef;
 use crate::frontend::Polynomial;
 use backend::ArkConfig;
-use graph::{GraphError, PRef};
+use graph::GraphError;
 use thiserror::Error;
 
 /// Reason why no valid extractor was found for a witness slot.

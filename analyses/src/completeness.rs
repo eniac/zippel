@@ -90,15 +90,15 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
 #[cfg(test)]
 mod tests {
     use super::CompletenessAnalysis;
+    use crate::PRef;
     use crate::backend::GbBackend;
     use crate::error::AnalysisError;
     use crate::frontend::Polynomial;
     use crate::{QualifierPropagation, UniformityPropagation};
     use backend::ArkBls12_381;
-    use graph::PRef;
     use graph::UDags;
     use lang::ast::UModule;
-    use lang::id::Vid;
+
     use share::Ctx;
     use share::Set;
     use share::unwrap;
@@ -302,10 +302,9 @@ mod tests {
 
         let mk_var = |name: &str, idx: usize| -> PRef {
             PRef::from_var(
-                Vid(name.to_string()),
+                name.to_string(),
                 NodeIndex::new(idx),
                 ATyp::scalar(),
-                0,
                 Qualifier::Public,
                 Distribution::default(),
             )
@@ -970,7 +969,7 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let ca = CompletenessAnalysis::from_input(&g);
 
-        let verifier_vars: Set<graph::PRef> = ca.verifier.iter().flat_map(|p| p.vars()).collect();
+        let verifier_vars: Set<crate::PRef> = ca.verifier.iter().flat_map(|p| p.vars()).collect();
         assert!(
             verifier_vars
                 .iter()

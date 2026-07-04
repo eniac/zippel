@@ -1,9 +1,8 @@
+use crate::PRef;
 use crate::TransClos;
 use crate::frontend::Polynomial;
-use graph::pref::PRef;
 use graph::{GOp, HOp, Op, Ref, mk};
 use lang::ast::BinOp;
-use lang::id::Vid;
 
 use ark_ff::{FftField, Field, One, Zero};
 use backend::op::HasOpFactory;
@@ -152,6 +151,7 @@ fn lagrange_basis<F: Field>(xs: &[F]) -> Vec<Vec<F>> {
 }
 
 pub const GB_GENERATED_NAME_PREFIX: &str = "__zippel::gb::";
+pub const NODE_GENERATED_NAME_PREFIX: &str = "__zippel::node::";
 
 /// Canonical polynomial shape used when comparing division witness operands.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -197,10 +197,9 @@ impl<C: ArkConfig + HasOpFactory> IdealNamespace<C> {
 
     /// Allocate a fresh sentinel PRef with a stable unique NodeIndex.
     pub fn sentinel_pref(&mut self, name: &str, typ: ATyp) -> PRef {
-        let vid = Vid::from(name);
         let idx = NodeIndex::new(self.sentinel_counter);
         self.sentinel_counter -= 1;
-        PRef::from_var(vid, idx, typ, 0, Qualifier::Local, Distribution::default())
+        PRef::from_var(name, idx, typ, Qualifier::Local, Distribution::default())
     }
 
     /// Return a unique name for the given key by appending a per-key counter.
@@ -1005,20 +1004,22 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     }
 
     fn is_named_source_pref(pref: &PRef) -> bool {
-        pref.name()
-            .map(|name| !name.to_string().starts_with(GB_GENERATED_NAME_PREFIX))
-            .unwrap_or(false)
+        !pref.name().starts_with(GB_GENERATED_NAME_PREFIX)
+            && !pref.name().starts_with(NODE_GENERATED_NAME_PREFIX)
     }
 
     fn canonical_pref_key(pref: &PRef) -> String {
-        let name = pref.name().map(|name| name.to_string());
-        match name {
-            Some(name) if !name.starts_with(GB_GENERATED_NAME_PREFIX) => format!(
-                "named:name={};slot={};typ={};qual={:?};dist={:?};transcript={}",
+        let name = pref.name();
+        if !name.starts_with(GB_GENERATED_NAME_PREFIX)
+            && !name.starts_with(NODE_GENERATED_NAME_PREFIX)
+        {
+            format!(
+                "named:name={};slot={:?};typ={};qual={:?};dist={:?};transcript={}",
                 name, pref.index, pref.typ, pref.qualifier, pref.distribution, pref.from_transcript,
-            ),
-            name => format!(
-                "raw:ref={:?};slot={};typ={};qual={:?};dist={:?};transcript={};name={:?}",
+            )
+        } else {
+            format!(
+                "raw:ref={:?};slot={:?};typ={};qual={:?};dist={:?};transcript={};name={:?}",
                 pref.reference,
                 pref.index,
                 pref.typ,
@@ -1026,7 +1027,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 pref.distribution,
                 pref.from_transcript,
                 name,
-            ),
+            )
         }
     }
 
@@ -2217,7 +2218,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     fn add_op(&mut self, pr: PRef, op: GOp<C>, ideal: &mut Ideal<C>) {
         match op {
             Op::Ref(r, typ) => {
-                if pr.reference == r && pr.index == 0 && pr.typ == typ {
+                if pr.reference == r && pr.index.is_empty() && pr.typ == typ {
                     return;
                 }
 
@@ -3538,7 +3539,7 @@ mod tests {
 
     #[test]
     fn test_ref_vars_vpoly_expands_coefficients() {
-        use graph::PRef;
+        use crate::PRef;
         use graph::Ref;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -3547,7 +3548,6 @@ mod tests {
         let pref_p = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -3569,7 +3569,7 @@ mod tests {
 
     #[test]
     fn test_ref_vars_mle_expands_evaluations() {
-        use graph::PRef;
+        use crate::PRef;
         use graph::Ref;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -3578,7 +3578,6 @@ mod tests {
         let pref_p = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Mle(3),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -3595,9 +3594,9 @@ mod tests {
 
     #[test]
     fn test_add_op_poly_binds_coefficient_slots() {
+        use crate::PRef;
         use ark_bls12_381::Fr;
         use backend::op::mk;
-        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -3608,7 +3607,6 @@ mod tests {
         let pref_v = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -3621,7 +3619,6 @@ mod tests {
         let pref_p = PRef::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -3644,9 +3641,9 @@ mod tests {
     #[test]
     fn test_add_op_coef_roundtrips_poly() {
         // Op::Coef(Op::Poly(v)) bound to the same slots should reduce to `v`.
+        use crate::PRef;
         use ark_bls12_381::Fr;
         use backend::op::mk;
-        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -3657,7 +3654,6 @@ mod tests {
         let pref_v = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -3671,7 +3667,6 @@ mod tests {
         let pref_p = PRef::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -3690,7 +3685,6 @@ mod tests {
         let pref_c = PRef::from_node(
             NodeIndex::new(2),
             ATyp::Uni(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -3717,9 +3711,9 @@ mod tests {
 
     #[test]
     fn test_add_op_mle_binds_hypercube_slots() {
+        use crate::PRef;
         use ark_bls12_381::Fr;
         use backend::op::mk;
-        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -3730,7 +3724,6 @@ mod tests {
         let pref_v = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Mle(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -3743,7 +3736,6 @@ mod tests {
         let pref_m = PRef::from_node(
             NodeIndex::new(1),
             ATyp::Mle(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -3781,14 +3773,13 @@ mod tests {
 
     #[test]
     fn mle1_to_uni1_lift_converts_evals_to_coeffs() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
         let src = PRef::from_node(
             NodeIndex::new(10),
             ATyp::Mle(1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -3808,9 +3799,10 @@ mod tests {
 
     #[test]
     fn test_add_op_eval_univariate_batched() {
+        use crate::PRef;
         use ark_bls12_381::Fr;
         use backend::op::mk;
-        use graph::{PRef, Ref};
+        use graph::Ref;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -3823,7 +3815,6 @@ mod tests {
             let p = PRef::from_node(
                 NodeIndex::new(0),
                 ATyp::VPoly(1, 1),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             );
@@ -3834,7 +3825,6 @@ mod tests {
             let p = PRef::from_node(
                 NodeIndex::new(1),
                 ATyp::Uni(1),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             );
@@ -3845,7 +3835,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::Uni(1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -3873,14 +3862,12 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
         let pref_xs = PRef::from_node(
             NodeIndex::new(1),
             ATyp::Uni(1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -3908,9 +3895,9 @@ mod tests {
     #[test]
     fn test_add_op_eval_univariate_batched_with_constants() {
         // p(x) = 3 + 5x evaluated at [7, 11] should give [38, 58].
+        use crate::PRef;
         use ark_bls12_381::Fr;
         use backend::op::mk;
-        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -3921,7 +3908,6 @@ mod tests {
         let pref_vp = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -3934,7 +3920,6 @@ mod tests {
         let pref_p = PRef::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -3952,7 +3937,6 @@ mod tests {
         let pref_vxs = PRef::from_node(
             NodeIndex::new(2),
             ATyp::Uni(1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -3965,7 +3949,6 @@ mod tests {
         let pref_xs = PRef::from_node(
             NodeIndex::new(3),
             ATyp::Uni(1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -3983,7 +3966,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(4),
             ATyp::Uni(1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4016,7 +3998,7 @@ mod tests {
     #[test]
     fn test_add_op_eval_vpoly_full_multivariate() {
         // VPoly(2, 2) has 6 coef slots; eval at Uni(2) => scalar (one slot).
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -4026,7 +4008,6 @@ mod tests {
             let p = PRef::from_node(
                 NodeIndex::new(0),
                 ATyp::VPoly(2, 2),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             );
@@ -4037,7 +4018,6 @@ mod tests {
             let p = PRef::from_node(
                 NodeIndex::new(1),
                 ATyp::Uni(1),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             );
@@ -4048,7 +4028,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4080,7 +4059,7 @@ mod tests {
     #[test]
     fn test_add_op_eval_vpoly_partial_multivariate() {
         // VPoly(3, 1) evaluated at Uni(1) => VPoly(2, 1) (2-var linear poly w/ 3 slots).
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -4090,7 +4069,6 @@ mod tests {
             let p = PRef::from_node(
                 NodeIndex::new(0),
                 ATyp::VPoly(3, 1),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             );
@@ -4101,7 +4079,6 @@ mod tests {
             let p = PRef::from_node(
                 NodeIndex::new(1),
                 ATyp::Uni(0),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             );
@@ -4112,7 +4089,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(2, 1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4144,7 +4120,7 @@ mod tests {
     #[test]
     fn test_add_op_eval_mle_full_multivariate() {
         // Mle(2) has 4 eval slots; eval at Uni(2) => scalar.
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -4154,7 +4130,6 @@ mod tests {
             let p = PRef::from_node(
                 NodeIndex::new(0),
                 ATyp::Mle(2),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             );
@@ -4165,7 +4140,6 @@ mod tests {
             let p = PRef::from_node(
                 NodeIndex::new(1),
                 ATyp::Uni(1),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             );
@@ -4176,7 +4150,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4203,7 +4176,7 @@ mod tests {
     #[test]
     fn test_add_op_eval_mle_partial_multivariate() {
         // Mle(3) evaluated at Uni(1) => Mle(2) (4 slots).
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -4213,7 +4186,6 @@ mod tests {
             let p = PRef::from_node(
                 NodeIndex::new(0),
                 ATyp::Mle(3),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             );
@@ -4224,7 +4196,6 @@ mod tests {
             let p = PRef::from_node(
                 NodeIndex::new(1),
                 ATyp::Uni(0),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             );
@@ -4235,7 +4206,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::Mle(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4270,8 +4240,9 @@ mod tests {
     fn test_add_op_vpoly_add_coefficient_wise() {
         // VPoly(2,1) has 3 coefficient slots.  a + b should bind ideal.slot(i)
         // to a.slot(i) + b.slot(i) for each of the 3 slots.
+        use crate::PRef;
         use backend::op::mk;
-        use graph::{PRef, Ref};
+        use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -4282,7 +4253,6 @@ mod tests {
             let p = PRef::from_node(
                 NodeIndex::new(0),
                 ATyp::VPoly(2, 1),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             );
@@ -4293,7 +4263,6 @@ mod tests {
             let p = PRef::from_node(
                 NodeIndex::new(1),
                 ATyp::VPoly(2, 1),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             );
@@ -4304,7 +4273,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(2, 1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4338,8 +4306,9 @@ mod tests {
     #[test]
     fn test_add_op_mle_add_pointwise() {
         // Mle(2) has 4 evaluation slots. add is pointwise over hypercube.
+        use crate::PRef;
         use backend::op::mk;
-        use graph::{PRef, Ref};
+        use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -4350,7 +4319,6 @@ mod tests {
             let p = PRef::from_node(
                 NodeIndex::new(0),
                 ATyp::Mle(2),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             );
@@ -4361,7 +4329,6 @@ mod tests {
             let p = PRef::from_node(
                 NodeIndex::new(1),
                 ATyp::Mle(2),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             );
@@ -4372,7 +4339,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::Mle(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4396,8 +4362,9 @@ mod tests {
 
     #[test]
     fn test_add_op_vpoly_sub_coefficient_wise() {
+        use crate::PRef;
         use backend::op::mk;
-        use graph::{PRef, Ref};
+        use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -4407,7 +4374,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4415,7 +4381,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(2, 2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4424,7 +4389,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(2, 2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4451,8 +4415,9 @@ mod tests {
     #[test]
     fn test_add_op_vpoly_mul_univariate_convolution() {
         // VPoly(1,1) × VPoly(1,1) → VPoly(1,2), a_0 b_0, a_0 b_1 + a_1 b_0, a_1 b_1.
+        use crate::PRef;
         use backend::op::mk;
-        use graph::{PRef, Ref};
+        use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -4462,7 +4427,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4470,7 +4434,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4479,7 +4442,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(1, 2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4530,8 +4492,9 @@ mod tests {
         //   [0,0], [0,1], [1,0]   (sizes 3)
         // VPoly(2,2) multi-indices:
         //   [0,0], [0,1], [1,0], [0,2], [1,1], [2,0]   (size 6)
+        use crate::PRef;
         use backend::op::mk;
-        use graph::{PRef, Ref};
+        use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -4541,7 +4504,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4549,7 +4511,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(2, 1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4558,7 +4519,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(2, 2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4608,8 +4568,9 @@ mod tests {
         //   x^0 :  u_0 v_0
         //   x^1 :  -2 u_0 v_0 + u_0 v_1 + u_1 v_0
         //   x^2 :  u_0 v_0 - u_0 v_1 - u_1 v_0 + u_1 v_1
+        use crate::PRef;
         use backend::op::mk;
-        use graph::{PRef, Ref};
+        use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -4619,7 +4580,6 @@ mod tests {
         let pref_u = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Mle(1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4627,7 +4587,6 @@ mod tests {
         let pref_v = PRef::from_node(
             NodeIndex::new(1),
             ATyp::Mle(1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4636,7 +4595,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(1, 2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4702,8 +4660,9 @@ mod tests {
         //   VPoly: b_0 + b_1·x
         //   Product: p(x)·q(x) = (u_0·b_0) + (u_1·b_0 - u_0·b_0 + u_0·b_1)·x
         //                      + (u_1·b_1 - u_0·b_1)·x²
+        use crate::PRef;
         use backend::op::mk;
-        use graph::{PRef, Ref};
+        use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -4713,7 +4672,6 @@ mod tests {
         let pref_u = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Mle(1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4721,7 +4679,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4730,7 +4687,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(1, 2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4781,8 +4737,9 @@ mod tests {
         // Mle(2) has 4 slots: evals at (0,0), (1,0), (0,1), (1,1).
         // Result VPoly(2,3) has 10 slots.
         // Just verify all 10 ideal slots are populated.
+        use crate::PRef;
         use backend::op::mk;
-        use graph::{PRef, Ref};
+        use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -4792,7 +4749,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4800,7 +4756,6 @@ mod tests {
         let pref_u = PRef::from_node(
             NodeIndex::new(1),
             ATyp::Mle(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4809,7 +4764,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(2, 3),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4836,8 +4790,9 @@ mod tests {
     fn test_add_op_mle_vpoly_mul_bivariate_coefficients() {
         // Mle(2) × VPoly(2, 1) → VPoly(2, 3).
         // Verify the constant-term slot (multi-index [0,0]) and a cross-term.
+        use crate::PRef;
         use backend::op::mk;
-        use graph::{PRef, Ref};
+        use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -4847,7 +4802,6 @@ mod tests {
         let pref_u = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Mle(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4855,7 +4809,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(2, 1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4864,7 +4817,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(2, 3),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4928,9 +4880,10 @@ mod tests {
         //   k=[1] (total deg 1): a_1  -  (b_0·q_1 + b_1·q_0)
         //   k=[2] (total deg 2): a_2  -  b_1·q_1
         // link_to_witness emits 2 more rows: var(q_wit[j]) - var(ideal[j]), j=0,1.
-        use graph::{PRef, Ref};
+        use crate::PRef;
+        use graph::Ref;
         use lang::ast::BinOp;
-        use lang::id::Vid;
+
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -4939,7 +4892,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4947,7 +4899,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4957,7 +4908,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(1, 1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -4972,18 +4922,16 @@ mod tests {
         // Recover the q_wit / r_wit PRefs (minted by sentinel_pref starting
         // at MAX and decrementing: q_wit=MAX, r_wit=MAX-1).
         let q_wit = PRef::from_var(
-            Vid::from("__zippel::gb::div_q::0"),
+            "__zippel::gb::div_q::0",
             petgraph::graph::NodeIndex::new(usize::MAX),
             ATyp::VPoly(1, 1),
-            0,
             Qualifier::Local,
             Distribution::default(),
         );
         let r_wit = PRef::from_var(
-            Vid::from("__zippel::gb::div_r::0"),
+            "__zippel::gb::div_r::0",
             petgraph::graph::NodeIndex::new(usize::MAX - 1),
             ATyp::VPoly(1, 0),
-            0,
             Qualifier::Local,
             Distribution::default(),
         );
@@ -5063,9 +5011,10 @@ mod tests {
     fn test_add_op_vpoly_rem_univariate_identity() {
         // VPoly(1,2) % VPoly(1,1) → VPoly(1,0).
         // Same witnesses as the Div test, but link ideal to r_wit (1 slot).
-        use graph::{PRef, Ref};
+        use crate::PRef;
+        use graph::Ref;
         use lang::ast::BinOp;
-        use lang::id::Vid;
+
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -5074,7 +5023,6 @@ mod tests {
         let _pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -5082,7 +5030,6 @@ mod tests {
         let _pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -5092,7 +5039,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(1, 0),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -5106,10 +5052,9 @@ mod tests {
 
         // q_wit=MAX, r_wit=MAX-1 (fresh builder, counter starts at MAX).
         let r_wit = PRef::from_var(
-            Vid::from("__zippel::gb::div_r::0"),
+            "__zippel::gb::div_r::0",
             petgraph::graph::NodeIndex::new(usize::MAX - 1),
             ATyp::VPoly(1, 0),
-            0,
             Qualifier::Local,
             Distribution::default(),
         );
@@ -5147,7 +5092,8 @@ mod tests {
     fn test_add_op_div_then_rem_shares_witness() {
         // Both `a/b` and `a%b` on the same source-level operand pair share the
         // witness side-table. Second op should NOT emit new identity rows.
-        use graph::{PRef, Ref};
+        use crate::PRef;
+        use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -5157,7 +5103,6 @@ mod tests {
         let _pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -5165,7 +5110,6 @@ mod tests {
         let _pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -5176,7 +5120,6 @@ mod tests {
             let pref = PRef::from_node(
                 NodeIndex::new(2),
                 ATyp::VPoly(1, 1),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             );
@@ -5195,7 +5138,6 @@ mod tests {
             let pref = PRef::from_node(
                 NodeIndex::new(3),
                 ATyp::VPoly(1, 0),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             );
@@ -5235,9 +5177,10 @@ mod tests {
         // same named-source expression (`a * b - c`) while still having
         // distinct raw HOp refs. Div and Rem over those equivalent operands
         // should share a single witness pair.
-        use graph::{PRef, Ref};
+        use crate::PRef;
+        use graph::Ref;
         use lang::ast::BinOp;
-        use lang::id::Vid;
+
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -5251,10 +5194,9 @@ mod tests {
             (3, "d", ATyp::VPoly(1, 1)),
         ] {
             let pref = PRef::from_var(
-                Vid::new(name),
+                name,
                 NodeIndex::new(idx),
                 typ,
-                0,
                 Qualifier::Public,
                 Distribution::default(),
             );
@@ -5267,7 +5209,6 @@ mod tests {
             let mul_ref = PRef::from_node(
                 NodeIndex::new(mul_idx),
                 ATyp::VPoly(1, 2),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             );
@@ -5286,7 +5227,6 @@ mod tests {
             let sub_ref = PRef::from_node(
                 NodeIndex::new(sub_idx),
                 ATyp::VPoly(1, 2),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             );
@@ -5310,7 +5250,6 @@ mod tests {
         let q = PRef::from_node(
             NodeIndex::new(20),
             ATyp::VPoly(1, 1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -5328,7 +5267,6 @@ mod tests {
         let r = PRef::from_node(
             NodeIndex::new(21),
             ATyp::VPoly(1, 0),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -5355,7 +5293,8 @@ mod tests {
         // Scalar / Scalar → Scalar: legacy zip path (a - b·var(pr) = 0).
         // Scalar fallback does not build a canonical polynomial witness key, so
         // no witness side-table entry is created.
-        use graph::{PRef, Ref};
+        use crate::PRef;
+        use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -5365,7 +5304,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -5373,7 +5311,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -5383,7 +5320,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -5416,7 +5352,8 @@ mod tests {
 
     #[test]
     fn test_add_op_scalar_div_vec_scalar_recurses_without_div_wit() {
-        use graph::{PRef, Ref};
+        use crate::PRef;
+        use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -5426,14 +5363,12 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::vec_scalar(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -5443,7 +5378,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::vec_scalar(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -5473,7 +5407,8 @@ mod tests {
 
     #[test]
     fn test_add_op_uni_div_scalar_slot_wise_without_div_wit() {
-        use graph::{PRef, Ref};
+        use crate::PRef;
+        use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -5483,14 +5418,12 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -5500,7 +5433,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::Uni(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -5522,7 +5454,8 @@ mod tests {
 
     #[test]
     fn test_add_op_mle_div_scalar_slot_wise_without_div_wit() {
-        use graph::{PRef, Ref};
+        use crate::PRef;
+        use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -5532,14 +5465,12 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Mle(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -5549,7 +5480,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::Mle(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -5571,7 +5501,8 @@ mod tests {
 
     #[test]
     fn test_add_op_vector_poly_div_rem_propagates_witness_cache() {
-        use graph::{PRef, Ref};
+        use crate::PRef;
+        use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -5585,7 +5516,6 @@ mod tests {
             ideal.register(&PRef::from_node(
                 NodeIndex::new(idx),
                 vec_typ.clone(),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             ));
@@ -5595,7 +5525,6 @@ mod tests {
             PRef::from_node(
                 NodeIndex::new(2),
                 div_typ.clone(),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             ),
@@ -5614,7 +5543,6 @@ mod tests {
             PRef::from_node(
                 NodeIndex::new(3),
                 rem_typ.clone(),
-                0,
                 Qualifier::Private,
                 Distribution::default(),
             ),
@@ -5888,17 +5816,15 @@ mod tests {
             .flat_map(|p| p.vars())
             .collect::<share::Set<_>>();
         assert!(
-            basis_vars.iter().any(|p| p
-                .name
-                .as_ref()
-                .is_some_and(|n| n.0.starts_with("__zippel::gb::div_q"))),
+            basis_vars
+                .iter()
+                .any(|p| p.name.starts_with("__zippel::gb::div_q")),
             "basis.vars() should contain div_q witnesses"
         );
         assert!(
-            basis_vars.iter().any(|p| p
-                .name
-                .as_ref()
-                .is_some_and(|n| n.0.starts_with("__zippel::gb::div_r"))),
+            basis_vars
+                .iter()
+                .any(|p| p.name.starts_with("__zippel::gb::div_r")),
             "basis.vars() should contain div_r witnesses"
         );
     }
@@ -5934,12 +5860,12 @@ mod tests {
             .next()
             .expect("div_wit should have exactly one (q_wit, r_wit) entry");
         assert!(
-            q_wit.name.as_ref().is_some_and(|n| n.0.contains("div_q")),
+            q_wit.name.contains("div_q"),
             "q_wit should be named div_q..., got {:?}",
             q_wit.name
         );
         assert!(
-            r_wit.name.as_ref().is_some_and(|n| n.0.contains("div_r")),
+            r_wit.name.contains("div_r"),
             "r_wit should be named div_r..., got {:?}",
             r_wit.name
         );
@@ -6018,7 +5944,7 @@ mod tests {
         );
 
         // Namespace should register all 8 public inputs
-        let ns_named_count = gr.prefs.values().filter(|p| p.name.is_some()).count();
+        let ns_named_count = gr.prefs.values().filter(|p| !p.name.is_empty()).count();
         assert!(
             ns_named_count >= 8,
             "namespace should register >= 8 named public prefs, got {}",
@@ -6057,7 +5983,7 @@ mod tests {
             gr.generating_set.len()
         );
 
-        let ns_named_count = gr.prefs.values().filter(|p| p.name.is_some()).count();
+        let ns_named_count = gr.prefs.values().filter(|p| !p.name.is_empty()).count();
         assert!(
             ns_named_count >= 8,
             "namespace should register >= 8 named public prefs, got {}",
@@ -6067,7 +5993,8 @@ mod tests {
 
     #[test]
     fn test_reduce_add_over_scalar_vec() {
-        use graph::{PRef, Ref};
+        use crate::PRef;
+        use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6078,7 +6005,6 @@ mod tests {
         let pref_v = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Vec(Box::new(ATyp::scalar()), 3),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6087,7 +6013,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6125,7 +6050,8 @@ mod tests {
         // Vec(Poly(1,2), 3) has 3 elements × 3 coefficients = 9 physical slots.
         // reduce should produce 3 polynomials (one per coefficient position),
         // where ideal[j] = v0[j] + v1[j] + v2[j].
-        use graph::{PRef, Ref};
+        use crate::PRef;
+        use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6137,7 +6063,6 @@ mod tests {
         let pref_v = PRef::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6146,7 +6071,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(1),
             poly_t.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6260,8 +6184,8 @@ mod tests {
 
     #[test]
     fn test_add_op_interpolate_constant_points() {
+        use crate::PRef;
         use ark_bls12_381::Fr;
-        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -6272,7 +6196,6 @@ mod tests {
         let pref_evals = PRef::from_node(
             NodeIndex::new(0),
             evals_typ.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6287,7 +6210,6 @@ mod tests {
         let pref_ideal = PRef::from_node(
             NodeIndex::new(1),
             ideal_typ.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6351,8 +6273,8 @@ mod tests {
 
     #[test]
     fn test_add_op_interpolate_3_constant_points() {
+        use crate::PRef;
         use ark_bls12_381::Fr;
-        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -6363,7 +6285,6 @@ mod tests {
         let pref_evals = PRef::from_node(
             NodeIndex::new(0),
             evals_typ.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6379,7 +6300,6 @@ mod tests {
         let pref_ideal = PRef::from_node(
             NodeIndex::new(1),
             ideal_typ.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6451,8 +6371,8 @@ mod tests {
 
     #[test]
     fn test_add_op_interpolate_ref_with_constant_points_in_pl() {
+        use crate::PRef;
         use ark_bls12_381::Fr;
-        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -6463,7 +6383,6 @@ mod tests {
         let pref_points = PRef::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6478,7 +6397,6 @@ mod tests {
         let pref_evals = PRef::from_node(
             NodeIndex::new(1),
             vec_t.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6488,7 +6406,6 @@ mod tests {
         let pref_ideal = PRef::from_node(
             NodeIndex::new(2),
             ideal_typ.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6542,7 +6459,7 @@ mod tests {
 
     #[test]
     fn test_add_op_interpolate_symbolic_points() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -6555,14 +6472,12 @@ mod tests {
         let pref_x0 = PRef::from_node(
             NodeIndex::new(0),
             scalar_t.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
         let pref_x1 = PRef::from_node(
             NodeIndex::new(1),
             scalar_t.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6573,7 +6488,6 @@ mod tests {
         let pref_points = PRef::from_node(
             NodeIndex::new(2),
             vec_t.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6597,14 +6511,12 @@ mod tests {
         let pref_y0 = PRef::from_node(
             NodeIndex::new(3),
             scalar_t.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
         let pref_y1 = PRef::from_node(
             NodeIndex::new(4),
             scalar_t.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6614,7 +6526,6 @@ mod tests {
         let pref_evals = PRef::from_node(
             NodeIndex::new(5),
             vec_t.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6642,7 +6553,6 @@ mod tests {
         let pref_ideal = PRef::from_node(
             NodeIndex::new(6),
             ideal_typ.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6668,11 +6578,7 @@ mod tests {
         let d_vars: Vec<_> = ideal
             .var_order
             .iter()
-            .filter(|v| {
-                v.name
-                    .as_ref()
-                    .is_some_and(|vid| vid.0.contains("interp_inv"))
-            })
+            .filter(|v| v.name.contains("interp_inv"))
             .collect();
         assert_eq!(d_vars.len(), 2, "should have 2 d-variables");
         let d01 = d_vars[0];
@@ -6726,8 +6632,8 @@ mod tests {
         expected = "ideal: operation has no polynomial-ideal treatment at duplicate-interpolate-points"
     )]
     fn test_add_op_interpolate_duplicate_points_panics_explicitly() {
+        use crate::PRef;
         use backend::op::mk;
-        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -6738,7 +6644,6 @@ mod tests {
         let pref_evals = PRef::from_node(
             NodeIndex::new(1),
             evals_typ.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6747,7 +6652,6 @@ mod tests {
         let pref_ideal = PRef::from_node(
             NodeIndex::new(2),
             ATyp::uni(3),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6763,7 +6667,7 @@ mod tests {
 
     #[test]
     fn test_add_op_div_scalar_slot_wise() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -6773,14 +6677,12 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6790,7 +6692,6 @@ mod tests {
         let pref_ideal = PRef::from_node(
             NodeIndex::new(2),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6821,7 +6722,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Rem: non-polynomial remainder")]
     fn test_add_op_rem_scalar_panics() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -6831,14 +6732,12 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6848,7 +6747,6 @@ mod tests {
         let pref_ideal = PRef::from_node(
             NodeIndex::new(2),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6867,7 +6765,7 @@ mod tests {
 
     #[test]
     fn test_reduce_div_scalar_uses_slot_wise_div() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6879,7 +6777,6 @@ mod tests {
         let pref_v = PRef::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6888,7 +6785,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6927,7 +6823,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Rem: non-polynomial remainder")]
     fn test_reduce_rem_scalar_panics() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6939,7 +6835,6 @@ mod tests {
         let pref_v = PRef::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6948,7 +6843,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6964,7 +6858,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "MLE division is not supported")]
     fn test_add_op_div_mle_panics() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -6974,14 +6868,12 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Mle(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::Mle(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -6991,7 +6883,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::Mle(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -7010,7 +6901,7 @@ mod tests {
 
     #[test]
     fn test_reduce_div_vpoly_uses_handle_div_rem() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7022,7 +6913,6 @@ mod tests {
         let pref_v = PRef::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -7031,7 +6921,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -7051,7 +6940,7 @@ mod tests {
 
     #[test]
     fn reduce_mul_poly_accumulator_widens() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7064,7 +6953,6 @@ mod tests {
         let pref_v = PRef::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -7073,7 +6961,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(1),
             ATyp::Uni(3),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -7107,7 +6994,7 @@ mod tests {
     /// `reduce_mul_poly_accumulator_widens`.
     #[test]
     fn reduce_map_mul_poly_accumulator_widens() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7120,7 +7007,6 @@ mod tests {
         let pref_v = PRef::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -7129,7 +7015,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(1),
             ATyp::Uni(3),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -7157,7 +7042,7 @@ mod tests {
 
     #[test]
     fn reduce_rem_poly_left_fold_semantics() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7170,7 +7055,6 @@ mod tests {
         let pref_v = PRef::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -7179,7 +7063,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(1),
             ATyp::Uni(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -7207,7 +7090,7 @@ mod tests {
 
     #[test]
     fn poly_rem_smaller_dividend_passes_through() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7220,14 +7103,12 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             dividend_t.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             divisor_t.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -7237,7 +7118,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::Uni(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -7283,7 +7163,7 @@ mod tests {
 
     #[test]
     fn test_record_scalar_fields_bind_slots() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7300,7 +7180,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             s.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7308,7 +7187,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             s.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7327,7 +7205,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             rec_typ,
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7362,7 +7239,7 @@ mod tests {
 
     #[test]
     fn test_record_mixed_type_fields_bind_slots() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7379,7 +7256,6 @@ mod tests {
         let pref_scalar = PRef::from_node(
             NodeIndex::new(0),
             s.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7388,7 +7264,6 @@ mod tests {
         let pref_poly = PRef::from_node(
             NodeIndex::new(1),
             uni_typ.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7407,7 +7282,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             rec_typ,
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7445,7 +7319,7 @@ mod tests {
 
     #[test]
     fn test_record_basis_count_matches_physical_len() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7464,7 +7338,6 @@ mod tests {
         let pref_x = PRef::from_node(
             NodeIndex::new(0),
             s.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7473,7 +7346,6 @@ mod tests {
         let pref_v = PRef::from_node(
             NodeIndex::new(1),
             v2.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7492,7 +7364,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             rec_typ,
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7513,7 +7384,7 @@ mod tests {
 
     #[test]
     fn test_proj_scalar_field_from_record() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7530,7 +7401,6 @@ mod tests {
         let pref_rec = PRef::from_node(
             NodeIndex::new(0),
             rec_typ.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7541,7 +7411,6 @@ mod tests {
         let pref_proj = PRef::from_node(
             NodeIndex::new(1),
             s.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7565,7 +7434,7 @@ mod tests {
 
     #[test]
     fn test_proj_second_field_offset_correct() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7585,7 +7454,6 @@ mod tests {
         let pref_rec = PRef::from_node(
             NodeIndex::new(0),
             rec_typ.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7596,7 +7464,6 @@ mod tests {
         let pref_proj = PRef::from_node(
             NodeIndex::new(1),
             v3.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7609,18 +7476,20 @@ mod tests {
         );
 
         assert_eq!(pref_proj.typ.physical_len(), 3, "Vec<F, 3> has 3 slots");
+        let proj_slots = pref_proj.slots();
+        let rec_slots = pref_rec.slots();
         for i in 0..3 {
-            let proj_slot = pref_proj.clone().with_slot(i).unwrap();
+            let proj_slot = &proj_slots[i];
             assert!(
-                ideal.pl.contains(&proj_slot),
+                ideal.pl.contains(proj_slot),
                 "proj slot {} missing from pl",
                 i
             );
 
-            let proj_poly = ideal.pl.get(&proj_slot).unwrap();
-            let rec_slot = pref_rec.clone().with_slot(1 + i).unwrap();
+            let proj_poly = ideal.pl.get(proj_slot).unwrap();
+            let rec_slot = &rec_slots[1 + i];
             assert!(
-                proj_poly.contains(&rec_slot),
+                proj_poly.contains(rec_slot),
                 "proj slot {} poly should reference record slot {} (field b at offset 1)",
                 i,
                 1 + i
@@ -7630,7 +7499,7 @@ mod tests {
 
     #[test]
     fn test_proj_first_field_of_multi_field_record() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7650,7 +7519,6 @@ mod tests {
         let pref_rec = PRef::from_node(
             NodeIndex::new(0),
             rec_typ.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7661,7 +7529,6 @@ mod tests {
         let pref_proj = PRef::from_node(
             NodeIndex::new(1),
             uni2.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7674,18 +7541,20 @@ mod tests {
         );
 
         assert_eq!(pref_proj.typ.physical_len(), 3, "Uni(2) has 3 coefficients");
+        let proj_slots = pref_proj.slots();
+        let rec_slots = pref_rec.slots();
         for i in 0..3 {
-            let proj_slot = pref_proj.clone().with_slot(i).unwrap();
+            let proj_slot = &proj_slots[i];
             assert!(
-                ideal.pl.contains(&proj_slot),
+                ideal.pl.contains(proj_slot),
                 "proj slot {} missing from pl",
                 i
             );
 
-            let proj_poly = ideal.pl.get(&proj_slot).unwrap();
-            let rec_slot = pref_rec.clone().with_slot(i).unwrap();
+            let proj_poly = ideal.pl.get(proj_slot).unwrap();
+            let rec_slot = &rec_slots[i];
             assert!(
-                proj_poly.contains(&rec_slot),
+                proj_poly.contains(rec_slot),
                 "proj slot {} poly should reference record slot {} (field a at offset 0)",
                 i,
                 i
@@ -7699,9 +7568,9 @@ mod tests {
 
     #[test]
     fn test_add_uni_different_degrees() {
+        use crate::PRef;
         use ark_bls12_381::Fr;
         use backend::op::mk;
-        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7716,7 +7585,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             uni2.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -7729,7 +7597,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             uni4.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -7742,7 +7609,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             uni4_ideal.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -7772,7 +7638,7 @@ mod tests {
 
     #[test]
     fn test_mul_scalar_poly_broadcast() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7786,7 +7652,6 @@ mod tests {
         let pref_s = PRef::from_node(
             NodeIndex::new(0),
             s.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7795,7 +7660,6 @@ mod tests {
         let pref_p = PRef::from_node(
             NodeIndex::new(1),
             uni2.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7804,7 +7668,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             uni2.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7838,7 +7701,7 @@ mod tests {
 
     #[test]
     fn test_mul_vec_scalar_broadcast() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7852,7 +7715,6 @@ mod tests {
         let pref_v = PRef::from_node(
             NodeIndex::new(0),
             v3.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7861,7 +7723,6 @@ mod tests {
         let pref_s = PRef::from_node(
             NodeIndex::new(1),
             s.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7870,7 +7731,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             v3.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7898,8 +7758,9 @@ mod tests {
         op: BinOp,
         scalar_left: bool,
         poly_typ: ATyp,
-    ) -> (graph::PRef, graph::PRef, graph::PRef, Ideal<ArkBls12_381>) {
-        use graph::{PRef, Ref};
+    ) -> (crate::PRef, crate::PRef, crate::PRef, Ideal<ArkBls12_381>) {
+        use crate::PRef;
+        use graph::Ref;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7910,7 +7771,6 @@ mod tests {
         let pref_s = PRef::from_node(
             NodeIndex::new(0),
             scalar_typ.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7919,7 +7779,6 @@ mod tests {
         let pref_p = PRef::from_node(
             NodeIndex::new(1),
             poly_typ.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7928,7 +7787,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             poly_typ.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -7953,7 +7811,7 @@ mod tests {
 
     fn assert_ideal_slot(
         ideal: &Ideal<ArkBls12_381>,
-        pref_r: &graph::PRef,
+        pref_r: &crate::PRef,
         slot: usize,
         expected: Polynomial<ark_bls12_381::Fr>,
     ) {
@@ -8071,7 +7929,7 @@ mod tests {
 
     #[test]
     fn test_concat_vec_uni_different_degrees() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8088,7 +7946,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             vec_uni2.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8097,7 +7954,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             vec_uni4.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8106,7 +7962,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             vec_ideal.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8150,7 +8005,7 @@ mod tests {
 
     #[test]
     fn test_concat_vec_scalar_element() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8165,7 +8020,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             vec_s.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8174,7 +8028,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             s.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8183,7 +8036,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             vec_ideal.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8213,7 +8065,7 @@ mod tests {
 
     #[test]
     fn test_equ_vec_uni_different_degrees() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8230,7 +8082,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             vec_uni2.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8239,7 +8090,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             vec_uni4.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8248,7 +8098,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             bool_typ.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8279,7 +8128,7 @@ mod tests {
 
     #[test]
     fn test_dot_vec_scalar() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8293,7 +8142,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             vec_s.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8302,7 +8150,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             vec_s.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8311,7 +8158,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             s.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8340,7 +8186,7 @@ mod tests {
 
     #[test]
     fn test_dot_vec_uni() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8357,7 +8203,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             vec_uni2.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8366,7 +8211,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             vec_uni4.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8375,7 +8219,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             dot_ideal.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8410,7 +8253,7 @@ mod tests {
 
     #[test]
     fn test_pair_vec() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -8427,7 +8270,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             vec_g1.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8436,7 +8278,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             vec_g2.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8445,7 +8286,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             vec_gt.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8474,7 +8314,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "ideal: operation has no polynomial-ideal treatment at dynamic-pow")]
     fn test_pow_vec_element_wise() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8491,7 +8331,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             vec_s.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8500,7 +8339,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             vec_fin.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8509,7 +8347,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             vec_ideal.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8530,8 +8367,8 @@ mod tests {
 
     #[test]
     fn test_pow_uni_const_exp() {
+        use crate::PRef;
         use backend::op::mk;
-        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8545,7 +8382,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             uni2.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8554,7 +8390,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(1),
             ideal_uni4.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8584,8 +8419,8 @@ mod tests {
 
     #[test]
     fn test_pow_vec_uni_const_exp() {
+        use crate::PRef;
         use backend::op::mk;
-        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8601,7 +8436,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             vec_uni2.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8610,7 +8444,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(1),
             vec_ideal.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8647,8 +8480,8 @@ mod tests {
 
     #[test]
     fn test_pow_vec_vecindex_per_element() {
+        use crate::PRef;
         use backend::op::mk;
-        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8663,7 +8496,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             vec_s.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8672,7 +8504,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(1),
             vec_ideal.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8703,8 +8534,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "ideal: operation has no polynomial-ideal treatment at dynamic-pow")]
     fn test_pow_vec_mixed_const_and_opaque() {
+        use crate::PRef;
         use backend::op::mk;
-        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8721,7 +8552,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             vec_s.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8730,7 +8560,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             vec_fin.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8739,7 +8568,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             vec_ideal.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8764,7 +8592,7 @@ mod tests {
 
     #[test]
     fn test_lift_uni_to_wider_uni() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -8772,7 +8600,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8803,7 +8630,7 @@ mod tests {
 
     #[test]
     fn test_lift_mle_to_wider_mle() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -8811,7 +8638,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Mle(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8842,7 +8668,7 @@ mod tests {
 
     #[test]
     fn test_lift_vpoly_same_arity_prefix() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -8850,7 +8676,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8880,7 +8705,7 @@ mod tests {
 
     #[test]
     fn test_lift_vpoly_cross_arity_embedding() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -8888,7 +8713,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -8981,7 +8805,7 @@ mod tests {
 
     #[test]
     fn test_lift_uni_to_vpoly_same_arity() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -8989,7 +8813,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9017,7 +8840,7 @@ mod tests {
 
     #[test]
     fn test_equ_scalar_has_var_constraint_and_diff() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -9028,7 +8851,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9036,7 +8858,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9044,7 +8865,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             ATyp::bool(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9079,7 +8899,7 @@ mod tests {
 
     #[test]
     fn test_equ_uni_bool_ideal_bare_diffs() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -9090,7 +8910,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9098,7 +8917,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::Uni(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9106,7 +8924,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             ATyp::bool(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9152,7 +8969,7 @@ mod tests {
 
     #[test]
     fn test_equ_uni_different_degrees_lifts_both() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -9163,7 +8980,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9171,7 +8987,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::Uni(4),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9179,7 +8994,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             ATyp::bool(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9228,7 +9042,7 @@ mod tests {
 
     #[test]
     fn test_concat_vec_vec_elements() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -9244,7 +9058,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             vec2.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9252,7 +9065,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             vec3.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9260,7 +9072,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             vec5.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9293,7 +9104,7 @@ mod tests {
 
     #[test]
     fn test_reduce_add_poly_vec_direct_fold() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -9307,7 +9118,6 @@ mod tests {
         let pref_v = PRef::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9316,7 +9126,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(1),
             poly_t.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9347,7 +9156,7 @@ mod tests {
 
     #[test]
     fn test_ref_lift_to_wider_type() {
-        use graph::PRef;
+        use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -9357,7 +9166,6 @@ mod tests {
         let pref_src = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9366,7 +9174,6 @@ mod tests {
         let pref_dst = PRef::from_node(
             NodeIndex::new(1),
             ATyp::Uni(4),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9411,7 +9218,6 @@ mod tests {
         let scalar_poly = Polynomial::<ark_bls12_381::Fr>::var(&PRef::from_node(
             petgraph::graph::NodeIndex::new(0),
             ATyp::scalar(),
-            0,
             lang::typ::Qualifier::Private,
             lang::typ::Distribution::default(),
         ));
@@ -9430,23 +9236,21 @@ mod tests {
     #[test]
     fn vars_is_pl_keys_union_basis_vars() {
         use ark_bls12_381::Fr;
-        use lang::id::Vid;
+
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
         let pl_ref = PRef::from_var(
-            Vid::new("pl_v"),
+            "pl_v",
             NodeIndex::new(10),
             ATyp::scalar(),
-            0,
             Qualifier::Public,
             Distribution::Nonuniform,
         );
         let basis_ref = PRef::from_var(
-            Vid::new("basis_v"),
+            "basis_v",
             NodeIndex::new(11),
             ATyp::scalar(),
-            0,
             Qualifier::Public,
             Distribution::Nonuniform,
         );
@@ -9480,7 +9284,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(100),
             ATyp::scalar(),
-            0,
             Qualifier::Public,
             Distribution::Nonuniform,
         );
@@ -9516,7 +9319,6 @@ mod tests {
         let pref = PRef::from_node(
             NodeIndex::new(101),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::Uniform,
         );
@@ -9551,7 +9353,6 @@ mod tests {
         let challenge_pref = PRef::from_node(
             NodeIndex::new(200),
             ATyp::scalar(),
-            0,
             Qualifier::Public,
             Distribution::Nonuniform,
         );
@@ -9566,7 +9367,6 @@ mod tests {
         let x_pref = PRef::from_node(
             NodeIndex::new(201),
             ATyp::scalar(),
-            0,
             Qualifier::Private,
             Distribution::Nonuniform,
         );
@@ -9576,7 +9376,6 @@ mod tests {
         let y_pref = PRef::from_node(
             NodeIndex::new(202),
             ATyp::scalar(),
-            0,
             Qualifier::Public,
             Distribution::Nonuniform,
         );
@@ -9629,7 +9428,6 @@ mod tests {
         let g1_pref = PRef::from_node(
             NodeIndex::new(300),
             ATyp::g1(),
-            0,
             Qualifier::Public,
             Distribution::Nonuniform,
         );
@@ -9638,7 +9436,6 @@ mod tests {
         let g2_pref = PRef::from_node(
             NodeIndex::new(301),
             ATyp::g2(),
-            0,
             Qualifier::Public,
             Distribution::Nonuniform,
         );
@@ -9647,7 +9444,6 @@ mod tests {
         let pair_ideal_pref = PRef::from_node(
             NodeIndex::new(302),
             ATyp::gt(),
-            0,
             Qualifier::Public,
             Distribution::Nonuniform,
         );
@@ -9683,11 +9479,9 @@ mod tests {
             "pair ideal must be visible through basis vars"
         );
         // No GT sentinel should exist
-        let has_gt_sentinel = basis_vars.iter().any(|pr| {
-            pr.name
-                .as_ref()
-                .is_some_and(|n| n.0.starts_with("__zippel::gb::gt"))
-        });
+        let has_gt_sentinel = basis_vars
+            .iter()
+            .any(|pr| pr.name.starts_with("__zippel::gb::gt"));
         assert!(!has_gt_sentinel, "GT sentinel should not exist");
     }
 
@@ -9699,8 +9493,8 @@ mod tests {
     fn record_projection_resolves_without_np_lookup() {
         // Build a record {a: Scalar, b: Scalar} from scalar refs, project
         // field "a", assert pl/basis aliases the field directly.
+        use crate::PRef;
         use backend::op::mk;
-        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -9720,7 +9514,6 @@ mod tests {
         let pref_rec = PRef::from_node(
             NodeIndex::new(0),
             rec_typ.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -9730,14 +9523,12 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(1),
             s.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
         let pref_b = PRef::from_node(
             NodeIndex::new(2),
             s.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -9761,7 +9552,6 @@ mod tests {
         let pref_proj = PRef::from_node(
             NodeIndex::new(3),
             s.clone(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         );
@@ -9799,8 +9589,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "ideal: operation has no polynomial-ideal treatment at dynamic-pow")]
     fn uncovered_op_dynamic_pow_vec_vec_panics() {
+        use crate::PRef;
         use backend::op::mk;
-        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -9816,7 +9606,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             vec_s.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9825,7 +9614,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             vec_fin.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9834,7 +9622,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             ATyp::Vec(Box::new(s.clone()), 2),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9857,8 +9644,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "ideal: operation has no polynomial-ideal treatment at dynamic-pow")]
     fn uncovered_op_dynamic_pow_scalar_panics() {
+        use crate::PRef;
         use backend::op::mk;
-        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -9872,7 +9659,6 @@ mod tests {
         let pref_a = PRef::from_node(
             NodeIndex::new(0),
             s.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9882,7 +9668,6 @@ mod tests {
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             fin.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );
@@ -9891,7 +9676,6 @@ mod tests {
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             s.clone(),
-            0,
             Qualifier::Private,
             Distribution::default(),
         );

@@ -3,7 +3,6 @@ use lang::id::Vid;
 use lang::typ::{Distribution, Nothing, Qualifier};
 use share::traversal::ToTraversal2;
 
-use crate::PRef;
 use backend::op::{GOp, HOp, HasOpFactory, Op, Ref, mk};
 use backend::{ATyp, ArkConfig};
 use petgraph::graph::NodeIndex;
@@ -139,21 +138,6 @@ impl<C: ArkConfig, N> Node<C, N> {
             Node::Op(_, ann) => ann,
             Node::Transcr(_, ann) => ann,
             _ => panic!("Cannot convert input to annotation"),
-        }
-    }
-
-    /// Build a `PRef` from this node if it is an `Arg` node.
-    /// Returns `None` for `Inp`/`Rel`/`Op`/`Transcr`.
-    pub fn arg_pref(&self, idx: NodeIndex) -> Option<PRef> {
-        match self {
-            Node::Arg(name, typ, qual, dist, kind) => {
-                let mut pr = PRef::new_named(Ref(idx), name.clone(), typ.clone(), 0, *qual, *dist);
-                if *kind == ArgKind::TranscriptInput {
-                    pr = pr.mark_transcript_source();
-                }
-                Some(pr)
-            }
-            _ => None,
         }
     }
 

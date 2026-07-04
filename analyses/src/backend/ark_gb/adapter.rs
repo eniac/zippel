@@ -59,8 +59,8 @@ use ark_gb::poly::Poly;
 use ark_gb::ring::Ring;
 use share::{Ctx, Set};
 
+use crate::PRef;
 use crate::frontend::{Monomial, Polynomial};
-use graph::PRef;
 
 /// Max per-variable exponent ark-gb's 7-bit packing supports.
 const MAX_EXPONENT: usize = 127;

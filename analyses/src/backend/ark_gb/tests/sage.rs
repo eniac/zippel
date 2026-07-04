@@ -2,9 +2,9 @@
 //! published `sage.rings.ideal.Katsura` / `sage.rings.ideal.Cyclic`
 //! small-n examples.
 
+use crate::PRef;
 use crate::frontend::Polynomial;
 use ark_bls12_381::Fr;
-use graph::PRef;
 
 use super::shared::{cyclic_polys, katsura_polys, mk_vars};
 

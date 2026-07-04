@@ -1,6 +1,7 @@
+use crate::PRef;
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
-use graph::{DQDag, GOp, Node, Op, PRef, Ref, mk};
+use graph::{DQDag, GOp, Node, Op, Ref, mk};
 use petgraph::graph::NodeIndex;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
@@ -15,12 +16,14 @@ fn named_pref(
     let name = dag.find_var(r.node());
     PRef {
         reference: r,
-        index: 0,
+        index: Vec::new(),
         typ,
         qualifier,
         distribution,
         from_transcript: false,
-        name,
+        name: name
+            .map(|v| v.0)
+            .unwrap_or_else(|| format!("__zippel::node::{}", r.node().index())),
     }
 }
 
@@ -227,9 +230,20 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         let input_prefs: Vec<PRef> = dag
             .input_args()
             .into_iter()
-            .filter_map(|n| {
-                let pref = dag[n].arg_pref(n)?;
-                if pref.is_public() { Some(pref) } else { None }
+            .filter_map(|n| match &dag[n] {
+                Node::Arg(name, typ, qual, dist, kind) => {
+                    if qual.is_public() {
+                        let mut pr =
+                            PRef::new_named(Ref(n), name.0.clone(), typ.clone(), *qual, *dist);
+                        if *kind == graph::ArgKind::TranscriptInput {
+                            pr = pr.mark_transcript_source();
+                        }
+                        Some(pr)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
             })
             .collect();
 
@@ -290,7 +304,16 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         let mut args: Vec<NodeIndex> = dag.nodes_from(node).filter(|n| dag[*n].is_arg()).collect();
         args.sort();
         args.into_iter()
-            .filter_map(|n| dag[n].arg_pref(n))
+            .filter_map(|n| match &dag[n] {
+                Node::Arg(name, typ, qual, dist, kind) => {
+                    let mut pr = PRef::new_named(Ref(n), name.0.clone(), typ.clone(), *qual, *dist);
+                    if *kind == graph::ArgKind::TranscriptInput {
+                        pr = pr.mark_transcript_source();
+                    }
+                    Some(pr)
+                }
+                _ => None,
+            })
             .collect()
     }
 
@@ -662,13 +685,9 @@ mod tests {
         let private_prefs: HashSet<NodeIndex> = g
             .input_args()
             .into_iter()
-            .filter_map(|n| {
-                let pref = g[n].arg_pref(n)?;
-                if pref.is_private() {
-                    Some(pref.node())
-                } else {
-                    None
-                }
+            .filter_map(|n| match &g[n] {
+                Node::Arg(_, _, qual, _, _) if qual.is_private() => Some(n),
+                _ => None,
             })
             .collect();
         for (verifier_pref, _) in tc.clos.iter() {

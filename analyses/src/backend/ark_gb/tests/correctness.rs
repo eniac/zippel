@@ -25,12 +25,12 @@
 //! covered by the Criterion bench (`benches/groebner.rs`); regressions on
 //! larger sizes therefore surface there, not here.
 
+use crate::PRef;
 use crate::backend::ark_gb::ArkGb;
 use crate::backend::{GbBackend, GbBasis};
 use crate::frontend::{Block, BlockKind, MonoOrder, Monomial, Polynomial};
 use ark_bls12_381::Fr;
 use ark_ff::{Field, Zero};
-use graph::PRef;
 
 use super::shared::{cyclic_polys, katsura_polys, mk_vars};
 

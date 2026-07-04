@@ -14,8 +14,8 @@
 
 use std::marker::PhantomData;
 
+use crate::PRef;
 use ark_ff::PrimeField;
-use graph::PRef;
 use share::Set;
 
 use crate::backend::ark_gb::adapter::{

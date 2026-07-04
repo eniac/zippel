@@ -9,8 +9,8 @@ use std::fmt;
 use std::iter::Sum;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
+use crate::PRef;
 use ark_ff::Field;
-use graph::PRef;
 use share::{Ctx, DocAllocator, DocBuilder, Pretty, Set};
 
 use super::monomial::Monomial;

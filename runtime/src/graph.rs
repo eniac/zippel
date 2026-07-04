@@ -1,5 +1,5 @@
 use backend::{ArkConfig, Value, value_to_bytes};
-use graph::{Dag, GOp, Node, Op, UDag};
+use graph::{ArgKind, Dag, GOp, Node, Op, UDag};
 use lang::id::Vid;
 use log::debug;
 use petgraph::Direction;
@@ -533,22 +533,21 @@ impl<C: ArkConfig> MutexGraph<C> {
                         arg_children.len()
                     );
                     for arg_idx in arg_children {
-                        if let Some(pref) = g.mutex_graph[arg_idx].arg_pref(arg_idx)
-                            && pref.qualifier.is_public()
-                            && !pref.from_transcript
-                        {
-                            let vid = pref.name().expect("Arg node must carry a name").clone();
-                            let value = match inputs.get(&vid) {
-                                Some(v) => v,
-                                None => {
-                                    let err = RuntimeError::missing_arg(&vid, inputs.keys());
-                                    record_error(&error_slot, err.clone());
-                                    // Drop tx and bail; in-flight workers
-                                    // will see the slot set and short-circuit.
-                                    return Err(err);
-                                }
-                            };
-                            absorb_public_input::<C, H>(prover_state, &**value);
+                        if let Node::Arg(name, _, qual, _, kind) = &g.mutex_graph[arg_idx] {
+                            if qual.is_public() && !matches!(kind, ArgKind::TranscriptInput) {
+                                let vid = name.clone();
+                                let value = match inputs.get(&vid) {
+                                    Some(v) => v,
+                                    None => {
+                                        let err = RuntimeError::missing_arg(&vid, inputs.keys());
+                                        record_error(&error_slot, err.clone());
+                                        // Drop tx and bail; in-flight workers
+                                        // will see the slot set and short-circuit.
+                                        return Err(err);
+                                    }
+                                };
+                                absorb_public_input::<C, H>(prover_state, &**value);
+                            }
                         }
                     }
                 }

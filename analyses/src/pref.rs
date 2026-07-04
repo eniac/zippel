@@ -1,139 +1,86 @@
-use crate::Ref;
-use lang::id::Tid;
-use lang::typ::{CKind, Qualifier};
-use lang::{ast::CArg, id::Vid, typ::Distribution};
+use backend::op::Ref;
+use graph::{ArgKind, Dag, Node};
+use lang::typ::Distribution;
+use lang::typ::Qualifier;
 use petgraph::graph::NodeIndex;
-use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
+use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 
-use backend::{ATyp, binomial};
+use backend::{ATyp, ArkConfig, binomial};
 use std::fmt;
 
 /// A reference to a node in the graph, with all associated metadata.
 ///
-/// Issue #83 / Phase B: `Ref` is now a thin newtype around `NodeIndex`.
-/// The variable name (when applicable) is stored on `PRef` directly via
-/// the optional `name` field, populated at construction time from the
-/// owning `Node::Arg` (or transcript variable). It is metadata only —
-/// `PRef` equality is still ultimately driven by `reference`/`index`.
+/// `index` is a logical multi-dimensional path (e.g. `[1, 0]` for the first
+/// element of the second row of a 2D array). It is built up by `with_slot` /
+/// `with_index` / `collect_slots` as they recurse into composite types.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct PRef {
     pub reference: Ref,
-    pub index: usize,
+    pub index: Vec<usize>,
     pub typ: ATyp,
     pub qualifier: Qualifier,
     pub distribution: Distribution,
     pub from_transcript: bool,
-    /// Source-level variable name, if any. For `Node::Arg` PRefs this
-    /// is the argument's `Vid`; for transcript-source PRefs it is the
-    /// log-variable name.
-    pub name: Option<Vid>,
+    /// Source-level variable name. For `Node::Arg` PRefs this is the
+    /// argument's `Vid`; for transcript-source PRefs it is the log-variable
+    /// name; for unnamed PRefs it is derived from the node index.
+    pub name: String,
 }
 
 impl PRef {
-    pub fn new(
-        reference: Ref,
-        typ: ATyp,
-        index: usize,
-        qualifier: Qualifier,
-        distribution: Distribution,
-    ) -> Self {
-        PRef {
-            reference,
-            index,
-            typ,
-            qualifier,
-            distribution,
-            from_transcript: false,
-            name: None,
-        }
-    }
-
     pub fn new_named(
         reference: Ref,
-        name: Vid,
+        name: impl Into<String>,
         typ: ATyp,
-        index: usize,
         qualifier: Qualifier,
         distribution: Distribution,
     ) -> Self {
         PRef {
             reference,
-            index,
+            index: Vec::new(),
             typ,
             qualifier,
             distribution,
             from_transcript: false,
-            name: Some(name),
+            name: name.into(),
         }
     }
 
     pub fn from_node(
         node: NodeIndex,
         typ: ATyp,
-        index: usize,
         qualifier: Qualifier,
         distribution: Distribution,
     ) -> Self {
         PRef {
             reference: Ref(node),
-            index,
+            index: Vec::new(),
             typ,
             qualifier,
             distribution,
             from_transcript: false,
-            name: None,
+            name: format!("__zippel::node::{}", node.index()),
         }
     }
 
     /// Construct a PRef referencing the `Arg` node at `node`, carrying
     /// the variable name `v` as metadata.
     pub fn from_var(
-        v: Vid,
+        v: impl Into<String>,
         node: NodeIndex,
         typ: ATyp,
-        index: usize,
         qualifier: Qualifier,
         distribution: Distribution,
     ) -> Self {
         PRef {
             reference: Ref(node),
-            index,
+            index: Vec::new(),
             typ,
             qualifier,
             distribution,
             from_transcript: false,
-            name: Some(v),
+            name: v.into(),
         }
-    }
-
-    pub fn from_ref(
-        reference: Ref,
-        typ: ATyp,
-        qualifier: Qualifier,
-        distribution: Distribution,
-    ) -> Self {
-        PRef {
-            reference,
-            index: 0,
-            typ,
-            qualifier,
-            distribution,
-            from_transcript: false,
-            name: None,
-        }
-    }
-
-    /// Construct a `PRef` for an arg expected to live at the `Arg` node `node`.
-    pub fn from_arg(arg: &CArg, node: NodeIndex, kctx: &Ctx<Tid, CKind>) -> Option<Self> {
-        let atyp = ATyp::from_ctyp(&arg.typ, kctx)?;
-        Some(PRef::from_var(
-            arg.id.clone(),
-            node,
-            atyp,
-            0,
-            arg.qualifier,
-            arg.distribution,
-        ))
     }
 
     pub fn is_public(&self) -> bool {
@@ -155,17 +102,8 @@ impl PRef {
         self.distribution == Distribution::UniformNonZero
     }
 
-    pub fn is_transcript_source(&self) -> bool {
-        self.from_transcript
-    }
-
     pub fn mark_transcript_source(mut self) -> Self {
         self.from_transcript = true;
-        self
-    }
-
-    pub fn with_transcript_source(mut self, flag: bool) -> Self {
-        self.from_transcript = flag;
         self
     }
 
@@ -173,16 +111,24 @@ impl PRef {
         self.reference.node()
     }
 
-    /// Source-level variable name, if known (set at construction).
-    pub fn name(&self) -> Option<&Vid> {
-        self.name.as_ref()
+    /// Source-level variable name (set at construction).
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
+    // TODO: check caller correctness
     pub fn with_slot(&self, index: usize) -> Option<Self> {
         let slot_typ = self.typ.physical_slot_type(index)?;
+        // For base types (scalar, group), with_slot(0) is identity — the
+        // value itself is the only slot, so no index component is pushed.
+        if matches!(self.typ, ATyp::Base(_)) {
+            return Some(self.clone());
+        }
+        let mut new_index = self.index.clone();
+        new_index.push(index);
         Some(PRef {
             reference: self.reference,
-            index: self.index + index,
+            index: new_index,
             typ: slot_typ,
             qualifier: self.qualifier,
             distribution: self.distribution,
@@ -192,21 +138,24 @@ impl PRef {
     }
 
     /// Logical slot access: returns a PRef at logical slot `i` with the
-    /// type of that slot and the physical offset computed via
-    /// `ATyp::logical_slot_offset`.
+    /// type of that slot.
     ///
-    /// For `Vec(T, n)`, `with_index(i)` returns a PRef of type `T` at
-    /// physical offset `i * T.physical_len()`.
+    /// For `Vec(T, n)`, `with_index(i)` returns a PRef of type `T`.
     /// For polynomial types (Uni, Mle, VPoly), every logical slot has
-    /// type `ATyp::scalar()` at physical offset `i`.
+    /// type `ATyp::scalar()`.
     ///
     /// Returns `None` if `i >= logical_len()`.
     pub fn with_index(&self, i: usize) -> Option<Self> {
         let slot_typ = self.typ.logical_slot_type(i)?;
-        let slot_offset = self.typ.logical_slot_offset(i)?;
+        // For base types, with_index(0) is identity.
+        if matches!(self.typ, ATyp::Base(_)) {
+            return Some(self.clone());
+        }
+        let mut new_index = self.index.clone();
+        new_index.push(i);
         Some(PRef {
             reference: self.reference,
-            index: self.index + slot_offset,
+            index: new_index,
             typ: slot_typ,
             qualifier: self.qualifier,
             distribution: self.distribution,
@@ -235,10 +184,11 @@ impl PRef {
             ATyp::Vec(t, n) => {
                 let mut out = Vec::with_capacity(self.typ.physical_len());
                 for i in 0..*n {
-                    let offset = i * t.physical_len();
+                    let mut elem_index = self.index.clone();
+                    elem_index.push(i);
                     let elem = PRef {
                         reference: self.reference,
-                        index: self.index + offset,
+                        index: elem_index,
                         typ: (**t).clone(),
                         qualifier: self.qualifier,
                         distribution: self.distribution,
@@ -251,11 +201,12 @@ impl PRef {
             }
             ATyp::Record(fields) => {
                 let mut out = Vec::with_capacity(self.typ.physical_len());
-                let mut offset = 0usize;
-                for (_, ft) in fields.iter() {
+                for (field_idx, (_, ft)) in fields.iter().enumerate() {
+                    let mut field_index = self.index.clone();
+                    field_index.push(field_idx);
                     let field = PRef {
                         reference: self.reference,
-                        index: self.index + offset,
+                        index: field_index,
                         typ: ft.clone(),
                         qualifier: self.qualifier,
                         distribution: self.distribution,
@@ -263,7 +214,6 @@ impl PRef {
                         name: self.name.clone(),
                     };
                     out.extend(field.collect_slots());
-                    offset += ft.physical_len();
                 }
                 out
             }
@@ -277,28 +227,42 @@ impl PRef {
     }
 
     pub fn verbose(&self) -> String {
-        let label: String = match &self.name {
-            Some(v) => format!("{}", v),
-            None => format!("{}", self.reference),
+        let label = &self.name;
+        let idx_str = self
+            .index
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join("][");
+        let idx_part = if self.index.is_empty() {
+            String::new()
+        } else {
+            format!("[{}]", idx_str)
         };
         if self.typ.physical_len() > 1 && self.distribution.is_uniform() {
             format!(
-                "{} uniform {}[{}]: {}",
-                self.qualifier, label, self.index, self.typ
+                "{} uniform {}{}: {}",
+                self.qualifier, label, idx_part, self.typ
             )
         } else if self.typ.physical_len() > 1 && self.distribution.is_uniform_nz() {
             format!(
-                "{} uniform* {}[{}]: {}",
-                self.qualifier, label, self.index, self.typ
+                "{} uniform* {}{}: {}",
+                self.qualifier, label, idx_part, self.typ
             )
         } else if self.typ.physical_len() > 1 {
-            format!("{} {}[{}]: {}", self.qualifier, label, self.index, self.typ)
+            format!("{} {}{}: {}", self.qualifier, label, idx_part, self.typ)
         } else if self.distribution.is_uniform() {
-            format!("{} uniform {}: {}", self.qualifier, label, self.typ)
+            format!(
+                "{} uniform {}{}: {}",
+                self.qualifier, label, idx_part, self.typ
+            )
         } else if self.distribution.is_uniform_nz() {
-            format!("{} uniform* {}: {}", self.qualifier, label, self.typ)
+            format!(
+                "{} uniform* {}{}: {}",
+                self.qualifier, label, idx_part, self.typ
+            )
         } else {
-            format!("{} {}: {}", self.qualifier, label, self.typ)
+            format!("{} {}{}: {}", self.qualifier, label, idx_part, self.typ)
         }
     }
 }
@@ -318,13 +282,32 @@ where
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        match self.name {
-            Some(v) => allocator.text(format!("{}", v)),
-            None => self.reference.pretty(allocator),
+        let mut text = self.name;
+        for i in &self.index {
+            text.push_str(&format!("[{}]", i));
         }
+        allocator.text(text)
     }
 
     fn is_nil(&self) -> bool {
         false
     }
+}
+
+/// Build `PRef`s for all input Arg nodes of `dag`, preserving the sort order
+/// of `Dag::input_args()`.
+pub fn dag_args<C: ArkConfig, A>(dag: &Dag<C, A>) -> Vec<PRef> {
+    dag.input_args()
+        .into_iter()
+        .filter_map(|n| match &dag[n] {
+            Node::Arg(name, typ, qual, dist, kind) => {
+                let mut pr = PRef::new_named(Ref(n), name.0.clone(), typ.clone(), *qual, *dist);
+                if *kind == ArgKind::TranscriptInput {
+                    pr = pr.mark_transcript_source();
+                }
+                Some(pr)
+            }
+            _ => None,
+        })
+        .collect()
 }

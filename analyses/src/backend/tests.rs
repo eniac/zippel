@@ -2,22 +2,21 @@
 
 #[cfg(test)]
 mod backend_tests {
+    use crate::PRef;
     use crate::backend::{GbBackend, ark_gb::ArkGb};
     use crate::frontend::{MonoOrder, Polynomial};
     use ark_bls12_381::Fr;
     use ark_ff::One;
     use backend::ATyp;
-    use graph::PRef;
-    use lang::id::Vid;
+
     use lang::typ::{Distribution, Qualifier};
     use petgraph::graph::NodeIndex;
 
     fn mk_var(name: &str, idx: usize) -> PRef {
         PRef::from_var(
-            Vid(name.to_string()),
+            name.to_string(),
             NodeIndex::new(idx),
             ATyp::scalar(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         )
@@ -99,22 +98,21 @@ mod backend_tests {
 /// so CI without Singular passes.
 #[cfg(test)]
 mod singular_tests {
+    use crate::PRef;
     use crate::backend::{GbBackend, ark_gb::ArkGb, singular::Singular};
     use crate::frontend::{Block, BlockKind, MonoOrder, Polynomial};
     use ark_bls12_381::Fr;
     use ark_ff::One;
     use backend::ATyp;
-    use graph::PRef;
-    use lang::id::Vid;
+
     use lang::typ::{Distribution, Qualifier};
     use petgraph::graph::NodeIndex;
 
     fn mk_var(name: &str, idx: usize) -> PRef {
         PRef::from_var(
-            Vid(name.to_string()),
+            name.to_string(),
             NodeIndex::new(idx),
             ATyp::scalar(),
-            0,
             Qualifier::Public,
             Distribution::default(),
         )

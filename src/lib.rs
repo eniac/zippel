@@ -19,7 +19,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-use graph::PRef;
 use runtime::MutexGraph;
 use share::traversal::ToTraversal1;
 use std::sync::Arc;
@@ -95,7 +94,8 @@ pub struct ZippelHandler<C: ArkConfig> {
     pub prover_graph: Option<UDag<C>>,
     pub verifier_graph: Option<UDag<C>>,
     public_inputs: Option<Ctx<Vid, Value<C>>>,
-    prover_args: Option<Vec<PRef>>,
+    /// (name, is_public, is_transcript) for each prover Arg node.
+    prover_args: Option<Vec<(Vid, bool, bool)>>,
     analyze_graph: Option<Dag<C, (Qualifier, Distribution)>>,
 }
 
@@ -306,7 +306,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         let prover = self.prover_graph.as_ref().unwrap();
 
         // save public inputs as public_inputs
-        let prover_args = prover.args();
+        let prover_args = prover.arg_info();
         self.prover_args = Some(prover_args);
     }
 
@@ -324,7 +324,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         let prover = self.prover_graph.as_ref().unwrap();
 
         // save public inputs as public_inputs
-        let prover_args = prover.args();
+        let prover_args = prover.arg_info();
 
         // Validate that every prover argument expected from the caller is
         // present in `inputs`. Transcript-sourced args are produced internally
@@ -334,8 +334,8 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         // `Option::unwrap() on a None value` panic.
         let expected_args: Vec<Vid> = prover_args
             .iter()
-            .filter(|arg| !arg.from_transcript)
-            .filter_map(|arg| arg.name().cloned())
+            .filter(|(_, _, is_transcript)| !is_transcript)
+            .map(|(name, _, _)| name.clone())
             .collect();
         let missing: Vec<&Vid> = expected_args
             .iter()
@@ -351,8 +351,8 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
 
         let public_args: Vec<Vid> = prover_args
             .iter()
-            .filter(|arg| arg.is_public())
-            .map(|arg| arg.name().cloned().unwrap())
+            .filter(|(_, is_public, _)| *is_public)
+            .map(|(name, _, _)| name.clone())
             .collect();
         let public_inputs = inputs
             .clone()
@@ -388,21 +388,14 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         let verifier = self.verifier_graph.as_ref().unwrap();
         let prover_args = self.prover_args.as_ref().unwrap();
 
-        let verifier_args = verifier.args();
-        debug!("Verifier args: {:?}", verifier_args);
+        let verifier_args = verifier.arg_info();
         let prover_arg_names: std::collections::HashSet<&Vid> =
-            prover_args.iter().filter_map(|p| p.name()).collect();
+            prover_args.iter().map(|(name, _, _)| name).collect();
         let pg_additional_args = verifier_args
             .iter()
-            .filter(|arg| arg.name().is_none_or(|v| !prover_arg_names.contains(v)))
+            .filter(|(name, _, _)| !prover_arg_names.contains(name))
             .zip(proof.iter())
-            .map(|(arg, val)| {
-                let v = arg
-                    .name()
-                    .cloned()
-                    .expect("Verifier transcript arg must have a name");
-                (v, val.clone())
-            })
+            .map(|((name, _, _), val)| (name.clone(), val.clone()))
             .collect::<Ctx<Vid, Value<C>>>();
         let inputs = self.public_inputs.as_ref().unwrap().clone();
         let mut inputs = inputs;

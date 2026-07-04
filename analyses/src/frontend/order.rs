@@ -9,7 +9,7 @@
 //! returns [`BackendError::UnsupportedOrder`] for the rest; see
 //! `analyses/src/backend/ark_gb.rs` (Phase 1).
 
-use graph::PRef;
+use crate::PRef;
 
 /// A monomial ordering as runtime data: a product of [`Block`]s.
 ///

@@ -91,15 +91,19 @@ mod runtime_tests {
             &Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(4u64)),
         );
 
-        let verifier_args = verifier.args();
-        let transcript_args: Vec<graph::PRef> = verifier_args
+        let transcript_args: Vec<lang::id::Vid> = verifier
+            .input_args()
             .into_iter()
-            .filter(|arg| arg.from_transcript)
+            .filter_map(|n| match &verifier[n] {
+                graph::Node::Arg(name, _, _, _, graph::ArgKind::TranscriptInput) => {
+                    Some(name.clone())
+                }
+                _ => None,
+            })
             .collect();
 
         assert_eq!(transcript_args.len(), proof.len());
-        for (arg, val) in transcript_args.iter().zip(proof.iter()) {
-            let name = arg.name().unwrap();
+        for (name, val) in transcript_args.iter().zip(proof.iter()) {
             verifier_inputs.insert(name, val);
         }
 

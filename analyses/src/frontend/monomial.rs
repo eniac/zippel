@@ -7,8 +7,8 @@
 use core::cmp::Ordering;
 use core::ops::{Div, Mul, MulAssign};
 
+use crate::PRef;
 use ark_ff::Field;
-use graph::PRef;
 use share::Ctx;
 use std::fmt;
 

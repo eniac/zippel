@@ -13,7 +13,6 @@ mod dep;
 pub mod domain_seperator;
 pub mod eval;
 mod node;
-pub mod pref;
 
 #[cfg(test)]
 mod tests;
@@ -22,7 +21,6 @@ pub use backend::op::{GOp, HOp, HasOpFactory, Op, Ref, mk};
 pub use dep::{Dep, DepType};
 use log::debug;
 pub use node::{ArgKind, Node};
-pub use pref::PRef;
 
 use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePolynomial};
 use backend::{ATyp, ArkConfig, PolyVariant, Value, VirtualPolynomial};
@@ -237,17 +235,18 @@ impl<C: ArkConfig, A> Dag<C, A> {
         out
     }
 
-    pub fn args(&self) -> Vec<PRef> {
+    /// Lightweight arg info: (name, is_public, is_transcript) for each input Arg.
+    pub fn arg_info(&self) -> Vec<(Vid, bool, bool)> {
         self.input_args()
             .into_iter()
-            .filter_map(|n| self[n].arg_pref(n))
-            .collect()
-    }
-
-    pub fn relation_args_prefs(&self) -> Vec<PRef> {
-        self.relation_args()
-            .into_iter()
-            .filter_map(|n| self[n].arg_pref(n))
+            .filter_map(|n| match &self[n] {
+                Node::Arg(name, _, qual, _, kind) => Some((
+                    name.clone(),
+                    qual.is_public(),
+                    matches!(kind, ArgKind::TranscriptInput),
+                )),
+                _ => None,
+            })
             .collect()
     }
 
@@ -740,16 +739,12 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         let mut verifier = Dag::new();
 
         // Public inputs that survive into the verifier (with their source-dag NodeIndex).
-        let public_args: Vec<(NodeIndex, PRef)> = self
+        let public_args: Vec<(NodeIndex, Vid)> = self
             .input_args()
             .into_iter()
-            .filter_map(|n| {
-                let pref = self[n].arg_pref(n)?;
-                if pref.is_public() {
-                    Some((n, pref))
-                } else {
-                    None
-                }
+            .filter_map(|n| match &self[n] {
+                Node::Arg(name, _, qual, _, _) if qual.is_public() => Some((n, name.clone())),
+                _ => None,
             })
             .collect();
         let name = self.name();
@@ -801,10 +796,10 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             for r in op.references() {
                 let target = r.node();
                 if self[target].is_input_arg() {
-                    let is_private_input = self[target]
-                        .arg_pref(target)
-                        .map(|pr| pr.is_private())
-                        .unwrap_or(false);
+                    let is_private_input = matches!(
+                        &self[target],
+                        Node::Arg(_, _, qual, _, _) if qual.is_private()
+                    );
                     if is_private_input {
                         return Err(GraphError::private_node_in_verifier(&op, &r));
                     }
@@ -885,9 +880,8 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             // Determine/create the Arg node for this transcript var.
             let arg_node = if let Some(&n) = transcript_arg_nodes.get(&transcript_var) {
                 n
-            } else if let Some((old, _)) = public_args
-                .iter()
-                .find(|(_, pr)| pr.name() == Some(&transcript_var))
+            } else if let Some((old, _)) =
+                public_args.iter().find(|(_, name)| name == &transcript_var)
             {
                 node_map_self[old]
             } else {
@@ -1156,19 +1150,12 @@ impl<C: HasOpFactory> UDag<C> {
         // Add arguments to [vctx] and [vars]
         let mut vctx = Ctx::new();
 
-        // Cast the signature to a arguments and insert to [start] node
-        let asig = sig
+        // Build a lookup from arg name → (qualifier, distribution) for Node::Arg construction.
+        let arg_meta: HashMap<&Vid, (Qualifier, Distribution)> = sig
             .args
             .iter()
-            .map(|arg| {
-                PRef::from_arg(arg, NodeIndex::new(0), &kctx).ok_or_else(|| {
-                    TypeError::decl(
-                        &sig.name,
-                        TypeError::ark(&kctx, &vctx, &CExp::var(&arg.id), &arg.typ),
-                    )
-                })
-            })
-            .collect::<Result<Vec<PRef>, _>>()?;
+            .map(|arg| (&arg.id, (arg.qualifier, arg.distribution)))
+            .collect();
 
         // Add arguments to type and fft contexts
         let mut atyps = Ctx::new();
@@ -1200,16 +1187,15 @@ impl<C: HasOpFactory> UDag<C> {
                 let mut start = self.add_node(Node::inp(sig.name.clone()));
                 let mut vars: Ctx<Vid, GOp<C>> = Ctx::new();
                 for (id, typ) in atyps.iter() {
-                    let pref = asig
-                        .iter()
-                        .find(|p| p.name() == Some(id))
-                        .cloned()
-                        .expect("PRef built from sig must be present");
+                    let (qualifier, distribution) = arg_meta
+                        .get(id)
+                        .copied()
+                        .expect("arg meta must be present for every sig arg");
                     let arg_node = self.add_node(Node::arg(
                         id.clone(),
                         typ.clone(),
-                        pref.qualifier,
-                        pref.distribution,
+                        qualifier,
+                        distribution,
                         ArgKind::Input,
                     ));
                     self.graph.add_edge(start, arg_node, Dep::data());
@@ -1231,16 +1217,15 @@ impl<C: HasOpFactory> UDag<C> {
                 start = self.add_node(Node::rel(sig.name.clone()));
                 let mut vars: Ctx<Vid, GOp<C>> = Ctx::new();
                 for (id, typ) in atyps.iter() {
-                    let pref = asig
-                        .iter()
-                        .find(|p| p.name() == Some(id))
-                        .cloned()
-                        .expect("PRef built from sig must be present");
+                    let (qualifier, distribution) = arg_meta
+                        .get(id)
+                        .copied()
+                        .expect("arg meta must be present for every sig arg");
                     let arg_node = self.add_node(Node::arg(
                         id.clone(),
                         typ.clone(),
-                        pref.qualifier,
-                        pref.distribution,
+                        qualifier,
+                        distribution,
                         ArgKind::Relation,
                     ));
                     self.graph.add_edge(start, arg_node, Dep::data());
@@ -1261,16 +1246,15 @@ impl<C: HasOpFactory> UDag<C> {
                 let mut start = self.add_node(Node::inp(sig.name.clone()));
                 let mut vars: Ctx<Vid, GOp<C>> = Ctx::new();
                 for (id, typ) in atyps.iter() {
-                    let pref = asig
-                        .iter()
-                        .find(|p| p.name() == Some(id))
-                        .cloned()
-                        .expect("PRef built from sig must be present");
+                    let (qualifier, distribution) = arg_meta
+                        .get(id)
+                        .copied()
+                        .expect("arg meta must be present for every sig arg");
                     let arg_node = self.add_node(Node::arg(
                         id.clone(),
                         typ.clone(),
-                        pref.qualifier,
-                        pref.distribution,
+                        qualifier,
+                        distribution,
                         ArgKind::Input,
                     ));
                     self.graph.add_edge(start, arg_node, Dep::data());

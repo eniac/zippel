@@ -26,8 +26,8 @@ use std::marker::PhantomData;
 use std::process::{Command, Stdio};
 use std::str::FromStr;
 
+use crate::PRef;
 use ark_ff::PrimeField;
-use graph::PRef;
 use num_bigint::BigUint;
 
 use super::{GbBackend, GbBasis};

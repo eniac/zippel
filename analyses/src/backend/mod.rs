@@ -8,9 +8,9 @@
 pub mod ark_gb;
 pub mod singular;
 
+use crate::PRef;
 use crate::frontend::{BackendError, BlockKind, MonoOrder, Polynomial};
 use ark_ff::PrimeField;
-use graph::PRef;
 use share::Set;
 
 /// User-selectable Gröbner-basis backend.

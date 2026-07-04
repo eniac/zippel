@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use crate::PRef;
 use crate::TransClos;
 use crate::backend::{GbBackendKind, GbBasis};
 use crate::error::{AnalysisError, ExtractorRejection};
@@ -9,8 +10,8 @@ use crate::ideal::{Ideal, IdealBuilder};
 use ark_ff::One;
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
-use graph::{DQDag, PRef, Ref};
-use lang::id::Vid;
+use graph::{DQDag, Ref};
+use lang::typ::{Distribution, Qualifier};
 use log::{info, warn};
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
@@ -156,8 +157,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
         let challenge_rounds = validate_2n_plus_1(dag, &l_vec)?;
 
-        let witness_slots: Vec<PRef> = dag
-            .args()
+        let witness_slots: Vec<PRef> = crate::pref::dag_args(dag)
             .into_iter()
             .filter(|a| a.is_private())
             .flat_map(|a| a.slots())
@@ -207,15 +207,15 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                     let suffix_owned = suffix.clone();
 
                     copy_tc.remap(&|pref: &PRef| {
-                        let key = (pref.reference, pref.index);
+                        let key = (pref.reference, pref.index.clone());
                         let in_round = round_map_ref
                             .get(&key)
                             .is_some_and(|&highest| highest == round_idx);
 
                         if in_round {
-                            let orig = pref.name().map(|v| v.0.clone()).unwrap_or_default();
+                            let orig = pref.name();
                             PRef {
-                                name: Some(Vid::new(&format!("{}::{}", orig, suffix_owned))),
+                                name: format!("{}::{}", orig, suffix_owned),
                                 ..pref.clone()
                             }
                         } else {
@@ -226,14 +226,14 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                     let remapped_challenges: Vec<PRef> = challenge_prefs_per_round[round_idx]
                         .iter()
                         .map(|cp| {
-                            let key = (cp.reference, cp.index);
+                            let key = (cp.reference, cp.index.clone());
                             let in_round = round_map_ref
                                 .get(&key)
                                 .is_some_and(|&highest| highest == round_idx);
                             if in_round {
-                                let orig = cp.name().map(|v| v.0.clone()).unwrap_or_default();
+                                let orig = cp.name();
                                 PRef {
-                                    name: Some(Vid::new(&format!("{}::{}", orig, suffix_owned))),
+                                    name: format!("{}::{}", orig, suffix_owned),
                                     ..cp.clone()
                                 }
                             } else {
@@ -525,8 +525,8 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 fn build_round_map<C: ArkConfig>(
     dag: &DQDag<C>,
     challenge_rounds: &[Vec<NodeIndex>],
-) -> HashMap<(Ref, usize), usize> {
-    let mut round_map: HashMap<(Ref, usize), usize> = HashMap::new();
+) -> HashMap<(Ref, Vec<usize>), usize> {
+    let mut round_map: HashMap<(Ref, Vec<usize>), usize> = HashMap::new();
     let challenge_nodes: Vec<NodeIndex> = challenge_rounds.iter().flatten().copied().collect();
     let challenge_set: HashSet<NodeIndex> = challenge_nodes.iter().copied().collect();
 
@@ -547,9 +547,11 @@ fn build_round_map<C: ArkConfig>(
         while let Some(node) = queue.pop_front() {
             if let Some(typ) = dag[node].typ() {
                 let r = dag.find_ref(node);
-                for idx in 0..typ.physical_len() {
+                let base =
+                    PRef::from_node(node, typ.clone(), Qualifier::Public, Distribution::Uniform);
+                for slot in base.slots() {
                     round_map
-                        .entry((r, idx))
+                        .entry((r, slot.index))
                         .and_modify(|e| *e = (*e).max(round_idx))
                         .or_insert(round_idx);
                 }
@@ -645,10 +647,11 @@ fn factor_group_gcd<F: ark_ff::Field>(polys: &mut Vec<Polynomial<F>>) {
 #[cfg(test)]
 mod tests {
     use super::SpecialSoundnessAnalysis;
+    use crate::PRef;
     use crate::error::{AnalysisError, ExtractorRejection};
     use crate::{QualifierPropagation, UniformityPropagation};
     use backend::ArkBls12_381;
-    use graph::{PRef, UDags};
+    use graph::UDags;
     use lang::ast::UModule;
     use share::Set;
     use share::{Ctx, unwrap};
@@ -753,16 +756,14 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g_inp).annotate_dag(&g_inp);
         SpecialSoundnessAnalysis::analyze(&g, vec![2]).unwrap();
 
-        let witness_names: Set<String> = g
-            .args()
+        let witness_names: Set<String> = crate::pref::dag_args(&g)
             .into_iter()
             .filter(|a| a.is_private())
             .flat_map(|a| a.slots())
-            .filter_map(|w| w.name().map(|v| v.0.clone()))
+            .filter_map(|w| Some(w.name().to_string()))
             .collect();
         assert!(witness_names.contains(&"x".to_string()));
-        let witness_count: usize = g
-            .args()
+        let witness_count: usize = crate::pref::dag_args(&g)
             .into_iter()
             .filter(|a| a.is_private())
             .flat_map(|a| a.slots())
@@ -965,8 +966,7 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g_inp).annotate_dag(&g_inp);
         SpecialSoundnessAnalysis::analyze(&g, vec![2]).unwrap();
 
-        let witness_slots: Vec<PRef> = g
-            .args()
+        let witness_slots: Vec<PRef> = crate::pref::dag_args(&g)
             .into_iter()
             .filter(|a| a.is_private())
             .flat_map(|a| a.slots())

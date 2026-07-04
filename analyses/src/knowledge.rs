@@ -1,3 +1,4 @@
+use crate::PRef;
 use crate::TransClos;
 use crate::backend::{GbBackendKind, GbBasis};
 use crate::error::AnalysisError;
@@ -5,7 +6,7 @@ use crate::frontend::{Block, BlockKind, MonoOrder, Polynomial};
 use crate::ideal::{Ideal, IdealBuilder};
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
-use graph::{DQDag, PRef};
+use graph::DQDag;
 use log::warn;
 
 /// Knowledge-analysis elimination predicate: Local variables and private-uniform

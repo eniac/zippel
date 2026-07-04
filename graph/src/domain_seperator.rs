@@ -1,5 +1,6 @@
-use crate::{Dag, PRef};
+use crate::{ArgKind, Dag, Node};
 use backend::ArkConfig;
+use lang::id::Vid;
 #[cfg(test)]
 use log::debug;
 use spongefish::{Encoding, domain_separator, session_id_from_str};
@@ -41,24 +42,31 @@ impl<C: ArkConfig> ZippelDomainSeparator<C> {
     }
 
     pub fn new_zippel_domain_seperator<A>(session: &str, dag: &Dag<C, A>) -> Self {
-        let mut public_args: Vec<PRef> = dag
-            .args()
-            .iter()
-            .filter(|arg| arg.is_public() && !arg.from_transcript)
-            .cloned()
+        // Collect public, non-transcript Arg nodes sorted by name.
+        let mut public_args: Vec<(&Vid, &backend::ATyp)> = dag
+            .input_args()
+            .into_iter()
+            .filter_map(|n| match &dag[n] {
+                Node::Arg(name, typ, qual, _, ArgKind::Input) => {
+                    if qual.is_public() {
+                        Some((name, typ))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
             .collect();
 
-        public_args.sort_by_key(|arg| arg.name().map(|v| v.0.clone()).unwrap_or_default());
+        public_args.sort_by_key(|(name, _)| name.0.as_str());
 
         let mut instance_buf = Vec::new();
-        for arg in public_args {
-            if let Some(vid) = arg.name() {
-                let vid_bytes = vid.0.as_bytes();
-                instance_buf.extend_from_slice(vid_bytes);
+        for (vid, typ) in public_args {
+            let vid_bytes = vid.0.as_bytes();
+            instance_buf.extend_from_slice(vid_bytes);
 
-                let type_size = arg.typ.physical_len();
-                instance_buf.extend_from_slice(&(type_size as u64).to_le_bytes());
-            }
+            let type_size = typ.physical_len();
+            instance_buf.extend_from_slice(&(type_size as u64).to_le_bytes());
         }
 
         Self {
