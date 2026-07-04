@@ -1,0 +1,9 @@
+---
+source: analyses/tests/gb_snapshots.rs
+expression: value
+---
+- g*z + h*c + u
+- u + g*n4
+- x*u + h*n4
+- z + x*c + n4
+g*x - h

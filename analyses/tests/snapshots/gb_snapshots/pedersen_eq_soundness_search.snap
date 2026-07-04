@@ -1,0 +1,14 @@
+---
+source: analyses/tests/gb_snapshots.rs
+expression: value
+---
+- c2*z::1*__zippel::soundness::d::0::1::0 + c1*z::1*__zippel::soundness::d::0::1::0 + c2*z::0*__zippel::soundness::d::0::1::0 - c1*z::0*__zippel::soundness::d::0::1::0 + c2*r2 - c1*r2 - c2*r1 + c1*r1
+- c::1*__zippel::soundness::d::0::1::0 + c::0*__zippel::soundness::d::0::1::0 - 1
+- h*r2 + h*r1 + c2 - c1
+- h*z::0 - c2*c::0 + c1*c::0 + t
+- h*z::1 - c2*c::1 + c1*c::1 + t
+- h*z::1*__zippel::soundness::d::0::1::0 + h*z::0*__zippel::soundness::d::0::1::0 + c2 - c1
+- m2 + m1
+h*c::0*z::1 - h*c::1*z::0 + t*c::1 - t*c::0
+h*r2 + g*m2 - c2
+t*z::1*__zippel::soundness::d::0::1::0 - t*z::0*__zippel::soundness::d::0::1::0 - r2*t + r1*t

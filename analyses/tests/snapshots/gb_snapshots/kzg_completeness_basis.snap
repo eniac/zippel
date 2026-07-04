@@ -1,0 +1,15 @@
+---
+source: analyses/tests/gb_snapshots.rs
+expression: value
+---
+- __zippel::gb::div_q::0 + poly_coeffs
+- poly_coeffs*srs_g1*__zippel::gb::div_q::0 + eval_result*srs_g1*__zippel::gb::div_q::0 + eval_point*poly_coeffs*proof + poly_coeffs*commitment - eval_result*commitment
+- srs_g1 + gen_g1
+- srs_g1*srs_g2_s + gen_g2*srs_g1
+__zippel::gb::div_r::0
+eval_point*__zippel::gb::div_q::0 + poly_coeffs - eval_result
+srs_g1*__zippel::gb::div_q::0 - commitment + poly_coeffs*srs_g1
+srs_g1*__zippel::gb::div_q::0 - eval_point*proof - commitment + eval_result*srs_g1
+srs_g1*__zippel::gb::div_q::0 - proof
+srs_g1*__zippel::gb::div_q::0^2 - commitment*__zippel::gb::div_q::0 + poly_coeffs*proof
+srs_g2_s*proof*__zippel::gb::div_q::0 - gen_g2*commitment*__zippel::gb::div_q::0 + gen_g2*poly_coeffs*proof

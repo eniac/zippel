@@ -1,0 +1,16 @@
+---
+source: analyses/tests/gb_snapshots.rs
+expression: value
+---
+- beta*v_r + v*n6
+- beta*w_r + w*n6
+- beta_z + beta*c + n6
+- g*beta_z + v*c + v_r
+- g*w + u*v
+- g*w_r + u*v_r
+- u*beta_z + w*c + w_r
+- v + beta*g
+- v*w_r + w*v_r
+- v_r + g*n6
+- w + beta*u
+- w_r + u*n6

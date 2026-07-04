@@ -1,0 +1,14 @@
+---
+source: analyses/tests/gb_snapshots.rs
+expression: value
+---
+- p_A*v_H*__zippel::gb::div_q::0 - p_A*v_H*__zippel::gb::div_q::0 + p_A*v_H*__zippel::gb::div_q::0 - p_A*p_C + p_A*p_C + p_A^2*p_B
+- right_hand + left_hand
+- v_H*__zippel::gb::div_q::0 + p_A*p_B
+- v_H*__zippel::gb::div_q::0 - p_C + p_A*p_B
+- v_H*__zippel::gb::div_q::0 - v_H*__zippel::gb::div_q::0 - p_C + p_A*p_B + p_A*p_B
+__zippel::gb::div_r::0
+p_A^2*v_H*__zippel::gb::div_q::0 - p_A*p_A*v_H*__zippel::gb::div_q::0 - p_A*p_A*v_H*__zippel::gb::div_q::0 + p_A^2*v_H*__zippel::gb::div_q::0 - p_A*p_A*p_C + p_A^2*p_C
+p_B*v_H*__zippel::gb::div_q::0 - p_B*v_H*__zippel::gb::div_q::0 - p_B*v_H*__zippel::gb::div_q::0 - p_B*p_C + p_A*p_B^2
+p_B^2*v_H*__zippel::gb::div_q::0 - p_B*p_B*v_H*__zippel::gb::div_q::0 - p_B*p_B*v_H*__zippel::gb::div_q::0 + p_B^2*v_H*__zippel::gb::div_q::0 - p_B*p_B*p_C + p_B^2*p_C
+v_H*r^2*__zippel::gb::div_q::0 + v_H*r*__zippel::gb::div_q::0 + v_H*r*__zippel::gb::div_q::0 + v_H*__zippel::gb::div_q::0 - right_hand

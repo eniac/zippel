@@ -1,0 +1,30 @@
+---
+source: analyses/tests/gb_snapshots.rs
+expression: value
+---
+- __zippel::gb::div_q::0 + p_coeffs
+- delta + srs_g1*u*n19 - srs_g1*n19 + srs_g1*n9
+- delta*__zippel::gb::div_q::0 + n9*pi - c*n19 + srs_g1*v*n19
+- gen_g2*delta*__zippel::gb::div_q::0 - srs_g2*n19*delta + gen_g2*u*n19*pi - srs_g2*n19*pi + gen_g2*n9*pi
+- n9*delta*__zippel::gb::div_q::0 + p_coeffs*n19*delta + u*n9*n19*pi + n9^2*pi - u*c*n19^2 + srs_g1*v*n19^2 - n9*c*n19
+- p_coeffs*delta - u*n9*pi + u*c*n19 - srs_g1*v*n19 + srs_g1*v*n9
+- srs_g1 + gen_g1
+- srs_g1*srs_g2 + gen_g2*srs_g1
+- srs_g1*srs_g2 + gen_g2*srs_g1
+- srs_g1*srs_g2 + srs_g1*srs_g2
+- srs_g2*delta*__zippel::gb::div_q::0 - srs_g2*n9*delta - gen_g2*p_coeffs*delta + gen_g2*u*c*n19 - srs_g2*c*n19 + gen_g2*n9*c
+- srs_g2*pi*__zippel::gb::div_q::0 + gen_g2*c*__zippel::gb::div_q::0 - srs_g2*n9*pi - gen_g2*p_coeffs*pi + srs_g2*c*n19
+- srs_g2*srs_g2*delta*__zippel::gb::div_q::0 - srs_g2^2*pi*__zippel::gb::div_q::0 + gen_g2*srs_g2*c*__zippel::gb::div_q::0 - srs_g2^2*n9*delta - gen_g2*p_coeffs*srs_g2*delta + gen_g2*srs_g2*u*n9*pi - srs_g2*srs_g2*n9*pi + gen_g2*srs_g2*v*pi + gen_g2^2*p_coeffs*u*pi + 52435875175126190479447740508185965837690552500527637822603658699938581184511*gen_g2*p_coeffs*srs_g2*pi + gen_g2*srs_g2*n9*c - gen_g2^2*v*c + gen_g2^2*p_coeffs*c
+__zippel::gb::div_r::0
+gen_g2*delta*__zippel::gb::div_q::0^2 + srs_g2*n19*delta*__zippel::gb::div_q::0 + srs_g2*n19*pi*__zippel::gb::div_q::0 - gen_g2*n9*pi*__zippel::gb::div_q::0 - gen_g2*v*n19*pi + gen_g2*p_coeffs*n19*pi
+gen_g2*srs_g1*__zippel::gb::div_q::0 - gen_g2*pi + srs_g1*srs_g2*n19
+srs_g1*__zippel::gb::div_q::0 - c + srs_g1*n9 + p_coeffs*srs_g1
+srs_g1*__zippel::gb::div_q::0 - pi + srs_g1*n19
+srs_g1*delta - srs_g1*u*pi + srs_g1*pi - srs_g1*c + srs_g1^2*v
+srs_g1*srs_g2*__zippel::gb::div_q::0 - srs_g2*pi + srs_g1*srs_g2*n19
+srs_g1*srs_g2*v*n9*__zippel::gb::div_q::0 + p_coeffs^2*srs_g2*delta + p_coeffs*srs_g2*u*n9*pi - p_coeffs*srs_g2*u*c*n19 + p_coeffs*srs_g1*srs_g2*v*n19 - srs_g2*v*n9*c + srs_g1*srs_g2*v*n9^2
+srs_g1*v*n9*__zippel::gb::div_q::0 + p_coeffs^2*delta + p_coeffs*u*n9*pi - p_coeffs*u*c*n19 + p_coeffs*srs_g1*v*n19 - v*n9*c + srs_g1*v*n9^2
+srs_g2*delta - gen_g2*u*pi + srs_g2*pi - gen_g2*c + gen_g2*srs_g1*v
+srs_g2*delta*__zippel::gb::div_q::0^2 + srs_g2*n9*delta*__zippel::gb::div_q::0 + gen_g2*p_coeffs*delta*__zippel::gb::div_q::0 + srs_g2*c*n19*__zippel::gb::div_q::0 - gen_g2*n9*c*__zippel::gb::div_q::0 - gen_g2*v*c*n19 + gen_g2*p_coeffs*c*n19
+srs_g2*srs_g2*delta*__zippel::gb::div_q::0^2 + srs_g2^2*pi*__zippel::gb::div_q::0^2 - gen_g2*srs_g2*c*__zippel::gb::div_q::0^2 + srs_g2^2*n9*delta*__zippel::gb::div_q::0 + gen_g2*p_coeffs*srs_g2*delta*__zippel::gb::div_q::0 + srs_g2*srs_g2*n9*pi*__zippel::gb::div_q::0 - gen_g2*srs_g2*v*pi*__zippel::gb::div_q::0 + 2*gen_g2*p_coeffs*srs_g2*pi*__zippel::gb::div_q::0 - gen_g2*srs_g2*n9*c*__zippel::gb::div_q::0 + gen_g2^2*v*c*__zippel::gb::div_q::0 - gen_g2^2*p_coeffs*c*__zippel::gb::div_q::0 - gen_g2*srs_g2*v*n9*pi + gen_g2*p_coeffs*srs_g2*n9*pi - gen_g2^2*p_coeffs*v*pi + gen_g2^2*p_coeffs^2*pi
+u*__zippel::gb::div_q::0 - v + p_coeffs

@@ -1,0 +1,9 @@
+---
+source: analyses/tests/gb_snapshots.rs
+expression: value
+---
+- __zippel::gb::div_q::0 + q
+- p*v + p*v
+__zippel::gb::div_r::0
+v*__zippel::gb::div_q::0 - p
+v*__zippel::gb::div_q::0 - p

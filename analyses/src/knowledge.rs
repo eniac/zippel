@@ -39,11 +39,13 @@ fn knowledge_order(result: &Ideal<impl ArkConfig>) -> MonoOrder {
 /// Perform a knowledge analysis using Groebner bases.
 #[allow(unnameable_types)]
 pub struct KnowledgeAnalysis<C: ArkConfig> {
-    prover_rel_ideal: Ideal<C>,
+    /// Gröbner basis of (prover ∪ relation) under the knowledge block order.
+    /// Computed in `from_input_with_backend`.
+    pub basis: GbBasis<C::F>,
     /// Gröbner basis of the relation (precondition) alone, used to filter
     /// polynomials that are derivable from the precondition (not real leaks).
-    relation_basis: Option<GbBasis<C::F>>,
-    backend: GbBackendKind,
+    /// `None` when the protocol has no relation.
+    pub relation_basis: Option<GbBasis<C::F>>,
 }
 
 impl<C: HasOpFactory> KnowledgeAnalysis<C> {
@@ -73,10 +75,14 @@ impl<C: HasOpFactory> KnowledgeAnalysis<C> {
             prover_ideal.merge(&rel_ideal);
         }
 
+        let order = knowledge_order(&prover_ideal);
+        let basis = gb_backend
+            .compute_gb(prover_ideal.generating_set, &order)
+            .expect("GB backend should support knowledge block order");
+
         Self {
-            prover_rel_ideal: prover_ideal,
+            basis,
             relation_basis,
-            backend,
         }
     }
 
@@ -105,8 +111,8 @@ impl<C: HasOpFactory> KnowledgeAnalysis<C> {
         })
     }
 
-    fn eliminate_var(&mut self) {
-        self.prover_rel_ideal.generating_set.retain(|p| {
+    fn eliminate_var(polys: &mut Vec<Polynomial<C::F>>) {
+        polys.retain(|p| {
             let vars = p.vars();
             if vars.is_empty() {
                 return true;
@@ -125,47 +131,38 @@ impl<C: HasOpFactory> KnowledgeAnalysis<C> {
         });
     }
 
-    fn eliminate_groups(&mut self) {
-        self.prover_rel_ideal.eliminate_monomial(&|t| {
-            let mono_sum = t
-                .iter()
-                .filter_map(|(v, i)| if v.typ.is_group() { Some(*i) } else { None })
-                .sum::<usize>();
-            mono_sum > 1
+    fn eliminate_groups(polys: &mut Vec<Polynomial<C::F>>) {
+        polys.retain(|p| {
+            p.terms.keys().any(|t| {
+                let mono_sum = t
+                    .iter()
+                    .filter_map(|(v, i)| if v.typ.is_group() { Some(*i) } else { None })
+                    .sum::<usize>();
+                mono_sum <= 1
+            })
         });
     }
 
     /// Run knowledge analysis.
     ///
-    /// Uses the backend selected at construction (default: ArkGb with W=128,
-    /// supports up to 1023 variables).
+    /// Uses the pre-computed Gröbner basis from `from_input_with_backend`.
     pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
-        let backend = self.backend.build::<C::F>();
-        let order = knowledge_order(&self.prover_rel_ideal);
-
-        // Compute the Groebner basis
-        let gb = backend
-            .compute_gb(
-                std::mem::take(&mut self.prover_rel_ideal.generating_set),
-                &order,
-            )
-            .expect("GB backend should support knowledge block order");
-
-        if gb.is_unit() {
+        if self.basis.is_unit() {
             return Err(AnalysisError::UnitIdeal {
                 context: "knowledge prover-relation",
             });
         }
 
-        self.prover_rel_ideal.generating_set = gb.polys.clone();
+        // Work on a mutable copy of the basis polynomials.
+        let mut polys = self.basis.polys.clone();
 
         // Delete varieties with elimination variables
-        self.eliminate_var();
+        Self::eliminate_var(&mut polys);
 
         // Delete varieties where group elements are multiplied
-        self.eliminate_groups();
+        Self::eliminate_groups(&mut polys);
 
-        for p in self.prover_rel_ideal.generating_set.iter() {
+        for p in polys.iter() {
             if Self::is_leak(p) {
                 // Skip polynomials derivable from the relation (precondition).
                 // The verifier already knows these — they're not new leaks.

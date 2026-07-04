@@ -3,11 +3,11 @@ use backend::op::HasOpFactory;
 use share::Set;
 
 use crate::TransClos;
-use crate::backend::GbBackendKind;
+use crate::backend::{GbBackendKind, GbBasis};
 use crate::error::AnalysisError;
 use crate::extractor::extract_locals;
-use crate::frontend::MonoOrder;
-use crate::ideal::{Ideal, IdealBuilder};
+use crate::frontend::{MonoOrder, Polynomial};
+use crate::ideal::IdealBuilder;
 use graph::DQDag;
 use graph::Ref;
 
@@ -15,10 +15,11 @@ use graph::Ref;
 /// This analysis checks if the relation is included in the implementation.
 /// One shared namespace is used for prover, relation, and verifier.
 pub struct CompletenessAnalysis<C: ArkConfig> {
-    pub prover: Ideal<C>,
-    pub verifier: Ideal<C>,
-    verifier_locals: Ideal<C>,
-    backend: GbBackendKind,
+    /// Gröbner basis of (prover ∪ relation ∪ verifier-locals) under grevlex.
+    /// Computed in `from_input_with_backend`.
+    pub basis: GbBasis<C::F>,
+    /// Verifier polynomials to reduce against `basis` in `run()`.
+    pub verifier: Vec<Polynomial<C::F>>,
 }
 
 impl<C: HasOpFactory> CompletenessAnalysis<C> {
@@ -48,38 +49,36 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         let mut verifier_result = builder.build(verifier_tc);
         verifier_result.inline(&Set::new());
 
+        // Merge verifier_locals into prover, then compute the GB.
+        for p in verifier_locals.generating_set.iter() {
+            prover_result.generating_set.push(p.clone());
+        }
+
+        let gb = backend.build::<C::F>();
+        let basis = gb
+            .compute_gb(prover_result.generating_set, &MonoOrder::grevlex())
+            .expect("GB backend should support grevlex");
+
         Self {
-            prover: prover_result,
-            verifier: verifier_result,
-            verifier_locals,
-            backend,
+            basis,
+            verifier: verifier_result.generating_set,
         }
     }
 
     pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
-        for p in self.verifier_locals.generating_set.iter() {
-            self.prover.generating_set.push(p.clone());
-        }
-
-        let backend = self.backend.build::<C::F>();
-        let prover_gb = backend
-            .compute_gb(
-                std::mem::take(&mut self.prover.generating_set),
-                &MonoOrder::grevlex(),
-            )
-            .expect("GB backend should support grevlex");
-
-        if prover_gb.is_unit() {
+        if self.basis.is_unit() {
             return Err(AnalysisError::UnitIdeal {
                 context: "completeness prover",
             });
         }
 
-        for p in self.verifier.generating_set.iter() {
+        // Use the shared reduce (no backend needed — reduction only needs
+        // the basis + its ordering, both stored in self.basis).
+        for p in self.verifier.iter() {
             if p.is_zero() {
                 continue;
             }
-            let remainder = backend.reduce(p.clone(), &prover_gb);
+            let remainder = crate::backend::reduce(p.clone(), &self.basis.polys, &self.basis.order);
             if !remainder.is_zero() {
                 return Err(AnalysisError::Incomplete(remainder));
             }
@@ -101,6 +100,7 @@ mod tests {
     use lang::ast::UModule;
     use lang::id::Vid;
     use share::Ctx;
+    use share::Set;
     use share::unwrap;
 
     #[test]
@@ -970,9 +970,9 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let ca = CompletenessAnalysis::from_input(&g);
 
+        let verifier_vars: Set<graph::PRef> = ca.verifier.iter().flat_map(|p| p.vars()).collect();
         assert!(
-            ca.verifier
-                .vars()
+            verifier_vars
                 .iter()
                 .all(|p| !p.qualifier.is_private() || p.from_transcript),
             "verifier Groebner result should not contain prover-only private inputs (unless from transcript)"
@@ -1112,11 +1112,7 @@ mod tests {
             ),
             "expected UnitIdeal error, got: {result:?}"
         );
-        // The prover ideal was consumed by run(); we verify the contradiction
-        // indirectly: the ideal contained x - (x+1) = -1, a nonzero constant.
-        assert!(
-            ca.prover.generating_set.is_empty(),
-            "prover basis should be consumed after run"
-        );
+        // The basis is the unit ideal (contains 1).
+        assert!(ca.basis.is_unit(), "basis should be the unit ideal");
     }
 }

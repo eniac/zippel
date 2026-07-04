@@ -1,0 +1,42 @@
+---
+source: analyses/tests/gb_snapshots.rs
+expression: value
+---
+- c1*h*sr::1*__zippel::soundness::d::0::1::0 + c1*h*sr::0*__zippel::soundness::d::0::1::0 + c1*g*x - c1*c2
+- c1*h*sr::1^2*__zippel::soundness::d::0::1::0 + c1*h*sr::0*sr::1*__zippel::soundness::d::0::1::0 + c1*t2*sr::1*__zippel::soundness::d::0::1::0 - c2*t1*sr::1*__zippel::soundness::d::0::1::0 - c1*t2*sr::0*__zippel::soundness::d::0::1::0 + c2*t1*sr::0*__zippel::soundness::d::0::1::0 - c1*c2*sr::1 + c1^2*sx::1
+- c::1*__zippel::soundness::d::0::1::0 + c::0*__zippel::soundness::d::0::1::0 - 1
+- g*sr::0 + c1*c::0 + t1
+- g*sr::1 + c1*c::1 + t1
+- g*sr::1*__zippel::soundness::d::0::1::0 + g*sr::0*__zippel::soundness::d::0::1::0 - c1
+- h*c::0*sr::1^2 + h*c::1*sr::0*sr::1 + g*c::1*sx::0*sr::1 - t2*c::1*sr::1 + t2*c::0*sr::1 - g*c::1*sx::1*sr::0 + t1*c::1*sx::1 - t1*c::0*sx::1
+- h*sr::0 - g*sx::0 + c2*c::0 + t2
+- h*sr::1 - g*sx::1 + c2*c::1 + t2
+- h*sr::1*__zippel::soundness::d::0::1::0 + h*sr::0*__zippel::soundness::d::0::1::0 - g*sx::1*__zippel::soundness::d::0::1::0 + g*sx::0*__zippel::soundness::d::0::1::0 - c2
+- h*t1*sr::1*__zippel::soundness::d::0::1::0 + h*t1*sr::0*__zippel::soundness::d::0::1::0 + g*x*t1 - c2*t1
+- h*t1*sx::1*sr::1*__zippel::soundness::d::0::1::0^2 + h*t1*sx::0*sr::1*__zippel::soundness::d::0::1::0^2 + h*t1*sx::1*sr::0*__zippel::soundness::d::0::1::0^2 - h*t1*sx::0*sr::0*__zippel::soundness::d::0::1::0^2 - h*x*t1*sr::1*__zippel::soundness::d::0::1::0 + h*x*t1*sr::0*__zippel::soundness::d::0::1::0 - c2*t1*sx::1*__zippel::soundness::d::0::1::0 + c2*t1*sx::0*__zippel::soundness::d::0::1::0 - c2*x*t1
+- h*t2*c::1*sx::1*sr::1^2*__zippel::soundness::d::0::1::0 + h*t2*c::1*sx::0*sr::1^2*__zippel::soundness::d::0::1::0 + h*t2*c::1*sx::1*sr::0*sr::1*__zippel::soundness::d::0::1::0 - h*t2*c::1*sx::0*sr::0*sr::1*__zippel::soundness::d::0::1::0 + h*t1*c::1*sx::0*sx::1*sr::1*__zippel::soundness::d::0::1::0 - h*t1*c::1*sx::0^2*sr::1*__zippel::soundness::d::0::1::0 - h*t1*c::1*sx::1^2*sr::0*__zippel::soundness::d::0::1::0 + h*t1*c::1*sx::0*sx::1*sr::0*__zippel::soundness::d::0::1::0 - h*t2*sx::1*sr::1^2 + h*t2*sx::0*sr::1^2 - h*x*t2*c::0*sr::1^2 + h*x*t2*c::1*sr::0*sr::1 + t2^2*sx::1*sr::1 + h*x*t1*c::1*sx::0*sr::1 - t2^2*sx::0*sr::1 - x*t2^2*c::1*sr::1 + x*t2^2*c::0*sr::1 - h*x*t1*c::1*sx::1*sr::0 - t1*t2*sx::1^2 + t1*t2*sx::0*sx::1 + x*t1*t2*c::1*sx::1 - x*t1*t2*c::0*sx::1
+- h*t2*sr::1*__zippel::soundness::d::0::1::0 + h*t2*sr::0*__zippel::soundness::d::0::1::0 - h*t1*sx::1*__zippel::soundness::d::0::1::0 + h*t1*sx::0*__zippel::soundness::d::0::1::0 + g*x*t2 - c2*t2 - h*x*t1
+- h*t2*sx::1*sr::1*__zippel::soundness::d::0::1::0^2 + h*t2*sx::0*sr::1*__zippel::soundness::d::0::1::0^2 + h*t2*sx::1*sr::0*__zippel::soundness::d::0::1::0^2 - h*t2*sx::0*sr::0*__zippel::soundness::d::0::1::0^2 - h*t1*sx::1^2*__zippel::soundness::d::0::1::0^2 + 2*h*t1*sx::0*sx::1*__zippel::soundness::d::0::1::0^2 - h*t1*sx::0^2*__zippel::soundness::d::0::1::0^2 - h*x*t2*sr::1*__zippel::soundness::d::0::1::0 + h*x*t2*sr::0*__zippel::soundness::d::0::1::0 - c2*t2*sx::1*__zippel::soundness::d::0::1::0 - h*x*t1*sx::1*__zippel::soundness::d::0::1::0 + c2*t2*sx::0*__zippel::soundness::d::0::1::0 + h*x*t1*sx::0*__zippel::soundness::d::0::1::0 - c2*x*t2
+c1*h*sr::0 - c2*g*sr::0 + c1*g*sx::0 - c1*t2 + c2*t1
+c1*h*sr::1 - c2*g*sr::1 + c1*g*sx::1 - c1*t2 + c2*t1
+c1*h*sx::0*sr::1 - c2*g*sx::0*sr::1 - c1*h*sx::1*sr::0 + c2*g*sx::1*sr::0 + c1*t2*sx::1 - c2*t1*sx::1 - c1*t2*sx::0 + c2*t1*sx::0
+c1*sr::1*__zippel::soundness::d::0::1::0 - c1*sr::0*__zippel::soundness::d::0::1::0 + c1*r
+c1*t1*sx::1*__zippel::soundness::d::0::1::0 - c1*t1*sx::0*__zippel::soundness::d::0::1::0 + c1*x*t1
+c1*t2*sr::1^2*__zippel::soundness::d::0::1::0 - c2*t1*sr::1^2*__zippel::soundness::d::0::1::0 + 52435875175126190479447740508185965837690552500527637822603658699938581184511*c1*t2*sr::0*sr::1*__zippel::soundness::d::0::1::0 + 2*c2*t1*sr::0*sr::1*__zippel::soundness::d::0::1::0 + c1*t2*sr::0^2*__zippel::soundness::d::0::1::0 - c2*t1*sr::0^2*__zippel::soundness::d::0::1::0 + c1^2*sx::0*sr::1 - c1^2*sx::1*sr::0
+c1*t2*sx::1*__zippel::soundness::d::0::1::0 - c2*t1*sx::1*__zippel::soundness::d::0::1::0 - c1*t2*sx::0*__zippel::soundness::d::0::1::0 + c2*t1*sx::0*__zippel::soundness::d::0::1::0 + c1*x*t2 - c2*x*t1
+c1^2*sx::1*__zippel::soundness::d::0::1::0 - c1^2*sx::0*__zippel::soundness::d::0::1::0 + c1^2*x
+c2*h*sr::1*__zippel::soundness::d::0::1::0 - c2*h*sr::0*__zippel::soundness::d::0::1::0 + c1*h*sx::1*__zippel::soundness::d::0::1::0 - c1*h*sx::0*__zippel::soundness::d::0::1::0 + c1*h*x - c2*g*x + c2^2
+c2*sr::1*__zippel::soundness::d::0::1::0 - c2*sr::0*__zippel::soundness::d::0::1::0 + c1*sx::1*__zippel::soundness::d::0::1::0 - c1*sx::0*__zippel::soundness::d::0::1::0 + c1*x + c2*r
+g*c::0*sr::1 - g*c::1*sr::0 + t1*c::1 - t1*c::0
+g*r - c1
+g*x + h*r - c2
+g^2*sx::0*sr::1 - g*t2*sr::1 + h*t1*sr::1 - g^2*sx::1*sr::0 + g*t2*sr::0 - h*t1*sr::0 + g*t1*sx::1 - g*t1*sx::0
+g^2*x + c1*h - c2*g
+h*c::0*sr::1 - h*c::1*sr::0 + g*c::0*sx::1 - g*c::1*sx::0 + t2*c::1 - t2*c::0
+h*c::0^2*sr::1^2 + 52435875175126190479447740508185965837690552500527637822603658699938581184511*h*c::0*c::1*sr::0*sr::1 + t2*c::0*c::1*sr::1 - t2*c::0^2*sr::1 + h*c::1^2*sr::0^2 - t2*c::1^2*sr::0 + t2*c::0*c::1*sr::0 - t1*c::0*c::1*sx::1 + t1*c::0^2*sx::1 + t1*c::1^2*sx::0 - t1*c::0*c::1*sx::0
+h*sr::1^2*__zippel::soundness::d::0::1::0 + 52435875175126190479447740508185965837690552500527637822603658699938581184511*h*sr::0*sr::1*__zippel::soundness::d::0::1::0 + h*sr::0^2*__zippel::soundness::d::0::1::0 + c2*sr::1 - c2*sr::0 - c1*sx::1 + c1*sx::0
+h*t1*c::1*sx::1*sr::1*__zippel::soundness::d::0::1::0 - h*t1*c::1*sx::0*sr::1*__zippel::soundness::d::0::1::0 - h*t1*c::1*sx::1*sr::0*__zippel::soundness::d::0::1::0 + h*t1*c::1*sx::0*sr::0*__zippel::soundness::d::0::1::0 + h*t1*sx::1*sr::1 - h*t1*sx::0*sr::1 + h*x*t1*c::0*sr::1 - h*x*t1*c::1*sr::0 - t1*t2*sx::1 + t1*t2*sx::0 + x*t1*t2*c::1 - x*t1*t2*c::0
+h*t2*c::1*sx::1*sr::1*__zippel::soundness::d::0::1::0 - h*t2*c::1*sx::0*sr::1*__zippel::soundness::d::0::1::0 - h*t2*c::1*sx::1*sr::0*__zippel::soundness::d::0::1::0 + h*t2*c::1*sx::0*sr::0*__zippel::soundness::d::0::1::0 + h*t1*c::1*sx::1^2*__zippel::soundness::d::0::1::0 + 52435875175126190479447740508185965837690552500527637822603658699938581184511*h*t1*c::1*sx::0*sx::1*__zippel::soundness::d::0::1::0 + h*t1*c::1*sx::0^2*__zippel::soundness::d::0::1::0 + h*t2*sx::1*sr::1 - h*t2*sx::0*sr::1 + h*x*t2*c::0*sr::1 - h*x*t2*c::1*sr::0 + h*t1*sx::1^2 - h*t1*sx::0*sx::1 + h*x*t1*c::0*sx::1 - t2^2*sx::1 - h*x*t1*c::1*sx::0 + t2^2*sx::0 + x*t2^2*c::1 - x*t2^2*c::0
+t1*sr::1*__zippel::soundness::d::0::1::0 - t1*sr::0*__zippel::soundness::d::0::1::0 + r*t1
+t1^2*sx::1*__zippel::soundness::d::0::1::0 - t1^2*sx::0*__zippel::soundness::d::0::1::0 + x*t1^2
+t2*sr::1*__zippel::soundness::d::0::1::0 - t2*sr::0*__zippel::soundness::d::0::1::0 + t1*sx::1*__zippel::soundness::d::0::1::0 - t1*sx::0*__zippel::soundness::d::0::1::0 + r*t2 + x*t1

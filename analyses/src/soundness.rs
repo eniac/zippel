@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::TransClos;
-use crate::backend::GbBackendKind;
+use crate::backend::{GbBackendKind, GbBasis};
 use crate::error::{AnalysisError, ExtractorRejection};
 use crate::extractor::{extract_locals, valid_extractor};
 use crate::frontend::{MonoOrder, Polynomial};
@@ -18,7 +18,26 @@ use petgraph::visit::EdgeRef;
 use share::Set;
 
 pub struct SpecialSoundnessAnalysis<C: ArkConfig> {
-    _marker: std::marker::PhantomData<C>,
+    /// Gröbner basis of the search ideal (verifier TC copies + d-equations +
+    /// relation) under lex order. Computed in `from_input_with_backend`.
+    /// Snapshotable.
+    pub search_gb: GbBasis<C::F>,
+    /// Witness slots (private args) for extractor search in `run()`.
+    witness_slots: Vec<PRef>,
+    /// Variables visible to the verifier (used for extractor validation).
+    verifier_visible: Set<PRef>,
+    /// Validity ideal: d-equations + copy TCs. Extractors are added in
+    /// `run()` before computing the validity GB.
+    grev_validity: Ideal<C>,
+    /// Relation ideal (inlined). Relation polys are reduced against the
+    /// validity GB in `run()`.
+    grev_rel_result: Ideal<C>,
+    /// Relation locals (merged into validity ideal in `run()`).
+    rel_locals: Ideal<C>,
+    /// Lex ordering used for both search and validity GBs.
+    lex_order: MonoOrder,
+    /// Backend for the validity GB computation in `run()`.
+    backend: GbBackendKind,
 }
 
 fn format_suffix(prefix: &[usize], copy_idx: usize) -> String {
@@ -102,16 +121,7 @@ fn validate_2n_plus_1<C: ArkConfig>(
 impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
     /// Analyze special soundness of a sigma protocol.
     ///
-    /// # Phases
-    ///
-    /// 1. **Construct**: build all GB inputs — d-equations, copy TCs,
-    ///    relation polys (order-free).
-    /// 2. **Build lex ordering**: compute the lex-elimination var_order from
-    ///    `var_order` as `MonoOrder::lex(var_order)` — runtime data, no TLS.
-    /// 3. **Inline & compute** the search GB via the backend under lex.
-    /// 4. **Extract witnesses** from the search basis.
-    /// 5. **Build validity GB** (also under lex) and verify that all relation
-    ///    polys reduce to zero.
+    /// Convenience wrapper: `from_input_with_backend` + `run`.
     pub fn analyze(dag: &DQDag<C>, l_vec: Vec<usize>) -> Result<(), AnalysisError<C>> {
         Self::analyze_with_backend(dag, l_vec, GbBackendKind::default())
     }
@@ -122,6 +132,24 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         l_vec: Vec<usize>,
         backend: GbBackendKind,
     ) -> Result<(), AnalysisError<C>> {
+        let mut sa = Self::from_input_with_backend(dag, l_vec, backend)?;
+        sa.run()
+    }
+
+    /// Build the analysis from the DAG, computing the search Gröbner basis.
+    ///
+    /// # Phases
+    ///
+    /// 1. **Construct**: build all GB inputs — d-equations, copy TCs,
+    ///    relation polys (order-free).
+    /// 2. **Build lex ordering**: compute the lex-elimination var_order from
+    ///    `var_order` as `MonoOrder::lex(var_order)` — runtime data, no TLS.
+    /// 3. **Inline & compute** the search GB via the backend under lex.
+    pub fn from_input_with_backend(
+        dag: &DQDag<C>,
+        l_vec: Vec<usize>,
+        backend: GbBackendKind,
+    ) -> Result<Self, AnalysisError<C>> {
         if l_vec.is_empty() || l_vec.iter().any(|l| *l < 2) {
             return Err(AnalysisError::InvalidSoundnessParameter);
         }
@@ -352,13 +380,10 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         // Phase 3: Inline & compute the search GB via the backend.
         grev_search.inline(&Set::new());
 
-        let backend = backend.build::<C::F>();
-        let search_gb = backend
+        let gb = backend.build::<C::F>();
+        let search_gb = gb
             .compute_gb(std::mem::take(&mut grev_search.generating_set), &lex_order)
             .expect("GB backend should support lex order");
-
-        let mut search_polys = search_gb.polys.clone();
-        factor_group_gcd(&mut search_polys);
 
         if search_gb.is_unit() {
             return Err(AnalysisError::UnitIdeal {
@@ -366,10 +391,34 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             });
         }
 
+        Ok(Self {
+            search_gb,
+            witness_slots,
+            verifier_visible,
+            grev_validity,
+            grev_rel_result,
+            rel_locals,
+            lex_order,
+            backend,
+        })
+    }
+
+    /// Run the checking phase: extract witnesses from the search GB, build the
+    /// validity GB, and verify that all relation polys reduce to zero.
+    ///
+    /// # Phases
+    ///
+    /// 4. **Extract witnesses** from the search basis.
+    /// 5. **Build validity GB** (also under lex) and verify that all relation
+    ///    polys reduce to zero.
+    pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
         // Phase 4: Extract witnesses.
+        let mut search_polys = self.search_gb.polys.clone();
+        factor_group_gcd(&mut search_polys);
+
         let mut extractors: Vec<(PRef, Polynomial<C::F>)> = Vec::new();
 
-        for w in &witness_slots {
+        for w in &self.witness_slots {
             let mut found_extractor = None;
             let mut rejection: Option<ExtractorRejection<C>> = None;
 
@@ -393,7 +442,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                         .flat_map(|(t, _)| t.vars())
                         .collect();
 
-                    let all_visible = other_vars.iter().all(|v| verifier_visible.contains(v));
+                    let all_visible = other_vars.iter().all(|v| self.verifier_visible.contains(v));
                     if !all_visible {
                         rejection = Some(ExtractorRejection::NotVisible(poly.clone()));
                         continue;
@@ -430,21 +479,22 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         info!(
             "Found {} extractor(s) for {} witness slot(s)",
             extractors.len(),
-            witness_slots.len()
+            self.witness_slots.len()
         );
 
         // Phase 5: Build validity GB and verify.
         for (_, ext_poly) in &extractors {
-            grev_validity.generating_set.push(ext_poly.clone());
+            self.grev_validity.generating_set.push(ext_poly.clone());
         }
 
-        grev_validity.merge(&rel_locals);
-        grev_validity.inline(&Set::new());
+        self.grev_validity.merge(&self.rel_locals);
+        self.grev_validity.inline(&Set::new());
 
+        let backend = self.backend.build::<C::F>();
         let validity_gb = backend
             .compute_gb(
-                std::mem::take(&mut grev_validity.generating_set),
-                &lex_order,
+                std::mem::take(&mut self.grev_validity.generating_set),
+                &self.lex_order,
             )
             .expect("GB backend should support lex order");
 
@@ -454,7 +504,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             });
         }
 
-        for r in grev_rel_result.generating_set.iter() {
+        for r in self.grev_rel_result.generating_set.iter() {
             if r.is_zero() {
                 continue;
             }

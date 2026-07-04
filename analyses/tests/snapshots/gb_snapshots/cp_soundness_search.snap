@@ -1,0 +1,22 @@
+---
+source: analyses/tests/gb_snapshots.rs
+expression: value
+---
+- c::1*__zippel::soundness::d::0::1::0 + c::0*__zippel::soundness::d::0::1::0 - 1
+- v + beta*g
+- v*c::1*beta_z::1*__zippel::soundness::d::0::1::0 - v_r*beta_z::1*__zippel::soundness::d::0::1::0 + v*c::1*beta_z::0*__zippel::soundness::d::0::1::0 + v_r*beta_z::0*__zippel::soundness::d::0::1::0 - v*beta_z::1
+- w + beta*u
+- w*c::1*beta_z::1*__zippel::soundness::d::0::1::0 - w_r*beta_z::1*__zippel::soundness::d::0::1::0 + w*c::1*beta_z::0*__zippel::soundness::d::0::1::0 + w_r*beta_z::0*__zippel::soundness::d::0::1::0 - w*beta_z::1
+g*beta_z::0 - v*c::0 - v_r
+g*beta_z::1 - v*c::1 - v_r
+g*w - u*v
+g*w_r - u*v_r
+u*beta_z::0 - w*c::0 - w_r
+u*beta_z::1 - w*c::1 - w_r
+v*beta_z::1*__zippel::soundness::d::0::1::0 - v*beta_z::0*__zippel::soundness::d::0::1::0 + beta*v
+v*c::0*beta_z::1 + v_r*beta_z::1 - v*c::1*beta_z::0 - v_r*beta_z::0
+v*w_r - w*v_r
+v_r*beta_z::1*__zippel::soundness::d::0::1::0 - v_r*beta_z::0*__zippel::soundness::d::0::1::0 + beta*v_r
+w*beta_z::1*__zippel::soundness::d::0::1::0 - w*beta_z::0*__zippel::soundness::d::0::1::0 + beta*w
+w*c::0*beta_z::1 + w_r*beta_z::1 - w*c::1*beta_z::0 - w_r*beta_z::0
+w_r*beta_z::1*__zippel::soundness::d::0::1::0 - w_r*beta_z::0*__zippel::soundness::d::0::1::0 + beta*w_r

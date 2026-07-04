@@ -1,0 +1,26 @@
+---
+source: analyses/tests/gb_snapshots.rs
+expression: value
+---
+- c1*x*sr + c1*r*sx - r^2*t2 + c2*r*n8
+- c1^2*x*sr + c1^2*r*sx - c1*r^2*t2 + c2*r^2*t1
+- g*sr + c1*c + t1
+- h*sr - g*sx + c2*c + t2
+- h*x*n7*sr - x*t2*sx + h*x*n8*sx + c2*n7*sx + x*n7*t2 - c2*n7^2
+- n8*t2 + n7*t1 + h*n8^2
+- r*t1 + c1*n8
+- r*t2 - x*t1 + c2*n8 + c1*n7
+- sr + r*c + n8
+- sx + x*c + n7
+- t1 + g*n8
+- t2 + h*n8 + g*n7
+- x*t1*sr + r*t1*sx - r*n8*t2 + c2*n8^2
+c1*h*sr - c2*g*sr + c1*g*sx - c1*t2 + c2*t1
+g*r - c1
+g*x + h*r - c2
+g*x*sr - c1*sx + r*t2 - c2*n8
+g^2*x + c1*h - c2*g
+h*x*n8*sr + x*t1*sx - c2*n8*sx - x*n8*t2 + c2*n7*n8
+h*x*sr + g*x*sx - c2*sx - x*t2 + c2*n7
+h*x*sr^2 - c2*sx*sr - x*t2*sr + c2*n7*sr + c1*sx^2 - r*t2*sx + c2*n8*sx
+x*sr - r*sx - x*n8 + r*n7

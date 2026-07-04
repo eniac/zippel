@@ -1,0 +1,31 @@
+---
+source: analyses/tests/gb_snapshots.rs
+expression: value
+---
+- c1*z2 + c2*z1 - n4*c2 + c1*n8
+- c1*z3 + c3*z1 - n4*c3 + c1*n12
+- c2*z3 + c3*z2 - n8*c3 + c2*n12
+- g*c1*z2 + g*c2*z1 - u1*c2 + c1*u2
+- g*c1*z3 + g*c3*z1 - u1*c3 + c1*u3
+- g*c2*z3 + g*c3*z2 - u2*c3 + c2*u3
+- g*z1 + h*c1 + u1
+- g*z2 + h*c2 + u2
+- g*z3 + h*c3 + u3
+- n4*u2 + u1*n8
+- n4*u3 + u1*n12
+- n8*u3 + u2*n12
+- u1 + g*n4
+- u1*c1*z2 + u1*c2*z1 - n4*u1*c2 + n4*c1*u2
+- u1*c1*z3 + u1*c3*z1 - n4*u1*c3 + n4*c1*u3
+- u1*c2*z3 + c1*u2*z3 + u1*c3*z2 - c1*u3*z2 - u2*c3*z1 + c2*u3*z1
+- u1*c2*z3 + u1*c3*z2 - n4*u2*c3 + n4*c2*u3
+- u2 + g*n8
+- u2*c2*z3 + u2*c3*z2 - n8*u2*c3 + n8*c2*u3
+- u3 + g*n12
+- x*u1 + h*n4
+- x*u2 + h*n8
+- x*u3 + h*n12
+- z1 + x*c1 + n4
+- z2 + x*c2 + n8
+- z3 + x*c3 + n12
+g*x - h

@@ -1,0 +1,21 @@
+---
+source: analyses/tests/gb_snapshots.rs
+expression: value
+---
+- evs0_msg + poly + poly + poly + poly
+- evs0_msg + poly + poly + poly + poly
+- evs0_msg - evs0_msg + claimed_sum
+- evs0_msg*evs_msg + evs0_msg*evs_msg - poly*evs_msg + poly*evs_msg + poly*evs_msg - poly*evs_msg - poly*evs_msg + poly*evs_msg + poly*evs_msg - poly*evs_msg + 2*poly*evs_msg*r_next + 52435875175126190479447740508185965837690552500527637822603658699938581184511*poly*evs_msg*r_next + 52435875175126190479447740508185965837690552500527637822603658699938581184511*poly*evs_msg*r_next + 2*poly*evs_msg*r_next + poly*evs0_msg*r_next - poly*evs0_msg*r_next - poly*evs0_msg*r_next + poly*evs0_msg*r_next + poly*evs_msg - poly*evs_msg + poly*evs_msg - poly*evs_msg + poly*evs0_msg - poly*evs0_msg
+- evs0_msg*evs_msg*evs_msg + evs0_msg*evs_msg*evs_msg + poly*evs_msg*evs_msg - poly*evs_msg*evs_msg - poly*evs_msg*evs_msg + poly*evs_msg*evs_msg + evs0_msg*evs_msg*evs_msg - evs0_msg*evs_msg*evs_msg + poly*evs_msg*evs_msg - poly*evs_msg*evs_msg - poly*evs_msg*evs_msg + poly*evs_msg*evs_msg + poly*evs0_msg*evs_msg - poly*evs0_msg*evs_msg - poly*evs0_msg*evs_msg + poly*evs0_msg*evs_msg + poly*evs_msg*evs_msg - poly*evs_msg*evs_msg - poly*evs_msg*evs_msg + poly*evs_msg*evs_msg + poly*evs_msg*evs_msg - poly*evs_msg*evs_msg - poly*evs_msg*evs_msg + poly*evs_msg*evs_msg + poly*evs0_msg*evs_msg - poly*evs0_msg*evs_msg - poly*evs0_msg*evs_msg + poly*evs0_msg*evs_msg + poly*evs_msg^2 - poly*evs_msg^2 - poly*evs_msg*evs_msg + poly*evs_msg*evs_msg + poly*evs_msg*evs_msg - poly*evs_msg*evs_msg + poly*evs0_msg*evs_msg - poly*evs0_msg*evs_msg - poly*evs_msg^2 + poly*evs_msg^2 - poly*evs0_msg*evs_msg + poly*evs0_msg*evs_msg
+- evs_msg + poly*r1*r_next - poly*r1*r_next - poly*r1*r_next + poly*r1*r_next + poly*r_next - poly*r_next + poly*r1 - poly*r1 + poly
+- evs_msg*evs_msg + evs_msg*evs_msg + poly*r1*evs_msg - poly*r1*evs_msg - poly*r1*evs_msg + poly*r1*evs_msg + poly*evs_msg - poly*evs_msg + poly*r1*evs_msg - poly*r1*evs_msg - poly*r1*evs_msg + poly*r1*evs_msg + poly*evs_msg - poly*evs_msg + poly*r1*evs_msg - poly*r1*evs_msg + poly*evs_msg - poly*r1*evs_msg + poly*r1*evs_msg - poly*evs_msg
+__zippel::gb::interp_inv::0 + 1
+__zippel::gb::interp_inv::1 - 1
+__zippel::gb::interp_inv::2 + 1
+__zippel::gb::interp_inv::3 - 1
+evs0_msg*evs_msg - evs0_msg*evs_msg - poly*evs_msg + poly*evs_msg - poly*evs_msg + poly*evs_msg - poly*evs_msg + poly*evs_msg - poly*evs_msg + poly*evs_msg - poly*evs0_msg - poly*evs0_msg + poly*evs0_msg + poly*evs0_msg
+evs_msg + evs_msg - evs0_msg*r1 + evs0_msg*r1 - evs0_msg
+evs_msg + evs_msg - evs_msg*r_next + evs_msg*r_next - evs_msg
+evs_msg - poly*r1 + poly*r1 - poly*r1 + poly*r1 - poly - poly
+poly*evs_msg - poly*evs_msg + poly*evs_msg - poly*evs_msg - poly*evs_msg*r_next + poly*evs_msg*r_next + poly*evs_msg*r_next - poly*evs_msg*r_next + poly*poly*r_next + poly*poly*r_next - poly*poly*r_next - poly*poly*r_next - poly*poly*r_next + poly*poly*r_next - poly*evs_msg + poly*evs_msg - poly*poly + poly*poly + poly*poly - poly*poly
+poly*evs_msg*evs_msg - poly*evs_msg*evs_msg + poly*evs_msg*evs_msg - poly*evs_msg*evs_msg - poly*evs_msg*evs_msg + poly*evs_msg*evs_msg - poly*evs_msg*evs_msg + poly*evs_msg*evs_msg + poly*poly*evs_msg + poly*poly*evs_msg - poly*poly*evs_msg - poly*poly*evs_msg - poly*poly*evs_msg + poly*poly*evs_msg - poly*evs_msg*evs_msg + poly*evs_msg*evs_msg + poly*evs_msg*evs_msg - poly*evs_msg*evs_msg + poly*poly*evs_msg + poly*poly*evs_msg - poly*poly*evs_msg - poly*poly*evs_msg - poly*poly*evs_msg + poly*poly*evs_msg - poly*evs_msg^2 + poly*evs_msg^2 + poly*evs_msg*evs_msg - poly*evs_msg*evs_msg - poly*poly*evs_msg + poly*poly*evs_msg + poly*poly*evs_msg - poly*poly*evs_msg - poly*poly*evs_msg + poly*poly*evs_msg

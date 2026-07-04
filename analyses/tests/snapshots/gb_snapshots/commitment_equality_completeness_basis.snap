@@ -1,0 +1,13 @@
+---
+source: analyses/tests/gb_snapshots.rs
+expression: value
+---
+- c_diff + g*x + h*r1 - c2
+- c_diff - c2 + c1
+- h*z + c_diff*c + t
+- t + h*n9
+- z - r2*c + r1*c + n9
+g*x + h*r2 - c2
+r2*c_diff - g*r2*x + g*r1*x + c2*r2 - c2*r1
+r2*t + g*x*n9 - c2*n9
+r2*t - r1*t + n9*c_diff

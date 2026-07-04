@@ -29,7 +29,12 @@ arbtest = "0.3.2"
 serial_test = "3.2.0"
 rayon = "1.10.0"
 libtest-mimic = "0.8"
+insta = "1"
 
 [[test]]
 name = "completeness_examples"
+harness = false
+
+[[test]]
+name = "gb_snapshots"
 harness = false

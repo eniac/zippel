@@ -1,0 +1,11 @@
+---
+source: analyses/tests/gb_snapshots.rs
+expression: value
+---
+- h*r2 + h*r1 + c2 - c1
+- h*z - c2*c + c1*c + t
+- m2 + m1
+- t + h*n11
+- z - r2*c + r1*c + n11
+h*r2 + g*m2 - c2
+r2*t - r1*t - c2*n11 + c1*n11

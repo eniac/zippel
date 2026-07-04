@@ -196,7 +196,9 @@ fn build_script<F: PrimeField>(
     let names: Vec<String> = (0..ideal.len()).map(|i| format!("p{i}")).collect();
     s.push_str(&format!("ideal I = {};\n", names.join(", ")));
 
-    // Compute standard basis.
+    // Compute a *reduced* standard basis (Gröbner basis).
+    // Without option(redSB), std returns a non-interreduced basis.
+    s.push_str("option(redSB);\n");
     s.push_str("ideal G = std(I);\n");
 
     // Emission loop: each term as `coeff exp1 exp2 ... expN`, END between polys.

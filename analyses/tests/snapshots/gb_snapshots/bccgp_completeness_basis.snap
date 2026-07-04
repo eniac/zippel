@@ -1,0 +1,9 @@
+---
+source: analyses/tests/gb_snapshots.rs
+expression: value
+---
+- a_scalar_transcript + a_vec
+- b_scalar_transcript + b_vec
+a_scalar_transcript*b_scalar_transcript - c_val
+h_vec*b_scalar_transcript + g_vec*a_scalar_transcript - p_commitment
+h_vec*b_scalar_transcript^2 - p_commitment*b_scalar_transcript + c_val*g_vec
