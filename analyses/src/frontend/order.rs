@@ -9,13 +9,13 @@
 //! returns [`BackendError::UnsupportedOrder`] for the rest; see
 //! `analyses/src/backend/ark_gb.rs` (Phase 1).
 
-use crate::PRef;
+use crate::Var;
 
 /// A monomial ordering as runtime data: a product of [`Block`]s.
 ///
 /// Use the constructors for the common cases:
 /// - [`MonoOrder::grevlex`] — single GrevLex block, vars inferred from the
-///   ideal, `PRef::Ord` reverse-lex tiebreak. Zero-arg.
+///   ideal, `Var::Ord` reverse-lex tiebreak. Zero-arg.
 /// - [`MonoOrder::lex`] — single Lex block; requires an explicit variable
 ///   ranking (which variable is "largest" is positional).
 /// - [`MonoOrder::block`] — arbitrary product of blocks.
@@ -32,7 +32,7 @@ pub struct Block {
     /// `None` means "all remaining variables" and is valid only for the last
     /// block (mirrors Singular's auto-sized last block). The backend infers
     /// the variable set from the ideal.
-    pub vars: Option<Vec<PRef>>,
+    pub vars: Option<Vec<Var>>,
     pub kind: BlockKind,
 }
 
@@ -42,7 +42,7 @@ pub enum BlockKind {
     /// Lexicographic (`lp`).
     Lex,
     /// Degree reverse-lexicographic (`dp`). The reverse-lex tiebreak uses
-    /// `PRef::Ord` implicitly.
+    /// `Var::Ord` implicitly.
     GrevLex,
 }
 
@@ -63,7 +63,7 @@ pub enum BackendError {
 
 impl MonoOrder {
     /// Single GrevLex block; variables are inferred from the ideal and the
-    /// reverse-lex tiebreak uses `PRef::Ord`.
+    /// reverse-lex tiebreak uses `Var::Ord`.
     pub fn grevlex() -> Self {
         MonoOrder {
             blocks: vec![Block {
@@ -75,7 +75,7 @@ impl MonoOrder {
 
     /// Single Lex block with an explicit variable ranking. The first element
     /// of `var_order` is the "largest" (highest elimination priority).
-    pub fn lex(var_order: Vec<PRef>) -> Self {
+    pub fn lex(var_order: Vec<Var>) -> Self {
         MonoOrder {
             blocks: vec![Block {
                 vars: Some(var_order),
@@ -101,16 +101,16 @@ impl MonoOrder {
     /// (mirrors Singular's auto-sized last block). Variables not covered by
     /// any explicit block are appended as a final implicit `GrevLex` block.
     ///
-    /// Deduplication uses full `PRef` identity (not just `reference`), so
+    /// Deduplication uses full `Var` identity (not just `reference`), so
     /// distinct PRefs sharing the same `Ref`/`NodeIndex` are treated as
     /// separate variables.
     ///
     /// Empty blocks are skipped from the result. The returned Vec is
     /// self-contained — callers do not need to handle a separate "remaining"
     /// bucket.
-    pub fn block_var_assignment(&self, all_vars: &[PRef]) -> Vec<(BlockKind, Vec<PRef>)> {
-        let mut result: Vec<(BlockKind, Vec<PRef>)> = Vec::with_capacity(self.blocks.len() + 1);
-        let mut seen: std::collections::HashSet<&PRef> = std::collections::HashSet::new();
+    pub fn block_var_assignment(&self, all_vars: &[Var]) -> Vec<(BlockKind, Vec<Var>)> {
+        let mut result: Vec<(BlockKind, Vec<Var>)> = Vec::with_capacity(self.blocks.len() + 1);
+        let mut seen: std::collections::HashSet<&Var> = std::collections::HashSet::new();
 
         for block in &self.blocks {
             let mut bv = Vec::new();
@@ -136,7 +136,7 @@ impl MonoOrder {
         }
 
         // Variables not covered by any explicit block: implicit final GrevLex.
-        let remaining: Vec<PRef> = all_vars
+        let remaining: Vec<Var> = all_vars
             .iter()
             .filter(|v| !seen.contains(v))
             .cloned()
@@ -162,7 +162,7 @@ impl MonoOrder {
     ) -> core::cmp::Ordering {
         use core::cmp::Ordering;
 
-        let mut all_vars: Vec<PRef> = a.vars();
+        let mut all_vars: Vec<Var> = a.vars();
         all_vars.extend(b.vars());
         all_vars.sort();
         all_vars.dedup();

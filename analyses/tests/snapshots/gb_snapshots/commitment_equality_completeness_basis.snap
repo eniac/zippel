@@ -5,9 +5,9 @@ expression: value
 - c_diff + g*x + h*r1 - c2
 - c_diff - c2 + c1
 - h*z + c_diff*c + t
-- t + h*n9
-- z - r2*c + r1*c + n9
+- t + h*__zippel::node::9
+- z - r2*c + r1*c + __zippel::node::9
 g*x + h*r2 - c2
 r2*c_diff - g*r2*x + g*r1*x + c2*r2 - c2*r1
-r2*t + g*x*n9 - c2*n9
-r2*t - r1*t + n9*c_diff
+r2*t + g*x*__zippel::node::9 - c2*__zippel::node::9
+r2*t - r1*t + __zippel::node::9*c_diff

@@ -9,7 +9,7 @@
 //! Two adapter entry points:
 //!
 //! * [`compute_reduced_gb_grevlex`] — single GrevLex block. Uses ark-gb's
-//!   built-in `ArkGrev<W>`; var-index assignment is just sorted-PRef
+//!   built-in `ArkGrev<W>`; var-index assignment is just sorted-Var
 //!   order.
 //!
 //! * [`compute_reduced_gb_with_elim`] — 2-block GrevLex/GrevLex (elim).
@@ -17,7 +17,7 @@
 //!   `cmp_key` overridden to implement block-elimination order.
 //!
 //!   The block-elim encoding relies on **var-index reordering**: eliminated
-//!   `PRef`s get *high* ark-gb indices (which sit at MSB byte positions in
+//!   `Var`s get *high* ark-gb indices (which sit at MSB byte positions in
 //!   ark-gb's packing), so ark-gb's natural degrevlex byte order already
 //!   gives the within-block reverse-lex tiebreak in the right blocks. The
 //!   only override needed is to put `elim_block_total_degree` into
@@ -26,7 +26,7 @@
 //!
 //! # Conversion outline (one adapter call)
 //!
-//! 1. Collect the union of `PRef`s used in `input`.
+//! 1. Collect the union of `Var`s used in `input`.
 //! 2. Partition (elim path only) and assign ark-gb indices `0..nvars`.
 //! 3. Build `Arc<Ring<F, W>>` (W = 128 ⇒ ≤ 1023 variables).
 //! 4. Convert each `Polynomial<F>` to `ark_gb::Poly<F, M, W>`.
@@ -37,7 +37,7 @@
 //!
 //! The W packing supports `W * 8 - 1` variables and per-var exponents ≤ 127.
 //! Inputs exceeding either bound panic with a clear message.
-//! Inputs whose union of `PRef`s is empty are handled inline (all-constant
+//! Inputs whose union of `Var`s is empty are handled inline (all-constant
 //! polynomials → the unit ideal `[1]` if any constant is nonzero, else
 //! the empty basis).
 //!
@@ -59,7 +59,7 @@ use ark_gb::poly::Poly;
 use ark_gb::ring::Ring;
 use share::{Ctx, Set};
 
-use crate::PRef;
+use crate::Var;
 use crate::frontend::{Monomial, Polynomial};
 
 /// Max per-variable exponent ark-gb's 7-bit packing supports.
@@ -81,7 +81,7 @@ pub(crate) const fn max_vars_for_w(w: usize) -> usize {
 /// and conversion logic between grevlex and elim paths.
 pub(crate) fn compute_gb_pipeline<F, M, const W: usize, GbFn>(
     input: Vec<Polynomial<F>>,
-    var_order: Vec<PRef>,
+    var_order: Vec<Var>,
     exponents_fit: bool,
     gb_fn: GbFn,
 ) -> Vec<Polynomial<F>>
@@ -119,7 +119,7 @@ pub(crate) fn compute_reduced_gb_grevlex<F: Field, const W: usize>(
     input: Vec<Polynomial<F>>,
 ) -> Vec<Polynomial<F>> {
     let (vars, exponents_fit) = collect_and_validate(&input);
-    let var_order: Vec<PRef> = vars.iter().cloned().collect();
+    let var_order: Vec<Var> = vars.iter().cloned().collect();
     compute_gb_pipeline::<F, ArkGrev<W>, W, _>(input, var_order, exponents_fit, |ring, polys| {
         ark_gb::compute_gb::<F, ArkGrev<W>, W>(ring, polys)
     })
@@ -239,7 +239,7 @@ fn elim_total_deg<const W: usize>(packed: &[u64; W], mask: &[u64; W]) -> u32 {
 ///   underlying packed bytes.
 /// * `cmp_key` puts `elim_total_deg` into `pre_key` and the standard
 ///   degrevlex-XOR'd packed words into the suffix. Because the adapter
-///   assigns elim `PRef`s to *high* ark-gb indices (i.e. MSB byte
+///   assigns elim `Var`s to *high* ark-gb indices (i.e. MSB byte
 ///   positions), the natural degrevlex byte-order tiebreak gives
 ///   "elim block rev-lex first, then keep block rev-lex" — the exact
 ///   ordering zippel's [`ElimMono`] produces.
@@ -319,7 +319,7 @@ impl<F: Field, const W: usize> ArkMonomial<F, W> for ZippelElimMono<W> {
         // `pre_key` = elim-block total degree (puts the elim block first
         // in lex compare). The suffix is ark-gb's standard degrevlex
         // XOR-flipped packed bytes; since the adapter assigned elim
-        // `PRef`s to high ark-gb indices, the natural byte order gives
+        // `Var`s to high ark-gb indices, the natural byte order gives
         // the within-block reverse-lex tiebreak in the correct blocks.
         let mask = get_elim_mask::<W>();
         let elim_deg = elim_total_deg::<W>(packed.packed(), &mask) as u64;
@@ -333,7 +333,7 @@ impl<F: Field, const W: usize> ArkMonomial<F, W> for ZippelElimMono<W> {
 /// Routes to ark-gb with elim-aware monomial ordering.
 pub(crate) fn compute_reduced_gb_with_elim<F: Field, const W: usize>(
     input: Vec<Polynomial<F>>,
-    eliminate_fn: &dyn Fn(&PRef) -> bool,
+    eliminate_fn: &dyn Fn(&Var) -> bool,
 ) -> Vec<Polynomial<F>> {
     let (keep_vars, elim_vars, exponents_fit) = collect_vars_with(&input, eliminate_fn);
     let actual_nvars = keep_vars.len() + elim_vars.len();
@@ -344,7 +344,7 @@ pub(crate) fn compute_reduced_gb_with_elim<F: Field, const W: usize>(
 
     assert_fits_in_ark_gb::<W>(actual_nvars, exponents_fit);
 
-    let mut var_order: Vec<PRef> = Vec::with_capacity(actual_nvars);
+    let mut var_order: Vec<Var> = Vec::with_capacity(actual_nvars);
     var_order.extend(keep_vars.iter().cloned());
     var_order.extend(elim_vars.iter().cloned());
 
@@ -361,11 +361,11 @@ pub(crate) fn compute_reduced_gb_with_elim<F: Field, const W: usize>(
 
 fn collect_vars_with<F: Field>(
     input: &[Polynomial<F>],
-    eliminate_fn: &dyn Fn(&PRef) -> bool,
-) -> (Vec<PRef>, Vec<PRef>, bool) {
+    eliminate_fn: &dyn Fn(&Var) -> bool,
+) -> (Vec<Var>, Vec<Var>, bool) {
     let (vars, exponents_fit) = collect_and_validate(input);
-    let mut keep: Vec<PRef> = Vec::new();
-    let mut elim: Vec<PRef> = Vec::new();
+    let mut keep: Vec<Var> = Vec::new();
+    let mut elim: Vec<Var> = Vec::new();
     for v in vars.iter().cloned() {
         if eliminate_fn(&v) {
             elim.push(v);
@@ -395,10 +395,10 @@ fn build_elim_byte_mask<const W: usize>(num_keep: usize, nvars: usize) -> [u64; 
 // Shared helpers (generic over zippel term type T and ark-gb monomial M).
 // ---------------------------------------------------------------------------
 
-/// Collect all PRef variables from input polynomials and validate exponents.
+/// Collect all Var variables from input polynomials and validate exponents.
 /// Returns (variable_set, exponents_fit).
-pub(crate) fn collect_and_validate<F: Field>(input: &[Polynomial<F>]) -> (Set<PRef>, bool) {
-    let mut vars: Set<PRef> = Set::new();
+pub(crate) fn collect_and_validate<F: Field>(input: &[Polynomial<F>]) -> (Set<Var>, bool) {
+    let mut vars: Set<Var> = Set::new();
     let mut exponents_fit = true;
     for p in input {
         for mono in p.terms.keys() {
@@ -416,7 +416,7 @@ pub(crate) fn collect_and_validate<F: Field>(input: &[Polynomial<F>]) -> (Set<PR
 /// Convert a zippel `Polynomial<F>` to an ark-gb polynomial in monomial type `M`.
 fn poly_to_ark_gb<F: Field, M: ArkMonomial<F, W>, const W: usize>(
     ring: &Ring<F, W>,
-    var_index: &Ctx<PRef, usize>,
+    var_index: &Ctx<Var, usize>,
     nvars: usize,
     p: Polynomial<F>,
 ) -> Poly<F, M, W> {
@@ -428,7 +428,7 @@ fn poly_to_ark_gb<F: Field, M: ArkMonomial<F, W>, const W: usize>(
             for (v, &e) in mono.iter() {
                 let idx = *var_index
                     .get(v)
-                    .expect("every PRef in input was collected into var_index");
+                    .expect("every Var in input was collected into var_index");
                 exps[idx] = e as u32;
             }
             let m = M::from_exponents(ring, &exps)
@@ -442,13 +442,13 @@ fn poly_to_ark_gb<F: Field, M: ArkMonomial<F, W>, const W: usize>(
 /// Convert an ark-gb polynomial back to a zippel `Polynomial<F>`.
 fn ark_gb_to_poly<F: Field, M: ArkMonomial<F, W>, const W: usize>(
     ring: &Ring<F, W>,
-    var_order: &[PRef],
+    var_order: &[Var],
     p: Poly<F, M, W>,
 ) -> Polynomial<F> {
     let mut terms: HashMap<Monomial, F> = HashMap::new();
     for (coeff, mono) in p.iter() {
         let exps = mono.exponents(ring);
-        let pairs: Vec<(PRef, usize)> = exps
+        let pairs: Vec<(Var, usize)> = exps
             .iter()
             .enumerate()
             .filter_map(|(i, &e)| {
@@ -464,7 +464,7 @@ fn ark_gb_to_poly<F: Field, M: ArkMonomial<F, W>, const W: usize>(
     Polynomial { terms }
 }
 
-fn index_map(var_order: &[PRef]) -> Ctx<PRef, usize> {
+fn index_map(var_order: &[Var]) -> Ctx<Var, usize> {
     var_order
         .iter()
         .enumerate()

@@ -1,4 +1,4 @@
-use crate::PRef;
+use crate::Var;
 use crate::frontend::{Polynomial, TransClos};
 use crate::ideal::{Ideal, IdealBuilder};
 use backend::ATyp;
@@ -63,9 +63,9 @@ pub(crate) fn valid_extractor<C: ArkConfig>(witness_typ: &ATyp, poly: &Polynomia
 ///
 /// `Op::Bin(BinOp::Equ, ...)` entries represent assertions, not definitions.
 /// They are neutralised to `Op::Ref(pr)` — an identity operation that
-/// defines the result PRef without emitting any assertion polynomial.
+/// defines the result Var without emitting any assertion polynomial.
 ///
-/// ## Shared builder and PRef alignment
+/// ## Shared builder and Var alignment
 ///
 /// The `builder` is cloned befor
 ///
@@ -73,16 +73,16 @@ pub(crate) fn valid_extractor<C: ArkConfig>(witness_typ: &ATyp, poly: &Polynomia
 ///
 /// `Op::Bin(BinOp::Equ, ...)` entries represent assertions.
 /// They are neutralised to `Op::Ref(pr)` — an identity operation that
-/// defines the result PRef without emitting any assertion polynomial.
+/// defines the result Var without emitting any assertion polynomial.
 ///
-/// ## Shared builder and PRef alignment
+/// ## Shared builder and Var alignment
 ///
 /// The `builder` is cloned before use so that its witness/sentinel allocation
 /// counters remain unchanged. **The caller must immediately use the original
 /// (un-cloned) builder to build the same `TransClos` (or a superset) whose
 /// locals were extracted.** This ensures that `div_wit` and other sentinel
 /// variables allocated by `extract_locals`'s internal clone receive the same
-/// `PRef` identities as those allocated by the caller's subsequent build,
+/// `Var` identities as those allocated by the caller's subsequent build,
 /// keeping division-witness references aligned across the two results.
 pub fn extract_locals<C: ArkConfig + HasOpFactory>(
     builder: &IdealBuilder<C>,
@@ -102,7 +102,7 @@ fn strip_equ<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> TransClos<C> {
     tc_no_equ
 }
 
-fn strip_equ_op<C: ArkConfig + HasOpFactory>(op: GOp<C>, result: &PRef) -> GOp<C> {
+fn strip_equ_op<C: ArkConfig + HasOpFactory>(op: GOp<C>, result: &Var) -> GOp<C> {
     match op {
         Op::Bin(BinOp::Equ, ..) => Op::Ref(
             backend::op::Ref(result.reference.node()),

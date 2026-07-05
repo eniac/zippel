@@ -4,7 +4,7 @@
 // In #[cfg(test)] builds, alias the crate as `graph` so that test-only
 // modules included via `#[path]` from outside the crate root (e.g. the
 // `groebner_shared.rs` bench helper sourced by `speedup_bench.rs`) can
-// reference `graph::PRef`, `graph::analyses::...`, etc. with the same
+// reference `graph::Var`, `graph::analyses::...`, etc. with the same
 // paths they use when compiled as external bench / integration test code.
 #[cfg(test)]
 extern crate self as graph;
@@ -120,7 +120,7 @@ impl GraphError {
 }
 
 /// Compare two `Node` values for isomorphism-compatible equality.
-/// Erases `NodeIndex` inside `GOp` and `PRef` so that structurally
+/// Erases `NodeIndex` inside `GOp` and `Var` so that structurally
 /// identical nodes from different graphs compare as equal.
 fn nodes_isomorphic_eq<C: HasOpFactory, A: PartialEq + Clone>(
     a: &Node<C, A>,
@@ -233,21 +233,6 @@ impl<C: ArkConfig, A> Dag<C, A> {
             .collect();
         out.sort();
         out
-    }
-
-    /// Lightweight arg info: (name, is_public, is_transcript) for each input Arg.
-    pub fn arg_info(&self) -> Vec<(Vid, bool, bool)> {
-        self.input_args()
-            .into_iter()
-            .filter_map(|n| match &self[n] {
-                Node::Arg(name, _, qual, _, kind) => Some((
-                    name.clone(),
-                    qual.is_public(),
-                    matches!(kind, ArgKind::TranscriptInput),
-                )),
-                _ => None,
-            })
-            .collect()
     }
 
     /// Dep deduplication

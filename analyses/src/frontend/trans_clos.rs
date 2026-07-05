@@ -1,4 +1,4 @@
-use crate::PRef;
+use crate::Var;
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
 use graph::{DQDag, GOp, Node, Op, Ref, mk};
@@ -12,15 +12,14 @@ fn named_pref(
     typ: backend::ATyp,
     qualifier: lang::typ::Qualifier,
     distribution: lang::typ::Distribution,
-) -> PRef {
+) -> Var {
     let name = dag.find_var(r.node());
-    PRef {
+    Var {
         reference: r,
         index: Vec::new(),
         typ,
         qualifier,
         distribution,
-        from_transcript: false,
         name: name
             .map(|v| v.0)
             .unwrap_or_else(|| format!("__zippel::node::{}", r.node().index())),
@@ -106,7 +105,7 @@ fn topo_sort_nodes<C: ArkConfig>(dag: &DQDag<C>, nodes: &HashSet<NodeIndex>) -> 
 
 /// Transitive closure on a DAG.
 ///
-/// Flattens a `DQDag` into a linear list of `(PRef, GOp)` pairs.
+/// Flattens a `DQDag` into a linear list of `(Var, GOp)` pairs.
 /// For each node, `trans_clos_op` recursively normalizes the stored op:
 /// - `Op::Check(inner)` is unwrapped to `inner` (the verifier assertion is
 ///   stripped, leaving the asserted expression).
@@ -126,8 +125,8 @@ fn topo_sort_nodes<C: ArkConfig>(dag: &DQDag<C>, nodes: &HashSet<NodeIndex>) -> 
 ///   of some operation (`GOp`). Every entry `(pr, op)` satisfies: `pr` is the
 ///   result of applying `op` to its operands.
 ///
-/// - **Disjointness**: `prefs` and `clos` are disjoint. A PRef that is a leaf
-///   (source/input) appears only in `prefs`; a PRef that is a computation
+/// - **Disjointness**: `prefs` and `clos` are disjoint. A Var that is a leaf
+///   (source/input) appears only in `prefs`; a Var that is a computation
 ///   result appears only in `clos`. This invariant is maintained by the
 ///   internal `seen` map — leaf nodes are inserted into `seen` before the
 ///   traversal, so `trans_clos_ref` skips them when encountered later.
@@ -135,13 +134,13 @@ fn topo_sort_nodes<C: ArkConfig>(dag: &DQDag<C>, nodes: &HashSet<NodeIndex>) -> 
 /// Constructors pre-populate the internal `seen` map to establish canonical
 /// mappings before traversal:
 /// - `relation()` maps both input-arg and relation-arg nodes to the same
-///   input-arg PRef, ensuring a single namespace.
+///   input-arg Var, ensuring a single namespace.
 /// - `verifier()` pre-populates transcript-source nodes so `trans_clos_op`
 ///   doesn't recurse past the transcript boundary.
 #[derive(Clone)]
 pub struct TransClos<C: ArkConfig> {
-    pub clos: Vec<(PRef, GOp<C>)>,
-    pub prefs: Vec<PRef>,
+    pub clos: Vec<(Var, GOp<C>)>,
+    pub prefs: Vec<Var>,
 }
 
 impl<C: ArkConfig + HasOpFactory> TransClos<C> {
@@ -166,7 +165,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             clos: Vec::new(),
             prefs: Vec::new(),
         };
-        let mut seen: HashMap<NodeIndex, PRef> = HashMap::new();
+        let mut seen: HashMap<NodeIndex, Var> = HashMap::new();
 
         // Insert input args as canonical entries in seen (not clos — they're
         // leaf/source nodes, not results of ops), then alias relation args.
@@ -210,7 +209,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         let reachable = collect_reachable_backward(dag, &transcripts_vec, None);
         let topo = topo_sort_nodes(dag, &reachable);
 
-        let mut seen: HashMap<NodeIndex, PRef> = HashMap::new();
+        let mut seen: HashMap<NodeIndex, Var> = HashMap::new();
 
         for node in topo {
             tc.trans_clos_ref(dag, dag.find_ref(node), &mut seen);
@@ -227,17 +226,13 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
     /// Transcript source nodes are pre-populated in the index so that
     /// `trans_clos_op` does not recurse past them into prover-only nodes.
     pub fn verifier(dag: &DQDag<C>) -> Self {
-        let input_prefs: Vec<PRef> = dag
+        let input_prefs: Vec<Var> = dag
             .input_args()
             .into_iter()
             .filter_map(|n| match &dag[n] {
-                Node::Arg(name, typ, qual, dist, kind) => {
+                Node::Arg(name, typ, qual, dist, _kind) => {
                     if qual.is_public() {
-                        let mut pr =
-                            PRef::new_named(Ref(n), name.0.clone(), typ.clone(), *qual, *dist);
-                        if *kind == graph::ArgKind::TranscriptInput {
-                            pr = pr.mark_transcript_source();
-                        }
+                        let pr = Var::new_named(Ref(n), name.0.clone(), typ.clone(), *qual, *dist);
                         Some(pr)
                     } else {
                         None
@@ -256,7 +251,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             prefs: input_prefs,
         };
 
-        let mut seen: HashMap<NodeIndex, PRef> = HashMap::new();
+        let mut seen: HashMap<NodeIndex, Var> = HashMap::new();
 
         // Pre-populate seen with transcript source nodes so trans_clos_ref
         // doesn't recurse past them into prover-only nodes. Also add
@@ -286,12 +281,12 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         tc
     }
 
-    /// Remap every PRef (both prefs and clos entries) through `f`.
+    /// Remap every Var (both prefs and clos entries) through `f`.
     ///
-    /// `f` must not change the `reference` (node identity) of a PRef, only its
+    /// `f` must not change the `reference` (node identity) of a Var, only its
     /// metadata. Changing the reference would leave `Op::Ref` children in
     /// `clos` pointing at stale node identities.
-    pub fn remap(&mut self, f: &impl Fn(&PRef) -> PRef) {
+    pub fn remap(&mut self, f: &impl Fn(&Var) -> Var) {
         self.prefs = self.prefs.iter().map(f).collect();
         self.clos = self.clos.drain(..).map(|(pr, op)| (f(&pr), op)).collect();
     }
@@ -300,16 +295,13 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
     // Internal
     // ----------------------------------------------------------------
 
-    fn prefs_from_marker<A>(dag: &graph::Dag<C, A>, node: NodeIndex) -> Vec<PRef> {
+    fn prefs_from_marker<A>(dag: &graph::Dag<C, A>, node: NodeIndex) -> Vec<Var> {
         let mut args: Vec<NodeIndex> = dag.nodes_from(node).filter(|n| dag[*n].is_arg()).collect();
         args.sort();
         args.into_iter()
             .filter_map(|n| match &dag[n] {
-                Node::Arg(name, typ, qual, dist, kind) => {
-                    let mut pr = PRef::new_named(Ref(n), name.0.clone(), typ.clone(), *qual, *dist);
-                    if *kind == graph::ArgKind::TranscriptInput {
-                        pr = pr.mark_transcript_source();
-                    }
+                Node::Arg(name, typ, qual, dist, _kind) => {
+                    let pr = Var::new_named(Ref(n), name.0.clone(), typ.clone(), *qual, *dist);
                     Some(pr)
                 }
                 _ => None,
@@ -321,7 +313,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         &mut self,
         dag: &DQDag<C>,
         op: GOp<C>,
-        seen: &mut HashMap<NodeIndex, PRef>,
+        seen: &mut HashMap<NodeIndex, Var>,
     ) -> GOp<C> {
         match op {
             Op::Ref(r, _) => self.trans_clos_ref(dag, r, seen),
@@ -396,11 +388,11 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         }
     }
 
-    fn find<'a>(seen: &'a HashMap<NodeIndex, PRef>, r: &Ref) -> Option<&'a PRef> {
+    fn find<'a>(seen: &'a HashMap<NodeIndex, Var>, r: &Ref) -> Option<&'a Var> {
         seen.get(&r.node())
     }
 
-    fn insert(&mut self, r: PRef, op: GOp<C>, seen: &mut HashMap<NodeIndex, PRef>) -> GOp<C> {
+    fn insert(&mut self, r: Var, op: GOp<C>, seen: &mut HashMap<NodeIndex, Var>) -> GOp<C> {
         if let Some(canonical) = seen.get(&r.node()) {
             Op::Ref(canonical.reference, op.typ())
         } else {
@@ -417,7 +409,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         &mut self,
         dag: &DQDag<C>,
         r: Ref,
-        seen: &mut HashMap<NodeIndex, PRef>,
+        seen: &mut HashMap<NodeIndex, Var>,
     ) -> GOp<C> {
         if let Some(canonical) = Self::find(seen, &r) {
             return Op::Ref(canonical.reference, canonical.typ.clone());

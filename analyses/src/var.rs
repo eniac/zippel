@@ -1,5 +1,5 @@
 use backend::op::Ref;
-use graph::{ArgKind, Dag, Node};
+use graph::{Dag, Node};
 use lang::typ::Distribution;
 use lang::typ::Qualifier;
 use petgraph::graph::NodeIndex;
@@ -14,20 +14,19 @@ use std::fmt;
 /// element of the second row of a 2D array). It is built up by `with_slot` /
 /// `with_index` / `collect_slots` as they recurse into composite types.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-pub struct PRef {
+pub struct Var {
     pub reference: Ref,
     pub index: Vec<usize>,
     pub typ: ATyp,
     pub qualifier: Qualifier,
     pub distribution: Distribution,
-    pub from_transcript: bool,
     /// Source-level variable name. For `Node::Arg` PRefs this is the
     /// argument's `Vid`; for transcript-source PRefs it is the log-variable
     /// name; for unnamed PRefs it is derived from the node index.
     pub name: String,
 }
 
-impl PRef {
+impl Var {
     pub fn new_named(
         reference: Ref,
         name: impl Into<String>,
@@ -35,13 +34,12 @@ impl PRef {
         qualifier: Qualifier,
         distribution: Distribution,
     ) -> Self {
-        PRef {
+        Var {
             reference,
             index: Vec::new(),
             typ,
             qualifier,
             distribution,
-            from_transcript: false,
             name: name.into(),
         }
     }
@@ -52,18 +50,17 @@ impl PRef {
         qualifier: Qualifier,
         distribution: Distribution,
     ) -> Self {
-        PRef {
+        Var {
             reference: Ref(node),
             index: Vec::new(),
             typ,
             qualifier,
             distribution,
-            from_transcript: false,
             name: format!("__zippel::node::{}", node.index()),
         }
     }
 
-    /// Construct a PRef referencing the `Arg` node at `node`, carrying
+    /// Construct a Var referencing the `Arg` node at `node`, carrying
     /// the variable name `v` as metadata.
     pub fn from_var(
         v: impl Into<String>,
@@ -72,13 +69,12 @@ impl PRef {
         qualifier: Qualifier,
         distribution: Distribution,
     ) -> Self {
-        PRef {
+        Var {
             reference: Ref(node),
             index: Vec::new(),
             typ,
             qualifier,
             distribution,
-            from_transcript: false,
             name: v.into(),
         }
     }
@@ -102,11 +98,6 @@ impl PRef {
         self.distribution == Distribution::UniformNonZero
     }
 
-    pub fn mark_transcript_source(mut self) -> Self {
-        self.from_transcript = true;
-        self
-    }
-
     pub fn node(&self) -> NodeIndex {
         self.reference.node()
     }
@@ -126,21 +117,20 @@ impl PRef {
         }
         let mut new_index = self.index.clone();
         new_index.push(index);
-        Some(PRef {
+        Some(Var {
             reference: self.reference,
             index: new_index,
             typ: slot_typ,
             qualifier: self.qualifier,
             distribution: self.distribution,
-            from_transcript: self.from_transcript,
             name: self.name.clone(),
         })
     }
 
-    /// Logical slot access: returns a PRef at logical slot `i` with the
+    /// Logical slot access: returns a Var at logical slot `i` with the
     /// type of that slot.
     ///
-    /// For `Vec(T, n)`, `with_index(i)` returns a PRef of type `T`.
+    /// For `Vec(T, n)`, `with_index(i)` returns a Var of type `T`.
     /// For polynomial types (Uni, Mle, VPoly), every logical slot has
     /// type `ATyp::scalar()`.
     ///
@@ -153,13 +143,12 @@ impl PRef {
         }
         let mut new_index = self.index.clone();
         new_index.push(i);
-        Some(PRef {
+        Some(Var {
             reference: self.reference,
             index: new_index,
             typ: slot_typ,
             qualifier: self.qualifier,
             distribution: self.distribution,
-            from_transcript: self.from_transcript,
             name: self.name.clone(),
         })
     }
@@ -169,7 +158,7 @@ impl PRef {
     /// For leaf types (scalar, group), returns a single-element vec with
     /// `self`. For `Vec(T, n)`, returns `n` logical elements, each
     /// recursively expanded via `T.logical_slots()`. For polynomial types,
-    /// returns one PRef per coefficient (all scalar-typed).
+    /// returns one Var per coefficient (all scalar-typed).
     fn collect_slots(&self) -> Vec<Self> {
         match &self.typ {
             ATyp::Base(_) => vec![self.clone()],
@@ -186,13 +175,12 @@ impl PRef {
                 for i in 0..*n {
                     let mut elem_index = self.index.clone();
                     elem_index.push(i);
-                    let elem = PRef {
+                    let elem = Var {
                         reference: self.reference,
                         index: elem_index,
                         typ: (**t).clone(),
                         qualifier: self.qualifier,
                         distribution: self.distribution,
-                        from_transcript: self.from_transcript,
                         name: self.name.clone(),
                     };
                     out.extend(elem.collect_slots());
@@ -204,13 +192,12 @@ impl PRef {
                 for (field_idx, (_, ft)) in fields.iter().enumerate() {
                     let mut field_index = self.index.clone();
                     field_index.push(field_idx);
-                    let field = PRef {
+                    let field = Var {
                         reference: self.reference,
                         index: field_index,
                         typ: ft.clone(),
                         qualifier: self.qualifier,
                         distribution: self.distribution,
-                        from_transcript: self.from_transcript,
                         name: self.name.clone(),
                     };
                     out.extend(field.collect_slots());
@@ -267,15 +254,15 @@ impl PRef {
     }
 }
 
-impl fmt::Display for PRef {
+impl fmt::Display for Var {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <PRef as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <Var as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(100, f)
     }
 }
 
-impl<'a, D, A> Pretty<'a, D, A> for PRef
+impl<'a, D, A> Pretty<'a, D, A> for Var
 where
     D: DocAllocator<'a, A>,
     D::Doc: Clone,
@@ -294,19 +281,19 @@ where
     }
 }
 
-/// Build `PRef`s for all input Arg nodes of `dag`, preserving the sort order
+/// Build `Var`s for all input Arg nodes of `dag`, preserving the sort order
 /// of `Dag::input_args()`.
-pub fn dag_args<C: ArkConfig, A>(dag: &Dag<C, A>) -> Vec<PRef> {
+pub fn dag_args<C: ArkConfig, A>(dag: &Dag<C, A>) -> Vec<Var> {
     dag.input_args()
         .into_iter()
         .filter_map(|n| match &dag[n] {
-            Node::Arg(name, typ, qual, dist, kind) => {
-                let mut pr = PRef::new_named(Ref(n), name.0.clone(), typ.clone(), *qual, *dist);
-                if *kind == ArgKind::TranscriptInput {
-                    pr = pr.mark_transcript_source();
-                }
-                Some(pr)
-            }
+            Node::Arg(name, typ, qual, dist, _kind) => Some(Var::new_named(
+                Ref(n),
+                name.0.clone(),
+                typ.clone(),
+                *qual,
+                *dist,
+            )),
             _ => None,
         })
         .collect()

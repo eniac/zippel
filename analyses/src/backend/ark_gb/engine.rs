@@ -14,7 +14,7 @@
 
 use std::marker::PhantomData;
 
-use crate::PRef;
+use crate::Var;
 use ark_ff::PrimeField;
 use share::Set;
 
@@ -84,12 +84,12 @@ impl<F: PrimeField> GbBackend<F> for ArkGb<F> {
             && matches!(blocks[0].kind, BlockKind::GrevLex)
             && matches!(blocks[1].kind, BlockKind::GrevLex)
         {
-            let elim_vars: Set<PRef> = blocks[0]
+            let elim_vars: Set<Var> = blocks[0]
                 .vars
                 .as_ref()
                 .map(|vs| vs.iter().cloned().collect())
                 .unwrap_or_default();
-            let eliminate_fn = |v: &PRef| elim_vars.contains(v);
+            let eliminate_fn = |v: &Var| elim_vars.contains(v);
             let result = match w {
                 8 => compute_reduced_gb_with_elim::<F, 8>(ideal, &eliminate_fn),
                 16 => compute_reduced_gb_with_elim::<F, 16>(ideal, &eliminate_fn),
@@ -139,17 +139,17 @@ fn dispatch_tiered<F: PrimeField>(
     }
 
     // Build var_order and group_lens from MonoOrder blocks.
-    // Deduplicate: a PRef may appear in multiple groups; only its first
+    // Deduplicate: a Var may appear in multiple groups; only its first
     // occurrence counts.
-    let mut var_order: Vec<PRef> = Vec::new();
-    let mut seen: Set<PRef> = Set::new();
+    let mut var_order: Vec<Var> = Vec::new();
+    let mut seen: Set<Var> = Set::new();
     let mut group_lens: Vec<(usize, usize)> = Vec::new();
 
     for (i, block) in order.blocks().iter().enumerate() {
-        let block_vars: Vec<PRef> = if let Some(vs) = &block.vars {
+        let block_vars: Vec<Var> = if let Some(vs) = &block.vars {
             vs.iter().filter(|v| !seen.contains(v)).cloned().collect()
         } else {
-            // "Remaining vars" block: all vars not yet assigned, sorted by PRef.
+            // "Remaining vars" block: all vars not yet assigned, sorted by Var.
             vars.iter().filter(|v| !seen.contains(v)).cloned().collect()
         };
 
@@ -167,7 +167,7 @@ fn dispatch_tiered<F: PrimeField>(
     }
 
     // Any vars not covered by any block go into a final GrevLex block.
-    let remaining: Vec<PRef> = vars.iter().filter(|v| !seen.contains(v)).cloned().collect();
+    let remaining: Vec<Var> = vars.iter().filter(|v| !seen.contains(v)).cloned().collect();
     if !remaining.is_empty() {
         let raw_tier = group_lens.len();
         let rem_len = remaining.len();
@@ -194,7 +194,7 @@ fn dispatch_tiered<F: PrimeField>(
 
 fn compute_tiered_with_layout<F: PrimeField, const W: usize>(
     input: Vec<Polynomial<F>>,
-    var_order: Vec<PRef>,
+    var_order: Vec<Var>,
     group_lens: Vec<(usize, usize)>,
     nvars: usize,
     exponents_fit: bool,

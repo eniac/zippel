@@ -9,7 +9,7 @@ use std::fmt;
 use std::iter::Sum;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use crate::PRef;
+use crate::Var;
 use ark_ff::Field;
 use share::{Ctx, DocAllocator, DocBuilder, Pretty, Set};
 
@@ -201,7 +201,7 @@ impl<F: Field> Polynomial<F> {
         Polynomial { terms }
     }
 
-    pub fn var(v: &PRef) -> Self {
+    pub fn var(v: &Var) -> Self {
         let mut terms = HashMap::new();
         terms.insert(Monomial::from(vec![(v.clone(), 1)]), F::one());
         Polynomial { terms }
@@ -224,11 +224,11 @@ impl<F: Field> Polynomial<F> {
             .unwrap_or(F::zero())
     }
 
-    pub fn contains(&self, v: &PRef) -> bool {
+    pub fn contains(&self, v: &Var) -> bool {
         self.vars().contains(v)
     }
 
-    pub fn vars(&self) -> Set<PRef> {
+    pub fn vars(&self) -> Set<Var> {
         self.terms.keys().flat_map(|t| t.vars()).collect()
     }
 
@@ -257,7 +257,7 @@ impl<F: Field> Polynomial<F> {
         }
     }
 
-    pub fn flat_map_vars<FF: Fn(PRef) -> Self>(self, f: &FF) -> Self {
+    pub fn flat_map_vars<FF: Fn(Var) -> Self>(self, f: &FF) -> Self {
         let mut new_poly = Polynomial::zero();
         for (term, coeff) in self.terms.into_iter() {
             let mut new_mono = Polynomial::lit(&coeff);
@@ -273,7 +273,7 @@ impl<F: Field> Polynomial<F> {
 
     /// Inline variables from `substitutions` into this polynomial.
     /// Returns `(result, did_change)`.
-    pub fn inline_vars(self, substitutions: &Ctx<PRef, Polynomial<F>>) -> (Self, bool) {
+    pub fn inline_vars(self, substitutions: &Ctx<Var, Polynomial<F>>) -> (Self, bool) {
         let mut new_poly = Polynomial::zero();
         let mut did_change = false;
         for (term, coeff) in self.terms.into_iter() {
@@ -296,10 +296,10 @@ impl<F: Field> Polynomial<F> {
     }
 
     /// Remap every variable in every term through `f`.
-    pub fn remap_vars(&self, f: &dyn Fn(&PRef) -> PRef) -> Self {
+    pub fn remap_vars(&self, f: &dyn Fn(&Var) -> Var) -> Self {
         let mut new_poly = Polynomial::zero();
         for (term, coeff) in &self.terms {
-            let pairs: Vec<(PRef, usize)> = term
+            let pairs: Vec<(Var, usize)> = term
                 .vars()
                 .iter()
                 .zip(term.powers().iter())

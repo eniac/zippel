@@ -11,20 +11,20 @@ pub mod extractor;
 pub mod frontend;
 pub mod ideal;
 pub mod knowledge;
-pub mod pref;
 pub mod qualifier;
 pub mod soundness;
 pub mod uniform;
+pub mod var;
 
 pub use completeness::CompletenessAnalysis;
 pub use error::AnalysisError;
 pub use frontend::TransClos;
 pub use ideal::{Ideal, IdealBuilder, IdealNamespace};
 pub use knowledge::KnowledgeAnalysis;
-pub use pref::PRef;
 pub use qualifier::QualifierPropagation;
 pub use soundness::SpecialSoundnessAnalysis;
 pub use uniform::UniformityPropagation;
+pub use var::Var;
 
 pub use backend::GbBackendKind;
 

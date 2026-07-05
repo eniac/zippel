@@ -1,32 +1,32 @@
 //! Structural monomial — a variable-exponent map with no semantic ordering.
 //!
-//! `Monomial` is `Hash + Eq` (structural: sorted `PRef` keys) but carries **no
+//! `Monomial` is `Hash + Eq` (structural: sorted `Var` keys) but carries **no
 //! `Ord`** and no notion of a "leading" term. Ordering is runtime data
 //! ([`super::MonoOrder`]) owned by the backend.
 
 use core::cmp::Ordering;
 use core::ops::{Div, Mul, MulAssign};
 
-use crate::PRef;
+use crate::Var;
 use ark_ff::Field;
 use share::Ctx;
 use std::fmt;
 
 /// A monomial: a map from variables to positive exponents.
 ///
-/// Stored as a `Ctx<PRef, usize>` (sorted by `PRef`) so that structurally equal
+/// Stored as a `Ctx<Var, usize>` (sorted by `Var`) so that structurally equal
 /// monomials are byte-identical for `Hash`/`Eq`. The `Ord` impl is structural
-/// (by `PRef` then exponent) and is used **only** for deterministic `Display`
+/// (by `Var` then exponent) and is used **only** for deterministic `Display`
 /// iteration — never for leading-term semantics.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub struct Monomial(pub(crate) Ctx<PRef, usize>);
+pub struct Monomial(pub(crate) Ctx<Var, usize>);
 
 impl Monomial {
-    pub fn new(vars: Ctx<PRef, usize>) -> Self {
+    pub fn new(vars: Ctx<Var, usize>) -> Self {
         Monomial(vars)
     }
 
-    pub fn vars(&self) -> Vec<PRef> {
+    pub fn vars(&self) -> Vec<Var> {
         self.0.keys().into_iter().collect()
     }
 
@@ -35,7 +35,7 @@ impl Monomial {
     }
 
     /// Get the exponent of `v` in this monomial (0 if absent).
-    pub fn powers_for(&self, v: &PRef) -> usize {
+    pub fn powers_for(&self, v: &Var) -> usize {
         self.0.get(v).copied().unwrap_or(0)
     }
 
@@ -47,7 +47,7 @@ impl Monomial {
         self.0.is_empty()
     }
 
-    pub fn evaluate<F: Field>(&self, p: &Ctx<PRef, F>) -> F {
+    pub fn evaluate<F: Field>(&self, p: &Ctx<Var, F>) -> F {
         let mut result = F::one();
         for (var, power) in self.0.iter() {
             if let Some(value) = p.get(var) {
@@ -74,7 +74,7 @@ impl Monomial {
     }
 
     pub fn lcm(&self, other: &Self) -> Self {
-        let mut lcm_powers: Vec<(PRef, usize)> =
+        let mut lcm_powers: Vec<(Var, usize)> =
             self.0.iter().map(|(v, p)| (v.clone(), *p)).collect();
         for (var, power2) in other.0.iter() {
             match lcm_powers.iter_mut().find(|(v, _)| v == var) {
@@ -86,7 +86,7 @@ impl Monomial {
     }
 
     pub fn gcd(&self, other: &Self) -> Self {
-        let mut gcd_powers: Vec<(PRef, usize)> = Vec::new();
+        let mut gcd_powers: Vec<(Var, usize)> = Vec::new();
         for (var1, power1) in self.0.iter() {
             if let Some((_, power2)) = other.0.iter().find(|(v, _p)| v == &var1) {
                 let min_power = (*power1).min(*power2);
@@ -98,7 +98,7 @@ impl Monomial {
         Monomial(gcd_powers.into_iter().collect())
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (&PRef, &usize)> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&Var, &usize)> {
         self.0.iter()
     }
 }
@@ -109,8 +109,8 @@ impl Default for Monomial {
     }
 }
 
-impl From<Vec<(PRef, usize)>> for Monomial {
-    fn from(vars: Vec<(PRef, usize)>) -> Self {
+impl From<Vec<(Var, usize)>> for Monomial {
+    fn from(vars: Vec<(Var, usize)>) -> Self {
         Monomial(vars.into_iter().collect())
     }
 }
@@ -139,7 +139,7 @@ impl Div for Monomial {
         if !self.is_divided(&other) {
             return None;
         }
-        let mut powers1: Vec<(PRef, usize)> = self.0.iter().map(|(v, p)| (v.clone(), *p)).collect();
+        let mut powers1: Vec<(Var, usize)> = self.0.iter().map(|(v, p)| (v.clone(), *p)).collect();
         for (var, power2) in other.0.iter() {
             if let Some(power1) = powers1.iter_mut().find(|(v, _)| v == var) {
                 power1.1 -= power2;

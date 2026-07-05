@@ -26,7 +26,7 @@ use std::marker::PhantomData;
 use std::process::{Command, Stdio};
 use std::str::FromStr;
 
-use crate::PRef;
+use crate::Var;
 use ark_ff::PrimeField;
 use num_bigint::BigUint;
 
@@ -72,8 +72,8 @@ fn compute_gb_via_cli<F: PrimeField>(
     let ideal: Vec<Polynomial<F>> = ideal.into_iter().filter(|p| !p.is_zero()).collect();
 
     // Collect all variables across the ideal.
-    let all_vars: Vec<PRef> = {
-        let mut vs: Vec<PRef> = ideal.iter().flat_map(|p| p.vars()).collect();
+    let all_vars: Vec<Var> = {
+        let mut vs: Vec<Var> = ideal.iter().flat_map(|p| p.vars()).collect();
         vs.sort();
         vs.dedup();
         vs
@@ -93,10 +93,10 @@ fn compute_gb_via_cli<F: PrimeField>(
         });
     }
 
-    // Build the PRef → x(i) variable map from block_var_assignment.
+    // Build the Var → x(i) variable map from block_var_assignment.
     // Concatenate block vars in order; this is the order Singular's ring
     // declaration uses.
-    let var_map: Vec<PRef> = order
+    let var_map: Vec<Var> = order
         .block_var_assignment(&all_vars)
         .into_iter()
         .flat_map(|(_, vs)| vs)
@@ -121,7 +121,7 @@ fn compute_gb_via_cli<F: PrimeField>(
 ///
 /// `Lex` over `n` vars → `lp(n)`, `GrevLex` over `n` vars → `dp(n)`.
 /// Product → `(lp(n₁), dp(n₂), …)`.
-fn ordering_string(order: &MonoOrder, all_vars: &[PRef]) -> String {
+fn ordering_string(order: &MonoOrder, all_vars: &[Var]) -> String {
     let blocks = order.block_var_assignment(all_vars);
     let parts: Vec<String> = blocks
         .iter()
@@ -140,7 +140,7 @@ fn ordering_string(order: &MonoOrder, all_vars: &[PRef]) -> String {
 ///
 /// Terms are joined by ` + `. Coefficients are rendered as canonical `[0, P)`
 /// decimal integers via `into_bigint`. Each variable is rendered as `x(i)^e`.
-fn poly_to_singular<F: PrimeField>(p: &Polynomial<F>, var_index: &HashMap<&PRef, usize>) -> String {
+fn poly_to_singular<F: PrimeField>(p: &Polynomial<F>, var_index: &HashMap<&Var, usize>) -> String {
     if p.is_zero() {
         return "0".to_string();
     }
@@ -170,14 +170,14 @@ fn poly_to_singular<F: PrimeField>(p: &Polynomial<F>, var_index: &HashMap<&PRef,
 fn build_script<F: PrimeField>(
     ideal: &[Polynomial<F>],
     order: &MonoOrder,
-    var_map: &[PRef],
+    var_map: &[Var],
 ) -> String {
     let nvars = var_map.len();
     let modulus = format!("{}", F::MODULUS);
     let ordering = ordering_string(order, var_map);
 
-    // Build a PRef → 0-based index lookup.
-    let index_of: HashMap<&PRef, usize> = var_map.iter().enumerate().map(|(i, v)| (v, i)).collect();
+    // Build a Var → 0-based index lookup.
+    let index_of: HashMap<&Var, usize> = var_map.iter().enumerate().map(|(i, v)| (v, i)).collect();
 
     let mut s = String::new();
 
@@ -287,7 +287,7 @@ fn run_singular(script: &str) -> Result<String, BackendError> {
 
 fn parse_output<F: PrimeField>(
     stdout: &str,
-    var_map: &[PRef],
+    var_map: &[Var],
     nvars: usize,
 ) -> Result<Vec<Polynomial<F>>, BackendError> {
     let mut polys: Vec<Polynomial<F>> = Vec::new();
@@ -328,7 +328,7 @@ fn parse_output<F: PrimeField>(
         }
 
         let coeff = parse_coeff::<F>(tokens[0])?;
-        let mut pairs: Vec<(PRef, usize)> = Vec::new();
+        let mut pairs: Vec<(Var, usize)> = Vec::new();
         for (k, tok) in tokens[1..].iter().enumerate() {
             let exp: usize = tok
                 .parse()

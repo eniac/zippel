@@ -1,4 +1,4 @@
-use crate::PRef;
+use crate::Var;
 use crate::frontend::Polynomial;
 use backend::ArkConfig;
 use graph::GraphError;
@@ -76,7 +76,7 @@ pub enum AnalysisError<C: ArkConfig> {
     /// No valid extractor found for a witness slot.
     #[error("No valid extractor for witness {witness}: {reason:?}")]
     NoValidExtractor {
-        witness: PRef,
+        witness: Var,
         reason: Box<ExtractorRejection<C>>,
     },
 

@@ -3,7 +3,7 @@ source: analyses/tests/gb_snapshots.rs
 expression: value
 ---
 - g*z + h*c + u
-- u + g*n4
-- x*u + h*n4
-- z + x*c + n4
+- u + g*__zippel::node::4
+- x*u + h*__zippel::node::4
+- z + x*c + __zippel::node::4
 g*x - h

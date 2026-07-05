@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::PRef;
 use crate::TransClos;
+use crate::Var;
 use crate::backend::{GbBackendKind, GbBasis};
 use crate::error::{AnalysisError, ExtractorRejection};
 use crate::extractor::{extract_locals, valid_extractor};
@@ -24,9 +24,9 @@ pub struct SpecialSoundnessAnalysis<C: ArkConfig> {
     /// Snapshotable.
     pub search_gb: GbBasis<C::F>,
     /// Witness slots (private args) for extractor search in `run()`.
-    witness_slots: Vec<PRef>,
+    witness_slots: Vec<Var>,
     /// Variables visible to the verifier (used for extractor validation).
-    verifier_visible: Set<PRef>,
+    verifier_visible: Set<Var>,
     /// Validity ideal: d-equations + copy TCs. Extractors are added in
     /// `run()` before computing the validity GB.
     grev_validity: Ideal<C>,
@@ -157,7 +157,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
         let challenge_rounds = validate_2n_plus_1(dag, &l_vec)?;
 
-        let witness_slots: Vec<PRef> = crate::pref::dag_args(dag)
+        let witness_slots: Vec<Var> = crate::var::dag_args(dag)
             .into_iter()
             .filter(|a| a.is_private())
             .flat_map(|a| a.slots())
@@ -167,7 +167,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
         let round_map = build_round_map(dag, &challenge_rounds);
 
-        let challenge_prefs_per_round: Vec<Vec<PRef>> = challenge_rounds
+        let challenge_prefs_per_round: Vec<Vec<Var>> = challenge_rounds
             .iter()
             .map(|round| {
                 round
@@ -189,7 +189,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         let mut grev_builder: IdealBuilder<C> = IdealBuilder::new();
         let mut worklist: Vec<(Vec<usize>, TransClos<C>)> = vec![(vec![], verifier_tc.clone())];
         let mut all_d_equations: Vec<Polynomial<C::F>> = Vec::new();
-        let mut all_d_prefs: Vec<PRef> = Vec::new();
+        let mut all_d_prefs: Vec<Var> = Vec::new();
         let mut grev_search = Ideal::<C>::new();
         let mut grev_validity = Ideal::<C>::new();
 
@@ -197,7 +197,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             let mut new_worklist = Vec::new();
 
             for (prefix, tc) in worklist {
-                let mut copies_with_challenges: Vec<(TransClos<C>, Vec<PRef>)> = Vec::new();
+                let mut copies_with_challenges: Vec<(TransClos<C>, Vec<Var>)> = Vec::new();
 
                 for j in 0..li {
                     let suffix = format_suffix(&prefix, j);
@@ -206,7 +206,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                     let round_map_ref = &round_map;
                     let suffix_owned = suffix.clone();
 
-                    copy_tc.remap(&|pref: &PRef| {
+                    copy_tc.remap(&|pref: &Var| {
                         let key = (pref.reference, pref.index.clone());
                         let in_round = round_map_ref
                             .get(&key)
@@ -214,7 +214,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
                         if in_round {
                             let orig = pref.name();
-                            PRef {
+                            Var {
                                 name: format!("{}::{}", orig, suffix_owned),
                                 ..pref.clone()
                             }
@@ -223,7 +223,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                         }
                     });
 
-                    let remapped_challenges: Vec<PRef> = challenge_prefs_per_round[round_idx]
+                    let remapped_challenges: Vec<Var> = challenge_prefs_per_round[round_idx]
                         .iter()
                         .map(|cp| {
                             let key = (cp.reference, cp.index.clone());
@@ -232,7 +232,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                                 .is_some_and(|&highest| highest == round_idx);
                             if in_round {
                                 let orig = cp.name();
-                                PRef {
+                                Var {
                                     name: format!("{}::{}", orig, suffix_owned),
                                     ..cp.clone()
                                 }
@@ -283,9 +283,9 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             worklist = new_worklist;
         }
 
-        let mut verifier_visible: Set<PRef> = Set::new();
-        let mut pub_prefs: Vec<PRef> = Vec::new();
-        let mut priv_prefs: Vec<PRef> = Vec::new();
+        let mut verifier_visible: Set<Var> = Set::new();
+        let mut pub_prefs: Vec<Var> = Vec::new();
+        let mut priv_prefs: Vec<Var> = Vec::new();
 
         for eq in &all_d_equations {
             grev_search.generating_set.push(eq.clone());
@@ -332,27 +332,27 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         // Phase 2: Build lex ordering as runtime data.
         // Priority: rel_locals > priv_prefs > other_locals > pub_prefs.
         // In MonoOrder::lex, the first variable has the highest elimination
-        // priority. Within each group, sort by PRef::Ord for determinism.
-        let lex_var_order: Vec<PRef> = {
-            let rel_locals_set: Set<PRef> = grev_rel_result.var_order.iter().cloned().collect();
-            let priv_set: Set<PRef> = priv_prefs.iter().cloned().collect();
-            let pub_set: Set<PRef> = pub_prefs.iter().cloned().collect();
+        // priority. Within each group, sort by Var::Ord for determinism.
+        let lex_var_order: Vec<Var> = {
+            let rel_locals_set: Set<Var> = grev_rel_result.var_order.iter().cloned().collect();
+            let priv_set: Set<Var> = priv_prefs.iter().cloned().collect();
+            let pub_set: Set<Var> = pub_prefs.iter().cloned().collect();
 
-            let all_vars: Set<PRef> = grev_search.vars();
+            let all_vars: Set<Var> = grev_search.vars();
 
-            let mut rel: Vec<PRef> = all_vars
+            let mut rel: Vec<Var> = all_vars
                 .iter()
                 .filter(|v| rel_locals_set.contains(v))
                 .cloned()
                 .collect();
             rel.sort();
-            let mut priv_v: Vec<PRef> = all_vars
+            let mut priv_v: Vec<Var> = all_vars
                 .iter()
                 .filter(|v| priv_set.contains(v) && !rel_locals_set.contains(v))
                 .cloned()
                 .collect();
             priv_v.sort();
-            let mut pub_v: Vec<PRef> = all_vars
+            let mut pub_v: Vec<Var> = all_vars
                 .iter()
                 .filter(|v| {
                     pub_set.contains(v) && !rel_locals_set.contains(v) && !priv_set.contains(v)
@@ -360,7 +360,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                 .cloned()
                 .collect();
             pub_v.sort();
-            let mut other: Vec<PRef> = all_vars
+            let mut other: Vec<Var> = all_vars
                 .iter()
                 .filter(|v| {
                     !rel_locals_set.contains(v) && !priv_set.contains(v) && !pub_set.contains(v)
@@ -416,7 +416,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         let mut search_polys = self.search_gb.polys.clone();
         factor_group_gcd(&mut search_polys);
 
-        let mut extractors: Vec<(PRef, Polynomial<C::F>)> = Vec::new();
+        let mut extractors: Vec<(Var, Polynomial<C::F>)> = Vec::new();
 
         for w in &self.witness_slots {
             let mut found_extractor = None;
@@ -431,7 +431,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                         continue;
                     }
 
-                    let other_vars: Set<PRef> = poly
+                    let other_vars: Set<Var> = poly
                         .terms
                         .iter()
                         .filter(|(t, _)| {
@@ -548,7 +548,7 @@ fn build_round_map<C: ArkConfig>(
             if let Some(typ) = dag[node].typ() {
                 let r = dag.find_ref(node);
                 let base =
-                    PRef::from_node(node, typ.clone(), Qualifier::Public, Distribution::Uniform);
+                    Var::from_node(node, typ.clone(), Qualifier::Public, Distribution::Uniform);
                 for slot in base.slots() {
                     round_map
                         .entry((r, slot.index))
@@ -590,9 +590,9 @@ fn factor_group_gcd<F: ark_ff::Field>(polys: &mut Vec<Polynomial<F>>) {
                 return None;
             }
 
-            let mut common_gcd: Option<BTreeMap<PRef, usize>> = None;
+            let mut common_gcd: Option<BTreeMap<Var, usize>> = None;
             for term in p.terms.keys() {
-                let group_part: BTreeMap<PRef, usize> = term
+                let group_part: BTreeMap<Var, usize> = term
                     .iter()
                     .filter(|(v, _)| v.typ.is_group())
                     .map(|(v, p)| (v.clone(), *p))
@@ -604,7 +604,7 @@ fn factor_group_gcd<F: ark_ff::Field>(polys: &mut Vec<Polynomial<F>>) {
                 match &mut common_gcd {
                     None => common_gcd = Some(group_part),
                     Some(g) => {
-                        let keys: Vec<PRef> = g.keys().cloned().collect();
+                        let keys: Vec<Var> = g.keys().cloned().collect();
                         for k in keys {
                             if let Some(v_power) = group_part.get(&k) {
                                 *g.get_mut(&k).unwrap() = (*g.get_mut(&k).unwrap()).min(*v_power);
@@ -619,7 +619,7 @@ fn factor_group_gcd<F: ark_ff::Field>(polys: &mut Vec<Polynomial<F>>) {
                 }
             }
 
-            let divisor: Vec<(PRef, usize)> = match common_gcd {
+            let divisor: Vec<(Var, usize)> = match common_gcd {
                 Some(g) if !g.is_empty() => g.into_iter().collect(),
                 _ => return Some(p),
             };
@@ -647,7 +647,7 @@ fn factor_group_gcd<F: ark_ff::Field>(polys: &mut Vec<Polynomial<F>>) {
 #[cfg(test)]
 mod tests {
     use super::SpecialSoundnessAnalysis;
-    use crate::PRef;
+    use crate::Var;
     use crate::error::{AnalysisError, ExtractorRejection};
     use crate::{QualifierPropagation, UniformityPropagation};
     use backend::ArkBls12_381;
@@ -756,14 +756,14 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g_inp).annotate_dag(&g_inp);
         SpecialSoundnessAnalysis::analyze(&g, vec![2]).unwrap();
 
-        let witness_names: Set<String> = crate::pref::dag_args(&g)
+        let witness_names: Set<String> = crate::var::dag_args(&g)
             .into_iter()
             .filter(|a| a.is_private())
             .flat_map(|a| a.slots())
             .filter_map(|w| Some(w.name().to_string()))
             .collect();
         assert!(witness_names.contains(&"x".to_string()));
-        let witness_count: usize = crate::pref::dag_args(&g)
+        let witness_count: usize = crate::var::dag_args(&g)
             .into_iter()
             .filter(|a| a.is_private())
             .flat_map(|a| a.slots())
@@ -966,7 +966,7 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g_inp).annotate_dag(&g_inp);
         SpecialSoundnessAnalysis::analyze(&g, vec![2]).unwrap();
 
-        let witness_slots: Vec<PRef> = crate::pref::dag_args(&g)
+        let witness_slots: Vec<Var> = crate::var::dag_args(&g)
             .into_iter()
             .filter(|a| a.is_private())
             .flat_map(|a| a.slots())

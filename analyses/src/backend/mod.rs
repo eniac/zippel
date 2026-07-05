@@ -8,7 +8,7 @@
 pub mod ark_gb;
 pub mod singular;
 
-use crate::PRef;
+use crate::Var;
 use crate::frontend::{BackendError, BlockKind, MonoOrder, Polynomial};
 use ark_ff::PrimeField;
 use share::Set;
@@ -66,7 +66,7 @@ impl<F: ark_ff::PrimeField> GbBasis<F> {
         self.polys.iter()
     }
 
-    pub fn vars(&self) -> Set<PRef> {
+    pub fn vars(&self) -> Set<Var> {
         self.polys
             .iter()
             .flat_map(|p| p.vars().into_iter())
@@ -115,8 +115,8 @@ pub fn reduce<F: PrimeField>(
     use std::collections::HashMap;
 
     // Collect all PRefs from the input polynomials.
-    let all_vars: Vec<PRef> = {
-        let mut vs: Vec<PRef> = basis_polys.iter().flat_map(|p| p.vars()).collect();
+    let all_vars: Vec<Var> = {
+        let mut vs: Vec<Var> = basis_polys.iter().flat_map(|p| p.vars()).collect();
         vs.extend(p.vars());
         vs.sort();
         vs.dedup();

@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod backend_tests {
-    use crate::PRef;
+    use crate::Var;
     use crate::backend::{GbBackend, ark_gb::ArkGb};
     use crate::frontend::{MonoOrder, Polynomial};
     use ark_bls12_381::Fr;
@@ -12,8 +12,8 @@ mod backend_tests {
     use lang::typ::{Distribution, Qualifier};
     use petgraph::graph::NodeIndex;
 
-    fn mk_var(name: &str, idx: usize) -> PRef {
-        PRef::from_var(
+    fn mk_var(name: &str, idx: usize) -> Var {
+        Var::from_var(
             name.to_string(),
             NodeIndex::new(idx),
             ATyp::scalar(),
@@ -30,7 +30,7 @@ mod backend_tests {
         let r = mk_var("r", 3);
         let u = mk_var("u", 4);
 
-        let var = |p: &PRef| Polynomial::<Fr>::var(p);
+        let var = |p: &Var| Polynomial::<Fr>::var(p);
         let p1 = var(&g) * var(&x) - var(&h);
         let p2 = var(&g) * var(&r) - var(&u);
 
@@ -54,7 +54,7 @@ mod backend_tests {
     #[test]
     fn grevlex_unit_ideal() {
         let x = mk_var("x", 0);
-        let var = |p: &PRef| Polynomial::<Fr>::var(p);
+        let var = |p: &Var| Polynomial::<Fr>::var(p);
         let one = Polynomial::lit(&Fr::one());
 
         // x and 1 → unit ideal
@@ -70,7 +70,7 @@ mod backend_tests {
         use crate::frontend::{Block, BlockKind};
         let x = mk_var("x", 0);
         let y = mk_var("y", 1);
-        let var = |p: &PRef| Polynomial::<Fr>::var(p);
+        let var = |p: &Var| Polynomial::<Fr>::var(p);
 
         let backend = ArkGb::<Fr>::default();
         // GrevLex-then-Lex: ark-gb's Case 3 requires the first block to be Lex.
@@ -98,7 +98,7 @@ mod backend_tests {
 /// so CI without Singular passes.
 #[cfg(test)]
 mod singular_tests {
-    use crate::PRef;
+    use crate::Var;
     use crate::backend::{GbBackend, ark_gb::ArkGb, singular::Singular};
     use crate::frontend::{Block, BlockKind, MonoOrder, Polynomial};
     use ark_bls12_381::Fr;
@@ -108,8 +108,8 @@ mod singular_tests {
     use lang::typ::{Distribution, Qualifier};
     use petgraph::graph::NodeIndex;
 
-    fn mk_var(name: &str, idx: usize) -> PRef {
-        PRef::from_var(
+    fn mk_var(name: &str, idx: usize) -> Var {
+        Var::from_var(
             name.to_string(),
             NodeIndex::new(idx),
             ATyp::scalar(),
@@ -151,13 +151,13 @@ mod singular_tests {
     }
 
     /// Build the test ideal: g*x = h, g*r = u (from `grevlex_basic_gb`).
-    fn gx_hu_ideal() -> (Vec<PRef>, Vec<Polynomial<Fr>>) {
+    fn gx_hu_ideal() -> (Vec<Var>, Vec<Polynomial<Fr>>) {
         let g = mk_var("g", 0);
         let x = mk_var("x", 1);
         let h = mk_var("h", 2);
         let r = mk_var("r", 3);
         let u = mk_var("u", 4);
-        let var = |p: &PRef| Polynomial::<Fr>::var(p);
+        let var = |p: &Var| Polynomial::<Fr>::var(p);
         let ideal = vec![var(&g) * var(&x) - var(&h), var(&g) * var(&r) - var(&u)];
         (vec![g, x, h, r, u], ideal)
     }
@@ -266,7 +266,7 @@ mod singular_tests {
             return;
         }
         let x = mk_var("x", 0);
-        let var = |p: &PRef| Polynomial::<Fr>::var(p);
+        let var = |p: &Var| Polynomial::<Fr>::var(p);
         let one = Polynomial::lit(&Fr::one());
         let ideal = vec![var(&x), one];
         let order = MonoOrder::grevlex();
@@ -287,7 +287,7 @@ mod singular_tests {
         }
         let x = mk_var("x", 0);
         let y = mk_var("y", 1);
-        let var = |p: &PRef| Polynomial::<Fr>::var(p);
+        let var = |p: &Var| Polynomial::<Fr>::var(p);
         let ideal = vec![var(&x) * var(&y.clone()) - var(&x)];
         let order = MonoOrder::block(vec![
             Block {

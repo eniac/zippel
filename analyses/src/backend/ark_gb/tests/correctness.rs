@@ -25,7 +25,7 @@
 //! covered by the Criterion bench (`benches/groebner.rs`); regressions on
 //! larger sizes therefore surface there, not here.
 
-use crate::PRef;
+use crate::Var;
 use crate::backend::ark_gb::ArkGb;
 use crate::backend::{GbBackend, GbBasis};
 use crate::frontend::{Block, BlockKind, MonoOrder, Monomial, Polynomial};
@@ -122,7 +122,7 @@ fn buchberger_after_shuffle(
 }
 
 /// Count standard monomials of `g` (= dim_F(R/I) when I is 0-dim).
-fn standard_monomial_count(g: &GbBasis<Fr>, vars: &[PRef]) -> Option<usize> {
+fn standard_monomial_count(g: &GbBasis<Fr>, vars: &[Var]) -> Option<usize> {
     let lms: Vec<Monomial> = g
         .polys
         .iter()
@@ -150,7 +150,7 @@ fn standard_monomial_count(g: &GbBasis<Fr>, vars: &[PRef]) -> Option<usize> {
     let mut idx = vec![0usize; n];
     let mut count = 0usize;
     loop {
-        let pairs: Vec<(PRef, usize)> = (0..n)
+        let pairs: Vec<(Var, usize)> = (0..n)
             .filter(|i| idx[*i] > 0)
             .map(|i| (vars[i].clone(), idx[i]))
             .collect();
@@ -175,10 +175,10 @@ fn standard_monomial_count(g: &GbBasis<Fr>, vars: &[PRef]) -> Option<usize> {
     }
 }
 
-fn katsura_vars(n: usize) -> Vec<PRef> {
+fn katsura_vars(n: usize) -> Vec<Var> {
     mk_vars("k", n)
 }
-fn cyclic_vars(n: usize) -> Vec<PRef> {
+fn cyclic_vars(n: usize) -> Vec<Var> {
     mk_vars("c", n)
 }
 
@@ -196,7 +196,7 @@ fn assert_proper(g: &GbBasis<Fr>, label: &str) {
 }
 
 /// Build an elim order where all given vars are in the first (elim) block.
-fn elim_order(vars: &[PRef]) -> MonoOrder {
+fn elim_order(vars: &[Var]) -> MonoOrder {
     MonoOrder::block(vec![
         Block {
             vars: Some(vars.to_vec()),
@@ -216,7 +216,7 @@ fn elim_order(vars: &[PRef]) -> MonoOrder {
 fn run_self_checks(
     label: &str,
     inputs: Vec<Polynomial<Fr>>,
-    vars: &[PRef],
+    vars: &[Var],
     expected_dim: Option<usize>,
     order: &MonoOrder,
 ) {
@@ -402,7 +402,7 @@ fn fr_from_rational(num: i64, den: u64) -> Fr {
     n * d.inverse().expect("denominator must be non-zero")
 }
 
-fn poly_from_lit(vars: &[PRef], lit: PolyLit<'_>) -> Polynomial<Fr> {
+fn poly_from_lit(vars: &[Var], lit: PolyLit<'_>) -> Polynomial<Fr> {
     let mut out = Polynomial::<Fr>::zero();
     for &(num, den, mono) in lit {
         let c = fr_from_rational(num, den);
@@ -417,7 +417,7 @@ fn poly_from_lit(vars: &[PRef], lit: PolyLit<'_>) -> Polynomial<Fr> {
     out
 }
 
-fn pinned_polys(vars: &[PRef], lits: BasisLit<'_>) -> Vec<Polynomial<Fr>> {
+fn pinned_polys(vars: &[Var], lits: BasisLit<'_>) -> Vec<Polynomial<Fr>> {
     lits.iter().map(|p| poly_from_lit(vars, p)).collect()
 }
 

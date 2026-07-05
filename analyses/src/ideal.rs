@@ -1,5 +1,5 @@
-use crate::PRef;
 use crate::TransClos;
+use crate::Var;
 use crate::frontend::Polynomial;
 use graph::{GOp, HOp, Op, Ref, mk};
 use lang::ast::BinOp;
@@ -21,10 +21,10 @@ use std::marker::PhantomData;
 const MAX_IDEAL_MATERIALIZED_SLOTS: usize = 1 << 20;
 
 // ---------------------------------------------------------------------------
-// PRef-slot enumeration helpers for polynomial / MLE values.
+// Var-slot enumeration helpers for polynomial / MLE values.
 //
 // These define the canonical order in which the slots of a polynomial-typed
-// PRef are laid out (via `PRef::with_slot(i)`). They are NOT monomial / term
+// Var are laid out (via `Var::with_slot(i)`). They are NOT monomial / term
 // orderings — the `GrevLexTerm` and `ElimMono<E>` orderings in
 // `monomial.rs` are untouched.
 //
@@ -173,7 +173,7 @@ pub struct DivWitnessKey {
 /// Ideal builders.
 #[derive(Clone)]
 pub struct IdealNamespace<C: ArkConfig> {
-    pub div_wit: Ctx<DivWitnessKey, (PRef, PRef)>,
+    pub div_wit: Ctx<DivWitnessKey, (Var, Var)>,
     sentinel_counter: usize,
     name_counters: HashMap<String, usize>,
     _phantom: PhantomData<C>,
@@ -195,11 +195,11 @@ impl<C: ArkConfig + HasOpFactory> IdealNamespace<C> {
         }
     }
 
-    /// Allocate a fresh sentinel PRef with a stable unique NodeIndex.
-    pub fn sentinel_pref(&mut self, name: &str, typ: ATyp) -> PRef {
+    /// Allocate a fresh sentinel Var with a stable unique NodeIndex.
+    pub fn sentinel_pref(&mut self, name: &str, typ: ATyp) -> Var {
         let idx = NodeIndex::new(self.sentinel_counter);
         self.sentinel_counter -= 1;
-        PRef::from_var(name, idx, typ, Qualifier::Local, Distribution::default())
+        Var::from_var(name, idx, typ, Qualifier::Local, Distribution::default())
     }
 
     /// Return a unique name for the given key by appending a per-key counter.
@@ -216,9 +216,9 @@ impl<C: ArkConfig + HasOpFactory> IdealNamespace<C> {
 #[derive(Clone)]
 pub struct Ideal<C: ArkConfig> {
     pub generating_set: Vec<Polynomial<C::F>>,
-    pub pl: Ctx<PRef, Polynomial<C::F>>,
-    pub prefs: HashMap<Ref, PRef>,
-    pub var_order: Vec<PRef>,
+    pub pl: Ctx<Var, Polynomial<C::F>>,
+    pub prefs: HashMap<Ref, Var>,
+    pub var_order: Vec<Var>,
 }
 
 impl<C: ArkConfig + HasOpFactory> Ideal<C> {
@@ -231,22 +231,22 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         }
     }
 
-    /// Register a PRef in the namespace. Overwrites any existing entry
+    /// Register a Var in the namespace. Overwrites any existing entry
     /// for the same reference. Returns the previous entry if one existed.
-    pub fn register(&mut self, pr: &PRef) -> Option<PRef> {
+    pub fn register(&mut self, pr: &Var) -> Option<Var> {
         self.prefs.insert(pr.reference, pr.clone())
     }
 
     /// Look up a Ref in the namespace. Panics if not found.
-    pub fn find_ref(&self, r: &Ref) -> PRef {
+    pub fn find_ref(&self, r: &Ref) -> Var {
         if let Some(v) = self.prefs.get(r) {
             return v.clone();
         }
         panic!("ideal: ref {} not found in namespace prefs", r)
     }
 
-    pub fn vars(&self) -> Set<PRef> {
-        let mut vars: Set<PRef> = self.pl.keys().into_iter().collect();
+    pub fn vars(&self) -> Set<Var> {
+        let mut vars: Set<Var> = self.pl.keys().into_iter().collect();
         for p in &self.generating_set {
             for v in p.vars() {
                 vars.insert(v);
@@ -256,7 +256,7 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
     }
 
     /// Filter out variables that satisfy the predicate
-    pub fn eliminate_var<F: Fn(&PRef) -> bool>(&mut self, f: &F) {
+    pub fn eliminate_var<F: Fn(&Var) -> bool>(&mut self, f: &F) {
         self.generating_set
             .retain(|p| p.vars().iter().all(|v| !f(v)));
         self.pl.retain(|p, _| !f(p));
@@ -265,7 +265,7 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
     pub fn eliminate_monomial<F: Fn(&crate::frontend::Monomial) -> bool>(&mut self, f: &F) {
         self.generating_set
             .retain(|p| p.terms.keys().any(|t| !f(t)));
-        let basis_vars: Set<PRef> = self.generating_set.iter().flat_map(|p| p.vars()).collect();
+        let basis_vars: Set<Var> = self.generating_set.iter().flat_map(|p| p.vars()).collect();
         self.pl.retain(|p, _| basis_vars.contains(p));
     }
 
@@ -279,12 +279,12 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             return;
         }
 
-        let pl_keys: Set<PRef> = self.pl.keys();
-        let mut order: Vec<PRef> = Vec::with_capacity(pl_keys.len());
-        let mut resolved: Set<PRef> = Set::new();
-        let mut inlineable: Set<PRef> = pl_keys.clone();
+        let pl_keys: Set<Var> = self.pl.keys();
+        let mut order: Vec<Var> = Vec::with_capacity(pl_keys.len());
+        let mut resolved: Set<Var> = Set::new();
+        let mut inlineable: Set<Var> = pl_keys.clone();
         inlineable.retain(|k| !transcript_refs.contains(&k.reference));
-        let mut remaining: Vec<(PRef, usize)> = inlineable
+        let mut remaining: Vec<(Var, usize)> = inlineable
             .iter()
             .map(|k| {
                 let deps = self.pl[k]
@@ -334,7 +334,7 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         }
 
         // save transcript vars
-        let mut saved: Vec<(PRef, Polynomial<C::F>)> = Vec::new();
+        let mut saved: Vec<(Var, Polynomial<C::F>)> = Vec::new();
         for k in pl_keys.iter() {
             if transcript_refs.contains(&k.reference)
                 && let Some(v) = self.pl.remove(k)
@@ -441,7 +441,7 @@ impl<C: ArkConfig> PolySource<C> {
         self.typ.physical_len()
     }
 
-    fn from_ref_vars(prefs: &HashMap<Ref, PRef>, op: &GOp<C>) -> Self
+    fn from_ref_vars(prefs: &HashMap<Ref, Var>, op: &GOp<C>) -> Self
     where
         C: HasOpFactory,
     {
@@ -450,7 +450,7 @@ impl<C: ArkConfig> PolySource<C> {
         PolySource { polys, typ }
     }
 
-    fn from_pref_vars(pref: &PRef, typ: ATyp) -> Self {
+    fn from_pref_vars(pref: &Var, typ: ATyp) -> Self {
         let polys = pref
             .slots()
             .into_iter()
@@ -814,7 +814,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     ///
     /// `context` is a short kebab-case string identifying the code path
     /// (e.g. `"concat-non-vector"`, `"dynamic-pow"`).
-    fn uncovered_op(context: &str, target: &PRef) -> ! {
+    fn uncovered_op(context: &str, target: &Var) -> ! {
         panic!(
             "ideal: operation has no polynomial-ideal treatment at {} for {}",
             context,
@@ -863,7 +863,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         ideal
     }
 
-    pub(crate) fn sentinel_pref(&mut self, name: &str, typ: ATyp, ideal: &mut Ideal<C>) -> PRef {
+    pub(crate) fn sentinel_pref(&mut self, name: &str, typ: ATyp, ideal: &mut Ideal<C>) -> Var {
         let pr = self.ns.sentinel_pref(name, typ);
         ideal.var_order.push(pr.clone());
         pr
@@ -875,7 +875,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         quotient_typ: ATyp,
         remainder_typ: ATyp,
         ideal: &mut Ideal<C>,
-    ) -> (PRef, PRef) {
+    ) -> (Var, Var) {
         let q_name = self.ns.next_name("div_q");
         let r_name = self.ns.next_name("div_r");
         let q_wit = self.sentinel_pref(&q_name, quotient_typ, ideal);
@@ -945,7 +945,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     fn canonical_poly_key(
         poly: &Polynomial<C::F>,
         ideal: &Ideal<C>,
-        seen: &mut Vec<PRef>,
+        seen: &mut Vec<Var>,
     ) -> String {
         if poly.is_zero() {
             return "0".to_string();
@@ -969,7 +969,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     fn canonical_monomial_key(
         term: &crate::frontend::Monomial,
         ideal: &Ideal<C>,
-        seen: &mut Vec<PRef>,
+        seen: &mut Vec<Var>,
     ) -> String {
         let mut factors: Vec<String> = term
             .vars()
@@ -982,10 +982,10 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     }
 
     fn canonical_factor_key(
-        pref: &PRef,
+        pref: &Var,
         power: usize,
         ideal: &Ideal<C>,
-        seen: &mut Vec<PRef>,
+        seen: &mut Vec<Var>,
     ) -> String {
         if Self::is_named_source_pref(pref) {
             return format!("{}^{}", Self::canonical_pref_key(pref), power);
@@ -1003,30 +1003,24 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         format!("{}^{}", Self::canonical_pref_key(pref), power)
     }
 
-    fn is_named_source_pref(pref: &PRef) -> bool {
+    fn is_named_source_pref(pref: &Var) -> bool {
         !pref.name().starts_with(GB_GENERATED_NAME_PREFIX)
             && !pref.name().starts_with(NODE_GENERATED_NAME_PREFIX)
     }
 
-    fn canonical_pref_key(pref: &PRef) -> String {
+    fn canonical_pref_key(pref: &Var) -> String {
         let name = pref.name();
         if !name.starts_with(GB_GENERATED_NAME_PREFIX)
             && !name.starts_with(NODE_GENERATED_NAME_PREFIX)
         {
             format!(
-                "named:name={};slot={:?};typ={};qual={:?};dist={:?};transcript={}",
-                name, pref.index, pref.typ, pref.qualifier, pref.distribution, pref.from_transcript,
+                "named:name={};slot={:?};typ={};qual={:?};dist={:?}",
+                name, pref.index, pref.typ, pref.qualifier, pref.distribution,
             )
         } else {
             format!(
-                "raw:ref={:?};slot={:?};typ={};qual={:?};dist={:?};transcript={};name={:?}",
-                pref.reference,
-                pref.index,
-                pref.typ,
-                pref.qualifier,
-                pref.distribution,
-                pref.from_transcript,
-                name,
+                "raw:ref={:?};slot={:?};typ={};qual={:?};dist={:?};name={:?}",
+                pref.reference, pref.index, pref.typ, pref.qualifier, pref.distribution, name,
             )
         }
     }
@@ -1045,7 +1039,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     /// Div+Rem on equivalent named operands share witnesses across closures.
     fn div_rem_op(
         &mut self,
-        target: &PRef,
+        target: &Var,
         a: &PolySource<C>,
         b: &PolySource<C>,
         is_rem: bool,
@@ -1246,7 +1240,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     /// - Same-type poly op → straightforward slot-wise
     fn broadcast_equ(
         &mut self,
-        _pr: &PRef,
+        _pr: &Var,
         a: &PolySource<C>,
         b: &PolySource<C>,
         ideal: &mut Ideal<C>,
@@ -1289,7 +1283,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     }
 
     fn bind_lifted_alias(
-        target: &PRef,
+        target: &Var,
         source: &PolySource<C>,
         target_typ: &ATyp,
         ideal: &mut Ideal<C>,
@@ -1302,7 +1296,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     }
 
     fn bind_vec_aliases(
-        target: &PRef,
+        target: &Var,
         target_offset: usize,
         source: &PolySource<C>,
         source_len: usize,
@@ -1318,7 +1312,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
 
     fn concat_op(
         &mut self,
-        pr: &PRef,
+        pr: &Var,
         a: &PolySource<C>,
         b: &PolySource<C>,
         _a_op: &HOp<C>,
@@ -1348,7 +1342,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
 
     fn emit_slotwise_binop(
         &self,
-        pr: &PRef,
+        pr: &Var,
         left: &[Polynomial<C::F>],
         right: &[Polynomial<C::F>],
         op: BinOp,
@@ -1376,7 +1370,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
 
     fn broadcast_binop(
         &mut self,
-        pr: &PRef,
+        pr: &Var,
         a: &PolySource<C>,
         b: &PolySource<C>,
         r_typ: &ATyp,
@@ -1492,7 +1486,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     /// convolution (VPoly/Uni/Mle) or slot-wise multiplication (base types).
     fn mul_op(
         &mut self,
-        target: &PRef,
+        target: &Var,
         a: &PolySource<C>,
         b: &PolySource<C>,
         r_typ: &ATyp,
@@ -1736,7 +1730,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         }
     }
 
-    fn dot_op(&mut self, pr: &PRef, a: &PolySource<C>, b: &PolySource<C>, ideal: &mut Ideal<C>) {
+    fn dot_op(&mut self, pr: &Var, a: &PolySource<C>, b: &PolySource<C>, ideal: &mut Ideal<C>) {
         match (a.typ(), b.typ()) {
             (ATyp::Vec(_, na), ATyp::Vec(_, nb)) if na == nb => {
                 let r_elem_len = pr.typ.physical_len();
@@ -1790,7 +1784,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         }
     }
 
-    fn pair_op(&mut self, pr: &PRef, a: &PolySource<C>, b: &PolySource<C>, ideal: &mut Ideal<C>) {
+    fn pair_op(&mut self, pr: &Var, a: &PolySource<C>, b: &PolySource<C>, ideal: &mut Ideal<C>) {
         match (a.typ(), b.typ(), &pr.typ) {
             (ATyp::Vec(_, na), ATyp::Vec(_, nb), ATyp::Vec(r_inner, _)) if na == nb => {
                 for i in 0..*na {
@@ -1830,7 +1824,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         }
     }
 
-    fn pow_op(&mut self, pr: &PRef, a: &HOp<C>, b: &HOp<C>, ideal: &mut Ideal<C>) {
+    fn pow_op(&mut self, pr: &Var, a: &HOp<C>, b: &HOp<C>, ideal: &mut Ideal<C>) {
         let a_src = PolySource::from_ref_vars(&ideal.prefs, a);
         match (a_src.typ(), &b.typ(), &pr.typ) {
             (ATyp::Vec(_, na), ATyp::Vec(_, nb), ATyp::Vec(r_inner, _)) if na == nb => {
@@ -1905,7 +1899,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     }
     fn pow_const(
         &mut self,
-        target: &PRef,
+        target: &Var,
         base: &PolySource<C>,
         _ideal_typ: &ATyp,
         k: usize,
@@ -1954,7 +1948,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     ///   `a[j] - b[j] * var(target[j]) = 0`
     fn slot_wise_div(
         &mut self,
-        target: &PRef,
+        target: &Var,
         a_polys: &[Polynomial<C::F>],
         b_polys: &[Polynomial<C::F>],
         ideal: &mut Ideal<C>,
@@ -1967,11 +1961,11 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         }
     }
 
-    /// Phase 13: link the user's PRef `pr` to a witness PRef `wit` slot by
+    /// Phase 13: link the user's Var `pr` to a witness Var `wit` slot by
     /// slot, for when `pr` aliases a div/rem witness produced by
     /// `div_witnesses`. Emits `var(pr[j]) − var(wit[j]) = 0` for every
     /// `j < pr.typ.physical_len()`, and registers `pl[pr[j]] = var(wit[j])`.
-    fn link_to_witness(&mut self, pr: &PRef, wit: &PRef, ideal: &mut Ideal<C>) {
+    fn link_to_witness(&mut self, pr: &Var, wit: &Var, ideal: &mut Ideal<C>) {
         // Zip to min(pr slots, wit slots) — zip truncates to the shorter iterator.
         // Excess pr slots stay unconstrained (opaque).
         for (pf, wf) in pr.slots().into_iter().zip(wit.slots()) {
@@ -2013,7 +2007,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         &mut self,
         p: &GOp<C>,
         xs: &GOp<C>,
-        prefs: &HashMap<Ref, PRef>,
+        prefs: &HashMap<Ref, Var>,
     ) -> Vec<Polynomial<C::F>> {
         let p_typ = p.typ();
         let xs_polys = Self::ref_vars(xs, prefs);
@@ -2156,7 +2150,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         p: &GOp<C>,
         xs: &GOp<C>,
         target_typ: &ATyp,
-        prefs: &HashMap<Ref, PRef>,
+        prefs: &HashMap<Ref, Var>,
     ) -> Vec<Polynomial<C::F>> {
         let polys = self.eval_to_poly(p, xs, prefs);
         let raw_typ = {
@@ -2182,12 +2176,12 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     }
 
     /// Resolve an `Op::Ref(v, typ)` to a vector of variable polynomials,
-    /// one per physical slot of the resolved PRef.
+    /// one per physical slot of the resolved Var.
     ///
     /// After IR lowering, every child of a compound op is `Op::Ref` or
     /// `Op::Value`. This helper asserts the `Op::Ref` invariant and
     /// returns the slot variables for use in basis row construction.
-    fn ref_vars(op: &GOp<C>, prefs: &HashMap<Ref, PRef>) -> Vec<Polynomial<C::F>> {
+    fn ref_vars(op: &GOp<C>, prefs: &HashMap<Ref, Var>) -> Vec<Polynomial<C::F>> {
         match op {
             Op::Ref(v, typ) => {
                 let pf = prefs
@@ -2215,7 +2209,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
 }
 
 impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
-    fn add_op(&mut self, pr: PRef, op: GOp<C>, ideal: &mut Ideal<C>) {
+    fn add_op(&mut self, pr: Var, op: GOp<C>, ideal: &mut Ideal<C>) {
         match op {
             Op::Ref(r, typ) => {
                 if pr.reference == r && pr.index.is_empty() && pr.typ == typ {
@@ -2319,7 +2313,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     ideal.generating_set.push(&lhs - &Polynomial::var(pf));
                 }
             }
-            // Op::Poly / Op::Mle / Op::Coef: bind the i-th PRef slot of `pr`
+            // Op::Poly / Op::Mle / Op::Coef: bind the i-th Var slot of `pr`
             // to the i-th scalar poly read from `inner` by `ref_vars`. These
             // three share identity semantics on coefficients / evaluations —
             // only the slot-count / enumeration of `pr.typ` differs, and that
@@ -2599,7 +2593,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     /// constant bindings are already available there.
     ///
     /// Falls back to opaque if the point values aren't all constant.
-    fn interpolate_op(&mut self, pr: PRef, points: &HOp<C>, evals: &HOp<C>, ideal: &mut Ideal<C>) {
+    fn interpolate_op(&mut self, pr: Var, points: &HOp<C>, evals: &HOp<C>, ideal: &mut Ideal<C>) {
         let evals_polys = Self::ref_vars(evals, &ideal.prefs);
         let n = evals_polys.len();
 
@@ -2662,7 +2656,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             }
 
             let n_pts = xs_polys.len();
-            let mut denom_inverses: Vec<Vec<Option<PRef>>> = vec![vec![None; n_pts]; n_pts];
+            let mut denom_inverses: Vec<Vec<Option<Var>>> = vec![vec![None; n_pts]; n_pts];
             for i in 0..n_pts {
                 for j in 0..n_pts {
                     if i == j {
@@ -2756,7 +2750,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     ///   in `add_op` which sees a single exponent directly.
     ///
     /// - **Dot**: unreachable (type checker rejects `reduce(dot, _)`).
-    fn reduce_op(&mut self, pr: PRef, rop: BinOp, v: &HOp<C>, ideal: &mut Ideal<C>) {
+    fn reduce_op(&mut self, pr: Var, rop: BinOp, v: &HOp<C>, ideal: &mut Ideal<C>) {
         let v_typ = v.typ();
         let (elem_t, n) = match &v_typ {
             ATyp::Vec(box e, n) => (e.clone(), *n),
@@ -2907,7 +2901,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     /// elements of `v_src` (each of type `elem_t`) under `rop`, binding `pr`.
     fn reduce_polysource(
         &mut self,
-        pr: PRef,
+        pr: Var,
         rop: BinOp,
         v_src: PolySource<C>,
         elem_t: ATyp,
@@ -3055,7 +3049,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         p: &GOp<C>,
         range: &lang::typ::CRange,
         fixed: &GOp<C>,
-        prefs: &HashMap<Ref, PRef>,
+        prefs: &HashMap<Ref, Var>,
     ) -> Option<Vec<Polynomial<C::F>>> {
         if range.step != 1 || range.len() != 1 {
             return None;
@@ -3140,14 +3134,14 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     }
 
     /// Materialize an inline Map/ReduceMap body op-tree into registered
-    /// sentinel PRefs and return the PRef bound to its ideal.
+    /// sentinel PRefs and return the Var bound to its ideal.
     fn body_to_poly(
         &mut self,
         body: &HOp<C>,
-        loops: &[PRef],
+        loops: &[Var],
         loop_vals: &[Option<Value<C>>],
         ideal: &mut Ideal<C>,
-    ) -> Option<PRef> {
+    ) -> Option<Var> {
         match body.get() {
             Op::Ref(r, _) => Some(ideal.find_ref(r)),
             Op::LoopParam(level, _) => loops.get(*level).cloned(),
@@ -3195,7 +3189,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     fn body_child(
         &mut self,
         child: &HOp<C>,
-        loops: &[PRef],
+        loops: &[Var],
         loop_vals: &[Option<Value<C>>],
         ideal: &mut Ideal<C>,
     ) -> Option<HOp<C>> {
@@ -3216,7 +3210,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     fn rebuild_body_op(
         &mut self,
         body: &HOp<C>,
-        loops: &[PRef],
+        loops: &[Var],
         loop_vals: &[Option<Value<C>>],
         ideal: &mut Ideal<C>,
     ) -> Option<GOp<C>> {
@@ -3276,10 +3270,10 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     fn explode_domain(
         &mut self,
         domain: &HOp<C>,
-        loops: &[PRef],
+        loops: &[Var],
         loop_vals: &[Option<Value<C>>],
         ideal: &mut Ideal<C>,
-    ) -> Option<Vec<(PRef, Option<Value<C>>)>> {
+    ) -> Option<Vec<(Var, Option<Value<C>>)>> {
         let (elem_t, n) = match domain.typ() {
             ATyp::Vec(box e, n) => (e, n),
             _ => return None,
@@ -3320,10 +3314,10 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     /// link ideal slot `i` to the body's output for element `i`.
     fn map_to_poly(
         &mut self,
-        pr: PRef,
+        pr: Var,
         domain: &HOp<C>,
         body: &HOp<C>,
-        parent_loops: &[PRef],
+        parent_loops: &[Var],
         parent_vals: &[Option<Value<C>>],
         ideal: &mut Ideal<C>,
     ) {
@@ -3348,11 +3342,11 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     #[allow(clippy::too_many_arguments)]
     fn reduce_map_to_poly(
         &mut self,
-        pr: PRef,
+        pr: Var,
         rop: BinOp,
         domain: &HOp<C>,
         body: &HOp<C>,
-        parent_loops: &[PRef],
+        parent_loops: &[Var],
         parent_vals: &[Option<Value<C>>],
         ideal: &mut Ideal<C>,
     ) {
@@ -3364,7 +3358,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         if n == 0 {
             Self::uncovered_op("reduce-map-empty", &pr);
         }
-        let mut mapped: Vec<PRef> = Vec::with_capacity(n);
+        let mut mapped: Vec<Var> = Vec::with_capacity(n);
         for (elem, elem_val) in elems.iter() {
             let mut loops = parent_loops.to_vec();
             loops.push(elem.clone());
@@ -3539,13 +3533,13 @@ mod tests {
 
     #[test]
     fn test_ref_vars_vpoly_expands_coefficients() {
-        use crate::PRef;
+        use crate::Var;
         use graph::Ref;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_p = PRef::from_node(
+        let pref_p = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 2),
             Qualifier::Private,
@@ -3560,7 +3554,7 @@ mod tests {
             let expected = pref_p.clone().with_slot(i).unwrap();
             assert!(
                 polys[i].contains(&expected),
-                "coefficient poly {} does not contain expected PRef (index {})",
+                "coefficient poly {} does not contain expected Var (index {})",
                 i,
                 i
             );
@@ -3569,13 +3563,13 @@ mod tests {
 
     #[test]
     fn test_ref_vars_mle_expands_evaluations() {
-        use crate::PRef;
+        use crate::Var;
         use graph::Ref;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_p = PRef::from_node(
+        let pref_p = Var::from_node(
             NodeIndex::new(0),
             ATyp::Mle(3),
             Qualifier::Private,
@@ -3594,7 +3588,7 @@ mod tests {
 
     #[test]
     fn test_add_op_poly_binds_coefficient_slots() {
-        use crate::PRef;
+        use crate::Var;
         use ark_bls12_381::Fr;
         use backend::op::mk;
         use lang::typ::{Distribution, Qualifier};
@@ -3604,7 +3598,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         // First: bind Vec of scalars on node 0, then Poly on node 1.
-        let pref_v = PRef::from_node(
+        let pref_v = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 2),
             Qualifier::Private,
@@ -3616,7 +3610,7 @@ mod tests {
             .collect();
         builder.add_op(pref_v.clone(), Op::Vec(coefs), &mut ideal);
 
-        let pref_p = PRef::from_node(
+        let pref_p = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 2),
             Qualifier::Private,
@@ -3641,7 +3635,7 @@ mod tests {
     #[test]
     fn test_add_op_coef_roundtrips_poly() {
         // Op::Coef(Op::Poly(v)) bound to the same slots should reduce to `v`.
-        use crate::PRef;
+        use crate::Var;
         use ark_bls12_381::Fr;
         use backend::op::mk;
         use lang::typ::{Distribution, Qualifier};
@@ -3651,7 +3645,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         // First: bind Vec of scalars on node 0, then Poly on node 1.
-        let pref_v = PRef::from_node(
+        let pref_v = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 2),
             Qualifier::Private,
@@ -3664,7 +3658,7 @@ mod tests {
         builder.add_op(pref_v.clone(), Op::Vec(coefs), &mut ideal);
 
         // Poly: reads the Vec's slots via Ref.
-        let pref_p = PRef::from_node(
+        let pref_p = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 2),
             Qualifier::Private,
@@ -3682,7 +3676,7 @@ mod tests {
 
         // Then: Op::Coef reading the VPoly back into a Uni(2) output
         // (degree 2 = 3 coefficient slots, per docs/poly-encoding.md).
-        let pref_c = PRef::from_node(
+        let pref_c = Var::from_node(
             NodeIndex::new(2),
             ATyp::Uni(2),
             Qualifier::Private,
@@ -3697,7 +3691,7 @@ mod tests {
         );
 
         // Each Coef slot should be bound identically to the corresponding
-        // VPoly coefficient PRef — that's the round-trip identity. `ref_vars`
+        // VPoly coefficient Var — that's the round-trip identity. `ref_vars`
         // resolves per-slot PRefs to ATyp::scalar(), so we expect that form
         // on the RHS.
         for i in 0..3 {
@@ -3711,7 +3705,7 @@ mod tests {
 
     #[test]
     fn test_add_op_mle_binds_hypercube_slots() {
-        use crate::PRef;
+        use crate::Var;
         use ark_bls12_381::Fr;
         use backend::op::mk;
         use lang::typ::{Distribution, Qualifier};
@@ -3721,7 +3715,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         // First: bind Vec of scalars on node 0, then Mle on node 1.
-        let pref_v = PRef::from_node(
+        let pref_v = Var::from_node(
             NodeIndex::new(0),
             ATyp::Mle(2),
             Qualifier::Private,
@@ -3733,7 +3727,7 @@ mod tests {
             .collect();
         builder.add_op(pref_v.clone(), Op::Vec(vals), &mut ideal);
 
-        let pref_m = PRef::from_node(
+        let pref_m = Var::from_node(
             NodeIndex::new(1),
             ATyp::Mle(2),
             Qualifier::Private,
@@ -3767,17 +3761,17 @@ mod tests {
     //   - partial multivariate
     // -----------------------------------------------------------------
 
-    /// Helper: a PRef registered with the builder so `find_ref` can locate
+    /// Helper: a Var registered with the builder so `find_ref` can locate
     /// it, returning the pref for caller use. The slot type isn't important
     /// here; we only need the reference node / index to resolve.
 
     #[test]
     fn mle1_to_uni1_lift_converts_evals_to_coeffs() {
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let src = PRef::from_node(
+        let src = Var::from_node(
             NodeIndex::new(10),
             ATyp::Mle(1),
             Qualifier::Private,
@@ -3799,7 +3793,7 @@ mod tests {
 
     #[test]
     fn test_add_op_eval_univariate_batched() {
-        use crate::PRef;
+        use crate::Var;
         use ark_bls12_381::Fr;
         use backend::op::mk;
         use graph::Ref;
@@ -3812,7 +3806,7 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let _pref_p = {
-            let p = PRef::from_node(
+            let p = Var::from_node(
                 NodeIndex::new(0),
                 ATyp::VPoly(1, 1),
                 Qualifier::Private,
@@ -3822,7 +3816,7 @@ mod tests {
             p
         };
         let _pref_xs = {
-            let p = PRef::from_node(
+            let p = Var::from_node(
                 NodeIndex::new(1),
                 ATyp::Uni(1),
                 Qualifier::Private,
@@ -3832,7 +3826,7 @@ mod tests {
             p
         };
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::Uni(1),
             Qualifier::Private,
@@ -3859,13 +3853,13 @@ mod tests {
         }
         // Each ideal slot: poly = a_0 + a_1 * xs[i] (a linear polynomial in
         // 4 input variables). Check it depends on exactly {a_0, a_1, xs[i]}.
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_xs = PRef::from_node(
+        let pref_xs = Var::from_node(
             NodeIndex::new(1),
             ATyp::Uni(1),
             Qualifier::Private,
@@ -3895,7 +3889,7 @@ mod tests {
     #[test]
     fn test_add_op_eval_univariate_batched_with_constants() {
         // p(x) = 3 + 5x evaluated at [7, 11] should give [38, 58].
-        use crate::PRef;
+        use crate::Var;
         use ark_bls12_381::Fr;
         use backend::op::mk;
         use lang::typ::{Distribution, Qualifier};
@@ -3905,7 +3899,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         // Bind p: Vec of scalars on node 0, then Poly on node 1.
-        let pref_vp = PRef::from_node(
+        let pref_vp = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
@@ -3917,7 +3911,7 @@ mod tests {
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(*n)))))
             .collect();
         builder.add_op(pref_vp.clone(), Op::Vec(coefs), &mut ideal);
-        let pref_p = PRef::from_node(
+        let pref_p = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
@@ -3934,7 +3928,7 @@ mod tests {
         );
 
         // Bind xs: Vec of scalars on node 2, then Poly on node 3.
-        let pref_vxs = PRef::from_node(
+        let pref_vxs = Var::from_node(
             NodeIndex::new(2),
             ATyp::Uni(1),
             Qualifier::Private,
@@ -3946,7 +3940,7 @@ mod tests {
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(*n)))))
             .collect();
         builder.add_op(pref_vxs.clone(), Op::Vec(xs_vals), &mut ideal);
-        let pref_xs = PRef::from_node(
+        let pref_xs = Var::from_node(
             NodeIndex::new(3),
             ATyp::Uni(1),
             Qualifier::Private,
@@ -3963,7 +3957,7 @@ mod tests {
         );
 
         // Now issue eval: p(xs).
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(4),
             ATyp::Uni(1),
             Qualifier::Private,
@@ -3998,14 +3992,14 @@ mod tests {
     #[test]
     fn test_add_op_eval_vpoly_full_multivariate() {
         // VPoly(2, 2) has 6 coef slots; eval at Uni(2) => scalar (one slot).
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let _ = {
-            let p = PRef::from_node(
+            let p = Var::from_node(
                 NodeIndex::new(0),
                 ATyp::VPoly(2, 2),
                 Qualifier::Private,
@@ -4015,7 +4009,7 @@ mod tests {
             p
         };
         let _ = {
-            let p = PRef::from_node(
+            let p = Var::from_node(
                 NodeIndex::new(1),
                 ATyp::Uni(1),
                 Qualifier::Private,
@@ -4025,7 +4019,7 @@ mod tests {
             p
         };
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::scalar(),
             Qualifier::Private,
@@ -4059,14 +4053,14 @@ mod tests {
     #[test]
     fn test_add_op_eval_vpoly_partial_multivariate() {
         // VPoly(3, 1) evaluated at Uni(1) => VPoly(2, 1) (2-var linear poly w/ 3 slots).
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let _ = {
-            let p = PRef::from_node(
+            let p = Var::from_node(
                 NodeIndex::new(0),
                 ATyp::VPoly(3, 1),
                 Qualifier::Private,
@@ -4076,7 +4070,7 @@ mod tests {
             p
         };
         let _ = {
-            let p = PRef::from_node(
+            let p = Var::from_node(
                 NodeIndex::new(1),
                 ATyp::Uni(0),
                 Qualifier::Private,
@@ -4086,7 +4080,7 @@ mod tests {
             p
         };
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(2, 1),
             Qualifier::Private,
@@ -4120,14 +4114,14 @@ mod tests {
     #[test]
     fn test_add_op_eval_mle_full_multivariate() {
         // Mle(2) has 4 eval slots; eval at Uni(2) => scalar.
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let _ = {
-            let p = PRef::from_node(
+            let p = Var::from_node(
                 NodeIndex::new(0),
                 ATyp::Mle(2),
                 Qualifier::Private,
@@ -4137,7 +4131,7 @@ mod tests {
             p
         };
         let _ = {
-            let p = PRef::from_node(
+            let p = Var::from_node(
                 NodeIndex::new(1),
                 ATyp::Uni(1),
                 Qualifier::Private,
@@ -4147,7 +4141,7 @@ mod tests {
             p
         };
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::scalar(),
             Qualifier::Private,
@@ -4176,14 +4170,14 @@ mod tests {
     #[test]
     fn test_add_op_eval_mle_partial_multivariate() {
         // Mle(3) evaluated at Uni(1) => Mle(2) (4 slots).
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let _ = {
-            let p = PRef::from_node(
+            let p = Var::from_node(
                 NodeIndex::new(0),
                 ATyp::Mle(3),
                 Qualifier::Private,
@@ -4193,7 +4187,7 @@ mod tests {
             p
         };
         let _ = {
-            let p = PRef::from_node(
+            let p = Var::from_node(
                 NodeIndex::new(1),
                 ATyp::Uni(0),
                 Qualifier::Private,
@@ -4203,7 +4197,7 @@ mod tests {
             p
         };
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::Mle(2),
             Qualifier::Private,
@@ -4240,7 +4234,7 @@ mod tests {
     fn test_add_op_vpoly_add_coefficient_wise() {
         // VPoly(2,1) has 3 coefficient slots.  a + b should bind ideal.slot(i)
         // to a.slot(i) + b.slot(i) for each of the 3 slots.
-        use crate::PRef;
+        use crate::Var;
         use backend::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
@@ -4250,7 +4244,7 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let pref_a = {
-            let p = PRef::from_node(
+            let p = Var::from_node(
                 NodeIndex::new(0),
                 ATyp::VPoly(2, 1),
                 Qualifier::Private,
@@ -4260,7 +4254,7 @@ mod tests {
             p
         };
         let pref_b = {
-            let p = PRef::from_node(
+            let p = Var::from_node(
                 NodeIndex::new(1),
                 ATyp::VPoly(2, 1),
                 Qualifier::Private,
@@ -4270,7 +4264,7 @@ mod tests {
             p
         };
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(2, 1),
             Qualifier::Private,
@@ -4306,7 +4300,7 @@ mod tests {
     #[test]
     fn test_add_op_mle_add_pointwise() {
         // Mle(2) has 4 evaluation slots. add is pointwise over hypercube.
-        use crate::PRef;
+        use crate::Var;
         use backend::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
@@ -4316,7 +4310,7 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let pref_a = {
-            let p = PRef::from_node(
+            let p = Var::from_node(
                 NodeIndex::new(0),
                 ATyp::Mle(2),
                 Qualifier::Private,
@@ -4326,7 +4320,7 @@ mod tests {
             p
         };
         let pref_b = {
-            let p = PRef::from_node(
+            let p = Var::from_node(
                 NodeIndex::new(1),
                 ATyp::Mle(2),
                 Qualifier::Private,
@@ -4336,7 +4330,7 @@ mod tests {
             p
         };
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::Mle(2),
             Qualifier::Private,
@@ -4362,7 +4356,7 @@ mod tests {
 
     #[test]
     fn test_add_op_vpoly_sub_coefficient_wise() {
-        use crate::PRef;
+        use crate::Var;
         use backend::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
@@ -4371,14 +4365,14 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 2),
             Qualifier::Private,
             Distribution::default(),
         );
         ideal.register(&pref_a);
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(2, 2),
             Qualifier::Private,
@@ -4386,7 +4380,7 @@ mod tests {
         );
         ideal.register(&pref_b);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(2, 2),
             Qualifier::Private,
@@ -4415,7 +4409,7 @@ mod tests {
     #[test]
     fn test_add_op_vpoly_mul_univariate_convolution() {
         // VPoly(1,1) × VPoly(1,1) → VPoly(1,2), a_0 b_0, a_0 b_1 + a_1 b_0, a_1 b_1.
-        use crate::PRef;
+        use crate::Var;
         use backend::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
@@ -4424,14 +4418,14 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
             Distribution::default(),
         );
         ideal.register(&pref_a);
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
@@ -4439,7 +4433,7 @@ mod tests {
         );
         ideal.register(&pref_b);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(1, 2),
             Qualifier::Private,
@@ -4460,7 +4454,7 @@ mod tests {
         let b0 = pref_b.clone().with_slot(0).unwrap();
         let b1 = pref_b.clone().with_slot(1).unwrap();
 
-        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         let deg0 = ideal
             .pl
             .get(&pref.clone().with_slot(0).unwrap())
@@ -4492,7 +4486,7 @@ mod tests {
         //   [0,0], [0,1], [1,0]   (sizes 3)
         // VPoly(2,2) multi-indices:
         //   [0,0], [0,1], [1,0], [0,2], [1,1], [2,0]   (size 6)
-        use crate::PRef;
+        use crate::Var;
         use backend::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
@@ -4501,14 +4495,14 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 1),
             Qualifier::Private,
             Distribution::default(),
         );
         ideal.register(&pref_a);
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(2, 1),
             Qualifier::Private,
@@ -4516,7 +4510,7 @@ mod tests {
         );
         ideal.register(&pref_b);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(2, 2),
             Qualifier::Private,
@@ -4538,7 +4532,7 @@ mod tests {
 
         let a00 = pref_a.clone().with_slot(a_pos_00).unwrap();
         let b00 = pref_b.clone().with_slot(a_pos_00).unwrap();
-        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         let got = ideal
             .pl
             .get(&pref.clone().with_slot(pos_00).unwrap())
@@ -4568,7 +4562,7 @@ mod tests {
         //   x^0 :  u_0 v_0
         //   x^1 :  -2 u_0 v_0 + u_0 v_1 + u_1 v_0
         //   x^2 :  u_0 v_0 - u_0 v_1 - u_1 v_0 + u_1 v_1
-        use crate::PRef;
+        use crate::Var;
         use backend::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
@@ -4577,14 +4571,14 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_u = PRef::from_node(
+        let pref_u = Var::from_node(
             NodeIndex::new(0),
             ATyp::Mle(1),
             Qualifier::Private,
             Distribution::default(),
         );
         ideal.register(&pref_u);
-        let pref_v = PRef::from_node(
+        let pref_v = Var::from_node(
             NodeIndex::new(1),
             ATyp::Mle(1),
             Qualifier::Private,
@@ -4592,7 +4586,7 @@ mod tests {
         );
         ideal.register(&pref_v);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(1, 2),
             Qualifier::Private,
@@ -4619,7 +4613,7 @@ mod tests {
         let u1 = pref_u.clone().with_slot(1).unwrap();
         let v0 = pref_v.clone().with_slot(0).unwrap();
         let v1 = pref_v.clone().with_slot(1).unwrap();
-        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
 
         let deg0 = ideal
             .pl
@@ -4660,7 +4654,7 @@ mod tests {
         //   VPoly: b_0 + b_1·x
         //   Product: p(x)·q(x) = (u_0·b_0) + (u_1·b_0 - u_0·b_0 + u_0·b_1)·x
         //                      + (u_1·b_1 - u_0·b_1)·x²
-        use crate::PRef;
+        use crate::Var;
         use backend::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
@@ -4669,14 +4663,14 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_u = PRef::from_node(
+        let pref_u = Var::from_node(
             NodeIndex::new(0),
             ATyp::Mle(1),
             Qualifier::Private,
             Distribution::default(),
         );
         ideal.register(&pref_u);
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
@@ -4684,7 +4678,7 @@ mod tests {
         );
         ideal.register(&pref_b);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(1, 2),
             Qualifier::Private,
@@ -4702,7 +4696,7 @@ mod tests {
         let u1 = pref_u.clone().with_slot(1).unwrap();
         let b0 = pref_b.clone().with_slot(0).unwrap();
         let b1 = pref_b.clone().with_slot(1).unwrap();
-        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
 
         let deg0 = ideal
             .pl
@@ -4737,7 +4731,7 @@ mod tests {
         // Mle(2) has 4 slots: evals at (0,0), (1,0), (0,1), (1,1).
         // Result VPoly(2,3) has 10 slots.
         // Just verify all 10 ideal slots are populated.
-        use crate::PRef;
+        use crate::Var;
         use backend::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
@@ -4746,14 +4740,14 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 1),
             Qualifier::Private,
             Distribution::default(),
         );
         ideal.register(&pref_b);
-        let pref_u = PRef::from_node(
+        let pref_u = Var::from_node(
             NodeIndex::new(1),
             ATyp::Mle(2),
             Qualifier::Private,
@@ -4761,7 +4755,7 @@ mod tests {
         );
         ideal.register(&pref_u);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(2, 3),
             Qualifier::Private,
@@ -4790,7 +4784,7 @@ mod tests {
     fn test_add_op_mle_vpoly_mul_bivariate_coefficients() {
         // Mle(2) × VPoly(2, 1) → VPoly(2, 3).
         // Verify the constant-term slot (multi-index [0,0]) and a cross-term.
-        use crate::PRef;
+        use crate::Var;
         use backend::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
@@ -4799,14 +4793,14 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_u = PRef::from_node(
+        let pref_u = Var::from_node(
             NodeIndex::new(0),
             ATyp::Mle(2),
             Qualifier::Private,
             Distribution::default(),
         );
         ideal.register(&pref_u);
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(2, 1),
             Qualifier::Private,
@@ -4814,7 +4808,7 @@ mod tests {
         );
         ideal.register(&pref_b);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(2, 3),
             Qualifier::Private,
@@ -4830,7 +4824,7 @@ mod tests {
 
         let r_idx = multi_indices(2, 3);
         let v_idx = multi_indices(2, 1);
-        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
 
         // Constant term [0,0]: u_00 * b_00
         let pos_00 = r_idx.iter().position(|k| k == &vec![0, 0]).unwrap();
@@ -4880,7 +4874,7 @@ mod tests {
         //   k=[1] (total deg 1): a_1  -  (b_0·q_1 + b_1·q_0)
         //   k=[2] (total deg 2): a_2  -  b_1·q_1
         // link_to_witness emits 2 more rows: var(q_wit[j]) - var(ideal[j]), j=0,1.
-        use crate::PRef;
+        use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
 
@@ -4889,14 +4883,14 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 2),
             Qualifier::Private,
             Distribution::default(),
         );
         ideal.register(&pref_a);
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
@@ -4905,7 +4899,7 @@ mod tests {
         ideal.register(&pref_b);
 
         let basis_before = ideal.generating_set.len();
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
@@ -4921,14 +4915,14 @@ mod tests {
 
         // Recover the q_wit / r_wit PRefs (minted by sentinel_pref starting
         // at MAX and decrementing: q_wit=MAX, r_wit=MAX-1).
-        let q_wit = PRef::from_var(
+        let q_wit = Var::from_var(
             "__zippel::gb::div_q::0",
             petgraph::graph::NodeIndex::new(usize::MAX),
             ATyp::VPoly(1, 1),
             Qualifier::Local,
             Distribution::default(),
         );
-        let r_wit = PRef::from_var(
+        let r_wit = Var::from_var(
             "__zippel::gb::div_r::0",
             petgraph::graph::NodeIndex::new(usize::MAX - 1),
             ATyp::VPoly(1, 0),
@@ -4937,11 +4931,11 @@ mod tests {
         );
 
         // Per-slot input vars (typ computed by `with_slot`).
-        let scl = |p: &PRef, i: usize| p.clone().with_slot(i).unwrap();
+        let scl = |p: &Var, i: usize| p.clone().with_slot(i).unwrap();
         // Per-slot witness vars. `div_witnesses` uses `wit.clone().with_slot(j).unwrap()`
         // which sets typ appropriately.
-        let wit_slot = |p: &PRef, i: usize| p.clone().with_slot(i).unwrap();
-        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let wit_slot = |p: &Var, i: usize| p.clone().with_slot(i).unwrap();
+        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         let a0 = scl(&pref_a, 0);
         let a1 = scl(&pref_a, 1);
         let a2 = scl(&pref_a, 2);
@@ -5011,7 +5005,7 @@ mod tests {
     fn test_add_op_vpoly_rem_univariate_identity() {
         // VPoly(1,2) % VPoly(1,1) → VPoly(1,0).
         // Same witnesses as the Div test, but link ideal to r_wit (1 slot).
-        use crate::PRef;
+        use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
 
@@ -5020,14 +5014,14 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let _pref_a = PRef::from_node(
+        let _pref_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 2),
             Qualifier::Private,
             Distribution::default(),
         );
         ideal.register(&_pref_a);
-        let _pref_b = PRef::from_node(
+        let _pref_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
@@ -5036,7 +5030,7 @@ mod tests {
         ideal.register(&_pref_b);
 
         let basis_before = ideal.generating_set.len();
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(1, 0),
             Qualifier::Private,
@@ -5051,16 +5045,16 @@ mod tests {
         builder.add_op(pref.clone(), op, &mut ideal);
 
         // q_wit=MAX, r_wit=MAX-1 (fresh builder, counter starts at MAX).
-        let r_wit = PRef::from_var(
+        let r_wit = Var::from_var(
             "__zippel::gb::div_r::0",
             petgraph::graph::NodeIndex::new(usize::MAX - 1),
             ATyp::VPoly(1, 0),
             Qualifier::Local,
             Distribution::default(),
         );
-        let scl = |p: &PRef, i: usize| p.clone().with_slot(i).unwrap();
+        let scl = |p: &Var, i: usize| p.clone().with_slot(i).unwrap();
         let _ = scl; // kept for parity with the Div test; not used here.
-        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         // r_wit slots: with_slot computes the correct type.
         let r0 = r_wit.clone().with_slot(0).unwrap();
 
@@ -5092,7 +5086,7 @@ mod tests {
     fn test_add_op_div_then_rem_shares_witness() {
         // Both `a/b` and `a%b` on the same source-level operand pair share the
         // witness side-table. Second op should NOT emit new identity rows.
-        use crate::PRef;
+        use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -5100,14 +5094,14 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let _pref_a = PRef::from_node(
+        let _pref_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 2),
             Qualifier::Private,
             Distribution::default(),
         );
         ideal.register(&_pref_a);
-        let _pref_b = PRef::from_node(
+        let _pref_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
@@ -5117,7 +5111,7 @@ mod tests {
 
         let basis_before_div = ideal.generating_set.len();
         let _q_res = {
-            let pref = PRef::from_node(
+            let pref = Var::from_node(
                 NodeIndex::new(2),
                 ATyp::VPoly(1, 1),
                 Qualifier::Private,
@@ -5135,7 +5129,7 @@ mod tests {
         let after_div = ideal.generating_set.len();
 
         let _r_res = {
-            let pref = PRef::from_node(
+            let pref = Var::from_node(
                 NodeIndex::new(3),
                 ATyp::VPoly(1, 0),
                 Qualifier::Private,
@@ -5177,7 +5171,7 @@ mod tests {
         // same named-source expression (`a * b - c`) while still having
         // distinct raw HOp refs. Div and Rem over those equivalent operands
         // should share a single witness pair.
-        use crate::PRef;
+        use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
 
@@ -5193,7 +5187,7 @@ mod tests {
             (2, "c", ATyp::VPoly(1, 2)),
             (3, "d", ATyp::VPoly(1, 1)),
         ] {
-            let pref = PRef::from_var(
+            let pref = Var::from_var(
                 name,
                 NodeIndex::new(idx),
                 typ,
@@ -5206,7 +5200,7 @@ mod tests {
         let mk_ref = |idx, typ| mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(idx)), typ));
 
         let mut add_derived_operand = |mul_idx, sub_idx| {
-            let mul_ref = PRef::from_node(
+            let mul_ref = Var::from_node(
                 NodeIndex::new(mul_idx),
                 ATyp::VPoly(1, 2),
                 Qualifier::Private,
@@ -5224,7 +5218,7 @@ mod tests {
                 &mut ideal,
             );
 
-            let sub_ref = PRef::from_node(
+            let sub_ref = Var::from_node(
                 NodeIndex::new(sub_idx),
                 ATyp::VPoly(1, 2),
                 Qualifier::Private,
@@ -5247,7 +5241,7 @@ mod tests {
         add_derived_operand(10, 11);
         add_derived_operand(12, 13);
 
-        let q = PRef::from_node(
+        let q = Var::from_node(
             NodeIndex::new(20),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
@@ -5264,7 +5258,7 @@ mod tests {
             &mut ideal,
         );
 
-        let r = PRef::from_node(
+        let r = Var::from_node(
             NodeIndex::new(21),
             ATyp::VPoly(1, 0),
             Qualifier::Private,
@@ -5293,7 +5287,7 @@ mod tests {
         // Scalar / Scalar → Scalar: legacy zip path (a - b·var(pr) = 0).
         // Scalar fallback does not build a canonical polynomial witness key, so
         // no witness side-table entry is created.
-        use crate::PRef;
+        use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -5301,14 +5295,14 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::default(),
         );
         ideal.register(&pref_a);
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
             Qualifier::Private,
@@ -5317,7 +5311,7 @@ mod tests {
         ideal.register(&pref_b);
 
         let basis_before = ideal.generating_set.len();
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::scalar(),
             Qualifier::Private,
@@ -5337,7 +5331,7 @@ mod tests {
             1,
             "scalar fallback emits 1 row"
         );
-        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         let expected = &var(&pref_a) - &(&var(&pref_b) * &var(&pref));
         assert!(
             ideal.generating_set.iter().any(|row| row == &expected),
@@ -5352,7 +5346,7 @@ mod tests {
 
     #[test]
     fn test_add_op_scalar_div_vec_scalar_recurses_without_div_wit() {
-        use crate::PRef;
+        use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -5360,13 +5354,13 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::vec_scalar(2),
             Qualifier::Private,
@@ -5375,7 +5369,7 @@ mod tests {
         ideal.register(&pref_a);
         ideal.register(&pref_b);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::vec_scalar(2),
             Qualifier::Private,
@@ -5392,7 +5386,7 @@ mod tests {
         builder.add_op(pref.clone(), op, &mut ideal);
 
         assert_eq!(ideal.generating_set.len() - before, 2);
-        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         for i in 0..2 {
             let b_i = pref_b.clone().with_index(i).unwrap();
             let r_i = pref.clone().with_index(i).unwrap();
@@ -5407,7 +5401,7 @@ mod tests {
 
     #[test]
     fn test_add_op_uni_div_scalar_slot_wise_without_div_wit() {
-        use crate::PRef;
+        use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -5415,13 +5409,13 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
             Qualifier::Private,
@@ -5430,7 +5424,7 @@ mod tests {
         ideal.register(&pref_a);
         ideal.register(&pref_b);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::Uni(2),
             Qualifier::Private,
@@ -5454,7 +5448,7 @@ mod tests {
 
     #[test]
     fn test_add_op_mle_div_scalar_slot_wise_without_div_wit() {
-        use crate::PRef;
+        use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -5462,13 +5456,13 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::Mle(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
             Qualifier::Private,
@@ -5477,7 +5471,7 @@ mod tests {
         ideal.register(&pref_a);
         ideal.register(&pref_b);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::Mle(2),
             Qualifier::Private,
@@ -5501,7 +5495,7 @@ mod tests {
 
     #[test]
     fn test_add_op_vector_poly_div_rem_propagates_witness_cache() {
-        use crate::PRef;
+        use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -5513,7 +5507,7 @@ mod tests {
         let div_typ = ATyp::Vec(Box::new(ATyp::VPoly(1, 1)), 2);
         let rem_typ = ATyp::Vec(Box::new(ATyp::VPoly(1, 0)), 2);
         for idx in 0..2 {
-            ideal.register(&PRef::from_node(
+            ideal.register(&Var::from_node(
                 NodeIndex::new(idx),
                 vec_typ.clone(),
                 Qualifier::Private,
@@ -5522,7 +5516,7 @@ mod tests {
         }
 
         builder.add_op(
-            PRef::from_node(
+            Var::from_node(
                 NodeIndex::new(2),
                 div_typ.clone(),
                 Qualifier::Private,
@@ -5540,7 +5534,7 @@ mod tests {
         let after_div = ideal.generating_set.len();
 
         builder.add_op(
-            PRef::from_node(
+            Var::from_node(
                 NodeIndex::new(3),
                 rem_typ.clone(),
                 Qualifier::Private,
@@ -5659,7 +5653,7 @@ mod tests {
 
     #[test]
     fn test_physical_len_base_is_one() {
-        // Every scalar-shaped base type occupies exactly one PRef slot.
+        // Every scalar-shaped base type occupies exactly one Var slot.
         // Enumerated explicitly — the set of ABase variants is finite and fixed.
         for typ in [
             ATyp::scalar(),
@@ -5993,7 +5987,7 @@ mod tests {
 
     #[test]
     fn test_reduce_add_over_scalar_vec() {
-        use crate::PRef;
+        use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -6002,7 +5996,7 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         // v : Vec(F, 3)  →  reduce(+, v) : F
-        let pref_v = PRef::from_node(
+        let pref_v = Var::from_node(
             NodeIndex::new(0),
             ATyp::Vec(Box::new(ATyp::scalar()), 3),
             Qualifier::Private,
@@ -6010,7 +6004,7 @@ mod tests {
         );
         ideal.register(&pref_v);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
             Qualifier::Private,
@@ -6025,7 +6019,7 @@ mod tests {
         );
         builder.add_op(pref.clone(), op, &mut ideal);
 
-        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         let v0 = pref_v.clone().with_slot(0).unwrap();
         let v1 = pref_v.clone().with_slot(1).unwrap();
         let v2 = pref_v.clone().with_slot(2).unwrap();
@@ -6050,7 +6044,7 @@ mod tests {
         // Vec(Poly(1,2), 3) has 3 elements × 3 coefficients = 9 physical slots.
         // reduce should produce 3 polynomials (one per coefficient position),
         // where ideal[j] = v0[j] + v1[j] + v2[j].
-        use crate::PRef;
+        use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -6060,7 +6054,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let poly_t = ATyp::Uni(2);
         let vec_t = ATyp::Vec(Box::new(poly_t.clone()), 3);
-        let pref_v = PRef::from_node(
+        let pref_v = Var::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
             Qualifier::Private,
@@ -6068,7 +6062,7 @@ mod tests {
         );
         ideal.register(&pref_v);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(1),
             poly_t.clone(),
             Qualifier::Private,
@@ -6080,7 +6074,7 @@ mod tests {
         );
         builder.add_op(pref.clone(), op, &mut ideal);
 
-        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         // Vec(Poly(1,2), 3): element 0 is slots 0,1,2; element 1 is slots 3,4,5; element 2 is slots 6,7,8.
         let v0_c0 = pref_v.clone().with_index(0).unwrap().with_slot(0).unwrap();
         let v0_c1 = pref_v.clone().with_index(0).unwrap().with_slot(1).unwrap();
@@ -6184,7 +6178,7 @@ mod tests {
 
     #[test]
     fn test_add_op_interpolate_constant_points() {
-        use crate::PRef;
+        use crate::Var;
         use ark_bls12_381::Fr;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6193,7 +6187,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let evals_typ = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let pref_evals = PRef::from_node(
+        let pref_evals = Var::from_node(
             NodeIndex::new(0),
             evals_typ.clone(),
             Qualifier::Private,
@@ -6207,7 +6201,7 @@ mod tests {
             Op::Ref(graph::Ref::new(NodeIndex::new(0)), evals_typ.clone());
 
         let ideal_typ = ATyp::uni(2);
-        let pref_ideal = PRef::from_node(
+        let pref_ideal = Var::from_node(
             NodeIndex::new(1),
             ideal_typ.clone(),
             Qualifier::Private,
@@ -6219,7 +6213,7 @@ mod tests {
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
         builder.add_op(pref_ideal.clone(), op, &mut ideal);
 
-        let var = |p: &PRef| Polynomial::<Fr>::var(p);
+        let var = |p: &Var| Polynomial::<Fr>::var(p);
 
         let r0 = pref_ideal.clone().with_slot(0).unwrap();
         let r1 = pref_ideal.clone().with_slot(1).unwrap();
@@ -6273,7 +6267,7 @@ mod tests {
 
     #[test]
     fn test_add_op_interpolate_3_constant_points() {
-        use crate::PRef;
+        use crate::Var;
         use ark_bls12_381::Fr;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6282,7 +6276,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let evals_typ = ATyp::Vec(Box::new(ATyp::scalar()), 3);
-        let pref_evals = PRef::from_node(
+        let pref_evals = Var::from_node(
             NodeIndex::new(0),
             evals_typ.clone(),
             Qualifier::Private,
@@ -6297,7 +6291,7 @@ mod tests {
             Op::Ref(graph::Ref::new(NodeIndex::new(0)), evals_typ.clone());
 
         let ideal_typ = ATyp::uni(3);
-        let pref_ideal = PRef::from_node(
+        let pref_ideal = Var::from_node(
             NodeIndex::new(1),
             ideal_typ.clone(),
             Qualifier::Private,
@@ -6309,7 +6303,7 @@ mod tests {
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
         builder.add_op(pref_ideal.clone(), op, &mut ideal);
 
-        let var = |p: &PRef| Polynomial::<Fr>::var(p);
+        let var = |p: &Var| Polynomial::<Fr>::var(p);
 
         let r0 = pref_ideal.clone().with_slot(0).unwrap();
         let r1 = pref_ideal.clone().with_slot(1).unwrap();
@@ -6371,7 +6365,7 @@ mod tests {
 
     #[test]
     fn test_add_op_interpolate_ref_with_constant_points_in_pl() {
-        use crate::PRef;
+        use crate::Var;
         use ark_bls12_381::Fr;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6380,7 +6374,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let pref_points = PRef::from_node(
+        let pref_points = Var::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
             Qualifier::Private,
@@ -6394,7 +6388,7 @@ mod tests {
             .collect();
         builder.add_op(pref_points.clone(), Op::Vec(coefs), &mut ideal);
 
-        let pref_evals = PRef::from_node(
+        let pref_evals = Var::from_node(
             NodeIndex::new(1),
             vec_t.clone(),
             Qualifier::Private,
@@ -6403,7 +6397,7 @@ mod tests {
         ideal.register(&pref_evals);
 
         let ideal_typ = ATyp::uni(2);
-        let pref_ideal = PRef::from_node(
+        let pref_ideal = Var::from_node(
             NodeIndex::new(2),
             ideal_typ.clone(),
             Qualifier::Private,
@@ -6418,7 +6412,7 @@ mod tests {
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
         builder.add_op(pref_ideal.clone(), op, &mut ideal);
 
-        let var = |p: &PRef| Polynomial::<Fr>::var(p);
+        let var = |p: &Var| Polynomial::<Fr>::var(p);
 
         let r0 = pref_ideal.clone().with_slot(0).unwrap();
         let r1 = pref_ideal.clone().with_slot(1).unwrap();
@@ -6459,23 +6453,23 @@ mod tests {
 
     #[test]
     fn test_add_op_interpolate_symbolic_points() {
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        // Two symbolic points x0, x1 stored as PRef variables
+        // Two symbolic points x0, x1 stored as Var variables
         let scalar_t = ATyp::scalar();
         let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let pref_x0 = PRef::from_node(
+        let pref_x0 = Var::from_node(
             NodeIndex::new(0),
             scalar_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_x1 = PRef::from_node(
+        let pref_x1 = Var::from_node(
             NodeIndex::new(1),
             scalar_t.clone(),
             Qualifier::Private,
@@ -6485,7 +6479,7 @@ mod tests {
         ideal.register(&pref_x1);
 
         // Points = [x0, x1]
-        let pref_points = PRef::from_node(
+        let pref_points = Var::from_node(
             NodeIndex::new(2),
             vec_t.clone(),
             Qualifier::Private,
@@ -6508,13 +6502,13 @@ mod tests {
         ideal.pl.insert(&x1_slot, &Polynomial::var(&pref_x1));
 
         // Evals = [y0, y1]
-        let pref_y0 = PRef::from_node(
+        let pref_y0 = Var::from_node(
             NodeIndex::new(3),
             scalar_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_y1 = PRef::from_node(
+        let pref_y1 = Var::from_node(
             NodeIndex::new(4),
             scalar_t.clone(),
             Qualifier::Private,
@@ -6523,7 +6517,7 @@ mod tests {
         ideal.register(&pref_y0);
         ideal.register(&pref_y1);
 
-        let pref_evals = PRef::from_node(
+        let pref_evals = Var::from_node(
             NodeIndex::new(5),
             vec_t.clone(),
             Qualifier::Private,
@@ -6550,7 +6544,7 @@ mod tests {
         //      = y0 * d01 * t - y0 * d01 * x1 + y1 * d10 * t - y1 * d10 * x0
         // where d01 * (x0 - x1) = 1 and d10 * (x1 - x0) = 1
         let ideal_typ = ATyp::uni(2);
-        let pref_ideal = PRef::from_node(
+        let pref_ideal = Var::from_node(
             NodeIndex::new(6),
             ideal_typ.clone(),
             Qualifier::Private,
@@ -6632,7 +6626,7 @@ mod tests {
         expected = "ideal: operation has no polynomial-ideal treatment at duplicate-interpolate-points"
     )]
     fn test_add_op_interpolate_duplicate_points_panics_explicitly() {
-        use crate::PRef;
+        use crate::Var;
         use backend::op::mk;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6641,7 +6635,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let evals_typ = ATyp::vec_scalar(3);
-        let pref_evals = PRef::from_node(
+        let pref_evals = Var::from_node(
             NodeIndex::new(1),
             evals_typ.clone(),
             Qualifier::Private,
@@ -6649,7 +6643,7 @@ mod tests {
         );
         ideal.register(&pref_evals);
 
-        let pref_ideal = PRef::from_node(
+        let pref_ideal = Var::from_node(
             NodeIndex::new(2),
             ATyp::uni(3),
             Qualifier::Private,
@@ -6667,20 +6661,20 @@ mod tests {
 
     #[test]
     fn test_add_op_div_scalar_slot_wise() {
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
             Qualifier::Private,
@@ -6689,7 +6683,7 @@ mod tests {
         ideal.register(&pref_a);
         ideal.register(&pref_b);
 
-        let pref_ideal = PRef::from_node(
+        let pref_ideal = Var::from_node(
             NodeIndex::new(2),
             ATyp::scalar(),
             Qualifier::Private,
@@ -6707,7 +6701,7 @@ mod tests {
         );
         builder.add_op(pref_ideal.clone(), op, &mut ideal);
 
-        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
 
         let a_slot = pref_a.with_slot(0).unwrap();
         let b_slot = pref_b.with_slot(0).unwrap();
@@ -6722,20 +6716,20 @@ mod tests {
     #[test]
     #[should_panic(expected = "Rem: non-polynomial remainder")]
     fn test_add_op_rem_scalar_panics() {
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
             Qualifier::Private,
@@ -6744,7 +6738,7 @@ mod tests {
         ideal.register(&pref_a);
         ideal.register(&pref_b);
 
-        let pref_ideal = PRef::from_node(
+        let pref_ideal = Var::from_node(
             NodeIndex::new(2),
             ATyp::scalar(),
             Qualifier::Private,
@@ -6765,7 +6759,7 @@ mod tests {
 
     #[test]
     fn test_reduce_div_scalar_uses_slot_wise_div() {
-        use crate::PRef;
+        use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6774,7 +6768,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 3);
-        let pref_v = PRef::from_node(
+        let pref_v = Var::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
             Qualifier::Private,
@@ -6782,7 +6776,7 @@ mod tests {
         );
         ideal.register(&pref_v);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
             Qualifier::Private,
@@ -6823,7 +6817,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Rem: non-polynomial remainder")]
     fn test_reduce_rem_scalar_panics() {
-        use crate::PRef;
+        use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6832,7 +6826,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let pref_v = PRef::from_node(
+        let pref_v = Var::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
             Qualifier::Private,
@@ -6840,7 +6834,7 @@ mod tests {
         );
         ideal.register(&pref_v);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
             Qualifier::Private,
@@ -6858,20 +6852,20 @@ mod tests {
     #[test]
     #[should_panic(expected = "MLE division is not supported")]
     fn test_add_op_div_mle_panics() {
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::Mle(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::Mle(2),
             Qualifier::Private,
@@ -6880,7 +6874,7 @@ mod tests {
         ideal.register(&pref_a);
         ideal.register(&pref_b);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::Mle(2),
             Qualifier::Private,
@@ -6901,7 +6895,7 @@ mod tests {
 
     #[test]
     fn test_reduce_div_vpoly_uses_handle_div_rem() {
-        use crate::PRef;
+        use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6910,7 +6904,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let vec_t = ATyp::Vec(Box::new(ATyp::VPoly(1, 3)), 2);
-        let pref_v = PRef::from_node(
+        let pref_v = Var::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
             Qualifier::Private,
@@ -6918,7 +6912,7 @@ mod tests {
         );
         ideal.register(&pref_v);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
@@ -6940,7 +6934,7 @@ mod tests {
 
     #[test]
     fn reduce_mul_poly_accumulator_widens() {
-        use crate::PRef;
+        use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6950,7 +6944,7 @@ mod tests {
 
         let elem_t = ATyp::Uni(1);
         let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
-        let pref_v = PRef::from_node(
+        let pref_v = Var::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
             Qualifier::Private,
@@ -6958,7 +6952,7 @@ mod tests {
         );
         ideal.register(&pref_v);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(1),
             ATyp::Uni(3),
             Qualifier::Private,
@@ -6994,7 +6988,7 @@ mod tests {
     /// `reduce_mul_poly_accumulator_widens`.
     #[test]
     fn reduce_map_mul_poly_accumulator_widens() {
-        use crate::PRef;
+        use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7004,7 +6998,7 @@ mod tests {
 
         let elem_t = ATyp::Uni(1);
         let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
-        let pref_v = PRef::from_node(
+        let pref_v = Var::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
             Qualifier::Private,
@@ -7012,7 +7006,7 @@ mod tests {
         );
         ideal.register(&pref_v);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(1),
             ATyp::Uni(3),
             Qualifier::Private,
@@ -7042,7 +7036,7 @@ mod tests {
 
     #[test]
     fn reduce_rem_poly_left_fold_semantics() {
-        use crate::PRef;
+        use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7052,7 +7046,7 @@ mod tests {
 
         let elem_t = ATyp::Uni(3);
         let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
-        let pref_v = PRef::from_node(
+        let pref_v = Var::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
             Qualifier::Private,
@@ -7060,7 +7054,7 @@ mod tests {
         );
         ideal.register(&pref_v);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(1),
             ATyp::Uni(2),
             Qualifier::Private,
@@ -7090,7 +7084,7 @@ mod tests {
 
     #[test]
     fn poly_rem_smaller_dividend_passes_through() {
-        use crate::PRef;
+        use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7100,13 +7094,13 @@ mod tests {
 
         let dividend_t = ATyp::Uni(1);
         let divisor_t = ATyp::Uni(3);
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             dividend_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             divisor_t.clone(),
             Qualifier::Private,
@@ -7115,7 +7109,7 @@ mod tests {
         ideal.register(&pref_a);
         ideal.register(&pref_b);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(2),
             ATyp::Uni(2),
             Qualifier::Private,
@@ -7163,7 +7157,7 @@ mod tests {
 
     #[test]
     fn test_record_scalar_fields_bind_slots() {
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7177,14 +7171,14 @@ mod tests {
         rec_fields.insert(&"y".to_string(), &s);
         let rec_typ = ATyp::Record(rec_fields);
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             s.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
         ideal.register(&pref_a);
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             s.clone(),
             Qualifier::Public,
@@ -7202,7 +7196,7 @@ mod tests {
             &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), s.clone())),
         );
 
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             rec_typ,
             Qualifier::Public,
@@ -7239,7 +7233,7 @@ mod tests {
 
     #[test]
     fn test_record_mixed_type_fields_bind_slots() {
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7253,7 +7247,7 @@ mod tests {
         rec_fields.insert(&"p".to_string(), &uni_typ);
         let rec_typ = ATyp::Record(rec_fields);
 
-        let pref_scalar = PRef::from_node(
+        let pref_scalar = Var::from_node(
             NodeIndex::new(0),
             s.clone(),
             Qualifier::Public,
@@ -7261,7 +7255,7 @@ mod tests {
         );
         ideal.register(&pref_scalar);
 
-        let pref_poly = PRef::from_node(
+        let pref_poly = Var::from_node(
             NodeIndex::new(1),
             uni_typ.clone(),
             Qualifier::Public,
@@ -7279,7 +7273,7 @@ mod tests {
             &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), uni_typ.clone())),
         );
 
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             rec_typ,
             Qualifier::Public,
@@ -7319,7 +7313,7 @@ mod tests {
 
     #[test]
     fn test_record_basis_count_matches_physical_len() {
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7335,7 +7329,7 @@ mod tests {
         let phys_len = rec_typ.physical_len();
         assert_eq!(phys_len, 4, "1 scalar + 3 Vec scalars = 4");
 
-        let pref_x = PRef::from_node(
+        let pref_x = Var::from_node(
             NodeIndex::new(0),
             s.clone(),
             Qualifier::Public,
@@ -7343,7 +7337,7 @@ mod tests {
         );
         ideal.register(&pref_x);
 
-        let pref_v = PRef::from_node(
+        let pref_v = Var::from_node(
             NodeIndex::new(1),
             v2.clone(),
             Qualifier::Public,
@@ -7361,7 +7355,7 @@ mod tests {
             &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), v2.clone())),
         );
 
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             rec_typ,
             Qualifier::Public,
@@ -7384,7 +7378,7 @@ mod tests {
 
     #[test]
     fn test_proj_scalar_field_from_record() {
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7398,7 +7392,7 @@ mod tests {
         rec_fields.insert(&"y".to_string(), &s);
         let rec_typ = ATyp::Record(rec_fields);
 
-        let pref_rec = PRef::from_node(
+        let pref_rec = Var::from_node(
             NodeIndex::new(0),
             rec_typ.clone(),
             Qualifier::Public,
@@ -7408,7 +7402,7 @@ mod tests {
 
         let inner_op: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(0)), rec_typ);
 
-        let pref_proj = PRef::from_node(
+        let pref_proj = Var::from_node(
             NodeIndex::new(1),
             s.clone(),
             Qualifier::Public,
@@ -7434,7 +7428,7 @@ mod tests {
 
     #[test]
     fn test_proj_second_field_offset_correct() {
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7451,7 +7445,7 @@ mod tests {
         rec_fields.insert(&"b".to_string(), &v3);
         let rec_typ = ATyp::Record(rec_fields);
 
-        let pref_rec = PRef::from_node(
+        let pref_rec = Var::from_node(
             NodeIndex::new(0),
             rec_typ.clone(),
             Qualifier::Public,
@@ -7461,7 +7455,7 @@ mod tests {
 
         let inner_op: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(0)), rec_typ);
 
-        let pref_proj = PRef::from_node(
+        let pref_proj = Var::from_node(
             NodeIndex::new(1),
             v3.clone(),
             Qualifier::Public,
@@ -7499,7 +7493,7 @@ mod tests {
 
     #[test]
     fn test_proj_first_field_of_multi_field_record() {
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7516,7 +7510,7 @@ mod tests {
         rec_fields.insert(&"b".to_string(), &s);
         let rec_typ = ATyp::Record(rec_fields);
 
-        let pref_rec = PRef::from_node(
+        let pref_rec = Var::from_node(
             NodeIndex::new(0),
             rec_typ.clone(),
             Qualifier::Public,
@@ -7526,7 +7520,7 @@ mod tests {
 
         let inner_op: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(0)), rec_typ);
 
-        let pref_proj = PRef::from_node(
+        let pref_proj = Var::from_node(
             NodeIndex::new(1),
             uni2.clone(),
             Qualifier::Public,
@@ -7568,7 +7562,7 @@ mod tests {
 
     #[test]
     fn test_add_uni_different_degrees() {
-        use crate::PRef;
+        use crate::Var;
         use ark_bls12_381::Fr;
         use backend::op::mk;
         use lang::ast::BinOp;
@@ -7582,7 +7576,7 @@ mod tests {
         let uni4 = ATyp::Uni(4);
         let uni4_ideal = ATyp::Uni(4);
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             uni2.clone(),
             Qualifier::Private,
@@ -7594,7 +7588,7 @@ mod tests {
             .collect();
         builder.add_op(pref_a.clone(), Op::Vec(coefs_a), &mut ideal);
 
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             uni4.clone(),
             Qualifier::Private,
@@ -7606,7 +7600,7 @@ mod tests {
             .collect();
         builder.add_op(pref_b.clone(), Op::Vec(coefs_b), &mut ideal);
 
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             uni4_ideal.clone(),
             Qualifier::Private,
@@ -7638,7 +7632,7 @@ mod tests {
 
     #[test]
     fn test_mul_scalar_poly_broadcast() {
-        use crate::PRef;
+        use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7649,7 +7643,7 @@ mod tests {
         let s = ATyp::scalar();
         let uni2 = ATyp::Uni(2);
 
-        let pref_s = PRef::from_node(
+        let pref_s = Var::from_node(
             NodeIndex::new(0),
             s.clone(),
             Qualifier::Public,
@@ -7657,7 +7651,7 @@ mod tests {
         );
         ideal.register(&pref_s);
 
-        let pref_p = PRef::from_node(
+        let pref_p = Var::from_node(
             NodeIndex::new(1),
             uni2.clone(),
             Qualifier::Public,
@@ -7665,7 +7659,7 @@ mod tests {
         );
         ideal.register(&pref_p);
 
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             uni2.clone(),
             Qualifier::Public,
@@ -7701,7 +7695,7 @@ mod tests {
 
     #[test]
     fn test_mul_vec_scalar_broadcast() {
-        use crate::PRef;
+        use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7712,7 +7706,7 @@ mod tests {
         let s = ATyp::scalar();
         let v3 = ATyp::Vec(Box::new(s.clone()), 3);
 
-        let pref_v = PRef::from_node(
+        let pref_v = Var::from_node(
             NodeIndex::new(0),
             v3.clone(),
             Qualifier::Public,
@@ -7720,7 +7714,7 @@ mod tests {
         );
         ideal.register(&pref_v);
 
-        let pref_s = PRef::from_node(
+        let pref_s = Var::from_node(
             NodeIndex::new(1),
             s.clone(),
             Qualifier::Public,
@@ -7728,7 +7722,7 @@ mod tests {
         );
         ideal.register(&pref_s);
 
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             v3.clone(),
             Qualifier::Public,
@@ -7758,8 +7752,8 @@ mod tests {
         op: BinOp,
         scalar_left: bool,
         poly_typ: ATyp,
-    ) -> (crate::PRef, crate::PRef, crate::PRef, Ideal<ArkBls12_381>) {
-        use crate::PRef;
+    ) -> (crate::Var, crate::Var, crate::Var, Ideal<ArkBls12_381>) {
+        use crate::Var;
         use graph::Ref;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7768,7 +7762,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let scalar_typ = ATyp::scalar();
-        let pref_s = PRef::from_node(
+        let pref_s = Var::from_node(
             NodeIndex::new(0),
             scalar_typ.clone(),
             Qualifier::Public,
@@ -7776,7 +7770,7 @@ mod tests {
         );
         ideal.register(&pref_s);
 
-        let pref_p = PRef::from_node(
+        let pref_p = Var::from_node(
             NodeIndex::new(1),
             poly_typ.clone(),
             Qualifier::Public,
@@ -7784,7 +7778,7 @@ mod tests {
         );
         ideal.register(&pref_p);
 
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             poly_typ.clone(),
             Qualifier::Public,
@@ -7811,7 +7805,7 @@ mod tests {
 
     fn assert_ideal_slot(
         ideal: &Ideal<ArkBls12_381>,
-        pref_r: &crate::PRef,
+        pref_r: &crate::Var,
         slot: usize,
         expected: Polynomial<ark_bls12_381::Fr>,
     ) {
@@ -7929,7 +7923,7 @@ mod tests {
 
     #[test]
     fn test_concat_vec_uni_different_degrees() {
-        use crate::PRef;
+        use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7943,7 +7937,7 @@ mod tests {
         let vec_uni4 = ATyp::Vec(Box::new(uni4.clone()), 2);
         let vec_ideal = ATyp::Vec(Box::new(uni4.clone()), 4);
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             vec_uni2.clone(),
             Qualifier::Private,
@@ -7951,7 +7945,7 @@ mod tests {
         );
         ideal.register(&pref_a);
 
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             vec_uni4.clone(),
             Qualifier::Private,
@@ -7959,7 +7953,7 @@ mod tests {
         );
         ideal.register(&pref_b);
 
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             vec_ideal.clone(),
             Qualifier::Private,
@@ -8005,7 +7999,7 @@ mod tests {
 
     #[test]
     fn test_concat_vec_scalar_element() {
-        use crate::PRef;
+        use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8017,7 +8011,7 @@ mod tests {
         let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
         let vec_ideal = ATyp::Vec(Box::new(s.clone()), 3);
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             vec_s.clone(),
             Qualifier::Private,
@@ -8025,7 +8019,7 @@ mod tests {
         );
         ideal.register(&pref_a);
 
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             s.clone(),
             Qualifier::Private,
@@ -8033,7 +8027,7 @@ mod tests {
         );
         ideal.register(&pref_b);
 
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             vec_ideal.clone(),
             Qualifier::Private,
@@ -8065,7 +8059,7 @@ mod tests {
 
     #[test]
     fn test_equ_vec_uni_different_degrees() {
-        use crate::PRef;
+        use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8079,7 +8073,7 @@ mod tests {
         let vec_uni4 = ATyp::Vec(Box::new(uni4.clone()), 2);
         let bool_typ = ATyp::bool();
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             vec_uni2.clone(),
             Qualifier::Private,
@@ -8087,7 +8081,7 @@ mod tests {
         );
         ideal.register(&pref_a);
 
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             vec_uni4.clone(),
             Qualifier::Private,
@@ -8095,7 +8089,7 @@ mod tests {
         );
         ideal.register(&pref_b);
 
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             bool_typ.clone(),
             Qualifier::Private,
@@ -8128,7 +8122,7 @@ mod tests {
 
     #[test]
     fn test_dot_vec_scalar() {
-        use crate::PRef;
+        use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8139,7 +8133,7 @@ mod tests {
         let s = ATyp::scalar();
         let vec_s = ATyp::Vec(Box::new(s.clone()), 3);
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             vec_s.clone(),
             Qualifier::Private,
@@ -8147,7 +8141,7 @@ mod tests {
         );
         ideal.register(&pref_a);
 
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             vec_s.clone(),
             Qualifier::Private,
@@ -8155,7 +8149,7 @@ mod tests {
         );
         ideal.register(&pref_b);
 
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             s.clone(),
             Qualifier::Private,
@@ -8186,7 +8180,7 @@ mod tests {
 
     #[test]
     fn test_dot_vec_uni() {
-        use crate::PRef;
+        use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8200,7 +8194,7 @@ mod tests {
         let vec_uni4 = ATyp::Vec(Box::new(uni4.clone()), 2);
         let dot_ideal = ATyp::Uni(6);
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             vec_uni2.clone(),
             Qualifier::Private,
@@ -8208,7 +8202,7 @@ mod tests {
         );
         ideal.register(&pref_a);
 
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             vec_uni4.clone(),
             Qualifier::Private,
@@ -8216,7 +8210,7 @@ mod tests {
         );
         ideal.register(&pref_b);
 
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             dot_ideal.clone(),
             Qualifier::Private,
@@ -8253,7 +8247,7 @@ mod tests {
 
     #[test]
     fn test_pair_vec() {
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -8267,7 +8261,7 @@ mod tests {
         let vec_g2 = ATyp::Vec(Box::new(g2.clone()), 2);
         let vec_gt = ATyp::Vec(Box::new(gt.clone()), 2);
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             vec_g1.clone(),
             Qualifier::Private,
@@ -8275,7 +8269,7 @@ mod tests {
         );
         ideal.register(&pref_a);
 
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             vec_g2.clone(),
             Qualifier::Private,
@@ -8283,7 +8277,7 @@ mod tests {
         );
         ideal.register(&pref_b);
 
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             vec_gt.clone(),
             Qualifier::Private,
@@ -8314,7 +8308,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "ideal: operation has no polynomial-ideal treatment at dynamic-pow")]
     fn test_pow_vec_element_wise() {
-        use crate::PRef;
+        use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8328,7 +8322,7 @@ mod tests {
         let vec_fin = ATyp::Vec(Box::new(fin.clone()), 2);
         let vec_ideal = ATyp::Vec(Box::new(s.clone()), 2);
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             vec_s.clone(),
             Qualifier::Private,
@@ -8336,7 +8330,7 @@ mod tests {
         );
         ideal.register(&pref_a);
 
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             vec_fin.clone(),
             Qualifier::Private,
@@ -8344,7 +8338,7 @@ mod tests {
         );
         ideal.register(&pref_b);
 
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             vec_ideal.clone(),
             Qualifier::Private,
@@ -8367,7 +8361,7 @@ mod tests {
 
     #[test]
     fn test_pow_uni_const_exp() {
-        use crate::PRef;
+        use crate::Var;
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -8379,7 +8373,7 @@ mod tests {
         let uni2 = ATyp::Uni(2);
         let ideal_uni4 = ATyp::Uni(4);
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             uni2.clone(),
             Qualifier::Private,
@@ -8387,7 +8381,7 @@ mod tests {
         );
         ideal.register(&pref_a);
 
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(1),
             ideal_uni4.clone(),
             Qualifier::Private,
@@ -8419,7 +8413,7 @@ mod tests {
 
     #[test]
     fn test_pow_vec_uni_const_exp() {
-        use crate::PRef;
+        use crate::Var;
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -8433,7 +8427,7 @@ mod tests {
         let vec_uni2 = ATyp::Vec(Box::new(uni2.clone()), 2);
         let vec_ideal = ATyp::Vec(Box::new(ideal_uni4.clone()), 2);
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             vec_uni2.clone(),
             Qualifier::Private,
@@ -8441,7 +8435,7 @@ mod tests {
         );
         ideal.register(&pref_a);
 
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(1),
             vec_ideal.clone(),
             Qualifier::Private,
@@ -8480,7 +8474,7 @@ mod tests {
 
     #[test]
     fn test_pow_vec_vecindex_per_element() {
-        use crate::PRef;
+        use crate::Var;
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -8493,7 +8487,7 @@ mod tests {
         let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
         let vec_ideal = ATyp::Vec(Box::new(s.clone()), 2);
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             vec_s.clone(),
             Qualifier::Private,
@@ -8501,7 +8495,7 @@ mod tests {
         );
         ideal.register(&pref_a);
 
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(1),
             vec_ideal.clone(),
             Qualifier::Private,
@@ -8534,7 +8528,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "ideal: operation has no polynomial-ideal treatment at dynamic-pow")]
     fn test_pow_vec_mixed_const_and_opaque() {
-        use crate::PRef;
+        use crate::Var;
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -8549,7 +8543,7 @@ mod tests {
         let fin = ATyp::fin(lang::typ::range::CRange::default());
         let vec_fin = ATyp::Vec(Box::new(fin.clone()), 2);
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             vec_s.clone(),
             Qualifier::Private,
@@ -8557,7 +8551,7 @@ mod tests {
         );
         ideal.register(&pref_a);
 
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             vec_fin.clone(),
             Qualifier::Private,
@@ -8565,7 +8559,7 @@ mod tests {
         );
         ideal.register(&pref_b);
 
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             vec_ideal.clone(),
             Qualifier::Private,
@@ -8592,12 +8586,12 @@ mod tests {
 
     #[test]
     fn test_lift_uni_to_wider_uni() {
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
             Qualifier::Private,
@@ -8630,12 +8624,12 @@ mod tests {
 
     #[test]
     fn test_lift_mle_to_wider_mle() {
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(0),
             ATyp::Mle(2),
             Qualifier::Private,
@@ -8668,12 +8662,12 @@ mod tests {
 
     #[test]
     fn test_lift_vpoly_same_arity_prefix() {
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 2),
             Qualifier::Private,
@@ -8705,12 +8699,12 @@ mod tests {
 
     #[test]
     fn test_lift_vpoly_cross_arity_embedding() {
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 2),
             Qualifier::Private,
@@ -8805,12 +8799,12 @@ mod tests {
 
     #[test]
     fn test_lift_uni_to_vpoly_same_arity() {
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
             Qualifier::Private,
@@ -8840,7 +8834,7 @@ mod tests {
 
     #[test]
     fn test_equ_scalar_has_var_constraint_and_diff() {
-        use crate::PRef;
+        use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8848,21 +8842,21 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::default(),
         );
         ideal.register(&pref_a);
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::default(),
         );
         ideal.register(&pref_b);
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             ATyp::bool(),
             Qualifier::Private,
@@ -8899,7 +8893,7 @@ mod tests {
 
     #[test]
     fn test_equ_uni_bool_ideal_bare_diffs() {
-        use crate::PRef;
+        use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8907,21 +8901,21 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
             Qualifier::Private,
             Distribution::default(),
         );
         ideal.register(&pref_a);
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::Uni(2),
             Qualifier::Private,
             Distribution::default(),
         );
         ideal.register(&pref_b);
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             ATyp::bool(),
             Qualifier::Private,
@@ -8969,7 +8963,7 @@ mod tests {
 
     #[test]
     fn test_equ_uni_different_degrees_lifts_both() {
-        use crate::PRef;
+        use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8977,21 +8971,21 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
             Qualifier::Private,
             Distribution::default(),
         );
         ideal.register(&pref_a);
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::Uni(4),
             Qualifier::Private,
             Distribution::default(),
         );
         ideal.register(&pref_b);
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             ATyp::bool(),
             Qualifier::Private,
@@ -9042,7 +9036,7 @@ mod tests {
 
     #[test]
     fn test_concat_vec_vec_elements() {
-        use crate::PRef;
+        use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -9055,21 +9049,21 @@ mod tests {
         let vec3 = ATyp::Vec(Box::new(s.clone()), 3);
         let vec5 = ATyp::Vec(Box::new(s.clone()), 5);
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             vec2.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
         ideal.register(&pref_a);
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             vec3.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
         ideal.register(&pref_b);
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             vec5.clone(),
             Qualifier::Private,
@@ -9104,7 +9098,7 @@ mod tests {
 
     #[test]
     fn test_reduce_add_poly_vec_direct_fold() {
-        use crate::PRef;
+        use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -9115,7 +9109,7 @@ mod tests {
         let poly_t = ATyp::Uni(2);
         let vec_t = ATyp::Vec(Box::new(poly_t.clone()), 2);
 
-        let pref_v = PRef::from_node(
+        let pref_v = Var::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
             Qualifier::Private,
@@ -9123,7 +9117,7 @@ mod tests {
         );
         ideal.register(&pref_v);
 
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(1),
             poly_t.clone(),
             Qualifier::Private,
@@ -9139,7 +9133,7 @@ mod tests {
             &mut ideal,
         );
 
-        let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         for j in 0..3 {
             let v0_j = pref_v.clone().with_index(0).unwrap().with_slot(j).unwrap();
             let v1_j = pref_v.clone().with_index(1).unwrap().with_slot(j).unwrap();
@@ -9156,14 +9150,14 @@ mod tests {
 
     #[test]
     fn test_ref_lift_to_wider_type() {
-        use crate::PRef;
+        use crate::Var;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let pref_src = PRef::from_node(
+        let pref_src = Var::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
             Qualifier::Private,
@@ -9171,7 +9165,7 @@ mod tests {
         );
         ideal.register(&pref_src);
 
-        let pref_dst = PRef::from_node(
+        let pref_dst = Var::from_node(
             NodeIndex::new(1),
             ATyp::Uni(4),
             Qualifier::Private,
@@ -9215,7 +9209,7 @@ mod tests {
 
     #[test]
     fn test_broadcast_scalar_to_vpoly() {
-        let scalar_poly = Polynomial::<ark_bls12_381::Fr>::var(&PRef::from_node(
+        let scalar_poly = Polynomial::<ark_bls12_381::Fr>::var(&Var::from_node(
             petgraph::graph::NodeIndex::new(0),
             ATyp::scalar(),
             lang::typ::Qualifier::Private,
@@ -9240,14 +9234,14 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let pl_ref = PRef::from_var(
+        let pl_ref = Var::from_var(
             "pl_v",
             NodeIndex::new(10),
             ATyp::scalar(),
             Qualifier::Public,
             Distribution::Nonuniform,
         );
-        let basis_ref = PRef::from_var(
+        let basis_ref = Var::from_var(
             "basis_v",
             NodeIndex::new(11),
             ATyp::scalar(),
@@ -9281,7 +9275,7 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(100),
             ATyp::scalar(),
             Qualifier::Public,
@@ -9316,7 +9310,7 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref = PRef::from_node(
+        let pref = Var::from_node(
             NodeIndex::new(101),
             ATyp::scalar(),
             Qualifier::Private,
@@ -9349,8 +9343,8 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        // Create a challenge PRef
-        let challenge_pref = PRef::from_node(
+        // Create a challenge Var
+        let challenge_pref = Var::from_node(
             NodeIndex::new(200),
             ATyp::scalar(),
             Qualifier::Public,
@@ -9364,7 +9358,7 @@ mod tests {
         );
 
         // Create a private variable
-        let x_pref = PRef::from_node(
+        let x_pref = Var::from_node(
             NodeIndex::new(201),
             ATyp::scalar(),
             Qualifier::Private,
@@ -9373,7 +9367,7 @@ mod tests {
         ideal.register(&x_pref);
 
         // Create a polynomial operation that uses the challenge: y = x + c
-        let y_pref = PRef::from_node(
+        let y_pref = Var::from_node(
             NodeIndex::new(202),
             ATyp::scalar(),
             Qualifier::Public,
@@ -9425,7 +9419,7 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let g1_pref = PRef::from_node(
+        let g1_pref = Var::from_node(
             NodeIndex::new(300),
             ATyp::g1(),
             Qualifier::Public,
@@ -9433,7 +9427,7 @@ mod tests {
         );
         ideal.register(&g1_pref);
 
-        let g2_pref = PRef::from_node(
+        let g2_pref = Var::from_node(
             NodeIndex::new(301),
             ATyp::g2(),
             Qualifier::Public,
@@ -9441,7 +9435,7 @@ mod tests {
         );
         ideal.register(&g2_pref);
 
-        let pair_ideal_pref = PRef::from_node(
+        let pair_ideal_pref = Var::from_node(
             NodeIndex::new(302),
             ATyp::gt(),
             Qualifier::Public,
@@ -9493,7 +9487,7 @@ mod tests {
     fn record_projection_resolves_without_np_lookup() {
         // Build a record {a: Scalar, b: Scalar} from scalar refs, project
         // field "a", assert pl/basis aliases the field directly.
-        use crate::PRef;
+        use crate::Var;
         use backend::op::mk;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -9510,8 +9504,8 @@ mod tests {
         rec_fields.insert(&"b".to_string(), &s);
         let rec_typ = ATyp::Record(rec_fields);
 
-        // Register the record PRef.
-        let pref_rec = PRef::from_node(
+        // Register the record Var.
+        let pref_rec = Var::from_node(
             NodeIndex::new(0),
             rec_typ.clone(),
             Qualifier::Public,
@@ -9520,13 +9514,13 @@ mod tests {
         ideal.register(&pref_rec);
 
         // Register scalar refs for a and b.
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(1),
             s.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(2),
             s.clone(),
             Qualifier::Public,
@@ -9549,7 +9543,7 @@ mod tests {
         builder.add_op(pref_rec.clone(), Op::Record(field_ops), &mut ideal);
 
         // Project field "a" from the record.
-        let pref_proj = PRef::from_node(
+        let pref_proj = Var::from_node(
             NodeIndex::new(3),
             s.clone(),
             Qualifier::Public,
@@ -9589,7 +9583,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "ideal: operation has no polynomial-ideal treatment at dynamic-pow")]
     fn uncovered_op_dynamic_pow_vec_vec_panics() {
-        use crate::PRef;
+        use crate::Var;
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -9603,7 +9597,7 @@ mod tests {
         let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
         let vec_fin = ATyp::Vec(Box::new(fin.clone()), 2);
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             vec_s.clone(),
             Qualifier::Private,
@@ -9611,7 +9605,7 @@ mod tests {
         );
         ideal.register(&pref_a);
 
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             vec_fin.clone(),
             Qualifier::Private,
@@ -9619,7 +9613,7 @@ mod tests {
         );
         ideal.register(&pref_b);
 
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             ATyp::Vec(Box::new(s.clone()), 2),
             Qualifier::Private,
@@ -9644,7 +9638,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "ideal: operation has no polynomial-ideal treatment at dynamic-pow")]
     fn uncovered_op_dynamic_pow_scalar_panics() {
-        use crate::PRef;
+        use crate::Var;
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -9656,7 +9650,7 @@ mod tests {
         let s = ATyp::scalar();
         let fin = ATyp::fin(lang::typ::range::CRange::default());
 
-        let pref_a = PRef::from_node(
+        let pref_a = Var::from_node(
             NodeIndex::new(0),
             s.clone(),
             Qualifier::Private,
@@ -9665,7 +9659,7 @@ mod tests {
         ideal.register(&pref_a);
 
         // pref_b is a Ref, not a Value::Index → non-const exponent.
-        let pref_b = PRef::from_node(
+        let pref_b = Var::from_node(
             NodeIndex::new(1),
             fin.clone(),
             Qualifier::Private,
@@ -9673,7 +9667,7 @@ mod tests {
         );
         ideal.register(&pref_b);
 
-        let pref_r = PRef::from_node(
+        let pref_r = Var::from_node(
             NodeIndex::new(2),
             s.clone(),
             Qualifier::Private,

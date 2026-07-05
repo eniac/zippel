@@ -6,7 +6,7 @@ use backend::{ArkConfig, Value, value_to_bytes};
 use graph::Dag;
 use graph::WritePdf;
 use graph::domain_seperator::ZippelDomainSeparator;
-use graph::{UDag, UDags};
+use graph::{ArgKind, Node, UDag, UDags};
 use lang::ast::{CModule, UModule};
 use lang::id::{Tid, Vid};
 use lang::typ::range::Range;
@@ -94,8 +94,8 @@ pub struct ZippelHandler<C: ArkConfig> {
     pub prover_graph: Option<UDag<C>>,
     pub verifier_graph: Option<UDag<C>>,
     public_inputs: Option<Ctx<Vid, Value<C>>>,
-    /// (name, is_public, is_transcript) for each prover Arg node.
-    prover_args: Option<Vec<(Vid, bool, bool)>>,
+    /// Names of all prover Arg nodes (used by verifier to find additional args).
+    prover_args: Option<Vec<Vid>>,
     analyze_graph: Option<Dag<C, (Qualifier, Distribution)>>,
 }
 
@@ -305,8 +305,15 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         self.public_inputs = Some(public_inputs);
         let prover = self.prover_graph.as_ref().unwrap();
 
-        // save public inputs as public_inputs
-        let prover_args = prover.arg_info();
+        // save prover arg names
+        let prover_args: Vec<Vid> = prover
+            .input_args()
+            .into_iter()
+            .filter_map(|n| match &prover[n] {
+                Node::Arg(name, _, _, _, _) => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
         self.prover_args = Some(prover_args);
     }
 
@@ -323,8 +330,19 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     ) -> Result<Vec<Value<C>>, RuntimeError> {
         let prover = self.prover_graph.as_ref().unwrap();
 
-        // save public inputs as public_inputs
-        let prover_args = prover.arg_info();
+        // Collect arg info from the prover dag directly.
+        let prover_arg_info: Vec<(Vid, bool, bool)> = prover
+            .input_args()
+            .into_iter()
+            .filter_map(|n| match &prover[n] {
+                Node::Arg(name, _, qual, _, kind) => Some((
+                    name.clone(),
+                    qual.is_public(),
+                    matches!(kind, ArgKind::TranscriptInput),
+                )),
+                _ => None,
+            })
+            .collect();
 
         // Validate that every prover argument expected from the caller is
         // present in `inputs`. Transcript-sourced args are produced internally
@@ -332,7 +350,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         // mismatch between the protocol declaration and the call-site
         // `inputs` map surfaces deep inside the runtime as an opaque
         // `Option::unwrap() on a None value` panic.
-        let expected_args: Vec<Vid> = prover_args
+        let expected_args: Vec<Vid> = prover_arg_info
             .iter()
             .filter(|(_, _, is_transcript)| !is_transcript)
             .map(|(name, _, _)| name.clone())
@@ -349,7 +367,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             ));
         }
 
-        let public_args: Vec<Vid> = prover_args
+        let public_args: Vec<Vid> = prover_arg_info
             .iter()
             .filter(|(_, is_public, _)| *is_public)
             .map(|(name, _, _)| name.clone())
@@ -366,7 +384,12 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             &prover.clone(),
         );
 
-        self.prover_args = Some(prover_args);
+        self.prover_args = Some(
+            prover_arg_info
+                .iter()
+                .map(|(name, _, _)| name.clone())
+                .collect(),
+        );
         self.public_inputs = Some(public_inputs);
         let mut prover_state = prover_seperator.std_prover();
         MutexGraph::run_graph(
@@ -386,16 +409,22 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     /// If `compile()` has not been called first.
     pub fn run_verifier(&mut self, proof: &[Value<C>]) -> Result<Vec<Value<C>>, RuntimeError> {
         let verifier = self.verifier_graph.as_ref().unwrap();
-        let prover_args = self.prover_args.as_ref().unwrap();
-
-        let verifier_args = verifier.arg_info();
         let prover_arg_names: std::collections::HashSet<&Vid> =
-            prover_args.iter().map(|(name, _, _)| name).collect();
+            self.prover_args.as_ref().unwrap().iter().collect();
+
+        let verifier_args: Vec<Vid> = verifier
+            .input_args()
+            .into_iter()
+            .filter_map(|n| match &verifier[n] {
+                Node::Arg(name, _, _, _, _) => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
         let pg_additional_args = verifier_args
             .iter()
-            .filter(|(name, _, _)| !prover_arg_names.contains(name))
+            .filter(|name| !prover_arg_names.contains(name))
             .zip(proof.iter())
-            .map(|((name, _, _), val)| (name.clone(), val.clone()))
+            .map(|(name, val)| (name.clone(), val.clone()))
             .collect::<Ctx<Vid, Value<C>>>();
         let inputs = self.public_inputs.as_ref().unwrap().clone();
         let mut inputs = inputs;

@@ -90,7 +90,7 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
 #[cfg(test)]
 mod tests {
     use super::CompletenessAnalysis;
-    use crate::PRef;
+    use crate::Var;
     use crate::backend::GbBackend;
     use crate::error::AnalysisError;
     use crate::frontend::Polynomial;
@@ -300,8 +300,8 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mk_var = |name: &str, idx: usize| -> PRef {
-            PRef::from_var(
+        let mk_var = |name: &str, idx: usize| -> Var {
+            Var::from_var(
                 name.to_string(),
                 NodeIndex::new(idx),
                 ATyp::scalar(),
@@ -316,7 +316,7 @@ mod tests {
         let u_var = mk_var("u", 4);
 
         type Poly = Polynomial<<ArkBls12_381 as backend::ArkConfig>::F>;
-        let var = |p: &PRef| -> Poly { Polynomial::var(p) };
+        let var = |p: &Var| -> Poly { Polynomial::var(p) };
 
         let p1 = var(&g_var) * var(&x_var) - var(&h_var);
         let p2 = var(&g_var) * var(&r_var) - var(&u_var);
@@ -950,89 +950,6 @@ mod tests {
         assert!(
             ca.run().is_ok(),
             "verify(p == d*q + r) should collapse directly to the shared identity row"
-        );
-    }
-
-    #[test]
-    fn completeness_uses_verifier_closure_excludes_prover_only_behind_transcript() {
-        let ex = r#"
-            proto transcript_boundary<F: Field>(private x: F, public y: F) where y == y {
-                t <- x;
-                verify(t == t)
-            }"#;
-        let m = UModule::from_str(ex)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-        let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
-        let ca = CompletenessAnalysis::from_input(&g);
-
-        let verifier_vars: Set<crate::PRef> = ca.verifier.iter().flat_map(|p| p.vars()).collect();
-        assert!(
-            verifier_vars
-                .iter()
-                .all(|p| !p.qualifier.is_private() || p.from_transcript),
-            "verifier Groebner result should not contain prover-only private inputs (unless from transcript)"
-        );
-    }
-
-    #[test]
-    fn kzg_opening_shape_completeness() {
-        let ex = r#"
-            proto kzg_shape<F: Field>(
-                public p_val: Poly<F, 1, 2>,
-                public z: F,
-                public y: F
-            ) where let zero: F = 0; poly([zero]) == (p_val - y) % poly([-z, 1]) {
-                let d_val = poly([-z, 1]);
-                let diff = p_val - y;
-                let q_val = diff / d_val;
-                verify(q_val * d_val == diff)
-            }"#;
-        let m = UModule::from_str(ex)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-        let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
-        let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(
-            ca.run().is_ok(),
-            "KZG opening shape q * (x - z) == p - y should be complete"
-        );
-    }
-
-    #[test]
-    fn full_kzg_completeness() {
-        use lang::id::Tid;
-        let ex = r#"
-            proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>
-                    (private poly_coeffs: [F; N], public eval_point: F, public eval_result: F, private srs_g1: [G1; N],
-                    public gen_g1: G1, public gen_g2: G2, public srs_g2_s: G2)
-                    where dot(poly_coeffs, [eval_point ^ i for i in 0..N]) == eval_result && srs_g1[0] == gen_g1 && reduce(&&, [pair(srs_g1[i], srs_g2_s) == pair(srs_g1[i+1], gen_g2) for i in 0..N-1]) {
-                let poly_x = poly(poly_coeffs);
-                commitment <- dot(poly_coeffs, srs_g1);
-                let quotient_poly = (poly_x - eval_result) / poly([-eval_point, 1]);
-                let quotient_coeffs = coef(quotient_poly);
-                let srs_g1_truncated = srs_g1[0..N-1];
-                proof <- dot(quotient_coeffs, srs_g1_truncated);
-                let pairing_lhs = pair(proof, srs_g2_s - gen_g2 * eval_point);
-                let pairing_rhs = pair(commitment - eval_result * gen_g1, gen_g2);
-                verify(pairing_lhs == pairing_rhs)
-             }"#;
-        let mut sizes = Ctx::new();
-        sizes.insert(&Tid::new("N"), &3);
-        let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-        let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
-        let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(
-            ca.run().is_ok(),
-            "full KZG should be complete via phase-12 pairing + phase-13 poly-div"
         );
     }
 

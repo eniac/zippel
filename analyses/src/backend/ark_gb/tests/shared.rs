@@ -6,7 +6,7 @@
 
 #![allow(dead_code)]
 
-use crate::PRef;
+use crate::Var;
 use crate::frontend::Polynomial;
 use ark_bls12_381::Fr;
 use ark_ff::One;
@@ -31,8 +31,8 @@ pub const CYCLIC_SIZES: &[usize] = &[4, 5];
 // Variable construction helpers
 // ---------------------------------------------------------------------------
 
-pub fn mk_var(name: &str) -> PRef {
-    PRef::from_var(
+pub fn mk_var(name: &str) -> Var {
+    Var::from_var(
         name,
         NodeIndex::new(0),
         ATyp::scalar(),
@@ -41,7 +41,7 @@ pub fn mk_var(name: &str) -> PRef {
     )
 }
 
-pub fn mk_vars(prefix: &str, count: usize) -> Vec<PRef> {
+pub fn mk_vars(prefix: &str, count: usize) -> Vec<Var> {
     (0..count)
         .map(|i| mk_var(&format!("{prefix}{i}")))
         .collect()
@@ -51,7 +51,7 @@ pub fn mk_vars(prefix: &str, count: usize) -> Vec<PRef> {
 // Cyclic-n — translation of Singular polylib.lib `proc cyclic(int n)`
 // ---------------------------------------------------------------------------
 
-pub fn cyclic_polys(vars: &[PRef]) -> Vec<Polynomial<Fr>> {
+pub fn cyclic_polys(vars: &[Var]) -> Vec<Polynomial<Fr>> {
     let n = vars.len();
     assert!(n >= 1, "Cyclic-n requires n >= 1");
     let one = Polynomial::<Fr>::lit(&Fr::one());
@@ -80,7 +80,7 @@ pub fn cyclic_polys(vars: &[PRef]) -> Vec<Polynomial<Fr>> {
 // Katsura-n — translation of Singular polylib.lib `proc katsura` + `kat_var`
 // ---------------------------------------------------------------------------
 
-pub fn katsura_polys(vars: &[PRef]) -> Vec<Polynomial<Fr>> {
+pub fn katsura_polys(vars: &[Var]) -> Vec<Polynomial<Fr>> {
     let n_arg = vars.len();
     assert!(n_arg >= 1, "Katsura-n requires at least one variable");
     let n = (n_arg - 1) as isize;

@@ -1624,8 +1624,15 @@ fn pin_get_verifier_basic() {
     assert_eq!(verifier.name(), Vid::new("foo"));
     // Verifier should not have private-only computations
     // Verifier args should only include public inputs (v) and transcript vars (a)
-    let args = verifier.arg_info();
-    assert!(args.iter().all(|(_, is_public, _)| *is_public));
+    let args: Vec<bool> = verifier
+        .input_args()
+        .into_iter()
+        .filter_map(|n| match &verifier[n] {
+            Node::Arg(_, _, qual, _, _) => Some(qual.is_public()),
+            _ => None,
+        })
+        .collect();
+    assert!(args.iter().all(|is_public| *is_public));
 }
 
 /// get_relation extracts the relation subgraph from the Rel node.
@@ -2017,8 +2024,15 @@ fn pin_get_verifier_multiple_checks() {
     // Verifier name matches
     assert_eq!(verifier.name(), Vid::new("two_verify"));
     // Verifier args should only include public inputs
-    let args = verifier.arg_info();
-    assert!(args.iter().all(|(_, is_public, _)| *is_public));
+    let args: Vec<bool> = verifier
+        .input_args()
+        .into_iter()
+        .filter_map(|n| match &verifier[n] {
+            Node::Arg(_, _, qual, _, _) => Some(qual.is_public()),
+            _ => None,
+        })
+        .collect();
+    assert!(args.iter().all(|is_public| *is_public));
 }
 
 /// get_prover works correctly with multiple check nodes.
@@ -2118,9 +2132,16 @@ fn pin_get_verifier_scattered_checks() {
     );
 
     // Verifier args should only include public inputs
-    let args = verifier.arg_info();
+    let args: Vec<bool> = verifier
+        .input_args()
+        .into_iter()
+        .filter_map(|n| match &verifier[n] {
+            Node::Arg(_, _, qual, _, _) => Some(qual.is_public()),
+            _ => None,
+        })
+        .collect();
     assert!(
-        args.iter().all(|(_, is_public, _)| *is_public),
+        args.iter().all(|is_public| *is_public),
         "All verifier args should be public"
     );
 }

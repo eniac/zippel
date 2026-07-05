@@ -2,14 +2,14 @@
 //! published `sage.rings.ideal.Katsura` / `sage.rings.ideal.Cyclic`
 //! small-n examples.
 
-use crate::PRef;
+use crate::Var;
 use crate::frontend::Polynomial;
 use ark_bls12_381::Fr;
 
 use super::shared::{cyclic_polys, katsura_polys, mk_vars};
 
 /// Build a polynomial from `(coeff, [(var_index, power), ...])` terms.
-fn build_poly(vars: &[PRef], terms: &[(i64, &[(usize, usize)])]) -> Polynomial<Fr> {
+fn build_poly(vars: &[Var], terms: &[(i64, &[(usize, usize)])]) -> Polynomial<Fr> {
     let mut out = Polynomial::<Fr>::zero();
     for (coeff, mono) in terms {
         let mag = Fr::from(coeff.unsigned_abs());

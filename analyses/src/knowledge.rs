@@ -1,5 +1,5 @@
-use crate::PRef;
 use crate::TransClos;
+use crate::Var;
 use crate::backend::{GbBackendKind, GbBasis};
 use crate::error::AnalysisError;
 use crate::frontend::{Block, BlockKind, MonoOrder, Polynomial};
@@ -11,7 +11,7 @@ use log::warn;
 
 /// Knowledge-analysis elimination predicate: Local variables and private-uniform
 /// variables (random masks) are eliminated first.
-fn is_elim_var(v: &PRef) -> bool {
+fn is_elim_var(v: &Var) -> bool {
     v.qualifier == lang::typ::Qualifier::Local
         || (v.qualifier == lang::typ::Qualifier::Private && v.distribution.is_uniform())
 }
@@ -19,7 +19,7 @@ fn is_elim_var(v: &PRef) -> bool {
 /// Build the block ordering for knowledge analysis: elim-block (GrevLex) first,
 /// then the remaining vars (GrevLex).
 fn knowledge_order(result: &Ideal<impl ArkConfig>) -> MonoOrder {
-    let elim_vars: Vec<PRef> = result
+    let elim_vars: Vec<Var> = result
         .var_order
         .iter()
         .filter(|v| is_elim_var(v))

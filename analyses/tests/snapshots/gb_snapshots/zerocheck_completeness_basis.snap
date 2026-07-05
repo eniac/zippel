@@ -2,8 +2,8 @@
 source: analyses/tests/gb_snapshots.rs
 expression: value
 ---
-- __zippel::gb::div_q::0 + q
-- p*v + p*v
-__zippel::gb::div_r::0
-v*__zippel::gb::div_q::0 - p
-v*__zippel::gb::div_q::0 - p
+- __zippel::gb::div_q::0[0] + q[0]
+- p[0]*v[1] + p[1]*v[0]
+__zippel::gb::div_r::0[0]
+v[0]*__zippel::gb::div_q::0[0] - p[0]
+v[1]*__zippel::gb::div_q::0[0] - p[1]
