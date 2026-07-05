@@ -20,9 +20,9 @@ pub struct Var {
     pub typ: ATyp,
     pub qualifier: Qualifier,
     pub distribution: Distribution,
-    /// Source-level variable name. For `Node::Arg` PRefs this is the
-    /// argument's `Vid`; for transcript-source PRefs it is the log-variable
-    /// name; for unnamed PRefs it is derived from the node index.
+    /// Source-level variable name. For `Node::Arg` Vars this is the
+    /// argument's `Vid`; for transcript-source Vars it is the log-variable
+    /// name; for unnamed Vars it is derived from the node index.
     pub name: String,
 }
 
@@ -153,7 +153,7 @@ impl Var {
         })
     }
 
-    /// Collect all physical slot PRefs for this value, flattened one per scalar position.
+    /// Collect all physical slot Vars for this value, flattened one per scalar position.
     ///
     /// For leaf types (scalar, group), returns a single-element vec with
     /// `self`. For `Vec(T, n)`, returns `n` logical elements, each
@@ -207,7 +207,7 @@ impl Var {
         }
     }
 
-    /// Returns all physical slot PRefs for this type, one per flattened
+    /// Returns all physical slot Vars for this type, one per flattened
     /// scalar position.
     pub fn slots(&self) -> Vec<Self> {
         self.collect_slots()

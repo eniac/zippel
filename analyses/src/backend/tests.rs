@@ -30,9 +30,9 @@ mod backend_tests {
         let r = mk_var("r", 3);
         let u = mk_var("u", 4);
 
-        let var = |p: &Var| Polynomial::<Fr>::var(p);
-        let p1 = var(&g) * var(&x) - var(&h);
-        let p2 = var(&g) * var(&r) - var(&u);
+        let var_poly = |p: &Var| Polynomial::<Fr>::var(p);
+        let p1 = var_poly(&g) * var_poly(&x) - var_poly(&h);
+        let p2 = var_poly(&g) * var_poly(&r) - var_poly(&u);
 
         let backend = ArkGb::<Fr>::default();
         let basis = backend
@@ -46,7 +46,7 @@ mod backend_tests {
         assert!(rem2.is_zero(), "p2 should reduce to 0, got: {}", rem2);
 
         // h*r - u*x should reduce to 0 given g*x = h and g*r = u
-        let target = var(&h) * var(&r) - var(&u) * var(&x);
+        let target = var_poly(&h) * var_poly(&r) - var_poly(&u) * var_poly(&x);
         let rem = backend.reduce(target, &basis);
         assert!(rem.is_zero(), "h*r - u*x should reduce to 0, got: {}", rem);
     }
@@ -54,13 +54,13 @@ mod backend_tests {
     #[test]
     fn grevlex_unit_ideal() {
         let x = mk_var("x", 0);
-        let var = |p: &Var| Polynomial::<Fr>::var(p);
+        let var_poly = |p: &Var| Polynomial::<Fr>::var(p);
         let one = Polynomial::lit(&Fr::one());
 
         // x and 1 → unit ideal
         let backend = ArkGb::<Fr>::default();
         let basis = backend
-            .compute_gb(vec![var(&x), one], &MonoOrder::grevlex())
+            .compute_gb(vec![var_poly(&x), one], &MonoOrder::grevlex())
             .unwrap();
         assert!(basis.is_unit(), "basis with constant should be unit ideal");
     }
@@ -70,7 +70,7 @@ mod backend_tests {
         use crate::frontend::{Block, BlockKind};
         let x = mk_var("x", 0);
         let y = mk_var("y", 1);
-        let var = |p: &Var| Polynomial::<Fr>::var(p);
+        let var_poly = |p: &Var| Polynomial::<Fr>::var(p);
 
         let backend = ArkGb::<Fr>::default();
         // GrevLex-then-Lex: ark-gb's Case 3 requires the first block to be Lex.
@@ -84,7 +84,10 @@ mod backend_tests {
                 kind: BlockKind::Lex,
             },
         ]);
-        let result = backend.compute_gb(vec![var(&x) * var(&y.clone()) - var(&x)], &order);
+        let result = backend.compute_gb(
+            vec![var_poly(&x) * var_poly(&y.clone()) - var_poly(&x)],
+            &order,
+        );
         assert!(
             result.is_err(),
             "GrevLex-then-Lex should be unsupported by ark-gb"
@@ -157,8 +160,11 @@ mod singular_tests {
         let h = mk_var("h", 2);
         let r = mk_var("r", 3);
         let u = mk_var("u", 4);
-        let var = |p: &Var| Polynomial::<Fr>::var(p);
-        let ideal = vec![var(&g) * var(&x) - var(&h), var(&g) * var(&r) - var(&u)];
+        let var_poly = |p: &Var| Polynomial::<Fr>::var(p);
+        let ideal = vec![
+            var_poly(&g) * var_poly(&x) - var_poly(&h),
+            var_poly(&g) * var_poly(&r) - var_poly(&u),
+        ];
         (vec![g, x, h, r, u], ideal)
     }
 
@@ -266,9 +272,9 @@ mod singular_tests {
             return;
         }
         let x = mk_var("x", 0);
-        let var = |p: &Var| Polynomial::<Fr>::var(p);
+        let var_poly = |p: &Var| Polynomial::<Fr>::var(p);
         let one = Polynomial::lit(&Fr::one());
-        let ideal = vec![var(&x), one];
+        let ideal = vec![var_poly(&x), one];
         let order = MonoOrder::grevlex();
 
         let sing = Singular::<Fr>::default();
@@ -287,8 +293,8 @@ mod singular_tests {
         }
         let x = mk_var("x", 0);
         let y = mk_var("y", 1);
-        let var = |p: &Var| Polynomial::<Fr>::var(p);
-        let ideal = vec![var(&x) * var(&y.clone()) - var(&x)];
+        let var_poly = |p: &Var| Polynomial::<Fr>::var(p);
+        let ideal = vec![var_poly(&x) * var_poly(&y.clone()) - var_poly(&x)];
         let order = MonoOrder::block(vec![
             Block {
                 vars: Some(vec![x.clone()]),

@@ -114,7 +114,7 @@ pub fn reduce<F: PrimeField>(
     use crate::frontend::Monomial;
     use std::collections::HashMap;
 
-    // Collect all PRefs from the input polynomials.
+    // Collect all Vars from the input polynomials.
     let all_vars: Vec<Var> = {
         let mut vs: Vec<Var> = basis_polys.iter().flat_map(|p| p.vars()).collect();
         vs.extend(p.vars());

@@ -196,7 +196,7 @@ impl<C: ArkConfig + HasOpFactory> IdealNamespace<C> {
     }
 
     /// Allocate a fresh sentinel Var with a stable unique NodeIndex.
-    pub fn sentinel_pref(&mut self, name: &str, typ: ATyp) -> Var {
+    pub fn sentinel_var(&mut self, name: &str, typ: ATyp) -> Var {
         let idx = NodeIndex::new(self.sentinel_counter);
         self.sentinel_counter -= 1;
         Var::from_var(name, idx, typ, Qualifier::Local, Distribution::default())
@@ -212,12 +212,12 @@ impl<C: ArkConfig + HasOpFactory> IdealNamespace<C> {
 }
 
 /// The ideal of building a Gröbner basis — the basis polynomials, their
-/// polynomial definitions (pl), and the prefs used in the basis.
+/// polynomial definitions (pl), and the vars used in the basis.
 #[derive(Clone)]
 pub struct Ideal<C: ArkConfig> {
     pub generating_set: Vec<Polynomial<C::F>>,
     pub pl: Ctx<Var, Polynomial<C::F>>,
-    pub prefs: HashMap<Ref, Var>,
+    pub vars: HashMap<Ref, Var>,
     pub var_order: Vec<Var>,
 }
 
@@ -226,23 +226,23 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         Self {
             generating_set: Vec::new(),
             pl: Ctx::new(),
-            prefs: HashMap::new(),
+            vars: HashMap::new(),
             var_order: Vec::new(),
         }
     }
 
     /// Register a Var in the namespace. Overwrites any existing entry
     /// for the same reference. Returns the previous entry if one existed.
-    pub fn register(&mut self, pr: &Var) -> Option<Var> {
-        self.prefs.insert(pr.reference, pr.clone())
+    pub fn register(&mut self, var: &Var) -> Option<Var> {
+        self.vars.insert(var.reference, var.clone())
     }
 
     /// Look up a Ref in the namespace. Panics if not found.
     pub fn find_ref(&self, r: &Ref) -> Var {
-        if let Some(v) = self.prefs.get(r) {
+        if let Some(v) = self.vars.get(r) {
             return v.clone();
         }
-        panic!("ideal: ref {} not found in namespace prefs", r)
+        panic!("ideal: ref {} not found in namespace vars", r)
     }
 
     pub fn vars(&self) -> Set<Var> {
@@ -368,8 +368,8 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             self.pl.insert(k, v);
         }
         self.var_order.extend(other.var_order.iter().cloned());
-        for (k, v) in other.prefs.iter() {
-            self.prefs.entry(*k).or_insert_with(|| v.clone());
+        for (k, v) in other.vars.iter() {
+            self.vars.entry(*k).or_insert_with(|| v.clone());
         }
     }
 }
@@ -441,17 +441,17 @@ impl<C: ArkConfig> PolySource<C> {
         self.typ.physical_len()
     }
 
-    fn from_ref_vars(prefs: &HashMap<Ref, Var>, op: &GOp<C>) -> Self
+    fn from_ref_vars(vars: &HashMap<Ref, Var>, op: &GOp<C>) -> Self
     where
         C: HasOpFactory,
     {
         let typ = op.typ();
-        let polys = IdealBuilder::<C>::ref_vars(op, prefs);
+        let polys = IdealBuilder::<C>::ref_vars(op, vars);
         PolySource { polys, typ }
     }
 
-    fn from_pref_vars(pref: &Var, typ: ATyp) -> Self {
-        let polys = pref
+    fn from_vars(var: &Var, typ: ATyp) -> Self {
+        let polys = var
             .slots()
             .into_iter()
             .map(|slot| Polynomial::var(&slot))
@@ -775,7 +775,7 @@ impl<C: ArkConfig> PolySource<C> {
 /// Constructs `Ideal`s from `TransClos` inputs. Owns a
 /// `IdealNamespace` for division-witness and sentinel allocation
 /// that persists across `build()` calls. Each call to `build(TransClos)`
-/// returns a fresh `Ideal` with its own `prefs` namespace.
+/// returns a fresh `Ideal` with its own `vars` namespace.
 #[derive(Clone)]
 pub struct IdealBuilder<C: ArkConfig> {
     pub ns: IdealNamespace<C>,
@@ -840,33 +840,33 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     }
 
     /// Build a `Ideal` from a `TransClos`. Each call returns a
-    /// fresh ideal with its own `prefs` namespace, while the builder
+    /// fresh ideal with its own `vars` namespace, while the builder
     /// namespace keeps generated witness/sentinel allocation stable.
     pub fn build(&mut self, tc: TransClos<C>) -> Ideal<C> {
         let mut ideal = Ideal::new();
         if self.detect_exact_division {
             self.node_ops.clear();
-            for (pr, op) in tc.clos.iter() {
-                self.node_ops.insert(pr.reference, op.clone());
+            for (var, op) in tc.clos.iter() {
+                self.node_ops.insert(var.reference, op.clone());
             }
         }
-        for new_arg in tc.prefs.iter() {
+        for new_arg in tc.vars.iter() {
             ideal.register(new_arg);
         }
-        for (pr, _op) in tc.clos.iter() {
-            ideal.register(pr);
+        for (var, _op) in tc.clos.iter() {
+            ideal.register(var);
         }
-        for (pr, op) in tc.clos.into_iter() {
-            self.add_op(pr.clone(), op, &mut ideal);
-            ideal.var_order.push(pr);
+        for (var, op) in tc.clos.into_iter() {
+            self.add_op(var.clone(), op, &mut ideal);
+            ideal.var_order.push(var);
         }
         ideal
     }
 
-    pub(crate) fn sentinel_pref(&mut self, name: &str, typ: ATyp, ideal: &mut Ideal<C>) -> Var {
-        let pr = self.ns.sentinel_pref(name, typ);
-        ideal.var_order.push(pr.clone());
-        pr
+    pub(crate) fn sentinel_var(&mut self, name: &str, typ: ATyp, ideal: &mut Ideal<C>) -> Var {
+        let var = self.ns.sentinel_var(name, typ);
+        ideal.var_order.push(var.clone());
+        var
     }
 
     /// Allocate quotient/remainder witness sentinels without registering opaque operations.
@@ -878,8 +878,8 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     ) -> (Var, Var) {
         let q_name = self.ns.next_name("div_q");
         let r_name = self.ns.next_name("div_r");
-        let q_wit = self.sentinel_pref(&q_name, quotient_typ, ideal);
-        let r_wit = self.sentinel_pref(&r_name, remainder_typ, ideal);
+        let q_wit = self.sentinel_var(&q_name, quotient_typ, ideal);
+        let r_wit = self.sentinel_var(&r_name, remainder_typ, ideal);
         (q_wit, r_wit)
     }
 
@@ -975,52 +975,52 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             .vars()
             .into_iter()
             .zip(term.powers())
-            .map(|(pref, power)| Self::canonical_factor_key(&pref, power, ideal, seen))
+            .map(|(var, power)| Self::canonical_factor_key(&var, power, ideal, seen))
             .collect();
         factors.sort();
         factors.join("*")
     }
 
     fn canonical_factor_key(
-        pref: &Var,
+        var: &Var,
         power: usize,
         ideal: &Ideal<C>,
         seen: &mut Vec<Var>,
     ) -> String {
-        if Self::is_named_source_pref(pref) {
-            return format!("{}^{}", Self::canonical_pref_key(pref), power);
+        if Self::is_named_source_var(var) {
+            return format!("{}^{}", Self::canonical_var_key(var), power);
         }
 
-        if let Some(def) = ideal.pl.get(pref)
-            && !seen.contains(pref)
+        if let Some(def) = ideal.pl.get(var)
+            && !seen.contains(var)
         {
-            seen.push(pref.clone());
+            seen.push(var.clone());
             let def_key = Self::canonical_poly_key(def, ideal, seen);
             seen.pop();
             return format!("def=({})^{}", def_key, power);
         }
 
-        format!("{}^{}", Self::canonical_pref_key(pref), power)
+        format!("{}^{}", Self::canonical_var_key(var), power)
     }
 
-    fn is_named_source_pref(pref: &Var) -> bool {
-        !pref.name().starts_with(GB_GENERATED_NAME_PREFIX)
-            && !pref.name().starts_with(NODE_GENERATED_NAME_PREFIX)
+    fn is_named_source_var(var: &Var) -> bool {
+        !var.name().starts_with(GB_GENERATED_NAME_PREFIX)
+            && !var.name().starts_with(NODE_GENERATED_NAME_PREFIX)
     }
 
-    fn canonical_pref_key(pref: &Var) -> String {
-        let name = pref.name();
+    fn canonical_var_key(var: &Var) -> String {
+        let name = var.name();
         if !name.starts_with(GB_GENERATED_NAME_PREFIX)
             && !name.starts_with(NODE_GENERATED_NAME_PREFIX)
         {
             format!(
                 "named:name={};slot={:?};typ={};qual={:?};dist={:?}",
-                name, pref.index, pref.typ, pref.qualifier, pref.distribution,
+                name, var.index, var.typ, var.qualifier, var.distribution,
             )
         } else {
             format!(
                 "raw:ref={:?};slot={:?};typ={};qual={:?};dist={:?};name={:?}",
-                pref.reference, pref.index, pref.typ, pref.qualifier, pref.distribution, name,
+                var.reference, var.index, var.typ, var.qualifier, var.distribution, name,
             )
         }
     }
@@ -1029,7 +1029,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     ///
     /// Dispatches based on operand types:
     /// - Vec operands recurse element-wise, preserving witness caching for each element
-    /// - VPoly/Uni polynomial divisions use witness PRefs + cache
+    /// - VPoly/Uni polynomial divisions use witness Vars + cache
     /// - Polynomial-like dividends divided by scalar-like divisors use slot-wise field division
     /// - Non-polynomial Div uses slot-wise field division
     /// - Remainder by scalar and unsupported MLE polynomial division remain `unreachable!`
@@ -1246,7 +1246,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         ideal: &mut Ideal<C>,
     ) {
         self.emit_equ_diffs(a, b, ideal);
-        // NOTE: We do NOT emit `pr.slots()` as basis polynomials here.
+        // NOTE: We do NOT emit `var.slots()` as basis polynomials here.
         // `==` is used as an assertion, not to compute the boolean
         // ideal of equality checking.
     }
@@ -1312,44 +1312,44 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
 
     fn concat_op(
         &mut self,
-        pr: &Var,
+        var: &Var,
         a: &PolySource<C>,
         b: &PolySource<C>,
         _a_op: &HOp<C>,
         _b_op: &HOp<C>,
         ideal: &mut Ideal<C>,
     ) {
-        match (&pr.typ, a.typ(), b.typ()) {
+        match (&var.typ, a.typ(), b.typ()) {
             (ATyp::Vec(r_elem, _), ATyp::Vec(_, na), ATyp::Vec(_, nb)) => {
-                Self::bind_vec_aliases(pr, 0, a, *na, r_elem, ideal);
-                Self::bind_vec_aliases(pr, *na, b, *nb, r_elem, ideal);
+                Self::bind_vec_aliases(var, 0, a, *na, r_elem, ideal);
+                Self::bind_vec_aliases(var, *na, b, *nb, r_elem, ideal);
             }
             (ATyp::Vec(r_elem, _), ATyp::Vec(_, na), _) => {
-                Self::bind_vec_aliases(pr, 0, a, *na, r_elem, ideal);
-                let target_elem = pr.with_index(*na).unwrap();
+                Self::bind_vec_aliases(var, 0, a, *na, r_elem, ideal);
+                let target_elem = var.with_index(*na).unwrap();
                 Self::bind_lifted_alias(&target_elem, b, r_elem, ideal);
             }
             (ATyp::Vec(r_elem, _), _, ATyp::Vec(_, nb)) => {
-                let target_elem = pr.with_index(0).unwrap();
+                let target_elem = var.with_index(0).unwrap();
                 Self::bind_lifted_alias(&target_elem, a, r_elem, ideal);
-                Self::bind_vec_aliases(pr, 1, b, *nb, r_elem, ideal);
+                Self::bind_vec_aliases(var, 1, b, *nb, r_elem, ideal);
             }
             _ => {
-                Self::uncovered_op("concat-non-vector", pr);
+                Self::uncovered_op("concat-non-vector", var);
             }
         }
     }
 
     fn emit_slotwise_binop(
         &self,
-        pr: &Var,
+        var: &Var,
         left: &[Polynomial<C::F>],
         right: &[Polynomial<C::F>],
         op: BinOp,
         ideal: &mut Ideal<C>,
         context: &str,
     ) {
-        let pr_slots = pr.slots();
+        let pr_slots = var.slots();
         assert_eq!(
             pr_slots.len(),
             left.len(),
@@ -1370,7 +1370,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
 
     fn broadcast_binop(
         &mut self,
-        pr: &Var,
+        var: &Var,
         a: &PolySource<C>,
         b: &PolySource<C>,
         r_typ: &ATyp,
@@ -1387,7 +1387,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                         _ => unreachable!("broadcast_binop Vec×Vec ideal must be Vec"),
                     };
                     self.broadcast_binop(
-                        &pr.with_index(i).unwrap(),
+                        &var.with_index(i).unwrap(),
                         &a_elem,
                         &b_elem,
                         r_inner,
@@ -1404,7 +1404,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 let a_lifted = a.lift_to(r_typ);
                 let b_lifted = b.lift_scalar_for_add_sub_to(r_typ);
                 self.emit_slotwise_binop(
-                    pr,
+                    var,
                     a_lifted.polys(),
                     b_lifted.polys(),
                     op,
@@ -1420,7 +1420,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 let a_lifted = a.lift_scalar_for_add_sub_to(r_typ);
                 let b_lifted = b.lift_to(r_typ);
                 self.emit_slotwise_binop(
-                    pr,
+                    var,
                     a_lifted.polys(),
                     b_lifted.polys(),
                     op,
@@ -1431,7 +1431,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             (_, _) if PolySource::<C>::is_scalar_like(b.typ()) && a.physical_len() > 1 => {
                 let b_broadcast = b.broadcast_scalar_to(a.typ());
                 self.emit_slotwise_binop(
-                    pr,
+                    var,
                     a.polys(),
                     b_broadcast.polys(),
                     op,
@@ -1442,7 +1442,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             (_, _) if PolySource::<C>::is_scalar_like(a.typ()) && b.physical_len() > 1 => {
                 let a_broadcast = a.broadcast_scalar_to(b.typ());
                 self.emit_slotwise_binop(
-                    pr,
+                    var,
                     a_broadcast.polys(),
                     b.polys(),
                     op,
@@ -1454,7 +1454,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 let a_lifted = a.lift_to(r_typ);
                 let b_lifted = b.lift_to(r_typ);
                 self.emit_slotwise_binop(
-                    pr,
+                    var,
                     a_lifted.polys(),
                     b_lifted.polys(),
                     op,
@@ -1463,7 +1463,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 );
             }
             _ => {
-                self.emit_slotwise_binop(pr, a.polys(), b.polys(), op, ideal, "slotwise");
+                self.emit_slotwise_binop(var, a.polys(), b.polys(), op, ideal, "slotwise");
             }
         }
     }
@@ -1730,18 +1730,18 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         }
     }
 
-    fn dot_op(&mut self, pr: &Var, a: &PolySource<C>, b: &PolySource<C>, ideal: &mut Ideal<C>) {
+    fn dot_op(&mut self, var: &Var, a: &PolySource<C>, b: &PolySource<C>, ideal: &mut Ideal<C>) {
         match (a.typ(), b.typ()) {
             (ATyp::Vec(_, na), ATyp::Vec(_, nb)) if na == nb => {
-                let r_elem_len = pr.typ.physical_len();
+                let r_elem_len = var.typ.physical_len();
                 let mut acc: Vec<Polynomial<C::F>> = vec![Polynomial::zero(); r_elem_len];
                 for i in 0..*na {
                     let acc_name = self.ns.next_name("dot_acc");
-                    let acc_pref = self.sentinel_pref(&acc_name, pr.typ.clone(), ideal);
+                    let acc_var = self.sentinel_var(&acc_name, var.typ.clone(), ideal);
                     let a_elem = a.at_index(i).unwrap();
                     let b_elem = b.at_index(i).unwrap();
-                    self.mul_op(&acc_pref, &a_elem, &b_elem, &pr.typ, ideal);
-                    let acc_vars: Vec<Polynomial<C::F>> = acc_pref
+                    self.mul_op(&acc_var, &a_elem, &b_elem, &var.typ, ideal);
+                    let acc_vars: Vec<Polynomial<C::F>> = acc_var
                         .slots()
                         .into_iter()
                         .map(|s| Polynomial::var(&s))
@@ -1749,19 +1749,19 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     assert_eq!(
                         acc_vars.len(),
                         acc.len(),
-                        "dot_op: acc_pref slot count must match accumulator"
+                        "dot_op: acc_var slot count must match accumulator"
                     );
                     for (j, a) in acc.iter_mut().enumerate() {
                         *a = &*a + &acc_vars[j];
                     }
                 }
-                for (pf, p) in pr.slots().into_iter().zip(acc) {
+                for (pf, p) in var.slots().into_iter().zip(acc) {
                     ideal.pl.insert(&pf, &p);
                     ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
             }
             (ATyp::Base(_), ATyp::Base(_)) => {
-                let pr_slots = pr.slots();
+                let pr_slots = var.slots();
                 assert_eq!(
                     pr_slots.len(),
                     1,
@@ -1784,13 +1784,13 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         }
     }
 
-    fn pair_op(&mut self, pr: &Var, a: &PolySource<C>, b: &PolySource<C>, ideal: &mut Ideal<C>) {
-        match (a.typ(), b.typ(), &pr.typ) {
+    fn pair_op(&mut self, var: &Var, a: &PolySource<C>, b: &PolySource<C>, ideal: &mut Ideal<C>) {
+        match (a.typ(), b.typ(), &var.typ) {
             (ATyp::Vec(_, na), ATyp::Vec(_, nb), ATyp::Vec(r_inner, _)) if na == nb => {
                 for i in 0..*na {
                     let a_elem = a.at_index(i).unwrap();
                     let b_elem = b.at_index(i).unwrap();
-                    let t_i = pr.with_index(i).unwrap();
+                    let t_i = var.with_index(i).unwrap();
                     let a_lifted = a_elem.lift_to(r_inner);
                     let b_lifted = b_elem.lift_to(r_inner);
                     for (j, pf) in t_i.slots().iter().enumerate() {
@@ -1801,7 +1801,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 }
             }
             (ATyp::Base(_), ATyp::Base(_), ATyp::Base(_)) => {
-                let pr_slots = pr.slots();
+                let pr_slots = var.slots();
                 for (pf, e_a, e_b) in pr_slots
                     .iter()
                     .zip(a.polys())
@@ -1818,19 +1818,19 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     "Pair: unsupported type combination {} × {} → {}",
                     a.typ(),
                     b.typ(),
-                    pr.typ
+                    var.typ
                 );
             }
         }
     }
 
-    fn pow_op(&mut self, pr: &Var, a: &HOp<C>, b: &HOp<C>, ideal: &mut Ideal<C>) {
-        let a_src = PolySource::from_ref_vars(&ideal.prefs, a);
-        match (a_src.typ(), &b.typ(), &pr.typ) {
+    fn pow_op(&mut self, var: &Var, a: &HOp<C>, b: &HOp<C>, ideal: &mut Ideal<C>) {
+        let a_src = PolySource::from_ref_vars(&ideal.vars, a);
+        match (a_src.typ(), &b.typ(), &var.typ) {
             (ATyp::Vec(_, na), ATyp::Vec(_, nb), ATyp::Vec(r_inner, _)) if na == nb => {
                 let elem_exps = self.resolve_const_exps_vec(b, *na);
                 for (i, exp) in elem_exps.iter().enumerate().take(*na) {
-                    let t_i = pr.with_index(i).unwrap();
+                    let t_i = var.with_index(i).unwrap();
                     let elem_a = a_src.at_index(i).unwrap();
                     if let Some(k) = exp {
                         self.pow_const(&t_i, &elem_a, r_inner, *k, ideal);
@@ -1842,7 +1842,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             (ATyp::Vec(_, na), _, ATyp::Vec(r_inner, _)) => {
                 let k = self.resolve_const_exp_scalar(b);
                 for i in 0..*na {
-                    let t_i = pr.with_index(i).unwrap();
+                    let t_i = var.with_index(i).unwrap();
                     let elem_a = a_src.at_index(i).unwrap();
                     if let Some(k) = k {
                         self.pow_const(&t_i, &elem_a, r_inner, k, ideal);
@@ -1854,7 +1854,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             (_, ATyp::Vec(_, nb), ATyp::Vec(_, _)) => {
                 let elem_exps = self.resolve_const_exps_vec(b, *nb);
                 for (i, exp) in elem_exps.iter().enumerate().take(*nb) {
-                    let t_i = pr.with_index(i).unwrap();
+                    let t_i = var.with_index(i).unwrap();
                     if let Some(k) = exp {
                         self.pow_const(&t_i, &a_src, &t_i.typ, *k, ideal);
                     } else {
@@ -1864,9 +1864,9 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             }
             _ => {
                 if let Some(k) = self.resolve_const_exp_scalar(b) {
-                    self.pow_const(pr, &a_src, &pr.typ, k, ideal);
+                    self.pow_const(var, &a_src, &var.typ, k, ideal);
                 } else {
-                    Self::uncovered_op("dynamic-pow", pr);
+                    Self::uncovered_op("dynamic-pow", var);
                 }
             }
         }
@@ -1927,10 +1927,10 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             let next_name = self.ns.next_name("pow_acc");
             let next_typ =
                 ATyp::lub_mul(acc.typ(), base.typ(), &Nothing).expect("pow_const: lub_mul");
-            let next_pref = self.sentinel_pref(&next_name, next_typ.clone(), ideal);
-            self.mul_op(&next_pref, &acc, base, &next_typ, ideal);
+            let next_var = self.sentinel_var(&next_name, next_typ.clone(), ideal);
+            self.mul_op(&next_var, &acc, base, &next_typ, ideal);
             acc = PolySource::new(
-                next_pref
+                next_var
                     .slots()
                     .into_iter()
                     .map(|s| Polynomial::var(&s))
@@ -1961,14 +1961,14 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         }
     }
 
-    /// Phase 13: link the user's Var `pr` to a witness Var `wit` slot by
-    /// slot, for when `pr` aliases a div/rem witness produced by
-    /// `div_witnesses`. Emits `var(pr[j]) − var(wit[j]) = 0` for every
-    /// `j < pr.typ.physical_len()`, and registers `pl[pr[j]] = var(wit[j])`.
-    fn link_to_witness(&mut self, pr: &Var, wit: &Var, ideal: &mut Ideal<C>) {
-        // Zip to min(pr slots, wit slots) — zip truncates to the shorter iterator.
-        // Excess pr slots stay unconstrained (opaque).
-        for (pf, wf) in pr.slots().into_iter().zip(wit.slots()) {
+    /// Phase 13: link the user's Var `var` to a witness Var `wit` slot by
+    /// slot, for when `var` aliases a div/rem witness produced by
+    /// `div_witnesses`. Emits `var(var[j]) − var(wit[j]) = 0` for every
+    /// `j < var.typ.physical_len()`, and registers `pl[var[j]] = var(wit[j])`.
+    fn link_to_witness(&mut self, var: &Var, wit: &Var, ideal: &mut Ideal<C>) {
+        // Zip to min(var slots, wit slots) — zip truncates to the shorter iterator.
+        // Excess var slots stay unconstrained (opaque).
+        for (pf, wf) in var.slots().into_iter().zip(wit.slots()) {
             let wvar = Polynomial::var(&wf);
             ideal.pl.insert(&pf, &wvar);
             ideal.generating_set.push(&wvar - &Polynomial::var(&pf));
@@ -2007,10 +2007,10 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         &mut self,
         p: &GOp<C>,
         xs: &GOp<C>,
-        prefs: &HashMap<Ref, Var>,
+        vars: &HashMap<Ref, Var>,
     ) -> Vec<Polynomial<C::F>> {
         let p_typ = p.typ();
-        let xs_polys = Self::ref_vars(xs, prefs);
+        let xs_polys = Self::ref_vars(xs, vars);
         let k = xs_polys.len();
         match &p_typ {
             ATyp::Uni(_) | ATyp::VPoly(1, _) => {
@@ -2019,7 +2019,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     "Evaluate on Uni/VPoly(1,_) requires at least 1 point; got {}",
                     k
                 );
-                let p_polys = Self::ref_vars(p, prefs);
+                let p_polys = Self::ref_vars(p, vars);
                 let one = Polynomial::<C::F>::lit(&C::F::one());
                 xs_polys
                     .iter()
@@ -2040,7 +2040,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     "Evaluate on VPoly requires at least 1 point; got {}",
                     k
                 );
-                let p_polys = Self::ref_vars(p, prefs);
+                let p_polys = Self::ref_vars(p, vars);
                 let all_k = multi_indices(*n, *mdeg);
                 let mono = |k_fixed: &[usize], xs_polys: &[Polynomial<C::F>]| -> Polynomial<C::F> {
                     let mut acc = Polynomial::<C::F>::lit(&C::F::one());
@@ -2084,7 +2084,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     "Evaluate on Mle requires at least 1 point; got {}",
                     k
                 );
-                let p_polys = Self::ref_vars(p, prefs);
+                let p_polys = Self::ref_vars(p, vars);
                 let all_b = hypercube(*n);
                 let one = Polynomial::<C::F>::lit(&C::F::one());
                 let eq = |bi: usize, x: &Polynomial<C::F>| -> Polynomial<C::F> {
@@ -2150,11 +2150,11 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         p: &GOp<C>,
         xs: &GOp<C>,
         target_typ: &ATyp,
-        prefs: &HashMap<Ref, Var>,
+        vars: &HashMap<Ref, Var>,
     ) -> Vec<Polynomial<C::F>> {
-        let polys = self.eval_to_poly(p, xs, prefs);
+        let polys = self.eval_to_poly(p, xs, vars);
         let raw_typ = {
-            let k = Self::ref_vars(xs, prefs).len();
+            let k = Self::ref_vars(xs, vars).len();
             match p.typ() {
                 ATyp::Mle(n) if k < n => ATyp::Mle(n - k),
                 ATyp::Mle(n) if k == n => ATyp::scalar(),
@@ -2181,12 +2181,12 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     /// After IR lowering, every child of a compound op is `Op::Ref` or
     /// `Op::Value`. This helper asserts the `Op::Ref` invariant and
     /// returns the slot variables for use in basis row construction.
-    fn ref_vars(op: &GOp<C>, prefs: &HashMap<Ref, Var>) -> Vec<Polynomial<C::F>> {
+    fn ref_vars(op: &GOp<C>, vars: &HashMap<Ref, Var>) -> Vec<Polynomial<C::F>> {
         match op {
             Op::Ref(v, typ) => {
-                let pf = prefs
+                let pf = vars
                     .get(v)
-                    .unwrap_or_else(|| panic!("ideal: ref {} not found in namespace prefs", v));
+                    .unwrap_or_else(|| panic!("ideal: ref {} not found in namespace vars", v));
                 debug_assert_eq!(
                     pf.typ, *typ,
                     "find_ref type mismatch: namespace has {:?} but Op::Ref says {:?}",
@@ -2209,88 +2209,88 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
 }
 
 impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
-    fn add_op(&mut self, pr: Var, op: GOp<C>, ideal: &mut Ideal<C>) {
+    fn add_op(&mut self, var: Var, op: GOp<C>, ideal: &mut Ideal<C>) {
         match op {
             Op::Ref(r, typ) => {
-                if pr.reference == r && pr.index.is_empty() && pr.typ == typ {
+                if var.reference == r && var.index.is_empty() && var.typ == typ {
                     return;
                 }
 
                 let ref_src: PolySource<C> =
-                    PolySource::from_ref_vars(&ideal.prefs, &Op::Ref(r, typ.clone()));
-                let lifted = ref_src.lift_to(&pr.typ);
-                for (pf, p) in pr.slots().into_iter().zip(lifted.polys) {
+                    PolySource::from_ref_vars(&ideal.vars, &Op::Ref(r, typ.clone()));
+                let lifted = ref_src.lift_to(&var.typ);
+                for (pf, p) in var.slots().into_iter().zip(lifted.polys) {
                     ideal.pl.insert(&pf, &p);
                     ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
             }
             Op::Bin(BinOp::Add, a, b, _) => {
-                let a_src = PolySource::from_ref_vars(&ideal.prefs, &a);
-                let b_src = PolySource::from_ref_vars(&ideal.prefs, &b);
-                self.broadcast_binop(&pr, &a_src, &b_src, &pr.typ, BinOp::Add, ideal);
+                let a_src = PolySource::from_ref_vars(&ideal.vars, &a);
+                let b_src = PolySource::from_ref_vars(&ideal.vars, &b);
+                self.broadcast_binop(&var, &a_src, &b_src, &var.typ, BinOp::Add, ideal);
             }
             Op::Bin(BinOp::And, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&ideal.prefs, a);
-                let b_src = PolySource::from_ref_vars(&ideal.prefs, b);
-                self.mul_op(&pr, &a_src, &b_src, &pr.typ, ideal);
+                let a_src = PolySource::from_ref_vars(&ideal.vars, a);
+                let b_src = PolySource::from_ref_vars(&ideal.vars, b);
+                self.mul_op(&var, &a_src, &b_src, &var.typ, ideal);
             }
             Op::Bin(BinOp::Sub, a, b, _) => {
-                let a_src = PolySource::from_ref_vars(&ideal.prefs, &a);
-                let b_src = PolySource::from_ref_vars(&ideal.prefs, &b);
-                self.broadcast_binop(&pr, &a_src, &b_src, &pr.typ, BinOp::Sub, ideal);
+                let a_src = PolySource::from_ref_vars(&ideal.vars, &a);
+                let b_src = PolySource::from_ref_vars(&ideal.vars, &b);
+                self.broadcast_binop(&var, &a_src, &b_src, &var.typ, BinOp::Sub, ideal);
             }
             Op::Bin(BinOp::Mul, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&ideal.prefs, a);
-                let b_src = PolySource::from_ref_vars(&ideal.prefs, b);
-                self.mul_op(&pr, &a_src, &b_src, &pr.typ, ideal);
+                let a_src = PolySource::from_ref_vars(&ideal.vars, a);
+                let b_src = PolySource::from_ref_vars(&ideal.vars, b);
+                self.mul_op(&var, &a_src, &b_src, &var.typ, ideal);
             }
             Op::Bin(BinOp::Dot, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&ideal.prefs, a);
-                let b_src = PolySource::from_ref_vars(&ideal.prefs, b);
-                self.dot_op(&pr, &a_src, &b_src, ideal);
+                let a_src = PolySource::from_ref_vars(&ideal.vars, a);
+                let b_src = PolySource::from_ref_vars(&ideal.vars, b);
+                self.dot_op(&var, &a_src, &b_src, ideal);
             }
             Op::Bin(BinOp::Div, ref a, ref b, _) => {
                 if let Some(cofactor) = self.exact_division_cofactor(a, b) {
-                    let cof_src = PolySource::from_ref_vars(&ideal.prefs, &cofactor);
-                    let lifted = cof_src.lift_to(&pr.typ);
-                    for (pf, p) in pr.slots().into_iter().zip(lifted.polys) {
+                    let cof_src = PolySource::from_ref_vars(&ideal.vars, &cofactor);
+                    let lifted = cof_src.lift_to(&var.typ);
+                    for (pf, p) in var.slots().into_iter().zip(lifted.polys) {
                         ideal.pl.insert(&pf, &p);
                         ideal.generating_set.push(p - Polynomial::var(&pf));
                     }
                 } else {
-                    let a_src = PolySource::from_ref_vars(&ideal.prefs, a);
-                    let b_src = PolySource::from_ref_vars(&ideal.prefs, b);
-                    self.div_rem_op(&pr, &a_src, &b_src, false, true, ideal);
+                    let a_src = PolySource::from_ref_vars(&ideal.vars, a);
+                    let b_src = PolySource::from_ref_vars(&ideal.vars, b);
+                    self.div_rem_op(&var, &a_src, &b_src, false, true, ideal);
                 }
             }
             Op::Bin(BinOp::Rem, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&ideal.prefs, a);
-                let b_src = PolySource::from_ref_vars(&ideal.prefs, b);
-                self.div_rem_op(&pr, &a_src, &b_src, true, true, ideal);
+                let a_src = PolySource::from_ref_vars(&ideal.vars, a);
+                let b_src = PolySource::from_ref_vars(&ideal.vars, b);
+                self.div_rem_op(&var, &a_src, &b_src, true, true, ideal);
             }
             Op::Bin(BinOp::Equ, a, b, _) => {
-                let a_src = PolySource::from_ref_vars(&ideal.prefs, &a);
-                let b_src = PolySource::from_ref_vars(&ideal.prefs, &b);
-                self.broadcast_equ(&pr, &a_src, &b_src, ideal);
+                let a_src = PolySource::from_ref_vars(&ideal.vars, &a);
+                let b_src = PolySource::from_ref_vars(&ideal.vars, &b);
+                self.broadcast_equ(&var, &a_src, &b_src, ideal);
             }
-            Op::Check(a) => self.add_op(pr, a.get().clone(), ideal),
+            Op::Check(a) => self.add_op(var, a.get().clone(), ideal),
             Op::Challenge(_, _) | Op::Random(_, _) => {}
             Op::Interpolate(ref points, ref evals) => {
-                self.interpolate_op(pr, points, evals, ideal);
+                self.interpolate_op(var, points, evals, ideal);
             }
-            // Op::Ifft(v): p = ifft(v) — inverse DFT. The coefficient form `pr`
+            // Op::Ifft(v): p = ifft(v) — inverse DFT. The coefficient form `var`
             // is the IDFT of the evaluation form `a`. Each coefficient is:
             //   p[j] = (1/N) · Σ_i ω^{-i·j} · v[i]
             // where ω is a primitive N-th root of unity. The type checker
             // guarantees N is a 2-adic divisor of |F|-1, so ω always exists.
             Op::Ifft(ref a) => {
-                let v_polys = Self::ref_vars(a, &ideal.prefs);
+                let v_polys = Self::ref_vars(a, &ideal.vars);
                 let n = v_polys.len();
                 let omega = C::F::get_root_of_unity(n as u64)
                     .expect("IFFT size must have a root of unity; type checker guarantees this");
                 let omega_inv = omega.inverse().unwrap();
                 let n_inv = C::F::from(n as u64).inverse().unwrap();
-                let pr_slots = pr.slots();
+                let pr_slots = var.slots();
                 for (j, pf) in pr_slots.iter().enumerate() {
                     let idft_j = dft_row::<C>(&v_polys, omega_inv, j);
                     let lhs = &idft_j * &Polynomial::lit(&n_inv);
@@ -2302,40 +2302,40 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             //   v[i] = Σ_j ω^{i·j} · p[j]
             // The type checker guarantees N is a 2-adic divisor of |F|-1.
             Op::Fft(ref a) => {
-                let coeff_polys = Self::ref_vars(a, &ideal.prefs);
+                let coeff_polys = Self::ref_vars(a, &ideal.vars);
                 let n = coeff_polys.len();
                 let omega = C::F::get_root_of_unity(n as u64)
                     .expect("FFT size must have a root of unity; type checker guarantees this");
-                let pr_slots = pr.slots();
+                let pr_slots = var.slots();
                 for (i, pf) in pr_slots.iter().enumerate() {
                     let lhs = dft_row::<C>(&coeff_polys, omega, i);
                     ideal.pl.insert(pf, &lhs);
                     ideal.generating_set.push(&lhs - &Polynomial::var(pf));
                 }
             }
-            // Op::Poly / Op::Mle / Op::Coef: bind the i-th Var slot of `pr`
+            // Op::Poly / Op::Mle / Op::Coef: bind the i-th Var slot of `var`
             // to the i-th scalar poly read from `inner` by `ref_vars`. These
             // three share identity semantics on coefficients / evaluations —
-            // only the slot-count / enumeration of `pr.typ` differs, and that
+            // only the slot-count / enumeration of `var.typ` differs, and that
             // is driven entirely by the input's shape (ref_vars already returns
             // the right number of polys). Basis-change between coefficient
             // and evaluation form happens in later phases (Eval / Bin on
             // mixed polynomial types).
             Op::Poly(ref inner) | Op::Mle(ref inner) | Op::Coef(ref inner) => {
-                let polys = Self::ref_vars(inner, &ideal.prefs);
+                let polys = Self::ref_vars(inner, &ideal.vars);
                 debug_assert!(
                     !polys.is_empty(),
                     "Op::Poly/Mle/Coef produced zero polys for {:?}",
-                    pr.typ
+                    var.typ
                 );
-                for (pf, p) in pr.slots().into_iter().zip(polys) {
+                for (pf, p) in var.slots().into_iter().zip(polys) {
                     ideal.pl.insert(&pf, &p);
                     ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
             }
             Op::Vec(vs) => {
                 for (i, v) in vs.into_iter().enumerate() {
-                    let pr_i = pr.with_index(i).unwrap();
+                    let pr_i = var.with_index(i).unwrap();
                     self.add_op(pr_i, v.get().clone(), ideal);
                 }
             }
@@ -2361,50 +2361,50 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             // The type checker guarantees xs is non-empty and p has a supported
             // polynomial type; unsupported shapes are unreachable.
             Op::Evaluate(ref p, None, Some(ref xs)) => {
-                let polys = self.eval_to_poly_as(p, xs, &pr.typ, &ideal.prefs);
-                for (pf, poly) in pr.slots().into_iter().zip(polys) {
+                let polys = self.eval_to_poly_as(p, xs, &var.typ, &ideal.vars);
+                for (pf, poly) in var.slots().into_iter().zip(polys) {
                     ideal.pl.insert(&pf, &poly);
                     ideal.generating_set.push(poly - Polynomial::var(&pf));
                 }
             }
             Op::Evaluate(ref p, Some(range), Some(ref fixed)) => {
-                match self.selected_eval_to_poly(p, &range, fixed, &ideal.prefs) {
+                match self.selected_eval_to_poly(p, &range, fixed, &ideal.vars) {
                     Some(polys) => {
-                        for (pf, poly) in pr.slots().into_iter().zip(polys) {
+                        for (pf, poly) in var.slots().into_iter().zip(polys) {
                             ideal.pl.insert(&pf, &poly);
                             ideal.generating_set.push(poly - Polynomial::var(&pf));
                         }
                     }
-                    None => Self::uncovered_op("selected-evaluate", &pr),
+                    None => Self::uncovered_op("selected-evaluate", &var),
                 }
             }
             Op::Evaluate(ref p, None, None) => {
-                let coeff_polys = Self::ref_vars(p, &ideal.prefs);
+                let coeff_polys = Self::ref_vars(p, &ideal.vars);
                 let n = coeff_polys.len();
                 let omega = C::F::get_root_of_unity(n as u64).expect(
                     "Evaluate grid size must have a root of unity; type checker guarantees this",
                 );
-                for (i, pf) in pr.slots().into_iter().enumerate() {
+                for (i, pf) in var.slots().into_iter().enumerate() {
                     let lhs = dft_row::<C>(&coeff_polys, omega, i);
                     ideal.pl.insert(&pf, &lhs);
                     ideal.generating_set.push(&lhs - &Polynomial::var(&pf));
                 }
             }
             Op::Evaluate(_, Some(_), None) => {
-                Self::uncovered_op("selected-evaluate-missing-points", &pr);
+                Self::uncovered_op("selected-evaluate-missing-points", &var);
             }
-            Op::Map(ref domain, ref body) => self.map_to_poly(pr, domain, body, &[], &[], ideal),
+            Op::Map(ref domain, ref body) => self.map_to_poly(var, domain, body, &[], &[], ideal),
             Op::ReduceMap(rop, ref domain, ref body) => {
-                self.reduce_map_to_poly(pr, rop, domain, body, &[], &[], ideal)
+                self.reduce_map_to_poly(var, rop, domain, body, &[], &[], ideal)
             }
-            Op::LoopParam(_, _) => Self::uncovered_op("loop-param", &pr),
+            Op::LoopParam(_, _) => Self::uncovered_op("loop-param", &var),
             // Phase 10: `Op::Reduce(op, v)` — left-fold of vector elements.
             // See `reduce_op` for per-operator handling.
             Op::Reduce(rop, ref v) => {
-                self.reduce_op(pr, rop, v, ideal);
+                self.reduce_op(var, rop, v, ideal);
             }
             // Phase 10: `Op::Value(lit)` — pattern-match on the `Value`
-            // variant via `to_poly_value`, then bind each slot of `pr` to
+            // variant via `to_poly_value`, then bind each slot of `var` to
             // the corresponding literal polynomial. This lets literal
             // constants act as real polynomials in the basis (e.g.
             // `let c = 7; verify(x == c)` folds without needing an
@@ -2431,13 +2431,13 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 };
                 match polys_opt {
                     Some(polys) => {
-                        for (pf, p) in pr.slots().into_iter().zip(polys) {
+                        for (pf, p) in var.slots().into_iter().zip(polys) {
                             ideal.pl.insert(&pf, &p);
                             ideal.generating_set.push(p - Polynomial::var(&pf));
                         }
                     }
                     None => {
-                        Self::uncovered_op("unsupported-value", &pr);
+                        Self::uncovered_op("unsupported-value", &var);
                     }
                 }
             }
@@ -2454,15 +2454,15 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                             std::mem::discriminant(a.get())
                         )
                     };
-                    let array_pref = ideal.find_ref(r);
-                    let Some(elem_pref) = array_pref.with_index(*i) else {
+                    let array_var = ideal.find_ref(r);
+                    let Some(elem_var) = array_var.with_index(*i) else {
                         unreachable!(
                             "Ram operand with literal index must be within bound; Got {:?}",
                             *i
                         )
                     };
 
-                    for (pf, e) in pr.slots().into_iter().zip(elem_pref.slots()) {
+                    for (pf, e) in var.slots().into_iter().zip(elem_var.slots()) {
                         let e_poly = Polynomial::var(&e);
                         ideal
                             .generating_set
@@ -2477,11 +2477,11 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                             std::mem::discriminant(a.get())
                         )
                     };
-                    let array_pref = ideal.find_ref(r);
+                    let array_var = ideal.find_ref(r);
                     for (j, idx) in vs.iter().enumerate() {
-                        let src_pref = array_pref.with_index(*idx).unwrap();
-                        let dst_pref = pr.with_index(j).unwrap();
-                        for (pf, e) in dst_pref.slots().into_iter().zip(src_pref.slots()) {
+                        let src_var = array_var.with_index(*idx).unwrap();
+                        let dst_var = var.with_index(j).unwrap();
+                        for (pf, e) in dst_var.slots().into_iter().zip(src_var.slots()) {
                             let e_poly = Polynomial::var(&e);
                             ideal
                                 .generating_set
@@ -2491,22 +2491,22 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     }
                 }
                 _ => {
-                    Self::uncovered_op("dynamic-ram", &pr);
+                    Self::uncovered_op("dynamic-ram", &var);
                 }
             },
             // Phase 12: `Op::Pair(a, b, t)` — bilinear pairing.
             // For each slot position, the ideal is bound to the
             // exponent-space product:
             //
-            //   var(pr[i]) = var(a[i]) · var(b[i])
+            //   var(var[i]) = var(a[i]) · var(b[i])
             //
             // Matching pair expressions on both sides of a `verify(lhs == rhs)`
             // cancel under Buchberger because their basis rows are identical
             // F-polynomials.
             Op::Pair(ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&ideal.prefs, a.get());
-                let b_src = PolySource::from_ref_vars(&ideal.prefs, b.get());
-                self.pair_op(&pr, &a_src, &b_src, ideal);
+                let a_src = PolySource::from_ref_vars(&ideal.vars, a.get());
+                let b_src = PolySource::from_ref_vars(&ideal.vars, b.get());
+                self.pair_op(&var, &a_src, &b_src, ideal);
             }
             // `Op::Record(fields)` — field-slot-aware layout.
             // Physical slots are laid out in Ctx iteration order: each
@@ -2514,7 +2514,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             // For each field, emit basis rows linking record slots to
             // the field's polynomial values.
             Op::Record(ref fields) => {
-                let pr_len = pr.typ.physical_len();
+                let pr_len = var.typ.physical_len();
                 if pr_len > MAX_IDEAL_MATERIALIZED_SLOTS {
                     panic!(
                         "ideal: Record has {} physical slots, above materialization limit {}",
@@ -2523,9 +2523,9 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 }
                 let mut slot_offset = 0usize;
                 for (_, field_op) in fields.iter() {
-                    let field_polys = Self::ref_vars(field_op.get(), &ideal.prefs);
+                    let field_polys = Self::ref_vars(field_op.get(), &ideal.vars);
                     for (j, p) in field_polys.into_iter().enumerate() {
-                        let pf = pr
+                        let pf = var
                             .clone()
                             .with_slot(slot_offset + j)
                             .expect("record field slot must be within record physical layout");
@@ -2538,12 +2538,12 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             // Concat/Pow/Marginalize/Proj require explicit ideal treatment;
             // unsupported shapes fail instead of becoming hidden op state.
             Op::Bin(BinOp::Concat, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&ideal.prefs, a);
-                let b_src = PolySource::from_ref_vars(&ideal.prefs, b);
-                self.concat_op(&pr, &a_src, &b_src, a, b, ideal);
+                let a_src = PolySource::from_ref_vars(&ideal.vars, a);
+                let b_src = PolySource::from_ref_vars(&ideal.vars, b);
+                self.concat_op(&var, &a_src, &b_src, a, b, ideal);
             }
             Op::Bin(BinOp::Pow, ref a, ref b, _) => {
-                self.pow_op(&pr, a, b, ideal);
+                self.pow_op(&var, a, b, ideal);
             }
             // `Op::Proj(inner, field, typ)` — extract a field from a Record.
             // The field's physical slots sit at an offset within the Record's
@@ -2555,11 +2555,11 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             // Proj must operate on a Record; any other variant is a compiler bug.
             Op::Proj(ref inner, ref field, ref _typ) => {
                 let inner_typ = inner.typ();
-                let inner_polys = Self::ref_vars(inner, &ideal.prefs);
+                let inner_polys = Self::ref_vars(inner, &ideal.vars);
                 match &inner_typ {
                     ATyp::Record(fields) => {
                         let offset = Self::record_field_offset(fields, field);
-                        let pr_slots = pr.slots();
+                        let pr_slots = var.slots();
                         for (j, pf) in pr_slots.iter().enumerate() {
                             ideal.pl.insert(pf, &inner_polys[offset + j]);
                             ideal
@@ -2584,7 +2584,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     /// `L_i(X) = Π_{j≠i} (X - x_j) / (x_i - x_j)`.
     ///
     /// For each coefficient slot `k` of the ideal `Uni(n)`:
-    ///   `var(pr[k]) = Σ_i var(y_i) · L[i][k]`
+    ///   `var(var[k]) = Σ_i var(y_i) · L[i][k]`
     ///
     /// When `points` is `Op::Value`, the constant values are extracted
     /// directly via `to_poly_value`. When `points` is `Op::Ref`, the
@@ -2593,15 +2593,15 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     /// constant bindings are already available there.
     ///
     /// Falls back to opaque if the point values aren't all constant.
-    fn interpolate_op(&mut self, pr: Var, points: &HOp<C>, evals: &HOp<C>, ideal: &mut Ideal<C>) {
-        let evals_polys = Self::ref_vars(evals, &ideal.prefs);
+    fn interpolate_op(&mut self, var: Var, points: &HOp<C>, evals: &HOp<C>, ideal: &mut Ideal<C>) {
+        let evals_polys = Self::ref_vars(evals, &ideal.vars);
         let n = evals_polys.len();
 
         let xs_polys: Vec<Polynomial<C::F>> = match points.get() {
             Op::Value(v) => Self::to_poly_value(v),
             Op::Ref(r, _) => {
-                let points_pref = ideal.find_ref(r);
-                points_pref
+                let points_var = ideal.find_ref(r);
+                points_var
                     .slots()
                     .iter()
                     .map(|s| ideal.pl.get(s).cloned().unwrap_or_else(Polynomial::zero))
@@ -2628,12 +2628,12 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             for i in 0..xs.len() {
                 for j in (i + 1)..xs.len() {
                     if xs[i] == xs[j] {
-                        Self::uncovered_op("duplicate-interpolate-points", &pr);
+                        Self::uncovered_op("duplicate-interpolate-points", &var);
                     }
                 }
             }
             let lag = lagrange_basis::<C::F>(&xs);
-            let pr_slots = pr.slots();
+            let pr_slots = var.slots();
             for (k, pf) in pr_slots.iter().enumerate() {
                 let mut acc = Polynomial::<C::F>::zero();
                 for (i, y_i) in evals_polys.iter().enumerate() {
@@ -2650,7 +2650,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 for j in (i + 1)..xs_polys.len() {
                     let diff = &xs_polys[i] - &xs_polys[j];
                     if diff.is_zero() {
-                        Self::uncovered_op("duplicate-interpolate-points", &pr);
+                        Self::uncovered_op("duplicate-interpolate-points", &var);
                     }
                 }
             }
@@ -2667,7 +2667,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                         continue;
                     }
                     let d_name = self.ns.next_name("interp_inv");
-                    let d = self.sentinel_pref(&d_name, ATyp::scalar(), ideal);
+                    let d = self.sentinel_var(&d_name, ATyp::scalar(), ideal);
                     ideal
                         .generating_set
                         .push(Polynomial::var(&d) * diff - Polynomial::<C::F>::lit(&C::F::one()));
@@ -2675,7 +2675,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 }
             }
 
-            let pr_slots = pr.slots();
+            let pr_slots = var.slots();
             let mut ideal_polys = vec![Polynomial::<C::F>::zero(); pr_slots.len()];
 
             for (i, y_i) in evals_polys.iter().enumerate() {
@@ -2750,7 +2750,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     ///   in `add_op` which sees a single exponent directly.
     ///
     /// - **Dot**: unreachable (type checker rejects `reduce(dot, _)`).
-    fn reduce_op(&mut self, pr: Var, rop: BinOp, v: &HOp<C>, ideal: &mut Ideal<C>) {
+    fn reduce_op(&mut self, var: Var, rop: BinOp, v: &HOp<C>, ideal: &mut Ideal<C>) {
         let v_typ = v.typ();
         let (elem_t, n) = match &v_typ {
             ATyp::Vec(box e, n) => (e.clone(), *n),
@@ -2764,13 +2764,13 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     std::mem::discriminant(v.get())
                 )
             };
-            let v_pref = ideal.find_ref(r);
-            let elem_pref = v_pref.with_index(0).unwrap();
-            self.link_to_witness(&pr, &elem_pref, ideal);
+            let v_var = ideal.find_ref(r);
+            let elem_var = v_var.with_index(0).unwrap();
+            self.link_to_witness(&var, &elem_var, ideal);
             return;
         }
 
-        let v_src = PolySource::from_ref_vars(&ideal.prefs, v);
+        let v_src = PolySource::from_ref_vars(&ideal.vars, v);
 
         match rop {
             BinOp::Add => {
@@ -2787,7 +2787,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                         *p = &*p + &lifted.polys[j];
                     }
                 }
-                for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
+                for (pf, p) in var.slots().into_iter().zip(acc.polys) {
                     ideal.pl.insert(&pf, &p);
                     ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
@@ -2797,10 +2797,10 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 for i in 1..n {
                     let elem = v_src.at_index(i).unwrap();
                     let acc_name = self.ns.next_name("reduce_and_acc");
-                    let acc_pref = self.sentinel_pref(&acc_name, elem_t.clone(), ideal);
-                    self.mul_op(&acc_pref, &acc, &elem, &elem_t, ideal);
+                    let acc_var = self.sentinel_var(&acc_name, elem_t.clone(), ideal);
+                    self.mul_op(&acc_var, &acc, &elem, &elem_t, ideal);
                     acc = PolySource::new(
-                        acc_pref
+                        acc_var
                             .slots()
                             .into_iter()
                             .map(|s| Polynomial::var(&s))
@@ -2808,7 +2808,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                         elem_t.clone(),
                     );
                 }
-                for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
+                for (pf, p) in var.slots().into_iter().zip(acc.polys) {
                     ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
             }
@@ -2821,7 +2821,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                         *p = &*p - &lifted.polys[j];
                     }
                 }
-                for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
+                for (pf, p) in var.slots().into_iter().zip(acc.polys) {
                     ideal.pl.insert(&pf, &p);
                     ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
@@ -2834,19 +2834,19 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     let step_typ = ATyp::lub_mul(&acc_typ, elem.typ(), &Nothing)
                         .expect("reduce(*): type checker guarantees lub_mul");
                     let is_last = i == n - 1;
-                    let acc_pref = if is_last {
-                        pr.clone()
+                    let acc_var = if is_last {
+                        var.clone()
                     } else {
                         let acc_name = self.ns.next_name("reduce_mul_acc");
-                        self.sentinel_pref(&acc_name, step_typ.clone(), ideal)
+                        self.sentinel_var(&acc_name, step_typ.clone(), ideal)
                     };
-                    self.mul_op(&acc_pref, &acc, &elem, &step_typ, ideal);
-                    acc = PolySource::from_pref_vars(&acc_pref, step_typ.clone());
+                    self.mul_op(&acc_var, &acc, &elem, &step_typ, ideal);
+                    acc = PolySource::from_vars(&acc_var, step_typ.clone());
                     acc_typ = step_typ;
                 }
             }
             BinOp::Concat => {
-                for (pf, p) in pr.slots().into_iter().zip(v_src.polys) {
+                for (pf, p) in var.slots().into_iter().zip(v_src.polys) {
                     ideal.pl.insert(&pf, &p);
                     ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
@@ -2868,26 +2868,26 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     let step_typ = ATyp::lub_op(rop, &acc_typ, elem_src.typ(), &Nothing)
                         .expect("reduce(/,%): type checker guarantees lub");
                     let target = if is_last {
-                        pr.clone()
+                        var.clone()
                     } else {
                         let acc_name = self.ns.next_name(if is_rem {
                             "reduce_rem_acc"
                         } else {
                             "reduce_div_acc"
                         });
-                        self.sentinel_pref(&acc_name, step_typ.clone(), ideal)
+                        self.sentinel_var(&acc_name, step_typ.clone(), ideal)
                     };
                     if is_poly {
                         self.div_rem_op(&target, &acc_src, &elem_src, is_rem, false, ideal);
                     } else {
                         self.slot_wise_div(&target, acc_src.polys(), elem_src.polys(), ideal);
                     }
-                    acc_src = PolySource::from_pref_vars(&target, step_typ.clone());
+                    acc_src = PolySource::from_vars(&target, step_typ.clone());
                     acc_typ = step_typ;
                 }
             }
             BinOp::Equ | BinOp::Pow => {
-                Self::uncovered_op("reduce-equ-or-pow", &pr);
+                Self::uncovered_op("reduce-equ-or-pow", &var);
             }
             BinOp::Dot => {
                 unreachable!("reduce(dot, _) is rejected by the type checker");
@@ -2898,10 +2898,10 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
 
 impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     /// Shared fold for `Op::Reduce` and `Op::ReduceMap`: combine the `n`
-    /// elements of `v_src` (each of type `elem_t`) under `rop`, binding `pr`.
+    /// elements of `v_src` (each of type `elem_t`) under `rop`, binding `var`.
     fn reduce_polysource(
         &mut self,
-        pr: Var,
+        var: Var,
         rop: BinOp,
         v_src: PolySource<C>,
         elem_t: ATyp,
@@ -2923,7 +2923,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                         *p = &*p + &lifted.polys[j];
                     }
                 }
-                for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
+                for (pf, p) in var.slots().into_iter().zip(acc.polys) {
                     ideal.pl.insert(&pf, &p);
                     ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
@@ -2933,10 +2933,10 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 for i in 1..n {
                     let elem = v_src.at_index(i).unwrap();
                     let acc_name = self.ns.next_name("reduce_and_acc");
-                    let acc_pref = self.sentinel_pref(&acc_name, elem_t.clone(), ideal);
-                    self.mul_op(&acc_pref, &acc, &elem, &elem_t, ideal);
+                    let acc_var = self.sentinel_var(&acc_name, elem_t.clone(), ideal);
+                    self.mul_op(&acc_var, &acc, &elem, &elem_t, ideal);
                     acc = PolySource::new(
-                        acc_pref
+                        acc_var
                             .slots()
                             .into_iter()
                             .map(|s| Polynomial::var(&s))
@@ -2944,7 +2944,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                         elem_t.clone(),
                     );
                 }
-                for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
+                for (pf, p) in var.slots().into_iter().zip(acc.polys) {
                     ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
             }
@@ -2957,7 +2957,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                         *p = &*p - &lifted.polys[j];
                     }
                 }
-                for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
+                for (pf, p) in var.slots().into_iter().zip(acc.polys) {
                     ideal.pl.insert(&pf, &p);
                     ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
@@ -2970,19 +2970,19 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     let step_typ = ATyp::lub_mul(&acc_typ, elem.typ(), &Nothing)
                         .expect("reduce(*): type checker guarantees lub_mul");
                     let is_last = i == n - 1;
-                    let acc_pref = if is_last {
-                        pr.clone()
+                    let acc_var = if is_last {
+                        var.clone()
                     } else {
                         let acc_name = self.ns.next_name("reduce_mul_acc");
-                        self.sentinel_pref(&acc_name, step_typ.clone(), ideal)
+                        self.sentinel_var(&acc_name, step_typ.clone(), ideal)
                     };
-                    self.mul_op(&acc_pref, &acc, &elem, &step_typ, ideal);
-                    acc = PolySource::from_pref_vars(&acc_pref, step_typ.clone());
+                    self.mul_op(&acc_var, &acc, &elem, &step_typ, ideal);
+                    acc = PolySource::from_vars(&acc_var, step_typ.clone());
                     acc_typ = step_typ;
                 }
             }
             BinOp::Concat => {
-                for (pf, p) in pr.slots().into_iter().zip(v_src.polys) {
+                for (pf, p) in var.slots().into_iter().zip(v_src.polys) {
                     ideal.pl.insert(&pf, &p);
                     ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
@@ -2994,14 +2994,14 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 for step in 0..n - 1 {
                     let is_last = step == n - 2;
                     let target = if is_last {
-                        pr.clone()
+                        var.clone()
                     } else {
                         let acc_name = self.ns.next_name(if is_rem {
                             "reduce_rem_acc"
                         } else {
                             "reduce_div_acc"
                         });
-                        self.sentinel_pref(&acc_name, elem_t.clone(), ideal)
+                        self.sentinel_var(&acc_name, elem_t.clone(), ideal)
                     };
                     let elem_src = v_src.at_index(step + 1).unwrap();
                     if is_poly {
@@ -3033,7 +3033,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 }
             }
             BinOp::Equ | BinOp::Pow => {
-                Self::uncovered_op("reduce-equ-or-pow", &pr);
+                Self::uncovered_op("reduce-equ-or-pow", &var);
             }
             BinOp::Dot => {
                 unreachable!("reduce(dot, _) is rejected by the type checker");
@@ -3049,16 +3049,16 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         p: &GOp<C>,
         range: &lang::typ::CRange,
         fixed: &GOp<C>,
-        prefs: &HashMap<Ref, Var>,
+        vars: &HashMap<Ref, Var>,
     ) -> Option<Vec<Polynomial<C::F>>> {
         if range.step != 1 || range.len() != 1 {
             return None;
         }
 
-        let fixed_polys = Self::ref_vars(fixed, prefs);
+        let fixed_polys = Self::ref_vars(fixed, vars);
         match p.typ() {
             ATyp::VPoly(n, d) if range.end <= n && fixed_polys.len() == n.saturating_sub(1) => {
-                let p_polys = Self::ref_vars(p, prefs);
+                let p_polys = Self::ref_vars(p, vars);
                 let all_indices = multi_indices(n, d);
                 let mut out = vec![Polynomial::<C::F>::zero(); d + 1];
 
@@ -3082,7 +3082,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 Some(out)
             }
             ATyp::Mle(n) if range.end <= n && fixed_polys.len() == n.saturating_sub(1) => {
-                let p_polys = Self::ref_vars(p, prefs);
+                let p_polys = Self::ref_vars(p, vars);
                 let all_b = hypercube(n);
                 let one = Polynomial::<C::F>::lit(&C::F::one());
                 let eq = |bi: usize, x: &Polynomial<C::F>| -> Polynomial<C::F> {
@@ -3134,7 +3134,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     }
 
     /// Materialize an inline Map/ReduceMap body op-tree into registered
-    /// sentinel PRefs and return the Var bound to its ideal.
+    /// sentinel Vars and return the Var bound to its ideal.
     fn body_to_poly(
         &mut self,
         body: &HOp<C>,
@@ -3147,21 +3147,21 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             Op::LoopParam(level, _) => loops.get(*level).cloned(),
             Op::Value(_) => {
                 let name = self.ns.next_name("gb_map_body");
-                let pf = self.sentinel_pref(&name, body.typ(), ideal);
+                let pf = self.sentinel_var(&name, body.typ(), ideal);
                 ideal.register(&pf);
                 self.add_op(pf.clone(), body.get().clone(), ideal);
                 Some(pf)
             }
             Op::Map(d, b) => {
                 let name = self.ns.next_name("gb_map_body");
-                let pf = self.sentinel_pref(&name, body.typ(), ideal);
+                let pf = self.sentinel_var(&name, body.typ(), ideal);
                 ideal.register(&pf);
                 self.map_to_poly(pf.clone(), d, b, loops, loop_vals, ideal);
                 Some(pf)
             }
             Op::ReduceMap(rop, d, b) => {
                 let name = self.ns.next_name("gb_map_body");
-                let pf = self.sentinel_pref(&name, body.typ(), ideal);
+                let pf = self.sentinel_var(&name, body.typ(), ideal);
                 ideal.register(&pf);
                 self.reduce_map_to_poly(pf.clone(), *rop, d, b, loops, loop_vals, ideal);
                 Some(pf)
@@ -3169,14 +3169,14 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             _ => {
                 if let Some(v) = self.const_eval_int(body, loop_vals) {
                     let name = self.ns.next_name("gb_map_body");
-                    let pf = self.sentinel_pref(&name, body.typ(), ideal);
+                    let pf = self.sentinel_var(&name, body.typ(), ideal);
                     ideal.register(&pf);
                     self.add_op(pf.clone(), Op::Value(v), ideal);
                     return Some(pf);
                 }
                 let rebuilt = self.rebuild_body_op(body, loops, loop_vals, ideal)?;
                 let name = self.ns.next_name("gb_map_body");
-                let pf = self.sentinel_pref(&name, body.typ(), ideal);
+                let pf = self.sentinel_var(&name, body.typ(), ideal);
                 ideal.register(&pf);
                 self.add_op(pf.clone(), rebuilt, ideal);
                 Some(pf)
@@ -3266,7 +3266,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         })
     }
 
-    /// Explode a domain `v: [F; n]` into `n` registered element PRefs.
+    /// Explode a domain `v: [F; n]` into `n` registered element Vars.
     fn explode_domain(
         &mut self,
         domain: &HOp<C>,
@@ -3283,7 +3283,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             _ => vec![None; n],
         };
         let src: PolySource<C> = match domain.get() {
-            Op::Ref(_, _) | Op::Value(_) => PolySource::from_ref_vars(&ideal.prefs, domain.get()),
+            Op::Ref(_, _) | Op::Value(_) => PolySource::from_ref_vars(&ideal.vars, domain.get()),
             _ => {
                 let dp = self.body_to_poly(domain, loops, loop_vals, ideal)?;
                 PolySource::new(
@@ -3299,7 +3299,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         for i in 0..n {
             let es = src.at_index(i)?;
             let name = self.ns.next_name("gb_map_elem");
-            let elem_pf = self.sentinel_pref(&name, elem_t.clone(), ideal);
+            let elem_pf = self.sentinel_var(&name, elem_t.clone(), ideal);
             ideal.register(&elem_pf);
             for (slot, poly) in elem_pf.slots().into_iter().zip(es.polys) {
                 ideal.pl.insert(&slot, &poly);
@@ -3314,7 +3314,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     /// link ideal slot `i` to the body's output for element `i`.
     fn map_to_poly(
         &mut self,
-        pr: Var,
+        var: Var,
         domain: &HOp<C>,
         body: &HOp<C>,
         parent_loops: &[Var],
@@ -3323,7 +3323,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     ) {
         let elems = match self.explode_domain(domain, parent_loops, parent_vals, ideal) {
             Some(e) => e,
-            None => Self::uncovered_op("map-domain", &pr),
+            None => Self::uncovered_op("map-domain", &var),
         };
         for (i, (elem, elem_val)) in elems.iter().enumerate() {
             let mut loops = parent_loops.to_vec();
@@ -3331,8 +3331,8 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             let mut vals = parent_vals.to_vec();
             vals.push(elem_val.clone());
             match self.body_to_poly(body, &loops, &vals, ideal) {
-                Some(vi) => self.link_to_witness(&pr.with_index(i).unwrap(), &vi, ideal),
-                None => Self::uncovered_op("map-body", &pr),
+                Some(vi) => self.link_to_witness(&var.with_index(i).unwrap(), &vi, ideal),
+                None => Self::uncovered_op("map-body", &var),
             }
         }
     }
@@ -3342,7 +3342,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     #[allow(clippy::too_many_arguments)]
     fn reduce_map_to_poly(
         &mut self,
-        pr: Var,
+        var: Var,
         rop: BinOp,
         domain: &HOp<C>,
         body: &HOp<C>,
@@ -3352,11 +3352,11 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     ) {
         let elems = match self.explode_domain(domain, parent_loops, parent_vals, ideal) {
             Some(e) => e,
-            None => Self::uncovered_op("reduce-map-domain", &pr),
+            None => Self::uncovered_op("reduce-map-domain", &var),
         };
         let n = elems.len();
         if n == 0 {
-            Self::uncovered_op("reduce-map-empty", &pr);
+            Self::uncovered_op("reduce-map-empty", &var);
         }
         let mut mapped: Vec<Var> = Vec::with_capacity(n);
         for (elem, elem_val) in elems.iter() {
@@ -3366,11 +3366,11 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             vals.push(elem_val.clone());
             match self.body_to_poly(body, &loops, &vals, ideal) {
                 Some(vi) => mapped.push(vi),
-                None => Self::uncovered_op("reduce-map-body", &pr),
+                None => Self::uncovered_op("reduce-map-body", &var),
             }
         }
         if n == 1 {
-            self.link_to_witness(&pr, &mapped[0], ideal);
+            self.link_to_witness(&var, &mapped[0], ideal);
             return;
         }
         let elem_t = mapped[0].typ.clone();
@@ -3381,7 +3381,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 .collect(),
             ATyp::vec(&elem_t, n),
         );
-        self.reduce_polysource(pr, rop, combined, elem_t, n, ideal);
+        self.reduce_polysource(var, rop, combined, elem_t, n, ideal);
     }
 }
 
@@ -3539,19 +3539,19 @@ mod tests {
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_p = Var::from_node(
+        let var_p = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_p);
+        ideal.register(&var_p);
 
         let op: GOp<ArkBls12_381> = Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 2));
-        let polys = IdealBuilder::<ArkBls12_381>::ref_vars(&op, &ideal.prefs);
+        let polys = IdealBuilder::<ArkBls12_381>::ref_vars(&op, &ideal.vars);
         assert_eq!(polys.len(), 6);
         for (i, _) in polys.iter().enumerate() {
-            let expected = pref_p.clone().with_slot(i).unwrap();
+            let expected = var_p.clone().with_slot(i).unwrap();
             assert!(
                 polys[i].contains(&expected),
                 "coefficient poly {} does not contain expected Var (index {})",
@@ -3569,16 +3569,16 @@ mod tests {
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_p = Var::from_node(
+        let var_p = Var::from_node(
             NodeIndex::new(0),
             ATyp::Mle(3),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_p);
+        ideal.register(&var_p);
 
         let op: GOp<ArkBls12_381> = Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(3));
-        let polys = IdealBuilder::<ArkBls12_381>::ref_vars(&op, &ideal.prefs);
+        let polys = IdealBuilder::<ArkBls12_381>::ref_vars(&op, &ideal.vars);
         assert_eq!(polys.len(), 8);
     }
 
@@ -3598,19 +3598,19 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         // First: bind Vec of scalars on node 0, then Poly on node 1.
-        let pref_v = Var::from_node(
+        let var_v = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_v);
+        ideal.register(&var_v);
         let coefs: Vec<_> = (1..=3u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
-        builder.add_op(pref_v.clone(), Op::Vec(coefs), &mut ideal);
+        builder.add_op(var_v.clone(), Op::Vec(coefs), &mut ideal);
 
-        let pref_p = Var::from_node(
+        let var_p = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 2),
             Qualifier::Private,
@@ -3620,12 +3620,12 @@ mod tests {
             graph::Ref::new(NodeIndex::new(0)),
             ATyp::VPoly(1, 2),
         )));
-        ideal.register(&pref_p);
-        builder.add_op(pref_p.clone(), op_poly, &mut ideal);
+        ideal.register(&var_p);
+        builder.add_op(var_p.clone(), op_poly, &mut ideal);
 
         // Three coefficient slots should have been bound.
         for i in 0..3 {
-            let slot = pref_p.clone().with_slot(i).unwrap();
+            let slot = var_p.clone().with_slot(i).unwrap();
             assert!(ideal.pl.contains(&slot), "slot {} missing from pl", i);
         }
         // Six basis equations: 3 from Vec binding + 3 from Poly identity.
@@ -3645,28 +3645,28 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         // First: bind Vec of scalars on node 0, then Poly on node 1.
-        let pref_v = Var::from_node(
+        let var_v = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_v);
+        ideal.register(&var_v);
         let coefs: Vec<_> = (1..=3u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
-        builder.add_op(pref_v.clone(), Op::Vec(coefs), &mut ideal);
+        builder.add_op(var_v.clone(), Op::Vec(coefs), &mut ideal);
 
         // Poly: reads the Vec's slots via Ref.
-        let pref_p = Var::from_node(
+        let var_p = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_p);
+        ideal.register(&var_p);
         builder.add_op(
-            pref_p.clone(),
+            var_p.clone(),
             Op::Poly(mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(0)),
                 ATyp::VPoly(1, 2),
@@ -3676,7 +3676,7 @@ mod tests {
 
         // Then: Op::Coef reading the VPoly back into a Uni(2) output
         // (degree 2 = 3 coefficient slots, per docs/poly-encoding.md).
-        let pref_c = Var::from_node(
+        let var_c = Var::from_node(
             NodeIndex::new(2),
             ATyp::Uni(2),
             Qualifier::Private,
@@ -3685,18 +3685,18 @@ mod tests {
         let ref_p: GOp<ArkBls12_381> =
             Op::Ref(graph::Ref::new(NodeIndex::new(1)), ATyp::VPoly(1, 2));
         builder.add_op(
-            pref_c.clone(),
+            var_c.clone(),
             Op::Coef(mk::<ArkBls12_381>(ref_p)),
             &mut ideal,
         );
 
         // Each Coef slot should be bound identically to the corresponding
         // VPoly coefficient Var — that's the round-trip identity. `ref_vars`
-        // resolves per-slot PRefs to ATyp::scalar(), so we expect that form
+        // resolves per-slot Vars to ATyp::scalar(), so we expect that form
         // on the RHS.
         for i in 0..3 {
-            let coef_slot = pref_c.clone().with_slot(i).unwrap();
-            let poly_slot = pref_p.clone().with_slot(i).unwrap();
+            let coef_slot = var_c.clone().with_slot(i).unwrap();
+            let poly_slot = var_p.clone().with_slot(i).unwrap();
             let stored = ideal.pl.get(&coef_slot).expect("coef slot missing");
             let expected = Polynomial::<Fr>::var(&poly_slot);
             assert_eq!(*stored, expected, "coef[{}] did not bind to poly[{}]", i, i);
@@ -3715,27 +3715,27 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         // First: bind Vec of scalars on node 0, then Mle on node 1.
-        let pref_v = Var::from_node(
+        let var_v = Var::from_node(
             NodeIndex::new(0),
             ATyp::Mle(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_v);
+        ideal.register(&var_v);
         let vals: Vec<_> = (1..=4u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
-        builder.add_op(pref_v.clone(), Op::Vec(vals), &mut ideal);
+        builder.add_op(var_v.clone(), Op::Vec(vals), &mut ideal);
 
-        let pref_m = Var::from_node(
+        let var_m = Var::from_node(
             NodeIndex::new(1),
             ATyp::Mle(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_m);
+        ideal.register(&var_m);
         builder.add_op(
-            pref_m.clone(),
+            var_m.clone(),
             Op::Mle(mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(0)),
                 ATyp::Mle(2),
@@ -3747,7 +3747,7 @@ mod tests {
         assert_eq!(ideal.generating_set.len(), 8);
         for i in 0..4 {
             assert!(
-                ideal.pl.contains(&pref_m.clone().with_slot(i).unwrap()),
+                ideal.pl.contains(&var_m.clone().with_slot(i).unwrap()),
                 "mle slot {} missing",
                 i
             );
@@ -3762,7 +3762,7 @@ mod tests {
     // -----------------------------------------------------------------
 
     /// Helper: a Var registered with the builder so `find_ref` can locate
-    /// it, returning the pref for caller use. The slot type isn't important
+    /// it, returning the var for caller use. The slot type isn't important
     /// here; we only need the reference node / index to resolve.
 
     #[test]
@@ -3805,7 +3805,7 @@ mod tests {
         // Expected: ideal[i] = a_0 + a_1 * xs[i].
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let _pref_p = {
+        let _var_p = {
             let p = Var::from_node(
                 NodeIndex::new(0),
                 ATyp::VPoly(1, 1),
@@ -3815,7 +3815,7 @@ mod tests {
             ideal.register(&p);
             p
         };
-        let _pref_xs = {
+        let _var_xs = {
             let p = Var::from_node(
                 NodeIndex::new(1),
                 ATyp::Uni(1),
@@ -3826,7 +3826,7 @@ mod tests {
             p
         };
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::Uni(1),
             Qualifier::Private,
@@ -3841,43 +3841,43 @@ mod tests {
                 ATyp::Uni(1),
             ))),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
         // Eval uses explicit ideal treatment with no fallback.
         for i in 0..2 {
             assert!(
-                ideal.pl.contains(&pref.clone().with_slot(i).unwrap()),
+                ideal.pl.contains(&var.clone().with_slot(i).unwrap()),
                 "uni batched ideal slot {} missing",
                 i
             );
         }
         // Each ideal slot: poly = a_0 + a_1 * xs[i] (a linear polynomial in
         // 4 input variables). Check it depends on exactly {a_0, a_1, xs[i]}.
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_xs = Var::from_node(
+        let var_xs = Var::from_node(
             NodeIndex::new(1),
             ATyp::Uni(1),
             Qualifier::Private,
             Distribution::default(),
         );
-        let a0 = pref_a.clone().with_slot(0).unwrap();
-        let a1 = pref_a.clone().with_slot(1).unwrap();
-        let x0 = pref_xs.clone().with_slot(0).unwrap();
-        let x1 = pref_xs.clone().with_slot(1).unwrap();
+        let a0 = var_a.clone().with_slot(0).unwrap();
+        let a1 = var_a.clone().with_slot(1).unwrap();
+        let x0 = var_xs.clone().with_slot(0).unwrap();
+        let x1 = var_xs.clone().with_slot(1).unwrap();
 
-        let slot0 = ideal.pl.get(&pref.clone().with_slot(0).unwrap()).unwrap();
+        let slot0 = ideal.pl.get(&var.clone().with_slot(0).unwrap()).unwrap();
         let vars0 = slot0.vars();
         assert!(vars0.contains(&a0), "slot 0 missing a_0");
         assert!(vars0.contains(&a1), "slot 0 missing a_1");
         assert!(vars0.contains(&x0), "slot 0 missing xs[0]");
         assert!(!vars0.contains(&x1), "slot 0 should not contain xs[1]");
 
-        let slot1 = ideal.pl.get(&pref.clone().with_slot(1).unwrap()).unwrap();
+        let slot1 = ideal.pl.get(&var.clone().with_slot(1).unwrap()).unwrap();
         let vars1 = slot1.vars();
         assert!(vars1.contains(&a0), "slot 1 missing a_0");
         assert!(vars1.contains(&a1), "slot 1 missing a_1");
@@ -3899,27 +3899,27 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         // Bind p: Vec of scalars on node 0, then Poly on node 1.
-        let pref_vp = Var::from_node(
+        let var_vp = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_vp);
+        ideal.register(&var_vp);
         let coefs: Vec<_> = [3u64, 5]
             .iter()
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(*n)))))
             .collect();
-        builder.add_op(pref_vp.clone(), Op::Vec(coefs), &mut ideal);
-        let pref_p = Var::from_node(
+        builder.add_op(var_vp.clone(), Op::Vec(coefs), &mut ideal);
+        let var_p = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_p);
+        ideal.register(&var_p);
         builder.add_op(
-            pref_p.clone(),
+            var_p.clone(),
             Op::Poly(mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(0)),
                 ATyp::VPoly(1, 1),
@@ -3928,27 +3928,27 @@ mod tests {
         );
 
         // Bind xs: Vec of scalars on node 2, then Poly on node 3.
-        let pref_vxs = Var::from_node(
+        let var_vxs = Var::from_node(
             NodeIndex::new(2),
             ATyp::Uni(1),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_vxs);
+        ideal.register(&var_vxs);
         let xs_vals: Vec<_> = [7u64, 11]
             .iter()
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(*n)))))
             .collect();
-        builder.add_op(pref_vxs.clone(), Op::Vec(xs_vals), &mut ideal);
-        let pref_xs = Var::from_node(
+        builder.add_op(var_vxs.clone(), Op::Vec(xs_vals), &mut ideal);
+        let var_xs = Var::from_node(
             NodeIndex::new(3),
             ATyp::Uni(1),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_xs);
+        ideal.register(&var_xs);
         builder.add_op(
-            pref_xs.clone(),
+            var_xs.clone(),
             Op::Poly(mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(2)),
                 ATyp::Uni(1),
@@ -3957,7 +3957,7 @@ mod tests {
         );
 
         // Now issue eval: p(xs).
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(4),
             ATyp::Uni(1),
             Qualifier::Private,
@@ -3974,14 +3974,14 @@ mod tests {
                 ATyp::Uni(1),
             ))),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
         // Check stored polys: since all inputs are constants, each ideal slot
         // stores a polynomial equal to a_0 + a_1 * x as a sparse poly in the
-        // slot PRefs (constants haven't been inlined). We verify the basis
+        // slot Vars (constants haven't been inlined). We verify the basis
         // equation reduces correctly by substituting literal values via `vars`.
-        let slot0 = ideal.pl.get(&pref.clone().with_slot(0).unwrap()).unwrap();
-        let slot1 = ideal.pl.get(&pref.clone().with_slot(1).unwrap()).unwrap();
+        let slot0 = ideal.pl.get(&var.clone().with_slot(0).unwrap()).unwrap();
+        let slot1 = ideal.pl.get(&var.clone().with_slot(1).unwrap()).unwrap();
         assert!(!slot0.is_zero());
         assert!(!slot1.is_zero());
         // 2 Vec bindings * 2 slots each = 4, plus 2 Poly identities * 2 = 4,
@@ -4019,7 +4019,7 @@ mod tests {
             p
         };
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::scalar(),
             Qualifier::Private,
@@ -4036,12 +4036,12 @@ mod tests {
                 ATyp::Uni(1),
             ))),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
         // One ideal slot (scalar) produced by explicit eval encoding.
-        assert!(ideal.pl.contains(&pref.clone().with_slot(0).unwrap()));
-        // Should contain all 6 coef PRefs of p + both xs slots.
-        let slot = ideal.pl.get(&pref.clone().with_slot(0).unwrap()).unwrap();
+        assert!(ideal.pl.contains(&var.clone().with_slot(0).unwrap()));
+        // Should contain all 6 coef Vars of p + both xs slots.
+        let slot = ideal.pl.get(&var.clone().with_slot(0).unwrap()).unwrap();
         let vars = slot.vars();
         assert!(
             vars.len() >= 6,
@@ -4080,7 +4080,7 @@ mod tests {
             p
         };
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(2, 1),
             Qualifier::Private,
@@ -4097,14 +4097,14 @@ mod tests {
                 ATyp::Uni(0),
             ))),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
         // VPoly(2, 1) has physical_len = C(2+1, 1) = 3 slots (one for constant,
         // two for each linear variable).
         assert_eq!(ATyp::VPoly(2, 1).physical_len(), 3);
         for i in 0..3 {
             assert!(
-                ideal.pl.contains(&pref.clone().with_slot(i).unwrap()),
+                ideal.pl.contains(&var.clone().with_slot(i).unwrap()),
                 "partial vpoly eval slot {} missing",
                 i
             );
@@ -4141,7 +4141,7 @@ mod tests {
             p
         };
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::scalar(),
             Qualifier::Private,
@@ -4158,11 +4158,11 @@ mod tests {
                 ATyp::Uni(1),
             ))),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
-        assert!(ideal.pl.contains(&pref.clone().with_slot(0).unwrap()));
+        assert!(ideal.pl.contains(&var.clone().with_slot(0).unwrap()));
         // Result poly should reference all 4 Mle slots + both xs slots.
-        let slot = ideal.pl.get(&pref.clone().with_slot(0).unwrap()).unwrap();
+        let slot = ideal.pl.get(&var.clone().with_slot(0).unwrap()).unwrap();
         let vars = slot.vars();
         assert!(vars.len() >= 4, "mle full eval got {} vars", vars.len());
     }
@@ -4197,7 +4197,7 @@ mod tests {
             p
         };
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::Mle(2),
             Qualifier::Private,
@@ -4214,12 +4214,12 @@ mod tests {
                 ATyp::Uni(0),
             ))),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
         // Mle(2) has 4 eval slots.
         for i in 0..4 {
             assert!(
-                ideal.pl.contains(&pref.clone().with_slot(i).unwrap()),
+                ideal.pl.contains(&var.clone().with_slot(i).unwrap()),
                 "partial mle eval slot {} missing",
                 i
             );
@@ -4243,7 +4243,7 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_a = {
+        let var_a = {
             let p = Var::from_node(
                 NodeIndex::new(0),
                 ATyp::VPoly(2, 1),
@@ -4253,7 +4253,7 @@ mod tests {
             ideal.register(&p);
             p
         };
-        let pref_b = {
+        let var_b = {
             let p = Var::from_node(
                 NodeIndex::new(1),
                 ATyp::VPoly(2, 1),
@@ -4264,7 +4264,7 @@ mod tests {
             p
         };
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(2, 1),
             Qualifier::Private,
@@ -4276,21 +4276,21 @@ mod tests {
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(2, 1))),
             ATyp::VPoly(2, 1),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
         // 3 ideal slots bound.
         for i in 0..3 {
             assert!(
-                ideal.pl.contains(&pref.clone().with_slot(i).unwrap()),
+                ideal.pl.contains(&var.clone().with_slot(i).unwrap()),
                 "add ideal slot {} missing",
                 i
             );
         }
         // Each ideal slot contains exactly a.slot(i) + b.slot(i).
         for i in 0..3 {
-            let a_slot = pref_a.clone().with_slot(i).unwrap();
-            let b_slot = pref_b.clone().with_slot(i).unwrap();
-            let stored = ideal.pl.get(&pref.clone().with_slot(i).unwrap()).unwrap();
+            let a_slot = var_a.clone().with_slot(i).unwrap();
+            let b_slot = var_b.clone().with_slot(i).unwrap();
+            let stored = ideal.pl.get(&var.clone().with_slot(i).unwrap()).unwrap();
             let expected =
                 &Polynomial::<ark_bls12_381::Fr>::var(&a_slot) + &Polynomial::var(&b_slot);
             assert_eq!(*stored, expected, "vpoly add slot {} mismatch", i);
@@ -4309,7 +4309,7 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_a = {
+        let var_a = {
             let p = Var::from_node(
                 NodeIndex::new(0),
                 ATyp::Mle(2),
@@ -4319,7 +4319,7 @@ mod tests {
             ideal.register(&p);
             p
         };
-        let pref_b = {
+        let var_b = {
             let p = Var::from_node(
                 NodeIndex::new(1),
                 ATyp::Mle(2),
@@ -4330,7 +4330,7 @@ mod tests {
             p
         };
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::Mle(2),
             Qualifier::Private,
@@ -4342,12 +4342,12 @@ mod tests {
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Mle(2))),
             ATyp::Mle(2),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
         for i in 0..4 {
-            let a_slot = pref_a.clone().with_slot(i).unwrap();
-            let b_slot = pref_b.clone().with_slot(i).unwrap();
-            let stored = ideal.pl.get(&pref.clone().with_slot(i).unwrap()).unwrap();
+            let a_slot = var_a.clone().with_slot(i).unwrap();
+            let b_slot = var_b.clone().with_slot(i).unwrap();
+            let stored = ideal.pl.get(&var.clone().with_slot(i).unwrap()).unwrap();
             let expected =
                 &Polynomial::<ark_bls12_381::Fr>::var(&a_slot) + &Polynomial::var(&b_slot);
             assert_eq!(*stored, expected, "mle add slot {} mismatch", i);
@@ -4365,22 +4365,22 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
-        let pref_b = Var::from_node(
+        ideal.register(&var_a);
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(2, 2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
+        ideal.register(&var_b);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(2, 2),
             Qualifier::Private,
@@ -4392,14 +4392,14 @@ mod tests {
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(2, 2))),
             ATyp::VPoly(2, 2),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
         // VPoly(2,2) has 6 slots.
         assert_eq!(ATyp::VPoly(2, 2).physical_len(), 6);
         for i in 0..6 {
-            let a_slot = pref_a.clone().with_slot(i).unwrap();
-            let b_slot = pref_b.clone().with_slot(i).unwrap();
-            let stored = ideal.pl.get(&pref.clone().with_slot(i).unwrap()).unwrap();
+            let a_slot = var_a.clone().with_slot(i).unwrap();
+            let b_slot = var_b.clone().with_slot(i).unwrap();
+            let stored = ideal.pl.get(&var.clone().with_slot(i).unwrap()).unwrap();
             let expected =
                 &Polynomial::<ark_bls12_381::Fr>::var(&a_slot) - &Polynomial::var(&b_slot);
             assert_eq!(*stored, expected, "vpoly sub slot {} mismatch", i);
@@ -4418,22 +4418,22 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
-        let pref_b = Var::from_node(
+        ideal.register(&var_a);
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
+        ideal.register(&var_b);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(1, 2),
             Qualifier::Private,
@@ -4445,38 +4445,38 @@ mod tests {
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(1, 1))),
             ATyp::VPoly(1, 2),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
         // VPoly(1,2) has physical_len = 3 slots (degrees 0, 1, 2 in graded-lex order).
         assert_eq!(ATyp::VPoly(1, 2).physical_len(), 3);
-        let a0 = pref_a.clone().with_slot(0).unwrap();
-        let a1 = pref_a.clone().with_slot(1).unwrap();
-        let b0 = pref_b.clone().with_slot(0).unwrap();
-        let b1 = pref_b.clone().with_slot(1).unwrap();
+        let a0 = var_a.clone().with_slot(0).unwrap();
+        let a1 = var_a.clone().with_slot(1).unwrap();
+        let b0 = var_b.clone().with_slot(0).unwrap();
+        let b1 = var_b.clone().with_slot(1).unwrap();
 
-        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         let deg0 = ideal
             .pl
-            .get(&pref.clone().with_slot(0).unwrap())
+            .get(&var.clone().with_slot(0).unwrap())
             .unwrap()
             .clone();
         let deg1 = ideal
             .pl
-            .get(&pref.clone().with_slot(1).unwrap())
+            .get(&var.clone().with_slot(1).unwrap())
             .unwrap()
             .clone();
         let deg2 = ideal
             .pl
-            .get(&pref.clone().with_slot(2).unwrap())
+            .get(&var.clone().with_slot(2).unwrap())
             .unwrap()
             .clone();
-        assert_eq!(deg0, &var(&a0) * &var(&b0), "(*.x^0)");
+        assert_eq!(deg0, &var_poly(&a0) * &var_poly(&b0), "(*.x^0)");
         assert_eq!(
             deg1,
-            &(&var(&a0) * &var(&b1)) + &(&var(&a1) * &var(&b0)),
+            &(&var_poly(&a0) * &var_poly(&b1)) + &(&var_poly(&a1) * &var_poly(&b0)),
             "(*.x^1)"
         );
-        assert_eq!(deg2, &var(&a1) * &var(&b1), "(*.x^2)");
+        assert_eq!(deg2, &var_poly(&a1) * &var_poly(&b1), "(*.x^2)");
     }
 
     #[test]
@@ -4495,22 +4495,22 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 1),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
-        let pref_b = Var::from_node(
+        ideal.register(&var_a);
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(2, 1),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
+        ideal.register(&var_b);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(2, 2),
             Qualifier::Private,
@@ -4522,7 +4522,7 @@ mod tests {
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(2, 1))),
             ATyp::VPoly(2, 2),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
         // Check the constant-term slot (multi-index [0,0]): should be a_[0,0] * b_[0,0].
         let r_idx = multi_indices(2, 2);
@@ -4530,24 +4530,24 @@ mod tests {
         let pos_00 = r_idx.iter().position(|k| k == &vec![0, 0]).unwrap();
         let a_pos_00 = a_idx.iter().position(|k| k == &vec![0, 0]).unwrap();
 
-        let a00 = pref_a.clone().with_slot(a_pos_00).unwrap();
-        let b00 = pref_b.clone().with_slot(a_pos_00).unwrap();
-        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let a00 = var_a.clone().with_slot(a_pos_00).unwrap();
+        let b00 = var_b.clone().with_slot(a_pos_00).unwrap();
+        let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         let got = ideal
             .pl
-            .get(&pref.clone().with_slot(pos_00).unwrap())
+            .get(&var.clone().with_slot(pos_00).unwrap())
             .unwrap()
             .clone();
         assert_eq!(
             got,
-            &var(&a00) * &var(&b00),
+            &var_poly(&a00) * &var_poly(&b00),
             "VPoly(2,2) constant term mismatch"
         );
 
         // Ensure all 6 slots were populated.
         for i in 0..6 {
             assert!(
-                ideal.pl.contains(&pref.clone().with_slot(i).unwrap()),
+                ideal.pl.contains(&var.clone().with_slot(i).unwrap()),
                 "VPoly(2,2) slot {} missing",
                 i
             );
@@ -4571,22 +4571,22 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_u = Var::from_node(
+        let var_u = Var::from_node(
             NodeIndex::new(0),
             ATyp::Mle(1),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_u);
-        let pref_v = Var::from_node(
+        ideal.register(&var_u);
+        let var_v = Var::from_node(
             NodeIndex::new(1),
             ATyp::Mle(1),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_v);
+        ideal.register(&var_v);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(1, 2),
             Qualifier::Private,
@@ -4598,52 +4598,54 @@ mod tests {
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Mle(1))),
             ATyp::VPoly(1, 2),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
         // 3 slots populated.
         for i in 0..3 {
             assert!(
-                ideal.pl.contains(&pref.clone().with_slot(i).unwrap()),
+                ideal.pl.contains(&var.clone().with_slot(i).unwrap()),
                 "Mle×Mle slot {} missing",
                 i
             );
         }
 
-        let u0 = pref_u.clone().with_slot(0).unwrap();
-        let u1 = pref_u.clone().with_slot(1).unwrap();
-        let v0 = pref_v.clone().with_slot(0).unwrap();
-        let v1 = pref_v.clone().with_slot(1).unwrap();
-        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let u0 = var_u.clone().with_slot(0).unwrap();
+        let u1 = var_u.clone().with_slot(1).unwrap();
+        let v0 = var_v.clone().with_slot(0).unwrap();
+        let v1 = var_v.clone().with_slot(1).unwrap();
+        let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
 
         let deg0 = ideal
             .pl
-            .get(&pref.clone().with_slot(0).unwrap())
+            .get(&var.clone().with_slot(0).unwrap())
             .unwrap()
             .clone();
         let deg1 = ideal
             .pl
-            .get(&pref.clone().with_slot(1).unwrap())
+            .get(&var.clone().with_slot(1).unwrap())
             .unwrap()
             .clone();
         let deg2 = ideal
             .pl
-            .get(&pref.clone().with_slot(2).unwrap())
+            .get(&var.clone().with_slot(2).unwrap())
             .unwrap()
             .clone();
 
         // deg0 = u_0 * v_0
-        assert_eq!(deg0, &var(&u0) * &var(&v0), "mle mul deg0");
+        assert_eq!(deg0, &var_poly(&u0) * &var_poly(&v0), "mle mul deg0");
 
         // deg1 = -2 u_0 v_0 + u_0 v_1 + u_1 v_0
         let two =
             Polynomial::<ark_bls12_381::Fr>::lit(&<ark_bls12_381::Fr as From<u64>>::from(2u64));
-        let expected_deg1 = &(&(&var(&u0) * &var(&v1)) + &(&var(&u1) * &var(&v0)))
-            - &(&two * &(&var(&u0) * &var(&v0)));
+        let expected_deg1 = &(&(&var_poly(&u0) * &var_poly(&v1))
+            + &(&var_poly(&u1) * &var_poly(&v0)))
+            - &(&two * &(&var_poly(&u0) * &var_poly(&v0)));
         assert_eq!(deg1, expected_deg1, "mle mul deg1");
 
         // deg2 = u_0 v_0 - u_0 v_1 - u_1 v_0 + u_1 v_1
-        let expected_deg2 = &(&(&var(&u0) * &var(&v0)) - &(&var(&u0) * &var(&v1)))
-            + &(&(&var(&u1) * &var(&v1)) - &(&var(&u1) * &var(&v0)));
+        let expected_deg2 = &(&(&var_poly(&u0) * &var_poly(&v0))
+            - &(&var_poly(&u0) * &var_poly(&v1)))
+            + &(&(&var_poly(&u1) * &var_poly(&v1)) - &(&var_poly(&u1) * &var_poly(&v0)));
         assert_eq!(deg2, expected_deg2, "mle mul deg2");
     }
 
@@ -4663,22 +4665,22 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_u = Var::from_node(
+        let var_u = Var::from_node(
             NodeIndex::new(0),
             ATyp::Mle(1),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_u);
-        let pref_b = Var::from_node(
+        ideal.register(&var_u);
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
+        ideal.register(&var_b);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(1, 2),
             Qualifier::Private,
@@ -4690,37 +4692,37 @@ mod tests {
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(1, 1))),
             ATyp::VPoly(1, 2),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
-        let u0 = pref_u.clone().with_slot(0).unwrap();
-        let u1 = pref_u.clone().with_slot(1).unwrap();
-        let b0 = pref_b.clone().with_slot(0).unwrap();
-        let b1 = pref_b.clone().with_slot(1).unwrap();
-        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let u0 = var_u.clone().with_slot(0).unwrap();
+        let u1 = var_u.clone().with_slot(1).unwrap();
+        let b0 = var_b.clone().with_slot(0).unwrap();
+        let b1 = var_b.clone().with_slot(1).unwrap();
+        let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
 
         let deg0 = ideal
             .pl
-            .get(&pref.clone().with_slot(0).unwrap())
+            .get(&var.clone().with_slot(0).unwrap())
             .unwrap()
             .clone();
         let deg1 = ideal
             .pl
-            .get(&pref.clone().with_slot(1).unwrap())
+            .get(&var.clone().with_slot(1).unwrap())
             .unwrap()
             .clone();
         let deg2 = ideal
             .pl
-            .get(&pref.clone().with_slot(2).unwrap())
+            .get(&var.clone().with_slot(2).unwrap())
             .unwrap()
             .clone();
 
-        assert_eq!(deg0, &var(&u0) * &var(&b0), "mle×vpoly deg0");
+        assert_eq!(deg0, &var_poly(&u0) * &var_poly(&b0), "mle×vpoly deg0");
 
-        let expected_deg1 =
-            &(&var(&u1) * &var(&b0)) - &(&var(&u0) * &var(&b0)) + &var(&u0) * &var(&b1);
+        let expected_deg1 = &(&var_poly(&u1) * &var_poly(&b0)) - &(&var_poly(&u0) * &var_poly(&b0))
+            + &var_poly(&u0) * &var_poly(&b1);
         assert_eq!(deg1, expected_deg1, "mle×vpoly deg1");
 
-        let expected_deg2 = &(&var(&u1) * &var(&b1)) - &(&var(&u0) * &var(&b1));
+        let expected_deg2 = &(&var_poly(&u1) * &var_poly(&b1)) - &(&var_poly(&u0) * &var_poly(&b1));
         assert_eq!(deg2, expected_deg2, "mle×vpoly deg2");
     }
 
@@ -4740,22 +4742,22 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_b = Var::from_node(
+        let var_b = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 1),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
-        let pref_u = Var::from_node(
+        ideal.register(&var_b);
+        let var_u = Var::from_node(
             NodeIndex::new(1),
             ATyp::Mle(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_u);
+        ideal.register(&var_u);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(2, 3),
             Qualifier::Private,
@@ -4767,13 +4769,13 @@ mod tests {
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Mle(2))),
             ATyp::VPoly(2, 3),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
         let r_idx = multi_indices(2, 3);
         assert_eq!(r_idx.len(), 10, "VPoly(2,3) should have 10 multi-indices");
         for i in 0..10 {
             assert!(
-                ideal.pl.contains(&pref.clone().with_slot(i).unwrap()),
+                ideal.pl.contains(&var.clone().with_slot(i).unwrap()),
                 "VPoly×Mle slot {} missing",
                 i
             );
@@ -4793,22 +4795,22 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_u = Var::from_node(
+        let var_u = Var::from_node(
             NodeIndex::new(0),
             ATyp::Mle(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_u);
-        let pref_b = Var::from_node(
+        ideal.register(&var_u);
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(2, 1),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
+        ideal.register(&var_b);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(2, 3),
             Qualifier::Private,
@@ -4820,28 +4822,32 @@ mod tests {
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(2, 1))),
             ATyp::VPoly(2, 3),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
         let r_idx = multi_indices(2, 3);
         let v_idx = multi_indices(2, 1);
-        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
 
         // Constant term [0,0]: u_00 * b_00
         let pos_00 = r_idx.iter().position(|k| k == &vec![0, 0]).unwrap();
         let v_pos_00 = v_idx.iter().position(|k| k == &vec![0, 0]).unwrap();
-        let u00 = pref_u.clone().with_slot(0).unwrap();
-        let b00 = pref_b.clone().with_slot(v_pos_00).unwrap();
+        let u00 = var_u.clone().with_slot(0).unwrap();
+        let b00 = var_b.clone().with_slot(v_pos_00).unwrap();
         let got_00 = ideal
             .pl
-            .get(&pref.clone().with_slot(pos_00).unwrap())
+            .get(&var.clone().with_slot(pos_00).unwrap())
             .unwrap()
             .clone();
-        assert_eq!(got_00, &var(&u00) * &var(&b00), "bivariate constant term");
+        assert_eq!(
+            got_00,
+            &var_poly(&u00) * &var_poly(&b00),
+            "bivariate constant term"
+        );
 
         // [1,0] slot: -u_00·b_10 + u_10·b_00 + u_00·b_10... check it's populated
         let pos_10 = r_idx.iter().position(|k| k == &vec![1, 0]).unwrap();
         assert!(
-            ideal.pl.contains(&pref.clone().with_slot(pos_10).unwrap()),
+            ideal.pl.contains(&var.clone().with_slot(pos_10).unwrap()),
             "bivariate [1,0] slot missing"
         );
 
@@ -4849,7 +4855,7 @@ mod tests {
         assert_eq!(r_idx.len(), 10);
         for i in 0..10 {
             assert!(
-                ideal.pl.contains(&pref.clone().with_slot(i).unwrap()),
+                ideal.pl.contains(&var.clone().with_slot(i).unwrap()),
                 "Mle×VPoly bivariate slot {} missing",
                 i
             );
@@ -4883,23 +4889,23 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
-        let pref_b = Var::from_node(
+        ideal.register(&var_a);
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
+        ideal.register(&var_b);
 
         let basis_before = ideal.generating_set.len();
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
@@ -4911,9 +4917,9 @@ mod tests {
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(1, 1))),
             ATyp::VPoly(1, 1),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
-        // Recover the q_wit / r_wit PRefs (minted by sentinel_pref starting
+        // Recover the q_wit / r_wit Vars (minted by sentinel_var starting
         // at MAX and decrementing: q_wit=MAX, r_wit=MAX-1).
         let q_wit = Var::from_var(
             "__zippel::gb::div_q::0",
@@ -4935,12 +4941,12 @@ mod tests {
         // Per-slot witness vars. `div_witnesses` uses `wit.clone().with_slot(j).unwrap()`
         // which sets typ appropriately.
         let wit_slot = |p: &Var, i: usize| p.clone().with_slot(i).unwrap();
-        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
-        let a0 = scl(&pref_a, 0);
-        let a1 = scl(&pref_a, 1);
-        let a2 = scl(&pref_a, 2);
-        let b0 = scl(&pref_b, 0);
-        let b1 = scl(&pref_b, 1);
+        let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let a0 = scl(&var_a, 0);
+        let a1 = scl(&var_a, 1);
+        let a2 = scl(&var_a, 2);
+        let b0 = scl(&var_b, 0);
+        let b1 = scl(&var_b, 1);
         let q0 = wit_slot(&q_wit, 0);
         let q1 = wit_slot(&q_wit, 1);
         let r0 = wit_slot(&r_wit, 0);
@@ -4953,9 +4959,10 @@ mod tests {
         );
 
         // Check identity rows exist in basis.
-        let expected_k0 = &var(&a0) - &(&(&var(&b0) * &var(&q0)) + &var(&r0));
-        let expected_k1 = &var(&a1) - &(&(&var(&b0) * &var(&q1)) + &(&var(&b1) * &var(&q0)));
-        let expected_k2 = &var(&a2) - &(&var(&b1) * &var(&q1));
+        let expected_k0 = &var_poly(&a0) - &(&(&var_poly(&b0) * &var_poly(&q0)) + &var_poly(&r0));
+        let expected_k1 = &var_poly(&a1)
+            - &(&(&var_poly(&b0) * &var_poly(&q1)) + &(&var_poly(&b1) * &var_poly(&q0)));
+        let expected_k2 = &var_poly(&a2) - &(&var_poly(&b1) * &var_poly(&q1));
         for (lbl, expected) in [
             ("k0", &expected_k0),
             ("k1", &expected_k1),
@@ -4970,29 +4977,29 @@ mod tests {
 
         // link_to_witness: pl[ideal[j]] = var(q_wit[j]) for j=0,1.
         assert_eq!(
-            ideal.pl.get(&pref.clone().with_slot(0).unwrap()).cloned(),
-            Some(var(&q0)),
+            ideal.pl.get(&var.clone().with_slot(0).unwrap()).cloned(),
+            Some(var_poly(&q0)),
             "pl[ideal[0]] should alias q_wit[0]"
         );
         assert_eq!(
-            ideal.pl.get(&pref.clone().with_slot(1).unwrap()).cloned(),
-            Some(var(&q1)),
+            ideal.pl.get(&var.clone().with_slot(1).unwrap()).cloned(),
+            Some(var_poly(&q1)),
             "pl[ideal[1]] should alias q_wit[1]"
         );
 
         // Linking rows: var(q_wit[j]) - var(ideal[j]).
         // link_to_witness uses `ideal.clone().with_slot(j).unwrap()` (typ computed by with_slot).
-        let r0_slot = pref.clone().with_slot(0).unwrap();
-        let r1_slot = pref.clone().with_slot(1).unwrap();
-        let link0 = &var(&q0) - &var(&r0_slot);
-        let link1 = &var(&q1) - &var(&r1_slot);
+        let r0_slot = var.clone().with_slot(0).unwrap();
+        let r1_slot = var.clone().with_slot(1).unwrap();
+        let link0 = &var_poly(&q0) - &var_poly(&r0_slot);
+        let link1 = &var_poly(&q1) - &var_poly(&r1_slot);
         assert!(
             ideal.generating_set.iter().any(|row| row == &link0),
-            "basis missing link row var(q_wit[0]) - var(ideal[0])"
+            "basis missing link row var_poly(q_wit[0]) - var_poly(ideal[0])"
         );
         assert!(
             ideal.generating_set.iter().any(|row| row == &link1),
-            "basis missing link row var(q_wit[1]) - var(ideal[1])"
+            "basis missing link row var_poly(q_wit[1]) - var_poly(ideal[1])"
         );
         assert_eq!(
             builder.ns.div_wit.len(),
@@ -5014,23 +5021,23 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let _pref_a = Var::from_node(
+        let _var_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&_pref_a);
-        let _pref_b = Var::from_node(
+        ideal.register(&_var_a);
+        let _var_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&_pref_b);
+        ideal.register(&_var_b);
 
         let basis_before = ideal.generating_set.len();
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(1, 0),
             Qualifier::Private,
@@ -5042,7 +5049,7 @@ mod tests {
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(1, 1))),
             ATyp::VPoly(1, 0),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
         // q_wit=MAX, r_wit=MAX-1 (fresh builder, counter starts at MAX).
         let r_wit = Var::from_var(
@@ -5054,7 +5061,7 @@ mod tests {
         );
         let scl = |p: &Var, i: usize| p.clone().with_slot(i).unwrap();
         let _ = scl; // kept for parity with the Div test; not used here.
-        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         // r_wit slots: with_slot computes the correct type.
         let r0 = r_wit.clone().with_slot(0).unwrap();
 
@@ -5067,17 +5074,17 @@ mod tests {
 
         // pl[ideal[0]] = var(r_wit[0]).
         assert_eq!(
-            ideal.pl.get(&pref.clone().with_slot(0).unwrap()).cloned(),
-            Some(var(&r0)),
+            ideal.pl.get(&var.clone().with_slot(0).unwrap()).cloned(),
+            Some(var_poly(&r0)),
             "pl[ideal[0]] should alias r_wit[0]"
         );
 
         // Linking row: link_to_witness uses ideal.with_slot(0).unwrap() (type computed by with_slot).
-        let r0_slot = pref.clone().with_slot(0).unwrap();
-        let link = &var(&r0) - &var(&r0_slot);
+        let r0_slot = var.clone().with_slot(0).unwrap();
+        let link = &var_poly(&r0) - &var_poly(&r0_slot);
         assert!(
             ideal.generating_set.iter().any(|row| row == &link),
-            "basis missing link row var(r_wit[0]) - var(ideal[0])"
+            "basis missing link row var_poly(r_wit[0]) - var_poly(ideal[0])"
         );
         assert_eq!(builder.ns.div_wit.len(), 1, "one div_wit entry after Rem");
     }
@@ -5094,24 +5101,24 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let _pref_a = Var::from_node(
+        let _var_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&_pref_a);
-        let _pref_b = Var::from_node(
+        ideal.register(&_var_a);
+        let _var_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&_pref_b);
+        ideal.register(&_var_b);
 
         let basis_before_div = ideal.generating_set.len();
         let _q_res = {
-            let pref = Var::from_node(
+            let var = Var::from_node(
                 NodeIndex::new(2),
                 ATyp::VPoly(1, 1),
                 Qualifier::Private,
@@ -5123,13 +5130,13 @@ mod tests {
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(1, 1))),
                 ATyp::VPoly(1, 1),
             );
-            builder.add_op(pref.clone(), op, &mut ideal);
-            pref
+            builder.add_op(var.clone(), op, &mut ideal);
+            var
         };
         let after_div = ideal.generating_set.len();
 
         let _r_res = {
-            let pref = Var::from_node(
+            let var = Var::from_node(
                 NodeIndex::new(3),
                 ATyp::VPoly(1, 0),
                 Qualifier::Private,
@@ -5141,8 +5148,8 @@ mod tests {
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(1, 1))),
                 ATyp::VPoly(1, 0),
             );
-            builder.add_op(pref.clone(), op, &mut ideal);
-            pref
+            builder.add_op(var.clone(), op, &mut ideal);
+            var
         };
         let after_rem = ideal.generating_set.len();
 
@@ -5187,14 +5194,14 @@ mod tests {
             (2, "c", ATyp::VPoly(1, 2)),
             (3, "d", ATyp::VPoly(1, 1)),
         ] {
-            let pref = Var::from_var(
+            let var = Var::from_var(
                 name,
                 NodeIndex::new(idx),
                 typ,
                 Qualifier::Public,
                 Distribution::default(),
             );
-            ideal.register(&pref);
+            ideal.register(&var);
         }
 
         let mk_ref = |idx, typ| mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(idx)), typ));
@@ -5284,7 +5291,7 @@ mod tests {
 
     #[test]
     fn test_add_op_div_scalar_fallback() {
-        // Scalar / Scalar → Scalar: legacy zip path (a - b·var(pr) = 0).
+        // Scalar / Scalar → Scalar: legacy zip path (a - b·var(var) = 0).
         // Scalar fallback does not build a canonical polynomial witness key, so
         // no witness side-table entry is created.
         use crate::Var;
@@ -5295,23 +5302,23 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
-        let pref_b = Var::from_node(
+        ideal.register(&var_a);
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
+        ideal.register(&var_b);
 
         let basis_before = ideal.generating_set.len();
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::scalar(),
             Qualifier::Private,
@@ -5323,7 +5330,7 @@ mod tests {
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::scalar())),
             ATyp::scalar(),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
         // Legacy zip emits exactly one row: a - b · var(ideal).
         assert_eq!(
@@ -5331,11 +5338,11 @@ mod tests {
             1,
             "scalar fallback emits 1 row"
         );
-        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
-        let expected = &var(&pref_a) - &(&var(&pref_b) * &var(&pref));
+        let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let expected = &var_poly(&var_a) - &(&var_poly(&var_b) * &var_poly(&var));
         assert!(
             ideal.generating_set.iter().any(|row| row == &expected),
-            "scalar fallback row should be `a - b · var(ideal)`"
+            "scalar fallback row should be `a - b · var_poly(ideal)`"
         );
         assert_eq!(
             builder.ns.div_wit.len(),
@@ -5354,22 +5361,22 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_b = Var::from_node(
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::vec_scalar(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
-        ideal.register(&pref_b);
+        ideal.register(&var_a);
+        ideal.register(&var_b);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::vec_scalar(2),
             Qualifier::Private,
@@ -5383,14 +5390,14 @@ mod tests {
         );
 
         let before = ideal.generating_set.len();
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
         assert_eq!(ideal.generating_set.len() - before, 2);
-        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         for i in 0..2 {
-            let b_i = pref_b.clone().with_index(i).unwrap();
-            let r_i = pref.clone().with_index(i).unwrap();
-            let expected = &var(&pref_a) - &(&var(&b_i) * &var(&r_i));
+            let b_i = var_b.clone().with_index(i).unwrap();
+            let r_i = var.clone().with_index(i).unwrap();
+            let expected = &var_poly(&var_a) - &(&var_poly(&b_i) * &var_poly(&r_i));
             assert!(
                 ideal.generating_set.iter().any(|row| row == &expected),
                 "basis missing scalar/vector div row {i}"
@@ -5409,22 +5416,22 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_b = Var::from_node(
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
-        ideal.register(&pref_b);
+        ideal.register(&var_a);
+        ideal.register(&var_b);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::Uni(2),
             Qualifier::Private,
@@ -5432,7 +5439,7 @@ mod tests {
         );
         let before = ideal.generating_set.len();
         builder.add_op(
-            pref.clone(),
+            var.clone(),
             Op::Bin(
                 BinOp::Div,
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
@@ -5456,22 +5463,22 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::Mle(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_b = Var::from_node(
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
-        ideal.register(&pref_b);
+        ideal.register(&var_a);
+        ideal.register(&var_b);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::Mle(2),
             Qualifier::Private,
@@ -5479,7 +5486,7 @@ mod tests {
         );
         let before = ideal.generating_set.len();
         builder.add_op(
-            pref,
+            var,
             Op::Bin(
                 BinOp::Div,
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(2))),
@@ -5938,10 +5945,10 @@ mod tests {
         );
 
         // Namespace should register all 8 public inputs
-        let ns_named_count = gr.prefs.values().filter(|p| !p.name.is_empty()).count();
+        let ns_named_count = gr.vars.values().filter(|p| !p.name.is_empty()).count();
         assert!(
             ns_named_count >= 8,
-            "namespace should register >= 8 named public prefs, got {}",
+            "namespace should register >= 8 named public vars, got {}",
             ns_named_count
         );
     }
@@ -5977,10 +5984,10 @@ mod tests {
             gr.generating_set.len()
         );
 
-        let ns_named_count = gr.prefs.values().filter(|p| !p.name.is_empty()).count();
+        let ns_named_count = gr.vars.values().filter(|p| !p.name.is_empty()).count();
         assert!(
             ns_named_count >= 8,
-            "namespace should register >= 8 named public prefs, got {}",
+            "namespace should register >= 8 named public vars, got {}",
             ns_named_count
         );
     }
@@ -5996,15 +6003,15 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         // v : Vec(F, 3)  →  reduce(+, v) : F
-        let pref_v = Var::from_node(
+        let var_v = Var::from_node(
             NodeIndex::new(0),
             ATyp::Vec(Box::new(ATyp::scalar()), 3),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_v);
+        ideal.register(&var_v);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
             Qualifier::Private,
@@ -6017,22 +6024,22 @@ mod tests {
                 ATyp::Vec(Box::new(ATyp::scalar()), 3),
             )),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
-        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
-        let v0 = pref_v.clone().with_slot(0).unwrap();
-        let v1 = pref_v.clone().with_slot(1).unwrap();
-        let v2 = pref_v.clone().with_slot(2).unwrap();
+        let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let v0 = var_v.clone().with_slot(0).unwrap();
+        let v1 = var_v.clone().with_slot(1).unwrap();
+        let v2 = var_v.clone().with_slot(2).unwrap();
 
-        let expected = &var(&v0) + &(&var(&v1) + &var(&v2));
-        let row = &expected - &var(&pref);
+        let expected = &var_poly(&v0) + &(&var_poly(&v1) + &var_poly(&v2));
+        let row = &expected - &var_poly(&var);
         assert!(
             ideal.generating_set.iter().any(|r| r == &row),
             "basis should contain v0+v1+v2 - ideal, got {:?}",
             ideal.generating_set
         );
         assert_eq!(
-            ideal.pl.get(&pref).cloned(),
+            ideal.pl.get(&var).cloned(),
             Some(expected),
             "pl[ideal] should map to v0+v1+v2"
         );
@@ -6054,15 +6061,15 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let poly_t = ATyp::Uni(2);
         let vec_t = ATyp::Vec(Box::new(poly_t.clone()), 3);
-        let pref_v = Var::from_node(
+        let var_v = Var::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_v);
+        ideal.register(&var_v);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(1),
             poly_t.clone(),
             Qualifier::Private,
@@ -6072,28 +6079,28 @@ mod tests {
             BinOp::Add,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), vec_t)),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
-        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         // Vec(Poly(1,2), 3): element 0 is slots 0,1,2; element 1 is slots 3,4,5; element 2 is slots 6,7,8.
-        let v0_c0 = pref_v.clone().with_index(0).unwrap().with_slot(0).unwrap();
-        let v0_c1 = pref_v.clone().with_index(0).unwrap().with_slot(1).unwrap();
-        let v0_c2 = pref_v.clone().with_index(0).unwrap().with_slot(2).unwrap();
-        let v1_c0 = pref_v.clone().with_index(1).unwrap().with_slot(0).unwrap();
-        let v1_c1 = pref_v.clone().with_index(1).unwrap().with_slot(1).unwrap();
-        let v1_c2 = pref_v.clone().with_index(1).unwrap().with_slot(2).unwrap();
-        let v2_c0 = pref_v.clone().with_index(2).unwrap().with_slot(0).unwrap();
-        let v2_c1 = pref_v.clone().with_index(2).unwrap().with_slot(1).unwrap();
-        let v2_c2 = pref_v.clone().with_index(2).unwrap().with_slot(2).unwrap();
+        let v0_c0 = var_v.clone().with_index(0).unwrap().with_slot(0).unwrap();
+        let v0_c1 = var_v.clone().with_index(0).unwrap().with_slot(1).unwrap();
+        let v0_c2 = var_v.clone().with_index(0).unwrap().with_slot(2).unwrap();
+        let v1_c0 = var_v.clone().with_index(1).unwrap().with_slot(0).unwrap();
+        let v1_c1 = var_v.clone().with_index(1).unwrap().with_slot(1).unwrap();
+        let v1_c2 = var_v.clone().with_index(1).unwrap().with_slot(2).unwrap();
+        let v2_c0 = var_v.clone().with_index(2).unwrap().with_slot(0).unwrap();
+        let v2_c1 = var_v.clone().with_index(2).unwrap().with_slot(1).unwrap();
+        let v2_c2 = var_v.clone().with_index(2).unwrap().with_slot(2).unwrap();
 
-        let r_c0 = pref.clone().with_slot(0).unwrap();
-        let r_c1 = pref.clone().with_slot(1).unwrap();
-        let r_c2 = pref.clone().with_slot(2).unwrap();
+        let r_c0 = var.clone().with_slot(0).unwrap();
+        let r_c1 = var.clone().with_slot(1).unwrap();
+        let r_c2 = var.clone().with_slot(2).unwrap();
 
         // ideal[0] = v0[0] + v1[0] + v2[0]
-        let expected_c0 = &var(&v0_c0) + &(&var(&v1_c0) + &var(&v2_c0));
-        let expected_c1 = &var(&v0_c1) + &(&var(&v1_c1) + &var(&v2_c1));
-        let expected_c2 = &var(&v0_c2) + &(&var(&v1_c2) + &var(&v2_c2));
+        let expected_c0 = &var_poly(&v0_c0) + &(&var_poly(&v1_c0) + &var_poly(&v2_c0));
+        let expected_c1 = &var_poly(&v0_c1) + &(&var_poly(&v1_c1) + &var_poly(&v2_c1));
+        let expected_c2 = &var_poly(&v0_c2) + &(&var_poly(&v1_c2) + &var_poly(&v2_c2));
 
         assert_eq!(
             ideal.pl.get(&r_c0).cloned(),
@@ -6111,9 +6118,9 @@ mod tests {
             "pl[ideal[2]] = v0[2]+v1[2]+v2[2]"
         );
 
-        let row0 = &expected_c0 - &var(&r_c0);
-        let row1 = &expected_c1 - &var(&r_c1);
-        let row2 = &expected_c2 - &var(&r_c2);
+        let row0 = &expected_c0 - &var_poly(&r_c0);
+        let row1 = &expected_c1 - &var_poly(&r_c1);
+        let row2 = &expected_c2 - &var_poly(&r_c2);
         assert!(
             ideal.generating_set.iter().any(|r| r == &row0),
             "basis should contain row for coefficient 0"
@@ -6187,13 +6194,13 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let evals_typ = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let pref_evals = Var::from_node(
+        let var_evals = Var::from_node(
             NodeIndex::new(0),
             evals_typ.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_evals);
+        ideal.register(&var_evals);
 
         let points: GOp<ArkBls12_381> =
             Op::Value(Value::VecScalar(vec![Fr::from(0u64), Fr::from(1u64)]));
@@ -6201,49 +6208,49 @@ mod tests {
             Op::Ref(graph::Ref::new(NodeIndex::new(0)), evals_typ.clone());
 
         let ideal_typ = ATyp::uni(2);
-        let pref_ideal = Var::from_node(
+        let var_ideal = Var::from_node(
             NodeIndex::new(1),
             ideal_typ.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_ideal);
+        ideal.register(&var_ideal);
 
         let op: GOp<ArkBls12_381> =
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
-        builder.add_op(pref_ideal.clone(), op, &mut ideal);
+        builder.add_op(var_ideal.clone(), op, &mut ideal);
 
-        let var = |p: &Var| Polynomial::<Fr>::var(p);
+        let var_poly = |p: &Var| Polynomial::<Fr>::var(p);
 
-        let r0 = pref_ideal.clone().with_slot(0).unwrap();
-        let r1 = pref_ideal.clone().with_slot(1).unwrap();
-        let r2 = pref_ideal.clone().with_slot(2).unwrap();
+        let r0 = var_ideal.clone().with_slot(0).unwrap();
+        let r1 = var_ideal.clone().with_slot(1).unwrap();
+        let r2 = var_ideal.clone().with_slot(2).unwrap();
 
-        let y0 = pref_evals
+        let y0 = var_evals
             .clone()
             .with_index(0)
             .unwrap()
             .with_slot(0)
             .unwrap();
-        let y1 = pref_evals
+        let y1 = var_evals
             .clone()
             .with_index(1)
             .unwrap()
             .with_slot(0)
             .unwrap();
 
-        let expected_c0 = var(&y0);
-        let expected_c1 = -var(&y0) + var(&y1);
+        let expected_c0 = var_poly(&y0);
+        let expected_c1 = -var_poly(&y0) + var_poly(&y1);
 
         assert_eq!(
             ideal.pl.get(&r0).cloned(),
             Some(expected_c0.clone()),
-            "pl[c0] = var(y0)"
+            "pl[c0] = var_poly(y0)"
         );
         assert_eq!(
             ideal.pl.get(&r1).cloned(),
             Some(expected_c1.clone()),
-            "pl[c1] = -var(y0) + var(y1)"
+            "pl[c1] = -var_poly(y0) + var_poly(y1)"
         );
         assert_eq!(
             ideal.pl.get(&r2).cloned(),
@@ -6255,13 +6262,13 @@ mod tests {
             ideal
                 .generating_set
                 .iter()
-                .any(|r| r == &(&expected_c0 - &var(&r0)))
+                .any(|r| r == &(&expected_c0 - &var_poly(&r0)))
         );
         assert!(
             ideal
                 .generating_set
                 .iter()
-                .any(|r| r == &(&expected_c1 - &var(&r1)))
+                .any(|r| r == &(&expected_c1 - &var_poly(&r1)))
         );
     }
 
@@ -6276,13 +6283,13 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let evals_typ = ATyp::Vec(Box::new(ATyp::scalar()), 3);
-        let pref_evals = Var::from_node(
+        let var_evals = Var::from_node(
             NodeIndex::new(0),
             evals_typ.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_evals);
+        ideal.register(&var_evals);
 
         let points: GOp<ArkBls12_381> = Op::Value(Value::VecScalar(
             [1u64, 2, 3].iter().map(|&x| Fr::from(x)).collect(),
@@ -6291,38 +6298,38 @@ mod tests {
             Op::Ref(graph::Ref::new(NodeIndex::new(0)), evals_typ.clone());
 
         let ideal_typ = ATyp::uni(3);
-        let pref_ideal = Var::from_node(
+        let var_ideal = Var::from_node(
             NodeIndex::new(1),
             ideal_typ.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_ideal);
+        ideal.register(&var_ideal);
 
         let op: GOp<ArkBls12_381> =
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
-        builder.add_op(pref_ideal.clone(), op, &mut ideal);
+        builder.add_op(var_ideal.clone(), op, &mut ideal);
 
-        let var = |p: &Var| Polynomial::<Fr>::var(p);
+        let var_poly = |p: &Var| Polynomial::<Fr>::var(p);
 
-        let r0 = pref_ideal.clone().with_slot(0).unwrap();
-        let r1 = pref_ideal.clone().with_slot(1).unwrap();
-        let r2 = pref_ideal.clone().with_slot(2).unwrap();
-        let r3 = pref_ideal.clone().with_slot(3).unwrap();
+        let r0 = var_ideal.clone().with_slot(0).unwrap();
+        let r1 = var_ideal.clone().with_slot(1).unwrap();
+        let r2 = var_ideal.clone().with_slot(2).unwrap();
+        let r3 = var_ideal.clone().with_slot(3).unwrap();
 
-        let y0 = pref_evals
+        let y0 = var_evals
             .clone()
             .with_index(0)
             .unwrap()
             .with_slot(0)
             .unwrap();
-        let y1 = pref_evals
+        let y1 = var_evals
             .clone()
             .with_index(1)
             .unwrap()
             .with_slot(0)
             .unwrap();
-        let y2 = pref_evals
+        let y2 = var_evals
             .clone()
             .with_index(2)
             .unwrap()
@@ -6331,15 +6338,15 @@ mod tests {
 
         let lag = lagrange_basis::<Fr>(&[Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]);
 
-        let expected_c0 = &(&var(&y0) * &Polynomial::lit(&lag[0][0]))
-            + &(&(&var(&y1) * &Polynomial::lit(&lag[1][0]))
-                + &(&var(&y2) * &Polynomial::lit(&lag[2][0])));
-        let expected_c1 = &(&var(&y0) * &Polynomial::lit(&lag[0][1]))
-            + &(&(&var(&y1) * &Polynomial::lit(&lag[1][1]))
-                + &(&var(&y2) * &Polynomial::lit(&lag[2][1])));
-        let expected_c2 = &(&var(&y0) * &Polynomial::lit(&lag[0][2]))
-            + &(&(&var(&y1) * &Polynomial::lit(&lag[1][2]))
-                + &(&var(&y2) * &Polynomial::lit(&lag[2][2])));
+        let expected_c0 = &(&var_poly(&y0) * &Polynomial::lit(&lag[0][0]))
+            + &(&(&var_poly(&y1) * &Polynomial::lit(&lag[1][0]))
+                + &(&var_poly(&y2) * &Polynomial::lit(&lag[2][0])));
+        let expected_c1 = &(&var_poly(&y0) * &Polynomial::lit(&lag[0][1]))
+            + &(&(&var_poly(&y1) * &Polynomial::lit(&lag[1][1]))
+                + &(&var_poly(&y2) * &Polynomial::lit(&lag[2][1])));
+        let expected_c2 = &(&var_poly(&y0) * &Polynomial::lit(&lag[0][2]))
+            + &(&(&var_poly(&y1) * &Polynomial::lit(&lag[1][2]))
+                + &(&var_poly(&y2) * &Polynomial::lit(&lag[2][2])));
 
         assert_eq!(
             ideal.pl.get(&r0).cloned(),
@@ -6374,65 +6381,65 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let pref_points = Var::from_node(
+        let var_points = Var::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_points);
+        ideal.register(&var_points);
 
         let coefs: Vec<_> = [0u64, 1]
             .iter()
             .map(|&n| mk::<ArkBls12_381>(Op::Value(Value::Index(n as usize))))
             .collect();
-        builder.add_op(pref_points.clone(), Op::Vec(coefs), &mut ideal);
+        builder.add_op(var_points.clone(), Op::Vec(coefs), &mut ideal);
 
-        let pref_evals = Var::from_node(
+        let var_evals = Var::from_node(
             NodeIndex::new(1),
             vec_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_evals);
+        ideal.register(&var_evals);
 
         let ideal_typ = ATyp::uni(2);
-        let pref_ideal = Var::from_node(
+        let var_ideal = Var::from_node(
             NodeIndex::new(2),
             ideal_typ.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_ideal);
+        ideal.register(&var_ideal);
 
         let points: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_t.clone());
         let evals: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(1)), vec_t.clone());
 
         let op: GOp<ArkBls12_381> =
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
-        builder.add_op(pref_ideal.clone(), op, &mut ideal);
+        builder.add_op(var_ideal.clone(), op, &mut ideal);
 
-        let var = |p: &Var| Polynomial::<Fr>::var(p);
+        let var_poly = |p: &Var| Polynomial::<Fr>::var(p);
 
-        let r0 = pref_ideal.clone().with_slot(0).unwrap();
-        let r1 = pref_ideal.clone().with_slot(1).unwrap();
-        let r2 = pref_ideal.clone().with_slot(2).unwrap();
+        let r0 = var_ideal.clone().with_slot(0).unwrap();
+        let r1 = var_ideal.clone().with_slot(1).unwrap();
+        let r2 = var_ideal.clone().with_slot(2).unwrap();
 
-        let y0 = pref_evals
+        let y0 = var_evals
             .clone()
             .with_index(0)
             .unwrap()
             .with_slot(0)
             .unwrap();
-        let y1 = pref_evals
+        let y1 = var_evals
             .clone()
             .with_index(1)
             .unwrap()
             .with_slot(0)
             .unwrap();
 
-        let expected_c0 = var(&y0);
-        let expected_c1 = -var(&y0) + var(&y1);
+        let expected_c0 = var_poly(&y0);
+        let expected_c1 = -var_poly(&y0) + var_poly(&y1);
 
         assert_eq!(
             ideal.pl.get(&r0).cloned(),
@@ -6463,101 +6470,101 @@ mod tests {
         // Two symbolic points x0, x1 stored as Var variables
         let scalar_t = ATyp::scalar();
         let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let pref_x0 = Var::from_node(
+        let var_x0 = Var::from_node(
             NodeIndex::new(0),
             scalar_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_x1 = Var::from_node(
+        let var_x1 = Var::from_node(
             NodeIndex::new(1),
             scalar_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_x0);
-        ideal.register(&pref_x1);
+        ideal.register(&var_x0);
+        ideal.register(&var_x1);
 
         // Points = [x0, x1]
-        let pref_points = Var::from_node(
+        let var_points = Var::from_node(
             NodeIndex::new(2),
             vec_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_points);
-        let x0_slot = pref_points
+        ideal.register(&var_points);
+        let x0_slot = var_points
             .clone()
             .with_index(0)
             .unwrap()
             .with_slot(0)
             .unwrap();
-        let x1_slot = pref_points
+        let x1_slot = var_points
             .clone()
             .with_index(1)
             .unwrap()
             .with_slot(0)
             .unwrap();
-        ideal.pl.insert(&x0_slot, &Polynomial::var(&pref_x0));
-        ideal.pl.insert(&x1_slot, &Polynomial::var(&pref_x1));
+        ideal.pl.insert(&x0_slot, &Polynomial::var(&var_x0));
+        ideal.pl.insert(&x1_slot, &Polynomial::var(&var_x1));
 
         // Evals = [y0, y1]
-        let pref_y0 = Var::from_node(
+        let var_y0 = Var::from_node(
             NodeIndex::new(3),
             scalar_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_y1 = Var::from_node(
+        let var_y1 = Var::from_node(
             NodeIndex::new(4),
             scalar_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_y0);
-        ideal.register(&pref_y1);
+        ideal.register(&var_y0);
+        ideal.register(&var_y1);
 
-        let pref_evals = Var::from_node(
+        let var_evals = Var::from_node(
             NodeIndex::new(5),
             vec_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_evals);
-        let y0_slot = pref_evals
+        ideal.register(&var_evals);
+        let y0_slot = var_evals
             .clone()
             .with_index(0)
             .unwrap()
             .with_slot(0)
             .unwrap();
-        let y1_slot = pref_evals
+        let y1_slot = var_evals
             .clone()
             .with_index(1)
             .unwrap()
             .with_slot(0)
             .unwrap();
-        ideal.pl.insert(&y0_slot, &Polynomial::var(&pref_y0));
-        ideal.pl.insert(&y1_slot, &Polynomial::var(&pref_y1));
+        ideal.pl.insert(&y0_slot, &Polynomial::var(&var_y0));
+        ideal.pl.insert(&y1_slot, &Polynomial::var(&var_y1));
 
         // Result = interpolate([x0, x1], [y0, y1])
         // p(t) = y0 * (t - x1) / (x0 - x1) + y1 * (t - x0) / (x1 - x0)
         //      = y0 * d01 * t - y0 * d01 * x1 + y1 * d10 * t - y1 * d10 * x0
         // where d01 * (x0 - x1) = 1 and d10 * (x1 - x0) = 1
         let ideal_typ = ATyp::uni(2);
-        let pref_ideal = Var::from_node(
+        let var_ideal = Var::from_node(
             NodeIndex::new(6),
             ideal_typ.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_ideal);
+        ideal.register(&var_ideal);
 
         let points: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(2)), vec_t.clone());
         let evals: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(5)), vec_t.clone());
 
         let op: GOp<ArkBls12_381> =
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
-        builder.add_op(pref_ideal.clone(), op, &mut ideal);
+        builder.add_op(var_ideal.clone(), op, &mut ideal);
 
         // Verify: basis should contain d-variable equations and ideal equations.
         // For interpolate([x0, x1], [y0, y1]) with 2 symbolic points:
@@ -6565,9 +6572,9 @@ mod tests {
         // p[0] = -y0*d01*x1 - y1*d10*x0  (constant term)
         // p[1] = y0*d01 + y1*d10          (linear coefficient)
         // p[2] = 0                         (no quadratic term)
-        let r0 = pref_ideal.clone().with_slot(0).unwrap();
-        let r1 = pref_ideal.clone().with_slot(1).unwrap();
-        let r2 = pref_ideal.clone().with_slot(2).unwrap();
+        let r0 = var_ideal.clone().with_slot(0).unwrap();
+        let r1 = var_ideal.clone().with_slot(1).unwrap();
+        let r2 = var_ideal.clone().with_slot(2).unwrap();
 
         let d_vars: Vec<_> = ideal
             .var_order
@@ -6584,12 +6591,12 @@ mod tests {
 
         let neg_one = -<ark_bls12_381::Fr as ark_ff::One>::one();
         // Expected: p[0] = -y0*d01*x1 - y1*d10*x0, p[1] = y0*d01 + y1*d10
-        // evals_polys uses slot PRefs (y0_slot, y1_slot) as monomial variables.
-        // xs_polys uses resolved PRefs from pl (pref_x0, pref_x1) as monomial variables.
+        // evals_polys uses slot Vars (y0_slot, y1_slot) as monomial variables.
+        // xs_polys uses resolved Vars from pl (var_x0, var_x1) as monomial variables.
         let expected_r0 = Polynomial::var(&y0_slot)
-            * (Polynomial::var(d01) * Polynomial::lit(&neg_one) * Polynomial::var(&pref_x1))
+            * (Polynomial::var(d01) * Polynomial::lit(&neg_one) * Polynomial::var(&var_x1))
             + Polynomial::var(&y1_slot)
-                * (Polynomial::var(d10) * Polynomial::lit(&neg_one) * Polynomial::var(&pref_x0));
+                * (Polynomial::var(d10) * Polynomial::lit(&neg_one) * Polynomial::var(&var_x0));
         let expected_r1 = Polynomial::var(&y0_slot) * Polynomial::var(d01)
             + Polynomial::var(&y1_slot) * Polynomial::var(d10);
 
@@ -6635,28 +6642,28 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let evals_typ = ATyp::vec_scalar(3);
-        let pref_evals = Var::from_node(
+        let var_evals = Var::from_node(
             NodeIndex::new(1),
             evals_typ.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_evals);
+        ideal.register(&var_evals);
 
-        let pref_ideal = Var::from_node(
+        let var_ideal = Var::from_node(
             NodeIndex::new(2),
             ATyp::uni(3),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_ideal);
+        ideal.register(&var_ideal);
 
         let points = Op::Value(Value::VecIndex(vec![0, 0, 1]));
         let evals = Op::Ref(graph::Ref::new(NodeIndex::new(1)), evals_typ);
         let op: GOp<ArkBls12_381> =
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
 
-        builder.add_op(pref_ideal, op, &mut ideal);
+        builder.add_op(var_ideal, op, &mut ideal);
     }
 
     #[test]
@@ -6668,28 +6675,28 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_b = Var::from_node(
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
-        ideal.register(&pref_b);
+        ideal.register(&var_a);
+        ideal.register(&var_b);
 
-        let pref_ideal = Var::from_node(
+        let var_ideal = Var::from_node(
             NodeIndex::new(2),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_ideal);
+        ideal.register(&var_ideal);
 
         let a = Op::Ref(graph::Ref::new(NodeIndex::new(0)), ATyp::scalar());
         let b = Op::Ref(graph::Ref::new(NodeIndex::new(1)), ATyp::scalar());
@@ -6699,17 +6706,17 @@ mod tests {
             mk::<ArkBls12_381>(b),
             ATyp::scalar(),
         );
-        builder.add_op(pref_ideal.clone(), op, &mut ideal);
+        builder.add_op(var_ideal.clone(), op, &mut ideal);
 
-        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
 
-        let a_slot = pref_a.with_slot(0).unwrap();
-        let b_slot = pref_b.with_slot(0).unwrap();
-        let r_slot = pref_ideal.with_slot(0).unwrap();
-        let expected = &var(&a_slot) - &(&var(&b_slot) * &var(&r_slot));
+        let a_slot = var_a.with_slot(0).unwrap();
+        let b_slot = var_b.with_slot(0).unwrap();
+        let r_slot = var_ideal.with_slot(0).unwrap();
+        let expected = &var_poly(&a_slot) - &(&var_poly(&b_slot) * &var_poly(&r_slot));
         assert!(
             ideal.generating_set.iter().any(|r| r == &expected),
-            "basis should contain a - b*var(pr)"
+            "basis should contain a - b*var_poly(var)"
         );
     }
 
@@ -6723,28 +6730,28 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_b = Var::from_node(
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
-        ideal.register(&pref_b);
+        ideal.register(&var_a);
+        ideal.register(&var_b);
 
-        let pref_ideal = Var::from_node(
+        let var_ideal = Var::from_node(
             NodeIndex::new(2),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_ideal);
+        ideal.register(&var_ideal);
 
         let a = Op::Ref(graph::Ref::new(NodeIndex::new(0)), ATyp::scalar());
         let b = Op::Ref(graph::Ref::new(NodeIndex::new(1)), ATyp::scalar());
@@ -6754,7 +6761,7 @@ mod tests {
             mk::<ArkBls12_381>(b),
             ATyp::scalar(),
         );
-        builder.add_op(pref_ideal, op, &mut ideal);
+        builder.add_op(var_ideal, op, &mut ideal);
     }
 
     #[test]
@@ -6768,15 +6775,15 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 3);
-        let pref_v = Var::from_node(
+        let var_v = Var::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_v);
+        ideal.register(&var_v);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
             Qualifier::Private,
@@ -6786,12 +6793,12 @@ mod tests {
             BinOp::Div,
             mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_t)),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
-        let v0 = pref_v.clone().with_index(0).unwrap().with_slot(0).unwrap();
-        let v1 = pref_v.clone().with_index(1).unwrap().with_slot(0).unwrap();
-        let v2 = pref_v.clone().with_index(2).unwrap().with_slot(0).unwrap();
-        let r_slot = pref.with_slot(0).unwrap();
+        let v0 = var_v.clone().with_index(0).unwrap().with_slot(0).unwrap();
+        let v1 = var_v.clone().with_index(1).unwrap().with_slot(0).unwrap();
+        let v2 = var_v.clone().with_index(2).unwrap().with_slot(0).unwrap();
+        let r_slot = var.with_slot(0).unwrap();
 
         let step1_vars: Vec<_> = ideal
             .generating_set
@@ -6826,27 +6833,27 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let pref_v = Var::from_node(
+        let var_v = Var::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_v);
+        ideal.register(&var_v);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref);
+        ideal.register(&var);
 
         let op: GOp<ArkBls12_381> = Op::Reduce(
             BinOp::Rem,
             mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_t)),
         );
-        builder.add_op(pref, op, &mut ideal);
+        builder.add_op(var, op, &mut ideal);
     }
 
     #[test]
@@ -6859,28 +6866,28 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::Mle(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_b = Var::from_node(
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::Mle(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
-        ideal.register(&pref_b);
+        ideal.register(&var_a);
+        ideal.register(&var_b);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::Mle(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref);
+        ideal.register(&var);
 
         let a = Op::Ref(graph::Ref::new(NodeIndex::new(0)), ATyp::Mle(2));
         let b = Op::Ref(graph::Ref::new(NodeIndex::new(1)), ATyp::Mle(2));
@@ -6890,7 +6897,7 @@ mod tests {
             mk::<ArkBls12_381>(b),
             ATyp::Mle(2),
         );
-        builder.add_op(pref, op, &mut ideal);
+        builder.add_op(var, op, &mut ideal);
     }
 
     #[test]
@@ -6904,27 +6911,27 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let vec_t = ATyp::Vec(Box::new(ATyp::VPoly(1, 3)), 2);
-        let pref_v = Var::from_node(
+        let var_v = Var::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_v);
+        ideal.register(&var_v);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref);
+        ideal.register(&var);
 
         let op: GOp<ArkBls12_381> = Op::Reduce(
             BinOp::Div,
             mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_t)),
         );
-        builder.add_op(pref.clone(), op, &mut ideal);
+        builder.add_op(var.clone(), op, &mut ideal);
 
         assert!(
             !ideal.generating_set.is_empty(),
@@ -6944,24 +6951,24 @@ mod tests {
 
         let elem_t = ATyp::Uni(1);
         let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
-        let pref_v = Var::from_node(
+        let var_v = Var::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_v);
+        ideal.register(&var_v);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(1),
             ATyp::Uni(3),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref);
+        ideal.register(&var);
 
         builder.add_op(
-            pref.clone(),
+            var.clone(),
             Op::Reduce(
                 BinOp::Mul,
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_t)),
@@ -6969,7 +6976,7 @@ mod tests {
             &mut ideal,
         );
 
-        let high_slot = pref.with_slot(3).unwrap();
+        let high_slot = var.with_slot(3).unwrap();
         assert!(
             ideal
                 .generating_set
@@ -6998,33 +7005,33 @@ mod tests {
 
         let elem_t = ATyp::Uni(1);
         let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
-        let pref_v = Var::from_node(
+        let var_v = Var::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_v);
+        ideal.register(&var_v);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(1),
             ATyp::Uni(3),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref);
+        ideal.register(&var);
 
         // reduce(*, [x for x in polys]) — ReduceMap(Mul) with identity body over a
         // length-3 vector of degree-1 univariates → degree-3 product (Uni(3)).
         let domain = mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_t));
         let body = mk::<ArkBls12_381>(Op::LoopParam(0, elem_t.clone()));
         builder.add_op(
-            pref.clone(),
+            var.clone(),
             Op::ReduceMap(BinOp::Mul, domain, body),
             &mut ideal,
         );
 
-        let high_slot = pref.with_slot(3).unwrap();
+        let high_slot = var.with_slot(3).unwrap();
         assert!(
             ideal
                 .generating_set
@@ -7046,24 +7053,24 @@ mod tests {
 
         let elem_t = ATyp::Uni(3);
         let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
-        let pref_v = Var::from_node(
+        let var_v = Var::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_v);
+        ideal.register(&var_v);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(1),
             ATyp::Uni(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref);
+        ideal.register(&var);
 
         builder.add_op(
-            pref.clone(),
+            var.clone(),
             Op::Reduce(
                 BinOp::Rem,
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_t)),
@@ -7072,7 +7079,7 @@ mod tests {
         );
 
         assert_eq!(
-            pref.typ.physical_len(),
+            var.typ.physical_len(),
             3,
             "Uni(3) % Uni(3) % Uni(3) is lowered as the left-fold remainder type Uni(2)"
         );
@@ -7094,31 +7101,31 @@ mod tests {
 
         let dividend_t = ATyp::Uni(1);
         let divisor_t = ATyp::Uni(3);
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             dividend_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_b = Var::from_node(
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             divisor_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
-        ideal.register(&pref_b);
+        ideal.register(&var_a);
+        ideal.register(&var_b);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(2),
             ATyp::Uni(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref);
+        ideal.register(&var);
 
         builder.add_op(
-            pref.clone(),
+            var.clone(),
             Op::Bin(
                 BinOp::Rem,
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), dividend_t)),
@@ -7134,8 +7141,8 @@ mod tests {
             "pass-through remainder allocates no div_wit"
         );
         for i in 0..2 {
-            let src = pref_a.clone().with_slot(i).unwrap();
-            let dst = pref.clone().with_slot(i).unwrap();
+            let src = var_a.clone().with_slot(i).unwrap();
+            let dst = var.clone().with_slot(i).unwrap();
             assert!(
                 ideal
                     .generating_set
@@ -7144,7 +7151,7 @@ mod tests {
                 "pass-through remainder should bind source slot {i} to the ideal"
             );
         }
-        let padded = pref.with_slot(2).unwrap();
+        let padded = var.with_slot(2).unwrap();
         assert!(
             ideal.generating_set.iter().any(|row| row.contains(&padded)),
             "lifted pass-through remainder should constrain the padded high slot"
@@ -7171,20 +7178,20 @@ mod tests {
         rec_fields.insert(&"y".to_string(), &s);
         let rec_typ = ATyp::Record(rec_fields);
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             s.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
-        let pref_b = Var::from_node(
+        ideal.register(&var_a);
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             s.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
+        ideal.register(&var_b);
 
         let mut fields = Ctx::<String, HOp<ArkBls12_381>>::new();
         fields.insert(
@@ -7196,19 +7203,19 @@ mod tests {
             &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), s.clone())),
         );
 
-        let pref_r = Var::from_node(
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             rec_typ,
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_r);
+        ideal.register(&var_r);
 
-        builder.add_op(pref_r.clone(), Op::Record(fields), &mut ideal);
+        builder.add_op(var_r.clone(), Op::Record(fields), &mut ideal);
 
         // Ctx iteration order: "x" (slot 0), "y" (slot 1)
-        let slot_x = pref_r.clone().with_slot(0).unwrap();
-        let slot_y = pref_r.clone().with_slot(1).unwrap();
+        let slot_x = var_r.clone().with_slot(0).unwrap();
+        let slot_y = var_r.clone().with_slot(1).unwrap();
 
         assert!(
             ideal.pl.contains(&slot_x),
@@ -7222,11 +7229,11 @@ mod tests {
         let poly_x = ideal.pl.get(&slot_x).unwrap();
         let poly_y = ideal.pl.get(&slot_y).unwrap();
         assert!(
-            poly_x.contains(&pref_a),
+            poly_x.contains(&var_a),
             "slot 0 poly should reference field x"
         );
         assert!(
-            poly_y.contains(&pref_b),
+            poly_y.contains(&var_b),
             "slot 1 poly should reference field y"
         );
     }
@@ -7247,21 +7254,21 @@ mod tests {
         rec_fields.insert(&"p".to_string(), &uni_typ);
         let rec_typ = ATyp::Record(rec_fields);
 
-        let pref_scalar = Var::from_node(
+        let var_scalar = Var::from_node(
             NodeIndex::new(0),
             s.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_scalar);
+        ideal.register(&var_scalar);
 
-        let pref_poly = Var::from_node(
+        let var_poly = Var::from_node(
             NodeIndex::new(1),
             uni_typ.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_poly);
+        ideal.register(&var_poly);
 
         let mut fields = Ctx::<String, HOp<ArkBls12_381>>::new();
         fields.insert(
@@ -7273,23 +7280,23 @@ mod tests {
             &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), uni_typ.clone())),
         );
 
-        let pref_r = Var::from_node(
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             rec_typ,
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_r);
+        ideal.register(&var_r);
 
-        builder.add_op(pref_r.clone(), Op::Record(fields), &mut ideal);
+        builder.add_op(var_r.clone(), Op::Record(fields), &mut ideal);
 
         assert_eq!(
-            pref_r.typ.physical_len(),
+            var_r.typ.physical_len(),
             4,
             "1 scalar + 3 Uni(2) coeffs = 4"
         );
 
-        let slot_a = pref_r.clone().with_slot(0).unwrap();
+        let slot_a = var_r.clone().with_slot(0).unwrap();
         assert_eq!(slot_a.typ, s, "slot 0 should be scalar (field a)");
         assert!(
             ideal.pl.contains(&slot_a),
@@ -7297,7 +7304,7 @@ mod tests {
         );
 
         for i in 0..3 {
-            let slot_pi = pref_r.clone().with_slot(1 + i).unwrap();
+            let slot_pi = var_r.clone().with_slot(1 + i).unwrap();
             assert_eq!(
                 slot_pi.typ, s,
                 "slots 1-3 should be scalar (field p coefficients)"
@@ -7329,21 +7336,21 @@ mod tests {
         let phys_len = rec_typ.physical_len();
         assert_eq!(phys_len, 4, "1 scalar + 3 Vec scalars = 4");
 
-        let pref_x = Var::from_node(
+        let var_x = Var::from_node(
             NodeIndex::new(0),
             s.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_x);
+        ideal.register(&var_x);
 
-        let pref_v = Var::from_node(
+        let var_v = Var::from_node(
             NodeIndex::new(1),
             v2.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_v);
+        ideal.register(&var_v);
 
         let mut fields = Ctx::<String, HOp<ArkBls12_381>>::new();
         fields.insert(
@@ -7355,15 +7362,15 @@ mod tests {
             &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), v2.clone())),
         );
 
-        let pref_r = Var::from_node(
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             rec_typ,
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_r);
+        ideal.register(&var_r);
 
-        builder.add_op(pref_r.clone(), Op::Record(fields), &mut ideal);
+        builder.add_op(var_r.clone(), Op::Record(fields), &mut ideal);
 
         assert_eq!(
             ideal.generating_set.len(),
@@ -7392,34 +7399,34 @@ mod tests {
         rec_fields.insert(&"y".to_string(), &s);
         let rec_typ = ATyp::Record(rec_fields);
 
-        let pref_rec = Var::from_node(
+        let var_rec = Var::from_node(
             NodeIndex::new(0),
             rec_typ.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_rec);
+        ideal.register(&var_rec);
 
         let inner_op: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(0)), rec_typ);
 
-        let pref_proj = Var::from_node(
+        let var_proj = Var::from_node(
             NodeIndex::new(1),
             s.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_proj);
+        ideal.register(&var_proj);
 
         builder.add_op(
-            pref_proj.clone(),
+            var_proj.clone(),
             Op::Proj(mk::<ArkBls12_381>(inner_op), "x".to_string(), s.clone()),
             &mut ideal,
         );
 
-        assert!(ideal.pl.contains(&pref_proj), "proj ideal missing from pl");
+        assert!(ideal.pl.contains(&var_proj), "proj ideal missing from pl");
 
-        let proj_poly = ideal.pl.get(&pref_proj).unwrap();
-        let slot_0 = pref_rec.clone().with_slot(0).unwrap();
+        let proj_poly = ideal.pl.get(&var_proj).unwrap();
+        let slot_0 = var_rec.clone().with_slot(0).unwrap();
         assert!(
             proj_poly.contains(&slot_0),
             "proj poly should reference record slot 0 (field x)"
@@ -7445,33 +7452,33 @@ mod tests {
         rec_fields.insert(&"b".to_string(), &v3);
         let rec_typ = ATyp::Record(rec_fields);
 
-        let pref_rec = Var::from_node(
+        let var_rec = Var::from_node(
             NodeIndex::new(0),
             rec_typ.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_rec);
+        ideal.register(&var_rec);
 
         let inner_op: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(0)), rec_typ);
 
-        let pref_proj = Var::from_node(
+        let var_proj = Var::from_node(
             NodeIndex::new(1),
             v3.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_proj);
+        ideal.register(&var_proj);
 
         builder.add_op(
-            pref_proj.clone(),
+            var_proj.clone(),
             Op::Proj(mk::<ArkBls12_381>(inner_op), "b".to_string(), v3.clone()),
             &mut ideal,
         );
 
-        assert_eq!(pref_proj.typ.physical_len(), 3, "Vec<F, 3> has 3 slots");
-        let proj_slots = pref_proj.slots();
-        let rec_slots = pref_rec.slots();
+        assert_eq!(var_proj.typ.physical_len(), 3, "Vec<F, 3> has 3 slots");
+        let proj_slots = var_proj.slots();
+        let rec_slots = var_rec.slots();
         for i in 0..3 {
             let proj_slot = &proj_slots[i];
             assert!(
@@ -7510,33 +7517,33 @@ mod tests {
         rec_fields.insert(&"b".to_string(), &s);
         let rec_typ = ATyp::Record(rec_fields);
 
-        let pref_rec = Var::from_node(
+        let var_rec = Var::from_node(
             NodeIndex::new(0),
             rec_typ.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_rec);
+        ideal.register(&var_rec);
 
         let inner_op: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(0)), rec_typ);
 
-        let pref_proj = Var::from_node(
+        let var_proj = Var::from_node(
             NodeIndex::new(1),
             uni2.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_proj);
+        ideal.register(&var_proj);
 
         builder.add_op(
-            pref_proj.clone(),
+            var_proj.clone(),
             Op::Proj(mk::<ArkBls12_381>(inner_op), "a".to_string(), uni2.clone()),
             &mut ideal,
         );
 
-        assert_eq!(pref_proj.typ.physical_len(), 3, "Uni(2) has 3 coefficients");
-        let proj_slots = pref_proj.slots();
-        let rec_slots = pref_rec.slots();
+        assert_eq!(var_proj.typ.physical_len(), 3, "Uni(2) has 3 coefficients");
+        let proj_slots = var_proj.slots();
+        let rec_slots = var_rec.slots();
         for i in 0..3 {
             let proj_slot = &proj_slots[i];
             assert!(
@@ -7576,40 +7583,40 @@ mod tests {
         let uni4 = ATyp::Uni(4);
         let uni4_ideal = ATyp::Uni(4);
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             uni2.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
+        ideal.register(&var_a);
         let coefs_a: Vec<_> = (1..=3u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
-        builder.add_op(pref_a.clone(), Op::Vec(coefs_a), &mut ideal);
+        builder.add_op(var_a.clone(), Op::Vec(coefs_a), &mut ideal);
 
-        let pref_b = Var::from_node(
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             uni4.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
+        ideal.register(&var_b);
         let coefs_b: Vec<_> = (1..=5u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
-        builder.add_op(pref_b.clone(), Op::Vec(coefs_b), &mut ideal);
+        builder.add_op(var_b.clone(), Op::Vec(coefs_b), &mut ideal);
 
-        let pref_r = Var::from_node(
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             uni4_ideal.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_r);
+        ideal.register(&var_r);
 
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Bin(
                 BinOp::Add,
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), uni2)),
@@ -7619,9 +7626,9 @@ mod tests {
             &mut ideal,
         );
 
-        assert_eq!(pref_r.typ.physical_len(), 5, "Uni(4) has 5 coefficients");
+        assert_eq!(var_r.typ.physical_len(), 5, "Uni(4) has 5 coefficients");
         for i in 0..5 {
-            let slot = pref_r.clone().with_slot(i).unwrap();
+            let slot = var_r.clone().with_slot(i).unwrap();
             assert!(
                 ideal.pl.contains(&slot),
                 "Uni(2)+Uni(4) ideal slot {} missing from pl",
@@ -7643,32 +7650,32 @@ mod tests {
         let s = ATyp::scalar();
         let uni2 = ATyp::Uni(2);
 
-        let pref_s = Var::from_node(
+        let var_s = Var::from_node(
             NodeIndex::new(0),
             s.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_s);
+        ideal.register(&var_s);
 
-        let pref_p = Var::from_node(
+        let var_p = Var::from_node(
             NodeIndex::new(1),
             uni2.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_p);
+        ideal.register(&var_p);
 
-        let pref_r = Var::from_node(
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             uni2.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_r);
+        ideal.register(&var_r);
 
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Bin(
                 BinOp::Mul,
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), s.clone())),
@@ -7684,7 +7691,7 @@ mod tests {
             "Scalar * Uni(2) should produce 3 basis rows (one per coefficient)"
         );
         for i in 0..3 {
-            let slot = pref_r.clone().with_slot(i).unwrap();
+            let slot = var_r.clone().with_slot(i).unwrap();
             assert!(
                 ideal.pl.contains(&slot),
                 "Scalar*Uni(2) ideal slot {} missing from pl",
@@ -7706,32 +7713,32 @@ mod tests {
         let s = ATyp::scalar();
         let v3 = ATyp::Vec(Box::new(s.clone()), 3);
 
-        let pref_v = Var::from_node(
+        let var_v = Var::from_node(
             NodeIndex::new(0),
             v3.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_v);
+        ideal.register(&var_v);
 
-        let pref_s = Var::from_node(
+        let var_s = Var::from_node(
             NodeIndex::new(1),
             s.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_s);
+        ideal.register(&var_s);
 
-        let pref_r = Var::from_node(
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             v3.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_r);
+        ideal.register(&var_r);
 
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Bin(
                 BinOp::Mul,
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), v3.clone())),
@@ -7762,29 +7769,29 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let scalar_typ = ATyp::scalar();
-        let pref_s = Var::from_node(
+        let var_s = Var::from_node(
             NodeIndex::new(0),
             scalar_typ.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_s);
+        ideal.register(&var_s);
 
-        let pref_p = Var::from_node(
+        let var_p = Var::from_node(
             NodeIndex::new(1),
             poly_typ.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_p);
+        ideal.register(&var_p);
 
-        let pref_r = Var::from_node(
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             poly_typ.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_r);
+        ideal.register(&var_r);
 
         let scalar_op = mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), scalar_typ));
         let poly_op = mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), poly_typ.clone()));
@@ -7795,129 +7802,125 @@ mod tests {
         };
 
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Bin(op, left, right, poly_typ),
             &mut ideal,
         );
 
-        (pref_s, pref_p, pref_r, ideal)
+        (var_s, var_p, var_r, ideal)
     }
 
     fn assert_ideal_slot(
         ideal: &Ideal<ArkBls12_381>,
-        pref_r: &crate::Var,
+        var_r: &crate::Var,
         slot: usize,
         expected: Polynomial<ark_bls12_381::Fr>,
     ) {
-        let r_slot = pref_r.with_slot(slot).unwrap();
+        let r_slot = var_r.with_slot(slot).unwrap();
         let stored = ideal.pl.get(&r_slot).unwrap();
         assert_eq!(*stored, expected, "ideal slot {slot} mismatch");
     }
 
     #[test]
     fn test_add_scalar_poly_broadcast() {
-        let (pref_s, pref_p, pref_r, ideal) =
-            scalar_poly_binop_ideal(BinOp::Add, true, ATyp::Uni(2));
+        let (var_s, var_p, var_r, ideal) = scalar_poly_binop_ideal(BinOp::Add, true, ATyp::Uni(2));
         assert_eq!(
             ideal.generating_set.len(),
             3,
             "Scalar + Uni(2) should produce one row per coefficient slot"
         );
 
-        let s = Polynomial::<ark_bls12_381::Fr>::var(&pref_s);
+        let s = Polynomial::<ark_bls12_381::Fr>::var(&var_s);
         for i in 0..3 {
-            let p_slot_pref = pref_p.with_slot(i).unwrap();
-            let p = Polynomial::var(&p_slot_pref);
+            let p_slot_var = var_p.with_slot(i).unwrap();
+            let p = Polynomial::var(&p_slot_var);
             let expected = if i == 0 { &s + &p } else { p };
-            assert_ideal_slot(&ideal, &pref_r, i, expected);
+            assert_ideal_slot(&ideal, &var_r, i, expected);
         }
     }
 
     #[test]
     fn test_uni_add_scalar_lifts_to_constant_slot_only() {
-        let (pref_s, pref_p, pref_r, ideal) =
-            scalar_poly_binop_ideal(BinOp::Add, false, ATyp::Uni(2));
-        let s = Polynomial::<ark_bls12_381::Fr>::var(&pref_s);
+        let (var_s, var_p, var_r, ideal) = scalar_poly_binop_ideal(BinOp::Add, false, ATyp::Uni(2));
+        let s = Polynomial::<ark_bls12_381::Fr>::var(&var_s);
         for i in 0..3 {
-            let p_slot_pref = pref_p.with_slot(i).unwrap();
-            let p = Polynomial::var(&p_slot_pref);
+            let p_slot_var = var_p.with_slot(i).unwrap();
+            let p = Polynomial::var(&p_slot_var);
             let expected = if i == 0 { &p + &s } else { p };
-            assert_ideal_slot(&ideal, &pref_r, i, expected);
+            assert_ideal_slot(&ideal, &var_r, i, expected);
         }
     }
 
     #[test]
     fn test_uni_sub_scalar_lifts_to_constant_slot_only() {
-        let (pref_s, pref_p, pref_r, ideal) =
-            scalar_poly_binop_ideal(BinOp::Sub, false, ATyp::Uni(2));
-        let s = Polynomial::<ark_bls12_381::Fr>::var(&pref_s);
+        let (var_s, var_p, var_r, ideal) = scalar_poly_binop_ideal(BinOp::Sub, false, ATyp::Uni(2));
+        let s = Polynomial::<ark_bls12_381::Fr>::var(&var_s);
         for i in 0..3 {
-            let p_slot_pref = pref_p.with_slot(i).unwrap();
-            let p = Polynomial::var(&p_slot_pref);
+            let p_slot_var = var_p.with_slot(i).unwrap();
+            let p = Polynomial::var(&p_slot_var);
             let expected = if i == 0 { &p - &s } else { p };
-            assert_ideal_slot(&ideal, &pref_r, i, expected);
+            assert_ideal_slot(&ideal, &var_r, i, expected);
         }
     }
 
     #[test]
     fn test_scalar_sub_uni_negates_nonconstant_slots() {
-        let (pref_s, pref_p, pref_r, ideal) =
-            scalar_poly_binop_ideal(BinOp::Sub, true, ATyp::Uni(2));
-        let s = Polynomial::<ark_bls12_381::Fr>::var(&pref_s);
+        let (var_s, var_p, var_r, ideal) = scalar_poly_binop_ideal(BinOp::Sub, true, ATyp::Uni(2));
+        let s = Polynomial::<ark_bls12_381::Fr>::var(&var_s);
         for i in 0..3 {
-            let p_slot_pref = pref_p.with_slot(i).unwrap();
-            let p = Polynomial::var(&p_slot_pref);
+            let p_slot_var = var_p.with_slot(i).unwrap();
+            let p = Polynomial::var(&p_slot_var);
             let expected = if i == 0 { &s - &p } else { -p };
-            assert_ideal_slot(&ideal, &pref_r, i, expected);
+            assert_ideal_slot(&ideal, &var_r, i, expected);
         }
     }
 
     #[test]
     fn test_scalar_add_vpoly_lifts_to_constant_slot_only() {
         let poly_typ = ATyp::VPoly(2, 2);
-        let (pref_s, pref_p, pref_r, ideal) =
+        let (var_s, var_p, var_r, ideal) =
             scalar_poly_binop_ideal(BinOp::Add, true, poly_typ.clone());
-        let s = Polynomial::<ark_bls12_381::Fr>::var(&pref_s);
+        let s = Polynomial::<ark_bls12_381::Fr>::var(&var_s);
         let zero_slot = multi_indices(2, 2)
             .iter()
             .position(|idx| idx.iter().all(|degree| *degree == 0))
             .unwrap();
         for i in 0..poly_typ.physical_len() {
-            let p_slot_pref = pref_p.with_slot(i).unwrap();
-            let p = Polynomial::var(&p_slot_pref);
+            let p_slot_var = var_p.with_slot(i).unwrap();
+            let p = Polynomial::var(&p_slot_var);
             let expected = if i == zero_slot { &s + &p } else { p };
-            assert_ideal_slot(&ideal, &pref_r, i, expected);
+            assert_ideal_slot(&ideal, &var_r, i, expected);
         }
     }
 
     #[test]
     fn test_scalar_sub_vpoly_negates_nonconstant_slots() {
         let poly_typ = ATyp::VPoly(2, 2);
-        let (pref_s, pref_p, pref_r, ideal) =
+        let (var_s, var_p, var_r, ideal) =
             scalar_poly_binop_ideal(BinOp::Sub, true, poly_typ.clone());
-        let s = Polynomial::<ark_bls12_381::Fr>::var(&pref_s);
+        let s = Polynomial::<ark_bls12_381::Fr>::var(&var_s);
         let zero_slot = multi_indices(2, 2)
             .iter()
             .position(|idx| idx.iter().all(|degree| *degree == 0))
             .unwrap();
         for i in 0..poly_typ.physical_len() {
-            let p_slot_pref = pref_p.with_slot(i).unwrap();
-            let p = Polynomial::var(&p_slot_pref);
+            let p_slot_var = var_p.with_slot(i).unwrap();
+            let p = Polynomial::var(&p_slot_var);
             let expected = if i == zero_slot { &s - &p } else { -p };
-            assert_ideal_slot(&ideal, &pref_r, i, expected);
+            assert_ideal_slot(&ideal, &var_r, i, expected);
         }
     }
 
     #[test]
     fn test_scalar_add_mle_broadcasts_to_all_evaluation_slots() {
         let poly_typ = ATyp::Mle(2);
-        let (pref_s, pref_p, pref_r, ideal) =
+        let (var_s, var_p, var_r, ideal) =
             scalar_poly_binop_ideal(BinOp::Add, true, poly_typ.clone());
-        let s = Polynomial::<ark_bls12_381::Fr>::var(&pref_s);
+        let s = Polynomial::<ark_bls12_381::Fr>::var(&var_s);
         for i in 0..poly_typ.physical_len() {
-            let p_slot_pref = pref_p.with_slot(i).unwrap();
-            let p = Polynomial::var(&p_slot_pref);
-            assert_ideal_slot(&ideal, &pref_r, i, &s + &p);
+            let p_slot_var = var_p.with_slot(i).unwrap();
+            let p = Polynomial::var(&p_slot_var);
+            assert_ideal_slot(&ideal, &var_r, i, &s + &p);
         }
     }
 
@@ -7937,32 +7940,32 @@ mod tests {
         let vec_uni4 = ATyp::Vec(Box::new(uni4.clone()), 2);
         let vec_ideal = ATyp::Vec(Box::new(uni4.clone()), 4);
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             vec_uni2.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
+        ideal.register(&var_a);
 
-        let pref_b = Var::from_node(
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             vec_uni4.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
+        ideal.register(&var_b);
 
-        let pref_r = Var::from_node(
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             vec_ideal.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_r);
+        ideal.register(&var_r);
 
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Bin(
                 BinOp::Concat,
                 mk::<ArkBls12_381>(Op::Ref(
@@ -7979,12 +7982,12 @@ mod tests {
         );
 
         assert_eq!(
-            pref_r.typ.physical_len(),
+            var_r.typ.physical_len(),
             20,
             "Vec(Uni(4), 4) has 4*5=20 slots"
         );
         for i in 0..4 {
-            let elem = pref_r.with_index(i).unwrap();
+            let elem = var_r.with_index(i).unwrap();
             for j in 0..5 {
                 let slot = elem.with_slot(j).unwrap();
                 assert!(
@@ -8011,32 +8014,32 @@ mod tests {
         let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
         let vec_ideal = ATyp::Vec(Box::new(s.clone()), 3);
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             vec_s.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
+        ideal.register(&var_a);
 
-        let pref_b = Var::from_node(
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             s.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
+        ideal.register(&var_b);
 
-        let pref_r = Var::from_node(
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             vec_ideal.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_r);
+        ideal.register(&var_r);
 
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Bin(
                 BinOp::Concat,
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_s.clone())),
@@ -8046,9 +8049,9 @@ mod tests {
             &mut ideal,
         );
 
-        assert_eq!(pref_r.typ.physical_len(), 3, "Vec(Scalar, 3) has 3 slots");
+        assert_eq!(var_r.typ.physical_len(), 3, "Vec(Scalar, 3) has 3 slots");
         for i in 0..3 {
-            let elem = pref_r.with_index(i).unwrap();
+            let elem = var_r.with_index(i).unwrap();
             assert!(
                 ideal.pl.contains(&elem),
                 "Concat Vec++Scalar ideal element {} missing from pl",
@@ -8073,32 +8076,32 @@ mod tests {
         let vec_uni4 = ATyp::Vec(Box::new(uni4.clone()), 2);
         let bool_typ = ATyp::bool();
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             vec_uni2.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
+        ideal.register(&var_a);
 
-        let pref_b = Var::from_node(
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             vec_uni4.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
+        ideal.register(&var_b);
 
-        let pref_r = Var::from_node(
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             bool_typ.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_r);
+        ideal.register(&var_r);
 
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Bin(
                 BinOp::Equ,
                 mk::<ArkBls12_381>(Op::Ref(
@@ -8133,32 +8136,32 @@ mod tests {
         let s = ATyp::scalar();
         let vec_s = ATyp::Vec(Box::new(s.clone()), 3);
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             vec_s.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
+        ideal.register(&var_a);
 
-        let pref_b = Var::from_node(
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             vec_s.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
+        ideal.register(&var_b);
 
-        let pref_r = Var::from_node(
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             s.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_r);
+        ideal.register(&var_r);
 
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Bin(
                 BinOp::Dot,
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_s.clone())),
@@ -8169,7 +8172,7 @@ mod tests {
         );
 
         assert!(
-            ideal.pl.contains(&pref_r),
+            ideal.pl.contains(&var_r),
             "Dot Vec(Scalar,3)·Vec(Scalar,3) ideal should be in pl"
         );
         assert!(
@@ -8194,32 +8197,32 @@ mod tests {
         let vec_uni4 = ATyp::Vec(Box::new(uni4.clone()), 2);
         let dot_ideal = ATyp::Uni(6);
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             vec_uni2.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
+        ideal.register(&var_a);
 
-        let pref_b = Var::from_node(
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             vec_uni4.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
+        ideal.register(&var_b);
 
-        let pref_r = Var::from_node(
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             dot_ideal.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_r);
+        ideal.register(&var_r);
 
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Bin(
                 BinOp::Dot,
                 mk::<ArkBls12_381>(Op::Ref(
@@ -8236,7 +8239,7 @@ mod tests {
         );
 
         for i in 0..7 {
-            let slot = pref_r.with_slot(i).unwrap();
+            let slot = var_r.with_slot(i).unwrap();
             assert!(
                 ideal.pl.contains(&slot),
                 "Dot Vec(Uni(2),2)·Vec(Uni(4),2) ideal slot {} missing from pl",
@@ -8261,32 +8264,32 @@ mod tests {
         let vec_g2 = ATyp::Vec(Box::new(g2.clone()), 2);
         let vec_gt = ATyp::Vec(Box::new(gt.clone()), 2);
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             vec_g1.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
+        ideal.register(&var_a);
 
-        let pref_b = Var::from_node(
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             vec_g2.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
+        ideal.register(&var_b);
 
-        let pref_r = Var::from_node(
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             vec_gt.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_r);
+        ideal.register(&var_r);
 
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Pair(
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_g1.clone())),
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), vec_g2.clone())),
@@ -8296,7 +8299,7 @@ mod tests {
         );
 
         for i in 0..2 {
-            let elem = pref_r.with_index(i).unwrap();
+            let elem = var_r.with_index(i).unwrap();
             assert!(
                 ideal.pl.contains(&elem),
                 "Pair Vec(G1,2)×Vec(G2,2) ideal element {} missing from pl",
@@ -8322,32 +8325,32 @@ mod tests {
         let vec_fin = ATyp::Vec(Box::new(fin.clone()), 2);
         let vec_ideal = ATyp::Vec(Box::new(s.clone()), 2);
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             vec_s.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
+        ideal.register(&var_a);
 
-        let pref_b = Var::from_node(
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             vec_fin.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
+        ideal.register(&var_b);
 
-        let pref_r = Var::from_node(
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             vec_ideal.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_r);
+        ideal.register(&var_r);
 
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Bin(
                 BinOp::Pow,
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_s.clone())),
@@ -8373,24 +8376,24 @@ mod tests {
         let uni2 = ATyp::Uni(2);
         let ideal_uni4 = ATyp::Uni(4);
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             uni2.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
+        ideal.register(&var_a);
 
-        let pref_r = Var::from_node(
+        let var_r = Var::from_node(
             NodeIndex::new(1),
             ideal_uni4.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_r);
+        ideal.register(&var_r);
 
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Bin(
                 BinOp::Pow,
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), uni2.clone())),
@@ -8401,7 +8404,7 @@ mod tests {
         );
 
         for i in 0..5 {
-            let slot = pref_r.with_slot(i).unwrap();
+            let slot = var_r.with_slot(i).unwrap();
             assert!(
                 ideal.pl.contains(&slot),
                 "Pow Uni(2)^2 ideal slot {} missing from pl",
@@ -8427,24 +8430,24 @@ mod tests {
         let vec_uni2 = ATyp::Vec(Box::new(uni2.clone()), 2);
         let vec_ideal = ATyp::Vec(Box::new(ideal_uni4.clone()), 2);
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             vec_uni2.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
+        ideal.register(&var_a);
 
-        let pref_r = Var::from_node(
+        let var_r = Var::from_node(
             NodeIndex::new(1),
             vec_ideal.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_r);
+        ideal.register(&var_r);
 
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Bin(
                 BinOp::Pow,
                 mk::<ArkBls12_381>(Op::Ref(
@@ -8458,7 +8461,7 @@ mod tests {
         );
 
         for i in 0..2 {
-            let elem = pref_r.with_index(i).unwrap();
+            let elem = var_r.with_index(i).unwrap();
             for j in 0..5 {
                 let slot = elem.with_slot(j).unwrap();
                 assert!(
@@ -8487,24 +8490,24 @@ mod tests {
         let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
         let vec_ideal = ATyp::Vec(Box::new(s.clone()), 2);
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             vec_s.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
+        ideal.register(&var_a);
 
-        let pref_r = Var::from_node(
+        let var_r = Var::from_node(
             NodeIndex::new(1),
             vec_ideal.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_r);
+        ideal.register(&var_r);
 
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Bin(
                 BinOp::Pow,
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_s.clone())),
@@ -8515,7 +8518,7 @@ mod tests {
         );
 
         for i in 0..2 {
-            let elem = pref_r.with_index(i).unwrap();
+            let elem = var_r.with_index(i).unwrap();
             assert!(
                 ideal.pl.contains(&elem),
                 "Pow Vec(Scalar,2)^VecIndex([2,3]) ideal element {} missing from pl",
@@ -8543,32 +8546,32 @@ mod tests {
         let fin = ATyp::fin(lang::typ::range::CRange::default());
         let vec_fin = ATyp::Vec(Box::new(fin.clone()), 2);
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             vec_s.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
+        ideal.register(&var_a);
 
-        let pref_b = Var::from_node(
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             vec_fin.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
+        ideal.register(&var_b);
 
-        let pref_r = Var::from_node(
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             vec_ideal.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_r);
+        ideal.register(&var_r);
 
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Bin(
                 BinOp::Pow,
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_s.clone())),
@@ -8591,15 +8594,15 @@ mod tests {
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref);
+        ideal.register(&var);
         let src = PolySource::<ArkBls12_381>::from_ref_vars(
-            &ideal.prefs,
+            &ideal.vars,
             &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2)),
         );
         assert_eq!(src.polys.len(), 3);
@@ -8610,7 +8613,7 @@ mod tests {
         for i in 0..3 {
             assert_eq!(
                 lifted.polys[i],
-                Polynomial::var(&pref.clone().with_slot(i).unwrap())
+                Polynomial::var(&var.clone().with_slot(i).unwrap())
             );
         }
         for i in 3..5 {
@@ -8629,15 +8632,15 @@ mod tests {
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(0),
             ATyp::Mle(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref);
+        ideal.register(&var);
         let src = PolySource::<ArkBls12_381>::from_ref_vars(
-            &ideal.prefs,
+            &ideal.vars,
             &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(2)),
         );
         assert_eq!(src.polys.len(), 4);
@@ -8648,7 +8651,7 @@ mod tests {
         for i in 0..4 {
             assert_eq!(
                 lifted.polys[i],
-                Polynomial::var(&pref.clone().with_slot(i).unwrap())
+                Polynomial::var(&var.clone().with_slot(i).unwrap())
             );
         }
         for i in 4..8 {
@@ -8667,15 +8670,15 @@ mod tests {
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref);
+        ideal.register(&var);
         let src = PolySource::<ArkBls12_381>::from_ref_vars(
-            &ideal.prefs,
+            &ideal.vars,
             &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 2)),
         );
 
@@ -8685,7 +8688,7 @@ mod tests {
         for i in 0..6 {
             assert_eq!(
                 lifted.polys[i],
-                Polynomial::var(&pref.clone().with_slot(i).unwrap())
+                Polynomial::var(&var.clone().with_slot(i).unwrap())
             );
         }
         for i in 6..10 {
@@ -8704,15 +8707,15 @@ mod tests {
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref);
+        ideal.register(&var);
         let src = PolySource::<ArkBls12_381>::from_ref_vars(
-            &ideal.prefs,
+            &ideal.vars,
             &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 2)),
         );
 
@@ -8728,7 +8731,7 @@ mod tests {
             let pos = dst.iter().position(|dk| dk == &padded).unwrap();
             assert_eq!(
                 lifted.polys[pos],
-                Polynomial::var(&pref.clone().with_slot(j).unwrap()),
+                Polynomial::var(&var.clone().with_slot(j).unwrap()),
                 "src multi-index {:?} → padded {:?} → dst position {} should have src slot {}",
                 sk,
                 padded,
@@ -8804,15 +8807,15 @@ mod tests {
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref);
+        ideal.register(&var);
         let src = PolySource::<ArkBls12_381>::from_ref_vars(
-            &ideal.prefs,
+            &ideal.vars,
             &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2)),
         );
         assert_eq!(src.polys.len(), 3);
@@ -8823,7 +8826,7 @@ mod tests {
         for i in 0..3 {
             assert_eq!(
                 lifted.polys[i],
-                Polynomial::var(&pref.clone().with_slot(i).unwrap())
+                Polynomial::var(&var.clone().with_slot(i).unwrap())
             );
         }
     }
@@ -8842,21 +8845,21 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
-        let pref_b = Var::from_node(
+        ideal.register(&var_a);
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
-        let pref_r = Var::from_node(
+        ideal.register(&var_b);
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             ATyp::bool(),
             Qualifier::Private,
@@ -8864,7 +8867,7 @@ mod tests {
         );
 
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Bin(
                 BinOp::Equ,
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::scalar())),
@@ -8874,9 +8877,9 @@ mod tests {
             &mut ideal,
         );
 
-        let a_slot = pref_a.with_slot(0).unwrap();
-        let b_slot = pref_b.with_slot(0).unwrap();
-        let r_slot = pref_r.with_slot(0).unwrap();
+        let a_slot = var_a.with_slot(0).unwrap();
+        let b_slot = var_b.with_slot(0).unwrap();
+        let r_slot = var_r.with_slot(0).unwrap();
         let diff = &Polynomial::var(&a_slot) - &Polynomial::var(&b_slot);
         assert!(
             ideal.generating_set.contains(&diff),
@@ -8887,7 +8890,7 @@ mod tests {
                 .generating_set
                 .iter()
                 .any(|p| *p == Polynomial::var(&r_slot)),
-            "basis should NOT contain var(r) for Bool ideal (== is an assertion, not a computation)"
+            "basis should NOT contain var_poly(r) for Bool ideal (== is an assertion, not a computation)"
         );
     }
 
@@ -8901,21 +8904,21 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
-        let pref_b = Var::from_node(
+        ideal.register(&var_a);
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::Uni(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
-        let pref_r = Var::from_node(
+        ideal.register(&var_b);
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             ATyp::bool(),
             Qualifier::Private,
@@ -8923,7 +8926,7 @@ mod tests {
         );
 
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Bin(
                 BinOp::Equ,
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
@@ -8933,19 +8936,19 @@ mod tests {
             &mut ideal,
         );
 
-        let r_slot = pref_r.with_slot(0).unwrap();
+        let r_slot = var_r.with_slot(0).unwrap();
 
         assert!(
             !ideal
                 .generating_set
                 .iter()
                 .any(|p| *p == Polynomial::var(&r_slot)),
-            "basis should NOT contain var(r) for Bool ideal"
+            "basis should NOT contain var_poly(r) for Bool ideal"
         );
 
         for j in 0..3 {
-            let a_j = pref_a.clone().with_slot(j).unwrap();
-            let b_j = pref_b.clone().with_slot(j).unwrap();
+            let a_j = var_a.clone().with_slot(j).unwrap();
+            let b_j = var_b.clone().with_slot(j).unwrap();
             let diff = &Polynomial::var(&a_j) - &Polynomial::var(&b_j);
             assert!(
                 ideal.generating_set.contains(&diff),
@@ -8971,21 +8974,21 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
-        let pref_b = Var::from_node(
+        ideal.register(&var_a);
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             ATyp::Uni(4),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
-        let pref_r = Var::from_node(
+        ideal.register(&var_b);
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             ATyp::bool(),
             Qualifier::Private,
@@ -8993,7 +8996,7 @@ mod tests {
         );
 
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Bin(
                 BinOp::Equ,
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
@@ -9003,24 +9006,24 @@ mod tests {
             &mut ideal,
         );
 
-        let r_slot = pref_r.with_slot(0).unwrap();
+        let r_slot = var_r.with_slot(0).unwrap();
         assert!(
             !ideal
                 .generating_set
                 .iter()
                 .any(|p| *p == Polynomial::var(&r_slot)),
-            "basis should NOT contain var(r) for Bool ideal"
+            "basis should NOT contain var_poly(r) for Bool ideal"
         );
 
         let lub_len = ATyp::Uni(4).physical_len();
         assert_eq!(lub_len, 5);
         for j in 0..lub_len {
             let a_j = if j < 3 {
-                Polynomial::var(&pref_a.clone().with_slot(j).unwrap())
+                Polynomial::var(&var_a.clone().with_slot(j).unwrap())
             } else {
                 Polynomial::zero()
             };
-            let b_j = Polynomial::var(&pref_b.clone().with_slot(j).unwrap());
+            let b_j = Polynomial::var(&var_b.clone().with_slot(j).unwrap());
             let diff = a_j - b_j;
             assert!(
                 ideal.generating_set.contains(&diff),
@@ -9049,21 +9052,21 @@ mod tests {
         let vec3 = ATyp::Vec(Box::new(s.clone()), 3);
         let vec5 = ATyp::Vec(Box::new(s.clone()), 5);
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             vec2.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
-        let pref_b = Var::from_node(
+        ideal.register(&var_a);
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             vec3.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
-        let pref_r = Var::from_node(
+        ideal.register(&var_b);
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             vec5.clone(),
             Qualifier::Private,
@@ -9071,7 +9074,7 @@ mod tests {
         );
 
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Bin(
                 BinOp::Concat,
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), vec2)),
@@ -9082,7 +9085,7 @@ mod tests {
         );
 
         for i in 0..5 {
-            let pr_i = pref_r.with_index(i).unwrap();
+            let pr_i = var_r.with_index(i).unwrap();
             let pr_slot = pr_i.with_slot(0).unwrap();
             assert!(
                 ideal.pl.contains(&pr_slot),
@@ -9109,15 +9112,15 @@ mod tests {
         let poly_t = ATyp::Uni(2);
         let vec_t = ATyp::Vec(Box::new(poly_t.clone()), 2);
 
-        let pref_v = Var::from_node(
+        let var_v = Var::from_node(
             NodeIndex::new(0),
             vec_t.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_v);
+        ideal.register(&var_v);
 
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(1),
             poly_t.clone(),
             Qualifier::Private,
@@ -9125,7 +9128,7 @@ mod tests {
         );
 
         builder.add_op(
-            pref.clone(),
+            var.clone(),
             Op::Reduce(
                 BinOp::Add,
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), vec_t)),
@@ -9133,12 +9136,12 @@ mod tests {
             &mut ideal,
         );
 
-        let var = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         for j in 0..3 {
-            let v0_j = pref_v.clone().with_index(0).unwrap().with_slot(j).unwrap();
-            let v1_j = pref_v.clone().with_index(1).unwrap().with_slot(j).unwrap();
-            let r_j = pref.clone().with_slot(j).unwrap();
-            let expected = &var(&v0_j) + &var(&v1_j);
+            let v0_j = var_v.clone().with_index(0).unwrap().with_slot(j).unwrap();
+            let v1_j = var_v.clone().with_index(1).unwrap().with_slot(j).unwrap();
+            let r_j = var.clone().with_slot(j).unwrap();
+            let expected = &var_poly(&v0_j) + &var_poly(&v1_j);
             let stored = ideal.pl.get(&r_j).unwrap();
             assert_eq!(*stored, expected, "reduce add poly slot {} mismatch", j);
         }
@@ -9157,32 +9160,32 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let pref_src = Var::from_node(
+        let var_src = Var::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_src);
+        ideal.register(&var_src);
 
-        let pref_dst = Var::from_node(
+        let var_dst = Var::from_node(
             NodeIndex::new(1),
             ATyp::Uni(4),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_dst);
+        ideal.register(&var_dst);
 
         builder.add_op(
-            pref_dst.clone(),
+            var_dst.clone(),
             Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2)),
             &mut ideal,
         );
 
-        assert_eq!(pref_dst.slots().len(), 5, "Uni(4) should have 5 slots");
+        assert_eq!(var_dst.slots().len(), 5, "Uni(4) should have 5 slots");
         for j in 0..3 {
-            let dst_j = pref_dst.clone().with_slot(j).unwrap();
-            let src_j = pref_src.clone().with_slot(j).unwrap();
+            let dst_j = var_dst.clone().with_slot(j).unwrap();
+            let src_j = var_src.clone().with_slot(j).unwrap();
             let stored = ideal.pl.get(&dst_j).unwrap();
             assert_eq!(
                 *stored,
@@ -9193,7 +9196,7 @@ mod tests {
             );
         }
         for j in 3..5 {
-            let dst_j = pref_dst.clone().with_slot(j).unwrap();
+            let dst_j = var_dst.clone().with_slot(j).unwrap();
             let stored = ideal.pl.get(&dst_j).unwrap();
             assert!(
                 stored.is_zero(),
@@ -9275,7 +9278,7 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(100),
             ATyp::scalar(),
             Qualifier::Public,
@@ -9283,7 +9286,7 @@ mod tests {
         );
 
         builder.add_op(
-            pref.clone(),
+            var.clone(),
             Op::Challenge(ATyp::scalar(), false),
             &mut ideal,
         );
@@ -9293,11 +9296,11 @@ mod tests {
             "challenge should not emit basis polynomials"
         );
         assert!(
-            !ideal.pl.contains(&pref),
+            !ideal.pl.contains(&var),
             "challenge should not insert into pl"
         );
         assert!(
-            !ideal.vars().contains(&pref),
+            !ideal.vars().contains(&var),
             "challenge should not be visible in vars() unless used in a polynomial"
         );
     }
@@ -9310,25 +9313,22 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let pref = Var::from_node(
+        let var = Var::from_node(
             NodeIndex::new(101),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::Uniform,
         );
 
-        builder.add_op(pref.clone(), Op::Random(ATyp::scalar(), false), &mut ideal);
+        builder.add_op(var.clone(), Op::Random(ATyp::scalar(), false), &mut ideal);
 
         assert!(
             ideal.generating_set.is_empty(),
             "random should not emit basis polynomials"
         );
+        assert!(!ideal.pl.contains(&var), "random should not insert into pl");
         assert!(
-            !ideal.pl.contains(&pref),
-            "random should not insert into pl"
-        );
-        assert!(
-            !ideal.vars().contains(&pref),
+            !ideal.vars().contains(&var),
             "random should not be visible in vars() unless used in a polynomial"
         );
     }
@@ -9344,39 +9344,39 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         // Create a challenge Var
-        let challenge_pref = Var::from_node(
+        let challenge_var = Var::from_node(
             NodeIndex::new(200),
             ATyp::scalar(),
             Qualifier::Public,
             Distribution::Nonuniform,
         );
-        ideal.register(&challenge_pref);
+        ideal.register(&challenge_var);
         builder.add_op(
-            challenge_pref.clone(),
+            challenge_var.clone(),
             Op::Challenge(ATyp::scalar(), false),
             &mut ideal,
         );
 
         // Create a private variable
-        let x_pref = Var::from_node(
+        let x_var = Var::from_node(
             NodeIndex::new(201),
             ATyp::scalar(),
             Qualifier::Private,
             Distribution::Nonuniform,
         );
-        ideal.register(&x_pref);
+        ideal.register(&x_var);
 
         // Create a polynomial operation that uses the challenge: y = x + c
-        let y_pref = Var::from_node(
+        let y_var = Var::from_node(
             NodeIndex::new(202),
             ATyp::scalar(),
             Qualifier::Public,
             Distribution::Nonuniform,
         );
-        ideal.register(&y_pref);
+        ideal.register(&y_var);
 
         builder.add_op(
-            y_pref.clone(),
+            y_var.clone(),
             Op::Bin(
                 lang::ast::BinOp::Add,
                 mk::<ArkBls12_381>(Op::Ref(
@@ -9399,11 +9399,11 @@ mod tests {
             .flat_map(|p| p.vars())
             .collect::<share::Set<_>>();
         assert!(
-            basis_vars.contains(&challenge_pref),
+            basis_vars.contains(&challenge_var),
             "challenge must be visible through basis vars once an equation references it"
         );
         assert!(
-            ideal.vars().contains(&challenge_pref),
+            ideal.vars().contains(&challenge_var),
             "challenge must be in ideal.vars() when used in polynomial"
         );
     }
@@ -9419,32 +9419,32 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let g1_pref = Var::from_node(
+        let g1_var = Var::from_node(
             NodeIndex::new(300),
             ATyp::g1(),
             Qualifier::Public,
             Distribution::Nonuniform,
         );
-        ideal.register(&g1_pref);
+        ideal.register(&g1_var);
 
-        let g2_pref = Var::from_node(
+        let g2_var = Var::from_node(
             NodeIndex::new(301),
             ATyp::g2(),
             Qualifier::Public,
             Distribution::Nonuniform,
         );
-        ideal.register(&g2_pref);
+        ideal.register(&g2_var);
 
-        let pair_ideal_pref = Var::from_node(
+        let pair_ideal_var = Var::from_node(
             NodeIndex::new(302),
             ATyp::gt(),
             Qualifier::Public,
             Distribution::Nonuniform,
         );
-        ideal.register(&pair_ideal_pref);
+        ideal.register(&pair_ideal_var);
 
         builder.add_op(
-            pair_ideal_pref.clone(),
+            pair_ideal_var.clone(),
             Op::Pair(
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(300)), ATyp::g1())),
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(301)), ATyp::g2())),
@@ -9461,21 +9461,21 @@ mod tests {
             .flat_map(|p| p.vars())
             .collect::<share::Set<_>>();
         assert!(
-            basis_vars.contains(&g1_pref),
+            basis_vars.contains(&g1_var),
             "g1 must be visible through basis vars"
         );
         assert!(
-            basis_vars.contains(&g2_pref),
+            basis_vars.contains(&g2_var),
             "g2 must be visible through basis vars"
         );
         assert!(
-            basis_vars.contains(&pair_ideal_pref),
+            basis_vars.contains(&pair_ideal_var),
             "pair ideal must be visible through basis vars"
         );
         // No GT sentinel should exist
         let has_gt_sentinel = basis_vars
             .iter()
-            .any(|pr| pr.name.starts_with("__zippel::gb::gt"));
+            .any(|var| var.name.starts_with("__zippel::gb::gt"));
         assert!(!has_gt_sentinel, "GT sentinel should not exist");
     }
 
@@ -9505,31 +9505,31 @@ mod tests {
         let rec_typ = ATyp::Record(rec_fields);
 
         // Register the record Var.
-        let pref_rec = Var::from_node(
+        let var_rec = Var::from_node(
             NodeIndex::new(0),
             rec_typ.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_rec);
+        ideal.register(&var_rec);
 
         // Register scalar refs for a and b.
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(1),
             s.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        let pref_b = Var::from_node(
+        let var_b = Var::from_node(
             NodeIndex::new(2),
             s.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
-        ideal.register(&pref_b);
+        ideal.register(&var_a);
+        ideal.register(&var_b);
 
-        // Build record {a: pref_a, b: pref_b}.
+        // Build record {a: var_a, b: var_b}.
         let mut field_ops: Ctx<String, backend::op::HOp<ArkBls12_381>> = Ctx::new();
         field_ops.insert(
             &"a".to_string(),
@@ -9540,32 +9540,32 @@ mod tests {
             &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(2)), s.clone())),
         );
 
-        builder.add_op(pref_rec.clone(), Op::Record(field_ops), &mut ideal);
+        builder.add_op(var_rec.clone(), Op::Record(field_ops), &mut ideal);
 
         // Project field "a" from the record.
-        let pref_proj = Var::from_node(
+        let var_proj = Var::from_node(
             NodeIndex::new(3),
             s.clone(),
             Qualifier::Public,
             Distribution::default(),
         );
-        ideal.register(&pref_proj);
+        ideal.register(&var_proj);
 
         let inner_op: GOp<ArkBls12_381> =
             Op::Ref(graph::Ref::new(NodeIndex::new(0)), rec_typ.clone());
 
         builder.add_op(
-            pref_proj.clone(),
+            var_proj.clone(),
             Op::Proj(mk::<ArkBls12_381>(inner_op), "a".to_string(), s.clone()),
             &mut ideal,
         );
 
         // Projection ideal should be in pl.
-        assert!(ideal.pl.contains(&pref_proj), "proj ideal should be in pl");
+        assert!(ideal.pl.contains(&var_proj), "proj ideal should be in pl");
 
         // The proj poly should reference record slot 0 (field "a").
-        let proj_poly = ideal.pl.get(&pref_proj).unwrap();
-        let rec_slot_0 = pref_rec.clone().with_slot(0).unwrap();
+        let proj_poly = ideal.pl.get(&var_proj).unwrap();
+        let rec_slot_0 = var_rec.clone().with_slot(0).unwrap();
         assert!(
             proj_poly.contains(&rec_slot_0),
             "proj ideal should alias record slot 0 (field 'a')"
@@ -9597,33 +9597,33 @@ mod tests {
         let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
         let vec_fin = ATyp::Vec(Box::new(fin.clone()), 2);
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             vec_s.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
+        ideal.register(&var_a);
 
-        let pref_b = Var::from_node(
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             vec_fin.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
+        ideal.register(&var_b);
 
-        let pref_r = Var::from_node(
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             ATyp::Vec(Box::new(s.clone()), 2),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_r);
+        ideal.register(&var_r);
 
         // Non-const exponent (a runtime Ref, not a Value::Index) must panic.
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Bin(
                 BinOp::Pow,
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_s.clone())),
@@ -9650,33 +9650,33 @@ mod tests {
         let s = ATyp::scalar();
         let fin = ATyp::fin(lang::typ::range::CRange::default());
 
-        let pref_a = Var::from_node(
+        let var_a = Var::from_node(
             NodeIndex::new(0),
             s.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_a);
+        ideal.register(&var_a);
 
-        // pref_b is a Ref, not a Value::Index → non-const exponent.
-        let pref_b = Var::from_node(
+        // var_b is a Ref, not a Value::Index → non-const exponent.
+        let var_b = Var::from_node(
             NodeIndex::new(1),
             fin.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_b);
+        ideal.register(&var_b);
 
-        let pref_r = Var::from_node(
+        let var_r = Var::from_node(
             NodeIndex::new(2),
             s.clone(),
             Qualifier::Private,
             Distribution::default(),
         );
-        ideal.register(&pref_r);
+        ideal.register(&var_r);
 
         builder.add_op(
-            pref_r.clone(),
+            var_r.clone(),
             Op::Bin(
                 BinOp::Pow,
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), s.clone())),

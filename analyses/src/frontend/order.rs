@@ -102,7 +102,7 @@ impl MonoOrder {
     /// any explicit block are appended as a final implicit `GrevLex` block.
     ///
     /// Deduplication uses full `Var` identity (not just `reference`), so
-    /// distinct PRefs sharing the same `Ref`/`NodeIndex` are treated as
+    /// distinct Vars sharing the same `Ref`/`NodeIndex` are treated as
     /// separate variables.
     ///
     /// Empty blocks are skipped from the result. The returned Vec is

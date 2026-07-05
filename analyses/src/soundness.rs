@@ -167,7 +167,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
         let round_map = build_round_map(dag, &challenge_rounds);
 
-        let challenge_prefs_per_round: Vec<Vec<Var>> = challenge_rounds
+        let challenge_vars_per_round: Vec<Vec<Var>> = challenge_rounds
             .iter()
             .map(|round| {
                 round
@@ -175,7 +175,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                     .flat_map(|&cn| {
                         let r = dag.find_ref(cn);
                         verifier_tc
-                            .prefs
+                            .vars
                             .iter()
                             .filter(|p| p.reference == r)
                             .cloned()
@@ -189,7 +189,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         let mut grev_builder: IdealBuilder<C> = IdealBuilder::new();
         let mut worklist: Vec<(Vec<usize>, TransClos<C>)> = vec![(vec![], verifier_tc.clone())];
         let mut all_d_equations: Vec<Polynomial<C::F>> = Vec::new();
-        let mut all_d_prefs: Vec<Var> = Vec::new();
+        let mut all_d_vars: Vec<Var> = Vec::new();
         let mut grev_search = Ideal::<C>::new();
         let mut grev_validity = Ideal::<C>::new();
 
@@ -206,24 +206,24 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                     let round_map_ref = &round_map;
                     let suffix_owned = suffix.clone();
 
-                    copy_tc.remap(&|pref: &Var| {
-                        let key = (pref.reference, pref.index.clone());
+                    copy_tc.remap(&|var: &Var| {
+                        let key = (var.reference, var.index.clone());
                         let in_round = round_map_ref
                             .get(&key)
                             .is_some_and(|&highest| highest == round_idx);
 
                         if in_round {
-                            let orig = pref.name();
+                            let orig = var.name();
                             Var {
                                 name: format!("{}::{}", orig, suffix_owned),
-                                ..pref.clone()
+                                ..var.clone()
                             }
                         } else {
-                            pref.clone()
+                            var.clone()
                         }
                     });
 
-                    let remapped_challenges: Vec<Var> = challenge_prefs_per_round[round_idx]
+                    let remapped_challenges: Vec<Var> = challenge_vars_per_round[round_idx]
                         .iter()
                         .map(|cp| {
                             let key = (cp.reference, cp.index.clone());
@@ -247,20 +247,19 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
                 for m in 0..li {
                     for n in (m + 1)..li {
-                        let cm_prefs = &copies_with_challenges[m].1;
-                        let cn_prefs = &copies_with_challenges[n].1;
+                        let cm_vars = &copies_with_challenges[m].1;
+                        let cn_vars = &copies_with_challenges[n].1;
                         let mut product = Polynomial::<C::F>::lit(&C::F::one());
-                        for (k, (cm_ref, cn_ref)) in
-                            cm_prefs.iter().zip(cn_prefs.iter()).enumerate()
+                        for (k, (cm_ref, cn_ref)) in cm_vars.iter().zip(cn_vars.iter()).enumerate()
                         {
                             let d_name = format_d_name(&prefix, m, n, k);
-                            let d = grev_builder.sentinel_pref(
+                            let d = grev_builder.sentinel_var(
                                 &d_name,
                                 ATyp::scalar(),
                                 &mut grev_search,
                             );
                             grev_validity.var_order.push(d.clone());
-                            all_d_prefs.push(d.clone());
+                            all_d_vars.push(d.clone());
                             let d_poly = Polynomial::<C::F>::var(&d);
                             let cm_poly = Polynomial::<C::F>::var(cm_ref);
                             let cn_poly = Polynomial::<C::F>::var(cn_ref);
@@ -284,29 +283,29 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         }
 
         let mut verifier_visible: Set<Var> = Set::new();
-        let mut pub_prefs: Vec<Var> = Vec::new();
-        let mut priv_prefs: Vec<Var> = Vec::new();
+        let mut pub_vars: Vec<Var> = Vec::new();
+        let mut priv_vars: Vec<Var> = Vec::new();
 
         for eq in &all_d_equations {
             grev_search.generating_set.push(eq.clone());
             grev_validity.generating_set.push(eq.clone());
         }
-        for d in &all_d_prefs {
+        for d in &all_d_vars {
             verifier_visible.insert(d.clone());
         }
 
         for (_prefix, tc) in worklist {
-            for (pr, _) in tc.clos.iter() {
-                verifier_visible.insert(pr.clone());
+            for (var, _) in tc.clos.iter() {
+                verifier_visible.insert(var.clone());
             }
-            for pr in tc.prefs.iter() {
-                verifier_visible.insert(pr.clone());
+            for var in tc.vars.iter() {
+                verifier_visible.insert(var.clone());
             }
-            for pr in tc.prefs.iter() {
-                if pr.qualifier.is_private() {
-                    priv_prefs.push(pr.clone());
+            for var in tc.vars.iter() {
+                if var.qualifier.is_private() {
+                    priv_vars.push(var.clone());
                 } else {
-                    pub_prefs.push(pr.clone());
+                    pub_vars.push(var.clone());
                 }
             }
             let copy_result = grev_builder.build(tc);
@@ -315,11 +314,11 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         }
 
         let rel_tc = TransClos::relation(dag);
-        for pr in rel_tc.prefs.iter() {
-            if pr.qualifier.is_private() {
-                priv_prefs.push(pr.clone());
+        for var in rel_tc.vars.iter() {
+            if var.qualifier.is_private() {
+                priv_vars.push(var.clone());
             } else {
-                pub_prefs.push(pr.clone());
+                pub_vars.push(var.clone());
             }
         }
         let mut rel_locals = extract_locals(&grev_builder, &rel_tc);
@@ -330,13 +329,13 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         grev_search.merge(&grev_rel_result);
 
         // Phase 2: Build lex ordering as runtime data.
-        // Priority: rel_locals > priv_prefs > other_locals > pub_prefs.
+        // Priority: rel_locals > priv_vars > other_locals > pub_vars.
         // In MonoOrder::lex, the first variable has the highest elimination
         // priority. Within each group, sort by Var::Ord for determinism.
         let lex_var_order: Vec<Var> = {
             let rel_locals_set: Set<Var> = grev_rel_result.var_order.iter().cloned().collect();
-            let priv_set: Set<Var> = priv_prefs.iter().cloned().collect();
-            let pub_set: Set<Var> = pub_prefs.iter().cloned().collect();
+            let priv_set: Set<Var> = priv_vars.iter().cloned().collect();
+            let pub_set: Set<Var> = pub_vars.iter().cloned().collect();
 
             let all_vars: Set<Var> = grev_search.vars();
 
@@ -760,7 +759,7 @@ mod tests {
             .into_iter()
             .filter(|a| a.is_private())
             .flat_map(|a| a.slots())
-            .filter_map(|w| Some(w.name().to_string()))
+            .map(|w| w.name().to_string())
             .collect();
         assert!(witness_names.contains(&"x".to_string()));
         let witness_count: usize = crate::var::dag_args(&g)

@@ -62,7 +62,7 @@ pub(crate) fn valid_extractor<C: ArkConfig>(witness_typ: &ATyp, poly: &Polynomia
 /// ## Replacing Equality nodes
 ///
 /// `Op::Bin(BinOp::Equ, ...)` entries represent assertions, not definitions.
-/// They are neutralised to `Op::Ref(pr)` — an identity operation that
+/// They are neutralised to `Op::Ref(var)` — an identity operation that
 /// defines the result Var without emitting any assertion polynomial.
 ///
 /// ## Shared builder and Var alignment
@@ -72,7 +72,7 @@ pub(crate) fn valid_extractor<C: ArkConfig>(witness_typ: &ATyp, poly: &Polynomia
 /// ## Replacing Equality nodes
 ///
 /// `Op::Bin(BinOp::Equ, ...)` entries represent assertions.
-/// They are neutralised to `Op::Ref(pr)` — an identity operation that
+/// They are neutralised to `Op::Ref(var)` — an identity operation that
 /// defines the result Var without emitting any assertion polynomial.
 ///
 /// ## Shared builder and Var alignment
@@ -96,8 +96,8 @@ pub fn extract_locals<C: ArkConfig + HasOpFactory>(
 fn strip_equ<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> TransClos<C> {
     let mut tc_no_equ = tc.clone();
     for entry in &mut tc_no_equ.clos {
-        let pr = entry.0.clone();
-        entry.1 = strip_equ_op(entry.1.clone(), &pr);
+        let var = entry.0.clone();
+        entry.1 = strip_equ_op(entry.1.clone(), &var);
     }
     tc_no_equ
 }

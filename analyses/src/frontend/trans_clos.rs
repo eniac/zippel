@@ -6,7 +6,7 @@ use petgraph::graph::NodeIndex;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 
-fn named_pref(
+fn named_var(
     dag: &DQDag<impl ArkConfig>,
     r: Ref,
     typ: backend::ATyp,
@@ -113,20 +113,20 @@ fn topo_sort_nodes<C: ArkConfig>(dag: &DQDag<C>, nodes: &HashSet<NodeIndex>) -> 
 ///   `clos`. After resolution, compound ops are reconstructed via `mk()`
 ///   wrapping, but no algebraic simplification fires on `Ref` children.
 ///
-/// `prefs` holds the protocol-parameter PRefs.
+/// `vars` holds the protocol-parameter Vars.
 ///
 /// # Invariants
 ///
-/// - **`prefs`** contains exactly the leaf/source nodes — variables that are
+/// - **`vars`** contains exactly the leaf/source nodes — variables that are
 ///   opaque inputs to the computation (e.g. protocol arguments, transcript
 ///   challenges/randomness). These are never the result of an operation.
 ///
-/// - **`clos`** contains exactly the result nodes — PRefs that are the output
-///   of some operation (`GOp`). Every entry `(pr, op)` satisfies: `pr` is the
+/// - **`clos`** contains exactly the result nodes — Vars that are the output
+///   of some operation (`GOp`). Every entry `(var, op)` satisfies: `var` is the
 ///   result of applying `op` to its operands.
 ///
-/// - **Disjointness**: `prefs` and `clos` are disjoint. A Var that is a leaf
-///   (source/input) appears only in `prefs`; a Var that is a computation
+/// - **Disjointness**: `vars` and `clos` are disjoint. A Var that is a leaf
+///   (source/input) appears only in `vars`; a Var that is a computation
 ///   result appears only in `clos`. This invariant is maintained by the
 ///   internal `seen` map — leaf nodes are inserted into `seen` before the
 ///   traversal, so `trans_clos_ref` skips them when encountered later.
@@ -140,7 +140,7 @@ fn topo_sort_nodes<C: ArkConfig>(dag: &DQDag<C>, nodes: &HashSet<NodeIndex>) -> 
 #[derive(Clone)]
 pub struct TransClos<C: ArkConfig> {
     pub clos: Vec<(Var, GOp<C>)>,
-    pub prefs: Vec<Var>,
+    pub vars: Vec<Var>,
 }
 
 impl<C: ArkConfig + HasOpFactory> TransClos<C> {
@@ -151,36 +151,36 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
     /// Transitive closure from the `Rel` (relation) marker of the full DAG.
     ///
     /// Pre-populates the index with identity entries for each input arg
-    /// (so they get canonical PRefs), then maps each relation-arg node to
+    /// (so they get canonical Vars), then maps each relation-arg node to
     /// the same index entry by name. This ensures the resulting closure
     /// uses a single namespace — the input namespace — throughout.
     ///
     /// Panics if the DAG has no relation node (i.e. it's a function, not a protocol).
     pub fn relation(dag: &DQDag<C>) -> Self {
         let start = dag.relation_node().unwrap();
-        let rel_prefs = Self::prefs_from_marker(dag, start);
-        let input_prefs = Self::prefs_from_marker(dag, dag.input_node());
+        let rel_vars = Self::vars_from_marker(dag, start);
+        let input_vars = Self::vars_from_marker(dag, dag.input_node());
 
         let mut tc = Self {
             clos: Vec::new(),
-            prefs: Vec::new(),
+            vars: Vec::new(),
         };
         let mut seen: HashMap<NodeIndex, Var> = HashMap::new();
 
         // Insert input args as canonical entries in seen (not clos — they're
         // leaf/source nodes, not results of ops), then alias relation args.
-        for input_pref in &input_prefs {
-            seen.insert(input_pref.node(), input_pref.clone());
+        for input_var in &input_vars {
+            seen.insert(input_var.node(), input_var.clone());
         }
-        for rel_pref in &rel_prefs {
-            let input_pref = input_prefs
+        for rel_var in &rel_vars {
+            let input_var = input_vars
                 .iter()
-                .find(|ip| ip.name() == rel_pref.name())
+                .find(|ip| ip.name() == rel_var.name())
                 .expect("relation arg must also exist in input arg");
-            seen.insert(rel_pref.node(), input_pref.clone());
+            seen.insert(rel_var.node(), input_var.clone());
         }
 
-        tc.prefs = input_prefs;
+        tc.vars = input_vars;
 
         let reachable = collect_reachable_forward(dag, start);
         let topo = topo_sort_nodes(dag, &reachable);
@@ -198,12 +198,12 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
     /// every node encountered. Prefs are all input args (both public and
     /// private).
     pub fn prover(dag: &DQDag<C>) -> Self {
-        let prefs = Self::prefs_from_marker(dag, dag.input_node());
+        let vars = Self::vars_from_marker(dag, dag.input_node());
         let transcripts_vec = dag.transcript_nodes();
 
         let mut tc = Self {
             clos: Vec::new(),
-            prefs,
+            vars,
         };
 
         let reachable = collect_reachable_backward(dag, &transcripts_vec, None);
@@ -226,14 +226,14 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
     /// Transcript source nodes are pre-populated in the index so that
     /// `trans_clos_op` does not recurse past them into prover-only nodes.
     pub fn verifier(dag: &DQDag<C>) -> Self {
-        let input_prefs: Vec<Var> = dag
+        let input_vars: Vec<Var> = dag
             .input_args()
             .into_iter()
             .filter_map(|n| match &dag[n] {
                 Node::Arg(name, typ, qual, dist, _kind) => {
                     if qual.is_public() {
-                        let pr = Var::new_named(Ref(n), name.0.clone(), typ.clone(), *qual, *dist);
-                        Some(pr)
+                        let var = Var::new_named(Ref(n), name.0.clone(), typ.clone(), *qual, *dist);
+                        Some(var)
                     } else {
                         None
                     }
@@ -248,14 +248,14 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
 
         let mut tc = Self {
             clos: Vec::new(),
-            prefs: input_prefs,
+            vars: input_vars,
         };
 
         let mut seen: HashMap<NodeIndex, Var> = HashMap::new();
 
         // Pre-populate seen with transcript source nodes so trans_clos_ref
         // doesn't recurse past them into prover-only nodes. Also add
-        // transcript source PRefs to prefs — they are opaque inputs to
+        // transcript source Vars to vars — they are opaque inputs to
         // the verifier, analogous to public args. These are leaf nodes
         // and are NOT added to clos.
         for &n in &transcripts_vec {
@@ -263,9 +263,9 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
                 Node::Op(op, (qualifier, distribution))
                 | Node::Transcr(op, (qualifier, distribution)) => {
                     let inner = op.get();
-                    let pref = named_pref(dag, Ref::new(n), inner.typ(), *qualifier, *distribution);
-                    tc.prefs.push(pref.clone());
-                    seen.insert(n, pref);
+                    let var = named_var(dag, Ref::new(n), inner.typ(), *qualifier, *distribution);
+                    tc.vars.push(var.clone());
+                    seen.insert(n, var);
                 }
                 _ => {}
             }
@@ -281,28 +281,28 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         tc
     }
 
-    /// Remap every Var (both prefs and clos entries) through `f`.
+    /// Remap every Var (both vars and clos entries) through `f`.
     ///
     /// `f` must not change the `reference` (node identity) of a Var, only its
     /// metadata. Changing the reference would leave `Op::Ref` children in
     /// `clos` pointing at stale node identities.
     pub fn remap(&mut self, f: &impl Fn(&Var) -> Var) {
-        self.prefs = self.prefs.iter().map(f).collect();
-        self.clos = self.clos.drain(..).map(|(pr, op)| (f(&pr), op)).collect();
+        self.vars = self.vars.iter().map(f).collect();
+        self.clos = self.clos.drain(..).map(|(var, op)| (f(&var), op)).collect();
     }
 
     // ----------------------------------------------------------------
     // Internal
     // ----------------------------------------------------------------
 
-    fn prefs_from_marker<A>(dag: &graph::Dag<C, A>, node: NodeIndex) -> Vec<Var> {
+    fn vars_from_marker<A>(dag: &graph::Dag<C, A>, node: NodeIndex) -> Vec<Var> {
         let mut args: Vec<NodeIndex> = dag.nodes_from(node).filter(|n| dag[*n].is_arg()).collect();
         args.sort();
         args.into_iter()
             .filter_map(|n| match &dag[n] {
                 Node::Arg(name, typ, qual, dist, _kind) => {
-                    let pr = Var::new_named(Ref(n), name.0.clone(), typ.clone(), *qual, *dist);
-                    Some(pr)
+                    let var = Var::new_named(Ref(n), name.0.clone(), typ.clone(), *qual, *dist);
+                    Some(var)
                 }
                 _ => None,
             })
@@ -420,14 +420,14 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
                 if matches!(op.get(), Op::Challenge(_, _) | Op::Random(_, _)) =>
             {
                 let inner = op.get();
-                let pref = named_pref(dag, r, inner.typ(), *qualifier, *distribution);
-                self.insert(pref, inner.clone(), seen)
+                let var = named_var(dag, r, inner.typ(), *qualifier, *distribution);
+                self.insert(var, inner.clone(), seen)
             }
             Node::Op(op, (qualifier, distribution))
             | Node::Transcr(op, (qualifier, distribution)) => {
                 let obin = self.trans_clos_op(dag, op.get().clone(), seen);
                 self.insert(
-                    named_pref(dag, r, obin.typ(), *qualifier, *distribution),
+                    named_var(dag, r, obin.typ(), *qualifier, *distribution),
                     obin,
                     seen,
                 )
@@ -445,7 +445,7 @@ impl<C: ArkConfig> fmt::Display for TransClos<C> {
         writeln!(
             f,
             "Pref: {}",
-            self.prefs
+            self.vars
                 .iter()
                 .map(|n| n.verbose())
                 .collect::<Vec<_>>()
@@ -492,13 +492,13 @@ mod tests {
 
         let tc = TransClos::prover(&g);
 
-        assert!(!tc.prefs.is_empty(), "prefs should not be empty");
+        assert!(!tc.vars.is_empty(), "vars should not be empty");
         assert!(
-            tc.prefs.iter().any(|p| p.is_private()),
+            tc.vars.iter().any(|p| p.is_private()),
             "prover should include private args"
         );
         assert!(
-            tc.prefs.iter().any(|p| p.is_public()),
+            tc.vars.iter().any(|p| p.is_public()),
             "prover should include public args"
         );
         assert!(!tc.clos.is_empty(), "clos should not be empty");
@@ -530,33 +530,30 @@ mod tests {
         let tc_prover = TransClos::prover(&g);
         let tc_rel = TransClos::relation(&g);
 
-        // Relation prefs should use input namespace (same NodeIndex)
-        for rel_pref in &tc_rel.prefs {
-            let matching_prover = tc_prover
-                .prefs
-                .iter()
-                .find(|ip| ip.name() == rel_pref.name());
+        // Relation vars should use input namespace (same NodeIndex)
+        for rel_var in &tc_rel.vars {
+            let matching_prover = tc_prover.vars.iter().find(|ip| ip.name() == rel_var.name());
             assert!(
                 matching_prover.is_some(),
                 "relation arg {:?} should have a matching prover arg",
-                rel_pref.name()
+                rel_var.name()
             );
             assert_eq!(
-                rel_pref.node(),
+                rel_var.node(),
                 matching_prover.unwrap().node(),
                 "relation arg {:?} should map to same node as prover arg",
-                rel_pref.name()
+                rel_var.name()
             );
         }
 
         // Relation clos entries for arg nodes should also use input namespace
-        for (pref, _) in tc_rel.clos.iter() {
-            if let Some(prover_pref) = tc_prover.prefs.iter().find(|ip| ip.name() == pref.name()) {
+        for (var, _) in tc_rel.clos.iter() {
+            if let Some(prover_var) = tc_prover.vars.iter().find(|ip| ip.name() == var.name()) {
                 assert_eq!(
-                    pref.node(),
-                    prover_pref.node(),
+                    var.node(),
+                    prover_var.node(),
                     "relation clos entry {:?} should use input namespace",
-                    pref.name()
+                    var.name()
                 );
             }
         }
@@ -602,11 +599,11 @@ mod tests {
         let tc_prover = TransClos::prover(&g);
 
         assert!(
-            tc_prover.prefs.iter().any(|p| p.is_private()),
+            tc_prover.vars.iter().any(|p| p.is_private()),
             "prover should see private inputs"
         );
         assert!(
-            tc_prover.prefs.iter().any(|p| p.is_public()),
+            tc_prover.vars.iter().any(|p| p.is_public()),
             "prover should see public inputs"
         );
     }
@@ -629,13 +626,13 @@ mod tests {
             "prover should have reachable ops"
         );
 
-        // Prover should include both private and public input prefs
+        // Prover should include both private and public input vars
         assert!(
-            tc_prover.prefs.iter().any(|p| p.is_private()),
+            tc_prover.vars.iter().any(|p| p.is_private()),
             "prover should see private inputs"
         );
         assert!(
-            tc_prover.prefs.iter().any(|p| p.is_public()),
+            tc_prover.vars.iter().any(|p| p.is_public()),
             "prover should see public inputs"
         );
     }
@@ -654,12 +651,12 @@ mod tests {
         let tc = TransClos::verifier(&g);
 
         assert!(
-            tc.prefs.iter().all(|p| p.is_public()),
-            "verifier prefs should all be public, got: {:?}",
-            tc.prefs
+            tc.vars.iter().all(|p| p.is_public()),
+            "verifier vars should all be public, got: {:?}",
+            tc.vars
         );
         assert!(
-            !tc.prefs.is_empty(),
+            !tc.vars.is_empty(),
             "verifier should have at least one public arg"
         );
         assert!(!tc.clos.is_empty(), "verifier should have reachable ops");
@@ -673,20 +670,20 @@ mod tests {
             "verifier should see at least one transcript source (Challenge/Random)"
         );
 
-        // Verifier clos should not contain any private-input PRefs
-        let private_prefs: HashSet<NodeIndex> = g
+        // Verifier clos should not contain any private-input Vars
+        let private_vars: HashSet<NodeIndex> = g
             .input_args()
             .into_iter()
-            .filter_map(|n| match &g[n] {
-                Node::Arg(_, _, qual, _, _) if qual.is_private() => Some(n),
-                _ => None,
+            .filter(|n| match &g[*n] {
+                Node::Arg(_, _, qual, _, _) => qual.is_private(),
+                _ => false,
             })
             .collect();
-        for (verifier_pref, _) in tc.clos.iter() {
+        for (verifier_var, _) in tc.clos.iter() {
             assert!(
-                !private_prefs.contains(&verifier_pref.node()),
+                !private_vars.contains(&verifier_var.node()),
                 "verifier clos entry at node {:?} should not be a private input",
-                verifier_pref.node()
+                verifier_var.node()
             );
         }
     }
@@ -704,10 +701,10 @@ mod tests {
 
         let tc = TransClos::prover(&g);
         let original_clos_len = tc.clos.len();
-        let original_prefs_len = tc.prefs.len();
+        let original_vars_len = tc.vars.len();
 
         let mut tc2 = TransClos::prover(&g);
-        tc2.remap(&|pr| pr.clone());
+        tc2.remap(&|var| var.clone());
 
         assert_eq!(
             tc2.clos.len(),
@@ -715,9 +712,9 @@ mod tests {
             "identity remap should preserve clos length"
         );
         assert_eq!(
-            tc2.prefs.len(),
-            original_prefs_len,
-            "identity remap should preserve prefs length"
+            tc2.vars.len(),
+            original_vars_len,
+            "identity remap should preserve vars length"
         );
 
         for (orig, remapped) in tc.clos.iter().zip(tc2.clos.iter()) {
@@ -754,7 +751,7 @@ mod tests {
             .clos
             .iter()
             .enumerate()
-            .map(|(i, (pr, _))| (pr.node(), i))
+            .map(|(i, (var, _))| (var.node(), i))
             .collect();
 
         for (i, (_, op)) in tc.clos.iter().enumerate() {

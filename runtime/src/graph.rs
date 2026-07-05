@@ -533,21 +533,22 @@ impl<C: ArkConfig> MutexGraph<C> {
                         arg_children.len()
                     );
                     for arg_idx in arg_children {
-                        if let Node::Arg(name, _, qual, _, kind) = &g.mutex_graph[arg_idx] {
-                            if qual.is_public() && !matches!(kind, ArgKind::TranscriptInput) {
-                                let vid = name.clone();
-                                let value = match inputs.get(&vid) {
-                                    Some(v) => v,
-                                    None => {
-                                        let err = RuntimeError::missing_arg(&vid, inputs.keys());
-                                        record_error(&error_slot, err.clone());
-                                        // Drop tx and bail; in-flight workers
-                                        // will see the slot set and short-circuit.
-                                        return Err(err);
-                                    }
-                                };
-                                absorb_public_input::<C, H>(prover_state, &**value);
-                            }
+                        if let Node::Arg(name, _, qual, _, kind) = &g.mutex_graph[arg_idx]
+                            && qual.is_public()
+                            && !matches!(kind, ArgKind::TranscriptInput)
+                        {
+                            let vid = name.clone();
+                            let value = match inputs.get(&vid) {
+                                Some(v) => v,
+                                None => {
+                                    let err = RuntimeError::missing_arg(&vid, inputs.keys());
+                                    record_error(&error_slot, err.clone());
+                                    // Drop tx and bail; in-flight workers
+                                    // will see the slot set and short-circuit.
+                                    return Err(err);
+                                }
+                            };
+                            absorb_public_input::<C, H>(prover_state, &**value);
                         }
                     }
                 }

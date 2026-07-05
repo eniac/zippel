@@ -100,7 +100,6 @@ mod tests {
     use lang::ast::UModule;
 
     use share::Ctx;
-    use share::Set;
     use share::unwrap;
 
     #[test]
@@ -316,10 +315,10 @@ mod tests {
         let u_var = mk_var("u", 4);
 
         type Poly = Polynomial<<ArkBls12_381 as backend::ArkConfig>::F>;
-        let var = |p: &Var| -> Poly { Polynomial::var(p) };
+        let var_poly = |p: &Var| -> Poly { Polynomial::var(p) };
 
-        let p1 = var(&g_var) * var(&x_var) - var(&h_var);
-        let p2 = var(&g_var) * var(&r_var) - var(&u_var);
+        let p1 = var_poly(&g_var) * var_poly(&x_var) - var_poly(&h_var);
+        let p2 = var_poly(&g_var) * var_poly(&r_var) - var_poly(&u_var);
 
         use crate::backend::ark_gb::ArkGb;
         use crate::frontend::MonoOrder;
@@ -329,7 +328,7 @@ mod tests {
             .compute_gb(vec![p1, p2], &MonoOrder::grevlex())
             .expect("ark-gb grevlex should succeed for Schnorr-like input");
 
-        let target = var(&h_var) * var(&r_var) - var(&u_var) * var(&x_var);
+        let target = var_poly(&h_var) * var_poly(&r_var) - var_poly(&u_var) * var_poly(&x_var);
         let rem = backend.reduce(target, &gb);
         assert!(
             rem.is_zero(),
@@ -531,14 +530,14 @@ mod tests {
         assert!(
             tc.clos
                 .iter()
-                .any(|(_pref, op)| matches!(op, graph::Op::Evaluate(..))
+                .any(|(_var, op)| matches!(op, graph::Op::Evaluate(..))
                     && op.typ() == backend::ATyp::Mle(1)),
             "transitive closure should preserve materialized partial MLE eval as Mle(1)"
         );
         assert!(
             !tc.clos
                 .iter()
-                .any(|(_pref, op)| matches!(op, graph::Op::Evaluate(..))
+                .any(|(_var, op)| matches!(op, graph::Op::Evaluate(..))
                     && op.typ() == backend::ATyp::Uni(1)),
             "transitive closure should not recompute the same eval as Uni(1)"
         );
