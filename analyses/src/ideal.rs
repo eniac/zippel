@@ -15,16 +15,11 @@ use std::collections::HashMap;
 use std::fmt;
 use std::marker::PhantomData;
 
-// Keep record/projection materialization bounded. Large protocol helper records
-// can contain polynomial state with enormous flattened slot counts; failing
-// explicitly is preferable to attempting an allocation that aborts the process.
-const MAX_IDEAL_MATERIALIZED_SLOTS: usize = 1 << 20;
-
 // ---------------------------------------------------------------------------
 // Var-slot enumeration helpers for polynomial / MLE values.
 //
 // These define the canonical order in which the slots of a polynomial-typed
-// Var are laid out (via `Var::with_slot(i)`). They are NOT monomial / term
+// Var are laid out (via `Var::with_index(i)`). They are NOT monomial / term
 // orderings — the `GrevLexTerm` and `ElimMono<E>` orderings in
 // `monomial.rs` are untouched.
 //
@@ -1140,7 +1135,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     let b_poly = &b.polys()[0];
                     for (ka_pos, _k) in a_idx.iter().enumerate() {
                         let rhs: Polynomial<C::F> =
-                            b_poly * &Polynomial::var(&q_wit.with_slot(ka_pos).unwrap());
+                            b_poly * &Polynomial::var(&q_wit.with_index(ka_pos).unwrap());
                         ideal.generating_set.push(&a.polys()[ka_pos] - &rhs);
                     }
                     for rf in r_wit.slots() {
@@ -1188,13 +1183,13 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                             let sum: Vec<usize> =
                                 ki.iter().zip(kj.iter()).map(|(x, y)| x + y).collect();
                             if sum == *k {
-                                let qf = q_wit.clone().with_slot(j_pos).unwrap();
+                                let qf = q_wit.clone().with_index(j_pos).unwrap();
                                 rhs = &rhs + &(&b.polys()[i_pos] * &Polynomial::var(&qf));
                             }
                         }
                     }
                     if let Some(r_pos) = r_idx.iter().position(|rk| rk == k) {
-                        let rf = r_wit.clone().with_slot(r_pos).unwrap();
+                        let rf = r_wit.clone().with_index(r_pos).unwrap();
                         rhs = &rhs + &Polynomial::var(&rf);
                     }
                     ideal.generating_set.push(&a.polys()[ka_pos] - &rhs);
@@ -2509,30 +2504,21 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 self.pair_op(&var, &a_src, &b_src, ideal);
             }
             // `Op::Record(fields)` — field-slot-aware layout.
-            // Physical slots are laid out in Ctx iteration order: each
-            // field occupies `field_typ.physical_len()` consecutive slots.
-            // For each field, emit basis rows linking record slots to
-            // the field's polynomial values.
+            // For each field, get the field-level Var via `with_index`,
+            // then expand its sub-slots via `slots()` to get hierarchical
+            // indices (e.g. `[0][0]`, `[0][1]` for a Vec field).
             Op::Record(ref fields) => {
-                let pr_len = var.typ.physical_len();
-                if pr_len > MAX_IDEAL_MATERIALIZED_SLOTS {
-                    panic!(
-                        "ideal: Record has {} physical slots, above materialization limit {}",
-                        pr_len, MAX_IDEAL_MATERIALIZED_SLOTS
-                    );
-                }
-                let mut slot_offset = 0usize;
-                for (_, field_op) in fields.iter() {
+                for (field_idx, (_, field_op)) in fields.iter().enumerate() {
+                    let field_var = var
+                        .clone()
+                        .with_index(field_idx)
+                        .expect("record field index must be within record logical layout");
                     let field_polys = Self::ref_vars(field_op.get(), &ideal.vars);
-                    for (j, p) in field_polys.into_iter().enumerate() {
-                        let pf = var
-                            .clone()
-                            .with_slot(slot_offset + j)
-                            .expect("record field slot must be within record physical layout");
+                    let field_slots = field_var.slots();
+                    for (p, pf) in field_polys.into_iter().zip(field_slots) {
                         ideal.pl.insert(&pf, &p);
                         ideal.generating_set.push(p - Polynomial::var(&pf));
                     }
-                    slot_offset += field_op.typ().physical_len();
                 }
             }
             // Concat/Pow/Marginalize/Proj require explicit ideal treatment;
@@ -3551,7 +3537,7 @@ mod tests {
         let polys = IdealBuilder::<ArkBls12_381>::ref_vars(&op, &ideal.vars);
         assert_eq!(polys.len(), 6);
         for (i, _) in polys.iter().enumerate() {
-            let expected = var_p.clone().with_slot(i).unwrap();
+            let expected = var_p.clone().with_index(i).unwrap();
             assert!(
                 polys[i].contains(&expected),
                 "coefficient poly {} does not contain expected Var (index {})",
@@ -3625,7 +3611,7 @@ mod tests {
 
         // Three coefficient slots should have been bound.
         for i in 0..3 {
-            let slot = var_p.clone().with_slot(i).unwrap();
+            let slot = var_p.clone().with_index(i).unwrap();
             assert!(ideal.pl.contains(&slot), "slot {} missing from pl", i);
         }
         // Six basis equations: 3 from Vec binding + 3 from Poly identity.
@@ -3695,8 +3681,8 @@ mod tests {
         // resolves per-slot Vars to ATyp::scalar(), so we expect that form
         // on the RHS.
         for i in 0..3 {
-            let coef_slot = var_c.clone().with_slot(i).unwrap();
-            let poly_slot = var_p.clone().with_slot(i).unwrap();
+            let coef_slot = var_c.clone().with_index(i).unwrap();
+            let poly_slot = var_p.clone().with_index(i).unwrap();
             let stored = ideal.pl.get(&coef_slot).expect("coef slot missing");
             let expected = Polynomial::<Fr>::var(&poly_slot);
             assert_eq!(*stored, expected, "coef[{}] did not bind to poly[{}]", i, i);
@@ -3747,7 +3733,7 @@ mod tests {
         assert_eq!(ideal.generating_set.len(), 8);
         for i in 0..4 {
             assert!(
-                ideal.pl.contains(&var_m.clone().with_slot(i).unwrap()),
+                ideal.pl.contains(&var_m.clone().with_index(i).unwrap()),
                 "mle slot {} missing",
                 i
             );
@@ -3777,8 +3763,8 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        let g0 = Polynomial::<ark_bls12_381::Fr>::var(&src.clone().with_slot(0).unwrap());
-        let g1 = Polynomial::<ark_bls12_381::Fr>::var(&src.clone().with_slot(1).unwrap());
+        let g0 = Polynomial::<ark_bls12_381::Fr>::var(&src.clone().with_index(0).unwrap());
+        let g1 = Polynomial::<ark_bls12_381::Fr>::var(&src.clone().with_index(1).unwrap());
         let lifted = PolySource::<ArkBls12_381> {
             polys: vec![g0.clone(), g1.clone()],
             typ: ATyp::Mle(1),
@@ -3846,7 +3832,7 @@ mod tests {
         // Eval uses explicit ideal treatment with no fallback.
         for i in 0..2 {
             assert!(
-                ideal.pl.contains(&var.clone().with_slot(i).unwrap()),
+                ideal.pl.contains(&var.clone().with_index(i).unwrap()),
                 "uni batched ideal slot {} missing",
                 i
             );
@@ -3865,19 +3851,19 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        let a0 = var_a.clone().with_slot(0).unwrap();
-        let a1 = var_a.clone().with_slot(1).unwrap();
-        let x0 = var_xs.clone().with_slot(0).unwrap();
-        let x1 = var_xs.clone().with_slot(1).unwrap();
+        let a0 = var_a.clone().with_index(0).unwrap();
+        let a1 = var_a.clone().with_index(1).unwrap();
+        let x0 = var_xs.clone().with_index(0).unwrap();
+        let x1 = var_xs.clone().with_index(1).unwrap();
 
-        let slot0 = ideal.pl.get(&var.clone().with_slot(0).unwrap()).unwrap();
+        let slot0 = ideal.pl.get(&var.clone().with_index(0).unwrap()).unwrap();
         let vars0 = slot0.vars();
         assert!(vars0.contains(&a0), "slot 0 missing a_0");
         assert!(vars0.contains(&a1), "slot 0 missing a_1");
         assert!(vars0.contains(&x0), "slot 0 missing xs[0]");
         assert!(!vars0.contains(&x1), "slot 0 should not contain xs[1]");
 
-        let slot1 = ideal.pl.get(&var.clone().with_slot(1).unwrap()).unwrap();
+        let slot1 = ideal.pl.get(&var.clone().with_index(1).unwrap()).unwrap();
         let vars1 = slot1.vars();
         assert!(vars1.contains(&a0), "slot 1 missing a_0");
         assert!(vars1.contains(&a1), "slot 1 missing a_1");
@@ -3980,8 +3966,8 @@ mod tests {
         // stores a polynomial equal to a_0 + a_1 * x as a sparse poly in the
         // slot Vars (constants haven't been inlined). We verify the basis
         // equation reduces correctly by substituting literal values via `vars`.
-        let slot0 = ideal.pl.get(&var.clone().with_slot(0).unwrap()).unwrap();
-        let slot1 = ideal.pl.get(&var.clone().with_slot(1).unwrap()).unwrap();
+        let slot0 = ideal.pl.get(&var.clone().with_index(0).unwrap()).unwrap();
+        let slot1 = ideal.pl.get(&var.clone().with_index(1).unwrap()).unwrap();
         assert!(!slot0.is_zero());
         assert!(!slot1.is_zero());
         // 2 Vec bindings * 2 slots each = 4, plus 2 Poly identities * 2 = 4,
@@ -4039,9 +4025,9 @@ mod tests {
         builder.add_op(var.clone(), op, &mut ideal);
 
         // One ideal slot (scalar) produced by explicit eval encoding.
-        assert!(ideal.pl.contains(&var.clone().with_slot(0).unwrap()));
+        assert!(ideal.pl.contains(&var.clone().with_index(0).unwrap()));
         // Should contain all 6 coef Vars of p + both xs slots.
-        let slot = ideal.pl.get(&var.clone().with_slot(0).unwrap()).unwrap();
+        let slot = ideal.pl.get(&var.clone().with_index(0).unwrap()).unwrap();
         let vars = slot.vars();
         assert!(
             vars.len() >= 6,
@@ -4104,7 +4090,7 @@ mod tests {
         assert_eq!(ATyp::VPoly(2, 1).physical_len(), 3);
         for i in 0..3 {
             assert!(
-                ideal.pl.contains(&var.clone().with_slot(i).unwrap()),
+                ideal.pl.contains(&var.clone().with_index(i).unwrap()),
                 "partial vpoly eval slot {} missing",
                 i
             );
@@ -4160,9 +4146,9 @@ mod tests {
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
-        assert!(ideal.pl.contains(&var.clone().with_slot(0).unwrap()));
+        assert!(ideal.pl.contains(&var.clone().with_index(0).unwrap()));
         // Result poly should reference all 4 Mle slots + both xs slots.
-        let slot = ideal.pl.get(&var.clone().with_slot(0).unwrap()).unwrap();
+        let slot = ideal.pl.get(&var.clone().with_index(0).unwrap()).unwrap();
         let vars = slot.vars();
         assert!(vars.len() >= 4, "mle full eval got {} vars", vars.len());
     }
@@ -4219,7 +4205,7 @@ mod tests {
         // Mle(2) has 4 eval slots.
         for i in 0..4 {
             assert!(
-                ideal.pl.contains(&var.clone().with_slot(i).unwrap()),
+                ideal.pl.contains(&var.clone().with_index(i).unwrap()),
                 "partial mle eval slot {} missing",
                 i
             );
@@ -4281,16 +4267,16 @@ mod tests {
         // 3 ideal slots bound.
         for i in 0..3 {
             assert!(
-                ideal.pl.contains(&var.clone().with_slot(i).unwrap()),
+                ideal.pl.contains(&var.clone().with_index(i).unwrap()),
                 "add ideal slot {} missing",
                 i
             );
         }
         // Each ideal slot contains exactly a.slot(i) + b.slot(i).
         for i in 0..3 {
-            let a_slot = var_a.clone().with_slot(i).unwrap();
-            let b_slot = var_b.clone().with_slot(i).unwrap();
-            let stored = ideal.pl.get(&var.clone().with_slot(i).unwrap()).unwrap();
+            let a_slot = var_a.clone().with_index(i).unwrap();
+            let b_slot = var_b.clone().with_index(i).unwrap();
+            let stored = ideal.pl.get(&var.clone().with_index(i).unwrap()).unwrap();
             let expected =
                 &Polynomial::<ark_bls12_381::Fr>::var(&a_slot) + &Polynomial::var(&b_slot);
             assert_eq!(*stored, expected, "vpoly add slot {} mismatch", i);
@@ -4345,9 +4331,9 @@ mod tests {
         builder.add_op(var.clone(), op, &mut ideal);
 
         for i in 0..4 {
-            let a_slot = var_a.clone().with_slot(i).unwrap();
-            let b_slot = var_b.clone().with_slot(i).unwrap();
-            let stored = ideal.pl.get(&var.clone().with_slot(i).unwrap()).unwrap();
+            let a_slot = var_a.clone().with_index(i).unwrap();
+            let b_slot = var_b.clone().with_index(i).unwrap();
+            let stored = ideal.pl.get(&var.clone().with_index(i).unwrap()).unwrap();
             let expected =
                 &Polynomial::<ark_bls12_381::Fr>::var(&a_slot) + &Polynomial::var(&b_slot);
             assert_eq!(*stored, expected, "mle add slot {} mismatch", i);
@@ -4397,9 +4383,9 @@ mod tests {
         // VPoly(2,2) has 6 slots.
         assert_eq!(ATyp::VPoly(2, 2).physical_len(), 6);
         for i in 0..6 {
-            let a_slot = var_a.clone().with_slot(i).unwrap();
-            let b_slot = var_b.clone().with_slot(i).unwrap();
-            let stored = ideal.pl.get(&var.clone().with_slot(i).unwrap()).unwrap();
+            let a_slot = var_a.clone().with_index(i).unwrap();
+            let b_slot = var_b.clone().with_index(i).unwrap();
+            let stored = ideal.pl.get(&var.clone().with_index(i).unwrap()).unwrap();
             let expected =
                 &Polynomial::<ark_bls12_381::Fr>::var(&a_slot) - &Polynomial::var(&b_slot);
             assert_eq!(*stored, expected, "vpoly sub slot {} mismatch", i);
@@ -4449,25 +4435,25 @@ mod tests {
 
         // VPoly(1,2) has physical_len = 3 slots (degrees 0, 1, 2 in graded-lex order).
         assert_eq!(ATyp::VPoly(1, 2).physical_len(), 3);
-        let a0 = var_a.clone().with_slot(0).unwrap();
-        let a1 = var_a.clone().with_slot(1).unwrap();
-        let b0 = var_b.clone().with_slot(0).unwrap();
-        let b1 = var_b.clone().with_slot(1).unwrap();
+        let a0 = var_a.clone().with_index(0).unwrap();
+        let a1 = var_a.clone().with_index(1).unwrap();
+        let b0 = var_b.clone().with_index(0).unwrap();
+        let b1 = var_b.clone().with_index(1).unwrap();
 
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         let deg0 = ideal
             .pl
-            .get(&var.clone().with_slot(0).unwrap())
+            .get(&var.clone().with_index(0).unwrap())
             .unwrap()
             .clone();
         let deg1 = ideal
             .pl
-            .get(&var.clone().with_slot(1).unwrap())
+            .get(&var.clone().with_index(1).unwrap())
             .unwrap()
             .clone();
         let deg2 = ideal
             .pl
-            .get(&var.clone().with_slot(2).unwrap())
+            .get(&var.clone().with_index(2).unwrap())
             .unwrap()
             .clone();
         assert_eq!(deg0, &var_poly(&a0) * &var_poly(&b0), "(*.x^0)");
@@ -4530,12 +4516,12 @@ mod tests {
         let pos_00 = r_idx.iter().position(|k| k == &vec![0, 0]).unwrap();
         let a_pos_00 = a_idx.iter().position(|k| k == &vec![0, 0]).unwrap();
 
-        let a00 = var_a.clone().with_slot(a_pos_00).unwrap();
-        let b00 = var_b.clone().with_slot(a_pos_00).unwrap();
+        let a00 = var_a.clone().with_index(a_pos_00).unwrap();
+        let b00 = var_b.clone().with_index(a_pos_00).unwrap();
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         let got = ideal
             .pl
-            .get(&var.clone().with_slot(pos_00).unwrap())
+            .get(&var.clone().with_index(pos_00).unwrap())
             .unwrap()
             .clone();
         assert_eq!(
@@ -4547,7 +4533,7 @@ mod tests {
         // Ensure all 6 slots were populated.
         for i in 0..6 {
             assert!(
-                ideal.pl.contains(&var.clone().with_slot(i).unwrap()),
+                ideal.pl.contains(&var.clone().with_index(i).unwrap()),
                 "VPoly(2,2) slot {} missing",
                 i
             );
@@ -4603,31 +4589,31 @@ mod tests {
         // 3 slots populated.
         for i in 0..3 {
             assert!(
-                ideal.pl.contains(&var.clone().with_slot(i).unwrap()),
+                ideal.pl.contains(&var.clone().with_index(i).unwrap()),
                 "Mle×Mle slot {} missing",
                 i
             );
         }
 
-        let u0 = var_u.clone().with_slot(0).unwrap();
-        let u1 = var_u.clone().with_slot(1).unwrap();
-        let v0 = var_v.clone().with_slot(0).unwrap();
-        let v1 = var_v.clone().with_slot(1).unwrap();
+        let u0 = var_u.clone().with_index(0).unwrap();
+        let u1 = var_u.clone().with_index(1).unwrap();
+        let v0 = var_v.clone().with_index(0).unwrap();
+        let v1 = var_v.clone().with_index(1).unwrap();
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
 
         let deg0 = ideal
             .pl
-            .get(&var.clone().with_slot(0).unwrap())
+            .get(&var.clone().with_index(0).unwrap())
             .unwrap()
             .clone();
         let deg1 = ideal
             .pl
-            .get(&var.clone().with_slot(1).unwrap())
+            .get(&var.clone().with_index(1).unwrap())
             .unwrap()
             .clone();
         let deg2 = ideal
             .pl
-            .get(&var.clone().with_slot(2).unwrap())
+            .get(&var.clone().with_index(2).unwrap())
             .unwrap()
             .clone();
 
@@ -4694,25 +4680,25 @@ mod tests {
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
-        let u0 = var_u.clone().with_slot(0).unwrap();
-        let u1 = var_u.clone().with_slot(1).unwrap();
-        let b0 = var_b.clone().with_slot(0).unwrap();
-        let b1 = var_b.clone().with_slot(1).unwrap();
+        let u0 = var_u.clone().with_index(0).unwrap();
+        let u1 = var_u.clone().with_index(1).unwrap();
+        let b0 = var_b.clone().with_index(0).unwrap();
+        let b1 = var_b.clone().with_index(1).unwrap();
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
 
         let deg0 = ideal
             .pl
-            .get(&var.clone().with_slot(0).unwrap())
+            .get(&var.clone().with_index(0).unwrap())
             .unwrap()
             .clone();
         let deg1 = ideal
             .pl
-            .get(&var.clone().with_slot(1).unwrap())
+            .get(&var.clone().with_index(1).unwrap())
             .unwrap()
             .clone();
         let deg2 = ideal
             .pl
-            .get(&var.clone().with_slot(2).unwrap())
+            .get(&var.clone().with_index(2).unwrap())
             .unwrap()
             .clone();
 
@@ -4775,7 +4761,7 @@ mod tests {
         assert_eq!(r_idx.len(), 10, "VPoly(2,3) should have 10 multi-indices");
         for i in 0..10 {
             assert!(
-                ideal.pl.contains(&var.clone().with_slot(i).unwrap()),
+                ideal.pl.contains(&var.clone().with_index(i).unwrap()),
                 "VPoly×Mle slot {} missing",
                 i
             );
@@ -4831,11 +4817,11 @@ mod tests {
         // Constant term [0,0]: u_00 * b_00
         let pos_00 = r_idx.iter().position(|k| k == &vec![0, 0]).unwrap();
         let v_pos_00 = v_idx.iter().position(|k| k == &vec![0, 0]).unwrap();
-        let u00 = var_u.clone().with_slot(0).unwrap();
-        let b00 = var_b.clone().with_slot(v_pos_00).unwrap();
+        let u00 = var_u.clone().with_index(0).unwrap();
+        let b00 = var_b.clone().with_index(v_pos_00).unwrap();
         let got_00 = ideal
             .pl
-            .get(&var.clone().with_slot(pos_00).unwrap())
+            .get(&var.clone().with_index(pos_00).unwrap())
             .unwrap()
             .clone();
         assert_eq!(
@@ -4847,7 +4833,7 @@ mod tests {
         // [1,0] slot: -u_00·b_10 + u_10·b_00 + u_00·b_10... check it's populated
         let pos_10 = r_idx.iter().position(|k| k == &vec![1, 0]).unwrap();
         assert!(
-            ideal.pl.contains(&var.clone().with_slot(pos_10).unwrap()),
+            ideal.pl.contains(&var.clone().with_index(pos_10).unwrap()),
             "bivariate [1,0] slot missing"
         );
 
@@ -4855,7 +4841,7 @@ mod tests {
         assert_eq!(r_idx.len(), 10);
         for i in 0..10 {
             assert!(
-                ideal.pl.contains(&var.clone().with_slot(i).unwrap()),
+                ideal.pl.contains(&var.clone().with_index(i).unwrap()),
                 "Mle×VPoly bivariate slot {} missing",
                 i
             );
@@ -4937,10 +4923,10 @@ mod tests {
         );
 
         // Per-slot input vars (typ computed by `with_slot`).
-        let scl = |p: &Var, i: usize| p.clone().with_slot(i).unwrap();
-        // Per-slot witness vars. `div_witnesses` uses `wit.clone().with_slot(j).unwrap()`
+        let scl = |p: &Var, i: usize| p.clone().with_index(i).unwrap();
+        // Per-slot witness vars. `div_witnesses` uses `wit.clone().with_index(j).unwrap()`
         // which sets typ appropriately.
-        let wit_slot = |p: &Var, i: usize| p.clone().with_slot(i).unwrap();
+        let wit_slot = |p: &Var, i: usize| p.clone().with_index(i).unwrap();
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         let a0 = scl(&var_a, 0);
         let a1 = scl(&var_a, 1);
@@ -4977,20 +4963,20 @@ mod tests {
 
         // link_to_witness: pl[ideal[j]] = var(q_wit[j]) for j=0,1.
         assert_eq!(
-            ideal.pl.get(&var.clone().with_slot(0).unwrap()).cloned(),
+            ideal.pl.get(&var.clone().with_index(0).unwrap()).cloned(),
             Some(var_poly(&q0)),
             "pl[ideal[0]] should alias q_wit[0]"
         );
         assert_eq!(
-            ideal.pl.get(&var.clone().with_slot(1).unwrap()).cloned(),
+            ideal.pl.get(&var.clone().with_index(1).unwrap()).cloned(),
             Some(var_poly(&q1)),
             "pl[ideal[1]] should alias q_wit[1]"
         );
 
         // Linking rows: var(q_wit[j]) - var(ideal[j]).
-        // link_to_witness uses `ideal.clone().with_slot(j).unwrap()` (typ computed by with_slot).
-        let r0_slot = var.clone().with_slot(0).unwrap();
-        let r1_slot = var.clone().with_slot(1).unwrap();
+        // link_to_witness uses `ideal.clone().with_index(j).unwrap()` (typ computed by with_slot).
+        let r0_slot = var.clone().with_index(0).unwrap();
+        let r1_slot = var.clone().with_index(1).unwrap();
         let link0 = &var_poly(&q0) - &var_poly(&r0_slot);
         let link1 = &var_poly(&q1) - &var_poly(&r1_slot);
         assert!(
@@ -5059,11 +5045,11 @@ mod tests {
             Qualifier::Local,
             Distribution::default(),
         );
-        let scl = |p: &Var, i: usize| p.clone().with_slot(i).unwrap();
+        let scl = |p: &Var, i: usize| p.clone().with_index(i).unwrap();
         let _ = scl; // kept for parity with the Div test; not used here.
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         // r_wit slots: with_slot computes the correct type.
-        let r0 = r_wit.clone().with_slot(0).unwrap();
+        let r0 = r_wit.clone().with_index(0).unwrap();
 
         // 3 identity rows + 1 linking row (ideal has only 1 slot).
         assert_eq!(
@@ -5074,13 +5060,13 @@ mod tests {
 
         // pl[ideal[0]] = var(r_wit[0]).
         assert_eq!(
-            ideal.pl.get(&var.clone().with_slot(0).unwrap()).cloned(),
+            ideal.pl.get(&var.clone().with_index(0).unwrap()).cloned(),
             Some(var_poly(&r0)),
             "pl[ideal[0]] should alias r_wit[0]"
         );
 
-        // Linking row: link_to_witness uses ideal.with_slot(0).unwrap() (type computed by with_slot).
-        let r0_slot = var.clone().with_slot(0).unwrap();
+        // Linking row: link_to_witness uses ideal.with_index(0).unwrap() (type computed by with_slot).
+        let r0_slot = var.clone().with_index(0).unwrap();
         let link = &var_poly(&r0) - &var_poly(&r0_slot);
         assert!(
             ideal.generating_set.iter().any(|row| row == &link),
@@ -6027,9 +6013,9 @@ mod tests {
         builder.add_op(var.clone(), op, &mut ideal);
 
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
-        let v0 = var_v.clone().with_slot(0).unwrap();
-        let v1 = var_v.clone().with_slot(1).unwrap();
-        let v2 = var_v.clone().with_slot(2).unwrap();
+        let v0 = var_v.clone().with_index(0).unwrap();
+        let v1 = var_v.clone().with_index(1).unwrap();
+        let v2 = var_v.clone().with_index(2).unwrap();
 
         let expected = &var_poly(&v0) + &(&var_poly(&v1) + &var_poly(&v2));
         let row = &expected - &var_poly(&var);
@@ -6083,19 +6069,19 @@ mod tests {
 
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         // Vec(Poly(1,2), 3): element 0 is slots 0,1,2; element 1 is slots 3,4,5; element 2 is slots 6,7,8.
-        let v0_c0 = var_v.clone().with_index(0).unwrap().with_slot(0).unwrap();
-        let v0_c1 = var_v.clone().with_index(0).unwrap().with_slot(1).unwrap();
-        let v0_c2 = var_v.clone().with_index(0).unwrap().with_slot(2).unwrap();
-        let v1_c0 = var_v.clone().with_index(1).unwrap().with_slot(0).unwrap();
-        let v1_c1 = var_v.clone().with_index(1).unwrap().with_slot(1).unwrap();
-        let v1_c2 = var_v.clone().with_index(1).unwrap().with_slot(2).unwrap();
-        let v2_c0 = var_v.clone().with_index(2).unwrap().with_slot(0).unwrap();
-        let v2_c1 = var_v.clone().with_index(2).unwrap().with_slot(1).unwrap();
-        let v2_c2 = var_v.clone().with_index(2).unwrap().with_slot(2).unwrap();
+        let v0_c0 = var_v.clone().with_index(0).unwrap().with_index(0).unwrap();
+        let v0_c1 = var_v.clone().with_index(0).unwrap().with_index(1).unwrap();
+        let v0_c2 = var_v.clone().with_index(0).unwrap().with_index(2).unwrap();
+        let v1_c0 = var_v.clone().with_index(1).unwrap().with_index(0).unwrap();
+        let v1_c1 = var_v.clone().with_index(1).unwrap().with_index(1).unwrap();
+        let v1_c2 = var_v.clone().with_index(1).unwrap().with_index(2).unwrap();
+        let v2_c0 = var_v.clone().with_index(2).unwrap().with_index(0).unwrap();
+        let v2_c1 = var_v.clone().with_index(2).unwrap().with_index(1).unwrap();
+        let v2_c2 = var_v.clone().with_index(2).unwrap().with_index(2).unwrap();
 
-        let r_c0 = var.clone().with_slot(0).unwrap();
-        let r_c1 = var.clone().with_slot(1).unwrap();
-        let r_c2 = var.clone().with_slot(2).unwrap();
+        let r_c0 = var.clone().with_index(0).unwrap();
+        let r_c1 = var.clone().with_index(1).unwrap();
+        let r_c2 = var.clone().with_index(2).unwrap();
 
         // ideal[0] = v0[0] + v1[0] + v2[0]
         let expected_c0 = &var_poly(&v0_c0) + &(&var_poly(&v1_c0) + &var_poly(&v2_c0));
@@ -6222,21 +6208,21 @@ mod tests {
 
         let var_poly = |p: &Var| Polynomial::<Fr>::var(p);
 
-        let r0 = var_ideal.clone().with_slot(0).unwrap();
-        let r1 = var_ideal.clone().with_slot(1).unwrap();
-        let r2 = var_ideal.clone().with_slot(2).unwrap();
+        let r0 = var_ideal.clone().with_index(0).unwrap();
+        let r1 = var_ideal.clone().with_index(1).unwrap();
+        let r2 = var_ideal.clone().with_index(2).unwrap();
 
         let y0 = var_evals
             .clone()
             .with_index(0)
             .unwrap()
-            .with_slot(0)
+            .with_index(0)
             .unwrap();
         let y1 = var_evals
             .clone()
             .with_index(1)
             .unwrap()
-            .with_slot(0)
+            .with_index(0)
             .unwrap();
 
         let expected_c0 = var_poly(&y0);
@@ -6312,28 +6298,28 @@ mod tests {
 
         let var_poly = |p: &Var| Polynomial::<Fr>::var(p);
 
-        let r0 = var_ideal.clone().with_slot(0).unwrap();
-        let r1 = var_ideal.clone().with_slot(1).unwrap();
-        let r2 = var_ideal.clone().with_slot(2).unwrap();
-        let r3 = var_ideal.clone().with_slot(3).unwrap();
+        let r0 = var_ideal.clone().with_index(0).unwrap();
+        let r1 = var_ideal.clone().with_index(1).unwrap();
+        let r2 = var_ideal.clone().with_index(2).unwrap();
+        let r3 = var_ideal.clone().with_index(3).unwrap();
 
         let y0 = var_evals
             .clone()
             .with_index(0)
             .unwrap()
-            .with_slot(0)
+            .with_index(0)
             .unwrap();
         let y1 = var_evals
             .clone()
             .with_index(1)
             .unwrap()
-            .with_slot(0)
+            .with_index(0)
             .unwrap();
         let y2 = var_evals
             .clone()
             .with_index(2)
             .unwrap()
-            .with_slot(0)
+            .with_index(0)
             .unwrap();
 
         let lag = lagrange_basis::<Fr>(&[Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]);
@@ -6421,21 +6407,21 @@ mod tests {
 
         let var_poly = |p: &Var| Polynomial::<Fr>::var(p);
 
-        let r0 = var_ideal.clone().with_slot(0).unwrap();
-        let r1 = var_ideal.clone().with_slot(1).unwrap();
-        let r2 = var_ideal.clone().with_slot(2).unwrap();
+        let r0 = var_ideal.clone().with_index(0).unwrap();
+        let r1 = var_ideal.clone().with_index(1).unwrap();
+        let r2 = var_ideal.clone().with_index(2).unwrap();
 
         let y0 = var_evals
             .clone()
             .with_index(0)
             .unwrap()
-            .with_slot(0)
+            .with_index(0)
             .unwrap();
         let y1 = var_evals
             .clone()
             .with_index(1)
             .unwrap()
-            .with_slot(0)
+            .with_index(0)
             .unwrap();
 
         let expected_c0 = var_poly(&y0);
@@ -6497,13 +6483,13 @@ mod tests {
             .clone()
             .with_index(0)
             .unwrap()
-            .with_slot(0)
+            .with_index(0)
             .unwrap();
         let x1_slot = var_points
             .clone()
             .with_index(1)
             .unwrap()
-            .with_slot(0)
+            .with_index(0)
             .unwrap();
         ideal.pl.insert(&x0_slot, &Polynomial::var(&var_x0));
         ideal.pl.insert(&x1_slot, &Polynomial::var(&var_x1));
@@ -6535,13 +6521,13 @@ mod tests {
             .clone()
             .with_index(0)
             .unwrap()
-            .with_slot(0)
+            .with_index(0)
             .unwrap();
         let y1_slot = var_evals
             .clone()
             .with_index(1)
             .unwrap()
-            .with_slot(0)
+            .with_index(0)
             .unwrap();
         ideal.pl.insert(&y0_slot, &Polynomial::var(&var_y0));
         ideal.pl.insert(&y1_slot, &Polynomial::var(&var_y1));
@@ -6572,9 +6558,9 @@ mod tests {
         // p[0] = -y0*d01*x1 - y1*d10*x0  (constant term)
         // p[1] = y0*d01 + y1*d10          (linear coefficient)
         // p[2] = 0                         (no quadratic term)
-        let r0 = var_ideal.clone().with_slot(0).unwrap();
-        let r1 = var_ideal.clone().with_slot(1).unwrap();
-        let r2 = var_ideal.clone().with_slot(2).unwrap();
+        let r0 = var_ideal.clone().with_index(0).unwrap();
+        let r1 = var_ideal.clone().with_index(1).unwrap();
+        let r2 = var_ideal.clone().with_index(2).unwrap();
 
         let d_vars: Vec<_> = ideal
             .var_order
@@ -6710,9 +6696,9 @@ mod tests {
 
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
 
-        let a_slot = var_a.with_slot(0).unwrap();
-        let b_slot = var_b.with_slot(0).unwrap();
-        let r_slot = var_ideal.with_slot(0).unwrap();
+        let a_slot = var_a.with_index(0).unwrap();
+        let b_slot = var_b.with_index(0).unwrap();
+        let r_slot = var_ideal.with_index(0).unwrap();
         let expected = &var_poly(&a_slot) - &(&var_poly(&b_slot) * &var_poly(&r_slot));
         assert!(
             ideal.generating_set.iter().any(|r| r == &expected),
@@ -6795,10 +6781,10 @@ mod tests {
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
-        let v0 = var_v.clone().with_index(0).unwrap().with_slot(0).unwrap();
-        let v1 = var_v.clone().with_index(1).unwrap().with_slot(0).unwrap();
-        let v2 = var_v.clone().with_index(2).unwrap().with_slot(0).unwrap();
-        let r_slot = var.with_slot(0).unwrap();
+        let v0 = var_v.clone().with_index(0).unwrap().with_index(0).unwrap();
+        let v1 = var_v.clone().with_index(1).unwrap().with_index(0).unwrap();
+        let v2 = var_v.clone().with_index(2).unwrap().with_index(0).unwrap();
+        let r_slot = var.with_index(0).unwrap();
 
         let step1_vars: Vec<_> = ideal
             .generating_set
@@ -6976,7 +6962,7 @@ mod tests {
             &mut ideal,
         );
 
-        let high_slot = var.with_slot(3).unwrap();
+        let high_slot = var.with_index(3).unwrap();
         assert!(
             ideal
                 .generating_set
@@ -7031,7 +7017,7 @@ mod tests {
             &mut ideal,
         );
 
-        let high_slot = var.with_slot(3).unwrap();
+        let high_slot = var.with_index(3).unwrap();
         assert!(
             ideal
                 .generating_set
@@ -7141,8 +7127,8 @@ mod tests {
             "pass-through remainder allocates no div_wit"
         );
         for i in 0..2 {
-            let src = var_a.clone().with_slot(i).unwrap();
-            let dst = var.clone().with_slot(i).unwrap();
+            let src = var_a.clone().with_index(i).unwrap();
+            let dst = var.clone().with_index(i).unwrap();
             assert!(
                 ideal
                     .generating_set
@@ -7151,7 +7137,7 @@ mod tests {
                 "pass-through remainder should bind source slot {i} to the ideal"
             );
         }
-        let padded = var.with_slot(2).unwrap();
+        let padded = var.with_index(2).unwrap();
         assert!(
             ideal.generating_set.iter().any(|row| row.contains(&padded)),
             "lifted pass-through remainder should constrain the padded high slot"
@@ -7214,8 +7200,8 @@ mod tests {
         builder.add_op(var_r.clone(), Op::Record(fields), &mut ideal);
 
         // Ctx iteration order: "x" (slot 0), "y" (slot 1)
-        let slot_x = var_r.clone().with_slot(0).unwrap();
-        let slot_y = var_r.clone().with_slot(1).unwrap();
+        let slot_x = var_r.clone().with_index(0).unwrap();
+        let slot_y = var_r.clone().with_index(1).unwrap();
 
         assert!(
             ideal.pl.contains(&slot_x),
@@ -7296,23 +7282,22 @@ mod tests {
             "1 scalar + 3 Uni(2) coeffs = 4"
         );
 
-        let slot_a = var_r.clone().with_slot(0).unwrap();
-        assert_eq!(slot_a.typ, s, "slot 0 should be scalar (field a)");
+        let slot_a = var_r.clone().with_index(0).unwrap();
+        assert_eq!(slot_a.typ, s, "field 0 (a) should be scalar");
         assert!(
             ideal.pl.contains(&slot_a),
-            "record slot 0 (a) missing from pl"
+            "record field 0 (a) missing from pl"
         );
 
-        for i in 0..3 {
-            let slot_pi = var_r.clone().with_slot(1 + i).unwrap();
-            assert_eq!(
-                slot_pi.typ, s,
-                "slots 1-3 should be scalar (field p coefficients)"
-            );
+        let slot_p = var_r.clone().with_index(1).unwrap();
+        assert_eq!(slot_p.typ, uni_typ, "field 1 (p) should be Uni(2)");
+        let p_slots = slot_p.slots();
+        assert_eq!(p_slots.len(), 3, "Uni(2) has 3 scalar slots");
+        for (i, slot_pi) in p_slots.iter().enumerate() {
+            assert_eq!(slot_pi.typ, s, "p slot {} should be scalar", i);
             assert!(
-                ideal.pl.contains(&slot_pi),
-                "record slot {} (p coeff {}) missing from pl",
-                1 + i,
+                ideal.pl.contains(slot_pi),
+                "record field 1 (p) sub-slot {} missing from pl",
                 i
             );
         }
@@ -7426,7 +7411,7 @@ mod tests {
         assert!(ideal.pl.contains(&var_proj), "proj ideal missing from pl");
 
         let proj_poly = ideal.pl.get(&var_proj).unwrap();
-        let slot_0 = var_rec.clone().with_slot(0).unwrap();
+        let slot_0 = var_rec.clone().with_index(0).unwrap();
         assert!(
             proj_poly.contains(&slot_0),
             "proj poly should reference record slot 0 (field x)"
@@ -7628,7 +7613,7 @@ mod tests {
 
         assert_eq!(var_r.typ.physical_len(), 5, "Uni(4) has 5 coefficients");
         for i in 0..5 {
-            let slot = var_r.clone().with_slot(i).unwrap();
+            let slot = var_r.clone().with_index(i).unwrap();
             assert!(
                 ideal.pl.contains(&slot),
                 "Uni(2)+Uni(4) ideal slot {} missing from pl",
@@ -7691,7 +7676,7 @@ mod tests {
             "Scalar * Uni(2) should produce 3 basis rows (one per coefficient)"
         );
         for i in 0..3 {
-            let slot = var_r.clone().with_slot(i).unwrap();
+            let slot = var_r.clone().with_index(i).unwrap();
             assert!(
                 ideal.pl.contains(&slot),
                 "Scalar*Uni(2) ideal slot {} missing from pl",
@@ -7816,7 +7801,7 @@ mod tests {
         slot: usize,
         expected: Polynomial<ark_bls12_381::Fr>,
     ) {
-        let r_slot = var_r.with_slot(slot).unwrap();
+        let r_slot = var_r.with_index(slot).unwrap();
         let stored = ideal.pl.get(&r_slot).unwrap();
         assert_eq!(*stored, expected, "ideal slot {slot} mismatch");
     }
@@ -7832,7 +7817,7 @@ mod tests {
 
         let s = Polynomial::<ark_bls12_381::Fr>::var(&var_s);
         for i in 0..3 {
-            let p_slot_var = var_p.with_slot(i).unwrap();
+            let p_slot_var = var_p.with_index(i).unwrap();
             let p = Polynomial::var(&p_slot_var);
             let expected = if i == 0 { &s + &p } else { p };
             assert_ideal_slot(&ideal, &var_r, i, expected);
@@ -7844,7 +7829,7 @@ mod tests {
         let (var_s, var_p, var_r, ideal) = scalar_poly_binop_ideal(BinOp::Add, false, ATyp::Uni(2));
         let s = Polynomial::<ark_bls12_381::Fr>::var(&var_s);
         for i in 0..3 {
-            let p_slot_var = var_p.with_slot(i).unwrap();
+            let p_slot_var = var_p.with_index(i).unwrap();
             let p = Polynomial::var(&p_slot_var);
             let expected = if i == 0 { &p + &s } else { p };
             assert_ideal_slot(&ideal, &var_r, i, expected);
@@ -7856,7 +7841,7 @@ mod tests {
         let (var_s, var_p, var_r, ideal) = scalar_poly_binop_ideal(BinOp::Sub, false, ATyp::Uni(2));
         let s = Polynomial::<ark_bls12_381::Fr>::var(&var_s);
         for i in 0..3 {
-            let p_slot_var = var_p.with_slot(i).unwrap();
+            let p_slot_var = var_p.with_index(i).unwrap();
             let p = Polynomial::var(&p_slot_var);
             let expected = if i == 0 { &p - &s } else { p };
             assert_ideal_slot(&ideal, &var_r, i, expected);
@@ -7868,7 +7853,7 @@ mod tests {
         let (var_s, var_p, var_r, ideal) = scalar_poly_binop_ideal(BinOp::Sub, true, ATyp::Uni(2));
         let s = Polynomial::<ark_bls12_381::Fr>::var(&var_s);
         for i in 0..3 {
-            let p_slot_var = var_p.with_slot(i).unwrap();
+            let p_slot_var = var_p.with_index(i).unwrap();
             let p = Polynomial::var(&p_slot_var);
             let expected = if i == 0 { &s - &p } else { -p };
             assert_ideal_slot(&ideal, &var_r, i, expected);
@@ -7886,7 +7871,7 @@ mod tests {
             .position(|idx| idx.iter().all(|degree| *degree == 0))
             .unwrap();
         for i in 0..poly_typ.physical_len() {
-            let p_slot_var = var_p.with_slot(i).unwrap();
+            let p_slot_var = var_p.with_index(i).unwrap();
             let p = Polynomial::var(&p_slot_var);
             let expected = if i == zero_slot { &s + &p } else { p };
             assert_ideal_slot(&ideal, &var_r, i, expected);
@@ -7904,7 +7889,7 @@ mod tests {
             .position(|idx| idx.iter().all(|degree| *degree == 0))
             .unwrap();
         for i in 0..poly_typ.physical_len() {
-            let p_slot_var = var_p.with_slot(i).unwrap();
+            let p_slot_var = var_p.with_index(i).unwrap();
             let p = Polynomial::var(&p_slot_var);
             let expected = if i == zero_slot { &s - &p } else { -p };
             assert_ideal_slot(&ideal, &var_r, i, expected);
@@ -7918,7 +7903,7 @@ mod tests {
             scalar_poly_binop_ideal(BinOp::Add, true, poly_typ.clone());
         let s = Polynomial::<ark_bls12_381::Fr>::var(&var_s);
         for i in 0..poly_typ.physical_len() {
-            let p_slot_var = var_p.with_slot(i).unwrap();
+            let p_slot_var = var_p.with_index(i).unwrap();
             let p = Polynomial::var(&p_slot_var);
             assert_ideal_slot(&ideal, &var_r, i, &s + &p);
         }
@@ -7989,7 +7974,7 @@ mod tests {
         for i in 0..4 {
             let elem = var_r.with_index(i).unwrap();
             for j in 0..5 {
-                let slot = elem.with_slot(j).unwrap();
+                let slot = elem.with_index(j).unwrap();
                 assert!(
                     ideal.pl.contains(&slot),
                     "Concat ideal element {} slot {} missing from pl",
@@ -8239,7 +8224,7 @@ mod tests {
         );
 
         for i in 0..7 {
-            let slot = var_r.with_slot(i).unwrap();
+            let slot = var_r.with_index(i).unwrap();
             assert!(
                 ideal.pl.contains(&slot),
                 "Dot Vec(Uni(2),2)·Vec(Uni(4),2) ideal slot {} missing from pl",
@@ -8404,7 +8389,7 @@ mod tests {
         );
 
         for i in 0..5 {
-            let slot = var_r.with_slot(i).unwrap();
+            let slot = var_r.with_index(i).unwrap();
             assert!(
                 ideal.pl.contains(&slot),
                 "Pow Uni(2)^2 ideal slot {} missing from pl",
@@ -8463,7 +8448,7 @@ mod tests {
         for i in 0..2 {
             let elem = var_r.with_index(i).unwrap();
             for j in 0..5 {
-                let slot = elem.with_slot(j).unwrap();
+                let slot = elem.with_index(j).unwrap();
                 assert!(
                     ideal.pl.contains(&slot),
                     "Pow Vec(Uni(2),2)^2 element {} slot {} missing from pl",
@@ -8613,7 +8598,7 @@ mod tests {
         for i in 0..3 {
             assert_eq!(
                 lifted.polys[i],
-                Polynomial::var(&var.clone().with_slot(i).unwrap())
+                Polynomial::var(&var.clone().with_index(i).unwrap())
             );
         }
         for i in 3..5 {
@@ -8651,7 +8636,7 @@ mod tests {
         for i in 0..4 {
             assert_eq!(
                 lifted.polys[i],
-                Polynomial::var(&var.clone().with_slot(i).unwrap())
+                Polynomial::var(&var.clone().with_index(i).unwrap())
             );
         }
         for i in 4..8 {
@@ -8688,7 +8673,7 @@ mod tests {
         for i in 0..6 {
             assert_eq!(
                 lifted.polys[i],
-                Polynomial::var(&var.clone().with_slot(i).unwrap())
+                Polynomial::var(&var.clone().with_index(i).unwrap())
             );
         }
         for i in 6..10 {
@@ -8731,7 +8716,7 @@ mod tests {
             let pos = dst.iter().position(|dk| dk == &padded).unwrap();
             assert_eq!(
                 lifted.polys[pos],
-                Polynomial::var(&var.clone().with_slot(j).unwrap()),
+                Polynomial::var(&var.clone().with_index(j).unwrap()),
                 "src multi-index {:?} → padded {:?} → dst position {} should have src slot {}",
                 sk,
                 padded,
@@ -8826,7 +8811,7 @@ mod tests {
         for i in 0..3 {
             assert_eq!(
                 lifted.polys[i],
-                Polynomial::var(&var.clone().with_slot(i).unwrap())
+                Polynomial::var(&var.clone().with_index(i).unwrap())
             );
         }
     }
@@ -8877,9 +8862,9 @@ mod tests {
             &mut ideal,
         );
 
-        let a_slot = var_a.with_slot(0).unwrap();
-        let b_slot = var_b.with_slot(0).unwrap();
-        let r_slot = var_r.with_slot(0).unwrap();
+        let a_slot = var_a.with_index(0).unwrap();
+        let b_slot = var_b.with_index(0).unwrap();
+        let r_slot = var_r.with_index(0).unwrap();
         let diff = &Polynomial::var(&a_slot) - &Polynomial::var(&b_slot);
         assert!(
             ideal.generating_set.contains(&diff),
@@ -8936,7 +8921,7 @@ mod tests {
             &mut ideal,
         );
 
-        let r_slot = var_r.with_slot(0).unwrap();
+        let r_slot = var_r.with_index(0).unwrap();
 
         assert!(
             !ideal
@@ -8947,8 +8932,8 @@ mod tests {
         );
 
         for j in 0..3 {
-            let a_j = var_a.clone().with_slot(j).unwrap();
-            let b_j = var_b.clone().with_slot(j).unwrap();
+            let a_j = var_a.clone().with_index(j).unwrap();
+            let b_j = var_b.clone().with_index(j).unwrap();
             let diff = &Polynomial::var(&a_j) - &Polynomial::var(&b_j);
             assert!(
                 ideal.generating_set.contains(&diff),
@@ -9006,7 +8991,7 @@ mod tests {
             &mut ideal,
         );
 
-        let r_slot = var_r.with_slot(0).unwrap();
+        let r_slot = var_r.with_index(0).unwrap();
         assert!(
             !ideal
                 .generating_set
@@ -9019,11 +9004,11 @@ mod tests {
         assert_eq!(lub_len, 5);
         for j in 0..lub_len {
             let a_j = if j < 3 {
-                Polynomial::var(&var_a.clone().with_slot(j).unwrap())
+                Polynomial::var(&var_a.clone().with_index(j).unwrap())
             } else {
                 Polynomial::zero()
             };
-            let b_j = Polynomial::var(&var_b.clone().with_slot(j).unwrap());
+            let b_j = Polynomial::var(&var_b.clone().with_index(j).unwrap());
             let diff = a_j - b_j;
             assert!(
                 ideal.generating_set.contains(&diff),
@@ -9086,7 +9071,7 @@ mod tests {
 
         for i in 0..5 {
             let pr_i = var_r.with_index(i).unwrap();
-            let pr_slot = pr_i.with_slot(0).unwrap();
+            let pr_slot = pr_i.with_index(0).unwrap();
             assert!(
                 ideal.pl.contains(&pr_slot),
                 "concat ideal element {} slot 0 should be in pl",
@@ -9138,9 +9123,9 @@ mod tests {
 
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         for j in 0..3 {
-            let v0_j = var_v.clone().with_index(0).unwrap().with_slot(j).unwrap();
-            let v1_j = var_v.clone().with_index(1).unwrap().with_slot(j).unwrap();
-            let r_j = var.clone().with_slot(j).unwrap();
+            let v0_j = var_v.clone().with_index(0).unwrap().with_index(j).unwrap();
+            let v1_j = var_v.clone().with_index(1).unwrap().with_index(j).unwrap();
+            let r_j = var.clone().with_index(j).unwrap();
             let expected = &var_poly(&v0_j) + &var_poly(&v1_j);
             let stored = ideal.pl.get(&r_j).unwrap();
             assert_eq!(*stored, expected, "reduce add poly slot {} mismatch", j);
@@ -9184,8 +9169,8 @@ mod tests {
 
         assert_eq!(var_dst.slots().len(), 5, "Uni(4) should have 5 slots");
         for j in 0..3 {
-            let dst_j = var_dst.clone().with_slot(j).unwrap();
-            let src_j = var_src.clone().with_slot(j).unwrap();
+            let dst_j = var_dst.clone().with_index(j).unwrap();
+            let src_j = var_src.clone().with_index(j).unwrap();
             let stored = ideal.pl.get(&dst_j).unwrap();
             assert_eq!(
                 *stored,
@@ -9196,7 +9181,7 @@ mod tests {
             );
         }
         for j in 3..5 {
-            let dst_j = var_dst.clone().with_slot(j).unwrap();
+            let dst_j = var_dst.clone().with_index(j).unwrap();
             let stored = ideal.pl.get(&dst_j).unwrap();
             assert!(
                 stored.is_zero(),
@@ -9565,7 +9550,7 @@ mod tests {
 
         // The proj poly should reference record slot 0 (field "a").
         let proj_poly = ideal.pl.get(&var_proj).unwrap();
-        let rec_slot_0 = var_rec.clone().with_slot(0).unwrap();
+        let rec_slot_0 = var_rec.clone().with_index(0).unwrap();
         assert!(
             proj_poly.contains(&rec_slot_0),
             "proj ideal should alias record slot 0 (field 'a')"

@@ -107,26 +107,6 @@ impl Var {
         &self.name
     }
 
-    // TODO: check caller correctness
-    pub fn with_slot(&self, index: usize) -> Option<Self> {
-        let slot_typ = self.typ.physical_slot_type(index)?;
-        // For base types (scalar, group), with_slot(0) is identity — the
-        // value itself is the only slot, so no index component is pushed.
-        if matches!(self.typ, ATyp::Base(_)) {
-            return Some(self.clone());
-        }
-        let mut new_index = self.index.clone();
-        new_index.push(index);
-        Some(Var {
-            reference: self.reference,
-            index: new_index,
-            typ: slot_typ,
-            qualifier: self.qualifier,
-            distribution: self.distribution,
-            name: self.name.clone(),
-        })
-    }
-
     /// Logical slot access: returns a Var at logical slot `i` with the
     /// type of that slot.
     ///
@@ -162,13 +142,13 @@ impl Var {
     fn collect_slots(&self) -> Vec<Self> {
         match &self.typ {
             ATyp::Base(_) => vec![self.clone()],
-            ATyp::Uni(m) => (0..=*m).filter_map(|i| self.with_slot(i)).collect(),
+            ATyp::Uni(m) => (0..=*m).filter_map(|i| self.with_index(i)).collect(),
             ATyp::Mle(n) => (0..(1usize << *n))
-                .filter_map(|i| self.with_slot(i))
+                .filter_map(|i| self.with_index(i))
                 .collect(),
             ATyp::VPoly(n, m) => {
                 let count = binomial(*m + *n, *n);
-                (0..count).filter_map(|i| self.with_slot(i)).collect()
+                (0..count).filter_map(|i| self.with_index(i)).collect()
             }
             ATyp::Vec(t, n) => {
                 let mut out = Vec::with_capacity(self.typ.physical_len());

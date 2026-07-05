@@ -264,37 +264,6 @@ impl ATyp {
         }
     }
 
-    /// Type at physical slot offset `i`. Returns `None` if `i >= physical_len()`.
-    ///
-    /// For leaf types (scalar, group), every physical slot is the same type.
-    /// For `Vec(T, n)`, physical slots are `T.physical_len()` wide per element.
-    /// For `Record`, physical slots follow field order.
-    pub fn physical_slot_type(&self, i: usize) -> Option<ATyp> {
-        if i >= self.physical_len() {
-            return None;
-        }
-        match self {
-            ATyp::Base(b) => Some(ATyp::Base(b.clone())),
-            ATyp::Vec(t, _n) => {
-                let inner_size = t.physical_len();
-                let slot_in_elem = i % inner_size;
-                t.physical_slot_type(slot_in_elem)
-            }
-            ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => Some(ATyp::scalar()),
-            ATyp::Record(fields) => {
-                let mut offset = 0;
-                for (_, ft) in fields.iter() {
-                    let fsize = ft.physical_len();
-                    if i < offset + fsize {
-                        return ft.physical_slot_type(i - offset);
-                    }
-                    offset += fsize;
-                }
-                None
-            }
-        }
-    }
-
     // Convert from Generic types to arkworks types
     pub fn from_ctyp(typ: &CTyp, kctx: &Ctx<Tid, CKind>) -> Option<Self> {
         match typ {
@@ -1714,41 +1683,5 @@ mod tests {
         assert_eq!(t.logical_slot_offset(0), Some(0));
         assert_eq!(t.logical_slot_offset(9), Some(9));
         assert_eq!(t.logical_slot_offset(10), None);
-    }
-
-    #[test]
-    fn physical_slot_type_scalar() {
-        assert_eq!(ATyp::scalar().physical_slot_type(0), Some(ATyp::scalar()));
-        assert_eq!(ATyp::scalar().physical_slot_type(1), None);
-    }
-
-    #[test]
-    fn physical_slot_type_g1() {
-        assert_eq!(ATyp::g1().physical_slot_type(0), Some(ATyp::g1()));
-        assert_eq!(ATyp::g1().physical_slot_type(1), None);
-    }
-
-    #[test]
-    fn physical_slot_type_vec_scalar() {
-        let t = ATyp::vec_scalar(4);
-        assert_eq!(t.physical_slot_type(0), Some(ATyp::scalar()));
-        assert_eq!(t.physical_slot_type(3), Some(ATyp::scalar()));
-        assert_eq!(t.physical_slot_type(4), None);
-    }
-
-    #[test]
-    fn physical_slot_type_uni() {
-        let t = ATyp::uni(4);
-        assert_eq!(t.physical_slot_type(0), Some(ATyp::scalar()));
-        assert_eq!(t.physical_slot_type(4), Some(ATyp::scalar()));
-        assert_eq!(t.physical_slot_type(5), None);
-    }
-
-    #[test]
-    fn physical_slot_type_vpoly() {
-        let t = ATyp::vpoly(2, 3);
-        assert_eq!(t.physical_slot_type(0), Some(ATyp::scalar()));
-        assert_eq!(t.physical_slot_type(9), Some(ATyp::scalar()));
-        assert_eq!(t.physical_slot_type(10), None);
     }
 }
