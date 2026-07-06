@@ -62,15 +62,11 @@ pub type UDag<C> = Dag<C, Nothing>;
 /// Dag with qualifiers
 pub type QDag<C> = Dag<C, Qualifier>;
 
-/// Dag with qualifiers and distributions
-pub type DQDag<C> = Dag<C, (Qualifier, Distribution)>;
-
 /// A collection of dags
 #[derive(Clone)]
 pub struct Dags<C: ArkConfig, A>(Vec<Dag<C, A>>);
 pub type UDags<C> = Dags<C, Nothing>;
 pub type QDags<C> = Dags<C, Qualifier>;
-pub type DQDags<C> = Dags<C, (Qualifier, Distribution)>;
 
 #[derive(Error, PartialEq, Debug)]
 pub enum GraphError {
@@ -967,13 +963,6 @@ impl<C: ArkConfig> WritePdf for QDag<C> {
     }
 }
 
-impl<C: ArkConfig> WritePdf for DQDag<C> {
-    fn write_pdf(&self, filename: &str) -> std::io::Result<()> {
-        self.map_annotations(&|_, (q, d)| format!("{} {}", q, d))
-            .write_pdf(filename)
-    }
-}
-
 impl<C: ArkConfig> WritePdf for Dags<C, String> {
     fn write_pdf(&self, filename: &str) -> std::io::Result<()> {
         let mut joined_graph = Dag::new();
@@ -994,13 +983,6 @@ impl<C: ArkConfig> WritePdf for UDags<C> {
 impl<C: ArkConfig> WritePdf for QDags<C> {
     fn write_pdf(&self, filename: &str) -> std::io::Result<()> {
         self.map_annotations(&|_, q| q.to_string())
-            .write_pdf(filename)
-    }
-}
-
-impl<C: ArkConfig> WritePdf for DQDags<C> {
-    fn write_pdf(&self, filename: &str) -> std::io::Result<()> {
-        self.map_annotations(&|_, (q, d)| format!("{} {}", q, d))
             .write_pdf(filename)
     }
 }

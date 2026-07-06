@@ -1,13 +1,13 @@
 use crate::Var;
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
-use graph::{DQDag, GOp, Node, Op, Ref, mk};
+use graph::{GOp, Node, Op, QDag, Ref, mk};
 use petgraph::graph::NodeIndex;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 
 fn named_var(
-    dag: &DQDag<impl ArkConfig>,
+    dag: &QDag<impl ArkConfig>,
     r: Ref,
     typ: backend::ATyp,
     qualifier: lang::typ::Qualifier,
@@ -24,7 +24,7 @@ fn named_var(
     }
 }
 
-fn collect_reachable_forward<C: ArkConfig>(dag: &DQDag<C>, start: NodeIndex) -> HashSet<NodeIndex> {
+fn collect_reachable_forward<C: ArkConfig>(dag: &QDag<C>, start: NodeIndex) -> HashSet<NodeIndex> {
     let mut done: HashSet<NodeIndex> = HashSet::new();
     let mut worklist = vec![start];
 
@@ -43,7 +43,7 @@ fn collect_reachable_forward<C: ArkConfig>(dag: &DQDag<C>, start: NodeIndex) -> 
 }
 
 fn collect_reachable_backward<C: ArkConfig>(
-    dag: &DQDag<C>,
+    dag: &QDag<C>,
     starts: &[NodeIndex],
     stop_set: Option<&HashSet<NodeIndex>>,
 ) -> HashSet<NodeIndex> {
@@ -67,7 +67,7 @@ fn collect_reachable_backward<C: ArkConfig>(
     done.into_iter().filter(|&n| dag[n].is_op()).collect()
 }
 
-fn topo_sort_nodes<C: ArkConfig>(dag: &DQDag<C>, nodes: &HashSet<NodeIndex>) -> Vec<NodeIndex> {
+fn topo_sort_nodes<C: ArkConfig>(dag: &QDag<C>, nodes: &HashSet<NodeIndex>) -> Vec<NodeIndex> {
     let mut in_degree: HashMap<NodeIndex, usize> = HashMap::with_capacity(nodes.len());
     for &node in nodes {
         let deg = dag.nodes_to(node).filter(|dep| nodes.contains(dep)).count();
@@ -103,7 +103,7 @@ fn topo_sort_nodes<C: ArkConfig>(dag: &DQDag<C>, nodes: &HashSet<NodeIndex>) -> 
 
 /// Transitive closure on a DAG.
 ///
-/// Flattens a `DQDag` into a linear list of `(Var, GOp)` pairs.
+/// Flattens a `QDag` into a linear list of `(Var, GOp)` pairs.
 /// For each node, `trans_clos_op` recursively normalizes the stored op:
 /// - `Op::Check(inner)` is unwrapped to `inner` (the verifier assertion is
 ///   stripped, leaving the asserted expression).
@@ -154,7 +154,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
     /// uses a single namespace — the input namespace — throughout.
     ///
     /// Panics if the DAG has no relation node (i.e. it's a function, not a protocol).
-    pub fn relation(dag: &DQDag<C>) -> Self {
+    pub fn relation(dag: &QDag<C>) -> Self {
         let start = dag.relation_node().unwrap();
         let rel_vars = Self::vars_from_marker(dag, start);
         let input_vars = Self::vars_from_marker(dag, dag.input_node());
@@ -195,7 +195,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
     /// Walks backward from transcript nodes to input args and processes
     /// every node encountered. Prefs are all input args (both public and
     /// private).
-    pub fn prover(dag: &DQDag<C>) -> Self {
+    pub fn prover(dag: &QDag<C>) -> Self {
         let vars = Self::vars_from_marker(dag, dag.input_node());
         let transcripts_vec = dag.transcript_nodes();
 
@@ -223,7 +223,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
     ///
     /// Transcript source nodes are pre-populated in the index so that
     /// `trans_clos_op` does not recurse past them into prover-only nodes.
-    pub fn verifier(dag: &DQDag<C>) -> Self {
+    pub fn verifier(dag: &QDag<C>) -> Self {
         let input_vars: Vec<Var> = dag
             .input_args()
             .into_iter()
@@ -258,8 +258,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         // and are NOT added to clos.
         for &n in &transcripts_vec {
             match &dag[n] {
-                Node::Op(op, (qualifier, _distribution))
-                | Node::Transcr(op, (qualifier, _distribution)) => {
+                Node::Op(op, qualifier) | Node::Transcr(op, qualifier) => {
                     let inner = op.get();
                     let var = named_var(dag, Ref::new(n), inner.typ(), *qualifier);
                     tc.vars.push(var.clone());
@@ -309,7 +308,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
 
     fn trans_clos_op(
         &mut self,
-        dag: &DQDag<C>,
+        dag: &QDag<C>,
         op: GOp<C>,
         seen: &mut HashMap<NodeIndex, Var>,
     ) -> GOp<C> {
@@ -405,7 +404,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
 
     fn trans_clos_ref(
         &mut self,
-        dag: &DQDag<C>,
+        dag: &QDag<C>,
         r: Ref,
         seen: &mut HashMap<NodeIndex, Var>,
     ) -> GOp<C> {
@@ -413,16 +412,14 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             return Op::Ref(canonical.reference, canonical.typ.clone());
         }
         match &dag[r.node()] {
-            Node::Op(op, (qualifier, _distribution))
-            | Node::Transcr(op, (qualifier, _distribution))
+            Node::Op(op, qualifier) | Node::Transcr(op, qualifier)
                 if matches!(op.get(), Op::Challenge(_, _) | Op::Random(_, _)) =>
             {
                 let inner = op.get();
                 let var = named_var(dag, r, inner.typ(), *qualifier);
                 self.insert(var, inner.clone(), seen)
             }
-            Node::Op(op, (qualifier, _distribution))
-            | Node::Transcr(op, (qualifier, _distribution)) => {
+            Node::Op(op, qualifier) | Node::Transcr(op, qualifier) => {
                 let obin = self.trans_clos_op(dag, op.get().clone(), seen);
                 self.insert(named_var(dag, r, obin.typ(), *qualifier), obin, seen)
             }
@@ -455,21 +452,20 @@ impl<C: ArkConfig> fmt::Display for TransClos<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{QualifierPropagation, UniformityPropagation};
+    use crate::QualifierPropagation;
     use backend::ArkBls12_381;
-    use graph::{DQDag, UDags};
+    use graph::{QDag, UDags};
     use lang::ast::UModule;
     use share::{Ctx, unwrap};
     use std::collections::HashSet;
 
-    fn make_qualified_dag(ex: &str) -> DQDag<ArkBls12_381> {
+    fn make_qualified_dag(ex: &str) -> QDag<ArkBls12_381> {
         let m = UModule::from_str(ex)
             .unwrap()
             .concretize(&Ctx::new())
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-        let g = QualifierPropagation::from_dag(&gs[0]);
-        UniformityPropagation::from_dag(&g).annotate_dag(&g)
+        QualifierPropagation::from_dag(&gs[0])
     }
 
     #[test]

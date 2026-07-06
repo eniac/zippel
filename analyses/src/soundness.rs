@@ -10,7 +10,7 @@ use crate::ideal::{Ideal, IdealBuilder};
 use ark_ff::One;
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
-use graph::{DQDag, Ref};
+use graph::{QDag, Ref};
 use lang::typ::Qualifier;
 use log::{info, warn};
 use petgraph::Direction;
@@ -73,7 +73,7 @@ fn format_d_name(prefix: &[usize], m: usize, n: usize, k: usize) -> String {
 /// Returns `Vec<Vec<NodeIndex>>` where each inner vec is the consecutive
 /// challenge nodes forming one vector challenge round.
 fn validate_2n_plus_1<C: ArkConfig>(
-    dag: &DQDag<C>,
+    dag: &QDag<C>,
     l_vec: &[usize],
 ) -> Result<Vec<Vec<NodeIndex>>, AnalysisError<C>> {
     let transcript = dag.transcript_nodes();
@@ -123,13 +123,13 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
     /// Analyze special soundness of a sigma protocol.
     ///
     /// Convenience wrapper: `from_input_with_backend` + `run`.
-    pub fn analyze(dag: &DQDag<C>, l_vec: Vec<usize>) -> Result<(), AnalysisError<C>> {
+    pub fn analyze(dag: &QDag<C>, l_vec: Vec<usize>) -> Result<(), AnalysisError<C>> {
         Self::analyze_with_backend(dag, l_vec, GbBackendKind::default())
     }
 
     /// Like [`analyze`](Self::analyze) but with a user-selected GB backend.
     pub fn analyze_with_backend(
-        dag: &DQDag<C>,
+        dag: &QDag<C>,
         l_vec: Vec<usize>,
         backend: GbBackendKind,
     ) -> Result<(), AnalysisError<C>> {
@@ -147,7 +147,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
     ///    `var_order` as `MonoOrder::lex(var_order)` — runtime data, no TLS.
     /// 3. **Inline & compute** the search GB via the backend under lex.
     pub fn from_input_with_backend(
-        dag: &DQDag<C>,
+        dag: &QDag<C>,
         l_vec: Vec<usize>,
         backend: GbBackendKind,
     ) -> Result<Self, AnalysisError<C>> {
@@ -522,7 +522,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 }
 
 fn build_round_map<C: ArkConfig>(
-    dag: &DQDag<C>,
+    dag: &QDag<C>,
     challenge_rounds: &[Vec<NodeIndex>],
 ) -> HashMap<(Ref, Vec<usize>), usize> {
     let mut round_map: HashMap<(Ref, Vec<usize>), usize> = HashMap::new();
@@ -645,9 +645,9 @@ fn factor_group_gcd<F: ark_ff::Field>(polys: &mut Vec<Polynomial<F>>) {
 #[cfg(test)]
 mod tests {
     use super::SpecialSoundnessAnalysis;
+    use crate::QualifierPropagation;
     use crate::Var;
     use crate::error::{AnalysisError, ExtractorRejection};
-    use crate::{QualifierPropagation, UniformityPropagation};
     use backend::ArkBls12_381;
     use graph::UDags;
     use lang::ast::UModule;
@@ -664,7 +664,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g_inp).annotate_dag(&g_inp);
+        let g = g_inp;
         SpecialSoundnessAnalysis::analyze(&g, l_vec)
     }
 
@@ -686,7 +686,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g_inp).annotate_dag(&g_inp);
+        let g = g_inp;
         let result = SpecialSoundnessAnalysis::analyze(&g, vec![2]);
         match &result {
             Ok(()) => {}
@@ -751,7 +751,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g_inp).annotate_dag(&g_inp);
+        let g = g_inp;
         SpecialSoundnessAnalysis::analyze(&g, vec![2]).unwrap();
 
         let witness_names: Set<String> = crate::var::dag_args(&g)
@@ -961,7 +961,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g_inp).annotate_dag(&g_inp);
+        let g = g_inp;
         SpecialSoundnessAnalysis::analyze(&g, vec![2]).unwrap();
 
         let witness_slots: Vec<Var> = crate::var::dag_args(&g)
@@ -999,7 +999,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g_inp).annotate_dag(&g_inp);
+        let g = g_inp;
         let result = SpecialSoundnessAnalysis::analyze(&g, vec![2]);
         assert!(result.is_ok());
     }

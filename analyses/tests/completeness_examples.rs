@@ -7,12 +7,10 @@
 //! The GB backend is chosen at runtime: Singular is preferred (faster) if
 //! available on `PATH`, falling back to ArkGb.
 
-use analyses::{
-    AnalysisError, CompletenessAnalysis, GbBackendKind, QualifierPropagation, UniformityPropagation,
-};
+use analyses::{AnalysisError, CompletenessAnalysis, GbBackendKind, QualifierPropagation};
 use backend::ArkBls12_381;
 use lang::id::Tid;
-use lang::typ::{Distribution, Qualifier};
+use lang::typ::Qualifier;
 use libtest_mimic::{Failed, Trial};
 use petgraph::Direction;
 use petgraph::visit::EdgeRef;
@@ -23,7 +21,7 @@ use std::process::{Command, Stdio};
 use graph::UDags;
 use lang::ast::UModule;
 
-type AnalysisDag = graph::Dag<ArkBls12_381, (Qualifier, Distribution)>;
+type AnalysisDag = graph::Dag<ArkBls12_381, Qualifier>;
 
 const ANALYSIS_STACK_SIZE: usize = 256 * 1024 * 1024;
 
@@ -123,8 +121,7 @@ fn compile_to_dag(path: &PathBuf, sizes: &[(&str, usize)]) -> AnalysisDag {
         .into_iter()
         .next()
         .unwrap_or_else(|| panic!("no protocol found in {}", path.display()));
-    let g_qual = QualifierPropagation::from_dag(proto);
-    UniformityPropagation::from_dag(&g_qual).annotate_dag(&g_qual)
+    QualifierPropagation::from_dag(proto)
 }
 
 /// Remove all outgoing edges from the relation node (simulates a protocol

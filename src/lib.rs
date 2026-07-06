@@ -1,6 +1,4 @@
-use analyses::{
-    CompletenessAnalysis, KnowledgeAnalysis, QualifierPropagation, UniformityPropagation,
-};
+use analyses::{CompletenessAnalysis, KnowledgeAnalysis, QualifierPropagation};
 use backend::op::HasOpFactory;
 use backend::{ArkConfig, Value, value_to_bytes};
 use graph::Dag;
@@ -10,7 +8,7 @@ use graph::{ArgKind, Node, UDag, UDags};
 use lang::ast::{CModule, UModule};
 use lang::id::{Tid, Vid};
 use lang::typ::range::Range;
-use lang::typ::{Distribution, Kind, Qualifier, Size};
+use lang::typ::{Kind, Qualifier, Size};
 use log::{debug, error, info};
 use runtime::RuntimeError;
 use runtime::graph::ResultKind;
@@ -96,7 +94,7 @@ pub struct ZippelHandler<C: ArkConfig> {
     public_inputs: Option<Ctx<Vid, Value<C>>>,
     /// Names of all prover Arg nodes (used by verifier to find additional args).
     prover_args: Option<Vec<Vid>>,
-    analyze_graph: Option<Dag<C, (Qualifier, Distribution)>>,
+    analyze_graph: Option<Dag<C, Qualifier>>,
 }
 
 impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
@@ -141,15 +139,14 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             .expect("verifier_graph not set; call compile() first")
     }
 
-    /// Lazily build and return the `DQDag` used by the `analyze_*` methods.
+    /// Lazily build and return the `QDag` used by the `analyze_*` methods.
     ///
     /// Rebuilds the `UDags` from the cached `concrete_module` (no extra
     /// parse / concretize cost the first time the analysis graph is
-    /// requested after `compile`), runs `QualifierPropagation` +
-    /// `UniformityPropagation`, and caches the result. Subsequent calls
-    /// return a `&mut` into the cache.
+    /// requested after `compile`), runs `QualifierPropagation`, and caches
+    /// the result. Subsequent calls return a `&mut` into the cache.
     ///
-    /// The `DQDag` returned here is a fresh construction each time the
+    /// The `QDag` returned here is a fresh construction each time the
     /// cache is empty; once populated, it lives for the rest of the
     /// handler's lifetime. Tests that need to mutate it between `compile`
     /// and `analyze_*` (e.g. `tests/completeness_examples.rs::strip_relation`)
@@ -157,7 +154,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     ///
     /// # Panics
     /// If `compile()` has not been called first.
-    pub fn analyze_graph(&mut self) -> &mut Dag<C, (Qualifier, Distribution)> {
+    pub fn analyze_graph(&mut self) -> &mut Dag<C, Qualifier> {
         if self.analyze_graph.is_none() {
             self.analyze_graph = Some(self.build_analyze_graph());
         }
@@ -166,15 +163,14 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             .expect("analyze_graph cache populated above")
     }
 
-    fn build_analyze_graph(&self) -> Dag<C, (Qualifier, Distribution)> {
+    fn build_analyze_graph(&self) -> Dag<C, Qualifier> {
         let gs = unwrap!(UDags::<C>::from_module(
             self.concrete_module
                 .as_ref()
                 .expect("compile() must be called before analyze_*()")
                 .clone()
         ));
-        let g_analyze = QualifierPropagation::from_dag(self.get_protocol_subgraph(&gs));
-        UniformityPropagation::from_dag(&g_analyze).annotate_dag(&g_analyze)
+        QualifierPropagation::from_dag(self.get_protocol_subgraph(&gs))
     }
 
     fn get_protocol_subgraph<'a>(&self, gs: &'a UDags<C>) -> &'a UDag<C> {

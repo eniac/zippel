@@ -8,7 +8,7 @@ use crate::error::AnalysisError;
 use crate::extractor::extract_locals;
 use crate::frontend::{MonoOrder, Polynomial};
 use crate::ideal::IdealBuilder;
-use graph::DQDag;
+use graph::QDag;
 use graph::Ref;
 
 /// Perform a completeness analysis using Groebner bases.
@@ -23,13 +23,13 @@ pub struct CompletenessAnalysis<C: ArkConfig> {
 }
 
 impl<C: HasOpFactory> CompletenessAnalysis<C> {
-    pub fn from_input(dag: &DQDag<C>) -> Self {
+    pub fn from_input(dag: &QDag<C>) -> Self {
         Self::from_input_with_backend(dag, GbBackendKind::default())
     }
 
     /// Like [`from_input`](Self::from_input) but with a user-selected GB
     /// backend.
-    pub fn from_input_with_backend(dag: &DQDag<C>, backend: GbBackendKind) -> Self {
+    pub fn from_input_with_backend(dag: &QDag<C>, backend: GbBackendKind) -> Self {
         let mut builder = IdealBuilder::new();
         builder.enable_exact_division();
 
@@ -90,11 +90,11 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
 #[cfg(test)]
 mod tests {
     use super::CompletenessAnalysis;
+    use crate::QualifierPropagation;
     use crate::Var;
     use crate::backend::GbBackend;
     use crate::error::AnalysisError;
     use crate::frontend::Polynomial;
-    use crate::{QualifierPropagation, UniformityPropagation};
     use backend::ArkBls12_381;
     use graph::UDags;
     use lang::ast::UModule;
@@ -120,7 +120,6 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(ca.run().is_ok());
@@ -143,7 +142,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(ca.run().is_ok(), "Schnorr protocol should be complete");
@@ -165,7 +163,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -191,7 +188,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -220,7 +216,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -246,7 +241,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -284,7 +278,6 @@ mod tests {
         );
 
         let g = QualifierPropagation::from_dag(caller);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -351,7 +344,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -376,7 +368,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -404,7 +395,6 @@ mod tests {
         let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -429,7 +419,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -455,7 +444,6 @@ mod tests {
         let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(ca.run().is_ok(), "named-let single-eval should be complete");
@@ -477,7 +465,6 @@ mod tests {
         let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -500,7 +487,6 @@ mod tests {
         let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -523,7 +509,7 @@ mod tests {
         let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+
         let tc = crate::frontend::TransClos::verifier(&g);
 
         assert!(
@@ -558,7 +544,6 @@ mod tests {
         let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -588,7 +573,6 @@ mod tests {
         let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -658,7 +642,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -686,7 +669,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -714,7 +696,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -737,7 +718,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
             ca.run().is_ok(),
@@ -759,7 +740,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
             ca.run().is_ok(),
@@ -781,7 +762,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
             ca.run().is_ok(),
@@ -802,7 +783,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
             ca.run().is_ok(),
@@ -825,7 +806,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
             ca.run().is_ok(),
@@ -848,7 +829,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
             ca.run().is_ok(),
@@ -870,7 +851,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
             ca.run().is_ok(),
@@ -893,7 +874,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
             ca.run().is_ok(),
@@ -918,7 +899,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
             ca.run().is_ok(),
@@ -943,7 +924,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
             ca.run().is_ok(),
@@ -966,7 +947,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -989,7 +969,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -1011,7 +990,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+
         let mut ca = CompletenessAnalysis::from_input(&g);
         let result = ca.run();
         // A self-contradictory relation (x == x+1) drives the prover ideal

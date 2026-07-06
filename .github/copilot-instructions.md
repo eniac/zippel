@@ -39,7 +39,6 @@ Run these locally before pushing — clippy in particular is strict about the wh
   → lang::CModule        (concretize symbolic sizes to concrete usize)
   → graph::UDags         (build DAG IR per protocol/function)
   → graph::QDags         (qualifier propagation: Public/Private)
-  → graph::DQDags        (uniformity propagation: Uniform/Nonuniform)
   → Prover/Verifier      (project subgraphs via get_prover/get_verifier)
   → graph::TDags         (schedule with LocalScheduler)
   → runtime::MutexGraph  (parallel execution)
@@ -70,7 +69,6 @@ The formal language definition is in `docs/grammar.ott` (Ott source) and built t
 | `Dag<C, A>` | graph | Core DAG IR, parameterized by annotation `A` |
 | `UDag<C>` = `Dag<C, Nothing>` | graph | Unanalyzed DAG |
 | `QDag<C>` = `Dag<C, Qualifier>` | graph | After qualifier propagation |
-| `DQDag<C>` = `Dag<C, (Qualifier, Distribution)>` | graph | After uniformity propagation |
 | `TDag<C>` = `Dag<C, ThreadAlloc>` | graph | After scheduling |
 | `Op<C, R>` / `GOp<C>` | graph | Typed operations (arithmetic, polynomial, crypto) |
 | `Value<C>` | backend | Runtime values (scalars, group elements, polynomials) |

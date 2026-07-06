@@ -3356,9 +3356,9 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TransClos;
     #[cfg(test)]
-    use crate::{QualifierPropagation, UniformityPropagation};
+    use crate::QualifierPropagation;
+    use crate::TransClos;
     use backend::ArkBls12_381;
     use backend::op::mk;
     #[cfg(test)]
@@ -3377,7 +3377,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+
         TransClos::verifier(&g)
     }
 
@@ -3388,7 +3388,7 @@ mod tests {
         let m = UModule::from_str(src).unwrap().concretize(sizes).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+
         TransClos::verifier(&g)
     }
 

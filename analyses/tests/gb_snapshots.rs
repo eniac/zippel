@@ -24,11 +24,11 @@
 use analyses::frontend::Polynomial;
 use analyses::{
     CompletenessAnalysis, GbBackendKind, KnowledgeAnalysis, QualifierPropagation,
-    SpecialSoundnessAnalysis, UniformityPropagation,
+    SpecialSoundnessAnalysis,
 };
 use backend::{ArkBls12_381, ArkConfig};
 use lang::id::Tid;
-use lang::typ::{Distribution, Qualifier};
+use lang::typ::Qualifier;
 use libtest_mimic::{Failed, Trial};
 use share::{Ctx, unwrap};
 use std::path::PathBuf;
@@ -38,7 +38,7 @@ use std::sync::OnceLock;
 use graph::UDags;
 use lang::ast::UModule;
 
-type AnalysisDag = graph::Dag<ArkBls12_381, (Qualifier, Distribution)>;
+type AnalysisDag = graph::Dag<ArkBls12_381, Qualifier>;
 type F = <ArkBls12_381 as ArkConfig>::F;
 
 const ANALYSIS_STACK_SIZE: usize = 256 * 1024 * 1024;
@@ -193,8 +193,7 @@ fn compile_to_dag(path: &PathBuf, sizes: &[(&str, usize)]) -> AnalysisDag {
         .into_iter()
         .next()
         .unwrap_or_else(|| panic!("no protocol found in {}", path.display()));
-    let g_qual = QualifierPropagation::from_dag(proto);
-    UniformityPropagation::from_dag(&g_qual).annotate_dag(&g_qual)
+    QualifierPropagation::from_dag(proto)
 }
 
 /// Normalize a GB for deterministic snapshot comparison:

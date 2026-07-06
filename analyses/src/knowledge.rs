@@ -4,35 +4,17 @@ use crate::backend::{GbBackendKind, GbBasis};
 use crate::error::AnalysisError;
 use crate::frontend::{Block, BlockKind, MonoOrder, Polynomial};
 use crate::ideal::{Ideal, IdealBuilder};
+use crate::uniform::UniformityPropagation;
 use backend::ArkConfig;
 use backend::op::{HasOpFactory, Ref};
-use graph::{DQDag, Node};
+use graph::QDag;
 use lang::typ::Distribution;
 use log::warn;
-use std::collections::HashMap;
-
-/// Side map from `Ref` → `Distribution`, built from all annotated DAG nodes.
-/// Used by knowledge analysis to determine uniformity without storing
-/// `Distribution` on every `Var`.
-fn build_dist_map<C: ArkConfig>(dag: &DQDag<C>) -> HashMap<Ref, Distribution> {
-    let mut map = HashMap::new();
-    for n in dag.node_indices() {
-        match &dag[n] {
-            Node::Arg(_, _, _, dist, _) => {
-                map.insert(Ref(n), *dist);
-            }
-            Node::Op(_, (_, dist)) | Node::Transcr(_, (_, dist)) => {
-                map.insert(Ref(n), *dist);
-            }
-            _ => {}
-        }
-    }
-    map
-}
+use share::Ctx;
 
 /// Knowledge-analysis elimination predicate: Local variables and private-uniform
 /// variables (random masks) are eliminated first.
-fn is_elim_var(v: &Var, dist_map: &HashMap<Ref, Distribution>) -> bool {
+fn is_elim_var(v: &Var, dist_map: &Ctx<Ref, Distribution>) -> bool {
     v.qualifier == lang::typ::Qualifier::Local
         || (v.qualifier == lang::typ::Qualifier::Private
             && dist_map
@@ -43,10 +25,7 @@ fn is_elim_var(v: &Var, dist_map: &HashMap<Ref, Distribution>) -> bool {
 
 /// Build the block ordering for knowledge analysis: elim-block (GrevLex) first,
 /// then the remaining vars (GrevLex).
-fn knowledge_order(
-    result: &Ideal<impl ArkConfig>,
-    dist_map: &HashMap<Ref, Distribution>,
-) -> MonoOrder {
+fn knowledge_order(result: &Ideal<impl ArkConfig>, dist_map: &Ctx<Ref, Distribution>) -> MonoOrder {
     let elim_vars: Vec<Var> = result
         .var_order
         .iter()
@@ -75,20 +54,20 @@ pub struct KnowledgeAnalysis<C: ArkConfig> {
     /// polynomials that are derivable from the precondition (not real leaks).
     /// `None` when the protocol has no relation.
     pub relation_basis: Option<GbBasis<C::F>>,
-    /// Side map from `Ref` → `Distribution`, used to check uniformity
-    /// without storing `Distribution` on every `Var`.
-    dist_map: HashMap<Ref, Distribution>,
+    /// Side map from `Ref` → `Distribution`, computed by
+    /// `UniformityPropagation`, used to check uniformity.
+    dist_map: Ctx<Ref, Distribution>,
 }
 
 impl<C: HasOpFactory> KnowledgeAnalysis<C> {
-    pub fn from_input(dag: &DQDag<C>) -> Self {
+    pub fn from_input(dag: &QDag<C>) -> Self {
         Self::from_input_with_backend(dag, GbBackendKind::default())
     }
 
     /// Like [`from_input`](Self::from_input) but with a user-selected GB
     /// backend.
-    pub fn from_input_with_backend(dag: &DQDag<C>, backend: GbBackendKind) -> Self {
-        let dist_map = build_dist_map(dag);
+    pub fn from_input_with_backend(dag: &QDag<C>, backend: GbBackendKind) -> Self {
+        let dist_map = UniformityPropagation::from_dag(dag).distributions;
         let mut gb = IdealBuilder::new();
         let mut prover_ideal = gb.build(TransClos::prover(dag));
 
@@ -230,7 +209,7 @@ impl<C: HasOpFactory> KnowledgeAnalysis<C> {
 #[cfg(test)]
 mod tests {
     use super::KnowledgeAnalysis;
-    use crate::{QualifierPropagation, UniformityPropagation};
+    use crate::QualifierPropagation;
     use backend::ArkBls12_381;
     use graph::UDags;
     use graph::WritePdf;
@@ -265,7 +244,6 @@ mod tests {
 
         // Propagate qualifiers
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         // Compute Groebner basis for the implementation
         let mut kz = KnowledgeAnalysis::from_input(&g);
@@ -300,7 +278,7 @@ mod tests {
 
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         // Uniformity propagation
-        let g = UniformityPropagation::from_dag(&g_inp).annotate_dag(&g_inp);
+        let g = g_inp;
 
         // Create an object computing the Groebner basis
         let mut kz = KnowledgeAnalysis::from_input(&g);
@@ -335,7 +313,7 @@ mod tests {
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
 
         // Uniformity propagation
-        let g = UniformityPropagation::from_dag(&g_inp).annotate_dag(&g_inp);
+        let g = g_inp;
         // Create an object computing the Groebner basis
         let mut kz = KnowledgeAnalysis::from_input(&g);
 
@@ -377,7 +355,6 @@ mod tests {
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         // Uniformity propagation
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         // Create an object computing the Groebner basis
         let mut kz = KnowledgeAnalysis::from_input(&g);
@@ -422,7 +399,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut kz = KnowledgeAnalysis::from_input(&g);
         assert!(
@@ -448,7 +424,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut kz = KnowledgeAnalysis::from_input(&g);
         let result = kz.run();
@@ -476,7 +451,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut kz = KnowledgeAnalysis::from_input(&g);
         assert!(
@@ -501,7 +475,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut kz = KnowledgeAnalysis::from_input(&g);
         assert!(
@@ -526,7 +499,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut kz = KnowledgeAnalysis::from_input(&g);
         assert!(
@@ -556,7 +528,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut kz = KnowledgeAnalysis::from_input(&g);
         assert!(
@@ -585,7 +556,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut kz = KnowledgeAnalysis::from_input(&g);
         assert!(
@@ -615,7 +585,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut kz = KnowledgeAnalysis::from_input(&g);
         assert!(
@@ -648,7 +617,6 @@ mod tests {
         let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut kz = KnowledgeAnalysis::from_input(&g);
         // All inputs are public so nothing could leak; trivially ZK.
@@ -675,7 +643,6 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut kz = KnowledgeAnalysis::from_input(&g);
         assert!(

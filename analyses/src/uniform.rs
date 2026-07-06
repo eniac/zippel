@@ -1,5 +1,5 @@
 use backend::ArkConfig;
-use graph::{DQDag, Dag, GOp, Node, Op, QDag, Ref};
+use graph::{GOp, Node, Op, QDag, Ref};
 use lang::ast::BinOp;
 use lang::typ::Distribution;
 #[cfg(test)]
@@ -341,17 +341,6 @@ impl UniformityPropagation {
         }
     }
 
-    pub fn annotate_dag<C: ArkConfig>(&self, dag: &QDag<C>) -> DQDag<C> {
-        Dag {
-            graph: dag.graph.map(
-                |i, node| node.add_annotation(self.find_distribution(i)),
-                |_, e| *e,
-            ),
-            vctx: dag.vctx.clone(),
-            transcript_vars: dag.transcript_vars.clone(),
-        }
-    }
-
     pub fn find_distribution(&self, r: NodeIndex) -> Distribution {
         self.distributions
             .get(&Ref(r))
@@ -409,7 +398,6 @@ mod tests {
 
         let g = QualifierPropagation::from_dag(&gs[0]);
         let up = UniformityPropagation::from_dag(&g);
-        let g = up.annotate_dag(&g);
 
         debug!("{}", up);
         assert!(g.node_count() > 0);
@@ -427,9 +415,9 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let result = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+        let result = UniformityPropagation::from_dag(&g);
 
-        assert!(result.node_count() > 0);
+        assert!(result.distributions.len() > 0);
     }
 
     #[test]
@@ -454,9 +442,9 @@ mod tests {
             2,
             "Protocol with two verify statements should have two check nodes"
         );
-        let result = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+        let result = UniformityPropagation::from_dag(&g);
 
-        assert!(result.node_count() > 0);
+        assert!(result.distributions.len() > 0);
     }
 
     #[test]
