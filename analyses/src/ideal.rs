@@ -8,7 +8,7 @@ use ark_ff::{FftField, Field, One, Zero};
 use backend::op::HasOpFactory;
 use backend::{ABase, ATyp, ArkConfig, ArkScalarOps, Value};
 use lang::typ::lub::Lub;
-use lang::typ::{Distribution, Nothing, Qualifier};
+use lang::typ::{Nothing, Qualifier};
 use petgraph::graph::NodeIndex;
 use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty, Set};
 use std::collections::HashMap;
@@ -146,7 +146,6 @@ fn lagrange_basis<F: Field>(xs: &[F]) -> Vec<Vec<F>> {
 }
 
 pub const GB_GENERATED_NAME_PREFIX: &str = "__zippel::gb::";
-pub const NODE_GENERATED_NAME_PREFIX: &str = "__zippel::node::";
 
 /// Canonical polynomial shape used when comparing division witness operands.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -194,7 +193,7 @@ impl<C: ArkConfig + HasOpFactory> IdealNamespace<C> {
     pub fn sentinel_var(&mut self, name: &str, typ: ATyp) -> Var {
         let idx = NodeIndex::new(self.sentinel_counter);
         self.sentinel_counter -= 1;
-        Var::from_var(name, idx, typ, Qualifier::Local, Distribution::default())
+        Var::from_var(name, idx, typ, Qualifier::Local)
     }
 
     /// Return a unique name for the given key by appending a per-key counter.
@@ -982,10 +981,8 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         ideal: &Ideal<C>,
         seen: &mut Vec<Var>,
     ) -> String {
-        if Self::is_named_source_var(var) {
-            return format!("{}^{}", Self::canonical_var_key(var), power);
-        }
-
+        // If the var has a polynomial definition, recurse into it — it's
+        // a derived value, not a source var.
         if let Some(def) = ideal.pl.get(var)
             && !seen.contains(var)
         {
@@ -998,26 +995,11 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         format!("{}^{}", Self::canonical_var_key(var), power)
     }
 
-    fn is_named_source_var(var: &Var) -> bool {
-        !var.name().starts_with(GB_GENERATED_NAME_PREFIX)
-            && !var.name().starts_with(NODE_GENERATED_NAME_PREFIX)
-    }
-
     fn canonical_var_key(var: &Var) -> String {
-        let name = var.name();
-        if !name.starts_with(GB_GENERATED_NAME_PREFIX)
-            && !name.starts_with(NODE_GENERATED_NAME_PREFIX)
-        {
-            format!(
-                "named:name={};slot={:?};typ={};qual={:?};dist={:?}",
-                name, var.index, var.typ, var.qualifier, var.distribution,
-            )
-        } else {
-            format!(
-                "raw:ref={:?};slot={:?};typ={};qual={:?};dist={:?};name={:?}",
-                var.reference, var.index, var.typ, var.qualifier, var.distribution, name,
-            )
-        }
+        format!(
+            "ref={:?};slot={:?};typ={};qual={:?};name={}",
+            var.reference, var.index, var.typ, var.qualifier, var.name,
+        )
     }
 
     /// Unified Div/Rem handler for both `add_op` and `reduce_op`.
@@ -3521,16 +3503,11 @@ mod tests {
     fn test_ref_vars_vpoly_expands_coefficients() {
         use crate::Var;
         use graph::Ref;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_p = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::VPoly(2, 2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_p = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 2), Qualifier::Private);
         ideal.register(&var_p);
 
         let op: GOp<ArkBls12_381> = Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 2));
@@ -3551,16 +3528,11 @@ mod tests {
     fn test_ref_vars_mle_expands_evaluations() {
         use crate::Var;
         use graph::Ref;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_p = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::Mle(3),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_p = Var::from_node(NodeIndex::new(0), ATyp::Mle(3), Qualifier::Private);
         ideal.register(&var_p);
 
         let op: GOp<ArkBls12_381> = Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(3));
@@ -3577,31 +3549,21 @@ mod tests {
         use crate::Var;
         use ark_bls12_381::Fr;
         use backend::op::mk;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         // First: bind Vec of scalars on node 0, then Poly on node 1.
-        let var_v = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::VPoly(1, 2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_v = Var::from_node(NodeIndex::new(0), ATyp::VPoly(1, 2), Qualifier::Private);
         ideal.register(&var_v);
         let coefs: Vec<_> = (1..=3u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
         builder.add_op(var_v.clone(), Op::Vec(coefs), &mut ideal);
 
-        let var_p = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::VPoly(1, 2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_p = Var::from_node(NodeIndex::new(1), ATyp::VPoly(1, 2), Qualifier::Private);
         let op_poly: GOp<ArkBls12_381> = Op::Poly(mk::<ArkBls12_381>(Op::Ref(
             graph::Ref::new(NodeIndex::new(0)),
             ATyp::VPoly(1, 2),
@@ -3624,19 +3586,14 @@ mod tests {
         use crate::Var;
         use ark_bls12_381::Fr;
         use backend::op::mk;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         // First: bind Vec of scalars on node 0, then Poly on node 1.
-        let var_v = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::VPoly(1, 2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_v = Var::from_node(NodeIndex::new(0), ATyp::VPoly(1, 2), Qualifier::Private);
         ideal.register(&var_v);
         let coefs: Vec<_> = (1..=3u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
@@ -3644,12 +3601,7 @@ mod tests {
         builder.add_op(var_v.clone(), Op::Vec(coefs), &mut ideal);
 
         // Poly: reads the Vec's slots via Ref.
-        let var_p = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::VPoly(1, 2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_p = Var::from_node(NodeIndex::new(1), ATyp::VPoly(1, 2), Qualifier::Private);
         ideal.register(&var_p);
         builder.add_op(
             var_p.clone(),
@@ -3662,12 +3614,7 @@ mod tests {
 
         // Then: Op::Coef reading the VPoly back into a Uni(2) output
         // (degree 2 = 3 coefficient slots, per docs/poly-encoding.md).
-        let var_c = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::Uni(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_c = Var::from_node(NodeIndex::new(2), ATyp::Uni(2), Qualifier::Private);
         let ref_p: GOp<ArkBls12_381> =
             Op::Ref(graph::Ref::new(NodeIndex::new(1)), ATyp::VPoly(1, 2));
         builder.add_op(
@@ -3694,31 +3641,21 @@ mod tests {
         use crate::Var;
         use ark_bls12_381::Fr;
         use backend::op::mk;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         // First: bind Vec of scalars on node 0, then Mle on node 1.
-        let var_v = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::Mle(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_v = Var::from_node(NodeIndex::new(0), ATyp::Mle(2), Qualifier::Private);
         ideal.register(&var_v);
         let vals: Vec<_> = (1..=4u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
         builder.add_op(var_v.clone(), Op::Vec(vals), &mut ideal);
 
-        let var_m = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::Mle(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_m = Var::from_node(NodeIndex::new(1), ATyp::Mle(2), Qualifier::Private);
         ideal.register(&var_m);
         builder.add_op(
             var_m.clone(),
@@ -3754,15 +3691,10 @@ mod tests {
     #[test]
     fn mle1_to_uni1_lift_converts_evals_to_coeffs() {
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
-        let src = Var::from_node(
-            NodeIndex::new(10),
-            ATyp::Mle(1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let src = Var::from_node(NodeIndex::new(10), ATyp::Mle(1), Qualifier::Private);
         let g0 = Polynomial::<ark_bls12_381::Fr>::var(&src.clone().with_index(0).unwrap());
         let g1 = Polynomial::<ark_bls12_381::Fr>::var(&src.clone().with_index(1).unwrap());
         let lifted = PolySource::<ArkBls12_381> {
@@ -3783,7 +3715,7 @@ mod tests {
         use ark_bls12_381::Fr;
         use backend::op::mk;
         use graph::Ref;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         // p(x) = a_0 + a_1 x   as VPoly(1,1): 2 coefficient slots on node 0.
@@ -3792,32 +3724,17 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let _var_p = {
-            let p = Var::from_node(
-                NodeIndex::new(0),
-                ATyp::VPoly(1, 1),
-                Qualifier::Private,
-                Distribution::default(),
-            );
+            let p = Var::from_node(NodeIndex::new(0), ATyp::VPoly(1, 1), Qualifier::Private);
             ideal.register(&p);
             p
         };
         let _var_xs = {
-            let p = Var::from_node(
-                NodeIndex::new(1),
-                ATyp::Uni(1),
-                Qualifier::Private,
-                Distribution::default(),
-            );
+            let p = Var::from_node(NodeIndex::new(1), ATyp::Uni(1), Qualifier::Private);
             ideal.register(&p);
             p
         };
 
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::Uni(1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::Uni(1), Qualifier::Private);
 
         let op: GOp<ArkBls12_381> = Op::Evaluate(
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(1, 1))),
@@ -3839,18 +3756,8 @@ mod tests {
         }
         // Each ideal slot: poly = a_0 + a_1 * xs[i] (a linear polynomial in
         // 4 input variables). Check it depends on exactly {a_0, a_1, xs[i]}.
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::VPoly(1, 1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
-        let var_xs = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::Uni(1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::VPoly(1, 1), Qualifier::Private);
+        let var_xs = Var::from_node(NodeIndex::new(1), ATyp::Uni(1), Qualifier::Private);
         let a0 = var_a.clone().with_index(0).unwrap();
         let a1 = var_a.clone().with_index(1).unwrap();
         let x0 = var_xs.clone().with_index(0).unwrap();
@@ -3878,31 +3785,21 @@ mod tests {
         use crate::Var;
         use ark_bls12_381::Fr;
         use backend::op::mk;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         // Bind p: Vec of scalars on node 0, then Poly on node 1.
-        let var_vp = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::VPoly(1, 1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_vp = Var::from_node(NodeIndex::new(0), ATyp::VPoly(1, 1), Qualifier::Private);
         ideal.register(&var_vp);
         let coefs: Vec<_> = [3u64, 5]
             .iter()
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(*n)))))
             .collect();
         builder.add_op(var_vp.clone(), Op::Vec(coefs), &mut ideal);
-        let var_p = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::VPoly(1, 1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_p = Var::from_node(NodeIndex::new(1), ATyp::VPoly(1, 1), Qualifier::Private);
         ideal.register(&var_p);
         builder.add_op(
             var_p.clone(),
@@ -3914,24 +3811,14 @@ mod tests {
         );
 
         // Bind xs: Vec of scalars on node 2, then Poly on node 3.
-        let var_vxs = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::Uni(1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_vxs = Var::from_node(NodeIndex::new(2), ATyp::Uni(1), Qualifier::Private);
         ideal.register(&var_vxs);
         let xs_vals: Vec<_> = [7u64, 11]
             .iter()
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(*n)))))
             .collect();
         builder.add_op(var_vxs.clone(), Op::Vec(xs_vals), &mut ideal);
-        let var_xs = Var::from_node(
-            NodeIndex::new(3),
-            ATyp::Uni(1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_xs = Var::from_node(NodeIndex::new(3), ATyp::Uni(1), Qualifier::Private);
         ideal.register(&var_xs);
         builder.add_op(
             var_xs.clone(),
@@ -3943,12 +3830,7 @@ mod tests {
         );
 
         // Now issue eval: p(xs).
-        let var = Var::from_node(
-            NodeIndex::new(4),
-            ATyp::Uni(1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(4), ATyp::Uni(1), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Evaluate(
             mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(1)),
@@ -3979,38 +3861,23 @@ mod tests {
     fn test_add_op_eval_vpoly_full_multivariate() {
         // VPoly(2, 2) has 6 coef slots; eval at Uni(2) => scalar (one slot).
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let _ = {
-            let p = Var::from_node(
-                NodeIndex::new(0),
-                ATyp::VPoly(2, 2),
-                Qualifier::Private,
-                Distribution::default(),
-            );
+            let p = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 2), Qualifier::Private);
             ideal.register(&p);
             p
         };
         let _ = {
-            let p = Var::from_node(
-                NodeIndex::new(1),
-                ATyp::Uni(1),
-                Qualifier::Private,
-                Distribution::default(),
-            );
+            let p = Var::from_node(NodeIndex::new(1), ATyp::Uni(1), Qualifier::Private);
             ideal.register(&p);
             p
         };
 
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::scalar(), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Evaluate(
             backend::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(0)),
@@ -4040,38 +3907,23 @@ mod tests {
     fn test_add_op_eval_vpoly_partial_multivariate() {
         // VPoly(3, 1) evaluated at Uni(1) => VPoly(2, 1) (2-var linear poly w/ 3 slots).
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let _ = {
-            let p = Var::from_node(
-                NodeIndex::new(0),
-                ATyp::VPoly(3, 1),
-                Qualifier::Private,
-                Distribution::default(),
-            );
+            let p = Var::from_node(NodeIndex::new(0), ATyp::VPoly(3, 1), Qualifier::Private);
             ideal.register(&p);
             p
         };
         let _ = {
-            let p = Var::from_node(
-                NodeIndex::new(1),
-                ATyp::Uni(0),
-                Qualifier::Private,
-                Distribution::default(),
-            );
+            let p = Var::from_node(NodeIndex::new(1), ATyp::Uni(0), Qualifier::Private);
             ideal.register(&p);
             p
         };
 
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::VPoly(2, 1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(2, 1), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Evaluate(
             backend::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(0)),
@@ -4101,38 +3953,23 @@ mod tests {
     fn test_add_op_eval_mle_full_multivariate() {
         // Mle(2) has 4 eval slots; eval at Uni(2) => scalar.
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let _ = {
-            let p = Var::from_node(
-                NodeIndex::new(0),
-                ATyp::Mle(2),
-                Qualifier::Private,
-                Distribution::default(),
-            );
+            let p = Var::from_node(NodeIndex::new(0), ATyp::Mle(2), Qualifier::Private);
             ideal.register(&p);
             p
         };
         let _ = {
-            let p = Var::from_node(
-                NodeIndex::new(1),
-                ATyp::Uni(1),
-                Qualifier::Private,
-                Distribution::default(),
-            );
+            let p = Var::from_node(NodeIndex::new(1), ATyp::Uni(1), Qualifier::Private);
             ideal.register(&p);
             p
         };
 
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::scalar(), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Evaluate(
             backend::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(0)),
@@ -4157,38 +3994,23 @@ mod tests {
     fn test_add_op_eval_mle_partial_multivariate() {
         // Mle(3) evaluated at Uni(1) => Mle(2) (4 slots).
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let _ = {
-            let p = Var::from_node(
-                NodeIndex::new(0),
-                ATyp::Mle(3),
-                Qualifier::Private,
-                Distribution::default(),
-            );
+            let p = Var::from_node(NodeIndex::new(0), ATyp::Mle(3), Qualifier::Private);
             ideal.register(&p);
             p
         };
         let _ = {
-            let p = Var::from_node(
-                NodeIndex::new(1),
-                ATyp::Uni(0),
-                Qualifier::Private,
-                Distribution::default(),
-            );
+            let p = Var::from_node(NodeIndex::new(1), ATyp::Uni(0), Qualifier::Private);
             ideal.register(&p);
             p
         };
 
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::Mle(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::Mle(2), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Evaluate(
             backend::op::mk::<ArkBls12_381>(Op::Ref(
                 graph::Ref::new(NodeIndex::new(0)),
@@ -4224,38 +4046,23 @@ mod tests {
         use backend::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let var_a = {
-            let p = Var::from_node(
-                NodeIndex::new(0),
-                ATyp::VPoly(2, 1),
-                Qualifier::Private,
-                Distribution::default(),
-            );
+            let p = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 1), Qualifier::Private);
             ideal.register(&p);
             p
         };
         let var_b = {
-            let p = Var::from_node(
-                NodeIndex::new(1),
-                ATyp::VPoly(2, 1),
-                Qualifier::Private,
-                Distribution::default(),
-            );
+            let p = Var::from_node(NodeIndex::new(1), ATyp::VPoly(2, 1), Qualifier::Private);
             ideal.register(&p);
             p
         };
 
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::VPoly(2, 1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(2, 1), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Add,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 1))),
@@ -4290,38 +4097,23 @@ mod tests {
         use backend::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let var_a = {
-            let p = Var::from_node(
-                NodeIndex::new(0),
-                ATyp::Mle(2),
-                Qualifier::Private,
-                Distribution::default(),
-            );
+            let p = Var::from_node(NodeIndex::new(0), ATyp::Mle(2), Qualifier::Private);
             ideal.register(&p);
             p
         };
         let var_b = {
-            let p = Var::from_node(
-                NodeIndex::new(1),
-                ATyp::Mle(2),
-                Qualifier::Private,
-                Distribution::default(),
-            );
+            let p = Var::from_node(NodeIndex::new(1), ATyp::Mle(2), Qualifier::Private);
             ideal.register(&p);
             p
         };
 
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::Mle(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::Mle(2), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Add,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(2))),
@@ -4346,32 +4138,17 @@ mod tests {
         use backend::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::VPoly(2, 2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 2), Qualifier::Private);
         ideal.register(&var_a);
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::VPoly(2, 2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::VPoly(2, 2), Qualifier::Private);
         ideal.register(&var_b);
 
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::VPoly(2, 2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(2, 2), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Sub,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 2))),
@@ -4399,32 +4176,17 @@ mod tests {
         use backend::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::VPoly(1, 1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::VPoly(1, 1), Qualifier::Private);
         ideal.register(&var_a);
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::VPoly(1, 1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::VPoly(1, 1), Qualifier::Private);
         ideal.register(&var_b);
 
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::VPoly(1, 2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(1, 2), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Mul,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(1, 1))),
@@ -4476,32 +4238,17 @@ mod tests {
         use backend::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::VPoly(2, 1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 1), Qualifier::Private);
         ideal.register(&var_a);
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::VPoly(2, 1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::VPoly(2, 1), Qualifier::Private);
         ideal.register(&var_b);
 
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::VPoly(2, 2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(2, 2), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Mul,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 1))),
@@ -4552,32 +4299,17 @@ mod tests {
         use backend::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_u = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::Mle(1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_u = Var::from_node(NodeIndex::new(0), ATyp::Mle(1), Qualifier::Private);
         ideal.register(&var_u);
-        let var_v = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::Mle(1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_v = Var::from_node(NodeIndex::new(1), ATyp::Mle(1), Qualifier::Private);
         ideal.register(&var_v);
 
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::VPoly(1, 2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(1, 2), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Mul,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(1))),
@@ -4646,32 +4378,17 @@ mod tests {
         use backend::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_u = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::Mle(1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_u = Var::from_node(NodeIndex::new(0), ATyp::Mle(1), Qualifier::Private);
         ideal.register(&var_u);
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::VPoly(1, 1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::VPoly(1, 1), Qualifier::Private);
         ideal.register(&var_b);
 
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::VPoly(1, 2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(1, 2), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Mul,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(1))),
@@ -4723,32 +4440,17 @@ mod tests {
         use backend::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_b = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::VPoly(2, 1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 1), Qualifier::Private);
         ideal.register(&var_b);
-        let var_u = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::Mle(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_u = Var::from_node(NodeIndex::new(1), ATyp::Mle(2), Qualifier::Private);
         ideal.register(&var_u);
 
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::VPoly(2, 3),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(2, 3), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Mul,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 1))),
@@ -4776,32 +4478,17 @@ mod tests {
         use backend::op::mk;
         use graph::Ref;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_u = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::Mle(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_u = Var::from_node(NodeIndex::new(0), ATyp::Mle(2), Qualifier::Private);
         ideal.register(&var_u);
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::VPoly(2, 1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::VPoly(2, 1), Qualifier::Private);
         ideal.register(&var_b);
 
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::VPoly(2, 3),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(2, 3), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Mul,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(2))),
@@ -4870,33 +4557,18 @@ mod tests {
         use graph::Ref;
         use lang::ast::BinOp;
 
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::VPoly(1, 2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::VPoly(1, 2), Qualifier::Private);
         ideal.register(&var_a);
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::VPoly(1, 1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::VPoly(1, 1), Qualifier::Private);
         ideal.register(&var_b);
 
         let basis_before = ideal.generating_set.len();
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::VPoly(1, 1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(1, 1), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Div,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(1, 2))),
@@ -4912,14 +4584,12 @@ mod tests {
             petgraph::graph::NodeIndex::new(usize::MAX),
             ATyp::VPoly(1, 1),
             Qualifier::Local,
-            Distribution::default(),
         );
         let r_wit = Var::from_var(
             "__zippel::gb::div_r::0",
             petgraph::graph::NodeIndex::new(usize::MAX - 1),
             ATyp::VPoly(1, 0),
             Qualifier::Local,
-            Distribution::default(),
         );
 
         // Per-slot input vars (typ computed by `with_slot`).
@@ -5002,33 +4672,18 @@ mod tests {
         use graph::Ref;
         use lang::ast::BinOp;
 
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let _var_a = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::VPoly(1, 2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let _var_a = Var::from_node(NodeIndex::new(0), ATyp::VPoly(1, 2), Qualifier::Private);
         ideal.register(&_var_a);
-        let _var_b = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::VPoly(1, 1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let _var_b = Var::from_node(NodeIndex::new(1), ATyp::VPoly(1, 1), Qualifier::Private);
         ideal.register(&_var_b);
 
         let basis_before = ideal.generating_set.len();
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::VPoly(1, 0),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(1, 0), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Rem,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(1, 2))),
@@ -5043,7 +4698,6 @@ mod tests {
             petgraph::graph::NodeIndex::new(usize::MAX - 1),
             ATyp::VPoly(1, 0),
             Qualifier::Local,
-            Distribution::default(),
         );
         let scl = |p: &Var, i: usize| p.clone().with_index(i).unwrap();
         let _ = scl; // kept for parity with the Div test; not used here.
@@ -5082,34 +4736,19 @@ mod tests {
         use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let _var_a = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::VPoly(1, 2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let _var_a = Var::from_node(NodeIndex::new(0), ATyp::VPoly(1, 2), Qualifier::Private);
         ideal.register(&_var_a);
-        let _var_b = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::VPoly(1, 1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let _var_b = Var::from_node(NodeIndex::new(1), ATyp::VPoly(1, 1), Qualifier::Private);
         ideal.register(&_var_b);
 
         let basis_before_div = ideal.generating_set.len();
         let _q_res = {
-            let var = Var::from_node(
-                NodeIndex::new(2),
-                ATyp::VPoly(1, 1),
-                Qualifier::Private,
-                Distribution::default(),
-            );
+            let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(1, 1), Qualifier::Private);
             let op: GOp<ArkBls12_381> = Op::Bin(
                 BinOp::Div,
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(1, 2))),
@@ -5122,12 +4761,7 @@ mod tests {
         let after_div = ideal.generating_set.len();
 
         let _r_res = {
-            let var = Var::from_node(
-                NodeIndex::new(3),
-                ATyp::VPoly(1, 0),
-                Qualifier::Private,
-                Distribution::default(),
-            );
+            let var = Var::from_node(NodeIndex::new(3), ATyp::VPoly(1, 0), Qualifier::Private);
             let op: GOp<ArkBls12_381> = Op::Bin(
                 BinOp::Rem,
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(1, 2))),
@@ -5168,7 +4802,7 @@ mod tests {
         use graph::Ref;
         use lang::ast::BinOp;
 
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -5180,13 +4814,7 @@ mod tests {
             (2, "c", ATyp::VPoly(1, 2)),
             (3, "d", ATyp::VPoly(1, 1)),
         ] {
-            let var = Var::from_var(
-                name,
-                NodeIndex::new(idx),
-                typ,
-                Qualifier::Public,
-                Distribution::default(),
-            );
+            let var = Var::from_var(name, NodeIndex::new(idx), typ, Qualifier::Public);
             ideal.register(&var);
         }
 
@@ -5197,7 +4825,6 @@ mod tests {
                 NodeIndex::new(mul_idx),
                 ATyp::VPoly(1, 2),
                 Qualifier::Private,
-                Distribution::default(),
             );
             ideal.register(&mul_ref);
             builder.add_op(
@@ -5215,7 +4842,6 @@ mod tests {
                 NodeIndex::new(sub_idx),
                 ATyp::VPoly(1, 2),
                 Qualifier::Private,
-                Distribution::default(),
             );
             ideal.register(&sub_ref);
             builder.add_op(
@@ -5234,12 +4860,7 @@ mod tests {
         add_derived_operand(10, 11);
         add_derived_operand(12, 13);
 
-        let q = Var::from_node(
-            NodeIndex::new(20),
-            ATyp::VPoly(1, 1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let q = Var::from_node(NodeIndex::new(20), ATyp::VPoly(1, 1), Qualifier::Private);
         builder.add_op(
             q,
             Op::Bin(
@@ -5251,12 +4872,7 @@ mod tests {
             &mut ideal,
         );
 
-        let r = Var::from_node(
-            NodeIndex::new(21),
-            ATyp::VPoly(1, 0),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let r = Var::from_node(NodeIndex::new(21), ATyp::VPoly(1, 0), Qualifier::Private);
         builder.add_op(
             r,
             Op::Bin(
@@ -5283,33 +4899,18 @@ mod tests {
         use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::scalar(), Qualifier::Private);
         ideal.register(&var_a);
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::scalar(), Qualifier::Private);
         ideal.register(&var_b);
 
         let basis_before = ideal.generating_set.len();
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::scalar(), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Div,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::scalar())),
@@ -5342,32 +4943,17 @@ mod tests {
         use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::vec_scalar(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::scalar(), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::vec_scalar(2), Qualifier::Private);
         ideal.register(&var_a);
         ideal.register(&var_b);
 
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::vec_scalar(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::vec_scalar(2), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Div,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::scalar())),
@@ -5397,32 +4983,17 @@ mod tests {
         use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::Uni(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::scalar(), Qualifier::Private);
         ideal.register(&var_a);
         ideal.register(&var_b);
 
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::Uni(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::Uni(2), Qualifier::Private);
         let before = ideal.generating_set.len();
         builder.add_op(
             var.clone(),
@@ -5444,32 +5015,17 @@ mod tests {
         use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::Mle(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::Mle(2), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::scalar(), Qualifier::Private);
         ideal.register(&var_a);
         ideal.register(&var_b);
 
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::Mle(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::Mle(2), Qualifier::Private);
         let before = ideal.generating_set.len();
         builder.add_op(
             var,
@@ -5491,7 +5047,7 @@ mod tests {
         use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -5504,17 +5060,11 @@ mod tests {
                 NodeIndex::new(idx),
                 vec_typ.clone(),
                 Qualifier::Private,
-                Distribution::default(),
             ));
         }
 
         builder.add_op(
-            Var::from_node(
-                NodeIndex::new(2),
-                div_typ.clone(),
-                Qualifier::Private,
-                Distribution::default(),
-            ),
+            Var::from_node(NodeIndex::new(2), div_typ.clone(), Qualifier::Private),
             Op::Bin(
                 BinOp::Div,
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), vec_typ.clone())),
@@ -5527,12 +5077,7 @@ mod tests {
         let after_div = ideal.generating_set.len();
 
         builder.add_op(
-            Var::from_node(
-                NodeIndex::new(3),
-                rem_typ.clone(),
-                Qualifier::Private,
-                Distribution::default(),
-            ),
+            Var::from_node(NodeIndex::new(3), rem_typ.clone(), Qualifier::Private),
             Op::Bin(
                 BinOp::Rem,
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), vec_typ.clone())),
@@ -5983,7 +5528,7 @@ mod tests {
         use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -5993,16 +5538,10 @@ mod tests {
             NodeIndex::new(0),
             ATyp::Vec(Box::new(ATyp::scalar()), 3),
             Qualifier::Private,
-            Distribution::default(),
         );
         ideal.register(&var_v);
 
-        let var = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(1), ATyp::scalar(), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Reduce(
             BinOp::Add,
             mk::<ArkBls12_381>(Op::Ref(
@@ -6040,27 +5579,17 @@ mod tests {
         use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let poly_t = ATyp::Uni(2);
         let vec_t = ATyp::Vec(Box::new(poly_t.clone()), 3);
-        let var_v = Var::from_node(
-            NodeIndex::new(0),
-            vec_t.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Private);
         ideal.register(&var_v);
 
-        let var = Var::from_node(
-            NodeIndex::new(1),
-            poly_t.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(1), poly_t.clone(), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Reduce(
             BinOp::Add,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), vec_t)),
@@ -6173,19 +5702,14 @@ mod tests {
     fn test_add_op_interpolate_constant_points() {
         use crate::Var;
         use ark_bls12_381::Fr;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let evals_typ = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let var_evals = Var::from_node(
-            NodeIndex::new(0),
-            evals_typ.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_evals = Var::from_node(NodeIndex::new(0), evals_typ.clone(), Qualifier::Private);
         ideal.register(&var_evals);
 
         let points: GOp<ArkBls12_381> =
@@ -6194,12 +5718,7 @@ mod tests {
             Op::Ref(graph::Ref::new(NodeIndex::new(0)), evals_typ.clone());
 
         let ideal_typ = ATyp::uni(2);
-        let var_ideal = Var::from_node(
-            NodeIndex::new(1),
-            ideal_typ.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_ideal = Var::from_node(NodeIndex::new(1), ideal_typ.clone(), Qualifier::Private);
         ideal.register(&var_ideal);
 
         let op: GOp<ArkBls12_381> =
@@ -6262,19 +5781,14 @@ mod tests {
     fn test_add_op_interpolate_3_constant_points() {
         use crate::Var;
         use ark_bls12_381::Fr;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let evals_typ = ATyp::Vec(Box::new(ATyp::scalar()), 3);
-        let var_evals = Var::from_node(
-            NodeIndex::new(0),
-            evals_typ.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_evals = Var::from_node(NodeIndex::new(0), evals_typ.clone(), Qualifier::Private);
         ideal.register(&var_evals);
 
         let points: GOp<ArkBls12_381> = Op::Value(Value::VecScalar(
@@ -6284,12 +5798,7 @@ mod tests {
             Op::Ref(graph::Ref::new(NodeIndex::new(0)), evals_typ.clone());
 
         let ideal_typ = ATyp::uni(3);
-        let var_ideal = Var::from_node(
-            NodeIndex::new(1),
-            ideal_typ.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_ideal = Var::from_node(NodeIndex::new(1), ideal_typ.clone(), Qualifier::Private);
         ideal.register(&var_ideal);
 
         let op: GOp<ArkBls12_381> =
@@ -6360,19 +5869,14 @@ mod tests {
     fn test_add_op_interpolate_ref_with_constant_points_in_pl() {
         use crate::Var;
         use ark_bls12_381::Fr;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let var_points = Var::from_node(
-            NodeIndex::new(0),
-            vec_t.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_points = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Private);
         ideal.register(&var_points);
 
         let coefs: Vec<_> = [0u64, 1]
@@ -6381,21 +5885,11 @@ mod tests {
             .collect();
         builder.add_op(var_points.clone(), Op::Vec(coefs), &mut ideal);
 
-        let var_evals = Var::from_node(
-            NodeIndex::new(1),
-            vec_t.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_evals = Var::from_node(NodeIndex::new(1), vec_t.clone(), Qualifier::Private);
         ideal.register(&var_evals);
 
         let ideal_typ = ATyp::uni(2);
-        let var_ideal = Var::from_node(
-            NodeIndex::new(2),
-            ideal_typ.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_ideal = Var::from_node(NodeIndex::new(2), ideal_typ.clone(), Qualifier::Private);
         ideal.register(&var_ideal);
 
         let points: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_t.clone());
@@ -6447,7 +5941,7 @@ mod tests {
     #[test]
     fn test_add_op_interpolate_symbolic_points() {
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -6456,28 +5950,13 @@ mod tests {
         // Two symbolic points x0, x1 stored as Var variables
         let scalar_t = ATyp::scalar();
         let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let var_x0 = Var::from_node(
-            NodeIndex::new(0),
-            scalar_t.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
-        let var_x1 = Var::from_node(
-            NodeIndex::new(1),
-            scalar_t.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_x0 = Var::from_node(NodeIndex::new(0), scalar_t.clone(), Qualifier::Private);
+        let var_x1 = Var::from_node(NodeIndex::new(1), scalar_t.clone(), Qualifier::Private);
         ideal.register(&var_x0);
         ideal.register(&var_x1);
 
         // Points = [x0, x1]
-        let var_points = Var::from_node(
-            NodeIndex::new(2),
-            vec_t.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_points = Var::from_node(NodeIndex::new(2), vec_t.clone(), Qualifier::Private);
         ideal.register(&var_points);
         let x0_slot = var_points
             .clone()
@@ -6495,27 +5974,12 @@ mod tests {
         ideal.pl.insert(&x1_slot, &Polynomial::var(&var_x1));
 
         // Evals = [y0, y1]
-        let var_y0 = Var::from_node(
-            NodeIndex::new(3),
-            scalar_t.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
-        let var_y1 = Var::from_node(
-            NodeIndex::new(4),
-            scalar_t.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_y0 = Var::from_node(NodeIndex::new(3), scalar_t.clone(), Qualifier::Private);
+        let var_y1 = Var::from_node(NodeIndex::new(4), scalar_t.clone(), Qualifier::Private);
         ideal.register(&var_y0);
         ideal.register(&var_y1);
 
-        let var_evals = Var::from_node(
-            NodeIndex::new(5),
-            vec_t.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_evals = Var::from_node(NodeIndex::new(5), vec_t.clone(), Qualifier::Private);
         ideal.register(&var_evals);
         let y0_slot = var_evals
             .clone()
@@ -6537,12 +6001,7 @@ mod tests {
         //      = y0 * d01 * t - y0 * d01 * x1 + y1 * d10 * t - y1 * d10 * x0
         // where d01 * (x0 - x1) = 1 and d10 * (x1 - x0) = 1
         let ideal_typ = ATyp::uni(2);
-        let var_ideal = Var::from_node(
-            NodeIndex::new(6),
-            ideal_typ.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_ideal = Var::from_node(NodeIndex::new(6), ideal_typ.clone(), Qualifier::Private);
         ideal.register(&var_ideal);
 
         let points: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(2)), vec_t.clone());
@@ -6621,27 +6080,17 @@ mod tests {
     fn test_add_op_interpolate_duplicate_points_panics_explicitly() {
         use crate::Var;
         use backend::op::mk;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let evals_typ = ATyp::vec_scalar(3);
-        let var_evals = Var::from_node(
-            NodeIndex::new(1),
-            evals_typ.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_evals = Var::from_node(NodeIndex::new(1), evals_typ.clone(), Qualifier::Private);
         ideal.register(&var_evals);
 
-        let var_ideal = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::uni(3),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_ideal = Var::from_node(NodeIndex::new(2), ATyp::uni(3), Qualifier::Private);
         ideal.register(&var_ideal);
 
         let points = Op::Value(Value::VecIndex(vec![0, 0, 1]));
@@ -6655,33 +6104,18 @@ mod tests {
     #[test]
     fn test_add_op_div_scalar_slot_wise() {
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::scalar(), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::scalar(), Qualifier::Private);
         ideal.register(&var_a);
         ideal.register(&var_b);
 
-        let var_ideal = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_ideal = Var::from_node(NodeIndex::new(2), ATyp::scalar(), Qualifier::Private);
         ideal.register(&var_ideal);
 
         let a = Op::Ref(graph::Ref::new(NodeIndex::new(0)), ATyp::scalar());
@@ -6710,33 +6144,18 @@ mod tests {
     #[should_panic(expected = "Rem: non-polynomial remainder")]
     fn test_add_op_rem_scalar_panics() {
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::scalar(), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::scalar(), Qualifier::Private);
         ideal.register(&var_a);
         ideal.register(&var_b);
 
-        let var_ideal = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_ideal = Var::from_node(NodeIndex::new(2), ATyp::scalar(), Qualifier::Private);
         ideal.register(&var_ideal);
 
         let a = Op::Ref(graph::Ref::new(NodeIndex::new(0)), ATyp::scalar());
@@ -6754,27 +6173,17 @@ mod tests {
     fn test_reduce_div_scalar_uses_slot_wise_div() {
         use crate::Var;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 3);
-        let var_v = Var::from_node(
-            NodeIndex::new(0),
-            vec_t.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Private);
         ideal.register(&var_v);
 
-        let var = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(1), ATyp::scalar(), Qualifier::Private);
         let op: GOp<ArkBls12_381> = Op::Reduce(
             BinOp::Div,
             mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_t)),
@@ -6812,27 +6221,17 @@ mod tests {
     fn test_reduce_rem_scalar_panics() {
         use crate::Var;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let var_v = Var::from_node(
-            NodeIndex::new(0),
-            vec_t.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Private);
         ideal.register(&var_v);
 
-        let var = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(1), ATyp::scalar(), Qualifier::Private);
         ideal.register(&var);
 
         let op: GOp<ArkBls12_381> = Op::Reduce(
@@ -6846,33 +6245,18 @@ mod tests {
     #[should_panic(expected = "MLE division is not supported")]
     fn test_add_op_div_mle_panics() {
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::Mle(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::Mle(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::Mle(2), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::Mle(2), Qualifier::Private);
         ideal.register(&var_a);
         ideal.register(&var_b);
 
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::Mle(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::Mle(2), Qualifier::Private);
         ideal.register(&var);
 
         let a = Op::Ref(graph::Ref::new(NodeIndex::new(0)), ATyp::Mle(2));
@@ -6890,27 +6274,17 @@ mod tests {
     fn test_reduce_div_vpoly_uses_handle_div_rem() {
         use crate::Var;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let vec_t = ATyp::Vec(Box::new(ATyp::VPoly(1, 3)), 2);
-        let var_v = Var::from_node(
-            NodeIndex::new(0),
-            vec_t.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Private);
         ideal.register(&var_v);
 
-        let var = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::VPoly(1, 1),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(1), ATyp::VPoly(1, 1), Qualifier::Private);
         ideal.register(&var);
 
         let op: GOp<ArkBls12_381> = Op::Reduce(
@@ -6929,7 +6303,7 @@ mod tests {
     fn reduce_mul_poly_accumulator_widens() {
         use crate::Var;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -6937,20 +6311,10 @@ mod tests {
 
         let elem_t = ATyp::Uni(1);
         let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
-        let var_v = Var::from_node(
-            NodeIndex::new(0),
-            vec_t.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Private);
         ideal.register(&var_v);
 
-        let var = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::Uni(3),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(1), ATyp::Uni(3), Qualifier::Private);
         ideal.register(&var);
 
         builder.add_op(
@@ -6983,7 +6347,7 @@ mod tests {
     fn reduce_map_mul_poly_accumulator_widens() {
         use crate::Var;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -6991,20 +6355,10 @@ mod tests {
 
         let elem_t = ATyp::Uni(1);
         let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
-        let var_v = Var::from_node(
-            NodeIndex::new(0),
-            vec_t.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Private);
         ideal.register(&var_v);
 
-        let var = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::Uni(3),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(1), ATyp::Uni(3), Qualifier::Private);
         ideal.register(&var);
 
         // reduce(*, [x for x in polys]) — ReduceMap(Mul) with identity body over a
@@ -7031,7 +6385,7 @@ mod tests {
     fn reduce_rem_poly_left_fold_semantics() {
         use crate::Var;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -7039,20 +6393,10 @@ mod tests {
 
         let elem_t = ATyp::Uni(3);
         let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
-        let var_v = Var::from_node(
-            NodeIndex::new(0),
-            vec_t.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Private);
         ideal.register(&var_v);
 
-        let var = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::Uni(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(1), ATyp::Uni(2), Qualifier::Private);
         ideal.register(&var);
 
         builder.add_op(
@@ -7079,7 +6423,7 @@ mod tests {
     fn poly_rem_smaller_dividend_passes_through() {
         use crate::Var;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -7087,27 +6431,12 @@ mod tests {
 
         let dividend_t = ATyp::Uni(1);
         let divisor_t = ATyp::Uni(3);
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            dividend_t.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            divisor_t.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), dividend_t.clone(), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), divisor_t.clone(), Qualifier::Private);
         ideal.register(&var_a);
         ideal.register(&var_b);
 
-        let var = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::Uni(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(2), ATyp::Uni(2), Qualifier::Private);
         ideal.register(&var);
 
         builder.add_op(
@@ -7151,7 +6480,7 @@ mod tests {
     #[test]
     fn test_record_scalar_fields_bind_slots() {
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -7164,19 +6493,9 @@ mod tests {
         rec_fields.insert(&"y".to_string(), &s);
         let rec_typ = ATyp::Record(rec_fields);
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            s.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), s.clone(), Qualifier::Public);
         ideal.register(&var_a);
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            s.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), s.clone(), Qualifier::Public);
         ideal.register(&var_b);
 
         let mut fields = Ctx::<String, HOp<ArkBls12_381>>::new();
@@ -7189,12 +6508,7 @@ mod tests {
             &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), s.clone())),
         );
 
-        let var_r = Var::from_node(
-            NodeIndex::new(2),
-            rec_typ,
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(2), rec_typ, Qualifier::Public);
         ideal.register(&var_r);
 
         builder.add_op(var_r.clone(), Op::Record(fields), &mut ideal);
@@ -7227,7 +6541,7 @@ mod tests {
     #[test]
     fn test_record_mixed_type_fields_bind_slots() {
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -7240,20 +6554,10 @@ mod tests {
         rec_fields.insert(&"p".to_string(), &uni_typ);
         let rec_typ = ATyp::Record(rec_fields);
 
-        let var_scalar = Var::from_node(
-            NodeIndex::new(0),
-            s.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_scalar = Var::from_node(NodeIndex::new(0), s.clone(), Qualifier::Public);
         ideal.register(&var_scalar);
 
-        let var_poly = Var::from_node(
-            NodeIndex::new(1),
-            uni_typ.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_poly = Var::from_node(NodeIndex::new(1), uni_typ.clone(), Qualifier::Public);
         ideal.register(&var_poly);
 
         let mut fields = Ctx::<String, HOp<ArkBls12_381>>::new();
@@ -7266,12 +6570,7 @@ mod tests {
             &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), uni_typ.clone())),
         );
 
-        let var_r = Var::from_node(
-            NodeIndex::new(2),
-            rec_typ,
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(2), rec_typ, Qualifier::Public);
         ideal.register(&var_r);
 
         builder.add_op(var_r.clone(), Op::Record(fields), &mut ideal);
@@ -7306,7 +6605,7 @@ mod tests {
     #[test]
     fn test_record_basis_count_matches_physical_len() {
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -7321,20 +6620,10 @@ mod tests {
         let phys_len = rec_typ.physical_len();
         assert_eq!(phys_len, 4, "1 scalar + 3 Vec scalars = 4");
 
-        let var_x = Var::from_node(
-            NodeIndex::new(0),
-            s.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_x = Var::from_node(NodeIndex::new(0), s.clone(), Qualifier::Public);
         ideal.register(&var_x);
 
-        let var_v = Var::from_node(
-            NodeIndex::new(1),
-            v2.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_v = Var::from_node(NodeIndex::new(1), v2.clone(), Qualifier::Public);
         ideal.register(&var_v);
 
         let mut fields = Ctx::<String, HOp<ArkBls12_381>>::new();
@@ -7347,12 +6636,7 @@ mod tests {
             &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), v2.clone())),
         );
 
-        let var_r = Var::from_node(
-            NodeIndex::new(2),
-            rec_typ,
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(2), rec_typ, Qualifier::Public);
         ideal.register(&var_r);
 
         builder.add_op(var_r.clone(), Op::Record(fields), &mut ideal);
@@ -7371,7 +6655,7 @@ mod tests {
     #[test]
     fn test_proj_scalar_field_from_record() {
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -7384,22 +6668,12 @@ mod tests {
         rec_fields.insert(&"y".to_string(), &s);
         let rec_typ = ATyp::Record(rec_fields);
 
-        let var_rec = Var::from_node(
-            NodeIndex::new(0),
-            rec_typ.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_rec = Var::from_node(NodeIndex::new(0), rec_typ.clone(), Qualifier::Public);
         ideal.register(&var_rec);
 
         let inner_op: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(0)), rec_typ);
 
-        let var_proj = Var::from_node(
-            NodeIndex::new(1),
-            s.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_proj = Var::from_node(NodeIndex::new(1), s.clone(), Qualifier::Public);
         ideal.register(&var_proj);
 
         builder.add_op(
@@ -7421,7 +6695,7 @@ mod tests {
     #[test]
     fn test_proj_second_field_offset_correct() {
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -7437,22 +6711,12 @@ mod tests {
         rec_fields.insert(&"b".to_string(), &v3);
         let rec_typ = ATyp::Record(rec_fields);
 
-        let var_rec = Var::from_node(
-            NodeIndex::new(0),
-            rec_typ.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_rec = Var::from_node(NodeIndex::new(0), rec_typ.clone(), Qualifier::Public);
         ideal.register(&var_rec);
 
         let inner_op: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(0)), rec_typ);
 
-        let var_proj = Var::from_node(
-            NodeIndex::new(1),
-            v3.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_proj = Var::from_node(NodeIndex::new(1), v3.clone(), Qualifier::Public);
         ideal.register(&var_proj);
 
         builder.add_op(
@@ -7486,7 +6750,7 @@ mod tests {
     #[test]
     fn test_proj_first_field_of_multi_field_record() {
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -7502,22 +6766,12 @@ mod tests {
         rec_fields.insert(&"b".to_string(), &s);
         let rec_typ = ATyp::Record(rec_fields);
 
-        let var_rec = Var::from_node(
-            NodeIndex::new(0),
-            rec_typ.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_rec = Var::from_node(NodeIndex::new(0), rec_typ.clone(), Qualifier::Public);
         ideal.register(&var_rec);
 
         let inner_op: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(0)), rec_typ);
 
-        let var_proj = Var::from_node(
-            NodeIndex::new(1),
-            uni2.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_proj = Var::from_node(NodeIndex::new(1), uni2.clone(), Qualifier::Public);
         ideal.register(&var_proj);
 
         builder.add_op(
@@ -7558,7 +6812,7 @@ mod tests {
         use ark_bls12_381::Fr;
         use backend::op::mk;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -7568,36 +6822,21 @@ mod tests {
         let uni4 = ATyp::Uni(4);
         let uni4_ideal = ATyp::Uni(4);
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            uni2.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), uni2.clone(), Qualifier::Private);
         ideal.register(&var_a);
         let coefs_a: Vec<_> = (1..=3u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
         builder.add_op(var_a.clone(), Op::Vec(coefs_a), &mut ideal);
 
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            uni4.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), uni4.clone(), Qualifier::Private);
         ideal.register(&var_b);
         let coefs_b: Vec<_> = (1..=5u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
         builder.add_op(var_b.clone(), Op::Vec(coefs_b), &mut ideal);
 
-        let var_r = Var::from_node(
-            NodeIndex::new(2),
-            uni4_ideal.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(2), uni4_ideal.clone(), Qualifier::Private);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -7626,7 +6865,7 @@ mod tests {
     fn test_mul_scalar_poly_broadcast() {
         use crate::Var;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -7635,28 +6874,13 @@ mod tests {
         let s = ATyp::scalar();
         let uni2 = ATyp::Uni(2);
 
-        let var_s = Var::from_node(
-            NodeIndex::new(0),
-            s.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_s = Var::from_node(NodeIndex::new(0), s.clone(), Qualifier::Public);
         ideal.register(&var_s);
 
-        let var_p = Var::from_node(
-            NodeIndex::new(1),
-            uni2.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_p = Var::from_node(NodeIndex::new(1), uni2.clone(), Qualifier::Public);
         ideal.register(&var_p);
 
-        let var_r = Var::from_node(
-            NodeIndex::new(2),
-            uni2.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(2), uni2.clone(), Qualifier::Public);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -7689,7 +6913,7 @@ mod tests {
     fn test_mul_vec_scalar_broadcast() {
         use crate::Var;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -7698,28 +6922,13 @@ mod tests {
         let s = ATyp::scalar();
         let v3 = ATyp::Vec(Box::new(s.clone()), 3);
 
-        let var_v = Var::from_node(
-            NodeIndex::new(0),
-            v3.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_v = Var::from_node(NodeIndex::new(0), v3.clone(), Qualifier::Public);
         ideal.register(&var_v);
 
-        let var_s = Var::from_node(
-            NodeIndex::new(1),
-            s.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_s = Var::from_node(NodeIndex::new(1), s.clone(), Qualifier::Public);
         ideal.register(&var_s);
 
-        let var_r = Var::from_node(
-            NodeIndex::new(2),
-            v3.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(2), v3.clone(), Qualifier::Public);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -7747,35 +6956,20 @@ mod tests {
     ) -> (crate::Var, crate::Var, crate::Var, Ideal<ArkBls12_381>) {
         use crate::Var;
         use graph::Ref;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let scalar_typ = ATyp::scalar();
-        let var_s = Var::from_node(
-            NodeIndex::new(0),
-            scalar_typ.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_s = Var::from_node(NodeIndex::new(0), scalar_typ.clone(), Qualifier::Public);
         ideal.register(&var_s);
 
-        let var_p = Var::from_node(
-            NodeIndex::new(1),
-            poly_typ.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_p = Var::from_node(NodeIndex::new(1), poly_typ.clone(), Qualifier::Public);
         ideal.register(&var_p);
 
-        let var_r = Var::from_node(
-            NodeIndex::new(2),
-            poly_typ.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(2), poly_typ.clone(), Qualifier::Public);
         ideal.register(&var_r);
 
         let scalar_op = mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), scalar_typ));
@@ -7913,7 +7107,7 @@ mod tests {
     fn test_concat_vec_uni_different_degrees() {
         use crate::Var;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -7925,28 +7119,13 @@ mod tests {
         let vec_uni4 = ATyp::Vec(Box::new(uni4.clone()), 2);
         let vec_ideal = ATyp::Vec(Box::new(uni4.clone()), 4);
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            vec_uni2.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), vec_uni2.clone(), Qualifier::Private);
         ideal.register(&var_a);
 
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            vec_uni4.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), vec_uni4.clone(), Qualifier::Private);
         ideal.register(&var_b);
 
-        let var_r = Var::from_node(
-            NodeIndex::new(2),
-            vec_ideal.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(2), vec_ideal.clone(), Qualifier::Private);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -7989,7 +7168,7 @@ mod tests {
     fn test_concat_vec_scalar_element() {
         use crate::Var;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -7999,28 +7178,13 @@ mod tests {
         let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
         let vec_ideal = ATyp::Vec(Box::new(s.clone()), 3);
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            vec_s.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), vec_s.clone(), Qualifier::Private);
         ideal.register(&var_a);
 
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            s.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), s.clone(), Qualifier::Private);
         ideal.register(&var_b);
 
-        let var_r = Var::from_node(
-            NodeIndex::new(2),
-            vec_ideal.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(2), vec_ideal.clone(), Qualifier::Private);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -8049,7 +7213,7 @@ mod tests {
     fn test_equ_vec_uni_different_degrees() {
         use crate::Var;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -8061,28 +7225,13 @@ mod tests {
         let vec_uni4 = ATyp::Vec(Box::new(uni4.clone()), 2);
         let bool_typ = ATyp::bool();
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            vec_uni2.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), vec_uni2.clone(), Qualifier::Private);
         ideal.register(&var_a);
 
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            vec_uni4.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), vec_uni4.clone(), Qualifier::Private);
         ideal.register(&var_b);
 
-        let var_r = Var::from_node(
-            NodeIndex::new(2),
-            bool_typ.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(2), bool_typ.clone(), Qualifier::Private);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -8112,7 +7261,7 @@ mod tests {
     fn test_dot_vec_scalar() {
         use crate::Var;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -8121,28 +7270,13 @@ mod tests {
         let s = ATyp::scalar();
         let vec_s = ATyp::Vec(Box::new(s.clone()), 3);
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            vec_s.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), vec_s.clone(), Qualifier::Private);
         ideal.register(&var_a);
 
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            vec_s.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), vec_s.clone(), Qualifier::Private);
         ideal.register(&var_b);
 
-        let var_r = Var::from_node(
-            NodeIndex::new(2),
-            s.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(2), s.clone(), Qualifier::Private);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -8170,7 +7304,7 @@ mod tests {
     fn test_dot_vec_uni() {
         use crate::Var;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -8182,28 +7316,13 @@ mod tests {
         let vec_uni4 = ATyp::Vec(Box::new(uni4.clone()), 2);
         let dot_ideal = ATyp::Uni(6);
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            vec_uni2.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), vec_uni2.clone(), Qualifier::Private);
         ideal.register(&var_a);
 
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            vec_uni4.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), vec_uni4.clone(), Qualifier::Private);
         ideal.register(&var_b);
 
-        let var_r = Var::from_node(
-            NodeIndex::new(2),
-            dot_ideal.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(2), dot_ideal.clone(), Qualifier::Private);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -8236,7 +7355,7 @@ mod tests {
     #[test]
     fn test_pair_vec() {
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -8249,28 +7368,13 @@ mod tests {
         let vec_g2 = ATyp::Vec(Box::new(g2.clone()), 2);
         let vec_gt = ATyp::Vec(Box::new(gt.clone()), 2);
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            vec_g1.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), vec_g1.clone(), Qualifier::Private);
         ideal.register(&var_a);
 
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            vec_g2.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), vec_g2.clone(), Qualifier::Private);
         ideal.register(&var_b);
 
-        let var_r = Var::from_node(
-            NodeIndex::new(2),
-            vec_gt.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(2), vec_gt.clone(), Qualifier::Private);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -8298,7 +7402,7 @@ mod tests {
     fn test_pow_vec_element_wise() {
         use crate::Var;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -8310,28 +7414,13 @@ mod tests {
         let vec_fin = ATyp::Vec(Box::new(fin.clone()), 2);
         let vec_ideal = ATyp::Vec(Box::new(s.clone()), 2);
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            vec_s.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), vec_s.clone(), Qualifier::Private);
         ideal.register(&var_a);
 
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            vec_fin.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), vec_fin.clone(), Qualifier::Private);
         ideal.register(&var_b);
 
-        let var_r = Var::from_node(
-            NodeIndex::new(2),
-            vec_ideal.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(2), vec_ideal.clone(), Qualifier::Private);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -8352,7 +7441,7 @@ mod tests {
         use crate::Var;
         use backend::op::mk;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -8361,20 +7450,10 @@ mod tests {
         let uni2 = ATyp::Uni(2);
         let ideal_uni4 = ATyp::Uni(4);
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            uni2.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), uni2.clone(), Qualifier::Private);
         ideal.register(&var_a);
 
-        let var_r = Var::from_node(
-            NodeIndex::new(1),
-            ideal_uni4.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(1), ideal_uni4.clone(), Qualifier::Private);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -8404,7 +7483,7 @@ mod tests {
         use crate::Var;
         use backend::op::mk;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -8415,20 +7494,10 @@ mod tests {
         let vec_uni2 = ATyp::Vec(Box::new(uni2.clone()), 2);
         let vec_ideal = ATyp::Vec(Box::new(ideal_uni4.clone()), 2);
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            vec_uni2.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), vec_uni2.clone(), Qualifier::Private);
         ideal.register(&var_a);
 
-        let var_r = Var::from_node(
-            NodeIndex::new(1),
-            vec_ideal.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(1), vec_ideal.clone(), Qualifier::Private);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -8465,7 +7534,7 @@ mod tests {
         use crate::Var;
         use backend::op::mk;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -8475,20 +7544,10 @@ mod tests {
         let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
         let vec_ideal = ATyp::Vec(Box::new(s.clone()), 2);
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            vec_s.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), vec_s.clone(), Qualifier::Private);
         ideal.register(&var_a);
 
-        let var_r = Var::from_node(
-            NodeIndex::new(1),
-            vec_ideal.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(1), vec_ideal.clone(), Qualifier::Private);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -8519,7 +7578,7 @@ mod tests {
         use crate::Var;
         use backend::op::mk;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -8531,28 +7590,13 @@ mod tests {
         let fin = ATyp::fin(lang::typ::range::CRange::default());
         let vec_fin = ATyp::Vec(Box::new(fin.clone()), 2);
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            vec_s.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), vec_s.clone(), Qualifier::Private);
         ideal.register(&var_a);
 
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            vec_fin.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), vec_fin.clone(), Qualifier::Private);
         ideal.register(&var_b);
 
-        let var_r = Var::from_node(
-            NodeIndex::new(2),
-            vec_ideal.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(2), vec_ideal.clone(), Qualifier::Private);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -8575,16 +7619,11 @@ mod tests {
     #[test]
     fn test_lift_uni_to_wider_uni() {
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::Uni(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Private);
         ideal.register(&var);
         let src = PolySource::<ArkBls12_381>::from_ref_vars(
             &ideal.vars,
@@ -8613,16 +7652,11 @@ mod tests {
     #[test]
     fn test_lift_mle_to_wider_mle() {
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::Mle(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(0), ATyp::Mle(2), Qualifier::Private);
         ideal.register(&var);
         let src = PolySource::<ArkBls12_381>::from_ref_vars(
             &ideal.vars,
@@ -8651,16 +7685,11 @@ mod tests {
     #[test]
     fn test_lift_vpoly_same_arity_prefix() {
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::VPoly(2, 2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 2), Qualifier::Private);
         ideal.register(&var);
         let src = PolySource::<ArkBls12_381>::from_ref_vars(
             &ideal.vars,
@@ -8688,16 +7717,11 @@ mod tests {
     #[test]
     fn test_lift_vpoly_cross_arity_embedding() {
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::VPoly(2, 2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 2), Qualifier::Private);
         ideal.register(&var);
         let src = PolySource::<ArkBls12_381>::from_ref_vars(
             &ideal.vars,
@@ -8788,16 +7812,11 @@ mod tests {
     #[test]
     fn test_lift_uni_to_vpoly_same_arity() {
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::Uni(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Private);
         ideal.register(&var);
         let src = PolySource::<ArkBls12_381>::from_ref_vars(
             &ideal.vars,
@@ -8824,32 +7843,17 @@ mod tests {
     fn test_equ_scalar_has_var_constraint_and_diff() {
         use crate::Var;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::scalar(), Qualifier::Private);
         ideal.register(&var_a);
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::scalar(), Qualifier::Private);
         ideal.register(&var_b);
-        let var_r = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::bool(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(2), ATyp::bool(), Qualifier::Private);
 
         builder.add_op(
             var_r.clone(),
@@ -8883,32 +7887,17 @@ mod tests {
     fn test_equ_uni_bool_ideal_bare_diffs() {
         use crate::Var;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::Uni(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Private);
         ideal.register(&var_a);
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::Uni(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::Uni(2), Qualifier::Private);
         ideal.register(&var_b);
-        let var_r = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::bool(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(2), ATyp::bool(), Qualifier::Private);
 
         builder.add_op(
             var_r.clone(),
@@ -8953,32 +7942,17 @@ mod tests {
     fn test_equ_uni_different_degrees_lifts_both() {
         use crate::Var;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::Uni(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Private);
         ideal.register(&var_a);
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::Uni(4),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::Uni(4), Qualifier::Private);
         ideal.register(&var_b);
-        let var_r = Var::from_node(
-            NodeIndex::new(2),
-            ATyp::bool(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(2), ATyp::bool(), Qualifier::Private);
 
         builder.add_op(
             var_r.clone(),
@@ -9026,7 +8000,7 @@ mod tests {
     fn test_concat_vec_vec_elements() {
         use crate::Var;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -9037,26 +8011,11 @@ mod tests {
         let vec3 = ATyp::Vec(Box::new(s.clone()), 3);
         let vec5 = ATyp::Vec(Box::new(s.clone()), 5);
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            vec2.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), vec2.clone(), Qualifier::Private);
         ideal.register(&var_a);
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            vec3.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), vec3.clone(), Qualifier::Private);
         ideal.register(&var_b);
-        let var_r = Var::from_node(
-            NodeIndex::new(2),
-            vec5.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(2), vec5.clone(), Qualifier::Private);
 
         builder.add_op(
             var_r.clone(),
@@ -9088,7 +8047,7 @@ mod tests {
     fn test_reduce_add_poly_vec_direct_fold() {
         use crate::Var;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -9097,20 +8056,10 @@ mod tests {
         let poly_t = ATyp::Uni(2);
         let vec_t = ATyp::Vec(Box::new(poly_t.clone()), 2);
 
-        let var_v = Var::from_node(
-            NodeIndex::new(0),
-            vec_t.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Private);
         ideal.register(&var_v);
 
-        let var = Var::from_node(
-            NodeIndex::new(1),
-            poly_t.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var = Var::from_node(NodeIndex::new(1), poly_t.clone(), Qualifier::Private);
 
         builder.add_op(
             var.clone(),
@@ -9139,26 +8088,16 @@ mod tests {
     #[test]
     fn test_ref_lift_to_wider_type() {
         use crate::Var;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let var_src = Var::from_node(
-            NodeIndex::new(0),
-            ATyp::Uni(2),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_src = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Private);
         ideal.register(&var_src);
 
-        let var_dst = Var::from_node(
-            NodeIndex::new(1),
-            ATyp::Uni(4),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_dst = Var::from_node(NodeIndex::new(1), ATyp::Uni(4), Qualifier::Private);
         ideal.register(&var_dst);
 
         builder.add_op(
@@ -9201,7 +8140,6 @@ mod tests {
             petgraph::graph::NodeIndex::new(0),
             ATyp::scalar(),
             lang::typ::Qualifier::Private,
-            lang::typ::Distribution::default(),
         ));
         let src = PolySource::<ArkBls12_381>::new(vec![scalar_poly.clone()], ATyp::scalar());
         let broadcast = src.broadcast_scalar_to(&ATyp::VPoly(2, 2));
@@ -9219,7 +8157,7 @@ mod tests {
     fn vars_is_pl_keys_union_basis_vars() {
         use ark_bls12_381::Fr;
 
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let pl_ref = Var::from_var(
@@ -9227,14 +8165,12 @@ mod tests {
             NodeIndex::new(10),
             ATyp::scalar(),
             Qualifier::Public,
-            Distribution::Nonuniform,
         );
         let basis_ref = Var::from_var(
             "basis_v",
             NodeIndex::new(11),
             ATyp::scalar(),
             Qualifier::Public,
-            Distribution::Nonuniform,
         );
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
@@ -9258,17 +8194,12 @@ mod tests {
     /// Test that challenge emits no basis or pl state.
     #[test]
     fn challenge_emits_no_basis_or_pl_state() {
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var = Var::from_node(
-            NodeIndex::new(100),
-            ATyp::scalar(),
-            Qualifier::Public,
-            Distribution::Nonuniform,
-        );
+        let var = Var::from_node(NodeIndex::new(100), ATyp::scalar(), Qualifier::Public);
 
         builder.add_op(
             var.clone(),
@@ -9293,17 +8224,12 @@ mod tests {
     /// Test that random emits no basis or pl state.
     #[test]
     fn random_emits_no_basis_or_pl_state() {
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var = Var::from_node(
-            NodeIndex::new(101),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::Uniform,
-        );
+        let var = Var::from_node(NodeIndex::new(101), ATyp::scalar(), Qualifier::Private);
 
         builder.add_op(var.clone(), Op::Random(ATyp::scalar(), false), &mut ideal);
 
@@ -9322,19 +8248,14 @@ mod tests {
     /// This test captures the desired invariant: challenges become visible when referenced.
     #[test]
     fn challenge_used_in_polynomial_is_visible() {
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         // Create a challenge Var
-        let challenge_var = Var::from_node(
-            NodeIndex::new(200),
-            ATyp::scalar(),
-            Qualifier::Public,
-            Distribution::Nonuniform,
-        );
+        let challenge_var = Var::from_node(NodeIndex::new(200), ATyp::scalar(), Qualifier::Public);
         ideal.register(&challenge_var);
         builder.add_op(
             challenge_var.clone(),
@@ -9343,21 +8264,11 @@ mod tests {
         );
 
         // Create a private variable
-        let x_var = Var::from_node(
-            NodeIndex::new(201),
-            ATyp::scalar(),
-            Qualifier::Private,
-            Distribution::Nonuniform,
-        );
+        let x_var = Var::from_node(NodeIndex::new(201), ATyp::scalar(), Qualifier::Private);
         ideal.register(&x_var);
 
         // Create a polynomial operation that uses the challenge: y = x + c
-        let y_var = Var::from_node(
-            NodeIndex::new(202),
-            ATyp::scalar(),
-            Qualifier::Public,
-            Distribution::Nonuniform,
-        );
+        let y_var = Var::from_node(NodeIndex::new(202), ATyp::scalar(), Qualifier::Public);
         ideal.register(&y_var);
 
         builder.add_op(
@@ -9398,34 +8309,19 @@ mod tests {
     #[test]
     fn pair_emits_product_without_sentinel() {
         use backend::op::mk;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let g1_var = Var::from_node(
-            NodeIndex::new(300),
-            ATyp::g1(),
-            Qualifier::Public,
-            Distribution::Nonuniform,
-        );
+        let g1_var = Var::from_node(NodeIndex::new(300), ATyp::g1(), Qualifier::Public);
         ideal.register(&g1_var);
 
-        let g2_var = Var::from_node(
-            NodeIndex::new(301),
-            ATyp::g2(),
-            Qualifier::Public,
-            Distribution::Nonuniform,
-        );
+        let g2_var = Var::from_node(NodeIndex::new(301), ATyp::g2(), Qualifier::Public);
         ideal.register(&g2_var);
 
-        let pair_ideal_var = Var::from_node(
-            NodeIndex::new(302),
-            ATyp::gt(),
-            Qualifier::Public,
-            Distribution::Nonuniform,
-        );
+        let pair_ideal_var = Var::from_node(NodeIndex::new(302), ATyp::gt(), Qualifier::Public);
         ideal.register(&pair_ideal_var);
 
         builder.add_op(
@@ -9474,7 +8370,7 @@ mod tests {
         // field "a", assert pl/basis aliases the field directly.
         use crate::Var;
         use backend::op::mk;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -9490,27 +8386,12 @@ mod tests {
         let rec_typ = ATyp::Record(rec_fields);
 
         // Register the record Var.
-        let var_rec = Var::from_node(
-            NodeIndex::new(0),
-            rec_typ.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_rec = Var::from_node(NodeIndex::new(0), rec_typ.clone(), Qualifier::Public);
         ideal.register(&var_rec);
 
         // Register scalar refs for a and b.
-        let var_a = Var::from_node(
-            NodeIndex::new(1),
-            s.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
-        let var_b = Var::from_node(
-            NodeIndex::new(2),
-            s.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(1), s.clone(), Qualifier::Public);
+        let var_b = Var::from_node(NodeIndex::new(2), s.clone(), Qualifier::Public);
         ideal.register(&var_a);
         ideal.register(&var_b);
 
@@ -9528,12 +8409,7 @@ mod tests {
         builder.add_op(var_rec.clone(), Op::Record(field_ops), &mut ideal);
 
         // Project field "a" from the record.
-        let var_proj = Var::from_node(
-            NodeIndex::new(3),
-            s.clone(),
-            Qualifier::Public,
-            Distribution::default(),
-        );
+        let var_proj = Var::from_node(NodeIndex::new(3), s.clone(), Qualifier::Public);
         ideal.register(&var_proj);
 
         let inner_op: GOp<ArkBls12_381> =
@@ -9571,7 +8447,7 @@ mod tests {
         use crate::Var;
         use backend::op::mk;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -9582,27 +8458,16 @@ mod tests {
         let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
         let vec_fin = ATyp::Vec(Box::new(fin.clone()), 2);
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            vec_s.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), vec_s.clone(), Qualifier::Private);
         ideal.register(&var_a);
 
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            vec_fin.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), vec_fin.clone(), Qualifier::Private);
         ideal.register(&var_b);
 
         let var_r = Var::from_node(
             NodeIndex::new(2),
             ATyp::Vec(Box::new(s.clone()), 2),
             Qualifier::Private,
-            Distribution::default(),
         );
         ideal.register(&var_r);
 
@@ -9626,7 +8491,7 @@ mod tests {
         use crate::Var;
         use backend::op::mk;
         use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
@@ -9635,29 +8500,14 @@ mod tests {
         let s = ATyp::scalar();
         let fin = ATyp::fin(lang::typ::range::CRange::default());
 
-        let var_a = Var::from_node(
-            NodeIndex::new(0),
-            s.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_a = Var::from_node(NodeIndex::new(0), s.clone(), Qualifier::Private);
         ideal.register(&var_a);
 
         // var_b is a Ref, not a Value::Index → non-const exponent.
-        let var_b = Var::from_node(
-            NodeIndex::new(1),
-            fin.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_b = Var::from_node(NodeIndex::new(1), fin.clone(), Qualifier::Private);
         ideal.register(&var_b);
 
-        let var_r = Var::from_node(
-            NodeIndex::new(2),
-            s.clone(),
-            Qualifier::Private,
-            Distribution::default(),
-        );
+        let var_r = Var::from_node(NodeIndex::new(2), s.clone(), Qualifier::Private);
         ideal.register(&var_r);
 
         builder.add_op(

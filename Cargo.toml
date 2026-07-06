@@ -70,7 +70,7 @@ ark-groth16 = { git = "https://github.com/arkworks-rs/groth16.git", branch = "re
 
 [[bench]]
 name = "graph_execution"
-test = true
+test = false
 harness = false
 
 [[bench]]

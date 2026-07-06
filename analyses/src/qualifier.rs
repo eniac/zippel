@@ -3,8 +3,7 @@ use graph::{Dag, GOp, Node, Op, QDag, UDag};
 use lang::typ::Qualifier;
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
-use petgraph::visit::EdgeRef;
-use share::Ctx;
+use share::{Ctx, Set};
 
 pub struct QualifierPropagation {
     pub quals: Ctx<NodeIndex, Qualifier>,
@@ -76,43 +75,87 @@ impl QualifierPropagation {
                 }
                 Some(qual)
             }
-            Op::Random(_, _) => Some(Qualifier::Private),
+            Op::Random(_, _) => Some(Qualifier::Local),
             Op::Challenge(_, _) => Some(Qualifier::Public),
         }
     }
 
     pub fn from_dag<C: ArkConfig>(dag: &UDag<C>) -> QDag<C> {
         let mut qp = QualifierPropagation { quals: Ctx::new() };
-        let mut worklist = dag.find_check();
-        assert!(!worklist.is_empty(), "No check found in the DAG");
 
-        while let Some(n) = worklist.pop() {
-            if qp.quals.contains(&n) {
-                continue;
-            }
-
-            match &dag[n] {
-                Node::Inp(_) | Node::Rel(_) => {
+        // Forward-reachable set from args (prover side), stopping at transcripts.
+        // Transcript nodes are included (assigned Public) but not traversed past.
+        let forward_set: Set<NodeIndex> = {
+            let mut set = Set::new();
+            let mut worklist: Vec<NodeIndex> = dag
+                .input_args()
+                .into_iter()
+                .chain(dag.relation_args())
+                .collect();
+            while let Some(n) = worklist.pop() {
+                if set.contains(&n) {
                     continue;
                 }
-                Node::Arg(_, _, qual, _, _) => {
-                    qp.quals.insert(&n, qual);
+                set.insert(n);
+                if dag[n].is_transcript() {
                     continue;
                 }
-                Node::Transcr(_, _) => {
-                    qp.quals.insert(&n, &Qualifier::Public);
-                    continue;
-                }
-                Node::Op(op, _) => {
-                    qp.from_op(op).and_then(|q| qp.quals.insert(&n, &q));
+                for succ in dag.graph.neighbors_directed(n, Direction::Outgoing) {
+                    worklist.push(succ);
                 }
             }
+            set
+        };
 
-            // Add parent neighbors to worklist
-            for e in dag.graph.edges_directed(n, Direction::Incoming) {
-                // Add neighbors to worklist
-                if !qp.quals.contains(&e.source()) {
-                    worklist.push(e.source());
+        // Backward-reachable set from checks (verifier side), stopping at transcripts.
+        let checks = dag.find_check();
+        assert!(!checks.is_empty(), "No check found in the DAG");
+        let backward_set: Set<NodeIndex> = {
+            let mut set = Set::new();
+            let mut worklist = checks;
+            while let Some(n) = worklist.pop() {
+                if set.contains(&n) {
+                    continue;
+                }
+                set.insert(n);
+                if dag[n].is_transcript() {
+                    continue;
+                }
+                for pred in dag.graph.neighbors_directed(n, Direction::Incoming) {
+                    worklist.push(pred);
+                }
+            }
+            set
+        };
+
+        // Fixpoint iteration: qualify nodes in both sets until no progress.
+        // from_op looks up Op::Ref children in qp.quals, so a node can only be
+        // qualified once all its dependencies (graph predecessors) are qualified.
+        // Iterating in NodeIndex order (BTreeSet order) is not topological, so we
+        // repeat until fixpoint.
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for &n in forward_set.iter().chain(backward_set.iter()) {
+                if qp.quals.contains(&n) {
+                    continue;
+                }
+                match &dag[n] {
+                    Node::Inp(_) | Node::Rel(_) => continue,
+                    Node::Arg(_, _, qual, _, _) => {
+                        qp.quals.insert(&n, qual);
+                        changed = true;
+                    }
+                    Node::Transcr(_, _) => {
+                        qp.quals.insert(&n, &Qualifier::Public);
+                        changed = true;
+                    }
+                    Node::Op(op, _) => {
+                        if let Some(q) = qp.from_op(op) {
+                            qp.quals.insert(&n, &q);
+                            changed = true;
+                        }
+                    }
                 }
             }
         }
@@ -121,7 +164,6 @@ impl QualifierPropagation {
             graph: dag.graph.map(
                 |i, node| {
                     node.with_annotation(if node.is_transcript() {
-                        // Transcript nodes are always Public (verifier-observable)
                         Qualifier::Public
                     } else {
                         *qp.quals.get(&i).unwrap_or(&Qualifier::Local)
@@ -177,7 +219,7 @@ mod tests {
         let qp = QualifierPropagation { quals: Ctx::new() };
         let op = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), false);
         let qual = qp.from_op(&op);
-        assert_eq!(qual, Some(Qualifier::Private));
+        assert_eq!(qual, Some(Qualifier::Local));
     }
 
     #[test]
@@ -445,5 +487,272 @@ mod tests {
         let op = Op::Ifft(mk::<ArkBls12_381>(inner));
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Public));
+    }
+
+    // ----------------------------------------------------------------
+    // Regression tests for bidirectional qualifier propagation
+    // ----------------------------------------------------------------
+
+    /// Helper: find a node by variable name in a QDag.
+    fn find_node_by_name(g: &QDag<ArkBls12_381>, name: &str) -> Option<NodeIndex> {
+        g.node_indices()
+            .find(|&n| g.find_var(n).map(|v| v.0 == name).unwrap_or(false))
+    }
+
+    /// Helper: get the qualifier annotation of a node.
+    fn node_qual(g: &QDag<ArkBls12_381>, n: NodeIndex) -> Qualifier {
+        match &g[n] {
+            Node::Op(_, q) | Node::Transcr(_, q) => *q,
+            Node::Arg(_, _, q, _, _) => *q,
+            _ => panic!("node {:?} has no qualifier", n),
+        }
+    }
+
+    /// `let r = random<F>` should get `Local` (not `Private`).
+    /// This is the Op::Random → Local fix (Step 2).
+    #[test]
+    fn regression_random_gets_local() {
+        let ex = r#"
+            proto foo<F: Field>(private s: F) where s == s {
+                let r = random<F>;
+                a <- r * s;
+                verify(a == a)
+            }"#;
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        let r_node = find_node_by_name(&g, "r").expect("r node should exist");
+        assert_eq!(
+            node_qual(&g, r_node),
+            Qualifier::Local,
+            "random<F> should get Local, not Private"
+        );
+    }
+
+    /// Prover-side computation behind a transcript should be reached by the
+    /// forward walk from args. `r * s` (where r is random, s is private)
+    /// should get `Local` (join of Local and Private).
+    #[test]
+    fn regression_prover_side_computation_reached() {
+        let ex = r#"
+            proto foo<F: Field>(private s: F) where s == s {
+                let r = random<F>;
+                a <- r * s;
+                verify(a == a)
+            }"#;
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        // Find the `a` transcript node, then walk back to the `r * s` op node.
+        let a_node = find_node_by_name(&g, "a").expect("a transcript node should exist");
+        // The op node feeding `a` is the predecessor (r * s computation).
+        let preds: Vec<_> = g
+            .graph
+            .neighbors_directed(a_node, Direction::Incoming)
+            .collect();
+        let op_node = preds
+            .iter()
+            .find(|&&p| matches!(g[p], Node::Op(_, _)))
+            .copied()
+            .expect("should have an Op predecessor for transcript a");
+
+        // r is Local, s is Private → join should be Local (Local absorbs).
+        assert_eq!(
+            node_qual(&g, op_node),
+            Qualifier::Local,
+            "r * s (Local * Private) should be Local"
+        );
+    }
+
+    /// Transcript nodes are always `Public`, regardless of what feeds them.
+    #[test]
+    fn regression_transcript_always_public() {
+        let ex = r#"
+            proto foo<F: Field>(private s: F) where s == s {
+                let r = random<F>;
+                a <- r * s;
+                verify(a == a)
+            }"#;
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        for n in g.node_indices() {
+            if g[n].is_transcript() {
+                assert_eq!(
+                    node_qual(&g, n),
+                    Qualifier::Public,
+                    "transcript node {:?} should be Public",
+                    n
+                );
+            }
+        }
+    }
+
+    /// `let`-bound variables should have their names registered in `vctx`
+    /// so `find_var()` returns the correct name instead of `__zippel::node::N`.
+    #[test]
+    fn regression_let_binding_name_registered() {
+        let ex = r#"
+            proto foo<F: Field>(private s: F) where s == s {
+                let r = random<F>;
+                let t = r * r;
+                a <- t + s;
+                verify(a == a)
+            }"#;
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        let r_node = find_node_by_name(&g, "r");
+        assert!(
+            r_node.is_some(),
+            "let-bound `r` should be findable by name, not __zippel::node::N"
+        );
+
+        let t_node = find_node_by_name(&g, "t");
+        assert!(
+            t_node.is_some(),
+            "let-bound `t` should be findable by name, not __zippel::node::N"
+        );
+    }
+
+    /// Relation-side computation nodes should be reached by the forward walk
+    /// from relation args. In Schnorr, `g*x` in the relation should get
+    /// `Private` (join of Public g and Private x).
+    #[test]
+    fn regression_relation_side_computation_reached() {
+        let ex = r#"
+            proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+                let r = random<F>;
+                u <- g*r;
+                c <- challenge<F*>;
+                z <- r + x*c;
+                verify(g*z == u + h*c)
+            }"#;
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        // The relation-side g*x computation should be Private.
+        // Find any Op node with Private qualifier that is a Bin(Mul, ...)
+        // referencing a Public arg and a Private arg.
+        let has_private_mul = g.node_indices().any(|n| {
+            if let Node::Op(op, qual) = &g[n] {
+                if *qual != Qualifier::Private {
+                    return false;
+                }
+                if let Op::Bin(_, a, b, _) = &**op {
+                    // Get qualifiers of operands by looking up their target nodes
+                    let qual_of = |op: &GOp<ArkBls12_381>| -> Option<Qualifier> {
+                        match op {
+                            Op::Ref(r, _) => Some(node_qual(&g, r.node())),
+                            _ => None,
+                        }
+                    };
+                    let qa = qual_of(a);
+                    let qb = qual_of(b);
+                    // g*x: one is Public (g), the other is Private (x)
+                    matches!(qa, Some(Qualifier::Public)) && matches!(qb, Some(Qualifier::Private))
+                        || matches!(qa, Some(Qualifier::Private))
+                            && matches!(qb, Some(Qualifier::Public))
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_private_mul,
+            "relation-side g*x should be reached and get Private qualifier"
+        );
+    }
+
+    /// Verifier-side computation (between check and transcript) should be
+    /// reached by the backward walk. `g*z` in the check `g*z == u + h*c`
+    /// should get `Public` (join of Public g and Public z).
+    #[test]
+    fn regression_verifier_side_computation_reached() {
+        let ex = r#"
+            proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+                let r = random<F>;
+                u <- g*r;
+                c <- challenge<F*>;
+                z <- r + x*c;
+                verify(g*z == u + h*c)
+            }"#;
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        // Find the check node, then walk to its predecessors to find g*z.
+        let checks = g.find_check();
+        assert!(!checks.is_empty());
+        let check = checks[0];
+        // The check wraps an equality; its predecessors include g*z and u+h*c.
+        let preds: Vec<_> = g
+            .graph
+            .neighbors_directed(check, Direction::Incoming)
+            .collect();
+        // At least one predecessor should be Public (the verifier-side computation)
+        let has_public_op = preds.iter().any(
+            |&p| matches!(&g[p], Node::Op(_, q) | Node::Transcr(_, q) if *q == Qualifier::Public),
+        );
+        assert!(
+            has_public_op,
+            "verifier-side computation should be reached and get Public"
+        );
+    }
+
+    /// `r * r` (random squared) should get `Local` via the forward walk.
+    /// This is the key case from the plan: non-uniform prover-side computation
+    /// that should be eliminated, not flagged as a leak.
+    #[test]
+    fn regression_random_squared_gets_local() {
+        let ex = r#"
+            proto foo<F: Field>(public x: F, private s: F) where x == x {
+                let r = random<F>;
+                let t = r * r;
+                a <- t + s;
+                verify(a == x)
+            }"#;
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        // `t` is let-bound to `r * r`. Find the op node for `r * r`.
+        let t_node = find_node_by_name(&g, "t").expect("t should be findable by name");
+        // t_node is the node for the let binding; the op feeding it is r * r.
+        // Actually, `let t = r * r` creates a node for `r * r` and registers
+        // the name `t` on it. So t_node IS the r*r op node.
+        assert_eq!(
+            node_qual(&g, t_node),
+            Qualifier::Local,
+            "r * r (Local * Local) should be Local"
+        );
     }
 }

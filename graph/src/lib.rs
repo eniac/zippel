@@ -2264,6 +2264,12 @@ impl<C: HasOpFactory> UDag<C> {
                     let tl = l.infer(kctx, &fctx.keys(), &vctx)?;
                     // Add left-hand side as node
                     let nl = self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    // Register the node name so find_var() returns the correct name
+                    // instead of falling back to __zippel::node::N
+                    if let GOp::Ref(r, _) = &nl {
+                        self.vctx.insert(&r.node(), &id);
+                        self.transcript_vars.insert(&r.node(), &false);
+                    }
                     // Add [id] to the variable context (clone-on-write)
                     vctx.insert(&id, &tl);
                     vars.insert(&id, &nl);

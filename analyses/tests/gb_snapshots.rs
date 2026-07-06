@@ -6,6 +6,12 @@
 //! - **File exists** → use ArkGb (verify mode). Compares ArkGb output
 //!   against the committed snapshot.
 //!
+//! When `INSTA_UPDATE` is set (snapshot regeneration mode), Singular is
+//! always used regardless of whether the file exists. This prevents
+//! accidentally overwriting Singular-generated baselines with ArkGb output.
+//! If Singular is not on `PATH` during regeneration, the test fails with a
+//! clear error.
+//!
 //! To (re)generate snapshots:
 //! ```sh
 //! INSTA_UPDATE=always cargo test -p analyses --test gb_snapshots
@@ -137,8 +143,25 @@ fn snap_dir() -> PathBuf {
 }
 
 /// Determine the backend for a given snapshot file.
-/// If the file doesn't exist → Singular (generate). If it exists → ArkGb (verify).
+///
+/// - If `INSTA_UPDATE` is set (regeneration mode) → always Singular, the
+///   baseline. Fails if Singular is not on `PATH`.
+/// - If the file doesn't exist → Singular (generate mode). Fails if
+///   Singular is not on `PATH`.
+/// - If the file exists → ArkGb (verify mode).
 fn backend_for_snapshot(snap_name: &str) -> Result<GbBackendKind, Failed> {
+    // Regeneration mode: always use Singular to preserve baselines.
+    if std::env::var("INSTA_UPDATE").is_ok() {
+        if !singular() {
+            return Err(Failed::from(format!(
+                "INSTA_UPDATE is set but Singular is not on PATH. \
+                 Snapshots must be (re)generated with Singular to preserve baselines. \
+                 Install Singular or unset INSTA_UPDATE to verify with ArkGb."
+            )));
+        }
+        return Ok(GbBackendKind::Singular);
+    }
+
     let snap_full = snap_dir().join(format!("{snap_name}.snap"));
     if snap_full.exists() {
         Ok(GbBackendKind::ArkGb)

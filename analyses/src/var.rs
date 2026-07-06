@@ -1,6 +1,5 @@
 use backend::op::Ref;
 use graph::{Dag, Node};
-use lang::typ::Distribution;
 use lang::typ::Qualifier;
 use petgraph::graph::NodeIndex;
 use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
@@ -11,7 +10,7 @@ use std::fmt;
 /// A reference to a node in the graph, with all associated metadata.
 ///
 /// `index` is a logical multi-dimensional path (e.g. `[1, 0]` for the first
-/// element of the second row of a 2D array). It is built up by `with_slot` /
+/// element of the second row of a 2D array). It is built up by
 /// `with_index` / `collect_slots` as they recurse into composite types.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct Var {
@@ -19,7 +18,6 @@ pub struct Var {
     pub index: Vec<usize>,
     pub typ: ATyp,
     pub qualifier: Qualifier,
-    pub distribution: Distribution,
     /// Source-level variable name. For `Node::Arg` Vars this is the
     /// argument's `Vid`; for transcript-source Vars it is the log-variable
     /// name; for unnamed Vars it is derived from the node index.
@@ -32,30 +30,22 @@ impl Var {
         name: impl Into<String>,
         typ: ATyp,
         qualifier: Qualifier,
-        distribution: Distribution,
     ) -> Self {
         Var {
             reference,
             index: Vec::new(),
             typ,
             qualifier,
-            distribution,
             name: name.into(),
         }
     }
 
-    pub fn from_node(
-        node: NodeIndex,
-        typ: ATyp,
-        qualifier: Qualifier,
-        distribution: Distribution,
-    ) -> Self {
+    pub fn from_node(node: NodeIndex, typ: ATyp, qualifier: Qualifier) -> Self {
         Var {
             reference: Ref(node),
             index: Vec::new(),
             typ,
             qualifier,
-            distribution,
             name: format!("__zippel::node::{}", node.index()),
         }
     }
@@ -67,14 +57,12 @@ impl Var {
         node: NodeIndex,
         typ: ATyp,
         qualifier: Qualifier,
-        distribution: Distribution,
     ) -> Self {
         Var {
             reference: Ref(node),
             index: Vec::new(),
             typ,
             qualifier,
-            distribution,
             name: v.into(),
         }
     }
@@ -87,15 +75,6 @@ impl Var {
     }
     pub fn is_local(&self) -> bool {
         self.qualifier.is_local()
-    }
-    pub fn is_uniform(&self) -> bool {
-        match self.distribution {
-            Distribution::Uniform | Distribution::UniformNonZero => true,
-            Distribution::Nonuniform => false,
-        }
-    }
-    pub fn is_uniform_nz(&self) -> bool {
-        self.distribution == Distribution::UniformNonZero
     }
 
     pub fn node(&self) -> NodeIndex {
@@ -128,7 +107,6 @@ impl Var {
             index: new_index,
             typ: slot_typ,
             qualifier: self.qualifier,
-            distribution: self.distribution,
             name: self.name.clone(),
         })
     }
@@ -160,7 +138,6 @@ impl Var {
                         index: elem_index,
                         typ: (**t).clone(),
                         qualifier: self.qualifier,
-                        distribution: self.distribution,
                         name: self.name.clone(),
                     };
                     out.extend(elem.collect_slots());
@@ -177,7 +154,6 @@ impl Var {
                         index: field_index,
                         typ: ft.clone(),
                         qualifier: self.qualifier,
-                        distribution: self.distribution,
                         name: self.name.clone(),
                     };
                     out.extend(field.collect_slots());
@@ -206,31 +182,7 @@ impl Var {
         } else {
             format!("[{}]", idx_str)
         };
-        if self.typ.physical_len() > 1 && self.distribution.is_uniform() {
-            format!(
-                "{} uniform {}{}: {}",
-                self.qualifier, label, idx_part, self.typ
-            )
-        } else if self.typ.physical_len() > 1 && self.distribution.is_uniform_nz() {
-            format!(
-                "{} uniform* {}{}: {}",
-                self.qualifier, label, idx_part, self.typ
-            )
-        } else if self.typ.physical_len() > 1 {
-            format!("{} {}{}: {}", self.qualifier, label, idx_part, self.typ)
-        } else if self.distribution.is_uniform() {
-            format!(
-                "{} uniform {}{}: {}",
-                self.qualifier, label, idx_part, self.typ
-            )
-        } else if self.distribution.is_uniform_nz() {
-            format!(
-                "{} uniform* {}{}: {}",
-                self.qualifier, label, idx_part, self.typ
-            )
-        } else {
-            format!("{} {}{}: {}", self.qualifier, label, idx_part, self.typ)
-        }
+        format!("{} {}{}: {}", self.qualifier, label, idx_part, self.typ)
     }
 }
 
@@ -267,13 +219,9 @@ pub fn dag_args<C: ArkConfig, A>(dag: &Dag<C, A>) -> Vec<Var> {
     dag.input_args()
         .into_iter()
         .filter_map(|n| match &dag[n] {
-            Node::Arg(name, typ, qual, dist, _kind) => Some(Var::new_named(
-                Ref(n),
-                name.0.clone(),
-                typ.clone(),
-                *qual,
-                *dist,
-            )),
+            Node::Arg(name, typ, qual, _dist, _kind) => {
+                Some(Var::new_named(Ref(n), name.0.clone(), typ.clone(), *qual))
+            }
             _ => None,
         })
         .collect()

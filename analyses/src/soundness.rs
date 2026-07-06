@@ -11,7 +11,7 @@ use ark_ff::One;
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
 use graph::{DQDag, Ref};
-use lang::typ::{Distribution, Qualifier};
+use lang::typ::Qualifier;
 use log::{info, warn};
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
@@ -546,8 +546,7 @@ fn build_round_map<C: ArkConfig>(
         while let Some(node) = queue.pop_front() {
             if let Some(typ) = dag[node].typ() {
                 let r = dag.find_ref(node);
-                let base =
-                    Var::from_node(node, typ.clone(), Qualifier::Public, Distribution::Uniform);
+                let base = Var::from_node(node, typ.clone(), Qualifier::Public);
                 for slot in base.slots() {
                     round_map
                         .entry((r, slot.index))

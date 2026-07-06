@@ -9,7 +9,7 @@ mod backend_tests {
     use ark_ff::One;
     use backend::ATyp;
 
-    use lang::typ::{Distribution, Qualifier};
+    use lang::typ::Qualifier;
     use petgraph::graph::NodeIndex;
 
     fn mk_var(name: &str, idx: usize) -> Var {
@@ -18,7 +18,6 @@ mod backend_tests {
             NodeIndex::new(idx),
             ATyp::scalar(),
             Qualifier::Public,
-            Distribution::default(),
         )
     }
 
@@ -108,7 +107,7 @@ mod singular_tests {
     use ark_ff::One;
     use backend::ATyp;
 
-    use lang::typ::{Distribution, Qualifier};
+    use lang::typ::Qualifier;
     use petgraph::graph::NodeIndex;
 
     fn mk_var(name: &str, idx: usize) -> Var {
@@ -117,7 +116,6 @@ mod singular_tests {
             NodeIndex::new(idx),
             ATyp::scalar(),
             Qualifier::Public,
-            Distribution::default(),
         )
     }
 

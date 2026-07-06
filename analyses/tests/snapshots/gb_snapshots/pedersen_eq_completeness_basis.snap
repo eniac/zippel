@@ -5,7 +5,7 @@ expression: value
 - h*r2 + h*r1 + c2 - c1
 - h*z - c2*c + c1*c + t
 - m2 + m1
-- t + h*__zippel::node::11
-- z - r2*c + r1*c + __zippel::node::11
+- t + h*k
+- z - r2*c + r1*c + k
 h*r2 + g*m2 - c2
-r2*t - r1*t - c2*__zippel::node::11 + c1*__zippel::node::11
+r2*t - r1*t - c2*k + c1*k

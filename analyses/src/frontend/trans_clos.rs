@@ -11,7 +11,6 @@ fn named_var(
     r: Ref,
     typ: backend::ATyp,
     qualifier: lang::typ::Qualifier,
-    distribution: lang::typ::Distribution,
 ) -> Var {
     let name = dag.find_var(r.node());
     Var {
@@ -19,7 +18,6 @@ fn named_var(
         index: Vec::new(),
         typ,
         qualifier,
-        distribution,
         name: name
             .map(|v| v.0)
             .unwrap_or_else(|| format!("__zippel::node::{}", r.node().index())),
@@ -230,9 +228,9 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             .input_args()
             .into_iter()
             .filter_map(|n| match &dag[n] {
-                Node::Arg(name, typ, qual, dist, _kind) => {
+                Node::Arg(name, typ, qual, _dist, _kind) => {
                     if qual.is_public() {
-                        let var = Var::new_named(Ref(n), name.0.clone(), typ.clone(), *qual, *dist);
+                        let var = Var::new_named(Ref(n), name.0.clone(), typ.clone(), *qual);
                         Some(var)
                     } else {
                         None
@@ -260,10 +258,10 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         // and are NOT added to clos.
         for &n in &transcripts_vec {
             match &dag[n] {
-                Node::Op(op, (qualifier, distribution))
-                | Node::Transcr(op, (qualifier, distribution)) => {
+                Node::Op(op, (qualifier, _distribution))
+                | Node::Transcr(op, (qualifier, _distribution)) => {
                     let inner = op.get();
-                    let var = named_var(dag, Ref::new(n), inner.typ(), *qualifier, *distribution);
+                    let var = named_var(dag, Ref::new(n), inner.typ(), *qualifier);
                     tc.vars.push(var.clone());
                     seen.insert(n, var);
                 }
@@ -300,8 +298,8 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         args.sort();
         args.into_iter()
             .filter_map(|n| match &dag[n] {
-                Node::Arg(name, typ, qual, dist, _kind) => {
-                    let var = Var::new_named(Ref(n), name.0.clone(), typ.clone(), *qual, *dist);
+                Node::Arg(name, typ, qual, _dist, _kind) => {
+                    let var = Var::new_named(Ref(n), name.0.clone(), typ.clone(), *qual);
                     Some(var)
                 }
                 _ => None,
@@ -415,22 +413,18 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             return Op::Ref(canonical.reference, canonical.typ.clone());
         }
         match &dag[r.node()] {
-            Node::Op(op, (qualifier, distribution))
-            | Node::Transcr(op, (qualifier, distribution))
+            Node::Op(op, (qualifier, _distribution))
+            | Node::Transcr(op, (qualifier, _distribution))
                 if matches!(op.get(), Op::Challenge(_, _) | Op::Random(_, _)) =>
             {
                 let inner = op.get();
-                let var = named_var(dag, r, inner.typ(), *qualifier, *distribution);
+                let var = named_var(dag, r, inner.typ(), *qualifier);
                 self.insert(var, inner.clone(), seen)
             }
-            Node::Op(op, (qualifier, distribution))
-            | Node::Transcr(op, (qualifier, distribution)) => {
+            Node::Op(op, (qualifier, _distribution))
+            | Node::Transcr(op, (qualifier, _distribution)) => {
                 let obin = self.trans_clos_op(dag, op.get().clone(), seen);
-                self.insert(
-                    named_var(dag, r, obin.typ(), *qualifier, *distribution),
-                    obin,
-                    seen,
-                )
+                self.insert(named_var(dag, r, obin.typ(), *qualifier), obin, seen)
             }
             Node::Arg(_, t, _, _, _) => Op::Ref(r, t.clone()),
             Node::Inp(_) | Node::Rel(_) => {

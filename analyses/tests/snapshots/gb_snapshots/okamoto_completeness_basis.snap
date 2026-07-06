@@ -2,12 +2,12 @@
 source: analyses/tests/gb_snapshots.rs
 expression: value
 ---
-- g*x*sr + g*r*sx - r*t + comm*__zippel::node::7
+- g*x*sr + g*r*sx - r*t + comm*rr
 - h*sr - g*sx + comm*c + t
-- h*x*__zippel::node::6*sr - x*t*sx + h*x*__zippel::node::7*sx + comm*__zippel::node::6*sx + x*__zippel::node::6*t - comm*__zippel::node::6^2
-- sr + r*c + __zippel::node::7
-- sx + x*c + __zippel::node::6
-- t + h*__zippel::node::7 + g*__zippel::node::6
+- h*x*rx*sr - x*t*sx + h*x*rr*sx + comm*rx*sx + x*rx*t - comm*rx^2
+- sr + r*c + rr
+- sx + x*c + rx
+- t + h*rr + g*rx
 g*x + h*r - comm
-h*x*sr + g*x*sx - comm*sx - x*t + comm*__zippel::node::6
-x*sr - r*sx - x*__zippel::node::7 + r*__zippel::node::6
+h*x*sr + g*x*sx - comm*sx - x*t + comm*rx
+x*sr - r*sx - x*rr + r*rx

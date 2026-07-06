@@ -2,25 +2,25 @@
 source: analyses/tests/gb_snapshots.rs
 expression: value
 ---
-- __zippel::node::8*t2 + __zippel::node::7*t1 + h*__zippel::node::8^2
-- c1*x*sr + c1*r*sx - r^2*t2 + c2*r*__zippel::node::8
+- c1*x*sr + c1*r*sx - r^2*t2 + c2*r*rr
 - c1^2*x*sr + c1^2*r*sx - c1*r^2*t2 + c2*r^2*t1
 - g*sr + c1*c + t1
 - h*sr - g*sx + c2*c + t2
-- h*x*__zippel::node::7*sr - x*t2*sx + h*x*__zippel::node::8*sx + c2*__zippel::node::7*sx + x*__zippel::node::7*t2 - c2*__zippel::node::7^2
-- r*t1 + c1*__zippel::node::8
-- r*t2 - x*t1 + c2*__zippel::node::8 + c1*__zippel::node::7
-- sr + r*c + __zippel::node::8
-- sx + x*c + __zippel::node::7
-- t1 + g*__zippel::node::8
-- t2 + h*__zippel::node::8 + g*__zippel::node::7
-- x*t1*sr + r*t1*sx - r*__zippel::node::8*t2 + c2*__zippel::node::8^2
+- h*x*rx*sr - x*t2*sx + h*x*rr*sx + c2*rx*sx + x*rx*t2 - c2*rx^2
+- r*t1 + c1*rr
+- r*t2 - x*t1 + c2*rr + c1*rx
+- rr*t2 + rx*t1 + h*rr^2
+- sr + r*c + rr
+- sx + x*c + rx
+- t1 + g*rr
+- t2 + h*rr + g*rx
+- x*t1*sr + r*t1*sx - r*rr*t2 + c2*rr^2
 c1*h*sr - c2*g*sr + c1*g*sx - c1*t2 + c2*t1
 g*r - c1
 g*x + h*r - c2
-g*x*sr - c1*sx + r*t2 - c2*__zippel::node::8
+g*x*sr - c1*sx + r*t2 - c2*rr
 g^2*x + c1*h - c2*g
-h*x*__zippel::node::8*sr + x*t1*sx - c2*__zippel::node::8*sx - x*__zippel::node::8*t2 + c2*__zippel::node::7*__zippel::node::8
-h*x*sr + g*x*sx - c2*sx - x*t2 + c2*__zippel::node::7
-h*x*sr^2 - c2*sx*sr - x*t2*sr + c2*__zippel::node::7*sr + c1*sx^2 - r*t2*sx + c2*__zippel::node::8*sx
-x*sr - r*sx - x*__zippel::node::8 + r*__zippel::node::7
+h*x*rr*sr + x*t1*sx - c2*rr*sx - x*rr*t2 + c2*rx*rr
+h*x*sr + g*x*sx - c2*sx - x*t2 + c2*rx
+h*x*sr^2 - c2*sx*sr - x*t2*sr + c2*rx*sr + c1*sx^2 - r*t2*sx + c2*rr*sx
+x*sr - r*sx - x*rr + r*rx

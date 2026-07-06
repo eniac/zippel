@@ -404,7 +404,9 @@ fn pin_let_named() {
 
     // `c` resolves to Ref(bin); since the body is a Ref, add_top_exp does
     // not add a Ret node.
-    let _ = c;
+    // let-binding registers the name in vctx and marks it as non-transcript.
+    expected.vctx.insert(&bin, &c);
+    expected.transcript_vars.insert(&bin, &false);
 
     assert!(gs[0] == expected);
 }
@@ -435,6 +437,9 @@ fn pin_let_anon() {
     let add = expected.add_node(Node::bin(BinOp::Add, &var_a, &var_b, &s));
     expected.add_edges(DepType::Data, add, var_a.clone());
     expected.add_edges(DepType::Data, add, var_b.clone());
+    // let-binding registers the name in vctx and marks it as non-transcript.
+    expected.vctx.insert(&add, &Vid::new("_"));
+    expected.transcript_vars.insert(&add, &false);
 
     // a * b → Bin(Mul) node (this is the return value; add_exp returns Ref(mul) so add_top_exp skips Ret)
     let mul = expected.add_node(Node::bin(BinOp::Mul, &var_a, &var_b, &s));
@@ -445,7 +450,6 @@ fn pin_let_anon() {
 }
 
 /// Assert expression.
-/// Tests: CExp::Assert, Node::check, check node with data edge.
 #[test]
 fn pin_assert() {
     let src = r#"
@@ -1433,6 +1437,9 @@ fn pin_log_var_ref() {
     let bin_add = expected.add_node(Node::bin(BinOp::Add, &var_s, &var_s, &ATyp::scalar()));
     expected.add_edges(DepType::Data, bin_add, var_s.clone());
     expected.add_edges(DepType::Data, bin_add, var_s.clone());
+    // let-binding registers the name in vctx and marks it as non-transcript.
+    expected.vctx.insert(&bin_add, &Vid::new("x"));
+    expected.transcript_vars.insert(&bin_add, &false);
     let transcr_op = GOp::<B>::Ref(Ref(bin_add), ATyp::scalar());
     let transcr = expected.add_node(Node::transcr(&transcr_op));
     expected[transcr].set_transcript();
@@ -1497,6 +1504,9 @@ fn pin_proj_var_record() {
     let rec_node = expected.add_node(Node::Op(mk::<B>(GOp::Record(fields)), Nothing));
     expected.add_edges(DepType::Data, rec_node, ref_a);
     expected.add_edges(DepType::Data, rec_node, ref_b);
+    // let-binding registers the name in vctx and marks it as non-transcript.
+    expected.vctx.insert(&rec_node, &Vid::new("r"));
+    expected.transcript_vars.insert(&rec_node, &false);
 
     // r.x — Proj derefs Ref(Record) to extract field x, returns Ref(arg_a) directly.
     // The return value is a Ref, so no ret node is added.
@@ -2425,18 +2435,24 @@ fn pin_nested_let_chain() {
     let add_a = expected.add_node(Node::bin(BinOp::Add, &var_x, &var_y, &s));
     expected.add_edges(DepType::Data, add_a, var_x.clone());
     expected.add_edges(DepType::Data, add_a, var_y.clone());
+    expected.vctx.insert(&add_a, &Vid::new("a"));
+    expected.transcript_vars.insert(&add_a, &false);
 
     // b = a + x
     let ref_a = GOp::<B>::var(&Vid::new("a"), add_a, s.clone());
     let add_b = expected.add_node(Node::bin(BinOp::Add, &ref_a, &var_x, &s));
     expected.add_edges(DepType::Data, add_b, ref_a);
     expected.add_edges(DepType::Data, add_b, var_x);
+    expected.vctx.insert(&add_b, &Vid::new("b"));
+    expected.transcript_vars.insert(&add_b, &false);
 
     // c = b + y
     let ref_b = GOp::<B>::var(&Vid::new("b"), add_b, s.clone());
     let add_c = expected.add_node(Node::bin(BinOp::Add, &ref_b, &var_y, &s));
     expected.add_edges(DepType::Data, add_c, ref_b);
     expected.add_edges(DepType::Data, add_c, var_y);
+    expected.vctx.insert(&add_c, &Vid::new("c"));
+    expected.transcript_vars.insert(&add_c, &false);
 
     // `c` resolves to Ref(add_c); since the body is a Ref, add_top_exp
     // does not add a Ret node.
@@ -2569,6 +2585,8 @@ fn pin_diamond_dag() {
     let add = expected.add_node(Node::bin(BinOp::Add, &var_a, &var_b, &s));
     expected.add_edges(DepType::Data, add, var_a);
     expected.add_edges(DepType::Data, add, var_b);
+    expected.vctx.insert(&add, &Vid::new("c"));
+    expected.transcript_vars.insert(&add, &false);
 
     // c * c  — both operands ref the same node
     let ref_c = GOp::<B>::var(&Vid::new("c"), add, s.clone());

@@ -11,7 +11,7 @@ use crate::frontend::Polynomial;
 use ark_bls12_381::Fr;
 use ark_ff::One;
 use backend::ATyp;
-use lang::typ::{Distribution, Qualifier};
+use lang::typ::Qualifier;
 use petgraph::graph::NodeIndex;
 
 // ---------------------------------------------------------------------------
@@ -32,13 +32,7 @@ pub const CYCLIC_SIZES: &[usize] = &[4, 5];
 // ---------------------------------------------------------------------------
 
 pub fn mk_var(name: &str) -> Var {
-    Var::from_var(
-        name,
-        NodeIndex::new(0),
-        ATyp::scalar(),
-        Qualifier::Private,
-        Distribution::Uniform,
-    )
+    Var::from_var(name, NodeIndex::new(0), ATyp::scalar(), Qualifier::Private)
 }
 
 pub fn mk_vars(prefix: &str, count: usize) -> Vec<Var> {

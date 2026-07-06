@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn test_buchberger_completeness_schnorr_like() {
         use backend::ATyp;
-        use lang::typ::{Distribution, Qualifier};
+        use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
         let mk_var = |name: &str, idx: usize| -> Var {
@@ -305,7 +305,6 @@ mod tests {
                 NodeIndex::new(idx),
                 ATyp::scalar(),
                 Qualifier::Public,
-                Distribution::default(),
             )
         };
         let g_var = mk_var("g", 0);
