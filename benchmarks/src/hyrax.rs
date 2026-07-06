@@ -105,7 +105,7 @@ pub mod zippel_side {
                 let t = Instant::now();
                 let proof = self
                     .handler
-                    .run_prover(inputs_c)
+                    .run_prover(&inputs_c)
                     .expect("zippel hyrax prover failed");
                 prove_sum += t.elapsed();
                 last_proof = Some(proof);
@@ -119,7 +119,7 @@ pub mod zippel_side {
                 let t = Instant::now();
                 let verifier_result = self
                     .handler
-                    .run_verifier(proof_c)
+                    .run_verifier(&proof_c)
                     .expect("zippel hyrax verifier failed");
                 verify_sum += t.elapsed();
                 last_result = Some(verifier_result);

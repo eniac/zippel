@@ -167,7 +167,7 @@ pub mod zippel_side {
                 let t = Instant::now();
                 let proof = self
                     .handler
-                    .run_prover(inputs_c)
+                    .run_prover(&inputs_c)
                     .expect("run_prover failed");
                 prove_sum += t.elapsed();
                 last_proof = Some(proof);
@@ -177,7 +177,7 @@ pub mod zippel_side {
             let t = Instant::now();
             let verifier_result = self
                 .handler
-                .run_verifier(proof)
+                .run_verifier(&proof)
                 .expect("run_verifier failed");
             let verify = t.elapsed();
 

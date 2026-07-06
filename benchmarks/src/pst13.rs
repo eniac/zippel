@@ -390,6 +390,7 @@ mod textbook_native_side {
     /// Single fused multi_pairing of length (n+1):
     ///   e(C − y·g, h) · Π_j e(−π_j, α_h_j − z_j·h) == 1_GT.
     /// One Miller loop + one final exponentiation.
+    #[allow(clippy::eq_op)]
     pub fn verify(shared: &Shared, proof: &Proof) -> bool {
         let n = shared.n;
         let g = shared.g_gen;
@@ -526,7 +527,7 @@ pub mod zippel_side {
                 let t = Instant::now();
                 let proof = self
                     .handler
-                    .run_prover(inputs_c)
+                    .run_prover(&inputs_c)
                     .expect("zippel pst13 prover failed");
                 prove_sum += t.elapsed();
                 last_proof = Some(proof);
@@ -540,7 +541,7 @@ pub mod zippel_side {
                 let t = Instant::now();
                 let verifier_result = self
                     .handler
-                    .run_verifier(proof_c)
+                    .run_verifier(&proof_c)
                     .expect("zippel pst13 verifier failed");
                 verify_sum += t.elapsed();
                 last_result = Some(verifier_result);
@@ -627,7 +628,7 @@ mod cross_tests {
         // Prime zippel handler state by running its prover once.
         let mut handler = zippel_handler(&shared);
         let _ = handler
-            .run_prover(zip_inputs(&shared))
+            .run_prover(&zip_inputs(&shared))
             .expect("zippel run_prover (priming handler state)");
 
         // Pack native proof into the zippel transcript order: [c_p, π_0, ..., π_{n-1}].
@@ -637,7 +638,7 @@ mod cross_tests {
             cross_proof.push(Value::G1(*pi));
         }
         let verifier_result = handler
-            .run_verifier(cross_proof)
+            .run_verifier(&cross_proof)
             .expect("zippel run_verifier on cross-proof");
         let result = check_verification(verifier_result);
         assert!(
@@ -661,7 +662,7 @@ mod cross_tests {
 
         let mut handler = zippel_handler(&shared);
         let zip_proof: Vec<Value<ArkBls12_381>> = handler
-            .run_prover(zip_inputs(&shared))
+            .run_prover(&zip_inputs(&shared))
             .expect("zippel run_prover");
 
         assert_eq!(

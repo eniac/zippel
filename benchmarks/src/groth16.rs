@@ -573,7 +573,7 @@ pub mod zippel_side {
                 inputs.insert(&Vid("h_coeffs".to_string()), &Value::VecScalar(h_coeffs));
                 let proof = self
                     .handler
-                    .run_prover(inputs)
+                    .run_prover(&inputs)
                     .expect("zippel groth16 prover failed");
                 prove_sum += t.elapsed();
                 last_proof = Some(proof);
@@ -589,7 +589,7 @@ pub mod zippel_side {
                 let t = Instant::now();
                 let verifier_result = self
                     .handler
-                    .run_verifier(proof_c)
+                    .run_verifier(&proof_c)
                     .expect("zippel groth16 verifier failed");
                 verify_sum += t.elapsed();
                 last_result = Some(verifier_result);
@@ -825,6 +825,7 @@ pub mod native_side {
     /// Vendored Groth16 verifier. One MSM over `gamma_abc_g1` plus a
     /// single 3-pair `multi_pairing` (one Miller loop + one
     /// final-exponentiation), then GT identity check via `result == result − result`.
+    #[allow(clippy::eq_op)]
     pub fn verify(keys: &AffineKeys, proof: &Proof, public_inputs: &[GitFr]) -> bool {
         // IC = gamma_abc_g1[0] + MSM(gamma_abc_g1[1..], public_inputs).
         // public_inputs already drops the constant-1, matching the v0.5
@@ -1022,7 +1023,7 @@ mod cross_tests {
         let mut handler = zippel_handler(&t);
         let zip_inputs = zip_inputs_from_translated(&t);
         let _ = handler
-            .run_prover(zip_inputs)
+            .run_prover(&zip_inputs)
             .expect("zippel run_prover (priming handler state)");
 
         // The zippel transcript is [a_proof, b_proof, c_proof] in `<-` order
@@ -1033,7 +1034,7 @@ mod cross_tests {
             Value::G1(proof_n.c),
         ];
         let verifier_result = handler
-            .run_verifier(cross_proof)
+            .run_verifier(&cross_proof)
             .expect("zippel run_verifier on cross-proof");
         let result = check_verification(verifier_result);
         assert!(
@@ -1059,7 +1060,7 @@ mod cross_tests {
         let mut handler = zippel_handler(&t);
         let zip_inputs = zip_inputs_from_translated(&t);
         let zip_proof: Vec<Value<ArkBls12_381>> = handler
-            .run_prover(zip_inputs)
+            .run_prover(&zip_inputs)
             .expect("zippel run_prover");
 
         assert_eq!(
