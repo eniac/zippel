@@ -1,0 +1,119 @@
+//! Op encoder infrastructure: `EncodeCtx` and per-op encoder modules.
+//!
+//! Each op encoder is a free function taking `&mut EncodeCtx`. The context
+//! provides mutable access to the namespace (for sentinel/witness allocation)
+//! and the ideal being built.
+
+use backend::op::HasOpFactory;
+use backend::{ATyp, ArkConfig};
+
+use crate::Var;
+use crate::frontend::Polynomial;
+
+use super::ideal::Ideal;
+use super::namespace::IdealNamespace;
+
+/// Context passed to every op encoder. Provides access to the
+/// namespace (for sentinel allocation) and the ideal being built.
+pub struct EncodeCtx<'a, C: ArkConfig> {
+    pub ns: &'a mut IdealNamespace<C>,
+    pub ideal: &'a mut Ideal<C>,
+}
+
+impl<'a, C: ArkConfig + HasOpFactory> EncodeCtx<'a, C> {
+    /// Allocate a sentinel variable with `name` and `typ`, registering it
+    /// in the ideal's var_order.
+    pub fn sentinel_var(&mut self, name: &str, typ: ATyp) -> Var {
+        let var = self.ns.sentinel_var(name, typ);
+        self.ideal.var_order.push(var.clone());
+        var
+    }
+}
+
+/// Link the user's Var `var` to a witness Var `wit` slot by slot.
+/// Emits `var(var[j]) − var(wit[j]) = 0` for every slot, and
+/// registers `pl[var[j]] = var(wit[j])`.
+///
+/// The type checker computes exact degree bounds for quotient
+/// (`m - m'`) and remainder (`m' - 1`), so the witness and target
+/// must have the same number of physical slots. A mismatch indicates
+/// a bug in either the type checker or the caller.
+pub fn link_to_witness<C: ArkConfig>(ideal: &mut Ideal<C>, var: &Var, wit: &Var) {
+    let var_slots = var.slots();
+    let wit_slots = wit.slots();
+    assert_eq!(
+        var_slots.len(),
+        wit_slots.len(),
+        "link_to_witness: slot count mismatch — var {} has {} slots, wit {} has {}",
+        var.verbose(),
+        var_slots.len(),
+        wit.verbose(),
+        wit_slots.len(),
+    );
+    for (pf, wf) in var_slots.into_iter().zip(wit_slots) {
+        let wvar = Polynomial::var(&wf);
+        ideal.pl.insert(&pf, &wvar);
+        ideal.generating_set.push(&wvar - &Polynomial::var(&pf));
+    }
+}
+
+/// Link each slot of `var` to the corresponding polynomial in `polys`.
+/// Registers `pl[var[j]] = polys[j]` and emits `polys[j] − var(var[j]) = 0`.
+///
+/// Asserts that `var` has exactly `polys.len()` physical slots.
+pub fn link_to_polys<C: ArkConfig>(ideal: &mut Ideal<C>, var: &Var, polys: Vec<Polynomial<C::F>>) {
+    let var_slots = var.slots();
+    assert_eq!(
+        var_slots.len(),
+        polys.len(),
+        "link_to_polys: slot count mismatch — var {} has {} slots, polys has {}",
+        var.verbose(),
+        var_slots.len(),
+        polys.len(),
+    );
+    for (pf, p) in var_slots.into_iter().zip(polys) {
+        ideal.pl.insert(&pf, &p);
+        ideal.generating_set.push(p - Polynomial::var(&pf));
+    }
+}
+
+/// Constrain each slot of `var` to equal the corresponding polynomial in
+/// `polys`, emitting `polys[j] − var(var[j]) = 0` **without** registering
+/// in `pl`. Used when the polys are already defined elsewhere (e.g. via
+/// sentinel vars from `mul_op`) and the target var should not be recorded
+/// as their canonical definition.
+///
+/// Asserts that `var` has exactly `polys.len()` physical slots.
+pub fn constrain_to_polys<C: ArkConfig>(
+    ideal: &mut Ideal<C>,
+    var: &Var,
+    polys: Vec<Polynomial<C::F>>,
+) {
+    let var_slots = var.slots();
+    assert_eq!(
+        var_slots.len(),
+        polys.len(),
+        "constrain_to_polys: slot count mismatch — var {} has {} slots, polys has {}",
+        var.verbose(),
+        var_slots.len(),
+        polys.len(),
+    );
+    for (pf, p) in var_slots.into_iter().zip(polys) {
+        ideal.generating_set.push(p - Polynomial::var(&pf));
+    }
+}
+
+pub mod binop;
+pub mod concat;
+pub mod div;
+pub mod equ;
+pub mod eval;
+pub mod fft;
+pub mod interpolate;
+pub mod map;
+pub mod pow;
+pub mod ram;
+pub mod record;
+pub mod reduce;
+pub mod test_helpers;
+pub mod value;
