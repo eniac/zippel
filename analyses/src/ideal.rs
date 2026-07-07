@@ -689,7 +689,7 @@ impl<C: ArkConfig> PolySource<C> {
             }
 
             _ => {
-                unreachable!(
+                panic!(
                     "lift_to: unsupported type combination {} → {}",
                     self.typ, target
                 )
@@ -706,16 +706,16 @@ impl<C: ArkConfig> PolySource<C> {
         }
     }
 
-    fn lift_scalar_for_add_sub_to(&self, poly_typ: &ATyp) -> PolySource<C> {
+    fn inject_constant_to(&self, poly_typ: &ATyp) -> PolySource<C> {
         assert!(
             Self::is_scalar_like(&self.typ),
-            "lift_scalar_for_add_sub_to requires a scalar-like source, got {}",
+            "inject_constant_to requires a scalar-like source, got {}",
             self.typ
         );
         assert_eq!(
             self.polys.len(),
             1,
-            "lift_scalar_for_add_sub_to requires exactly one source slot"
+            "inject_constant_to requires exactly one source slot"
         );
 
         let scalar_poly = self.polys[0].clone();
@@ -737,8 +737,8 @@ impl<C: ArkConfig> PolySource<C> {
                 out
             }
             ATyp::Mle(_) => vec![scalar_poly; poly_typ.physical_len()],
-            ATyp::Vec(_, _) | ATyp::Record(_) => unreachable!(
-                "lift_scalar_for_add_sub_to: unsupported scalar lift target {}",
+            ATyp::Vec(_, _) | ATyp::Record(_) => panic!(
+                "inject_constant_to: unsupported scalar lift target {}",
                 poly_typ
             ),
         };
@@ -773,14 +773,6 @@ impl<C: ArkConfig> PolySource<C> {
 #[derive(Clone)]
 pub struct IdealBuilder<C: ArkConfig> {
     pub ns: IdealNamespace<C>,
-    /// When true, `a / b` where `a`'s op is `Mul(cofactor, b)` (or `Mul(b, cofactor)`)
-    /// lowers as the exact-division copy `q = cofactor` instead of the generic
-    /// quotient/remainder convolution. Set only by the completeness analysis.
-    detect_exact_division: bool,
-    /// Per-`build()` map from a node's `Ref` to its op, used to recognise the
-    /// `Mul`-then-`Div` exact-division pattern. Populated only when
-    /// `detect_exact_division` is set.
-    node_ops: HashMap<Ref, GOp<C>>,
 }
 
 impl<C: ArkConfig + HasOpFactory> Default for IdealBuilder<C> {
@@ -793,14 +785,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     pub fn new() -> Self {
         Self {
             ns: IdealNamespace::new(),
-            detect_exact_division: false,
-            node_ops: HashMap::new(),
         }
-    }
-
-    /// Enable structural exact-division detection (completeness analysis only).
-    pub fn enable_exact_division(&mut self) {
-        self.detect_exact_division = true;
     }
 
     /// Panic with a clear, searchable message when an operation has no
@@ -826,8 +811,6 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     pub fn fork_with_clean_div_witness_cache(&self) -> Self {
         let mut fork = Self {
             ns: self.ns.clone(),
-            detect_exact_division: self.detect_exact_division,
-            node_ops: self.node_ops.clone(),
         };
         fork.clear_div_witness_cache();
         fork
@@ -838,12 +821,6 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     /// namespace keeps generated witness/sentinel allocation stable.
     pub fn build(&mut self, tc: TransClos<C>) -> Ideal<C> {
         let mut ideal = Ideal::new();
-        if self.detect_exact_division {
-            self.node_ops.clear();
-            for (var, op) in tc.clos.iter() {
-                self.node_ops.insert(var.reference, op.clone());
-            }
-        }
         for new_arg in tc.vars.iter() {
             ideal.register(new_arg);
         }
@@ -875,36 +852,6 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         let q_wit = self.sentinel_var(&q_name, quotient_typ, ideal);
         let r_wit = self.sentinel_var(&r_name, remainder_typ, ideal);
         (q_wit, r_wit)
-    }
-
-    /// If exact-division detection is enabled and dividend `a` is a `Ref` to a
-    /// node whose op is `Mul(x, y)` with one factor structurally equal to divisor
-    /// `b`, return the *other* factor (the cofactor). Then `a / b` is exact:
-    /// quotient = cofactor, remainder = 0.
-    fn exact_division_cofactor(&self, a: &HOp<C>, b: &HOp<C>) -> Option<HOp<C>> {
-        if !self.detect_exact_division {
-            return None;
-        }
-        let Op::Ref(div_ref, _) = b.get() else {
-            return None;
-        };
-        let Op::Ref(prod_ref, _) = a.get() else {
-            return None;
-        };
-        let Op::Bin(BinOp::Mul, x, y, _) = self.node_ops.get(prod_ref)? else {
-            return None;
-        };
-        if let Op::Ref(xr, _) = x.get()
-            && xr == div_ref
-        {
-            return Some(y.clone());
-        }
-        if let Op::Ref(yr, _) = y.get()
-            && yr == div_ref
-        {
-            return Some(x.clone());
-        }
-        None
     }
 
     fn canonical_div_typ(t: &ATyp) -> Option<CanonPolyTyp> {
@@ -1009,7 +956,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     /// - VPoly/Uni polynomial divisions use witness Vars + cache
     /// - Polynomial-like dividends divided by scalar-like divisors use slot-wise field division
     /// - Non-polynomial Div uses slot-wise field division
-    /// - Remainder by scalar and unsupported MLE polynomial division remain `unreachable!`
+    /// - Remainder by scalar and unsupported MLE polynomial division remain `panic!`
     ///
     /// Polynomial divisions use a canonical operand-content key in `div_wit`
     /// before emitting identity rows, and insert after emission. This ensures
@@ -1041,7 +988,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             }
             (_, ATyp::Vec(_, nb)) if PolySource::<C>::is_scalar_like(a.typ()) => {
                 if is_rem {
-                    unreachable!(
+                    panic!(
                         "Rem: scalar-left vector remainder is undefined for {} % {} — type checker should prevent this",
                         a.typ(),
                         b.typ(),
@@ -1055,7 +1002,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             }
             _ if a.is_poly() && PolySource::<C>::is_scalar_like(b.typ()) => {
                 if is_rem {
-                    unreachable!(
+                    panic!(
                         "Rem: polynomial-like remainder by scalar is undefined for {} % {} — type checker should prevent this",
                         a.typ(),
                         b.typ(),
@@ -1065,7 +1012,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 self.slot_wise_div(target, a.polys(), b_broadcast.polys(), ideal);
             }
             _ if matches!(a.typ(), ATyp::Mle(_)) || matches!(b.typ(), ATyp::Mle(_)) => {
-                unreachable!(
+                panic!(
                     "{}: MLE division is not supported ({} {} {}) — only VPoly/Uni dividend and divisor are supported",
                     if is_rem { "Rem" } else { "Div" },
                     a.typ(),
@@ -1087,11 +1034,19 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 let (na, ma) = PolySource::<C>::poly_shape_static(a.typ()).unwrap();
                 let (nb, mb) = PolySource::<C>::poly_shape_static(b.typ()).unwrap();
                 if na != nb {
-                    unreachable!(
+                    panic!(
                         "{}: VPoly num_vars mismatch — dividend has n={} but divisor has n={}",
                         if is_rem { "Rem" } else { "Div" },
                         na,
                         nb,
+                    );
+                }
+                if na != 1 {
+                    panic!(
+                        "{}: multivariate VPoly division is not supported (dividend has n={}) \
+                         — only univariate (VPoly(1, m) / VPoly(1, m)) is handled",
+                        if is_rem { "Rem" } else { "Div" },
+                        na,
                     );
                 }
                 if ma < mb {
@@ -1103,7 +1058,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                         }
                         return;
                     }
-                    unreachable!(
+                    panic!(
                         "{}: dividend degree < divisor degree ({} < {})",
                         if is_rem { "Rem" } else { "Div" },
                         ma,
@@ -1137,6 +1092,32 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
 
                 let (q_wit, r_wit) =
                     self.alloc_div_witness_pair(ATyp::VPoly(nr, mq), ATyp::VPoly(nr, mr), ideal);
+
+                // The divisor's leading coefficient must be nonzero for
+                // polynomial division to be well-defined. We encode this
+                // assumption by introducing a fresh inverse variable and the
+                // constraint `b_lead · b_lead_inv - 1 = 0`, which makes
+                // `b_lead` a unit in the polynomial ring. Without this, the
+                // GB cannot cancel `b_lead` from equations like
+                // `b_lead · (q - p) = 0` to deduce `q = p` (exact division),
+                // because `b_lead` is an indeterminate, not a unit.
+                //
+                // Caveat: `Uni(m)` / `VPoly(1, m)` encodes max degree m, not
+                // exact degree m. A divisor of actual degree < m has a zero
+                // leading coefficient, and this constraint would be
+                // unsatisfiable (forcing the unit ideal). This is acceptable
+                // for now because (1) we only handle univariate division,
+                // (2) no existing program divides by a polynomial whose
+                // declared degree exceeds its actual degree, and (3) this
+                // is a temporary measure. When Zippel gains a `nonzero`
+                // keyword, the programmer will explicitly mark divisors as
+                // nonzero at declaration time, and this implicit constraint
+                // can be dropped in favor of the explicit one.
+                let b_lead = &b.polys()[b.polys().len() - 1];
+                let inv_var = self.sentinel_var("div_inv", ATyp::scalar(), ideal);
+                ideal.generating_set.push(
+                    &(b_lead * &Polynomial::var(&inv_var)) - &Polynomial::lit(&C::FOps::one()),
+                );
 
                 let a_idx = multi_indices(na, ma);
                 let b_idx = multi_indices(nb, mb);
@@ -1186,7 +1167,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             }
             _ if !a.is_poly() && !b.is_poly() => {
                 if is_rem {
-                    unreachable!(
+                    panic!(
                         "Rem: non-polynomial remainder is undefined for {} % {} — type checker should prevent this",
                         a.typ(),
                         b.typ(),
@@ -1195,7 +1176,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 self.slot_wise_div(target, a.polys(), b.polys(), ideal);
             }
             _ => {
-                unreachable!(
+                panic!(
                     "{}: mixed poly/non-poly division ({} {} {}) is not supported",
                     if is_rem { "Rem" } else { "Div" },
                     a.typ(),
@@ -1361,7 +1342,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     let b_elem = b.at_index(i).unwrap();
                     let r_inner = match r_typ {
                         ATyp::Vec(inner, _) => inner,
-                        _ => unreachable!("broadcast_binop Vec×Vec ideal must be Vec"),
+                        _ => panic!("broadcast_binop Vec×Vec ideal must be Vec"),
                     };
                     self.broadcast_binop(
                         &var.with_index(i).unwrap(),
@@ -1379,7 +1360,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     && a.is_poly() =>
             {
                 let a_lifted = a.lift_to(r_typ);
-                let b_lifted = b.lift_scalar_for_add_sub_to(r_typ);
+                let b_lifted = b.inject_constant_to(r_typ);
                 self.emit_slotwise_binop(
                     var,
                     a_lifted.polys(),
@@ -1394,7 +1375,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     && PolySource::<C>::is_scalar_like(a.typ())
                     && b.is_poly() =>
             {
-                let a_lifted = a.lift_scalar_for_add_sub_to(r_typ);
+                let a_lifted = a.inject_constant_to(r_typ);
                 let b_lifted = b.lift_to(r_typ);
                 self.emit_slotwise_binop(
                     var,
@@ -1454,7 +1435,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         match op {
             BinOp::Add => a + b,
             BinOp::Sub => a - b,
-            other => unreachable!("apply_binop called with {:?}", other),
+            other => panic!("apply_binop called with {:?}", other),
         }
     }
 
@@ -1473,7 +1454,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             (ATyp::Vec(_, na), ATyp::Vec(_, nb)) if na == nb => {
                 let r_inner = match r_typ {
                     ATyp::Vec(inner, _) => inner,
-                    _ => unreachable!("mul_op Vec×Vec ideal must be Vec"),
+                    _ => panic!("mul_op Vec×Vec ideal must be Vec"),
                 };
                 for i in 0..*na {
                     let t_i = target.with_index(i).unwrap();
@@ -1485,7 +1466,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             (ATyp::Vec(_, na), _) => {
                 let r_inner = match r_typ {
                     ATyp::Vec(inner, _) => inner,
-                    _ => unreachable!("mul_op Vec×scalar ideal must be Vec"),
+                    _ => panic!("mul_op Vec×scalar ideal must be Vec"),
                 };
                 for i in 0..*na {
                     let t_i = target.with_index(i).unwrap();
@@ -1496,7 +1477,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             (_, ATyp::Vec(_, nb)) => {
                 let r_inner = match r_typ {
                     ATyp::Vec(inner, _) => inner,
-                    _ => unreachable!("mul_op scalar×Vec ideal must be Vec"),
+                    _ => panic!("mul_op scalar×Vec ideal must be Vec"),
                 };
                 for i in 0..*nb {
                     let t_i = target.with_index(i).unwrap();
@@ -1522,7 +1503,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             }
             (ATyp::Mle(na), ATyp::Mle(nb)) if na == nb => {
                 let ATyp::VPoly(_nr, mr) = r_typ else {
-                    unreachable!("Mul Mle×Mle ideal must be VPoly");
+                    panic!("Mul Mle×Mle ideal must be VPoly");
                 };
                 let n = *na;
                 let all_b = hypercube(n);
@@ -1572,7 +1553,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 if *na == *nb =>
             {
                 let ATyp::VPoly(nr, mr) = r_typ else {
-                    unreachable!("Mul Mle×VPoly ideal must be VPoly");
+                    panic!("Mul Mle×VPoly ideal must be VPoly");
                 };
                 assert!(
                     *nr == *na && *mr == *mb + *na,
@@ -1679,7 +1660,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                         }
                     }
                     _ => {
-                        unreachable!(
+                        panic!(
                             "Mul: unsupported polynomial type combination {}×{} → {}",
                             a.typ(),
                             b.typ(),
@@ -1697,7 +1678,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 }
             }
             _ => {
-                unreachable!(
+                panic!(
                     "Mul: unsupported type combination {}×{} → {}",
                     a.typ(),
                     b.typ(),
@@ -1752,7 +1733,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     .push(sum - Polynomial::var(&pr_slots[0]));
             }
             _ => {
-                unreachable!(
+                panic!(
                     "Dot: unsupported type combination {} · {}",
                     a.typ(),
                     b.typ()
@@ -1791,7 +1772,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 }
             }
             _ => {
-                unreachable!(
+                panic!(
                     "Pair: unsupported type combination {} × {} → {}",
                     a.typ(),
                     b.typ(),
@@ -1972,14 +1953,14 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 .iter()
                 .map(|i| Polynomial::lit(&C::FOps::from_usize(*i)))
                 .collect::<Vec<_>>(),
-            _ => unreachable!("Unsupported value: {}", v),
+            _ => panic!("Unsupported value: {}", v),
         }
     }
 
     /// Shared helper for `Op::Evaluate(p, xs)` — computes the ideal
     /// polynomials for evaluating `p` at `xs`. Panics on unsupported
     /// (p.typ(), |xs|) combinations; the type checker guarantees these
-    /// are unreachable.
+    /// are not expected.
     fn eval_to_poly(
         &mut self,
         p: &GOp<C>,
@@ -2099,7 +2080,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                         .collect()
                 }
             }
-            _ => unreachable!(
+            _ => panic!(
                 "Evaluate: unsupported polynomial type {:?} with {} evaluation points",
                 p_typ, k
             ),
@@ -2227,18 +2208,9 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 self.dot_op(&var, &a_src, &b_src, ideal);
             }
             Op::Bin(BinOp::Div, ref a, ref b, _) => {
-                if let Some(cofactor) = self.exact_division_cofactor(a, b) {
-                    let cof_src = PolySource::from_ref_vars(&ideal.vars, &cofactor);
-                    let lifted = cof_src.lift_to(&var.typ);
-                    for (pf, p) in var.slots().into_iter().zip(lifted.polys) {
-                        ideal.pl.insert(&pf, &p);
-                        ideal.generating_set.push(p - Polynomial::var(&pf));
-                    }
-                } else {
-                    let a_src = PolySource::from_ref_vars(&ideal.vars, a);
-                    let b_src = PolySource::from_ref_vars(&ideal.vars, b);
-                    self.div_rem_op(&var, &a_src, &b_src, false, true, ideal);
-                }
+                let a_src = PolySource::from_ref_vars(&ideal.vars, a);
+                let b_src = PolySource::from_ref_vars(&ideal.vars, b);
+                self.div_rem_op(&var, &a_src, &b_src, false, true, ideal);
             }
             Op::Bin(BinOp::Rem, ref a, ref b, _) => {
                 let a_src = PolySource::from_ref_vars(&ideal.vars, a);
@@ -2336,7 +2308,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             //                        Σ_{b_fixed} v_{(b_fixed,b′)} · Π_i eq(b_fixed,i, xs[i])
             //
             // The type checker guarantees xs is non-empty and p has a supported
-            // polynomial type; unsupported shapes are unreachable.
+            // polynomial type; unsupported shapes are not expected.
             Op::Evaluate(ref p, None, Some(ref xs)) => {
                 let polys = self.eval_to_poly_as(p, xs, &var.typ, &ideal.vars);
                 for (pf, poly) in var.slots().into_iter().zip(polys) {
@@ -2389,7 +2361,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             //
             // Group / Pair / Poly literals aren't scalars and fall through
             // to the opaque catch-all below via `to_poly_value`'s
-            // `unreachable!` — which we guard against with a try-convert.
+            // `panic!` — which we guard against with a try-convert.
             Op::Value(ref v) => {
                 // `to_poly_value` panics on unsupported Value variants; we
                 // keep it behind a closure so the panic path is explicit.
@@ -2426,14 +2398,14 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             Op::Ram(ref a, ref b) => match b.get() {
                 Op::Value(Value::Index(i)) => {
                     let Op::Ref(r, _) = a.get() else {
-                        unreachable!(
+                        panic!(
                             "Ram array operand must be Ref; got {:?}",
                             std::mem::discriminant(a.get())
                         )
                     };
                     let array_var = ideal.find_ref(r);
                     let Some(elem_var) = array_var.with_index(*i) else {
-                        unreachable!(
+                        panic!(
                             "Ram operand with literal index must be within bound; Got {:?}",
                             *i
                         )
@@ -2449,7 +2421,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 }
                 Op::Value(Value::VecIndex(vs)) => {
                     let Op::Ref(r, _) = a.get() else {
-                        unreachable!(
+                        panic!(
                             "Ram array operand must be Ref; got {:?}",
                             std::mem::discriminant(a.get())
                         )
@@ -2536,7 +2508,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                         }
                     }
                     _ => {
-                        unreachable!(
+                        panic!(
                             "ideal: Proj: non-record inner type {:?} for field '{}'; \
                              all Proj ops must operate on Record types after IR lowering",
                             inner_typ, field
@@ -2576,7 +2548,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     .collect()
             }
             other => {
-                unreachable!(
+                panic!(
                     "Interpolate points operand must be Ref or Value; got {:?}",
                     std::mem::discriminant(other)
                 )
@@ -2717,17 +2689,17 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     ///   very-high-degree terms — better handled by the `BinOp::Pow` handler
     ///   in `add_op` which sees a single exponent directly.
     ///
-    /// - **Dot**: unreachable (type checker rejects `reduce(dot, _)`).
+    /// - **Dot**: not supported (type checker rejects `reduce(dot, _)`).
     fn reduce_op(&mut self, var: Var, rop: BinOp, v: &HOp<C>, ideal: &mut Ideal<C>) {
         let v_typ = v.typ();
         let (elem_t, n) = match &v_typ {
             ATyp::Vec(box e, n) => (e.clone(), *n),
-            _ => unreachable!("Reduce operand must be Vec; type checker guarantees this"),
+            _ => panic!("Reduce operand must be Vec; type checker guarantees this"),
         };
 
         if n == 1 {
             let Op::Ref(r, _) = v.get() else {
-                unreachable!(
+                panic!(
                     "Reduce operand must be Ref; got {:?}",
                     std::mem::discriminant(v.get())
                 )
@@ -2828,7 +2800,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     let is_last = step == n - 2;
                     let elem_src = v_src.at_index(step + 1).unwrap();
                     if !is_poly && is_rem {
-                        unreachable!(
+                        panic!(
                             "Rem: non-polynomial remainder is undefined for Vec<{}>",
                             elem_t,
                         );
@@ -2858,7 +2830,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 Self::uncovered_op("reduce-equ-or-pow", &var);
             }
             BinOp::Dot => {
-                unreachable!("reduce(dot, _) is rejected by the type checker");
+                panic!("reduce(dot, _) is rejected by the type checker");
             }
         }
     }
@@ -2983,7 +2955,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                         );
                     } else {
                         if is_rem {
-                            unreachable!(
+                            panic!(
                                 "Rem: non-polynomial remainder is undefined for Vec<{}>",
                                 elem_t,
                             );
@@ -3004,7 +2976,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 Self::uncovered_op("reduce-equ-or-pow", &var);
             }
             BinOp::Dot => {
-                unreachable!("reduce(dot, _) is rejected by the type checker");
+                panic!("reduce(dot, _) is rejected by the type checker");
             }
         }
     }
@@ -4607,11 +4579,11 @@ mod tests {
         let q1 = wit_slot(&q_wit, 1);
         let r0 = wit_slot(&r_wit, 0);
 
-        // 3 identity rows + 2 linking rows.
+        // 3 identity rows + 2 linking rows + 1 divisor-invertibility constraint.
         assert_eq!(
             ideal.generating_set.len() - basis_before,
-            5,
-            "expected 3 identity + 2 linking rows"
+            6,
+            "expected 3 identity + 2 linking + 1 invertibility rows"
         );
 
         // Check identity rows exist in basis.
@@ -4705,11 +4677,11 @@ mod tests {
         // r_wit slots: with_slot computes the correct type.
         let r0 = r_wit.clone().with_index(0).unwrap();
 
-        // 3 identity rows + 1 linking row (ideal has only 1 slot).
+        // 3 identity rows + 1 linking row + 1 divisor-invertibility constraint.
         assert_eq!(
             ideal.generating_set.len() - basis_before,
-            4,
-            "expected 3 identity + 1 linking row"
+            5,
+            "expected 3 identity + 1 linking + 1 invertibility row"
         );
 
         // pl[ideal[0]] = var(r_wit[0]).
@@ -4773,11 +4745,11 @@ mod tests {
         };
         let after_rem = ideal.generating_set.len();
 
-        // Div added 3 identity + 2 linking = 5 rows.
+        // Div added 3 identity + 2 linking + 1 invertibility = 6 rows.
         assert_eq!(
             after_div - basis_before_div,
-            5,
-            "Div emitted 3 identity + 2 linking rows"
+            6,
+            "Div emitted 3 identity + 2 linking + 1 invertibility rows"
         );
         // Rem added ONLY the linking row (1 slot on VPoly(1,0)) — no new identity.
         assert_eq!(
@@ -7433,7 +7405,7 @@ mod tests {
             ),
             &mut ideal,
         );
-        // The above panics with "dynamic-pow"; assertions below are unreachable.
+        // The above panics with "dynamic-pow"; assertions below are not expected.
     }
 
     #[test]
@@ -7609,7 +7581,7 @@ mod tests {
             ),
             &mut ideal,
         );
-        // The above panics with "dynamic-pow"; assertions below are unreachable.
+        // The above panics with "dynamic-pow"; assertions below are not expected.
     }
 
     // -----------------------------------------------------------------

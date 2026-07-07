@@ -417,7 +417,7 @@ mod tests {
         let g = QualifierPropagation::from_dag(&gs[0]);
         let result = UniformityPropagation::from_dag(&g);
 
-        assert!(result.distributions.len() > 0);
+        assert!(!result.distributions.is_empty());
     }
 
     #[test]
@@ -444,7 +444,7 @@ mod tests {
         );
         let result = UniformityPropagation::from_dag(&g);
 
-        assert!(result.distributions.len() > 0);
+        assert!(!result.distributions.is_empty());
     }
 
     #[test]

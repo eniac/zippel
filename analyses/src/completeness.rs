@@ -31,7 +31,6 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
     /// backend.
     pub fn from_input_with_backend(dag: &QDag<C>, backend: GbBackendKind) -> Self {
         let mut builder = IdealBuilder::new();
-        builder.enable_exact_division();
 
         let prover_tc = TransClos::prover(dag);
         let mut prover_result = builder.build(prover_tc);

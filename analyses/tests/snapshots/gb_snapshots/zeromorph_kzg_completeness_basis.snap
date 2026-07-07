@@ -16,6 +16,7 @@ expression: value
 - srs_g2[0]*pi*__zippel::gb::div_q::0[0] + gen_g2*c*__zippel::gb::div_q::0[0] - srs_g2[1]*r*pi - gen_g2*p_coeffs[0]*pi + srs_g2[1]*c*s
 - srs_g2[0]*srs_g2[1]*delta*__zippel::gb::div_q::0[0] - srs_g2[0]^2*pi*__zippel::gb::div_q::0[0] + gen_g2*srs_g2[0]*c*__zippel::gb::div_q::0[0] - srs_g2[1]^2*r*delta - gen_g2*p_coeffs[0]*srs_g2[1]*delta + gen_g2*srs_g2[1]*u*r*pi - srs_g2[0]*srs_g2[1]*r*pi + gen_g2*srs_g2[0]*v*pi + gen_g2^2*p_coeffs[0]*u*pi + 52435875175126190479447740508185965837690552500527637822603658699938581184511*gen_g2*p_coeffs[0]*srs_g2[0]*pi + gen_g2*srs_g2[1]*r*c - gen_g2^2*v*c + gen_g2^2*p_coeffs[0]*c
 __zippel::gb::div_r::0[0]
+div_inv - 1
 gen_g2*delta*__zippel::gb::div_q::0[0]^2 + srs_g2[1]*s*delta*__zippel::gb::div_q::0[0] + srs_g2[0]*s*pi*__zippel::gb::div_q::0[0] - gen_g2*r*pi*__zippel::gb::div_q::0[0] - gen_g2*v*s*pi + gen_g2*p_coeffs[0]*s*pi
 gen_g2*srs_g1[0]*__zippel::gb::div_q::0[0] - gen_g2*pi + srs_g1[0]*srs_g2[1]*s
 srs_g1[0]*__zippel::gb::div_q::0[0] - pi + srs_g1[2]*s

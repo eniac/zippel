@@ -153,11 +153,12 @@ fn backend_for_snapshot(snap_name: &str) -> Result<GbBackendKind, Failed> {
     // Regeneration mode: always use Singular to preserve baselines.
     if std::env::var("INSTA_UPDATE").is_ok() {
         if !singular() {
-            return Err(Failed::from(format!(
+            return Err(Failed::from(
                 "INSTA_UPDATE is set but Singular is not on PATH. \
                  Snapshots must be (re)generated with Singular to preserve baselines. \
                  Install Singular or unset INSTA_UPDATE to verify with ArkGb."
-            )));
+                    .to_string(),
+            ));
         }
         return Ok(GbBackendKind::Singular);
     }
