@@ -1,5 +1,6 @@
 //! Record and projection op encoders: `record_op`, `proj_op`.
 
+use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
 use graph::HOp;
 use share::Ctx;
@@ -7,8 +8,8 @@ use share::Ctx;
 use crate::Var;
 use crate::frontend::Polynomial;
 
-use super::super::PolySource;
-use super::super::ideal::Ideal;
+use super::EncodeCtx;
+use super::PolySource;
 use super::eval::record_field_offset;
 use super::link_to_polys;
 
@@ -16,14 +17,18 @@ use super::link_to_polys;
 /// For each field, get the field-level Var via `with_index`,
 /// then expand its sub-slots via `slots()` to get hierarchical
 /// indices (e.g. `[0][0]`, `[0][1]` for a Vec field).
-pub fn record_op<C: ArkConfig>(ideal: &mut Ideal<C>, var: &Var, fields: &Ctx<String, HOp<C>>) {
+pub fn record_op<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    var: &Var,
+    fields: &Ctx<String, HOp<C>>,
+) {
     for (field_idx, (_, field_op)) in fields.iter().enumerate() {
         let field_var = var
             .clone()
             .with_index(field_idx)
             .expect("record field index must be within record logical layout");
-        let field_polys = PolySource::ref_vars(field_op.get(), &ideal.vars);
-        link_to_polys(ideal, &field_var, field_polys);
+        let field_polys = PolySource::ref_vars(field_op.get(), &ctx.ideal.vars);
+        link_to_polys(ctx.ideal, &field_var, field_polys);
     }
 }
 
@@ -35,9 +40,14 @@ pub fn record_op<C: ArkConfig>(ideal: &mut Ideal<C>, var: &Var, fields: &Ctx<Str
 ///
 /// Non-record inner types are not supported — after IR lowering every
 /// Proj must operate on a Record; any other variant is a compiler bug.
-pub fn proj_op<C: ArkConfig>(ideal: &mut Ideal<C>, var: &Var, inner: &HOp<C>, field: &str) {
+pub fn proj_op<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    var: &Var,
+    inner: &HOp<C>,
+    field: &str,
+) {
     let inner_typ = inner.typ();
-    let inner_polys = PolySource::ref_vars(inner, &ideal.vars);
+    let inner_polys = PolySource::ref_vars(inner, &ctx.ideal.vars);
     match &inner_typ {
         ATyp::Record(fields) => {
             let offset = record_field_offset(fields, field);
@@ -45,7 +55,7 @@ pub fn proj_op<C: ArkConfig>(ideal: &mut Ideal<C>, var: &Var, inner: &HOp<C>, fi
             let polys: Vec<Polynomial<C::F>> = (0..n_slots)
                 .map(|j| inner_polys[offset + j].clone())
                 .collect();
-            link_to_polys(ideal, var, polys);
+            link_to_polys(ctx.ideal, var, polys);
         }
         _ => {
             panic!(
@@ -60,7 +70,7 @@ pub fn proj_op<C: ArkConfig>(ideal: &mut Ideal<C>, var: &Var, inner: &HOp<C>, fi
 #[cfg(test)]
 mod tests {
 
-    use crate::{Ideal, IdealBuilder};
+    use super::super::{Ideal, IdealBuilder};
 
     use backend::ArkBls12_381;
 

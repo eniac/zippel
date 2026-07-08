@@ -9,9 +9,9 @@ use graph::{HOp, Op};
 use crate::Var;
 use crate::frontend::Polynomial;
 
-use super::super::PolySource;
-use super::super::combinatorics::lagrange_basis;
 use super::EncodeCtx;
+use super::PolySource;
+use super::lagrange_basis;
 
 /// `Op::Interpolate(points, evals)`: bind `var` to the Lagrange
 /// interpolation polynomial through `(points[i], evals[i])`.
@@ -105,8 +105,8 @@ pub fn interpolate_op<C: ArkConfig + HasOpFactory>(
                 if diff.is_constant() {
                     continue;
                 }
-                let d_name = ctx.ns.next_name("interp_inv");
-                let d = ctx.sentinel_var(&d_name, ATyp::scalar());
+                let d_name = ctx.builder.ns.next_name("interp_inv");
+                let d = ctx.builder.sentinel_var(&d_name, ATyp::scalar(), ctx.ideal);
                 ctx.ideal
                     .generating_set
                     .push(Polynomial::var(&d) * diff - Polynomial::<C::F>::lit(&C::F::one()));
@@ -174,8 +174,8 @@ fn uncovered_op(context: &str, target: &Var) -> ! {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{Ideal, IdealBuilder};
     use super::lagrange_basis;
-    use crate::{Ideal, IdealBuilder};
 
     use crate::frontend::Polynomial;
     use backend::ATyp;

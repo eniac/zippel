@@ -12,7 +12,7 @@ use lang::typ::lub::Lub;
 use crate::Var;
 use crate::frontend::Polynomial;
 
-use super::super::PolySource;
+use super::PolySource;
 use super::binop::mul_op;
 use super::{EncodeCtx, link_to_polys};
 
@@ -65,10 +65,12 @@ pub fn pow_const<C: ArkConfig + HasOpFactory>(
     }
     let mut acc = PolySource::new(base.polys().to_vec(), base.typ().clone());
     for _step in 1..k {
-        let next_name = ctx.ns.next_name("pow_acc");
+        let next_name = ctx.builder.ns.next_name("pow_acc");
         let next_typ = ATyp::lub_mul(acc.typ(), base.typ(), &Nothing).expect("pow_const: lub_mul");
-        let next_var = ctx.sentinel_var(&next_name, next_typ.clone());
-        mul_op(&next_var, &acc, base, &next_typ, ctx.ideal);
+        let next_var = ctx
+            .builder
+            .sentinel_var(&next_name, next_typ.clone(), ctx.ideal);
+        mul_op(&mut *ctx, &next_var, &acc, base, &next_typ);
         acc = PolySource::new(
             next_var
                 .slots()
@@ -145,7 +147,7 @@ fn uncovered_op(context: &str, target: &Var) -> ! {
 #[cfg(test)]
 mod tests {
 
-    use crate::{Ideal, IdealBuilder};
+    use super::super::{Ideal, IdealBuilder};
 
     use backend::ATyp;
     use backend::ArkBls12_381;

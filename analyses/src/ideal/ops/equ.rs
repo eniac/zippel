@@ -1,13 +1,15 @@
 //! Equality op encoder: `broadcast_equ` and `emit_equ_diffs`.
 
+use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
 use lang::typ::Nothing;
 use lang::typ::lub::Lub;
 
 use crate::Var;
 
-use super::super::PolySource;
-use super::super::ideal::Ideal;
+use super::EncodeCtx;
+use super::Ideal;
+use super::PolySource;
 
 /// Slot-wise binary operation with type-aware broadcasting.
 ///
@@ -18,13 +20,13 @@ use super::super::ideal::Ideal;
 /// - `Poly op Scalar` / `Scalar op Poly` → broadcast scalar to each coefficient
 /// - `Uni(n1) op Uni(n2)` → zero-pad shorter operand to match ideal degree
 /// - Same-type poly op → straightforward slot-wise
-pub fn broadcast_equ<C: ArkConfig>(
+pub fn broadcast_equ<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
     _pr: &Var,
     a: &PolySource<C>,
     b: &PolySource<C>,
-    ideal: &mut Ideal<C>,
 ) {
-    emit_equ_diffs(a, b, ideal);
+    emit_equ_diffs(a, b, ctx.ideal);
     // NOTE: We do NOT emit `var.slots()` as basis polynomials here.
     // `==` is used as an assertion, not to compute the boolean
     // ideal of equality checking.
@@ -64,7 +66,7 @@ pub fn emit_equ_diffs<C: ArkConfig>(a: &PolySource<C>, b: &PolySource<C>, ideal:
 #[cfg(test)]
 mod tests {
 
-    use crate::{Ideal, IdealBuilder};
+    use super::super::{Ideal, IdealBuilder};
 
     use crate::frontend::Polynomial;
     use backend::ArkBls12_381;

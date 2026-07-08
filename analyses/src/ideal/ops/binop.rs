@@ -8,10 +8,9 @@ use lang::ast::BinOp;
 use crate::Var;
 use crate::frontend::Polynomial;
 
-use super::super::PolySource;
-use super::super::combinatorics::{hypercube, multi_indices};
-use super::super::ideal::Ideal;
+use super::PolySource;
 use super::{EncodeCtx, link_to_polys};
+use super::{hypercube, multi_indices};
 
 pub fn apply_binop<C: ArkConfig>(
     op: BinOp,
@@ -25,12 +24,12 @@ pub fn apply_binop<C: ArkConfig>(
     }
 }
 
-pub fn emit_slotwise_binop<C: ArkConfig>(
+pub fn emit_slotwise_binop<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     left: &[Polynomial<C::F>],
     right: &[Polynomial<C::F>],
     op: BinOp,
-    ideal: &mut Ideal<C>,
     context: &str,
 ) {
     let pr_slots = var.slots();
@@ -47,18 +46,20 @@ pub fn emit_slotwise_binop<C: ArkConfig>(
 
     for ((pf, left_poly), right_poly) in pr_slots.iter().zip(left).zip(right) {
         let combined = apply_binop::<C>(op, left_poly, right_poly);
-        ideal.pl.insert(pf, &combined);
-        ideal.generating_set.push(combined - Polynomial::var(pf));
+        ctx.ideal.pl.insert(pf, &combined);
+        ctx.ideal
+            .generating_set
+            .push(combined - Polynomial::var(pf));
     }
 }
 
-pub fn broadcast_binop<C: ArkConfig>(
+pub fn broadcast_binop<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a: &PolySource<C>,
     b: &PolySource<C>,
     r_typ: &ATyp,
     op: BinOp,
-    ideal: &mut Ideal<C>,
 ) {
     match (a.typ(), b.typ()) {
         (ATyp::Vec(_, na), ATyp::Vec(_, nb)) if na == nb => {
@@ -70,12 +71,12 @@ pub fn broadcast_binop<C: ArkConfig>(
                     _ => panic!("broadcast_binop Vec×Vec ideal must be Vec"),
                 };
                 broadcast_binop(
+                    &mut *ctx,
                     &var.with_index(i).unwrap(),
                     &a_elem,
                     &b_elem,
                     r_inner,
                     op,
-                    ideal,
                 );
             }
         }
@@ -87,11 +88,11 @@ pub fn broadcast_binop<C: ArkConfig>(
             let a_lifted = a.lift_to(r_typ);
             let b_lifted = b.inject_constant_to(r_typ);
             emit_slotwise_binop(
+                &mut *ctx,
                 var,
                 a_lifted.polys(),
                 b_lifted.polys(),
                 op,
-                ideal,
                 "Poly×Scalar",
             );
         }
@@ -103,33 +104,33 @@ pub fn broadcast_binop<C: ArkConfig>(
             let a_lifted = a.inject_constant_to(r_typ);
             let b_lifted = b.lift_to(r_typ);
             emit_slotwise_binop(
+                &mut *ctx,
                 var,
                 a_lifted.polys(),
                 b_lifted.polys(),
                 op,
-                ideal,
                 "Scalar×Poly",
             );
         }
         (_, _) if PolySource::<C>::is_scalar_like(b.typ()) && a.physical_len() > 1 => {
             let b_broadcast = b.broadcast_scalar_to(a.typ());
             emit_slotwise_binop(
+                &mut *ctx,
                 var,
                 a.polys(),
                 b_broadcast.polys(),
                 op,
-                ideal,
                 "value×scalar",
             );
         }
         (_, _) if PolySource::<C>::is_scalar_like(a.typ()) && b.physical_len() > 1 => {
             let a_broadcast = a.broadcast_scalar_to(b.typ());
             emit_slotwise_binop(
+                &mut *ctx,
                 var,
                 a_broadcast.polys(),
                 b.polys(),
                 op,
-                ideal,
                 "scalar×value",
             );
         }
@@ -137,16 +138,16 @@ pub fn broadcast_binop<C: ArkConfig>(
             let a_lifted = a.lift_to(r_typ);
             let b_lifted = b.lift_to(r_typ);
             emit_slotwise_binop(
+                &mut *ctx,
                 var,
                 a_lifted.polys(),
                 b_lifted.polys(),
                 op,
-                ideal,
                 "poly/lifted",
             );
         }
         _ => {
-            emit_slotwise_binop(var, a.polys(), b.polys(), op, ideal, "slotwise");
+            emit_slotwise_binop(&mut *ctx, var, a.polys(), b.polys(), op, "slotwise");
         }
     }
 }
@@ -154,12 +155,12 @@ pub fn broadcast_binop<C: ArkConfig>(
 /// For `Vec<T>` × `Vec<T>`, iterates over logical indices and recurses
 /// per element. At the leaf level (non-Vec), dispatches to polynomial
 /// convolution (VPoly/Uni/Mle) or slot-wise multiplication (base types).
-pub fn mul_op<C: ArkConfig>(
+pub fn mul_op<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
     a: &PolySource<C>,
     b: &PolySource<C>,
     r_typ: &ATyp,
-    ideal: &mut Ideal<C>,
 ) {
     match (a.typ(), b.typ()) {
         (ATyp::Vec(_, na), ATyp::Vec(_, nb)) if na == nb => {
@@ -171,7 +172,7 @@ pub fn mul_op<C: ArkConfig>(
                 let t_i = target.with_index(i).unwrap();
                 let a_elem = a.at_index(i).unwrap();
                 let b_elem = b.at_index(i).unwrap();
-                mul_op(&t_i, &a_elem, &b_elem, r_inner, ideal);
+                mul_op(&mut *ctx, &t_i, &a_elem, &b_elem, r_inner);
             }
         }
         (ATyp::Vec(_, na), _) => {
@@ -182,7 +183,7 @@ pub fn mul_op<C: ArkConfig>(
             for i in 0..*na {
                 let t_i = target.with_index(i).unwrap();
                 let a_elem = a.at_index(i).unwrap();
-                mul_op(&t_i, &a_elem, b, r_inner, ideal);
+                mul_op(&mut *ctx, &t_i, &a_elem, b, r_inner);
             }
         }
         (_, ATyp::Vec(_, nb)) => {
@@ -193,23 +194,23 @@ pub fn mul_op<C: ArkConfig>(
             for i in 0..*nb {
                 let t_i = target.with_index(i).unwrap();
                 let b_elem = b.at_index(i).unwrap();
-                mul_op(&t_i, a, &b_elem, r_inner, ideal);
+                mul_op(&mut *ctx, &t_i, a, &b_elem, r_inner);
             }
         }
         (_, ATyp::Base(ABase::Scalar)) if a.is_poly() => {
             let target_slots = target.slots();
             for (ap, pf) in a.polys().iter().zip(&target_slots) {
                 let prod = ap * &b.polys()[0];
-                ideal.pl.insert(pf, &prod);
-                ideal.generating_set.push(prod - Polynomial::var(pf));
+                ctx.ideal.pl.insert(pf, &prod);
+                ctx.ideal.generating_set.push(prod - Polynomial::var(pf));
             }
         }
         (ATyp::Base(ABase::Scalar), _) if b.is_poly() => {
             let target_slots = target.slots();
             for (bp, pf) in b.polys().iter().zip(&target_slots) {
                 let prod = &a.polys()[0] * bp;
-                ideal.pl.insert(pf, &prod);
-                ideal.generating_set.push(prod - Polynomial::var(pf));
+                ctx.ideal.pl.insert(pf, &prod);
+                ctx.ideal.generating_set.push(prod - Polynomial::var(pf));
             }
         }
         (ATyp::Mle(na), ATyp::Mle(nb)) if na == nb => {
@@ -254,7 +255,7 @@ pub fn mul_op<C: ArkConfig>(
                     }
                 }
             }
-            link_to_polys(ideal, target, out);
+            link_to_polys(ctx.ideal, target, out);
         }
         (ATyp::Mle(na), ATyp::VPoly(nb, mb)) | (ATyp::VPoly(nb, mb), ATyp::Mle(na))
             if *na == *nb =>
@@ -323,7 +324,7 @@ pub fn mul_op<C: ArkConfig>(
                     }
                 }
             }
-            link_to_polys(ideal, target, out);
+            link_to_polys(ctx.ideal, target, out);
         }
         _ if a.is_poly() && b.is_poly() => {
             let a_norm = match a.typ() {
@@ -359,8 +360,8 @@ pub fn mul_op<C: ArkConfig>(
                         }
                     }
                     for (pf, poly) in target.slots().into_iter().zip(out) {
-                        ideal.pl.insert(&pf, &poly);
-                        ideal.generating_set.push(poly - Polynomial::var(&pf));
+                        ctx.ideal.pl.insert(&pf, &poly);
+                        ctx.ideal.generating_set.push(poly - Polynomial::var(&pf));
                     }
                 }
                 _ => {
@@ -377,8 +378,8 @@ pub fn mul_op<C: ArkConfig>(
             let target_slots = target.slots();
             for ((ap, bp), pf) in a.polys().iter().zip(b.polys()).zip(&target_slots) {
                 let prod = ap * bp;
-                ideal.pl.insert(pf, &prod);
-                ideal.generating_set.push(prod - Polynomial::var(pf));
+                ctx.ideal.pl.insert(pf, &prod);
+                ctx.ideal.generating_set.push(prod - Polynomial::var(pf));
             }
         }
         _ => {
@@ -403,11 +404,11 @@ pub fn dot_op<C: ArkConfig + HasOpFactory>(
             let r_elem_len = var.typ.physical_len();
             let mut acc: Vec<Polynomial<C::F>> = vec![Polynomial::zero(); r_elem_len];
             for i in 0..*na {
-                let acc_name = ctx.ns.next_name("dot_acc");
+                let acc_name = ctx.builder.ns.next_name("dot_acc");
                 let acc_var = ctx.sentinel_var(&acc_name, var.typ.clone());
                 let a_elem = a.at_index(i).unwrap();
                 let b_elem = b.at_index(i).unwrap();
-                mul_op(&acc_var, &a_elem, &b_elem, &var.typ, ctx.ideal);
+                mul_op(&mut *ctx, &acc_var, &a_elem, &b_elem, &var.typ);
                 let acc_vars: Vec<Polynomial<C::F>> = acc_var
                     .slots()
                     .into_iter()
@@ -447,11 +448,11 @@ pub fn dot_op<C: ArkConfig + HasOpFactory>(
     }
 }
 
-pub fn pair_op<C: ArkConfig>(
+pub fn pair_op<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a: &PolySource<C>,
     b: &PolySource<C>,
-    ideal: &mut Ideal<C>,
 ) {
     match (a.typ(), b.typ(), &var.typ) {
         (ATyp::Vec(_, na), ATyp::Vec(_, nb), ATyp::Vec(r_inner, _)) if na == nb => {
@@ -463,8 +464,8 @@ pub fn pair_op<C: ArkConfig>(
                 let b_lifted = b_elem.lift_to(r_inner);
                 for (j, pf) in t_i.slots().iter().enumerate() {
                     let e = &a_lifted.polys()[j] * &b_lifted.polys()[j];
-                    ideal.pl.insert(pf, &e);
-                    ideal.generating_set.push(&e - &Polynomial::var(pf));
+                    ctx.ideal.pl.insert(pf, &e);
+                    ctx.ideal.generating_set.push(&e - &Polynomial::var(pf));
                 }
             }
         }
@@ -477,8 +478,8 @@ pub fn pair_op<C: ArkConfig>(
                 .map(|((pf, a), b)| (pf, a, b))
             {
                 let e = e_a * e_b;
-                ideal.pl.insert(pf, &e);
-                ideal.generating_set.push(&e - &Polynomial::var(pf));
+                ctx.ideal.pl.insert(pf, &e);
+                ctx.ideal.generating_set.push(&e - &Polynomial::var(pf));
             }
         }
         _ => {
@@ -497,8 +498,8 @@ mod tests {
     use super::super::test_helpers::{
         assert_ideal_slot, scalar_poly_binop_ideal, trans_clos_from_src,
     };
+    use super::super::{Ideal, IdealBuilder};
     use super::multi_indices;
-    use crate::{Ideal, IdealBuilder};
 
     use crate::frontend::Polynomial;
     use backend::ATyp;

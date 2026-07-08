@@ -18,7 +18,7 @@ use lang::ast::{BinOp, UModule};
 use share::Ctx;
 use share::unwrap;
 
-use crate::{Ideal, IdealBuilder};
+use super::{Ideal, IdealBuilder};
 
 pub fn trans_clos_from_src(src: &str) -> TransClos<ArkBls12_381> {
     let m = UModule::from_str(src)

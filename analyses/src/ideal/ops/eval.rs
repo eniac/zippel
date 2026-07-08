@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use ark_ff::One;
 
+use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
 use graph::{GOp, Ref};
 
@@ -12,12 +13,12 @@ use crate::Var;
 use crate::frontend::Polynomial;
 use share::Ctx;
 
-use super::super::PolySource;
-use super::super::combinatorics::{hypercube, multi_indices};
-use super::super::ideal::Ideal;
+use super::EncodeCtx;
+use super::PolySource;
 use super::fft::encode_dft;
 use super::link_to_polys;
 use super::reduce::selected_eval_to_poly;
+use super::{hypercube, multi_indices};
 
 /// Shared helper for `Op::Evaluate(p, xs)` — computes the ideal
 /// polynomials for evaluating `p` at `xs`. Panics on unsupported
@@ -201,8 +202,8 @@ pub fn eval_to_poly_as<C: ArkConfig>(
 /// 3. `(p, None, None)` — full-grid DFT.
 ///
 /// `(p, Some(_), None)` is unsupported and panics.
-pub fn evaluate_op<C: ArkConfig>(
-    ideal: &mut Ideal<C>,
+pub fn evaluate_op<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     p: &GOp<C>,
     range: Option<lang::typ::CRange>,
@@ -210,22 +211,24 @@ pub fn evaluate_op<C: ArkConfig>(
 ) {
     match (range, pts) {
         (None, Some(xs)) => {
-            let polys = eval_to_poly_as(p, xs, &var.typ, &ideal.vars);
-            link_to_polys(ideal, var, polys);
+            let polys = eval_to_poly_as(p, xs, &var.typ, &ctx.ideal.vars);
+            link_to_polys(ctx.ideal, var, polys);
         }
-        (Some(range), Some(fixed)) => match selected_eval_to_poly(p, &range, fixed, &ideal.vars) {
-            Some(polys) => {
-                link_to_polys(ideal, var, polys);
+        (Some(range), Some(fixed)) => {
+            match selected_eval_to_poly(p, &range, fixed, &ctx.ideal.vars) {
+                Some(polys) => {
+                    link_to_polys(ctx.ideal, var, polys);
+                }
+                None => {
+                    panic!(
+                        "ideal: operation has no polynomial-ideal treatment at selected-evaluate for {}",
+                        var.verbose()
+                    );
+                }
             }
-            None => {
-                panic!(
-                    "ideal: operation has no polynomial-ideal treatment at selected-evaluate for {}",
-                    var.verbose()
-                );
-            }
-        },
+        }
         (None, None) => {
-            encode_dft(ideal, var, p);
+            encode_dft(ctx, var, p);
         }
         (Some(_), None) => {
             panic!(
@@ -239,7 +242,7 @@ pub fn evaluate_op<C: ArkConfig>(
 #[cfg(test)]
 mod tests {
 
-    use crate::{Ideal, IdealBuilder};
+    use super::super::{Ideal, IdealBuilder};
 
     use backend::ArkBls12_381;
     use backend::Value;

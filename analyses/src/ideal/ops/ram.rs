@@ -6,7 +6,7 @@ use graph::{HOp, Op};
 
 use crate::Var;
 
-use super::super::ideal::Ideal;
+use super::EncodeCtx;
 use super::link_to_witness;
 
 /// Encode `Op::Ram(a, b)`: RAM reads with a literal index `i` resolve
@@ -14,7 +14,7 @@ use super::link_to_witness;
 /// all physical slots are linked pairwise. Multi-index (VecIndex) reads
 /// produce a vector of elements. Runtime indices are unsupported.
 pub fn ram_op<C: ArkConfig + HasOpFactory>(
-    ideal: &mut Ideal<C>,
+    ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a: &HOp<C>,
     b: &HOp<C>,
@@ -27,7 +27,7 @@ pub fn ram_op<C: ArkConfig + HasOpFactory>(
                     std::mem::discriminant(a.get())
                 )
             };
-            let array_var = ideal.find_ref(r);
+            let array_var = ctx.ideal.find_ref(r);
             let Some(elem_var) = array_var.with_index(*i) else {
                 panic!(
                     "Ram operand with literal index must be within bound; Got {:?}",
@@ -35,7 +35,7 @@ pub fn ram_op<C: ArkConfig + HasOpFactory>(
                 )
             };
 
-            link_to_witness(ideal, var, &elem_var);
+            link_to_witness(ctx.ideal, var, &elem_var);
         }
         Op::Value(Value::VecIndex(vs)) => {
             let Op::Ref(r, _) = a.get() else {
@@ -44,11 +44,11 @@ pub fn ram_op<C: ArkConfig + HasOpFactory>(
                     std::mem::discriminant(a.get())
                 )
             };
-            let array_var = ideal.find_ref(r);
+            let array_var = ctx.ideal.find_ref(r);
             for (j, idx) in vs.iter().enumerate() {
                 let src_var = array_var.with_index(*idx).unwrap();
                 let dst_var = var.with_index(j).unwrap();
-                link_to_witness(ideal, &dst_var, &src_var);
+                link_to_witness(ctx.ideal, &dst_var, &src_var);
             }
         }
         _ => {

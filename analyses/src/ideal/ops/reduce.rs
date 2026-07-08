@@ -14,11 +14,11 @@ use lang::typ::lub::Lub;
 use crate::Var;
 use crate::frontend::Polynomial;
 
-use super::super::PolySource;
-use super::super::combinatorics::{hypercube, multi_indices};
+use super::PolySource;
 use super::binop::mul_op;
 use super::div;
 use super::{EncodeCtx, constrain_to_polys, link_to_polys, link_to_witness};
+use super::{hypercube, multi_indices};
 
 /// Left-fold of vector elements:
 ///   acc₀ = v[0],  acc_i = rop(acc_{i-1}, v[i]),  ideal = acc_{n-1}
@@ -93,9 +93,9 @@ pub fn reduce_op<C: ArkConfig + HasOpFactory>(
             let mut acc = v_src.at_index(0).unwrap();
             for i in 1..n {
                 let elem = v_src.at_index(i).unwrap();
-                let acc_name = ctx.ns.next_name("reduce_and_acc");
+                let acc_name = ctx.builder.ns.next_name("reduce_and_acc");
                 let acc_var = ctx.sentinel_var(&acc_name, elem_t.clone());
-                mul_op(&acc_var, &acc, &elem, &elem_t, ctx.ideal);
+                mul_op(ctx, &acc_var, &acc, &elem, &elem_t);
                 acc = PolySource::new(
                     acc_var
                         .slots()
@@ -129,10 +129,10 @@ pub fn reduce_op<C: ArkConfig + HasOpFactory>(
                 let acc_var = if is_last {
                     var.clone()
                 } else {
-                    let acc_name = ctx.ns.next_name("reduce_mul_acc");
+                    let acc_name = ctx.builder.ns.next_name("reduce_mul_acc");
                     ctx.sentinel_var(&acc_name, step_typ.clone())
                 };
-                mul_op(&acc_var, &acc, &elem, &step_typ, ctx.ideal);
+                mul_op(ctx, &acc_var, &acc, &elem, &step_typ);
                 acc = PolySource::from_vars(&acc_var, step_typ.clone());
                 acc_typ = step_typ;
             }
@@ -159,7 +159,7 @@ pub fn reduce_op<C: ArkConfig + HasOpFactory>(
                 let target = if is_last {
                     var.clone()
                 } else {
-                    let acc_name = ctx.ns.next_name(if is_rem {
+                    let acc_name = ctx.builder.ns.next_name(if is_rem {
                         "reduce_rem_acc"
                     } else {
                         "reduce_div_acc"
@@ -215,9 +215,9 @@ pub fn reduce_polysource<C: ArkConfig + HasOpFactory>(
             let mut acc = v_src.at_index(0).unwrap();
             for i in 1..n {
                 let elem = v_src.at_index(i).unwrap();
-                let acc_name = ctx.ns.next_name("reduce_and_acc");
+                let acc_name = ctx.builder.ns.next_name("reduce_and_acc");
                 let acc_var = ctx.sentinel_var(&acc_name, elem_t.clone());
-                mul_op(&acc_var, &acc, &elem, &elem_t, ctx.ideal);
+                mul_op(ctx, &acc_var, &acc, &elem, &elem_t);
                 acc = PolySource::new(
                     acc_var
                         .slots()
@@ -251,10 +251,10 @@ pub fn reduce_polysource<C: ArkConfig + HasOpFactory>(
                 let acc_var = if is_last {
                     var.clone()
                 } else {
-                    let acc_name = ctx.ns.next_name("reduce_mul_acc");
+                    let acc_name = ctx.builder.ns.next_name("reduce_mul_acc");
                     ctx.sentinel_var(&acc_name, step_typ.clone())
                 };
-                mul_op(&acc_var, &acc, &elem, &step_typ, ctx.ideal);
+                mul_op(ctx, &acc_var, &acc, &elem, &step_typ);
                 acc = PolySource::from_vars(&acc_var, step_typ.clone());
                 acc_typ = step_typ;
             }
@@ -271,7 +271,7 @@ pub fn reduce_polysource<C: ArkConfig + HasOpFactory>(
                 let target = if is_last {
                     var.clone()
                 } else {
-                    let acc_name = ctx.ns.next_name(if is_rem {
+                    let acc_name = ctx.builder.ns.next_name(if is_rem {
                         "reduce_rem_acc"
                     } else {
                         "reduce_div_acc"
@@ -392,7 +392,7 @@ fn uncovered_op(context: &str, target: &Var) -> ! {
 #[cfg(test)]
 mod tests {
 
-    use crate::{Ideal, IdealBuilder};
+    use super::super::{Ideal, IdealBuilder};
 
     use crate::frontend::Polynomial;
     use backend::ArkBls12_381;

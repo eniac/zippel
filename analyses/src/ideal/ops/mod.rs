@@ -1,8 +1,8 @@
 //! Op encoder infrastructure: `EncodeCtx` and per-op encoder modules.
 //!
 //! Each op encoder is a free function taking `&mut EncodeCtx`. The context
-//! provides mutable access to the namespace (for sentinel/witness allocation)
-//! and the ideal being built.
+//! provides mutable access to the `IdealBuilder` (for sentinel/witness
+//! allocation and recursive `add_op` dispatch) and the ideal being built.
 
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
@@ -10,13 +10,20 @@ use backend::{ATyp, ArkConfig};
 use crate::Var;
 use crate::frontend::Polynomial;
 
-use super::ideal::Ideal;
-use super::namespace::IdealNamespace;
+// Barrel re-exports for child modules. Children use `super::X` instead of
+// `super::super::X`, and test modules use `super::super::X` instead of
+// `crate::X`.
+pub(crate) use super::Ideal;
+pub(crate) use super::IdealBuilder;
+pub(crate) use super::PolySource;
+pub(crate) use super::combinatorics::{dft_row, hypercube, lagrange_basis, multi_indices};
+pub(crate) use super::namespace::{CanonPolyTyp, DivWitnessKey};
 
 /// Context passed to every op encoder. Provides access to the
-/// namespace (for sentinel allocation) and the ideal being built.
+/// `IdealBuilder` (for sentinel allocation, div-witness cache, and
+/// recursive `add_op` dispatch) and the ideal being built.
 pub struct EncodeCtx<'a, C: ArkConfig> {
-    pub ns: &'a mut IdealNamespace<C>,
+    pub builder: &'a mut IdealBuilder<C>,
     pub ideal: &'a mut Ideal<C>,
 }
 
@@ -24,9 +31,7 @@ impl<'a, C: ArkConfig + HasOpFactory> EncodeCtx<'a, C> {
     /// Allocate a sentinel variable with `name` and `typ`, registering it
     /// in the ideal's var_order.
     pub fn sentinel_var(&mut self, name: &str, typ: ATyp) -> Var {
-        let var = self.ns.sentinel_var(name, typ);
-        self.ideal.var_order.push(var.clone());
-        var
+        self.builder.sentinel_var(name, typ, self.ideal)
     }
 }
 

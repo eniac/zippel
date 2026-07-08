@@ -82,6 +82,10 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
 
 impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     pub(crate) fn add_op(&mut self, var: Var, op: GOp<C>, ideal: &mut Ideal<C>) {
+        let mut ctx = EncodeCtx {
+            builder: self,
+            ideal,
+        };
         match op {
             Op::Ref(r, typ) => {
                 if var.reference == r && var.index.is_empty() && var.typ == typ {
@@ -89,69 +93,53 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 }
 
                 let ref_src: PolySource<C> =
-                    PolySource::from_ref_vars(&ideal.vars, &Op::Ref(r, typ.clone()));
+                    PolySource::from_ref_vars(&ctx.ideal.vars, &Op::Ref(r, typ.clone()));
                 let lifted = ref_src.lift_to(&var.typ);
-                link_to_polys(ideal, &var, lifted.polys);
+                link_to_polys(ctx.ideal, &var, lifted.polys);
             }
             Op::Bin(BinOp::Add, a, b, _) => {
-                let a_src = PolySource::from_ref_vars(&ideal.vars, &a);
-                let b_src = PolySource::from_ref_vars(&ideal.vars, &b);
-                ops::binop::broadcast_binop(&var, &a_src, &b_src, &var.typ, BinOp::Add, ideal);
+                let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, &a);
+                let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, &b);
+                ops::binop::broadcast_binop(&mut ctx, &var, &a_src, &b_src, &var.typ, BinOp::Add);
             }
             Op::Bin(BinOp::And, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&ideal.vars, a);
-                let b_src = PolySource::from_ref_vars(&ideal.vars, b);
-                ops::binop::mul_op(&var, &a_src, &b_src, &var.typ, ideal);
+                let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
+                let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
+                ops::binop::mul_op(&mut ctx, &var, &a_src, &b_src, &var.typ);
             }
             Op::Bin(BinOp::Sub, a, b, _) => {
-                let a_src = PolySource::from_ref_vars(&ideal.vars, &a);
-                let b_src = PolySource::from_ref_vars(&ideal.vars, &b);
-                ops::binop::broadcast_binop(&var, &a_src, &b_src, &var.typ, BinOp::Sub, ideal);
+                let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, &a);
+                let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, &b);
+                ops::binop::broadcast_binop(&mut ctx, &var, &a_src, &b_src, &var.typ, BinOp::Sub);
             }
             Op::Bin(BinOp::Mul, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&ideal.vars, a);
-                let b_src = PolySource::from_ref_vars(&ideal.vars, b);
-                ops::binop::mul_op(&var, &a_src, &b_src, &var.typ, ideal);
+                let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
+                let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
+                ops::binop::mul_op(&mut ctx, &var, &a_src, &b_src, &var.typ);
             }
             Op::Bin(BinOp::Dot, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&ideal.vars, a);
-                let b_src = PolySource::from_ref_vars(&ideal.vars, b);
-                let mut ctx = EncodeCtx {
-                    ns: &mut self.ns,
-                    ideal,
-                };
+                let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
+                let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
                 ops::binop::dot_op(&mut ctx, &var, &a_src, &b_src);
             }
             Op::Bin(BinOp::Div, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&ideal.vars, a);
-                let b_src = PolySource::from_ref_vars(&ideal.vars, b);
-                let mut ctx = EncodeCtx {
-                    ns: &mut self.ns,
-                    ideal,
-                };
+                let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
+                let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
                 ops::div::div_rem_op(&mut ctx, &var, &a_src, &b_src, false, true);
             }
             Op::Bin(BinOp::Rem, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&ideal.vars, a);
-                let b_src = PolySource::from_ref_vars(&ideal.vars, b);
-                let mut ctx = EncodeCtx {
-                    ns: &mut self.ns,
-                    ideal,
-                };
+                let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
+                let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
                 ops::div::div_rem_op(&mut ctx, &var, &a_src, &b_src, true, true);
             }
             Op::Bin(BinOp::Equ, a, b, _) => {
-                let a_src = PolySource::from_ref_vars(&ideal.vars, &a);
-                let b_src = PolySource::from_ref_vars(&ideal.vars, &b);
-                ops::equ::broadcast_equ(&var, &a_src, &b_src, ideal);
+                let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, &a);
+                let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, &b);
+                ops::equ::broadcast_equ(&mut ctx, &var, &a_src, &b_src);
             }
-            Op::Check(a) => self.add_op(var, a.get().clone(), ideal),
+            Op::Check(a) => ctx.builder.add_op(var, a.get().clone(), ctx.ideal),
             Op::Challenge(_, _) | Op::Random(_, _) => {}
             Op::Interpolate(ref points, ref evals) => {
-                let mut ctx = EncodeCtx {
-                    ns: &mut self.ns,
-                    ideal,
-                };
                 ops::interpolate::interpolate_op(&mut ctx, var, points, evals);
             }
             // Op::Ifft(v): p = ifft(v) — inverse DFT. The coefficient form `var`
@@ -160,13 +148,13 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             // where ω is a primitive N-th root of unity. The type checker
             // guarantees N is a 2-adic divisor of |F|-1, so ω always exists.
             Op::Ifft(ref a) => {
-                ops::fft::encode_ifft(ideal, &var, a);
+                ops::fft::encode_ifft(&mut ctx, &var, a);
             }
             // Op::Fft(p): v = fft(p) — forward DFT. Each evaluation is:
             //   v[i] = Σ_j ω^{i·j} · p[j]
             // The type checker guarantees N is a 2-adic divisor of |F|-1.
             Op::Fft(ref a) => {
-                ops::fft::encode_fft(ideal, &var, a);
+                ops::fft::encode_fft(&mut ctx, &var, a);
             }
             // Op::Poly / Op::Mle / Op::Coef: bind the i-th Var slot of `var`
             // to the i-th scalar poly read from `inner` by `ref_vars`. These
@@ -177,38 +165,36 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             // and evaluation form happens in later phases (Eval / Bin on
             // mixed polynomial types).
             Op::Poly(ref inner) | Op::Mle(ref inner) | Op::Coef(ref inner) => {
-                let polys = PolySource::ref_vars(inner, &ideal.vars);
+                let polys = PolySource::ref_vars(inner, &ctx.ideal.vars);
                 debug_assert!(
                     !polys.is_empty(),
                     "Op::Poly/Mle/Coef produced zero polys for {:?}",
                     var.typ
                 );
-                link_to_polys(ideal, &var, polys);
+                link_to_polys(ctx.ideal, &var, polys);
             }
             Op::Vec(vs) => {
                 for (i, v) in vs.into_iter().enumerate() {
                     let pr_i = var.with_index(i).unwrap();
-                    self.add_op(pr_i, v.get().clone(), ideal);
+                    ctx.builder.add_op(pr_i, v.get().clone(), ctx.ideal);
                 }
             }
             // Op::Evaluate(p, xs): evaluate a polynomial `p` at points `xs`.
             // See `ops::eval::evaluate_op` for the three-shape dispatch
             // (batched, selected, full-grid DFT).
             Op::Evaluate(ref p, range, ref pts) => {
-                ops::eval::evaluate_op(ideal, &var, p, range, pts.as_deref());
+                ops::eval::evaluate_op(&mut ctx, &var, p, range, pts.as_deref());
             }
-            Op::Map(ref domain, ref body) => self.map_to_poly(var, domain, body, &[], &[], ideal),
+            Op::Map(ref domain, ref body) => {
+                ops::map::map_to_poly(&mut ctx, var, domain, body, &[], &[]);
+            }
             Op::ReduceMap(rop, ref domain, ref body) => {
-                self.reduce_map_to_poly(var, rop, domain, body, &[], &[], ideal)
+                ops::map::reduce_map_to_poly(&mut ctx, var, rop, domain, body, &[], &[]);
             }
             Op::LoopParam(_, _) => Self::uncovered_op("loop-param", &var),
             // Phase 10: `Op::Reduce(op, v)` — left-fold of vector elements.
             // See `reduce_op` for per-operator handling.
             Op::Reduce(rop, ref v) => {
-                let mut ctx = EncodeCtx {
-                    ns: &mut self.ns,
-                    ideal,
-                };
                 ops::reduce::reduce_op(&mut ctx, var, rop, v);
             }
             // Phase 10: `Op::Value(lit)` — pattern-match on the `Value`
@@ -222,7 +208,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             // to the opaque catch-all below via `to_poly_value`'s
             // `panic!` — which we guard against with a try-convert.
             Op::Value(ref v) => {
-                ops::value::value_op(ideal, &var, v);
+                ops::value::value_op(&mut ctx, &var, v);
             }
             // Phase 10: `Op::Ram(a, b)` — RAM reads with a literal index `i`
             // resolve to the i-th logical element of the array. For compound
@@ -230,7 +216,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             // Multi-index (VecIndex) reads produce a vector of elements.
             // Runtime indices fall back to opaque.
             Op::Ram(ref a, ref b) => {
-                ops::ram::ram_op(ideal, &var, a, b);
+                ops::ram::ram_op(&mut ctx, &var, a, b);
             }
             // Phase 12: `Op::Pair(a, b, t)` — bilinear pairing.
             // For each slot position, the ideal is bound to the
@@ -242,29 +228,25 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             // cancel under Buchberger because their basis rows are identical
             // F-polynomials.
             Op::Pair(ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&ideal.vars, a.get());
-                let b_src = PolySource::from_ref_vars(&ideal.vars, b.get());
-                ops::binop::pair_op(&var, &a_src, &b_src, ideal);
+                let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a.get());
+                let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b.get());
+                ops::binop::pair_op(&mut ctx, &var, &a_src, &b_src);
             }
             // `Op::Record(fields)` — field-slot-aware layout.
             // For each field, get the field-level Var via `with_index`,
             // then expand its sub-slots via `slots()` to get hierarchical
             // indices (e.g. `[0][0]`, `[0][1]` for a Vec field).
             Op::Record(ref fields) => {
-                ops::record::record_op(ideal, &var, fields);
+                ops::record::record_op(&mut ctx, &var, fields);
             }
             // Concat/Pow/Marginalize/Proj require explicit ideal treatment;
             // unsupported shapes fail instead of becoming hidden op state.
             Op::Bin(BinOp::Concat, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&ideal.vars, a);
-                let b_src = PolySource::from_ref_vars(&ideal.vars, b);
-                ops::concat::concat_op(&var, &a_src, &b_src, a, b, ideal);
+                let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
+                let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
+                ops::concat::concat_op(&mut ctx, &var, &a_src, &b_src, a, b);
             }
             Op::Bin(BinOp::Pow, ref a, ref b, _) => {
-                let mut ctx = EncodeCtx {
-                    ns: &mut self.ns,
-                    ideal,
-                };
                 ops::pow::pow_op(&mut ctx, &var, a, b);
             }
             // `Op::Proj(inner, field, typ)` — extract a field from a Record.
@@ -276,7 +258,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             // Non-record inner types are not supported — after IR lowering every
             // Proj must operate on a Record; any other variant is a compiler bug.
             Op::Proj(ref inner, ref field, ref _typ) => {
-                ops::record::proj_op(ideal, &var, inner, field);
+                ops::record::proj_op(&mut ctx, &var, inner, field);
             }
         }
     }

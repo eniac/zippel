@@ -8,10 +8,10 @@ use backend::{ATyp, ArkConfig, ArkScalarOps};
 use crate::Var;
 use crate::frontend::Polynomial;
 
-use super::super::PolySource;
-use super::super::combinatorics::multi_indices;
-use super::super::ideal::Ideal;
-use super::super::namespace::{CanonPolyTyp, DivWitnessKey};
+use super::Ideal;
+use super::PolySource;
+use super::multi_indices;
+use super::{CanonPolyTyp, DivWitnessKey};
 use super::{EncodeCtx, link_to_polys, link_to_witness};
 
 /// Allocate quotient/remainder witness sentinels without registering
@@ -21,10 +21,10 @@ fn alloc_div_witness_pair<C: ArkConfig + HasOpFactory>(
     quotient_typ: ATyp,
     remainder_typ: ATyp,
 ) -> (Var, Var) {
-    let q_name = ctx.ns.next_name("div_q");
-    let r_name = ctx.ns.next_name("div_r");
-    let q_wit = ctx.sentinel_var(&q_name, quotient_typ);
-    let r_wit = ctx.sentinel_var(&r_name, remainder_typ);
+    let q_name = ctx.builder.ns.next_name("div_q");
+    let r_name = ctx.builder.ns.next_name("div_r");
+    let q_wit = ctx.builder.sentinel_var(&q_name, quotient_typ, ctx.ideal);
+    let r_wit = ctx.builder.sentinel_var(&r_name, remainder_typ, ctx.ideal);
     (q_wit, r_wit)
 }
 
@@ -196,7 +196,7 @@ pub fn div_rem_op<C: ArkConfig + HasOpFactory>(
             let key = cache_witness.then(|| div_witness_key(ctx, a, b));
             if let Some((q_wit, r_wit)) = key
                 .as_ref()
-                .and_then(|key| ctx.ns.div_wit.get(key).cloned())
+                .and_then(|key| ctx.builder.ns.div_wit.get(key).cloned())
             {
                 let wit = if is_rem { &r_wit } else { &q_wit };
                 link_to_witness(ctx.ideal, target, wit);
@@ -257,7 +257,7 @@ pub fn div_rem_op<C: ArkConfig + HasOpFactory>(
                 let wit = if is_rem { &r_wit } else { &q_wit };
                 link_to_witness(ctx.ideal, target, wit);
                 if let Some(key) = key {
-                    ctx.ns.div_wit.insert(&key, &(q_wit, r_wit));
+                    ctx.builder.ns.div_wit.insert(&key, &(q_wit, r_wit));
                 }
                 return;
             }
@@ -290,7 +290,9 @@ pub fn div_rem_op<C: ArkConfig + HasOpFactory>(
             // nonzero at declaration time, and this implicit constraint
             // can be dropped in favor of the explicit one.
             let b_lead = &b.polys()[b.polys().len() - 1];
-            let inv_var = ctx.sentinel_var("div_inv", ATyp::scalar());
+            let inv_var = ctx
+                .builder
+                .sentinel_var("div_inv", ATyp::scalar(), ctx.ideal);
             ctx.ideal
                 .generating_set
                 .push(&(b_lead * &Polynomial::var(&inv_var)) - &Polynomial::lit(&C::FOps::one()));
@@ -338,7 +340,7 @@ pub fn div_rem_op<C: ArkConfig + HasOpFactory>(
             link_to_witness(ctx.ideal, target, wit);
 
             if let Some(key) = key {
-                ctx.ns.div_wit.insert(&key, &(q_wit, r_wit));
+                ctx.builder.ns.div_wit.insert(&key, &(q_wit, r_wit));
             }
         }
         _ if !a.is_poly() && !b.is_poly() => {
@@ -381,7 +383,7 @@ pub fn slot_wise_div<C: ArkConfig>(
 #[cfg(test)]
 mod tests {
     use super::super::test_helpers::*;
-    use crate::{Ideal, IdealBuilder};
+    use super::super::{Ideal, IdealBuilder};
 
     use crate::frontend::Polynomial;
     use backend::ArkBls12_381;

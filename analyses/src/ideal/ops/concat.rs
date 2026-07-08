@@ -1,12 +1,14 @@
 //! Concatenation op encoder: `concat_op`, `bind_lifted_alias`, `bind_vec_aliases`.
 
+use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
 use graph::HOp;
 
 use crate::Var;
 
-use super::super::PolySource;
-use super::super::ideal::Ideal;
+use super::EncodeCtx;
+use super::Ideal;
+use super::PolySource;
 use super::link_to_polys;
 
 /// Bind `target`'s slots to `source`'s polys lifted to `target_typ`.
@@ -36,28 +38,28 @@ pub fn bind_vec_aliases<C: ArkConfig>(
     }
 }
 
-pub fn concat_op<C: ArkConfig>(
+pub fn concat_op<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a: &PolySource<C>,
     b: &PolySource<C>,
     _a_op: &HOp<C>,
     _b_op: &HOp<C>,
-    ideal: &mut Ideal<C>,
 ) {
     match (&var.typ, a.typ(), b.typ()) {
         (ATyp::Vec(r_elem, _), ATyp::Vec(_, na), ATyp::Vec(_, nb)) => {
-            bind_vec_aliases(var, 0, a, *na, r_elem, ideal);
-            bind_vec_aliases(var, *na, b, *nb, r_elem, ideal);
+            bind_vec_aliases(var, 0, a, *na, r_elem, ctx.ideal);
+            bind_vec_aliases(var, *na, b, *nb, r_elem, ctx.ideal);
         }
         (ATyp::Vec(r_elem, _), ATyp::Vec(_, na), _) => {
-            bind_vec_aliases(var, 0, a, *na, r_elem, ideal);
+            bind_vec_aliases(var, 0, a, *na, r_elem, ctx.ideal);
             let target_elem = var.with_index(*na).unwrap();
-            bind_lifted_alias(&target_elem, b, r_elem, ideal);
+            bind_lifted_alias(&target_elem, b, r_elem, ctx.ideal);
         }
         (ATyp::Vec(r_elem, _), _, ATyp::Vec(_, nb)) => {
             let target_elem = var.with_index(0).unwrap();
-            bind_lifted_alias(&target_elem, a, r_elem, ideal);
-            bind_vec_aliases(var, 1, b, *nb, r_elem, ideal);
+            bind_lifted_alias(&target_elem, a, r_elem, ctx.ideal);
+            bind_vec_aliases(var, 1, b, *nb, r_elem, ctx.ideal);
         }
         _ => {
             panic!(
@@ -71,7 +73,7 @@ pub fn concat_op<C: ArkConfig>(
 #[cfg(test)]
 mod tests {
 
-    use crate::{Ideal, IdealBuilder};
+    use super::super::{Ideal, IdealBuilder};
 
     use backend::ArkBls12_381;
 
