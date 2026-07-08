@@ -10,8 +10,23 @@ use crate::frontend::Polynomial;
 
 use super::EncodeCtx;
 use super::PolySource;
-use super::eval::record_field_offset;
 use super::link_to_polys;
+
+/// Compute the slot offset of `field_name` within a record type.
+fn record_field_offset(fields: &Ctx<String, ATyp>, field_name: &str) -> usize {
+    let mut offset = 0;
+    for (fname, ftyp) in fields.iter() {
+        if fname == field_name {
+            return offset;
+        }
+        offset += ftyp.physical_len();
+    }
+    panic!(
+        "ideal: record_field_offset: field '{}' not found in record fields {:?}",
+        field_name,
+        fields.iter().map(|(k, _)| k).collect::<Vec<_>>()
+    )
+}
 
 /// Encode `Op::Record(fields)`: field-slot-aware layout.
 /// For each field, get the field-level Var via `with_index`,

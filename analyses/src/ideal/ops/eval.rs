@@ -1,5 +1,4 @@
-//! Evaluation op encoders: `evaluate_op`, `eval_to_poly`, `eval_to_poly_as`,
-//! `record_field_offset`.
+//! Evaluation op encoders: `evaluate_op`, `eval_to_poly`, `eval_to_poly_as`.
 
 use std::collections::HashMap;
 
@@ -11,7 +10,6 @@ use graph::{GOp, Ref};
 
 use crate::Var;
 use crate::frontend::Polynomial;
-use share::Ctx;
 
 use super::EncodeCtx;
 use super::PolySource;
@@ -148,22 +146,6 @@ pub fn eval_to_poly<C: ArkConfig>(
     }
 }
 
-/// Compute the slot offset of `field_name` within a record type.
-pub fn record_field_offset(fields: &Ctx<String, ATyp>, field_name: &str) -> usize {
-    let mut offset = 0;
-    for (fname, ftyp) in fields.iter() {
-        if fname == field_name {
-            return offset;
-        }
-        offset += ftyp.physical_len();
-    }
-    panic!(
-        "ideal: record_field_offset: field '{}' not found in record fields {:?}",
-        field_name,
-        fields.iter().map(|(k, _)| k).collect::<Vec<_>>()
-    )
-}
-
 pub fn eval_to_poly_as<C: ArkConfig>(
     p: &GOp<C>,
     xs: &GOp<C>,
@@ -220,10 +202,7 @@ pub fn evaluate_op<C: ArkConfig + HasOpFactory>(
                     link_to_polys(ctx.ideal, var, polys);
                 }
                 None => {
-                    panic!(
-                        "ideal: operation has no polynomial-ideal treatment at selected-evaluate for {}",
-                        var.verbose()
-                    );
+                    super::uncovered_op("selected-evaluate", var);
                 }
             }
         }
@@ -231,10 +210,7 @@ pub fn evaluate_op<C: ArkConfig + HasOpFactory>(
             encode_dft(ctx, var, p);
         }
         (Some(_), None) => {
-            panic!(
-                "ideal: operation has no polynomial-ideal treatment at selected-evaluate-missing-points for {}",
-                var.verbose()
-            );
+            super::uncovered_op("selected-evaluate-missing-points", var);
         }
     }
 }

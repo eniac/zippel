@@ -4,6 +4,7 @@
 
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
+use graph::HOp;
 
 use crate::Var;
 use crate::frontend::Polynomial;
@@ -137,6 +138,19 @@ fn canonical_var_key(var: &Var) -> String {
 pub fn div_rem_op<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
+    a: &HOp<C>,
+    b: &HOp<C>,
+    is_rem: bool,
+    cache_witness: bool,
+) {
+    let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
+    let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
+    div_rem_op_inner(ctx, target, &a_src, &b_src, is_rem, cache_witness);
+}
+
+pub(crate) fn div_rem_op_inner<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    target: &Var,
     a: &PolySource<C>,
     b: &PolySource<C>,
     is_rem: bool,
@@ -148,14 +162,14 @@ pub fn div_rem_op<C: ArkConfig + HasOpFactory>(
                 let t_i = target.with_index(i).unwrap();
                 let a_elem = a.at_index(i).unwrap();
                 let b_elem = b.at_index(i).unwrap();
-                div_rem_op(ctx, &t_i, &a_elem, &b_elem, is_rem, cache_witness);
+                div_rem_op_inner(ctx, &t_i, &a_elem, &b_elem, is_rem, cache_witness);
             }
         }
         (ATyp::Vec(_, na), _) if PolySource::<C>::is_scalar_like(b.typ()) => {
             for i in 0..*na {
                 let t_i = target.with_index(i).unwrap();
                 let a_elem = a.at_index(i).unwrap();
-                div_rem_op(ctx, &t_i, &a_elem, b, is_rem, cache_witness);
+                div_rem_op_inner(ctx, &t_i, &a_elem, b, is_rem, cache_witness);
             }
         }
         (_, ATyp::Vec(_, nb)) if PolySource::<C>::is_scalar_like(a.typ()) => {
@@ -169,7 +183,7 @@ pub fn div_rem_op<C: ArkConfig + HasOpFactory>(
             for i in 0..*nb {
                 let t_i = target.with_index(i).unwrap();
                 let b_elem = b.at_index(i).unwrap();
-                div_rem_op(ctx, &t_i, a, &b_elem, false, cache_witness);
+                div_rem_op_inner(ctx, &t_i, a, &b_elem, false, cache_witness);
             }
         }
         _ if a.is_poly() && PolySource::<C>::is_scalar_like(b.typ()) => {
@@ -184,12 +198,13 @@ pub fn div_rem_op<C: ArkConfig + HasOpFactory>(
             slot_wise_div(ctx.ideal, target, a.polys(), b_broadcast.polys());
         }
         _ if matches!(a.typ(), ATyp::Mle(_)) || matches!(b.typ(), ATyp::Mle(_)) => {
-            panic!(
-                "{}: MLE division is not supported ({} {} {}) — only VPoly/Uni dividend and divisor are supported",
-                if is_rem { "Rem" } else { "Div" },
-                a.typ(),
-                if is_rem { "%" } else { "/" },
-                b.typ(),
+            super::uncovered_op(
+                if is_rem {
+                    "rem-mle-unsupported"
+                } else {
+                    "div-mle-unsupported"
+                },
+                target,
             );
         }
         _ if a.is_poly() && b.is_poly() => {
@@ -214,11 +229,13 @@ pub fn div_rem_op<C: ArkConfig + HasOpFactory>(
                 );
             }
             if na != 1 {
-                panic!(
-                    "{}: multivariate VPoly division is not supported (dividend has n={}) \
-                     — only univariate (VPoly(1, m) / VPoly(1, m)) is handled",
-                    if is_rem { "Rem" } else { "Div" },
-                    na,
+                super::uncovered_op(
+                    if is_rem {
+                        "rem-multivariate-vpoly"
+                    } else {
+                        "div-multivariate-vpoly"
+                    },
+                    target,
                 );
             }
             if ma < mb {
@@ -335,12 +352,13 @@ pub fn div_rem_op<C: ArkConfig + HasOpFactory>(
             slot_wise_div(ctx.ideal, target, a.polys(), b.polys());
         }
         _ => {
-            panic!(
-                "{}: mixed poly/non-poly division ({} {} {}) is not supported",
-                if is_rem { "Rem" } else { "Div" },
-                a.typ(),
-                if is_rem { "%" } else { "/" },
-                b.typ(),
+            super::uncovered_op(
+                if is_rem {
+                    "rem-mixed-poly-nonpoly"
+                } else {
+                    "div-mixed-poly-nonpoly"
+                },
+                target,
             );
         }
     }
@@ -1124,7 +1142,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "MLE division is not supported")]
+    #[should_panic(expected = "div-mle-unsupported")]
     fn test_add_op_div_mle_panics() {
         use crate::Var;
         use lang::typ::Qualifier;

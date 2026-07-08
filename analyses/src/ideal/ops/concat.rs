@@ -41,10 +41,19 @@ pub fn bind_vec_aliases<C: ArkConfig>(
 pub fn concat_op<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
+    a: &HOp<C>,
+    b: &HOp<C>,
+) {
+    let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
+    let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
+    concat_op_inner(ctx, var, &a_src, &b_src);
+}
+
+fn concat_op_inner<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    var: &Var,
     a: &PolySource<C>,
     b: &PolySource<C>,
-    _a_op: &HOp<C>,
-    _b_op: &HOp<C>,
 ) {
     match (&var.typ, a.typ(), b.typ()) {
         (ATyp::Vec(r_elem, _), ATyp::Vec(_, na), ATyp::Vec(_, nb)) => {
@@ -62,10 +71,7 @@ pub fn concat_op<C: ArkConfig + HasOpFactory>(
             bind_vec_aliases(var, 1, b, *nb, r_elem, ctx.ideal);
         }
         _ => {
-            panic!(
-                "ideal: operation has no polynomial-ideal treatment at concat-non-vector for {}",
-                var.verbose()
-            );
+            super::uncovered_op("concat-non-vector", var);
         }
     }
 }

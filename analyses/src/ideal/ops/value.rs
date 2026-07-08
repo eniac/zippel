@@ -34,10 +34,7 @@ pub fn value_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, var: &V
             link_to_polys(ctx.ideal, var, polys);
         }
         None => {
-            panic!(
-                "ideal: operation has no polynomial-ideal treatment at unsupported-value for {}",
-                var.verbose()
-            );
+            super::uncovered_op("unsupported-value", var);
         }
     }
 }

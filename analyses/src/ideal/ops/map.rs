@@ -14,7 +14,6 @@ use share::Ctx;
 use crate::Var;
 use crate::frontend::Polynomial;
 
-use super::IdealBuilder;
 use super::PolySource;
 use super::{EncodeCtx, link_to_polys, link_to_witness};
 
@@ -220,7 +219,7 @@ pub(crate) fn map_to_poly<C: ArkConfig + HasOpFactory>(
 ) {
     let elems = match explode_domain(&mut *ctx, domain, parent_loops, parent_vals) {
         Some(e) => e,
-        None => IdealBuilder::<C>::uncovered_op("map-domain", &var),
+        None => super::uncovered_op("map-domain", &var),
     };
     for (i, (elem, elem_val)) in elems.iter().enumerate() {
         let mut loops = parent_loops.to_vec();
@@ -229,7 +228,7 @@ pub(crate) fn map_to_poly<C: ArkConfig + HasOpFactory>(
         vals.push(elem_val.clone());
         match body_to_poly(&mut *ctx, body, &loops, &vals) {
             Some(vi) => link_to_witness(ctx.ideal, &var.with_index(i).unwrap(), &vi),
-            None => IdealBuilder::<C>::uncovered_op("map-body", &var),
+            None => super::uncovered_op("map-body", &var),
         }
     }
 }
@@ -248,11 +247,11 @@ pub(crate) fn reduce_map_to_poly<C: ArkConfig + HasOpFactory>(
 ) {
     let elems = match explode_domain(&mut *ctx, domain, parent_loops, parent_vals) {
         Some(e) => e,
-        None => IdealBuilder::<C>::uncovered_op("reduce-map-domain", &var),
+        None => super::uncovered_op("reduce-map-domain", &var),
     };
     let n = elems.len();
     if n == 0 {
-        IdealBuilder::<C>::uncovered_op("reduce-map-empty", &var);
+        super::uncovered_op("reduce-map-empty", &var);
     }
     let mut mapped: Vec<Var> = Vec::with_capacity(n);
     for (elem, elem_val) in elems.iter() {
@@ -262,7 +261,7 @@ pub(crate) fn reduce_map_to_poly<C: ArkConfig + HasOpFactory>(
         vals.push(elem_val.clone());
         match body_to_poly(&mut *ctx, body, &loops, &vals) {
             Some(vi) => mapped.push(vi),
-            None => IdealBuilder::<C>::uncovered_op("reduce-map-body", &var),
+            None => super::uncovered_op("reduce-map-body", &var),
         }
     }
     if n == 1 {

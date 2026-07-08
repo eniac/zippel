@@ -2,6 +2,7 @@
 
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
+use graph::HOp;
 use lang::typ::Nothing;
 use lang::typ::lub::Lub;
 
@@ -21,6 +22,17 @@ use super::PolySource;
 /// - `Uni(n1) op Uni(n2)` → zero-pad shorter operand to match ideal degree
 /// - Same-type poly op → straightforward slot-wise
 pub fn broadcast_equ<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    _pr: &Var,
+    a: &HOp<C>,
+    b: &HOp<C>,
+) {
+    let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
+    let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
+    broadcast_equ_inner(ctx, _pr, &a_src, &b_src);
+}
+
+fn broadcast_equ_inner<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     _pr: &Var,
     a: &PolySource<C>,

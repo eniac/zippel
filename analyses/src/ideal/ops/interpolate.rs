@@ -38,11 +38,13 @@ pub fn interpolate_op<C: ArkConfig + HasOpFactory>(
                 .slots()
                 .iter()
                 .map(|s| {
-                    ctx.ideal
-                        .pl
-                        .get(s)
-                        .cloned()
-                        .unwrap_or_else(Polynomial::zero)
+                    ctx.ideal.pl.get(s).cloned().unwrap_or_else(|| {
+                        panic!(
+                            "Interpolate: point slot {} not found in pl — \
+                                 points must be materialized before interpolation",
+                            s
+                        )
+                    })
                 })
                 .collect()
         }
@@ -67,7 +69,7 @@ pub fn interpolate_op<C: ArkConfig + HasOpFactory>(
         for i in 0..xs.len() {
             for j in (i + 1)..xs.len() {
                 if xs[i] == xs[j] {
-                    uncovered_op("duplicate-interpolate-points", &var);
+                    super::uncovered_op("duplicate-interpolate-points", &var);
                 }
             }
         }
@@ -89,7 +91,7 @@ pub fn interpolate_op<C: ArkConfig + HasOpFactory>(
             for j in (i + 1)..xs_polys.len() {
                 let diff = &xs_polys[i] - &xs_polys[j];
                 if diff.is_zero() {
-                    uncovered_op("duplicate-interpolate-points", &var);
+                    super::uncovered_op("duplicate-interpolate-points", &var);
                 }
             }
         }
@@ -162,14 +164,6 @@ pub fn interpolate_op<C: ArkConfig + HasOpFactory>(
             ctx.ideal.generating_set.push(poly - Polynomial::var(pf));
         }
     }
-}
-
-fn uncovered_op(context: &str, target: &Var) -> ! {
-    panic!(
-        "ideal: operation has no polynomial-ideal treatment at {} for {}",
-        context,
-        target.verbose()
-    );
 }
 
 #[cfg(test)]

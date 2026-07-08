@@ -52,10 +52,7 @@ pub fn ram_op<C: ArkConfig + HasOpFactory>(
             }
         }
         _ => {
-            panic!(
-                "ideal: operation has no polynomial-ideal treatment at dynamic-ram for {}",
-                var.verbose()
-            );
+            super::uncovered_op("dynamic-ram", var);
         }
     }
 }

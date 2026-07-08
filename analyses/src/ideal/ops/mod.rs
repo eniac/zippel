@@ -122,3 +122,14 @@ pub mod record;
 pub mod reduce;
 pub mod test_helpers;
 pub mod value;
+
+/// Panic with a standard message when an operation has no polynomial-ideal
+/// treatment. `context` is a short kebab-case string identifying the code
+/// path (e.g. `"concat-non-vector"`, `"dynamic-pow"`).
+pub fn uncovered_op(context: &str, target: &Var) -> ! {
+    panic!(
+        "ideal: operation has no polynomial-ideal treatment at {} for {}",
+        context,
+        target.verbose()
+    )
+}

@@ -804,10 +804,13 @@ impl Lub for CTyp {
                 *n,
             )),
 
-            // Uni<B> ^ Fin<i..j> = Uni<B*j>
-            (CTyp::Poly(a, 1, n), CTyp::Fin(r)) => {
-                Ok(CTyp::uni(a, n.saturating_mul(r.end.saturating_sub(1))))
-            }
+            // Uni<B> ^ Fin<i..j> = Uni<B*(j-1)>
+            (CTyp::Poly(a, 1, n), CTyp::Fin(r)) => r
+                .end
+                .checked_sub(1)
+                .ok_or_else(|| LubError::pow(&x, &y))
+                .and_then(|exp| n.checked_mul(exp).ok_or_else(|| LubError::pow(&x, &y)))
+                .map(|deg| CTyp::uni(a, deg)),
 
             (_, _) => Err(LubError::pow(&x, &y)),
         }

@@ -1,11 +1,10 @@
-//! Power op encoders: `pow_op`, `pow_const`, and constant-exponent
-//! resolvers `resolve_const_exp_scalar`, `resolve_const_exps_vec`.
+//! Power op encoders: `pow_op`, `pow_const`, `resolve_const_exp`.
 
-use ark_ff::One;
+use ark_ff::{BigInteger, One, PrimeField};
 
 use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig, Value};
-use graph::{HOp, Op};
+use backend::{ATyp, ArkConfig};
+use graph::HOp;
 use lang::typ::Nothing;
 use lang::typ::lub::Lub;
 
@@ -13,56 +12,55 @@ use crate::Var;
 use crate::frontend::Polynomial;
 
 use super::PolySource;
-use super::binop::mul_op;
+use super::binop::mul_op_inner;
 use super::{EncodeCtx, link_to_polys};
 
-/// Try to resolve a scalar operand to a compile-time constant index.
-pub fn resolve_const_exp_scalar<C: ArkConfig>(b: &HOp<C>) -> Option<usize> {
-    match b.get() {
-        Op::Value(Value::Index(i)) => Some(*i),
-        _ => None,
+/// Try to resolve a `PolySource` to a compile-time constant exponent.
+/// Returns `Some(k)` if the source is a single constant polynomial whose
+/// value fits in a `usize`; otherwise `None` (dynamic exponent).
+fn resolve_const_exp<C: ArkConfig>(src: &PolySource<C>) -> Option<usize> {
+    if src.polys().len() != 1 {
+        return None;
     }
-}
-
-/// Try to resolve each element of a Vec operand to a compile-time constant index.
-pub fn resolve_const_exps_vec<C: ArkConfig>(b: &HOp<C>, n: usize) -> Vec<Option<usize>> {
-    match b.get() {
-        Op::Value(Value::VecIndex(vs)) => vs.iter().map(|i| Some(*i)).collect(),
-        Op::Vec(vs) => vs
-            .iter()
-            .map(|v| match v.get() {
-                Op::Value(Value::Index(i)) => Some(*i),
-                _ => None,
-            })
-            .collect(),
-        Op::Value(Value::Index(i)) => {
-            vec![Some(*i); n]
+    let p = &src.polys()[0];
+    if !p.is_constant() {
+        return None;
+    }
+    let val = p.constant_coeff();
+    let big = val.into_bigint();
+    let bytes = big.to_bytes_le();
+    let mut result: usize = 0;
+    for (i, &byte) in bytes.iter().enumerate() {
+        if i >= std::mem::size_of::<usize>() {
+            if byte != 0 {
+                return None;
+            }
+            continue;
         }
-        _ => vec![None; n],
+        result |= (byte as usize) << (8 * i);
     }
+    Some(result)
 }
 
 pub fn pow_const<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
     base: &PolySource<C>,
-    _ideal_typ: &ATyp,
     k: usize,
 ) {
     if k == 0 {
+        // p^0 = 1 (constant polynomial). Type inference handles degree reduction:
+        // Uni(n) ^ 0 has type Uni(0), Scalar ^ 0 has type Scalar.
         let one = Polynomial::<C::F>::lit(&C::F::one());
-        for pf in target.slots() {
-            ctx.ideal.pl.insert(&pf, &one);
-            ctx.ideal
-                .generating_set
-                .push(one.clone() - Polynomial::var(&pf));
-        }
+        link_to_polys(ctx.ideal, target, vec![one]);
         return;
     }
+
     if k == 1 {
         link_to_polys(ctx.ideal, target, base.polys().to_vec());
         return;
     }
+
     let mut acc = PolySource::new(base.polys().to_vec(), base.typ().clone());
     for _step in 1..k {
         let next_name = ctx.builder.ns.next_name("pow_acc");
@@ -70,7 +68,7 @@ pub fn pow_const<C: ArkConfig + HasOpFactory>(
         let next_var = ctx
             .builder
             .sentinel_var(&next_name, next_typ.clone(), ctx.ideal);
-        mul_op(&mut *ctx, &next_var, &acc, base, &next_typ);
+        mul_op_inner(&mut *ctx, &next_var, &acc, base, &next_typ);
         acc = PolySource::new(
             next_var
                 .slots()
@@ -80,6 +78,7 @@ pub fn pow_const<C: ArkConfig + HasOpFactory>(
             next_typ,
         );
     }
+
     link_to_polys(ctx.ideal, target, acc.polys);
 }
 
@@ -90,58 +89,55 @@ pub fn pow_op<C: ArkConfig + HasOpFactory>(
     b: &HOp<C>,
 ) {
     let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
-    match (a_src.typ(), &b.typ(), &var.typ) {
-        (ATyp::Vec(_, na), ATyp::Vec(_, nb), ATyp::Vec(r_inner, _)) if na == nb => {
-            let elem_exps = resolve_const_exps_vec(b, *na);
-            for (i, exp) in elem_exps.iter().enumerate().take(*na) {
-                let t_i = var.with_index(i).unwrap();
-                let elem_a = a_src.at_index(i).unwrap();
-                if let Some(k) = exp {
-                    pow_const(ctx, &t_i, &elem_a, r_inner, *k);
-                } else {
-                    uncovered_op("dynamic-pow", &t_i);
-                }
-            }
-        }
-        (ATyp::Vec(_, na), _, ATyp::Vec(r_inner, _)) => {
-            let k = resolve_const_exp_scalar(b);
+    let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
+    pow_op_inner(ctx, var, &a_src, &b_src);
+}
+
+fn pow_op_inner<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    var: &Var,
+    a_src: &PolySource<C>,
+    b_src: &PolySource<C>,
+) {
+    match (a_src.typ(), b_src.typ()) {
+        (ATyp::Vec(_, na), ATyp::Vec(_, nb)) if na == nb => {
             for i in 0..*na {
                 let t_i = var.with_index(i).unwrap();
-                let elem_a = a_src.at_index(i).unwrap();
-                if let Some(k) = k {
-                    pow_const(ctx, &t_i, &elem_a, r_inner, k);
+                let a_elem = a_src.at_index(i).unwrap();
+                let b_elem = b_src.at_index(i).unwrap();
+                pow_op_inner(ctx, &t_i, &a_elem, &b_elem);
+            }
+        }
+        (ATyp::Vec(_, na), _) => {
+            for i in 0..*na {
+                let t_i = var.with_index(i).unwrap();
+                let a_elem = a_src.at_index(i).unwrap();
+                if let Some(k) = resolve_const_exp(b_src) {
+                    pow_const(ctx, &t_i, &a_elem, k);
                 } else {
-                    uncovered_op("dynamic-pow", &t_i);
+                    super::uncovered_op("dynamic-pow", &t_i);
                 }
             }
         }
-        (_, ATyp::Vec(_, nb), ATyp::Vec(_, _)) => {
-            let elem_exps = resolve_const_exps_vec(b, *nb);
-            for (i, exp) in elem_exps.iter().enumerate().take(*nb) {
+        (_, ATyp::Vec(_, nb)) => {
+            for i in 0..*nb {
                 let t_i = var.with_index(i).unwrap();
-                if let Some(k) = exp {
-                    pow_const(ctx, &t_i, &a_src, &t_i.typ, *k);
+                let b_elem = b_src.at_index(i).unwrap();
+                if let Some(k) = resolve_const_exp(&b_elem) {
+                    pow_const(ctx, &t_i, a_src, k);
                 } else {
-                    uncovered_op("dynamic-pow", &t_i);
+                    super::uncovered_op("dynamic-pow", &t_i);
                 }
             }
         }
         _ => {
-            if let Some(k) = resolve_const_exp_scalar(b) {
-                pow_const(ctx, var, &a_src, &var.typ, k);
+            if let Some(k) = resolve_const_exp(b_src) {
+                pow_const(ctx, var, a_src, k);
             } else {
-                uncovered_op("dynamic-pow", var);
+                super::uncovered_op("dynamic-pow", var);
             }
         }
     }
-}
-
-fn uncovered_op(context: &str, target: &Var) -> ! {
-    panic!(
-        "ideal: operation has no polynomial-ideal treatment at {} for {}",
-        context,
-        target.verbose()
-    );
 }
 
 #[cfg(test)]
@@ -149,8 +145,10 @@ mod tests {
 
     use super::super::{Ideal, IdealBuilder};
 
+    use ark_ff::One;
     use backend::ATyp;
     use backend::ArkBls12_381;
+    use backend::ArkConfig;
     use backend::Value;
     use backend::op::mk;
     use graph::Op;
@@ -452,5 +450,283 @@ mod tests {
             ),
             &mut ideal,
         );
+    }
+
+    // === Regression tests for pow_op recursion fix ===
+
+    /// pow_const with k=0 on Scalar: every slot of `target` must be bound to
+    /// the constant polynomial 1 in `pl`.
+    #[test]
+    fn test_pow_scalar_exp_zero() {
+        use crate::Var;
+        use lang::ast::BinOp;
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+
+        let s = ATyp::scalar();
+
+        let var_a = Var::from_node(NodeIndex::new(0), s.clone(), Qualifier::Private);
+        ideal.register(&var_a);
+
+        let var_r = Var::from_node(NodeIndex::new(1), s.clone(), Qualifier::Private);
+        ideal.register(&var_r);
+
+        builder.add_op(
+            var_r.clone(),
+            Op::Bin(
+                BinOp::Pow,
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), s.clone())),
+                mk::<ArkBls12_381>(Op::Value(Value::Index(0))),
+                s.clone(),
+            ),
+            &mut ideal,
+        );
+
+        let slot = var_r.with_index(0).unwrap();
+        let poly = ideal.pl.get(&slot).expect("pow k=0: slot must be in pl");
+        assert!(
+            poly.is_constant(),
+            "pow k=0 on Scalar: ideal polynomial must be constant 1"
+        );
+        assert_eq!(
+            poly.constant_coeff(),
+            <ArkBls12_381 as ArkConfig>::F::one(),
+            "pow k=0 on Scalar: constant coefficient must be 1"
+        );
+    }
+
+    /// pow_const with k=1: `target` must be linked to `base` (identity).
+    #[test]
+    fn test_pow_scalar_exp_one() {
+        use crate::Var;
+        use lang::ast::BinOp;
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+
+        let s = ATyp::scalar();
+
+        let var_a = Var::from_node(NodeIndex::new(0), s.clone(), Qualifier::Private);
+        ideal.register(&var_a);
+
+        let var_r = Var::from_node(NodeIndex::new(1), s.clone(), Qualifier::Private);
+        ideal.register(&var_r);
+
+        builder.add_op(
+            var_r.clone(),
+            Op::Bin(
+                BinOp::Pow,
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), s.clone())),
+                mk::<ArkBls12_381>(Op::Value(Value::Index(1))),
+                s.clone(),
+            ),
+            &mut ideal,
+        );
+
+        let slot = var_r.with_index(0).unwrap();
+        let poly = ideal.pl.get(&slot).expect("pow k=1: slot must be in pl");
+        // k=1 links target to base — the polynomial should be the base's
+        // variable polynomial (var(a_slot)), not a constant.
+        assert!(
+            !poly.is_constant(),
+            "pow k=1: ideal polynomial must be the base variable, not a constant"
+        );
+    }
+
+    /// Vec(Uni(2), 2) ^ VecIndex([2, 3]): per-element constant exponents
+    /// on polynomial elements via VecIndex. Both elements get Uni(2)^2 and
+    /// Uni(2)^3 respectively. The result type is Uni(6) (max degree), but
+    /// element 0 (Uni(2)^2=Uni(4)) must be lifted to Uni(6) by the type
+    /// checker. Here we test with VecIndex([2, 2]) so both produce Uni(4),
+    /// matching the result type Vec(Uni(4), 2).
+    #[test]
+    fn test_pow_vec_uni_per_element_exps() {
+        use crate::Var;
+        use lang::ast::BinOp;
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+
+        let uni2 = ATyp::Uni(2);
+        let uni4 = ATyp::Uni(4);
+        let vec_uni2 = ATyp::Vec(Box::new(uni2.clone()), 2);
+        let vec_ideal = ATyp::Vec(Box::new(uni4.clone()), 2);
+
+        let var_a = Var::from_node(NodeIndex::new(0), vec_uni2.clone(), Qualifier::Private);
+        ideal.register(&var_a);
+
+        let var_r = Var::from_node(NodeIndex::new(1), vec_ideal.clone(), Qualifier::Private);
+        ideal.register(&var_r);
+
+        builder.add_op(
+            var_r.clone(),
+            Op::Bin(
+                BinOp::Pow,
+                mk::<ArkBls12_381>(Op::Ref(
+                    graph::Ref::new(NodeIndex::new(0)),
+                    vec_uni2.clone(),
+                )),
+                mk::<ArkBls12_381>(Op::Value(Value::VecIndex(vec![2, 2]))),
+                vec_ideal.clone(),
+            ),
+            &mut ideal,
+        );
+
+        // Both elements: Uni(2)^2 = Uni(4) → 5 slots each
+        for i in 0..2 {
+            let elem = var_r.with_index(i).unwrap();
+            for j in 0..5 {
+                let slot = elem.with_index(j).unwrap();
+                assert!(
+                    ideal.pl.contains(&slot),
+                    "Pow Vec(Uni(2),2)^VecIndex([2,2]) element {} slot {} missing from pl",
+                    i,
+                    j
+                );
+            }
+        }
+    }
+
+    /// Vec(Vec(Scalar, 2), 2) ^ Index(2): nested Vec base with scalar const
+    /// exponent. The exponent broadcasts to all elements, recursing through
+    /// the nested Vec structure. All 4 scalar slots must be in pl.
+    #[test]
+    fn test_pow_nested_vec_scalar_exp() {
+        use crate::Var;
+        use lang::ast::BinOp;
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+
+        let s = ATyp::scalar();
+        let vec_s2 = ATyp::Vec(Box::new(s.clone()), 2);
+        let vec_vec_s2 = ATyp::Vec(Box::new(vec_s2.clone()), 2);
+        let vec_vec_ideal = ATyp::Vec(Box::new(vec_s2.clone()), 2);
+
+        let var_a = Var::from_node(NodeIndex::new(0), vec_vec_s2.clone(), Qualifier::Private);
+        ideal.register(&var_a);
+
+        let var_r = Var::from_node(NodeIndex::new(1), vec_vec_ideal.clone(), Qualifier::Private);
+        ideal.register(&var_r);
+
+        builder.add_op(
+            var_r.clone(),
+            Op::Bin(
+                BinOp::Pow,
+                mk::<ArkBls12_381>(Op::Ref(
+                    graph::Ref::new(NodeIndex::new(0)),
+                    vec_vec_s2.clone(),
+                )),
+                mk::<ArkBls12_381>(Op::Value(Value::Index(2))),
+                vec_vec_ideal.clone(),
+            ),
+            &mut ideal,
+        );
+
+        // 2×2 = 4 scalar slots, all must be in pl
+        for i in 0..2 {
+            let elem_i = var_r.with_index(i).unwrap();
+            for j in 0..2 {
+                let slot = elem_i.with_index(j).unwrap();
+                assert!(
+                    ideal.pl.contains(&slot),
+                    "Pow Vec(Vec(Scalar,2),2)^2 element [{}][{}] missing from pl",
+                    i,
+                    j
+                );
+            }
+        }
+    }
+
+    /// Vec(Scalar, 2) ^ Vec(Fin, 2) where the exponent is a Ref to a
+    /// registered Var (symbolic, not constant). Must panic with dynamic-pow
+    /// because the exponent values are symbolic polynomials, not constants.
+    #[test]
+    #[should_panic(expected = "ideal: operation has no polynomial-ideal treatment at dynamic-pow")]
+    fn test_pow_vec_vec_ref_exponent_panics() {
+        use crate::Var;
+        use lang::ast::BinOp;
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+
+        let s = ATyp::scalar();
+        let fin = ATyp::fin(lang::typ::range::CRange::default());
+        let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
+        let vec_fin = ATyp::Vec(Box::new(fin.clone()), 2);
+
+        let var_a = Var::from_node(NodeIndex::new(0), vec_s.clone(), Qualifier::Private);
+        ideal.register(&var_a);
+
+        let var_b = Var::from_node(NodeIndex::new(1), vec_fin.clone(), Qualifier::Private);
+        ideal.register(&var_b);
+
+        let var_r = Var::from_node(NodeIndex::new(2), vec_s.clone(), Qualifier::Private);
+        ideal.register(&var_r);
+
+        // Exponent is a Ref to a symbolic Var — not a constant.
+        builder.add_op(
+            var_r.clone(),
+            Op::Bin(
+                BinOp::Pow,
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), vec_fin.clone())),
+                vec_s.clone(),
+            ),
+            &mut ideal,
+        );
+    }
+
+    /// Scalar ^ Index(3): basic scalar^3 with const exponent. The result
+    /// should be in pl and not constant (depends on the base variable).
+    #[test]
+    fn test_pow_scalar_const_exp() {
+        use crate::Var;
+        use lang::ast::BinOp;
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+
+        let s = ATyp::scalar();
+
+        let var_a = Var::from_node(NodeIndex::new(0), s.clone(), Qualifier::Private);
+        ideal.register(&var_a);
+
+        let var_r = Var::from_node(NodeIndex::new(1), s.clone(), Qualifier::Private);
+        ideal.register(&var_r);
+
+        builder.add_op(
+            var_r.clone(),
+            Op::Bin(
+                BinOp::Pow,
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), s.clone())),
+                mk::<ArkBls12_381>(Op::Value(Value::Index(3))),
+                s.clone(),
+            ),
+            &mut ideal,
+        );
+
+        let slot = var_r.with_index(0).unwrap();
+        let poly = ideal.pl.get(&slot).expect("pow k=3: slot must be in pl");
+        assert!(
+            !poly.is_constant(),
+            "pow k=3: ideal polynomial must depend on the base variable"
+        );
+        // k=3 introduces intermediate sentinel vars via mul_op, so the
+        // polynomial in pl[target] is a product of sentinel vars, not
+        // base^3 directly. Just check it's non-constant and in pl.
     }
 }

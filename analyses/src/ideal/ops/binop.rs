@@ -3,6 +3,7 @@
 
 use backend::op::HasOpFactory;
 use backend::{ABase, ATyp, ArkConfig, ArkScalarOps};
+use graph::HOp;
 use lang::ast::BinOp;
 
 use crate::Var;
@@ -56,6 +57,19 @@ pub fn emit_slotwise_binop<C: ArkConfig + HasOpFactory>(
 pub fn broadcast_binop<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
+    a: &HOp<C>,
+    b: &HOp<C>,
+    r_typ: &ATyp,
+    op: BinOp,
+) {
+    let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
+    let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
+    broadcast_binop_inner(ctx, var, &a_src, &b_src, r_typ, op);
+}
+
+fn broadcast_binop_inner<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    var: &Var,
     a: &PolySource<C>,
     b: &PolySource<C>,
     r_typ: &ATyp,
@@ -70,7 +84,7 @@ pub fn broadcast_binop<C: ArkConfig + HasOpFactory>(
                     ATyp::Vec(inner, _) => inner,
                     _ => panic!("broadcast_binop Vec×Vec ideal must be Vec"),
                 };
-                broadcast_binop(
+                broadcast_binop_inner(
                     &mut *ctx,
                     &var.with_index(i).unwrap(),
                     &a_elem,
@@ -158,6 +172,18 @@ pub fn broadcast_binop<C: ArkConfig + HasOpFactory>(
 pub fn mul_op<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
+    a: &HOp<C>,
+    b: &HOp<C>,
+    r_typ: &ATyp,
+) {
+    let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
+    let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
+    mul_op_inner(ctx, target, &a_src, &b_src, r_typ);
+}
+
+pub fn mul_op_inner<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    target: &Var,
     a: &PolySource<C>,
     b: &PolySource<C>,
     r_typ: &ATyp,
@@ -172,7 +198,7 @@ pub fn mul_op<C: ArkConfig + HasOpFactory>(
                 let t_i = target.with_index(i).unwrap();
                 let a_elem = a.at_index(i).unwrap();
                 let b_elem = b.at_index(i).unwrap();
-                mul_op(&mut *ctx, &t_i, &a_elem, &b_elem, r_inner);
+                mul_op_inner(&mut *ctx, &t_i, &a_elem, &b_elem, r_inner);
             }
         }
         (ATyp::Vec(_, na), _) => {
@@ -183,7 +209,7 @@ pub fn mul_op<C: ArkConfig + HasOpFactory>(
             for i in 0..*na {
                 let t_i = target.with_index(i).unwrap();
                 let a_elem = a.at_index(i).unwrap();
-                mul_op(&mut *ctx, &t_i, &a_elem, b, r_inner);
+                mul_op_inner(&mut *ctx, &t_i, &a_elem, b, r_inner);
             }
         }
         (_, ATyp::Vec(_, nb)) => {
@@ -194,7 +220,7 @@ pub fn mul_op<C: ArkConfig + HasOpFactory>(
             for i in 0..*nb {
                 let t_i = target.with_index(i).unwrap();
                 let b_elem = b.at_index(i).unwrap();
-                mul_op(&mut *ctx, &t_i, a, &b_elem, r_inner);
+                mul_op_inner(&mut *ctx, &t_i, a, &b_elem, r_inner);
             }
         }
         (_, ATyp::Base(ABase::Scalar)) if a.is_poly() => {
@@ -365,12 +391,7 @@ pub fn mul_op<C: ArkConfig + HasOpFactory>(
                     }
                 }
                 _ => {
-                    panic!(
-                        "Mul: unsupported polynomial type combination {}×{} → {}",
-                        a.typ(),
-                        b.typ(),
-                        r_typ
-                    )
+                    super::uncovered_op("mul-unsupported-poly-combo", target);
                 }
             }
         }
@@ -383,17 +404,23 @@ pub fn mul_op<C: ArkConfig + HasOpFactory>(
             }
         }
         _ => {
-            panic!(
-                "Mul: unsupported type combination {}×{} → {}",
-                a.typ(),
-                b.typ(),
-                r_typ
-            )
+            super::uncovered_op("mul-unsupported-type-combo", target);
         }
     }
 }
 
 pub fn dot_op<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    var: &Var,
+    a: &HOp<C>,
+    b: &HOp<C>,
+) {
+    let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
+    let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
+    dot_op_inner(ctx, var, &a_src, &b_src);
+}
+
+fn dot_op_inner<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a: &PolySource<C>,
@@ -408,7 +435,7 @@ pub fn dot_op<C: ArkConfig + HasOpFactory>(
                 let acc_var = ctx.sentinel_var(&acc_name, var.typ.clone());
                 let a_elem = a.at_index(i).unwrap();
                 let b_elem = b.at_index(i).unwrap();
-                mul_op(&mut *ctx, &acc_var, &a_elem, &b_elem, &var.typ);
+                mul_op_inner(&mut *ctx, &acc_var, &a_elem, &b_elem, &var.typ);
                 let acc_vars: Vec<Polynomial<C::F>> = acc_var
                     .slots()
                     .into_iter()
@@ -439,16 +466,23 @@ pub fn dot_op<C: ArkConfig + HasOpFactory>(
                 .push(sum - Polynomial::var(&pr_slots[0]));
         }
         _ => {
-            panic!(
-                "Dot: unsupported type combination {} · {}",
-                a.typ(),
-                b.typ()
-            );
+            super::uncovered_op("dot-unsupported-type-combo", var);
         }
     }
 }
 
 pub fn pair_op<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    var: &Var,
+    a: &HOp<C>,
+    b: &HOp<C>,
+) {
+    let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
+    let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
+    pair_op_inner(ctx, var, &a_src, &b_src);
+}
+
+fn pair_op_inner<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a: &PolySource<C>,
@@ -483,12 +517,7 @@ pub fn pair_op<C: ArkConfig + HasOpFactory>(
             }
         }
         _ => {
-            panic!(
-                "Pair: unsupported type combination {} × {} → {}",
-                a.typ(),
-                b.typ(),
-                var.typ
-            );
+            super::uncovered_op("pair-unsupported-type-combo", var);
         }
     }
 }

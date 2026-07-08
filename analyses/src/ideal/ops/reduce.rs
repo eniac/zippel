@@ -15,7 +15,7 @@ use crate::Var;
 use crate::frontend::Polynomial;
 
 use super::PolySource;
-use super::binop::mul_op;
+use super::binop::mul_op_inner;
 use super::div;
 use super::{EncodeCtx, constrain_to_polys, link_to_polys, link_to_witness};
 use super::{hypercube, multi_indices};
@@ -95,7 +95,7 @@ pub fn reduce_op<C: ArkConfig + HasOpFactory>(
                 let elem = v_src.at_index(i).unwrap();
                 let acc_name = ctx.builder.ns.next_name("reduce_and_acc");
                 let acc_var = ctx.sentinel_var(&acc_name, elem_t.clone());
-                mul_op(ctx, &acc_var, &acc, &elem, &elem_t);
+                mul_op_inner(ctx, &acc_var, &acc, &elem, &elem_t);
                 acc = PolySource::new(
                     acc_var
                         .slots()
@@ -132,7 +132,7 @@ pub fn reduce_op<C: ArkConfig + HasOpFactory>(
                     let acc_name = ctx.builder.ns.next_name("reduce_mul_acc");
                     ctx.sentinel_var(&acc_name, step_typ.clone())
                 };
-                mul_op(ctx, &acc_var, &acc, &elem, &step_typ);
+                mul_op_inner(ctx, &acc_var, &acc, &elem, &step_typ);
                 acc = PolySource::from_vars(&acc_var, step_typ.clone());
                 acc_typ = step_typ;
             }
@@ -167,7 +167,7 @@ pub fn reduce_op<C: ArkConfig + HasOpFactory>(
                     ctx.sentinel_var(&acc_name, step_typ.clone())
                 };
                 if is_poly {
-                    div::div_rem_op(ctx, &target, &acc_src, &elem_src, is_rem, false);
+                    div::div_rem_op_inner(ctx, &target, &acc_src, &elem_src, is_rem, false);
                 } else {
                     div::slot_wise_div(ctx.ideal, &target, acc_src.polys(), elem_src.polys());
                 }
@@ -176,7 +176,7 @@ pub fn reduce_op<C: ArkConfig + HasOpFactory>(
             }
         }
         BinOp::Equ | BinOp::Pow => {
-            uncovered_op("reduce-equ-or-pow", &var);
+            super::uncovered_op("reduce-equ-or-pow", &var);
         }
         BinOp::Dot => {
             panic!("reduce(dot, _) is rejected by the type checker");
@@ -217,7 +217,7 @@ pub fn reduce_polysource<C: ArkConfig + HasOpFactory>(
                 let elem = v_src.at_index(i).unwrap();
                 let acc_name = ctx.builder.ns.next_name("reduce_and_acc");
                 let acc_var = ctx.sentinel_var(&acc_name, elem_t.clone());
-                mul_op(ctx, &acc_var, &acc, &elem, &elem_t);
+                mul_op_inner(ctx, &acc_var, &acc, &elem, &elem_t);
                 acc = PolySource::new(
                     acc_var
                         .slots()
@@ -254,7 +254,7 @@ pub fn reduce_polysource<C: ArkConfig + HasOpFactory>(
                     let acc_name = ctx.builder.ns.next_name("reduce_mul_acc");
                     ctx.sentinel_var(&acc_name, step_typ.clone())
                 };
-                mul_op(ctx, &acc_var, &acc, &elem, &step_typ);
+                mul_op_inner(ctx, &acc_var, &acc, &elem, &step_typ);
                 acc = PolySource::from_vars(&acc_var, step_typ.clone());
                 acc_typ = step_typ;
             }
@@ -280,7 +280,14 @@ pub fn reduce_polysource<C: ArkConfig + HasOpFactory>(
                 };
                 let elem_src = v_src.at_index(step + 1).unwrap();
                 if is_poly {
-                    div::div_rem_op(ctx, &target, &acc_src, &elem_src, is_rem && is_last, false);
+                    div::div_rem_op_inner(
+                        ctx,
+                        &target,
+                        &acc_src,
+                        &elem_src,
+                        is_rem && is_last,
+                        false,
+                    );
                 } else {
                     if is_rem {
                         panic!(
@@ -301,7 +308,7 @@ pub fn reduce_polysource<C: ArkConfig + HasOpFactory>(
             }
         }
         BinOp::Equ | BinOp::Pow => {
-            uncovered_op("reduce-equ-or-pow", &var);
+            super::uncovered_op("reduce-equ-or-pow", &var);
         }
         BinOp::Dot => {
             panic!("reduce(dot, _) is rejected by the type checker");
@@ -379,14 +386,6 @@ pub fn selected_eval_to_poly<C: ArkConfig>(
         }
         _ => None,
     }
-}
-
-fn uncovered_op(context: &str, target: &Var) -> ! {
-    panic!(
-        "ideal: operation has no polynomial-ideal treatment at {} for {}",
-        context,
-        target.verbose()
-    );
 }
 
 #[cfg(test)]

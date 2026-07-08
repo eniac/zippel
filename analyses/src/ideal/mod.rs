@@ -43,19 +43,6 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         }
     }
 
-    /// Panic with a clear, searchable message when an operation has no
-    /// polynomial-ideal treatment in the analysis.
-    ///
-    /// `context` is a short kebab-case string identifying the code path
-    /// (e.g. `"concat-non-vector"`, `"dynamic-pow"`).
-    pub(crate) fn uncovered_op(context: &str, target: &Var) -> ! {
-        panic!(
-            "ideal: operation has no polynomial-ideal treatment at {} for {}",
-            context,
-            target.verbose()
-        )
-    }
-
     /// Build a `Ideal` from a `TransClos`. Each call returns a
     /// fresh ideal with its own `vars` namespace, while the builder
     /// namespace keeps generated witness/sentinel allocation stable.
@@ -155,44 +142,28 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 link_to_polys(ctx.ideal, &var, lifted.polys);
             }
             Op::Bin(BinOp::Add, a, b, _) => {
-                let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, &a);
-                let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, &b);
-                ops::binop::broadcast_binop(&mut ctx, &var, &a_src, &b_src, &var.typ, BinOp::Add);
+                ops::binop::broadcast_binop(&mut ctx, &var, &a, &b, &var.typ, BinOp::Add);
             }
             Op::Bin(BinOp::And, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
-                let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
-                ops::binop::mul_op(&mut ctx, &var, &a_src, &b_src, &var.typ);
+                ops::binop::mul_op(&mut ctx, &var, a, b, &var.typ);
             }
             Op::Bin(BinOp::Sub, a, b, _) => {
-                let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, &a);
-                let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, &b);
-                ops::binop::broadcast_binop(&mut ctx, &var, &a_src, &b_src, &var.typ, BinOp::Sub);
+                ops::binop::broadcast_binop(&mut ctx, &var, &a, &b, &var.typ, BinOp::Sub);
             }
             Op::Bin(BinOp::Mul, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
-                let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
-                ops::binop::mul_op(&mut ctx, &var, &a_src, &b_src, &var.typ);
+                ops::binop::mul_op(&mut ctx, &var, a, b, &var.typ);
             }
             Op::Bin(BinOp::Dot, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
-                let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
-                ops::binop::dot_op(&mut ctx, &var, &a_src, &b_src);
+                ops::binop::dot_op(&mut ctx, &var, a, b);
             }
             Op::Bin(BinOp::Div, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
-                let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
-                ops::div::div_rem_op(&mut ctx, &var, &a_src, &b_src, false, true);
+                ops::div::div_rem_op(&mut ctx, &var, a, b, false, true);
             }
             Op::Bin(BinOp::Rem, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
-                let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
-                ops::div::div_rem_op(&mut ctx, &var, &a_src, &b_src, true, true);
+                ops::div::div_rem_op(&mut ctx, &var, a, b, true, true);
             }
             Op::Bin(BinOp::Equ, a, b, _) => {
-                let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, &a);
-                let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, &b);
-                ops::equ::broadcast_equ(&mut ctx, &var, &a_src, &b_src);
+                ops::equ::broadcast_equ(&mut ctx, &var, &a, &b);
             }
             Op::Check(a) => ctx.builder.add_op(var, a.get().clone(), ctx.ideal),
             Op::Challenge(_, _) | Op::Random(_, _) => {}
@@ -248,7 +219,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             Op::ReduceMap(rop, ref domain, ref body) => {
                 ops::map::reduce_map_to_poly(&mut ctx, var, rop, domain, body, &[], &[]);
             }
-            Op::LoopParam(_, _) => Self::uncovered_op("loop-param", &var),
+            Op::LoopParam(_, _) => ops::uncovered_op("loop-param", &var),
             // Phase 10: `Op::Reduce(op, v)` — left-fold of vector elements.
             // See `reduce_op` for per-operator handling.
             Op::Reduce(rop, ref v) => {
@@ -285,9 +256,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             // cancel under Buchberger because their basis rows are identical
             // F-polynomials.
             Op::Pair(ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a.get());
-                let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b.get());
-                ops::binop::pair_op(&mut ctx, &var, &a_src, &b_src);
+                ops::binop::pair_op(&mut ctx, &var, a, b);
             }
             // `Op::Record(fields)` — field-slot-aware layout.
             // For each field, get the field-level Var via `with_index`,
@@ -299,9 +268,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             // Concat/Pow/Marginalize/Proj require explicit ideal treatment;
             // unsupported shapes fail instead of becoming hidden op state.
             Op::Bin(BinOp::Concat, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
-                let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
-                ops::concat::concat_op(&mut ctx, &var, &a_src, &b_src, a, b);
+                ops::concat::concat_op(&mut ctx, &var, a, b);
             }
             Op::Bin(BinOp::Pow, ref a, ref b, _) => {
                 ops::pow::pow_op(&mut ctx, &var, a, b);
