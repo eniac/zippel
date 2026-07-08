@@ -1,10 +1,11 @@
 use crate::TransClos;
 use crate::Var;
+use crate::frontend::Polynomial;
 use graph::{GOp, Op};
 use lang::ast::BinOp;
 
 use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig};
+use backend::{ATyp, ArkConfig, ArkScalarOps};
 
 mod combinatorics;
 
@@ -66,6 +67,62 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         for (var, _op) in tc.clos.iter() {
             ideal.register(var);
         }
+
+        // Emit divisor-invertibility constraints for arg polynomials.
+        //
+        // TODO: Remove this block once the analysis supports `!=` (disequality)
+        // constraints in the generating set. The plan:
+        //   (1) [past] Per-division `div_inv` in `div_rem_op` — unsound for
+        //       runtime-generated polynomials with potentially zero leading
+        //       coefficients.
+        //   (2) [current] Enforce that arg polynomials have degree exactly
+        //       matching their type, so `coef(p)[m] != 0` and we can safely
+        //       add `lead · lead_inv - 1 = 0` to the GB. This works when the
+        //       prover supplies a polynomial of the declared degree, but
+        //       fails for protocols (e.g. kzg) where the polynomial may have
+        //       degree strictly less than the type bound — the leading
+        //       coefficient is zero, making the invertibility constraint
+        //       unsatisfiable.
+        //   (3) [proposed] Support `!=` operators so we can express
+        //       `coef(p)[m] != 0` directly and add the inverse to the GB
+        //       conditionally, without assuming exact degree. This removes
+        //       the need for the exact-degree assumption entirely.
+        //
+        // Only univariate polynomial args (`VPoly(1, m)` / `Uni(m)` with
+        // m > 0) get constraints. Multivariate and MLE are skipped (leading
+        // coefficient is ambiguous). Transcript vars (in verifier tc) are
+        // excluded via `tc.arg_refs`.
+        for arg in tc.vars.iter() {
+            if !tc.arg_refs.contains(&arg.reference) {
+                continue;
+            }
+            let Some((n, m)) = PolySource::<C>::poly_shape_static(&arg.typ) else {
+                continue;
+            };
+            if n != 1 || m == 0 {
+                continue;
+            }
+
+            // The leading coefficient is the last slot of a univariate
+            // polynomial of degree m: slots are indexed 0..=m.
+            let lead_slot = arg.clone().with_index(m).unwrap();
+
+            // Look up or allocate a shared lead_inv var for this arg.
+            let inv_var = if let Some(existing) = self.ns.arg_inv.get(&arg.reference) {
+                ideal.var_order.push(existing.clone());
+                existing.clone()
+            } else {
+                let inv_var = self.sentinel_var("arg_lead_inv", ATyp::scalar(), &mut ideal);
+                self.ns.arg_inv.insert(arg.reference, inv_var.clone());
+                inv_var
+            };
+
+            ideal.generating_set.push(
+                &(Polynomial::var(&lead_slot) * Polynomial::var(&inv_var))
+                    - &Polynomial::lit(&C::FOps::one()),
+            );
+        }
+
         for (var, op) in tc.clos.into_iter() {
             self.add_op(var.clone(), op, &mut ideal);
             ideal.var_order.push(var);

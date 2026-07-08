@@ -13,7 +13,7 @@ const PUBLIC_INPUT_NAMES: &[&str] = &["z", "y", "ss", "g", "h", "h_val"];
 
 fn main() {
     println!("=== ZK-KZG (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/zk-kzg/zk_kzg.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/zk_kzg/zk_kzg.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("N"), &2);
@@ -29,7 +29,7 @@ fn main() {
     common::run_prover_and_verify(&mut handler, &inputs);
 
     println!("\n--- Static Analysis ---");
-    let analysis_args = ZippelArgs::new(PathBuf::from("examples/zk-kzg/zk_kzg.zippel"));
+    let analysis_args = ZippelArgs::new(PathBuf::from("examples/zk_kzg/zk_kzg.zippel"));
     let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
     let mut analysis_sizes = Ctx::new();
     analysis_sizes.insert(&Tid::new("N"), &2);
@@ -51,22 +51,20 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let h_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
     let h: Value<ArkBls12_381> = Value::G2(h_input);
 
-    let p: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_size));
+    let p_val: Value<ArkBls12_381> =
+        Value::<ArkBls12_381>::random(&mut rng, &ATyp::uni(n_size - 1));
     let z: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
     let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
 
     let ss: Value<ArkBls12_381> = Value::VecG1((0..srs_size).map(|_| g_input).collect())
         * Value::VecScalar((0..srs_size).map(|i| tau_input.pow([i as u64])).collect());
 
-    let z_val: Value<ArkBls12_381> =
-        Value::Vec((0..n_size).map(|i| z.clone() ^ Value::Index(i)).collect());
-
-    let y: Value<ArkBls12_381> = p.clone().dot(z_val);
+    let y: Value<ArkBls12_381> = p_val.clone().value_eval(z.clone());
 
     let h_val: Value<ArkBls12_381> = Value::G2(h_input * tau_input);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("p".to_string()), p),
+        (Vid("p_val".to_string()), p_val),
         (Vid("z".to_string()), z),
         (Vid("y".to_string()), y),
         (Vid("ss".to_string()), ss),

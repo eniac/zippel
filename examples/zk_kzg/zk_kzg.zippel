@@ -11,9 +11,9 @@
 // SRS needs N+1 elements (one extra) to commit to the degree-N blinded polynomial.
 
 proto zk_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>
-        (private p: [F; N], public z: F, public y: F, public ss: [G1; N+1],
+        (private p_val: Uni<F, N-1>, public z: F, public y: F, public ss: [G1; N+1],
         public g: G1, public h: G2, public h_val: G2)
-        where dot(p, [z ^ i for i in 0..N]) == y && ss[0] == g && reduce(&&, [pair(ss[i], h_val) == pair(ss[i+1], h) for i in 0..N]) {
+        where p_val(z) == y && ss[0] == g && reduce(&&, [pair(ss[i], h_val) == pair(ss[i+1], h) for i in 0..N]) {
 
         // Sample blinding factors
         let b0 = random<F>;
@@ -25,7 +25,6 @@ proto zk_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Si
 
         // Blinded polynomial: p_tilde(x) = p(x) + blind(x)
         // Note: p_tilde(z) = p(z) + 0 = y (blinding vanishes at z)
-        let p_val = poly(p);
         let p_tilde = p_val + blind_val;
         let p_tilde_coefs = coef(p_tilde);
 

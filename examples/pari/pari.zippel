@@ -89,7 +89,7 @@ proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
     // it (to build v_K(X) for the quotient division); the verifier just
     // evaluates v_K(r) = r^K − 1 directly, so we keep this `private` to
     // skip O(K) FS absorption.
-    private v_k_coeffs: [F; K+1],
+    private v_k_poly:   Uni<F, K>,
     // The field element 1, used to negate via subtraction and to construct
     // (X - r) as a polynomial.
     public  f_one:      F,
@@ -147,8 +147,8 @@ proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
     let z_a_poly = interpolate(z_a_evals);
     let z_b_poly = interpolate(z_b_evals);
 
-    // v_K(X) = X^K - 1, supplied as a coefficient vector.
-    let v_k_poly = poly(v_k_coeffs);
+    // v_K(X) = X^K - 1, supplied as a polynomial.
+    // (Previously: poly(v_k_coeffs) from a [F; K+1] arg.)
 
     let z_a_sq   = z_a_poly * z_a_poly;
     let num_poly = z_a_sq - z_b_poly;

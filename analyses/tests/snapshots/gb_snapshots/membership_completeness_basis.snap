@@ -1,5 +1,6 @@
 ---
 source: analyses/tests/gb_snapshots.rs
+assertion_line: 214
 expression: value
 ---
 - __zippel::gb::div_q::0[0] + 52435875175126190479447740508185965837690552500527637822603658699938581184511*f_eval*__zippel::gb::div_q::2[0] + s[1]*__zippel::gb::div_q::2[0] + s[0]*__zippel::gb::div_q::2[0] + 2*h_eval
@@ -47,9 +48,6 @@ alpha*__zippel::gb::div_q::0[1] + __zippel::gb::div_q::0[0] - h_eval
 alpha*__zippel::gb::div_q::2[0] - f_eval + f_coeffs[0]
 alpha*f_eval*__zippel::gb::div_q::0[0]^2 - s[1]*alpha*__zippel::gb::div_q::0[0]^2 - alpha*f_eval*h_eval*__zippel::gb::div_q::0[0] + 2*s[1]*alpha*h_eval*__zippel::gb::div_q::0[0] - s[0]*alpha*h_eval*__zippel::gb::div_q::0[0] + f_eval^3*__zippel::gb::div_q::0[0] + 52435875175126190479447740508185965837690552500527637822603658699938581184510*s[1]*f_eval^2*__zippel::gb::div_q::0[0] + 3*s[1]^2*f_eval*__zippel::gb::div_q::0[0] - s[1]^3*__zippel::gb::div_q::0[0] + alpha*f_eval*h_eval^2 + 52435875175126190479447740508185965837690552500527637822603658699938581184511*s[1]*alpha*h_eval^2 + s[0]*alpha*h_eval^2 - f_eval^3*h_eval + 3*s[1]*f_eval^2*h_eval + 52435875175126190479447740508185965837690552500527637822603658699938581184510*s[1]^2*f_eval*h_eval + s[1]^3*h_eval
 com_f*__zippel::gb::div_q::0[1] - com_h*__zippel::gb::div_q::2[0] - f_eval*proof_h + h_eval*proof_f
-div_inv - 1
-div_inv - 1
-div_inv - 1
 proof_f*__zippel::gb::div_q::2[0] - proof_h
 s[1]*__zippel::gb::div_q::0[1] + s[0]*__zippel::gb::div_q::0[1] + 52435875175126190479447740508185965837690552500527637822603658699938581184511*f_coeffs[0]*__zippel::gb::div_q::0[1] + __zippel::gb::div_q::2[0]*__zippel::gb::div_q::0[0]
 s[1]*srs_g1[1]*__zippel::gb::div_q::0[1] + com_f*__zippel::gb::div_q::0[0] + com_f*f_eval*__zippel::gb::div_q::2[0] + 52435875175126190479447740508185965837690552500527637822603658699938581184511*s[1]*com_f*__zippel::gb::div_q::2[0] + s[1]^2*proof_f - com_f*h_eval + s[1]*com_h - f_coeffs[0]*com_h

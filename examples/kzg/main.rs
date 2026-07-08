@@ -52,26 +52,20 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let gen_g2_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
     let gen_g2: Value<ArkBls12_381> = Value::G2(gen_g2_input);
 
-    let poly_coeffs: Value<ArkBls12_381> =
-        Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_size));
+    let poly_x: Value<ArkBls12_381> =
+        Value::<ArkBls12_381>::random(&mut rng, &ATyp::uni(n_size - 1));
     let eval_point: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
     let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
 
     let srs_g1: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|_| gen_g1_input).collect())
         * Value::VecScalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect());
 
-    let eval_point_val: Value<ArkBls12_381> = Value::Vec(
-        (0..n_size)
-            .map(|i| eval_point.clone() ^ Value::Index(i))
-            .collect(),
-    );
-
-    let eval_result: Value<ArkBls12_381> = poly_coeffs.clone().dot(eval_point_val);
+    let eval_result: Value<ArkBls12_381> = poly_x.clone().value_eval(eval_point.clone());
 
     let srs_g2_s: Value<ArkBls12_381> = Value::G2(gen_g2_input * tau_input);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("poly_coeffs".to_string()), poly_coeffs),
+        (Vid("poly_x".to_string()), poly_x),
         (Vid("eval_point".to_string()), eval_point),
         (Vid("eval_result".to_string()), eval_result),
         (Vid("srs_g1".to_string()), srs_g1),

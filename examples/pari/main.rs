@@ -240,6 +240,7 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
     let mut v_k_coeffs_vec = vec![F::zero(); K + 1];
     v_k_coeffs_vec[0] = -F::one();
     v_k_coeffs_vec[K] = F::one();
+    let v_k_poly_value = Value::VecScalar(v_k_coeffs_vec).value_poly();
 
     // Lagrange shortcut inputs: x = (z[0], z[1], ..., z[N-1]),
     //                          omegas[i] = ω^{K-N+i}
@@ -258,7 +259,7 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
     let w_value = Value::VecScalar(w_vec);
     let x_value = Value::VecScalar(x_vec);
     let omegas_value = Value::VecScalar(omegas_vec);
-    let v_k_coeffs_value = Value::VecScalar(v_k_coeffs_vec);
+    let v_k_coeffs_value = v_k_poly_value;
 
     let sigma_w_value = Value::VecG1(sigma_w_vec);
     let sigma_q_value = Value::VecG1(sigma_q_vec);
@@ -294,7 +295,7 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
         (Vid("delta2_h".to_string()), delta2_h_value.clone()),
         (Vid("tau_h".to_string()), tau_h_value.clone()),
         (Vid("h_g2".to_string()), h_g2_value.clone()),
-        (Vid("v_k_coeffs".to_string()), v_k_coeffs_value),
+        (Vid("v_k_poly".to_string()), v_k_coeffs_value),
         (Vid("f_one".to_string()), f_one_value.clone()),
         (Vid("k_inv".to_string()), k_inv_value.clone()),
         // Relation-only trapdoor witnesses required by the `where`

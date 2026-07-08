@@ -3,7 +3,7 @@
 //! (`alloc_div_witness_pair`, `div_witness_key`, `canonical_*` helpers).
 
 use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig, ArkScalarOps};
+use backend::{ATyp, ArkConfig};
 
 use crate::Var;
 use crate::frontend::Polynomial;
@@ -269,33 +269,14 @@ pub fn div_rem_op<C: ArkConfig + HasOpFactory>(
             let (q_wit, r_wit) =
                 alloc_div_witness_pair(ctx, ATyp::VPoly(nr, mq), ATyp::VPoly(nr, mr));
 
-            // The divisor's leading coefficient must be nonzero for
-            // polynomial division to be well-defined. We encode this
-            // assumption by introducing a fresh inverse variable and the
-            // constraint `b_lead · b_lead_inv - 1 = 0`, which makes
-            // `b_lead` a unit in the polynomial ring. Without this, the
-            // GB cannot cancel `b_lead` from equations like
-            // `b_lead · (q - p) = 0` to deduce `q = p` (exact division),
-            // because `b_lead` is an indeterminate, not a unit.
-            //
-            // Caveat: `Uni(m)` / `VPoly(1, m)` encodes max degree m, not
-            // exact degree m. A divisor of actual degree < m has a zero
-            // leading coefficient, and this constraint would be
-            // unsatisfiable (forcing the unit ideal). This is acceptable
-            // for now because (1) we only handle univariate division,
-            // (2) no existing program divides by a polynomial whose
-            // declared degree exceeds its actual degree, and (3) this
-            // is a temporary measure. When Zippel gains a `nonzero`
-            // keyword, the programmer will explicitly mark divisors as
-            // nonzero at declaration time, and this implicit constraint
-            // can be dropped in favor of the explicit one.
-            let b_lead = &b.polys()[b.polys().len() - 1];
-            let inv_var = ctx
-                .builder
-                .sentinel_var("div_inv", ATyp::scalar(), ctx.ideal);
-            ctx.ideal
-                .generating_set
-                .push(&(b_lead * &Polynomial::var(&inv_var)) - &Polynomial::lit(&C::FOps::one()));
+            // Divisor-invertibility constraints are now emitted by
+            // `IdealBuilder::build()` for arg polynomials (not per-division).
+            // When the divisor is an arg polynomial, the constraint
+            // `b_lead · lead_inv - 1 = 0` is already in the ideal's
+            // generating set, allowing the GB to cancel `b_lead`.
+            // For non-arg (derived/runtime) divisors, no invertibility
+            // constraint exists — we cannot assume the leading coefficient
+            // is non-zero.
 
             let a_idx = multi_indices(na, ma);
             let b_idx = multi_indices(nb, mb);
@@ -462,11 +443,12 @@ mod tests {
         let q1 = wit_slot(&q_wit, 1);
         let r0 = wit_slot(&r_wit, 0);
 
-        // 3 identity rows + 2 linking rows + 1 divisor-invertibility constraint.
+        // 3 identity rows + 2 linking rows. Invertibility constraints are
+        // now emitted by build() for arg polynomials, not per-division.
         assert_eq!(
             ideal.generating_set.len() - basis_before,
-            6,
-            "expected 3 identity + 2 linking + 1 invertibility rows"
+            5,
+            "expected 3 identity + 2 linking rows"
         );
 
         // Check identity rows exist in basis.
@@ -560,11 +542,12 @@ mod tests {
         // r_wit slots: with_slot computes the correct type.
         let r0 = r_wit.clone().with_index(0).unwrap();
 
-        // 3 identity rows + 1 linking row + 1 divisor-invertibility constraint.
+        // 3 identity rows + 1 linking row. Invertibility constraints are
+        // now emitted by build() for arg polynomials, not per-division.
         assert_eq!(
             ideal.generating_set.len() - basis_before,
-            5,
-            "expected 3 identity + 1 linking + 1 invertibility row"
+            4,
+            "expected 3 identity + 1 linking row"
         );
 
         // pl[ideal[0]] = var(r_wit[0]).
@@ -628,11 +611,12 @@ mod tests {
         };
         let after_rem = ideal.generating_set.len();
 
-        // Div added 3 identity + 2 linking + 1 invertibility = 6 rows.
+        // Div added 3 identity + 2 linking = 5 rows. Invertibility is
+        // now emitted by build() for arg polynomials, not per-division.
         assert_eq!(
             after_div - basis_before_div,
-            6,
-            "Div emitted 3 identity + 2 linking + 1 invertibility rows"
+            5,
+            "Div emitted 3 identity + 2 linking rows"
         );
         // Rem added ONLY the linking row (1 slot on VPoly(1,0)) — no new identity.
         assert_eq!(

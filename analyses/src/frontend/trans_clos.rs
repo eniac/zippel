@@ -139,6 +139,10 @@ fn topo_sort_nodes<C: ArkConfig>(dag: &QDag<C>, nodes: &HashSet<NodeIndex>) -> V
 pub struct TransClos<C: ArkConfig> {
     pub clos: Vec<(Var, GOp<C>)>,
     pub vars: Vec<Var>,
+    /// Refs of `vars` that are actual protocol args (not transcript vars).
+    /// Used by `IdealBuilder::build()` to emit divisor-invertibility
+    /// constraints only for arg polynomials.
+    pub arg_refs: HashSet<Ref>,
 }
 
 impl<C: ArkConfig + HasOpFactory> TransClos<C> {
@@ -162,6 +166,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         let mut tc = Self {
             clos: Vec::new(),
             vars: Vec::new(),
+            arg_refs: HashSet::new(),
         };
         let mut seen: HashMap<NodeIndex, Var> = HashMap::new();
 
@@ -178,7 +183,8 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             seen.insert(rel_var.node(), input_var.clone());
         }
 
-        tc.vars = input_vars;
+        tc.vars = input_vars.clone();
+        tc.arg_refs = input_vars.iter().map(|v| v.reference).collect();
 
         let reachable = collect_reachable_forward(dag, start);
         let topo = topo_sort_nodes(dag, &reachable);
@@ -199,9 +205,11 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         let vars = Self::vars_from_marker(dag, dag.input_node());
         let transcripts_vec = dag.transcript_nodes();
 
+        let arg_refs = vars.iter().map(|v| v.reference).collect();
         let mut tc = Self {
             clos: Vec::new(),
             vars,
+            arg_refs,
         };
 
         let reachable = collect_reachable_backward(dag, &transcripts_vec, None);
@@ -244,9 +252,11 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         let transcripts_vec = dag.transcript_nodes();
         let transcripts_set: HashSet<NodeIndex> = transcripts_vec.iter().copied().collect();
 
+        let arg_refs = input_vars.iter().map(|v| v.reference).collect();
         let mut tc = Self {
             clos: Vec::new(),
             vars: input_vars,
+            arg_refs,
         };
 
         let mut seen: HashMap<NodeIndex, Var> = HashMap::new();

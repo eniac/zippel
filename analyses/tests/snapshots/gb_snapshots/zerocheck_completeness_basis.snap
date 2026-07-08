@@ -1,11 +1,16 @@
 ---
 source: analyses/tests/gb_snapshots.rs
+assertion_line: 214
 expression: value
 ---
-- __zippel::gb::div_q::0[0] + p[1]*div_inv
 - __zippel::gb::div_q::0[0] + q[0]
+- p[0]*arg_lead_inv + v[0]*arg_lead_inv
 - p[0]*v[1] + p[1]*v[0]
+__zippel::gb::div_q::0[0]*arg_lead_inv - arg_lead_inv
 __zippel::gb::div_r::0[0]
+p[0]*v[1]*arg_lead_inv - v[0]
+p[1]*arg_lead_inv - 1
+p[1]*arg_lead_inv - __zippel::gb::div_q::0[0]
 v[0]*__zippel::gb::div_q::0[0] - p[0]
 v[1]*__zippel::gb::div_q::0[0] - p[1]
-v[1]*div_inv - 1
+v[1]*arg_lead_inv - 1

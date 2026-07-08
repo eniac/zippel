@@ -1,4 +1,4 @@
-use ark_ff::{One, Zero, fields::Field};
+use ark_ff::fields::Field;
 use ark_std::UniformRand;
 use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
 use lang::id::{Tid, Vid};
@@ -64,26 +64,15 @@ fn prover_create_inputs(n_size: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
     let xi_g2 = h_input * xi_input;
     let srs_g2 = Value::VecG2(vec![tau_g2, xi_g2]);
 
-    let p_coeffs_val = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_size));
+    let p_poly_val = Value::<ArkBls12_381>::random(&mut rng, &ATyp::uni(n_size - 1));
 
     let u_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
     let u_val = Value::Scalar(u_input);
 
-    let p_coeffs_unwrapped = match &p_coeffs_val {
-        Value::VecScalar(v) => v.clone(),
-        _ => panic!("Expected VecScalar"),
-    };
-
-    let mut v_input = <ArkBls12_381 as ArkConfig>::F::zero();
-    let mut u_pow = <ArkBls12_381 as ArkConfig>::F::one();
-    for coeff in p_coeffs_unwrapped.iter().take(n_size) {
-        v_input += *coeff * u_pow;
-        u_pow *= u_input;
-    }
-    let v_val = Value::Scalar(v_input);
+    let v_val = p_poly_val.clone().value_eval(u_val.clone());
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("p_coeffs".to_string()), p_coeffs_val),
+        (Vid("p_poly".to_string()), p_poly_val),
         (Vid("u".to_string()), u_val),
         (Vid("v".to_string()), v_val),
         (Vid("srs_g1".to_string()), srs_g1),

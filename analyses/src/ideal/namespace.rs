@@ -6,6 +6,7 @@ use std::marker::PhantomData;
 
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
+use graph::Ref;
 use lang::typ::Qualifier;
 use petgraph::graph::NodeIndex;
 use share::Ctx;
@@ -35,6 +36,10 @@ pub struct DivWitnessKey {
 #[derive(Clone)]
 pub struct IdealNamespace<C: ArkConfig> {
     pub div_wit: Ctx<DivWitnessKey, (Var, Var)>,
+    /// Shared leading-coefficient inverse vars for arg polynomials.
+    /// Keyed by arg `Ref`, stable across `build()` calls so prover,
+    /// relation, and verifier clauses share the same `lead_inv` var.
+    pub arg_inv: HashMap<Ref, Var>,
     sentinel_counter: usize,
     name_counters: HashMap<String, usize>,
     _phantom: PhantomData<C>,
@@ -50,6 +55,7 @@ impl<C: ArkConfig + HasOpFactory> IdealNamespace<C> {
     pub fn new() -> Self {
         Self {
             div_wit: Ctx::new(),
+            arg_inv: HashMap::new(),
             sentinel_counter: usize::MAX,
             name_counters: HashMap::new(),
             _phantom: PhantomData,
