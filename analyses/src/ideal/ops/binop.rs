@@ -1,5 +1,5 @@
-//! Binary op encoders: `broadcast_binop`, `mul_op`, `dot_op`, `pair_op`,
-//! and helpers `emit_slotwise_binop`, `apply_binop`.
+//! Binary op encoders: `add_op`, `sub_op`, `broadcast_binop`, `mul_op`,
+//! `dot_op`, `pair_op`, and helpers `emit_slotwise_binop`, `apply_binop`.
 
 use backend::op::HasOpFactory;
 use backend::{ABase, ATyp, ArkConfig, ArkScalarOps};
@@ -54,7 +54,7 @@ pub fn emit_slotwise_binop<C: ArkConfig + HasOpFactory>(
     }
 }
 
-pub fn broadcast_binop<C: ArkConfig + HasOpFactory>(
+fn broadcast_binop<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a: &HOp<C>,
@@ -65,6 +65,28 @@ pub fn broadcast_binop<C: ArkConfig + HasOpFactory>(
     let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
     let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
     broadcast_binop_inner(ctx, var, &a_src, &b_src, r_typ, op);
+}
+
+/// Slot-wise addition with type-aware broadcasting.
+pub fn add_op<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    var: &Var,
+    a: &HOp<C>,
+    b: &HOp<C>,
+    r_typ: &ATyp,
+) {
+    broadcast_binop(ctx, var, a, b, r_typ, BinOp::Add);
+}
+
+/// Slot-wise subtraction with type-aware broadcasting.
+pub fn sub_op<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    var: &Var,
+    a: &HOp<C>,
+    b: &HOp<C>,
+    r_typ: &ATyp,
+) {
+    broadcast_binop(ctx, var, a, b, r_typ, BinOp::Sub);
 }
 
 fn broadcast_binop_inner<C: ArkConfig + HasOpFactory>(

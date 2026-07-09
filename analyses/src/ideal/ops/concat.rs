@@ -78,7 +78,6 @@ fn concat_op_inner<C: ArkConfig + HasOpFactory>(
 
 #[cfg(test)]
 mod tests {
-
     use super::super::{Ideal, IdealBuilder};
 
     use backend::ArkBls12_381;

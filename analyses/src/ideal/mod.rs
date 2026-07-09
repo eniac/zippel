@@ -142,13 +142,13 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 link_to_polys(ctx.ideal, &var, lifted.polys);
             }
             Op::Bin(BinOp::Add, a, b, _) => {
-                ops::binop::broadcast_binop(&mut ctx, &var, &a, &b, &var.typ, BinOp::Add);
+                ops::binop::add_op(&mut ctx, &var, &a, &b, &var.typ);
             }
             Op::Bin(BinOp::And, ref a, ref b, _) => {
                 ops::binop::mul_op(&mut ctx, &var, a, b, &var.typ);
             }
             Op::Bin(BinOp::Sub, a, b, _) => {
-                ops::binop::broadcast_binop(&mut ctx, &var, &a, &b, &var.typ, BinOp::Sub);
+                ops::binop::sub_op(&mut ctx, &var, &a, &b, &var.typ);
             }
             Op::Bin(BinOp::Mul, ref a, ref b, _) => {
                 ops::binop::mul_op(&mut ctx, &var, a, b, &var.typ);
@@ -163,7 +163,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 ops::div::div_rem_op(&mut ctx, &var, a, b, true, true);
             }
             Op::Bin(BinOp::Equ, a, b, _) => {
-                ops::equ::broadcast_equ(&mut ctx, &var, &a, &b);
+                ops::equ::equ_op(&mut ctx, &var, &a, &b);
             }
             Op::Check(a) => ctx.builder.add_op(var, a.get().clone(), ctx.ideal),
             Op::Challenge(_, _) | Op::Random(_, _) => {}

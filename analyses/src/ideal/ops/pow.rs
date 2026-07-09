@@ -42,6 +42,19 @@ fn resolve_const_exp<C: ArkConfig>(src: &PolySource<C>) -> Option<usize> {
     Some(result)
 }
 
+/// Recursively check whether `typ` contains any polynomial type
+/// (`Uni`/`Mle`/`VPoly`) at any nesting depth. When it does not, the
+/// base is a purely scalar/vec-of-scalar shape and `pow_const` can
+/// raise each slot polynomial directly, avoiding intermediate sentinel
+/// `pow_acc` vars.
+fn has_poly_type(typ: &ATyp) -> bool {
+    match typ {
+        ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => true,
+        ATyp::Vec(inner, _) => has_poly_type(inner),
+        _ => false,
+    }
+}
+
 pub fn pow_const<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
@@ -58,6 +71,25 @@ pub fn pow_const<C: ArkConfig + HasOpFactory>(
 
     if k == 1 {
         link_to_polys(ctx.ideal, target, base.polys().to_vec());
+        return;
+    }
+
+    // Short-circuit: when the base type contains no polynomial type
+    // (scalar / vec-of-scalar / vec-of-vec-of-scalar …), multiplication
+    // is purely slot-wise with no cross-terms. Raise each slot polynomial
+    // to the k-th power directly instead of allocating k-1 sentinel
+    // `pow_acc` vars.
+    if !has_poly_type(base.typ()) {
+        let powered: Vec<Polynomial<C::F>> = base
+            .polys()
+            .iter()
+            .map(|p| {
+                let mut q = p.clone();
+                q.pow(k);
+                q
+            })
+            .collect();
+        link_to_polys(ctx.ideal, target, powered);
         return;
     }
 

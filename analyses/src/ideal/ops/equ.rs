@@ -1,4 +1,4 @@
-//! Equality op encoder: `broadcast_equ` and `emit_equ_diffs`.
+//! Equality op encoder: `equ_op` and `equ_op_inner`.
 
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
@@ -21,7 +21,7 @@ use super::PolySource;
 /// - `Poly op Scalar` / `Scalar op Poly` → broadcast scalar to each coefficient
 /// - `Uni(n1) op Uni(n2)` → zero-pad shorter operand to match ideal degree
 /// - Same-type poly op → straightforward slot-wise
-pub fn broadcast_equ<C: ArkConfig + HasOpFactory>(
+pub fn equ_op<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     _pr: &Var,
     a: &HOp<C>,
@@ -29,42 +29,23 @@ pub fn broadcast_equ<C: ArkConfig + HasOpFactory>(
 ) {
     let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
     let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
-    broadcast_equ_inner(ctx, _pr, &a_src, &b_src);
-}
-
-fn broadcast_equ_inner<C: ArkConfig + HasOpFactory>(
-    ctx: &mut EncodeCtx<'_, C>,
-    _pr: &Var,
-    a: &PolySource<C>,
-    b: &PolySource<C>,
-) {
-    emit_equ_diffs(a, b, ctx.ideal);
+    equ_op_inner(&a_src, &b_src, ctx.ideal);
     // NOTE: We do NOT emit `var.slots()` as basis polynomials here.
     // `==` is used as an assertion, not to compute the boolean
     // ideal of equality checking.
 }
 
-pub fn emit_equ_diffs<C: ArkConfig>(a: &PolySource<C>, b: &PolySource<C>, ideal: &mut Ideal<C>) {
+fn equ_op_inner<C: ArkConfig>(a: &PolySource<C>, b: &PolySource<C>, ideal: &mut Ideal<C>) {
     match (a.typ(), b.typ()) {
         (ATyp::Vec(_, na), ATyp::Vec(_, nb)) if na == nb => {
             for i in 0..*na {
                 let a_elem = a.at_index(i).unwrap();
                 let b_elem = b.at_index(i).unwrap();
-                emit_equ_diffs(&a_elem, &b_elem, ideal);
-            }
-        }
-        _ if matches!(
-            (a.typ(), b.typ()),
-            (ATyp::Mle(_), ATyp::Uni(_)) | (ATyp::Uni(_), ATyp::Mle(_))
-        ) && a.typ().physical_len() == b.typ().physical_len() =>
-        {
-            for (ap, bp) in a.polys().iter().zip(b.polys()) {
-                ideal.generating_set.push(ap - bp);
+                equ_op_inner(&a_elem, &b_elem, ideal);
             }
         }
         _ => {
-            let lub =
-                ATyp::lub_equ(a.typ(), b.typ(), &Nothing).expect("broadcast_equ: lub_equ failed");
+            let lub = ATyp::lub_equ(a.typ(), b.typ(), &Nothing).expect("equ_op: lub_equ failed");
             let a_lifted = a.lift_to(&lub);
             let b_lifted = b.lift_to(&lub);
             for j in 0..lub.physical_len() {
