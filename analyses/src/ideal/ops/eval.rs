@@ -13,7 +13,7 @@ use crate::frontend::Polynomial;
 
 use super::EncodeCtx;
 use super::PolySource;
-use super::fft::encode_dft;
+use super::fft::encode_fft;
 use super::link_to_polys;
 use super::reduce::selected_eval_to_poly;
 use super::{hypercube, multi_indices};
@@ -207,7 +207,7 @@ pub fn evaluate_op<C: ArkConfig + HasOpFactory>(
             }
         }
         (None, None) => {
-            encode_dft(ctx, var, p);
+            encode_fft(ctx, var, p);
         }
         (Some(_), None) => {
             super::uncovered_op("selected-evaluate-missing-points", var);

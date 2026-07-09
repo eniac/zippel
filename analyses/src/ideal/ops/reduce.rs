@@ -266,8 +266,18 @@ pub fn reduce_polysource<C: ArkConfig + HasOpFactory>(
             let is_rem = rop == BinOp::Rem;
             let is_poly = PolySource::<C>::poly_shape_static(&elem_t).is_some();
             let mut acc_src = v_src.at_index(0).unwrap();
+            let mut acc_typ = elem_t.clone();
             for step in 0..n - 1 {
                 let is_last = step == n - 2;
+                let elem_src = v_src.at_index(step + 1).unwrap();
+                if !is_poly && is_rem {
+                    panic!(
+                        "Rem: non-polynomial remainder is undefined for Vec<{}>",
+                        elem_t,
+                    );
+                }
+                let step_typ = ATyp::lub_op(rop, &acc_typ, elem_src.typ(), &Nothing)
+                    .expect("reduce(/,%): type checker guarantees lub");
                 let target = if is_last {
                     var.clone()
                 } else {
@@ -276,35 +286,15 @@ pub fn reduce_polysource<C: ArkConfig + HasOpFactory>(
                     } else {
                         "reduce_div_acc"
                     });
-                    ctx.sentinel_var(&acc_name, elem_t.clone())
+                    ctx.sentinel_var(&acc_name, step_typ.clone())
                 };
-                let elem_src = v_src.at_index(step + 1).unwrap();
                 if is_poly {
-                    div::div_rem_op_inner(
-                        ctx,
-                        &target,
-                        &acc_src,
-                        &elem_src,
-                        is_rem && is_last,
-                        false,
-                    );
+                    div::div_rem_op_inner(ctx, &target, &acc_src, &elem_src, is_rem, false);
                 } else {
-                    if is_rem {
-                        panic!(
-                            "Rem: non-polynomial remainder is undefined for Vec<{}>",
-                            elem_t,
-                        );
-                    }
                     div::slot_wise_div(ctx.ideal, &target, acc_src.polys(), elem_src.polys());
                 }
-                acc_src = PolySource::new(
-                    target
-                        .slots()
-                        .into_iter()
-                        .map(|s| Polynomial::var(&s))
-                        .collect(),
-                    elem_t.clone(),
-                );
+                acc_src = PolySource::from_vars(&target, step_typ.clone());
+                acc_typ = step_typ;
             }
         }
         BinOp::Equ | BinOp::Pow => {

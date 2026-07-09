@@ -52,21 +52,3 @@ pub fn encode_fft<C: ArkConfig + HasOpFactory>(
         .collect();
     link_to_polys(ctx.ideal, var, polys);
 }
-
-/// `Op::Evaluate(p, None, None)`: DFT evaluation on the full grid.
-/// Each evaluation point is `v[i] = Σ_j ω^{i·j} · p[j]`.
-/// The type checker guarantees N is a 2-adic divisor of |F|-1.
-pub fn encode_dft<C: ArkConfig + HasOpFactory>(
-    ctx: &mut EncodeCtx<'_, C>,
-    var: &Var,
-    p: &graph::GOp<C>,
-) {
-    let coeff_polys = PolySource::ref_vars(p, &ctx.ideal.vars);
-    let n = coeff_polys.len();
-    let omega = C::F::get_root_of_unity(n as u64)
-        .expect("Evaluate grid size must have a root of unity; type checker guarantees this");
-    let polys: Vec<Polynomial<C::F>> = (0..n)
-        .map(|i| dft_row::<C>(&coeff_polys, omega, i))
-        .collect();
-    link_to_polys(ctx.ideal, var, polys);
-}

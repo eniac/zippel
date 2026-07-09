@@ -1,6 +1,8 @@
 //! Binary op encoders: `add_op`, `sub_op`, `broadcast_binop`, `mul_op`,
 //! `dot_op`, `pair_op`, and helpers `emit_slotwise_binop`, `apply_binop`.
 
+use std::collections::HashMap;
+
 use backend::op::HasOpFactory;
 use backend::{ABase, ATyp, ArkConfig, ArkScalarOps};
 use graph::HOp;
@@ -45,13 +47,12 @@ pub fn emit_slotwise_binop<C: ArkConfig + HasOpFactory>(
         "broadcast_binop {context}: ideal slot count must match right operand"
     );
 
-    for ((pf, left_poly), right_poly) in pr_slots.iter().zip(left).zip(right) {
-        let combined = apply_binop::<C>(op, left_poly, right_poly);
-        ctx.ideal.pl.insert(pf, &combined);
-        ctx.ideal
-            .generating_set
-            .push(combined - Polynomial::var(pf));
-    }
+    let combined: Vec<Polynomial<C::F>> = left
+        .iter()
+        .zip(right)
+        .map(|(l, r)| apply_binop::<C>(op, l, r))
+        .collect();
+    link_to_polys(ctx.ideal, var, combined);
 }
 
 fn broadcast_binop<C: ArkConfig + HasOpFactory>(
@@ -246,20 +247,15 @@ pub fn mul_op_inner<C: ArkConfig + HasOpFactory>(
             }
         }
         (_, ATyp::Base(ABase::Scalar)) if a.is_poly() => {
-            let target_slots = target.slots();
-            for (ap, pf) in a.polys().iter().zip(&target_slots) {
-                let prod = ap * &b.polys()[0];
-                ctx.ideal.pl.insert(pf, &prod);
-                ctx.ideal.generating_set.push(prod - Polynomial::var(pf));
-            }
+            let _target_slots = target.slots();
+            let prods: Vec<Polynomial<C::F>> =
+                a.polys().iter().map(|ap| ap * &b.polys()[0]).collect();
+            link_to_polys(ctx.ideal, target, prods);
         }
         (ATyp::Base(ABase::Scalar), _) if b.is_poly() => {
-            let target_slots = target.slots();
-            for (bp, pf) in b.polys().iter().zip(&target_slots) {
-                let prod = &a.polys()[0] * bp;
-                ctx.ideal.pl.insert(pf, &prod);
-                ctx.ideal.generating_set.push(prod - Polynomial::var(pf));
-            }
+            let prods: Vec<Polynomial<C::F>> =
+                b.polys().iter().map(|bp| &a.polys()[0] * bp).collect();
+            link_to_polys(ctx.ideal, target, prods);
         }
         (ATyp::Mle(na), ATyp::Mle(nb)) if na == nb => {
             let ATyp::VPoly(_nr, mr) = r_typ else {
@@ -394,23 +390,19 @@ pub fn mul_op_inner<C: ArkConfig + HasOpFactory>(
                     let a_idx = multi_indices(*na, *ma);
                     let b_idx = multi_indices(*nb, *mb);
                     let r_idx = multi_indices(*nr, *mr);
+                    let r_pos: HashMap<&Vec<usize>, usize> =
+                        r_idx.iter().enumerate().map(|(i, k)| (k, i)).collect();
                     let mut out: Vec<Polynomial<C::F>> =
                         vec![Polynomial::<C::F>::zero(); r_idx.len()];
                     for (ia, ka) in a_idx.iter().enumerate() {
                         for (ib, kb) in b_idx.iter().enumerate() {
                             let k: Vec<usize> =
                                 ka.iter().zip(kb.iter()).map(|(x, y)| x + y).collect();
-                            let ir = r_idx
-                                .iter()
-                                .position(|rk| rk == &k)
-                                .expect("multi-index missing in ideal");
+                            let ir = *r_pos.get(&k).expect("multi-index missing in ideal");
                             out[ir] = &out[ir] + &(&a.polys()[ia] * &b.polys()[ib]);
                         }
                     }
-                    for (pf, poly) in target.slots().into_iter().zip(out) {
-                        ctx.ideal.pl.insert(&pf, &poly);
-                        ctx.ideal.generating_set.push(poly - Polynomial::var(&pf));
-                    }
+                    link_to_polys(ctx.ideal, target, out);
                 }
                 _ => {
                     super::uncovered_op("mul-unsupported-poly-combo", target);
@@ -418,12 +410,13 @@ pub fn mul_op_inner<C: ArkConfig + HasOpFactory>(
             }
         }
         (ATyp::Base(_), ATyp::Base(_)) => {
-            let target_slots = target.slots();
-            for ((ap, bp), pf) in a.polys().iter().zip(b.polys()).zip(&target_slots) {
-                let prod = ap * bp;
-                ctx.ideal.pl.insert(pf, &prod);
-                ctx.ideal.generating_set.push(prod - Polynomial::var(pf));
-            }
+            let prods: Vec<Polynomial<C::F>> = a
+                .polys()
+                .iter()
+                .zip(b.polys())
+                .map(|(ap, bp)| ap * bp)
+                .collect();
+            link_to_polys(ctx.ideal, target, prods);
         }
         _ => {
             super::uncovered_op("mul-unsupported-type-combo", target);
@@ -475,17 +468,13 @@ fn dot_op_inner<C: ArkConfig + HasOpFactory>(
             link_to_polys(ctx.ideal, var, acc);
         }
         (ATyp::Base(_), ATyp::Base(_)) => {
-            let pr_slots = var.slots();
             assert_eq!(
-                pr_slots.len(),
+                var.slots().len(),
                 1,
                 "Dot: Base·Base ideal must be single slot"
             );
             let sum: Polynomial<C::F> = a.polys().iter().zip(b.polys()).map(|(a, b)| a * b).sum();
-            ctx.ideal.pl.insert(&pr_slots[0], &sum);
-            ctx.ideal
-                .generating_set
-                .push(sum - Polynomial::var(&pr_slots[0]));
+            link_to_polys(ctx.ideal, var, vec![sum]);
         }
         _ => {
             super::uncovered_op("dot-unsupported-type-combo", var);
@@ -518,25 +507,23 @@ fn pair_op_inner<C: ArkConfig + HasOpFactory>(
                 let t_i = var.with_index(i).unwrap();
                 let a_lifted = a_elem.lift_to(r_inner);
                 let b_lifted = b_elem.lift_to(r_inner);
-                for (j, pf) in t_i.slots().iter().enumerate() {
-                    let e = &a_lifted.polys()[j] * &b_lifted.polys()[j];
-                    ctx.ideal.pl.insert(pf, &e);
-                    ctx.ideal.generating_set.push(&e - &Polynomial::var(pf));
-                }
+                let es: Vec<Polynomial<C::F>> = a_lifted
+                    .polys()
+                    .iter()
+                    .zip(b_lifted.polys())
+                    .map(|(a, b)| a * b)
+                    .collect();
+                link_to_polys(ctx.ideal, &t_i, es);
             }
         }
         (ATyp::Base(_), ATyp::Base(_), ATyp::Base(_)) => {
-            let pr_slots = var.slots();
-            for (pf, e_a, e_b) in pr_slots
+            let es: Vec<Polynomial<C::F>> = a
+                .polys()
                 .iter()
-                .zip(a.polys())
                 .zip(b.polys())
-                .map(|((pf, a), b)| (pf, a, b))
-            {
-                let e = e_a * e_b;
-                ctx.ideal.pl.insert(pf, &e);
-                ctx.ideal.generating_set.push(&e - &Polynomial::var(pf));
-            }
+                .map(|(a, b)| a * b)
+                .collect();
+            link_to_polys(ctx.ideal, var, es);
         }
         _ => {
             super::uncovered_op("pair-unsupported-type-combo", var);

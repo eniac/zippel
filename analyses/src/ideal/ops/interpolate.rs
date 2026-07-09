@@ -12,6 +12,7 @@ use crate::frontend::Polynomial;
 use super::EncodeCtx;
 use super::PolySource;
 use super::lagrange_basis;
+use super::link_to_polys;
 
 /// `Op::Interpolate(points, evals)`: bind `var` to the Lagrange
 /// interpolation polynomial through `(points[i], evals[i])`.
@@ -62,40 +63,35 @@ pub fn interpolate_op<C: ArkConfig + HasOpFactory>(
         "Interpolate: points and evals must have same length"
     );
 
+    check_duplicate_points(&xs_polys, &var);
+
     let all_constant = xs_polys.iter().all(|p| p.is_constant());
 
     if all_constant {
         let xs: Vec<C::F> = xs_polys.iter().map(|p| p.constant_coeff()).collect();
-        for i in 0..xs.len() {
-            for j in (i + 1)..xs.len() {
-                if xs[i] == xs[j] {
-                    super::uncovered_op("duplicate-interpolate-points", &var);
-                }
-            }
-        }
         let lag = lagrange_basis::<C::F>(&xs);
         let pr_slots = var.slots();
-        for (k, pf) in pr_slots.iter().enumerate() {
-            let mut acc = Polynomial::<C::F>::zero();
-            for (i, y_i) in evals_polys.iter().enumerate() {
-                if k < lag[i].len() && lag[i][k] != C::F::zero() {
-                    let weight = Polynomial::<C::F>::lit(&lag[i][k]);
-                    acc += y_i * &weight;
-                }
-            }
-            ctx.ideal.pl.insert(pf, &acc);
-            ctx.ideal.generating_set.push(acc - Polynomial::var(pf));
-        }
-    } else {
-        for i in 0..xs_polys.len() {
-            for j in (i + 1)..xs_polys.len() {
-                let diff = &xs_polys[i] - &xs_polys[j];
-                if diff.is_zero() {
-                    super::uncovered_op("duplicate-interpolate-points", &var);
-                }
-            }
-        }
 
+        assert!(
+            pr_slots.len() >= lag[0].len(),
+            "interpolate: target has {} slots but interpolation through {} points produces {} coefficients — \
+             type checker should ensure target type is wide enough",
+            pr_slots.len(),
+            xs.len(),
+            lag[0].len(),
+        );
+
+        let mut ideal_polys = vec![Polynomial::<C::F>::zero(); pr_slots.len()];
+        for (i, y_i) in evals_polys.iter().enumerate() {
+            for (k, &coeff) in lag[i].iter().enumerate() {
+                if coeff != C::F::zero() {
+                    let weight = Polynomial::<C::F>::lit(&coeff);
+                    ideal_polys[k] = &ideal_polys[k] + &(y_i * &weight);
+                }
+            }
+        }
+        link_to_polys(ctx.ideal, &var, ideal_polys);
+    } else {
         let n_pts = xs_polys.len();
         let mut denom_inverses: Vec<Vec<Option<Var>>> = vec![vec![None; n_pts]; n_pts];
         for i in 0..n_pts {
@@ -117,30 +113,36 @@ pub fn interpolate_op<C: ArkConfig + HasOpFactory>(
         }
 
         let pr_slots = var.slots();
+        assert!(
+            pr_slots.len() >= n_pts,
+            "interpolate: target has {} slots but interpolation through {} points produces {} coefficients — \
+             type checker should ensure target type is wide enough",
+            pr_slots.len(),
+            n_pts,
+            n_pts,
+        );
         let mut ideal_polys = vec![Polynomial::<C::F>::zero(); pr_slots.len()];
 
         for (i, y_i) in evals_polys.iter().enumerate() {
+            // Build Lagrange basis polynomial L_i(t) = Π_{j≠i} (t - x_j)
+            // and denominator inverse 1 / Π_{j≠i} (x_i - x_j) in a single
+            // pass over j ≠ i.
             let mut lag_poly = vec![Polynomial::<C::F>::lit(&C::F::one())];
+            let mut denom_inv = Polynomial::<C::F>::lit(&C::F::one());
 
             for (j, xj_poly) in xs_polys.iter().enumerate().take(n_pts) {
                 if j == i {
                     continue;
                 }
-                let neg_xj = xj_poly * &Polynomial::lit(&(-C::F::one()));
+                // lag_poly *= (t - x_j): shift and subtract in-place
                 let mut new_lag = vec![Polynomial::<C::F>::zero(); lag_poly.len() + 1];
                 for (deg, c) in lag_poly.iter().enumerate() {
-                    let shifted = c * &neg_xj;
-                    new_lag[deg] = &new_lag[deg] + &shifted;
+                    new_lag[deg] = &new_lag[deg] - &(c * xj_poly);
                     new_lag[deg + 1] = &new_lag[deg + 1] + c;
                 }
                 lag_poly = new_lag;
-            }
 
-            let mut denom_inv = Polynomial::<C::F>::lit(&C::F::one());
-            for j in 0..n_pts {
-                if j == i {
-                    continue;
-                }
+                // denom_inv *= 1 / (x_i - x_j)
                 let diff = &xs_polys[i] - &xs_polys[j];
                 if diff.is_constant() {
                     let c = diff.constant_coeff();
@@ -159,9 +161,18 @@ pub fn interpolate_op<C: ArkConfig + HasOpFactory>(
             }
         }
 
-        for (pf, poly) in pr_slots.iter().zip(ideal_polys) {
-            ctx.ideal.pl.insert(pf, &poly);
-            ctx.ideal.generating_set.push(poly - Polynomial::var(pf));
+        link_to_polys(ctx.ideal, &var, ideal_polys);
+    }
+}
+
+/// Check for duplicate points and panic via `uncovered_op` if found.
+fn check_duplicate_points<F: Field>(xs_polys: &[Polynomial<F>], var: &Var) {
+    for i in 0..xs_polys.len() {
+        for j in (i + 1)..xs_polys.len() {
+            let diff = &xs_polys[i] - &xs_polys[j];
+            if diff.is_zero() {
+                super::uncovered_op("duplicate-interpolate-points", var);
+            }
         }
     }
 }

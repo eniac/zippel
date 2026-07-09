@@ -286,15 +286,6 @@ pub(crate) fn div_rem_op_inner<C: ArkConfig + HasOpFactory>(
             let (q_wit, r_wit) =
                 alloc_div_witness_pair(ctx, ATyp::VPoly(nr, mq), ATyp::VPoly(nr, mr));
 
-            // Divisor-invertibility constraints are now emitted by
-            // `IdealBuilder::build()` for arg polynomials (not per-division).
-            // When the divisor is an arg polynomial, the constraint
-            // `b_lead · lead_inv - 1 = 0` is already in the ideal's
-            // generating set, allowing the GB to cancel `b_lead`.
-            // For non-arg (derived/runtime) divisors, no invertibility
-            // constraint exists — we cannot assume the leading coefficient
-            // is non-zero.
-
             let a_idx = multi_indices(na, ma);
             let b_idx = multi_indices(nb, mb);
             let q_idx = multi_indices(nr, mq);
@@ -372,6 +363,20 @@ pub fn slot_wise_div<C: ArkConfig>(
     b_polys: &[Polynomial<C::F>],
 ) {
     let target_slots = target.slots();
+    assert_eq!(
+        target_slots.len(),
+        a_polys.len(),
+        "slot_wise_div: target has {} slots but a_polys has {}",
+        target_slots.len(),
+        a_polys.len(),
+    );
+    assert_eq!(
+        target_slots.len(),
+        b_polys.len(),
+        "slot_wise_div: target has {} slots but b_polys has {}",
+        target_slots.len(),
+        b_polys.len(),
+    );
     for (j, pf) in target_slots.iter().enumerate() {
         ideal
             .generating_set

@@ -66,7 +66,7 @@ struct TestEntry {
 #[rustfmt::skip]
 const EXAMPLES: &[TestEntry] = &[
     // --- Active (completeness + soundness verified Singular ↔ ArkGb) ---
-    TestEntry { name: "sumcheck", zippel_path: "examples/sumcheck/sumcheck.zippel", sizes: &[("NUM_VARS_CONST", 3), ("MAX_DEGREE_CONST", 1)], l_vec: &[], ignored: false },
+    TestEntry { name: "sumcheck", zippel_path: "examples/sumcheck/sumcheck_full.zippel", sizes: &[("NUM_VARS_CONST", 3), ("MAX_DEGREE_CONST", 1)], l_vec: &[], ignored: false },
     TestEntry { name: "mle_sumcheck", zippel_path: "examples/mle_sumcheck/mle_sumcheck.zippel", sizes: &[("NUM_VARS", 3), ("MAX_DEGREE_CONST", 1)], l_vec: &[], ignored: false },
     TestEntry { name: "kzg", zippel_path: "examples/kzg/kzg.zippel", sizes: &[("N", 2)], l_vec: &[], ignored: false },
     TestEntry { name: "membership", zippel_path: "examples/membership/membership.zippel", sizes: &[("N", 2), ("M", 2), ("S", 2)], l_vec: &[], ignored: false },
