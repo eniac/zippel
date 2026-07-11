@@ -1,4 +1,4 @@
-//! Multiplication op encoder: `mul_op`, `mul_op_inner`.
+//! Multiplication op encoder: `mul_op`, `mul_op_inner`, `mul_leaf`.
 //!
 //! For `Vec<T>` × `Vec<T>`, iterates over logical indices and recurses
 //! per element. At the leaf level (non-Vec), dispatches to polynomial
@@ -40,7 +40,7 @@ pub fn mul_op_inner<C: ArkConfig + HasOpFactory>(
         (ATyp::Vec(_, na), ATyp::Vec(_, nb)) if na == nb => {
             let r_inner = match r_typ {
                 ATyp::Vec(inner, _) => inner,
-                _ => panic!("mul_op Vec×Vec ideal must be Vec"),
+                _ => panic!("mul_op_inner Vec×Vec ideal must be Vec"),
             };
             for i in 0..*na {
                 let t_i = target.with_index(i).unwrap();
@@ -52,7 +52,7 @@ pub fn mul_op_inner<C: ArkConfig + HasOpFactory>(
         (ATyp::Vec(_, na), _) => {
             let r_inner = match r_typ {
                 ATyp::Vec(inner, _) => inner,
-                _ => panic!("mul_op Vec×scalar ideal must be Vec"),
+                _ => panic!("mul_op_inner Vec×_ ideal must be Vec"),
             };
             for i in 0..*na {
                 let t_i = target.with_index(i).unwrap();
@@ -63,7 +63,7 @@ pub fn mul_op_inner<C: ArkConfig + HasOpFactory>(
         (_, ATyp::Vec(_, nb)) => {
             let r_inner = match r_typ {
                 ATyp::Vec(inner, _) => inner,
-                _ => panic!("mul_op scalar×Vec ideal must be Vec"),
+                _ => panic!("mul_op_inner _×Vec ideal must be Vec"),
             };
             for i in 0..*nb {
                 let t_i = target.with_index(i).unwrap();
@@ -71,180 +71,235 @@ pub fn mul_op_inner<C: ArkConfig + HasOpFactory>(
                 mul_op_inner(&mut *ctx, &t_i, a, &b_elem, r_inner);
             }
         }
-        (_, ATyp::Base(ABase::Scalar)) if a.is_poly() => {
-            let _target_slots = target.slots();
-            let prods: Vec<Polynomial<C::F>> =
-                a.polys().iter().map(|ap| ap * &b.polys()[0]).collect();
-            link_to_polys(ctx.ideal, target, prods);
+        _ => {
+            mul_leaf(ctx, target, a, b, r_typ);
         }
-        (ATyp::Base(ABase::Scalar), _) if b.is_poly() => {
-            let prods: Vec<Polynomial<C::F>> =
-                b.polys().iter().map(|bp| &a.polys()[0] * bp).collect();
-            link_to_polys(ctx.ideal, target, prods);
+    }
+}
+
+/// Leaf-level multiplication for non-Vec operands. Dispatches based on
+/// operand types:
+///
+/// - `poly × Scalar` → scalar multiply (each poly slot × scalar)
+/// - `Scalar × poly` → scalar multiply (scalar × each poly slot)
+/// - `Mle × Mle` (equal arity) → basis-change convolution (Lagrange → monomial)
+/// - `Mle × VPoly` / `VPoly × Mle` (equal arity) → basis-change convolution
+/// - `poly × poly` (`Uni`/`VPoly`) → VPoly coefficient convolution
+/// - `Base × Base` → slot-wise multiply
+/// - otherwise → `uncovered_op`
+fn mul_leaf<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    target: &Var,
+    a: &PolySource<C>,
+    b: &PolySource<C>,
+    r_typ: &ATyp,
+) {
+    if matches!(b.typ(), ATyp::Base(ABase::Scalar)) && a.is_poly() {
+        let prods: Vec<Polynomial<C::F>> = a.polys().iter().map(|ap| ap * &b.polys()[0]).collect();
+        link_to_polys(ctx.ideal, target, prods);
+    } else if matches!(a.typ(), ATyp::Base(ABase::Scalar)) && b.is_poly() {
+        let prods: Vec<Polynomial<C::F>> = b.polys().iter().map(|bp| &a.polys()[0] * bp).collect();
+        link_to_polys(ctx.ideal, target, prods);
+    } else if matches!(a.typ(), ATyp::Mle(_)) && matches!(b.typ(), ATyp::Mle(_)) {
+        mul_mle_mle(ctx, target, a, b, r_typ);
+    } else if matches!(a.typ(), ATyp::Mle(_)) && matches!(b.typ(), ATyp::VPoly(_, _))
+        || matches!(a.typ(), ATyp::VPoly(_, _)) && matches!(b.typ(), ATyp::Mle(_))
+    {
+        mul_mle_vpoly(ctx, target, a, b, r_typ);
+    } else if a.is_poly() && b.is_poly() {
+        mul_vpoly_vpoly(ctx, target, a, b, r_typ);
+    } else if !a.is_poly() && !b.is_poly() {
+        let prods: Vec<Polynomial<C::F>> = a
+            .polys()
+            .iter()
+            .zip(b.polys())
+            .map(|(ap, bp)| ap * bp)
+            .collect();
+        link_to_polys(ctx.ideal, target, prods);
+    } else {
+        super::uncovered_op("mul-mixed-poly-nonpoly", target);
+    }
+}
+
+/// `Mle(n) × Mle(n) → VPoly(n, 2n)`: basis-change convolution.
+///
+/// Each evaluation slot of the result is a linear combination of
+/// `a_eval[i] · b_eval[j]` weighted by the Lagrange-to-monomial
+/// change-of-basis coefficients.
+fn mul_mle_mle<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    target: &Var,
+    a: &PolySource<C>,
+    b: &PolySource<C>,
+    r_typ: &ATyp,
+) {
+    let (ATyp::Mle(na), ATyp::Mle(nb)) = (a.typ(), b.typ()) else {
+        unreachable!("mul_mle_mle called with non-Mle operands");
+    };
+    assert_eq!(na, nb, "mul_mle_mle: Mle arity mismatch");
+    let ATyp::VPoly(_nr, mr) = r_typ else {
+        panic!("Mul Mle×Mle ideal must be VPoly");
+    };
+    let n = *na;
+    let all_b = hypercube(n);
+    let r_idx = multi_indices(n, *mr);
+    let single_var_coeff = |ba: usize, bb: usize, k: usize| -> i64 {
+        if k >= 3 {
+            return 0;
         }
-        (ATyp::Mle(na), ATyp::Mle(nb)) if na == nb => {
-            let ATyp::VPoly(_nr, mr) = r_typ else {
-                panic!("Mul Mle×Mle ideal must be VPoly");
-            };
-            let n = *na;
-            let all_b = hypercube(n);
-            let r_idx = multi_indices(n, *mr);
-            let single_var_coeff = |ba: usize, bb: usize, k: usize| -> i64 {
-                if k >= 3 {
-                    return 0;
-                }
-                const C: [[[i64; 3]; 2]; 2] = [[[1, -2, 1], [0, 1, -1]], [[0, 1, -1], [0, 0, 1]]];
-                C[ba][bb][k]
-            };
-            let lit_of = |v: i64| -> Polynomial<C::F> {
-                if v >= 0 {
-                    Polynomial::lit(&C::FOps::from_usize(v as usize))
-                } else {
-                    -Polynomial::lit(&C::FOps::from_usize((-v) as usize))
-                }
-            };
-            let mut out: Vec<Polynomial<C::F>> = vec![Polynomial::<C::F>::zero(); r_idx.len()];
-            for (ia, ba) in all_b.iter().enumerate() {
-                for (ib, bb) in all_b.iter().enumerate() {
-                    let uv = &a.polys()[ia] * &b.polys()[ib];
-                    for (ir, k) in r_idx.iter().enumerate() {
-                        let mut scalar: i64 = 1;
-                        for i in 0..n {
-                            let c = single_var_coeff(ba[i], bb[i], k[i]);
-                            if c == 0 {
-                                scalar = 0;
-                                break;
-                            }
-                            scalar *= c;
-                        }
-                        if scalar == 0 {
-                            continue;
-                        }
-                        out[ir] = &out[ir] + &(&lit_of(scalar) * &uv);
+        const C: [[[i64; 3]; 2]; 2] = [[[1, -2, 1], [0, 1, -1]], [[0, 1, -1], [0, 0, 1]]];
+        C[ba][bb][k]
+    };
+    let lit_of = |v: i64| -> Polynomial<C::F> {
+        if v >= 0 {
+            Polynomial::lit(&C::FOps::from_usize(v as usize))
+        } else {
+            -Polynomial::lit(&C::FOps::from_usize((-v) as usize))
+        }
+    };
+    let mut out: Vec<Polynomial<C::F>> = vec![Polynomial::<C::F>::zero(); r_idx.len()];
+    for (ia, ba) in all_b.iter().enumerate() {
+        for (ib, bb) in all_b.iter().enumerate() {
+            let uv = &a.polys()[ia] * &b.polys()[ib];
+            for (ir, k) in r_idx.iter().enumerate() {
+                let mut scalar: i64 = 1;
+                for i in 0..n {
+                    let c = single_var_coeff(ba[i], bb[i], k[i]);
+                    if c == 0 {
+                        scalar = 0;
+                        break;
                     }
+                    scalar *= c;
                 }
+                if scalar == 0 {
+                    continue;
+                }
+                out[ir] = &out[ir] + &(&lit_of(scalar) * &uv);
             }
-            link_to_polys(ctx.ideal, target, out);
         }
-        (ATyp::Mle(na), ATyp::VPoly(nb, mb)) | (ATyp::VPoly(nb, mb), ATyp::Mle(na))
-            if *na == *nb =>
-        {
-            let ATyp::VPoly(nr, mr) = r_typ else {
-                panic!("Mul Mle×VPoly ideal must be VPoly");
-            };
-            assert!(
-                *nr == *na && *mr == *mb + *na,
-                "Mul Mle({})×VPoly({}, {}) ideal must be VPoly({}, {}), got VPoly({}, {})",
-                na,
-                nb,
-                mb,
-                na,
-                *mb + *na,
-                nr,
-                mr
-            );
-            let n = *na;
-            let (mle_src, vpoly_src) = if matches!(a.typ(), ATyp::Mle(_)) {
-                (a, b)
-            } else {
-                (b, a)
-            };
-            let all_b = hypercube(n);
-            let b_idx = multi_indices(n, *mb);
-            let r_idx = multi_indices(n, *mr);
-            let lit_of = |v: i64| -> Polynomial<C::F> {
-                if v >= 0 {
-                    Polynomial::lit(&C::FOps::from_usize(v as usize))
-                } else {
-                    -Polynomial::lit(&C::FOps::from_usize((-v) as usize))
+    }
+    link_to_polys(ctx.ideal, target, out);
+}
+
+/// `Mle(n) × VPoly(n, m) → VPoly(n, m+n)`: basis-change convolution.
+///
+/// The Mle operand is expanded via Lagrange basis polynomials, then
+/// convolved with the VPoly coefficient slots.
+fn mul_mle_vpoly<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    target: &Var,
+    a: &PolySource<C>,
+    b: &PolySource<C>,
+    r_typ: &ATyp,
+) {
+    let (mle_src, vpoly_src, na, mb) = match (a.typ(), b.typ()) {
+        (ATyp::Mle(n), ATyp::VPoly(_, m)) => (a, b, n, m),
+        (ATyp::VPoly(_, m), ATyp::Mle(n)) => (b, a, n, m),
+        _ => unreachable!("mul_mle_vpoly called with wrong operand types"),
+    };
+    let ATyp::VPoly(nr, mr) = r_typ else {
+        panic!("Mul Mle×VPoly ideal must be VPoly");
+    };
+    assert!(
+        *nr == *na && *mr == *mb + *na,
+        "Mul Mle({})×VPoly(_, {}) ideal must be VPoly({}, {}), got VPoly({}, {})",
+        na,
+        mb,
+        na,
+        *mb + *na,
+        nr,
+        mr
+    );
+    let n = *na;
+    let all_b = hypercube(n);
+    let b_idx = multi_indices(n, *mb);
+    let r_idx = multi_indices(n, *mr);
+    let lit_of = |v: i64| -> Polynomial<C::F> {
+        if v >= 0 {
+            Polynomial::lit(&C::FOps::from_usize(v as usize))
+        } else {
+            -Polynomial::lit(&C::FOps::from_usize((-v) as usize))
+        }
+    };
+    let mut out: Vec<Polynomial<C::F>> = vec![Polynomial::<C::F>::zero(); r_idx.len()];
+    // Coefficient of x^k in L_{ba}(x) · x^{kb}, indexed by
+    // [ba][k - kb] (only when k >= kb).  L_0(x)=1-x → x^kb - x^{kb+1};
+    // L_1(x)=x → x^{kb+1}.
+    const C: [[i64; 2]; 2] = [[1, -1], [0, 1]];
+    for (ia, ba) in all_b.iter().enumerate() {
+        for (ib, kb) in b_idx.iter().enumerate() {
+            let uv = &mle_src.polys()[ia] * &vpoly_src.polys()[ib];
+            for (ir, k) in r_idx.iter().enumerate() {
+                let mut scalar: i64 = 1;
+                for i in 0..n {
+                    if k[i] < kb[i] {
+                        scalar = 0;
+                        break;
+                    }
+                    let delta = k[i] - kb[i];
+                    if delta >= 2 {
+                        scalar = 0;
+                        break;
+                    }
+                    let c = C[ba[i]][delta];
+                    if c == 0 {
+                        scalar = 0;
+                        break;
+                    }
+                    scalar *= c;
                 }
-            };
+                if scalar == 0 {
+                    continue;
+                }
+                out[ir] = &out[ir] + &(&lit_of(scalar) * &uv);
+            }
+        }
+    }
+    link_to_polys(ctx.ideal, target, out);
+}
+
+/// `VPoly × VPoly` (including `Uni` as `VPoly(1, m)`): coefficient convolution.
+///
+/// Normalizes `Uni` to `VPoly(1, m)`, then convolves the multi-index
+/// coefficient slots element-wise.
+fn mul_vpoly_vpoly<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    target: &Var,
+    a: &PolySource<C>,
+    b: &PolySource<C>,
+    r_typ: &ATyp,
+) {
+    let a_norm = match a.typ() {
+        ATyp::Uni(m) => ATyp::VPoly(1, *m),
+        other => other.clone(),
+    };
+    let b_norm = match b.typ() {
+        ATyp::Uni(m) => ATyp::VPoly(1, *m),
+        other => other.clone(),
+    };
+    let r_norm = match r_typ {
+        ATyp::Uni(m) => ATyp::VPoly(1, *m),
+        other => other.clone(),
+    };
+    match (&a_norm, &b_norm, &r_norm) {
+        (ATyp::VPoly(na, ma), ATyp::VPoly(nb, mb), ATyp::VPoly(nr, mr)) if na == nb && na == nr => {
+            let a_idx = multi_indices(*na, *ma);
+            let b_idx = multi_indices(*nb, *mb);
+            let r_idx = multi_indices(*nr, *mr);
+            let r_pos: HashMap<&Vec<usize>, usize> =
+                r_idx.iter().enumerate().map(|(i, k)| (k, i)).collect();
             let mut out: Vec<Polynomial<C::F>> = vec![Polynomial::<C::F>::zero(); r_idx.len()];
-            // Coefficient of x^k in L_{ba}(x) · x^{kb}, indexed by
-            // [ba][k - kb] (only when k >= kb).  L_0(x)=1-x → x^kb - x^{kb+1};
-            // L_1(x)=x → x^{kb+1}.
-            const C: [[i64; 2]; 2] = [[1, -1], [0, 1]];
-            for (ia, ba) in all_b.iter().enumerate() {
+            for (ia, ka) in a_idx.iter().enumerate() {
                 for (ib, kb) in b_idx.iter().enumerate() {
-                    let uv = &mle_src.polys()[ia] * &vpoly_src.polys()[ib];
-                    for (ir, k) in r_idx.iter().enumerate() {
-                        let mut scalar: i64 = 1;
-                        for i in 0..n {
-                            if k[i] < kb[i] {
-                                scalar = 0;
-                                break;
-                            }
-                            let delta = k[i] - kb[i];
-                            if delta >= 2 {
-                                scalar = 0;
-                                break;
-                            }
-                            let c = C[ba[i]][delta];
-                            if c == 0 {
-                                scalar = 0;
-                                break;
-                            }
-                            scalar *= c;
-                        }
-                        if scalar == 0 {
-                            continue;
-                        }
-                        out[ir] = &out[ir] + &(&lit_of(scalar) * &uv);
-                    }
+                    let k: Vec<usize> = ka.iter().zip(kb.iter()).map(|(x, y)| x + y).collect();
+                    let ir = *r_pos.get(&k).expect("multi-index missing in ideal");
+                    out[ir] = &out[ir] + &(&a.polys()[ia] * &b.polys()[ib]);
                 }
             }
             link_to_polys(ctx.ideal, target, out);
-        }
-        _ if a.is_poly() && b.is_poly() => {
-            let a_norm = match a.typ() {
-                ATyp::Uni(m) => ATyp::VPoly(1, *m),
-                other => other.clone(),
-            };
-            let b_norm = match b.typ() {
-                ATyp::Uni(m) => ATyp::VPoly(1, *m),
-                other => other.clone(),
-            };
-            let r_norm = match r_typ {
-                ATyp::Uni(m) => ATyp::VPoly(1, *m),
-                other => other.clone(),
-            };
-            match (&a_norm, &b_norm, &r_norm) {
-                (ATyp::VPoly(na, ma), ATyp::VPoly(nb, mb), ATyp::VPoly(nr, mr))
-                    if na == nb && na == nr =>
-                {
-                    let a_idx = multi_indices(*na, *ma);
-                    let b_idx = multi_indices(*nb, *mb);
-                    let r_idx = multi_indices(*nr, *mr);
-                    let r_pos: HashMap<&Vec<usize>, usize> =
-                        r_idx.iter().enumerate().map(|(i, k)| (k, i)).collect();
-                    let mut out: Vec<Polynomial<C::F>> =
-                        vec![Polynomial::<C::F>::zero(); r_idx.len()];
-                    for (ia, ka) in a_idx.iter().enumerate() {
-                        for (ib, kb) in b_idx.iter().enumerate() {
-                            let k: Vec<usize> =
-                                ka.iter().zip(kb.iter()).map(|(x, y)| x + y).collect();
-                            let ir = *r_pos.get(&k).expect("multi-index missing in ideal");
-                            out[ir] = &out[ir] + &(&a.polys()[ia] * &b.polys()[ib]);
-                        }
-                    }
-                    link_to_polys(ctx.ideal, target, out);
-                }
-                _ => {
-                    super::uncovered_op("mul-unsupported-poly-combo", target);
-                }
-            }
-        }
-        (ATyp::Base(_), ATyp::Base(_)) => {
-            let prods: Vec<Polynomial<C::F>> = a
-                .polys()
-                .iter()
-                .zip(b.polys())
-                .map(|(ap, bp)| ap * bp)
-                .collect();
-            link_to_polys(ctx.ideal, target, prods);
         }
         _ => {
-            super::uncovered_op("mul-unsupported-type-combo", target);
+            super::uncovered_op("mul-unsupported-poly-combo", target);
         }
     }
 }
@@ -712,5 +767,114 @@ mod tests {
             3,
             "Vec<Scalar,3> * Scalar should produce 3 basis rows"
         );
+    }
+
+    /// `Vec(VPoly(1,1),2) * VPoly(1,1)` — Vec<Poly> times a bare Poly.
+    /// Each element recurses into the leaf poly×poly convolution arm.
+    #[test]
+    fn test_mul_vec_vpoly_by_vpoly() {
+        use crate::Var;
+        use backend::op::mk;
+        use graph::Ref;
+        use lang::ast::BinOp;
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+
+        let elem_a = ATyp::VPoly(1, 1);
+        let vec_a = ATyp::Vec(Box::new(elem_a.clone()), 2);
+        let b_t = ATyp::VPoly(1, 1);
+
+        let var_a = Var::from_node(NodeIndex::new(0), vec_a.clone(), Qualifier::Private);
+        ideal.register(&var_a);
+
+        let var_b = Var::from_node(NodeIndex::new(1), b_t.clone(), Qualifier::Private);
+        ideal.register(&var_b);
+
+        // lub_mul(Vec(VPoly(1,1),2), VPoly(1,1))
+        //   = Vec(lub_mul(VPoly(1,1), VPoly(1,1)), 2)
+        //   = Vec(VPoly(1,2), 2)
+        let result_t = ATyp::Vec(Box::new(ATyp::VPoly(1, 2)), 2);
+        let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Private);
+        ideal.register(&var_r);
+
+        builder.add_op(
+            var_r.clone(),
+            Op::Bin(
+                BinOp::Mul,
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), vec_a.clone())),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), b_t.clone())),
+                result_t.clone(),
+            ),
+            &mut ideal,
+        );
+
+        // All result slots populated (2 elements × 3 slots per VPoly(1,2) = 6).
+        for i in 0..2 {
+            let elem = var_r.clone().with_index(i).unwrap();
+            for j in 0..3 {
+                let slot = elem.clone().with_index(j).unwrap();
+                assert!(
+                    ideal.pl.contains(&slot),
+                    "Vec(VPoly)*VPoly element {i} slot {j} missing from pl"
+                );
+            }
+        }
+    }
+
+    /// `VPoly(1,1) * Vec(VPoly(1,1),2)` — bare Poly times Vec<Poly>.
+    /// The poly broadcasts across vector elements.
+    #[test]
+    fn test_mul_vpoly_by_vec_vpoly() {
+        use crate::Var;
+        use backend::op::mk;
+        use graph::Ref;
+        use lang::ast::BinOp;
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+
+        let a_t = ATyp::VPoly(1, 1);
+        let elem_b = ATyp::VPoly(1, 1);
+        let vec_b = ATyp::Vec(Box::new(elem_b.clone()), 2);
+
+        let var_a = Var::from_node(NodeIndex::new(0), a_t.clone(), Qualifier::Private);
+        ideal.register(&var_a);
+
+        let var_b = Var::from_node(NodeIndex::new(1), vec_b.clone(), Qualifier::Private);
+        ideal.register(&var_b);
+
+        // lub_mul(VPoly(1,1), Vec(VPoly(1,1),2))
+        //   = Vec(lub_mul(VPoly(1,1), VPoly(1,1)), 2)
+        //   = Vec(VPoly(1,2), 2)
+        let result_t = ATyp::Vec(Box::new(ATyp::VPoly(1, 2)), 2);
+        let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Private);
+        ideal.register(&var_r);
+
+        builder.add_op(
+            var_r.clone(),
+            Op::Bin(
+                BinOp::Mul,
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), a_t.clone())),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), vec_b.clone())),
+                result_t.clone(),
+            ),
+            &mut ideal,
+        );
+
+        for i in 0..2 {
+            let elem = var_r.clone().with_index(i).unwrap();
+            for j in 0..3 {
+                let slot = elem.clone().with_index(j).unwrap();
+                assert!(
+                    ideal.pl.contains(&slot),
+                    "VPoly*Vec(VPoly) element {i} slot {j} missing from pl"
+                );
+            }
+        }
     }
 }

@@ -41,10 +41,6 @@ impl<C: ArkConfig> PolySource<C> {
         &self.polys
     }
 
-    pub fn physical_len(&self) -> usize {
-        self.typ.physical_len()
-    }
-
     pub fn from_ref_vars(vars: &HashMap<Ref, Var>, op: &GOp<C>) -> Self
     where
         C: HasOpFactory,

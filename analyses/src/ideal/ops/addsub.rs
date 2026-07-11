@@ -1,6 +1,6 @@
 //! Add/subtract op encoders: `add_op`, `sub_op`, and shared helpers
-//! `apply_binop`, `emit_slotwise_binop`, `broadcast_binop`,
-//! `broadcast_binop_inner`.
+//! `apply_binop`, `emit_slotwise_binop`, `add_sub_op`,
+//! `add_sub_op_inner`, `add_sub_leaf`.
 
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
@@ -37,12 +37,12 @@ pub fn emit_slotwise_binop<C: ArkConfig + HasOpFactory>(
     assert_eq!(
         pr_slots.len(),
         left.len(),
-        "broadcast_binop {context}: ideal slot count must match left operand"
+        "add_sub_op {context}: ideal slot count must match left operand"
     );
     assert_eq!(
         pr_slots.len(),
         right.len(),
-        "broadcast_binop {context}: ideal slot count must match right operand"
+        "add_sub_op {context}: ideal slot count must match right operand"
     );
 
     let combined: Vec<Polynomial<C::F>> = left
@@ -53,7 +53,7 @@ pub fn emit_slotwise_binop<C: ArkConfig + HasOpFactory>(
     link_to_polys(ctx.ideal, var, combined);
 }
 
-fn broadcast_binop<C: ArkConfig + HasOpFactory>(
+fn add_sub_op<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a: &HOp<C>,
@@ -63,7 +63,7 @@ fn broadcast_binop<C: ArkConfig + HasOpFactory>(
 ) {
     let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
     let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
-    broadcast_binop_inner(ctx, var, &a_src, &b_src, r_typ, op);
+    add_sub_op_inner(ctx, var, &a_src, &b_src, r_typ, op);
 }
 
 /// Slot-wise addition with type-aware broadcasting.
@@ -74,7 +74,7 @@ pub fn add_op<C: ArkConfig + HasOpFactory>(
     b: &HOp<C>,
     r_typ: &ATyp,
 ) {
-    broadcast_binop(ctx, var, a, b, r_typ, BinOp::Add);
+    add_sub_op(ctx, var, a, b, r_typ, BinOp::Add);
 }
 
 /// Slot-wise subtraction with type-aware broadcasting.
@@ -85,10 +85,10 @@ pub fn sub_op<C: ArkConfig + HasOpFactory>(
     b: &HOp<C>,
     r_typ: &ATyp,
 ) {
-    broadcast_binop(ctx, var, a, b, r_typ, BinOp::Sub);
+    add_sub_op(ctx, var, a, b, r_typ, BinOp::Sub);
 }
 
-fn broadcast_binop_inner<C: ArkConfig + HasOpFactory>(
+fn add_sub_op_inner<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a: &PolySource<C>,
@@ -98,14 +98,14 @@ fn broadcast_binop_inner<C: ArkConfig + HasOpFactory>(
 ) {
     match (a.typ(), b.typ()) {
         (ATyp::Vec(_, na), ATyp::Vec(_, nb)) if na == nb => {
+            let r_inner = match r_typ {
+                ATyp::Vec(inner, _) => inner,
+                _ => panic!("add_sub_op_inner Vec×Vec ideal must be Vec"),
+            };
             for i in 0..*na {
                 let a_elem = a.at_index(i).unwrap();
                 let b_elem = b.at_index(i).unwrap();
-                let r_inner = match r_typ {
-                    ATyp::Vec(inner, _) => inner,
-                    _ => panic!("broadcast_binop Vec×Vec ideal must be Vec"),
-                };
-                broadcast_binop_inner(
+                add_sub_op_inner(
                     &mut *ctx,
                     &var.with_index(i).unwrap(),
                     &a_elem,
@@ -115,75 +115,99 @@ fn broadcast_binop_inner<C: ArkConfig + HasOpFactory>(
                 );
             }
         }
-        (_, _)
-            if matches!(op, BinOp::Add | BinOp::Sub)
-                && PolySource::<C>::is_scalar_like(b.typ())
-                && a.is_poly() =>
-        {
-            let a_lifted = a.lift_to(r_typ);
-            let b_lifted = b.inject_constant_to(r_typ);
-            emit_slotwise_binop(
-                &mut *ctx,
-                var,
-                a_lifted.polys(),
-                b_lifted.polys(),
-                op,
-                "Poly×Scalar",
-            );
+        (ATyp::Vec(_, na), _) => {
+            let r_inner = match r_typ {
+                ATyp::Vec(inner, _) => inner,
+                _ => panic!("add_sub_op_inner Vec×_ ideal must be Vec"),
+            };
+            for i in 0..*na {
+                let a_elem = a.at_index(i).unwrap();
+                add_sub_op_inner(
+                    &mut *ctx,
+                    &var.with_index(i).unwrap(),
+                    &a_elem,
+                    b,
+                    r_inner,
+                    op,
+                );
+            }
         }
-        (_, _)
-            if matches!(op, BinOp::Add | BinOp::Sub)
-                && PolySource::<C>::is_scalar_like(a.typ())
-                && b.is_poly() =>
-        {
-            let a_lifted = a.inject_constant_to(r_typ);
-            let b_lifted = b.lift_to(r_typ);
-            emit_slotwise_binop(
-                &mut *ctx,
-                var,
-                a_lifted.polys(),
-                b_lifted.polys(),
-                op,
-                "Scalar×Poly",
-            );
-        }
-        (_, _) if PolySource::<C>::is_scalar_like(b.typ()) && a.physical_len() > 1 => {
-            let b_broadcast = b.broadcast_scalar_to(a.typ());
-            emit_slotwise_binop(
-                &mut *ctx,
-                var,
-                a.polys(),
-                b_broadcast.polys(),
-                op,
-                "value×scalar",
-            );
-        }
-        (_, _) if PolySource::<C>::is_scalar_like(a.typ()) && b.physical_len() > 1 => {
-            let a_broadcast = a.broadcast_scalar_to(b.typ());
-            emit_slotwise_binop(
-                &mut *ctx,
-                var,
-                a_broadcast.polys(),
-                b.polys(),
-                op,
-                "scalar×value",
-            );
-        }
-        _ if a.is_poly() || b.is_poly() || matches!(r_typ, ATyp::Mle(_)) => {
-            let a_lifted = a.lift_to(r_typ);
-            let b_lifted = b.lift_to(r_typ);
-            emit_slotwise_binop(
-                &mut *ctx,
-                var,
-                a_lifted.polys(),
-                b_lifted.polys(),
-                op,
-                "poly/lifted",
-            );
+        (_, ATyp::Vec(_, nb)) => {
+            let r_inner = match r_typ {
+                ATyp::Vec(inner, _) => inner,
+                _ => panic!("add_sub_op_inner _×Vec ideal must be Vec"),
+            };
+            for i in 0..*nb {
+                let b_elem = b.at_index(i).unwrap();
+                add_sub_op_inner(
+                    &mut *ctx,
+                    &var.with_index(i).unwrap(),
+                    a,
+                    &b_elem,
+                    r_inner,
+                    op,
+                );
+            }
         }
         _ => {
-            emit_slotwise_binop(&mut *ctx, var, a.polys(), b.polys(), op, "slotwise");
+            add_sub_leaf(ctx, var, a, b, r_typ, op);
         }
+    }
+}
+
+/// Leaf-level add/sub for non-Vec operands. Dispatches based on whether
+/// the operands are polynomial-like (`Uni`/`VPoly`/`Mle`) or scalar-like:
+///
+/// - `poly ± scalar` → lift poly, inject scalar as constant, slot-wise
+/// - `scalar ± poly` → inject scalar as constant, lift poly, slot-wise
+/// - `poly ± poly` → lift both to result type, slot-wise
+/// - `non-poly ± non-poly` (e.g. `Base×Base`) → raw slot-wise
+/// - otherwise → `uncovered_op` (mixed poly/non-poly without scalar)
+fn add_sub_leaf<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    var: &Var,
+    a: &PolySource<C>,
+    b: &PolySource<C>,
+    r_typ: &ATyp,
+    op: BinOp,
+) {
+    if PolySource::<C>::is_scalar_like(b.typ()) && a.is_poly() {
+        let a_lifted = a.lift_to(r_typ);
+        let b_lifted = b.inject_constant_to(r_typ);
+        emit_slotwise_binop(
+            ctx,
+            var,
+            a_lifted.polys(),
+            b_lifted.polys(),
+            op,
+            "Poly×Scalar",
+        );
+    } else if PolySource::<C>::is_scalar_like(a.typ()) && b.is_poly() {
+        let a_lifted = a.inject_constant_to(r_typ);
+        let b_lifted = b.lift_to(r_typ);
+        emit_slotwise_binop(
+            ctx,
+            var,
+            a_lifted.polys(),
+            b_lifted.polys(),
+            op,
+            "Scalar×Poly",
+        );
+    } else if a.is_poly() && b.is_poly() {
+        let a_lifted = a.lift_to(r_typ);
+        let b_lifted = b.lift_to(r_typ);
+        emit_slotwise_binop(
+            ctx,
+            var,
+            a_lifted.polys(),
+            b_lifted.polys(),
+            op,
+            "poly/lifted",
+        );
+    } else if !a.is_poly() && !b.is_poly() {
+        emit_slotwise_binop(ctx, var, a.polys(), b.polys(), op, "slotwise");
+    } else {
+        super::uncovered_op("add-sub-mixed-poly-nonpoly", var);
     }
 }
 
@@ -594,6 +618,161 @@ mod tests {
             let p_slot_var = var_p.with_index(i).unwrap();
             let p = Polynomial::var(&p_slot_var);
             assert_ideal_slot(&ideal, &var_r, i, &s + &p);
+        }
+    }
+
+    /// `Vec(VPoly(1,2),2) + VPoly(1,1)` — Vec<Poly> plus a bare Poly.
+    /// Each element recurses into the leaf poly/poly addition arm.
+    #[test]
+    fn test_add_vec_vpoly_by_vpoly() {
+        use crate::Var;
+        use backend::op::mk;
+        use graph::Ref;
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+
+        let elem_a = ATyp::VPoly(1, 2);
+        let vec_a = ATyp::Vec(Box::new(elem_a.clone()), 2);
+        let b_t = ATyp::VPoly(1, 1);
+
+        let var_a = Var::from_node(NodeIndex::new(0), vec_a.clone(), Qualifier::Private);
+        ideal.register(&var_a);
+
+        let var_b = Var::from_node(NodeIndex::new(1), b_t.clone(), Qualifier::Private);
+        ideal.register(&var_b);
+
+        // lub_add(Vec(VPoly(1,2),2), VPoly(1,1)) = Vec(lub_add(VPoly(1,2), VPoly(1,1)), 2)
+        //                                        = Vec(VPoly(1,2), 2)
+        let result_t = ATyp::Vec(Box::new(ATyp::VPoly(1, 2)), 2);
+        let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Private);
+        ideal.register(&var_r);
+
+        builder.add_op(
+            var_r.clone(),
+            Op::Bin(
+                BinOp::Add,
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), vec_a.clone())),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), b_t.clone())),
+                result_t.clone(),
+            ),
+            &mut ideal,
+        );
+
+        // All result slots populated (2 elements × 3 slots per VPoly(1,2) = 6).
+        for i in 0..2 {
+            let elem = var_r.clone().with_index(i).unwrap();
+            for j in 0..3 {
+                let slot = elem.clone().with_index(j).unwrap();
+                assert!(
+                    ideal.pl.contains(&slot),
+                    "Vec(VPoly)+VPoly element {i} slot {j} missing from pl"
+                );
+            }
+        }
+    }
+
+    /// `Vec(VPoly(1,2),2) - VPoly(1,1)` — Vec<Poly> minus a bare Poly.
+    /// Each element recurses into the leaf poly/poly subtraction arm.
+    #[test]
+    fn test_sub_vec_vpoly_by_vpoly() {
+        use crate::Var;
+        use backend::op::mk;
+        use graph::Ref;
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+
+        let elem_a = ATyp::VPoly(1, 2);
+        let vec_a = ATyp::Vec(Box::new(elem_a.clone()), 2);
+        let b_t = ATyp::VPoly(1, 1);
+
+        let var_a = Var::from_node(NodeIndex::new(0), vec_a.clone(), Qualifier::Private);
+        ideal.register(&var_a);
+
+        let var_b = Var::from_node(NodeIndex::new(1), b_t.clone(), Qualifier::Private);
+        ideal.register(&var_b);
+
+        let result_t = ATyp::Vec(Box::new(ATyp::VPoly(1, 2)), 2);
+        let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Private);
+        ideal.register(&var_r);
+
+        builder.add_op(
+            var_r.clone(),
+            Op::Bin(
+                BinOp::Sub,
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), vec_a.clone())),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), b_t.clone())),
+                result_t.clone(),
+            ),
+            &mut ideal,
+        );
+
+        for i in 0..2 {
+            let elem = var_r.clone().with_index(i).unwrap();
+            for j in 0..3 {
+                let slot = elem.clone().with_index(j).unwrap();
+                assert!(
+                    ideal.pl.contains(&slot),
+                    "Vec(VPoly)-VPoly element {i} slot {j} missing from pl"
+                );
+            }
+        }
+    }
+
+    /// `VPoly(1,2) + Vec(VPoly(1,1),2)` — bare Poly plus Vec<Poly>.
+    /// The scalar-left vector addition broadcasts the poly across elements.
+    #[test]
+    fn test_add_vpoly_by_vec_vpoly() {
+        use crate::Var;
+        use backend::op::mk;
+        use graph::Ref;
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+
+        let a_t = ATyp::VPoly(1, 2);
+        let elem_b = ATyp::VPoly(1, 1);
+        let vec_b = ATyp::Vec(Box::new(elem_b.clone()), 2);
+
+        let var_a = Var::from_node(NodeIndex::new(0), a_t.clone(), Qualifier::Private);
+        ideal.register(&var_a);
+
+        let var_b = Var::from_node(NodeIndex::new(1), vec_b.clone(), Qualifier::Private);
+        ideal.register(&var_b);
+
+        // lub_add(VPoly(1,2), Vec(VPoly(1,1),2)) = Vec(lub_add(VPoly(1,2), VPoly(1,1)), 2)
+        //                                        = Vec(VPoly(1,2), 2)
+        let result_t = ATyp::Vec(Box::new(ATyp::VPoly(1, 2)), 2);
+        let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Private);
+        ideal.register(&var_r);
+
+        builder.add_op(
+            var_r.clone(),
+            Op::Bin(
+                BinOp::Add,
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), a_t.clone())),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), vec_b.clone())),
+                result_t.clone(),
+            ),
+            &mut ideal,
+        );
+
+        for i in 0..2 {
+            let elem = var_r.clone().with_index(i).unwrap();
+            for j in 0..3 {
+                let slot = elem.clone().with_index(j).unwrap();
+                assert!(
+                    ideal.pl.contains(&slot),
+                    "VPoly+Vec(VPoly) element {i} slot {j} missing from pl"
+                );
+            }
         }
     }
 }
