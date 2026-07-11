@@ -100,12 +100,13 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             .collect();
 
         loop {
-            let before = remaining.len();
             let mut next_remaining = Vec::new();
+            let mut made_progress = false;
             for (k, deps) in remaining {
                 if deps == 0 {
                     order.push(k.clone());
                     resolved.insert(k.clone());
+                    made_progress = true;
                 } else {
                     let new_deps = self.pl[&k]
                         .terms
@@ -113,11 +114,14 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
                         .flat_map(|t| t.vars())
                         .filter(|v| inlineable.contains(v) && !resolved.contains(v))
                         .count();
+                    if new_deps < deps {
+                        made_progress = true;
+                    }
                     next_remaining.push((k, new_deps));
                 }
             }
             remaining = next_remaining;
-            if remaining.len() == before {
+            if !made_progress {
                 for (k, _) in remaining {
                     order.push(k);
                 }

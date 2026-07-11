@@ -142,19 +142,19 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 link_to_polys(ctx.ideal, &var, lifted.polys);
             }
             Op::Bin(BinOp::Add, a, b, _) => {
-                ops::binop::add_op(&mut ctx, &var, &a, &b, &var.typ);
+                ops::addsub::add_op(&mut ctx, &var, &a, &b, &var.typ);
             }
             Op::Bin(BinOp::And, ref a, ref b, _) => {
-                ops::binop::mul_op(&mut ctx, &var, a, b, &var.typ);
+                ops::mul::mul_op(&mut ctx, &var, a, b, &var.typ);
             }
             Op::Bin(BinOp::Sub, a, b, _) => {
-                ops::binop::sub_op(&mut ctx, &var, &a, &b, &var.typ);
+                ops::addsub::sub_op(&mut ctx, &var, &a, &b, &var.typ);
             }
             Op::Bin(BinOp::Mul, ref a, ref b, _) => {
-                ops::binop::mul_op(&mut ctx, &var, a, b, &var.typ);
+                ops::mul::mul_op(&mut ctx, &var, a, b, &var.typ);
             }
             Op::Bin(BinOp::Dot, ref a, ref b, _) => {
-                ops::binop::dot_op(&mut ctx, &var, a, b);
+                ops::dot::dot_op(&mut ctx, &var, a, b);
             }
             Op::Bin(BinOp::Div, ref a, ref b, _) => {
                 ops::div::div_rem_op(&mut ctx, &var, a, b, false, true);
@@ -214,10 +214,10 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 ops::eval::evaluate_op(&mut ctx, &var, p, range, pts.as_deref());
             }
             Op::Map(ref domain, ref body) => {
-                ops::map::map_to_poly(&mut ctx, var, domain, body, &[], &[]);
+                ops::map::map_op(&mut ctx, var, domain, body, &[], &[]);
             }
             Op::ReduceMap(rop, ref domain, ref body) => {
-                ops::map::reduce_map_to_poly(&mut ctx, var, rop, domain, body, &[], &[]);
+                ops::map::reduce_map_op(&mut ctx, var, rop, domain, body, &[], &[]);
             }
             Op::LoopParam(_, _) => ops::uncovered_op("loop-param", &var),
             // Phase 10: `Op::Reduce(op, v)` — left-fold of vector elements.
@@ -256,7 +256,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             // cancel under Buchberger because their basis rows are identical
             // F-polynomials.
             Op::Pair(ref a, ref b, _) => {
-                ops::binop::pair_op(&mut ctx, &var, a, b);
+                ops::pair::pair_op(&mut ctx, &var, a, b);
             }
             // `Op::Record(fields)` — field-slot-aware layout.
             // For each field, get the field-level Var via `with_index`,

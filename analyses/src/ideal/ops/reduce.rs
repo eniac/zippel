@@ -15,8 +15,8 @@ use crate::Var;
 use crate::frontend::Polynomial;
 
 use super::PolySource;
-use super::binop::mul_op_inner;
 use super::div;
+use super::mul::mul_op_inner;
 use super::{EncodeCtx, constrain_to_polys, link_to_polys, link_to_witness};
 use super::{hypercube, multi_indices};
 

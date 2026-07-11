@@ -12,7 +12,7 @@ use crate::Var;
 use crate::frontend::Polynomial;
 
 use super::PolySource;
-use super::binop::mul_op_inner;
+use super::mul::mul_op_inner;
 use super::{EncodeCtx, link_to_polys};
 
 /// Try to resolve a `PolySource` to a compile-time constant exponent.

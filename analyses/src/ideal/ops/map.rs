@@ -1,4 +1,4 @@
-//! Map and ReduceMap body materialization: `map_to_poly`, `reduce_map_to_poly`,
+//! Map and ReduceMap body materialization: `map_op`, `reduce_map_op`,
 //! `body_to_poly`, `body_child`, `rebuild_body_op`, `explode_domain`,
 //! `const_eval_int`.
 
@@ -59,14 +59,14 @@ fn body_to_poly<C: ArkConfig + HasOpFactory>(
             let name = ctx.builder.ns.next_name("gb_map_body");
             let pf = ctx.sentinel_var(&name, body.typ());
             ctx.ideal.register(&pf);
-            map_to_poly(&mut *ctx, pf.clone(), d, b, loops, loop_vals);
+            map_op(&mut *ctx, pf.clone(), d, b, loops, loop_vals);
             Some(pf)
         }
         Op::ReduceMap(rop, d, b) => {
             let name = ctx.builder.ns.next_name("gb_map_body");
             let pf = ctx.sentinel_var(&name, body.typ());
             ctx.ideal.register(&pf);
-            reduce_map_to_poly(&mut *ctx, pf.clone(), *rop, d, b, loops, loop_vals);
+            reduce_map_op(&mut *ctx, pf.clone(), *rop, d, b, loops, loop_vals);
             Some(pf)
         }
         _ => {
@@ -209,7 +209,7 @@ fn explode_domain<C: ArkConfig + HasOpFactory>(
 
 /// `Op::Map`: explode the domain, apply the body to each element, and
 /// link ideal slot `i` to the body's output for element `i`.
-pub(crate) fn map_to_poly<C: ArkConfig + HasOpFactory>(
+pub(crate) fn map_op<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     var: Var,
     domain: &HOp<C>,
@@ -236,7 +236,7 @@ pub(crate) fn map_to_poly<C: ArkConfig + HasOpFactory>(
 /// `Op::ReduceMap`: explode the domain, map the body per element, and fold
 /// the ideals with `reduce_polysource`.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn reduce_map_to_poly<C: ArkConfig + HasOpFactory>(
+pub(crate) fn reduce_map_op<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     var: Var,
     rop: BinOp,

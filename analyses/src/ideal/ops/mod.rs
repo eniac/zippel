@@ -108,14 +108,17 @@ pub fn constrain_to_polys<C: ArkConfig>(
     }
 }
 
-pub mod binop;
+pub mod addsub;
 pub mod concat;
 pub mod div;
+pub mod dot;
 pub mod equ;
 pub mod eval;
 pub mod fft;
 pub mod interpolate;
 pub mod map;
+pub mod mul;
+pub mod pair;
 pub mod pow;
 pub mod ram;
 pub mod record;

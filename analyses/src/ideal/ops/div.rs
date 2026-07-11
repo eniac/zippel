@@ -165,14 +165,14 @@ pub(crate) fn div_rem_op_inner<C: ArkConfig + HasOpFactory>(
                 div_rem_op_inner(ctx, &t_i, &a_elem, &b_elem, is_rem, cache_witness);
             }
         }
-        (ATyp::Vec(_, na), _) if PolySource::<C>::is_scalar_like(b.typ()) => {
+        (ATyp::Vec(_, na), _) => {
             for i in 0..*na {
                 let t_i = target.with_index(i).unwrap();
                 let a_elem = a.at_index(i).unwrap();
                 div_rem_op_inner(ctx, &t_i, &a_elem, b, is_rem, cache_witness);
             }
         }
-        (_, ATyp::Vec(_, nb)) if PolySource::<C>::is_scalar_like(a.typ()) => {
+        (_, ATyp::Vec(_, nb)) => {
             if is_rem {
                 panic!(
                     "Rem: scalar-left vector remainder is undefined for {} % {} — type checker should prevent this",
@@ -186,172 +186,201 @@ pub(crate) fn div_rem_op_inner<C: ArkConfig + HasOpFactory>(
                 div_rem_op_inner(ctx, &t_i, a, &b_elem, false, cache_witness);
             }
         }
-        _ if a.is_poly() && PolySource::<C>::is_scalar_like(b.typ()) => {
-            if is_rem {
-                panic!(
-                    "Rem: polynomial-like remainder by scalar is undefined for {} % {} — type checker should prevent this",
-                    a.typ(),
-                    b.typ(),
-                );
-            }
-            let b_broadcast = b.broadcast_scalar_to(a.typ());
-            slot_wise_div(ctx.ideal, target, a.polys(), b_broadcast.polys());
-        }
-        _ if matches!(a.typ(), ATyp::Mle(_)) || matches!(b.typ(), ATyp::Mle(_)) => {
-            super::uncovered_op(
-                if is_rem {
-                    "rem-mle-unsupported"
-                } else {
-                    "div-mle-unsupported"
-                },
-                target,
-            );
-        }
-        _ if a.is_poly() && b.is_poly() => {
-            let key = cache_witness.then(|| div_witness_key(ctx, a, b));
-            if let Some((q_wit, r_wit)) = key
-                .as_ref()
-                .and_then(|key| ctx.builder.ns.div_wit.get(key).cloned())
-            {
-                let wit = if is_rem { &r_wit } else { &q_wit };
-                link_to_witness(ctx.ideal, target, wit);
-                return;
-            }
-
-            let (na, ma) = PolySource::<C>::poly_shape_static(a.typ()).unwrap();
-            let (nb, mb) = PolySource::<C>::poly_shape_static(b.typ()).unwrap();
-            if na != nb {
-                panic!(
-                    "{}: VPoly num_vars mismatch — dividend has n={} but divisor has n={}",
-                    if is_rem { "Rem" } else { "Div" },
-                    na,
-                    nb,
-                );
-            }
-            if na != 1 {
-                super::uncovered_op(
-                    if is_rem {
-                        "rem-multivariate-vpoly"
-                    } else {
-                        "div-multivariate-vpoly"
-                    },
-                    target,
-                );
-            }
-            if ma < mb {
-                if is_rem {
-                    let lifted = a.lift_to(&target.typ);
-                    link_to_polys(ctx.ideal, target, lifted.polys);
-                    return;
-                }
-                panic!(
-                    "{}: dividend degree < divisor degree ({} < {})",
-                    if is_rem { "Rem" } else { "Div" },
-                    ma,
-                    mb,
-                );
-            }
-            if mb == 0 {
-                // Divisor is degree 0 (constant): quotient has degree ma,
-                // remainder is 0. Allocate r_wit with target.typ when
-                // is_rem so slot counts match for link_to_witness.
-                let r_typ = if is_rem {
-                    target.typ.clone()
-                } else {
-                    ATyp::VPoly(na, 0)
-                };
-                let (q_wit, r_wit) = alloc_div_witness_pair(ctx, ATyp::VPoly(na, ma), r_typ);
-                let a_idx = multi_indices(na, ma);
-                let b_poly = &b.polys()[0];
-                for (ka_pos, _k) in a_idx.iter().enumerate() {
-                    let rhs: Polynomial<C::F> =
-                        b_poly * &Polynomial::var(&q_wit.with_index(ka_pos).unwrap());
-                    ctx.ideal.generating_set.push(&a.polys()[ka_pos] - &rhs);
-                }
-                for rf in r_wit.slots() {
-                    ctx.ideal.generating_set.push(Polynomial::var(&rf));
-                }
-                let wit = if is_rem { &r_wit } else { &q_wit };
-                link_to_witness(ctx.ideal, target, wit);
-                if let Some(key) = key {
-                    ctx.builder.ns.div_wit.insert(&key, &(q_wit, r_wit));
-                }
-                return;
-            }
-
-            let nr = na;
-            let mq = ma - mb;
-            let mr = mb - 1;
-
-            let (q_wit, r_wit) =
-                alloc_div_witness_pair(ctx, ATyp::VPoly(nr, mq), ATyp::VPoly(nr, mr));
-
-            let a_idx = multi_indices(na, ma);
-            let b_idx = multi_indices(nb, mb);
-            let q_idx = multi_indices(nr, mq);
-            let r_idx = multi_indices(nr, mr);
-
-            debug_assert_eq!(
-                a.polys().len(),
-                a_idx.len(),
-                "a_polys slot count mismatch: {} vs a_idx {}",
-                a.polys().len(),
-                a_idx.len()
-            );
-            debug_assert_eq!(
-                b.polys().len(),
-                b_idx.len(),
-                "b_polys slot count mismatch: {} vs b_idx {}",
-                b.polys().len(),
-                b_idx.len()
-            );
-
-            for (ka_pos, k) in a_idx.iter().enumerate() {
-                let mut rhs = Polynomial::<C::F>::zero();
-                for (i_pos, ki) in b_idx.iter().enumerate() {
-                    for (j_pos, kj) in q_idx.iter().enumerate() {
-                        let sum: Vec<usize> =
-                            ki.iter().zip(kj.iter()).map(|(x, y)| x + y).collect();
-                        if sum == *k {
-                            let qf = q_wit.clone().with_index(j_pos).unwrap();
-                            rhs = &rhs + &(&b.polys()[i_pos] * &Polynomial::var(&qf));
-                        }
-                    }
-                }
-                if let Some(r_pos) = r_idx.iter().position(|rk| rk == k) {
-                    let rf = r_wit.clone().with_index(r_pos).unwrap();
-                    rhs = &rhs + &Polynomial::var(&rf);
-                }
-                ctx.ideal.generating_set.push(&a.polys()[ka_pos] - &rhs);
-            }
-
-            let wit = if is_rem { &r_wit } else { &q_wit };
-            link_to_witness(ctx.ideal, target, wit);
-
-            if let Some(key) = key {
-                ctx.builder.ns.div_wit.insert(&key, &(q_wit, r_wit));
-            }
-        }
-        _ if !a.is_poly() && !b.is_poly() => {
-            if is_rem {
-                panic!(
-                    "Rem: non-polynomial remainder is undefined for {} % {} — type checker should prevent this",
-                    a.typ(),
-                    b.typ(),
-                );
-            }
-            slot_wise_div(ctx.ideal, target, a.polys(), b.polys());
-        }
         _ => {
-            super::uncovered_op(
-                if is_rem {
-                    "rem-mixed-poly-nonpoly"
-                } else {
-                    "div-mixed-poly-nonpoly"
-                },
-                target,
+            div_rem_leaf(ctx, target, a, b, is_rem, cache_witness);
+        }
+    }
+}
+
+/// Leaf-level div/rem for non-Vec operands. Dispatches based on whether
+/// the operands are polynomial-like (`Uni`/`VPoly`) or scalar-like:
+///
+/// - `poly / scalar` → slot-wise field division (rem panics)
+/// - `Mle` involved → unsupported
+/// - `poly / poly` → polynomial long division with witness caching
+/// - `non-poly / non-poly` → slot-wise field division (rem panics)
+/// - mixed poly/non-poly → unsupported
+fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    target: &Var,
+    a: &PolySource<C>,
+    b: &PolySource<C>,
+    is_rem: bool,
+    cache_witness: bool,
+) {
+    if a.is_poly() && PolySource::<C>::is_scalar_like(b.typ()) {
+        if is_rem {
+            panic!(
+                "Rem: polynomial-like remainder by scalar is undefined for {} % {} — type checker should prevent this",
+                a.typ(),
+                b.typ(),
             );
         }
+        let b_broadcast = b.broadcast_scalar_to(a.typ());
+        slot_wise_div(ctx.ideal, target, a.polys(), b_broadcast.polys());
+    } else if matches!(a.typ(), ATyp::Mle(_)) || matches!(b.typ(), ATyp::Mle(_)) {
+        super::uncovered_op(
+            if is_rem {
+                "rem-mle-unsupported"
+            } else {
+                "div-mle-unsupported"
+            },
+            target,
+        );
+    } else if a.is_poly() && b.is_poly() {
+        div_rem_poly(ctx, target, a, b, is_rem, cache_witness);
+    } else if !a.is_poly() && !b.is_poly() {
+        if is_rem {
+            panic!(
+                "Rem: non-polynomial remainder is undefined for {} % {} — type checker should prevent this",
+                a.typ(),
+                b.typ(),
+            );
+        }
+        slot_wise_div(ctx.ideal, target, a.polys(), b.polys());
+    } else {
+        super::uncovered_op(
+            if is_rem {
+                "rem-mixed-poly-nonpoly"
+            } else {
+                "div-mixed-poly-nonpoly"
+            },
+            target,
+        );
+    }
+}
+
+/// Polynomial long division with quotient/remainder witness caching.
+/// Emits the canonical identity `a = b·q + r` as basis rows and links
+/// the target to `q` (Div) or `r` (Rem).
+fn div_rem_poly<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    target: &Var,
+    a: &PolySource<C>,
+    b: &PolySource<C>,
+    is_rem: bool,
+    cache_witness: bool,
+) {
+    let key = cache_witness.then(|| div_witness_key(ctx, a, b));
+    if let Some((q_wit, r_wit)) = key
+        .as_ref()
+        .and_then(|key| ctx.builder.ns.div_wit.get(key).cloned())
+    {
+        let wit = if is_rem { &r_wit } else { &q_wit };
+        link_to_witness(ctx.ideal, target, wit);
+        return;
+    }
+
+    let (na, ma) = PolySource::<C>::poly_shape_static(a.typ()).unwrap();
+    let (nb, mb) = PolySource::<C>::poly_shape_static(b.typ()).unwrap();
+    if na != nb {
+        panic!(
+            "{}: VPoly num_vars mismatch — dividend has n={} but divisor has n={}",
+            if is_rem { "Rem" } else { "Div" },
+            na,
+            nb,
+        );
+    }
+    if na != 1 {
+        super::uncovered_op(
+            if is_rem {
+                "rem-multivariate-vpoly"
+            } else {
+                "div-multivariate-vpoly"
+            },
+            target,
+        );
+    }
+    if ma < mb {
+        if is_rem {
+            let lifted = a.lift_to(&target.typ);
+            link_to_polys(ctx.ideal, target, lifted.polys);
+            return;
+        }
+        panic!(
+            "{}: dividend degree < divisor degree ({} < {})",
+            if is_rem { "Rem" } else { "Div" },
+            ma,
+            mb,
+        );
+    }
+    if mb == 0 {
+        // Divisor is degree 0 (constant): quotient has degree ma,
+        // remainder is 0. Allocate r_wit with target.typ when
+        // is_rem so slot counts match for link_to_witness.
+        let r_typ = if is_rem {
+            target.typ.clone()
+        } else {
+            ATyp::VPoly(na, 0)
+        };
+        let (q_wit, r_wit) = alloc_div_witness_pair(ctx, ATyp::VPoly(na, ma), r_typ);
+        let a_idx = multi_indices(na, ma);
+        let b_poly = &b.polys()[0];
+        for (ka_pos, _k) in a_idx.iter().enumerate() {
+            let rhs: Polynomial<C::F> =
+                b_poly * &Polynomial::var(&q_wit.with_index(ka_pos).unwrap());
+            ctx.ideal.generating_set.push(&a.polys()[ka_pos] - &rhs);
+        }
+        for rf in r_wit.slots() {
+            ctx.ideal.generating_set.push(Polynomial::var(&rf));
+        }
+        let wit = if is_rem { &r_wit } else { &q_wit };
+        link_to_witness(ctx.ideal, target, wit);
+        if let Some(key) = key {
+            ctx.builder.ns.div_wit.insert(&key, &(q_wit, r_wit));
+        }
+        return;
+    }
+
+    let nr = na;
+    let mq = ma - mb;
+    let mr = mb - 1;
+
+    let (q_wit, r_wit) = alloc_div_witness_pair(ctx, ATyp::VPoly(nr, mq), ATyp::VPoly(nr, mr));
+
+    let a_idx = multi_indices(na, ma);
+    let b_idx = multi_indices(nb, mb);
+    let q_idx = multi_indices(nr, mq);
+    let r_idx = multi_indices(nr, mr);
+
+    debug_assert_eq!(
+        a.polys().len(),
+        a_idx.len(),
+        "a_polys slot count mismatch: {} vs a_idx {}",
+        a.polys().len(),
+        a_idx.len()
+    );
+    debug_assert_eq!(
+        b.polys().len(),
+        b_idx.len(),
+        "b_polys slot count mismatch: {} vs b_idx {}",
+        b.polys().len(),
+        b_idx.len()
+    );
+
+    for (ka_pos, k) in a_idx.iter().enumerate() {
+        let mut rhs = Polynomial::<C::F>::zero();
+        for (i_pos, ki) in b_idx.iter().enumerate() {
+            for (j_pos, kj) in q_idx.iter().enumerate() {
+                let sum: Vec<usize> = ki.iter().zip(kj.iter()).map(|(x, y)| x + y).collect();
+                if sum == *k {
+                    let qf = q_wit.clone().with_index(j_pos).unwrap();
+                    rhs = &rhs + &(&b.polys()[i_pos] * &Polynomial::var(&qf));
+                }
+            }
+        }
+        if let Some(r_pos) = r_idx.iter().position(|rk| rk == k) {
+            let rf = r_wit.clone().with_index(r_pos).unwrap();
+            rhs = &rhs + &Polynomial::var(&rf);
+        }
+        ctx.ideal.generating_set.push(&a.polys()[ka_pos] - &rhs);
+    }
+
+    let wit = if is_rem { &r_wit } else { &q_wit };
+    link_to_witness(ctx.ideal, target, wit);
+
+    if let Some(key) = key {
+        ctx.builder.ns.div_wit.insert(&key, &(q_wit, r_wit));
     }
 }
 
@@ -1257,5 +1286,122 @@ mod tests {
             ideal.generating_set.iter().any(|row| row.contains(&padded)),
             "lifted pass-through remainder should constrain the padded high slot"
         );
+    }
+
+    /// `Vec(VPoly(1,2),2) / VPoly(1,1)` — Vec<Poly> divided by a bare Poly.
+    /// Each element recurses into the leaf poly/poly division arm.
+    #[test]
+    fn test_div_vec_vpoly_by_vpoly() {
+        use crate::Var;
+        use lang::ast::BinOp;
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+
+        let elem_a = ATyp::VPoly(1, 2);
+        let vec_a = ATyp::Vec(Box::new(elem_a.clone()), 2);
+        let div_t = ATyp::VPoly(1, 1);
+
+        let var_a = Var::from_node(NodeIndex::new(0), vec_a.clone(), Qualifier::Private);
+        ideal.register(&var_a);
+
+        let var_b = Var::from_node(NodeIndex::new(1), div_t.clone(), Qualifier::Private);
+        ideal.register(&var_b);
+
+        // lub_div(Vec(VPoly(1,2),2), VPoly(1,1)) = Vec(lub_div(VPoly(1,2), VPoly(1,1)), 2)
+        //                                          = Vec(VPoly(1,1), 2)
+        let result_t = ATyp::Vec(Box::new(ATyp::VPoly(1, 1)), 2);
+        let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Private);
+        ideal.register(&var_r);
+
+        builder.add_op(
+            var_r.clone(),
+            Op::Bin(
+                BinOp::Div,
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), vec_a.clone())),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), div_t.clone())),
+                result_t.clone(),
+            ),
+            &mut ideal,
+        );
+
+        // Each element should produce its own div_wit entry (2 total).
+        assert_eq!(
+            builder.ns.div_wit.len(),
+            2,
+            "Vec(VPoly)/VPoly should have 2 div_wit entries (one per element)"
+        );
+
+        // All result slots populated.
+        for i in 0..2 {
+            let elem = var_r.clone().with_index(i).unwrap();
+            for j in 0..2 {
+                let slot = elem.clone().with_index(j).unwrap();
+                assert!(
+                    ideal.pl.contains(&slot),
+                    "Vec(VPoly)/VPoly element {i} slot {j} missing from pl"
+                );
+            }
+        }
+    }
+
+    /// `VPoly(1,2) / Vec(VPoly(1,1),2)` — bare Poly divided by Vec<Poly>.
+    /// The scalar-left vector division broadcasts the dividend across elements.
+    #[test]
+    fn test_div_vpoly_by_vec_vpoly() {
+        use crate::Var;
+        use lang::ast::BinOp;
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+
+        let dividend_t = ATyp::VPoly(1, 2);
+        let elem_b = ATyp::VPoly(1, 1);
+        let vec_b = ATyp::Vec(Box::new(elem_b.clone()), 2);
+
+        let var_a = Var::from_node(NodeIndex::new(0), dividend_t.clone(), Qualifier::Private);
+        ideal.register(&var_a);
+
+        let var_b = Var::from_node(NodeIndex::new(1), vec_b.clone(), Qualifier::Private);
+        ideal.register(&var_b);
+
+        // lub_div(VPoly(1,2), Vec(VPoly(1,1),2)) = Vec(lub_div(VPoly(1,2), VPoly(1,1)), 2)
+        //                                        = Vec(VPoly(1,1), 2)
+        let result_t = ATyp::Vec(Box::new(ATyp::VPoly(1, 1)), 2);
+        let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Private);
+        ideal.register(&var_r);
+
+        builder.add_op(
+            var_r.clone(),
+            Op::Bin(
+                BinOp::Div,
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), dividend_t.clone())),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), vec_b.clone())),
+                result_t.clone(),
+            ),
+            &mut ideal,
+        );
+
+        // Each element divides the same dividend by a different divisor element.
+        assert_eq!(
+            builder.ns.div_wit.len(),
+            2,
+            "VPoly/Vec(VPoly) should have 2 div_wit entries (one per element)"
+        );
+
+        for i in 0..2 {
+            let elem = var_r.clone().with_index(i).unwrap();
+            for j in 0..2 {
+                let slot = elem.clone().with_index(j).unwrap();
+                assert!(
+                    ideal.pl.contains(&slot),
+                    "VPoly/Vec(VPoly) element {i} slot {j} missing from pl"
+                );
+            }
+        }
     }
 }

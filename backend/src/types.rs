@@ -614,6 +614,15 @@ impl Lub for ATyp {
                     .map_err(|e| LubError::next(LubError::pair(&a, &b), e))?;
                 Ok(ATyp::vec(&t, *n1))
             }
+            // Vec<A> * c = Vec<lub_pair(A, c)> — scalar broadcast, matching
+            // CTyp::lub_pair.
+            (ATyp::Vec(box t1, n), b) | (b, ATyp::Vec(box t1, n))
+                if !matches!(b, ATyp::Vec(_, _)) =>
+            {
+                let t = ATyp::lub_pair(t1, b, ctx)
+                    .map_err(|e| LubError::next(LubError::pair(&a, &b), e))?;
+                Ok(ATyp::vec(&t, *n))
+            }
             (a, b) => Err(LubError::pair(&a, &b)),
         }
     }
