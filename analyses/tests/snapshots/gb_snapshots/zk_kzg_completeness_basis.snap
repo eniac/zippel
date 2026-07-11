@@ -6,7 +6,6 @@ expression: value
 - __zippel::gb::div_q::0[0] + b0 + p_val[1]
 - __zippel::gb::div_q::0[0]*arg_lead_inv + b0*arg_lead_inv + 1
 - __zippel::gb::div_q::0[1] + b1
-- __zippel::node::61 + __zippel::node::54*__zippel::node::59
 - h*ss[0]*ss[2] + h*ss[1]^2
 - h*ss[1] + h_val*ss[0]
 - h*ss[2] + h_val*ss[1]

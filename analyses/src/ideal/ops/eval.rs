@@ -15,7 +15,6 @@ use super::EncodeCtx;
 use super::PolySource;
 use super::fft::encode_fft;
 use super::link_to_polys;
-use super::reduce::selected_eval_to_poly;
 use super::{hypercube, multi_indices};
 
 /// Shared helper for `Op::Evaluate(p, xs)` — computes the ideal
@@ -173,6 +172,78 @@ pub fn eval_to_poly_as<C: ArkConfig>(
     }
     .lift_to(target_typ)
     .polys
+}
+
+/// Selected evaluation: keep variable `range.start` free and substitute
+/// `fixed` for the remaining variables. Returns the residual univariate
+/// coefficient polys, or `None` for unsupported shapes.
+pub fn selected_eval_to_poly<C: ArkConfig>(
+    p: &GOp<C>,
+    range: &lang::typ::CRange,
+    fixed: &GOp<C>,
+    vars: &HashMap<Ref, Var>,
+) -> Option<Vec<Polynomial<C::F>>> {
+    if range.step != 1 || range.len() != 1 {
+        return None;
+    }
+
+    let fixed_polys = PolySource::ref_vars(fixed, vars);
+    match p.typ() {
+        ATyp::VPoly(n, d) if range.end <= n && fixed_polys.len() == n.saturating_sub(1) => {
+            let p_polys = PolySource::ref_vars(p, vars);
+            let all_indices = multi_indices(n, d);
+            let mut out = vec![Polynomial::<C::F>::zero(); d + 1];
+
+            for (idx, ki) in all_indices.iter().enumerate() {
+                let free_exp = ki[range.start];
+                let mut term = p_polys[idx].clone();
+                let mut fixed_idx = 0usize;
+                for (var_idx, &var_exp) in ki.iter().enumerate().take(n) {
+                    if var_idx == range.start {
+                        continue;
+                    }
+                    if var_exp > 0 {
+                        let mut fixed_pow = fixed_polys[fixed_idx].clone();
+                        fixed_pow.pow(var_exp);
+                        term = &term * &fixed_pow;
+                    }
+                    fixed_idx += 1;
+                }
+                out[free_exp] = &out[free_exp] + &term;
+            }
+            Some(out)
+        }
+        ATyp::Mle(n) if range.end <= n && fixed_polys.len() == n.saturating_sub(1) => {
+            let p_polys = PolySource::ref_vars(p, vars);
+            let all_b = hypercube(n);
+            let one = Polynomial::<C::F>::lit(&C::F::one());
+            let eq = |bi: usize, x: &Polynomial<C::F>| -> Polynomial<C::F> {
+                if bi == 1 { x.clone() } else { &one - x }
+            };
+            let free = range.start;
+            let mut out = vec![Polynomial::<C::F>::zero(); 2];
+            for (idx, b) in all_b.iter().enumerate() {
+                let mut w = one.clone();
+                let mut fixed_idx = 0usize;
+                for (var_idx, &bv) in b.iter().enumerate().take(n) {
+                    if var_idx == free {
+                        continue;
+                    }
+                    w = &w * &eq(bv, &fixed_polys[fixed_idx]);
+                    fixed_idx += 1;
+                }
+                let term = &p_polys[idx] * &w;
+                if b[free] == 0 {
+                    out[0] = &out[0] + &term;
+                    out[1] = &out[1] - &term;
+                } else {
+                    out[1] = &out[1] + &term;
+                }
+            }
+            Some(out)
+        }
+        _ => None,
+    }
 }
 
 /// Encode `Op::Evaluate(p, range, pts)`: dispatch on the three shapes:

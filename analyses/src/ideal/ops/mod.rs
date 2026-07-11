@@ -82,32 +82,6 @@ pub fn link_to_polys<C: ArkConfig>(ideal: &mut Ideal<C>, var: &Var, polys: Vec<P
     }
 }
 
-/// Constrain each slot of `var` to equal the corresponding polynomial in
-/// `polys`, emitting `polys[j] − var(var[j]) = 0` **without** registering
-/// in `pl`. Used when the polys are already defined elsewhere (e.g. via
-/// sentinel vars from `mul_op`) and the target var should not be recorded
-/// as their canonical definition.
-///
-/// Asserts that `var` has exactly `polys.len()` physical slots.
-pub fn constrain_to_polys<C: ArkConfig>(
-    ideal: &mut Ideal<C>,
-    var: &Var,
-    polys: Vec<Polynomial<C::F>>,
-) {
-    let var_slots = var.slots();
-    assert_eq!(
-        var_slots.len(),
-        polys.len(),
-        "constrain_to_polys: slot count mismatch — var {} has {} slots, polys has {}",
-        var.verbose(),
-        var_slots.len(),
-        polys.len(),
-    );
-    for (pf, p) in var_slots.into_iter().zip(polys) {
-        ideal.generating_set.push(p - Polynomial::var(&pf));
-    }
-}
-
 pub mod addsub;
 pub mod concat;
 pub mod div;
