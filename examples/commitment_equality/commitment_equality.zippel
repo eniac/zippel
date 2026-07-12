@@ -10,7 +10,7 @@ proto prove_commitment_equality<G: Group, F: Scalar<G>>(
     public h: G,           // Base for randomness
     public c1: G,          // Commitment C1 = g*x + h*r1
     public c2: G           // Commitment C2 = g*x + h*r2
-) where c1 == g*x + h*r1 && c2 == g*x + h*r2 {
+) where c1 == g*x + h*r1; c2 == g*x + h*r2 {
       // Prove that c1 - c2 commits to 0, using randomness r1 - r2
       // Let c_diff = c1 - c2 = g*x + h*r1 - (g*x + h*r2) = h*(r1 - r2)
       // We prove knowledge of (r1-r2) such that c_diff = h*(r1-r2)

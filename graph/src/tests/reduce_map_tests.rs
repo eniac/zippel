@@ -48,12 +48,12 @@ fn op_has_loop_param(op: &GOp<B>, level: usize) -> bool {
         Op::Map(d, b) | Op::ReduceMap(_, d, b) => {
             op_has_loop_param(d.get(), level) || op_has_loop_param(b.get(), level)
         }
+        Op::Check(a, b) => op_has_loop_param(a.get(), level) || op_has_loop_param(b.get(), level),
         Op::Poly(a)
         | Op::Coef(a)
         | Op::Mle(a)
         | Op::Ifft(a)
         | Op::Fft(a)
-        | Op::Check(a)
         | Op::Reduce(_, a)
         | Op::Proj(a, _, _) => op_has_loop_param(a.get(), level),
         Op::Evaluate(p, _, pts) => {

@@ -31,7 +31,8 @@ fn op_ancestors_of_loops<C: ArkConfig>(
         Op::Ref(r, _) => ancestors.get(&r.node()).cloned().unwrap_or_default(),
         Op::Ram(a, _) => op_ancestors_of_loops(a, ancestors, loops),
         Op::Value(_) => Set::new(),
-        Op::Check(op) => op_ancestors_of_loops(op, ancestors, loops),
+        Op::Check(a, b) => op_ancestors_of_loops(a, ancestors, loops)
+            .union(op_ancestors_of_loops(b, ancestors, loops)),
         Op::Poly(op) => op_ancestors_of_loops(op, ancestors, loops),
         Op::Coef(op) => op_ancestors_of_loops(op, ancestors, loops),
         Op::Reduce(_, v) => op_ancestors_of_loops(v, ancestors, loops),
@@ -110,9 +111,7 @@ fn compute_distribution_loops<C: ArkConfig>(
 ) -> Option<Distribution> {
     match op {
         Op::Value(_) => Some(Distribution::Nonuniform),
-        Op::Check(op) => {
-            compute_distribution_loops(op, ancestors, distributions, dist_loops, anc_loops)
-        }
+        Op::Check(_, _) => Some(Distribution::Nonuniform),
         Op::Ref(r, _) => distributions.get(r).cloned(),
         Op::Ram(a, _) => {
             compute_distribution_loops(a, ancestors, distributions, dist_loops, anc_loops)
@@ -195,7 +194,7 @@ fn compute_distribution_loops<C: ArkConfig>(
                 Some(Distribution::Nonuniform)
             }
         }
-        Op::Bin(BinOp::Sub, a, b, _) | Op::Bin(BinOp::Equ, a, b, _) => {
+        Op::Bin(BinOp::Sub, a, b, _) => {
             let dist_a =
                 compute_distribution_loops(a, ancestors, distributions, dist_loops, anc_loops)?;
             let dist_b =
@@ -206,10 +205,7 @@ fn compute_distribution_loops<C: ArkConfig>(
                 Some(Distribution::Nonuniform)
             }
         }
-        Op::Bin(BinOp::Mul, a, b, _)
-        | Op::Bin(BinOp::And, a, b, _)
-        | Op::Bin(BinOp::Dot, a, b, _)
-        | Op::Pair(a, b, _) => {
+        Op::Bin(BinOp::Mul, a, b, _) | Op::Bin(BinOp::Dot, a, b, _) | Op::Pair(a, b, _) => {
             let dist_a =
                 compute_distribution_loops(a, ancestors, distributions, dist_loops, anc_loops)?;
             let dist_b =
@@ -277,7 +273,7 @@ fn compute_distribution_loops<C: ArkConfig>(
                 compute_distribution_loops(v, ancestors, distributions, dist_loops, anc_loops)?;
             match op {
                 BinOp::Add | BinOp::Sub | BinOp::Concat => Some(dist_v),
-                BinOp::Mul | BinOp::And | BinOp::Dot => Some(dist_v),
+                BinOp::Mul | BinOp::Dot => Some(dist_v),
                 _ => Some(Distribution::Nonuniform),
             }
         }
@@ -384,7 +380,7 @@ mod tests {
     #[test]
     fn uniformity_prop() {
         let ex = r#"
-            proto foo<F: Field>(private uniform* s: F, public x: F) where true {
+            proto foo<F: Field>(private uniform* s: F, public x: F) where 1 == 1 {
                 let r = random<F>;
                 a <- r * s;
                 b <- r * x;
@@ -406,7 +402,7 @@ mod tests {
     #[test]
     fn test_uniformity_from_dag_simple() {
         let ex = r#"
-            proto simple<F: Field>(private x: F) where true {
+            proto simple<F: Field>(private x: F) where 1 == 1 {
                 verify(x == x)
             }"#;
         let m = UModule::from_str(ex)
@@ -423,7 +419,7 @@ mod tests {
     #[test]
     fn test_uniformity_from_dag_multiple_checks() {
         let ex = r#"
-            proto two_checks<F: Field>(private x: F, private y: F) where true {
+            proto two_checks<F: Field>(private x: F, private y: F) where 1 == 1 {
                 let r = random<F>;
                 a <- r * x;
                 b <- r * y;
@@ -558,7 +554,7 @@ mod tests {
         use graph::mk;
         let inner =
             GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
-        let op = Op::Check(mk::<ArkBls12_381>(inner));
+        let op = Op::Check(mk::<ArkBls12_381>(inner.clone()), mk::<ArkBls12_381>(inner));
         let dist = compute_distribution(&op, &Ctx::new(), &Ctx::new());
         assert_eq!(dist, Some(Distribution::Nonuniform));
     }

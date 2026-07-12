@@ -34,7 +34,7 @@ fn zc_round<F: Field, S: Size, N: 2^S>(
     public b_evs:            [F; N],
     public c_evs:            [F; N],
     public eq_tau_evs:       [F; N]
-) -> Bool {
+) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let evs_local = [residual_poly(t) for t in points];
     evs <- evs_local;
@@ -55,7 +55,7 @@ fn zc_round<F: Field, S: Size, N: 2^S>(
     let c_at_r     = dot(lambdas, c_evs);
     let eq_at_r    = dot(lambdas, eq_tau_evs);
 
-    final_eval == (a_at_r * b_at_r - c_at_r) * eq_at_r
+    verify(final_eval == (a_at_r * b_at_r - c_at_r) * eq_at_r)
 }
 fn zc_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
     public curr_poly:        Poly<F, V, 3>,
@@ -68,7 +68,7 @@ fn zc_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
     public b_evs:            [F; N],
     public c_evs:            [F; N],
     public eq_tau_evs:       [F; N]
-) -> Bool {
+) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let zero = points[0] - points[0];
     let one = zero + 1;
@@ -150,6 +150,6 @@ proto hyperplonk_zerocheck<F: Field, S: Size, N: 2^S>(
     r0 <- challenge<F>;
     let prev     = g0(r0);
 
-    verify(zc_round(h_poly, points, [r0], prev, r0, 1,
-                    a_evs, b_evs, c_evs, eq_tau_evs))
+    zc_round(h_poly, points, [r0], prev, r0, 1,
+                    a_evs, b_evs, c_evs, eq_tau_evs)
 }

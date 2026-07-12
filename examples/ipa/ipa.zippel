@@ -16,7 +16,7 @@ fn ipa_recursive<G: Group, F: Scalar<G>>(
     public p_commitment_k: G,                // Current P commitment for this round
     private a_vec_k_private: [F; 1],  // Prover's current 'a' vector (private)
     private b_vec_k_private: [F; 1]   // Prover's current 'b' vector (private)
-) -> Bool {
+) -> Unit {
         // BASE CASE (n=1)
         // Prover sends the final folded a, b scalars — these are the proof
         // elements that close out the protocol (BBB+18 Protocol 2 line 8).
@@ -37,7 +37,7 @@ fn ipa_recursive<G: Group, F: Scalar<G>>(
         let expected_P_at_base = ga + hb
                                + u_base_for_ipa * ip_val_at_base;
 
-        p_commitment_k == expected_P_at_base
+        verify(p_commitment_k == expected_P_at_base)
 }
 
 fn ipa_recursive<G: Group, F: Scalar<G>, S: Size, N_current: 1..S+1>(
@@ -47,7 +47,7 @@ fn ipa_recursive<G: Group, F: Scalar<G>, S: Size, N_current: 1..S+1>(
     public p_commitment_k: G,                   // Current P commitment for this round
     private a_vec_k_private: [F; 2^N_current],  // Prover's current 'a' vector (private)
     private b_vec_k_private: [F; 2^N_current]   // Prover's current 'b' vector (private)
-) -> Bool {
+) -> Unit {
         // RECURSIVE STEP (n > 1)
 
         // Prover computes c_L, c_R and then L, R.
@@ -118,8 +118,8 @@ proto ipa_wrapper<G: Group, F: Scalar<G>, S: Size, N_val_const: 2^S>(
     private a_vec_witness: [F; N_val_const],   // Corresponds to 'a' in the paper (vector of field elements)
     private b_vec_witness: [F; N_val_const]    // Corresponds to 'b' in the paper (vector of field elements)
 ) where
-        (p_initial_commitment == (dot(g_vec, a_vec_witness)
-        + dot(h_vec, b_vec_witness))) && (ip_val_claimed == dot(a_vec_witness, b_vec_witness)) {
+        p_initial_commitment == (dot(g_vec, a_vec_witness)
+        + dot(h_vec, b_vec_witness)); ip_val_claimed == dot(a_vec_witness, b_vec_witness) {
     // 1. "Verifier generates x <-$ Z*_p and sends it to Prover."
     //    In our non-interactive DSL, this is a Fiat-Shamir challenge.
     //    The challenge 'x_chal' is a scalar of type F.
@@ -140,15 +140,13 @@ proto ipa_wrapper<G: Group, F: Scalar<G>, S: Size, N_val_const: 2^S>(
     //    The inputs g_vec, h_vec are the original public base vectors.
     //    u_raised_to_x and p_prime are the values computed above.
     //    a_vec_witness and b_vec_witness are the original private witness vectors.
-    let verification_result = ipa_recursive(
+    // This Protocol 1 succeeds if the called ipa_recursive verifies successfully.
+    ipa_recursive(
                                             g_vec,
                                             h_vec,
                                             u_raised_to_x,
                                             p_prime,
                                             a_vec_witness,
                                             b_vec_witness
-                                        );
-
-    // This Protocol 1 succeeds if the called ipa_recursive verifies successfully.
-    verify(verification_result)
+                                        )
 }

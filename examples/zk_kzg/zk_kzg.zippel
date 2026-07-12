@@ -13,7 +13,7 @@
 proto zk_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>
         (private p_val: Uni<F, N-1>, public z: F, public y: F, public ss: [G1; N+1],
         public g: G1, public h: G2, public h_val: G2)
-        where p_val(z) == y && ss[0] == g && reduce(&&, [pair(ss[i], h_val) == pair(ss[i+1], h) for i in 0..N]) {
+        where p_val(z) == y; ss[0] == g; [pair(ss[i], h_val) for i in 0..N] == [pair(ss[i+1], h) for i in 0..N] {
 
         // Sample blinding factors
         let b0 = random<F>;

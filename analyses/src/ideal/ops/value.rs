@@ -16,15 +16,13 @@ use super::link_to_polys;
 /// polynomials in the basis (e.g. `let c = 7; verify(x == c)` folds
 /// without needing an opaque `c` variable).
 ///
-/// Supports Scalar / Bool / Index / Vec and the Vec* flavours.
+/// Supports Scalar / Index / Vec and the Vec* flavours.
 /// Everything else (G1/G2/GT/Poly/Record) panics with `unsupported-value`.
 pub fn value_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, var: &Var, v: &Value<C>) {
     let polys_opt: Option<Vec<Polynomial<C::F>>> = match v {
         Value::Scalar(_)
-        | Value::Bool(_)
         | Value::Index(_)
         | Value::Vec(_)
-        | Value::VecBool(_)
         | Value::VecScalar(_)
         | Value::VecIndex(_) => Some(PolySource::to_poly_value(v)),
         _ => None,

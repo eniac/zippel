@@ -8,7 +8,7 @@ fn bccgp_recursive<G: Group, F: Scalar<G>>(
     public c_val: F,
     private a_vec: [F; 1],
     private b_vec: [F; 1]
-) -> Bool {
+) -> Unit {
     let a_scalar = a_vec[0];
     let b_scalar = b_vec[0];
 
@@ -17,11 +17,12 @@ fn bccgp_recursive<G: Group, F: Scalar<G>>(
 
     // Check P == g^a + h^b (additive)
     let expected_p = g_vec[0] * a_scalar_transcript + h_vec[0] * b_scalar_transcript;
-    
+
     // Check c == a * b
     let expected_c = a_scalar_transcript * b_scalar_transcript;
 
-    (p_commitment == expected_p) && (c_val == expected_c)
+    verify(p_commitment == expected_p);
+    verify(c_val == expected_c)
 }
 
 // Recursive step (n > 1)
@@ -32,7 +33,7 @@ fn bccgp_recursive<G: Group, F: Scalar<G>, S: Size, N: 1..S+1>(
     public c_val: F,
     private a_vec: [F; 2^N],
     private b_vec: [F; 2^N]
-) -> Bool {
+) -> Unit {
     let a_l = a_vec[0..2^(N-1)];
     let a_r = a_vec[2^(N-1)..2^N];
     let b_l = b_vec[0..2^(N-1)];
@@ -88,15 +89,14 @@ proto bccgp_ipa<G: Group, F: Scalar<G>, S: Size, N_CONST: 2^S>(
     private a_vec: [F; N_CONST],
     private b_vec: [F; N_CONST]
 ) where
-    (p_commitment == dot(g_vec, a_vec) + dot(h_vec, b_vec)) && (c_val == dot(a_vec, b_vec))
+    p_commitment == dot(g_vec, a_vec) + dot(h_vec, b_vec); c_val == dot(a_vec, b_vec)
 {
-    let verification_result = bccgp_recursive(
+    bccgp_recursive(
         g_vec,
         h_vec,
         p_commitment,
         c_val,
         a_vec,
         b_vec
-    );
-    verify(verification_result)
+    )
 }

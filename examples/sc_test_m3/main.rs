@@ -67,8 +67,8 @@ fn main() {
     println!("Verifier: {verifier_elapsed:.2?}");
 
     for (i, v) in verifier_result.iter().enumerate() {
-        if let Value::Bool(b) = v {
-            println!("  verify[{i}] = {b}");
+        if let Value::Index(n) = v {
+            println!("  verify[{i}] = {}", *n != 0);
         }
     }
     let passed = check_verification(verifier_result).passed;

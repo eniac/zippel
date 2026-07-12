@@ -20,7 +20,7 @@ impl QualifierPropagation {
     fn from_op_loops<C: ArkConfig>(&self, op: &GOp<C>, loops: &[Qualifier]) -> Option<Qualifier> {
         match op {
             Op::Value(_) => Some(Qualifier::Public),
-            Op::Check(_) => Some(Qualifier::Public),
+            Op::Check(_, _) => Some(Qualifier::Public),
             Op::Ref(r, _) => self.quals.get(&r.node()).cloned(),
             Op::Ram(a, _) => self.from_op_loops(a, loops),
             Op::Poly(a) => self.from_op_loops(a, loops),
@@ -235,7 +235,7 @@ mod tests {
         let qp = QualifierPropagation { quals: Ctx::new() };
         let inner =
             GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
-        let op = Op::Check(mk::<ArkBls12_381>(inner));
+        let op = Op::Check(mk::<ArkBls12_381>(inner.clone()), mk::<ArkBls12_381>(inner));
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Public));
     }
@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn test_qualifier_propagation_public_public_join() {
         let ex = r#"
-            proto add_public<F: Field>(public x: F, public y: F) where true {
+            proto add_public<F: Field>(public x: F, public y: F) where 1 == 1 {
                 z <- x + y;
                 verify(z == x + y)
             }"#;
@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn test_qualifier_propagation_private_public_join() {
         let ex = r#"
-            proto mix_quals<F: Field>(private x: F, public y: F) where true {
+            proto mix_quals<F: Field>(private x: F, public y: F) where 1 == 1 {
                 z <- x + y;
                 verify(z == x + y)
             }"#;
@@ -285,7 +285,7 @@ mod tests {
     #[test]
     fn test_qualifier_propagation_private_private_join() {
         let ex = r#"
-            proto private_only<F: Field>(private x: F, private y: F) where true {
+            proto private_only<F: Field>(private x: F, private y: F) where 1 == 1 {
                 z <- x * y;
                 verify(z == x * y)
             }"#;
@@ -302,7 +302,7 @@ mod tests {
     #[test]
     fn test_qualifier_from_dag_finds_check() {
         let ex = r#"
-            proto simple<F: Field>(private x: F) where true {
+            proto simple<F: Field>(private x: F) where 1 == 1 {
                 verify(x == x)
             }"#;
         let m = UModule::from_str(ex)
@@ -319,7 +319,7 @@ mod tests {
     #[test]
     fn test_qualifier_from_dag_finds_multiple_checks() {
         let ex = r#"
-            proto two_checks<F: Field>(private x: F, private y: F) where true {
+            proto two_checks<F: Field>(private x: F, private y: F) where 1 == 1 {
                 verify(x == x);
                 verify(y == y)
             }"#;
@@ -341,7 +341,7 @@ mod tests {
     #[test]
     fn test_qualifier_multiple_checks_all_public() {
         let ex = r#"
-            proto two_checks<F: Field>(public x: F, public y: F) where true {
+            proto two_checks<F: Field>(public x: F, public y: F) where 1 == 1 {
                 verify(x == x);
                 verify(y == y)
             }"#;
@@ -373,7 +373,7 @@ mod tests {
     #[test]
     fn test_qualifier_three_checks() {
         let ex = r#"
-            proto three_checks<F: Field>(private x: F, private y: F, private z: F) where true {
+            proto three_checks<F: Field>(private x: F, private y: F, private z: F) where 1 == 1 {
                 verify(x == x);
                 verify(y == y);
                 verify(z == z)
@@ -396,7 +396,7 @@ mod tests {
     #[test]
     fn test_qualifier_scattered_checks() {
         let ex = r#"
-            proto scattered<F: Field>(private x: F, public y: F) where true {
+            proto scattered<F: Field>(private x: F, public y: F) where 1 == 1 {
                 a <- x + y;
                 verify(a == a);
                 b <- a + y;

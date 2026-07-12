@@ -37,8 +37,8 @@ impl Typeable for CExp {
             // Infer the type of a literal [n] as a Fin<n> type
             CExp::Lit(n) => Ok(CTyp::fin(Range::singleton(*n))),
 
-            // Booleans
-            CExp::Bool(_) => Ok(CTyp::Bool),
+            // Unit value
+            CExp::Unit => Ok(CTyp::Unit),
 
             // Unary: FFT-grid interpolation; binary: explicit points + evaluations
             CExp::Interpolate(points_opt, box evals) => {
@@ -219,11 +219,8 @@ impl Typeable for CExp {
                             }
                             // Multivariate polynomial (MLE, virtual, etc.): n > 1.
                             (CTyp::Poly(i_poly, n, d), CTyp::Vec(b, len_vec)) if n > 1 => {
-                                // Boolean (or Fin<0..2>) hypercube points evaluate the MLE by
-                                // table index; any scalar-castable point evaluates generically.
-                                // Both yield the polynomial's field element.
-                                let elem_is_bool = matches!(*b, CTyp::Bool);
-                                if !elem_is_bool && b.to_scalar(kctx).as_ref() != Some(&i_poly) {
+                                // Scalar-castable points evaluate the MLE generically.
+                                if b.to_scalar(kctx).as_ref() != Some(&i_poly) {
                                     return Err(TypeError::evaluate(kctx, vctx, p, x));
                                 }
                                 if len_vec == n {
@@ -433,32 +430,6 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_concat(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
-            }
-
-            CExp::Bin(BinOp::Equ, a, b) => {
-                let ta = a
-                    .infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let tb = b
-                    .infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                // Values are equal when their types are equal (with unification)
-                CTyp::lub_equ(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
-                Ok(CTyp::bool())
-            }
-
-            CExp::Bin(BinOp::And, box a, box b) => {
-                let ta = a
-                    .infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let tb = b
-                    .infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                CTyp::lub_and(&ta, &tb, kctx)
                     .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
             }
 
@@ -698,16 +669,20 @@ impl Typeable for CExp {
                 }
             }
 
-            CExp::Assert(box a) | CExp::Verify(box a) => {
-                let t = a
+            CExp::Assert(box lhs, box rhs, box cont) | CExp::Verify(box lhs, box rhs, box cont) => {
+                let ta = lhs
+                    .infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                let tb = rhs
                     .infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
-                if t == CTyp::Bool {
-                    Ok(CTyp::bool())
-                } else {
-                    Err(TypeError::bool(kctx, vctx, self))
-                }
+                // Constraint operands must have compatible types
+                CTyp::lub_equ(&ta, &tb, kctx)
+                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+
+                // The continuation determines the type of the expression
+                cont.infer(kctx, fctx, vctx)
             }
 
             CExp::Let(Some(var), box left, box right) | CExp::Log(var, box left, box right) => {
@@ -855,23 +830,25 @@ impl Typeable for CBody {
         // Type inference for each statement in the Body
         match self {
             CBody::Proto { relation, body } => {
-                // First the relation
-                let tr = relation.infer(kctx, fctx, &vctx.clone())?;
-                if tr != CTyp::Bool {
-                    return Err(TypeError::bool(kctx, vctx, relation));
+                // Check each constraint (lhs, rhs) has compatible types
+                for (lhs, rhs) in relation {
+                    let ta = lhs.infer(kctx, fctx, &vctx.clone())?;
+                    let tb = rhs.infer(kctx, fctx, &vctx.clone())?;
+                    CTyp::lub_equ(&ta, &tb, kctx)
+                        .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, lhs), e))?;
                 }
 
                 // Then the body
                 let tbody = body.infer(kctx, fctx, &vctx.clone())?;
 
-                if tbody != CTyp::Bool {
-                    Err(TypeError::bool(kctx, vctx, body))
+                if tbody != CTyp::Unit {
+                    Err(TypeError::unit(kctx, vctx, body))
                 } else {
-                    Ok(CTyp::Bool)
+                    Ok(CTyp::Unit)
                 }
             }
             CBody::Func { body } => body.infer(kctx, fctx, &vctx.clone()),
-            CBody::TypeAlias => Ok(CTyp::Bool), // Type aliases have no body to check
+            CBody::TypeAlias => Ok(CTyp::Unit), // Type aliases have no body to check
         }
     }
 }

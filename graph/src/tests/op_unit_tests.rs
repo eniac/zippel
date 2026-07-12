@@ -175,91 +175,6 @@ mod op_construction_tests {
     }
 
     #[test]
-    fn test_equ_both_values() {
-        let v1 = GOp::<C>::value(&scalar::<C>(42));
-        let v2 = GOp::<C>::value(&scalar::<C>(42));
-
-        let result = Op::equ(v1, v2);
-
-        // When both are values, should evaluate to Bool
-        match result {
-            Op::Value(Value::Bool(true)) => (),
-            _ => panic!("Expected Bool(true) for equal values"),
-        }
-    }
-
-    #[test]
-    fn test_equ_different_values() {
-        let v1 = GOp::<C>::value(&scalar::<C>(42));
-        let v2 = GOp::<C>::value(&scalar::<C>(17));
-
-        let result = Op::equ(v1, v2);
-
-        // When both are different values, should evaluate to Bool(false)
-        match result {
-            Op::Value(Value::Bool(false)) => (),
-            _ => panic!("Expected Bool(false) for different values"),
-        }
-    }
-
-    #[test]
-    fn test_and_both_values() {
-        let v1 = GOp::<C>::value(&Value::Bool(true));
-        let v2 = GOp::<C>::value(&Value::Bool(true));
-
-        let result = Op::and(v1, v2, ATyp::bool());
-
-        match result {
-            Op::Value(Value::Bool(true)) => (),
-            _ => panic!("Expected Bool(true)"),
-        }
-    }
-
-    #[test]
-    fn test_and_false_shortcircuit_left() {
-        let v1 = GOp::<C>::value(&Value::Bool(false));
-        let v2 = GOp::<C>::value(&Value::Bool(true));
-
-        let result = Op::and(v1, v2, ATyp::bool());
-
-        match result {
-            Op::Value(Value::Bool(false)) => (),
-            _ => panic!("Expected Bool(false) - short circuit"),
-        }
-    }
-
-    #[test]
-    fn test_and_false_shortcircuit_right() {
-        let v1 = GOp::<C>::value(&Value::Bool(true));
-        let v2 = GOp::<C>::value(&Value::Bool(false));
-
-        let result = Op::and(v1, v2, ATyp::bool());
-
-        match result {
-            Op::Value(Value::Bool(false)) => (),
-            _ => panic!("Expected Bool(false) - short circuit"),
-        }
-    }
-
-    #[test]
-    fn test_btrue() {
-        let result = GOp::<C>::btrue();
-        match result {
-            Op::Value(Value::Bool(true)) => (),
-            _ => panic!("Expected Bool(true)"),
-        }
-    }
-
-    #[test]
-    fn test_bfalse() {
-        let result = GOp::<C>::bfalse();
-        match result {
-            Op::Value(Value::Bool(false)) => (),
-            _ => panic!("Expected Bool(false)"),
-        }
-    }
-
-    #[test]
     fn test_vec_construction() {
         let ops = vec![GOp::<C>::value(&scalar::<C>(1)), Op::value(&scalar::<C>(2))];
 
@@ -309,11 +224,12 @@ mod op_construction_tests {
 
     #[test]
     fn test_check_construction() {
-        let val = GOp::<C>::value(&Value::Bool(true));
-        let check = Op::check(val);
+        let lhs = GOp::<C>::value(&scalar::<C>(1));
+        let rhs = GOp::<C>::value(&scalar::<C>(1));
+        let check = Op::check(lhs, rhs);
 
         match check {
-            Op::Check(_) => (),
+            Op::Check(_, _) => (),
             _ => panic!("Expected Check"),
         }
     }

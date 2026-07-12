@@ -32,9 +32,9 @@ proto proof_of_dot_product<G: Group, F: Scalar<G>, S: Size, N: S>(
 )
 // The 'where' clause defines the exact relations the prover must satisfy.
 // It uses the conceptual helper functions for clarity.
-where xi == Com_Vec(g_vec, h, x_vec, r_xi)
-  && tau == Com_Scal(g, h, y, r_tau)
-  && y == dot(x_vec, a_vec) {
+where xi == Com_Vec(g_vec, h, x_vec, r_xi);
+  tau == Com_Scal(g, h, y, r_tau);
+  y == dot(x_vec, a_vec) {
 
       // --- Prover Phase ---
 
@@ -74,13 +74,10 @@ where xi == Com_Vec(g_vec, h, x_vec, r_xi)
 
       // Check 1: xi*c + delta == Com(z_vec; z_delta)
       let check1_rhs = Com_Vec(g_vec, h, z_vec, z_delta);
-      let check1 = (xi*c + delta == check1_rhs);
+      verify(xi*c + delta == check1_rhs);
 
       // Check 2: tau*c + beta == Com(<z_vec, a_vec>; z_beta)
       let dot_za = dot(z_vec, a_vec); // Compute dot product <z_vec, a_vec>
       let check2_rhs = Com_Scal(g, h, dot_za, z_beta);
-      let check2 = (tau*c + beta == check2_rhs);
-
-      // Verify that both checks pass
-      verify(check1 && check2)
+      verify(tau*c + beta == check2_rhs)
 }

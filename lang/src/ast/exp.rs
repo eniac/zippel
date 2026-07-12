@@ -5,7 +5,7 @@ use pest::iterators::Pairs;
 use pest::pratt_parser::{Assoc, Op, PrattParser};
 use share::Ctx;
 use std::fmt;
-use std::ops::{Add, BitAnd, BitXor, Div, Index, Mul, Rem, Sub};
+use std::ops::{Add, BitXor, Div, Index, Mul, Rem, Sub};
 
 use share::traversal::ToTraversal1;
 
@@ -66,22 +66,6 @@ pub enum BinOp {
     ///     let inner: F = 5 % 2;
     ///     ```
     Rem,
-
-    ///     Represents the equality comparison between two arithmetic expressions.
-    ///
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     verify(5 == 5)
-    ///     ```
-    Equ,
-
-    ///     Represents the logical AND of two boolean expressions.
-    ///
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     assert(true && false);
-    ///     ```
-    And,
 }
 
 /// Represents arithmetic expressions in the Zippel language.
@@ -95,12 +79,8 @@ pub enum Exp<N> {
     ///     ```
     Lit(N),
 
-    ///     Boolean literal
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     let b = true;
-    ///     ```
-    Bool(bool),
+    ///     Unit value (the empty value of type Unit)
+    Unit,
 
     ///     Variable reference
     ///     **Zippel Code:**
@@ -241,21 +221,21 @@ pub enum Exp<N> {
     ///     ```
     Log(Vid, Box<Exp<N>>, Box<Exp<N>>),
 
-    ///     Prover assertion followed by expression.
+    ///     Prover assertion: asserts `lhs == rhs`, then continues with `cont`.
     ///     **Zippel Code:**
     ///     ```zippel
     ///     assert(1 == 1);
     ///     ...
     ///     ```
-    Assert(Box<Exp<N>>),
+    Assert(Box<Exp<N>>, Box<Exp<N>>, Box<Exp<N>>),
 
-    ///     Verifier check followed by expression.
+    ///     Verifier check: verifies `lhs == rhs`, then continues with `cont`.
     ///     **Zippel Code:**
     ///     ```zippel
     ///     verify(a == a)
     ///     ...
     ///     ```
-    Verify(Box<Exp<N>>),
+    Verify(Box<Exp<N>>, Box<Exp<N>>, Box<Exp<N>>),
 
     ///     Polynomial function definition
     ///     **Zippel Code:**
@@ -309,7 +289,7 @@ impl<N: Clone> ToTraversal1<N> for Exp<N> {
     fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Exp<Z>, E> {
         match self {
             Exp::Lit(x) => Ok(Exp::Lit(f(x)?)),
-            Exp::Bool(b) => Ok(Exp::Bool(b)),
+            Exp::Unit => Ok(Exp::Unit),
             Exp::Var(v) => Ok(Exp::Var(v)),
             Exp::Interpolate(po, box evals) => Ok(Exp::Interpolate(
                 match po {
@@ -366,8 +346,16 @@ impl<N: Clone> ToTraversal1<N> for Exp<N> {
                 Box::new(a.traverse1(f)?),
                 Box::new(b.traverse1(f)?),
             )),
-            Exp::Assert(box x) => Ok(Exp::Assert(Box::new(x.traverse1(f)?))),
-            Exp::Verify(box x) => Ok(Exp::Verify(Box::new(x.traverse1(f)?))),
+            Exp::Assert(box lhs, box rhs, box cont) => Ok(Exp::Assert(
+                Box::new(lhs.traverse1(f)?),
+                Box::new(rhs.traverse1(f)?),
+                Box::new(cont.traverse1(f)?),
+            )),
+            Exp::Verify(box lhs, box rhs, box cont) => Ok(Exp::Verify(
+                Box::new(lhs.traverse1(f)?),
+                Box::new(rhs.traverse1(f)?),
+                Box::new(cont.traverse1(f)?),
+            )),
             Exp::Fun(vars, box body) => Ok(Exp::Fun(vars, Box::new(body.traverse1(f)?))),
             Exp::Record(fields) => {
                 let pairs: Vec<_> = fields
@@ -415,12 +403,14 @@ impl TidSubst for CExp {
                 p.tid_subst(from, to);
                 x.tid_subst(from, to);
             }
-            Exp::Mle(box p)
-            | Exp::Poly(box p)
-            | Exp::Assert(box p)
-            | Exp::Verify(box p)
-            | Exp::Reduce(_, box p)
-            | Exp::Coef(box p) => p.tid_subst(from, to),
+            Exp::Mle(box p) | Exp::Poly(box p) | Exp::Reduce(_, box p) | Exp::Coef(box p) => {
+                p.tid_subst(from, to)
+            }
+            Exp::Assert(box lhs, box rhs, box cont) | Exp::Verify(box lhs, box rhs, box cont) => {
+                lhs.tid_subst(from, to);
+                rhs.tid_subst(from, to);
+                cont.tid_subst(from, to);
+            }
             Exp::Vec(v) | Exp::App(_, v) => v.tid_subst(from, to),
             Exp::Bin(_, box a, box b)
             | Exp::Map(box a, _, box b)
@@ -443,9 +433,9 @@ impl TidSubst for CExp {
                 value.tid_subst(from, to);
             }
             Exp::Lit(_)
+            | Exp::Unit
             | Exp::Var(_)
             | Exp::Range(_)
-            | Exp::Bool(_)
             | Exp::Challenge(_, _)
             | Exp::Random(_, _) => {}
         }
@@ -462,11 +452,9 @@ impl FreeVars for CExp {
     fn freevars(&self) -> Set<Vid> {
         match self {
             Exp::Var(id) => Set::singleton(id.clone()),
-            Exp::Bool(_)
-            | Exp::Challenge(_, _)
-            | Exp::Random(_, _)
-            | Exp::Lit(_)
-            | Exp::Range(_) => Set::new(),
+            Exp::Unit | Exp::Challenge(_, _) | Exp::Random(_, _) | Exp::Lit(_) | Exp::Range(_) => {
+                Set::new()
+            }
             Exp::Interpolate(points, evals) => match points {
                 None => evals.freevars(),
                 Some(p) => p.freevars().union(evals.freevars()),
@@ -475,12 +463,12 @@ impl FreeVars for CExp {
                 None => p.freevars(),
                 Some(x) => p.freevars().union(x.freevars()),
             },
-            Exp::Mle(box p)
-            | Exp::Poly(box p)
-            | Exp::Reduce(_, box p)
-            | Exp::Assert(box p)
-            | Exp::Verify(box p)
-            | Exp::Coef(box p) => p.freevars(),
+            Exp::Mle(box p) | Exp::Poly(box p) | Exp::Reduce(_, box p) | Exp::Coef(box p) => {
+                p.freevars()
+            }
+            Exp::Assert(box lhs, box rhs, box cont) | Exp::Verify(box lhs, box rhs, box cont) => {
+                lhs.freevars().union(rhs.freevars()).union(cont.freevars())
+            }
             Exp::Vec(v) | Exp::App(_, v) => v.freevars(),
             Exp::Bin(_, box a, box b)
             | Exp::Pair(box a, box b)
@@ -561,8 +549,16 @@ impl<N: Clone> RangeTraversal<N> for Exp<N> {
                 Ok(Exp::seq(t.range_traverse(f)?, e.range_traverse(f)?))
             }
             Exp::Pair(box t, box e) => Ok(Exp::pair(t.range_traverse(f)?, e.range_traverse(f)?)),
-            Exp::Assert(box x) => Ok(Exp::assert(x.range_traverse(f)?)),
-            Exp::Verify(box x) => Ok(Exp::verify(x.range_traverse(f)?)),
+            Exp::Assert(box lhs, box rhs, box cont) => Ok(Exp::assert_eq(
+                lhs.range_traverse(f)?,
+                rhs.range_traverse(f)?,
+                cont.range_traverse(f)?,
+            )),
+            Exp::Verify(box lhs, box rhs, box cont) => Ok(Exp::verify_eq(
+                lhs.range_traverse(f)?,
+                rhs.range_traverse(f)?,
+                cont.range_traverse(f)?,
+            )),
             Exp::App(x, ts) => Ok(Exp::app(x, ts.range_traverse(f)?)),
             Exp::Fun(vars, box body) => Ok(Exp::Fun(vars, Box::new(body.range_traverse(f)?))),
             Exp::Record(fields) => {
@@ -647,9 +643,6 @@ impl<N> Exp<N> {
     /// Annotated constructors
     pub fn lit(v: N) -> Self {
         Exp::Lit(v)
-    }
-    pub fn bool(b: bool) -> Self {
-        Exp::Bool(b)
     }
     pub fn bin(op: BinOp, l: Self, r: Self) -> Self {
         Exp::Bin(op, Box::new(l), Box::new(r))
@@ -749,11 +742,11 @@ impl<N> Exp<N> {
     pub fn varstr(x: &str) -> Self {
         Exp::Var(Vid::from(x))
     }
-    pub fn assert(b: Exp<N>) -> Self {
-        Exp::Assert(Box::new(b))
+    pub fn assert_eq(lhs: Exp<N>, rhs: Exp<N>, cont: Exp<N>) -> Self {
+        Exp::Assert(Box::new(lhs), Box::new(rhs), Box::new(cont))
     }
-    pub fn verify(b: Exp<N>) -> Self {
-        Exp::Verify(Box::new(b))
+    pub fn verify_eq(lhs: Exp<N>, rhs: Exp<N>, cont: Exp<N>) -> Self {
+        Exp::Verify(Box::new(lhs), Box::new(rhs), Box::new(cont))
     }
     pub fn letx(a: Vid, d: Self, e: Self) -> Self {
         Exp::Let(Some(a), Box::new(d), Box::new(e))
@@ -763,12 +756,6 @@ impl<N> Exp<N> {
     }
     pub fn seq(a: Self, b: Self) -> Self {
         Exp::Let(None, Box::new(a), Box::new(b))
-    }
-    pub fn and(l: Self, r: Self) -> Self {
-        Exp::Bin(BinOp::And, Box::new(l), Box::new(r))
-    }
-    pub fn equ(l: Exp<N>, r: Exp<N>) -> Self {
-        Exp::Bin(BinOp::Equ, Box::new(l), Box::new(r))
     }
     pub fn app(id: Vid, args: Exps<N>) -> Self {
         Exp::App(id, args)
@@ -787,7 +774,7 @@ impl<N> Exp<N> {
     }
     pub fn is_pure(&self) -> bool {
         match self {
-            Exp::Lit(_) | Exp::Bool(_) | Exp::Var(_) | Exp::Range(_) => true,
+            Exp::Lit(_) | Exp::Unit | Exp::Var(_) | Exp::Range(_) => true,
             Exp::Interpolate(None, box e) => e.is_pure(),
             Exp::Interpolate(Some(box p), box e) => p.is_pure() && e.is_pure(),
             Exp::Coef(box p) => p.is_pure(),
@@ -804,7 +791,7 @@ impl<N> Exp<N> {
             Exp::Log(_, box _, box _) => false,
             Exp::Challenge(_, _) | Exp::Random(_, _) => false,
             Exp::App(_, args) => args.iter().all(|e| e.is_pure()),
-            Exp::Assert(_) | Exp::Verify(_) => false,
+            Exp::Assert(_, _, _) | Exp::Verify(_, _, _) => false,
             Exp::Fun(_, box body) => body.is_pure(),
             Exp::Record(fields) => fields.iter().all(|(_, e)| e.is_pure()),
             Exp::Proj(box exp, _) => exp.is_pure(),
@@ -822,8 +809,6 @@ impl CExp {
 impl BinOp {
     pub fn precedence(&self) -> usize {
         match self {
-            BinOp::Equ => 0,
-            BinOp::And => 1,
             BinOp::Add | BinOp::Sub => 2,
             BinOp::Mul | BinOp::Div => 3,
             BinOp::Pow => 4,
@@ -851,8 +836,6 @@ where
             BinOp::Dot => allocator.text(" . "),
             BinOp::Concat => allocator.text(" ++ "),
             BinOp::Rem => allocator.text(" % "),
-            BinOp::Equ => allocator.text(" == "),
-            BinOp::And => allocator.text(" && "),
         }
     }
 
@@ -872,7 +855,7 @@ where
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         match self {
             Exp::Lit(p) => p.pretty(allocator),
-            Exp::Bool(b) => allocator.text(b.to_string()),
+            Exp::Unit => allocator.text("()"),
             Exp::Interpolate(None, ev) => allocator.concat([
                 allocator.text("interpolate("),
                 ev.pretty(allocator),
@@ -1015,15 +998,25 @@ where
                 allocator.hardline(),
                 (*e).pretty(allocator),
             ]),
-            Exp::Assert(c) => allocator.concat([
+            Exp::Assert(box lhs, box rhs, box cont) => allocator.concat([
                 allocator.text("assert("),
-                (*c).pretty(allocator),
+                lhs.pretty(allocator),
+                allocator.text(" == "),
+                rhs.pretty(allocator),
                 allocator.text(")"),
+                allocator.text(";"),
+                allocator.hardline(),
+                cont.pretty(allocator),
             ]),
-            Exp::Verify(c) => allocator.concat([
+            Exp::Verify(box lhs, box rhs, box cont) => allocator.concat([
                 allocator.text("verify("),
-                (*c).pretty(allocator),
+                lhs.pretty(allocator),
+                allocator.text(" == "),
+                rhs.pretty(allocator),
                 allocator.text(")"),
+                allocator.text(";"),
+                allocator.hardline(),
+                cont.pretty(allocator),
             ]),
             Exp::Fun(vars, body) => {
                 let vars_str = vars
@@ -1139,14 +1132,6 @@ impl<N> BitXor for Exp<N> {
     }
 }
 
-impl<N> BitAnd for Exp<N> {
-    type Output = Self;
-
-    fn bitand(self, rhs: Self) -> Self {
-        Exp::and(self, rhs)
-    }
-}
-
 impl From<u32> for UExp {
     fn from(x: u32) -> Self {
         UExp::lit(Size::from(x))
@@ -1168,12 +1153,6 @@ impl From<Vid> for UExp {
 impl From<&str> for UExp {
     fn from(x: &str) -> Self {
         UExp::varstr(x)
-    }
-}
-
-impl From<bool> for UExp {
-    fn from(x: bool) -> Self {
-        UExp::Bool(x)
     }
 }
 
@@ -1214,8 +1193,6 @@ lazy_static! {
         use Rule::*;
 
         PrattParser::new()
-            .op(Op::infix(and_op, Left))
-            .op(Op::infix(eq_op, Left))
             .op(Op::infix(add_op, Left) | Op::infix(sub_op, Left))
             .op(Op::infix(mul_op, Left) | Op::infix(div_op, Left) | Op::infix(rem_op, Left))
             .op(Op::infix(concat_op, Left))
@@ -1243,8 +1220,6 @@ impl<'pest> FromPest<'pest> for BinOp {
             Rule::pow_op => Ok(BinOp::Pow),
             Rule::rem_op => Ok(BinOp::Rem),
             Rule::concat_op => Ok(BinOp::Concat),
-            Rule::eq_op => Ok(BinOp::Equ),
-            Rule::and_op => Ok(BinOp::And),
             _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
         }
     }
@@ -1259,7 +1234,7 @@ impl<'pest> FromPest<'pest> for UExp {
     ) -> Result<Self, ConversionError<Self::FatalError>> {
         AEXP_PARSER
             .map_primary(|pair| match pair.as_rule() {
-                Rule::bool_exp => Ok(Exp::Bool(pair.as_str().parse().unwrap())),
+                Rule::unit_exp => Ok(Exp::Unit),
                 Rule::id => {
                     let name = pair.as_str().to_string();
                     if name.starts_with(|c: char| c.is_uppercase()) {
@@ -1424,24 +1399,45 @@ impl<'pest> FromPest<'pest> for UExp {
                 }
                 Rule::assert_exp => {
                     let mut inner = pair.into_inner();
-                    let cond = UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                    // constraint = { exp ~ eq_op ~ exp }
+                    let constraint_pair = inner.next().unwrap();
+                    let mut constraint_inner = constraint_pair.into_inner();
+                    let lhs =
+                        UExp::from_pest(&mut Pairs::single(constraint_inner.next().unwrap()))?;
+                    // skip eq_op
+                    constraint_inner.next();
+                    let rhs =
+                        UExp::from_pest(&mut Pairs::single(constraint_inner.next().unwrap()))?;
                     match inner.next() {
-                        Some(rest) => Ok(Exp::seq(
-                            Exp::assert(cond),
+                        Some(rest) => Ok(Exp::assert_eq(
+                            lhs,
+                            rhs,
                             UExp::from_pest(&mut Pairs::single(rest))?,
                         )),
-                        None => Ok(Exp::assert(cond)),
+                        None => {
+                            // No continuation: use Unit value.
+                            Ok(Exp::assert_eq(lhs, rhs, Exp::Unit))
+                        }
                     }
                 }
                 Rule::verify_exp => {
                     let mut inner = pair.into_inner();
-                    let cond = UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                    // constraint = { exp ~ eq_op ~ exp }
+                    let constraint_pair = inner.next().unwrap();
+                    let mut constraint_inner = constraint_pair.into_inner();
+                    let lhs =
+                        UExp::from_pest(&mut Pairs::single(constraint_inner.next().unwrap()))?;
+                    // skip eq_op
+                    constraint_inner.next();
+                    let rhs =
+                        UExp::from_pest(&mut Pairs::single(constraint_inner.next().unwrap()))?;
                     match inner.next() {
-                        Some(rest) => Ok(Exp::seq(
-                            Exp::verify(cond),
+                        Some(rest) => Ok(Exp::verify_eq(
+                            lhs,
+                            rhs,
                             UExp::from_pest(&mut Pairs::single(rest))?,
                         )),
-                        None => Ok(Exp::verify(cond)),
+                        None => Ok(Exp::verify_eq(lhs, rhs, Exp::Unit)),
                     }
                 }
                 Rule::let_exp => {
@@ -1488,7 +1484,6 @@ impl<'pest> FromPest<'pest> for UExp {
                 _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
             })
             .map_infix(|lhs, op, rhs| match op.clone().as_rule() {
-                Rule::and_op => Ok(Exp::and(lhs?, rhs?)),
                 Rule::add_op => Ok(Exp::add(lhs?, rhs?)),
                 Rule::sub_op => Ok(Exp::sub(lhs?, rhs?)),
                 Rule::mul_op => Ok(Exp::mul(lhs?, rhs?)),
@@ -1496,7 +1491,6 @@ impl<'pest> FromPest<'pest> for UExp {
                 Rule::pow_op => Ok(Exp::pow(lhs?, rhs?)),
                 Rule::rem_op => Ok(Exp::rem(lhs?, rhs?)),
                 Rule::concat_op => Ok(Exp::concat(lhs?, rhs?)),
-                Rule::eq_op => Ok(Exp::equ(lhs?, rhs?)),
                 _ => unreachable!(),
             })
             .map_prefix(|op, rhs| match op.as_rule() {
@@ -1886,27 +1880,21 @@ fn parser_log() {
 
 #[test]
 fn parser_assert() {
-    let ex = "assert(x == 2 && false)";
+    let ex = "assert(x == 2)";
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::assert(Exp::and(
-            Exp::equ(Exp::varstr("x"), Exp::from(2)),
-            Exp::bool(false)
-        )))
+        Ok(Exp::assert_eq(Exp::varstr("x"), Exp::from(2), Exp::Unit))
     );
 }
 
 #[test]
 fn parser_verify() {
-    let ex = "verify(x == 2 && 3 == 4)";
+    let ex = "verify(x == 2)";
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::verify(Exp::and(
-            Exp::equ(Exp::varstr("x"), Exp::from(2)),
-            Exp::equ(Exp::from(3), Exp::from(4))
-        )))
+        Ok(Exp::verify_eq(Exp::varstr("x"), Exp::from(2), Exp::Unit))
     );
 }
 
@@ -1916,9 +1904,10 @@ fn parser_verify_multiple() {
     let mut pairs = ZippelParser::parse(Rule::exps, ex).unwrap();
     assert_eq!(
         UExps::from_pest(&mut pairs),
-        Ok(Exps(vec![Exp::seq(
-            Exp::verify(Exp::equ(Exp::varstr("x"), Exp::from(2))),
-            Exp::verify(Exp::equ(Exp::from(3), Exp::from(4)))
+        Ok(Exps(vec![Exp::verify_eq(
+            Exp::varstr("x"),
+            Exp::from(2),
+            Exp::verify_eq(Exp::from(3), Exp::from(4), Exp::Unit)
         )]))
     );
 }
@@ -1929,11 +1918,13 @@ fn parser_verify_three() {
     let mut pairs = ZippelParser::parse(Rule::exps, ex).unwrap();
     assert_eq!(
         UExps::from_pest(&mut pairs),
-        Ok(Exps(vec![Exp::seq(
-            Exp::verify(Exp::equ(Exp::varstr("a"), Exp::varstr("a"))),
-            Exp::seq(
-                Exp::verify(Exp::equ(Exp::varstr("b"), Exp::varstr("b"))),
-                Exp::verify(Exp::equ(Exp::varstr("c"), Exp::varstr("c")))
+        Ok(Exps(vec![Exp::verify_eq(
+            Exp::varstr("a"),
+            Exp::varstr("a"),
+            Exp::verify_eq(
+                Exp::varstr("b"),
+                Exp::varstr("b"),
+                Exp::verify_eq(Exp::varstr("c"), Exp::varstr("c"), Exp::Unit)
             )
         )]))
     );
@@ -1941,15 +1932,13 @@ fn parser_verify_three() {
 
 #[test]
 fn parser_map() {
-    let ex = "[ss[i] == s^i for i in 0..N]";
+    let ex = "[ss[i] + s^i for i in 0..N]";
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::map(
-            Exp::equ(
-                Exp::ram(Exp::varstr("ss"), Exp::varstr("i")),
-                Exp::pow(Exp::varstr("s"), Exp::varstr("i"))
-            ),
+            Exp::ram(Exp::varstr("ss"), Exp::varstr("i"))
+                + Exp::pow(Exp::varstr("s"), Exp::varstr("i")),
             Vid::from("i"),
             Exp::range(Range {
                 start: Size::from(0),
@@ -1993,14 +1982,12 @@ fn parser_minus() {
 
 #[test]
 fn parser_app() {
-    let ex = "p(a) == q(a)";
+    let ex = "p(a) + q(a)";
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::equ(
-            Exp::app(Vid::from("p"), Exps(vec![Exp::varstr("a")])),
-            Exp::app(Vid::from("q"), Exps(vec![Exp::varstr("a")]))
-        ))
+        Ok(Exp::app(Vid::from("p"), Exps(vec![Exp::varstr("a")]))
+            + Exp::app(Vid::from("q"), Exps(vec![Exp::varstr("a")])))
     );
 }
 
@@ -2120,12 +2107,10 @@ fn parser_let_with_type() {
 fn parser_assert_and_verify_chain() {
     let ex = "assert(x == 2); verify(y == 3); z";
     let mut pairs = ZippelParser::parse(Rule::exps, ex).unwrap();
-    let expected = Exps(vec![Exp::seq(
-        Exp::assert(Exp::equ(Exp::varstr("x"), Exp::from(2))),
-        Exp::seq(
-            Exp::verify(Exp::equ(Exp::varstr("y"), Exp::from(3))),
-            Exp::varstr("z"),
-        ),
+    let expected = Exps(vec![Exp::assert_eq(
+        Exp::varstr("x"),
+        Exp::from(2),
+        Exp::verify_eq(Exp::varstr("y"), Exp::from(3), Exp::varstr("z")),
     )]);
     assert_eq!(UExps::from_pest(&mut pairs), Ok(expected));
 }

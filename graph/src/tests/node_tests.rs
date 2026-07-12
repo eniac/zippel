@@ -51,7 +51,7 @@ mod node_tests {
 
     #[test]
     fn test_node_is_verifier_check_true() {
-        let op = Op::<C, Ref>::check(Op::value(&scalar::<C>(1)));
+        let op = Op::<C, Ref>::check(Op::value(&scalar::<C>(1)), Op::value(&scalar::<C>(1)));
         let _node = Node::<C, Nothing>::Rel(Vid::from("check"));
         // Note: is_verifier_check requires Op node with Check op
         let check_node = Node::Op(mk::<C>(op), Nothing);

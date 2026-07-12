@@ -251,7 +251,7 @@ mod tests {
             let disc: u8 = u.int_in_range(0..=3)?;
             let inner = match disc {
                 0 => ATyp::scalar(),
-                1 => ATyp::bool(),
+                1 => ATyp::unit(),
                 2 => ATyp::g1(),
                 _ => ATyp::g2(),
             };
@@ -271,7 +271,7 @@ mod tests {
         // Enumerated explicitly — the set of ABase variants is finite and fixed.
         for typ in [
             ATyp::scalar(),
-            ATyp::bool(),
+            ATyp::unit(),
             ATyp::g1(),
             ATyp::g2(),
             ATyp::gt(),

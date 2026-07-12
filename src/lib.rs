@@ -551,11 +551,11 @@ pub struct VerificationResult<C: ArkConfig> {
 }
 
 /// Interpret verifier output as pass/fail.
-/// Passes if every `Value::Bool` in the output is `true`.
+/// Passes if every `Value::Index` in the output is non-zero (1 = check passed).
 #[must_use]
 pub fn check_verification<C: ArkConfig>(outputs: Vec<Value<C>>) -> VerificationResult<C> {
     let passed = outputs.iter().all(|v| match v {
-        Value::Bool(b) => *b,
+        Value::Index(n) => *n != 0,
         _ => true,
     });
     VerificationResult { passed, outputs }

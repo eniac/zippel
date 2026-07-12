@@ -52,7 +52,7 @@ fn gate_round<F: Field, S: Size, N: 2^S>(
     public q_m_evs:          [F; N],
     public q_c_evs:          [F; N],
     public eq_tau_evs:       [F; N]
-) -> Bool {
+) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let evs_local = [residual_poly(t) for t in points];
     evs <- evs_local;
@@ -82,7 +82,7 @@ fn gate_round<F: Field, S: Size, N: 2^S>(
         + qo_at_r * c_at_r
         + qm_at_r * a_at_r * b_at_r
         + qc_at_r;
-    final_eval == gate_at_r * eq_at_r
+    verify(final_eval == gate_at_r * eq_at_r)
 }
 fn gate_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
     public curr_poly:        Poly<F, V, 4>,
@@ -100,7 +100,7 @@ fn gate_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
     public q_m_evs:          [F; N],
     public q_c_evs:          [F; N],
     public eq_tau_evs:       [F; N]
-) -> Bool {
+) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let zero = points[0] - points[0];
     let one = zero + 1;
@@ -139,7 +139,7 @@ fn perm_round<F: Field, S: Size, N: 2^S>(
     public g_shift_evs:      [F; N],
     public eq_sau_evs:       [F; N],
     public alpha:            F
-) -> Bool {
+) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let evs_local = [residual_poly(t) for t in points];
     evs <- evs_local;
@@ -170,7 +170,7 @@ fn perm_round<F: Field, S: Size, N: 2^S>(
     let f_rel_at_r = v10_at_r - vt0_at_r * vt1_at_r;
     let g_rel_at_r = f2_at_r * v00_at_r - f1_at_r;
 
-    final_eval == (f_rel_at_r + alpha * g_rel_at_r) * eq_at_r
+    verify(final_eval == (f_rel_at_r + alpha * g_rel_at_r) * eq_at_r)
 }
 fn perm_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
     public curr_poly:        Poly<F, V, 3>,
@@ -184,7 +184,7 @@ fn perm_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
     public g_shift_evs:      [F; N],
     public eq_sau_evs:       [F; N],
     public alpha:            F
-) -> Bool {
+) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let zero = points[0] - points[0];
     let one = zero + 1;
@@ -234,12 +234,9 @@ proto hyperplonk<F: Field, S: Size, N: 2^S>(
     //     which holds iff (a, b) respects the permutation encoded by
     //     (s_id, s_sigma). Mirrors the k=2 fold used by perm_round.
     let zero_f = a_evs[0] - a_evs[0];
-    reduce(&&, [
-        q_l_evs[i] * a_evs[i] + q_r_evs[i] * b_evs[i] + q_o_evs[i] * c_evs[i]
-        + q_m_evs[i] * a_evs[i] * b_evs[i] + q_c_evs[i] == zero_f
-        for i in 0..N
-    ])
-    && reduce(*, [r + s_id_evs[i]    + r2 * a_evs[i] for i in 0..N])
+    [q_l_evs[i] * a_evs[i] + q_r_evs[i] * b_evs[i] + q_o_evs[i] * c_evs[i]
+        + q_m_evs[i] * a_evs[i] * b_evs[i] + q_c_evs[i] for i in 0..N] == [zero_f for i in 0..N];
+    reduce(*, [r + s_id_evs[i]    + r2 * a_evs[i] for i in 0..N])
     == reduce(*, [r + s_sigma_evs[i] + r2 * b_evs[i] for i in 0..N])
 {
     let one  = a_evs[0] - a_evs[0] + 1;
@@ -283,9 +280,9 @@ proto hyperplonk<F: Field, S: Size, N: 2^S>(
     rx0 <- challenge<F>;
     let prev0_p1 = g0_p1(rx0);
 
-    verify(gate_round(h_gate, pts4, [rx0], prev0_p1, rx0, 1,
+    gate_round(h_gate, pts4, [rx0], prev0_p1, rx0, 1,
                       a_evs, b_evs, c_evs, q_l_evs, q_r_evs, q_o_evs, q_m_evs, q_c_evs,
-                      eq_tau_evs));
+                      eq_tau_evs);
 
     // =============================================================
     // PHASE 2 — Wiring identity via Permutation PIOP
@@ -343,8 +340,8 @@ proto hyperplonk<F: Field, S: Size, N: 2^S>(
     sx0 <- challenge<F>;
     let prev0_p2 = g0_p2(sx0);
 
-    verify(perm_round(p_poly, pts3, [sx0], prev0_p2, sx0, 1,
-                      sent_v, f_shift_evs, g_shift_evs, eq_sau_evs, alpha));
+    perm_round(p_poly, pts3, [sx0], prev0_p2, sx0, 1,
+                      sent_v, f_shift_evs, g_shift_evs, eq_sau_evs, alpha);
 
     verify(sent_v[N - 1] == one)
 }

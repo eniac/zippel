@@ -211,7 +211,7 @@ fn type_dependencies(typ: &UTyp) -> share::Set<Tid> {
                     recurse(t, deps);
                 }
             }
-            Typ::Fin(_) | Typ::Bool => {}
+            Typ::Fin(_) | Typ::Unit => {}
         }
     }
     recurse(typ, &mut deps);

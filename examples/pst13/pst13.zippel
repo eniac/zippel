@@ -152,9 +152,9 @@ proto pst13<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Siz
     private alpha: [F; N]
 ) where
     let eq_alpha = eq_mle_priv(alpha);
-    y == dot(eq_mle(z), p)
-    && reduce(&&, [ck_N[i] == g_gen * eq_alpha[i] for i in 0..2^N])
-    && reduce(&&, [alpha_H[j] == h_gen * alpha[j] for j in 0..N])
+    y == dot(eq_mle(z), p);
+    [ck_N[i] for i in 0..2^N] == [g_gen * eq_alpha[i] for i in 0..2^N];
+    [alpha_H[j] for j in 0..N] == [h_gen * alpha[j] for j in 0..N]
 {
     // First prover move: commitment to p.
     c_p <- pst13_commit(p, ck_N);

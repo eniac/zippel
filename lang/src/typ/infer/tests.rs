@@ -377,36 +377,6 @@ fn test_binary_concat_inference() {
     );
 }
 
-// Test for equality
-#[test]
-fn test_binary_equ_inference() {
-    let fctx = Set::new();
-    let vctx = VAR_CTX.clone();
-
-    // Create expression x == y
-    let field_equ = CExp::equ(CExp::varstr("f1"), CExp::varstr("f2"));
-    assert_eq!(field_equ.infer(&KIND_CTX, &fctx, &vctx), Ok(CTyp::Bool));
-
-    // Create expression g1 == g2
-    let group_equ = CExp::equ(CExp::varstr("g1"), CExp::varstr("g2"));
-    assert_eq!(group_equ.infer(&KIND_CTX, &fctx, &vctx), Ok(CTyp::Bool));
-
-    // Create expression s1 == s2
-    let mult_group_equ = CExp::equ(CExp::varstr("s1"), CExp::varstr("s2"));
-    assert_eq!(
-        mult_group_equ.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Bool)
-    );
-
-    // Create expression v1 == v1
-    let vec_equ1 = CExp::equ(CExp::varstr("v1"), CExp::varstr("v1"));
-    assert_eq!(vec_equ1.infer(&KIND_CTX, &fctx, &vctx), Ok(CTyp::Bool));
-
-    // Create expression v1 == v2
-    let vec_equ2 = CExp::equ(CExp::varstr("v1"), CExp::varstr("v2"));
-    assert!(vec_equ2.infer(&KIND_CTX, &fctx, &vctx).is_err());
-}
-
 // Test for vector creation
 #[test]
 fn test_vector_inference() {
@@ -1109,17 +1079,15 @@ fn test_assert_inference() {
     let fctx = Set::new();
     let vctx = VAR_CTX.clone();
 
-    let assert_exp = CExp::seq(
-        CExp::assert(CExp::equ(CExp::varstr("f1"), CExp::varstr("f2"))),
-        CExp::varstr("f1"),
-    );
+    let assert_exp = CExp::assert_eq(CExp::varstr("f1"), CExp::varstr("f2"), CExp::varstr("f1"));
 
     assert_eq!(
         assert_exp.infer(&KIND_CTX, &fctx, &vctx),
         Ok(CTyp::Base(Tid::from("F")))
     );
 
-    let assert_bad = CExp::seq(CExp::assert(CExp::varstr("f1")), CExp::varstr("f1"));
+    // assert_eq with mismatched operand types should fail
+    let assert_bad = CExp::assert_eq(CExp::varstr("f1"), CExp::varstr("g1"), CExp::varstr("f1"));
     assert!(assert_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
 }
 
@@ -1128,17 +1096,15 @@ fn test_verify_inference() {
     let fctx = Set::new();
     let vctx = VAR_CTX.clone();
 
-    let verify_exp = CExp::seq(
-        CExp::verify(CExp::equ(CExp::varstr("f1"), CExp::varstr("f2"))),
-        CExp::varstr("f1"),
-    );
+    let verify_exp = CExp::verify_eq(CExp::varstr("f1"), CExp::varstr("f2"), CExp::varstr("f1"));
 
     assert_eq!(
         verify_exp.infer(&KIND_CTX, &fctx, &vctx),
         Ok(CTyp::Base(Tid::from("F")))
     );
 
-    let verify_bad = CExp::seq(CExp::verify(CExp::varstr("f1")), CExp::varstr("f1"));
+    // verify_eq with mismatched operand types should fail
+    let verify_bad = CExp::verify_eq(CExp::varstr("f1"), CExp::varstr("g1"), CExp::varstr("f1"));
     assert!(verify_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
 }
 
@@ -1365,20 +1331,6 @@ fn test_let_shadowing() {
 }
 
 #[test]
-fn test_assert_verify_boolean() {
-    let fctx = Set::new();
-    let vctx = VAR_CTX.clone();
-
-    // assert(f1) should fail because f1 is of type F, not Bool
-    let assert_bad = CExp::assert(CExp::varstr("f1"));
-    assert!(assert_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
-
-    // verify(f1) should fail
-    let verify_bad = CExp::verify(CExp::varstr("f1"));
-    assert!(verify_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
-}
-
-#[test]
 fn test_mle_eval_pbt() {
     let fctx = Set::new();
     arbtest::arbtest(|u| {
@@ -1410,29 +1362,6 @@ fn test_mle_eval_pbt() {
         }
         Ok(())
     });
-}
-
-#[test]
-fn test_mle_eval_bool_point() {
-    let fctx = Set::new();
-    let mut vctx = VAR_CTX.clone();
-    vctx.insert(&Vid::from("m3"), &CTyp::Poly(Tid::from("F"), 3, 1));
-    vctx.insert(&Vid::from("bvec3"), &CTyp::Vec(Box::new(CTyp::Bool), 3));
-    vctx.insert(&Vid::from("bvec1"), &CTyp::Vec(Box::new(CTyp::Bool), 1));
-
-    // Full boolean hypercube eval -> the polynomial's field element.
-    let full = CExp::evaluate_at(CExp::varstr("m3"), CExp::varstr("bvec3"));
-    assert_eq!(
-        full.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Base(Tid::from("F")))
-    );
-
-    // Partial boolean prefix -> residual MLE in the remaining variables.
-    let partial = CExp::evaluate_at(CExp::varstr("m3"), CExp::varstr("bvec1"));
-    assert_eq!(
-        partial.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Poly(Tid::from("F"), 2, 1))
-    );
 }
 
 #[test]
@@ -1571,11 +1500,10 @@ fn test_record_lub_vector_subtyping() {
 
 fn gen_arbitrary_cexp(u: &mut arbitrary::Unstructured, depth: usize) -> arbitrary::Result<CExp> {
     if depth == 0 {
-        let choice = u.int_in_range(0..=2)?;
+        let choice = u.int_in_range(0..=1)?;
         match choice {
             0 => Ok(CExp::Lit(u.arbitrary()?)),
-            1 => Ok(CExp::Bool(u.arbitrary()?)),
-            2 => {
+            1 => {
                 let vars = ["f1", "f2", "v1", "v2", "g1", "g2", "s1", "s2", "p", "m"];
                 let var = u.choose(&vars)?;
                 Ok(CExp::Var(Vid::from(*var)))
@@ -1618,8 +1546,6 @@ fn gen_arbitrary_cexp(u: &mut arbitrary::Unstructured, depth: usize) -> arbitrar
                     BinOp::Dot,
                     BinOp::Rem,
                     BinOp::Concat,
-                    BinOp::Equ,
-                    BinOp::And,
                 ])?;
                 Ok(CExp::Bin(*op, Box::new(a), Box::new(b)))
             }
@@ -1680,19 +1606,19 @@ fn test_proto_body_blames_body_not_relation() {
         name: name.clone(),
         typevars: TypeVars(vec![]),
         args: crate::ast::Args(vec![]),
-        ret: CTyp::Bool,
+        ret: CTyp::Unit,
     };
     let fctx = Set::new();
     let body = crate::ast::CBody::Proto {
-        relation: CExp::Bool(true), // relation has type Bool (valid)
-        body: CExp::lit(5),         // body has type Fin (invalid)
+        relation: vec![],   // no constraints — the body is what fails
+        body: CExp::lit(5), // body has type Fin (invalid, expected Unit)
     };
     let res = body.typecheck(sig, &fctx);
     let err = res.unwrap_err();
     // Under correct behavior, this should wrap the offending body expression CExp::Lit(5)
     assert!(matches!(
         err,
-        TypeError::Decl(_, box TypeError::Bool(_, _, CExp::Lit(5)))
+        TypeError::Decl(_, box TypeError::Unit(_, _, CExp::Lit(5)))
     ));
 }
 

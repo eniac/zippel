@@ -46,7 +46,6 @@ type V = Value<TestConfig>;
 pub fn has_atyp<C: ArkConfig>(v: &Value<C>, t: &ATyp) -> bool {
     match (v, t) {
         // --- bases ---
-        (Value::Bool(_), ATyp::Base(ABase::Bool)) => true,
         (Value::Scalar(_), ATyp::Base(ABase::Scalar)) => true,
         (Value::G1(_), ATyp::Base(ABase::G1)) => true,
         (Value::G1Affine(_), ATyp::Base(ABase::G1)) => true,
@@ -54,9 +53,9 @@ pub fn has_atyp<C: ArkConfig>(v: &Value<C>, t: &ATyp) -> bool {
         (Value::G2Affine(_), ATyp::Base(ABase::G2)) => true,
         (Value::GT(_), ATyp::Base(ABase::GT)) => true,
         (Value::Index(i), ATyp::Base(ABase::Fin(r))) => r.contains(*i),
+        (Value::Index(_), ATyp::Base(ABase::Unit)) => true,
 
         // --- vectors (specialized variants) ---
-        (Value::VecBool(xs), ATyp::Vec(box ATyp::Base(ABase::Bool), n)) => xs.len() == *n,
         (Value::VecScalar(xs), ATyp::Vec(box ATyp::Base(ABase::Scalar), n)) => xs.len() == *n,
         (Value::VecG1(xs), ATyp::Vec(box ATyp::Base(ABase::G1), n)) => xs.len() == *n,
         (Value::VecG1Affine(xs), ATyp::Vec(box ATyp::Base(ABase::G1), n)) => xs.len() == *n,
@@ -122,7 +121,7 @@ impl<'a> Arbitrary<'a> for AnyBaseATyp {
         let v: u8 = u.int_in_range(0..=5)?;
         Ok(AnyBaseATyp(match v {
             0 => ATyp::scalar(),
-            1 => ATyp::bool(),
+            1 => ATyp::unit(),
             2 => {
                 let lo: usize = u.int_in_range(0..=10)?;
                 let hi: usize = u.int_in_range((lo + 1)..=(lo + 10))?;
@@ -252,7 +251,6 @@ mod scaffolding {
         let mut rng = test_rng();
         for t in [
             ATyp::scalar(),
-            ATyp::bool(),
             ATyp::g1(),
             ATyp::g2(),
             ATyp::gt(),
@@ -395,36 +393,6 @@ mod binops {
             let b: V = Value::random(&mut rng, &t.atyp());
             let c = a - b;
             assert!(has_atyp(&c, &t.atyp()), "got {}", vty(&c));
-            Ok(())
-        });
-    }
-
-    /// Equality: (T, T) -> Bool.
-    #[test]
-    fn pbt_equ_scalar_returns_bool() {
-        arbtest::arbtest(|_u| {
-            let mut rng = test_rng();
-            let a: V = Value::random(&mut rng, &ATyp::scalar());
-            let b: V = Value::random(&mut rng, &ATyp::scalar());
-            let c = a.value_equ(&b);
-            assert!(
-                has_atyp(&c, &ATyp::bool()),
-                "equ produced {} (expected Bool)",
-                vty(&c)
-            );
-            Ok(())
-        });
-    }
-
-    /// Boolean and: (Bool, Bool) -> Bool.
-    #[test]
-    fn pbt_and_bool_returns_bool() {
-        arbtest::arbtest(|_u| {
-            let mut rng = test_rng();
-            let a: V = Value::random(&mut rng, &ATyp::bool());
-            let mut b: V = Value::random(&mut rng, &ATyp::bool());
-            a.value_and(&mut b);
-            assert!(has_atyp(&b, &ATyp::bool()), "got {}", vty(&b));
             Ok(())
         });
     }

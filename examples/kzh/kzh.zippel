@@ -74,9 +74,9 @@ proto kzh<
     // machinery than the analyzer needs for the primary tensor claim.
     let eq_x = eq_weights_priv(tau_x);
     let eq_y = eq_weights_priv(tau_y);
-    reduce(&&, [h_xy[k] == g_gen * (eq_x[k / NYV] * eq_y[k % NYV]) for k in 0..NXY])
-    && reduce(&&, [d_x[i] == g_gen * eq_x[i] for i in 0..NXV])
-    && reduce(&&, [h_y[j] == g_gen * eq_y[j] for j in 0..NYV])
+    [h_xy[k] for k in 0..NXY] == [g_gen * (eq_x[k / NYV] * eq_y[k % NYV]) for k in 0..NXY];
+    [d_x[i] for i in 0..NXV] == [g_gen * eq_x[i] for i in 0..NXV];
+    [h_y[j] for j in 0..NYV] == [g_gen * eq_y[j] for j in 0..NYV]
 {
     // -------- Phase 1: commit --------
     let c = dot(f_evals, h_xy);
@@ -104,14 +104,12 @@ proto kzh<
     // -------- Phase 4: verify --------
     // The verifier only uses the sent values: c_commit, pi, z0.
     // Check 1 (pairing): e(C, V') == sum_x e(D^(x), V^(x))
-    let check1 = pair(c_commit, v_prime) == reduce(+, pair(d_x, v_x));
+    verify(pair(c_commit, v_prime) == reduce(+, pair(d_x, v_x)));
 
     // Check 2 (G1 MSM): sum_y f*(y) H^(y) == sum_x eq(x, x0) D^(x)
-    let check2 = dot(pi, h_y) == dot(eqx, d_x);
+    verify(dot(pi, h_y) == dot(eqx, d_x));
 
     // Check 3: f*(y0) == z0, where f*(y0) = sum_y eq(y, y0) * pi[y].
     let claim = reduce(+, [pi[yi] * eqy[yi] for yi in 0..NYV]);
-    let check3 = claim == z0;
-
-    verify(check1 && check2 && check3)
+    verify(claim == z0)
 }

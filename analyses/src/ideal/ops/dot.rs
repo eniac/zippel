@@ -408,7 +408,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
-        let bool_typ = ATyp::bool();
+        let unit_typ = ATyp::unit();
         let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
 
         let var_a = Var::from_node(NodeIndex::new(0), vec_s.clone(), Qualifier::Private);
@@ -417,7 +417,7 @@ mod tests {
         let var_b = Var::from_node(NodeIndex::new(1), vec_s.clone(), Qualifier::Private);
         ideal.register(&var_b);
 
-        let var_r = Var::from_node(NodeIndex::new(2), bool_typ.clone(), Qualifier::Private);
+        let var_r = Var::from_node(NodeIndex::new(2), unit_typ.clone(), Qualifier::Private);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -426,7 +426,7 @@ mod tests {
                 BinOp::Dot,
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_s.clone())),
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), vec_s.clone())),
-                bool_typ.clone(),
+                unit_typ.clone(),
             ),
             &mut ideal,
         );

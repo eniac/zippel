@@ -25,12 +25,10 @@ where
     fn lub_dot(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
     fn lub_pair(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
     fn lub_rem(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
-    fn lub_and(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
     fn lub_concat(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
 
     fn lub_op(op: BinOp, a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
         match op {
-            BinOp::Equ => Self::lub_equ(a, b, ctx),
             BinOp::Add => Self::lub_add(a, b, ctx),
             BinOp::Sub => Self::lub_sub(a, b, ctx),
             BinOp::Mul => Self::lub_mul(a, b, ctx),
@@ -38,7 +36,6 @@ where
             BinOp::Pow => Self::lub_pow(a, b, ctx),
             BinOp::Rem => Self::lub_rem(a, b, ctx),
             BinOp::Dot => Self::lub_dot(a, b, ctx),
-            BinOp::And => Self::lub_and(a, b, ctx),
             BinOp::Concat => Self::lub_concat(a, b, ctx),
         }
     }
@@ -152,15 +149,6 @@ impl Lub for Range<usize> {
         } else {
             Err(LubError::concat(&a, &b))
         }
-    }
-    fn lub_and(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
-        // Validate ranges
-        a.check()
-            .map_err(|e| LubError::next(LubError::add(&a, &b), LubError::bad_range(a, e)))?;
-        b.check()
-            .map_err(|e| LubError::next(LubError::add(&a, &b), LubError::bad_range(b, e)))?;
-
-        Err(LubError::and(&a, &b))
     }
     fn lub_pair(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
         Err(LubError::pair(&a, &b))
@@ -352,20 +340,13 @@ impl Lub for Tid {
             &CTypeVar::new(b, kb),
         ))
     }
-
-    fn lub_and(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
-        let ka = ctx.get(a).ok_or(LubError::kind_not_found(a))?;
-        let kb = ctx.get(b).ok_or(LubError::kind_not_found(b))?;
-
-        Err(LubError::and(&CTypeVar::new(a, ka), &CTypeVar::new(b, kb)))
-    }
 }
 
 impl Lub for CTyp {
     type Context = Ctx<Tid, CKind>;
     fn lub_equ(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
-            (CTyp::Bool, CTyp::Bool) => Ok(CTyp::Bool),
+            (CTyp::Unit, CTyp::Unit) => Ok(CTyp::Unit),
             (CTyp::Base(a), CTyp::Base(b)) => Ok(CTyp::Base(
                 Tid::lub_equ(a, b, ctx).map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
             )),
@@ -868,19 +849,6 @@ impl Lub for CTyp {
             }
 
             (ta, tb) => Err(LubError::concat(&ta, &tb)),
-        }
-    }
-
-    #[allow(clippy::only_used_in_recursion)]
-    fn lub_and(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
-        match (x, y) {
-            (CTyp::Bool, CTyp::Bool) => Ok(CTyp::Bool),
-            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m => {
-                let t = CTyp::lub_and(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::and(&x, &y), e))?;
-                Ok(CTyp::vec(&t, *n))
-            }
-            (_, _) => Err(LubError::and(&x, &y)),
         }
     }
 }

@@ -153,8 +153,8 @@ fn pin_func_var() {
 }
 
 /// Proto declaration with body and relation.
-/// Tests: CBody::Proto, Inp node, Rel node, Bin(Equ) in relation, verify in body.
-/// Note: Proto body and relation must BOTH type to Bool.
+/// Tests: CBody::Proto, Inp node, Rel node, Check(lhs, rhs) in relation, verify in body.
+/// Note: `verify(s == s)` creates Check(var_s, var_s) directly (no Equ node).
 #[test]
 fn pin_proto_simple() {
     let src = r#"
@@ -167,32 +167,28 @@ fn pin_proto_simple() {
     let mut expected = UDag::<B>::new();
     let s = Vid::new("s");
 
-    // Body: Inp + Bin(Equ) + Check
+    // Body: Inp + Check(var_s, var_s) + Ret(Lit(0))
     let (inp, _inp_args) = expected_inp(&mut expected, "foo", &[priv_s("s")]);
     let arg_s = _inp_args[0];
     let var_s_body = GOp::<B>::var(&s, arg_s, ATyp::scalar());
 
-    let equ_body = expected.add_node(Node::bin(
-        BinOp::Equ,
-        &var_s_body,
-        &var_s_body,
-        &ATyp::bool(),
-    ));
-    expected.add_edges(DepType::Data, equ_body, var_s_body.clone());
-    expected.add_edges(DepType::Data, equ_body, var_s_body);
-
-    let equ_ref = GOp::<B>::underscore(equ_body, ATyp::bool());
-    let check = expected.add_node(Node::check(&equ_ref));
-    expected.add_edges(DepType::Data, check, equ_ref);
+    let check = expected.add_node(Node::check(&var_s_body, &var_s_body));
+    expected.add_edges(DepType::Data, check, var_s_body.clone());
+    expected.add_edges(DepType::Data, check, var_s_body);
     expected.add_edge(inp, check, Dep::transcript());
 
-    // Relation: Rel + Bin(Equ, s, s)
+    // Continuation Lit(0) → Ret(Value::Index(0))
+    let lit_0 = GOp::<B>::Value(backend::Value::Index(0));
+    let ret = expected.add_node(Node::ret(&lit_0));
+    expected.add_edges(DepType::Data, ret, lit_0);
+
+    // Relation: Rel + Check(var_s_rel, var_s_rel)
     let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[priv_s("s")]);
     let rel_arg_s = _rel_args[0];
     let var_s_rel = GOp::<B>::var(&s, rel_arg_s, ATyp::scalar());
-    let equ_rel = expected.add_node(Node::bin(BinOp::Equ, &var_s_rel, &var_s_rel, &ATyp::bool()));
-    expected.add_edges(DepType::Data, equ_rel, var_s_rel.clone());
-    expected.add_edges(DepType::Data, equ_rel, var_s_rel);
+    let check_rel = expected.add_node(Node::check(&var_s_rel, &var_s_rel));
+    expected.add_edges(DepType::Data, check_rel, var_s_rel.clone());
+    expected.add_edges(DepType::Data, check_rel, var_s_rel);
 
     assert!(gs[0] == expected);
 }
@@ -200,28 +196,6 @@ fn pin_proto_simple() {
 // ============================================================================
 // Group 2: Basic Values
 // ============================================================================
-
-/// CExp::Bool produces a GOp::Value(Bool), wrapped in ret by add_top_exp.
-#[test]
-fn pin_bool() {
-    let src = r#"
-        fn f<F: Field>(public a: F) -> F {
-            let _ = true;
-            a
-        }
-    "#;
-    let gs = parse_and_build(src);
-
-    // `let _ = true; a` — the `true` evaluates to Value(Bool(true)) but
-    // doesn't create a node (Let(None) just evaluates both sides).
-    // Only `a` matters for the graph structure.
-    let mut expected = UDag::<B>::new();
-    let _a = Vid::new("a");
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a")]);
-    // Body resolves to `a` (a Ref) → add_top_exp does not add a Ret.
-
-    assert!(gs[0] == expected);
-}
 
 /// CExp::Range produces a GOp::Range value, wrapped in ret by add_top_exp.
 #[test]
@@ -256,12 +230,7 @@ fn pin_range() {
 /// Helper to test a binary operation between two scalar arguments.
 fn assert_binop(op_str: &str, binop: BinOp, result_typ: ATyp) {
     let src = format!(
-        "fn f<F: Field>(public a: F, public b: F) -> {} {{ a {} b }}",
-        if result_typ == ATyp::bool() {
-            "Bool"
-        } else {
-            "F"
-        },
+        "fn f<F: Field>(public a: F, public b: F) -> F {{ a {} b }}",
         op_str
     );
     let gs = parse_and_build(&src);
@@ -299,11 +268,6 @@ fn pin_bin_mul() {
 #[test]
 fn pin_bin_div() {
     assert_binop("/", BinOp::Div, ATyp::scalar());
-}
-
-#[test]
-fn pin_bin_equ() {
-    assert_binop("==", BinOp::Equ, ATyp::bool());
 }
 
 // ============================================================================
@@ -453,7 +417,7 @@ fn pin_let_anon() {
 #[test]
 fn pin_assert() {
     let src = r#"
-        fn f<F: Field>(public a: F, public b: F) -> Bool {
+        fn f<F: Field>(public a: F, public b: F) -> Unit {
             assert(a == b)
         }
     "#;
@@ -468,16 +432,16 @@ fn pin_assert() {
     let var_a = GOp::<B>::var(&a, arg_a, ATyp::scalar());
     let var_b = GOp::<B>::var(&b, arg_b, ATyp::scalar());
 
-    // a == b → Bin(Equ) node
-    let equ = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_b, &ATyp::bool()));
-    expected.add_edges(DepType::Data, equ, var_a);
-    expected.add_edges(DepType::Data, equ, var_b);
-
-    // assert(...) → Check node
-    let equ_ref = GOp::<B>::underscore(equ, ATyp::bool());
-    let check = expected.add_node(Node::check(&equ_ref));
-    expected.add_edges(DepType::Data, check, equ_ref);
+    // assert(a == b) → Check(var_a, var_b) node
+    let check = expected.add_node(Node::check(&var_a, &var_b));
+    expected.add_edges(DepType::Data, check, var_a);
+    expected.add_edges(DepType::Data, check, var_b);
     expected.add_edge(inp, check, Dep::transcript());
+
+    // Continuation Lit(0) → Ret(Value::Index(0))
+    let lit_0 = GOp::<B>::Value(backend::Value::Index(0));
+    let ret = expected.add_node(Node::ret(&lit_0));
+    expected.add_edges(DepType::Data, ret, lit_0);
 
     assert!(gs[0] == expected);
 }
@@ -487,7 +451,7 @@ fn pin_assert() {
 #[test]
 fn pin_verify() {
     let src = r#"
-        fn f<F: Field>(public a: F, public b: F) -> Bool {
+        fn f<F: Field>(public a: F, public b: F) -> Unit {
             verify(a == b)
         }
     "#;
@@ -502,14 +466,15 @@ fn pin_verify() {
     let var_a = GOp::<B>::var(&a, arg_a, ATyp::scalar());
     let var_b = GOp::<B>::var(&b, arg_b, ATyp::scalar());
 
-    let equ = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_b, &ATyp::bool()));
-    expected.add_edges(DepType::Data, equ, var_a);
-    expected.add_edges(DepType::Data, equ, var_b);
-
-    let equ_ref = GOp::<B>::underscore(equ, ATyp::bool());
-    let check = expected.add_node(Node::check(&equ_ref));
-    expected.add_edges(DepType::Data, check, equ_ref);
+    let check = expected.add_node(Node::check(&var_a, &var_b));
+    expected.add_edges(DepType::Data, check, var_a);
+    expected.add_edges(DepType::Data, check, var_b);
     expected.add_edge(inp, check, Dep::transcript());
+
+    // Continuation Lit(0) → Ret(Value::Index(0))
+    let lit_0 = GOp::<B>::Value(backend::Value::Index(0));
+    let ret = expected.add_node(Node::ret(&lit_0));
+    expected.add_edges(DepType::Data, ret, lit_0);
 
     assert!(gs[0] == expected);
 }
@@ -551,25 +516,25 @@ fn pin_log_node_ref() {
     expected.add_edge(inp, transcr, Dep::transcript());
     expected.vctx.insert(&transcr, &a_vid);
     expected.transcript_vars.insert(&transcr, &true);
-    // a == s → Bin(Equ)
+    // a == s → Check(var_a, var_s) directly
     let var_a = GOp::<B>::var(&a_vid, transcr, ATyp::scalar());
-    let equ = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_s, &ATyp::bool()));
-    expected.add_edges(DepType::Data, equ, var_a);
-    expected.add_edges(DepType::Data, equ, var_s);
-
-    // verify(...) → Check node
-    let equ_ref = GOp::<B>::underscore(equ, ATyp::bool());
-    let check = expected.add_node(Node::check(&equ_ref));
-    expected.add_edges(DepType::Data, check, equ_ref);
+    let check = expected.add_node(Node::check(&var_a, &var_s));
+    expected.add_edges(DepType::Data, check, var_a);
+    expected.add_edges(DepType::Data, check, var_s);
     expected.add_edge(transcr, check, Dep::transcript());
 
-    // Relation: Rel + Bin(Equ, s, s)
+    // Continuation Lit(0) → Ret(Value::Index(0))
+    let lit_0 = GOp::<B>::Value(backend::Value::Index(0));
+    let ret = expected.add_node(Node::ret(&lit_0));
+    expected.add_edges(DepType::Data, ret, lit_0);
+
+    // Relation: Rel + Check(var_s_rel, var_s_rel)
     let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[priv_s("s")]);
     let rel_arg_s = _rel_args[0];
     let var_s_rel = GOp::<B>::var(&s_vid, rel_arg_s, ATyp::scalar());
-    let equ_rel = expected.add_node(Node::bin(BinOp::Equ, &var_s_rel, &var_s_rel, &ATyp::bool()));
-    expected.add_edges(DepType::Data, equ_rel, var_s_rel.clone());
-    expected.add_edges(DepType::Data, equ_rel, var_s_rel);
+    let check_rel = expected.add_node(Node::check(&var_s_rel, &var_s_rel));
+    expected.add_edges(DepType::Data, check_rel, var_s_rel.clone());
+    expected.add_edges(DepType::Data, check_rel, var_s_rel);
 
     assert!(gs[0] == expected);
 }
@@ -603,22 +568,23 @@ fn pin_log_new_transcr() {
     expected.vctx.insert(&transcr, &a_vid);
     expected.transcript_vars.insert(&transcr, &true);
     let var_s = GOp::<B>::var(&s_vid, arg_s, ATyp::scalar());
-    let equ_body = expected.add_node(Node::bin(BinOp::Equ, &var_s, &var_s, &ATyp::bool()));
-    expected.add_edges(DepType::Data, equ_body, var_s.clone());
-    expected.add_edges(DepType::Data, equ_body, var_s);
-
-    let equ_ref = GOp::<B>::underscore(equ_body, ATyp::bool());
-    let check = expected.add_node(Node::check(&equ_ref));
-    expected.add_edges(DepType::Data, check, equ_ref);
+    let check = expected.add_node(Node::check(&var_s, &var_s));
+    expected.add_edges(DepType::Data, check, var_s.clone());
+    expected.add_edges(DepType::Data, check, var_s);
     expected.add_edge(transcr, check, Dep::transcript());
 
-    // Relation: Rel + Bin(Equ, s, s)
+    // Continuation Lit(0) → Ret(Value::Index(0))
+    let lit_0 = GOp::<B>::Value(backend::Value::Index(0));
+    let ret = expected.add_node(Node::ret(&lit_0));
+    expected.add_edges(DepType::Data, ret, lit_0);
+
+    // Relation: Rel + Check(var_s_rel, var_s_rel)
     let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[priv_s("s")]);
     let rel_arg_s = _rel_args[0];
     let var_s_rel = GOp::<B>::var(&s_vid, rel_arg_s, ATyp::scalar());
-    let equ = expected.add_node(Node::bin(BinOp::Equ, &var_s_rel, &var_s_rel, &ATyp::bool()));
-    expected.add_edges(DepType::Data, equ, var_s_rel.clone());
-    expected.add_edges(DepType::Data, equ, var_s_rel);
+    let check_rel = expected.add_node(Node::check(&var_s_rel, &var_s_rel));
+    expected.add_edges(DepType::Data, check_rel, var_s_rel.clone());
+    expected.add_edges(DepType::Data, check_rel, var_s_rel);
 
     assert!(gs[0] == expected);
 }
@@ -1127,49 +1093,6 @@ fn pin_bin_rem() {
     assert!(gs[0] == expected);
 }
 
-/// Logical AND: `(a == b) && (a == b)` creates 2×Bin(Equ) + 1×Bin(And).
-/// Tests: CExp::Bin(And) → GOp::and fallthrough for Ref operands.
-#[test]
-fn pin_bin_and() {
-    let src = r#"
-        fn f<F: Field>(public a: F, public b: F) -> Bool {
-            (a == b) && (a == b)
-        }
-    "#;
-    let gs = parse_and_build(src);
-
-    let mut expected = UDag::<B>::new();
-    let a = Vid::new("a");
-    let b = Vid::new("b");
-    let s = ATyp::scalar();
-    let bl = ATyp::bool();
-
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
-    let arg_a = _inp_args[0];
-    let arg_b = _inp_args[1];
-    let var_a = GOp::<B>::var(&a, arg_a, s.clone());
-    let var_b = GOp::<B>::var(&b, arg_b, s.clone());
-
-    // First: a == b → Bin(Equ)
-    let equ1 = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_b, &bl));
-    expected.add_edges(DepType::Data, equ1, var_a.clone());
-    expected.add_edges(DepType::Data, equ1, var_b.clone());
-
-    // Second: a == b → another Bin(Equ)
-    let equ2 = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_b, &bl));
-    expected.add_edges(DepType::Data, equ2, var_a);
-    expected.add_edges(DepType::Data, equ2, var_b);
-
-    // (equ1) && (equ2) → Bin(And)
-    let ref_equ1 = GOp::<B>::underscore(equ1, bl.clone());
-    let ref_equ2 = GOp::<B>::underscore(equ2, bl.clone());
-    let and_node = expected.add_node(Node::bin(BinOp::And, &ref_equ1, &ref_equ2, &bl));
-    expected.add_edges(DepType::Data, and_node, ref_equ1);
-    expected.add_edges(DepType::Data, and_node, ref_equ2);
-
-    assert!(gs[0] == expected);
-}
-
 // ============================================================================
 // Group 13: Map, Ram, Eval
 // ============================================================================
@@ -1449,23 +1372,23 @@ fn pin_log_var_ref() {
     expected.transcript_vars.insert(&transcr, &true);
     // because Log's first arm uses `ol.clone()` which is op_from_var(x) = GOp::Ref(Ref(bin_add), scalar)
     let var_a = GOp::<B>::var(&a_vid, transcr, ATyp::scalar());
-    let equ = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_s, &ATyp::bool()));
-    expected.add_edges(DepType::Data, equ, var_a);
-    expected.add_edges(DepType::Data, equ, var_s);
-
-    // verify(...)
-    let equ_ref = GOp::<B>::underscore(equ, ATyp::bool());
-    let check = expected.add_node(Node::check(&equ_ref));
-    expected.add_edges(DepType::Data, check, equ_ref);
+    let check = expected.add_node(Node::check(&var_a, &var_s));
+    expected.add_edges(DepType::Data, check, var_a);
+    expected.add_edges(DepType::Data, check, var_s);
     expected.add_edge(transcr, check, Dep::transcript());
 
-    // Relation: Rel + Bin(Equ, s, s)
+    // Continuation Lit(0) → Ret(Value::Index(0))
+    let lit_0 = GOp::<B>::Value(backend::Value::Index(0));
+    let ret = expected.add_node(Node::ret(&lit_0));
+    expected.add_edges(DepType::Data, ret, lit_0);
+
+    // Relation: Rel + Check(var_s_rel, var_s_rel)
     let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[priv_s("s")]);
     let rel_arg_s = _rel_args[0];
     let var_s_rel = GOp::<B>::var(&s_vid, rel_arg_s, ATyp::scalar());
-    let equ_rel = expected.add_node(Node::bin(BinOp::Equ, &var_s_rel, &var_s_rel, &ATyp::bool()));
-    expected.add_edges(DepType::Data, equ_rel, var_s_rel.clone());
-    expected.add_edges(DepType::Data, equ_rel, var_s_rel);
+    let check_rel = expected.add_node(Node::check(&var_s_rel, &var_s_rel));
+    expected.add_edges(DepType::Data, check_rel, var_s_rel.clone());
+    expected.add_edges(DepType::Data, check_rel, var_s_rel);
 
     assert!(gs[0] == expected);
 }
@@ -1963,7 +1886,7 @@ fn pin_find_check() {
 fn pin_find_check_multiple() {
     // Two separate verify statements produce two Check nodes
     let src = r#"
-        proto two_verify<F: Field>(private x: F, private y: F) where true {
+        proto two_verify<F: Field>(private x: F, private y: F) where 1 == 1 {
             verify(x == x);
             verify(y == y)
         }
@@ -1978,7 +1901,7 @@ fn pin_find_check_multiple() {
 
     // Three separate verify statements produce three Check nodes
     let src3 = r#"
-        proto three_verify<F: Field>(private x: F, private y: F, private z: F) where true {
+        proto three_verify<F: Field>(private x: F, private y: F, private z: F) where 1 == 1 {
             verify(x == x);
             verify(y == y);
             verify(z == z)
@@ -1991,20 +1914,6 @@ fn pin_find_check_multiple() {
         3,
         "Protocol with three verify statements should have three check nodes"
     );
-
-    // Single verify with && produces one Check node
-    let src_and = r#"
-        proto and_verify<F: Field>(private x: F, private y: F) where true {
-            verify(x == x && y == y)
-        }
-    "#;
-    let gs_and = parse_and_build(src_and);
-    let checks_and = gs_and[0].find_check();
-    assert_eq!(
-        checks_and.len(),
-        1,
-        "Protocol with single verify (&&) should have one check node"
-    );
 }
 
 /// get_verifier works correctly with multiple check nodes.
@@ -2012,7 +1921,7 @@ fn pin_find_check_multiple() {
 #[test]
 fn pin_get_verifier_multiple_checks() {
     let src = r#"
-        proto two_verify<F: Field>(private s: F, private t: F, public v: F) where true {
+        proto two_verify<F: Field>(private s: F, private t: F, public v: F) where 1 == 1 {
             a <- s + v;
             b <- t + v;
             verify(a == v);
@@ -2050,7 +1959,7 @@ fn pin_get_verifier_multiple_checks() {
 #[test]
 fn pin_get_prover_multiple_checks() {
     let src = r#"
-        proto two_verify<F: Field>(private s: F, private t: F, public v: F) where true {
+        proto two_verify<F: Field>(private s: F, private t: F, public v: F) where 1 == 1 {
             a <- s + v;
             b <- t + v;
             verify(a == v);
@@ -2075,7 +1984,7 @@ fn pin_get_prover_multiple_checks() {
 #[test]
 fn pin_find_check_scattered() {
     let src = r#"
-        proto scattered<F: Field>(private s: F, public v: F) where true {
+        proto scattered<F: Field>(private s: F, public v: F) where 1 == 1 {
             a <- s + v;
             verify(a == a);
             b <- a * 2;
@@ -2098,7 +2007,7 @@ fn pin_find_check_scattered() {
 #[test]
 fn pin_find_check_interleaved_with_challenge() {
     let src = r#"
-        proto interleaved<F: Field>(private s: F, public v: F) where true {
+        proto interleaved<F: Field>(private s: F, public v: F) where 1 == 1 {
             a <- s + v;
             verify(a == a);
             c <- challenge<F>;
@@ -2123,7 +2032,7 @@ fn pin_find_check_interleaved_with_challenge() {
 #[test]
 fn pin_get_verifier_scattered_checks() {
     let src = r#"
-        proto scattered<F: Field>(private s: F, public v: F) where true {
+        proto scattered<F: Field>(private s: F, public v: F) where 1 == 1 {
             a <- s + v;
             verify(a == a);
             b <- a * 2;
@@ -2160,7 +2069,7 @@ fn pin_get_verifier_scattered_checks() {
 #[test]
 fn pin_get_prover_scattered_checks() {
     let src = r#"
-        proto scattered<F: Field>(private s: F, public v: F) where true {
+        proto scattered<F: Field>(private s: F, public v: F) where 1 == 1 {
             a <- s + v;
             verify(a == a);
             b <- a * 2;
@@ -2187,7 +2096,7 @@ fn pin_dags_multiple_verify_protocols() {
             verify(x == x);
             x
         }
-        proto two_verify<F: Field>(private s: F, public v: F) where true {
+        proto two_verify<F: Field>(private s: F, public v: F) where 1 == 1 {
             verify(s == s);
             verify(v == v)
         }

@@ -9,7 +9,7 @@ proto chaum_pedersen<G: Group, F: Scalar<G>>(
     public w: G           // Second public key: y2 = g2^x
 )
 
-where v == g*beta && w == u*beta {
+where v == g*beta; w == u*beta {
 
     let beta_r = random<F>;
     v_r <- g*beta_r;
@@ -17,5 +17,6 @@ where v == g*beta && w == u*beta {
 
     c <- challenge<F>;
     beta_z <- beta_r + beta*c;
-    verify(g*beta_z == v_r + v*c && u*beta_z == w_r + w*c)
+    verify(g*beta_z == v_r + v*c);
+    verify(u*beta_z == w_r + w*c)
 }

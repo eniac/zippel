@@ -21,7 +21,7 @@ proto prove_commitment_equality<G: Group, F: Scalar<G>>(
 // 1. c1 is a valid commitment to m1 with randomness r1.
 // 2. c2 is a valid commitment to m2 with randomness r2.
 // 3. The committed values m1 and m2 are equal.
-where c1 == g*m1 + h*r1 && c2 == g*m2 + h*r2 && m1 == m2 {
+where c1 == g*m1 + h*r1; c2 == g*m2 + h*r2; m1 == m2 {
 
       // --- Prover's Computation ---
 

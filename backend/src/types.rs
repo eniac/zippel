@@ -28,7 +28,7 @@ pub enum ABase {
     G2,
     GT,
     Scalar,
-    Bool,
+    Unit,
     Fin(CRange),
 }
 
@@ -66,8 +66,8 @@ impl ATyp {
     pub fn gt() -> Self {
         ATyp::Base(ABase::GT)
     }
-    pub fn bool() -> Self {
-        ATyp::Base(ABase::Bool)
+    pub fn unit() -> Self {
+        ATyp::Base(ABase::Unit)
     }
     pub fn fin(r: CRange) -> Self {
         ATyp::Base(ABase::Fin(r))
@@ -77,9 +77,6 @@ impl ATyp {
     }
     pub fn vec_scalar(n: usize) -> Self {
         ATyp::Vec(Box::new(ATyp::scalar()), n)
-    }
-    pub fn vec_bool(n: usize) -> Self {
-        ATyp::Vec(Box::new(ATyp::bool()), n)
     }
     pub fn vec_g1(n: usize) -> Self {
         ATyp::Vec(Box::new(ATyp::g1()), n)
@@ -138,8 +135,8 @@ impl ATyp {
         matches!(self, ATyp::Base(ABase::Fin(_)))
     }
 
-    pub fn is_bool(&self) -> bool {
-        matches!(self, ATyp::Base(ABase::Bool))
+    pub fn is_unit(&self) -> bool {
+        matches!(self, ATyp::Base(ABase::Unit))
     }
 
     pub fn is_group(&self) -> bool {
@@ -304,7 +301,7 @@ impl ATyp {
                 m.checked_mul(*n).expect("polynomial degree overflow"),
             )),
             CTyp::Fin(r) => Some(ATyp::fin(*r)),
-            CTyp::Bool => Some(ATyp::bool()),
+            CTyp::Unit => Some(ATyp::unit()),
             CTyp::Record(fields) => {
                 let mut atyp_fields = Ctx::new();
                 for (name, field_typ) in fields.iter() {
@@ -330,7 +327,7 @@ impl Lub for ABase {
             (ABase::G2, ABase::G2) => Ok(ABase::G2),
             (ABase::GT, ABase::GT) => Ok(ABase::GT),
             (ABase::Scalar, ABase::Scalar) => Ok(ABase::Scalar),
-            (ABase::Bool, ABase::Bool) => Ok(ABase::Bool),
+            (ABase::Unit, ABase::Unit) => Ok(ABase::Unit),
             (a, b) => Err(LubError::equ(&a, &b)),
         }
     }
@@ -439,13 +436,6 @@ impl Lub for ABase {
             )),
             (ABase::Scalar, ABase::Fin(r)) => Ok(ABase::Fin(*r)),
             (a, b) => Err(LubError::rem(&a, &b)),
-        }
-    }
-
-    fn lub_and(a: &Self, b: &Self, _: &Self::Context) -> Result<Self, LubError> {
-        match (a, b) {
-            (ABase::Bool, ABase::Bool) => Ok(ABase::Bool),
-            (a, b) => Err(LubError::and(&a, &b)),
         }
     }
 
@@ -778,22 +768,12 @@ impl Lub for ATyp {
             (a, b) => Err(LubError::concat(&a, &b)),
         }
     }
-
-    fn lub_and(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
-        match (a, b) {
-            (ATyp::Base(a), ATyp::Base(b)) => ABase::lub_and(a, b, ctx)
-                .map(ATyp::Base)
-                .map_err(|e| LubError::next(LubError::and(&a, &b), e)),
-
-            (a, b) => Err(LubError::and(&a, &b)),
-        }
-    }
 }
 
 impl fmt::Display for ABase {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ABase::Bool => write!(f, "Bool"),
+            ABase::Unit => write!(f, "Unit"),
             ABase::Fin(r) => write!(f, "Fin<{}>", r),
             ABase::Scalar => write!(f, "Scalar"),
             ABase::G1 => write!(f, "G1"),
@@ -1477,17 +1457,6 @@ mod tests {
             );
             Ok(())
         });
-    }
-
-    #[test]
-    fn lub_and_accepts_scalar_bool_only() {
-        assert_eq!(
-            ATyp::lub_and(&ATyp::bool(), &ATyp::bool(), &Nothing),
-            Ok(ATyp::bool())
-        );
-        assert!(ATyp::lub_and(&ATyp::vec_bool(2), &ATyp::vec_bool(2), &Nothing).is_err());
-        assert!(ATyp::lub_and(&ATyp::vec_bool(2), &ATyp::bool(), &Nothing).is_err());
-        assert!(ATyp::lub_and(&ATyp::bool(), &ATyp::vec_bool(2), &Nothing).is_err());
     }
 
     /// Division preserves vector operand order.

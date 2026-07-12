@@ -461,16 +461,6 @@ fn test_div_scalars() {
 }
 
 #[test]
-fn test_not_bool() {
-    let val = Value::<TestConfig>::Bool(true);
-    let result = val.not();
-    match result {
-        Value::Bool(b) => assert!(!b),
-        _ => panic!("Expected Bool"),
-    }
-}
-
-#[test]
 fn test_equ_scalars_equal() {
     let a = Value::<TestConfig>::Scalar(Fr::from(42u32));
     let b = Value::<TestConfig>::Scalar(Fr::from(42u32));
@@ -482,17 +472,6 @@ fn test_equ_scalars_not_equal() {
     let a = Value::<TestConfig>::Scalar(Fr::from(42u32));
     let b = Value::<TestConfig>::Scalar(Fr::from(43u32));
     assert!(!Value::equ(&a, &b));
-}
-
-#[test]
-fn test_value_equ_returns_bool() {
-    let a = Value::<TestConfig>::Scalar(Fr::from(42u32));
-    let b = Value::<TestConfig>::Scalar(Fr::from(42u32));
-    let result = a.value_equ(&b);
-    match result {
-        Value::Bool(true) => {}
-        _ => panic!("Expected Bool(true)"),
-    }
 }
 
 #[test]
@@ -525,12 +504,6 @@ fn test_typ_g1() {
 fn test_typ_g2() {
     let val = Value::<TestConfig>::G2(<TestConfig as ArkConfig>::G2::generator());
     assert_eq!(val.typ(), ATyp::g2());
-}
-
-#[test]
-fn test_typ_bool() {
-    let val = Value::<TestConfig>::Bool(true);
-    assert_eq!(val.typ(), ATyp::bool());
 }
 
 #[test]
@@ -762,20 +735,6 @@ fn test_index_commutativity() {
 }
 
 #[test]
-fn test_bool_operations() {
-    let t = Value::<TestConfig>::Bool(true);
-    let f = Value::<TestConfig>::Bool(false);
-
-    assert_deq!(t.clone() & t.clone(), Value::<TestConfig>::Bool(true));
-    assert_deq!(t.clone() & f.clone(), Value::<TestConfig>::Bool(false));
-    assert_deq!(f.clone() & f.clone(), Value::<TestConfig>::Bool(false));
-
-    assert_deq!(t.clone() | t.clone(), Value::<TestConfig>::Bool(true));
-    assert_deq!(t.clone() | f.clone(), Value::<TestConfig>::Bool(true));
-    assert_deq!(f.clone() | f, Value::<TestConfig>::Bool(false));
-}
-
-#[test]
 fn test_poly_operations() {
     let mut rng = test_rng();
     let a = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(4));
@@ -853,15 +812,6 @@ fn test_bitxor_as_pow() {
 }
 
 #[test]
-fn test_not_operation() {
-    let t = Value::<TestConfig>::Bool(true);
-    let f = Value::<TestConfig>::Bool(false);
-
-    assert_deq!(t.not(), Value::<TestConfig>::Bool(false));
-    assert_deq!(f.not(), Value::<TestConfig>::Bool(true));
-}
-
-#[test]
 fn test_value_pow() {
     // value_pow(a, b) computes a^b and stores result in b
     let base = Value::<TestConfig>::scalar_from_usize(2);
@@ -926,16 +876,6 @@ fn test_elliptic_curve_pairing() {
 }
 
 #[test]
-fn test_value_equ() {
-    let a = Value::<TestConfig>::scalar_from_usize(5);
-    let b = Value::<TestConfig>::scalar_from_usize(5);
-    let c = Value::<TestConfig>::scalar_from_usize(3);
-
-    assert_deq!(a.value_equ(&b), Value::<TestConfig>::Bool(true));
-    assert_deq!(a.value_equ(&c), Value::<TestConfig>::Bool(false));
-}
-
-#[test]
 fn test_equ_static() {
     let a = Value::<TestConfig>::scalar_from_usize(5);
     let b = Value::<TestConfig>::scalar_from_usize(5);
@@ -971,21 +911,16 @@ fn test_zero_creation() {
         _ => panic!("Expected G1"),
     }
 
-    let bool_zero = Value::<TestConfig>::zero(&ATyp::bool());
-    assert_deq!(bool_zero, Value::<TestConfig>::Bool(false));
-
     let index_zero = Value::<TestConfig>::zero(&ATyp::fin(CRange::new(0, 10)));
     assert_deq!(index_zero, Value::<TestConfig>::Index(0));
 }
 
 #[test]
 fn test_discriminant_order_extended() {
-    let bool_val = Value::<TestConfig>::Bool(true);
     let idx_val = Value::<TestConfig>::Index(5);
     let scalar_val = Value::<TestConfig>::scalar_from_usize(10);
 
     // Just ensure they return different values and don't panic
-    let _d1 = bool_val.discriminant_order();
     let _d2 = idx_val.discriminant_order();
     let _d3 = scalar_val.discriminant_order();
 }
@@ -998,10 +933,6 @@ fn test_typ_method() {
 
     let idx = Value::<TestConfig>::Index(5);
     let _typ = idx.typ();
-
-    let bool_val = Value::<TestConfig>::Bool(true);
-    let typ = bool_val.typ();
-    assert!(typ.is_bool());
 }
 
 #[test]
@@ -1010,10 +941,6 @@ fn test_serialize_value() {
 
     let scalar = Value::<TestConfig>::scalar_from_usize(42);
     let bytes = value_to_bytes(&scalar);
-    assert!(bytes.is_ok());
-
-    let bool_val = Value::<TestConfig>::Bool(true);
-    let bytes = value_to_bytes(&bool_val);
     assert!(bytes.is_ok());
 
     let idx = Value::<TestConfig>::Index(10);
@@ -1384,14 +1311,12 @@ fn test_value_concat_pbt() {
         // 0: Scalar
         // 1: G1
         // 2: G2
-        // 3: Bool
-        // 4: GT
-        let ty: u8 = u.int_in_range(0..=4)?;
+        // 3: GT
+        let ty: u8 = u.int_in_range(0..=3)?;
         let atyp = match ty {
             0 => ATyp::scalar(),
             1 => ATyp::g1(),
             2 => ATyp::g2(),
-            3 => ATyp::bool(),
             _ => ATyp::gt(),
         };
 
@@ -1418,7 +1343,6 @@ fn test_value_concat_pbt() {
                             0 => Value::VecScalar(vec![]),
                             1 => Value::VecG1(vec![]),
                             2 => Value::VecG2(vec![]),
-                            3 => Value::VecBool(vec![]),
                             _ => Value::VecGT(vec![]),
                         }
                     } else {
@@ -1446,15 +1370,6 @@ fn test_value_concat_pbt() {
                                     .iter()
                                     .map(|e| match e {
                                         Value::G2(g) => *g,
-                                        _ => panic!(),
-                                    })
-                                    .collect(),
-                            ),
-                            3 => Value::VecBool(
-                                elems
-                                    .iter()
-                                    .map(|e| match e {
-                                        Value::Bool(b) => *b,
                                         _ => panic!(),
                                     })
                                     .collect(),
@@ -1507,8 +1422,6 @@ fn test_value_concat_pbt() {
                 Value::VecG1(v) => v.into_iter().map(Value::G1).collect(),
                 Value::G2(g) => vec![Value::G2(g)],
                 Value::VecG2(v) => v.into_iter().map(Value::G2).collect(),
-                Value::Bool(b) => vec![Value::Bool(b)],
-                Value::VecBool(v) => v.into_iter().map(Value::Bool).collect(),
                 Value::GT(g) => vec![Value::GT(g)],
                 Value::VecGT(v) => v.into_iter().map(Value::GT).collect(),
                 Value::Vec(v) => v,

@@ -17,12 +17,12 @@ use crate::frontend::Polynomial;
 use super::PolySource;
 use super::{EncodeCtx, link_to_polys, link_to_witness};
 
-/// Constant-fold an integer (`Fin`/`Bool`) subexpression over the enclosing
+/// Constant-fold an integer (`Fin`/`Unit`) subexpression over the enclosing
 /// loop indices. Returns `Some(value)` only when `op` is integer-typed and
 /// every enclosing loop binder has a concrete value; otherwise `None`.
 fn const_eval_int<C: ArkConfig>(op: &HOp<C>, loop_vals: &[Option<Value<C>>]) -> Option<Value<C>> {
     let t = op.typ();
-    if !(t.is_fin() || t.is_bool()) {
+    if !(t.is_fin() || t.is_unit()) {
         return None;
     }
     let params: Vec<std::sync::Arc<Value<C>>> = loop_vals

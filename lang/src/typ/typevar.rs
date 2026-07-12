@@ -177,9 +177,6 @@ impl<'pest> FromPest<'pest> for UTypeVar {
             Rule::tvar => {
                 let mut inner = pair.into_inner();
                 let id = Tid::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                if id == Tid::new("Bool") {
-                    return Err(ConversionError::Malformed(InputError::ReservedType));
-                }
                 let kind = Kind::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                 Ok(TypeVar { id, kind })
             }
@@ -363,12 +360,5 @@ fn typevars_parser() {
             Tid::new("A"),
             Kind::Field
         )))
-    );
-
-    let ex_reserved = "Bool: Field";
-    let mut pairs = ZippelParser::parse(Rule::tvars, ex_reserved).unwrap();
-    assert_eq!(
-        UTypeVars::from_pest(&mut pairs),
-        Err(ConversionError::Malformed(InputError::ReservedType))
     );
 }

@@ -6,7 +6,7 @@ proto okamoto_elgamal<G: Group, F: Scalar<G>>(
     public h: G,
     public c1: G,
     public c2: G
-) where c1 == g*r && c2 == h*r + g*x {
+) where c1 == g*r; c2 == h*r + g*x {
     let rx = random<F>;
     let rr = random<F>;
     t1 <- g*rr;
@@ -14,5 +14,6 @@ proto okamoto_elgamal<G: Group, F: Scalar<G>>(
     c <- challenge<F*>;
     sx <- rx + x*c;
     sr <- rr + r*c;
-    verify(g*sr == t1 + c1*c && h*sr + g*sx == t2 + c2*c)
+    verify(g*sr == t1 + c1*c);
+    verify(h*sr + g*sx == t2 + c2*c)
 }

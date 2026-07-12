@@ -19,7 +19,7 @@ proto proof_of_product<G: Group, F: Scalar<G>>(
     public big_z: G            // Commitment big_z = g*(x*y) + h*r_Z
 )
 // The 'where' clause defines the exact relations the prover must satisfy.
-where big_x == g*x + h*r_X && big_y == g*y + h*r_Y && big_z == g*(x*y) + h*r_Z {
+where big_x == g*x + h*r_X; big_y == g*y + h*r_Y; big_z == g*(x*y) + h*r_Z {
 
       // --- Prover Phase ---
 
@@ -56,7 +56,7 @@ where big_x == g*x + h*r_X && big_y == g*y + h*r_Y && big_z == g*(x*y) + h*r_Z {
       // Check 1: alpha + big_x*c == g*z1 + h*z2
       // Check 2: beta + big_y*c == g*z3 + h*z4
       // Check 3: delta + big_z*c == big_x*z3 + h*z5
-      verify(alpha + big_x*c == g*z1 + h*z2
-        && beta + big_y*c == g*z3 + h*z4
-        && delta + big_z*c == big_x*z3 + h*z5)
+      verify(alpha + big_x*c == g*z1 + h*z2);
+      verify(beta + big_y*c == g*z3 + h*z4);
+      verify(delta + big_z*c == big_x*z3 + h*z5)
 }

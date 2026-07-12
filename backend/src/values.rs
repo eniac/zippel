@@ -27,13 +27,10 @@ use spongefish::{DuplexSpongeInterface, ProverState};
 use std::cmp::Ordering;
 use std::fmt;
 use std::io::Write;
-use std::ops::{Add, AddAssign, BitAnd, BitOr, BitXor, Div, Mul, MulAssign, Rem, Sub};
+use std::ops::{Add, AddAssign, BitXor, Div, Mul, MulAssign, Rem, Sub};
 
 #[derive(Debug, Clone, Eq)]
 pub enum Value<C: ArkConfig> {
-    /// Boolean
-    Bool(bool),
-    VecBool(Vec<bool>),
     /// Scalars
     Index(usize),
     Scalar(C::F),
@@ -78,8 +75,6 @@ impl<C: ArkConfig> PartialEq for Value<C> {
                         .all(|(x, y)| x.into_affine() == y.into_affine())
             }
             // For all other variants, use structural equality
-            (Value::Bool(a), Value::Bool(b)) => a == b,
-            (Value::VecBool(a), Value::VecBool(b)) => a == b,
             (Value::Index(a), Value::Index(b)) => a == b,
             (Value::Scalar(a), Value::Scalar(b)) => a == b,
             (Value::VecIndex(a), Value::VecIndex(b)) => a == b,
@@ -103,8 +98,6 @@ impl<C: ArkConfig> std::hash::Hash for Value<C> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
-            Value::Bool(b) => b.hash(state),
-            Value::VecBool(v) => v.hash(state),
             Value::Index(i) => i.hash(state),
             Value::Scalar(f) => f.hash(state),
             Value::VecIndex(v) => v.hash(state),
@@ -146,14 +139,6 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
     writer: &mut W,
 ) -> Result<(), SerializationError> {
     match value {
-        Value::Bool(b) => b.serialize_compressed(writer),
-        Value::VecBool(vec) => {
-            (vec.len() as u64).serialize_compressed(&mut *writer)?;
-            for b in vec {
-                b.serialize_compressed(&mut *writer)?;
-            }
-            Ok(())
-        }
         Value::Index(i) => (*i as u64).serialize_compressed(writer),
         Value::Scalar(f) => {
             // println!("Scalar: {}", f);
@@ -258,8 +243,6 @@ impl<C: ArkConfig> Value<C> {
     pub fn discriminant_order(&self) -> u8 {
         match self {
             Value::Poly(_) => 19,
-            Value::Bool(_) => 17,
-            Value::VecBool(_) => 16,
             Value::Index(_) => 15,
             Value::Scalar(_) => 14,
             Value::VecIndex(_) => 13,
@@ -287,7 +270,6 @@ impl<C: ArkConfig> Value<C> {
     /// arity for typed zero polynomials.
     pub fn zero(typ: &ATyp) -> Self {
         match typ {
-            ATyp::Base(ABase::Bool) => Value::Bool(false),
             ATyp::Base(ABase::Fin(r)) if r.contains(0) => Value::Index(0),
             ATyp::Base(ABase::Scalar) => Value::Scalar(C::F::zero()),
             ATyp::Base(ABase::G1) => Value::G1(C::G1::zero()),
@@ -296,7 +278,6 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Uni(_m) => Value::Poly(VirtualPolynomial::zero_with_num_vars(1)),
             ATyp::Mle(n) => Value::Poly(VirtualPolynomial::zero_with_num_vars(*n)),
             ATyp::VPoly(n, _) => Value::Poly(VirtualPolynomial::zero_with_num_vars(*n)),
-            ATyp::Vec(box ATyp::Base(ABase::Bool), n) => Value::VecBool(vec![false; *n]),
             ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(0) => {
                 Value::VecIndex(vec![0; *n])
             }
@@ -328,13 +309,11 @@ impl<C: ArkConfig> Value<C> {
     /// Creates the multiplicative identity (one) for the given type.
     pub fn one(typ: &ATyp) -> Self {
         match typ {
-            ATyp::Base(ABase::Bool) => Value::Bool(true),
             ATyp::Base(ABase::Fin(r)) if r.contains(1) => Value::Index(1),
             ATyp::Base(ABase::Scalar) => Value::Scalar(C::FOps::one()),
             ATyp::Vec(box ATyp::Base(ABase::Scalar), n) => {
                 Value::VecScalar(vec![C::FOps::one(); *n])
             }
-            ATyp::Vec(box ATyp::Base(ABase::Bool), n) => Value::VecBool(vec![true; *n]),
             ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(1) => {
                 Value::VecIndex(vec![1; *n])
             }
@@ -359,7 +338,6 @@ impl<C: ArkConfig> Value<C> {
     #[inline]
     pub fn value_add(&self, other: &mut Self) {
         match self {
-            Value::Bool(_) | Value::VecBool(_) => panic!("Cannot add bools {} + {}", self, other),
             // Indexes coerce to scalars (addition)
             Value::Index(a) => match &other {
                 Value::Index(_) => *other.into_index_mut() += *a,
@@ -454,9 +432,6 @@ impl<C: ArkConfig> Value<C> {
     #[inline]
     pub fn value_sub(&self, other: &mut Self) {
         match self {
-            Value::Bool(_) | Value::VecBool(_) => {
-                panic!("Cannot subtract bools {} - {}", self, other)
-            }
             // Indexes coerce to scalars (addition)
             Value::Index(a) => match &other {
                 Value::Index(b) => *other.into_index_mut() = *a - *b,
@@ -626,9 +601,6 @@ impl<C: ArkConfig> Value<C> {
     #[inline]
     pub fn value_mul(&self, other: &mut Self) {
         match self {
-            Value::Bool(_) | Value::VecBool(_) => {
-                panic!("Cannot multiply bools {} * {}", self, other)
-            }
             Value::Poly(a) => match &other {
                 Value::Poly(b) => {
                     *other = Value::Poly(a.poly_mul(b).expect("Polynomial multiplication failed"));
@@ -639,9 +611,6 @@ impl<C: ArkConfig> Value<C> {
                 _ => panic!("Expected polynomial or scalar, found {}", other),
             },
             Value::Index(a) => match &other {
-                Value::Bool(_) | Value::VecBool(_) => {
-                    panic!("Cannot multiply bools {} * {}", self, other)
-                }
                 // Index * Index = Index
                 Value::Index(_) => {
                     *other.into_index_mut() *= *a;
@@ -697,9 +666,6 @@ impl<C: ArkConfig> Value<C> {
                 panic!("Cannot multiply records")
             }
             Value::Scalar(a) => match &other {
-                Value::Bool(_) | Value::VecBool(_) => {
-                    panic!("Cannot multiply bools {} * {}", self, other)
-                }
                 // Scalar * index, cast index to Scalar
                 Value::Index(b) => {
                     let mut value = C::FOps::from_usize(*b);
@@ -833,9 +799,6 @@ impl<C: ArkConfig> Value<C> {
                 _ => panic!("Expected scalar, found {}", other),
             },
             Value::VecIndex(v) => match &other {
-                Value::Bool(_) | Value::VecBool(_) => {
-                    panic!("Cannot multiply bools {} * {}", self, other)
-                }
                 // Vec<Index> * Index
                 Value::Index(i) => {
                     *other = Value::VecIndex(v.par_iter().map(|a| *a * *i).collect())
@@ -1101,9 +1064,6 @@ impl<C: ArkConfig> Value<C> {
     #[inline]
     pub fn value_div(&self, other: &mut Self) {
         match self {
-            Value::Bool(_) | Value::VecBool(_) => {
-                panic!("Cannot divide bools {} / {}", self, other)
-            }
             Value::Index(a) => match &other {
                 // Index / Index = Index
                 Value::Index(_) => *other = Value::Index(*a / other.into_index()),
@@ -1846,49 +1806,8 @@ impl<C: ArkConfig> Value<C> {
     }
 
     #[inline]
-    pub fn value_and(&self, other: &mut Self) {
-        match (self, other) {
-            (Value::Bool(a), Value::Bool(b)) => *b = *a && *b,
-            (Value::VecBool(a), Value::VecBool(b)) => {
-                *b = a
-                    .par_iter()
-                    .zip(b.par_iter())
-                    .map(|(a, b)| *a && *b)
-                    .collect();
-            }
-            (a, b) => panic!("Cannot AND {} and {}", a, b),
-        }
-    }
-
-    #[inline]
-    pub fn value_or(&self, other: &mut Self) {
-        match (self, other) {
-            (Value::Bool(a), Value::Bool(b)) => *b = *a || *b,
-            (Value::VecBool(a), Value::VecBool(b)) => {
-                *b = a
-                    .par_iter()
-                    .zip(b.par_iter())
-                    .map(|(a, b)| *a || *b)
-                    .collect();
-            }
-            (a, b) => panic!("Cannot OR {} and {}", a, b),
-        }
-    }
-
-    #[inline]
-    pub fn not(&self) -> Self {
-        match self {
-            Value::Bool(a) => Value::Bool(!*a),
-            Value::VecBool(a) => Value::VecBool(a.iter().map(|a| !*a).collect()),
-            a => panic!("Cannot NOT {}", a),
-        }
-    }
-
-    #[inline]
     pub fn is_one(&self) -> bool {
         match self {
-            Value::Bool(a) => *a,
-            Value::VecBool(a) => a.iter().all(|a| *a),
             Value::Index(a) => *a == 1,
             Value::VecIndex(a) => a.iter().all(|a| *a == 1),
             Value::Scalar(a) => a == &C::FOps::one(),
@@ -1901,8 +1820,6 @@ impl<C: ArkConfig> Value<C> {
     #[inline]
     pub fn equ(a: &Self, other: &Self) -> bool {
         match (a, other) {
-            (Value::Bool(a), Value::Bool(b)) => *a == *b,
-            (Value::VecBool(a), Value::VecBool(b)) => a == b,
             (Value::Index(a), Value::Index(b)) => *a == *b,
             (Value::Scalar(a), Value::Scalar(b)) => a == b,
             (Value::Scalar(a), Value::Index(b)) => *a == C::FOps::from_usize(*b),
@@ -1990,10 +1907,6 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
-    pub fn value_equ(&self, other: &Self) -> Self {
-        Value::Bool(Value::equ(self, other))
-    }
-
     pub fn challenge<H: DuplexSpongeInterface<U = u8>>(state: &mut ProverState<H>) -> Self {
         Value::Scalar(C::FOps::challenge(state))
     }
@@ -2001,8 +1914,6 @@ impl<C: ArkConfig> Value<C> {
     #[allow(clippy::should_implement_trait)]
     pub fn hash<H: DuplexSpongeInterface<U = u8>>(&self, state: &mut ProverState<H>) {
         match self {
-            Value::Bool(b) => state.public_message(to_bytes!(b).unwrap().as_slice()),
-            Value::VecBool(items) => state.public_message(to_bytes!(items).unwrap().as_slice()),
             Value::Index(i) => state.public_message(to_bytes!(i).unwrap().as_slice()),
             Value::Scalar(f) => state.public_message(to_bytes!(f).unwrap().as_slice()),
             Value::VecIndex(items) => state.public_message(to_bytes!(items).unwrap().as_slice()),
@@ -2134,46 +2045,6 @@ impl<C: ArkConfig> Value<C> {
                     Value::Poly(result_poly)
                 };
             }
-            (Value::Poly(poly), Value::VecBool(bits)) => {
-                let n_points = bits.len();
-                if poly.num_vars() == Some(n_points) {
-                    // Full boolean evaluation: direct table index, no field point.
-                    let scalar = poly.evaluate_at_boolean_index(boolean_index(bits));
-                    *other = if n_points == 1 {
-                        Value::VecScalar(vec![scalar])
-                    } else {
-                        Value::Scalar(scalar)
-                    };
-                } else {
-                    // Partial boolean prefix: fall back via 0/1 field point.
-                    let points: Vec<C::F> = bits
-                        .iter()
-                        .map(|b| C::FOps::from_usize(*b as usize))
-                        .collect();
-                    let original_num_vars = poly.num_vars();
-                    let result_poly = if let Ok(scalar) = poly.evaluate_mv(&points) {
-                        VirtualPolynomial::from_scalar(scalar)
-                    } else {
-                        poly.evaluate_or_fix_mle(&points)
-                            .expect("MLE evaluation failed")
-                    };
-                    let keep_typed_residual = original_num_vars.is_some_and(|n| n_points < n)
-                        && result_poly.num_vars().is_some();
-                    *other = if !keep_typed_residual {
-                        if let Some(scalar) = result_poly.to_scalar() {
-                            if n_points == 1 {
-                                Value::VecScalar(vec![scalar])
-                            } else {
-                                Value::Scalar(scalar)
-                            }
-                        } else {
-                            Value::Poly(result_poly)
-                        }
-                    } else {
-                        Value::Poly(result_poly)
-                    };
-                }
-            }
             (Value::Poly(poly), Value::Scalar(x)) => {
                 *other = Value::Scalar(poly.evaluate_uv(x));
             }
@@ -2189,7 +2060,6 @@ impl<C: ArkConfig> Value<C> {
         match self {
             Value::Scalar(s) => *self = Value::VecScalar(vec![*s]),
             Value::Index(i) => *self = Value::VecIndex(vec![*i]),
-            Value::Bool(b) => *self = Value::VecBool(vec![*b]),
             Value::G1(g) => *self = Value::VecG1(vec![*g]),
             Value::G2(g) => *self = Value::VecG2(vec![*g]),
             Value::GT(g) => *self = Value::VecGT(vec![*g]),
@@ -2236,12 +2106,6 @@ impl<C: ArkConfig> Value<C> {
                 let mut a = a.clone();
                 a.append(r.into_vec_g2_affine_mut());
                 *r = Value::VecG2Affine(a);
-            }
-            Value::VecBool(a) => {
-                r.promote_to_vec();
-                let mut a = a.clone();
-                a.append(r.into_vec_bool_mut());
-                *r = Value::VecBool(a);
             }
             Value::VecIndex(a) => match &r {
                 Value::VecIndex(vs) => {
@@ -2311,12 +2175,6 @@ impl<C: ArkConfig> Value<C> {
                 a.append(r.into_vec_g2_affine_mut());
                 *r = Value::VecG2Affine(a);
             }
-            Value::Bool(a) => {
-                r.promote_to_vec();
-                let mut a = vec![*a];
-                a.append(r.into_vec_bool_mut());
-                *r = Value::VecBool(a);
-            }
             Value::Index(a) => {
                 r.promote_to_vec();
                 let mut a = vec![*a];
@@ -2328,11 +2186,6 @@ impl<C: ArkConfig> Value<C> {
                     let mut a = a.clone();
                     a.append(r.into_vec_mut());
                     *r = Value::Vec(a);
-                }
-                Value::VecBool(_) => {
-                    let mut slf = self.clone();
-                    slf.into_vec_bool_mut().append(r.into_vec_bool_mut());
-                    *r = slf;
                 }
                 Value::VecScalar(_) => {
                     let mut slf = self.clone();
@@ -2384,8 +2237,8 @@ impl<C: ArkConfig> Value<C> {
     /// Generate a random value, given some parameters
     pub fn random<R: Rng + Sized>(rng: &mut R, typ: &ATyp) -> Self {
         match typ {
-            ATyp::Base(ABase::Bool) => Value::Bool(rng.next_u32().is_multiple_of(2)),
             ATyp::Base(ABase::Fin(r)) => Value::Index(r.random(rng) % 10),
+            ATyp::Base(ABase::Unit) => Value::Index(0),
             ATyp::Base(ABase::Scalar) => Value::Scalar(C::FOps::rand(rng)),
             ATyp::Base(ABase::G1) => Value::G1(C::G1Ops::rand(rng)),
             ATyp::Base(ABase::G2) => Value::G2(C::G2Ops::rand(rng)),
@@ -2453,8 +2306,6 @@ impl<C: ArkConfig> Value<C> {
 
     pub fn typ(&self) -> ATyp {
         match self {
-            Value::Bool(_) => ATyp::bool(),
-            Value::VecBool(v) => ATyp::vec_bool(v.len()),
             Value::Index(n) => ATyp::fin(CRange::singleton(*n)),
             Value::Scalar(_) => ATyp::scalar(),
             Value::G1(_) => ATyp::g1(),
@@ -2625,10 +2476,6 @@ impl<C: ArkConfig> Value<C> {
                 *self = Value::Vec(v.par_iter().map(|i| Value::G2Affine(*i)).collect());
                 self.into_vec_mut()
             }
-            Value::VecBool(v) => {
-                *self = Value::Vec(v.par_iter().map(|i| Value::Bool(*i)).collect());
-                self.into_vec_mut()
-            }
             _ => panic!("Expected mut vec, found {}", self),
         }
     }
@@ -2714,23 +2561,6 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected mut vec group2, found {}", self),
         }
     }
-    pub fn into_vec_bool_mut(&mut self) -> &mut Vec<bool> {
-        match self {
-            Value::VecBool(v) => v,
-            Value::Vec(v) => {
-                *self = Value::VecBool(
-                    v.iter()
-                        .map(|val| match val {
-                            Value::Bool(b) => *b,
-                            _ => panic!("Expected Bool element in vec, found {}", val),
-                        })
-                        .collect(),
-                );
-                self.into_vec_bool_mut()
-            }
-            _ => panic!("Expected mut vec bool, found {}", self),
-        }
-    }
     pub fn into_range_mut(&mut self) -> &mut Vec<usize> {
         match self {
             Value::VecIndex(r) => r,
@@ -2766,7 +2596,6 @@ impl<C: ArkConfig> Value<C> {
         matches!(
             self,
             Value::Vec(_)
-                | Value::VecBool(_)
                 | Value::VecScalar(_)
                 | Value::VecG1(_)
                 | Value::VecG2(_)
@@ -2781,7 +2610,6 @@ impl<C: ArkConfig> Value<C> {
         match self {
             Value::Scalar(a) => a.is_zero(),
             Value::Index(a) => *a == 0,
-            Value::Bool(a) => !*a,
             Value::G1(a) => a.is_zero(),
             Value::G2(a) => a.is_zero(),
             Value::GT(a) => a.is_zero(),
@@ -2794,7 +2622,6 @@ impl<C: ArkConfig> Value<C> {
             Value::VecG1Affine(a) => a.par_iter().all(|a| a.is_zero()),
             Value::VecG2Affine(a) => a.par_iter().all(|a| a.is_zero()),
             Value::VecIndex(a) => a.par_iter().all(|a| *a == 0),
-            Value::VecBool(a) => a.par_iter().all(|a| !*a),
             Value::Vec(a) => a.par_iter().all(|a| a.is_zero()),
             Value::Record(fields) => fields.iter().all(|(_, v)| v.is_zero()),
             Value::Poly(poly) => poly.is_zero(),
@@ -2810,10 +2637,6 @@ impl<C: ArkConfig> Value<C> {
         match typ {
             ATyp::Base(ABase::Scalar) => {
                 vec_value.into_vec_scalar_mut();
-                vec_value
-            }
-            ATyp::Base(ABase::Bool) => {
-                vec_value.into_vec_bool_mut();
                 vec_value
             }
             ATyp::Base(ABase::Fin(_r)) => match vec_value {
@@ -2833,6 +2656,7 @@ impl<C: ArkConfig> Value<C> {
                 vec_value.into_vec_gt_mut();
                 vec_value
             }
+            ATyp::Base(ABase::Unit) => panic!("Cannot create vec value for Unit type"),
             ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) | ATyp::Record(_) | ATyp::Vec(_, _) => {
                 vec_value
             }
@@ -2980,7 +2804,7 @@ impl<C: ArkConfig> Value<C> {
     }
 
     /// Reduce a vector using a binary operation.
-    /// Commutative operations (Add, Mul, And) use parallel fold via rayon.
+    /// Commutative operations (Add, Mul) use parallel fold via rayon.
     /// Non-commutative operations use sequential left fold.
     pub fn value_reduce(self, op: BinOp) -> Self {
         let elements = self.into_elements();
@@ -3002,12 +2826,6 @@ impl<C: ArkConfig> Value<C> {
                     .into_par_iter()
                     .reduce(|| Value::<C>::one(&elem_typ), |a, b| a * b)
             }
-            BinOp::And => {
-                let elem_typ = elements[0].typ();
-                elements
-                    .into_par_iter()
-                    .reduce(|| Value::<C>::one(&elem_typ), |a, b| a & b)
-            }
             _ => {
                 let mut iter = elements.into_iter();
                 let first = iter.next().unwrap();
@@ -3018,7 +2836,6 @@ impl<C: ArkConfig> Value<C> {
                     BinOp::Rem => acc % x,
                     BinOp::Dot => acc.dot(x),
                     BinOp::Concat => acc.value_concat(x),
-                    BinOp::Equ => acc.value_equ(&x),
                     _ => unreachable!(),
                 })
             }
@@ -3030,7 +2847,6 @@ impl<C: ArkConfig> Value<C> {
         match self {
             Value::VecScalar(v) => v.into_iter().map(Value::Scalar).collect(),
             Value::VecIndex(v) => v.into_iter().map(Value::Index).collect(),
-            Value::VecBool(v) => v.into_iter().map(Value::Bool).collect(),
             Value::VecG1(v) => v.into_iter().map(Value::G1).collect(),
             Value::VecG2(v) => v.into_iter().map(Value::G2).collect(),
             Value::VecGT(v) => v.into_iter().map(Value::GT).collect(),
@@ -3040,15 +2856,6 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected vector, found {}", self),
         }
     }
-}
-
-/// Little-endian boolean hypercube index: variable `i` is bit `i`.
-fn boolean_index(bits: &[bool]) -> usize {
-    bits.iter()
-        .enumerate()
-        .filter(|(_, b)| **b)
-        .map(|(i, _)| 1usize << i)
-        .sum()
 }
 
 fn hypercube_reduce_selected_mle_products<C: ArkConfig>(
@@ -3537,26 +3344,6 @@ impl<C: ArkConfig> BitXor for Value<C> {
     }
 }
 
-impl<C: ArkConfig> BitAnd for Value<C> {
-    type Output = Value<C>;
-
-    fn bitand(self, other: Self) -> Self::Output {
-        let mut other = other;
-        self.value_and(&mut other);
-        other
-    }
-}
-
-impl<C: ArkConfig> BitOr for Value<C> {
-    type Output = Value<C>;
-
-    fn bitor(self, other: Self) -> Self::Output {
-        let mut other = other;
-        self.value_or(&mut other);
-        other
-    }
-}
-
 impl<C: ArkConfig> Add for &Value<C> {
     type Output = Value<C>;
 
@@ -3616,37 +3403,9 @@ impl<C: ArkConfig> BitXor for &Value<C> {
     }
 }
 
-impl<C: ArkConfig> BitAnd for &Value<C> {
-    type Output = Value<C>;
-
-    fn bitand(self, other: Self) -> Self::Output {
-        let mut other = other.clone();
-        self.value_and(&mut other);
-        other
-    }
-}
-
-impl<C: ArkConfig> BitOr for &Value<C> {
-    type Output = Value<C>;
-
-    fn bitor(self, other: Self) -> Self::Output {
-        let mut other = other.clone();
-        self.value_or(&mut other);
-        other
-    }
-}
-
 impl<C: ArkConfig> fmt::Display for Value<C> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Value::Bool(b) => write!(f, "{}", b),
-            Value::VecBool(v) => {
-                write!(f, "[")?;
-                for i in v {
-                    write!(f, "{}, ", i)?;
-                }
-                write!(f, "]")
-            }
             Value::Index(i) => write!(f, "{}", i),
             Value::Scalar(a) => C::FOps::write(a, f),
             Value::G1(a) => C::G1Ops::write(a, f),
@@ -3762,8 +3521,6 @@ impl<C: ArkConfig> Ord for Value<C> {
                 // 2. Variants are the same, compare inner values *if possible*
                 match (self, other) {
                     // Variants with comparable inner types
-                    (Value::Bool(a), Value::Bool(b)) => a.cmp(b), // bool is Ord
-                    (Value::VecBool(a), Value::VecBool(b)) => a.cmp(b), // Vec<bool> is Ord
                     (Value::Index(a), Value::Index(b)) => a.cmp(b), // usize is Ord
                     (Value::VecIndex(a), Value::VecIndex(b)) => a.cmp(b), // Vec<usize> is Ord
                     (Value::Vec(a), Value::Vec(b)) => a.cmp(b), // Vec<Value<C>> uses this impl recursively
@@ -3847,60 +3604,6 @@ mod value_tests {
 
     fn random_g2() -> TestValue {
         TestValue::G2(G2Projective::rand(&mut thread_rng()))
-    }
-
-    #[test]
-    fn boolean_eval_dense_full() {
-        let table: Vec<Fr> = (0..8).map(|i| Fr::from(i as u64)).collect();
-        let poly = TestValue::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-            DenseMultilinearExtension::from_evaluations_vec(3, table),
-        )));
-        // [true,false,true] -> little-endian index 1 + 4 = 5 -> table[5] = 5.
-        assert_eq!(
-            poly.value_eval(TestValue::VecBool(vec![true, false, true])),
-            TestValue::Scalar(Fr::from(5u64))
-        );
-    }
-
-    #[test]
-    fn boolean_eval_sparse_full() {
-        let poly = TestValue::Poly(VirtualPolynomial::from_poly(PolyVariant::SparseMle {
-            num_vars: 3,
-            evals: vec![
-                (5, Fr::from(10u64)),
-                (5, Fr::from(7u64)),
-                (2, Fr::from(3u64)),
-            ],
-        }));
-        // index 5: duplicate entries sum 10 + 7 = 17.
-        assert_eq!(
-            poly.clone()
-                .value_eval(TestValue::VecBool(vec![true, false, true])),
-            TestValue::Scalar(Fr::from(17u64))
-        );
-        // index 7 absent -> 0.
-        assert_eq!(
-            poly.value_eval(TestValue::VecBool(vec![true, true, true])),
-            TestValue::Scalar(Fr::zero())
-        );
-    }
-
-    #[test]
-    fn boolean_eval_equals_scalar_point() {
-        let table: Vec<Fr> = (0..8).map(|i| Fr::from((i * i + 1) as u64)).collect();
-        let poly = TestValue::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-            DenseMultilinearExtension::from_evaluations_vec(3, table),
-        )));
-        for idx in 0..8usize {
-            let bits = vec![idx & 1 == 1, (idx >> 1) & 1 == 1, (idx >> 2) & 1 == 1];
-            let via_bool = poly.clone().value_eval(TestValue::VecBool(bits.clone()));
-            let scalars: Vec<Fr> = bits
-                .iter()
-                .map(|b| if *b { Fr::one() } else { Fr::zero() })
-                .collect();
-            let via_scalar = poly.clone().value_eval(TestValue::VecScalar(scalars));
-            assert_eq!(via_bool, via_scalar, "mismatch at idx {idx}");
-        }
     }
 
     // Helper trait to extract inner values
@@ -4147,36 +3850,6 @@ mod value_tests {
         let lhs = a.clone() * (g1.clone() + g2.clone());
         let rhs = (a.clone() * g1) + (a * g2);
         assert_eq!(lhs, rhs);
-    }
-
-    // ========== Boolean Operations ==========
-
-    #[test]
-    fn test_bool_and_commutativity() {
-        let a = TestValue::Bool(true);
-        let b = TestValue::Bool(false);
-        assert_eq!(a.clone() & b.clone(), b & a);
-    }
-
-    #[test]
-    fn test_bool_or_commutativity() {
-        let a = TestValue::Bool(true);
-        let b = TestValue::Bool(false);
-        assert_eq!(a.clone() | b.clone(), b | a);
-    }
-
-    #[test]
-    fn test_bool_and_identity() {
-        let a = TestValue::Bool(true);
-        let true_val = TestValue::Bool(true);
-        assert_eq!(a.clone() & true_val, a);
-    }
-
-    #[test]
-    fn test_bool_or_identity() {
-        let a = TestValue::Bool(false);
-        let false_val = TestValue::Bool(false);
-        assert_eq!(a.clone() | false_val, a);
     }
 
     // ========== Index Operations ==========
@@ -4833,58 +4506,6 @@ mod value_tests {
         let zero = G2Projective::zero();
         let expected = TestValue::VecG2(vec![zero, zero]);
         assert_eq!(result, expected);
-    }
-
-    // ========== Boolean Edge Cases ==========
-
-    #[test]
-    fn test_bool_and_associativity() {
-        let a = TestValue::Bool(true);
-        let b = TestValue::Bool(false);
-        let c = TestValue::Bool(true);
-        assert_eq!((a.clone() & b.clone()) & c.clone(), a & (b & c));
-    }
-
-    #[test]
-    fn test_bool_or_associativity() {
-        let a = TestValue::Bool(true);
-        let b = TestValue::Bool(false);
-        let c = TestValue::Bool(true);
-        assert_eq!((a.clone() | b.clone()) | c.clone(), a | (b | c));
-    }
-
-    #[test]
-    fn test_bool_and_annihilator() {
-        // a & false = false
-        let a = TestValue::Bool(true);
-        let f = TestValue::Bool(false);
-        assert_eq!(a & f, TestValue::Bool(false));
-    }
-
-    #[test]
-    fn test_bool_or_annihilator() {
-        // a | true = true
-        let a = TestValue::Bool(false);
-        let t = TestValue::Bool(true);
-        assert_eq!(a | t, TestValue::Bool(true));
-    }
-
-    #[test]
-    fn test_bool_and_idempotent() {
-        // a & a = a
-        let a = TestValue::Bool(true);
-        assert_eq!(a.clone() & a.clone(), a);
-        let b = TestValue::Bool(false);
-        assert_eq!(b.clone() & b.clone(), b);
-    }
-
-    #[test]
-    fn test_bool_or_idempotent() {
-        // a | a = a
-        let a = TestValue::Bool(true);
-        assert_eq!(a.clone() | a.clone(), a);
-        let b = TestValue::Bool(false);
-        assert_eq!(b.clone() | b.clone(), b);
     }
 
     // ========== Additional Distributivity Tests ==========

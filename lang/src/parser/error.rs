@@ -36,8 +36,6 @@ pub enum InputError<'pest> {
     PairingGroup(Tid, Tid, Tid, UKind),
     #[error("KindError: Scalar<{0}> requires {0}: {1} to be a Group")]
     ScalarGroup(Set<Tid>, UKind),
-    #[error("ReservedType: Bool is a reserved type")]
-    ReservedType,
     #[error("EmptyDeclaration: Empty declaration body found: {0}{1}{2}")]
     EmptyDecl(Vid, UTypeVars, UArgs),
     #[error("Cyclic type alias dependency: {0}")]

@@ -71,7 +71,6 @@ mod tests {
     #[test]
     fn test_equ_vec_uni_different_degrees() {
         use crate::Var;
-        use lang::ast::BinOp;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
@@ -82,7 +81,7 @@ mod tests {
         let uni4 = ATyp::Uni(4);
         let vec_uni2 = ATyp::Vec(Box::new(uni2.clone()), 2);
         let vec_uni4 = ATyp::Vec(Box::new(uni4.clone()), 2);
-        let bool_typ = ATyp::bool();
+        let unit_typ = ATyp::unit();
 
         let var_a = Var::from_node(NodeIndex::new(0), vec_uni2.clone(), Qualifier::Private);
         ideal.register(&var_a);
@@ -90,13 +89,12 @@ mod tests {
         let var_b = Var::from_node(NodeIndex::new(1), vec_uni4.clone(), Qualifier::Private);
         ideal.register(&var_b);
 
-        let var_r = Var::from_node(NodeIndex::new(2), bool_typ.clone(), Qualifier::Private);
+        let var_r = Var::from_node(NodeIndex::new(2), unit_typ.clone(), Qualifier::Private);
         ideal.register(&var_r);
 
         builder.add_op(
             var_r.clone(),
-            Op::Bin(
-                BinOp::Equ,
+            Op::Check(
                 mk::<ArkBls12_381>(Op::Ref(
                     graph::Ref::new(NodeIndex::new(0)),
                     vec_uni2.clone(),
@@ -105,7 +103,6 @@ mod tests {
                     graph::Ref::new(NodeIndex::new(1)),
                     vec_uni4.clone(),
                 )),
-                bool_typ.clone(),
             ),
             &mut ideal,
         );
@@ -119,7 +116,6 @@ mod tests {
     #[test]
     fn test_equ_scalar_has_var_constraint_and_diff() {
         use crate::Var;
-        use lang::ast::BinOp;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
@@ -130,15 +126,13 @@ mod tests {
         ideal.register(&var_a);
         let var_b = Var::from_node(NodeIndex::new(1), ATyp::scalar(), Qualifier::Private);
         ideal.register(&var_b);
-        let var_r = Var::from_node(NodeIndex::new(2), ATyp::bool(), Qualifier::Private);
+        let var_r = Var::from_node(NodeIndex::new(2), ATyp::unit(), Qualifier::Private);
 
         builder.add_op(
             var_r.clone(),
-            Op::Bin(
-                BinOp::Equ,
+            Op::Check(
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::scalar())),
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::scalar())),
-                ATyp::bool(),
             ),
             &mut ideal,
         );
@@ -156,14 +150,13 @@ mod tests {
                 .generating_set
                 .iter()
                 .any(|p| *p == Polynomial::var(&r_slot)),
-            "basis should NOT contain var_poly(r) for Bool ideal (== is an assertion, not a computation)"
+            "basis should NOT contain var_poly(r) for Unit ideal (== is an assertion, not a computation)"
         );
     }
 
     #[test]
-    fn test_equ_uni_bool_ideal_bare_diffs() {
+    fn test_equ_uni_unit_ideal_bare_diffs() {
         use crate::Var;
-        use lang::ast::BinOp;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
@@ -174,15 +167,13 @@ mod tests {
         ideal.register(&var_a);
         let var_b = Var::from_node(NodeIndex::new(1), ATyp::Uni(2), Qualifier::Private);
         ideal.register(&var_b);
-        let var_r = Var::from_node(NodeIndex::new(2), ATyp::bool(), Qualifier::Private);
+        let var_r = Var::from_node(NodeIndex::new(2), ATyp::unit(), Qualifier::Private);
 
         builder.add_op(
             var_r.clone(),
-            Op::Bin(
-                BinOp::Equ,
+            Op::Check(
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Uni(2))),
-                ATyp::bool(),
             ),
             &mut ideal,
         );
@@ -194,7 +185,7 @@ mod tests {
                 .generating_set
                 .iter()
                 .any(|p| *p == Polynomial::var(&r_slot)),
-            "basis should NOT contain var_poly(r) for Bool ideal"
+            "basis should NOT contain var_poly(r) for Unit ideal"
         );
 
         for j in 0..3 {
@@ -211,14 +202,13 @@ mod tests {
 
         assert!(
             !ideal.pl.contains(&r_slot),
-            "Bool ideal slot should NOT be defined via pl"
+            "Unit ideal slot should NOT be defined via pl"
         );
     }
 
     #[test]
     fn test_equ_uni_different_degrees_lifts_both() {
         use crate::Var;
-        use lang::ast::BinOp;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
@@ -229,15 +219,13 @@ mod tests {
         ideal.register(&var_a);
         let var_b = Var::from_node(NodeIndex::new(1), ATyp::Uni(4), Qualifier::Private);
         ideal.register(&var_b);
-        let var_r = Var::from_node(NodeIndex::new(2), ATyp::bool(), Qualifier::Private);
+        let var_r = Var::from_node(NodeIndex::new(2), ATyp::unit(), Qualifier::Private);
 
         builder.add_op(
             var_r.clone(),
-            Op::Bin(
-                BinOp::Equ,
+            Op::Check(
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Uni(4))),
-                ATyp::bool(),
             ),
             &mut ideal,
         );
@@ -248,7 +236,7 @@ mod tests {
                 .generating_set
                 .iter()
                 .any(|p| *p == Polynomial::var(&r_slot)),
-            "basis should NOT contain var_poly(r) for Bool ideal"
+            "basis should NOT contain var_poly(r) for Unit ideal"
         );
 
         let lub_len = ATyp::Uni(4).physical_len();

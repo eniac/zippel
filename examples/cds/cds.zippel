@@ -20,11 +20,10 @@ proto cds<G: Group, F: Scalar<G>, N: 2, K: 1>(
     // The subset of K indices (1-based) where the witness is unknown
     private u_points: [F; K],
     private u_evals: [F; K]
-) where let schnorr = [ public_keys[i] == g * w[i] for i in 0..N ];
-    reduce(&&, schnorr) &&
-    reduce(&&, [ b[i] * (1 - b[i]) == 0 for i in 0..N ]) &&
-    reduce(&&, [ (1 - b[i]) * (eval_points[i] - u_points[0]) == 0 for i in 0..N ]) &&
-    reduce(&&, [ (1 - b[i]) * (c_sim[i] - u_evals[0]) == 0 for i in 0..N ]) {
+) where [public_keys[i] for i in 0..N] == [g * w[i] for i in 0..N];
+    [b[i] * (1 - b[i]) for i in 0..N] == [0 for i in 0..N];
+    [(1 - b[i]) * (eval_points[i] - u_points[0]) for i in 0..N] == [0 for i in 0..N];
+    [(1 - b[i]) * (c_sim[i] - u_evals[0]) for i in 0..N] == [0 for i in 0..N] {
 
     // Step 1: Initial Commitments
     // For i in A: m1 = g * r[i]
@@ -61,7 +60,9 @@ proto cds<G: Group, F: Scalar<G>, N: 2, K: 1>(
     // directly avoids that intermediate variable.)
     verify(
         g * m2_transcript[0] == m1_transcript[0] + public_keys[0] * c_transcript[0]
-        && g * m2_transcript[1] == m1_transcript[1] + public_keys[1] * c_transcript[1]
+    );
+    verify(
+        g * m2_transcript[1] == m1_transcript[1] + public_keys[1] * c_transcript[1]
     );
     
     // 5.b: Verify c_transcript is a valid degree K threshold sharing of s
@@ -81,5 +82,5 @@ proto cds<G: Group, F: Scalar<G>, N: 2, K: 1>(
     // 
     // let polynomial_checks = [ c_transcript[i + K] == verifier_check_evals[i] for i in 0..N-K ];
     // verify(reduce(&&, polynomial_checks));
-    verify(true)
+    verify(1 == 1)
 }

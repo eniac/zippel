@@ -7,7 +7,6 @@
 
 use std::collections::HashMap;
 
-use ark_ff::{One, Zero};
 use backend::op::HasOpFactory;
 use backend::{ABase, ATyp, ArkConfig, ArkScalarOps, Value};
 use graph::{GOp, Op, Ref};
@@ -404,17 +403,8 @@ impl<C: ArkConfig> PolySource<C> {
     pub fn to_poly_value(v: &Value<C>) -> Vec<Polynomial<C::F>> {
         match v {
             Value::Scalar(s) => vec![Polynomial::lit(s)],
-            Value::Bool(b) => vec![Polynomial::lit(&if *b {
-                C::F::one()
-            } else {
-                C::F::zero()
-            })],
             Value::Index(i) => vec![Polynomial::lit(&C::FOps::from_usize(*i))],
             Value::Vec(v) => v.iter().flat_map(|v| Self::to_poly_value(v)).collect(),
-            Value::VecBool(v) => v
-                .iter()
-                .map(|b| Polynomial::lit(&if *b { C::F::one() } else { C::F::zero() }))
-                .collect::<Vec<_>>(),
             Value::VecScalar(v) => v.iter().map(Polynomial::lit).collect::<Vec<_>>(),
             Value::VecIndex(v) => v
                 .iter()
@@ -443,24 +433,6 @@ mod tests {
     }
 
     #[test]
-    fn test_ideal_builder_to_poly_value_bool_true() {
-        use backend::Value;
-
-        let val = Value::Bool(true);
-        let poly = PolySource::<ArkBls12_381>::to_poly_value(&val);
-        assert_eq!(poly.len(), 1);
-    }
-
-    #[test]
-    fn test_ideal_builder_to_poly_value_bool_false() {
-        use backend::Value;
-
-        let val = Value::Bool(false);
-        let poly = PolySource::<ArkBls12_381>::to_poly_value(&val);
-        assert_eq!(poly.len(), 1);
-    }
-
-    #[test]
     fn test_ideal_builder_to_poly_value_index() {
         use backend::Value;
 
@@ -475,15 +447,6 @@ mod tests {
         use backend::Value;
 
         let val = Value::VecScalar(vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]);
-        let poly = PolySource::<ArkBls12_381>::to_poly_value(&val);
-        assert_eq!(poly.len(), 3);
-    }
-
-    #[test]
-    fn test_ideal_builder_to_poly_value_vec_bool() {
-        use backend::Value;
-
-        let val = Value::VecBool(vec![true, false, true]);
         let poly = PolySource::<ArkBls12_381>::to_poly_value(&val);
         assert_eq!(poly.len(), 3);
     }

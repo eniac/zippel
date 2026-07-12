@@ -401,12 +401,17 @@ impl<C: ArkConfig, A> Dag<C, A> {
             .collect()
     }
 
-    /// Get all verifier assertions, check nodes with no outgoing edges
+    /// Get all verifier assertions: `Check` nodes with no outgoing edges
+    /// that have an incoming transcript edge. Relation `Check` nodes (from
+    /// `where` clauses) lack a transcript edge and are excluded — they are
+    /// handled by the relation transitive closure, not the verifier TC.
     pub fn find_check(&self) -> Vec<NodeIndex> {
         self.node_indices()
             .filter(|&n| match &self[n] {
                 Node::Op(op, _) | Node::Transcr(op, _) => {
-                    matches!(&**op, Op::Check(_)) && self.nodes_from(n).count() == 0
+                    matches!(&**op, Op::Check(_, _))
+                        && self.nodes_from(n).count() == 0
+                        && self.transcript_edge(n, Direction::Incoming).is_some()
                 }
                 _ => false,
             })
@@ -1207,7 +1212,15 @@ impl<C: HasOpFactory> UDag<C> {
                         vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
                     }
                 }
-                self.add_top_exp(relation, &mut start, &kctx, fctx, &vctx, &vars)?;
+                for (lhs, rhs) in relation {
+                    let oa =
+                        self.add_exp(lhs, &mut start, DepType::Data, &kctx, fctx, &vctx, &vars)?;
+                    let ob =
+                        self.add_exp(rhs, &mut start, DepType::Data, &kctx, fctx, &vctx, &vars)?;
+                    let ncheck = self.add_node(Node::check(&oa, &ob));
+                    self.add_edges(DepType::Data, ncheck, oa);
+                    self.add_edges(DepType::Data, ncheck, ob);
+                }
             }
             CBody::Func { body } => {
                 let mut start = self.add_node(Node::inp(sig.name.clone()));
@@ -1339,7 +1352,7 @@ impl<C: HasOpFactory> UDag<C> {
     ) -> Result<Option<GOp<C>>, GraphError> {
         match exp {
             CExp::Lit(n) => Ok(Some(GOp::Value(Value::Index(*n)))),
-            CExp::Bool(b) => Ok(Some(GOp::Value(Value::Bool(*b)))),
+            CExp::Unit => Ok(Some(GOp::Value(Value::Index(0)))),
             CExp::Range(r) => Ok(Some(GOp::range(*r))),
             CExp::Var(id) => {
                 if let Some(level) = binders.iter().rposition(|(v, _)| v == id) {
@@ -1540,7 +1553,7 @@ impl<C: HasOpFactory> UDag<C> {
                 }
             }
             CExp::Lit(_)
-            | CExp::Bool(_)
+            | CExp::Unit
             | CExp::Range(_)
             | CExp::Random(_, _)
             | CExp::Challenge(_, _) => exp,
@@ -1664,7 +1677,7 @@ impl<C: HasOpFactory> UDag<C> {
     fn exp_mentions_free_var(exp: &CExp, target: &Vid) -> bool {
         match exp {
             CExp::Var(id) => id == target,
-            CExp::Lit(_) | CExp::Bool(_) | CExp::Range(_) => false,
+            CExp::Lit(_) | CExp::Unit | CExp::Range(_) => false,
             CExp::Interpolate(points, evals) => {
                 points
                     .as_ref()
@@ -1681,9 +1694,12 @@ impl<C: HasOpFactory> UDag<C> {
             | CExp::Coef(p)
             | CExp::Mle(p)
             | CExp::Reduce(_, p)
-            | CExp::Assert(p)
-            | CExp::Verify(p)
             | CExp::Proj(p, _) => Self::exp_mentions_free_var(p, target),
+            CExp::Assert(lhs, rhs, cont) | CExp::Verify(lhs, rhs, cont) => {
+                Self::exp_mentions_free_var(lhs, target)
+                    || Self::exp_mentions_free_var(rhs, target)
+                    || Self::exp_mentions_free_var(cont, target)
+            }
             CExp::Vec(xs) | CExp::App(_, xs) => {
                 xs.0.iter().any(|x| Self::exp_mentions_free_var(x, target))
             }
@@ -1756,7 +1772,8 @@ impl<C: HasOpFactory> UDag<C> {
                 // Literals get appended to the last node [self.it]
                 CExp::Lit(n) => return Ok(GOp::Value(Value::Index(n))),
 
-                CExp::Bool(b) => return Ok(GOp::Value(Value::Bool(b))),
+                // Unit value — no-op
+                CExp::Unit => return Ok(GOp::Value(Value::Index(0))),
 
                 // Variables are edges, no new nodes are added
                 CExp::Var(id) => return Self::op_from_var(&id, &vars),
@@ -2314,40 +2331,32 @@ impl<C: HasOpFactory> UDag<C> {
                     exp = r;
                     continue;
                 }
-                CExp::Assert(box a) => {
-                    let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                CExp::Assert(box lhs, box rhs, box cont) => {
+                    let oa = self.add_exp(lhs, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let ob = self.add_exp(rhs, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Add new node
-                    let nassert = self.add_node(Node::check(&oa));
+                    let nassert = self.add_node(Node::check(&oa, &ob));
                     // Add edges
                     self.add_edges(edge_type, nassert, oa);
+                    self.add_edges(edge_type, nassert, ob);
                     // Assert depends on the full transcript (implicit ordering)
                     self.add_edge(*transcr, nassert, Dep::transcript());
-                    return Ok(GOp::underscore(
-                        nassert,
-                        ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                            TypeError::next(
-                                TypeError::exp(kctx, &vctx, &exp),
-                                TypeError::ark(kctx, &vctx, &exp, &typ),
-                            )
-                        })?,
-                    ));
+                    // Trampoline: continue loop with cont
+                    exp = cont;
+                    continue;
                 }
-                CExp::Verify(box a) => {
-                    let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                CExp::Verify(box lhs, box rhs, box cont) => {
+                    let oa = self.add_exp(lhs, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let ob = self.add_exp(rhs, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Add new node
-                    let nverify = self.add_node(Node::check(&oa));
+                    let nverify = self.add_node(Node::check(&oa, &ob));
                     self.add_edges(edge_type, nverify, oa);
+                    self.add_edges(edge_type, nverify, ob);
                     // Verify depends on the full transcript (implicit ordering)
                     self.add_edge(*transcr, nverify, Dep::transcript());
-                    return Ok(GOp::underscore(
-                        nverify,
-                        ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                            TypeError::next(
-                                TypeError::exp(kctx, &vctx, &exp),
-                                TypeError::ark(kctx, &vctx, &exp, &typ),
-                            )
-                        })?,
-                    ));
+                    // Trampoline: continue loop with cont
+                    exp = cont;
+                    continue;
                 }
                 CExp::Fun(fun_vars, box body) => {
                     // Convert the Fun expression body to a PolyVariant

@@ -144,9 +144,6 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             Op::Bin(BinOp::Add, a, b, _) => {
                 ops::addsub::add_op(&mut ctx, &var, &a, &b, &var.typ);
             }
-            Op::Bin(BinOp::And, ref a, ref b, _) => {
-                ops::mul::mul_op(&mut ctx, &var, a, b, &var.typ);
-            }
             Op::Bin(BinOp::Sub, a, b, _) => {
                 ops::addsub::sub_op(&mut ctx, &var, &a, &b, &var.typ);
             }
@@ -162,10 +159,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             Op::Bin(BinOp::Rem, ref a, ref b, _) => {
                 ops::div::div_rem_op(&mut ctx, &var, a, b, true, true);
             }
-            Op::Bin(BinOp::Equ, a, b, _) => {
-                ops::equ::equ_op(&mut ctx, &var, &a, &b);
-            }
-            Op::Check(a) => ctx.builder.add_op(var, a.get().clone(), ctx.ideal),
+            Op::Check(ref a, ref b) => ops::equ::equ_op(&mut ctx, &var, a, b),
             Op::Challenge(_, _) | Op::Random(_, _) => {}
             Op::Interpolate(ref points, ref evals) => {
                 ops::interpolate::interpolate_op(&mut ctx, var, points, evals);

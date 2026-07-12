@@ -109,22 +109,22 @@ proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
     //       (A z) ⊙ (A z) == (B z), element-wise.
     //     With Az and Bz supplied as inputs this is the prover
     //     precondition; the protocol body attests to it succinctly.
-    reduce(&&, [z_a_evals[i] * z_a_evals[i] == z_b_evals[i] for i in 0..K])
+    [z_a_evals[i] * z_a_evals[i] for i in 0..K] == [z_b_evals[i] for i in 0..K];
     // (2) SRS trapdoor identities (Fig. 6 Generator).
     //     Verifier keys expose (alpha, beta, tau, delta2) via G1/G2:
-    && alpha_g   == g_g1 * alpha
-    && beta_g    == g_g1 * beta
-    && tau_h     == h_g2 * tau
-    && delta2_h  == h_g2 * delta2
+    alpha_g   == g_g1 * alpha;
+    beta_g    == g_g1 * beta;
+    tau_h     == h_g2 * tau;
+    delta2_h  == h_g2 * delta2;
     //     Opening-proof bases: Σ_A[i] = alpha·τ^i·G, Σ_B[i] = beta·τ^i·G,
     //     Σ_{q'}[i] = τ^i·G, all indexed by i in 0..K.
-    && reduce(&&, [sigma_a[i]       == g_g1 * (alpha * (tau ^ i)) for i in 0..K])
-    && reduce(&&, [sigma_b[i]       == g_g1 * (beta  * (tau ^ i)) for i in 0..K])
-    && reduce(&&, [sigma_q_prime[i] == g_g1 * (tau ^ i)           for i in 0..K])
+    [sigma_a[i]       for i in 0..K] == [g_g1 * (alpha * (tau ^ i)) for i in 0..K];
+    [sigma_b[i]       for i in 0..K] == [g_g1 * (beta  * (tau ^ i)) for i in 0..K];
+    [sigma_q_prime[i] for i in 0..K] == [g_g1 * (tau ^ i)           for i in 0..K];
     //     Quotient basis: Σ_q[i] = (τ^i / δ_2)·G. State multiplicatively
     //     to avoid F-division in the where clause:
     //       Σ_q[i] · δ_2 = τ^i · G.
-    && reduce(&&, [sigma_q[i] * delta2 == g_g1 * (tau ^ i) for i in 0..K])
+    [sigma_q[i] * delta2 for i in 0..K] == [g_g1 * (tau ^ i) for i in 0..K]
     // (Structural identity for sigma_w — which pins the witness-side
     // basis Σ_w[i] = (α a_i(τ) + β b_i(τ))/δ_2 · G to the A/B Lagrange
     // polynomials — is intentionally omitted: it would require

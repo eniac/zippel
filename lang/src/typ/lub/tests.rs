@@ -198,27 +198,6 @@ fn lub_typ() {
     );
     assert!(CTyp::lub_pow(&CTyp::mle(&f, 10), &tr, &ctx).is_err());
 
-    assert_eq!(
-        CTyp::lub_and(&CTyp::Bool, &CTyp::Bool, &ctx),
-        Ok(CTyp::Bool)
-    );
-    assert_eq!(
-        CTyp::lub_and(
-            &CTyp::vec(&CTyp::Bool, 10),
-            &CTyp::vec(&CTyp::Bool, 10),
-            &ctx
-        ),
-        Ok(CTyp::vec(&CTyp::Bool, 10))
-    );
-    assert_eq!(
-        CTyp::lub_and(&CTyp::Bool, &CTyp::vec(&CTyp::Bool, 10), &ctx),
-        Err(LubError::and(&CTyp::Bool, &CTyp::vec(&CTyp::Bool, 10)))
-    );
-    assert_eq!(
-        CTyp::lub_and(&CTyp::vec(&CTyp::Bool, 10), &CTyp::Bool, &ctx),
-        Err(LubError::and(&CTyp::vec(&CTyp::Bool, 10), &CTyp::Bool))
-    );
-
     // Regression (phase 7): Poly * Poly degree math.
     // Poly(F, n, m) = n variables, max total degree m. Product degrees add.
     // Uni<F, 3> * Uni<F, 4> = Uni<F, 7>
@@ -494,12 +473,6 @@ mod error_tests {
     }
 
     #[test]
-    fn test_lub_error_and() {
-        let err = LubError::and(&"A", &"B");
-        assert!(matches!(err, LubError::Bin(BinOp::And, _, _)));
-    }
-
-    #[test]
     fn test_lub_error_concat() {
         let err = LubError::concat(&"A", &"B");
         assert!(matches!(err, LubError::Bin(BinOp::Concat, _, _)));
@@ -533,8 +506,6 @@ mod error_tests {
         assert!(Range::lub_op(BinOp::Pow, &a, &b, &ctx).is_ok());
         assert!(Range::lub_op(BinOp::Rem, &a, &b, &ctx).is_ok());
         assert!(Range::lub_op(BinOp::Dot, &a, &b, &ctx).is_ok());
-        assert!(Range::lub_op(BinOp::And, &a, &b, &ctx).is_err());
-        assert!(Range::lub_op(BinOp::Equ, &a, &b, &ctx).is_ok());
 
         // Concat may succeed or fail depending on ranges - test with contiguous ranges
         let c = Range {
@@ -719,22 +690,6 @@ mod range_lub_tests {
     }
 
     #[test]
-    fn test_range_lub_and_error() {
-        let a = Range {
-            start: 1,
-            step: 1,
-            end: 5,
-        };
-        let b = Range {
-            start: 2,
-            step: 1,
-            end: 4,
-        };
-        let result = Range::lub_and(&a, &b, &Nothing);
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn test_range_lub_concat_valid() {
         let a = Range {
             start: 1,
@@ -794,14 +749,6 @@ mod tid_lub_tests {
         let f = Tid::from("F");
         let ctx = Ctx::from([(f.clone(), Kind::Field)]);
         let result = Tid::lub_concat(&f, &f, &ctx);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_tid_lub_and_error() {
-        let f = Tid::from("F");
-        let ctx = Ctx::from([(f.clone(), Kind::Field)]);
-        let result = Tid::lub_and(&f, &f, &ctx);
         assert!(result.is_err());
     }
 

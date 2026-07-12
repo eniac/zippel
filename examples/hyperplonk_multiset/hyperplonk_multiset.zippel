@@ -48,7 +48,7 @@ fn ms_round<F: Field, S: Size, N: 2^S>(
     public g_shift_evs:      [F; N],
     public eq_tau_evs:       [F; N],
     public alpha:            F
-) -> Bool {
+) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let evs_local = [residual_poly(t) for t in points];
     evs <- evs_local;
@@ -79,7 +79,7 @@ fn ms_round<F: Field, S: Size, N: 2^S>(
     let f_hat_at_r = v10_at_r - vt0_at_r * vt1_at_r;
     let g_hat_at_r = f2_at_r * v00_at_r - f1_at_r;
 
-    final_eval == (f_hat_at_r + alpha * g_hat_at_r) * eq_at_r
+    verify(final_eval == (f_hat_at_r + alpha * g_hat_at_r) * eq_at_r)
 }
 fn ms_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
     public curr_poly:        Poly<F, V, 3>,
@@ -93,7 +93,7 @@ fn ms_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
     public g_shift_evs:      [F; N],
     public eq_tau_evs:       [F; N],
     public alpha:            F
-) -> Bool {
+) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let zero = points[0] - points[0];
     let one = zero + 1;
@@ -189,8 +189,8 @@ proto hyperplonk_multiset<F: Field, S: Size, N: 2^S>(
     r0 <- challenge<F>;
     let prev = g0(r0);
 
-    verify(ms_round(p_poly, points, [r0], prev, r0, 1,
-                    sent_v, f_shift_evs, g_shift_evs, eq_tau_evs, alpha));
+    ms_round(p_poly, points, [r0], prev, r0, 1,
+                    sent_v, f_shift_evs, g_shift_evs, eq_tau_evs, alpha);
 
     // Product-tree root is 1 iff the multisets coincide.
     verify(sent_v[N - 1] == one)

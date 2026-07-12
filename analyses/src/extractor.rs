@@ -5,7 +5,6 @@ use backend::ATyp;
 use backend::ArkConfig;
 use backend::op::{GOp, HasOpFactory, mk};
 use graph::Op;
-use lang::ast::BinOp;
 
 /// Check whether a polynomial's group-variable terms are compatible with
 /// extracting a witness of the given type:
@@ -59,21 +58,12 @@ pub(crate) fn valid_extractor<C: ArkConfig>(witness_typ: &ATyp, poly: &Polynomia
 /// arguments and other witnesses, collectively serving as Skolem function
 /// for the existentially quantified intermediates.
 ///
-/// ## Replacing Equality nodes
+/// ## Replacing Check nodes
 ///
-/// `Op::Bin(BinOp::Equ, ...)` entries represent assertions, not definitions.
-/// They are neutralised to `Op::Ref(var)` — an identity operation that
-/// defines the result Var without emitting any assertion polynomial.
-///
-/// ## Shared builder and Var alignment
-///
-/// The `builder` is cloned befor
-///
-/// ## Replacing Equality nodes
-///
-/// `Op::Bin(BinOp::Equ, ...)` entries represent assertions.
-/// They are neutralised to `Op::Ref(var)` — an identity operation that
-/// defines the result Var without emitting any assertion polynomial.
+/// `Op::Check(lhs, rhs)` entries represent assertions (lhs == rhs), not
+/// definitions. They are neutralised to `Op::Ref(var)` — an identity
+/// operation that defines the result Var without emitting any assertion
+/// polynomial.
 ///
 /// ## Shared builder and Var alignment
 ///
@@ -104,7 +94,7 @@ fn strip_equ<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> TransClos<C> {
 
 fn strip_equ_op<C: ArkConfig + HasOpFactory>(op: GOp<C>, result: &Var) -> GOp<C> {
     match op {
-        Op::Bin(BinOp::Equ, ..) => Op::Ref(
+        Op::Check(_, _) => Op::Ref(
             backend::op::Ref(result.reference.node()),
             result.typ.clone(),
         ),
@@ -124,7 +114,6 @@ fn strip_equ_op<C: ArkConfig + HasOpFactory>(op: GOp<C>, result: &Var) -> GOp<C>
             mk(strip_equ_op(b.get().clone(), result)),
             typ,
         ),
-        Op::Check(a) => Op::Check(mk(strip_equ_op(a.get().clone(), result))),
         Op::Interpolate(pts, evals) => Op::Interpolate(
             mk(strip_equ_op(pts.get().clone(), result)),
             mk(strip_equ_op(evals.get().clone(), result)),

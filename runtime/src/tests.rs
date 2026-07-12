@@ -118,7 +118,7 @@ mod runtime_tests {
         .unwrap();
 
         assert_eq!(verify_results.len(), 1);
-        assert_eq!(verify_results[0], Value::Bool(true));
+        assert_eq!(verify_results[0], Value::Index(1));
     }
 
     #[test]

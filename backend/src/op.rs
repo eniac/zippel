@@ -10,8 +10,8 @@ use petgraph::graph::NodeIndex;
 use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 use std::fmt;
 use std::ops::{
-    Add, AddAssign, BitAnd, BitAndAssign, BitXor, BitXorAssign, Div, DivAssign, Mul, MulAssign,
-    Rem, RemAssign, Sub, SubAssign,
+    Add, AddAssign, BitXor, BitXorAssign, Div, DivAssign, Mul, MulAssign, Rem, RemAssign, Sub,
+    SubAssign,
 };
 use std::sync::RwLock;
 
@@ -95,8 +95,8 @@ pub enum Op<C: ArkConfig, R> {
     /// Explicit-domain reduce-map: `reduce(op, [body for x in domain])`.
     ReduceMap(BinOp, HOp<C>, HOp<C>),
 
-    /// Assertion or verification check
-    Check(HOp<C>),
+    /// Assertion or verification check: asserts/verifies that lhs == rhs
+    Check(HOp<C>, HOp<C>),
 
     /// Reduce a vector with a binary operation
     Reduce(BinOp, HOp<C>),
@@ -188,8 +188,6 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Bin(BinOp::Rem, _, _, _) => 7,
             Op::Bin(BinOp::Dot, _, _, _) => 8,
             Op::Bin(BinOp::Concat, _, _, _) => 9,
-            Op::Bin(BinOp::Equ, _, _, _) => 10,
-            Op::Bin(BinOp::And, _, _, _) => 11,
             Op::Bin(BinOp::Pow, _, _, _) => 12,
             Op::Pair(_, _, _) => 13,
             Op::Ram(_, _) => 14,
@@ -199,7 +197,7 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Challenge(_, _) => 18,
             Op::Interpolate(_, _) => 19,
             Op::Fft(_) => 20,
-            Op::Check(_) => 21,
+            Op::Check(_, _) => 21,
             Op::Poly(_) => 22,
             Op::Evaluate(_, _, _) => 23,
             Op::Map(_, _) => 30,
@@ -264,7 +262,20 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Ifft(op) => poly_typ_from_vec(op.typ()),
             // Op::Fft(p): p : Uni(m) → Vec<F, m + 1>.
             Op::Fft(op) => coef_typ_from_poly(op.typ()),
-            Op::Check(op) => op.typ(),
+            Op::Check(lhs, rhs) => {
+                // Check is a side-effect; its type is Unit.
+                // Operands must have compatible types (validated here via
+                // lub_equ, mirroring the type checker's ConstraintMismatch
+                // check).
+                ATyp::lub_equ(&lhs.typ(), &rhs.typ(), &Nothing).unwrap_or_else(|_| {
+                    panic!(
+                        "UncaughtError: Check operands have incompatible types: {} vs {}",
+                        lhs.typ(),
+                        rhs.typ()
+                    )
+                });
+                ATyp::unit()
+            }
             // Op::Poly(v): v : Vec<F, k> → Uni(k - 1) under the degree
             // convention (see docs/poly-encoding.md).
             Op::Poly(op) => poly_typ_from_vec(op.typ()),
@@ -405,13 +416,6 @@ impl<C: ArkConfig, R> Op<C, R> {
         Op::Value(Value::zero(typ))
     }
 
-    pub fn btrue() -> Self {
-        Op::Value(Value::Bool(true))
-    }
-    pub fn bfalse() -> Self {
-        Op::Value(Value::Bool(false))
-    }
-
     pub fn reference(r: R, typ: ATyp) -> Op<C, R> {
         Op::Ref(r, typ)
     }
@@ -441,8 +445,6 @@ impl<C: HasOpFactory> GOp<C> {
             BinOp::Pow => Self::pow(a, b, typ),
             BinOp::Dot => Self::dot(a, b, typ),
             BinOp::Concat => Self::concat(a, b, typ),
-            BinOp::Equ => Self::equ(a, b),
-            BinOp::And => Self::and(a, b, typ),
         }
     }
 
@@ -866,27 +868,12 @@ impl<C: HasOpFactory> GOp<C> {
         }
     }
 
-    pub fn equ(v1: Self, v2: Self) -> Self {
-        match (v1, v2) {
-            (Op::Value(a), Op::Value(b)) => Op::Value(a.value_equ(&b)),
-            (v1, v2) => Op::Bin(BinOp::Equ, mk::<C>(v1), mk::<C>(v2), ATyp::bool()),
-        }
-    }
-
-    pub fn and(v1: Self, v2: Self, typ: ATyp) -> Self {
-        match (v1, v2) {
-            (Op::Value(Value::Bool(false)), _) | (_, Op::Value(Value::Bool(false))) => Op::bfalse(),
-            (Op::Value(a), Op::Value(b)) => Op::Value(a & b),
-            (v1, v2) => Op::Bin(BinOp::And, mk::<C>(v1), mk::<C>(v2), typ),
-        }
-    }
-
     pub fn vec(vs: Vec<GOp<C>>) -> GOp<C> {
         Op::Vec(vs.into_iter().map(mk::<C>).collect())
     }
 
-    pub fn check(op: GOp<C>) -> GOp<C> {
-        Op::Check(mk::<C>(op))
+    pub fn check(lhs: GOp<C>, rhs: GOp<C>) -> GOp<C> {
+        Op::Check(mk::<C>(lhs), mk::<C>(rhs))
     }
 }
 
@@ -936,8 +923,12 @@ impl<C: ArkConfig> GOp<C> {
                 .into_iter()
                 .chain(v.references())
                 .collect(),
-            Op::Check(v)
-            | Op::Poly(v)
+            Op::Check(lhs, rhs) => lhs
+                .references()
+                .into_iter()
+                .chain(rhs.references())
+                .collect(),
+            Op::Poly(v)
             | Op::Mle(v)
             | Op::Coef(v)
             | Op::Reduce(_, v)
@@ -992,7 +983,10 @@ impl<C: HasOpFactory> GOp<C> {
             ),
             Op::Poly(op) => Op::Poly(mk::<C>(op.map_node_indices(f))),
             Op::Coef(op) => Op::Coef(mk::<C>(op.map_node_indices(f))),
-            Op::Check(op) => Op::Check(mk::<C>(op.map_node_indices(f))),
+            Op::Check(lhs, rhs) => Op::Check(
+                mk::<C>(lhs.map_node_indices(f)),
+                mk::<C>(rhs.map_node_indices(f)),
+            ),
             Op::Interpolate(points, evals) => Op::Interpolate(
                 mk::<C>(points.map_node_indices(f)),
                 mk::<C>(evals.map_node_indices(f)),
@@ -1028,7 +1022,7 @@ impl<C: HasOpFactory> GOp<C> {
             Op::Pair(a, b, typ) => {
                 Op::Pair(mk::<C>(a.map_refs(f)), mk::<C>(b.map_refs(f)), typ.clone())
             }
-            Op::Check(op) => Op::Check(mk::<C>(op.map_refs(f))),
+            Op::Check(lhs, rhs) => Op::Check(mk::<C>(lhs.map_refs(f)), mk::<C>(rhs.map_refs(f))),
             Op::Interpolate(points, evals) => {
                 Op::Interpolate(mk::<C>(points.map_refs(f)), mk::<C>(evals.map_refs(f)))
             }
@@ -1094,7 +1088,10 @@ impl<C: HasOpFactory> GOp<C> {
                     .map(|(k, v)| (k.clone(), mk::<C>(v.inline(vars, except))))
                     .collect(),
             ),
-            Op::Check(op) => op.inline(vars, except),
+            Op::Check(lhs, rhs) => Op::Check(
+                mk::<C>(lhs.inline(vars, except)),
+                mk::<C>(rhs.inline(vars, except)),
+            ),
             Op::Interpolate(points, evals) => Op::Interpolate(
                 mk::<C>(points.inline(vars, except)),
                 mk::<C>(evals.inline(vars, except)),
@@ -1191,13 +1188,6 @@ impl<C: HasOpFactory> BitXorAssign<GOp<C>> for GOp<C> {
     }
 }
 
-impl<C: HasOpFactory> BitAndAssign<GOp<C>> for GOp<C> {
-    fn bitand_assign(&mut self, other: GOp<C>) {
-        let typ = self.typ();
-        *self = Op::and(self.clone(), other, typ);
-    }
-}
-
 impl<C: HasOpFactory> Add for GOp<C> {
     type Output = GOp<C>;
 
@@ -1249,15 +1239,6 @@ impl<C: HasOpFactory> BitXor for GOp<C> {
     fn bitxor(self, other: GOp<C>) -> GOp<C> {
         let typ = self.typ().clone();
         Op::pow(self, other, typ)
-    }
-}
-
-impl<C: HasOpFactory> BitAnd for GOp<C> {
-    type Output = GOp<C>;
-
-    fn bitand(self, other: GOp<C>) -> GOp<C> {
-        let typ = self.typ();
-        Op::and(self, other, typ)
     }
 }
 
@@ -1393,9 +1374,11 @@ where
                 evals.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
-            Op::Check(v) => allocator.concat([
+            Op::Check(lhs, rhs) => allocator.concat([
                 allocator.text("(check "),
-                v.get().clone().pretty(allocator),
+                lhs.get().clone().pretty(allocator),
+                allocator.text(" == "),
+                rhs.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
             Op::Challenge(t, true) => allocator.text(format!("challenge<{}*>", t)),

@@ -257,7 +257,7 @@ mod tests {
 
         // Protocol with two separate verify statements → two Check nodes
         let src = r#"
-            proto two_checks<F: Field>(public x: F, public y: F) where true {
+            proto two_checks<F: Field>(public x: F, public y: F) where 1 == 1 {
                 verify(x == x);
                 verify(y == y)
             }
@@ -281,52 +281,13 @@ mod tests {
         add_scalar_input(&mut inputs, "y", 7);
         let computed = execute_graph_all(dag, inputs);
 
-        // Verify both check nodes produce Bool(true)
+        // Verify both check nodes produce Index(1) (equal)
         for (i, &check_idx) in checks.iter().enumerate() {
             match computed.get(&check_idx) {
-                Some(Value::Bool(true)) => {}
-                Some(v) => panic!("Check node {} produced {:?}, expected Bool(true)", i, v),
+                Some(Value::Index(1)) => {}
+                Some(v) => panic!("Check node {} produced {:?}, expected Index(1)", i, v),
                 None => panic!("Check node {} was not computed", i),
             }
-        }
-    }
-
-    #[test]
-    fn test_execute_single_check_conjunction() {
-        use crate::UDags;
-        use lang::ast::UModule;
-        use share::Ctx;
-
-        // Protocol with single verify using && → one Check node
-        let src = r#"
-            proto and_check<F: Field>(public x: F, public y: F) where true {
-                verify(x == x && y == y)
-            }
-        "#;
-        let m = UModule::from_str(src)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
-        let gs = UDags::<TestConfig>::from_module(m).unwrap();
-        let dag = &gs[0];
-
-        let checks = dag.find_check();
-        assert_eq!(
-            checks.len(),
-            1,
-            "Protocol with single verify (&&) should have one check node"
-        );
-
-        let mut inputs = test_inputs();
-        add_scalar_input(&mut inputs, "x", 5);
-        add_scalar_input(&mut inputs, "y", 7);
-        let computed = execute_graph_all(dag, inputs);
-
-        // The single check node should produce Bool(true)
-        match computed.get(&checks[0]) {
-            Some(Value::Bool(true)) => {}
-            Some(v) => panic!("Check node produced {:?}, expected Bool(true)", v),
-            None => panic!("Check node was not computed"),
         }
     }
 
@@ -338,7 +299,7 @@ mod tests {
 
         // Protocol with scattered verify statements throughout the body
         let src = r#"
-            proto scattered<F: Field>(public x: F, public y: F) where true {
+            proto scattered<F: Field>(public x: F, public y: F) where 1 == 1 {
                 a <- x + y;
                 verify(a == a);
                 b <- a + x;
@@ -364,11 +325,11 @@ mod tests {
         add_scalar_input(&mut inputs, "y", 7);
         let computed = execute_graph_all(dag, inputs);
 
-        // Verify all check nodes produce Bool(true)
+        // Verify all check nodes produce Index(1) (equal)
         for (i, &check_idx) in checks.iter().enumerate() {
             match computed.get(&check_idx) {
-                Some(Value::Bool(true)) => {}
-                Some(v) => panic!("Check node {} produced {:?}, expected Bool(true)", i, v),
+                Some(Value::Index(1)) => {}
+                Some(v) => panic!("Check node {} produced {:?}, expected Index(1)", i, v),
                 None => panic!("Check node {} was not computed", i),
             }
         }
@@ -382,7 +343,7 @@ mod tests {
 
         // Second verify has a false condition (x != y)
         let src = r#"
-            proto neg<F: Field>(public x: F, public y: F) where true {
+            proto neg<F: Field>(public x: F, public y: F) where 1 == 1 {
                 verify(x == x);
                 verify(x == y)
             }
@@ -402,10 +363,10 @@ mod tests {
         add_scalar_input(&mut inputs, "y", 7);
         let computed = execute_graph_all(dag, inputs);
 
-        // The second check should produce Bool(false)
+        // The second check should produce Index(0) (not equal)
         match computed.get(&checks[1]) {
-            Some(Value::Bool(false)) => {}
-            Some(v) => panic!("Second check node produced {:?}, expected Bool(false)", v),
+            Some(Value::Index(0)) => {}
+            Some(v) => panic!("Second check node produced {:?}, expected Index(0)", v),
             None => panic!("Second check node was not computed"),
         }
     }
@@ -418,7 +379,7 @@ mod tests {
 
         // First verify has a false condition (x != y)
         let src = r#"
-            proto neg2<F: Field>(public x: F, public y: F) where true {
+            proto neg2<F: Field>(public x: F, public y: F) where 1 == 1 {
                 verify(x == y);
                 verify(y == y)
             }
@@ -438,10 +399,10 @@ mod tests {
         add_scalar_input(&mut inputs, "y", 7);
         let computed = execute_graph_all(dag, inputs);
 
-        // The first check should produce Bool(false)
+        // The first check should produce Index(0) (not equal)
         match computed.get(&checks[0]) {
-            Some(Value::Bool(false)) => {}
-            Some(v) => panic!("First check node produced {:?}, expected Bool(false)", v),
+            Some(Value::Index(0)) => {}
+            Some(v) => panic!("First check node produced {:?}, expected Index(0)", v),
             None => panic!("First check node was not computed"),
         }
     }
@@ -484,8 +445,8 @@ mod tests {
 
         for (i, &idx) in checks.iter().enumerate() {
             match computed.get(&idx) {
-                Some(Value::Bool(true)) => {}
-                Some(v) => panic!("Check {} produced {:?}, expected Bool(true)", i, v),
+                Some(Value::Index(1)) => {}
+                Some(v) => panic!("Check {} produced {:?}, expected Index(1)", i, v),
                 None => panic!("Check {} was not computed", i),
             }
         }
@@ -530,13 +491,13 @@ mod tests {
 
         // The inlined verify(a == b) should fail; the protocol's own verify(r == a) passes.
         match computed.get(&checks[0]) {
-            Some(Value::Bool(false)) => {}
-            Some(v) => panic!("First check node produced {:?}, expected Bool(false)", v),
+            Some(Value::Index(0)) => {}
+            Some(v) => panic!("First check node produced {:?}, expected Index(0)", v),
             None => panic!("First check node was not computed"),
         }
         match computed.get(&checks[1]) {
-            Some(Value::Bool(true)) => {}
-            Some(v) => panic!("Second check node produced {:?}, expected Bool(true)", v),
+            Some(Value::Index(1)) => {}
+            Some(v) => panic!("Second check node produced {:?}, expected Index(1)", v),
             None => panic!("Second check node was not computed"),
         }
     }

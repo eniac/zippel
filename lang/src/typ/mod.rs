@@ -45,8 +45,8 @@ pub enum Typ<T, N> {
     Base(T),
     /// Fin within range
     Fin(Range<N>),
-    /// Boolean (BExp)
-    Bool,
+    /// Unit type (assert/verify/protocol return)
+    Unit,
     /// Record type with named fields
     Record(Ctx<String, Typ<T, N>>),
 }
@@ -77,7 +77,7 @@ impl<N: Clone> TidSubst for GTyp<N> {
                     field_typ.tid_subst(from, to);
                 });
             }
-            Typ::Fin(_) | Typ::Bool | Typ::Base(_) | Typ::Poly(_, _, _) => {}
+            Typ::Fin(_) | Typ::Unit | Typ::Base(_) | Typ::Poly(_, _, _) => {}
         }
     }
 }
@@ -120,8 +120,8 @@ impl<T, N> Typ<T, N> {
     pub fn fin(range: Range<N>) -> Self {
         Typ::Fin(range)
     }
-    pub fn bool() -> Self {
-        Typ::Bool
+    pub fn unit() -> Self {
+        Typ::Unit
     }
     pub fn record(fields: Ctx<String, Typ<T, N>>) -> Self {
         Typ::Record(fields)
@@ -249,7 +249,7 @@ impl<T: Clone, N: Clone> ToTraversal1<T> for Typ<T, N> {
             Typ::Base(b) => Ok(Typ::Base(f(b)?)),
             Typ::Vec(box b, n) => Ok(Typ::Vec(Box::new(b.traverse1(f)?), n)),
             Typ::Fin(r) => Ok(Typ::Fin(r)),
-            Typ::Bool => Ok(Typ::Bool),
+            Typ::Unit => Ok(Typ::Unit),
             Typ::Record(fields) => {
                 let pairs: Vec<_> = fields
                     .into_iter()
@@ -272,7 +272,7 @@ impl<T: Clone, N: Clone> ToTraversal2<N> for Typ<T, N> {
             Typ::Base(b) => Ok(Typ::Base(b)),
             Typ::Vec(box b, n) => Ok(Typ::Vec(Box::new(b.traverse2(f)?), f(n)?)),
             Typ::Fin(r) => Ok(Typ::Fin(r.traverse1(f)?)),
-            Typ::Bool => Ok(Typ::Bool),
+            Typ::Unit => Ok(Typ::Unit),
             Typ::Record(fields) => {
                 let pairs: Vec<_> = fields
                     .into_iter()
@@ -367,7 +367,7 @@ impl<N: Clone> TypeInline<N> for GTyp<N> {
             Typ::Vec(box t, n) => Typ::Vec(Box::new(t.type_inline(ctx)), n),
             Typ::Poly(b, m, n) => Typ::Poly(b, m, n),
             Typ::Fin(r) => Typ::Fin(r),
-            Typ::Bool => Typ::Bool,
+            Typ::Unit => Typ::Unit,
             Typ::Record(fields) => Typ::Record(Ctx::from_iter(
                 fields.into_iter().map(|(k, v)| (k, v.type_inline(ctx))),
             )),
@@ -414,7 +414,7 @@ where
                 r.pretty(allocator),
                 allocator.text(">"),
             ]),
-            Typ::Bool => allocator.text("Bool"),
+            Typ::Unit => allocator.text("Unit"),
             Typ::Record(fields) => {
                 let mut docs = Vec::new();
                 docs.push(allocator.text("{"));
@@ -512,7 +512,7 @@ impl<'pest> FromPest<'pest> for UTyp {
                 Ok(Typ::Poly(id, m, n))
             }
             Rule::fin_ty => Ok(Typ::fin(Range::from_pest(&mut pair.into_inner())?)),
-            Rule::bool_ty => Ok(Typ::Bool),
+            Rule::unit_ty => Ok(Typ::Unit),
             Rule::vec_ty => {
                 let mut inner = pair.into_inner();
                 let id = Typ::from_pest(&mut inner)?;
@@ -589,6 +589,6 @@ fn typ_parser() {
         })
     );
 
-    pairs = ZippelParser::parse(Rule::typ, "Bool").unwrap();
-    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::Bool);
+    pairs = ZippelParser::parse(Rule::typ, "Unit").unwrap();
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::Unit);
 }

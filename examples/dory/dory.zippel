@@ -20,17 +20,15 @@ fn dory_reduce<
     public final_gamma2: G2,
     private u_vec: [G1; 1],
     private g_vec: [G2; 1]
-) -> Bool {
+) -> Unit {
     // Prover sends u and g
     log_u <- u_vec[0];
     log_g <- g_vec[0];
 
     // Verifier checks
-    let check1 = c1 == pair(log_u, log_g);
-    let check2 = c2 == pair(log_u, final_gamma2);
-    let check3 = c3 == pair(final_gamma1, log_g);
-
-    check1 && check2 && check3
+    verify(c1 == pair(log_u, log_g));
+    verify(c2 == pair(log_u, final_gamma2));
+    verify(c3 == pair(final_gamma1, log_g))
 }
 
 // Intermediate case: LOG_N = 1 (size = 2 elements).
@@ -59,7 +57,7 @@ fn dory_reduce<
     private gamma2_prime: [G2; 1],
     private u_vec: [G1; 2],
     private g_vec: [G2; 2]
-) -> Bool {
+) -> Unit {
     // 1. Prover computes left/right commitments using the next level's bases
     let u_l = u_vec[0..1];
     let u_r = u_vec[1..2];
@@ -158,7 +156,7 @@ fn dory_reduce<
     private gamma2_prime: [G2; 2^(LOG_N-1)],
     private u_vec: [G1; 2^LOG_N],
     private g_vec: [G2; 2^LOG_N]
-) -> Bool {
+) -> Unit {
     // 1. Prover computes left/right commitments using the next level's bases
     let u_l = u_vec[0..2^(LOG_N-1)];
     let u_r = u_vec[2^(LOG_N-1)..2^LOG_N];
@@ -282,12 +280,12 @@ proto dory_eval<
     private u_vec: [G1; 2^LOG_N],
     private g_vec: [G2; 2^LOG_N]
 ) where
-    c1 == reduce(+, [pair(u_vec[i], g_vec[i]) for i in 0..2^LOG_N]) &&
-    c2 == reduce(+, [pair(u_vec[i], gamma2[i]) for i in 0..2^LOG_N]) &&
+    c1 == reduce(+, [pair(u_vec[i], g_vec[i]) for i in 0..2^LOG_N]);
+    c2 == reduce(+, [pair(u_vec[i], gamma2[i]) for i in 0..2^LOG_N]);
     c3 == reduce(+, [pair(gamma1[i], g_vec[i]) for i in 0..2^LOG_N])
 {
     // Start the reduction proof
-    let verified = dory_reduce(
+    dory_reduce(
         c1,
         c2,
         c3,
@@ -304,6 +302,5 @@ proto dory_eval<
         gamma2_prime,
         u_vec,
         g_vec
-    );
-    verify(verified)
+    )
 }

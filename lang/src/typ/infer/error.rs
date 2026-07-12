@@ -116,8 +116,11 @@ pub enum TypeError {
     #[error("FuncNotFound: No matching definition found for function:\n\t{0} |- {1} ( {2} )")]
     FuncNotFound(Set<CSig>, Vid, CTyps),
 
-    #[error("BoolError: Expected boolean expression:\n\t{0}, {1} |- {2}")]
-    Bool(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
+    #[error("UnitError: Expected unit-typed expression:\n\t{0}, {1} |- {2}")]
+    Unit(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
+
+    #[error("ConstraintMismatchError: Constraint operands have incompatible types {4} vs {5}:\n\t{0}, {1} |- {2} == {3}")]
+    ConstraintMismatch(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CExp, CTyp, CTyp),
 
     #[error("FuncRetError: The return type of function {3} must be {4} but is found:\n\t{0}, {1} |- {2} : {5}")]
     FuncRet(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, Vid, CTyp, CTyp),
@@ -317,8 +320,25 @@ impl TypeError {
     ) -> Self {
         TypeError::Ram(kctx.clone(), vctx.clone(), a.clone(), ta, b.clone(), tb)
     }
-    pub fn bool(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
-        TypeError::Bool(kctx.clone(), vctx.clone(), e.clone())
+    pub fn unit(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
+        TypeError::Unit(kctx.clone(), vctx.clone(), e.clone())
+    }
+    pub fn constraint_mismatch(
+        kctx: &Ctx<Tid, CKind>,
+        vctx: &Ctx<Vid, CTyp>,
+        lhs: &CExp,
+        rhs: &CExp,
+        ta: &CTyp,
+        tb: &CTyp,
+    ) -> Self {
+        TypeError::ConstraintMismatch(
+            kctx.clone(),
+            vctx.clone(),
+            lhs.clone(),
+            rhs.clone(),
+            ta.clone(),
+            tb.clone(),
+        )
     }
     pub fn app_multiple(fctx: &Set<CSig>, id: &Vid, params: CTyps) -> Self {
         TypeError::AppMultiple(fctx.clone(), id.clone(), params)

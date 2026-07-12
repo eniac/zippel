@@ -33,13 +33,13 @@ proto coin_proof<G: Group, F: Scalar<G>>(
     public big_d: G,
     public j: F
 ) where
-    big_b == g * sk_u + h * r_b &&
-    big_c == g * s + h * r_c &&
-    big_d == g * t + h * r_d &&
-    big_y == h1 * x1 + h2 * x2 + f * r_y &&
-    big_s == g * alpha + g * x1 &&
-    big_t == g * sk_u + g * r_beta + g * x2 &&
-    g + h * r_c_alpha == (g * j + big_c) * alpha &&
+    big_b == g * sk_u + h * r_b;
+    big_c == g * s + h * r_c;
+    big_d == g * t + h * r_d;
+    big_y == h1 * x1 + h2 * x2 + f * r_y;
+    big_s == g * alpha + g * x1;
+    big_t == g * sk_u + g * r_beta + g * x2;
+    g + h * r_c_alpha == (g * j + big_c) * alpha;
     g + h * r_d_beta == (g * j + big_d) * beta
 {
     // 1. Blindings

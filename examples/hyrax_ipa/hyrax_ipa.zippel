@@ -11,7 +11,7 @@ fn bullet_reduce<G: Group, F: Scalar<G>>(
     private x_hat: [F; 1],
     private y_hat: F,
     private r_Upsilon_hat: F
-) -> Bool {
+) -> Unit {
     // Prover Step 5
     let d = random<F>;
     let r_delta = random<F>;
@@ -32,7 +32,7 @@ fn bullet_reduce<G: Group, F: Scalar<G>>(
     let lhs = (upsilon * c + beta) * a_hat[0] + delta;
     let rhs = (g_hat[0] + g_base * a_hat[0]) * z1 + h_base * z2;
 
-    lhs == rhs
+    verify(lhs == rhs)
 }
 
 // RECURSIVE STEP (n > 1)
@@ -45,7 +45,7 @@ fn bullet_reduce<G: Group, F: Scalar<G>, S: Size, N: 1..S+1>(
     private x_vec: [F; 2^N],
     private y: F,
     private r_Upsilon: F
-) -> Bool {
+) -> Unit {
     let x_1 = x_vec[0..2^(N-1)];
     let x_2 = x_vec[2^(N-1)..2^N];
     
@@ -124,9 +124,9 @@ proto proof_log_of_dot_prod<G: Group, F: Scalar<G>, S: Size, N_CONST: 2^S>(
     private r_xi_private: F,
     private r_tau_private: F
 ) where 
-    xi == h_base * r_xi_private + dot(g_vec_public, x_vec_private)
-    && tau == g_base * y_private + h_base * r_tau_private
-    && y_private == dot(x_vec_private, a_vec_public) 
+    xi == h_base * r_xi_private + dot(g_vec_public, x_vec_private);
+    tau == g_base * y_private + h_base * r_tau_private;
+    y_private == dot(x_vec_private, a_vec_public) 
 {
     // Verifier Step 1
     rho <- challenge<F>;
@@ -141,7 +141,7 @@ proto proof_log_of_dot_prod<G: Group, F: Scalar<G>, S: Size, N_CONST: 2^S>(
     let y_rho = y_private * rho;
 
     // Step 4: Execute bullet-reduce
-    let result = bullet_reduce(
+    bullet_reduce(
         upsilon,
         a_rho,
         g_vec_public,
@@ -150,7 +150,5 @@ proto proof_log_of_dot_prod<G: Group, F: Scalar<G>, S: Size, N_CONST: 2^S>(
         x_vec_private,
         y_rho,
         r_Upsilon
-    );
-
-    verify(result)
+    )
 }

@@ -27,7 +27,7 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, V: 3..NUM_VARS_CONST + 1, MAX_
     public prev_eval: F,
     public challenge: F,
     public curr_round: Fin<NUM_VARS_CONST>
-) -> Bool {
+) -> Unit {
     let residual_poly = eval(curr_poly, [challenge]);
     let zero = points[0] - points[0];
     let one = zero + 1;
@@ -62,7 +62,7 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
     public prev_eval: F,
     public challenge: F,
     public curr_round: Fin<NUM_VARS_CONST>
-) -> Bool {
+) -> Unit {
     let residual_poly = eval(curr_poly, [challenge]);
     let eval_points = points;
     let evs = sample_univariate(residual_poly, eval_points);
@@ -75,7 +75,7 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
     let _drop_r = r_final;
     let _drop_round = curr_round;
     let _drop_challenges = challenges;
-    true
+    verify(1 == 1)
 }
 
 // Round 1: first challenge r1 folds round-1 message; second challenge r2 feeds the first tail round.
@@ -111,5 +111,5 @@ proto sumcheck<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
     r1 <- challenge<F>;
     let g = interpolate(points, evs0_msg);
     let prev = g(r1);
-    verify(sumcheck_round(poly, points, [r1], prev, r1, 1))
+    sumcheck_round(poly, points, [r1], prev, r1, 1)
 }

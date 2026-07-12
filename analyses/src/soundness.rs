@@ -774,20 +774,20 @@ mod tests {
             private x: F,
             public g: G, public g2: G,
             public h1: G, public h2: G
-        ) where h1 == g*x && h2 == g2*x {
+        ) where h1 == g*x; h2 == g2*x {
             let r = random<F>;
             u <- g*r;
             w <- g2*r;
             c <- challenge<F*>;
             z <- r + x*c;
-            verify(g*z == u + h1*c && g2*z == w + h2*c)
+            verify(g*z == u + h1*c); verify(g2*z == w + h2*c)
         }
     "#;
 
     #[test]
     fn schnorr_g_identity_no_extractor() {
         let proto = r#"
-            proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where g == g - g && h == g*x {
+            proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where g == g - g; h == g*x {
                 let r = random<F>;
                 u <- g*r;
                 c <- challenge<F*>;
@@ -847,7 +847,7 @@ mod tests {
                 c2 <- challenge<F*>;
                 z1 <- r1 + x * c1;
                 z2 <- r2 + r1 * c2 + x * (c1 * c2);
-                verify(g*z1 == u1 + h*c1 && g*z2 == u2 + u1*c2 + h*(c1*c2))
+                verify(g*z1 == u1 + h*c1); verify(g*z2 == u2 + u1*c2 + h*(c1*c2))
             }
         "#;
         assert!(analyze_soundness(proto, vec![2]).is_err());
@@ -865,7 +865,7 @@ mod tests {
                 z1 <- r + x*c1;
                 c2 <- challenge<F*>;
                 z2 <- s + r*c2 + x*(c1*c2) + x*(c2*c2);
-                verify(g*z1 == u + h*c1 && g*z2 == v + u*c2 + h*(c1*c2 + c2*c2))
+                verify(g*z1 == u + h*c1); verify(g*z2 == v + u*c2 + h*(c1*c2 + c2*c2))
             }
         "#;
         assert!(analyze_soundness(proto, vec![2, 2]).is_ok());
@@ -883,7 +883,7 @@ mod tests {
                 c2 <- challenge<F*>;
                 z1 <- r1 + x*c1;
                 z2 <- r2 + x*c2;
-                verify(g*z1 == u1 + h*c1 && g*z2 == u2 + h*c2)
+                verify(g*z1 == u1 + h*c1); verify(g*z2 == u2 + h*c2)
             }
         "#;
         assert!(analyze_soundness(proto, vec![2, 2]).is_ok());
@@ -934,7 +934,7 @@ mod tests {
                 z1 <- r + x*c1;
                 c2 <- challenge<F*>;
                 z2 <- r + x*c2;
-                verify(g*z1 == u + h*c1 && g*z2 == u + h*c2)
+                verify(g*z1 == u + h*c1); verify(g*z2 == u + h*c2)
             }
         "#;
         let result = analyze_soundness(proto, vec![2]);
@@ -982,7 +982,7 @@ mod tests {
     #[test]
     fn vec_witness_multi_slot_soundness() {
         let proto = r#"
-            proto vec_wit<G: Group, F: Scalar<G>>(private x: [F; 2], public g: G, public h1: G, public h2: G) where h1 == g*x[0] && h2 == g*x[1] {
+            proto vec_wit<G: Group, F: Scalar<G>>(private x: [F; 2], public g: G, public h1: G, public h2: G) where h1 == g*x[0]; h2 == g*x[1] {
                 let r0 = random<F>;
                 let r1 = random<F>;
                 u0 <- g*r0;
@@ -990,7 +990,7 @@ mod tests {
                 c <- challenge<F*>;
                 z0 <- r0 + x[0]*c;
                 z1 <- r1 + x[1]*c;
-                verify(g*z0 == u0 + h1*c && g*z1 == u1 + h2*c)
+                verify(g*z0 == u0 + h1*c); verify(g*z1 == u1 + h2*c)
             }
         "#;
         let m = UModule::from_str(proto)
@@ -1011,7 +1011,7 @@ mod tests {
     #[test]
     fn consecutive_vec_challenge_two_witnesses_not_sound() {
         let proto = r#"
-            proto vec_two_wit<G: Group, F: Scalar<G>>(private x1: F, private x2: F, public g: G, public h1: G, public h2: G) where h1 == g*x1 && h2 == g*x2 {
+            proto vec_two_wit<G: Group, F: Scalar<G>>(private x1: F, private x2: F, public g: G, public h1: G, public h2: G) where h1 == g*x1; h2 == g*x2 {
                 let r = random<F>;
                 u <- g*r;
                 c1 <- challenge<F*>;
@@ -1040,7 +1040,7 @@ mod tests {
                 c2 <- challenge<F*>;
                 z1 <- r + x*c1;
                 z2 <- s + x*c2;
-                verify(g*z1 == u1 + h*c1 && g*z2 == u2 + h*c2)
+                verify(g*z1 == u1 + h*c1); verify(g*z2 == u2 + h*c2)
             }
         "#;
         assert!(analyze_soundness(proto, vec![2]).is_ok());

@@ -358,7 +358,7 @@ mod tests {
                 let r = random<F>;
                 x <- a * r;
                 y <- b * r;
-                verify(x == y && c == 0)
+                verify(x == y); verify(c == 0)
             }"#;
 
         let m = UModule::from_str(ex)

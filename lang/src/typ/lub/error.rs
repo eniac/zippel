@@ -68,9 +68,6 @@ impl LubError {
     pub fn pair<K: fmt::Display>(a: &K, b: &K) -> Self {
         LubError::Pair(a.to_string(), b.to_string())
     }
-    pub fn and<K: fmt::Display>(a: &K, b: &K) -> Self {
-        LubError::Bin(BinOp::And, a.to_string(), b.to_string())
-    }
     pub fn concat<K: fmt::Display>(a: &K, b: &K) -> Self {
         LubError::Bin(BinOp::Concat, a.to_string(), b.to_string())
     }

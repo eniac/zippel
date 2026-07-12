@@ -8,7 +8,6 @@ use lang::typ::Nothing;
 use lang::typ::lub::Lub;
 
 use crate::Var;
-use crate::frontend::Polynomial;
 
 use super::PolySource;
 use super::div;
@@ -56,8 +55,8 @@ pub fn reduce_op<C: ArkConfig + HasOpFactory>(
 ///
 /// Operator handling:
 ///
-/// - **Add/And/Sub/Mul**: pure polynomial fold — Add/Sub start from the
-///   first element, And/Mul chain via `mul_op_inner` with the last step
+/// - **Add/Sub/Mul**: pure polynomial fold — Add/Sub start from the
+///   first element, Mul chains via `mul_op_inner` with the last step
 ///   targeting `var` directly.
 ///
 /// - **Concat**: passes through all physical slots.
@@ -66,8 +65,7 @@ pub fn reduce_op<C: ArkConfig + HasOpFactory>(
 ///   division/remainder witness identities for each step, while scalar
 ///   division uses per-slot constraints `acc - elem * var(target) = 0`.
 ///
-/// - **Equ/Pow**: opaque. Chained equality can't be cleanly encoded in
-///   the polynomial basis; Pow's left-fold `(a^b)^c` requires `a^(b*c)`
+/// - **Pow**: opaque. Pow's left-fold `(a^b)^c` requires `a^(b*c)`
 ///   which is only valid for constant b, c and produces potentially
 ///   very-high-degree terms — better handled by the `BinOp::Pow` handler
 ///   in `add_op` which sees a single exponent directly.
@@ -92,28 +90,6 @@ pub fn reduce_polysource<C: ArkConfig + HasOpFactory>(
                 }
             }
             link_to_polys(ctx.ideal, &var, acc.polys);
-        }
-        BinOp::And => {
-            let mut acc = v_src.at_index(0).unwrap();
-            for i in 1..n {
-                let elem = v_src.at_index(i).unwrap();
-                let is_last = i == n - 1;
-                let acc_var = if is_last {
-                    var.clone()
-                } else {
-                    let acc_name = ctx.builder.ns.next_name("reduce_and_acc");
-                    ctx.sentinel_var(&acc_name, elem_t.clone())
-                };
-                mul_op_inner(ctx, &acc_var, &acc, &elem, &elem_t);
-                acc = PolySource::new(
-                    acc_var
-                        .slots()
-                        .into_iter()
-                        .map(|s| Polynomial::var(&s))
-                        .collect(),
-                    elem_t.clone(),
-                );
-            }
         }
         BinOp::Sub => {
             let mut acc = v_src.at_index(0).unwrap();
@@ -172,8 +148,8 @@ pub fn reduce_polysource<C: ArkConfig + HasOpFactory>(
                 acc_typ = step_typ;
             }
         }
-        BinOp::Equ | BinOp::Pow => {
-            super::uncovered_op("reduce-equ-or-pow", &var);
+        BinOp::Pow => {
+            super::uncovered_op("reduce-pow", &var);
         }
         BinOp::Dot => {
             panic!("reduce(dot, _) is rejected by the type checker");

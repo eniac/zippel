@@ -175,8 +175,8 @@ fn run_one(m: usize, invalid: bool, manual_zippel: Option<&str>) -> RunResult {
     let verifier_elapsed = verifier_start.elapsed();
     if std::env::var("SPARTAN_DEBUG_VERIFIES").is_ok() {
         for (i, v) in verifier_result.iter().enumerate() {
-            if let Value::Bool(b) = v {
-                eprintln!("  verify[{i}] = {b}");
+            if let Value::Index(n) = v {
+                eprintln!("  verify[{i}] = {}", *n != 0);
             }
         }
     }

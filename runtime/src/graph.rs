@@ -434,7 +434,9 @@ impl<C: ArkConfig> MutexGraph<C> {
                     // are collected below via Dag::transcript_nodes(), which is
                     // already transcript-edge-topologically ordered.
                     match (&g.mutex_graph[node_idx], result_kind) {
-                        (Node::Op(op, _), ResultKind::Verifier) if matches!(**op, Op::Check(_)) => {
+                        (Node::Op(op, _), ResultKind::Verifier)
+                            if matches!(**op, Op::Check(_, _)) =>
+                        {
                             result_indices.push(node_idx);
                         }
                         _ => {}

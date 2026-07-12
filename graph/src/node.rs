@@ -79,7 +79,7 @@ impl<C: ArkConfig, N> Node<C, N> {
 
     pub fn is_verifier_check(&self) -> bool {
         match self {
-            Node::Op(op, _) | Node::Transcr(op, _) => matches!(&**op, Op::Check(_)),
+            Node::Op(op, _) | Node::Transcr(op, _) => matches!(&**op, Op::Check(_, _)),
             _ => false,
         }
     }
@@ -273,8 +273,8 @@ impl<C: HasOpFactory> Node<C, Nothing> {
     pub fn transcr(op: &GOp<C>) -> Self {
         Node::Transcr(mk::<C>(op.clone()), Nothing)
     }
-    pub fn check(op: &GOp<C>) -> Self {
-        Node::Op(mk::<C>(GOp::check(op.clone())), Nothing)
+    pub fn check(lhs: &GOp<C>, rhs: &GOp<C>) -> Self {
+        Node::Op(mk::<C>(GOp::check(lhs.clone(), rhs.clone())), Nothing)
     }
     pub fn ret(op: &GOp<C>) -> Self {
         Node::Op(mk::<C>(op.clone()), Nothing)

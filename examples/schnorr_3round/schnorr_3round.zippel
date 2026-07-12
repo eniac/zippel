@@ -11,5 +11,7 @@ proto schnorr_3round<G: Group, F: Scalar<G>>(private x: F, public g: G, public h
     z1 <- r1 + x*c1;
     z2 <- r2 + x*c2;
     z3 <- r3 + x*c3;
-    verify(g*z1 == u1 + h*c1 && g*z2 == u2 + h*c2 && g*z3 == u3 + h*c3)
+    verify(g*z1 == u1 + h*c1);
+    verify(g*z2 == u2 + h*c2);
+    verify(g*z3 == u3 + h*c3)
 }

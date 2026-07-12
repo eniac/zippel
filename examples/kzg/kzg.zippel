@@ -7,7 +7,7 @@
 proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>
         (private poly_x: Uni<F, N-1>, public eval_point: F, public eval_result: F, private srs_g1: [G1; N],
         public gen_g1: G1, public gen_g2: G2, public srs_g2_s: G2)
-        where poly_x(eval_point) == eval_result && srs_g1[0] == gen_g1 && reduce(&&, [pair(srs_g1[i], srs_g2_s) == pair(srs_g1[i+1], gen_g2) for i in 0..N-1]) {
+        where poly_x(eval_point) == eval_result; srs_g1[0] == gen_g1; [pair(srs_g1[i], srs_g2_s) for i in 0..N-1] == [pair(srs_g1[i+1], gen_g2) for i in 0..N-1] {
 
         commitment <- dot(coef(poly_x), srs_g1);
 

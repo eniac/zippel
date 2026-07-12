@@ -2,7 +2,7 @@ pub mod error;
 
 use crate::{GOp, HOp, Op, Ref};
 use ark_ff::{One, Zero};
-use backend::{ABase, ATyp, ArkConfig, SelectedEvalShape, Value};
+use backend::{ATyp, ArkConfig, SelectedEvalShape, Value};
 use error::EvalError;
 use lang::ast::BinOp;
 use rand::RngCore;
@@ -44,25 +44,11 @@ fn selected_eval_shape<C: ArkConfig>(p: &HOp<C>, range: &lang::typ::CRange) -> S
     SelectedEvalShape::new(input_num_vars, range.len(), max_degree)
 }
 
-/// A point statically typed `Vec(Bool, _)` or `Vec(Fin<0..2>, _)` is a boolean
-/// hypercube point. Coerce a `Fin<0..2>` index value to its boolean form so
-/// `Value::eval` takes the table-index fast path; everything else is untouched.
-fn coerce_boolean_eval_point<C: ArkConfig>(point: Value<C>, point_typ: &ATyp) -> Value<C> {
-    let is_boolean_vec = match point_typ {
-        ATyp::Vec(elem, _) => match &**elem {
-            ATyp::Base(ABase::Bool) => true,
-            ATyp::Base(ABase::Fin(r)) => r.len() == 2 && r.contains(0) && r.contains(1),
-            _ => false,
-        },
-        _ => false,
-    };
-    if !is_boolean_vec {
-        return point;
-    }
-    match point {
-        Value::VecIndex(v) => Value::VecBool(v.into_iter().map(|i| i == 1).collect()),
-        other => other,
-    }
+/// A point statically typed `Vec(Fin<0..2>, _)` is a boolean hypercube point.
+/// With `Bool` removed, `VecIndex` points are passed through unchanged;
+/// `Value::eval` handles them directly.
+fn coerce_boolean_eval_point<C: ArkConfig>(point: Value<C>, _point_typ: &ATyp) -> Value<C> {
+    point
 }
 
 fn op_has_loop_param<C: ArkConfig>(op: &GOp<C>, target_level: usize) -> bool {
@@ -104,7 +90,9 @@ fn op_has_loop_param<C: ArkConfig>(op: &GOp<C>, target_level: usize) -> bool {
             op_has_loop_param(domain.get(), target_level)
                 || op_has_loop_param(body.get(), target_level)
         }
-        Op::Check(a) => op_has_loop_param(a.get(), target_level),
+        Op::Check(a, b) => {
+            op_has_loop_param(a.get(), target_level) || op_has_loop_param(b.get(), target_level)
+        }
         Op::Reduce(_, a) => op_has_loop_param(a.get(), target_level),
         Op::Value(_) | Op::Ref(_, _) | Op::Random(_, _) | Op::Challenge(_, _) => false,
     }
@@ -158,7 +146,6 @@ fn is_value_one<C: ArkConfig>(v: &Value<C>) -> bool {
     match v {
         Value::Scalar(f) => *f == C::F::one(),
         Value::Index(1) => true,
-        Value::Bool(true) => true,
         _ => false,
     }
 }
@@ -167,7 +154,6 @@ fn is_value_zero<C: ArkConfig>(v: &Value<C>) -> bool {
     match v {
         Value::Scalar(f) => f.is_zero(),
         Value::Index(0) => true,
-        Value::Bool(false) => true,
         _ => false,
     }
 }
@@ -181,7 +167,6 @@ fn has_zero_one_at_start<C: ArkConfig>(v: &Value<C>) -> bool {
             elements.len() >= 2 && elements[0].is_zero() && elements[1] == C::F::one()
         }
         Value::VecIndex(elements) => elements.len() >= 2 && elements[0] == 0 && elements[1] == 1,
-        Value::VecBool(elements) => elements.len() >= 2 && !elements[0] && elements[1],
         _ => false,
     }
 }
@@ -238,7 +223,6 @@ fn is_canonical_hypercube_vector<C: ArkConfig>(val: &Value<C>, i: usize, k: usiz
                 })
         }
         Value::VecIndex(v) => v.len() == k && (0..k).all(|j| v[j] == ((i >> j) & 1)),
-        Value::VecBool(v) => v.len() == k && (0..k).all(|j| v[j] == (((i >> j) & 1) == 1)),
         Value::Vec(v) => {
             v.len() == k
                 && (0..k).all(|j| {
@@ -252,7 +236,6 @@ fn is_canonical_hypercube_vector<C: ArkConfig>(val: &Value<C>, i: usize, k: usiz
                             }
                         }
                         Value::Index(idx) => *idx == (expected_bit as usize),
-                        Value::Bool(b) => *b == expected_bit,
                         _ => false,
                     }
                 })
@@ -336,7 +319,6 @@ fn verify_hypercube_coordinates<C: ArkConfig, R: RngCore>(
         match dom_val {
             Value::VecScalar(v) => Arc::new(Value::Scalar(v[i])),
             Value::VecIndex(v) => Arc::new(Value::Index(v[i])),
-            Value::VecBool(v) => Arc::new(Value::Bool(v[i])),
             Value::VecG1(v) => Arc::new(Value::G1(v[i])),
             Value::VecG2(v) => Arc::new(Value::G2(v[i])),
             Value::VecGT(v) => Arc::new(Value::GT(v[i])),
@@ -483,8 +465,7 @@ where
 fn is_vector_value<C: ArkConfig>(v: &Value<C>) -> bool {
     matches!(
         v,
-        Value::VecBool(_)
-            | Value::VecIndex(_)
+        Value::VecIndex(_)
             | Value::VecScalar(_)
             | Value::VecG1(_)
             | Value::VecG2(_)
@@ -561,11 +542,6 @@ where
                     av_ref.value_pow(&mut bv_owned);
                     bv_owned
                 }
-                BinOp::And => {
-                    let mut bv_owned = Arc::unwrap_or_clone(bv);
-                    av_ref.value_and(&mut bv_owned);
-                    bv_owned
-                }
                 BinOp::Dot => {
                     let mut bv_owned = Arc::unwrap_or_clone(bv);
                     av_ref.value_dot(&mut bv_owned);
@@ -576,7 +552,6 @@ where
                     let bv_owned = Arc::unwrap_or_clone(bv);
                     av_owned.value_concat(bv_owned)
                 }
-                BinOp::Equ => av_ref.value_equ(&*bv),
             }))
         }
         Op::Vec(ops) => {
@@ -604,7 +579,12 @@ where
             let idx_val = eval_op_with_loop_params(idx, env, rng, loop_params)?;
             Ok(Arc::new(v_val.ram_ref(&*idx_val)))
         }
-        Op::Check(a) => eval_op_with_loop_params(a, env, rng, loop_params),
+        Op::Check(lhs, rhs) => {
+            let lhs_val = eval_op_with_loop_params(lhs, env, rng, loop_params)?;
+            let rhs_val = eval_op_with_loop_params(rhs, env, rng, loop_params)?;
+            let equal = *lhs_val == *rhs_val;
+            Ok(Arc::new(Value::Index(if equal { 1 } else { 0 })))
+        }
         Op::Pair(a, b, _) => {
             let av = Arc::unwrap_or_clone(eval_op_with_loop_params(a, env, rng, loop_params)?);
             let bv = Arc::unwrap_or_clone(eval_op_with_loop_params(b, env, rng, loop_params)?);
@@ -763,8 +743,11 @@ fn collect_refs_into<C: ArkConfig>(op: &GOp<C>, acc: &mut Vec<Ref>) {
                 collect_refs_into(child, acc);
             }
         }
-        Op::Check(a)
-        | Op::Coef(a)
+        Op::Check(a, b) => {
+            collect_refs_into(a, acc);
+            collect_refs_into(b, acc);
+        }
+        Op::Coef(a)
         | Op::Poly(a)
         | Op::Ifft(a)
         | Op::Fft(a)
@@ -798,41 +781,5 @@ mod tests {
         let mut rng = ThreadRng::default();
         let result = eval_op(&op, &env, &mut rng).unwrap();
         assert_eq!(*result, TestValue::Scalar(Fr::from(42)));
-    }
-}
-
-#[cfg(test)]
-mod boolean_coercion_tests {
-    use super::coerce_boolean_eval_point;
-    use backend::{ABase, ATyp, ArkBls12_381, Value};
-    use lang::typ::CRange;
-
-    type C = ArkBls12_381;
-
-    #[test]
-    fn fin02_index_point_coerces_to_bool() {
-        // A Vec(Fin<0..2>) index point takes the same fast path as Vec(Bool).
-        let ptyp = ATyp::Vec(Box::new(ATyp::Base(ABase::Fin(CRange::new(0, 2)))), 3);
-        let coerced = coerce_boolean_eval_point::<C>(Value::VecIndex(vec![1, 0, 1]), &ptyp);
-        assert_eq!(coerced, Value::VecBool(vec![true, false, true]));
-    }
-
-    #[test]
-    fn bool_point_passes_through() {
-        let ptyp = ATyp::vec_bool(3);
-        let pt = Value::<C>::VecBool(vec![true, false, true]);
-        assert_eq!(coerce_boolean_eval_point::<C>(pt.clone(), &ptyp), pt);
-    }
-
-    #[test]
-    fn non_boolean_points_unchanged() {
-        // Fin<0..4> is not the {0,1} hypercube -> left as VecIndex (generic path).
-        let fin4 = ATyp::Vec(Box::new(ATyp::Base(ABase::Fin(CRange::new(0, 4)))), 3);
-        let idx = Value::<C>::VecIndex(vec![1, 0, 1]);
-        assert_eq!(coerce_boolean_eval_point::<C>(idx.clone(), &fin4), idx);
-        // Scalar-vector points are never scanned/coerced.
-        let svec = Value::<C>::VecScalar(vec![]);
-        let sty = ATyp::vec_scalar(0);
-        assert_eq!(coerce_boolean_eval_point::<C>(svec.clone(), &sty), svec);
     }
 }
