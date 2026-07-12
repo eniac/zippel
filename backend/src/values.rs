@@ -54,6 +54,8 @@ pub enum Value<C: ArkConfig> {
     Record(Ctx<String, Value<C>>),
     /// Virtual Polynomial (sum-of-products of univariate or multilinear, dense or sparse)
     Poly(VirtualPolynomial<C::F>),
+    /// Unit value (the only inhabitant of type Unit)
+    Unit,
 }
 
 impl<C: ArkConfig> PartialEq for Value<C> {
@@ -88,6 +90,7 @@ impl<C: ArkConfig> PartialEq for Value<C> {
             (Value::Vec(a), Value::Vec(b)) => a == b,
             (Value::Record(a), Value::Record(b)) => a == b,
             (Value::Poly(a), Value::Poly(b)) => a == b,
+            (Value::Unit, Value::Unit) => true,
             // Different variants are not equal
             _ => false,
         }
@@ -130,6 +133,7 @@ impl<C: ArkConfig> std::hash::Hash for Value<C> {
                 p.serialize_compressed(&mut bytes).unwrap_or_default();
                 bytes.hash(state);
             }
+            Value::Unit => {}
         }
     }
 }
@@ -221,6 +225,7 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
             }
             Ok(())
         }
+        Value::Unit => Ok(()),
     }
 }
 
@@ -259,6 +264,7 @@ impl<C: ArkConfig> Value<C> {
             Value::VecG2Affine(_) => 1,
             Value::Vec(_) => 0,
             Value::Record(_) => 0,
+            Value::Unit => 20,
         }
     }
 
@@ -426,6 +432,7 @@ impl<C: ArkConfig> Value<C> {
             Value::Record(_) => {
                 panic!("Cannot add records")
             }
+            Value::Unit => panic!("Cannot add Unit"),
         }
     }
 
@@ -523,6 +530,7 @@ impl<C: ArkConfig> Value<C> {
             Value::Record(_) => {
                 panic!("Cannot subtract records")
             }
+            Value::Unit => panic!("Cannot subtract Unit"),
         }
     }
 
@@ -661,6 +669,7 @@ impl<C: ArkConfig> Value<C> {
                 Value::Record(_) => {
                     panic!("Cannot multiply Index and Record")
                 }
+                Value::Unit => panic!("Cannot multiply Index and Unit"),
             },
             Value::Record(_) => {
                 panic!("Cannot multiply records")
@@ -714,6 +723,7 @@ impl<C: ArkConfig> Value<C> {
                 Value::Record(_) => {
                     panic!("Cannot multiply Scalar and Record")
                 }
+                Value::Unit => panic!("Cannot multiply Scalar and Unit"),
             },
             Value::G1(a) => match &other {
                 // G1 * scalar multiplication
@@ -875,6 +885,7 @@ impl<C: ArkConfig> Value<C> {
                 Value::Record(_) => {
                     panic!("Cannot multiply Vec<Index> and Record")
                 }
+                Value::Unit => panic!("Cannot multiply Vec<Index> and Unit"),
             },
             Value::VecScalar(v) => match &other {
                 // Vec<Scalar> * Index
@@ -1057,6 +1068,7 @@ impl<C: ArkConfig> Value<C> {
                 .par_iter()
                 .zip(other.into_vec_mut().par_iter_mut())
                 .for_each(|(a, b)| a.value_mul(b)),
+            Value::Unit => panic!("Cannot multiply Unit"),
         }
     }
 
@@ -1404,6 +1416,7 @@ impl<C: ArkConfig> Value<C> {
             Value::Record(_) => {
                 panic!("Cannot divide records")
             }
+            Value::Unit => panic!("Cannot divide Unit"),
         }
     }
 
@@ -2238,7 +2251,7 @@ impl<C: ArkConfig> Value<C> {
     pub fn random<R: Rng + Sized>(rng: &mut R, typ: &ATyp) -> Self {
         match typ {
             ATyp::Base(ABase::Fin(r)) => Value::Index(r.random(rng) % 10),
-            ATyp::Base(ABase::Unit) => Value::Index(0),
+            ATyp::Base(ABase::Unit) => Value::Unit,
             ATyp::Base(ABase::Scalar) => Value::Scalar(C::FOps::rand(rng)),
             ATyp::Base(ABase::G1) => Value::G1(C::G1Ops::rand(rng)),
             ATyp::Base(ABase::G2) => Value::G2(C::G2Ops::rand(rng)),
@@ -2348,6 +2361,7 @@ impl<C: ArkConfig> Value<C> {
                     ATyp::mle(poly.num_vars().unwrap())
                 }
             }
+            Value::Unit => ATyp::unit(),
         }
     }
 
@@ -2625,6 +2639,7 @@ impl<C: ArkConfig> Value<C> {
             Value::Vec(a) => a.par_iter().all(|a| a.is_zero()),
             Value::Record(fields) => fields.iter().all(|(_, v)| v.is_zero()),
             Value::Poly(poly) => poly.is_zero(),
+            Value::Unit => true,
         }
     }
 
@@ -3485,6 +3500,7 @@ impl<C: ArkConfig> fmt::Display for Value<C> {
                 write!(f, "|}}")
             }
             Value::Poly(poly) => write!(f, "{}", poly),
+            Value::Unit => write!(f, "()"),
         }
     }
 }

@@ -31,7 +31,8 @@ fn const_eval_int<C: ArkConfig>(op: &HOp<C>, loop_vals: &[Option<Value<C>>]) -> 
         .collect::<Option<_>>()?;
     let env: HashMap<Ref, std::sync::Arc<Value<C>>> = HashMap::new();
     let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(0);
-    graph::eval::eval_op_with_loop_params(op.get(), &env, &mut rng, &params)
+    let mut check_sink = Vec::new();
+    graph::eval::eval_op_with_loop_params(op.get(), &env, &mut rng, &params, &mut check_sink)
         .ok()
         .map(|v| (*v).clone())
 }

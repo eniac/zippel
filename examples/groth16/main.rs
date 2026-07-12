@@ -181,9 +181,9 @@ fn run_and_verify(
     let verifier_start = Instant::now();
     let verifier_result = verifier_handler.run_verifier(&proof).unwrap();
     let verifier_elapsed = verifier_start.elapsed();
-    let result = check_verification(verifier_result);
+    let passed = check_verification(&verifier_result);
     println!("Zippel verifier time: {verifier_elapsed:.2?}");
-    if result.passed {
+    if passed {
         println!("Verification:         ✓ PASSED");
     } else {
         println!("Verification:         ✗ FAILED");

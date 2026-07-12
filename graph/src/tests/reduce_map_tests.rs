@@ -206,7 +206,7 @@ fn reduce_map_eval_matches_materialized_reduce() {
 
     let env: HashMap<Ref, Arc<Value<B>>> = HashMap::new();
     let mut rng = StdRng::seed_from_u64(0);
-    let got = eval_op(&rm, &env, &mut rng).unwrap();
+    let got = eval_op(&rm, &env, &mut rng, &mut Vec::new()).unwrap();
 
     // Reference: materialized reduce over the doubled elements.
     let doubled = Op::Vec(
@@ -216,7 +216,7 @@ fn reduce_map_eval_matches_materialized_reduce() {
             .collect(),
     );
     let reference = Op::Reduce(BinOp::Add, mk::<B>(doubled));
-    let want = eval_op(&reference, &env, &mut rng).unwrap();
+    let want = eval_op(&reference, &env, &mut rng, &mut Vec::new()).unwrap();
 
     assert_eq!(
         *got, *want,
@@ -243,7 +243,7 @@ fn map_eval_doubles_each_element() {
 
     let env: HashMap<Ref, Arc<Value<B>>> = HashMap::new();
     let mut rng = StdRng::seed_from_u64(0);
-    let got = eval_op(&map, &env, &mut rng).unwrap();
+    let got = eval_op(&map, &env, &mut rng, &mut Vec::new()).unwrap();
 
     let want_vec = Op::Vec(
         [2u64, 4, 6, 8]
@@ -251,7 +251,7 @@ fn map_eval_doubles_each_element() {
             .map(|n| mk::<B>(Op::Value(scalar::<B>(n))))
             .collect(),
     );
-    let want = eval_op(&want_vec, &env, &mut rng).unwrap();
+    let want = eval_op(&want_vec, &env, &mut rng, &mut Vec::new()).unwrap();
     assert_eq!(*got, *want, "map must apply the body element-wise");
 }
 
@@ -691,7 +691,7 @@ fn test_reduce_map_fused_optimization_skips_non_vec_domain() {
 
     let env: HashMap<Ref, Arc<Value<B>>> = HashMap::new();
     let mut rng = StdRng::seed_from_u64(0);
-    let _res = eval_op(&rm, &env, &mut rng);
+    let _res = eval_op(&rm, &env, &mut rng, &mut Vec::new());
 
     let after = optimization_stats_snapshot();
     // Optimization does not fire because the domain type is ATyp::Uni, not ATyp::Vec

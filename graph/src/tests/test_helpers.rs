@@ -120,7 +120,8 @@ fn execute_graph_inner<C: ArkConfig>(
         match &dag[node_idx] {
             Node::Inp(_) | Node::Rel(_) | Node::Arg(_, _, _, _, _) => {}
             Node::Op(op, _) | Node::Transcr(op, _) => {
-                let value_arc = eval_op(op, &env, &mut rng)
+                let mut check_sink = Vec::new();
+                let value_arc = eval_op(op, &env, &mut rng, &mut check_sink)
                     .expect("execute_graph: eval_op should not fail on a well-formed DAG");
                 env.insert(Ref(node_idx), Arc::clone(&value_arc));
                 computed.insert(node_idx, (*value_arc).clone());
@@ -281,11 +282,11 @@ mod tests {
         add_scalar_input(&mut inputs, "y", 7);
         let computed = execute_graph_all(dag, inputs);
 
-        // Verify both check nodes produce Index(1) (equal)
+        // Verify both check nodes produce Unit (Check always returns Unit)
         for (i, &check_idx) in checks.iter().enumerate() {
             match computed.get(&check_idx) {
-                Some(Value::Index(1)) => {}
-                Some(v) => panic!("Check node {} produced {:?}, expected Index(1)", i, v),
+                Some(Value::Unit) => {}
+                Some(v) => panic!("Check node {} produced {:?}, expected Unit", i, v),
                 None => panic!("Check node {} was not computed", i),
             }
         }
@@ -325,11 +326,11 @@ mod tests {
         add_scalar_input(&mut inputs, "y", 7);
         let computed = execute_graph_all(dag, inputs);
 
-        // Verify all check nodes produce Index(1) (equal)
+        // Verify all check nodes produce Unit (Check always returns Unit)
         for (i, &check_idx) in checks.iter().enumerate() {
             match computed.get(&check_idx) {
-                Some(Value::Index(1)) => {}
-                Some(v) => panic!("Check node {} produced {:?}, expected Index(1)", i, v),
+                Some(Value::Unit) => {}
+                Some(v) => panic!("Check node {} produced {:?}, expected Unit", i, v),
                 None => panic!("Check node {} was not computed", i),
             }
         }
@@ -363,10 +364,10 @@ mod tests {
         add_scalar_input(&mut inputs, "y", 7);
         let computed = execute_graph_all(dag, inputs);
 
-        // The second check should produce Index(0) (not equal)
+        // The second check should produce Unit (Check always returns Unit)
         match computed.get(&checks[1]) {
-            Some(Value::Index(0)) => {}
-            Some(v) => panic!("Second check node produced {:?}, expected Index(0)", v),
+            Some(Value::Unit) => {}
+            Some(v) => panic!("Second check node produced {:?}, expected Unit", v),
             None => panic!("Second check node was not computed"),
         }
     }
@@ -399,10 +400,10 @@ mod tests {
         add_scalar_input(&mut inputs, "y", 7);
         let computed = execute_graph_all(dag, inputs);
 
-        // The first check should produce Index(0) (not equal)
+        // The first check should produce Unit (Check always returns Unit)
         match computed.get(&checks[0]) {
-            Some(Value::Index(0)) => {}
-            Some(v) => panic!("First check node produced {:?}, expected Index(0)", v),
+            Some(Value::Unit) => {}
+            Some(v) => panic!("First check node produced {:?}, expected Unit", v),
             None => panic!("First check node was not computed"),
         }
     }
@@ -445,8 +446,8 @@ mod tests {
 
         for (i, &idx) in checks.iter().enumerate() {
             match computed.get(&idx) {
-                Some(Value::Index(1)) => {}
-                Some(v) => panic!("Check {} produced {:?}, expected Index(1)", i, v),
+                Some(Value::Unit) => {}
+                Some(v) => panic!("Check {} produced {:?}, expected Unit", i, v),
                 None => panic!("Check {} was not computed", i),
             }
         }
@@ -491,13 +492,13 @@ mod tests {
 
         // The inlined verify(a == b) should fail; the protocol's own verify(r == a) passes.
         match computed.get(&checks[0]) {
-            Some(Value::Index(0)) => {}
-            Some(v) => panic!("First check node produced {:?}, expected Index(0)", v),
+            Some(Value::Unit) => {}
+            Some(v) => panic!("First check node produced {:?}, expected Unit", v),
             None => panic!("First check node was not computed"),
         }
         match computed.get(&checks[1]) {
-            Some(Value::Index(1)) => {}
-            Some(v) => panic!("Second check node produced {:?}, expected Index(1)", v),
+            Some(Value::Unit) => {}
+            Some(v) => panic!("Second check node produced {:?}, expected Unit", v),
             None => panic!("Second check node was not computed"),
         }
     }

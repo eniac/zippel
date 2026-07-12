@@ -354,11 +354,8 @@ fn groth16_bench(c: &mut Criterion) {
                     &Value::VecScalar(h_coeffs_padded),
                 );
                 let proof = handler.run_prover(&prover_inputs).unwrap();
-                let verification = check_verification(handler.run_verifier(&proof).unwrap());
-                assert!(
-                    verification.passed,
-                    "opt verification failed in bench setup"
-                );
+                let passed = check_verification(&handler.run_verifier(&proof).unwrap());
+                assert!(passed, "opt verification failed in bench setup");
 
                 group.bench_with_input(
                     BenchmarkId::new("zippel_opt_verifier", size),
@@ -506,11 +503,8 @@ fn groth16_bench(c: &mut Criterion) {
                     .collect();
                 handler.set_public_inputs(public_inputs_ctx);
                 let proof = handler.run_prover(&noh_inputs).unwrap();
-                let verification = check_verification(handler.run_verifier(&proof).unwrap());
-                assert!(
-                    verification.passed,
-                    "noh verification failed in bench setup"
-                );
+                let passed = check_verification(&handler.run_verifier(&proof).unwrap());
+                assert!(passed, "noh verification failed in bench setup");
 
                 group.bench_with_input(
                     BenchmarkId::new("zippel_noh_verifier", size),

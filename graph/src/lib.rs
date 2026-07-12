@@ -402,9 +402,9 @@ impl<C: ArkConfig, A> Dag<C, A> {
     }
 
     /// Get all verifier assertions: `Check` nodes with no outgoing edges
-    /// that have an incoming transcript edge. Relation `Check` nodes (from
-    /// `where` clauses) lack a transcript edge and are excluded — they are
-    /// handled by the relation transitive closure, not the verifier TC.
+    /// that have an incoming transcript edge. `Assert` nodes and relation
+    /// `Check` nodes lack a transcript edge and are excluded — Assert is
+    /// prover-side, relation checks are handled by the relation TC.
     pub fn find_check(&self) -> Vec<NodeIndex> {
         self.node_indices()
             .filter(|&n| match &self[n] {
@@ -1212,15 +1212,19 @@ impl<C: HasOpFactory> UDag<C> {
                         vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
                     }
                 }
-                for (lhs, rhs) in relation {
-                    let oa =
-                        self.add_exp(lhs, &mut start, DepType::Data, &kctx, fctx, &vctx, &vars)?;
-                    let ob =
-                        self.add_exp(rhs, &mut start, DepType::Data, &kctx, fctx, &vctx, &vars)?;
-                    let ncheck = self.add_node(Node::check(&oa, &ob));
-                    self.add_edges(DepType::Data, ncheck, oa);
-                    self.add_edges(DepType::Data, ncheck, ob);
-                }
+                // Lower the relation as a single Exp. The relation is a
+                // Let/Assert chain; add_exp handles Let (binds vars) and
+                // Assert (creates Check nodes). Assert nodes do not get
+                // transcript edges (see add_exp Assert case).
+                self.add_exp(
+                    relation,
+                    &mut start,
+                    DepType::Data,
+                    &kctx,
+                    fctx,
+                    &vctx,
+                    &vars,
+                )?;
             }
             CBody::Func { body } => {
                 let mut start = self.add_node(Node::inp(sig.name.clone()));
@@ -1340,6 +1344,14 @@ impl<C: HasOpFactory> UDag<C> {
     /// `binders` are the enclosing loop binders by de Bruijn level (index =
     /// level); `vctx` is already extended with their CTyps. `Ok(None)` means
     /// the template declines and the caller falls back to the unroll lowerer.
+    ///
+    /// `CExp::Assert` and `CExp::Verify` are intentionally not handled here —
+    /// the catch-all `_ => Ok(None)` declines them, forcing the unroll path
+    /// which creates top-level `Node::check` graph nodes (one per element).
+    /// This ensures `Op::Check` never appears nested inside an `Op::Map` or
+    /// `Op::ReduceMap` op tree, so `find_check` (which only inspects top-level
+    /// node ops) and the runtime's `check_results` map (keyed by `NodeIndex`)
+    /// always find every Check.
     #[allow(clippy::too_many_arguments)]
     fn lower_loop_body_template(
         &mut self,
@@ -1352,7 +1364,7 @@ impl<C: HasOpFactory> UDag<C> {
     ) -> Result<Option<GOp<C>>, GraphError> {
         match exp {
             CExp::Lit(n) => Ok(Some(GOp::Value(Value::Index(*n)))),
-            CExp::Unit => Ok(Some(GOp::Value(Value::Index(0)))),
+            CExp::Unit => Ok(Some(GOp::Value(Value::Unit))),
             CExp::Range(r) => Ok(Some(GOp::range(*r))),
             CExp::Var(id) => {
                 if let Some(level) = binders.iter().rposition(|(v, _)| v == id) {
@@ -1773,7 +1785,7 @@ impl<C: HasOpFactory> UDag<C> {
                 CExp::Lit(n) => return Ok(GOp::Value(Value::Index(n))),
 
                 // Unit value — no-op
-                CExp::Unit => return Ok(GOp::Value(Value::Index(0))),
+                CExp::Unit => return Ok(GOp::Value(Value::Unit)),
 
                 // Variables are edges, no new nodes are added
                 CExp::Var(id) => return Self::op_from_var(&id, &vars),
@@ -2339,9 +2351,8 @@ impl<C: HasOpFactory> UDag<C> {
                     // Add edges
                     self.add_edges(edge_type, nassert, oa);
                     self.add_edges(edge_type, nassert, ob);
-                    // Assert depends on the full transcript (implicit ordering)
-                    self.add_edge(*transcr, nassert, Dep::transcript());
-                    // Trampoline: continue loop with cont
+                    // Assert is prover-side — no transcript edge.
+                    // (Verify gets a transcript edge; see the Verify case below.)
                     exp = cont;
                     continue;
                 }

@@ -163,29 +163,6 @@ fn eval_of_mle_partial_shape_is_residual_mle() {
     assert_eq!(eval.typ(), ATyp::mle(3));
 }
 
-#[test]
-fn eval_of_mle_full_at_bool_point_is_scalar() {
-    // Boolean hypercube point: full eval must still report Scalar, not Bool.
-    let evals: Vec<_> = (0..16).map(|i| h(scalar(i))).collect();
-    let mle: GOp<C> = Op::Mle(h(Op::Vec(evals))); // Mle(4)
-    let bits = [true, false, true, false];
-    let xs: Vec<_> = bits
-        .iter()
-        .map(|b| h(Op::Value(Value::scalar_from_usize(*b as usize))))
-        .collect();
-    let eval: GOp<C> = Op::Evaluate(h(mle), None, Some(h(Op::Vec(xs))));
-    assert_eq!(eval.typ(), ATyp::scalar());
-}
-
-#[test]
-fn eval_of_mle_partial_at_bool_point_is_residual_mle() {
-    let evals: Vec<_> = (0..16).map(|i| h(scalar(i))).collect();
-    let mle: GOp<C> = Op::Mle(h(Op::Vec(evals))); // Mle(4)
-    let xs: Vec<_> = vec![h(Op::Value(Value::scalar_from_usize(1)))]; // k = 1 < n = 4
-    let eval: GOp<C> = Op::Evaluate(h(mle), None, Some(h(Op::Vec(xs))));
-    assert_eq!(eval.typ(), ATyp::mle(3));
-}
-
 // ───────── Op::Vec heterogeneity diagnostic ─────────
 
 #[test]

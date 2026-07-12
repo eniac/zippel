@@ -830,13 +830,8 @@ impl Typeable for CBody {
         // Type inference for each statement in the Body
         match self {
             CBody::Proto { relation, body } => {
-                // Check each constraint (lhs, rhs) has compatible types
-                for (lhs, rhs) in relation {
-                    let ta = lhs.infer(kctx, fctx, &vctx.clone())?;
-                    let tb = rhs.infer(kctx, fctx, &vctx.clone())?;
-                    CTyp::lub_equ(&ta, &tb, kctx)
-                        .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, lhs), e))?;
-                }
+                // Infer the relation (Let/Assert chain — infers to Unit)
+                relation.infer(kctx, fctx, &vctx.clone())?;
 
                 // Then the body
                 let tbody = body.infer(kctx, fctx, &vctx.clone())?;

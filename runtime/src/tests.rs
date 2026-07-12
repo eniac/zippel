@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod runtime_tests {
-    use crate::graph::{MutexGraph, RuntimeInformation};
+    use crate::graph::{MutexGraph, ResultKind, RunResult, RuntimeInformation};
     use crate::queue::sync_channel;
     use backend::Value;
     use backend::config::ArkBls12_381;
@@ -22,7 +22,7 @@ mod runtime_tests {
     #[test]
     fn test_runtime_concurrency_and_evaluation() {
         let src = r#"
-            proto test_eval_strong<F: Field>(public a: F, public b: F) where true {
+            proto test_eval_strong<F: Field>(public a: F, public b: F) where 1 == 1 {
                 x <- a * a;
                 y <- b * b;
                 c <- challenge<F>;
@@ -61,13 +61,17 @@ mod runtime_tests {
         let mut prover_state = separator.std_prover();
 
         let mg_prover = Arc::new(MutexGraph::new(prover));
-        let proof = MutexGraph::run_graph(
+        let proof = match MutexGraph::run_graph(
             mg_prover,
             Arc::new(inputs),
             &mut prover_state,
-            crate::graph::ResultKind::Prover,
+            ResultKind::Prover,
         )
-        .unwrap();
+        .unwrap()
+        {
+            RunResult::Prover(v) => v,
+            RunResult::Verifier(_) => unreachable!(),
+        };
 
         // Proof must contain x (9), y (16) and t (c * 25)
         assert_eq!(proof.len(), 3);
@@ -109,22 +113,26 @@ mod runtime_tests {
 
         let mut verifier_state = separator.std_prover();
         let mg_verifier = Arc::new(MutexGraph::new(verifier.clone()));
-        let verify_results = MutexGraph::run_graph(
+        let verify_results = match MutexGraph::run_graph(
             mg_verifier,
             Arc::new(verifier_inputs),
             &mut verifier_state,
-            crate::graph::ResultKind::Verifier,
+            ResultKind::Verifier,
         )
-        .unwrap();
+        .unwrap()
+        {
+            RunResult::Verifier(v) => v,
+            RunResult::Prover(_) => unreachable!(),
+        };
 
         assert_eq!(verify_results.len(), 1);
-        assert_eq!(verify_results[0], Value::Index(1));
+        assert!(verify_results[0]);
     }
 
     #[test]
     fn test_runtime_error_propagation() {
         let src = r#"
-            proto test_err<F: Field>(public a: F, public b: F) where true {
+            proto test_err<F: Field>(public a: F, public b: F) where 1 == 1 {
                 verify(b == 999);
                 x1 <- a * a;
                 x2 <- x1 * x1;

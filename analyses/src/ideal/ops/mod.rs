@@ -83,10 +83,10 @@ pub fn link_to_polys<C: ArkConfig>(ideal: &mut Ideal<C>, var: &Var, polys: Vec<P
 }
 
 pub mod addsub;
+pub mod check;
 pub mod concat;
 pub mod div;
 pub mod dot;
-pub mod equ;
 pub mod eval;
 pub mod fft;
 pub mod interpolate;

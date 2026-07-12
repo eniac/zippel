@@ -1610,8 +1610,8 @@ fn test_proto_body_blames_body_not_relation() {
     };
     let fctx = Set::new();
     let body = crate::ast::CBody::Proto {
-        relation: vec![],   // no constraints — the body is what fails
-        body: CExp::lit(5), // body has type Fin (invalid, expected Unit)
+        relation: CExp::Unit, // no constraints — the body is what fails
+        body: CExp::lit(5),   // body has type Fin (invalid, expected Unit)
     };
     let res = body.typecheck(sig, &fctx);
     let err = res.unwrap_err();

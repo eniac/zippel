@@ -67,11 +67,9 @@ fn main() {
     println!("Verifier: {verifier_elapsed:.2?}");
 
     for (i, v) in verifier_result.iter().enumerate() {
-        if let Value::Index(n) = v {
-            println!("  verify[{i}] = {}", *n != 0);
-        }
+        println!("  verify[{i}] = {v}");
     }
-    let passed = check_verification(verifier_result).passed;
+    let passed = check_verification(&verifier_result);
     println!("Verdict: {}", if passed { "PASS" } else { "FAIL" });
     if !passed {
         std::process::exit(1);

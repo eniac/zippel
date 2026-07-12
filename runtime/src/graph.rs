@@ -80,6 +80,17 @@ pub enum ResultKind {
     Verifier,
 }
 
+/// Result of `run_graph`, parameterized by the role.
+///
+/// - `Prover`: proof transcript values (`Vec<Value<C>>`) in transcript order.
+/// - `Verifier`: per-Check pass/fail booleans (`Vec<bool>`) in topological
+///   order, collected from the `check_results` auxiliary map.
+#[derive(Debug)]
+pub enum RunResult<C: ArkConfig> {
+    Prover(Vec<Value<C>>),
+    Verifier(Vec<bool>),
+}
+
 /// Runtime information attached to each Op/Transcr node in the DAG.
 ///
 /// `remaining_deps` uses atomic operations for lock-free counter-based
@@ -119,6 +130,10 @@ impl<C: ArkConfig> RuntimeInformation<C> {
 
 pub struct MutexGraph<C: ArkConfig> {
     mutex_graph: Dag<C, Arc<RuntimeInformation<C>>>,
+    /// Auxiliary map storing pass/fail results for `Op::Check` nodes.
+    /// Populated by `handle_node` when a Check node is evaluated.
+    /// `run_graph` collects from this map for `ResultKind::Verifier`.
+    check_results: Mutex<HashMap<NodeIndex, bool>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -245,6 +260,7 @@ impl<C: ArkConfig> MutexGraph<C> {
     pub fn new(dag: UDag<C>) -> Self {
         MutexGraph {
             mutex_graph: dag.map_annotations(&|_, _| Arc::new(RuntimeInformation::<C>::new())),
+            check_results: Mutex::new(HashMap::new()),
         }
     }
 
@@ -296,7 +312,7 @@ impl<C: ArkConfig> MutexGraph<C> {
         &self,
         operation: &GOp<C>,
         inputs: &HashMap<Vid, Arc<Value<C>>>,
-    ) -> Result<Arc<Value<C>>, RuntimeError> {
+    ) -> Result<(Arc<Value<C>>, Vec<bool>), RuntimeError> {
         let refs = graph::eval::collect_refs(operation);
         // Pre-size the env so insertions don't trigger rehash/resize. Most
         // Op trees have ≤ 4 distinct refs; sizing to `refs.len()` slightly
@@ -309,8 +325,10 @@ impl<C: ArkConfig> MutexGraph<C> {
             }
         }
         let mut rng = ThreadRng::default();
-        Ok(graph::eval::eval_op(operation, &env, &mut rng)
-            .expect("runtime invariant violation: eval_op failed on a scheduled node"))
+        let mut check_sink = Vec::new();
+        let value = graph::eval::eval_op(operation, &env, &mut rng, &mut check_sink)
+            .expect("runtime invariant violation: eval_op failed on a scheduled node");
+        Ok((value, check_sink))
     }
 
     pub fn handle_node(
@@ -326,7 +344,16 @@ impl<C: ArkConfig> MutexGraph<C> {
                     log_double_execute("Op", node_curr, operation.discriminant_order());
                     return Ok(());
                 }
-                let return_val = self.handle_op(&**operation, inputs)?;
+                let (return_val, check_sink) = self.handle_op(&**operation, inputs)?;
+                // Store check results from the sink into the auxiliary map.
+                // Each node has at most one top-level Check, so the sink
+                // has 0 or 1 elements.
+                if !check_sink.is_empty() {
+                    let mut results = self.check_results.lock().unwrap();
+                    for passed in check_sink {
+                        results.insert(node_curr, passed);
+                    }
+                }
                 if annotation.return_value.set(return_val).is_err() {
                     log_double_execute("Op (set-race)", node_curr, operation.discriminant_order());
                 }
@@ -336,7 +363,13 @@ impl<C: ArkConfig> MutexGraph<C> {
                     log_double_execute("Transcr", node_curr, operation.discriminant_order());
                     return Ok(());
                 }
-                let return_val = self.handle_op(&**operation, inputs)?;
+                let (return_val, check_sink) = self.handle_op(&**operation, inputs)?;
+                if !check_sink.is_empty() {
+                    let mut results = self.check_results.lock().unwrap();
+                    for passed in check_sink {
+                        results.insert(node_curr, passed);
+                    }
+                }
                 if annotation.return_value.set(return_val).is_err() {
                     log_double_execute(
                         "Transcr (set-race)",
@@ -379,14 +412,16 @@ impl<C: ArkConfig> MutexGraph<C> {
     ///
     /// # Returns
     ///
-    /// - For `ResultKind::Prover`: proof transcript values in transcript order.
-    /// - For `ResultKind::Verifier`: terminal Check node values.
+    /// - For `ResultKind::Prover`: `RunResult::Prover(Vec<Value<C>>)` — proof
+    ///   transcript values in transcript order.
+    /// - For `ResultKind::Verifier`: `RunResult::Verifier(Vec<bool>)` —
+    ///   per-Check pass/fail booleans in topological order.
     pub fn run_graph<H: DuplexSpongeInterface<U = u8>>(
         g: Arc<MutexGraph<C>>,
         inputs: Arc<Ctx<Vid, Value<C>>>,
         prover_state: &mut ProverState<H>,
         result_kind: ResultKind,
-    ) -> Result<Vec<Value<C>>, RuntimeError> {
+    ) -> Result<RunResult<C>, RuntimeError> {
         let race_count_at_start = DOUBLE_EXECUTE_COUNT.load(Ordering::SeqCst);
         // Build an Arc-wrapped inputs map once. Subsequent per-handle_op
         // accesses clone the Arc (cheap) instead of the inner `Value`
@@ -616,24 +651,26 @@ impl<C: ArkConfig> MutexGraph<C> {
 
         // Phase 3: Collect results from pre-collected result indices.
         Ok(match result_kind {
-            ResultKind::Prover => result_indices
-                .into_iter()
-                .filter_map(|n| match &g.mutex_graph[n] {
-                    Node::Transcr(op, annotation) if !matches!(**op, Op::Challenge(_, _)) => {
-                        annotation.return_value.get().map(|arc| (**arc).clone())
-                    }
-                    _ => None,
-                })
-                .collect(),
-            ResultKind::Verifier => result_indices
-                .into_iter()
-                .filter_map(|n| match &g.mutex_graph[n] {
-                    Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
-                        annotation.return_value.get().map(|arc| (**arc).clone())
-                    }
-                    _ => None,
-                })
-                .collect(),
+            ResultKind::Prover => RunResult::Prover(
+                result_indices
+                    .into_iter()
+                    .filter_map(|n| match &g.mutex_graph[n] {
+                        Node::Transcr(op, annotation) if !matches!(**op, Op::Challenge(_, _)) => {
+                            annotation.return_value.get().map(|arc| (**arc).clone())
+                        }
+                        _ => None,
+                    })
+                    .collect(),
+            ),
+            ResultKind::Verifier => {
+                let check_results = g.check_results.lock().unwrap();
+                RunResult::Verifier(
+                    result_indices
+                        .into_iter()
+                        .filter_map(|n| check_results.get(&n).copied())
+                        .collect(),
+                )
+            }
         })
     }
 }

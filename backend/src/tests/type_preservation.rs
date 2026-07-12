@@ -53,7 +53,7 @@ pub fn has_atyp<C: ArkConfig>(v: &Value<C>, t: &ATyp) -> bool {
         (Value::G2Affine(_), ATyp::Base(ABase::G2)) => true,
         (Value::GT(_), ATyp::Base(ABase::GT)) => true,
         (Value::Index(i), ATyp::Base(ABase::Fin(r))) => r.contains(*i),
-        (Value::Index(_), ATyp::Base(ABase::Unit)) => true,
+        (Value::Unit, ATyp::Base(ABase::Unit)) => true,
 
         // --- vectors (specialized variants) ---
         (Value::VecScalar(xs), ATyp::Vec(box ATyp::Base(ABase::Scalar), n)) => xs.len() == *n,

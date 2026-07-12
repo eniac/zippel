@@ -1,4 +1,4 @@
-//! Equality op encoder: `equ_op` and `equ_op_inner`.
+//! Check op encoder: `check_op` and `check_op_inner`.
 
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
@@ -21,7 +21,7 @@ use super::PolySource;
 /// - `Poly op Scalar` / `Scalar op Poly` → broadcast scalar to each coefficient
 /// - `Uni(n1) op Uni(n2)` → zero-pad shorter operand to match ideal degree
 /// - Same-type poly op → straightforward slot-wise
-pub fn equ_op<C: ArkConfig + HasOpFactory>(
+pub fn check_op<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     _pr: &Var,
     a: &HOp<C>,
@@ -29,23 +29,23 @@ pub fn equ_op<C: ArkConfig + HasOpFactory>(
 ) {
     let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
     let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
-    equ_op_inner(&a_src, &b_src, ctx.ideal);
+    check_op_inner(&a_src, &b_src, ctx.ideal);
     // NOTE: We do NOT emit `var.slots()` as basis polynomials here.
     // `==` is used as an assertion, not to compute the boolean
     // ideal of equality checking.
 }
 
-fn equ_op_inner<C: ArkConfig>(a: &PolySource<C>, b: &PolySource<C>, ideal: &mut Ideal<C>) {
+fn check_op_inner<C: ArkConfig>(a: &PolySource<C>, b: &PolySource<C>, ideal: &mut Ideal<C>) {
     match (a.typ(), b.typ()) {
         (ATyp::Vec(_, na), ATyp::Vec(_, nb)) if na == nb => {
             for i in 0..*na {
                 let a_elem = a.at_index(i).unwrap();
                 let b_elem = b.at_index(i).unwrap();
-                equ_op_inner(&a_elem, &b_elem, ideal);
+                check_op_inner(&a_elem, &b_elem, ideal);
             }
         }
         _ => {
-            let lub = ATyp::lub_equ(a.typ(), b.typ(), &Nothing).expect("equ_op: lub_equ failed");
+            let lub = ATyp::lub_equ(a.typ(), b.typ(), &Nothing).expect("check_op: lub_equ failed");
             let a_lifted = a.lift_to(&lub);
             let b_lifted = b.lift_to(&lub);
             for j in 0..lub.physical_len() {

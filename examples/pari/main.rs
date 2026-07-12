@@ -72,9 +72,9 @@ fn main() {
         .run_verifier(&proof)
         .expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
-    let result = check_verification(verifier_result);
+    let passed = check_verification(&verifier_result);
     println!("Verifier time:  {verifier_elapsed:.2?}");
-    if result.passed {
+    if passed {
         println!("Verification:   ✓ PASSED");
     } else {
         println!("Verification:   ✗ FAILED");

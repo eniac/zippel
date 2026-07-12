@@ -798,6 +798,26 @@ impl<N> Exp<N> {
             Exp::SetRecord(box record, _, box value) => record.is_pure() && value.is_pure(),
         }
     }
+
+    /// Check if an expression is valid in a relation (where clause).
+    ///
+    /// Allows: `Let`, `Assert`, `Random`, and all pure expressions.
+    /// Rejects: `Challenge` (verifier oracle), `Log` (transcript),
+    /// `Verify` (verifier-side check).
+    pub fn is_relation_pure(&self) -> bool {
+        match self {
+            Exp::Assert(box lhs, box rhs, box cont) => {
+                lhs.is_pure() && rhs.is_pure() && cont.is_relation_pure()
+            }
+            Exp::Let(Some(_), box val, box cont) => {
+                val.is_relation_pure() && cont.is_relation_pure()
+            }
+            Exp::Let(None, box val, box cont) => val.is_relation_pure() && cont.is_relation_pure(),
+            Exp::Random(_, _) => true,
+            Exp::Challenge(_, _) | Exp::Log(_, _, _) | Exp::Verify(_, _, _) => false,
+            _ => self.is_pure(),
+        }
+    }
 }
 
 impl CExp {

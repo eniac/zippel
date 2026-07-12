@@ -38,8 +38,8 @@ fn main() {
     let verifier_result = handler.run_verifier(&proof).expect("run_verifier failed");
     println!("Verifier time:  {:.2?}", t.elapsed());
 
-    let result = check_verification(verifier_result);
-    if result.passed {
+    let passed = check_verification(&verifier_result);
+    if passed {
         println!("Verification:   ✓ PASSED");
     } else {
         println!("Verification:   ✗ FAILED");

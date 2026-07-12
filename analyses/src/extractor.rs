@@ -78,65 +78,65 @@ pub fn extract_locals<C: ArkConfig + HasOpFactory>(
     builder: &IdealBuilder<C>,
     tc: &TransClos<C>,
 ) -> Ideal<C> {
-    let tc_no_equ = strip_equ(tc);
+    let tc_no_check = strip_check(tc);
     let mut comp_builder = builder.clone();
-    comp_builder.build(tc_no_equ)
+    comp_builder.build(tc_no_check)
 }
 
-fn strip_equ<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> TransClos<C> {
-    let mut tc_no_equ = tc.clone();
-    for entry in &mut tc_no_equ.clos {
+fn strip_check<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> TransClos<C> {
+    let mut tc_no_check = tc.clone();
+    for entry in &mut tc_no_check.clos {
         let var = entry.0.clone();
-        entry.1 = strip_equ_op(entry.1.clone(), &var);
+        entry.1 = strip_check_op(entry.1.clone(), &var);
     }
-    tc_no_equ
+    tc_no_check
 }
 
-fn strip_equ_op<C: ArkConfig + HasOpFactory>(op: GOp<C>, result: &Var) -> GOp<C> {
+fn strip_check_op<C: ArkConfig + HasOpFactory>(op: GOp<C>, result: &Var) -> GOp<C> {
     match op {
         Op::Check(_, _) => Op::Ref(
             backend::op::Ref(result.reference.node()),
             result.typ.clone(),
         ),
         Op::Map(d, b) => Op::Map(
-            mk(strip_equ_op(d.get().clone(), result)),
-            mk(strip_equ_op(b.get().clone(), result)),
+            mk(strip_check_op(d.get().clone(), result)),
+            mk(strip_check_op(b.get().clone(), result)),
         ),
         Op::ReduceMap(rop, d, b) => Op::ReduceMap(
             rop,
-            mk(strip_equ_op(d.get().clone(), result)),
-            mk(strip_equ_op(b.get().clone(), result)),
+            mk(strip_check_op(d.get().clone(), result)),
+            mk(strip_check_op(b.get().clone(), result)),
         ),
-        Op::Reduce(rop, v) => Op::Reduce(rop, mk(strip_equ_op(v.get().clone(), result))),
+        Op::Reduce(rop, v) => Op::Reduce(rop, mk(strip_check_op(v.get().clone(), result))),
         Op::Bin(bop, a, b, typ) => Op::Bin(
             bop,
-            mk(strip_equ_op(a.get().clone(), result)),
-            mk(strip_equ_op(b.get().clone(), result)),
+            mk(strip_check_op(a.get().clone(), result)),
+            mk(strip_check_op(b.get().clone(), result)),
             typ,
         ),
         Op::Interpolate(pts, evals) => Op::Interpolate(
-            mk(strip_equ_op(pts.get().clone(), result)),
-            mk(strip_equ_op(evals.get().clone(), result)),
+            mk(strip_check_op(pts.get().clone(), result)),
+            mk(strip_check_op(evals.get().clone(), result)),
         ),
         Op::Evaluate(p, range, xs) => Op::Evaluate(
-            mk(strip_equ_op(p.get().clone(), result)),
+            mk(strip_check_op(p.get().clone(), result)),
             range,
-            xs.map(|v| mk(strip_equ_op(v.get().clone(), result))),
+            xs.map(|v| mk(strip_check_op(v.get().clone(), result))),
         ),
         Op::Vec(vs) => Op::Vec(
             vs.into_iter()
-                .map(|v| mk(strip_equ_op(v.get().clone(), result)))
+                .map(|v| mk(strip_check_op(v.get().clone(), result)))
                 .collect(),
         ),
         Op::Ram(a, b) => Op::Ram(
-            mk(strip_equ_op(a.get().clone(), result)),
-            mk(strip_equ_op(b.get().clone(), result)),
+            mk(strip_check_op(a.get().clone(), result)),
+            mk(strip_check_op(b.get().clone(), result)),
         ),
-        Op::Poly(v) => Op::Poly(mk(strip_equ_op(v.get().clone(), result))),
-        Op::Mle(v) => Op::Mle(mk(strip_equ_op(v.get().clone(), result))),
-        Op::Coef(v) => Op::Coef(mk(strip_equ_op(v.get().clone(), result))),
-        Op::Ifft(v) => Op::Ifft(mk(strip_equ_op(v.get().clone(), result))),
-        Op::Fft(v) => Op::Fft(mk(strip_equ_op(v.get().clone(), result))),
+        Op::Poly(v) => Op::Poly(mk(strip_check_op(v.get().clone(), result))),
+        Op::Mle(v) => Op::Mle(mk(strip_check_op(v.get().clone(), result))),
+        Op::Coef(v) => Op::Coef(mk(strip_check_op(v.get().clone(), result))),
+        Op::Ifft(v) => Op::Ifft(mk(strip_check_op(v.get().clone(), result))),
+        Op::Fft(v) => Op::Fft(mk(strip_check_op(v.get().clone(), result))),
         other => other,
     }
 }

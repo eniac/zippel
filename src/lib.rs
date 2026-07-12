@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use std::process;
 
 use runtime::MutexGraph;
+use runtime::RunResult;
 use share::traversal::ToTraversal1;
 use std::sync::Arc;
 
@@ -388,12 +389,16 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         );
         self.public_inputs = Some(public_inputs);
         let mut prover_state = prover_seperator.std_prover();
-        MutexGraph::run_graph(
+        let result = MutexGraph::run_graph(
             Arc::new(MutexGraph::new(prover.clone())),
             Arc::new(inputs.clone()),
             &mut prover_state,
             ResultKind::Prover,
-        )
+        )?;
+        match result {
+            RunResult::Prover(values) => Ok(values),
+            RunResult::Verifier(_) => unreachable!("run_prover with ResultKind::Prover"),
+        }
     }
 
     /// Run verifier, takes proof and returns result
@@ -403,7 +408,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     ///
     /// # Panics
     /// If `compile()` has not been called first.
-    pub fn run_verifier(&mut self, proof: &[Value<C>]) -> Result<Vec<Value<C>>, RuntimeError> {
+    pub fn run_verifier(&mut self, proof: &[Value<C>]) -> Result<Vec<bool>, RuntimeError> {
         let verifier = self.verifier_graph.as_ref().unwrap();
         let prover_arg_names: std::collections::HashSet<&Vid> =
             self.prover_args.as_ref().unwrap().iter().collect();
@@ -436,12 +441,16 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         // For now, use prover state since we don't have narg_string yet
         // TODO: Fix this to use proper verifier state when narg_string is available
         let mut verifier_state = verifier_seperator.std_prover();
-        MutexGraph::run_graph(
+        let result = MutexGraph::run_graph(
             Arc::new(MutexGraph::new(verifier.clone())),
             Arc::new(inputs),
             &mut verifier_state,
             ResultKind::Verifier,
-        )
+        )?;
+        match result {
+            RunResult::Verifier(bools) => Ok(bools),
+            RunResult::Prover(_) => unreachable!("run_verifier with ResultKind::Verifier"),
+        }
     }
 
     /// # Errors
@@ -544,21 +553,11 @@ pub fn find_minimal_sizes(module: &UModule) -> Ctx<Tid, usize> {
     sizes
 }
 
-/// Result of verifying a proof
-pub struct VerificationResult<C: ArkConfig> {
-    pub passed: bool,
-    pub outputs: Vec<Value<C>>,
-}
-
 /// Interpret verifier output as pass/fail.
-/// Passes if every `Value::Index` in the output is non-zero (1 = check passed).
+/// Passes if every Check in the output returned `true`.
 #[must_use]
-pub fn check_verification<C: ArkConfig>(outputs: Vec<Value<C>>) -> VerificationResult<C> {
-    let passed = outputs.iter().all(|v| match v {
-        Value::Index(n) => *n != 0,
-        _ => true,
-    });
-    VerificationResult { passed, outputs }
+pub fn check_verification(outputs: &[bool]) -> bool {
+    outputs.iter().all(|b| *b)
 }
 
 /// Compute the total serialized size (in bytes) of a proof certificate.
@@ -651,11 +650,8 @@ proto eq_proof<F: Field>(private a: F, private b: F) where a == b {
 
         let proof = handler.run_prover(&inputs).expect("run_prover failed");
         let verifier_result = handler.run_verifier(&proof).expect("run_verifier failed");
-        let result = check_verification(verifier_result);
-        assert!(
-            result.passed,
-            "eq_proof with a == b should pass verification"
-        );
+        let passed = check_verification(&verifier_result);
+        assert!(passed, "eq_proof with a == b should pass verification");
     }
 
     /// Regression for issue #157: re-logging earlier transcript values after a
@@ -697,9 +693,9 @@ proto repro<F: Field>(private s: F) where s == s {
         );
 
         let verifier_result = handler.run_verifier(&proof).expect("run_verifier failed");
-        let result = check_verification(verifier_result);
+        let passed = check_verification(&verifier_result);
         assert!(
-            result.passed,
+            passed,
             "issue #157 repro should pass verification after transcript relogs"
         );
     }
@@ -740,9 +736,9 @@ proto bad_check<F: Field>(private a: F, private b: F, public c: F) where a == b 
 
         let proof = handler.run_prover(&inputs).expect("run_prover failed");
         let verifier_result = handler.run_verifier(&proof).expect("run_verifier failed");
-        let result = check_verification(verifier_result);
+        let passed = check_verification(&verifier_result);
         assert!(
-            !result.passed,
+            !passed,
             "bad_check with c = 42 should fail verification since c != 0"
         );
     }

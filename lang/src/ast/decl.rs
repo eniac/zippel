@@ -28,12 +28,11 @@ pub enum Body<N> {
     ///
     /// # fields
     /// - `body`: The body of the protocol.
-    /// - `relation`: The relation describing the protocol — a list of
-    ///   equality constraints `(lhs, rhs)` from the `where` clause.
-    Proto {
-        body: Exp<N>,
-        relation: Vec<(Exp<N>, Exp<N>)>,
-    },
+    /// - `relation`: The relation describing the protocol — a single
+    ///   expression from the `where` clause, structured as
+    ///   `Let(r, val, Let(s, val, Assert(a, b, Assert(c, d, Unit))))`.
+    ///   Let-bindings are evaluated once and shared by all constraints.
+    Proto { body: Exp<N>, relation: Exp<N> },
 
     /// A function body declaration
     ///
@@ -83,7 +82,7 @@ impl<N> Body<N> {
             Body::TypeAlias => panic!("TypeAlias has no body"),
         }
     }
-    pub fn relation(self) -> Option<Vec<(Exp<N>, Exp<N>)>> {
+    pub fn relation(self) -> Option<Exp<N>> {
         match self {
             Body::Proto { relation, .. } => Some(relation),
             _ => None,
@@ -94,13 +93,7 @@ impl<N> Body<N> {
 impl FreeVars for CBody {
     fn freevars(&self) -> Set<Vid> {
         match self {
-            Body::Proto { body, relation } => {
-                let rel_fv: Set<Vid> = relation
-                    .iter()
-                    .flat_map(|(lhs, rhs)| lhs.freevars().union(rhs.freevars()))
-                    .collect();
-                body.freevars().union(rel_fv)
-            }
+            Body::Proto { body, relation } => body.freevars().union(relation.freevars()),
             Body::Func { body } => body.freevars(),
             Body::TypeAlias => Set::new(),
         }
@@ -113,7 +106,7 @@ impl<N> Decl<N> {
         name: Vid,
         typevars: TypeVars<N>,
         args: GArgs<N>,
-        relation: Vec<(Exp<N>, Exp<N>)>,
+        relation: Exp<N>,
         body: Exp<N>,
     ) -> Self {
         let sig = Sig {
@@ -280,24 +273,15 @@ impl CBody {
         }
         match self {
             Body::Proto { body, relation } => {
-                // Each constraint (lhs, rhs) must have type-compatible operands
-                for (lhs, rhs) in relation {
-                    // Constraints must be pure (no side-effects)
-                    if !lhs.is_pure() {
-                        return Err(TypeError::decl(&sig.name, TypeError::not_pure_rel(lhs)));
-                    }
-                    if !rhs.is_pure() {
-                        return Err(TypeError::decl(&sig.name, TypeError::not_pure_rel(rhs)));
-                    }
-                    let ta = lhs.infer(&kctx, fctx, &vctx)?;
-                    let tb = rhs.infer(&kctx, fctx, &vctx)?;
-                    CTyp::lub_equ(&ta, &tb, &kctx).map_err(|_| {
-                        TypeError::decl(
-                            &sig.name,
-                            TypeError::constraint_mismatch(&kctx, &vctx, lhs, rhs, &ta, &tb),
-                        )
-                    })?;
+                // Relation must be relation-pure (no Challenge/Log/Verify)
+                if !relation.is_relation_pure() {
+                    return Err(TypeError::decl(
+                        &sig.name,
+                        TypeError::not_pure_rel(relation),
+                    ));
                 }
+                // Relation must infer to Unit (Let/Assert chain ending in Unit)
+                relation.infer(&kctx, fctx, &vctx)?;
                 // Body must infer to Unit
                 let br = body.infer(&kctx, fctx, &vctx)?;
                 if br != CTyp::Unit {
@@ -335,16 +319,10 @@ impl<N: Clone> ToTraversal1<N> for Body<N> {
     type Output<Z> = Body<Z>;
     fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Body<Z>, E> {
         match self {
-            Body::Proto { relation, body } => {
-                let rel: Vec<(Exp<Z>, Exp<Z>)> = relation
-                    .into_iter()
-                    .map(|(lhs, rhs)| Ok((lhs.traverse1(f)?, rhs.traverse1(f)?)))
-                    .collect::<Result<_, _>>()?;
-                Ok(Body::Proto {
-                    body: body.traverse1(f)?,
-                    relation: rel,
-                })
-            }
+            Body::Proto { relation, body } => Ok(Body::Proto {
+                relation: relation.traverse1(f)?,
+                body: body.traverse1(f)?,
+            }),
             Body::Func { body } => Ok(Body::Func {
                 body: body.traverse1(f)?,
             }),
@@ -357,10 +335,7 @@ impl TidSubst for CBody {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         match self {
             Body::Proto { relation, body } => {
-                for (lhs, rhs) in relation {
-                    lhs.tid_subst(from, to);
-                    rhs.tid_subst(from, to);
-                }
+                relation.tid_subst(from, to);
                 body.tid_subst(from, to);
             }
             Body::Func { body } => body.tid_subst(from, to),
@@ -375,16 +350,10 @@ impl<N: Clone> RangeTraversal<N> for Body<N> {
         f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>,
     ) -> Result<Self, E> {
         match self {
-            Body::Proto { relation, body } => {
-                let rel: Vec<(Exp<N>, Exp<N>)> = relation
-                    .into_iter()
-                    .map(|(lhs, rhs)| Ok((lhs.range_traverse(f)?, rhs.range_traverse(f)?)))
-                    .collect::<Result<_, _>>()?;
-                Ok(Body::Proto {
-                    relation: rel,
-                    body: body.range_traverse(f)?,
-                })
-            }
+            Body::Proto { relation, body } => Ok(Body::Proto {
+                relation: relation.range_traverse(f)?,
+                body: body.range_traverse(f)?,
+            }),
             Body::Func { body } => Ok(Body::Func {
                 body: body.range_traverse(f)?,
             }),
@@ -421,27 +390,15 @@ where
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         match self {
-            Body::Proto { relation, body } => {
-                let constraint_docs: Vec<_> = relation
-                    .into_iter()
-                    .map(|(lhs, rhs)| {
-                        allocator.concat([
-                            lhs.pretty(allocator),
-                            allocator.text(" == "),
-                            rhs.pretty(allocator),
-                        ])
-                    })
-                    .collect();
-                allocator.concat([
-                    allocator.text(" where "),
-                    allocator.intersperse(constraint_docs, allocator.text("; ")),
-                    allocator.text(" {"),
-                    allocator.line(),
-                    body.pretty(allocator).group().indent(2),
-                    allocator.line(),
-                    allocator.text("}"),
-                ])
-            }
+            Body::Proto { relation, body } => allocator.concat([
+                allocator.text(" where "),
+                relation.pretty(allocator),
+                allocator.text(" {"),
+                allocator.line(),
+                body.pretty(allocator).group().indent(2),
+                allocator.line(),
+                allocator.text("}"),
+            ]),
             Body::Func { body } => allocator.concat([
                 allocator.text("{"),
                 allocator.line(),
@@ -551,7 +508,8 @@ impl<'pest> FromPest<'pest> for UDecl {
 
                 // The where_clause is followed by the body expression.
                 // Parse let-decls and constraints from where_clause, then
-                // wrap each constraint's lhs/rhs in the let-bindings.
+                // build a single chained Exp:
+                //   Let(r, val, Let(s, val, Assert(a, b, Assert(c, d, Unit))))
                 let where_pair = inner.next().unwrap();
                 let where_inner = where_pair.into_inner();
 
@@ -567,8 +525,6 @@ impl<'pest> FromPest<'pest> for UDecl {
                             if li.peek().map(|p| p.as_rule()) == Some(Rule::let_decl_typ) {
                                 li.next();
                             }
-                            // Next is the value expression (literals like
-                            // "let" and "=" don't produce pairs in pest)
                             let val = Exp::from_pest(&mut Pairs::single(li.next().unwrap()))?;
                             lets.push((id, val));
                         }
@@ -583,18 +539,19 @@ impl<'pest> FromPest<'pest> for UDecl {
                     }
                 }
 
-                // Wrap each constraint's lhs and rhs in the let-bindings
-                // (innermost let is the last one, so fold right-to-left).
-                let wrap = |mut e: Exp<Size>| {
-                    for (id, val) in lets.iter().rev() {
-                        e = Exp::letx(id.clone(), val.clone(), e);
+                // Build relation as a single chained Exp:
+                // Fold constraints right-to-left into Assert chain ending in Unit,
+                // then fold lets right-to-left around the Assert chain.
+                let relation = {
+                    let mut e = Exp::Unit;
+                    for (lhs, rhs) in constraints.into_iter().rev() {
+                        e = Exp::assert_eq(lhs, rhs, e);
+                    }
+                    for (id, val) in lets.into_iter().rev() {
+                        e = Exp::letx(id, val, e);
                     }
                     e
                 };
-                let relation: Vec<(Exp<Size>, Exp<Size>)> = constraints
-                    .into_iter()
-                    .map(|(lhs, rhs)| (wrap(lhs), wrap(rhs)))
-                    .collect();
 
                 // Body expression
                 let body = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
@@ -684,7 +641,7 @@ fn proto_parser() {
             Vid::from("test"),
             TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
             GArgs::from([GArg::public("a", GTyp::varstr("F"))]),
-            vec![(UExp::varstr("a"), UExp::varstr("a"))],
+            UExp::assert_eq(UExp::varstr("a"), UExp::varstr("a"), UExp::Unit),
             UExp::letx(
                 Vid::from("x"),
                 UExp::from(3) * UExp::varstr("a"),
@@ -793,7 +750,7 @@ fn decls_parser() {
                 Vid::from("test"),
                 TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
                 GArgs::from([GArg::public("a", GTyp::varstr("F"))]),
-                vec![(UExp::varstr("a"), UExp::varstr("a"))],
+                UExp::assert_eq(UExp::varstr("a"), UExp::varstr("a"), UExp::Unit),
                 UExp::letx(
                     Vid::from("x"),
                     UExp::mul(UExp::from(3), UExp::varstr("a")),
