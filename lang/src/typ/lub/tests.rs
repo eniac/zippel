@@ -28,14 +28,8 @@ fn lub_range() {
             end: 24
         })
     );
-    assert_eq!(
-        Range::lub_sub(&b, &a, &Nothing),
-        Ok(Range {
-            start: 0,
-            step: 1,
-            end: 15
-        })
-    );
+    // lub_sub(&b, &a): b.start (5) < a_max (9), so checked_sub underflows
+    assert!(Range::lub_sub(&b, &a, &Nothing).is_err());
     assert_eq!(
         Range::lub_mul(&a, &b, &Nothing),
         Ok(Range {
@@ -60,6 +54,117 @@ fn lub_range() {
             end: 15
         })
     );
+}
+
+#[test]
+fn lub_add_overflow() {
+    let a = Range {
+        start: usize::MAX - 5,
+        step: 1,
+        end: usize::MAX,
+    };
+    let b = Range {
+        start: 1,
+        step: 1,
+        end: 10,
+    };
+    assert!(Range::lub_add(&a, &b, &Nothing).is_err());
+}
+
+#[test]
+fn lub_sub_underflow() {
+    let a = Range {
+        start: 1,
+        step: 1,
+        end: 10,
+    };
+    let b = Range {
+        start: 5,
+        step: 1,
+        end: 20,
+    };
+    assert!(Range::lub_sub(&a, &b, &Nothing).is_err());
+}
+
+#[test]
+fn lub_mul_overflow() {
+    let big = (usize::MAX as f64).sqrt() as usize + 1;
+    let a = Range {
+        start: big,
+        step: 1,
+        end: big + 1,
+    };
+    let b = Range {
+        start: big,
+        step: 1,
+        end: big + 1,
+    };
+    // big * big overflows usize
+    assert!(Range::lub_mul(&a, &b, &Nothing).is_err());
+}
+
+#[test]
+fn lub_div_by_zero() {
+    let a = Range {
+        start: 0,
+        step: 1,
+        end: 10,
+    };
+    let b = Range {
+        start: 0,
+        step: 1,
+        end: 3,
+    };
+    // b.start == 0 is caught by the explicit zero check
+    assert!(Range::lub_div(&a, &b, &Nothing).is_err());
+}
+
+#[test]
+fn lub_rem_by_zero() {
+    let a = Range {
+        start: 0,
+        step: 1,
+        end: 10,
+    };
+    let b = Range {
+        start: 0,
+        step: 1,
+        end: 3,
+    };
+    assert!(Range::lub_rem(&a, &b, &Nothing).is_err());
+}
+
+#[test]
+fn lub_pow_overflow() {
+    let a = Range {
+        start: 2,
+        step: 1,
+        end: 3,
+    };
+    let b = Range {
+        start: 64,
+        step: 1,
+        end: 65,
+    };
+    // 2^64 overflows usize on 64-bit
+    assert!(Range::lub_pow(&a, &b, &Nothing).is_err());
+}
+
+#[test]
+fn lub_dot_overflow() {
+    let big = (usize::MAX as f64).sqrt() as usize + 1;
+    let a = Range {
+        start: big,
+        step: 1,
+        end: big + 1,
+    };
+    let b = Range {
+        start: big,
+        step: 1,
+        end: big + 1,
+    };
+    // dot delegates to mul, which overflows
+    assert!(Range::lub_dot(&a, &b, &Nothing).is_err());
 }
 
 use share::Set;
@@ -500,9 +605,11 @@ mod error_tests {
         let ctx = Nothing;
 
         assert!(Range::lub_op(BinOp::Add, &a, &b, &ctx).is_ok());
-        assert!(Range::lub_op(BinOp::Sub, &a, &b, &ctx).is_ok());
+        // Sub underflows: a.start (1) < b_max (19), so checked_sub returns None
+        assert!(Range::lub_op(BinOp::Sub, &a, &b, &ctx).is_err());
         assert!(Range::lub_op(BinOp::Mul, &a, &b, &ctx).is_ok());
         assert!(Range::lub_op(BinOp::Div, &a, &b, &ctx).is_ok());
+        // 9^19 fits in u64, so checked_pow succeeds
         assert!(Range::lub_op(BinOp::Pow, &a, &b, &ctx).is_ok());
         assert!(Range::lub_op(BinOp::Rem, &a, &b, &ctx).is_ok());
         assert!(Range::lub_op(BinOp::Dot, &a, &b, &ctx).is_ok());

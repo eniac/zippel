@@ -2,8 +2,6 @@ use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
 use rand::Rng;
 use std::fmt;
-use std::ops::{Add, BitXor, Div, Mul, Rem, Sub};
-use std::ops::{AddAssign, BitXorAssign, DivAssign, MulAssign, RemAssign, SubAssign};
 use thiserror::Error;
 
 use crate::parser::*;
@@ -218,6 +216,123 @@ impl CRange {
             );
         }
     }
+
+    /// Checked addition of two ranges. Returns `None` if any intermediate
+    /// `usize` arithmetic overflows.
+    pub fn checked_add(self, b: CRange) -> Option<CRange> {
+        let a_max = self.end.checked_sub(self.step)?;
+        let b_max = b.end.checked_sub(b.step)?;
+        Some(Range {
+            start: self.start.checked_add(b.start)?,
+            step: num::integer::gcd(self.step, b.step),
+            end: a_max.checked_add(b_max)?.checked_add(1)?,
+        })
+    }
+
+    /// Checked subtraction of two ranges. Returns `None` if any intermediate
+    /// `usize` arithmetic overflows or underflows.
+    pub fn checked_sub(self, b: CRange) -> Option<CRange> {
+        let b_max = b.end.checked_sub(b.step)?;
+        let a_max = self.end.checked_sub(self.step)?;
+        Some(Range {
+            start: self.start.checked_sub(b_max)?,
+            step: num::integer::gcd(self.step, b.step),
+            end: a_max.checked_sub(b.start)?.checked_add(1)?,
+        })
+    }
+
+    /// Checked multiplication of two ranges. Returns `None` if any
+    /// intermediate `usize` arithmetic overflows.
+    pub fn checked_mul(self, b: CRange) -> Option<CRange> {
+        let a_min = self.start;
+        let a_max = self.end.checked_sub(self.step)?;
+        let b_min = b.start;
+        let b_max = b.end.checked_sub(b.step)?;
+
+        let p1 = a_min.checked_mul(b_min)?;
+        let p2 = a_min.checked_mul(b_max)?;
+        let p3 = a_max.checked_mul(b_min)?;
+        let p4 = a_max.checked_mul(b_max)?;
+
+        let new_start = p1.min(p2).min(p3).min(p4);
+        let new_end = p1.max(p2).max(p3).max(p4).checked_add(1)?;
+
+        let new_step = num::integer::gcd(
+            self.step.checked_mul(b.step)?,
+            num::integer::gcd(
+                self.step.checked_mul(b.start)?,
+                b.step.checked_mul(self.start)?,
+            ),
+        );
+
+        Some(Range {
+            start: new_start,
+            step: new_step,
+            end: new_end,
+        })
+    }
+
+    /// Checked division of two ranges. Returns `None` if any intermediate
+    /// `usize` arithmetic overflows or if the divisor range includes zero.
+    pub fn checked_div(self, b: CRange) -> Option<CRange> {
+        let a_min = self.start;
+        let a_max = self.end.checked_sub(self.step)?;
+        let b_min = b.start;
+        let b_max = b.end.checked_sub(b.step)?;
+
+        if b_min == 0 || b_max == 0 {
+            return None;
+        }
+
+        let new_start = a_min / b_max;
+        let new_end = (a_max / b_min).checked_add(1)?;
+
+        Some(Range {
+            start: new_start,
+            step: 1,
+            end: new_end,
+        })
+    }
+
+    /// Checked remainder of two ranges. Returns `None` if any intermediate
+    /// `usize` arithmetic overflows or if the divisor range includes zero.
+    pub fn checked_rem(self, b: CRange) -> Option<CRange> {
+        let a_min = self.start;
+        let a_max = self.end.checked_sub(self.step)?;
+        let b_min = b.start;
+        let b_max = b.end.checked_sub(b.step)?;
+
+        if b_min == 0 || b_max == 0 {
+            return None;
+        }
+
+        let new_start = a_min % b_max;
+        let new_end = (a_max % b_min).checked_add(1)?;
+
+        Some(Range {
+            start: new_start,
+            step: 1,
+            end: new_end,
+        })
+    }
+
+    /// Checked exponentiation of two ranges. Returns `None` if any
+    /// intermediate `usize` arithmetic overflows.
+    pub fn checked_pow(self, b: CRange) -> Option<CRange> {
+        let a_min = self.start;
+        let a_max = self.end.checked_sub(self.step)?;
+        let b_min = b.start;
+        let b_max = b.end.checked_sub(b.step)?;
+
+        let new_start = a_min.checked_pow(b_min as u32)?;
+        let new_end = a_max.checked_pow(b_max as u32)?.checked_add(1)?;
+
+        Some(Range {
+            start: new_start,
+            step: 1,
+            end: new_end,
+        })
+    }
 }
 
 impl Iterator for CRange {
@@ -254,171 +369,6 @@ where
 
     fn is_nil(&self) -> bool {
         false
-    }
-}
-
-impl Add for CRange {
-    type Output = CRange;
-
-    fn add(self, b: CRange) -> CRange {
-        Range {
-            start: self.start + b.start,
-            step: num::integer::gcd(self.step, b.step),
-            end: (self.end - self.step) + (b.end - b.step) + 1,
-        }
-    }
-}
-
-impl Sub for CRange {
-    type Output = CRange;
-
-    fn sub(self, b: CRange) -> CRange {
-        Range {
-            start: self.start.saturating_sub(b.end - b.step),
-            step: num::integer::gcd(self.step, b.step),
-            end: (self.end - self.step) - (b.start) + 1,
-        }
-    }
-}
-
-impl Mul for CRange {
-    type Output = CRange;
-
-    fn mul(self, b: CRange) -> CRange {
-        let a_min = self.start;
-        let a_max = self.end - self.step;
-        let b_min = b.start;
-        let b_max = b.end - b.step;
-
-        // Compute all possible products
-        let p1 = a_min * b_min;
-        let p2 = a_min * b_max;
-        let p3 = a_max * b_min;
-        let p4 = a_max * b_max;
-
-        // Compute new start and end
-        let new_start = p1.min(p2).min(p3).min(p4);
-        let new_end = p1.max(p2).max(p3).max(p4) + 1;
-
-        // Compute new step
-        let new_step = num::integer::gcd(
-            self.step * b.step,
-            num::integer::gcd(self.step * b.start, b.step * self.start),
-        );
-
-        Range {
-            start: new_start,
-            step: new_step,
-            end: new_end,
-        }
-    }
-}
-
-impl Div for CRange {
-    type Output = CRange;
-
-    fn div(self, b: CRange) -> CRange {
-        let a_min = self.start;
-        let a_max = self.end - self.step;
-        let b_min = b.start;
-        let b_max = b.end - b.step;
-
-        // Compute new start and end
-        let new_start = a_min / b_max; // Smallest quotient
-        let new_end = a_max / b_min + 1; // Largest quotient + 1 (right-exclusive)
-
-        // Use a step of 1 for safe overapproximation
-        let new_step = 1;
-
-        Range {
-            start: new_start,
-            step: new_step,
-            end: new_end,
-        }
-    }
-}
-
-impl Rem for CRange {
-    type Output = CRange;
-
-    fn rem(self, b: CRange) -> CRange {
-        let a_min = self.start;
-        let a_max = self.end - self.step;
-        let b_min = b.start;
-        let b_max = b.end - b.step;
-
-        // Compute new start and end
-        let new_start = a_min % b_max; // Smallest remainder
-        let new_end = a_max % b_min + 1; // Largest remainder + 1 (right-exclusive)
-
-        // Use a step of 1 for safe overapproximation
-        let new_step = 1;
-
-        Range {
-            start: new_start,
-            step: new_step,
-            end: new_end,
-        }
-    }
-}
-
-impl BitXor for CRange {
-    type Output = CRange;
-
-    fn bitxor(self, b: CRange) -> CRange {
-        let a_min = self.start;
-        let a_max = self.end - self.step;
-        let b_min = b.start;
-        let b_max = b.end - b.step;
-
-        // Compute new start and end
-        let new_start = a_min.pow(b_min as u32); // Smallest power
-        let new_end = a_max.pow(b_max as u32) + 1; // Largest power + 1 (right-exclusive)
-
-        // Use a step of 1 for safe overapproximation
-        let new_step = 1;
-
-        Range {
-            start: new_start,
-            step: new_step,
-            end: new_end,
-        }
-    }
-}
-
-impl AddAssign for CRange {
-    fn add_assign(&mut self, b: CRange) {
-        *self = *self + b;
-    }
-}
-
-impl SubAssign for CRange {
-    fn sub_assign(&mut self, b: CRange) {
-        *self = *self - b;
-    }
-}
-
-impl MulAssign for CRange {
-    fn mul_assign(&mut self, b: CRange) {
-        *self = *self * b;
-    }
-}
-
-impl DivAssign for CRange {
-    fn div_assign(&mut self, b: CRange) {
-        *self = *self / b;
-    }
-}
-
-impl RemAssign for CRange {
-    fn rem_assign(&mut self, b: CRange) {
-        *self = *self % b;
-    }
-}
-
-impl BitXorAssign for CRange {
-    fn bitxor_assign(&mut self, b: CRange) {
-        *self = *self ^ b;
     }
 }
 
@@ -534,4 +484,160 @@ fn range_traversal() {
             end: 10
         }
     );
+}
+
+#[test]
+fn checked_add_basic() {
+    let a = CRange::new(1, 10);
+    let b = CRange::new(2, 20);
+    let r = a.checked_add(b).unwrap();
+    assert_eq!(r.start, 3);
+    assert_eq!(r.end, 29); // (10-1) + (20-1) + 1 = 9 + 19 + 1
+}
+
+#[test]
+fn checked_add_overflow() {
+    let a = CRange::new(usize::MAX - 5, usize::MAX);
+    let b = CRange::new(1, 10);
+    // start + b.start overflows
+    assert_eq!(a.checked_add(b), None);
+}
+
+#[test]
+fn checked_add_end_overflow() {
+    let a = CRange::new(0, usize::MAX);
+    let b = CRange::new(0, 2);
+    // (MAX - 1) + (2 - 1) + 1 overflows
+    assert_eq!(a.checked_add(b), None);
+}
+
+#[test]
+fn checked_sub_basic() {
+    let a = CRange::new(10, 20);
+    let b = CRange::new(2, 5);
+    let r = a.checked_sub(b).unwrap();
+    assert_eq!(r.start, 6); // 10 - (5-1) = 10 - 4 = 6
+    assert_eq!(r.end, 18); // (20-1) - 2 + 1 = 19 - 2 + 1
+}
+
+#[test]
+fn checked_sub_underflow_start() {
+    let a = CRange::new(1, 10);
+    let b = CRange::new(5, 20);
+    // a.start (1) - b_max (19) underflows
+    assert_eq!(a.checked_sub(b), None);
+}
+
+#[test]
+fn checked_sub_underflow_end() {
+    let a = CRange::new(0, 3);
+    let b = CRange::new(5, 10);
+    // a_max (2) - b.start (5) underflows
+    assert_eq!(a.checked_sub(b), None);
+}
+
+#[test]
+fn checked_mul_basic() {
+    let a = CRange::new(2, 5); // values 2,3,4
+    let b = CRange::new(3, 7); // values 3,4,5,6
+    let r = a.checked_mul(b).unwrap();
+    assert_eq!(r.start, 6); // 2*3
+    assert_eq!(r.end, 25); // 4*6 + 1
+}
+
+#[test]
+fn checked_mul_overflow() {
+    // Use values large enough that their product overflows usize.
+    // sqrt(usize::MAX) ≈ 4294967296 on 64-bit, so two values > that will overflow.
+    let big = (usize::MAX as f64).sqrt() as usize + 1;
+    let a = CRange::new(big, big + 1); // singleton {big}
+    let b = CRange::new(big, big + 1); // singleton {big}
+                                       // big * big overflows
+    assert_eq!(a.checked_mul(b), None);
+}
+
+#[test]
+fn checked_mul_step_overflow() {
+    let a = CRange {
+        start: 0,
+        step: usize::MAX,
+        end: usize::MAX,
+    };
+    let b = CRange {
+        start: 0,
+        step: 2,
+        end: 3,
+    };
+    // step * b.step = MAX * 2 overflows
+    assert_eq!(a.checked_mul(b), None);
+}
+
+#[test]
+fn checked_div_basic() {
+    let a = CRange::new(0, 10);
+    let b = CRange::new(1, 3);
+    let r = a.checked_div(b).unwrap();
+    assert_eq!(r.start, 0); // 0 / 2
+    assert_eq!(r.end, 10); // 9 / 1 + 1
+}
+
+#[test]
+fn checked_div_by_zero() {
+    let a = CRange::new(0, 10);
+    let b = CRange::new(0, 3); // includes 0
+    assert_eq!(a.checked_div(b), None);
+}
+
+#[test]
+fn checked_div_b_max_zero() {
+    // b_max = end - step = 1 - 1 = 0 → division by zero
+    let a = CRange::new(10, 20);
+    let b = CRange {
+        start: 0,
+        step: 1,
+        end: 1, // b_max = 0
+    };
+    assert_eq!(a.checked_div(b), None);
+}
+
+#[test]
+fn checked_rem_basic() {
+    let a = CRange::new(0, 10); // values 0..9
+    let b = CRange::new(1, 3); // values 1,2
+    let r = a.checked_rem(b).unwrap();
+    assert_eq!(r.start, 0); // 0 % 2 = 0
+    assert_eq!(r.end, 1); // 9 % 1 + 1 = 0 + 1
+}
+
+#[test]
+fn checked_rem_by_zero() {
+    let a = CRange::new(0, 10);
+    let b = CRange::new(0, 3); // includes 0
+    assert_eq!(a.checked_rem(b), None);
+}
+
+#[test]
+fn checked_pow_basic() {
+    let a = CRange::new(2, 4); // values 2,3
+    let b = CRange::new(2, 4); // values 2,3
+    let r = a.checked_pow(b).unwrap();
+    assert_eq!(r.start, 4); // 2^2
+    assert_eq!(r.end, 28); // 3^3 + 1 = 27 + 1
+}
+
+#[test]
+fn checked_pow_overflow() {
+    let a = CRange::new(2, 3);
+    let b = CRange::new(64, 65); // 2^64 overflows usize on 64-bit
+    assert_eq!(a.checked_pow(b), None);
+}
+
+#[test]
+fn checked_pow_end_overflow() {
+    // (usize::MAX - 1)^2 overflows usize
+    let big = usize::MAX - 1;
+    let a = CRange::new(big, big + 1); // singleton {big} — big+1 = MAX, fits
+    let b = CRange::new(2, 3); // singleton {2}
+                               // big^2 overflows
+    assert_eq!(a.checked_pow(b), None);
 }

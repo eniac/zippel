@@ -181,8 +181,8 @@ pub mod zippel_side {
                 .expect("run_verifier failed");
             let verify = t.elapsed();
 
-            let result = check_verification(verifier_result);
-            assert!(result.passed, "zippel IPA verification FAILED");
+            let result = check_verification(&verifier_result);
+            assert!(result, "zippel IPA verification FAILED");
 
             Timing { prove, verify }
         }

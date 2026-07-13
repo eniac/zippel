@@ -132,12 +132,12 @@ args = { arg? ~ ("," ~ arg)* }
 
 /// Declarations are either [protocols], [functions], or [type aliases].
 decl = { proto_decl | func_decl | type_decl }
-    proto_decl = { "proto" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "where" ~ where_clause ~ "{" ~ exp ~ "}" }
-    // where clause: optional let-bindings followed by one or more constraints
-    where_clause = { (let_decl ~ ";")* ~ constraint ~ (";" ~ constraint)* }
-    let_decl = { "let" ~ id ~ (":" ~ let_decl_typ)? ~ "=" ~ exp }
-    let_decl_typ = { typ }  // non-silent wrapper so typ produces a pair
-    func_decl  = { "fn" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "->" ~ typ ~ "{" ~ exp ~ "}" }
+    proto_decl = { "proto" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "where" ~ where_exp ~ "{" ~ exp ~ "}" }
+    // where clause: a single expression with == support (via where_eq)
+    where_exp = { where_let | where_eq | exp }
+    where_let = { "let" ~ id ~ (":" ~ typ)? ~ "=" ~ exp ~ ";" ~ where_exp }
+    where_eq = { exp ~ eq_op ~ exp ~ (";" ~ where_exp)? }
+    func_decl  = { "fn" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ ("->" ~ typ)? ~ "{" ~ exp ~ "}" }
     type_decl  = { "type" ~ id ~ "=" ~ typ ~ ";" }
 
 /// Top-level module

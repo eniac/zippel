@@ -505,54 +505,8 @@ impl<'pest> FromPest<'pest> for UDecl {
                 let typevars = TypeVars::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                 // Arguments
                 let args = GArgs::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-
-                // The where_clause is followed by the body expression.
-                // Parse let-decls and constraints from where_clause, then
-                // build a single chained Exp:
-                //   Let(r, val, Let(s, val, Assert(a, b, Assert(c, d, Unit))))
-                let where_pair = inner.next().unwrap();
-                let where_inner = where_pair.into_inner();
-
-                let mut lets: Vec<(Vid, Exp<Size>)> = Vec::new();
-                let mut constraints: Vec<(Exp<Size>, Exp<Size>)> = Vec::new();
-
-                for item in where_inner {
-                    match item.as_rule() {
-                        Rule::let_decl => {
-                            let mut li = item.into_inner();
-                            let id = Vid::from_pest(&mut Pairs::single(li.next().unwrap()))?;
-                            // Skip optional type annotation
-                            if li.peek().map(|p| p.as_rule()) == Some(Rule::let_decl_typ) {
-                                li.next();
-                            }
-                            let val = Exp::from_pest(&mut Pairs::single(li.next().unwrap()))?;
-                            lets.push((id, val));
-                        }
-                        Rule::constraint => {
-                            let mut ci = item.into_inner();
-                            let lhs = Exp::from_pest(&mut Pairs::single(ci.next().unwrap()))?;
-                            ci.next(); // skip eq_op
-                            let rhs = Exp::from_pest(&mut Pairs::single(ci.next().unwrap()))?;
-                            constraints.push((lhs, rhs));
-                        }
-                        _ => {}
-                    }
-                }
-
-                // Build relation as a single chained Exp:
-                // Fold constraints right-to-left into Assert chain ending in Unit,
-                // then fold lets right-to-left around the Assert chain.
-                let relation = {
-                    let mut e = Exp::Unit;
-                    for (lhs, rhs) in constraints.into_iter().rev() {
-                        e = Exp::assert_eq(lhs, rhs, e);
-                    }
-                    for (id, val) in lets.into_iter().rev() {
-                        e = Exp::letx(id, val, e);
-                    }
-                    e
-                };
-
+                // Relation (where clause) — parsed directly as an Exp
+                let relation = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                 // Body expression
                 let body = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                 Ok(Decl::proto(name, typevars, args, relation, body))
@@ -565,12 +519,21 @@ impl<'pest> FromPest<'pest> for UDecl {
                 let typevars = TypeVars::from_pest(&mut inner)?;
                 // Function's arguments
                 let args = GArgs::from_pest(&mut inner)?;
-                // Function return type
-                let ret = GTyp::from_pest(&mut inner)?;
-                // Function's body (single expression, chains via let/log continuations)
-                let body = Exp::from_pest(&mut Pairs::single(
-                    inner.next().ok_or(ConversionError::NoMatch)?,
-                ))?;
+                // Optional return type — if omitted, default to Unit.
+                // `typ` is a silent rule, so the pair will be one of its
+                // sub-rules (base_ty, vec_ty, etc.), never Rule::typ.
+                // Distinguish by checking if the next pair is Rule::exp
+                // (the body) — if not, it's the return type.
+                let next = inner.next().ok_or(ConversionError::NoMatch)?;
+                let (ret, body) = if next.as_rule() == Rule::exp {
+                    (GTyp::unit(), Exp::from_pest(&mut Pairs::single(next))?)
+                } else {
+                    let ret = GTyp::from_pest(&mut Pairs::single(next))?;
+                    let body = Exp::from_pest(&mut Pairs::single(
+                        inner.next().ok_or(ConversionError::NoMatch)?,
+                    ))?;
+                    (ret, body)
+                };
                 Ok(Decl::func(name, typevars, args, ret, body))
             }
             Rule::type_decl => {
@@ -728,6 +691,24 @@ fn fn_parser2() {
             ),
         ),
     );
+}
+
+#[test]
+fn fn_default_unit_return() {
+    let ex = "fn test<F: Field>(public a: F) { verify(a == a) }";
+    let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
+    let decl = UDecl::from_pest(&mut pairs).unwrap();
+    assert_eq!(decl.sig.ret, GTyp::unit());
+}
+
+#[test]
+fn proto_where_with_let() {
+    let ex = concat!(
+        "proto test<F: Field>(public a: F, public b: F) ",
+        "where let x = a + b; x == x { verify(a == a) }"
+    );
+    let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
+    UDecl::from_pest(&mut pairs).unwrap();
 }
 
 #[test]

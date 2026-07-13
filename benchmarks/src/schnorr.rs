@@ -98,8 +98,8 @@ pub mod zippel_side {
             }
             let verify = verify_sum / crate::VERIFY_SAMPLES;
 
-            let result = check_verification(last_result.expect("VERIFY_SAMPLES > 0"));
-            assert!(result.passed, "zippel schnorr verification FAILED");
+            let result = check_verification(&last_result.expect("VERIFY_SAMPLES > 0"));
+            assert!(result, "zippel schnorr verification FAILED");
 
             Timing { prove, verify }
         }

@@ -219,8 +219,8 @@ pub mod zippel_side {
             }
             let verify = verify_sum / crate::VERIFY_SAMPLES;
 
-            let result = check_verification(last_result.expect("VERIFY_SAMPLES > 0"));
-            assert!(result.passed, "zippel KZG verification FAILED");
+            let result = check_verification(&last_result.expect("VERIFY_SAMPLES > 0"));
+            assert!(result, "zippel KZG verification FAILED");
 
             Timing { prove, verify }
         }

@@ -1500,6 +1500,47 @@ impl<'pest> FromPest<'pest> for UExp {
                     }
                     Ok(Exp::Record(fields))
                 }
+                Rule::where_exp => Exp::from_pest(&mut pair.into_inner()),
+                Rule::where_let => {
+                    let mut inner = pair.into_inner();
+                    let var = Vid::from_pest(&mut Pairs::single(
+                        inner.next().ok_or(ConversionError::NoMatch)?,
+                    ))?;
+                    // Next is either a type annotation or the value expression
+                    let next = inner.next().ok_or(ConversionError::NoMatch)?;
+                    let (val, rest) = if next.as_rule() == Rule::exp {
+                        (
+                            Exp::from_pest(&mut Pairs::single(next))?,
+                            inner.next().unwrap(),
+                        )
+                    } else {
+                        // Type annotation present — skip it, then parse value
+                        let val = Exp::from_pest(&mut Pairs::single(
+                            inner.next().ok_or(ConversionError::NoMatch)?,
+                        ))?;
+                        (val, inner.next().ok_or(ConversionError::NoMatch)?)
+                    };
+                    let cont = Exp::from_pest(&mut Pairs::single(rest))?;
+                    Ok(Exp::letx(var, val, cont))
+                }
+                Rule::where_eq => {
+                    let mut inner = pair.into_inner();
+                    let lhs = Exp::from_pest(&mut Pairs::single(
+                        inner.next().ok_or(ConversionError::NoMatch)?,
+                    ))?;
+                    inner.next(); // skip eq_op
+                    let rhs = Exp::from_pest(&mut Pairs::single(
+                        inner.next().ok_or(ConversionError::NoMatch)?,
+                    ))?;
+                    match inner.next() {
+                        Some(cont) => Ok(Exp::assert_eq(
+                            lhs,
+                            rhs,
+                            Exp::from_pest(&mut Pairs::single(cont))?,
+                        )),
+                        None => Ok(Exp::assert_eq(lhs, rhs, Exp::Unit)),
+                    }
+                }
                 Rule::exp => Exp::from_pest(&mut pair.into_inner()),
                 _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
             })

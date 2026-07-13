@@ -498,8 +498,8 @@ pub mod zippel_side {
                 last_result = Some(verifier_result);
             }
             let verify = verify_sum / crate::VERIFY_SAMPLES;
-            let result = check_verification(last_result.expect("VERIFY_SAMPLES > 0"));
-            assert!(result.passed, "zippel PARI verification FAILED");
+            let result = check_verification(&last_result.expect("VERIFY_SAMPLES > 0"));
+            assert!(result, "zippel PARI verification FAILED");
 
             Timing { prove, verify }
         }

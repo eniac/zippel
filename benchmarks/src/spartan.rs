@@ -100,7 +100,7 @@ impl Setup {
             last_result = Some(verifier_result);
         }
         let verify = verify_sum / crate::VERIFY_SAMPLES;
-        let passed = check_verification(last_result.expect("VERIFY_SAMPLES > 0")).passed;
+        let passed = check_verification(&last_result.expect("VERIFY_SAMPLES > 0"));
 
         ZippelTiming {
             prove,

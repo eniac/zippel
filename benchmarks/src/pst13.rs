@@ -547,8 +547,8 @@ pub mod zippel_side {
                 last_result = Some(verifier_result);
             }
             let verify = verify_sum / crate::VERIFY_SAMPLES;
-            let result = check_verification(last_result.expect("VERIFY_SAMPLES > 0"));
-            assert!(result.passed, "zippel PST13 verification FAILED");
+            let result = check_verification(&last_result.expect("VERIFY_SAMPLES > 0"));
+            assert!(result, "zippel PST13 verification FAILED");
 
             Timing { prove, verify }
         }
@@ -640,9 +640,9 @@ mod cross_tests {
         let verifier_result = handler
             .run_verifier(&cross_proof)
             .expect("zippel run_verifier on cross-proof");
-        let result = check_verification(verifier_result);
+        let result = check_verification(&verifier_result);
         assert!(
-            result.passed,
+            result,
             "n={n}: CROSS-VERIFY FAILED: zippel verifier rejected native-produced proof"
         );
     }

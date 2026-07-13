@@ -70,7 +70,7 @@ impl Lub for Range<usize> {
         b.check()
             .map_err(|e| LubError::next(LubError::add(&a, &b), LubError::bad_range(b, e)))?;
 
-        Ok(*a + *b)
+        a.checked_add(*b).ok_or_else(|| LubError::add(&a, &b))
     }
 
     fn lub_sub(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
@@ -80,7 +80,7 @@ impl Lub for Range<usize> {
         b.check()
             .map_err(|e| LubError::next(LubError::sub(&a, &b), LubError::bad_range(b, e)))?;
 
-        Ok(*a - *b)
+        a.checked_sub(*b).ok_or_else(|| LubError::sub(&a, &b))
     }
 
     fn lub_mul(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
@@ -90,7 +90,7 @@ impl Lub for Range<usize> {
         b.check()
             .map_err(|e| LubError::next(LubError::mul(&a, &b), LubError::bad_range(b, e)))?;
 
-        Ok(*a * *b)
+        a.checked_mul(*b).ok_or_else(|| LubError::mul(&a, &b))
     }
 
     fn lub_div(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
@@ -105,7 +105,7 @@ impl Lub for Range<usize> {
             return Err(LubError::div(&a, &b)); // Division by zero is undefined
         }
 
-        Ok(*a / *b)
+        a.checked_div(*b).ok_or_else(|| LubError::div(&a, &b))
     }
 
     fn lub_pow(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
@@ -115,7 +115,7 @@ impl Lub for Range<usize> {
         b.check()
             .map_err(|e| LubError::next(LubError::pow(&a, &b), LubError::bad_range(b, e)))?;
 
-        Ok(*a ^ *b)
+        a.checked_pow(*b).ok_or_else(|| LubError::pow(&a, &b))
     }
 
     fn lub_rem(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
@@ -130,7 +130,7 @@ impl Lub for Range<usize> {
             return Err(LubError::rem(&a, &b)); // Division by zero is undefined
         }
 
-        Ok(*a % *b)
+        a.checked_rem(*b).ok_or_else(|| LubError::rem(&a, &b))
     }
 
     fn lub_dot(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
