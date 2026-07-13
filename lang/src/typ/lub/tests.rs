@@ -1607,3 +1607,72 @@ mod ctyp_lub_overflow_tests {
         assert_eq!(CTyp::lub_rem(&a, &b, &ctx), Ok(CTyp::Poly(f(), 1, 2)));
     }
 }
+
+/// Fin→Scalar coercion consistency tests: all four binary lub operations
+/// (`lub_add`, `lub_sub`, `lub_mul`, `lub_equ`) must accept `Fin` ↔ `Base(S)`
+/// where `S` is a `Scalar` kind (not just `Field`).
+mod ctyp_lub_fin_scalar_coercion_tests {
+    use super::*;
+    use share::Set;
+
+    fn kind_ctx() -> Ctx<Tid, CKind> {
+        let mut kctx = Ctx::new();
+        kctx.insert(&Tid::from("F"), &Kind::Field);
+        kctx.insert(&Tid::from("G"), &Kind::Group);
+        kctx.insert(&Tid::from("S"), &Kind::Scalar(Set::from([Tid::from("G")])));
+        kctx
+    }
+
+    fn s() -> Tid {
+        Tid::from("S")
+    }
+
+    fn fin0() -> CTyp {
+        CTyp::fin(Range::singleton(0))
+    }
+
+    #[test]
+    fn lub_add_fin_scalar() {
+        let ctx = kind_ctx();
+        let s_base = CTyp::base(&s());
+        // Fin + Scalar = Scalar (was rejected before fix; now accepted)
+        assert_eq!(CTyp::lub_add(&fin0(), &s_base, &ctx), Ok(s_base.clone()));
+        assert_eq!(CTyp::lub_add(&s_base, &fin0(), &ctx), Ok(s_base));
+    }
+
+    #[test]
+    fn lub_mul_fin_scalar() {
+        let ctx = kind_ctx();
+        let s_base = CTyp::base(&s());
+        // Fin * Scalar = Scalar (was rejected before fix; now accepted)
+        assert_eq!(CTyp::lub_mul(&fin0(), &s_base, &ctx), Ok(s_base.clone()));
+        assert_eq!(CTyp::lub_mul(&s_base, &fin0(), &ctx), Ok(s_base));
+    }
+
+    #[test]
+    fn lub_sub_fin_scalar() {
+        let ctx = kind_ctx();
+        let s_base = CTyp::base(&s());
+        // Fin - Scalar = Scalar (already worked)
+        assert_eq!(CTyp::lub_sub(&fin0(), &s_base, &ctx), Ok(s_base.clone()));
+        assert_eq!(CTyp::lub_sub(&s_base, &fin0(), &ctx), Ok(s_base));
+    }
+
+    #[test]
+    fn lub_equ_fin_scalar() {
+        let ctx = kind_ctx();
+        let s_base = CTyp::base(&s());
+        // Fin == Scalar = Scalar (already worked)
+        assert_eq!(CTyp::lub_equ(&fin0(), &s_base, &ctx), Ok(s_base.clone()));
+        assert_eq!(CTyp::lub_equ(&s_base, &fin0(), &ctx), Ok(s_base));
+    }
+
+    #[test]
+    fn lub_add_fin_group_rejected() {
+        let ctx = kind_ctx();
+        let g_base = CTyp::base(&Tid::from("G"));
+        // Fin + Group = error (no coercion to group types)
+        assert!(CTyp::lub_add(&fin0(), &g_base, &ctx).is_err());
+        assert!(CTyp::lub_add(&g_base, &fin0(), &ctx).is_err());
+    }
+}

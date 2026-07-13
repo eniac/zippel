@@ -29,15 +29,13 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, V: 3..NUM_VARS_CONST + 1, MAX_
     public curr_round: Fin<NUM_VARS_CONST>
 ) -> Unit {
     let residual_poly = eval(curr_poly, [challenge]);
-    let zero = points[0] - points[0];
-    let one = zero + 1;
     // Round polynomial: sum the residual evaluated over the Boolean-tail
     // hypercube. This lowers to a generic materialized reduce-map (the 2^k
     // tail domain is materialized; Groebner completeness const-folds the bits).
     let round_poly = reduce(+, [
         eval<0>(residual_poly, tail)
         for tail in [
-            [(((i / (2^j)) % 2) * one) for j in 0..(V - 2)]
+            [((i / (2^j)) % 2) for j in 0..(V - 2)]
             for i in 0..(2^(V - 2))
         ]
     ]);
@@ -82,25 +80,21 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
 proto sumcheck<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
     public claimed_sum: F,
     private poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>
-) where let zero: F = 0;
-        let one = zero + 1;
-        let points = [i * one for i in 0..MAX_DEGREE_CONST + 1];
+) where let points = 0..MAX_DEGREE_CONST + 1;
         let round_poly0 = reduce(+, [
             eval<0>(poly, tail)
             for tail in [
-                [(((i / (2^j)) % 2) * one) for j in 0..(NUM_VARS_CONST - 1)]
+                [((i / (2^j)) % 2) for j in 0..(NUM_VARS_CONST - 1)]
                 for i in 0..(2^(NUM_VARS_CONST - 1))
             ]
         ]);
         let evs0 = sample_univariate(round_poly0, points);
         claimed_sum == evs0[0] + evs0[1] {
-    let zero: F = 0;
-    let one = zero + 1;
-    let points = [i * one for i in 0..MAX_DEGREE_CONST + 1];
+    let points = 0..MAX_DEGREE_CONST + 1;
     let round_poly0 = reduce(+, [
         eval<0>(poly, tail)
         for tail in [
-            [(((i / (2^j)) % 2) * one) for j in 0..(NUM_VARS_CONST - 1)]
+            [((i / (2^j)) % 2) for j in 0..(NUM_VARS_CONST - 1)]
             for i in 0..(2^(NUM_VARS_CONST - 1))
         ]
     ]);

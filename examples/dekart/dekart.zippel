@@ -40,7 +40,7 @@ proto dekart<
     [f_evals[i] for i in 1..n+1] == [reduce(+, [ (let chunk_j = chunks_evals[j]; chunk_j[i] * b_pow[j]) for j in 0..l_chunk ]) for i in 1..n+1]
 {
 
-    let f_zero = f_one - f_one;
+    let f_zero = 0;
 
     // Interpolate f
     let f_poly = interpolate(f_evals);

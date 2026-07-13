@@ -33,7 +33,7 @@ proto cds<G: Group, F: Scalar<G>, N: 2, K: 1>(
     
     // Step 2: Verifier Challenge
     s <- challenge<F>;
-    let zero_f = s - s;
+    let zero_f = 0;
     
     // Step 3: Prover Share Completion
     // Interpolate polynomial p using (0, s) and the K points given by u_points
@@ -59,7 +59,7 @@ proto cds<G: Group, F: Scalar<G>, N: 2, K: 1>(
     );
 
     // 5.b: Verify c_transcript is a valid degree K threshold sharing of s
-    let verifier_pts = [s - s] ++ [eval_points[i] for i in 0..K];
+    let verifier_pts = [0] ++ [eval_points[i] for i in 0..K];
     let verifier_evals = [s] ++ [c_transcript[i] for i in 0..K];
     let p_verif = interpolate(verifier_pts, verifier_evals);
 

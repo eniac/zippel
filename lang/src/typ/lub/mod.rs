@@ -450,7 +450,7 @@ impl Lub for CTyp {
                     LubError::add(&x, &y),
                     LubError::kind_not_found(a),
                 ))?;
-                if ka == &Kind::Field {
+                if ka.is_scalar() {
                     Ok(CTyp::base(a))
                 } else {
                     Err(LubError::add(&x, &y))
@@ -616,7 +616,7 @@ impl Lub for CTyp {
                     LubError::mul(&x, &y),
                     LubError::kind_not_found(a),
                 ))?;
-                if ka == &Kind::Field {
+                if ka.is_scalar() {
                     Ok(CTyp::base(a))
                 } else {
                     Err(LubError::mul(&x, &y))

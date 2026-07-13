@@ -47,7 +47,7 @@ proto r1cs_sigma<G: Group, F: Scalar<G>, N: Size, n: 1..N, m: Size>(
     let omega_C = random<F>;
 
     // Build padded randomness (0^n, r) ∈ F^N
-    let padded_r = [r - r for _ in 0..n] ++ [r for _ in 0..(N - n)];
+    let padded_r = [0 for _ in 0..n] ++ [r for _ in 0..(N - n)];
 
     // Compute r_X = X·(0^n, r)
     let r_A = matvec(mat_A, padded_r);

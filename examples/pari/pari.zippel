@@ -134,7 +134,7 @@ proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
     // transitively via the pairing check.)
 {
     // === Constant scalars derived from f_one ===
-    let f_zero    = f_one - f_one;
+    let f_zero    = 0;
     let f_neg_one = f_zero - f_one;
 
     // === Prover: T_AB — batched commitment to ŵ_A and ŵ_B ===

@@ -89,12 +89,10 @@ fn pc_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
     public alpha:            F
 ) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
-    let zero = points[0] - points[0];
-    let one = zero + 1;
     let round_poly = reduce(+, [
         eval<0>(residual_poly, tail)
         for tail in [
-            [(((i / (2^j)) % 2) * one) for j in 0..(V - 2)]
+            [((i / (2^j)) % 2) for j in 0..(V - 2)]
             for i in 0..(2^(V - 2))
         ]
     ]);
@@ -124,9 +122,6 @@ proto hyperplonk_productcheck<F: Field, S: Size, N: 2^S>(
     // encoded in v_evs; this clause states the underlying relation.
     reduce(*, [f_evs[i] for i in 0..N]) == claimed
 {
-    let one  = f_evs[0] - f_evs[0] + 1;
-    let zero = f_evs[0] - f_evs[0];
-
     sent_v <- v_evs;
 
     // ṽ sub-MLE views.
@@ -142,7 +137,7 @@ proto hyperplonk_productcheck<F: Field, S: Size, N: 2^S>(
     let f_mle    = mle(f_evs);
 
     alpha <- challenge<F>;
-    let placeholder = [zero for i in 0..S];
+    let placeholder = [0 for i in 0..S];
     let tau         = draw_taus(placeholder);
     let eq_tau_evs  = eq_weights(tau);
     let eq_tau      = mle(eq_tau_evs);
@@ -150,7 +145,7 @@ proto hyperplonk_productcheck<F: Field, S: Size, N: 2^S>(
     // f̂(X) + α·ĝ(X), additive form to side-step Poly-Mle subtraction.
     //   f̂(X) = ṽ(1, X) - ṽ(X, 0)·ṽ(X, 1)
     //   ĝ(X) = ṽ(0, X) - f(X)
-    let neg_one     = zero - one;
+    let neg_one     = 0 - 1;
     let neg_v_prod  = (v_tail_0 * neg_one) * v_tail_1;
     let neg_f_mle   = f_mle * neg_one;
     let f_hat       = v_lead_1 + neg_v_prod;        // Poly<F, S, 2>
@@ -161,17 +156,17 @@ proto hyperplonk_productcheck<F: Field, S: Size, N: 2^S>(
     let p_poly = h_check * eq_tau;                  // Poly<F, S, 3>
 
     // -------- Round 0, then recurse via pc_round --------
-    let points = [i * one for i in 0..4];
+    let points = 0..4;
     let round_poly0 = reduce(+, [
         eval<0>(p_poly, tail)
         for tail in [
-            [(((i / (2^j)) % 2) * one) for j in 0..(S - 1)]
+            [((i / (2^j)) % 2) for j in 0..(S - 1)]
             for i in 0..(2^(S - 1))
         ]
     ]);
     let evs0_local = [round_poly0(t) for t in points];
     evs0 <- evs0_local;
-    verify(zero == evs0[0] + evs0[1]);
+    verify(0 == evs0[0] + evs0[1]);
 
     let g0     = interpolate(points, evs0);
     r0 <- challenge<F>;
