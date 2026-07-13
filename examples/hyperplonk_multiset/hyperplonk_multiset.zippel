@@ -95,10 +95,12 @@ fn ms_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
     public alpha:            F
 ) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
+    let zero = points[0] - points[0];
+    let one = zero + 1;
     let round_poly = reduce(+, [
         eval<0>(residual_poly, tail)
         for tail in [
-            [((i / (2^j)) % 2) for j in 0..(V - 2)]
+            [(((i / (2^j)) % 2) * one) for j in 0..(V - 2)]
             for i in 0..(2^(V - 2))
         ]
     ]);
@@ -130,6 +132,9 @@ proto hyperplonk_multiset<F: Field, S: Size, N: 2^S>(
     reduce(*, [r + f_evs[i] for i in 0..N])
     == reduce(*, [r + g_evs[i] for i in 0..N])
 {
+    let one  = f_evs[0] - f_evs[0] + 1;
+    let zero = f_evs[0] - f_evs[0];
+
     // (r + f) and (r + g) as MLE evaluations.
     let f_shift_evs = [r + f_evs[i] for i in 0..N];
     let g_shift_evs = [r + g_evs[i] for i in 0..N];
@@ -150,13 +155,13 @@ proto hyperplonk_multiset<F: Field, S: Size, N: 2^S>(
     let v_tail_1 = mle(v_tail_1_evs);
 
     alpha <- challenge<F>;
-    let placeholder = [0 for i in 0..S];
+    let placeholder = [zero for i in 0..S];
     let tau         = draw_taus(placeholder);
     let eq_tau_evs  = eq_weights(tau);
     let eq_tau      = mle(eq_tau_evs);
 
     // f̂(X) + α·ĝ(X), additive form.
-    let neg_one     = 0 - 1;
+    let neg_one     = zero - one;
     let neg_v_prod  = (v_tail_0 * neg_one) * v_tail_1;
     let neg_f1_mle  = f1_mle * neg_one;
     let f_hat       = v_lead_1 + neg_v_prod;
@@ -168,25 +173,25 @@ proto hyperplonk_multiset<F: Field, S: Size, N: 2^S>(
     let p_poly = h_check * eq_tau;
 
     // -------- Round 0, then recurse via ms_round --------
-    let points = 0..4;
+    let points = [i * one for i in 0..4];
     let round_poly0 = reduce(+, [
         eval<0>(p_poly, tail)
         for tail in [
-            [((i / (2^j)) % 2) for j in 0..(S - 1)]
+            [(((i / (2^j)) % 2) * one) for j in 0..(S - 1)]
             for i in 0..(2^(S - 1))
         ]
     ]);
     let evs0_local = [round_poly0(t) for t in points];
     evs0 <- evs0_local;
-    verify(0 == evs0[0] + evs0[1]);
+    verify(zero == evs0[0] + evs0[1]);
 
     let g0     = interpolate(points, evs0);
     r0 <- challenge<F>;
     let prev = g0(r0);
 
-    ms_round(p_poly, points, [r0], prev, r0, 1,
+    let _ = ms_round(p_poly, points, [r0], prev, r0, 1,
                     sent_v, f_shift_evs, g_shift_evs, eq_tau_evs, alpha);
 
     // Product-tree root is 1 iff the multisets coincide.
-    verify(sent_v[N - 1] == 1)
+    verify(sent_v[N - 1] == one)
 }

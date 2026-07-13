@@ -70,10 +70,12 @@ fn zc_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
     public eq_tau_evs:       [F; N]
 ) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
+    let zero = points[0] - points[0];
+    let one = zero + 1;
     let round_poly = reduce(+, [
         eval<0>(residual_poly, tail)
         for tail in [
-            [((i / (2^j)) % 2) for j in 0..(V - 2)]
+            [(((i / (2^j)) % 2) * one) for j in 0..(V - 2)]
             for i in 0..(2^(V - 2))
         ]
     ]);
@@ -111,8 +113,11 @@ proto hyperplonk_zerocheck<F: Field, S: Size, N: 2^S>(
 ) where
     a_evs * b_evs == c_evs
 {
+    let one  = a_evs[0] - a_evs[0] + 1;
+    let zero = a_evs[0] - a_evs[0];
+
     // V draws S taus in F^S, then builds eq_tau on B_S parametrically.
-    let placeholder = [0 for i in 0..S];
+    let placeholder = [zero for i in 0..S];
     let tau         = draw_taus(placeholder);
     let eq_tau_evs  = eq_weights(tau);
     let eq_tau      = mle(eq_tau_evs);
@@ -122,24 +127,24 @@ proto hyperplonk_zerocheck<F: Field, S: Size, N: 2^S>(
     let a       = mle(a_evs);
     let b       = mle(b_evs);
     let c       = mle(c_evs);
-    let neg_one = 0 - 1;
+    let neg_one = zero - one;
     let ab      = a * b;
     let neg_c   = c * neg_one;
     let f_poly  = ab + neg_c;
     let h_poly  = f_poly * eq_tau;
 
     // -------- Round 0 of sumcheck, then recurse into zc_round --------
-    let points = 0..4;
+    let points = [i * one for i in 0..4];
     let round_poly0 = reduce(+, [
         eval<0>(h_poly, tail)
         for tail in [
-            [((i / (2^j)) % 2) for j in 0..(S - 1)]
+            [(((i / (2^j)) % 2) * one) for j in 0..(S - 1)]
             for i in 0..(2^(S - 1))
         ]
     ]);
     let evs0_local = [round_poly0(t) for t in points];
     evs0 <- evs0_local;
-    verify(0 == evs0[0] + evs0[1]);
+    verify(zero == evs0[0] + evs0[1]);
 
     let g0     = interpolate(points, evs0);
     r0 <- challenge<F>;

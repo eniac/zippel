@@ -505,8 +505,7 @@ fn sc_recurse_d3<G: Group, F: Scalar<G>, SC: Size, V: 3..SC + 1>(
     z_vec_sc <- [c_sc * evs[i] + d_vec_sc[i] for i in 0..4];
     z_delta_sc <- c_sc * r_poly_sc + r_delta_sc;
     z_beta_sc <- c_sc * r_eval_sc + r_beta_sc;
-    let zk_check_sc = dot(g_evs_d3, z_vec_sc) + h_evs * z_delta_sc == comm_evs * c_sc + delta_sc;
-    verify(zk_check_sc);
+    verify(dot(g_evs_d3, z_vec_sc) + h_evs * z_delta_sc == comm_evs * c_sc + delta_sc);
 
     sc_recurse_d3(residual_poly, points, new_challenges, next_prev, r_next, curr_round + 1, g_evs_d3, h_evs)
 }}
@@ -543,8 +542,7 @@ fn sc_recurse_d3<G: Group, F: Scalar<G>, SC: Size>(
     z_vec_sc <- [c_sc * evs[i] + d_vec_sc[i] for i in 0..4];
     z_delta_sc <- c_sc * r_poly_sc + r_delta_sc;
     z_beta_sc <- c_sc * r_eval_sc + r_beta_sc;
-    let zk_check_sc = dot(g_evs_d3, z_vec_sc) + h_evs * z_delta_sc == comm_evs * c_sc + delta_sc;
-    verify(zk_check_sc);
+    verify(dot(g_evs_d3, z_vec_sc) + h_evs * z_delta_sc == comm_evs * c_sc + delta_sc);
 
     {{| final_eval: final_eval, challenges: prev_challenges ++ [r_final] |}}
 }}
@@ -589,8 +587,7 @@ fn sc_recurse_d2<G: Group, F: Scalar<G>, SC: Size, V: 3..SC + 1>(
     z_vec_sc <- [c_sc * evs[i] + d_vec_sc[i] for i in 0..3];
     z_delta_sc <- c_sc * r_poly_sc + r_delta_sc;
     z_beta_sc <- c_sc * r_eval_sc + r_beta_sc;
-    let zk_check_sc = dot(g_evs_d2, z_vec_sc) + h_evs * z_delta_sc == comm_evs * c_sc + delta_sc;
-    verify(zk_check_sc);
+    verify(dot(g_evs_d2, z_vec_sc) + h_evs * z_delta_sc == comm_evs * c_sc + delta_sc);
 
     sc_recurse_d2(residual_poly, points, new_challenges, next_prev, r_next, curr_round + 1, g_evs_d2, h_evs)
 }}
@@ -627,8 +624,7 @@ fn sc_recurse_d2<G: Group, F: Scalar<G>, SC: Size>(
     z_vec_sc <- [c_sc * evs[i] + d_vec_sc[i] for i in 0..3];
     z_delta_sc <- c_sc * r_poly_sc + r_delta_sc;
     z_beta_sc <- c_sc * r_eval_sc + r_beta_sc;
-    let zk_check_sc = dot(g_evs_d2, z_vec_sc) + h_evs * z_delta_sc == comm_evs * c_sc + delta_sc;
-    verify(zk_check_sc);
+    verify(dot(g_evs_d2, z_vec_sc) + h_evs * z_delta_sc == comm_evs * c_sc + delta_sc);
 
     {{| final_eval: final_eval, challenges: prev_challenges ++ [r_final] |}}
 }}
@@ -798,8 +794,7 @@ proto spartan<G: Group, F: Scalar<G>>(
     z_vec_10   <- [c_10 * evs1_0[i] + d_vec_10[i] for i in 0..4];
     z_delta_10 <- c_10 * r_poly_10 + r_delta_10;
     z_beta_10  <- c_10 * r_eval_10 + r_beta_10;
-    let zk_check_10 = dot(g_evs_d3, z_vec_10) + h_evs * z_delta_10 == comm_evs_10 * c_10 + delta_10;
-    verify(zk_check_10);
+    verify(dot(g_evs_d3, z_vec_10) + h_evs * z_delta_10 == comm_evs_10 * c_10 + delta_10);
 
     let sc1 = sc_recurse_d3(g_poly, pts3, [rx0], prev1, rx0, 1, g_evs_d3, h_evs);
     let rx  = sc1.challenges;
@@ -834,20 +829,16 @@ proto spartan<G: Group, F: Scalar<G>>(
     z3_phase1 <- c_phase1 * v_b + d2_phase1;
     z4_phase1 <- c_phase1 * r_vb + r_e_phase1;
     z5_phase1 <- c_phase1 * (r_prod - r_va * v_b) + r_f_phase1;
-    let prod_check1 = g_evs_d3[0] * z1_phase1 + h_evs * z2_phase1 == comm_va_phase1 * c_phase1 + alpha_phase1;
-    let prod_check2 = g_evs_d3[0] * z3_phase1 + h_evs * z4_phase1 == comm_vb_phase1 * c_phase1 + beta_p1_phase1;
-    let prod_check3 = comm_va_phase1 * z3_phase1 + h_evs * z5_phase1 == comm_prod_phase1 * c_phase1 + delta_phase1;
-    verify(prod_check1);
-    verify(prod_check2);
-    verify(prod_check3);
+    verify(g_evs_d3[0] * z1_phase1 + h_evs * z2_phase1 == comm_va_phase1 * c_phase1 + alpha_phase1);
+    verify(g_evs_d3[0] * z3_phase1 + h_evs * z4_phase1 == comm_vb_phase1 * c_phase1 + beta_p1_phase1);
+    verify(comm_va_phase1 * z3_phase1 + h_evs * z5_phase1 == comm_prod_phase1 * c_phase1 + delta_phase1);
     let t1_pok_vc = random<F>;
     let t2_pok_vc = random<F>;
     alpha_pok_vc <- g_evs_d3[0] * t1_pok_vc + h_evs * t2_pok_vc;
     c_pok_vc <- challenge<F>;
     z1_pok_vc <- v_c * c_pok_vc + t1_pok_vc;
     z2_pok_vc <- r_vc * c_pok_vc + t2_pok_vc;
-    let pok_vc_check = g_evs_d3[0] * z1_pok_vc + h_evs * z2_pok_vc == comm_vc_phase1 * c_pok_vc + alpha_pok_vc;
-    verify(pok_vc_check);
+    verify(g_evs_d3[0] * z1_pok_vc + h_evs * z2_pok_vc == comm_vc_phase1 * c_pok_vc + alpha_pok_vc);
     let r_postsc_blind = random<F>;
     let r_eq_p1 = random<F>;
     let derived_blind_p1 = eq_tau_at_rx * (r_prod - r_vc);
@@ -856,8 +847,7 @@ proto spartan<G: Group, F: Scalar<G>>(
     alpha_eq_p1 <- h_evs * r_eq_p1;
     c_eq_p1 <- challenge<F>;
     z_eq_p1 <- c_eq_p1 * (r_postsc_blind - derived_blind_p1) + r_eq_p1;
-    let eq_check_p1 = h_evs * z_eq_p1 == (comm_postsc_p1 - comm_derived_p1) * c_eq_p1 + alpha_eq_p1;
-    verify(eq_check_p1);
+    verify(h_evs * z_eq_p1 == (comm_postsc_p1 - comm_derived_p1) * c_eq_p1 + alpha_eq_p1);
 
     ra <- challenge<F>;
     rb <- challenge<F>;
@@ -901,8 +891,7 @@ proto spartan<G: Group, F: Scalar<G>>(
     z_vec_20   <- [c_20 * evs2_0[i] + d_vec_20[i] for i in 0..3];
     z_delta_20 <- c_20 * r_poly_20 + r_delta_20;
     z_beta_20  <- c_20 * r_eval_20 + r_beta_20;
-    let zk_check_20 = dot(g_evs_d2, z_vec_20) + h_evs * z_delta_20 == comm_evs_20 * c_20 + delta_20;
-    verify(zk_check_20);
+    verify(dot(g_evs_d2, z_vec_20) + h_evs * z_delta_20 == comm_evs_20 * c_20 + delta_20);
 
     let sc2 = sc_recurse_d2(m_poly, pts2, [ry0], prev2, ry0, 1, g_evs_d2, h_evs);
     let ry  = sc2.challenges;
@@ -955,7 +944,6 @@ proto spartan<G: Group, F: Scalar<G>>(
     z2_ipa <- a_hat * (c_ipa * b_final_r + r_beta_ipa) + r_delta_ipa;
     let lhs_ipa = (upsilon_combined * c_ipa + beta_ipa) * a_hat + delta_ipa;
     let rhs_ipa = (g_hat + g_base_w * a_hat) * z1_ipa + h_base_w * z2_ipa;
-    let ipa_ok = lhs_ipa == rhs_ipa;
 
     let io_block = io ++ [one];
     let v_io     = dot(ly_lo, io_block);
@@ -974,10 +962,9 @@ proto spartan<G: Group, F: Scalar<G>>(
     c_p2       <- challenge<F>;
     z1_p2 <- c_p2 * e_y + d_p2;
     z2_p2 <- c_p2 * r_ey + r_d_p2;
-    let eq_check_p2 = g_evs_d2[0] * z1_p2 + h_evs * z2_p2 == comm_ey_p2 * c_p2 + alpha_p2;
-    verify(eq_check_p2);
+    verify(g_evs_d2[0] * z1_p2 + h_evs * z2_p2 == comm_ey_p2 * c_p2 + alpha_p2);
 
-    verify(ipa_ok);
+    verify(lhs_ipa == rhs_ipa);
     verify(e_y == (ra * v1 + rb * v2 + rc * v3) * v_z)
 }}
 ",

@@ -1911,11 +1911,16 @@ impl<C: ArkConfig> Value<C> {
                 .par_iter()
                 .zip(b.par_iter())
                 .all(|(a, b)| Value::equ(a, &Value::G2Affine(*b))),
+            (Value::G1Affine(a), Value::G1Affine(b)) => a == b,
+            (Value::G2Affine(a), Value::G2Affine(b)) => a == b,
+            (Value::VecG1Affine(a), Value::VecG1Affine(b)) => a == b,
+            (Value::VecG2Affine(a), Value::VecG2Affine(b)) => a == b,
             (Value::Poly(a), Value::Poly(b)) => {
                 // Use PolyVariant's PartialEq implementation
                 a == b
             }
             (Value::Record(a), Value::Record(b)) => a == b,
+            (Value::Unit, Value::Unit) => true,
             (a, b) => panic!("Cannot compare {} == {}", a, b),
         }
     }

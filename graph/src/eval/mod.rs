@@ -596,7 +596,7 @@ where
         Op::Assert(lhs, rhs) | Op::Verify(lhs, rhs) => {
             let lhs_val = eval_op_with_loop_params(lhs, env, rng, loop_params, check_sink)?;
             let rhs_val = eval_op_with_loop_params(rhs, env, rng, loop_params, check_sink)?;
-            let equal = *lhs_val == *rhs_val;
+            let equal = Value::equ(&lhs_val, &rhs_val);
             check_sink.push(equal);
             Ok(Arc::new(Value::Unit))
         }
