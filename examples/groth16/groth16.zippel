@@ -1,10 +1,11 @@
 // Groth16 zkSNARK Protocol (h-coefficients provided externally)
 // Reference: Groth, J. (2016). "On the Size of Pairing-Based Non-interactive Arguments."
 //
-// This variant accepts h_coeffs as a private input, computed externally
-// by the Rust R1CS-to-QAP conversion. Compare with groth16.zippel which
-// computes h_coeffs inside zippel via FFT-based evaluation-domain arithmetic.
-// Random blinding factors r and s are sampled internally via random<F>.
+// The `where` clause specifies the trusted setup directly: sample random
+// trapdoors (tau, alpha, beta, gamma, delta), derive the SRS elements from
+// them, and assert the QAP identity at tau. This makes the trusted-setup
+// structure explicit rather than encoding it implicitly through the input
+// values.
 //
 // Size parameters (following Groth16 paper):
 //   M: number of public inputs (including the constant 1)
@@ -13,6 +14,8 @@
 //   Total QAP variables = M + L
 
 proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: Size, L: Size, H: Size>(
+    public gen_g1: G1,
+    public gen_g2: G2,
     public alpha_g1: G1,
     public beta_g2: G2,
     public gamma_g2: G2,
@@ -28,19 +31,25 @@ proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: S
     public instance_assignment: [F; M],
     private witness_assignment: [F; L],
     private h_coeffs: [F; H],
-    // Relation-only trapdoor witnesses (analogous to pst13.zippel's
-    // `private alpha`). The proto body and verifier never reference
-    // these; they exist so the `where` clause can express the QAP
-    // identity at the trusted-setup trapdoor τ:
-    //   ⟨A(τ), z⟩ · ⟨B(τ), z⟩ - ⟨C(τ), z⟩ == H(τ) · t(τ),
-    // where z = instance ++ witness and A_i(τ), B_i(τ), C_i(τ) are the
-    // QAP polynomial evaluations at τ.
+    // QAP polynomial evaluations at tau (circuit-specific, provided as
+    // witnesses). The proto body and verifier never reference these;
+    // they exist so the `where` clause can express the QAP identity.
     private a_evs: [F; M+L],
     private b_evs: [F; M+L],
     private c_evs: [F; M+L],
-    private tau: F,
     private t_at_tau: F
 ) where
+    let tau = random<F>;
+    let alpha = random<F>;
+    let beta = random<F>;
+    let gamma = random<F>;
+    let delta = random<F>;
+    alpha_g1 == alpha * gen_g1;
+    beta_g1 == beta * gen_g1;
+    beta_g2 == beta * gen_g2;
+    gamma_g2 == gamma * gen_g2;
+    delta_g1 == delta * gen_g1;
+    delta_g2 == delta * gen_g2;
     let full_assign = instance_assignment ++ witness_assignment;
     let a_at_tau = dot(a_evs, full_assign);
     let b_at_tau = dot(b_evs, full_assign);

@@ -2,14 +2,20 @@
 // This makes makes KZG Zero-Knowledge. This is not the
 // full Multilinear PCS Zeromorph protocol.
 // Protocol is from: https://eprint.iacr.org/2023/917.pdf.
+//
+// The `where` clause specifies the trusted setup directly: sample random
+// trapdoors tau and xi, then derive the SRS. srs_g1 holds powers of tau
+// (indices 0..N-1) plus xi*gen_g1 at index N. srs_g2 holds tau*gen_g2
+// and xi*gen_g2.
+
 proto zeromorph_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>
         (private p_poly: Uni<F, N-1>, public u: F, public v: F, public srs_g1: [G1; N+1],
         public gen_g1: G1, public gen_g2: G2, public srs_g2: [G2; 2])
-        where p_poly(u) == v;
-              srs_g1[0] == gen_g1;
-              [pair(srs_g1[i], srs_g2[0]) for i in 0..N-1] == [pair(srs_g1[i+1], gen_g2) for i in 0..N-1];
-              pair(srs_g1[N], srs_g2[0]) == pair(srs_g1[1], srs_g2[1]);
-              pair(srs_g1[N], gen_g2) == pair(gen_g1, srs_g2[1]) {
+        where let tau = random<F>;
+              let xi = random<F>;
+              srs_g1 == [tau^i * gen_g1 for i in 0..N] ++ [xi * gen_g1];
+              srs_g2 == [tau * gen_g2, xi * gen_g2];
+              p_poly(u) == v {
 
         // Sample random blinding factor r
         let r = random<F>;

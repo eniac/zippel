@@ -413,7 +413,7 @@ pub mod zippel_side {
     use super::Timing;
     use super::bridge::{Translated, witness_map};
     use ark_bls12_381::{Fr as GitFr, G1Projective, G2Projective};
-    use ark_ec::CurveGroup;
+    use ark_ec::{CurveGroup, PrimeGroup};
     use ark_ff::Zero;
     use backend::{ArkBls12_381, Value};
     use lang::id::{Tid, Vid};
@@ -450,6 +450,14 @@ pub mod zippel_side {
             let gamma_abc_aff = G1Projective::normalize_batch(&keys.gamma_abc_g1);
 
             let inputs_base = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+                (
+                    Vid("gen_g1".to_string()),
+                    Value::G1(G1Projective::generator()),
+                ),
+                (
+                    Vid("gen_g2".to_string()),
+                    Value::G2(G2Projective::generator()),
+                ),
                 (Vid("alpha_g1".to_string()), Value::G1(keys.alpha_g1)),
                 (Vid("beta_g2".to_string()), Value::G2(keys.beta_g2)),
                 (Vid("gamma_g2".to_string()), Value::G2(keys.gamma_g2)),
@@ -508,7 +516,6 @@ pub mod zippel_side {
                     Vid("c_evs".to_string()),
                     Value::VecScalar(vec![GitFr::zero(); translated.m + translated.l]),
                 ),
-                (Vid("tau".to_string()), Value::Scalar(GitFr::zero())),
                 (Vid("t_at_tau".to_string()), Value::Scalar(GitFr::zero())),
             ]);
 
@@ -520,6 +527,8 @@ pub mod zippel_side {
             // be in the verifier's input ctx — absorbing them into FS
             // would dominate verify time at large M+L.
             let public_input_names = [
+                "gen_g1",
+                "gen_g2",
                 "alpha_g1",
                 "beta_g2",
                 "gamma_g2",
@@ -901,6 +910,7 @@ mod cross_tests {
     use super::native_side::{AffineKeys, Proof, prove, verify};
     use super::build_translated;
     use ark_bls12_381::Fr as GitFr;
+    use ark_ec::PrimeGroup;
     use ark_ff::{UniformRand, Zero};
     use backend::{ArkBls12_381, Value};
     use lang::id::{Tid, Vid};
@@ -947,6 +957,14 @@ mod cross_tests {
         h_coeffs.resize(t.h_size, GitFr::zero());
 
         Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+            (
+                Vid("gen_g1".to_string()),
+                Value::G1(ark_bls12_381::G1Projective::generator()),
+            ),
+            (
+                Vid("gen_g2".to_string()),
+                Value::G2(ark_bls12_381::G2Projective::generator()),
+            ),
             (Vid("alpha_g1".to_string()), Value::G1(t.keys.alpha_g1)),
             (Vid("beta_g2".to_string()), Value::G2(t.keys.beta_g2)),
             (Vid("gamma_g2".to_string()), Value::G2(t.keys.gamma_g2)),
@@ -977,6 +995,21 @@ mod cross_tests {
                 Value::VecScalar(t.witness_assignment.clone()),
             ),
             (Vid("h_coeffs".to_string()), Value::VecScalar(h_coeffs)),
+            // Relation-only QAP witnesses (zeros are fine at runtime;
+            // analyses are skipped in cross-tests).
+            (
+                Vid("a_evs".to_string()),
+                Value::VecScalar(vec![GitFr::zero(); t.m + t.l]),
+            ),
+            (
+                Vid("b_evs".to_string()),
+                Value::VecScalar(vec![GitFr::zero(); t.m + t.l]),
+            ),
+            (
+                Vid("c_evs".to_string()),
+                Value::VecScalar(vec![GitFr::zero(); t.m + t.l]),
+            ),
+            (Vid("t_at_tau".to_string()), Value::Scalar(GitFr::zero())),
         ])
     }
 

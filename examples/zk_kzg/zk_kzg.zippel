@@ -9,11 +9,16 @@
 // is now randomized, and the pairing check remains identical.
 //
 // SRS needs N+1 elements (one extra) to commit to the degree-N blinded polynomial.
+// The `where` clause specifies the trusted setup directly: sample a random
+// trapdoor tau, then derive the SRS as powers of tau times the generators.
 
 proto zk_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>
         (private p_val: Uni<F, N-1>, public z: F, public y: F, public ss: [G1; N+1],
         public g: G1, public h: G2, public h_val: G2)
-        where p_val(z) == y; ss[0] == g; [pair(ss[i], h_val) for i in 0..N] == [pair(ss[i+1], h) for i in 0..N] {
+        where let tau = random<F>;
+              ss == [tau^i * g for i in 0..N+1];
+              h_val == tau * h;
+              p_val(z) == y {
 
         // Sample blinding factors
         let b0 = random<F>;

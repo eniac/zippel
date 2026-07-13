@@ -15,7 +15,7 @@
 //! picks the circuit size.
 
 use ark_bls12_381::{Fr as GitFr, G1Projective, G2Projective};
-use ark_ec::{CurveGroup, VariableBaseMSM};
+use ark_ec::{CurveGroup, PrimeGroup, VariableBaseMSM};
 use ark_ff::{PrimeField, UniformRand, Zero};
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use backend::{ArkBls12_381, Value};
@@ -285,6 +285,8 @@ fn main() {
     handler.compile(&sizes);
 
     let inputs_base = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+        (Vid("gen_g1".to_string()), Value::G1(ark_bls12_381::G1Projective::generator())),
+        (Vid("gen_g2".to_string()), Value::G2(ark_bls12_381::G2Projective::generator())),
         (Vid("alpha_g1".to_string()), Value::G1(t.keys.alpha_g1)),
         (Vid("beta_g2".to_string()), Value::G2(t.keys.beta_g2)),
         (Vid("gamma_g2".to_string()), Value::G2(t.keys.gamma_g2)),
@@ -306,6 +308,12 @@ fn main() {
     h_coeffs.resize(t.h_size, GitFr::zero());
     let mut inputs = inputs_base.clone();
     inputs.insert(&Vid("h_coeffs".to_string()), &Value::VecScalar(h_coeffs));
+    // Relation-only QAP witnesses (zeros fine — analyses skipped).
+    let n_total = t.m + t.l;
+    inputs.insert(&Vid("a_evs".to_string()), &Value::VecScalar(vec![GitFr::zero(); n_total]));
+    inputs.insert(&Vid("b_evs".to_string()), &Value::VecScalar(vec![GitFr::zero(); n_total]));
+    inputs.insert(&Vid("c_evs".to_string()), &Value::VecScalar(vec![GitFr::zero(); n_total]));
+    inputs.insert(&Vid("t_at_tau".to_string()), &Value::Scalar(GitFr::zero()));
     eprintln!("  witness_map + input clone:      {:>9.2?}", tic.elapsed());
     let tic = Instant::now();
     let _proof = handler.run_prover(&inputs).expect("zippel prove");

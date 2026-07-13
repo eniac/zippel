@@ -1,13 +1,21 @@
+// KZG polynomial commitment scheme.
+//
+// The `where` clause specifies the trusted setup directly: sample a random
+// trapdoor tau, then derive the SRS as powers of tau times the generators.
+// This replaces the previous indirect pairing-based SRS check.
+//
 // `srs_g1` is `private` even though the SRS is not cryptographically secret
 // — the verifier graph never consumes it (only the prover does, for the
 // commit + opening MSMs), and zippel's runtime currently requires every
 // `public` input to be passed to the verifier. Privatizing it sidesteps
-// the unused-input overhead. The `where` clause still binds the SRS
-// structure for the prover.
+// the unused-input overhead.
 proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>
         (private poly_x: Uni<F, N-1>, public eval_point: F, public eval_result: F, private srs_g1: [G1; N],
         public gen_g1: G1, public gen_g2: G2, public srs_g2_s: G2)
-        where poly_x(eval_point) == eval_result; srs_g1[0] == gen_g1; [pair(srs_g1[i], srs_g2_s) for i in 0..N-1] == [pair(srs_g1[i+1], gen_g2) for i in 0..N-1] {
+        where let tau = random<F>;
+              srs_g1 == [tau^i * gen_g1 for i in 0..N];
+              srs_g2_s == tau * gen_g2;
+              poly_x(eval_point) == eval_result {
 
         commitment <- dot(coef(poly_x), srs_g1);
 

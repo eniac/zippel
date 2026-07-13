@@ -6,7 +6,7 @@
 //! Run with: `cargo bench --bench groth16`
 
 use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
-use ark_ec::AffineRepr;
+use ark_ec::{AffineRepr, PrimeGroup};
 use ark_ff::{FftField, One, UniformRand, Zero};
 use ark_groth16::Groth16;
 use ark_groth16::Proof;
@@ -245,6 +245,14 @@ fn groth16_bench(c: &mut Criterion) {
                 .collect();
 
             let zippel_inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+                (
+                    Vid("gen_g1".to_string()),
+                    Value::G1(G1Projective::generator()),
+                ),
+                (
+                    Vid("gen_g2".to_string()),
+                    Value::G2(G2Projective::generator()),
+                ),
                 (Vid("alpha_g1".to_string()), Value::G1(alpha_g1)),
                 (Vid("beta_g2".to_string()), Value::G2(beta_g2)),
                 (Vid("gamma_g2".to_string()), Value::G2(gamma_g2)),
@@ -268,6 +276,20 @@ fn groth16_bench(c: &mut Criterion) {
                     Vid("witness_assignment".to_string()),
                     Value::VecScalar(data.witness_assignment.clone()),
                 ),
+                // Relation-only QAP witnesses (zeros fine — analyses skipped).
+                (
+                    Vid("a_evs".to_string()),
+                    Value::VecScalar(vec![F::zero(); data.m + data.l]),
+                ),
+                (
+                    Vid("b_evs".to_string()),
+                    Value::VecScalar(vec![F::zero(); data.m + data.l]),
+                ),
+                (
+                    Vid("c_evs".to_string()),
+                    Value::VecScalar(vec![F::zero(); data.m + data.l]),
+                ),
+                (Vid("t_at_tau".to_string()), Value::Scalar(F::zero())),
             ]);
 
             let m = data.m;
@@ -326,6 +348,8 @@ fn groth16_bench(c: &mut Criterion) {
                 handler.compile(&sizes);
 
                 let public_input_names = [
+                    "gen_g1",
+                    "gen_g2",
                     "alpha_g1",
                     "beta_g2",
                     "gamma_g2",
@@ -409,6 +433,14 @@ fn groth16_bench(c: &mut Criterion) {
             let coset_offset = F::GENERATOR;
 
             let noh_inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+                (
+                    Vid("gen_g1".to_string()),
+                    Value::G1(G1Projective::generator()),
+                ),
+                (
+                    Vid("gen_g2".to_string()),
+                    Value::G2(G2Projective::generator()),
+                ),
                 (Vid("alpha_g1".to_string()), Value::G1(alpha_g1)),
                 (Vid("beta_g2".to_string()), Value::G2(beta_g2)),
                 (Vid("gamma_g2".to_string()), Value::G2(gamma_g2)),
@@ -436,6 +468,20 @@ fn groth16_bench(c: &mut Criterion) {
                 (Vid("mat_b".to_string()), Value::VecScalar(mat_b_flat)),
                 (Vid("mat_c".to_string()), Value::VecScalar(mat_c_flat)),
                 (Vid("coset_offset".to_string()), Value::Scalar(coset_offset)),
+                // Relation-only QAP witnesses (zeros fine — analyses skipped).
+                (
+                    Vid("a_evs".to_string()),
+                    Value::VecScalar(vec![F::zero(); data.m + data.l]),
+                ),
+                (
+                    Vid("b_evs".to_string()),
+                    Value::VecScalar(vec![F::zero(); data.m + data.l]),
+                ),
+                (
+                    Vid("c_evs".to_string()),
+                    Value::VecScalar(vec![F::zero(); data.m + data.l]),
+                ),
+                (Vid("t_at_tau".to_string()), Value::Scalar(F::zero())),
             ]);
 
             let m = data.m;
@@ -478,6 +524,8 @@ fn groth16_bench(c: &mut Criterion) {
                 handler.compile(&sizes);
 
                 let public_input_names = [
+                    "gen_g1",
+                    "gen_g2",
                     "alpha_g1",
                     "beta_g2",
                     "gamma_g2",

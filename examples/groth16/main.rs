@@ -1,5 +1,5 @@
 use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
-use ark_ec::{AffineRepr, CurveGroup};
+use ark_ec::{AffineRepr, CurveGroup, PrimeGroup};
 use ark_ff::{UniformRand, Zero};
 use ark_groth16::Groth16;
 use ark_groth16::r1cs_to_qap::{LibsnarkReduction, R1CSToQAP};
@@ -87,7 +87,12 @@ impl Groth16Params {
         instance_assignment: &[F],
         witness_assignment: &[F],
     ) -> Vec<(Vid, Value<ArkBls12_381>)> {
+        // Fixed generators for BLS12-381.
+        let gen_g1 = G1Projective::generator();
+        let gen_g2 = G2Projective::generator();
         vec![
+            (Vid("gen_g1".to_string()), Value::G1(gen_g1)),
+            (Vid("gen_g2".to_string()), Value::G2(gen_g2)),
             (Vid("alpha_g1".to_string()), Value::G1(self.alpha_g1)),
             (Vid("beta_g2".to_string()), Value::G2(self.beta_g2)),
             (Vid("gamma_g2".to_string()), Value::G2(self.gamma_g2)),
@@ -228,12 +233,13 @@ fn run_groth16(
         Value::VecScalar(h_coeffs_padded),
     ));
 
-    // Relation-only trapdoor witnesses (a_evs, b_evs, c_evs, tau, t_at_tau).
+    // Relation-only QAP witnesses (a_evs, b_evs, c_evs, t_at_tau).
     // The proto body and verifier never reference these; they exist so the
     // `where` clause can express the QAP identity at the trusted-setup
-    // trapdoor τ. Zeros are fine at runtime — the static analyzer is where
-    // they matter, and it consumes them via the where clause without needing
-    // cryptographically-meaningful values.
+    // trapdoor τ (now sampled via random<F> in the relation). Zeros are
+    // fine at runtime — the static analyzer is where they matter, and it
+    // consumes them via the where clause without needing cryptographically-
+    // meaningful values.
     let n_total = m + l;
     let a_evs = vec![F::zero(); n_total];
     let b_evs = vec![F::zero(); n_total];
@@ -241,12 +247,13 @@ fn run_groth16(
     entries.push((Vid("a_evs".to_string()), Value::VecScalar(a_evs)));
     entries.push((Vid("b_evs".to_string()), Value::VecScalar(b_evs)));
     entries.push((Vid("c_evs".to_string()), Value::VecScalar(c_evs)));
-    entries.push((Vid("tau".to_string()), Value::Scalar(F::zero())));
     entries.push((Vid("t_at_tau".to_string()), Value::Scalar(F::zero())));
 
     let inputs: Ctx<Vid, Value<ArkBls12_381>> = Ctx::from_iter(entries);
 
     let public_input_names = [
+        "gen_g1",
+        "gen_g2",
         "alpha_g1",
         "beta_g2",
         "gamma_g2",
