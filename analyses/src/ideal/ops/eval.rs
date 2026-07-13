@@ -192,7 +192,10 @@ pub fn selected_eval_to_poly<C: ArkConfig>(
         ATyp::VPoly(n, d) if range.end <= n && fixed_polys.len() == n.saturating_sub(1) => {
             let p_polys = PolySource::ref_vars(p, vars);
             let all_indices = multi_indices(n, d);
-            let mut out = vec![Polynomial::<C::F>::zero(); d + 1];
+            let mut out = vec![
+                Polynomial::<C::F>::zero();
+                d.checked_add(1).expect("eval: VPoly d + 1 overflow")
+            ];
 
             for (idx, ki) in all_indices.iter().enumerate() {
                 let free_exp = ki[range.start];

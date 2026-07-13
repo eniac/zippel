@@ -565,7 +565,7 @@ impl Lub for CTyp {
             // (N is the max total degree per Typ::Poly docs; degrees add under multiplication)
             (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, mb)) => {
                 let num_vars = *na.max(nb);
-                let degree = ma.saturating_add(*mb);
+                let degree = ma.checked_add(*mb).ok_or_else(|| LubError::mul(&x, &y))?;
                 Ok(CTyp::Poly(
                     Tid::lub_mul(a, b, ctx)
                         .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?,
@@ -666,7 +666,7 @@ impl Lub for CTyp {
             // (N is the max total degree; polynomial quotient degree is m - m'.)
             (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, mb)) if ma >= mb => {
                 let num_vars = *na.max(nb);
-                let degree = *ma - *mb;
+                let degree = ma.checked_sub(*mb).ok_or_else(|| LubError::div(&x, &y))?;
                 Ok(CTyp::Poly(
                     Tid::lub_div(a, b, ctx)
                         .map_err(|e| LubError::next(LubError::div(&x, &y), e))?,
@@ -725,7 +725,7 @@ impl Lub for CTyp {
                     Tid::lub_equ(a, b, ctx)
                         .map_err(|e| LubError::next(LubError::rem(&x, &y), e))?,
                     num_vars,
-                    *mb - 1,
+                    mb.checked_sub(1).ok_or_else(|| LubError::rem(&x, &y))?,
                 ))
             }
             // Vec<A> % Vec<B> = Vec<C> where C = A = B
@@ -825,13 +825,22 @@ impl Lub for CTyp {
             (CTyp::Vec(box a, x), CTyp::Vec(box b, y)) => {
                 // Try to concatenate them first
                 if let Ok(t) = CTyp::lub_equ(a, b, kctx) {
-                    Ok(CTyp::vec(&t, x.saturating_add(*y)))
+                    Ok(CTyp::vec(
+                        &t,
+                        x.checked_add(*y).ok_or_else(|| LubError::concat(ta, tb))?,
+                    ))
                 } else if let Ok(t) = CTyp::lub_equ(a, tb, kctx) {
                     // Treating tb as an element of ta (appending)
-                    Ok(CTyp::vec(&t, x.saturating_add(1)))
+                    Ok(CTyp::vec(
+                        &t,
+                        x.checked_add(1).ok_or_else(|| LubError::concat(ta, tb))?,
+                    ))
                 } else if let Ok(t) = CTyp::lub_equ(b, ta, kctx) {
                     // Treating ta as an element of tb (prepending)
-                    Ok(CTyp::vec(&t, y.saturating_add(1)))
+                    Ok(CTyp::vec(
+                        &t,
+                        y.checked_add(1).ok_or_else(|| LubError::concat(ta, tb))?,
+                    ))
                 } else {
                     Err(LubError::concat(ta, tb))
                 }
@@ -845,7 +854,10 @@ impl Lub for CTyp {
                 let t = CTyp::lub_equ(a, b, kctx)
                     .map_err(|e| LubError::next(LubError::concat(ta, tb), e))?;
                 // Add an element to the vector
-                Ok(CTyp::vec(&t, n.saturating_add(1)))
+                Ok(CTyp::vec(
+                    &t,
+                    n.checked_add(1).ok_or_else(|| LubError::concat(ta, tb))?,
+                ))
             }
 
             (ta, tb) => Err(LubError::concat(&ta, &tb)),

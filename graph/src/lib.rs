@@ -2197,8 +2197,17 @@ impl<C: HasOpFactory> UDag<C> {
                             assert_eq!(param_types.len(), 1);
 
                             // https://github.com/microsoft/Nova/blob/ad4d77ac89d6bbe9ef943056806e65ceb4ba3b3e/src/spartan/polys/multilinear.rs#L58
-                            let mid = 1_usize << (*n - 1);
-                            let end = 1_usize << *n;
+                            let mid = 1_usize
+                                .checked_shl(
+                                    (*n).checked_sub(1)
+                                        .expect("mle_app: n - 1 underflow (n < 1)")
+                                        .try_into()
+                                        .expect("mle_app: n - 1 exceeds u32"),
+                                )
+                                .expect("mle_app: 1 << (n-1) overflow");
+                            let end = 1_usize
+                                .checked_shl((*n).try_into().expect("mle_app: n exceeds u32"))
+                                .expect("mle_app: 1 << n overflow");
                             let mut bound_vars = vctx.keys();
                             let coef_var = Vid::fresh(&format!("__coef_{}", fid), &mut bound_vars);
 

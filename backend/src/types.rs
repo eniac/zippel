@@ -5,11 +5,14 @@ use lang::typ::{CKind, CTyp, Nothing};
 use share::{Ctx, DocAllocator, DocBuilder, Pretty};
 use std::fmt;
 
-/// Binomial coefficient `C(n, k)` with saturating semantics.
+/// Binomial coefficient `C(n, k)`.
 ///
 /// Used by `ATyp::physical_len` to count coefficients of `VPoly(n, m)` — the
 /// number of multi-indices `(i₁, …, iₙ) ∈ ℕⁿ` with `i₁ + ⋯ + iₙ ≤ m`
 /// equals `C(m + n, n)`. See `docs/poly-encoding.md`.
+///
+/// Panics on overflow — this indicates a type whose physical layout
+/// exceeds `usize`, which is a genuine error, not a silent clamp.
 pub fn binomial(n: usize, k: usize) -> usize {
     if k > n {
         return 0;
@@ -17,7 +20,10 @@ pub fn binomial(n: usize, k: usize) -> usize {
     let k = k.min(n - k);
     let mut result: usize = 1;
     for i in 0..k {
-        result = result.saturating_mul(n - i) / (i + 1);
+        result = result
+            .checked_mul(n - i)
+            .expect("binomial: intermediate overflow")
+            / (i + 1);
     }
     result
 }
@@ -106,7 +112,10 @@ impl ATyp {
     pub fn into_vec(self) -> (ATyp, usize) {
         match self {
             ATyp::Vec(box b, n) => (b, n),
-            ATyp::Uni(m) => (ATyp::scalar(), m + 1),
+            ATyp::Uni(m) => (
+                ATyp::scalar(),
+                m.checked_add(1).expect("into_vec: m + 1 overflow"),
+            ),
             _ => unreachable!(),
         }
     }
@@ -173,13 +182,22 @@ impl ATyp {
     ///   degree `≤ m`.
     pub fn physical_len(&self) -> usize {
         match self {
-            ATyp::Vec(t, n) => t.physical_len() * n,
+            ATyp::Vec(t, n) => t
+                .physical_len()
+                .checked_mul(*n)
+                .expect("physical_len: Vec element count * length overflow"),
             ATyp::Base(ABase::Unit) => 0,
             ATyp::Base(_) => 1,
             ATyp::Record(fields) => fields.iter().map(|(_, t)| t.physical_len()).sum(),
-            ATyp::Uni(m) => *m + 1,
-            ATyp::Mle(n) => 1usize << *n,
-            ATyp::VPoly(n, m) => binomial(*m + *n, *n),
+            ATyp::Uni(m) => m.checked_add(1).expect("physical_len: Uni m + 1 overflow"),
+            ATyp::Mle(n) => 1usize
+                .checked_shl((*n).try_into().expect("physical_len: Mle n exceeds u32"))
+                .expect("physical_len: Mle 1 << n overflow"),
+            ATyp::VPoly(n, m) => binomial(
+                m.checked_add(*n)
+                    .expect("physical_len: VPoly m + n overflow"),
+                *n,
+            ),
         }
     }
 
@@ -218,10 +236,7 @@ impl ATyp {
             // = linear), not the Mle arm (which requires n≥2).
             CTyp::Poly(_, 1, m) => Some(ATyp::Uni(*m)),
             CTyp::Poly(_, n, 1) if *n >= 2 => Some(ATyp::Mle(*n)),
-            CTyp::Poly(_, m, n) => Some(ATyp::VPoly(
-                *m,
-                m.checked_mul(*n).expect("polynomial degree overflow"),
-            )),
+            CTyp::Poly(_, m, n) => Some(ATyp::VPoly(*m, m.checked_mul(*n)?)),
             CTyp::Fin(r) => Some(ATyp::fin(*r)),
             CTyp::Unit => Some(ATyp::unit()),
             CTyp::Record(fields) => {
@@ -498,20 +513,32 @@ impl Lub for ATyp {
                 .map(ATyp::Base)
                 .map_err(|e| LubError::next(LubError::mul(&a, &b), e)),
             // Uni * Uni -> Uni (product of univariates stays univariate, degrees add)
-            (ATyp::Uni(n1), ATyp::Uni(n2)) => Ok(ATyp::uni(*n1 + *n2)),
+            (ATyp::Uni(n1), ATyp::Uni(n2)) => Ok(ATyp::uni(
+                n1.checked_add(*n2).ok_or_else(|| LubError::mul(&a, &b))?,
+            )),
             // Mle * Mle -> VPoly (total degrees add: Mle(n) has total degree n)
-            (ATyp::Mle(m1), ATyp::Mle(m2)) => Ok(ATyp::vpoly(*m1.max(m2), *m1 + *m2)),
+            (ATyp::Mle(m1), ATyp::Mle(m2)) => Ok(ATyp::vpoly(
+                *m1.max(m2),
+                m1.checked_add(*m2).ok_or_else(|| LubError::mul(&a, &b))?,
+            )),
             // Uni * Mle -> VPoly (Uni(n) has total degree n, Mle(m) has total degree m)
-            (ATyp::Uni(n), ATyp::Mle(m)) | (ATyp::Mle(m), ATyp::Uni(n)) => {
-                Ok(ATyp::vpoly(*m, *n + *m))
-            }
+            (ATyp::Uni(n), ATyp::Mle(m)) | (ATyp::Mle(m), ATyp::Uni(n)) => Ok(ATyp::vpoly(
+                *m,
+                n.checked_add(*m).ok_or_else(|| LubError::mul(&a, &b))?,
+            )),
             // VPoly * anything -> VPoly with summed degrees
-            (ATyp::VPoly(m1, n1), ATyp::VPoly(m2, n2)) => Ok(ATyp::vpoly(*m1.max(m2), *n1 + *n2)),
-            (ATyp::VPoly(m, n), ATyp::Uni(d)) | (ATyp::Uni(d), ATyp::VPoly(m, n)) => {
-                Ok(ATyp::vpoly(*m, *n + *d))
-            }
+            (ATyp::VPoly(m1, n1), ATyp::VPoly(m2, n2)) => Ok(ATyp::vpoly(
+                *m1.max(m2),
+                n1.checked_add(*n2).ok_or_else(|| LubError::mul(&a, &b))?,
+            )),
+            (ATyp::VPoly(m, n), ATyp::Uni(d)) | (ATyp::Uni(d), ATyp::VPoly(m, n)) => Ok(
+                ATyp::vpoly(*m, n.checked_add(*d).ok_or_else(|| LubError::mul(&a, &b))?),
+            ),
             (ATyp::VPoly(m1, n), ATyp::Mle(m2)) | (ATyp::Mle(m2), ATyp::VPoly(m1, n)) => {
-                Ok(ATyp::vpoly(*m1.max(m2), *n + *m2))
+                Ok(ATyp::vpoly(
+                    *m1.max(m2),
+                    n.checked_add(*m2).ok_or_else(|| LubError::mul(&a, &b))?,
+                ))
             }
             // Scalar * polynomial -> same polynomial type
             (ATyp::Uni(n1), ATyp::Base(ABase::Scalar))
@@ -564,12 +591,23 @@ impl Lub for ATyp {
             (ATyp::Base(a), ATyp::Base(b)) => ABase::lub_div(a, b, ctx)
                 .map(ATyp::Base)
                 .map_err(|e| LubError::next(LubError::div(&x, &y), e)),
-            (ATyp::Uni(n1), ATyp::Uni(n2)) if *n1 >= *n2 => Ok(ATyp::uni(*n1 - *n2)),
+            (ATyp::Uni(n1), ATyp::Uni(n2)) if *n1 >= *n2 => Ok(ATyp::uni(
+                n1.checked_sub(*n2).ok_or_else(|| LubError::div(&x, &y))?,
+            )),
             (ATyp::VPoly(m1, n1), ATyp::VPoly(m2, n2)) if m1 == m2 && *n1 >= *n2 => {
-                Ok(ATyp::vpoly(*m1, *n1 - *n2))
+                Ok(ATyp::vpoly(
+                    *m1,
+                    n1.checked_sub(*n2).ok_or_else(|| LubError::div(&x, &y))?,
+                ))
             }
-            (ATyp::VPoly(1, n), ATyp::Uni(d)) if *n >= *d => Ok(ATyp::vpoly(1, *n - *d)),
-            (ATyp::Uni(d), ATyp::VPoly(1, n)) if *d >= *n => Ok(ATyp::vpoly(1, *d - *n)),
+            (ATyp::VPoly(1, n), ATyp::Uni(d)) if *n >= *d => Ok(ATyp::vpoly(
+                1,
+                n.checked_sub(*d).ok_or_else(|| LubError::div(&x, &y))?,
+            )),
+            (ATyp::Uni(d), ATyp::VPoly(1, n)) if *d >= *n => Ok(ATyp::vpoly(
+                1,
+                d.checked_sub(*n).ok_or_else(|| LubError::div(&x, &y))?,
+            )),
 
             (ATyp::Uni(n1), ATyp::Base(ABase::Scalar | ABase::Fin(_))) => Ok(ATyp::uni(*n1)),
             (ATyp::Mle(n1), ATyp::Base(ABase::Scalar | ABase::Fin(_))) => Ok(ATyp::mle(*n1)),
@@ -609,16 +647,25 @@ impl Lub for ATyp {
                 *n,
             )),
             // Uni<A> % Uni<B> = Uni<B-1> (requires B > 0)
-            (ATyp::Uni(_), ATyp::Uni(n2)) if *n2 > 0 => Ok(ATyp::uni(*n2 - 1)),
+            (ATyp::Uni(_), ATyp::Uni(n2)) if *n2 > 0 => Ok(ATyp::uni(
+                n2.checked_sub(1).ok_or_else(|| LubError::rem(&x, &y))?,
+            )),
             // VPoly(m,n1) % VPoly(m,n2) = VPoly(m, n2-1); cross-arity
             // polynomial remainder is rejected before Groebner lowering.
-            (ATyp::VPoly(m1, _), ATyp::VPoly(m2, n2)) if m1 == m2 && *n2 >= 1 => {
-                Ok(ATyp::vpoly(*m1, *n2 - 1))
-            }
+            (ATyp::VPoly(m1, _), ATyp::VPoly(m2, n2)) if m1 == m2 && *n2 >= 1 => Ok(ATyp::vpoly(
+                *m1,
+                n2.checked_sub(1).ok_or_else(|| LubError::rem(&x, &y))?,
+            )),
             // Mixed Uni/VPoly quotient-remainder witnesses are currently
             // lowerable only for arity-1 VPoly.
-            (ATyp::VPoly(1, _), ATyp::Uni(d)) if *d >= 1 => Ok(ATyp::vpoly(1, *d - 1)),
-            (ATyp::Uni(_), ATyp::VPoly(1, n)) if *n >= 1 => Ok(ATyp::vpoly(1, *n - 1)),
+            (ATyp::VPoly(1, _), ATyp::Uni(d)) if *d >= 1 => Ok(ATyp::vpoly(
+                1,
+                d.checked_sub(1).ok_or_else(|| LubError::rem(&x, &y))?,
+            )),
+            (ATyp::Uni(_), ATyp::VPoly(1, n)) if *n >= 1 => Ok(ATyp::vpoly(
+                1,
+                n.checked_sub(1).ok_or_else(|| LubError::rem(&x, &y))?,
+            )),
             // Vec<A> % C = Vec<lub_rem(A, C)>; scalar-left vector remainder
             // is not Groebner-lowerable and falls through to an error.
             (ATyp::Vec(box t1, n1), b) => {
@@ -636,7 +683,10 @@ impl Lub for ATyp {
                 .map(ATyp::Base)
                 .map_err(|e| LubError::next(LubError::pow(&x, &y), e)),
             // Uni<A> ^ Fin<B> = Uni<A*B>
-            (ATyp::Uni(n1), ATyp::Base(ABase::Fin(r))) => Ok(ATyp::uni(n1 * r.len())),
+            (ATyp::Uni(n1), ATyp::Base(ABase::Fin(r))) => Ok(ATyp::uni(
+                n1.checked_mul(r.len())
+                    .ok_or_else(|| LubError::pow(&x, &y))?,
+            )),
             // Vec<C> ^ C. Vector exponents and scalar-left vector
             // exponentiation are not runtime-supported.
             (ATyp::Vec(box t1, n1), b) => {
@@ -675,17 +725,27 @@ impl Lub for ATyp {
             (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) => {
                 let t = ATyp::lub_equ(t1, t2, &Nothing)
                     .map_err(|e| LubError::next(LubError::concat(&x, &y), e))?;
-                Ok(ATyp::vec(&t, *n1 + *n2))
+                Ok(ATyp::vec(
+                    &t,
+                    n1.checked_add(*n2)
+                        .ok_or_else(|| LubError::concat(&x, &y))?,
+                ))
             }
             (ATyp::Vec(box t1, n1), b) => {
                 let t = ATyp::lub_equ(t1, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::concat(&x, &y), e))?;
-                Ok(ATyp::vec(&t, *n1 + 1))
+                Ok(ATyp::vec(
+                    &t,
+                    n1.checked_add(1).ok_or_else(|| LubError::concat(&x, &y))?,
+                ))
             }
             (a, ATyp::Vec(box t2, n2)) => {
                 let t = ATyp::lub_equ(a, t2, &Nothing)
                     .map_err(|e| LubError::next(LubError::concat(&x, &y), e))?;
-                Ok(ATyp::vec(&t, *n2 + 1))
+                Ok(ATyp::vec(
+                    &t,
+                    n2.checked_add(1).ok_or_else(|| LubError::concat(&x, &y))?,
+                ))
             }
             (a, b) => Err(LubError::concat(&a, &b)),
         }
@@ -1516,4 +1576,64 @@ mod tests {
     }
 
     // --- Type-layout API tests ---
+
+    // --- Overflow tests: checked arithmetic in ATyp::lub_* ---
+
+    #[test]
+    fn atyp_lub_mul_uni_degree_overflow() {
+        let a = ATyp::uni(usize::MAX);
+        let b = ATyp::uni(1);
+        assert!(ATyp::lub_mul(&a, &b, &Nothing).is_err());
+    }
+
+    #[test]
+    fn atyp_lub_mul_vpoly_degree_overflow() {
+        let a = ATyp::vpoly(1, usize::MAX);
+        let b = ATyp::vpoly(1, 1);
+        assert!(ATyp::lub_mul(&a, &b, &Nothing).is_err());
+    }
+
+    #[test]
+    fn atyp_lub_concat_vec_overflow() {
+        let a = ATyp::vec_scalar(usize::MAX);
+        let b = ATyp::vec_scalar(1);
+        assert!(ATyp::lub_concat(&a, &b, &Nothing).is_err());
+    }
+
+    #[test]
+    fn atyp_lub_concat_vec_element_overflow() {
+        let a = ATyp::vec_scalar(usize::MAX);
+        assert!(ATyp::lub_concat(&a, &ATyp::scalar(), &Nothing).is_err());
+    }
+
+    #[test]
+    fn atyp_lub_pow_uni_fin_overflow() {
+        let a = ATyp::uni(usize::MAX);
+        let r = CRange::new(0, 2); // len = 2
+        let b = ATyp::fin(r);
+        assert!(ATyp::lub_pow(&a, &b, &Nothing).is_err());
+    }
+
+    #[test]
+    fn atyp_from_ctyp_poly_degree_overflow() {
+        let f = Tid::from("F");
+        let kctx: Ctx<Tid, CKind> = Ctx::from([(f.clone(), CKind::Field)]);
+        // Poly(F, m, n) where m * n overflows
+        let ctyp = CTyp::Poly(f, usize::MAX, 2);
+        assert_eq!(ATyp::from_ctyp(&ctyp, &kctx), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "physical_len: Uni m + 1 overflow")]
+    fn atyp_physical_len_uni_overflow() {
+        let t = ATyp::uni(usize::MAX);
+        t.physical_len();
+    }
+
+    #[test]
+    #[should_panic(expected = "physical_len: Mle 1 << n overflow")]
+    fn atyp_physical_len_mle_overflow() {
+        let t = ATyp::mle(usize::BITS as usize);
+        t.physical_len();
+    }
 }

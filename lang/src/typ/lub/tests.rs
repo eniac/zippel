@@ -1530,3 +1530,80 @@ mod ctyp_lub_poly_tests {
         });
     }
 }
+
+/// Overflow tests: checked arithmetic in CTyp::lub_* must reject programs
+/// whose type-level dimensions would overflow usize.
+mod ctyp_lub_overflow_tests {
+    use super::*;
+    use share::Set;
+
+    fn kind_ctx() -> Ctx<Tid, CKind> {
+        let mut kctx = Ctx::new();
+        kctx.insert(&Tid::from("F"), &Kind::Field);
+        kctx.insert(&Tid::from("G"), &Kind::Group);
+        kctx.insert(&Tid::from("S"), &Kind::Scalar(Set::from([Tid::from("G")])));
+        kctx
+    }
+
+    fn f() -> Tid {
+        Tid::from("F")
+    }
+
+    #[test]
+    fn lub_mul_poly_degree_overflow() {
+        let ctx = kind_ctx();
+        let a = CTyp::Poly(f(), 1, usize::MAX);
+        let b = CTyp::Poly(f(), 1, 1);
+        // degree = MAX + 1 overflows
+        assert!(CTyp::lub_mul(&a, &b, &ctx).is_err());
+    }
+
+    #[test]
+    fn lub_concat_vec_vec_overflow() {
+        let ctx = kind_ctx();
+        let tf = CTyp::base(&f());
+        let a = CTyp::vec(&tf, usize::MAX);
+        let b = CTyp::vec(&tf, 1);
+        // length = MAX + 1 overflows
+        assert!(CTyp::lub_concat(&a, &b, &ctx).is_err());
+    }
+
+    #[test]
+    fn lub_concat_vec_vec_large_overflow() {
+        let ctx = kind_ctx();
+        let tf = CTyp::base(&f());
+        let a = CTyp::vec(&tf, usize::MAX / 2 + 1);
+        let b = CTyp::vec(&tf, usize::MAX / 2 + 1);
+        // length = (MAX/2+1) + (MAX/2+1) overflows
+        assert!(CTyp::lub_concat(&a, &b, &ctx).is_err());
+    }
+
+    #[test]
+    fn lub_concat_vec_element_overflow() {
+        let ctx = kind_ctx();
+        let tf = CTyp::base(&f());
+        let a = CTyp::vec(&tf, usize::MAX);
+        // Vec ++ element: MAX + 1 overflows
+        assert!(CTyp::lub_concat(&a, &tf, &ctx).is_err());
+    }
+
+    #[test]
+    fn lub_div_poly_degree_safe() {
+        // Guarded by ma >= mb, so checked_sub should always succeed.
+        // This test confirms the checked path doesn't spuriously error.
+        let ctx = kind_ctx();
+        let a = CTyp::Poly(f(), 1, 5);
+        let b = CTyp::Poly(f(), 1, 3);
+        assert_eq!(CTyp::lub_div(&a, &b, &ctx), Ok(CTyp::Poly(f(), 1, 2)));
+    }
+
+    #[test]
+    fn lub_rem_poly_degree_safe() {
+        // Guarded by mb >= 1, so checked_sub(1) should always succeed.
+        let ctx = kind_ctx();
+        let a = CTyp::Poly(f(), 1, 5);
+        let b = CTyp::Poly(f(), 1, 3);
+        // remainder degree = mb - 1 = 2
+        assert_eq!(CTyp::lub_rem(&a, &b, &ctx), Ok(CTyp::Poly(f(), 1, 2)));
+    }
+}

@@ -112,13 +112,19 @@ impl Var {
                 ATyp::scalar()
             }
             ATyp::Mle(n) => {
-                if i >= (1usize << *n) {
+                let len = 1usize
+                    .checked_shl((*n).try_into().expect("with_index: Mle n exceeds u32"))
+                    .expect("with_index: Mle 1 << n overflow");
+                if i >= len {
                     return None;
                 }
                 ATyp::scalar()
             }
             ATyp::VPoly(n, m) => {
-                let count = binomial(*m + *n, *n);
+                let count = binomial(
+                    m.checked_add(*n).expect("with_index: VPoly m + n overflow"),
+                    *n,
+                );
                 if i >= count {
                     return None;
                 }
@@ -151,11 +157,18 @@ impl Var {
             ATyp::Base(ABase::Unit) => vec![],
             ATyp::Base(_) => vec![self.clone()],
             ATyp::Uni(m) => (0..=*m).filter_map(|i| self.with_index(i)).collect(),
-            ATyp::Mle(n) => (0..(1usize << *n))
-                .filter_map(|i| self.with_index(i))
-                .collect(),
+            ATyp::Mle(n) => {
+                let len = 1usize
+                    .checked_shl((*n).try_into().expect("collect_slots: Mle n exceeds u32"))
+                    .expect("collect_slots: Mle 1 << n overflow");
+                (0..len).filter_map(|i| self.with_index(i)).collect()
+            }
             ATyp::VPoly(n, m) => {
-                let count = binomial(*m + *n, *n);
+                let count = binomial(
+                    m.checked_add(*n)
+                        .expect("collect_slots: VPoly m + n overflow"),
+                    *n,
+                );
                 (0..count).filter_map(|i| self.with_index(i)).collect()
             }
             ATyp::Vec(t, n) => {

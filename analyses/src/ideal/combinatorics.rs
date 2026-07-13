@@ -44,7 +44,10 @@ pub fn multi_indices(n: usize, m: usize) -> Vec<Vec<usize>> {
 /// All boolean multi-indices `b ∈ {0,1}^n` in lex order (matches how
 /// `Op::Mle(v)` unpacks a length-`2^N` vector).
 pub fn hypercube(n: usize) -> Vec<Vec<usize>> {
-    (0..(1usize << n))
+    let len = 1usize
+        .checked_shl(n.try_into().expect("hypercube: n exceeds u32"))
+        .expect("hypercube: 1 << n overflow");
+    (0..len)
         .map(|i| (0..n).map(|j| (i >> j) & 1).collect())
         .collect()
 }

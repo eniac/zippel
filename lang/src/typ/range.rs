@@ -78,7 +78,13 @@ impl CRange {
     pub fn from_num(start: usize, step: usize, end: usize) -> Result<Self, RangeError> {
         // Check if the range is well formed
         let rs = Range { start, step, end };
-        if (start <= end) && (step > 0) && (end - start).is_multiple_of(step) {
+        if (start <= end)
+            && (step > 0)
+            && end
+                .checked_sub(start)
+                .map(|d| d.is_multiple_of(step))
+                .unwrap_or(false)
+        {
             Ok(rs)
         } else {
             Err(RangeError::RangeOrder(start, step, end))
@@ -94,12 +100,19 @@ impl CRange {
         Range {
             start,
             step: 1,
-            end: start + 1,
+            end: start.checked_add(1).expect("singleton: start + 1 overflow"),
         }
     }
 
     pub fn random<R: Rng>(&self, rng: &mut R) -> usize {
-        self.start + (rng.next_u32() % (self.len() as u32)) as usize * self.step
+        let offset = (rng.next_u32() % (self.len() as u32)) as usize;
+        self.start
+            .checked_add(
+                offset
+                    .checked_mul(self.step)
+                    .expect("random: offset * step overflow"),
+            )
+            .expect("random: start + offset*step overflow")
     }
 
     /// Function to check if a value is contained in the range
@@ -114,7 +127,7 @@ impl CRange {
     }
 
     pub fn concat(&self, other: &CRange) -> Option<CRange> {
-        if self.step == other.step && self.end == other.start + 1 {
+        if self.step == other.step && self.end == other.start.checked_add(1)? {
             Some(Range {
                 start: self.start,
                 step: self.step,
@@ -155,12 +168,14 @@ impl CRange {
     /// including the 'end' value.
     ///
     /// Returns a new Range representing their composition
-    pub fn compose(&self, other: &CRange) -> CRange {
+    pub fn compose(&self, other: &CRange) -> Option<CRange> {
         // Calculate the new start: original start + step * other.start
-        let new_start = self.start + self.step * other.start;
+        let new_start = self
+            .start
+            .checked_add(self.step.checked_mul(other.start)?)?;
 
         // Calculate the new step: original step * other.step
-        let new_step = self.step * other.step;
+        let new_step = self.step.checked_mul(other.step)?;
 
         // For end-exclusive ranges:
         // Calculate how many elements in the first range
@@ -186,13 +201,13 @@ impl CRange {
         );
 
         // Calculate the new end
-        let new_end = new_start + new_step * elements_in_result;
+        let new_end = new_start.checked_add(new_step.checked_mul(elements_in_result)?)?;
 
-        Range {
+        Some(Range {
             start: new_start,
             step: new_step,
             end: new_end,
-        }
+        })
     }
 
     /// Gets the element at the specified index when the range is applied
@@ -204,7 +219,13 @@ impl CRange {
     /// Returns the effective index in the original array,
     /// panics if the index is out of bounds.
     pub fn compose_index(&self, j: usize) -> usize {
-        let computed_index = self.start + j * self.step;
+        let computed_index = self
+            .start
+            .checked_add(
+                j.checked_mul(self.step)
+                    .expect("compose_index: j * step overflow"),
+            )
+            .expect("compose_index: start + j*step overflow");
 
         // Check if the computed index is within the bounds of the range
         if computed_index < self.end {
@@ -343,7 +364,10 @@ impl Iterator for CRange {
             None
         } else {
             let current = self.start;
-            self.start = self.start.saturating_add(self.step);
+            self.start = match self.start.checked_add(self.step) {
+                Some(v) => v,
+                None => self.end, // overflow: stop iteration
+            };
             Some(current)
         }
     }
@@ -640,4 +664,33 @@ fn checked_pow_end_overflow() {
     let b = CRange::new(2, 3); // singleton {2}
                                // big^2 overflows
     assert_eq!(a.checked_pow(b), None);
+}
+
+#[test]
+fn compose_overflow_returns_none() {
+    // step * other.step = MAX * 2 overflows
+    let a = CRange {
+        start: 0,
+        step: usize::MAX,
+        end: usize::MAX,
+    };
+    let b = CRange {
+        start: 0,
+        step: 2,
+        end: 3,
+    };
+    assert_eq!(a.compose(&b), None);
+}
+
+#[test]
+fn iterator_stops_on_overflow() {
+    let r = CRange {
+        start: usize::MAX - 1,
+        step: 2,
+        end: usize::MAX,
+    };
+    // First: start=MAX-1 (< MAX), yield MAX-1, then start = (MAX-1)+2 overflows → start=end
+    let mut it = r;
+    assert_eq!(it.next(), Some(usize::MAX - 1));
+    assert_eq!(it.next(), None);
 }
