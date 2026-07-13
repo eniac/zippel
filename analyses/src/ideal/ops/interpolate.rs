@@ -222,18 +222,8 @@ mod tests {
         let r1 = var_ideal.clone().with_index(1).unwrap();
         let r2 = var_ideal.clone().with_index(2).unwrap();
 
-        let y0 = var_evals
-            .clone()
-            .with_index(0)
-            .unwrap()
-            .with_index(0)
-            .unwrap();
-        let y1 = var_evals
-            .clone()
-            .with_index(1)
-            .unwrap()
-            .with_index(0)
-            .unwrap();
+        let y0 = var_evals.clone().with_index(0).unwrap();
+        let y1 = var_evals.clone().with_index(1).unwrap();
 
         let expected_c0 = var_poly(&y0);
         let expected_c1 = -var_poly(&y0) + var_poly(&y1);
@@ -303,24 +293,9 @@ mod tests {
         let r2 = var_ideal.clone().with_index(2).unwrap();
         let r3 = var_ideal.clone().with_index(3).unwrap();
 
-        let y0 = var_evals
-            .clone()
-            .with_index(0)
-            .unwrap()
-            .with_index(0)
-            .unwrap();
-        let y1 = var_evals
-            .clone()
-            .with_index(1)
-            .unwrap()
-            .with_index(0)
-            .unwrap();
-        let y2 = var_evals
-            .clone()
-            .with_index(2)
-            .unwrap()
-            .with_index(0)
-            .unwrap();
+        let y0 = var_evals.clone().with_index(0).unwrap();
+        let y1 = var_evals.clone().with_index(1).unwrap();
+        let y2 = var_evals.clone().with_index(2).unwrap();
 
         let lag = lagrange_basis::<Fr>(&[Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]);
 
@@ -396,18 +371,8 @@ mod tests {
         let r1 = var_ideal.clone().with_index(1).unwrap();
         let r2 = var_ideal.clone().with_index(2).unwrap();
 
-        let y0 = var_evals
-            .clone()
-            .with_index(0)
-            .unwrap()
-            .with_index(0)
-            .unwrap();
-        let y1 = var_evals
-            .clone()
-            .with_index(1)
-            .unwrap()
-            .with_index(0)
-            .unwrap();
+        let y0 = var_evals.clone().with_index(0).unwrap();
+        let y1 = var_evals.clone().with_index(1).unwrap();
 
         let expected_c0 = var_poly(&y0);
         let expected_c1 = -var_poly(&y0) + var_poly(&y1);
@@ -449,18 +414,8 @@ mod tests {
         // Points = [x0, x1]
         let var_points = Var::from_node(NodeIndex::new(2), vec_t.clone(), Qualifier::Private);
         ideal.register(&var_points);
-        let x0_slot = var_points
-            .clone()
-            .with_index(0)
-            .unwrap()
-            .with_index(0)
-            .unwrap();
-        let x1_slot = var_points
-            .clone()
-            .with_index(1)
-            .unwrap()
-            .with_index(0)
-            .unwrap();
+        let x0_slot = var_points.clone().with_index(0).unwrap();
+        let x1_slot = var_points.clone().with_index(1).unwrap();
         ideal.pl.insert(&x0_slot, &Polynomial::var(&var_x0));
         ideal.pl.insert(&x1_slot, &Polynomial::var(&var_x1));
 
@@ -472,18 +427,8 @@ mod tests {
 
         let var_evals = Var::from_node(NodeIndex::new(5), vec_t.clone(), Qualifier::Private);
         ideal.register(&var_evals);
-        let y0_slot = var_evals
-            .clone()
-            .with_index(0)
-            .unwrap()
-            .with_index(0)
-            .unwrap();
-        let y1_slot = var_evals
-            .clone()
-            .with_index(1)
-            .unwrap()
-            .with_index(0)
-            .unwrap();
+        let y0_slot = var_evals.clone().with_index(0).unwrap();
+        let y1_slot = var_evals.clone().with_index(1).unwrap();
         ideal.pl.insert(&y0_slot, &Polynomial::var(&var_y0));
         ideal.pl.insert(&y1_slot, &Polynomial::var(&var_y1));
 

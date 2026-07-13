@@ -502,4 +502,80 @@ mod tests {
             None => panic!("Second check node was not computed"),
         }
     }
+
+    /// Direct `verify(() == ())` — Unit == Unit, trivially true.
+    #[test]
+    fn test_execute_verify_unit_eq_unit() {
+        use crate::UDags;
+        use lang::ast::UModule;
+        use share::Ctx;
+
+        let src = r#"
+            proto unit_eq<F: Field>() where 1 == 1 {
+                verify(() == ())
+            }
+        "#;
+        let m = UModule::from_str(src)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let dag = &gs[0];
+
+        let checks = dag.find_check();
+        assert_eq!(checks.len(), 1, "Should have 1 check node");
+
+        let inputs = test_inputs();
+        let computed = execute_graph_all(dag, inputs);
+
+        match computed.get(&checks[0]) {
+            Some(Value::Unit) => {}
+            Some(v) => panic!("Check node produced {:?}, expected Unit", v),
+            None => panic!("Check node was not computed"),
+        }
+    }
+
+    /// `let a = verify(1 == 1); verify(a == ())` — Check returns Unit,
+    /// so `a` is Unit, and `verify(a == ())` compares Unit == Unit.
+    /// Uses a wrapper function because `verify(...)` greedily consumes `;`
+    /// as its continuation, preventing direct `let` binding.
+    #[test]
+    fn test_execute_verify_let_check_then_unit_eq() {
+        use crate::UDags;
+        use lang::ast::UModule;
+        use share::Ctx;
+
+        let src = r#"
+            fn do_check<F: Field>(x: F) -> Unit {
+                verify(x == x)
+            }
+            proto let_check<F: Field>(public x: F) where x == x {
+                let a = do_check(x);
+                verify(a == ())
+            }
+        "#;
+        let m = UModule::from_str(src)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let dag = &gs[0];
+
+        let checks = dag.find_check();
+        // The inlined verify(x == x) may be merged or lack transcript edges;
+        // the protocol's own verify(a == ()) is the one we care about.
+        assert!(!checks.is_empty(), "Should have at least 1 check node");
+
+        let mut inputs = test_inputs();
+        add_scalar_input(&mut inputs, "x", 5);
+        let computed = execute_graph_all(dag, inputs);
+
+        for (i, &check_idx) in checks.iter().enumerate() {
+            match computed.get(&check_idx) {
+                Some(Value::Unit) => {}
+                Some(v) => panic!("Check node {} produced {:?}, expected Unit", i, v),
+                None => panic!("Check node {} was not computed", i),
+            }
+        }
+    }
 }

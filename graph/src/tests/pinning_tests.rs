@@ -178,9 +178,9 @@ fn pin_proto_simple() {
     expected.add_edge(inp, check, Dep::transcript());
 
     // Continuation Lit(0) → Ret(Value::Unit)
-    let lit_0 = GOp::<B>::Value(backend::Value::Unit);
-    let ret = expected.add_node(Node::ret(&lit_0));
-    expected.add_edges(DepType::Data, ret, lit_0);
+    let unit = GOp::<B>::Value(backend::Value::Unit);
+    let ret = expected.add_node(Node::ret(&unit));
+    expected.add_edges(DepType::Data, ret, unit);
 
     // Relation: Rel + Check(var_s_rel, var_s_rel)
     let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[priv_s("s")]);
@@ -439,9 +439,9 @@ fn pin_assert() {
     expected.add_edges(DepType::Data, check, var_b);
 
     // Continuation Lit(0) → Ret(Value::Unit)
-    let lit_0 = GOp::<B>::Value(backend::Value::Unit);
-    let ret = expected.add_node(Node::ret(&lit_0));
-    expected.add_edges(DepType::Data, ret, lit_0);
+    let unit = GOp::<B>::Value(backend::Value::Unit);
+    let ret = expected.add_node(Node::ret(&unit));
+    expected.add_edges(DepType::Data, ret, unit);
 
     assert!(gs[0] == expected);
 }
@@ -472,9 +472,9 @@ fn pin_verify() {
     expected.add_edge(inp, check, Dep::transcript());
 
     // Continuation Lit(0) → Ret(Value::Unit)
-    let lit_0 = GOp::<B>::Value(backend::Value::Unit);
-    let ret = expected.add_node(Node::ret(&lit_0));
-    expected.add_edges(DepType::Data, ret, lit_0);
+    let unit = GOp::<B>::Value(backend::Value::Unit);
+    let ret = expected.add_node(Node::ret(&unit));
+    expected.add_edges(DepType::Data, ret, unit);
 
     assert!(gs[0] == expected);
 }
@@ -524,9 +524,9 @@ fn pin_log_node_ref() {
     expected.add_edge(transcr, check, Dep::transcript());
 
     // Continuation Lit(0) → Ret(Value::Unit)
-    let lit_0 = GOp::<B>::Value(backend::Value::Unit);
-    let ret = expected.add_node(Node::ret(&lit_0));
-    expected.add_edges(DepType::Data, ret, lit_0);
+    let unit = GOp::<B>::Value(backend::Value::Unit);
+    let ret = expected.add_node(Node::ret(&unit));
+    expected.add_edges(DepType::Data, ret, unit);
 
     // Relation: Rel + Check(var_s_rel, var_s_rel)
     let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[priv_s("s")]);
@@ -574,9 +574,9 @@ fn pin_log_new_transcr() {
     expected.add_edge(transcr, check, Dep::transcript());
 
     // Continuation Lit(0) → Ret(Value::Unit)
-    let lit_0 = GOp::<B>::Value(backend::Value::Unit);
-    let ret = expected.add_node(Node::ret(&lit_0));
-    expected.add_edges(DepType::Data, ret, lit_0);
+    let unit = GOp::<B>::Value(backend::Value::Unit);
+    let ret = expected.add_node(Node::ret(&unit));
+    expected.add_edges(DepType::Data, ret, unit);
 
     // Relation: Rel + Check(var_s_rel, var_s_rel)
     let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[priv_s("s")]);
@@ -1378,9 +1378,9 @@ fn pin_log_var_ref() {
     expected.add_edge(transcr, check, Dep::transcript());
 
     // Continuation Lit(0) → Ret(Value::Unit)
-    let lit_0 = GOp::<B>::Value(backend::Value::Unit);
-    let ret = expected.add_node(Node::ret(&lit_0));
-    expected.add_edges(DepType::Data, ret, lit_0);
+    let unit = GOp::<B>::Value(backend::Value::Unit);
+    let ret = expected.add_node(Node::ret(&unit));
+    expected.add_edges(DepType::Data, ret, unit);
 
     // Relation: Rel + Check(var_s_rel, var_s_rel)
     let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[priv_s("s")]);

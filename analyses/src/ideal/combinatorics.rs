@@ -245,7 +245,7 @@ mod tests {
 
     #[test]
     fn test_physical_len_vec_is_length() {
-        // Vec(t, n) is a base case: exactly n slots regardless of inner type.
+        // Vec(t, n) has n * physical_len(t) slots.
         arbtest::arbtest(|u| {
             let n: usize = u.int_in_range(0..=16)?;
             let disc: u8 = u.int_in_range(0..=3)?;
@@ -256,10 +256,11 @@ mod tests {
                 _ => ATyp::g2(),
             };
             let typ = ATyp::vec(&inner, n);
+            let expected = n * inner.physical_len();
             assert_eq!(
                 typ.physical_len(),
-                n,
-                "physical_len(Vec(_, {n})) should be {n}"
+                expected,
+                "physical_len(Vec(_, {n})) should be {expected}"
             );
             Ok(())
         });
@@ -268,10 +269,9 @@ mod tests {
     #[test]
     fn test_physical_len_base_is_one() {
         // Every scalar-shaped base type occupies exactly one Var slot.
-        // Enumerated explicitly — the set of ABase variants is finite and fixed.
+        // Unit is zero-sized (no slots).
         for typ in [
             ATyp::scalar(),
-            ATyp::unit(),
             ATyp::g1(),
             ATyp::g2(),
             ATyp::gt(),
@@ -279,6 +279,11 @@ mod tests {
         ] {
             assert_eq!(typ.physical_len(), 1, "physical_len({typ:?}) should be 1");
         }
+        assert_eq!(
+            ATyp::unit().physical_len(),
+            0,
+            "physical_len(Unit) should be 0"
+        );
     }
 
     #[test]

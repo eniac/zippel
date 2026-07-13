@@ -316,10 +316,10 @@ mod tests {
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
-        let v0 = var_v.clone().with_index(0).unwrap().with_index(0).unwrap();
-        let v1 = var_v.clone().with_index(1).unwrap().with_index(0).unwrap();
-        let v2 = var_v.clone().with_index(2).unwrap().with_index(0).unwrap();
-        let r_slot = var.with_index(0).unwrap();
+        let v0 = var_v.clone().with_index(0).unwrap();
+        let v1 = var_v.clone().with_index(1).unwrap();
+        let v2 = var_v.clone().with_index(2).unwrap();
+        let r_slot = var.clone();
 
         let step1_vars: Vec<_> = ideal
             .generating_set

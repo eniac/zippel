@@ -154,8 +154,8 @@ mod tests {
         );
 
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
-        let a_slot = var_a.clone().with_index(0).unwrap();
-        let b_slot = var_b.clone().with_index(0).unwrap();
+        let a_slot = var_a.clone();
+        let b_slot = var_b.clone();
         let expected = &var_poly(&a_slot) * &var_poly(&b_slot);
         assert_eq!(
             ideal.pl.get(&var_r).unwrap(),
@@ -315,7 +315,7 @@ mod tests {
         );
 
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
-        let b_slot = var_b.clone().with_index(0).unwrap();
+        let b_slot = var_b.clone();
         for i in 0..2 {
             let a_slot = var_a.clone().with_index(i).unwrap();
             let r_slot = var_r.clone().with_index(i).unwrap();
@@ -365,7 +365,7 @@ mod tests {
         );
 
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
-        let a_slot = var_a.clone().with_index(0).unwrap();
+        let a_slot = var_a.clone();
         for i in 0..2 {
             let b_slot = var_b.clone().with_index(i).unwrap();
             let r_slot = var_r.clone().with_index(i).unwrap();

@@ -2671,10 +2671,12 @@ impl<C: ArkConfig> Value<C> {
                 vec_value.into_vec_gt_mut();
                 vec_value
             }
-            ATyp::Base(ABase::Unit) => panic!("Cannot create vec value for Unit type"),
-            ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) | ATyp::Record(_) | ATyp::Vec(_, _) => {
-                vec_value
-            }
+            ATyp::Base(ABase::Unit)
+            | ATyp::Uni(_)
+            | ATyp::Mle(_)
+            | ATyp::VPoly(_, _)
+            | ATyp::Record(_)
+            | ATyp::Vec(_, _) => vec_value,
         }
     }
 

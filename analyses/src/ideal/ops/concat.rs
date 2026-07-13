@@ -226,10 +226,9 @@ mod tests {
 
         for i in 0..5 {
             let pr_i = var_r.with_index(i).unwrap();
-            let pr_slot = pr_i.with_index(0).unwrap();
             assert!(
-                ideal.pl.contains(&pr_slot),
-                "concat ideal element {} slot 0 should be in pl",
+                ideal.pl.contains(&pr_i),
+                "concat ideal element {} should be in pl",
                 i
             );
         }

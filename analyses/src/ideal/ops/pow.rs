@@ -517,7 +517,7 @@ mod tests {
             &mut ideal,
         );
 
-        let slot = var_r.with_index(0).unwrap();
+        let slot = var_r.clone();
         let poly = ideal.pl.get(&slot).expect("pow k=0: slot must be in pl");
         assert!(
             poly.is_constant(),
@@ -560,7 +560,7 @@ mod tests {
             &mut ideal,
         );
 
-        let slot = var_r.with_index(0).unwrap();
+        let slot = var_r.clone();
         let poly = ideal.pl.get(&slot).expect("pow k=1: slot must be in pl");
         // k=1 links target to base — the polynomial should be the base's
         // variable polynomial (var(a_slot)), not a constant.
@@ -751,7 +751,7 @@ mod tests {
             &mut ideal,
         );
 
-        let slot = var_r.with_index(0).unwrap();
+        let slot = var_r.clone();
         let poly = ideal.pl.get(&slot).expect("pow k=3: slot must be in pl");
         assert!(
             !poly.is_constant(),

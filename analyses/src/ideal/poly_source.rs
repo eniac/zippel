@@ -58,7 +58,7 @@ impl<C: ArkConfig> PolySource<C> {
         PolySource { polys, typ }
     }
 
-    pub fn embed_multi_indexed_polys(
+    fn embed_multi_indexed_polys(
         polys: &[Polynomial<C::F>],
         source_indices: &[Vec<usize>],
         target_indices: &[Vec<usize>],
@@ -404,6 +404,7 @@ impl<C: ArkConfig> PolySource<C> {
         match v {
             Value::Scalar(s) => vec![Polynomial::lit(s)],
             Value::Index(i) => vec![Polynomial::lit(&C::FOps::from_usize(*i))],
+            Value::Unit => vec![],
             Value::Vec(v) => v.iter().flat_map(|v| Self::to_poly_value(v)).collect(),
             Value::VecScalar(v) => v.iter().map(Polynomial::lit).collect::<Vec<_>>(),
             Value::VecIndex(v) => v

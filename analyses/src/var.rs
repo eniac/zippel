@@ -4,7 +4,7 @@ use lang::typ::Qualifier;
 use petgraph::graph::NodeIndex;
 use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 
-use backend::{ATyp, ArkConfig, binomial};
+use backend::{ABase, ATyp, ArkConfig, binomial};
 use std::fmt;
 
 /// A reference to a node in the graph, with all associated metadata.
@@ -92,14 +92,43 @@ impl Var {
     /// For `Vec(T, n)`, `with_index(i)` returns a Var of type `T`.
     /// For polynomial types (Uni, Mle, VPoly), every logical slot has
     /// type `ATyp::scalar()`.
+    /// For `Record`, `with_index(i)` returns a Var for field `i`.
     ///
-    /// Returns `None` if `i >= logical_len()`.
+    /// Returns `None` for base types (scalars/groups/Unit are not
+    /// indexable) or if `i` is out of bounds.
     pub fn with_index(&self, i: usize) -> Option<Self> {
-        let slot_typ = self.typ.logical_slot_type(i)?;
-        // For base types, with_index(0) is identity.
-        if matches!(self.typ, ATyp::Base(_)) {
-            return Some(self.clone());
-        }
+        let slot_typ = match &self.typ {
+            ATyp::Base(_) => return None,
+            ATyp::Vec(t, n) => {
+                if i >= *n {
+                    return None;
+                }
+                (**t).clone()
+            }
+            ATyp::Uni(m) => {
+                if i > *m {
+                    return None;
+                }
+                ATyp::scalar()
+            }
+            ATyp::Mle(n) => {
+                if i >= (1usize << *n) {
+                    return None;
+                }
+                ATyp::scalar()
+            }
+            ATyp::VPoly(n, m) => {
+                let count = binomial(*m + *n, *n);
+                if i >= count {
+                    return None;
+                }
+                ATyp::scalar()
+            }
+            ATyp::Record(fields) => {
+                let (_, t) = fields.iter().nth(i)?;
+                t.clone()
+            }
+        };
         let mut new_index = self.index.clone();
         new_index.push(i);
         Some(Var {
@@ -119,6 +148,7 @@ impl Var {
     /// returns one Var per coefficient (all scalar-typed).
     fn collect_slots(&self) -> Vec<Self> {
         match &self.typ {
+            ATyp::Base(ABase::Unit) => vec![],
             ATyp::Base(_) => vec![self.clone()],
             ATyp::Uni(m) => (0..=*m).filter_map(|i| self.with_index(i)).collect(),
             ATyp::Mle(n) => (0..(1usize << *n))

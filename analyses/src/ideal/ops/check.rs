@@ -64,8 +64,8 @@ mod tests {
     use crate::frontend::Polynomial;
     use backend::ArkBls12_381;
 
-    use backend::ATyp;
     use backend::op::mk;
+    use backend::{ATyp, Value};
     use graph::{Op, Ref};
 
     #[test]
@@ -137,21 +137,15 @@ mod tests {
             &mut ideal,
         );
 
-        let a_slot = var_a.with_index(0).unwrap();
-        let b_slot = var_b.with_index(0).unwrap();
-        let r_slot = var_r.with_index(0).unwrap();
+        let a_slot = var_a.clone();
+        let b_slot = var_b.clone();
         let diff = &Polynomial::var(&a_slot) - &Polynomial::var(&b_slot);
         assert!(
             ideal.generating_set.contains(&diff),
             "basis should contain a-b diff"
         );
-        assert!(
-            !ideal
-                .generating_set
-                .iter()
-                .any(|p| *p == Polynomial::var(&r_slot)),
-            "basis should NOT contain var_poly(r) for Unit ideal (== is an assertion, not a computation)"
-        );
+        // Unit-typed var_r has no slots, so it cannot appear in the generating set.
+        assert!(var_r.slots().is_empty());
     }
 
     #[test]
@@ -178,15 +172,8 @@ mod tests {
             &mut ideal,
         );
 
-        let r_slot = var_r.with_index(0).unwrap();
-
-        assert!(
-            !ideal
-                .generating_set
-                .iter()
-                .any(|p| *p == Polynomial::var(&r_slot)),
-            "basis should NOT contain var_poly(r) for Unit ideal"
-        );
+        // Unit-typed var_r has no slots, so it cannot appear in the generating set.
+        assert!(var_r.slots().is_empty());
 
         for j in 0..3 {
             let a_j = var_a.clone().with_index(j).unwrap();
@@ -200,10 +187,8 @@ mod tests {
             );
         }
 
-        assert!(
-            !ideal.pl.contains(&r_slot),
-            "Unit ideal slot should NOT be defined via pl"
-        );
+        // Unit-typed var_r has no slots, so it cannot appear in pl.
+        assert!(var_r.slots().is_empty());
     }
 
     #[test]
@@ -230,14 +215,8 @@ mod tests {
             &mut ideal,
         );
 
-        let r_slot = var_r.with_index(0).unwrap();
-        assert!(
-            !ideal
-                .generating_set
-                .iter()
-                .any(|p| *p == Polynomial::var(&r_slot)),
-            "basis should NOT contain var_poly(r) for Unit ideal"
-        );
+        // Unit-typed var_r has no slots, so it cannot appear in the generating set.
+        assert!(var_r.slots().is_empty());
 
         let lub_len = ATyp::Uni(4).physical_len();
         assert_eq!(lub_len, 5);
@@ -255,5 +234,33 @@ mod tests {
                 j
             );
         }
+    }
+
+    /// `verify(() == ())` — Unit == Unit produces no constraints (zero slots).
+    #[test]
+    fn test_check_unit_eq_unit_no_constraints() {
+        use crate::Var;
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+
+        let var_r = Var::from_node(NodeIndex::new(0), ATyp::unit(), Qualifier::Private);
+
+        builder.add_op(
+            var_r.clone(),
+            Op::Check(
+                mk::<ArkBls12_381>(Op::Value(Value::Unit)),
+                mk::<ArkBls12_381>(Op::Value(Value::Unit)),
+            ),
+            &mut ideal,
+        );
+
+        assert!(
+            ideal.generating_set.is_empty(),
+            "Unit == Unit should produce no constraints"
+        );
+        assert!(var_r.slots().is_empty());
     }
 }

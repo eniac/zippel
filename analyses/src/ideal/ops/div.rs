@@ -1136,9 +1136,9 @@ mod tests {
 
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
 
-        let a_slot = var_a.with_index(0).unwrap();
-        let b_slot = var_b.with_index(0).unwrap();
-        let r_slot = var_ideal.with_index(0).unwrap();
+        let a_slot = var_a.clone();
+        let b_slot = var_b.clone();
+        let r_slot = var_ideal.clone();
         let expected = &var_poly(&a_slot) - &(&var_poly(&b_slot) * &var_poly(&r_slot));
         assert!(
             ideal.generating_set.iter().any(|r| r == &expected),

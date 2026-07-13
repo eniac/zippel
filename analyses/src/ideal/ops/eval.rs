@@ -480,9 +480,9 @@ mod tests {
         builder.add_op(var.clone(), op, &mut ideal);
 
         // One ideal slot (scalar) produced by explicit eval encoding.
-        assert!(ideal.pl.contains(&var.clone().with_index(0).unwrap()));
+        assert!(ideal.pl.contains(&var));
         // Should contain all 6 coef Vars of p + both xs slots.
-        let slot = ideal.pl.get(&var.clone().with_index(0).unwrap()).unwrap();
+        let slot = ideal.pl.get(&var).unwrap();
         let vars = slot.vars();
         assert!(
             vars.len() >= 6,
@@ -571,9 +571,9 @@ mod tests {
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
-        assert!(ideal.pl.contains(&var.clone().with_index(0).unwrap()));
+        assert!(ideal.pl.contains(&var));
         // Result poly should reference all 4 Mle slots + both xs slots.
-        let slot = ideal.pl.get(&var.clone().with_index(0).unwrap()).unwrap();
+        let slot = ideal.pl.get(&var).unwrap();
         let vars = slot.vars();
         assert!(vars.len() >= 4, "mle full eval got {} vars", vars.len());
     }
