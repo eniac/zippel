@@ -159,7 +159,8 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             Op::Bin(BinOp::Rem, ref a, ref b, _) => {
                 ops::div::div_rem_op(&mut ctx, &var, a, b, true, true);
             }
-            Op::Check(ref a, ref b) => ops::check::check_op(&mut ctx, &var, a, b),
+            Op::Assert(ref a, ref b) => ops::check::assert_op(&mut ctx, &var, a, b),
+            Op::Verify(ref a, ref b) => ops::check::verify_op(&mut ctx, &var, a, b),
             Op::Challenge(_, _) | Op::Random(_, _) => {}
             Op::Interpolate(ref points, ref evals) => {
                 ops::interpolate::interpolate_op(&mut ctx, var, points, evals);

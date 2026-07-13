@@ -31,7 +31,7 @@ fn op_ancestors_of_loops<C: ArkConfig>(
         Op::Ref(r, _) => ancestors.get(&r.node()).cloned().unwrap_or_default(),
         Op::Ram(a, _) => op_ancestors_of_loops(a, ancestors, loops),
         Op::Value(_) => Set::new(),
-        Op::Check(a, b) => op_ancestors_of_loops(a, ancestors, loops)
+        Op::Assert(a, b) | Op::Verify(a, b) => op_ancestors_of_loops(a, ancestors, loops)
             .union(op_ancestors_of_loops(b, ancestors, loops)),
         Op::Poly(op) => op_ancestors_of_loops(op, ancestors, loops),
         Op::Coef(op) => op_ancestors_of_loops(op, ancestors, loops),
@@ -111,7 +111,7 @@ fn compute_distribution_loops<C: ArkConfig>(
 ) -> Option<Distribution> {
     match op {
         Op::Value(_) => Some(Distribution::Nonuniform),
-        Op::Check(_, _) => Some(Distribution::Nonuniform),
+        Op::Assert(_, _) | Op::Verify(_, _) => Some(Distribution::Nonuniform),
         Op::Ref(r, _) => distributions.get(r).cloned(),
         Op::Ram(a, _) => {
             compute_distribution_loops(a, ancestors, distributions, dist_loops, anc_loops)
@@ -432,7 +432,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let checks = g.find_check();
+        let checks = g.find_verify();
         assert_eq!(
             checks.len(),
             2,
@@ -554,7 +554,7 @@ mod tests {
         use graph::mk;
         let inner =
             GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
-        let op = Op::Check(mk::<ArkBls12_381>(inner.clone()), mk::<ArkBls12_381>(inner));
+        let op = Op::Verify(mk::<ArkBls12_381>(inner.clone()), mk::<ArkBls12_381>(inner));
         let dist = compute_distribution(&op, &Ctx::new(), &Ctx::new());
         assert_eq!(dist, Some(Distribution::Nonuniform));
     }

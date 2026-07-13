@@ -270,7 +270,7 @@ mod tests {
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = &gs[0];
 
-        let checks = dag.find_check();
+        let checks = dag.find_verify();
         assert_eq!(
             checks.len(),
             2,
@@ -314,7 +314,7 @@ mod tests {
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = &gs[0];
 
-        let checks = dag.find_check();
+        let checks = dag.find_verify();
         assert_eq!(
             checks.len(),
             2,
@@ -356,7 +356,7 @@ mod tests {
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = &gs[0];
 
-        let checks = dag.find_check();
+        let checks = dag.find_verify();
         assert_eq!(checks.len(), 2, "Should have 2 check nodes");
 
         let mut inputs = test_inputs();
@@ -392,7 +392,7 @@ mod tests {
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = &gs[0];
 
-        let checks = dag.find_check();
+        let checks = dag.find_verify();
         assert_eq!(checks.len(), 2, "Should have 2 check nodes");
 
         let mut inputs = test_inputs();
@@ -433,7 +433,7 @@ mod tests {
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
 
         let proto = gs.protocols()[0];
-        let checks = proto.find_check();
+        let checks = proto.find_verify();
         assert_eq!(
             checks.len(),
             2,
@@ -478,7 +478,7 @@ mod tests {
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
 
         let proto = gs.protocols()[0];
-        let checks = proto.find_check();
+        let checks = proto.find_verify();
         assert_eq!(
             checks.len(),
             2,
@@ -522,7 +522,7 @@ mod tests {
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = &gs[0];
 
-        let checks = dag.find_check();
+        let checks = dag.find_verify();
         assert_eq!(checks.len(), 1, "Should have 1 check node");
 
         let inputs = test_inputs();
@@ -561,7 +561,7 @@ mod tests {
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = &gs[0];
 
-        let checks = dag.find_check();
+        let checks = dag.find_verify();
         // The inlined verify(x == x) may be merged or lack transcript edges;
         // the protocol's own verify(a == ()) is the one we care about.
         assert!(!checks.is_empty(), "Should have at least 1 check node");

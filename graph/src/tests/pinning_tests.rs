@@ -153,8 +153,8 @@ fn pin_func_var() {
 }
 
 /// Proto declaration with body and relation.
-/// Tests: CBody::Proto, Inp node, Rel node, Check(lhs, rhs) in relation, verify in body.
-/// Note: `verify(s == s)` creates Check(var_s, var_s) directly (no Equ node).
+/// Tests: CBody::Proto, Inp node, Rel node, Assert(lhs, rhs) in relation, verify in body.
+/// Note: `verify(s == s)` creates Verify(var_s, var_s) directly (no Equ node).
 #[test]
 fn pin_proto_simple() {
     let src = r#"
@@ -167,26 +167,25 @@ fn pin_proto_simple() {
     let mut expected = UDag::<B>::new();
     let s = Vid::new("s");
 
-    // Body: Inp + Check(var_s, var_s) + Ret(Lit(0))
-    let (inp, _inp_args) = expected_inp(&mut expected, "foo", &[priv_s("s")]);
+    // Body: Inp + Verify(var_s, var_s) + Ret(Lit(0))
+    let (_inp, _inp_args) = expected_inp(&mut expected, "foo", &[priv_s("s")]);
     let arg_s = _inp_args[0];
     let var_s_body = GOp::<B>::var(&s, arg_s, ATyp::scalar());
 
-    let check = expected.add_node(Node::check(&var_s_body, &var_s_body));
+    let check = expected.add_node(Node::verify(&var_s_body, &var_s_body));
     expected.add_edges(DepType::Data, check, var_s_body.clone());
     expected.add_edges(DepType::Data, check, var_s_body);
-    expected.add_edge(inp, check, Dep::transcript());
 
     // Continuation Lit(0) → Ret(Value::Unit)
     let unit = GOp::<B>::Value(backend::Value::Unit);
     let ret = expected.add_node(Node::ret(&unit));
     expected.add_edges(DepType::Data, ret, unit);
 
-    // Relation: Rel + Check(var_s_rel, var_s_rel)
+    // Relation: Rel + Assert(var_s_rel, var_s_rel)
     let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[priv_s("s")]);
     let rel_arg_s = _rel_args[0];
     let var_s_rel = GOp::<B>::var(&s, rel_arg_s, ATyp::scalar());
-    let check_rel = expected.add_node(Node::check(&var_s_rel, &var_s_rel));
+    let check_rel = expected.add_node(Node::assert(&var_s_rel, &var_s_rel));
     expected.add_edges(DepType::Data, check_rel, var_s_rel.clone());
     expected.add_edges(DepType::Data, check_rel, var_s_rel);
 
@@ -432,9 +431,9 @@ fn pin_assert() {
     let var_a = GOp::<B>::var(&a, arg_a, ATyp::scalar());
     let var_b = GOp::<B>::var(&b, arg_b, ATyp::scalar());
 
-    // assert(a == b) → Check(var_a, var_b) node
+    // assert(a == b) → Assert(var_a, var_b) node
     // Assert is prover-side — no transcript edge.
-    let check = expected.add_node(Node::check(&var_a, &var_b));
+    let check = expected.add_node(Node::assert(&var_a, &var_b));
     expected.add_edges(DepType::Data, check, var_a);
     expected.add_edges(DepType::Data, check, var_b);
 
@@ -447,7 +446,7 @@ fn pin_assert() {
 }
 
 /// Verify expression (same structure as assert).
-/// Tests: CExp::Verify, Node::check.
+/// Tests: CExp::Verify, Node::verify.
 #[test]
 fn pin_verify() {
     let src = r#"
@@ -460,16 +459,15 @@ fn pin_verify() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let b = Vid::new("b");
-    let (inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
     let arg_a = _inp_args[0];
     let arg_b = _inp_args[1];
     let var_a = GOp::<B>::var(&a, arg_a, ATyp::scalar());
     let var_b = GOp::<B>::var(&b, arg_b, ATyp::scalar());
 
-    let check = expected.add_node(Node::check(&var_a, &var_b));
+    let check = expected.add_node(Node::verify(&var_a, &var_b));
     expected.add_edges(DepType::Data, check, var_a);
     expected.add_edges(DepType::Data, check, var_b);
-    expected.add_edge(inp, check, Dep::transcript());
 
     // Continuation Lit(0) → Ret(Value::Unit)
     let unit = GOp::<B>::Value(backend::Value::Unit);
@@ -516,23 +514,22 @@ fn pin_log_node_ref() {
     expected.add_edge(inp, transcr, Dep::transcript());
     expected.vctx.insert(&transcr, &a_vid);
     expected.transcript_vars.insert(&transcr, &true);
-    // a == s → Check(var_a, var_s) directly
+    // a == s → Verify(var_a, var_s) directly
     let var_a = GOp::<B>::var(&a_vid, transcr, ATyp::scalar());
-    let check = expected.add_node(Node::check(&var_a, &var_s));
+    let check = expected.add_node(Node::verify(&var_a, &var_s));
     expected.add_edges(DepType::Data, check, var_a);
     expected.add_edges(DepType::Data, check, var_s);
-    expected.add_edge(transcr, check, Dep::transcript());
 
     // Continuation Lit(0) → Ret(Value::Unit)
     let unit = GOp::<B>::Value(backend::Value::Unit);
     let ret = expected.add_node(Node::ret(&unit));
     expected.add_edges(DepType::Data, ret, unit);
 
-    // Relation: Rel + Check(var_s_rel, var_s_rel)
+    // Relation: Rel + Assert(var_s_rel, var_s_rel)
     let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[priv_s("s")]);
     let rel_arg_s = _rel_args[0];
     let var_s_rel = GOp::<B>::var(&s_vid, rel_arg_s, ATyp::scalar());
-    let check_rel = expected.add_node(Node::check(&var_s_rel, &var_s_rel));
+    let check_rel = expected.add_node(Node::assert(&var_s_rel, &var_s_rel));
     expected.add_edges(DepType::Data, check_rel, var_s_rel.clone());
     expected.add_edges(DepType::Data, check_rel, var_s_rel);
 
@@ -568,21 +565,20 @@ fn pin_log_new_transcr() {
     expected.vctx.insert(&transcr, &a_vid);
     expected.transcript_vars.insert(&transcr, &true);
     let var_s = GOp::<B>::var(&s_vid, arg_s, ATyp::scalar());
-    let check = expected.add_node(Node::check(&var_s, &var_s));
+    let check = expected.add_node(Node::verify(&var_s, &var_s));
     expected.add_edges(DepType::Data, check, var_s.clone());
     expected.add_edges(DepType::Data, check, var_s);
-    expected.add_edge(transcr, check, Dep::transcript());
 
     // Continuation Lit(0) → Ret(Value::Unit)
     let unit = GOp::<B>::Value(backend::Value::Unit);
     let ret = expected.add_node(Node::ret(&unit));
     expected.add_edges(DepType::Data, ret, unit);
 
-    // Relation: Rel + Check(var_s_rel, var_s_rel)
+    // Relation: Rel + Assert(var_s_rel, var_s_rel)
     let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[priv_s("s")]);
     let rel_arg_s = _rel_args[0];
     let var_s_rel = GOp::<B>::var(&s_vid, rel_arg_s, ATyp::scalar());
-    let check_rel = expected.add_node(Node::check(&var_s_rel, &var_s_rel));
+    let check_rel = expected.add_node(Node::assert(&var_s_rel, &var_s_rel));
     expected.add_edges(DepType::Data, check_rel, var_s_rel.clone());
     expected.add_edges(DepType::Data, check_rel, var_s_rel);
 
@@ -1372,21 +1368,20 @@ fn pin_log_var_ref() {
     expected.transcript_vars.insert(&transcr, &true);
     // because Log's first arm uses `ol.clone()` which is op_from_var(x) = GOp::Ref(Ref(bin_add), scalar)
     let var_a = GOp::<B>::var(&a_vid, transcr, ATyp::scalar());
-    let check = expected.add_node(Node::check(&var_a, &var_s));
+    let check = expected.add_node(Node::verify(&var_a, &var_s));
     expected.add_edges(DepType::Data, check, var_a);
     expected.add_edges(DepType::Data, check, var_s);
-    expected.add_edge(transcr, check, Dep::transcript());
 
     // Continuation Lit(0) → Ret(Value::Unit)
     let unit = GOp::<B>::Value(backend::Value::Unit);
     let ret = expected.add_node(Node::ret(&unit));
     expected.add_edges(DepType::Data, ret, unit);
 
-    // Relation: Rel + Check(var_s_rel, var_s_rel)
+    // Relation: Rel + Assert(var_s_rel, var_s_rel)
     let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[priv_s("s")]);
     let rel_arg_s = _rel_args[0];
     let var_s_rel = GOp::<B>::var(&s_vid, rel_arg_s, ATyp::scalar());
-    let check_rel = expected.add_node(Node::check(&var_s_rel, &var_s_rel));
+    let check_rel = expected.add_node(Node::assert(&var_s_rel, &var_s_rel));
     expected.add_edges(DepType::Data, check_rel, var_s_rel.clone());
     expected.add_edges(DepType::Data, check_rel, var_s_rel);
 
@@ -1533,7 +1528,7 @@ fn pin_get_prover_basic() {
     assert_eq!(prover.name(), Vid::new("foo"));
     // Prover should have the computation leading to the transcript (s + v)
     // but NOT the verify check node
-    assert!(prover.find_check().is_empty());
+    assert!(prover.find_verify().is_empty());
 }
 
 /// get_verifier extracts the verifier subgraph.
@@ -1552,7 +1547,7 @@ fn pin_get_verifier_basic() {
     let verifier = dag.get_verifier().unwrap();
 
     // Verifier must have a check node
-    assert!(!verifier.find_check().is_empty());
+    assert!(!verifier.find_verify().is_empty());
     // Verifier name matches
     assert_eq!(verifier.name(), Vid::new("foo"));
     // Verifier should not have private-only computations
@@ -1685,7 +1680,7 @@ fn pin_op_nodes_filter() {
         assert!(!dag[*n].is_input());
         assert!(!dag[*n].is_relation());
     }
-    // Should have at least the Equ and Check nodes in the body, plus Equ in relation
+    // Should have at least the Equ and Verify nodes in the body, plus Equ in relation
     assert!(op_nodes.len() >= 2);
 }
 
@@ -1857,9 +1852,9 @@ fn pin_trc_reachability() {
     );
 }
 
-/// find_check finds Check nodes in a protocol and returns an empty Vec for a function.
+/// find_verify finds Verify nodes in a protocol and returns an empty Vec for a function.
 #[test]
-fn pin_find_check() {
+fn pin_find_verify() {
     let proto_src = r#"
         proto foo<F: Field>(private s: F) where s == s {
             verify(s == s)
@@ -1867,7 +1862,7 @@ fn pin_find_check() {
     "#;
     let proto_gs = parse_and_build(proto_src);
     assert!(
-        !proto_gs[0].find_check().is_empty(),
+        !proto_gs[0].find_verify().is_empty(),
         "Protocol should have a check node"
     );
 
@@ -1876,15 +1871,15 @@ fn pin_find_check() {
     "#;
     let fn_gs = parse_and_build(fn_src);
     assert!(
-        fn_gs[0].find_check().is_empty(),
+        fn_gs[0].find_verify().is_empty(),
         "Function should not have a check node"
     );
 }
 
-/// find_check finds multiple Check nodes in a protocol with multiple verify statements.
+/// find_verify finds multiple Verify nodes in a protocol with multiple verify statements.
 #[test]
-fn pin_find_check_multiple() {
-    // Two separate verify statements produce two Check nodes
+fn pin_find_verify_multiple() {
+    // Two separate verify statements produce two Verify nodes
     let src = r#"
         proto two_verify<F: Field>(private x: F, private y: F) where 1 == 1 {
             verify(x == x);
@@ -1892,14 +1887,14 @@ fn pin_find_check_multiple() {
         }
     "#;
     let gs = parse_and_build(src);
-    let checks = gs[0].find_check();
+    let checks = gs[0].find_verify();
     assert_eq!(
         checks.len(),
         2,
         "Protocol with two verify statements should have two check nodes"
     );
 
-    // Three separate verify statements produce three Check nodes
+    // Three separate verify statements produce three Verify nodes
     let src3 = r#"
         proto three_verify<F: Field>(private x: F, private y: F, private z: F) where 1 == 1 {
             verify(x == x);
@@ -1908,7 +1903,7 @@ fn pin_find_check_multiple() {
         }
     "#;
     let gs3 = parse_and_build(src3);
-    let checks3 = gs3[0].find_check();
+    let checks3 = gs3[0].find_verify();
     assert_eq!(
         checks3.len(),
         3,
@@ -1934,7 +1929,7 @@ fn pin_get_verifier_multiple_checks() {
     let verifier = dag.get_verifier().unwrap();
 
     // Verifier must have one check node for each verify in this protocol
-    let checks = verifier.find_check();
+    let checks = verifier.find_verify();
     assert!(
         checks.len() == 2,
         "Verifier should have exactly 2 check nodes for a protocol with two verify statements, got {}",
@@ -1973,16 +1968,16 @@ fn pin_get_prover_multiple_checks() {
 
     // Prover should have computation nodes but NO verify check nodes
     assert!(
-        prover.find_check().is_empty(),
+        prover.find_verify().is_empty(),
         "Prover should not have any check nodes"
     );
     // Prover name matches
     assert_eq!(prover.name(), Vid::new("two_verify"));
 }
 
-/// find_check correctly identifies check nodes scattered throughout a protocol body.
+/// find_verify correctly identifies verify nodes scattered throughout a protocol body.
 #[test]
-fn pin_find_check_scattered() {
+fn pin_find_verify_scattered() {
     let src = r#"
         proto scattered<F: Field>(private s: F, public v: F) where 1 == 1 {
             a <- s + v;
@@ -1994,7 +1989,7 @@ fn pin_find_check_scattered() {
     let gs = parse_and_build(src);
     let dag = &gs[0];
 
-    let checks = dag.find_check();
+    let checks = dag.find_verify();
     assert_eq!(
         checks.len(),
         2,
@@ -2003,9 +1998,9 @@ fn pin_find_check_scattered() {
     );
 }
 
-/// find_check correctly identifies check nodes interleaved with challenge generation.
+/// find_verify correctly identifies verify nodes interleaved with challenge generation.
 #[test]
-fn pin_find_check_interleaved_with_challenge() {
+fn pin_find_verify_interleaved_with_challenge() {
     let src = r#"
         proto interleaved<F: Field>(private s: F, public v: F) where 1 == 1 {
             a <- s + v;
@@ -2018,7 +2013,7 @@ fn pin_find_check_interleaved_with_challenge() {
     let gs = parse_and_build(src);
     let dag = &gs[0];
 
-    let checks = dag.find_check();
+    let checks = dag.find_verify();
     assert_eq!(
         checks.len(),
         2,
@@ -2043,7 +2038,7 @@ fn pin_get_verifier_scattered_checks() {
     let dag = &gs[0];
 
     let verifier = dag.get_verifier().unwrap();
-    let checks = verifier.find_check();
+    let checks = verifier.find_verify();
     assert!(
         checks.len() >= 2,
         "Verifier should have at least 2 check nodes for scattered verify statements, got {}",
@@ -2081,7 +2076,7 @@ fn pin_get_prover_scattered_checks() {
 
     let (prover, _node_map) = dag.get_prover();
     assert!(
-        prover.find_check().is_empty(),
+        prover.find_verify().is_empty(),
         "Prover should not have any check nodes, even with scattered verify statements"
     );
 }
@@ -2111,7 +2106,7 @@ fn pin_dags_multiple_verify_protocols() {
         "Should have exactly 2 functions (including one with verify)"
     );
     assert_eq!(
-        gs.protocols()[0].find_check().len(),
+        gs.protocols()[0].find_verify().len(),
         2,
         "Protocol with two verify statements should have 2 check nodes"
     );
@@ -2122,16 +2117,16 @@ fn pin_dags_multiple_verify_protocols() {
         .find(|g| g.name() == Vid::new("with_verify"))
         .unwrap();
     assert!(
-        !fn_with_verify.find_check().is_empty(),
+        !fn_with_verify.find_verify().is_empty(),
         "Function with verify should have check nodes in its DAG"
     );
 }
 
-/// Inlined verify from a function call creates a Check node that IS terminal
+/// Inlined verify from a function call creates a Verify node that IS terminal
 /// in the full DAG — the verify result is discarded by Let(None, ...), so nothing
-/// consumes it. Both the inlined and protocol's own verify are found by find_check.
+/// consumes it. Both the inlined and protocol's own verify are found by find_verify.
 #[test]
-fn pin_find_check_cross_function_verify() {
+fn pin_find_verify_cross_function_verify() {
     let src = r#"
         fn with_verify<F: Field>(x: F) -> F {
             verify(x == x);
@@ -2149,16 +2144,16 @@ fn pin_find_check_cross_function_verify() {
     let proto = protos[0];
     // Both the inlined verify and the protocol's own verify are terminal
     assert_eq!(
-        proto.find_check().len(),
+        proto.find_verify().len(),
         2,
         "Full DAG should have 2 terminal checks: one inlined from function, one from protocol"
     );
     // Verifier subgraph: both checks are also present
     let verifier = proto.clone().rename_inner_nodes().get_verifier().unwrap();
     assert!(
-        verifier.find_check().len() >= 2,
+        verifier.find_verify().len() >= 2,
         "Verifier should have both inlined and protocol check nodes, got {}",
-        verifier.find_check().len()
+        verifier.find_verify().len()
     );
 }
 
@@ -2255,9 +2250,9 @@ fn pin_dags_protocols_vs_functions() {
     assert_eq!(gs.len(), 2);
 
     // Protocol should have a check node
-    assert!(!protos[0].find_check().is_empty());
+    assert!(!protos[0].find_verify().is_empty());
     // Function should not
-    assert!(funcs[0].find_check().is_empty());
+    assert!(funcs[0].find_verify().is_empty());
 }
 
 /// get_proto finds a protocol by name.
@@ -2542,7 +2537,7 @@ fn pin_app_mle() {
         "MLE app should produce multiple nodes"
     );
     // Verify it's a function (no check node)
-    assert!(dag.find_check().is_empty());
+    assert!(dag.find_verify().is_empty());
 }
 
 // ── Stress tests (verify no stack overflow with iterative builder) ──

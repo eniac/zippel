@@ -20,7 +20,7 @@ impl QualifierPropagation {
     fn from_op_loops<C: ArkConfig>(&self, op: &GOp<C>, loops: &[Qualifier]) -> Option<Qualifier> {
         match op {
             Op::Value(_) => Some(Qualifier::Public),
-            Op::Check(_, _) => Some(Qualifier::Public),
+            Op::Assert(_, _) | Op::Verify(_, _) => Some(Qualifier::Public),
             Op::Ref(r, _) => self.quals.get(&r.node()).cloned(),
             Op::Ram(a, _) => self.from_op_loops(a, loops),
             Op::Poly(a) => self.from_op_loops(a, loops),
@@ -107,9 +107,9 @@ impl QualifierPropagation {
             set
         };
 
-        // Backward-reachable set from checks (verifier side), stopping at transcripts.
-        let checks = dag.find_check();
-        assert!(!checks.is_empty(), "No check found in the DAG");
+        // Backward-reachable set from verify checks (verifier side), stopping at transcripts.
+        let checks = dag.find_verify();
+        assert!(!checks.is_empty(), "No verify check found in the DAG");
         let backward_set: Set<NodeIndex> = {
             let mut set = Set::new();
             let mut worklist = checks;
@@ -235,7 +235,7 @@ mod tests {
         let qp = QualifierPropagation { quals: Ctx::new() };
         let inner =
             GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
-        let op = Op::Check(mk::<ArkBls12_381>(inner.clone()), mk::<ArkBls12_381>(inner));
+        let op = Op::Verify(mk::<ArkBls12_381>(inner.clone()), mk::<ArkBls12_381>(inner));
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Public));
     }
@@ -254,7 +254,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let check_nodes = g.find_check();
+        let check_nodes = g.find_verify();
         assert!(!check_nodes.is_empty(), "Check node should exist");
         if let Node::Op(_, qual) = &g[check_nodes[0]] {
             assert_eq!(*qual, Qualifier::Public);
@@ -275,7 +275,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let check_nodes = g.find_check();
+        let check_nodes = g.find_verify();
         assert!(!check_nodes.is_empty(), "Check node should exist");
         if let Node::Op(_, qual) = &g[check_nodes[0]] {
             assert_eq!(*qual, Qualifier::Public);
@@ -312,7 +312,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let check = g.find_check();
+        let check = g.find_verify();
         assert!(!check.is_empty());
     }
 
@@ -330,7 +330,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let checks = g.find_check();
+        let checks = g.find_verify();
         assert_eq!(
             checks.len(),
             2,
@@ -352,7 +352,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let checks = g.find_check();
+        let checks = g.find_verify();
         assert_eq!(
             checks.len(),
             2,
@@ -385,7 +385,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let checks = g.find_check();
+        let checks = g.find_verify();
         assert_eq!(
             checks.len(),
             3,
@@ -409,7 +409,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let checks = g.find_check();
+        let checks = g.find_verify();
         assert_eq!(
             checks.len(),
             2,
@@ -707,7 +707,7 @@ mod tests {
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         // Find the check node, then walk to its predecessors to find g*z.
-        let checks = g.find_check();
+        let checks = g.find_verify();
         assert!(!checks.is_empty());
         let check = checks[0];
         // The check wraps an equality; its predecessors include g*z and u+h*c.

@@ -95,8 +95,11 @@ pub enum Op<C: ArkConfig, R> {
     /// Explicit-domain reduce-map: `reduce(op, [body for x in domain])`.
     ReduceMap(BinOp, HOp<C>, HOp<C>),
 
-    /// Assertion or verification check: asserts/verifies that lhs == rhs
-    Check(HOp<C>, HOp<C>),
+    /// Prover-side assertion: asserts that lhs == rhs at proving time.
+    /// If the assertion fails, the prover aborts with `AssertionFailed`.
+    Assert(HOp<C>, HOp<C>),
+    /// Verifier-side check: verifies that lhs == rhs at verification time.
+    Verify(HOp<C>, HOp<C>),
 
     /// Reduce a vector with a binary operation
     Reduce(BinOp, HOp<C>),
@@ -197,7 +200,8 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Challenge(_, _) => 18,
             Op::Interpolate(_, _) => 19,
             Op::Fft(_) => 20,
-            Op::Check(_, _) => 21,
+            Op::Assert(_, _) => 21,
+            Op::Verify(_, _) => 24,
             Op::Poly(_) => 22,
             Op::Evaluate(_, _, _) => 23,
             Op::Map(_, _) => 30,
@@ -262,14 +266,14 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Ifft(op) => poly_typ_from_vec(op.typ()),
             // Op::Fft(p): p : Uni(m) → Vec<F, m + 1>.
             Op::Fft(op) => coef_typ_from_poly(op.typ()),
-            Op::Check(lhs, rhs) => {
-                // Check is a side-effect; its type is Unit.
+            Op::Assert(lhs, rhs) | Op::Verify(lhs, rhs) => {
+                // Assert/Verify are side-effects; their type is Unit.
                 // Operands must have compatible types (validated here via
                 // lub_equ, mirroring the type checker's ConstraintMismatch
                 // check).
                 ATyp::lub_equ(&lhs.typ(), &rhs.typ(), &Nothing).unwrap_or_else(|_| {
                     panic!(
-                        "UncaughtError: Check operands have incompatible types: {} vs {}",
+                        "UncaughtError: Assert/Verify operands have incompatible types: {} vs {}",
                         lhs.typ(),
                         rhs.typ()
                     )
@@ -872,8 +876,11 @@ impl<C: HasOpFactory> GOp<C> {
         Op::Vec(vs.into_iter().map(mk::<C>).collect())
     }
 
-    pub fn check(lhs: GOp<C>, rhs: GOp<C>) -> GOp<C> {
-        Op::Check(mk::<C>(lhs), mk::<C>(rhs))
+    pub fn assert(lhs: GOp<C>, rhs: GOp<C>) -> GOp<C> {
+        Op::Assert(mk::<C>(lhs), mk::<C>(rhs))
+    }
+    pub fn verify(lhs: GOp<C>, rhs: GOp<C>) -> GOp<C> {
+        Op::Verify(mk::<C>(lhs), mk::<C>(rhs))
     }
 }
 
@@ -923,7 +930,7 @@ impl<C: ArkConfig> GOp<C> {
                 .into_iter()
                 .chain(v.references())
                 .collect(),
-            Op::Check(lhs, rhs) => lhs
+            Op::Assert(lhs, rhs) | Op::Verify(lhs, rhs) => lhs
                 .references()
                 .into_iter()
                 .chain(rhs.references())
@@ -983,7 +990,11 @@ impl<C: HasOpFactory> GOp<C> {
             ),
             Op::Poly(op) => Op::Poly(mk::<C>(op.map_node_indices(f))),
             Op::Coef(op) => Op::Coef(mk::<C>(op.map_node_indices(f))),
-            Op::Check(lhs, rhs) => Op::Check(
+            Op::Assert(lhs, rhs) => Op::Assert(
+                mk::<C>(lhs.map_node_indices(f)),
+                mk::<C>(rhs.map_node_indices(f)),
+            ),
+            Op::Verify(lhs, rhs) => Op::Verify(
                 mk::<C>(lhs.map_node_indices(f)),
                 mk::<C>(rhs.map_node_indices(f)),
             ),
@@ -1022,7 +1033,8 @@ impl<C: HasOpFactory> GOp<C> {
             Op::Pair(a, b, typ) => {
                 Op::Pair(mk::<C>(a.map_refs(f)), mk::<C>(b.map_refs(f)), typ.clone())
             }
-            Op::Check(lhs, rhs) => Op::Check(mk::<C>(lhs.map_refs(f)), mk::<C>(rhs.map_refs(f))),
+            Op::Assert(lhs, rhs) => Op::Assert(mk::<C>(lhs.map_refs(f)), mk::<C>(rhs.map_refs(f))),
+            Op::Verify(lhs, rhs) => Op::Verify(mk::<C>(lhs.map_refs(f)), mk::<C>(rhs.map_refs(f))),
             Op::Interpolate(points, evals) => {
                 Op::Interpolate(mk::<C>(points.map_refs(f)), mk::<C>(evals.map_refs(f)))
             }
@@ -1088,7 +1100,11 @@ impl<C: HasOpFactory> GOp<C> {
                     .map(|(k, v)| (k.clone(), mk::<C>(v.inline(vars, except))))
                     .collect(),
             ),
-            Op::Check(lhs, rhs) => Op::Check(
+            Op::Assert(lhs, rhs) => Op::Assert(
+                mk::<C>(lhs.inline(vars, except)),
+                mk::<C>(rhs.inline(vars, except)),
+            ),
+            Op::Verify(lhs, rhs) => Op::Verify(
                 mk::<C>(lhs.inline(vars, except)),
                 mk::<C>(rhs.inline(vars, except)),
             ),
@@ -1374,8 +1390,15 @@ where
                 evals.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
-            Op::Check(lhs, rhs) => allocator.concat([
-                allocator.text("(check "),
+            Op::Assert(lhs, rhs) => allocator.concat([
+                allocator.text("(assert "),
+                lhs.get().clone().pretty(allocator),
+                allocator.text(" == "),
+                rhs.get().clone().pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Op::Verify(lhs, rhs) => allocator.concat([
+                allocator.text("(verify "),
                 lhs.get().clone().pretty(allocator),
                 allocator.text(" == "),
                 rhs.get().clone().pretty(allocator),

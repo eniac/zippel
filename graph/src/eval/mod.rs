@@ -83,7 +83,7 @@ fn op_has_loop_param<C: ArkConfig>(op: &GOp<C>, target_level: usize) -> bool {
             op_has_loop_param(domain.get(), target_level)
                 || op_has_loop_param(body.get(), target_level)
         }
-        Op::Check(a, b) => {
+        Op::Assert(a, b) | Op::Verify(a, b) => {
             op_has_loop_param(a.get(), target_level) || op_has_loop_param(b.get(), target_level)
         }
         Op::Reduce(_, a) => op_has_loop_param(a.get(), target_level),
@@ -593,7 +593,7 @@ where
             let idx_val = eval_op_with_loop_params(idx, env, rng, loop_params, check_sink)?;
             Ok(Arc::new(v_val.ram_ref(&*idx_val)))
         }
-        Op::Check(lhs, rhs) => {
+        Op::Assert(lhs, rhs) | Op::Verify(lhs, rhs) => {
             let lhs_val = eval_op_with_loop_params(lhs, env, rng, loop_params, check_sink)?;
             let rhs_val = eval_op_with_loop_params(rhs, env, rng, loop_params, check_sink)?;
             let equal = *lhs_val == *rhs_val;
@@ -832,7 +832,7 @@ fn collect_refs_into<C: ArkConfig>(op: &GOp<C>, acc: &mut Vec<Ref>) {
                 collect_refs_into(child, acc);
             }
         }
-        Op::Check(a, b) => {
+        Op::Assert(a, b) | Op::Verify(a, b) => {
             collect_refs_into(a, acc);
             collect_refs_into(b, acc);
         }

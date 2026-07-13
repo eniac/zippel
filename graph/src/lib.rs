@@ -401,17 +401,27 @@ impl<C: ArkConfig, A> Dag<C, A> {
             .collect()
     }
 
-    /// Get all verifier assertions: `Check` nodes with no outgoing edges
-    /// that have an incoming transcript edge. `Assert` nodes and relation
-    /// `Check` nodes lack a transcript edge and are excluded — Assert is
-    /// prover-side, relation checks are handled by the relation TC.
-    pub fn find_check(&self) -> Vec<NodeIndex> {
+    /// Get all verifier checks: `Verify` nodes with no outgoing edges.
+    /// `Assert` nodes are prover-side and excluded.
+    pub fn find_verify(&self) -> Vec<NodeIndex> {
         self.node_indices()
             .filter(|&n| match &self[n] {
                 Node::Op(op, _) | Node::Transcr(op, _) => {
-                    matches!(&**op, Op::Check(_, _))
-                        && self.nodes_from(n).count() == 0
-                        && self.transcript_edge(n, Direction::Incoming).is_some()
+                    matches!(&**op, Op::Verify(_, _)) && self.nodes_from(n).count() == 0
+                }
+                _ => false,
+            })
+            .collect()
+    }
+
+    /// Get all prover assertions: `Assert` nodes with no outgoing edges.
+    /// These are terminal prover-side nodes that must be included in the
+    /// prover graph and checked at proving time.
+    pub fn find_assert(&self) -> Vec<NodeIndex> {
+        self.node_indices()
+            .filter(|&n| match &self[n] {
+                Node::Op(op, _) | Node::Transcr(op, _) => {
+                    matches!(&**op, Op::Assert(_, _)) && self.nodes_from(n).count() == 0
                 }
                 _ => false,
             })
@@ -556,8 +566,11 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         A: Clone,
     {
         let mut prover = Dag::new();
-        // Add all nodes to the prover graph
+        // Add all nodes to the prover graph. Seed the worklist with
+        // transcript nodes (for proof transcript values) and assert nodes
+        // (prover-side assertions that must be evaluated at proving time).
         let mut worklist: Vec<NodeIndex> = self.transcript_nodes();
+        worklist.extend(self.find_assert());
         // Map old node indices to new references
         let mut node_map: HashMap<NodeIndex, Ref> = HashMap::new();
 
@@ -765,9 +778,9 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             node_map_self.insert(n_transcr, new_idx);
         }
 
-        // Add the verifier nodes, start with the verifier assertions
-        let mut worklist = self.find_check();
-        assert!(!worklist.is_empty(), "No verifier assertion found");
+        // Add the verifier nodes, start with the verifier checks
+        let mut worklist = self.find_verify();
+        assert!(!worklist.is_empty(), "No verifier check found");
 
         while let Some(n) = worklist.pop() {
             if node_map_self.contains_key(&n) {
@@ -1347,11 +1360,12 @@ impl<C: HasOpFactory> UDag<C> {
     ///
     /// `CExp::Assert` and `CExp::Verify` are intentionally not handled here —
     /// the catch-all `_ => Ok(None)` declines them, forcing the unroll path
-    /// which creates top-level `Node::check` graph nodes (one per element).
-    /// This ensures `Op::Check` never appears nested inside an `Op::Map` or
-    /// `Op::ReduceMap` op tree, so `find_check` (which only inspects top-level
-    /// node ops) and the runtime's `check_results` map (keyed by `NodeIndex`)
-    /// always find every Check.
+    /// which creates top-level `Node::assert`/`Node::verify` graph nodes (one
+    /// per element). This ensures `Op::Assert`/`Op::Verify` never appears
+    /// nested inside an `Op::Map` or `Op::ReduceMap` op tree, so `find_verify`
+    /// and `find_assert` (which only inspect top-level node ops) and the
+    /// runtime's `check_results` map (keyed by `NodeIndex`) always find every
+    /// Assert/Verify.
     #[allow(clippy::too_many_arguments)]
     fn lower_loop_body_template(
         &mut self,
@@ -2347,12 +2361,11 @@ impl<C: HasOpFactory> UDag<C> {
                     let oa = self.add_exp(lhs, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     let ob = self.add_exp(rhs, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Add new node
-                    let nassert = self.add_node(Node::check(&oa, &ob));
+                    let nassert = self.add_node(Node::assert(&oa, &ob));
                     // Add edges
                     self.add_edges(edge_type, nassert, oa);
                     self.add_edges(edge_type, nassert, ob);
                     // Assert is prover-side — no transcript edge.
-                    // (Verify gets a transcript edge; see the Verify case below.)
                     exp = cont;
                     continue;
                 }
@@ -2360,11 +2373,11 @@ impl<C: HasOpFactory> UDag<C> {
                     let oa = self.add_exp(lhs, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     let ob = self.add_exp(rhs, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Add new node
-                    let nverify = self.add_node(Node::check(&oa, &ob));
+                    let nverify = self.add_node(Node::verify(&oa, &ob));
                     self.add_edges(edge_type, nverify, oa);
                     self.add_edges(edge_type, nverify, ob);
-                    // Verify depends on the full transcript (implicit ordering)
-                    self.add_edge(*transcr, nverify, Dep::transcript());
+                    // No transcript edge — the Op::Verify variant itself
+                    // distinguishes verifier checks from prover assertions.
                     // Trampoline: continue loop with cont
                     exp = cont;
                     continue;

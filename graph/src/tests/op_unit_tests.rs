@@ -223,14 +223,14 @@ mod op_construction_tests {
     }
 
     #[test]
-    fn test_check_construction() {
+    fn test_assert_construction() {
         let lhs = GOp::<C>::value(&scalar::<C>(1));
         let rhs = GOp::<C>::value(&scalar::<C>(1));
-        let check = Op::check(lhs, rhs);
+        let check = Op::assert(lhs, rhs);
 
         match check {
-            Op::Check(_, _) => (),
-            _ => panic!("Expected Check"),
+            Op::Assert(_, _) => (),
+            _ => panic!("Expected Assert"),
         }
     }
 

@@ -105,8 +105,9 @@ fn topo_sort_nodes<C: ArkConfig>(dag: &QDag<C>, nodes: &HashSet<NodeIndex>) -> V
 ///
 /// Flattens a `QDag` into a linear list of `(Var, GOp)` pairs.
 /// For each node, `trans_clos_op` recursively normalizes the stored op:
-/// - `Op::Check(lhs, rhs)` is unwrapped to its operands (the verifier
-///   assertion is processed, with both lhs and rhs traversed).
+/// - `Op::Assert(lhs, rhs)` / `Op::Verify(lhs, rhs)` is unwrapped to its
+///   operands (the assertion/check is processed, with both lhs and rhs
+///   traversed).
 /// - `Op::Ref` children are resolved so that their targets are added to
 ///   `clos`. After resolution, compound ops are reconstructed via `mk()`
 ///   wrapping, but no algebraic simplification fires on `Ref` children.
@@ -248,7 +249,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             })
             .collect();
 
-        let checks = dag.find_check();
+        let checks = dag.find_verify();
         let transcripts_vec = dag.transcript_nodes();
         let transcripts_set: HashSet<NodeIndex> = transcripts_vec.iter().copied().collect();
 
@@ -340,10 +341,15 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
                     .map(|v| mk::<C>(self.trans_clos_op(dag, v.get().clone(), seen)))
                     .collect::<Vec<_>>(),
             ),
-            Op::Check(a, b) => {
+            Op::Assert(a, b) => {
                 let oa = self.trans_clos_op(dag, a.get().clone(), seen);
                 let ob = self.trans_clos_op(dag, b.get().clone(), seen);
-                Op::Check(mk::<C>(oa), mk::<C>(ob))
+                Op::Assert(mk::<C>(oa), mk::<C>(ob))
+            }
+            Op::Verify(a, b) => {
+                let oa = self.trans_clos_op(dag, a.get().clone(), seen);
+                let ob = self.trans_clos_op(dag, b.get().clone(), seen);
+                Op::Verify(mk::<C>(oa), mk::<C>(ob))
             }
             Op::Interpolate(points, evals) => Op::Interpolate(
                 mk::<C>(self.trans_clos_op(dag, points.get().clone(), seen)),
@@ -743,8 +749,8 @@ mod tests {
 
         for (_, op) in tc.clos.iter() {
             assert!(
-                !matches!(op, Op::Check(_, _)),
-                "Op::Check should not appear in prover transitive closure, found: {:?}",
+                !matches!(op, Op::Verify(_, _)),
+                "Op::Verify should not appear in prover transitive closure, found: {:?}",
                 op
             );
         }

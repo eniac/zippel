@@ -396,8 +396,10 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             ResultKind::Prover,
         )?;
         match result {
-            RunResult::Prover(values) => Ok(values),
-            RunResult::Verifier(_) => unreachable!("run_prover with ResultKind::Prover"),
+            RunResult::Prover(transcript) => Ok(transcript),
+            RunResult::Verifier { .. } => {
+                unreachable!("run_prover with ResultKind::Prover")
+            }
         }
     }
 
@@ -448,8 +450,10 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             ResultKind::Verifier,
         )?;
         match result {
-            RunResult::Verifier(bools) => Ok(bools),
-            RunResult::Prover(_) => unreachable!("run_verifier with ResultKind::Verifier"),
+            RunResult::Verifier { verify_results } => Ok(verify_results),
+            RunResult::Prover { .. } => {
+                unreachable!("run_verifier with ResultKind::Verifier")
+            }
         }
     }
 

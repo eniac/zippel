@@ -58,12 +58,13 @@ pub(crate) fn valid_extractor<C: ArkConfig>(witness_typ: &ATyp, poly: &Polynomia
 /// arguments and other witnesses, collectively serving as Skolem function
 /// for the existentially quantified intermediates.
 ///
-/// ## Replacing Check nodes
+/// ## Replacing Verify nodes
 ///
-/// `Op::Check(lhs, rhs)` entries represent assertions (lhs == rhs), not
-/// definitions. They are neutralised to `Op::Ref(var)` — an identity
+/// `Op::Verify(lhs, rhs)` entries represent verifier checks (lhs == rhs),
+/// not definitions. They are neutralised to `Op::Ref(var)` — an identity
 /// operation that defines the result Var without emitting any assertion
-/// polynomial.
+/// polynomial. `Op::Assert` nodes are left untouched — they are prover-side
+/// and not the verifier's concern.
 ///
 /// ## Shared builder and Var alignment
 ///
@@ -78,65 +79,65 @@ pub fn extract_locals<C: ArkConfig + HasOpFactory>(
     builder: &IdealBuilder<C>,
     tc: &TransClos<C>,
 ) -> Ideal<C> {
-    let tc_no_check = strip_check(tc);
+    let tc_no_verify = strip_verify(tc);
     let mut comp_builder = builder.clone();
-    comp_builder.build(tc_no_check)
+    comp_builder.build(tc_no_verify)
 }
 
-fn strip_check<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> TransClos<C> {
-    let mut tc_no_check = tc.clone();
-    for entry in &mut tc_no_check.clos {
+fn strip_verify<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> TransClos<C> {
+    let mut tc_no_verify = tc.clone();
+    for entry in &mut tc_no_verify.clos {
         let var = entry.0.clone();
-        entry.1 = strip_check_op(entry.1.clone(), &var);
+        entry.1 = strip_verify_op(entry.1.clone(), &var);
     }
-    tc_no_check
+    tc_no_verify
 }
 
-fn strip_check_op<C: ArkConfig + HasOpFactory>(op: GOp<C>, result: &Var) -> GOp<C> {
+fn strip_verify_op<C: ArkConfig + HasOpFactory>(op: GOp<C>, result: &Var) -> GOp<C> {
     match op {
-        Op::Check(_, _) => Op::Ref(
+        Op::Verify(_, _) => Op::Ref(
             backend::op::Ref(result.reference.node()),
             result.typ.clone(),
         ),
         Op::Map(d, b) => Op::Map(
-            mk(strip_check_op(d.get().clone(), result)),
-            mk(strip_check_op(b.get().clone(), result)),
+            mk(strip_verify_op(d.get().clone(), result)),
+            mk(strip_verify_op(b.get().clone(), result)),
         ),
         Op::ReduceMap(rop, d, b) => Op::ReduceMap(
             rop,
-            mk(strip_check_op(d.get().clone(), result)),
-            mk(strip_check_op(b.get().clone(), result)),
+            mk(strip_verify_op(d.get().clone(), result)),
+            mk(strip_verify_op(b.get().clone(), result)),
         ),
-        Op::Reduce(rop, v) => Op::Reduce(rop, mk(strip_check_op(v.get().clone(), result))),
+        Op::Reduce(rop, v) => Op::Reduce(rop, mk(strip_verify_op(v.get().clone(), result))),
         Op::Bin(bop, a, b, typ) => Op::Bin(
             bop,
-            mk(strip_check_op(a.get().clone(), result)),
-            mk(strip_check_op(b.get().clone(), result)),
+            mk(strip_verify_op(a.get().clone(), result)),
+            mk(strip_verify_op(b.get().clone(), result)),
             typ,
         ),
         Op::Interpolate(pts, evals) => Op::Interpolate(
-            mk(strip_check_op(pts.get().clone(), result)),
-            mk(strip_check_op(evals.get().clone(), result)),
+            mk(strip_verify_op(pts.get().clone(), result)),
+            mk(strip_verify_op(evals.get().clone(), result)),
         ),
         Op::Evaluate(p, range, xs) => Op::Evaluate(
-            mk(strip_check_op(p.get().clone(), result)),
+            mk(strip_verify_op(p.get().clone(), result)),
             range,
-            xs.map(|v| mk(strip_check_op(v.get().clone(), result))),
+            xs.map(|v| mk(strip_verify_op(v.get().clone(), result))),
         ),
         Op::Vec(vs) => Op::Vec(
             vs.into_iter()
-                .map(|v| mk(strip_check_op(v.get().clone(), result)))
+                .map(|v| mk(strip_verify_op(v.get().clone(), result)))
                 .collect(),
         ),
         Op::Ram(a, b) => Op::Ram(
-            mk(strip_check_op(a.get().clone(), result)),
-            mk(strip_check_op(b.get().clone(), result)),
+            mk(strip_verify_op(a.get().clone(), result)),
+            mk(strip_verify_op(b.get().clone(), result)),
         ),
-        Op::Poly(v) => Op::Poly(mk(strip_check_op(v.get().clone(), result))),
-        Op::Mle(v) => Op::Mle(mk(strip_check_op(v.get().clone(), result))),
-        Op::Coef(v) => Op::Coef(mk(strip_check_op(v.get().clone(), result))),
-        Op::Ifft(v) => Op::Ifft(mk(strip_check_op(v.get().clone(), result))),
-        Op::Fft(v) => Op::Fft(mk(strip_check_op(v.get().clone(), result))),
+        Op::Poly(v) => Op::Poly(mk(strip_verify_op(v.get().clone(), result))),
+        Op::Mle(v) => Op::Mle(mk(strip_verify_op(v.get().clone(), result))),
+        Op::Coef(v) => Op::Coef(mk(strip_verify_op(v.get().clone(), result))),
+        Op::Ifft(v) => Op::Ifft(mk(strip_verify_op(v.get().clone(), result))),
+        Op::Fft(v) => Op::Fft(mk(strip_verify_op(v.get().clone(), result))),
         other => other,
     }
 }

@@ -1,4 +1,4 @@
-//! Check op encoder: `check_op` and `check_op_inner`.
+//! Check op encoder: `assert_op`, `verify_op`, and `check_op_inner`.
 
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
@@ -12,16 +12,9 @@ use super::EncodeCtx;
 use super::Ideal;
 use super::PolySource;
 
-/// Slot-wise binary operation with type-aware broadcasting.
-///
-/// Handles all type combinations that the lub functions permit:
-/// - `Scalar op Scalar` → single slot
-/// - `Vec(T,n) op Vec(T,n)` → element-wise recursion
-/// - `Vec(T,n) op Scalar` / `Scalar op Vec(T,n)` → broadcast scalar to each element
-/// - `Poly op Scalar` / `Scalar op Poly` → broadcast scalar to each coefficient
-/// - `Uni(n1) op Uni(n2)` → zero-pad shorter operand to match ideal degree
-/// - Same-type poly op → straightforward slot-wise
-pub fn check_op<C: ArkConfig + HasOpFactory>(
+/// Prover-side assertion encoder. Delegates to `check_op_inner` — the ideal
+/// generation is identical for assert and verify.
+pub fn assert_op<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     _pr: &Var,
     a: &HOp<C>,
@@ -30,9 +23,19 @@ pub fn check_op<C: ArkConfig + HasOpFactory>(
     let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
     let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
     check_op_inner(&a_src, &b_src, ctx.ideal);
-    // NOTE: We do NOT emit `var.slots()` as basis polynomials here.
-    // `==` is used as an assertion, not to compute the boolean
-    // ideal of equality checking.
+}
+
+/// Verifier-side check encoder. Delegates to `check_op_inner` — the ideal
+/// generation is identical for assert and verify.
+pub fn verify_op<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    _pr: &Var,
+    a: &HOp<C>,
+    b: &HOp<C>,
+) {
+    let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
+    let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
+    check_op_inner(&a_src, &b_src, ctx.ideal);
 }
 
 fn check_op_inner<C: ArkConfig>(a: &PolySource<C>, b: &PolySource<C>, ideal: &mut Ideal<C>) {
@@ -94,7 +97,7 @@ mod tests {
 
         builder.add_op(
             var_r.clone(),
-            Op::Check(
+            Op::Verify(
                 mk::<ArkBls12_381>(Op::Ref(
                     graph::Ref::new(NodeIndex::new(0)),
                     vec_uni2.clone(),
@@ -130,7 +133,7 @@ mod tests {
 
         builder.add_op(
             var_r.clone(),
-            Op::Check(
+            Op::Verify(
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::scalar())),
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::scalar())),
             ),
@@ -165,7 +168,7 @@ mod tests {
 
         builder.add_op(
             var_r.clone(),
-            Op::Check(
+            Op::Verify(
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Uni(2))),
             ),
@@ -208,7 +211,7 @@ mod tests {
 
         builder.add_op(
             var_r.clone(),
-            Op::Check(
+            Op::Verify(
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Uni(4))),
             ),
@@ -250,7 +253,7 @@ mod tests {
 
         builder.add_op(
             var_r.clone(),
-            Op::Check(
+            Op::Verify(
                 mk::<ArkBls12_381>(Op::Value(Value::Unit)),
                 mk::<ArkBls12_381>(Op::Value(Value::Unit)),
             ),

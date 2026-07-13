@@ -82,13 +82,15 @@ pub enum ResultKind {
 
 /// Result of `run_graph`, parameterized by the role.
 ///
-/// - `Prover`: proof transcript values (`Vec<Value<C>>`) in transcript order.
-/// - `Verifier`: per-Check pass/fail booleans (`Vec<bool>`) in topological
-///   order, collected from the `check_results` auxiliary map.
+/// - `Prover`: proof transcript values in transcript order.
+/// - `Verifier`: per-Verify pass/fail booleans.
+///
+/// If any Assert fails (in either role), `run_graph` returns
+/// `Err(RuntimeError::AssertionFailed)` instead of a `RunResult`.
 #[derive(Debug)]
 pub enum RunResult<C: ArkConfig> {
     Prover(Vec<Value<C>>),
-    Verifier(Vec<bool>),
+    Verifier { verify_results: Vec<bool> },
 }
 
 /// Runtime information attached to each Op/Transcr node in the DAG.
@@ -130,9 +132,11 @@ impl<C: ArkConfig> RuntimeInformation<C> {
 
 pub struct MutexGraph<C: ArkConfig> {
     mutex_graph: Dag<C, Arc<RuntimeInformation<C>>>,
-    /// Auxiliary map storing pass/fail results for `Op::Check` nodes.
-    /// Populated by `handle_node` when a Check node is evaluated.
-    /// `run_graph` collects from this map for `ResultKind::Verifier`.
+    /// Auxiliary map storing pass/fail results for `Op::Assert` and
+    /// `Op::Verify` nodes. Populated by `handle_node` when an Assert or
+    /// Verify node is evaluated. `run_graph` collects from this map for
+    /// both `ResultKind::Prover` (assert results) and
+    /// `ResultKind::Verifier` (verify results).
     check_results: Mutex<HashMap<NodeIndex, bool>>,
 }
 
@@ -414,8 +418,9 @@ impl<C: ArkConfig> MutexGraph<C> {
     ///
     /// - For `ResultKind::Prover`: `RunResult::Prover(Vec<Value<C>>)` — proof
     ///   transcript values in transcript order.
-    /// - For `ResultKind::Verifier`: `RunResult::Verifier(Vec<bool>)` —
-    ///   per-Check pass/fail booleans in topological order.
+    /// - For `ResultKind::Verifier`: `RunResult::Verifier { verify_results }` —
+    ///   per-Verify pass/fail booleans.
+    /// - If any Assert fails (in either role): `Err(RuntimeError::AssertionFailed)`.
     pub fn run_graph<H: DuplexSpongeInterface<U = u8>>(
         g: Arc<MutexGraph<C>>,
         inputs: Arc<Ctx<Vid, Value<C>>>,
@@ -440,7 +445,16 @@ impl<C: ArkConfig> MutexGraph<C> {
         //
         // Set remaining_deps counters, collect result indices, and
         // identify initially-ready nodes — all in one pass.
+        //
+        // `result_indices` holds the primary output nodes:
+        //   - Prover: transcript nodes (proof values in transcript order)
+        //   - Verifier: terminal Verify nodes (verify pass/fail booleans)
+        //
+        // `assert_indices` holds terminal Assert nodes, collected for both
+        // prover and verifier. If any assert fails, the run aborts with
+        // `AssertionFailed`.
         let mut result_indices: Vec<NodeIndex> = Vec::new();
+        let mut assert_indices: Vec<NodeIndex> = Vec::new();
         // Capacity of 1 is enough: sync nodes are connected in the DAG,
         // meaning that at any time, only one sync node can be processed.
         let (tx, rx) = sync_channel(1);
@@ -465,14 +479,17 @@ impl<C: ArkConfig> MutexGraph<C> {
                         initial_roots.push(node_idx);
                     }
 
-                    // Verifier results are terminal Check nodes. Prover results
-                    // are collected below via Dag::transcript_nodes(), which is
-                    // already transcript-edge-topologically ordered.
-                    match (&g.mutex_graph[node_idx], result_kind) {
-                        (Node::Op(op, _), ResultKind::Verifier)
-                            if matches!(**op, Op::Check(_, _)) =>
-                        {
-                            result_indices.push(node_idx);
+                    // Collect terminal Assert nodes for both prover and
+                    // verifier. Collect terminal Verify nodes for verifier
+                    // only (prover graph has no Verify nodes).
+                    match &g.mutex_graph[node_idx] {
+                        Node::Op(op, _) if matches!(**op, Op::Assert(_, _)) => {
+                            assert_indices.push(node_idx);
+                        }
+                        Node::Op(op, _) if matches!(**op, Op::Verify(_, _)) => {
+                            if matches!(result_kind, ResultKind::Verifier) {
+                                result_indices.push(node_idx);
+                            }
                         }
                         _ => {}
                     }
@@ -482,10 +499,11 @@ impl<C: ArkConfig> MutexGraph<C> {
                 Node::Arg(_, _, _, _, _) => {}
             }
         }
-        let result_indices = match result_kind {
-            ResultKind::Prover => g.mutex_graph.transcript_nodes(),
-            ResultKind::Verifier => result_indices,
-        };
+
+        // For prover, the primary result is transcript values.
+        if matches!(result_kind, ResultKind::Prover) {
+            result_indices = g.mutex_graph.transcript_nodes();
+        }
 
         debug!(
             "[run_graph] total nodes={}, result_indices count={}",
@@ -649,10 +667,27 @@ impl<C: ArkConfig> MutexGraph<C> {
             return Err(err);
         }
 
-        // Phase 3: Collect results from pre-collected result indices.
+        // Phase 3: Collect results from pre-collected indices.
+        // Check assert results first — if any assert failed, abort
+        // regardless of role (prover or verifier).
+        {
+            let check_results = g.check_results.lock().unwrap();
+            let failed_count = assert_indices
+                .iter()
+                .filter_map(|n| check_results.get(n).copied())
+                .filter(|passed| !passed)
+                .count();
+            if failed_count > 0 {
+                return Err(RuntimeError::AssertionFailed {
+                    failed_count,
+                    total_count: assert_indices.len(),
+                });
+            }
+        }
+
         Ok(match result_kind {
-            ResultKind::Prover => RunResult::Prover(
-                result_indices
+            ResultKind::Prover => {
+                let transcript: Vec<Value<C>> = result_indices
                     .into_iter()
                     .filter_map(|n| match &g.mutex_graph[n] {
                         Node::Transcr(op, annotation) if !matches!(**op, Op::Challenge(_, _)) => {
@@ -660,16 +695,17 @@ impl<C: ArkConfig> MutexGraph<C> {
                         }
                         _ => None,
                     })
-                    .collect(),
-            ),
+                    .collect();
+                RunResult::Prover(transcript)
+            }
             ResultKind::Verifier => {
                 let check_results = g.check_results.lock().unwrap();
-                RunResult::Verifier(
-                    result_indices
+                RunResult::Verifier {
+                    verify_results: result_indices
                         .into_iter()
                         .filter_map(|n| check_results.get(&n).copied())
                         .collect(),
-                )
+                }
             }
         })
     }

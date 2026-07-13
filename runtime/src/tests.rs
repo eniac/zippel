@@ -70,7 +70,7 @@ mod runtime_tests {
         .unwrap()
         {
             RunResult::Prover(v) => v,
-            RunResult::Verifier(_) => unreachable!(),
+            RunResult::Verifier { .. } => unreachable!(),
         };
 
         // Proof must contain x (9), y (16) and t (c * 25)
@@ -121,8 +121,8 @@ mod runtime_tests {
         )
         .unwrap()
         {
-            RunResult::Verifier(v) => v,
-            RunResult::Prover(_) => unreachable!(),
+            RunResult::Verifier { verify_results: v } => v,
+            RunResult::Prover { .. } => unreachable!(),
         };
 
         assert_eq!(verify_results.len(), 1);

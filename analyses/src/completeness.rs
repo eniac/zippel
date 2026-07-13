@@ -271,7 +271,7 @@ mod tests {
 
         let caller = gs.protocols()[0];
         assert_eq!(
-            caller.find_check().len(),
+            caller.find_verify().len(),
             2,
             "Full DAG should have 2 terminal checks: inlined verify from function, and protocol's own verify"
         );

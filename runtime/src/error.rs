@@ -41,6 +41,15 @@ pub enum RuntimeError {
         provided_str = provided.join(", "),
     )]
     MissingArg { vid: String, provided: Vec<String> },
+
+    /// During prover execution, one or more `assert` conditions evaluated
+    /// to `false`. The prover aborts rather than delivering a proof whose
+    /// own preconditions do not hold.
+    #[error("prover assertion failed: {failed_count} of {total_count} assert(s) did not hold")]
+    AssertionFailed {
+        failed_count: usize,
+        total_count: usize,
+    },
 }
 
 impl RuntimeError {
