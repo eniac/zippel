@@ -704,7 +704,7 @@ impl Typeable for CExp {
                 }
             }
 
-            CExp::Assert(box lhs, box rhs, box cont) | CExp::Verify(box lhs, box rhs, box cont) => {
+            CExp::Assert(box lhs, box rhs) | CExp::Verify(box lhs, box rhs) => {
                 let ta = lhs
                     .infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
@@ -716,8 +716,8 @@ impl Typeable for CExp {
                 CTyp::lub_equ(&ta, &tb, kctx)
                     .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
 
-                // The continuation determines the type of the expression
-                cont.infer(kctx, fctx, vctx)
+                // Assert/Verify return Unit
+                Ok(CTyp::Unit)
             }
 
             CExp::Let(Some(var), box left, box right) | CExp::Log(var, box left, box right) => {

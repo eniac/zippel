@@ -280,7 +280,7 @@ proto hyperplonk<F: Field, S: Size, N: 2^S>(
     rx0 <- challenge<F>;
     let prev0_p1 = g0_p1(rx0);
 
-    let _ = gate_round(h_gate, pts4, [rx0], prev0_p1, rx0, 1,
+    gate_round(h_gate, pts4, [rx0], prev0_p1, rx0, 1,
                       a_evs, b_evs, c_evs, q_l_evs, q_r_evs, q_o_evs, q_m_evs, q_c_evs,
                       eq_tau_evs);
 
@@ -340,7 +340,7 @@ proto hyperplonk<F: Field, S: Size, N: 2^S>(
     sx0 <- challenge<F>;
     let prev0_p2 = g0_p2(sx0);
 
-    let _ = perm_round(p_poly, pts3, [sx0], prev0_p2, sx0, 1,
+    perm_round(p_poly, pts3, [sx0], prev0_p2, sx0, 1,
                       sent_v, f_shift_evs, g_shift_evs, eq_sau_evs, alpha);
 
     verify(sent_v[N - 1] == one)

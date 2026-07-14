@@ -1721,10 +1721,8 @@ impl<C: HasOpFactory> UDag<C> {
             | CExp::Mle(p)
             | CExp::Reduce(_, p)
             | CExp::Proj(p, _) => Self::exp_mentions_free_var(p, target),
-            CExp::Assert(lhs, rhs, cont) | CExp::Verify(lhs, rhs, cont) => {
-                Self::exp_mentions_free_var(lhs, target)
-                    || Self::exp_mentions_free_var(rhs, target)
-                    || Self::exp_mentions_free_var(cont, target)
+            CExp::Assert(lhs, rhs) | CExp::Verify(lhs, rhs) => {
+                Self::exp_mentions_free_var(lhs, target) || Self::exp_mentions_free_var(rhs, target)
             }
             CExp::Vec(xs) | CExp::App(_, xs) => {
                 xs.0.iter().any(|x| Self::exp_mentions_free_var(x, target))
@@ -2366,7 +2364,7 @@ impl<C: HasOpFactory> UDag<C> {
                     exp = r;
                     continue;
                 }
-                CExp::Assert(box lhs, box rhs, box cont) => {
+                CExp::Assert(box lhs, box rhs) => {
                     let oa = self.add_exp(lhs, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     let ob = self.add_exp(rhs, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Add new node
@@ -2375,10 +2373,10 @@ impl<C: HasOpFactory> UDag<C> {
                     self.add_edges(edge_type, nassert, oa);
                     self.add_edges(edge_type, nassert, ob);
                     // Assert is prover-side — no transcript edge.
-                    exp = cont;
-                    continue;
+                    // Returns Unit value; sequencing via Let(None, ...) discards it.
+                    return Ok(GOp::Value(backend::Value::Unit));
                 }
-                CExp::Verify(box lhs, box rhs, box cont) => {
+                CExp::Verify(box lhs, box rhs) => {
                     let oa = self.add_exp(lhs, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     let ob = self.add_exp(rhs, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Add new node
@@ -2387,9 +2385,8 @@ impl<C: HasOpFactory> UDag<C> {
                     self.add_edges(edge_type, nverify, ob);
                     // No transcript edge — the Op::Verify variant itself
                     // distinguishes verifier checks from prover assertions.
-                    // Trampoline: continue loop with cont
-                    exp = cont;
-                    continue;
+                    // Returns Unit value; sequencing via Let(None, ...) discards it.
+                    return Ok(GOp::Value(backend::Value::Unit));
                 }
                 CExp::Fun(fun_vars, box body) => {
                     // Convert the Fun expression body to a PolyVariant

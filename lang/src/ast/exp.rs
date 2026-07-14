@@ -1,7 +1,7 @@
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
 use lazy_static::lazy_static;
-use pest::iterators::Pairs;
+use pest::iterators::{Pair, Pairs};
 use pest::pratt_parser::{Assoc, Op, PrattParser};
 use share::Ctx;
 use std::fmt;
@@ -221,21 +221,19 @@ pub enum Exp<N> {
     ///     ```
     Log(Vid, Box<Exp<N>>, Box<Exp<N>>),
 
-    ///     Prover assertion: asserts `lhs == rhs`, then continues with `cont`.
+    ///     Prover assertion: asserts `lhs == rhs`.
     ///     **Zippel Code:**
     ///     ```zippel
-    ///     assert(1 == 1);
-    ///     ...
+    ///     assert(1 == 1)
     ///     ```
-    Assert(Box<Exp<N>>, Box<Exp<N>>, Box<Exp<N>>),
+    Assert(Box<Exp<N>>, Box<Exp<N>>),
 
-    ///     Verifier check: verifies `lhs == rhs`, then continues with `cont`.
+    ///     Verifier check: verifies `lhs == rhs`.
     ///     **Zippel Code:**
     ///     ```zippel
     ///     verify(a == a)
-    ///     ...
     ///     ```
-    Verify(Box<Exp<N>>, Box<Exp<N>>, Box<Exp<N>>),
+    Verify(Box<Exp<N>>, Box<Exp<N>>),
 
     ///     Polynomial function definition
     ///     **Zippel Code:**
@@ -346,15 +344,13 @@ impl<N: Clone> ToTraversal1<N> for Exp<N> {
                 Box::new(a.traverse1(f)?),
                 Box::new(b.traverse1(f)?),
             )),
-            Exp::Assert(box lhs, box rhs, box cont) => Ok(Exp::Assert(
+            Exp::Assert(box lhs, box rhs) => Ok(Exp::Assert(
                 Box::new(lhs.traverse1(f)?),
                 Box::new(rhs.traverse1(f)?),
-                Box::new(cont.traverse1(f)?),
             )),
-            Exp::Verify(box lhs, box rhs, box cont) => Ok(Exp::Verify(
+            Exp::Verify(box lhs, box rhs) => Ok(Exp::Verify(
                 Box::new(lhs.traverse1(f)?),
                 Box::new(rhs.traverse1(f)?),
-                Box::new(cont.traverse1(f)?),
             )),
             Exp::Fun(vars, box body) => Ok(Exp::Fun(vars, Box::new(body.traverse1(f)?))),
             Exp::Record(fields) => {
@@ -406,10 +402,9 @@ impl TidSubst for CExp {
             Exp::Mle(box p) | Exp::Poly(box p) | Exp::Reduce(_, box p) | Exp::Coef(box p) => {
                 p.tid_subst(from, to)
             }
-            Exp::Assert(box lhs, box rhs, box cont) | Exp::Verify(box lhs, box rhs, box cont) => {
+            Exp::Assert(box lhs, box rhs) | Exp::Verify(box lhs, box rhs) => {
                 lhs.tid_subst(from, to);
                 rhs.tid_subst(from, to);
-                cont.tid_subst(from, to);
             }
             Exp::Vec(v) | Exp::App(_, v) => v.tid_subst(from, to),
             Exp::Bin(_, box a, box b)
@@ -466,8 +461,8 @@ impl FreeVars for CExp {
             Exp::Mle(box p) | Exp::Poly(box p) | Exp::Reduce(_, box p) | Exp::Coef(box p) => {
                 p.freevars()
             }
-            Exp::Assert(box lhs, box rhs, box cont) | Exp::Verify(box lhs, box rhs, box cont) => {
-                lhs.freevars().union(rhs.freevars()).union(cont.freevars())
+            Exp::Assert(box lhs, box rhs) | Exp::Verify(box lhs, box rhs) => {
+                lhs.freevars().union(rhs.freevars())
             }
             Exp::Vec(v) | Exp::App(_, v) => v.freevars(),
             Exp::Bin(_, box a, box b)
@@ -549,15 +544,13 @@ impl<N: Clone> RangeTraversal<N> for Exp<N> {
                 Ok(Exp::seq(t.range_traverse(f)?, e.range_traverse(f)?))
             }
             Exp::Pair(box t, box e) => Ok(Exp::pair(t.range_traverse(f)?, e.range_traverse(f)?)),
-            Exp::Assert(box lhs, box rhs, box cont) => Ok(Exp::assert_eq(
+            Exp::Assert(box lhs, box rhs) => Ok(Exp::assert_eq(
                 lhs.range_traverse(f)?,
                 rhs.range_traverse(f)?,
-                cont.range_traverse(f)?,
             )),
-            Exp::Verify(box lhs, box rhs, box cont) => Ok(Exp::verify_eq(
+            Exp::Verify(box lhs, box rhs) => Ok(Exp::verify_eq(
                 lhs.range_traverse(f)?,
                 rhs.range_traverse(f)?,
-                cont.range_traverse(f)?,
             )),
             Exp::App(x, ts) => Ok(Exp::app(x, ts.range_traverse(f)?)),
             Exp::Fun(vars, box body) => Ok(Exp::Fun(vars, Box::new(body.range_traverse(f)?))),
@@ -742,11 +735,11 @@ impl<N> Exp<N> {
     pub fn varstr(x: &str) -> Self {
         Exp::Var(Vid::from(x))
     }
-    pub fn assert_eq(lhs: Exp<N>, rhs: Exp<N>, cont: Exp<N>) -> Self {
-        Exp::Assert(Box::new(lhs), Box::new(rhs), Box::new(cont))
+    pub fn assert_eq(lhs: Exp<N>, rhs: Exp<N>) -> Self {
+        Exp::Assert(Box::new(lhs), Box::new(rhs))
     }
-    pub fn verify_eq(lhs: Exp<N>, rhs: Exp<N>, cont: Exp<N>) -> Self {
-        Exp::Verify(Box::new(lhs), Box::new(rhs), Box::new(cont))
+    pub fn verify_eq(lhs: Exp<N>, rhs: Exp<N>) -> Self {
+        Exp::Verify(Box::new(lhs), Box::new(rhs))
     }
     pub fn letx(a: Vid, d: Self, e: Self) -> Self {
         Exp::Let(Some(a), Box::new(d), Box::new(e))
@@ -791,7 +784,7 @@ impl<N> Exp<N> {
             Exp::Log(_, box _, box _) => false,
             Exp::Challenge(_, _) | Exp::Random(_, _) => false,
             Exp::App(_, args) => args.iter().all(|e| e.is_pure()),
-            Exp::Assert(_, _, _) | Exp::Verify(_, _, _) => false,
+            Exp::Assert(_, _) | Exp::Verify(_, _) => false,
             Exp::Fun(_, box body) => body.is_pure(),
             Exp::Record(fields) => fields.iter().all(|(_, e)| e.is_pure()),
             Exp::Proj(box exp, _) => exp.is_pure(),
@@ -806,15 +799,13 @@ impl<N> Exp<N> {
     /// `Verify` (verifier-side check).
     pub fn is_relation_pure(&self) -> bool {
         match self {
-            Exp::Assert(box lhs, box rhs, box cont) => {
-                lhs.is_pure() && rhs.is_pure() && cont.is_relation_pure()
-            }
+            Exp::Assert(box lhs, box rhs) => lhs.is_pure() && rhs.is_pure(),
             Exp::Let(Some(_), box val, box cont) => {
                 val.is_relation_pure() && cont.is_relation_pure()
             }
             Exp::Let(None, box val, box cont) => val.is_relation_pure() && cont.is_relation_pure(),
             Exp::Random(_, _) => true,
-            Exp::Challenge(_, _) | Exp::Log(_, _, _) | Exp::Verify(_, _, _) => false,
+            Exp::Challenge(_, _) | Exp::Log(_, _, _) | Exp::Verify(_, _) => false,
             _ => self.is_pure(),
         }
     }
@@ -1018,25 +1009,19 @@ where
                 allocator.hardline(),
                 (*e).pretty(allocator),
             ]),
-            Exp::Assert(box lhs, box rhs, box cont) => allocator.concat([
+            Exp::Assert(box lhs, box rhs) => allocator.concat([
                 allocator.text("assert("),
                 lhs.pretty(allocator),
                 allocator.text(" == "),
                 rhs.pretty(allocator),
                 allocator.text(")"),
-                allocator.text(";"),
-                allocator.hardline(),
-                cont.pretty(allocator),
             ]),
-            Exp::Verify(box lhs, box rhs, box cont) => allocator.concat([
+            Exp::Verify(box lhs, box rhs) => allocator.concat([
                 allocator.text("verify("),
                 lhs.pretty(allocator),
                 allocator.text(" == "),
                 rhs.pretty(allocator),
                 allocator.text(")"),
-                allocator.text(";"),
-                allocator.hardline(),
-                cont.pretty(allocator),
             ]),
             Exp::Fun(vars, body) => {
                 let vars_str = vars
@@ -1252,332 +1237,357 @@ impl<'pest> FromPest<'pest> for UExp {
     fn from_pest(
         expression: &mut Pairs<'pest, Self::Rule>,
     ) -> Result<Self, ConversionError<Self::FatalError>> {
-        AEXP_PARSER
-            .map_primary(|pair| match pair.as_rule() {
-                Rule::unit_exp => Ok(Exp::Unit),
-                Rule::id => {
-                    let name = pair.as_str().to_string();
-                    if name.starts_with(|c: char| c.is_uppercase()) {
-                        // Uppercase-starting identifiers are size type variables
-                        Ok(Exp::lit(Size::varstr(&name)))
-                    } else {
-                        Ok(Exp::Var(Vid(name)))
-                    }
-                }
-                Rule::positive => Ok(Exp::lit(Size::from_pest(&mut Pairs::single(pair))?)),
-                Rule::fun_exp => {
-                    let mut inner = pair.into_inner();
-                    let mut vars = Vec::new();
-                    // Parse variable names until we hit the expression
-                    loop {
-                        let next = inner.next().ok_or(ConversionError::NoMatch)?;
-                        if next.as_rule() == Rule::exp {
-                            // This is the body expression
-                            let body = Exp::from_pest(&mut Pairs::single(next))?;
-                            return Ok(Exp::fun(vars, body));
-                        } else {
-                            // This should be an id
-                            vars.push(Vid(next.as_str().to_string()));
-                        }
-                    }
-                }
-                Rule::mle_exp => Ok(Exp::mle(Exp::from_pest(&mut pair.into_inner())?)),
-                Rule::interpolate_exp => {
-                    let mut inner = pair.into_inner();
-                    let first = Exp::from_pest(&mut Pairs::single(
-                        inner.next().ok_or(ConversionError::NoMatch)?,
-                    ))?;
-                    match inner.next() {
-                        None => Ok(Exp::interpolate_grid(first)),
-                        Some(second) => Ok(Exp::interpolate_at(
-                            first,
-                            Exp::from_pest(&mut Pairs::single(second))?,
-                        )),
-                    }
-                }
-                Rule::poly_exp => Ok(Exp::poly(Exp::from_pest(&mut pair.into_inner())?)),
-                Rule::coef_exp => Ok(Exp::coef(Exp::from_pest(&mut pair.into_inner())?)),
-                Rule::range_exp => Ok(Exp::range(Range::from_pest(&mut pair.into_inner())?)),
-                Rule::minus_exp => {
-                    let mut inner = pair.into_inner();
-                    let op = BinOp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                    let exp = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                    Ok(Exp::bin(op, Exp::lit(Size::zero()), exp))
-                }
-                Rule::challenge_exp => {
-                    let mut inner = pair.into_inner();
-                    let tid = Tid::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                    let b = inner.next().is_some();
-                    Ok(Exp::Challenge(tid, b))
-                }
-                Rule::random_exp => {
-                    let mut inner = pair.into_inner();
-                    let tid = Tid::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                    let b = inner.next().is_some();
-                    Ok(Exp::Random(tid, b))
-                }
-                Rule::vec_exp => {
-                    let inner = pair.into_inner();
-                    let mut ve = Vec::new();
-                    for x in inner {
-                        ve.push(Exp::from_pest(&mut Pairs::single(x))?);
-                    }
-                    Ok(Exp::vec(ve))
-                }
-                Rule::map_exp => {
-                    let mut inner = pair.into_inner();
-                    Ok(Exp::map(
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                        Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                    ))
-                }
-                Rule::reduce_exp => {
-                    let mut inner = pair.into_inner();
-                    Ok(Exp::reduce(
-                        BinOp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                    ))
-                }
-                Rule::ram_exp => {
-                    let mut inner = pair.into_inner();
-                    Ok(Exp::ram(
-                        Exp::Var(Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?),
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                    ))
-                }
-                Rule::pair_exp => {
-                    let mut inner = pair.into_inner();
-                    Ok(Exp::pair(
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                    ))
-                }
-                Rule::eval_exp => {
-                    let mut inner = pair.into_inner();
-                    let first_pair = inner.next().ok_or(ConversionError::NoMatch)?;
-                    let (selector, selector_pair_for_error, poly_pair) =
-                        if first_pair.as_rule() == Rule::eval_selector {
-                            let selector_pair_for_error = first_pair.clone();
-                            let mut selector_inner = first_pair.into_inner();
-                            let selector_pair =
-                                selector_inner.next().ok_or(ConversionError::NoMatch)?;
-                            let range = match selector_pair.as_rule() {
-                                Rule::range => Range::from_pest(&mut Pairs::single(selector_pair))?,
-                                Rule::size_ty => {
-                                    let start = Size::from_pest(&mut Pairs::single(selector_pair))?;
-                                    Range {
-                                        start: start.clone(),
-                                        step: Size::one(),
-                                        end: start + Size::one(),
-                                    }
-                                }
-                                _ => return Err(ConversionError::NoMatch),
-                            };
-                            (
-                                Some(range),
-                                Some(selector_pair_for_error),
-                                inner.next().ok_or(ConversionError::NoMatch)?,
-                            )
-                        } else {
-                            (None, None, first_pair)
-                        };
-
-                    let poly = Exp::from_pest(&mut Pairs::single(poly_pair))?;
-                    match (selector, inner.next()) {
-                        (None, None) => Ok(Exp::evaluate_grid(poly)),
-                        (None, Some(second)) => Ok(Exp::evaluate_at(
-                            poly,
-                            Exp::from_pest(&mut Pairs::single(second))?,
-                        )),
-                        (Some(range), Some(fixed)) => Ok(Exp::evaluate_selected(
-                            range,
-                            poly,
-                            Exp::from_pest(&mut Pairs::single(fixed))?,
-                        )),
-                        (Some(_), None) => Err(ConversionError::Malformed(
-                            InputError::EvaluateSelectorWithoutPoints(
-                                selector_pair_for_error.ok_or(ConversionError::NoMatch)?,
-                            ),
-                        )),
-                    }
-                }
-                Rule::dot_exp => {
-                    let mut inner = pair.into_inner();
-                    Ok(Exp::dot(
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                    ))
-                }
-                Rule::app_exp => {
-                    let mut inner = pair.into_inner();
-                    // Call a function
-                    let func = Vid::from_pest(&mut inner)?;
-                    // Arguments
-                    let params = Exps::from_pest(&mut inner)?;
-                    Ok(Exp::app(func, params))
-                }
-                Rule::assert_exp => {
-                    let mut inner = pair.into_inner();
-                    // constraint = { exp ~ eq_op ~ exp }
-                    let constraint_pair = inner.next().unwrap();
-                    let mut constraint_inner = constraint_pair.into_inner();
-                    let lhs =
-                        UExp::from_pest(&mut Pairs::single(constraint_inner.next().unwrap()))?;
-                    // skip eq_op
-                    constraint_inner.next();
-                    let rhs =
-                        UExp::from_pest(&mut Pairs::single(constraint_inner.next().unwrap()))?;
-                    match inner.next() {
-                        Some(rest) => Ok(Exp::assert_eq(
-                            lhs,
-                            rhs,
-                            UExp::from_pest(&mut Pairs::single(rest))?,
-                        )),
-                        None => {
-                            // No continuation: use Unit value.
-                            Ok(Exp::assert_eq(lhs, rhs, Exp::Unit))
-                        }
-                    }
-                }
-                Rule::verify_exp => {
-                    let mut inner = pair.into_inner();
-                    // constraint = { exp ~ eq_op ~ exp }
-                    let constraint_pair = inner.next().unwrap();
-                    let mut constraint_inner = constraint_pair.into_inner();
-                    let lhs =
-                        UExp::from_pest(&mut Pairs::single(constraint_inner.next().unwrap()))?;
-                    // skip eq_op
-                    constraint_inner.next();
-                    let rhs =
-                        UExp::from_pest(&mut Pairs::single(constraint_inner.next().unwrap()))?;
-                    match inner.next() {
-                        Some(rest) => Ok(Exp::verify_eq(
-                            lhs,
-                            rhs,
-                            UExp::from_pest(&mut Pairs::single(rest))?,
-                        )),
-                        None => Ok(Exp::verify_eq(lhs, rhs, Exp::Unit)),
-                    }
-                }
-                Rule::let_exp => {
-                    let mut inner = pair.into_inner();
-                    let var = Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                    // Next is either a type annotation or the value expression
-                    let next = inner.next().unwrap();
-                    let (typ_ann, val) = if next.as_rule() == Rule::exp {
-                        // No type annotation: next is the value
-                        (None, Exp::from_pest(&mut Pairs::single(next))?)
-                    } else {
-                        // Type annotation present: next is typ, then exp
-                        let typ = GTyp::from_pest(&mut Pairs::single(next))?;
-                        let val = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                        (Some(typ), val)
-                    };
-                    let body = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                    // Type annotation is checked during type inference, not stored in AST
-                    let _ = typ_ann;
-                    Ok(Exp::letx(var, val, body))
-                }
-                Rule::log_exp => {
-                    let mut inner = pair.into_inner();
-                    Ok(Exp::logx(
-                        Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                    ))
-                }
-                Rule::record_exp => {
-                    let inner = pair.into_inner();
-                    let mut fields = Ctx::new();
-                    for field_pair in inner {
-                        if field_pair.as_rule() == Rule::record_field_exp {
-                            let mut field_inner = field_pair.into_inner();
-                            let field_name = Vid::from_pest(&mut field_inner)?.0;
-                            let field_value = Exp::from_pest(&mut field_inner)?;
-                            fields.insert(&field_name, &field_value);
-                        }
-                    }
-                    Ok(Exp::Record(fields))
-                }
-                Rule::where_exp => Exp::from_pest(&mut pair.into_inner()),
-                Rule::where_let => {
-                    let mut inner = pair.into_inner();
-                    let var = Vid::from_pest(&mut Pairs::single(
-                        inner.next().ok_or(ConversionError::NoMatch)?,
-                    ))?;
-                    // Next is either a type annotation or the value expression
-                    let next = inner.next().ok_or(ConversionError::NoMatch)?;
-                    let (val, rest) = if next.as_rule() == Rule::exp {
-                        (
-                            Exp::from_pest(&mut Pairs::single(next))?,
-                            inner.next().unwrap(),
-                        )
-                    } else {
-                        // Type annotation present — skip it, then parse value
-                        let val = Exp::from_pest(&mut Pairs::single(
-                            inner.next().ok_or(ConversionError::NoMatch)?,
-                        ))?;
-                        (val, inner.next().ok_or(ConversionError::NoMatch)?)
-                    };
-                    let cont = Exp::from_pest(&mut Pairs::single(rest))?;
-                    Ok(Exp::letx(var, val, cont))
-                }
-                Rule::where_eq => {
-                    let mut inner = pair.into_inner();
-                    let lhs = Exp::from_pest(&mut Pairs::single(
-                        inner.next().ok_or(ConversionError::NoMatch)?,
-                    ))?;
-                    inner.next(); // skip eq_op
-                    let rhs = Exp::from_pest(&mut Pairs::single(
-                        inner.next().ok_or(ConversionError::NoMatch)?,
-                    ))?;
-                    match inner.next() {
-                        Some(cont) => Ok(Exp::assert_eq(
-                            lhs,
-                            rhs,
-                            Exp::from_pest(&mut Pairs::single(cont))?,
-                        )),
-                        None => Ok(Exp::assert_eq(lhs, rhs, Exp::Unit)),
-                    }
-                }
-                Rule::exp => Exp::from_pest(&mut pair.into_inner()),
-                _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
-            })
-            .map_infix(|lhs, op, rhs| match op.clone().as_rule() {
-                Rule::add_op => Ok(Exp::add(lhs?, rhs?)),
-                Rule::sub_op => Ok(Exp::sub(lhs?, rhs?)),
-                Rule::mul_op => Ok(Exp::mul(lhs?, rhs?)),
-                Rule::div_op => Ok(Exp::div(lhs?, rhs?)),
-                Rule::pow_op => Ok(Exp::pow(lhs?, rhs?)),
-                Rule::rem_op => Ok(Exp::rem(lhs?, rhs?)),
-                Rule::concat_op => Ok(Exp::concat(lhs?, rhs?)),
-                _ => unreachable!(),
-            })
-            .map_prefix(|op, rhs| match op.as_rule() {
-                Rule::unary_minus => Ok(Exp::sub(Exp::lit(Size::zero()), rhs?)),
-                _ => unreachable!(),
-            })
-            .map_postfix(|lhs, op| match op.as_rule() {
-                Rule::record_set_op => {
-                    let mut inner = op.into_inner();
-                    let field_name = Vid::from_pest(&mut Pairs::single(
-                        inner.next().ok_or(ConversionError::NoMatch)?,
-                    ))?
-                    .0;
-                    let value_pair = inner.next().ok_or(ConversionError::NoMatch)?;
-                    let value = Exp::from_pest(&mut Pairs::single(value_pair))?;
-                    Ok(Exp::set_record(lhs?, field_name, value))
-                }
-                Rule::proj_op => {
-                    let mut inner = op.into_inner();
-                    let field_name = Vid::from_pest(&mut inner)?.0;
-                    Ok(Exp::proj(lhs?, field_name))
-                }
-                _ => unreachable!(),
-            })
-            .parse(expression)
+        let pair = expression.next().ok_or(ConversionError::NoMatch)?;
+        match pair.as_rule() {
+            // exp = { let_exp | log_exp | seq_exp | exp_no_seq }
+            // Unwrap to the inner alternative.
+            Rule::exp => parse_exp(pair.into_inner().next().unwrap()),
+            // where_exp = { where_let | where_eq | exp_no_seq }
+            // Unwrap to the inner alternative.
+            Rule::where_exp => parse_where_exp(pair.into_inner().next().unwrap()),
+            Rule::exp_no_seq => parse_exp_no_seq(pair),
+            _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
+        }
     }
+}
+
+/// Dispatch on exp = { let_exp | log_exp | seq_exp | exp_no_seq }
+/// `pair` is the inner alternative (let_exp/log_exp/seq_exp/exp_no_seq),
+/// not `Rule::exp` itself — callers unwrap.
+fn parse_exp<'pest>(pair: Pair<'pest, Rule>) -> Result<UExp, ConversionError<InputError<'pest>>> {
+    match pair.as_rule() {
+        Rule::let_exp => {
+            // let_exp = { "let" ~ id ~ (":" ~ typ)? ~ "=" ~ exp_no_seq ~ ";" ~ exp }
+            let mut inner = pair.into_inner();
+            let var = Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+            let next = inner.next().unwrap();
+            let (typ_ann, val) = if next.as_rule() == Rule::exp_no_seq {
+                (None, parse_exp_no_seq(next)?)
+            } else {
+                let typ = GTyp::from_pest(&mut Pairs::single(next))?;
+                let val = parse_exp_no_seq(inner.next().unwrap())?;
+                (Some(typ), val)
+            };
+            let body = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+            let _ = typ_ann;
+            Ok(Exp::letx(var, val, body))
+        }
+        Rule::log_exp => {
+            // log_exp = { id ~ "<-" ~ exp_no_seq ~ ";" ~ exp }
+            let mut inner = pair.into_inner();
+            Ok(Exp::logx(
+                Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
+                parse_exp_no_seq(inner.next().unwrap())?,
+                Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
+            ))
+        }
+        Rule::seq_exp => {
+            // seq_exp = { exp_no_seq ~ ";" ~ exp }
+            // ";" is a silent string literal — no pair produced
+            let mut inner = pair.into_inner();
+            let lhs = parse_exp_no_seq(inner.next().unwrap())?;
+            let rhs = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+            Ok(Exp::seq(lhs, rhs))
+        }
+        Rule::exp_no_seq => parse_exp_no_seq(pair),
+        _ => unreachable!("unexpected rule in exp: {:?}", pair.as_rule()),
+    }
+}
+
+/// Dispatch on where_exp = { where_let | where_eq | exp_no_seq }
+/// `pair` is the inner alternative (where_let/where_eq/exp_no_seq),
+/// not `Rule::where_exp` itself — callers unwrap.
+fn parse_where_exp<'pest>(
+    pair: Pair<'pest, Rule>,
+) -> Result<UExp, ConversionError<InputError<'pest>>> {
+    match pair.as_rule() {
+        Rule::where_let => parse_where_let(pair),
+        Rule::where_eq => parse_where_eq(pair),
+        Rule::exp_no_seq => parse_exp_no_seq(pair),
+        _ => unreachable!("unexpected rule in where_exp: {:?}", pair.as_rule()),
+    }
+}
+
+/// where_let = { "let" ~ id ~ (":" ~ typ)? ~ "=" ~ exp_no_seq ~ ";" ~ where_exp }
+fn parse_where_let<'pest>(
+    pair: Pair<'pest, Rule>,
+) -> Result<UExp, ConversionError<InputError<'pest>>> {
+    let mut inner = pair.into_inner();
+    let var = Vid::from_pest(&mut Pairs::single(
+        inner.next().ok_or(ConversionError::NoMatch)?,
+    ))?;
+    let next = inner.next().ok_or(ConversionError::NoMatch)?;
+    let (val, rest) = if next.as_rule() == Rule::exp_no_seq {
+        (parse_exp_no_seq(next)?, inner.next().unwrap())
+    } else {
+        let val = parse_exp_no_seq(inner.next().ok_or(ConversionError::NoMatch)?)?;
+        (val, inner.next().ok_or(ConversionError::NoMatch)?)
+    };
+    // rest is Rule::where_exp — unwrap to inner alternative
+    let cont = parse_where_exp(rest.into_inner().next().unwrap())?;
+    Ok(Exp::letx(var, val, cont))
+}
+
+/// where_eq = { exp_no_seq ~ eq_op ~ exp_no_seq ~ (";" ~ where_exp)? }
+fn parse_where_eq<'pest>(
+    pair: Pair<'pest, Rule>,
+) -> Result<UExp, ConversionError<InputError<'pest>>> {
+    let mut inner = pair.into_inner();
+    let lhs = parse_exp_no_seq(inner.next().ok_or(ConversionError::NoMatch)?)?;
+    inner.next(); // skip eq_op
+    let rhs = parse_exp_no_seq(inner.next().ok_or(ConversionError::NoMatch)?)?;
+    match inner.next() {
+        // cont is Rule::where_exp — unwrap to inner alternative
+        Some(cont) => Ok(Exp::seq(
+            Exp::assert_eq(lhs, rhs),
+            parse_where_exp(cont.into_inner().next().unwrap())?,
+        )),
+        None => Ok(Exp::assert_eq(lhs, rhs)),
+    }
+}
+
+/// Parse exp_no_seq using the PrattParser on its flat inner pairs.
+fn parse_exp_no_seq<'pest>(
+    pair: Pair<'pest, Rule>,
+) -> Result<UExp, ConversionError<InputError<'pest>>> {
+    AEXP_PARSER
+        .map_primary(|pair| match pair.as_rule() {
+            Rule::unit_exp => Ok(Exp::Unit),
+            Rule::id => {
+                let name = pair.as_str().to_string();
+                if name.starts_with(|c: char| c.is_uppercase()) {
+                    // Uppercase-starting identifiers are size type variables
+                    Ok(Exp::lit(Size::varstr(&name)))
+                } else {
+                    Ok(Exp::Var(Vid(name)))
+                }
+            }
+            Rule::positive => Ok(Exp::lit(Size::from_pest(&mut Pairs::single(pair))?)),
+            Rule::fun_exp => {
+                let mut inner = pair.into_inner();
+                let mut vars = Vec::new();
+                // Parse variable names until we hit the expression
+                loop {
+                    let next = inner.next().ok_or(ConversionError::NoMatch)?;
+                    if next.as_rule() == Rule::exp {
+                        // This is the body expression
+                        let body = Exp::from_pest(&mut Pairs::single(next))?;
+                        return Ok(Exp::fun(vars, body));
+                    } else {
+                        // This should be an id
+                        vars.push(Vid(next.as_str().to_string()));
+                    }
+                }
+            }
+            Rule::mle_exp => Ok(Exp::mle(parse_exp_no_seq(
+                pair.into_inner().next().unwrap(),
+            )?)),
+            Rule::interpolate_exp => {
+                let mut inner = pair.into_inner();
+                let first = parse_exp_no_seq(inner.next().ok_or(ConversionError::NoMatch)?)?;
+                match inner.next() {
+                    None => Ok(Exp::interpolate_grid(first)),
+                    Some(second) => Ok(Exp::interpolate_at(first, parse_exp_no_seq(second)?)),
+                }
+            }
+            Rule::poly_exp => Ok(Exp::poly(parse_exp_no_seq(
+                pair.into_inner().next().unwrap(),
+            )?)),
+            Rule::coef_exp => Ok(Exp::coef(parse_exp_no_seq(
+                pair.into_inner().next().unwrap(),
+            )?)),
+            Rule::range_exp => Ok(Exp::range(Range::from_pest(&mut pair.into_inner())?)),
+            Rule::minus_exp => {
+                let mut inner = pair.into_inner();
+                let op = BinOp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                let exp = parse_exp_no_seq(inner.next().unwrap())?;
+                Ok(Exp::bin(op, Exp::lit(Size::zero()), exp))
+            }
+            Rule::challenge_exp => {
+                let mut inner = pair.into_inner();
+                let tid = Tid::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                let b = inner.next().is_some();
+                Ok(Exp::Challenge(tid, b))
+            }
+            Rule::random_exp => {
+                let mut inner = pair.into_inner();
+                let tid = Tid::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                let b = inner.next().is_some();
+                Ok(Exp::Random(tid, b))
+            }
+            Rule::vec_exp => {
+                let inner = pair.into_inner();
+                let mut ve = Vec::new();
+                for x in inner {
+                    ve.push(parse_exp_no_seq(x)?);
+                }
+                Ok(Exp::vec(ve))
+            }
+            Rule::map_exp => {
+                let mut inner = pair.into_inner();
+                Ok(Exp::map(
+                    Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
+                    Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
+                    parse_exp_no_seq(inner.next().unwrap())?,
+                ))
+            }
+            Rule::reduce_exp => {
+                let mut inner = pair.into_inner();
+                Ok(Exp::reduce(
+                    BinOp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
+                    parse_exp_no_seq(inner.next().unwrap())?,
+                ))
+            }
+            Rule::ram_exp => {
+                let mut inner = pair.into_inner();
+                Ok(Exp::ram(
+                    Exp::Var(Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?),
+                    parse_exp_no_seq(inner.next().unwrap())?,
+                ))
+            }
+            Rule::pair_exp => {
+                let mut inner = pair.into_inner();
+                Ok(Exp::pair(
+                    parse_exp_no_seq(inner.next().unwrap())?,
+                    parse_exp_no_seq(inner.next().unwrap())?,
+                ))
+            }
+            Rule::eval_exp => {
+                let mut inner = pair.into_inner();
+                let first_pair = inner.next().ok_or(ConversionError::NoMatch)?;
+                let (selector, selector_pair_for_error, poly_pair) = if first_pair.as_rule()
+                    == Rule::eval_selector
+                {
+                    let selector_pair_for_error = first_pair.clone();
+                    let mut selector_inner = first_pair.into_inner();
+                    let selector_pair = selector_inner.next().ok_or(ConversionError::NoMatch)?;
+                    let range = match selector_pair.as_rule() {
+                        Rule::range => Range::from_pest(&mut Pairs::single(selector_pair))?,
+                        Rule::size_ty => {
+                            let start = Size::from_pest(&mut Pairs::single(selector_pair))?;
+                            Range {
+                                start: start.clone(),
+                                step: Size::one(),
+                                end: start + Size::one(),
+                            }
+                        }
+                        _ => return Err(ConversionError::NoMatch),
+                    };
+                    (
+                        Some(range),
+                        Some(selector_pair_for_error),
+                        inner.next().ok_or(ConversionError::NoMatch)?,
+                    )
+                } else {
+                    (None, None, first_pair)
+                };
+
+                let poly = parse_exp_no_seq(poly_pair)?;
+                match (selector, inner.next()) {
+                    (None, None) => Ok(Exp::evaluate_grid(poly)),
+                    (None, Some(second)) => Ok(Exp::evaluate_at(poly, parse_exp_no_seq(second)?)),
+                    (Some(range), Some(fixed)) => Ok(Exp::evaluate_selected(
+                        range,
+                        poly,
+                        parse_exp_no_seq(fixed)?,
+                    )),
+                    (Some(_), None) => Err(ConversionError::Malformed(
+                        InputError::EvaluateSelectorWithoutPoints(
+                            selector_pair_for_error.ok_or(ConversionError::NoMatch)?,
+                        ),
+                    )),
+                }
+            }
+            Rule::dot_exp => {
+                let mut inner = pair.into_inner();
+                Ok(Exp::dot(
+                    parse_exp_no_seq(inner.next().unwrap())?,
+                    parse_exp_no_seq(inner.next().unwrap())?,
+                ))
+            }
+            Rule::app_exp => {
+                let mut inner = pair.into_inner();
+                // Call a function
+                let func = Vid::from_pest(&mut inner)?;
+                // Arguments
+                let params = Exps::from_pest(&mut inner)?;
+                Ok(Exp::app(func, params))
+            }
+            Rule::assert_exp => {
+                let mut inner = pair.into_inner();
+                // constraint = { exp_no_seq ~ eq_op ~ exp_no_seq }
+                let constraint_pair = inner.next().unwrap();
+                let mut constraint_inner = constraint_pair.into_inner();
+                let lhs = parse_exp_no_seq(constraint_inner.next().unwrap())?;
+                // skip eq_op
+                constraint_inner.next();
+                let rhs = parse_exp_no_seq(constraint_inner.next().unwrap())?;
+                Ok(Exp::assert_eq(lhs, rhs))
+            }
+            Rule::verify_exp => {
+                let mut inner = pair.into_inner();
+                // constraint = { exp_no_seq ~ eq_op ~ exp_no_seq }
+                let constraint_pair = inner.next().unwrap();
+                let mut constraint_inner = constraint_pair.into_inner();
+                let lhs = parse_exp_no_seq(constraint_inner.next().unwrap())?;
+                // skip eq_op
+                constraint_inner.next();
+                let rhs = parse_exp_no_seq(constraint_inner.next().unwrap())?;
+                Ok(Exp::verify_eq(lhs, rhs))
+            }
+            Rule::record_exp => {
+                let inner = pair.into_inner();
+                let mut fields = Ctx::new();
+                for field_pair in inner {
+                    if field_pair.as_rule() == Rule::record_field_exp {
+                        let mut field_inner = field_pair.into_inner();
+                        let field_name = Vid::from_pest(&mut field_inner)?.0;
+                        let field_value = parse_exp_no_seq(field_inner.next().unwrap())?;
+                        fields.insert(&field_name, &field_value);
+                    }
+                }
+                Ok(Exp::Record(fields))
+            }
+            // Parenthesized expression: "(" ~ exp ~ ")"
+            // exp allows seq, so (a; b) is valid.
+            Rule::exp => Exp::from_pest(&mut Pairs::single(pair)),
+            // Inner exp_no_seq from silent rules like minus_exp
+            Rule::exp_no_seq => parse_exp_no_seq(pair),
+            _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
+        })
+        .map_infix(|lhs, op, rhs| match op.clone().as_rule() {
+            Rule::add_op => Ok(Exp::add(lhs?, rhs?)),
+            Rule::sub_op => Ok(Exp::sub(lhs?, rhs?)),
+            Rule::mul_op => Ok(Exp::mul(lhs?, rhs?)),
+            Rule::div_op => Ok(Exp::div(lhs?, rhs?)),
+            Rule::pow_op => Ok(Exp::pow(lhs?, rhs?)),
+            Rule::rem_op => Ok(Exp::rem(lhs?, rhs?)),
+            Rule::concat_op => Ok(Exp::concat(lhs?, rhs?)),
+            _ => unreachable!(),
+        })
+        .map_prefix(|op, rhs| match op.as_rule() {
+            Rule::unary_minus => Ok(Exp::sub(Exp::lit(Size::zero()), rhs?)),
+            _ => unreachable!(),
+        })
+        .map_postfix(|lhs, op| match op.as_rule() {
+            Rule::record_set_op => {
+                let mut inner = op.into_inner();
+                let field_name = Vid::from_pest(&mut Pairs::single(
+                    inner.next().ok_or(ConversionError::NoMatch)?,
+                ))?
+                .0;
+                let value_pair = inner.next().ok_or(ConversionError::NoMatch)?;
+                let value = parse_exp_no_seq(value_pair)?;
+                Ok(Exp::set_record(lhs?, field_name, value))
+            }
+            Rule::proj_op => {
+                let mut inner = op.into_inner();
+                let field_name = Vid::from_pest(&mut inner)?.0;
+                Ok(Exp::proj(lhs?, field_name))
+            }
+            _ => unreachable!(),
+        })
+        .parse(&mut pair.into_inner())
 }
 
 impl<'pest> FromPest<'pest> for UExps {
@@ -1945,7 +1955,7 @@ fn parser_assert() {
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::assert_eq(Exp::varstr("x"), Exp::from(2), Exp::Unit))
+        Ok(Exp::assert_eq(Exp::varstr("x"), Exp::from(2)))
     );
 }
 
@@ -1955,39 +1965,36 @@ fn parser_verify() {
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::verify_eq(Exp::varstr("x"), Exp::from(2), Exp::Unit))
+        Ok(Exp::verify_eq(Exp::varstr("x"), Exp::from(2)))
     );
 }
 
 #[test]
 fn parser_verify_multiple() {
     let ex = "verify(x == 2); verify(3 == 4)";
-    let mut pairs = ZippelParser::parse(Rule::exps, ex).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
-        UExps::from_pest(&mut pairs),
-        Ok(Exps(vec![Exp::verify_eq(
-            Exp::varstr("x"),
-            Exp::from(2),
-            Exp::verify_eq(Exp::from(3), Exp::from(4), Exp::Unit)
-        )]))
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::seq(
+            Exp::verify_eq(Exp::varstr("x"), Exp::from(2)),
+            Exp::verify_eq(Exp::from(3), Exp::from(4))
+        ))
     );
 }
 
 #[test]
 fn parser_verify_three() {
     let ex = "verify(a == a); verify(b == b); verify(c == c)";
-    let mut pairs = ZippelParser::parse(Rule::exps, ex).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
-        UExps::from_pest(&mut pairs),
-        Ok(Exps(vec![Exp::verify_eq(
-            Exp::varstr("a"),
-            Exp::varstr("a"),
-            Exp::verify_eq(
-                Exp::varstr("b"),
-                Exp::varstr("b"),
-                Exp::verify_eq(Exp::varstr("c"), Exp::varstr("c"), Exp::Unit)
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::seq(
+            Exp::verify_eq(Exp::varstr("a"), Exp::varstr("a")),
+            Exp::seq(
+                Exp::verify_eq(Exp::varstr("b"), Exp::varstr("b")),
+                Exp::verify_eq(Exp::varstr("c"), Exp::varstr("c"))
             )
-        )]))
+        ))
     );
 }
 
@@ -2013,10 +2020,10 @@ fn parser_map() {
 #[test]
 fn parser_seq() {
     let ex = "x <- 2; y <- 3; let x = 2 * 4; 2";
-    let mut pairs = ZippelParser::parse(Rule::exps, ex).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
-        UExps::from_pest(&mut pairs),
-        Ok(Exps(vec![Exp::logx(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::logx(
             Vid::from("x"),
             Exp::from(2),
             Exp::logx(
@@ -2024,7 +2031,7 @@ fn parser_seq() {
                 Exp::from(3),
                 Exp::letx(Vid::from("x"), Exp::from(2) * Exp::from(4), Exp::from(2))
             )
-        )]))
+        ))
     );
 }
 
@@ -2167,11 +2174,79 @@ fn parser_let_with_type() {
 #[test]
 fn parser_assert_and_verify_chain() {
     let ex = "assert(x == 2); verify(y == 3); z";
-    let mut pairs = ZippelParser::parse(Rule::exps, ex).unwrap();
-    let expected = Exps(vec![Exp::assert_eq(
-        Exp::varstr("x"),
-        Exp::from(2),
-        Exp::verify_eq(Exp::varstr("y"), Exp::from(3), Exp::varstr("z")),
-    )]);
-    assert_eq!(UExps::from_pest(&mut pairs), Ok(expected));
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    let expected = Exp::seq(
+        Exp::assert_eq(Exp::varstr("x"), Exp::from(2)),
+        Exp::seq(
+            Exp::verify_eq(Exp::varstr("y"), Exp::from(3)),
+            Exp::varstr("z"),
+        ),
+    );
+    assert_eq!(UExp::from_pest(&mut pairs), Ok(expected));
+}
+
+#[test]
+fn parser_app_seq() {
+    // The main motivation for the refactor: foo(); bar now parses.
+    let ex = "foo(a); bar(b)";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::seq(
+            Exp::app(Vid::from("foo"), Exps::from([Exp::varstr("a")])),
+            Exp::app(Vid::from("bar"), Exps::from([Exp::varstr("b")])),
+        ))
+    );
+}
+
+#[test]
+fn parser_arith_seq() {
+    // Any expression can be sequenced, not just let/log/assert/verify.
+    let ex = "1 + 2; x";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::seq(Exp::from(1) + Exp::from(2), Exp::varstr("x"),))
+    );
+}
+
+#[test]
+fn parser_paren_seq() {
+    // Sequencing inside parenthesized expressions.
+    let ex = "(a; b)";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::seq(Exp::varstr("a"), Exp::varstr("b")))
+    );
+}
+
+#[test]
+fn parser_let_value_no_seq() {
+    // Value position uses exp_no_seq — `;` cannot appear in the value.
+    // `let x = 1 + 2; x` parses as let(x, 1+2, x), NOT let(x, seq(1, ...)).
+    let ex = "let x = 1 + 2; x";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::letx(
+            Vid::from("x"),
+            Exp::from(1) + Exp::from(2),
+            Exp::varstr("x")
+        ))
+    );
+}
+
+#[test]
+fn parser_assert_no_cont() {
+    // Assert without `;` produces bare Assert(lhs, rhs), no Unit cont.
+    let ex = "assert(x == 2)";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::Assert(
+            Box::new(Exp::varstr("x")),
+            Box::new(Exp::from(2)),
+        ))
+    );
 }

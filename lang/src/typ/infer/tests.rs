@@ -1079,16 +1079,24 @@ fn test_assert_inference() {
     let fctx = Set::new();
     let vctx = VAR_CTX.clone();
 
-    let assert_exp = CExp::assert_eq(CExp::varstr("f1"), CExp::varstr("f2"), CExp::varstr("f1"));
+    // assert_eq returns Unit
+    let assert_exp = CExp::assert_eq(CExp::varstr("f1"), CExp::varstr("f2"));
 
-    assert_eq!(
-        assert_exp.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Base(Tid::from("F")))
-    );
+    assert_eq!(assert_exp.infer(&KIND_CTX, &fctx, &vctx), Ok(CTyp::Unit));
 
     // assert_eq with mismatched operand types should fail
-    let assert_bad = CExp::assert_eq(CExp::varstr("f1"), CExp::varstr("g1"), CExp::varstr("f1"));
+    let assert_bad = CExp::assert_eq(CExp::varstr("f1"), CExp::varstr("g1"));
     assert!(assert_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
+
+    // seq(assert, cont) returns cont's type
+    let seq_exp = CExp::seq(
+        CExp::assert_eq(CExp::varstr("f1"), CExp::varstr("f2")),
+        CExp::varstr("f1"),
+    );
+    assert_eq!(
+        seq_exp.infer(&KIND_CTX, &fctx, &vctx),
+        Ok(CTyp::Base(Tid::from("F")))
+    );
 }
 
 #[test]
@@ -1096,16 +1104,24 @@ fn test_verify_inference() {
     let fctx = Set::new();
     let vctx = VAR_CTX.clone();
 
-    let verify_exp = CExp::verify_eq(CExp::varstr("f1"), CExp::varstr("f2"), CExp::varstr("f1"));
+    // verify_eq returns Unit
+    let verify_exp = CExp::verify_eq(CExp::varstr("f1"), CExp::varstr("f2"));
 
-    assert_eq!(
-        verify_exp.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Base(Tid::from("F")))
-    );
+    assert_eq!(verify_exp.infer(&KIND_CTX, &fctx, &vctx), Ok(CTyp::Unit));
 
     // verify_eq with mismatched operand types should fail
-    let verify_bad = CExp::verify_eq(CExp::varstr("f1"), CExp::varstr("g1"), CExp::varstr("f1"));
+    let verify_bad = CExp::verify_eq(CExp::varstr("f1"), CExp::varstr("g1"));
     assert!(verify_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
+
+    // seq(verify, cont) returns cont's type
+    let seq_exp = CExp::seq(
+        CExp::verify_eq(CExp::varstr("f1"), CExp::varstr("f2")),
+        CExp::varstr("f1"),
+    );
+    assert_eq!(
+        seq_exp.infer(&KIND_CTX, &fctx, &vctx),
+        Ok(CTyp::Base(Tid::from("F")))
+    );
 }
 
 #[test]

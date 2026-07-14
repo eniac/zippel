@@ -30,7 +30,7 @@ pub enum Body<N> {
     /// - `body`: The body of the protocol.
     /// - `relation`: The relation describing the protocol — a single
     ///   expression from the `where` clause, structured as
-    ///   `Let(r, val, Let(s, val, Assert(a, b, Assert(c, d, Unit))))`.
+    ///   `Let(r, val, seq(Assert(a, b), seq(Assert(c, d), Unit)))`.
     ///   Let-bindings are evaluated once and shared by all constraints.
     Proto { body: Exp<N>, relation: Exp<N> },
 
@@ -604,11 +604,11 @@ fn proto_parser() {
             Vid::from("test"),
             TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
             GArgs::from([GArg::public("a", GTyp::varstr("F"))]),
-            UExp::assert_eq(UExp::varstr("a"), UExp::varstr("a"), UExp::Unit),
+            UExp::assert_eq(UExp::varstr("a"), UExp::varstr("a")),
             UExp::letx(
                 Vid::from("x"),
                 UExp::from(3) * UExp::varstr("a"),
-                UExp::verify_eq(UExp::varstr("x"), UExp::varstr("x"), UExp::Unit)
+                UExp::verify_eq(UExp::varstr("x"), UExp::varstr("x"))
             )
         )
     );
@@ -731,11 +731,11 @@ fn decls_parser() {
                 Vid::from("test"),
                 TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
                 GArgs::from([GArg::public("a", GTyp::varstr("F"))]),
-                UExp::assert_eq(UExp::varstr("a"), UExp::varstr("a"), UExp::Unit),
+                UExp::assert_eq(UExp::varstr("a"), UExp::varstr("a")),
                 UExp::letx(
                     Vid::from("x"),
                     UExp::mul(UExp::from(3), UExp::varstr("a")),
-                    UExp::verify_eq(UExp::varstr("x"), UExp::varstr("x"), UExp::Unit)
+                    UExp::verify_eq(UExp::varstr("x"), UExp::varstr("x"))
                 )
             ),
             UDecl::func(
@@ -764,4 +764,75 @@ fn decls_parser() {
             )
         ])
     );
+}
+
+#[test]
+fn proto_where_eq_no_cont() {
+    // where a == a  →  Assert(a, a)  (no continuation, no Unit)
+    let ex = concat!(
+        "proto test<F: Field>(public a: F) ",
+        "where a == a { verify(a == a) }"
+    );
+    let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
+    let decl = UDecl::from_pest(&mut pairs).unwrap();
+    match decl.body {
+        Body::Proto { relation, .. } => {
+            assert_eq!(
+                relation,
+                UExp::assert_eq(UExp::varstr("a"), UExp::varstr("a"))
+            );
+        }
+        _ => panic!("expected Proto body"),
+    }
+}
+
+#[test]
+fn proto_where_eq_with_cont() {
+    // where a == a; b == b  →  seq(Assert(a, a), Assert(b, b))
+    let ex = concat!(
+        "proto test<F: Field>(public a: F, public b: F) ",
+        "where a == a; b == b { verify(a == a) }"
+    );
+    let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
+    let decl = UDecl::from_pest(&mut pairs).unwrap();
+    match decl.body {
+        Body::Proto { relation, .. } => {
+            assert_eq!(
+                relation,
+                UExp::seq(
+                    UExp::assert_eq(UExp::varstr("a"), UExp::varstr("a")),
+                    UExp::assert_eq(UExp::varstr("b"), UExp::varstr("b")),
+                )
+            );
+        }
+        _ => panic!("expected Proto body"),
+    }
+}
+
+#[test]
+fn proto_where_let_then_eq_with_cont() {
+    // where let x = a + b; x == x; a == b
+    // →  Let(x, a+b, seq(Assert(x, x), Assert(a, b)))
+    let ex = concat!(
+        "proto test<F: Field>(public a: F, public b: F) ",
+        "where let x = a + b; x == x; a == b { verify(a == a) }"
+    );
+    let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
+    let decl = UDecl::from_pest(&mut pairs).unwrap();
+    match decl.body {
+        Body::Proto { relation, .. } => {
+            assert_eq!(
+                relation,
+                UExp::letx(
+                    Vid::from("x"),
+                    UExp::varstr("a") + UExp::varstr("b"),
+                    UExp::seq(
+                        UExp::assert_eq(UExp::varstr("x"), UExp::varstr("x")),
+                        UExp::assert_eq(UExp::varstr("a"), UExp::varstr("b")),
+                    )
+                )
+            );
+        }
+        _ => panic!("expected Proto body"),
+    }
 }

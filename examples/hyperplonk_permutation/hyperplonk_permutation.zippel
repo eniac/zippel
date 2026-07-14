@@ -194,7 +194,7 @@ proto hyperplonk_permutation<F: Field, S: Size, N: 2^S>(
     r0 <- challenge<F>;
     let prev = g0(r0);
 
-    let _ = perm_round(p_poly, points, [r0], prev, r0, 1,
+    perm_round(p_poly, points, [r0], prev, r0, 1,
                       sent_v, f_shift_evs, g_shift_evs, eq_tau_evs, alpha);
 
     verify(sent_v[N - 1] == one)
