@@ -492,3 +492,56 @@ fn test_module_overlap_error_message() {
     assert!(err_msg.contains("Overlapping declarations"));
     assert!(err_msg.contains("sum"));
 }
+
+/// Issue #173: overload resolution fails when a Size type variable is
+/// passed to a function overloaded on a Range type variable.
+/// `eq_weights` has two overloads: `[F; 1]` and `[F; N]` where `N: 2..20`.
+/// The protocol passes `placeholder_tau: [F; M]` where `M: Size`.
+/// After concretization (M pinned to e.g. 4), the call should resolve
+/// to the recursive overload with N=4.
+#[test]
+fn test_issue_173_overload_resolution_with_size_var() {
+    let ex = concat!(
+        "fn eq_weights<F: Field>(public x: [F; 1]) -> [F; 2] {\n",
+        "    [(1 - x[0]), x[0]]\n",
+        "}\n",
+        "fn eq_weights<F: Field, N: 2..20>(public x: [F; N]) -> [F; 2^N] {\n",
+        "    let x_lo = x[0..(N-1)];\n",
+        "    let a    = x[N-1];\n",
+        "    let prev = eq_weights(x_lo);\n",
+        "    (prev * (1 - a)) ++ (prev * a)\n",
+        "}\n",
+        "proto spartan<F: Field, M: Size>(\n",
+        "    public placeholder_tau: [F; M]\n",
+        ") where placeholder_tau[0] == placeholder_tau[0] {\n",
+        "    let tau = eq_weights(placeholder_tau);\n",
+        "    verify(placeholder_tau[0] == placeholder_tau[0])\n",
+        "}\n"
+    );
+    let umod = UModule::from_str(ex).unwrap();
+
+    // Without size pinning, M stays abstract — concretize cannot resolve
+    // the overload since it doesn't know if M=1 (base case) or M∈2..20.
+    let no_size = umod.concretize(&Ctx::new());
+    assert!(no_size.is_err(), "expected error without size pinning");
+
+    // Pin M=4 (a power of 2, within N's range 2..20)
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::from("M"), &4);
+
+    let result = umod.concretize(&sizes);
+    match result {
+        Ok(cmod) => {
+            // Should produce concrete declarations for the protocol and
+            // all recursive eq_weights instantiations (N=4, N=3, N=2, N=1)
+            assert!(
+                cmod.len() >= 3,
+                "expected at least 3 decls, got {}",
+                cmod.len()
+            );
+        }
+        Err(e) => {
+            panic!("concretize failed (issue #173 not fixed): {}", e);
+        }
+    }
+}
