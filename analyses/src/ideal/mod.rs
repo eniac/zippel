@@ -1,11 +1,12 @@
 use crate::TransClos;
 use crate::Var;
 use crate::frontend::Polynomial;
-use graph::{GOp, Op};
+use graph::{GOp, Op, Ref};
 use lang::ast::BinOp;
+use share::Ctx;
 
 use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig, ArkScalarOps};
+use backend::{ATyp, ArkConfig, ArkScalarOps, Value};
 
 mod combinatorics;
 
@@ -47,12 +48,34 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     /// fresh ideal with its own `vars` namespace, while the builder
     /// namespace keeps generated witness/sentinel allocation stable.
     pub fn build(&mut self, tc: TransClos<C>) -> Ideal<C> {
+        self.build_with_partial(tc, &Ctx::new())
+    }
+
+    /// Like [`build`](Self::build), but concretizes args whose `Ref`
+    /// appears in `partial_values`. Each matching arg is bound to
+    /// constant polynomials via `link_to_polys` (replacing the free
+    /// variable with known constants), and excluded from the
+    /// divisor-invertibility constraints (a known constant's leading
+    /// coefficient is not a free variable that needs an inverse).
+    pub fn build_with_partial(
+        &mut self,
+        tc: TransClos<C>,
+        partial_values: &Ctx<Ref, Value<C>>,
+    ) -> Ideal<C> {
         let mut ideal = Ideal::new();
         for new_arg in tc.vars.iter() {
             ideal.register(new_arg);
         }
         for (var, _op) in tc.clos.iter() {
             ideal.register(var);
+        }
+
+        // Bind concretized args to constant polynomials.
+        for arg in tc.vars.iter() {
+            if let Some(value) = partial_values.get(&arg.reference) {
+                let polys = PolySource::<C>::to_poly_value(value);
+                link_to_polys(&mut ideal, arg, polys);
+            }
         }
 
         // Emit divisor-invertibility constraints for arg polynomials.
@@ -78,9 +101,14 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         // Only univariate polynomial args (`VPoly(1, m)` / `Uni(m)` with
         // m > 0) get constraints. Multivariate and MLE are skipped (leading
         // coefficient is ambiguous). Transcript vars (in verifier tc) are
-        // excluded via `tc.arg_refs`.
+        // excluded via `tc.arg_refs`. Args concretized via
+        // `partial_values` are also skipped — their leading coefficient is
+        // a known constant, not a free variable.
         for arg in tc.vars.iter() {
             if !tc.arg_refs.contains(&arg.reference) {
+                continue;
+            }
+            if partial_values.contains(&arg.reference) {
                 continue;
             }
             let Some((n, m)) = PolySource::<C>::poly_shape_static(&arg.typ) else {

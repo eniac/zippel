@@ -9,14 +9,14 @@ use crate::frontend::{MonoOrder, Polynomial};
 use crate::ideal::{Ideal, IdealBuilder};
 use ark_ff::One;
 use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig};
+use backend::{ATyp, ArkConfig, Value};
 use graph::{QDag, Ref};
 use lang::typ::Qualifier;
 use log::{info, warn};
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
-use share::Set;
+use share::{Ctx, Set};
 
 pub struct SpecialSoundnessAnalysis<C: ArkConfig> {
     /// Gröbner basis of the search ideal (verifier TC copies + d-equations +
@@ -120,21 +120,11 @@ fn validate_2n_plus_1<C: ArkConfig>(
 }
 
 impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
-    /// Analyze special soundness of a sigma protocol.
+    /// Build the analysis from the DAG, computing the search Gröbner basis.
     ///
-    /// Convenience wrapper: `from_input_with_backend` + `run`.
-    pub fn analyze(dag: &QDag<C>, l_vec: Vec<usize>) -> Result<(), AnalysisError<C>> {
-        Self::analyze_with_backend(dag, l_vec, GbBackendKind::default())
-    }
-
-    /// Like [`analyze`](Self::analyze) but with a user-selected GB backend.
-    pub fn analyze_with_backend(
-        dag: &QDag<C>,
-        l_vec: Vec<usize>,
-        backend: GbBackendKind,
-    ) -> Result<(), AnalysisError<C>> {
-        let mut sa = Self::from_input_with_backend(dag, l_vec, backend)?;
-        sa.run()
+    /// Convenience wrapper using the default GB backend.
+    pub fn from_input(dag: &QDag<C>, l_vec: Vec<usize>) -> Result<Self, AnalysisError<C>> {
+        Self::from_input_with_backend(dag, l_vec, GbBackendKind::default())
     }
 
     /// Build the analysis from the DAG, computing the search Gröbner basis.
@@ -151,6 +141,17 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         l_vec: Vec<usize>,
         backend: GbBackendKind,
     ) -> Result<Self, AnalysisError<C>> {
+        Self::from_input_with_partial(dag, l_vec, backend, &Ctx::new())
+    }
+
+    /// Like [`from_input_with_backend`](Self::from_input_with_backend) but
+    /// concretizes args whose `Ref` appears in `partial_values`.
+    pub fn from_input_with_partial(
+        dag: &QDag<C>,
+        l_vec: Vec<usize>,
+        backend: GbBackendKind,
+        partial_values: &Ctx<Ref, Value<C>>,
+    ) -> Result<Self, AnalysisError<C>> {
         if l_vec.is_empty() || l_vec.iter().any(|l| *l < 2) {
             return Err(AnalysisError::InvalidSoundnessParameter);
         }
@@ -160,6 +161,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         let witness_slots: Vec<Var> = crate::var::dag_args(dag)
             .into_iter()
             .filter(|a| a.is_private())
+            .filter(|a| !partial_values.contains(&a.reference))
             .flat_map(|a| a.slots())
             .collect();
 
@@ -308,7 +310,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                     pub_vars.push(var.clone());
                 }
             }
-            let copy_result = grev_builder.build(tc);
+            let copy_result = grev_builder.build_with_partial(tc, partial_values);
             grev_search.merge(&copy_result);
             grev_validity.merge(&copy_result);
         }
@@ -322,7 +324,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             }
         }
         let mut rel_locals = extract_locals(&grev_builder, &rel_tc);
-        let mut grev_rel_result = grev_builder.build(rel_tc.clone());
+        let mut grev_rel_result = grev_builder.build_with_partial(rel_tc.clone(), partial_values);
         rel_locals.inline(&Set::new());
         grev_rel_result.inline(&Set::new());
 
@@ -665,7 +667,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
-        SpecialSoundnessAnalysis::analyze(&g, l_vec)
+        SpecialSoundnessAnalysis::from_input(&g, l_vec)?.run()
     }
 
     const SCHNORR_PROTO: &str = r#"
@@ -687,7 +689,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
-        let result = SpecialSoundnessAnalysis::analyze(&g, vec![2]);
+        let result = SpecialSoundnessAnalysis::from_input(&g, vec![2]).and_then(|mut sa| sa.run());
         match &result {
             Ok(()) => {}
             Err(e) => panic!("analyze() failed: {:?}", e),
@@ -752,7 +754,10 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
-        SpecialSoundnessAnalysis::analyze(&g, vec![2]).unwrap();
+        SpecialSoundnessAnalysis::from_input(&g, vec![2])
+            .unwrap()
+            .run()
+            .unwrap();
 
         let witness_names: Set<String> = crate::var::dag_args(&g)
             .into_iter()
@@ -962,7 +967,10 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
-        SpecialSoundnessAnalysis::analyze(&g, vec![2]).unwrap();
+        SpecialSoundnessAnalysis::from_input(&g, vec![2])
+            .unwrap()
+            .run()
+            .unwrap();
 
         let witness_slots: Vec<Var> = crate::var::dag_args(&g)
             .into_iter()
@@ -1000,7 +1008,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
-        let result = SpecialSoundnessAnalysis::analyze(&g, vec![2]);
+        let result = SpecialSoundnessAnalysis::from_input(&g, vec![2]).and_then(|mut sa| sa.run());
         assert!(result.is_ok());
     }
 

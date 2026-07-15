@@ -1,6 +1,7 @@
 use backend::ArkConfig;
+use backend::Value;
 use backend::op::HasOpFactory;
-use share::Set;
+use share::{Ctx, Set};
 
 use crate::TransClos;
 use crate::backend::{GbBackendKind, GbBasis};
@@ -30,12 +31,24 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
     /// Like [`from_input`](Self::from_input) but with a user-selected GB
     /// backend.
     pub fn from_input_with_backend(dag: &QDag<C>, backend: GbBackendKind) -> Self {
+        Self::from_input_with_partial(dag, backend, &Ctx::new())
+    }
+
+    /// Like [`from_input_with_backend`](Self::from_input_with_backend) but
+    /// concretizes args whose `Ref` appears in `partial_values` to constant
+    /// polynomials. Use [`QDag::resolve_partial_values`] to build the
+    /// `Ref`-keyed map from a name-based `Ctx<Vid, Value<C>>`.
+    pub fn from_input_with_partial(
+        dag: &QDag<C>,
+        backend: GbBackendKind,
+        partial_values: &Ctx<Ref, Value<C>>,
+    ) -> Self {
         let mut builder = IdealBuilder::new();
 
         let prover_tc = TransClos::prover(dag);
-        let mut prover_result = builder.build(prover_tc);
+        let mut prover_result = builder.build_with_partial(prover_tc, partial_values);
 
-        let rel_result = builder.build(TransClos::relation(dag));
+        let rel_result = builder.build_with_partial(TransClos::relation(dag), partial_values);
         prover_result.merge(&rel_result);
 
         let transcript_refs: Set<Ref> = dag.transcript_nodes().into_iter().map(Ref::new).collect();
@@ -45,7 +58,7 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         let mut verifier_locals = extract_locals(&builder, &verifier_tc);
         verifier_locals.inline(&Set::new());
 
-        let mut verifier_result = builder.build(verifier_tc);
+        let mut verifier_result = builder.build_with_partial(verifier_tc, partial_values);
         verifier_result.inline(&Set::new());
 
         // Merge verifier_locals into prover, then compute the GB.

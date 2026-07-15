@@ -493,7 +493,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     ) -> Result<(), analyses::AnalysisError<C>> {
         use analyses::SpecialSoundnessAnalysis;
         let g = self.analyze_graph();
-        SpecialSoundnessAnalysis::analyze(&*g, l_vec)
+        SpecialSoundnessAnalysis::from_input(&*g, l_vec)?.run()
     }
 }
 

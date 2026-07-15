@@ -231,6 +231,23 @@ impl<C: ArkConfig, A> Dag<C, A> {
         out
     }
 
+    /// Resolve a name-based partial-value map to a `Ref`-based map by
+    /// looking up input args by name. Panics if a name in `names` doesn't
+    /// match any input arg — this is a caller bug (the name should come
+    /// from the protocol's argument list).
+    pub fn resolve_partial_values(&self, names: &Ctx<Vid, Value<C>>) -> Ctx<Ref, Value<C>> {
+        let mut out = Ctx::new();
+        for (vid, value) in names.iter() {
+            let node = self
+                .input_args()
+                .into_iter()
+                .find(|n| self[*n].name() == Some(vid))
+                .unwrap_or_else(|| panic!("resolve_partial_values: no input arg named {:?}", vid,));
+            out.insert(&Ref::new(node), value);
+        }
+        out
+    }
+
     /// Dep deduplication
     pub(crate) fn add_edge(&mut self, source: NodeIndex, sink: NodeIndex, edge: Dep) {
         // If the edge is not a self-loop add it
