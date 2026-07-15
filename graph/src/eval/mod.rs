@@ -170,13 +170,13 @@ fn verify_domain_is_canonical_indices<C: ArkConfig>(dom_val: &Value<C>, n: usize
             if v.len() != n {
                 return false;
             }
-            v.iter().enumerate().all(|(i, &val)| val == i)
+            v.par_iter().enumerate().all(|(i, &val)| val == i)
         }
         Value::VecScalar(v) => {
             if v.len() != n {
                 return false;
             }
-            v.iter()
+            v.par_iter()
                 .enumerate()
                 .all(|(i, &val)| val == <C::F as From<u64>>::from(i as u64))
         }
@@ -184,7 +184,7 @@ fn verify_domain_is_canonical_indices<C: ArkConfig>(dom_val: &Value<C>, n: usize
             if v.len() != n {
                 return false;
             }
-            v.iter().enumerate().all(|(i, val)| match val {
+            v.par_iter().enumerate().all(|(i, val)| match val {
                 Value::Index(idx) => *idx == i,
                 Value::Scalar(f) => *f == <C::F as From<u64>>::from(i as u64),
                 _ => false,
@@ -246,7 +246,7 @@ fn verify_domain_is_canonical_coordinates<C: ArkConfig>(
         Value::Vec(elements) => {
             elements.len() == n
                 && elements
-                    .iter()
+                    .par_iter()
                     .enumerate()
                     .all(|(i, val)| is_canonical_hypercube_vector::<C>(val, i, k))
         }

@@ -2880,6 +2880,8 @@ impl<C: ArkConfig> Value<C> {
     }
 }
 
+const HYPERCUBE_PARALLEL_TAIL_THRESHOLD: usize = 1024;
+
 fn hypercube_reduce_selected_mle_products<C: ArkConfig>(
     poly: &VirtualPolynomial<C::F>,
     tail_num_vars: usize,
@@ -2907,36 +2909,88 @@ fn hypercube_reduce_selected_mle_products<C: ArkConfig>(
         })
         .collect();
 
+    // Hoist factor validation out of the per-tail hot loop: every referenced
+    // factor must be a DenseMle / SparseMle whose var count matches the input
+    // shape. Once this passes, the per-tail body is infallible and can run in a
+    // rayon closure (no `?`/early-return inside the parallel iterator).
+    for (_coefficient, indices) in &poly.products {
+        for &idx in indices {
+            match poly.flattened_polys.get(idx)?.as_ref() {
+                PolyVariant::DenseMle(mle) => {
+                    if mle.num_vars() != shape.input_num_vars {
+                        return None;
+                    }
+                }
+                PolyVariant::SparseMle { num_vars, .. } => {
+                    if *num_vars != shape.input_num_vars || sparse_mle_maps[idx].is_none() {
+                        return None;
+                    }
+                }
+                _ => return None,
+            }
+        }
+    }
+
     for (coefficient, indices) in &poly.products {
-        for tail_index in 0..tail_count {
+        // Infallible per-tail term: validation above guarantees every factor is
+        // an in-bounds DenseMle / SparseMle. `base_idx = tail_index << 1` and
+        // `base_idx | 1` are in range because the table has
+        // `2^input_num_vars = 2 * tail_count` entries.
+        let compute_term = |tail_index: usize| -> Vec<C::F> {
             let mut term = vec![*coefficient];
             for &idx in indices {
-                let factor = match poly.flattened_polys[idx].as_ref() {
+                let factor: [C::F; 2] = match poly.flattened_polys[idx].as_ref() {
                     PolyVariant::DenseMle(mle) => {
-                        if mle.num_vars() != shape.input_num_vars {
-                            return None;
-                        }
-                        let base_idx = tail_index.checked_shl(1)?;
-                        let v0 = *mle.evaluations.get(base_idx)?;
-                        let v1 = *mle.evaluations.get(base_idx | 1)?;
+                        let base_idx = tail_index << 1;
+                        let v0 = mle.evaluations[base_idx];
+                        let v1 = mle.evaluations[base_idx | 1];
                         [v0, v1 - v0]
                     }
-                    PolyVariant::SparseMle { num_vars, .. } => {
-                        if *num_vars != shape.input_num_vars {
-                            return None;
-                        }
-                        let map = sparse_mle_maps[idx].as_ref()?;
-                        let base_idx = tail_index.checked_shl(1)?;
+                    PolyVariant::SparseMle { .. } => {
+                        let map = sparse_mle_maps[idx]
+                            .as_ref()
+                            .expect("validated sparse factor");
+                        let base_idx = tail_index << 1;
                         let v0 = map.get(&base_idx).copied().unwrap_or_else(C::F::zero);
                         let v1 = map.get(&(base_idx | 1)).copied().unwrap_or_else(C::F::zero);
                         [v0, v1 - v0]
                     }
-                    _ => return None,
+                    _ => unreachable!("validated factor variant"),
                 };
                 term = mul_coeffs_truncated::<C::F>(&term, &factor, degree_cap);
             }
-            add_coeffs_assign(&mut total, &term);
-        }
+            term
+        };
+
+        // Field addition is associative and commutative, so the parallel
+        // reduction over independent tail vertices is bit-identical to the
+        // sequential fold. Small (late-round) tails keep the sequential path to
+        // avoid rayon overhead.
+        let product_total = if tail_count < HYPERCUBE_PARALLEL_TAIL_THRESHOLD {
+            let mut acc = vec![C::F::zero(); degree_cap.max(1)];
+            for tail_index in 0..tail_count {
+                add_coeffs_assign(&mut acc, &compute_term(tail_index));
+            }
+            acc
+        } else {
+            (0..tail_count)
+                .into_par_iter()
+                .fold(
+                    || vec![C::F::zero(); degree_cap.max(1)],
+                    |mut acc, tail_index| {
+                        add_coeffs_assign(&mut acc, &compute_term(tail_index));
+                        acc
+                    },
+                )
+                .reduce(
+                    || vec![C::F::zero(); degree_cap.max(1)],
+                    |mut a, b| {
+                        add_coeffs_assign(&mut a, &b);
+                        a
+                    },
+                )
+        };
+        add_coeffs_assign(&mut total, &product_total);
     }
 
     trim_trailing_zero_coeffs(&mut total);
@@ -5151,6 +5205,47 @@ mod value_tests {
                     Fr::zero()
                 };
                 expected += vp.evaluate_mv(&[t, b0, b1]).unwrap();
+            }
+            assert_eq!(round.evaluate_uv(&t), expected, "round mismatch at t={t_u}");
+        }
+    }
+
+    #[test]
+    fn fused_reduce_parallel_path_matches_oracle() {
+        // A degree-2 product of two distinct dense MLE factors over 12 vars
+        // drives the parallel tail loop: tail_num_vars = 11 => tail_count =
+        // 2048 >= HYPERCUBE_PARALLEL_TAIL_THRESHOLD (1024). The fused round
+        // poly must be bit-identical to the trusted per-(t, tail) evaluate_mv
+        // oracle regardless of rayon reduction order.
+        let num_vars = 12usize;
+        let size = 1usize << num_vars;
+        let evals_a: Vec<Fr> = (0..size).map(|i| Fr::from((i as u64 % 7) + 1)).collect();
+        let evals_b: Vec<Fr> = (0..size).map(|i| Fr::from((i as u64 % 5) + 2)).collect();
+        let factor_a = PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(
+            num_vars, evals_a,
+        ));
+        let factor_b = PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(
+            num_vars, evals_b,
+        ));
+        let vp = VirtualPolynomial::from_poly(factor_a)
+            .poly_mul(&VirtualPolynomial::from_poly(factor_b))
+            .expect("dense-dense virtual product");
+        let shape = SelectedEvalShape::new(num_vars, 1, 2);
+        let round = hypercube_reduce_selected_mle_products::<TestConfig>(&vp, num_vars - 1, shape)
+            .expect("dense multi-factor fast path must fire");
+        for t_u in [0u64, 1, 2, 3, 7, 100] {
+            let t = Fr::from(t_u);
+            let mut expected = Fr::zero();
+            for tail in 0..(1usize << (num_vars - 1)) {
+                let mut point = vec![t];
+                for j in 0..(num_vars - 1) {
+                    point.push(if (tail >> j) & 1 == 1 {
+                        Fr::one()
+                    } else {
+                        Fr::zero()
+                    });
+                }
+                expected += vp.evaluate_mv(&point).unwrap();
             }
             assert_eq!(round.evaluate_uv(&t), expected, "round mismatch at t={t_u}");
         }
