@@ -30,19 +30,16 @@ proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: S
     private l_query: [G1; L],
     public instance_assignment: [F; M],
     private witness_assignment: [F; L],
-    private h_coeffs: [F; H],
-    // QAP polynomial evaluations at tau (circuit-specific, provided as
-    // witnesses). The proto body and verifier never reference these;
-    // they exist so the `where` clause can express the QAP identity.
-    private a_evs: [F; M+L],
-    private b_evs: [F; M+L],
-    private c_evs: [F; M+L],
-    private t_at_tau: F
+    private h_coeffs: [F; H]
 ) where let tau = random<F>;
     let alpha = random<F>;
     let beta = random<F>;
     let gamma = random<F>;
     let delta = random<F>;
+    let a_evs = [random<F> for i in 0..M+L];
+    let b_evs = [random<F> for i in 0..M+L];
+    let c_evs = [random<F> for i in 0..M+L];
+    let t_at_tau = random<F>;
     alpha_g1 == alpha * gen_g1;
     beta_g1 == beta * gen_g1;
     beta_g2 == beta * gen_g2;

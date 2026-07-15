@@ -1,0 +1,171 @@
+---
+source: analyses/tests/gb_snapshots.rs
+expression: value
+---
+- beta*z_r_c_alpha - z_beta - beta*t*z_alpha + beta*s*z_alpha + r_d_beta*z_alpha - beta*r_d*z_alpha + beta*r_c*z_alpha + z_alpha + beta*t_h1 - beta*t_g1 + k_beta
+- beta*z_r_d - beta*z_t + t*z_beta + r_d*z_beta - t_g2 + beta*t_big_d + j*k_beta
+- big_s*z_beta + beta*z_alpha + beta*z_x1 - beta*t_big_s + big_s*k_beta
+- big_s*z_r_b + r_b*z_alpha + r_b*z_x1 - r_b*t_big_s + big_s*k_r_b
+- big_s*z_r_b + sk_u*z_alpha + r_b*z_alpha - big_s*z_sk_u + sk_u*z_x1 + r_b*z_x1 - sk_u*t_big_s - r_b*t_big_s + big_s*t_big_b
+- big_s*z_r_c + r_c*z_alpha + r_c*z_x1 - r_c*t_big_s + big_s*k_r_c
+- big_s*z_r_c - big_s*z_s + s*z_alpha + r_c*z_alpha + s*z_x1 + r_c*z_x1 - s*t_big_s - r_c*t_big_s + big_s*t_big_c
+- big_s*z_r_d + r_d*z_alpha + r_d*z_x1 - r_d*t_big_s + big_s*k_r_d
+- big_s*z_r_d - big_s*z_t + t*z_alpha + r_d*z_alpha + t*z_x1 + r_d*z_x1 - t*t_big_s - r_d*t_big_s + big_s*t_big_d
+- ch*z_alpha*z_r_d_beta + k_alpha*ch*z_r_d_beta + ch*z_beta*z_r_c_alpha - k_beta*ch*z_r_c_alpha + z_alpha*z_beta*z_r_d - k_alpha*z_beta*z_r_d - k_beta*z_alpha*z_r_d + k_alpha*k_beta*z_r_d - z_alpha*z_beta*z_r_c + k_alpha*z_beta*z_r_c + k_beta*z_alpha*z_r_c - k_alpha*k_beta*z_r_c + z_alpha*z_beta*z_t - k_alpha*z_beta*z_t - k_beta*z_alpha*z_t + k_alpha*k_beta*z_t - z_alpha*z_beta*z_s + k_alpha*z_beta*z_s + k_beta*z_alpha*z_s - k_alpha*k_beta*z_s - t_big_d*z_alpha*z_beta + t_big_c*z_alpha*z_beta + ch^2*z_beta - t_h1*ch*z_beta + k_alpha*t_big_d*z_beta - k_alpha*t_big_c*z_beta - ch^2*z_alpha + t_h2*ch*z_alpha + k_beta*t_big_d*z_alpha - k_beta*t_big_c*z_alpha - k_beta*ch^2 + k_alpha*ch^2 - k_alpha*t_h2*ch + k_beta*t_h1*ch - k_alpha*k_beta*t_big_d + k_alpha*k_beta*t_big_c
+- k_alpha*z_r_d_beta + x1*z_beta*z_r_d - x1*z_beta*z_r_c + x1*z_beta*z_t - x1*z_beta*z_s - t*z_x1*z_beta + s*z_x1*z_beta - r_d*z_x1*z_beta + r_c*z_x1*z_beta + t_g1*z_beta + t*t_big_s*z_beta - s*t_big_s*z_beta + r_d*t_big_s*z_beta - r_c*t_big_s*z_beta - x1*t_big_d*z_beta + x1*t_big_c*z_beta - k_alpha*ch + k_alpha*t_h2 - k_alpha*t_g2
+- r_b*x1*z_r_c - j*x1*z_r_b - r_b*x1*z_s + r_b*s*z_x1 + r_b*r_c*z_x1 + j*r_b*z_x1 + r_b*t_g1 - r_b*s*t_big_s - r_b*r_c*t_big_s - j*r_b*t_big_s + r_b*x1*t_big_c + j*x1*k_r_b
+- r_c*x1*z_r_c - j*x1*z_r_c - r_c*x1*z_s + r_c*s*z_x1 + r_c^2*z_x1 + j*r_c*z_x1 + r_c*t_g1 - r_c*s*t_big_s - r_c^2*t_big_s - j*r_c*t_big_s + r_c*x1*t_big_c + j*x1*k_r_c
+- s - r_c + big_c
+- s*x1 - r_c*x1 - j*x1 + big_s*s - r_c_alpha + big_s*r_c + big_s*j - 1
+- s*x1*z_r_c - r_c*x1*z_r_c - j*x1*z_r_c - s*x1*z_s - r_c*x1*z_s - j*x1*z_s + s^2*z_x1 + 2*r_c*s*z_x1 + j*s*z_x1 + r_c^2*z_x1 + j*r_c*z_x1 + s*t_g1 + r_c*t_g1 - s^2*t_big_s + 52435875175126190479447740508185965837690552500527637822603658699938581184511*r_c*s*t_big_s - j*s*t_big_s - r_c^2*t_big_s - j*r_c*t_big_s + s*x1*t_big_c + r_c*x1*t_big_c + j*x1*t_big_c
+- s*x1*z_r_d - r_c*x1*z_r_d - j*x1*z_r_d + t*x1*z_r_c - s*x1*z_t - r_c*x1*z_t + t*x1*z_s + r_d*s*z_x1 + r_c*r_d*z_x1 + j*r_d*z_x1 + r_d*t_g1 - r_d*s*t_big_s - r_c*r_d*t_big_s - j*r_d*t_big_s + s*x1*t_big_d + r_c*x1*t_big_d - t*x1*t_big_c + j*x1*k_r_d
+- s*x1*z_r_d - r_c*x1*z_r_d - j*x1*z_r_d - s*x1*z_t - r_c*x1*z_t - j*x1*z_t + s*t*z_x1 + r_c*t*z_x1 + j*t*z_x1 + r_d*s*z_x1 + r_c*r_d*z_x1 + j*r_d*z_x1 + t*t_g1 + r_d*t_g1 - s*t*t_big_s - r_c*t*t_big_s - j*t*t_big_s - r_d*s*t_big_s - r_c*r_d*t_big_s - j*r_d*t_big_s + s*x1*t_big_d + r_c*x1*t_big_d + j*x1*t_big_d
+- s*x1*z_r_y - r_c*x1*z_r_y - j*x1*z_r_y - s*x1*z_x2 - r_c*x1*z_x2 - j*x1*z_x2 + s*x2*z_x1 + r_c*x2*z_x1 + j*x2*z_x1 + r_y*s*z_x1 + r_c*r_y*z_x1 + j*r_y*z_x1 + x2*t_g1 + x1*t_g1 + r_y*t_g1 - s*x2*t_big_s - r_c*x2*t_big_s - j*x2*t_big_s - s*x1*t_big_s - r_c*x1*t_big_s - j*x1*t_big_s - r_y*s*t_big_s - r_c*r_y*t_big_s - j*r_y*t_big_s + s*x1*t_big_y + r_c*x1*t_big_y + j*x1*t_big_y
+- s*z_r_b - x2*z_s + r_b*z_s + s*z_x2 - s*t_big_t + x2*t_big_c - r_b*t_big_c + s*t_big_b + s*k_r_beta - x2*k_r_c + r_b*k_r_c
+- s*z_r_c + r_c*z_s - r_c*t_big_c + s*k_r_c + r_c*k_r_c
+- s*z_t + t*z_s + s*t_big_d - t*t_big_c - s*k_r_d + t*k_r_c
+- sk_u - r_b + big_b
+- sk_u*x1*z_r_c - r_b*x1*z_r_c - j*x1*z_r_b - sk_u*x1*z_s - r_b*x1*z_s - j*x1*z_sk_u + s*sk_u*z_x1 + r_c*sk_u*z_x1 + j*sk_u*z_x1 + r_b*s*z_x1 + r_b*r_c*z_x1 + j*r_b*z_x1 + sk_u*t_g1 + r_b*t_g1 - s*sk_u*t_big_s - r_c*sk_u*t_big_s - j*sk_u*t_big_s - r_b*s*t_big_s - r_b*r_c*t_big_s - j*r_b*t_big_s + sk_u*x1*t_big_c + r_b*x1*t_big_c + j*x1*t_big_b
+- sk_u*z_beta + beta*z_sk_u - beta*t_big_b + beta*k_r_b + sk_u*k_beta
+- sk_u*z_r_b - x2*z_sk_u + r_b*z_sk_u + sk_u*z_x2 - sk_u*t_big_t + x2*t_big_b + sk_u*t_big_b - r_b*t_big_b + sk_u*k_r_beta - x2*k_r_b + r_b*k_r_b
+- t - r_d + big_d
+- t*x1*z_r_d_beta - r_d*x1*z_r_d_beta + big_s*t*z_r_d_beta + big_s*r_d*z_r_d_beta + beta*t*x1*z_r_d - beta*s*x1*z_r_d + beta*r_d*x1*z_r_d - beta*r_c*x1*z_r_d - x1*z_r_d + beta*t*x1*z_t - beta*s*x1*z_t + beta*r_d*x1*z_t - beta*r_c*x1*z_t - x1*z_t - r_d_beta*t*z_alpha - r_d*r_d_beta*z_alpha - beta*t^2*z_x1 + beta*s*t*z_x1 + 52435875175126190479447740508185965837690552500527637822603658699938581184511*beta*r_d*t*z_x1 + beta*r_c*t*z_x1 + t*z_x1 + beta*r_d*s*z_x1 - beta*r_d^2*z_x1 + beta*r_c*r_d*z_x1 + r_d*z_x1 + t*x1*t_h2 + r_d*x1*t_h2 - big_s*t*t_h2 - big_s*r_d*t_h2 + beta*t*t_g1 + beta*r_d*t_g1 + beta*t^2*t_big_s - beta*s*t*t_big_s + 2*beta*r_d*t*t_big_s - beta*r_c*t*t_big_s - t*t_big_s - beta*r_d*s*t_big_s + beta*r_d^2*t_big_s - beta*r_c*r_d*t_big_s - r_d*t_big_s - beta*t*x1*t_big_d + beta*s*x1*t_big_d - beta*r_d*x1*t_big_d + beta*r_c*x1*t_big_d + x1*t_big_d
+- t*z_r_b - x2*z_t + r_b*z_t + t*z_x2 - t*t_big_t + x2*t_big_d - r_b*t_big_d + t*t_big_b + t*k_r_beta - x2*k_r_d + r_b*k_r_d
+- t*z_r_c + s*z_t + r_c*z_t - t*z_s - s*t_big_d - r_c*t_big_d + t*t_big_c + s*k_r_d + r_c*k_r_d
+- t*z_r_d + r_d*z_t - r_d*t_big_d + t*k_r_d + r_d*k_r_d
+- t_big_b + k_r_b + k_sk_u
+- t_big_c + k_r_c + k_s
+- t_big_d + k_r_d + k_t
+- t_big_s + k_alpha + k_x1
+- t_big_t + t_big_b + k_r_beta - k_r_b + k_x2
+- t_h1 + k_r_c_alpha
+- t_h2 + k_r_d_beta
+- x1*x2*z_r_d_beta + big_s*x2*z_r_d_beta - x1^2*z_r_d_beta - r_y*x1*z_r_d_beta + big_s*x1*z_r_d_beta + big_s*r_y*z_r_d_beta - r_d_beta*x2*z_alpha - r_d_beta*x1*z_alpha - r_d_beta*r_y*z_alpha + beta*t*x1*z_r_y - beta*s*x1*z_r_y + beta*r_d*x1*z_r_y - beta*r_c*x1*z_r_y - x1*z_r_y + beta*t*x1*z_x2 - beta*s*x1*z_x2 + beta*r_d*x1*z_x2 - beta*r_c*x1*z_x2 - x1*z_x2 - beta*t*x2*z_x1 + beta*s*x2*z_x1 - beta*r_d*x2*z_x1 + beta*r_c*x2*z_x1 + x2*z_x1 - beta*r_y*t*z_x1 + beta*r_y*s*z_x1 - beta*r_d*r_y*z_x1 + beta*r_c*r_y*z_x1 + r_y*z_x1 + x1*x2*t_h2 - big_s*x2*t_h2 + x1^2*t_h2 + r_y*x1*t_h2 - big_s*x1*t_h2 - big_s*r_y*t_h2 + beta*x2*t_g1 + beta*x1*t_g1 + beta*r_y*t_g1 + beta*t*x2*t_big_s - beta*s*x2*t_big_s + beta*r_d*x2*t_big_s - beta*r_c*x2*t_big_s - x2*t_big_s + beta*t*x1*t_big_s - beta*s*x1*t_big_s + beta*r_d*x1*t_big_s - beta*r_c*x1*t_big_s - x1*t_big_s + beta*r_y*t*t_big_s - beta*r_y*s*t_big_s + beta*r_d*r_y*t_big_s - beta*r_c*r_y*t_big_s - r_y*t_big_s - beta*t*x1*t_big_y + beta*s*x1*t_big_y - beta*r_d*x1*t_big_y + beta*r_c*x1*t_big_y + x1*t_big_y
+- x1*z_alpha - x1*z_x1 + big_s*z_x1 + x1*t_big_s - big_s*t_big_s + big_s*k_alpha
+- x1*z_beta + beta*z_x1 - beta*t_big_s + x1*k_beta + beta*k_alpha
+- x1*z_beta - r_y*z_beta + beta*z_r_y + beta*z_x1 + beta*t_big_t - beta*t_big_y - beta*t_big_b - beta*k_r_beta + beta*k_r_b + x1*k_beta + r_y*k_beta
+- x1*z_beta*z_r_c_alpha + beta*z_x1*z_r_c_alpha - beta*t_big_s*z_r_c_alpha + x1*k_beta*z_r_c_alpha + x1*t_h1*z_beta - x1*t_g1*z_beta - k_alpha*z_beta + beta*t_g1*z_alpha - beta*t_h1*z_x1 + beta*t_g1*z_x1 + beta*t_big_s*t_h1 - x1*k_beta*t_h1 - beta*t_big_s*t_g1 + x1*k_beta*t_g1 + k_alpha*k_beta
+- x1*z_r_b + r_b*z_x1 - r_b*t_big_s + x1*k_r_b + r_b*k_alpha
+- x1*z_r_b*z_r_c_alpha + r_b*z_x1*z_r_c_alpha - r_b*t_big_s*z_r_c_alpha + x1*k_r_b*z_r_c_alpha + x1*t_h1*z_r_b - x1*t_g1*z_r_b - k_alpha*z_r_b + r_b*t_g1*z_alpha - r_b*t_h1*z_x1 + r_b*t_g1*z_x1 + r_b*t_big_s*t_h1 - x1*k_r_b*t_h1 - r_b*t_big_s*t_g1 + x1*k_r_b*t_g1 + k_alpha*k_r_b
+- x1*z_r_b*z_r_c_alpha - x1*z_sk_u*z_r_c_alpha + sk_u*z_x1*z_r_c_alpha + r_b*z_x1*z_r_c_alpha - sk_u*t_big_s*z_r_c_alpha - r_b*t_big_s*z_r_c_alpha + x1*t_big_b*z_r_c_alpha + x1*t_h1*z_r_b - x1*t_g1*z_r_b - k_alpha*z_r_b + sk_u*t_g1*z_alpha + r_b*t_g1*z_alpha + x1*t_h1*z_sk_u - x1*t_g1*z_sk_u - k_alpha*z_sk_u - sk_u*t_h1*z_x1 - r_b*t_h1*z_x1 + sk_u*t_g1*z_x1 + r_b*t_g1*z_x1 + sk_u*t_big_s*t_h1 + r_b*t_big_s*t_h1 - x1*t_big_b*t_h1 - sk_u*t_big_s*t_g1 - r_b*t_big_s*t_g1 + x1*t_big_b*t_g1 + k_alpha*t_big_b
+- x1*z_r_beta + big_s*z_r_beta - x2*z_alpha - sk_u*z_alpha - r_beta*z_alpha + big_s*z_sk_u + big_s*z_x2 - x2*z_x1 - sk_u*z_x1 - big_s*t_big_t + x2*t_big_s + sk_u*t_big_s + x1*k_r_beta + r_beta*k_alpha
+- x1*z_r_c + r_c*z_x1 - r_c*t_big_s + x1*k_r_c + r_c*k_alpha
+- x1*z_r_c*z_r_c_alpha + r_c*z_x1*z_r_c_alpha - r_c*t_big_s*z_r_c_alpha + x1*k_r_c*z_r_c_alpha + x1*t_h1*z_r_c - x1*t_g1*z_r_c - k_alpha*z_r_c + r_c*t_g1*z_alpha - r_c*t_h1*z_x1 + r_c*t_g1*z_x1 + r_c*t_big_s*t_h1 - x1*k_r_c*t_h1 - r_c*t_big_s*t_g1 + x1*k_r_c*t_g1 + k_alpha*k_r_c
+- x1*z_r_c*z_r_c_alpha - x1*z_s*z_r_c_alpha + s*z_x1*z_r_c_alpha + r_c*z_x1*z_r_c_alpha - s*t_big_s*z_r_c_alpha - r_c*t_big_s*z_r_c_alpha + x1*t_big_c*z_r_c_alpha + x1*t_h1*z_r_c - x1*t_g1*z_r_c - k_alpha*z_r_c + x1*t_h1*z_s - x1*t_g1*z_s - k_alpha*z_s + s*t_g1*z_alpha + r_c*t_g1*z_alpha - s*t_h1*z_x1 - r_c*t_h1*z_x1 + s*t_g1*z_x1 + r_c*t_g1*z_x1 + s*t_big_s*t_h1 + r_c*t_big_s*t_h1 - x1*t_big_c*t_h1 - s*t_big_s*t_g1 - r_c*t_big_s*t_g1 + x1*t_big_c*t_g1 + k_alpha*t_big_c
+- x1*z_r_c_alpha + big_s*z_r_c_alpha - r_c_alpha*z_alpha + x1*t_h1 - big_s*t_h1 + r_c_alpha*k_alpha
+- x1*z_r_c_alpha + big_s*z_r_c_alpha - r_c_alpha*z_alpha + x1*t_h1 - big_s*t_h1 - x1*t_g1 + big_s*t_g1 - k_alpha
+- x1*z_r_d + r_d*z_x1 - r_d*t_big_s + x1*k_r_d + r_d*k_alpha
+- x1*z_r_d*z_r_c_alpha + r_d*z_x1*z_r_c_alpha - r_d*t_big_s*z_r_c_alpha + x1*k_r_d*z_r_c_alpha + x1*t_h1*z_r_d - x1*t_g1*z_r_d - k_alpha*z_r_d + r_d*t_g1*z_alpha - r_d*t_h1*z_x1 + r_d*t_g1*z_x1 + r_d*t_big_s*t_h1 - x1*k_r_d*t_h1 - r_d*t_big_s*t_g1 + x1*k_r_d*t_g1 + k_alpha*k_r_d
+- x1*z_r_d*z_r_c_alpha - x1*z_t*z_r_c_alpha + t*z_x1*z_r_c_alpha + r_d*z_x1*z_r_c_alpha - t*t_big_s*z_r_c_alpha - r_d*t_big_s*z_r_c_alpha + x1*t_big_d*z_r_c_alpha + x1*t_h1*z_r_d - x1*t_g1*z_r_d - k_alpha*z_r_d + x1*t_h1*z_t - x1*t_g1*z_t - k_alpha*z_t + t*t_g1*z_alpha + r_d*t_g1*z_alpha - t*t_h1*z_x1 - r_d*t_h1*z_x1 + t*t_g1*z_x1 + r_d*t_g1*z_x1 + t*t_big_s*t_h1 + r_d*t_big_s*t_h1 - x1*t_big_d*t_h1 - t*t_big_s*t_g1 - r_d*t_big_s*t_g1 + x1*t_big_d*t_g1 + k_alpha*t_big_d
+- x1*z_r_d*z_r_d_beta - x1*z_t*z_r_d_beta + t*z_x1*z_r_d_beta + r_d*z_x1*z_r_d_beta - t*t_big_s*z_r_d_beta - r_d*t_big_s*z_r_d_beta + x1*t_big_d*z_r_d_beta + t*x1*z_beta*z_r_d - s*x1*z_beta*z_r_d + r_d*x1*z_beta*z_r_d - r_c*x1*z_beta*z_r_d + x1*t_h2*z_r_d - x1*t_g2*z_r_d - k_alpha*z_r_d + t*x1*z_beta*z_t - s*x1*z_beta*z_t + r_d*x1*z_beta*z_t - r_c*x1*z_beta*z_t + x1*t_h2*z_t - x1*t_g2*z_t - k_alpha*z_t - t^2*z_x1*z_beta + s*t*z_x1*z_beta + 52435875175126190479447740508185965837690552500527637822603658699938581184511*r_d*t*z_x1*z_beta + r_c*t*z_x1*z_beta + r_d*s*z_x1*z_beta - r_d^2*z_x1*z_beta + r_c*r_d*z_x1*z_beta + t*t_g1*z_beta + r_d*t_g1*z_beta + t^2*t_big_s*z_beta - s*t*t_big_s*z_beta + 2*r_d*t*t_big_s*z_beta - r_c*t*t_big_s*z_beta - r_d*s*t_big_s*z_beta + r_d^2*t_big_s*z_beta - r_c*r_d*t_big_s*z_beta - t*x1*t_big_d*z_beta + s*x1*t_big_d*z_beta - r_d*x1*t_big_d*z_beta + r_c*x1*t_big_d*z_beta - t*t_h2*z_x1 - r_d*t_h2*z_x1 + t*t_g2*z_x1 + r_d*t_g2*z_x1 + t*t_big_s*t_h2 + r_d*t_big_s*t_h2 - x1*t_big_d*t_h2 - t*t_big_s*t_g2 - r_d*t_big_s*t_g2 + x1*t_big_d*t_g2 + k_alpha*t_big_d
+- x1*z_r_d_beta + big_s*z_r_d_beta + beta*x1*z_r_d - beta*x1*z_r_c + beta*x1*z_t - beta*x1*z_s - r_d_beta*z_alpha - beta*t*z_x1 + beta*s*z_x1 - beta*r_d*z_x1 + beta*r_c*z_x1 + x1*t_h2 - big_s*t_h2 + beta*t_g1 + beta*t*t_big_s - beta*s*t_big_s + beta*r_d*t_big_s - beta*r_c*t_big_s - beta*x1*t_big_d + beta*x1*t_big_c - k_alpha
+- x1*z_r_d_beta + big_s*z_r_d_beta + t*x1*z_beta - s*x1*z_beta + r_d*x1*z_beta - r_c*x1*z_beta - big_s*t*z_beta + big_s*s*z_beta - big_s*r_d*z_beta - r_c_alpha*z_beta + big_s*r_c*z_beta - z_beta + z_alpha + x1*t_h2 - big_s*t_h2 - x1*t_g2 + big_s*t_g2 - k_alpha
+- x1*z_r_d_beta + big_s*z_r_d_beta - r_d_beta*z_alpha + x1*t_h2 - big_s*t_h2 + r_d_beta*k_alpha
+- x1*z_r_y + r_y*z_x1 - x1*t_big_t - x1*t_big_s - r_y*t_big_s + x1*t_big_y + x1*t_big_b + x1*k_r_beta - x1*k_r_b + x1*k_alpha + r_y*k_alpha
+- x1*z_r_y*z_r_c_alpha - x1*z_x2*z_r_c_alpha + x2*z_x1*z_r_c_alpha + r_y*z_x1*z_r_c_alpha - x2*t_big_s*z_r_c_alpha - x1*t_big_s*z_r_c_alpha - r_y*t_big_s*z_r_c_alpha + x1*t_big_y*z_r_c_alpha + x2*t_g1*z_alpha + x1*t_g1*z_alpha + r_y*t_g1*z_alpha + x1*t_h1*z_r_y - x1*t_g1*z_r_y - k_alpha*z_r_y + x1*t_h1*z_x2 - x1*t_g1*z_x2 - k_alpha*z_x2 - x2*t_h1*z_x1 - r_y*t_h1*z_x1 + x2*t_g1*z_x1 + r_y*t_g1*z_x1 - k_alpha*z_x1 + x2*t_big_s*t_h1 + x1*t_big_s*t_h1 + r_y*t_big_s*t_h1 - x1*t_big_y*t_h1 - x2*t_big_s*t_g1 - x1*t_big_s*t_g1 - r_y*t_big_s*t_g1 + x1*t_big_y*t_g1 + k_alpha*t_big_y
+- x1*z_r_y*z_r_d_beta - x1*z_x2*z_r_d_beta + x2*z_x1*z_r_d_beta + r_y*z_x1*z_r_d_beta - x2*t_big_s*z_r_d_beta - x1*t_big_s*z_r_d_beta - r_y*t_big_s*z_r_d_beta + x1*t_big_y*z_r_d_beta + t*x1*z_r_y*z_beta - s*x1*z_r_y*z_beta + r_d*x1*z_r_y*z_beta - r_c*x1*z_r_y*z_beta + t*x1*z_x2*z_beta - s*x1*z_x2*z_beta + r_d*x1*z_x2*z_beta - r_c*x1*z_x2*z_beta - t*x2*z_x1*z_beta + s*x2*z_x1*z_beta - r_d*x2*z_x1*z_beta + r_c*x2*z_x1*z_beta - r_y*t*z_x1*z_beta + r_y*s*z_x1*z_beta - r_d*r_y*z_x1*z_beta + r_c*r_y*z_x1*z_beta + x2*t_g1*z_beta + x1*t_g1*z_beta + r_y*t_g1*z_beta + t*x2*t_big_s*z_beta - s*x2*t_big_s*z_beta + r_d*x2*t_big_s*z_beta - r_c*x2*t_big_s*z_beta + t*x1*t_big_s*z_beta - s*x1*t_big_s*z_beta + r_d*x1*t_big_s*z_beta - r_c*x1*t_big_s*z_beta + r_y*t*t_big_s*z_beta - r_y*s*t_big_s*z_beta + r_d*r_y*t_big_s*z_beta - r_c*r_y*t_big_s*z_beta - t*x1*t_big_y*z_beta + s*x1*t_big_y*z_beta - r_d*x1*t_big_y*z_beta + r_c*x1*t_big_y*z_beta + x1*t_h2*z_r_y - x1*t_g2*z_r_y - k_alpha*z_r_y + x1*t_h2*z_x2 - x1*t_g2*z_x2 - k_alpha*z_x2 - x2*t_h2*z_x1 - r_y*t_h2*z_x1 + x2*t_g2*z_x1 + r_y*t_g2*z_x1 - k_alpha*z_x1 + x2*t_big_s*t_h2 + x1*t_big_s*t_h2 + r_y*t_big_s*t_h2 - x1*t_big_y*t_h2 - x2*t_big_s*t_g2 - x1*t_big_s*t_g2 - r_y*t_big_s*t_g2 + x1*t_big_y*t_g2 + k_alpha*t_big_y
+- x1*z_s + s*z_x1 - s*t_big_s + x1*t_big_c - x1*k_r_c + s*k_alpha
+- x1*z_sk_u + sk_u*z_x1 - sk_u*t_big_s + x1*t_big_b - x1*k_r_b + sk_u*k_alpha
+- x1*z_t + t*z_x1 - t*t_big_s + x1*t_big_d - x1*k_r_d + t*k_alpha
+- x1*z_x2 + x2*z_x1 + x1*t_big_t - x2*t_big_s - x1*t_big_b - x1*k_r_beta + x1*k_r_b + x2*k_alpha
+- x2 - sk_u - r_beta + big_t
+- x2 - x1 - r_y + big_y
+- x2*z_alpha - sk_u*z_alpha + big_s*z_sk_u + big_s*z_x2 - x2*z_x1 - sk_u*z_x1 - big_s*t_big_t + x2*t_big_s + sk_u*t_big_s + big_s*k_r_beta
+- x2*z_beta + beta*z_x2 - beta*t_big_t + beta*t_big_b + beta*k_r_beta - beta*k_r_b + x2*k_beta
+- x2*z_r_b - sk_u*z_r_b - x2*z_sk_u + r_b*z_sk_u + sk_u*z_x2 + r_b*z_x2 - sk_u*t_big_t - r_b*t_big_t + x2*t_big_b + sk_u*t_big_b + sk_u*k_r_beta + r_b*k_r_beta
+- x2*z_r_b - x1*z_r_b - r_y*z_r_b + r_b*z_r_y + r_b*z_x2 + r_b*z_x1 - r_b*t_big_y + x2*k_r_b + x1*k_r_b + r_y*k_r_b
+- x2*z_r_b - x1*z_r_b - r_y*z_r_b - x2*z_sk_u - x1*z_sk_u - r_y*z_sk_u + sk_u*z_r_y + r_b*z_r_y + sk_u*z_x2 + r_b*z_x2 + sk_u*z_x1 + r_b*z_x1 - sk_u*t_big_y - r_b*t_big_y + x2*t_big_b + x1*t_big_b + r_y*t_big_b
+- x2*z_r_beta - sk_u*z_r_beta + r_beta*z_sk_u + r_beta*z_x2 - r_beta*t_big_t + x2*k_r_beta + sk_u*k_r_beta + r_beta*k_r_beta
+- x2*z_r_c - sk_u*z_r_c - x2*z_s - sk_u*z_s + s*z_sk_u + r_c*z_sk_u + s*z_x2 + r_c*z_x2 - s*t_big_t - r_c*t_big_t + x2*t_big_c + sk_u*t_big_c + s*k_r_beta + r_c*k_r_beta
+- x2*z_r_c - x1*z_r_c - r_y*z_r_c + r_c*z_r_y + r_c*z_x2 + r_c*z_x1 - r_c*t_big_y + x2*k_r_c + x1*k_r_c + r_y*k_r_c
+- x2*z_r_c - x1*z_r_c - r_y*z_r_c - x2*z_s - x1*z_s - r_y*z_s + s*z_r_y + r_c*z_r_y + s*z_x2 + r_c*z_x2 + s*z_x1 + r_c*z_x1 - s*t_big_y - r_c*t_big_y + x2*t_big_c + x1*t_big_c + r_y*t_big_c
+- x2*z_r_d - sk_u*z_r_d - x2*z_t - sk_u*z_t + t*z_sk_u + r_d*z_sk_u + t*z_x2 + r_d*z_x2 - t*t_big_t - r_d*t_big_t + x2*t_big_d + sk_u*t_big_d + t*k_r_beta + r_d*k_r_beta
+- x2*z_r_d - x1*z_r_d - r_y*z_r_d + r_d*z_r_y + r_d*z_x2 + r_d*z_x1 - r_d*t_big_y + x2*k_r_d + x1*k_r_d + r_y*k_r_d
+- x2*z_r_d - x1*z_r_d - r_y*z_r_d - x2*z_t - x1*z_t - r_y*z_t + t*z_r_y + r_d*z_r_y + t*z_x2 + r_d*z_x2 + t*z_x1 + r_d*z_x1 - t*t_big_y - r_d*t_big_y + x2*t_big_d + x1*t_big_d + r_y*t_big_d
+- z_alpha - z_x1 + big_s*ch + t_big_s
+- z_alpha*z_r_b*z_r_d_beta + k_r_b*z_alpha*z_r_d_beta + z_beta*z_r_b*z_r_c_alpha - k_r_b*z_beta*z_r_c_alpha + r_b*z_alpha*z_beta*z_r_d - r_b*z_alpha*z_beta*z_r_c + ch*z_beta*z_r_b - t_h1*z_beta*z_r_b + t_g1*z_beta*z_r_b - ch*z_alpha*z_r_b + t_h2*z_alpha*z_r_b - t_g2*z_alpha*z_r_b + r_b*z_alpha*z_beta*z_t - r_b*z_alpha*z_beta*z_s - r_b*t_big_d*z_alpha*z_beta + r_b*t_big_c*z_alpha*z_beta - k_r_b*ch*z_beta + k_r_b*t_h1*z_beta - k_r_b*t_g1*z_beta + k_r_b*ch*z_alpha - k_r_b*t_h2*z_alpha + k_r_b*t_g2*z_alpha
+- z_alpha*z_r_d_beta + z_beta*z_r_c_alpha - k_beta*z_r_c_alpha + beta*z_alpha*z_r_d - beta*z_alpha*z_r_c + beta*z_alpha*z_t - beta*z_alpha*z_s + ch*z_beta - t_h1*z_beta + t_g1*z_beta - ch*z_alpha + t_h2*z_alpha - beta*t_big_d*z_alpha + beta*t_big_c*z_alpha - k_beta*ch + k_beta*t_h1 - k_beta*t_g1
+- z_alpha*z_s*z_r_d_beta + t_big_c*z_alpha*z_r_d_beta - k_r_c*z_alpha*z_r_d_beta + z_beta*z_s*z_r_c_alpha - t_big_c*z_beta*z_r_c_alpha + k_r_c*z_beta*z_r_c_alpha + s*z_alpha*z_beta*z_r_d - s*z_alpha*z_beta*z_r_c + s*z_alpha*z_beta*z_t - s*z_alpha*z_beta*z_s + ch*z_beta*z_s - t_h1*z_beta*z_s + t_g1*z_beta*z_s - ch*z_alpha*z_s + t_h2*z_alpha*z_s - t_g2*z_alpha*z_s - s*t_big_d*z_alpha*z_beta + s*t_big_c*z_alpha*z_beta - t_big_c*ch*z_beta + k_r_c*ch*z_beta + t_big_c*t_h1*z_beta - k_r_c*t_h1*z_beta - t_big_c*t_g1*z_beta + k_r_c*t_g1*z_beta + t_big_c*ch*z_alpha - k_r_c*ch*z_alpha - t_big_c*t_h2*z_alpha + k_r_c*t_h2*z_alpha + t_big_c*t_g2*z_alpha - k_r_c*t_g2*z_alpha
+- z_alpha*z_t*z_r_d_beta + t_big_d*z_alpha*z_r_d_beta - k_r_d*z_alpha*z_r_d_beta + z_beta*z_t*z_r_c_alpha - t_big_d*z_beta*z_r_c_alpha + k_r_d*z_beta*z_r_c_alpha + t*z_alpha*z_beta*z_r_d - t*z_alpha*z_beta*z_r_c + t*z_alpha*z_beta*z_t + ch*z_beta*z_t - t_h1*z_beta*z_t + t_g1*z_beta*z_t - ch*z_alpha*z_t + t_h2*z_alpha*z_t - t_g2*z_alpha*z_t - t*z_alpha*z_beta*z_s - t*t_big_d*z_alpha*z_beta + t*t_big_c*z_alpha*z_beta - t_big_d*ch*z_beta + k_r_d*ch*z_beta + t_big_d*t_h1*z_beta - k_r_d*t_h1*z_beta - t_big_d*t_g1*z_beta + k_r_d*t_g1*z_beta + t_big_d*ch*z_alpha - k_r_d*ch*z_alpha - t_big_d*t_h2*z_alpha + k_r_d*t_h2*z_alpha + t_big_d*t_g2*z_alpha - k_r_d*t_g2*z_alpha
+- z_beta + beta*ch + k_beta
+- z_r_b + r_b*ch + k_r_b
+- z_r_beta + r_beta*ch + k_r_beta
+- z_r_c + r_c*ch + k_r_c
+- z_r_c_alpha + r_c_alpha*ch + t_h1
+- z_r_c_alpha + s*z_alpha + r_c*z_alpha + j*z_alpha - ch + t_h1 - t_g1
+- z_r_d + r_d*ch + k_r_d
+- z_r_d_beta + r_d_beta*ch + t_h2
+- z_r_d_beta + t*z_beta + r_d*z_beta + j*z_beta - ch + t_h2 - t_g2
+- z_r_y + r_y*ch - t_big_t - t_big_s + t_big_y + t_big_b + k_r_beta - k_r_b + k_alpha
+- z_s + s*ch + t_big_c - k_r_c
+- z_sk_u + sk_u*ch + t_big_b - k_r_b
+- z_sk_u*z_alpha*z_r_d_beta + t_big_b*z_alpha*z_r_d_beta - k_r_b*z_alpha*z_r_d_beta + z_sk_u*z_beta*z_r_c_alpha - t_big_b*z_beta*z_r_c_alpha + k_r_b*z_beta*z_r_c_alpha + sk_u*z_alpha*z_beta*z_r_d - sk_u*z_alpha*z_beta*z_r_c + sk_u*z_alpha*z_beta*z_t - sk_u*z_alpha*z_beta*z_s - sk_u*t_big_d*z_alpha*z_beta + sk_u*t_big_c*z_alpha*z_beta + ch*z_sk_u*z_beta - t_h1*z_sk_u*z_beta + t_g1*z_sk_u*z_beta - t_big_b*ch*z_beta + k_r_b*ch*z_beta + t_big_b*t_h1*z_beta - k_r_b*t_h1*z_beta - t_big_b*t_g1*z_beta + k_r_b*t_g1*z_beta - ch*z_sk_u*z_alpha + t_h2*z_sk_u*z_alpha - t_g2*z_sk_u*z_alpha + t_big_b*ch*z_alpha - k_r_b*ch*z_alpha - t_big_b*t_h2*z_alpha + k_r_b*t_h2*z_alpha + t_big_b*t_g2*z_alpha - k_r_b*t_g2*z_alpha
+- z_t + t*ch + t_big_d - k_r_d
+- z_x1 + x1*ch + t_big_s - k_alpha
+- z_x2 + x2*ch + t_big_t - t_big_b - k_r_beta + k_r_b
+- z_x2*z_alpha*z_r_d_beta + t_big_t*z_alpha*z_r_d_beta - t_big_b*z_alpha*z_r_d_beta - k_r_beta*z_alpha*z_r_d_beta + k_r_b*z_alpha*z_r_d_beta + z_x2*z_beta*z_r_c_alpha - t_big_t*z_beta*z_r_c_alpha + t_big_b*z_beta*z_r_c_alpha + k_r_beta*z_beta*z_r_c_alpha - k_r_b*z_beta*z_r_c_alpha + x2*z_alpha*z_beta*z_r_d - x2*z_alpha*z_beta*z_r_c + x2*z_alpha*z_beta*z_t - x2*z_alpha*z_beta*z_s - x2*t_big_d*z_alpha*z_beta + x2*t_big_c*z_alpha*z_beta + ch*z_x2*z_beta - t_h1*z_x2*z_beta + t_g1*z_x2*z_beta - t_big_t*ch*z_beta + t_big_b*ch*z_beta + k_r_beta*ch*z_beta - k_r_b*ch*z_beta + t_big_t*t_h1*z_beta - t_big_b*t_h1*z_beta - k_r_beta*t_h1*z_beta + k_r_b*t_h1*z_beta - t_big_t*t_g1*z_beta + t_big_b*t_g1*z_beta + k_r_beta*t_g1*z_beta - k_r_b*t_g1*z_beta - ch*z_x2*z_alpha + t_h2*z_x2*z_alpha - t_g2*z_x2*z_alpha + t_big_t*ch*z_alpha - t_big_b*ch*z_alpha - k_r_beta*ch*z_alpha + k_r_b*ch*z_alpha - t_big_t*t_h2*z_alpha + t_big_b*t_h2*z_alpha + k_r_beta*t_h2*z_alpha - k_r_b*t_h2*z_alpha + t_big_t*t_g2*z_alpha - t_big_b*t_g2*z_alpha - k_r_beta*t_g2*z_alpha + k_r_b*t_g2*z_alpha
+beta*t - r_d_beta + beta*r_d + beta*j - 1
+beta*t*x1 - beta*s*x1 - r_d_beta*x1 + beta*r_d*x1 - beta*r_c*x1 - x1 - beta*big_s*t + beta*big_s*s + big_s*r_d_beta - beta*big_s*r_d - beta*r_c_alpha + beta*big_s*r_c + big_s - beta
+beta*z_r_b - r_b*z_beta - beta*k_r_b + r_b*k_beta
+beta*z_r_beta - r_beta*z_beta - beta*k_r_beta + r_beta*k_beta
+beta*z_r_c - r_c*z_beta - beta*k_r_c + r_c*k_beta
+beta*z_r_c_alpha - r_c_alpha*z_beta - beta*t_h1 + r_c_alpha*k_beta
+beta*z_r_d - r_d*z_beta - beta*k_r_d + r_d*k_beta
+beta*z_r_d_beta - r_d_beta*z_beta - beta*t_h2 + beta*t_g2 - k_beta
+beta*z_r_d_beta - r_d_beta*z_beta - beta*t_h2 + r_d_beta*k_beta
+beta*z_s - s*z_beta - beta*t_big_c + beta*k_r_c + s*k_beta
+beta*z_t - t*z_beta - beta*t_big_d + beta*k_r_d + t*k_beta
+beta*z_x1*z_r_d - beta*t_big_s*z_r_d + x1*k_beta*z_r_d - beta*z_x1*z_r_c + beta*t_big_s*z_r_c - x1*k_beta*z_r_c + beta*z_x1*z_t - beta*t_big_s*z_t + x1*k_beta*z_t - beta*z_x1*z_s + beta*t_big_s*z_s - x1*k_beta*z_s - t*z_x1*z_beta + s*z_x1*z_beta - r_d*z_x1*z_beta + r_c*z_x1*z_beta + t*t_big_s*z_beta - s*t_big_s*z_beta + r_d*t_big_s*z_beta - r_c*t_big_s*z_beta - beta*t_big_d*z_x1 + beta*t_big_c*z_x1 - k_alpha*t_g2 + k_beta*t_g1 + beta*t_big_d*t_big_s - beta*t_big_c*t_big_s - x1*k_beta*t_big_d + x1*k_beta*t_big_c
+big_s*z_r_beta - x2*z_alpha - sk_u*z_alpha - r_beta*z_alpha + big_s*z_sk_u + big_s*z_x2 - x2*z_x1 - sk_u*z_x1 - r_beta*z_x1 - big_s*t_big_t + x2*t_big_s + sk_u*t_big_s + r_beta*t_big_s
+big_s*z_r_c_alpha - r_c_alpha*z_alpha - r_c_alpha*z_x1 - big_s*t_h1 + r_c_alpha*t_big_s
+big_s*z_r_d_beta - r_d_beta*z_alpha - r_d_beta*z_x1 - big_s*t_h2 + r_d_beta*t_big_s
+ch*z_alpha*z_r_d_beta - ch*z_beta*z_r_c_alpha + k_beta*ch*z_r_c_alpha - z_alpha*z_beta*z_r_d + k_beta*z_alpha*z_r_d + z_alpha*z_beta*z_r_c - k_beta*z_alpha*z_r_c - z_alpha*z_beta*z_t + k_beta*z_alpha*z_t + z_alpha*z_beta*z_s - k_beta*z_alpha*z_s + t_big_d*z_alpha*z_beta - t_big_c*z_alpha*z_beta - ch^2*z_beta + t_h1*ch*z_beta - t_g1*ch*z_beta + ch^2*z_alpha - t_h2*ch*z_alpha - k_beta*t_big_d*z_alpha + k_beta*t_big_c*z_alpha + k_beta*ch^2 - k_beta*t_h1*ch + k_beta*t_g1*ch
+ch*z_alpha*z_r_d_beta - ch*z_beta*z_r_c_alpha - z_alpha*z_beta*z_r_d + z_alpha*z_beta*z_r_c - z_alpha*z_beta*z_t + z_alpha*z_beta*z_s + t_big_d*z_alpha*z_beta - t_big_c*z_alpha*z_beta - ch^2*z_beta + t_h1*ch*z_beta - t_g1*ch*z_beta + ch^2*z_alpha - t_h2*ch*z_alpha + t_g2*ch*z_alpha
+k_alpha*ch*z_r_d_beta - k_alpha*z_beta*z_r_d + k_alpha*z_beta*z_r_c - k_alpha*z_beta*z_t + k_alpha*z_beta*z_s - t_g1*ch*z_beta + k_alpha*t_big_d*z_beta - k_alpha*t_big_c*z_beta + k_alpha*ch^2 - k_alpha*t_h2*ch + k_alpha*t_g2*ch
+k_alpha*z_r_c_alpha - t_g1*z_alpha + k_alpha*ch - k_alpha*t_h1 + k_alpha*t_g1
+k_beta*z_r_d_beta - t_g2*z_beta + k_beta*ch - k_beta*t_h2 + k_beta*t_g2
+r_b*z_r_beta - x2*z_r_b - sk_u*z_r_b - r_beta*z_r_b - x2*z_sk_u + r_b*z_sk_u + sk_u*z_x2 + r_b*z_x2 - sk_u*t_big_t - r_b*t_big_t + x2*t_big_b + sk_u*t_big_b + sk_u*k_r_beta + r_beta*k_r_b
+r_b*z_r_c - s*z_r_b - r_c*z_r_b - x2*z_s + r_b*z_s + s*z_x2 - s*t_big_t + x2*t_big_c - r_b*t_big_c + s*t_big_b + s*k_r_beta - x2*k_r_c + r_c*k_r_b
+r_b*z_r_c_alpha - r_c_alpha*z_r_b - r_b*t_h1 + r_c_alpha*k_r_b
+r_b*z_r_d - t*z_r_b - r_d*z_r_b - x2*z_t + r_b*z_t + t*z_x2 - t*t_big_t + x2*t_big_d - r_b*t_big_d + t*t_big_b + t*k_r_beta - x2*k_r_d + r_d*k_r_b
+r_b*z_r_d_beta - r_d_beta*z_r_b - r_b*t_h2 + r_d_beta*k_r_b
+r_beta*z_r_c_alpha - r_c_alpha*z_r_beta - r_beta*t_h1 + r_c_alpha*k_r_beta
+r_beta*z_r_d_beta - r_d_beta*z_r_beta - r_beta*t_h2 + r_d_beta*k_r_beta
+r_c*z_r_beta - x2*z_r_c - sk_u*z_r_c - r_beta*z_r_c - x2*z_s - sk_u*z_s + s*z_sk_u + r_c*z_sk_u + s*z_x2 + r_c*z_x2 - s*t_big_t - r_c*t_big_t + x2*t_big_c + sk_u*t_big_c + s*k_r_beta + r_beta*k_r_c
+r_c*z_r_c_alpha - r_c_alpha*z_r_c - r_c*t_h1 + r_c_alpha*k_r_c
+r_c*z_r_d - t*z_r_c - r_d*z_r_c + s*z_t + r_c*z_t - t*z_s - s*t_big_d - r_c*t_big_d + t*t_big_c + s*k_r_d + r_d*k_r_c
+r_c*z_r_d_beta - r_d_beta*z_r_c - r_c*t_h2 + r_d_beta*k_r_c
+r_c_alpha*z_r_d_beta - r_d_beta*z_r_c_alpha - r_c_alpha*t_h2 + r_d_beta*t_h1
+r_d*z_r_beta - x2*z_r_d - sk_u*z_r_d - r_beta*z_r_d - x2*z_t - sk_u*z_t + t*z_sk_u + r_d*z_sk_u + t*z_x2 + r_d*z_x2 - t*t_big_t - r_d*t_big_t + x2*t_big_d + sk_u*t_big_d + t*k_r_beta + r_beta*k_r_d
+r_d*z_r_c_alpha - r_c_alpha*z_r_d - r_d*t_h1 + r_c_alpha*k_r_d
+r_d*z_r_d_beta - r_d_beta*z_r_d - r_d*t_h2 + r_d_beta*k_r_d
+s*z_r_beta + r_c*z_r_beta - x2*z_r_c - sk_u*z_r_c - r_beta*z_r_c - x2*z_s - sk_u*z_s - r_beta*z_s + s*z_sk_u + r_c*z_sk_u + s*z_x2 + r_c*z_x2 - s*t_big_t - r_c*t_big_t + x2*t_big_c + sk_u*t_big_c + r_beta*t_big_c
+s*z_r_c_alpha + r_c*z_r_c_alpha - r_c_alpha*z_r_c - r_c_alpha*z_s - s*t_h1 - r_c*t_h1 + r_c_alpha*t_big_c
+s*z_r_d + r_c*z_r_d - t*z_r_c - r_d*z_r_c + s*z_t + r_c*z_t - t*z_s - r_d*z_s - s*t_big_d - r_c*t_big_d + t*t_big_c + r_d*t_big_c
+s*z_r_d_beta + r_c*z_r_d_beta - r_d_beta*z_r_c - r_d_beta*z_s - s*t_h2 - r_c*t_h2 + r_d_beta*t_big_c
+sk_u*z_r_beta + r_b*z_r_beta - x2*z_r_b - sk_u*z_r_b - r_beta*z_r_b - x2*z_sk_u - r_beta*z_sk_u + r_b*z_sk_u + sk_u*z_x2 + r_b*z_x2 - sk_u*t_big_t - r_b*t_big_t + x2*t_big_b + sk_u*t_big_b + r_beta*t_big_b
+sk_u*z_r_c + r_b*z_r_c - s*z_r_b - r_c*z_r_b + sk_u*z_s + r_b*z_s - s*z_sk_u - r_c*z_sk_u - sk_u*t_big_c - r_b*t_big_c + s*t_big_b + r_c*t_big_b
+sk_u*z_r_c_alpha + r_b*z_r_c_alpha - r_c_alpha*z_r_b - r_c_alpha*z_sk_u - sk_u*t_h1 - r_b*t_h1 + r_c_alpha*t_big_b
+sk_u*z_r_d + r_b*z_r_d - t*z_r_b - r_d*z_r_b + sk_u*z_t + r_b*z_t - t*z_sk_u - r_d*z_sk_u - sk_u*t_big_d - r_b*t_big_d + t*t_big_b + r_d*t_big_b
+sk_u*z_r_d_beta + r_b*z_r_d_beta - r_d_beta*z_r_b - r_d_beta*z_sk_u - sk_u*t_h2 - r_b*t_h2 + r_d_beta*t_big_b
+t*z_r_beta + r_d*z_r_beta - x2*z_r_d - sk_u*z_r_d - r_beta*z_r_d - x2*z_t - sk_u*z_t - r_beta*z_t + t*z_sk_u + r_d*z_sk_u + t*z_x2 + r_d*z_x2 - t*t_big_t - r_d*t_big_t + x2*t_big_d + sk_u*t_big_d + r_beta*t_big_d
+t*z_r_c_alpha + r_d*z_r_c_alpha - r_c_alpha*z_r_d - r_c_alpha*z_t - t*t_h1 - r_d*t_h1 + r_c_alpha*t_big_d
+t*z_r_d_beta + r_d*z_r_d_beta - r_d_beta*z_r_d - r_d_beta*z_t - t*t_h2 - r_d*t_h2 + r_d_beta*t_big_d
+t_big_t + t_big_s - t_big_y - t_big_b - k_r_beta + k_r_b - k_alpha + k_r_y
+x1 - big_s + alpha
+x1*x2*z_r_c + sk_u*x1*z_r_c + x1*x2*z_s + sk_u*x1*z_s + j*x1*z_sk_u + j*x1*z_x2 - s*x2*z_x1 - r_c*x2*z_x1 - j*x2*z_x1 - s*sk_u*z_x1 - r_c*sk_u*z_x1 - j*sk_u*z_x1 - x2*t_g1 - sk_u*t_g1 - j*x1*t_big_t + s*x2*t_big_s + r_c*x2*t_big_s + j*x2*t_big_s + s*sk_u*t_big_s + r_c*sk_u*t_big_s + j*sk_u*t_big_s - x1*x2*t_big_c - sk_u*x1*t_big_c + j*x1*k_r_beta
+x1*z_r_c + x1*z_s - s*z_x1 - r_c*z_x1 - t_g1 + s*t_big_s + r_c*t_big_s - x1*t_big_c + j*k_alpha
+x1*z_sk_u*z_r_c_alpha + x1*z_x2*z_r_c_alpha - x2*z_x1*z_r_c_alpha - sk_u*z_x1*z_r_c_alpha - x1*t_big_t*z_r_c_alpha + x2*t_big_s*z_r_c_alpha + sk_u*t_big_s*z_r_c_alpha + x1*k_r_beta*z_r_c_alpha - x2*t_g1*z_alpha - sk_u*t_g1*z_alpha - x1*t_h1*z_sk_u + x1*t_g1*z_sk_u + k_alpha*z_sk_u - x1*t_h1*z_x2 + x1*t_g1*z_x2 + k_alpha*z_x2 + x2*t_h1*z_x1 + sk_u*t_h1*z_x1 - x2*t_g1*z_x1 - sk_u*t_g1*z_x1 + x1*t_big_t*t_h1 - x2*t_big_s*t_h1 - sk_u*t_big_s*t_h1 - x1*k_r_beta*t_h1 - x1*t_big_t*t_g1 + x2*t_big_s*t_g1 + sk_u*t_big_s*t_g1 + x1*k_r_beta*t_g1 - k_alpha*t_big_t + k_alpha*k_r_beta
+x2*z_alpha + x1*z_alpha + r_y*z_alpha - big_s*z_r_y - big_s*z_x2 + x2*z_x1 + x1*z_x1 + r_y*z_x1 - big_s*z_x1 - x2*t_big_s - x1*t_big_s - r_y*t_big_s + big_s*t_big_y
+x2*z_r_beta + x1*z_r_beta + r_y*z_r_beta + x2*z_sk_u + x1*z_sk_u + r_y*z_sk_u - x2*z_r_y - sk_u*z_r_y - r_beta*z_r_y + x1*z_x2 - sk_u*z_x2 + r_y*z_x2 - r_beta*z_x2 - x2*z_x1 - sk_u*z_x1 - r_beta*z_x1 - x2*t_big_t - x1*t_big_t - r_y*t_big_t + x2*t_big_y + sk_u*t_big_y + r_beta*t_big_y
+x2*z_r_c_alpha + sk_u*z_r_c_alpha + r_beta*z_r_c_alpha - r_c_alpha*z_r_beta - r_c_alpha*z_sk_u - r_c_alpha*z_x2 - x2*t_h1 - sk_u*t_h1 - r_beta*t_h1 + r_c_alpha*t_big_t
+x2*z_r_c_alpha + x1*z_r_c_alpha + r_y*z_r_c_alpha - r_c_alpha*z_r_y - r_c_alpha*z_x2 - r_c_alpha*z_x1 - x2*t_h1 - x1*t_h1 - r_y*t_h1 + r_c_alpha*t_big_y
+x2*z_r_d_beta + sk_u*z_r_d_beta + r_beta*z_r_d_beta - r_d_beta*z_r_beta - r_d_beta*z_sk_u - r_d_beta*z_x2 - x2*t_h2 - sk_u*t_h2 - r_beta*t_h2 + r_d_beta*t_big_t
+x2*z_r_d_beta + x1*z_r_d_beta + r_y*z_r_d_beta - r_d_beta*z_r_y - r_d_beta*z_x2 - r_d_beta*z_x1 - x2*t_h2 - x1*t_h2 - r_y*t_h2 + r_d_beta*t_big_y
+x2*z_s + sk_u*z_s - s*z_sk_u - s*z_x2 + s*t_big_t - x2*t_big_c - sk_u*t_big_c - s*k_r_beta + x2*k_r_c + sk_u*k_r_c
+x2*z_s - s*z_x2 + s*t_big_t - x2*t_big_c - s*t_big_b - s*k_r_beta + x2*k_r_c + s*k_r_b
+x2*z_sk_u + x1*z_sk_u + r_y*z_sk_u - x2*z_r_y - sk_u*z_r_y + x1*z_x2 - sk_u*z_x2 + r_y*z_x2 - x2*z_x1 - sk_u*z_x1 - x2*t_big_t - x1*t_big_t - r_y*t_big_t + x2*t_big_y + sk_u*t_big_y + x2*k_r_beta + x1*k_r_beta + r_y*k_r_beta
+x2*z_sk_u - sk_u*z_x2 + sk_u*t_big_t - x2*t_big_b - sk_u*t_big_b - sk_u*k_r_beta + x2*k_r_b + sk_u*k_r_b
+x2*z_t + sk_u*z_t - t*z_sk_u - t*z_x2 + t*t_big_t - x2*t_big_d - sk_u*t_big_d - t*k_r_beta + x2*k_r_d + sk_u*k_r_d
+x2*z_t - t*z_x2 + t*t_big_t - x2*t_big_d - t*t_big_b - t*k_r_beta + x2*k_r_d + t*k_r_b
+z_alpha*z_r_d_beta - z_beta*z_r_c_alpha - t*z_alpha*z_beta + s*z_alpha*z_beta - r_d*z_alpha*z_beta + r_c*z_alpha*z_beta - ch*z_beta + t_h1*z_beta - t_g1*z_beta + ch*z_alpha - t_h2*z_alpha + t_g2*z_alpha

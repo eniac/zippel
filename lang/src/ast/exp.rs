@@ -799,14 +799,38 @@ impl<N> Exp<N> {
     /// `Verify` (verifier-side check).
     pub fn is_relation_pure(&self) -> bool {
         match self {
-            Exp::Assert(box lhs, box rhs) => lhs.is_pure() && rhs.is_pure(),
-            Exp::Let(Some(_), box val, box cont) => {
+            // Reject: verifier-only constructs
+            Exp::Challenge(_, _) | Exp::Log(_, _, _) | Exp::Verify(_, _) => false,
+            // Allow: Random (trusted-setup trapdoors, etc.)
+            Exp::Random(_, _) => true,
+            // Recurse into all sub-expressions with is_relation_pure
+            Exp::Assert(box lhs, box rhs) => lhs.is_relation_pure() && rhs.is_relation_pure(),
+            Exp::Let(Some(_), box val, box cont) | Exp::Let(None, box val, box cont) => {
                 val.is_relation_pure() && cont.is_relation_pure()
             }
-            Exp::Let(None, box val, box cont) => val.is_relation_pure() && cont.is_relation_pure(),
-            Exp::Random(_, _) => true,
-            Exp::Challenge(_, _) | Exp::Log(_, _, _) | Exp::Verify(_, _) => false,
-            _ => self.is_pure(),
+            Exp::Map(box a, _, box b) => a.is_relation_pure() && b.is_relation_pure(),
+            Exp::Vec(v) => v.iter().all(|e| e.is_relation_pure()),
+            Exp::Bin(_, box a, box b) => a.is_relation_pure() && b.is_relation_pure(),
+            Exp::Pair(box a, box b) => a.is_relation_pure() && b.is_relation_pure(),
+            Exp::Ram(box a, box b) => a.is_relation_pure() && b.is_relation_pure(),
+            Exp::Interpolate(None, box e) => e.is_relation_pure(),
+            Exp::Interpolate(Some(box p), box e) => p.is_relation_pure() && e.is_relation_pure(),
+            Exp::Coef(box p) => p.is_relation_pure(),
+            Exp::Poly(box p) => p.is_relation_pure(),
+            Exp::Mle(box p) => p.is_relation_pure(),
+            Exp::Reduce(_, box p) => p.is_relation_pure(),
+            Exp::Evaluate(box p, _, ox) => {
+                p.is_relation_pure() && ox.as_ref().is_none_or(|x| x.is_relation_pure())
+            }
+            Exp::App(_, args) => args.iter().all(|e| e.is_relation_pure()),
+            Exp::Fun(_, box body) => body.is_relation_pure(),
+            Exp::Record(fields) => fields.iter().all(|(_, e)| e.is_relation_pure()),
+            Exp::Proj(box exp, _) => exp.is_relation_pure(),
+            Exp::SetRecord(box record, _, box value) => {
+                record.is_relation_pure() && value.is_relation_pure()
+            }
+            // Leaves: always valid
+            Exp::Lit(_) | Exp::Unit | Exp::Var(_) | Exp::Range(_) => true,
         }
     }
 }

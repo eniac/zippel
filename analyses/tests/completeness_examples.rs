@@ -395,6 +395,7 @@ fn singular_available() -> bool {
         .arg("-q")
         .arg("-c")
         .arg("ring r = (integer, 7), (x(1)), dp;")
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()

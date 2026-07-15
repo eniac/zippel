@@ -264,18 +264,23 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             zippel_path: "examples/coin_proof/coin_proof.zippel",
             sizes: &[],
             l_vec: &[],
-            ignored: true,
-            partial_values: Ctx::new(),
+            ignored: false,
+            partial_values: Ctx::from_iter([
+                (Vid("f".to_string()), Value::Scalar(F::one())),
+                (Vid("g".to_string()), Value::Scalar(F::one())),
+                (Vid("h".to_string()), Value::Scalar(F::one())),
+                (Vid("h1".to_string()), Value::Scalar(F::one())),
+                (Vid("h2".to_string()), Value::Scalar(F::one())),
+            ]),
         },
         // r1cs_sigma: partial verification with fixed R1CS matrices (mat_A, mat_B, mat_C).
         // The circuit is A=[1,0], B=[1,0], C=[1,0] → relation x^2 == x.
-        // Ignored until a Singular-generated snapshot is committed.
         TestEntry {
             name: "r1cs_sigma",
             zippel_path: "examples/r1cs_sigma/r1cs_sigma.zippel",
             sizes: &[("N", 2), ("n", 1), ("m", 1)],
             l_vec: &[],
-            ignored: true,
+            ignored: false,
             partial_values: Ctx::from_iter([
                 (
                     Vid("mat_A".to_string()),
@@ -342,9 +347,9 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
         TestEntry {
             name: "groth16",
             zippel_path: "examples/groth16/groth16.zippel",
-            sizes: &[("M", 2), ("L", 2), ("H", 1)],
+            sizes: &[("M", 1), ("L", 1), ("H", 1)],
             l_vec: &[],
-            ignored: true,
+            ignored: false,
             partial_values: Ctx::new(),
         },
         TestEntry {
@@ -396,6 +401,7 @@ fn singular_available() -> bool {
         .arg("-q")
         .arg("-c")
         .arg("ring r = (integer, 7), (x(1)), dp;")
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()

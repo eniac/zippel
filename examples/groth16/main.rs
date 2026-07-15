@@ -233,22 +233,6 @@ fn run_groth16(
         Value::VecScalar(h_coeffs_padded),
     ));
 
-    // Relation-only QAP witnesses (a_evs, b_evs, c_evs, t_at_tau).
-    // The proto body and verifier never reference these; they exist so the
-    // `where` clause can express the QAP identity at the trusted-setup
-    // trapdoor τ (now sampled via random<F> in the relation). Zeros are
-    // fine at runtime — the static analyzer is where they matter, and it
-    // consumes them via the where clause without needing cryptographically-
-    // meaningful values.
-    let n_total = m + l;
-    let a_evs = vec![F::zero(); n_total];
-    let b_evs = vec![F::zero(); n_total];
-    let c_evs = vec![F::zero(); n_total];
-    entries.push((Vid("a_evs".to_string()), Value::VecScalar(a_evs)));
-    entries.push((Vid("b_evs".to_string()), Value::VecScalar(b_evs)));
-    entries.push((Vid("c_evs".to_string()), Value::VecScalar(c_evs)));
-    entries.push((Vid("t_at_tau".to_string()), Value::Scalar(F::zero())));
-
     let inputs: Ctx<Vid, Value<ArkBls12_381>> = Ctx::from_iter(entries);
 
     let public_input_names = [
