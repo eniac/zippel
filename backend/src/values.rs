@@ -2932,56 +2932,57 @@ fn hypercube_reduce_selected_mle_products<C: ArkConfig>(
     }
 
     for (coefficient, indices) in &poly.products {
-        // Infallible per-tail term: validation above guarantees every factor is
-        // an in-bounds DenseMle / SparseMle. `base_idx = tail_index << 1` and
-        // `base_idx | 1` are in range because the table has
-        // `2^input_num_vars = 2 * tail_count` entries.
-        let compute_term = |tail_index: usize| -> Vec<C::F> {
-            let mut term = vec![*coefficient];
-            for &idx in indices {
-                let factor: [C::F; 2] = match poly.flattened_polys[idx].as_ref() {
-                    PolyVariant::DenseMle(mle) => {
-                        let base_idx = tail_index << 1;
-                        let v0 = mle.evaluations[base_idx];
-                        let v1 = mle.evaluations[base_idx | 1];
-                        [v0, v1 - v0]
-                    }
-                    PolyVariant::SparseMle { .. } => {
-                        let map = sparse_mle_maps[idx]
-                            .as_ref()
-                            .expect("validated sparse factor");
-                        let base_idx = tail_index << 1;
-                        let v0 = map.get(&base_idx).copied().unwrap_or_else(C::F::zero);
-                        let v1 = map.get(&(base_idx | 1)).copied().unwrap_or_else(C::F::zero);
-                        [v0, v1 - v0]
-                    }
-                    _ => unreachable!("validated factor variant"),
-                };
-                term = mul_coeffs_truncated::<C::F>(&term, &factor, degree_cap);
-            }
-            term
-        };
+        // Resolve each factor's backing storage once per product (loop-invariant
+        // across tails): a dense evaluation slice or a sparse index→value map.
+        let factors: Vec<FactorRef<C::F>> = indices
+            .iter()
+            .map(|&idx| match poly.flattened_polys[idx].as_ref() {
+                PolyVariant::DenseMle(mle) => FactorRef::Dense(mle.evaluations.as_slice()),
+                PolyVariant::SparseMle { .. } => FactorRef::Sparse(
+                    sparse_mle_maps[idx]
+                        .as_ref()
+                        .expect("validated sparse factor"),
+                ),
+                _ => unreachable!("validated factor variant"),
+            })
+            .collect();
 
         // Field addition is associative and commutative, so the parallel
         // reduction over independent tail vertices is bit-identical to the
         // sequential fold. Small (late-round) tails keep the sequential path to
-        // avoid rayon overhead.
+        // avoid rayon overhead. Both branches reuse a single `term` scratch
+        // buffer per worker, so no per-tail heap allocation occurs.
         let product_total = if tail_count < HYPERCUBE_PARALLEL_TAIL_THRESHOLD {
             let mut acc = vec![C::F::zero(); degree_cap.max(1)];
+            let mut term = vec![C::F::zero(); degree_cap.max(1)];
             for tail_index in 0..tail_count {
-                add_coeffs_assign(&mut acc, &compute_term(tail_index));
+                let n = accumulate_term(&mut term, *coefficient, &factors, tail_index, degree_cap);
+                add_coeffs_assign(&mut acc, &term[..n]);
             }
             acc
         } else {
             (0..tail_count)
                 .into_par_iter()
                 .fold(
-                    || vec![C::F::zero(); degree_cap.max(1)],
-                    |mut acc, tail_index| {
-                        add_coeffs_assign(&mut acc, &compute_term(tail_index));
-                        acc
+                    || {
+                        (
+                            vec![C::F::zero(); degree_cap.max(1)],
+                            vec![C::F::zero(); degree_cap.max(1)],
+                        )
+                    },
+                    |(mut acc, mut term), tail_index| {
+                        let n = accumulate_term(
+                            &mut term,
+                            *coefficient,
+                            &factors,
+                            tail_index,
+                            degree_cap,
+                        );
+                        add_coeffs_assign(&mut acc, &term[..n]);
+                        (acc, term)
                     },
                 )
+                .map(|(acc, _)| acc)
                 .reduce(
                     || vec![C::F::zero(); degree_cap.max(1)],
                     |mut a, b| {
@@ -3026,17 +3027,52 @@ fn sparse_mle_factor_as_univariate<C: ArkConfig>(
     Some([v0, v1 - v0])
 }
 
-fn mul_coeffs_truncated<F: Field>(left: &[F], right: &[F; 2], max_len: usize) -> Vec<F> {
-    let mut result = vec![F::zero(); (left.len() + 1).min(max_len).max(1)];
-    for (i, coeff) in left.iter().enumerate() {
-        if i < result.len() {
-            result[i] += *coeff * right[0];
+/// Backing storage for a single MLE factor during the fused round-polynomial
+/// kernel, resolved once per product so the per-tail hot loop performs no enum
+/// dispatch beyond reading the two hypercube endpoints.
+enum FactorRef<'a, F> {
+    Dense(&'a [F]),
+    Sparse(&'a std::collections::HashMap<usize, F>),
+}
+
+/// Compute the truncated coefficient vector of `coefficient * ∏ factors`
+/// restricted to hypercube tail `tail_index`, writing into the caller-owned
+/// `term` scratch (capacity `degree_cap`) and returning the number of live
+/// coefficients. Each factor contributes a degree-1 linear factor `[v0, v1-v0]`
+/// via an in-place high→low recurrence `c[i] = c[i]*v0 + c[i-1]*delta`, which is
+/// coefficient-for-coefficient identical to chaining `mul_coeffs_truncated`.
+fn accumulate_term<F: Field>(
+    term: &mut [F],
+    coefficient: F,
+    factors: &[FactorRef<F>],
+    tail_index: usize,
+    degree_cap: usize,
+) -> usize {
+    term[0] = coefficient;
+    let mut len = 1usize;
+    let base = tail_index << 1;
+    for f in factors {
+        let (v0, v1) = match f {
+            FactorRef::Dense(evals) => (evals[base], evals[base | 1]),
+            FactorRef::Sparse(map) => (
+                map.get(&base).copied().unwrap_or_else(F::zero),
+                map.get(&(base | 1)).copied().unwrap_or_else(F::zero),
+            ),
+        };
+        let delta = v1 - v0;
+        let new_len = (len + 1).min(degree_cap).max(1);
+        for i in (0..new_len).rev() {
+            let hi = if i < len { term[i] * v0 } else { F::zero() };
+            let lo = if i >= 1 && i - 1 < len {
+                term[i - 1] * delta
+            } else {
+                F::zero()
+            };
+            term[i] = hi + lo;
         }
-        if i + 1 < result.len() {
-            result[i + 1] += *coeff * right[1];
-        }
+        len = new_len;
     }
-    result
+    len
 }
 
 fn reduce_univariate_poly_sum<C: ArkConfig>(
@@ -5233,6 +5269,65 @@ mod value_tests {
         let shape = SelectedEvalShape::new(num_vars, 1, 2);
         let round = hypercube_reduce_selected_mle_products::<TestConfig>(&vp, num_vars - 1, shape)
             .expect("dense multi-factor fast path must fire");
+        for t_u in [0u64, 1, 2, 3, 7, 100] {
+            let t = Fr::from(t_u);
+            let mut expected = Fr::zero();
+            for tail in 0..(1usize << (num_vars - 1)) {
+                let mut point = vec![t];
+                for j in 0..(num_vars - 1) {
+                    point.push(if (tail >> j) & 1 == 1 {
+                        Fr::one()
+                    } else {
+                        Fr::zero()
+                    });
+                }
+                expected += vp.evaluate_mv(&point).unwrap();
+            }
+            assert_eq!(round.evaluate_uv(&t), expected, "round mismatch at t={t_u}");
+        }
+    }
+
+    #[test]
+    fn fused_reduce_multi_product_mixed_dense_sparse_matches_oracle() {
+        // Two product terms over 12 vars mixing dense and sparse factors:
+        // product [a, b] (degree 2, both DenseMle) and product [c] (degree 1,
+        // SparseMle). tail_num_vars = 11 => tail_count = 2048 >=
+        // HYPERCUBE_PARALLEL_TAIL_THRESHOLD (1024), so the multi-product outer
+        // loop and the FactorRef::Dense/FactorRef::Sparse dispatch run together
+        // on the parallel branch. The fused round poly must equal the trusted
+        // per-(t, tail) evaluate_mv hypercube-sum oracle.
+        let num_vars = 12usize;
+        let size = 1usize << num_vars;
+        let evals_a: Vec<Fr> = (0..size).map(|i| Fr::from((i as u64 % 7) + 1)).collect();
+        let evals_b: Vec<Fr> = (0..size).map(|i| Fr::from((i as u64 % 5) + 2)).collect();
+        let factor_a = PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(
+            num_vars, evals_a,
+        ));
+        let factor_b = PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(
+            num_vars, evals_b,
+        ));
+        // Sparse factor with a handful of distinct indices plus a duplicate
+        // index (3) to exercise the kernel's duplicate-summing.
+        let evals_c = vec![
+            (0, Fr::from(2u64)),
+            (3, Fr::from(5u64)),
+            (100, Fr::from(7u64)),
+            (2047, Fr::from(3u64)),
+            (4095, Fr::from(11u64)),
+            (3, Fr::from(4u64)),
+        ];
+        let factor_c = PolyVariant::SparseMle {
+            num_vars,
+            evals: evals_c,
+        };
+        let vp = VirtualPolynomial::from_poly(factor_a)
+            .poly_mul(&VirtualPolynomial::from_poly(factor_b))
+            .expect("dense-dense virtual product")
+            .poly_add(&VirtualPolynomial::from_poly(factor_c))
+            .expect("add sparse product term");
+        let shape = SelectedEvalShape::new(num_vars, 1, 2);
+        let round = hypercube_reduce_selected_mle_products::<TestConfig>(&vp, num_vars - 1, shape)
+            .expect("mixed multi-product fast path must fire");
         for t_u in [0u64, 1, 2, 3, 7, 100] {
             let t = Fr::from(t_u);
             let mut expected = Fr::zero();
