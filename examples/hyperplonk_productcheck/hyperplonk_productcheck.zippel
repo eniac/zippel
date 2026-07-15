@@ -112,6 +112,11 @@ fn pc_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
              sent_v, f_evs, eq_tau_evs, alpha)
 }
 
+// ===== Relation helper (used in the where clause) =====
+fn product<F: Field, S: Size, N: 2^S>(public f: [F; N]) -> F {
+    reduce(*, [f[i] for i in 0..N])
+}
+
 proto hyperplonk_productcheck<F: Field, S: Size, N: 2^S>(
     public f_evs:   [F; N],
     public v_evs:   [F; 2^(S+1)],
@@ -122,7 +127,7 @@ proto hyperplonk_productcheck<F: Field, S: Size, N: 2^S>(
     //   Prod_{i in 0..N} f_evs[i] == claimed.
     // The proto attests to this via the rational grand-product tree
     // encoded in v_evs; this clause states the underlying relation.
-    reduce(*, [f_evs[i] for i in 0..N]) == claimed
+    product(f_evs) == claimed
 {
     let one  = f_evs[0] - f_evs[0] + 1;
     let zero = f_evs[0] - f_evs[0];

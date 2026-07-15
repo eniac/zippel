@@ -118,6 +118,11 @@ fn ms_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
              sent_v, f_shift_evs, g_shift_evs, eq_tau_evs, alpha)
 }
 
+// ===== Relation helper (used in the where clause) =====
+fn shifted_product<F: Field, S: Size, N: 2^S>(public r: F, public f: [F; N]) -> F {
+    reduce(*, [r + f[i] for i in 0..N])
+}
+
 proto hyperplonk_multiset<F: Field, S: Size, N: 2^S>(
     public f_evs:   [F; N],
     public g_evs:   [F; N],
@@ -129,8 +134,7 @@ proto hyperplonk_multiset<F: Field, S: Size, N: 2^S>(
     //   Prod_i (X + f_evs[i]) == Prod_i (X + g_evs[i]),
     // an identity in F[X] that (by Schwartz-Zippel) holds iff the
     // multisets are equal. Specializing at the FS challenge r gives:
-    reduce(*, [r + f_evs[i] for i in 0..N])
-    == reduce(*, [r + g_evs[i] for i in 0..N])
+    shifted_product(r, f_evs) == shifted_product(r, g_evs)
 {
     let one  = f_evs[0] - f_evs[0] + 1;
     let zero = f_evs[0] - f_evs[0];

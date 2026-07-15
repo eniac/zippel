@@ -209,6 +209,22 @@ fn perm_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
                sent_v, f_shift_evs, g_shift_evs, eq_sau_evs, alpha)
 }
 
+// ===== Relation helpers (used in the where clause) =====
+fn gate_identity<F: Field, S: Size, N: 2^S>(
+    public a: [F; N], public b: [F; N], public c: [F; N],
+    public ql: [F; N], public qr: [F; N], public qo: [F; N],
+    public qm: [F; N], public qc: [F; N]
+) -> [F; N] {
+    [ql[i] * a[i] + qr[i] * b[i] + qo[i] * c[i]
+        + qm[i] * a[i] * b[i] + qc[i] for i in 0..N]
+}
+
+fn perm_product<F: Field, S: Size, N: 2^S>(
+    public r: F, public s: [F; N], public r2: F, public x: [F; N]
+) -> F {
+    reduce(*, [r + s[i] + r2 * x[i] for i in 0..N])
+}
+
 proto hyperplonk<F: Field, S: Size, N: 2^S>(
     public a_evs:        [F; N],
     public b_evs:        [F; N],
@@ -234,10 +250,9 @@ proto hyperplonk<F: Field, S: Size, N: 2^S>(
     //     which holds iff (a, b) respects the permutation encoded by
     //     (s_id, s_sigma). Mirrors the k=2 fold used by perm_round.
     let zero_f = a_evs[0] - a_evs[0];
-    [q_l_evs[i] * a_evs[i] + q_r_evs[i] * b_evs[i] + q_o_evs[i] * c_evs[i]
-        + q_m_evs[i] * a_evs[i] * b_evs[i] + q_c_evs[i] for i in 0..N] == [zero_f for i in 0..N];
-    reduce(*, [r + s_id_evs[i]    + r2 * a_evs[i] for i in 0..N])
-    == reduce(*, [r + s_sigma_evs[i] + r2 * b_evs[i] for i in 0..N])
+    gate_identity(a_evs, b_evs, c_evs, q_l_evs, q_r_evs, q_o_evs, q_m_evs, q_c_evs)
+        == [zero_f for i in 0..N];
+    perm_product(r, s_id_evs, r2, a_evs) == perm_product(r, s_sigma_evs, r2, b_evs)
 {
     let one  = a_evs[0] - a_evs[0] + 1;
     let zero = a_evs[0] - a_evs[0];

@@ -57,7 +57,7 @@ typ = _{ poly_ty | uni_ty | mle_ty | vec_ty | fin_ty | unit_ty | base_ty | recor
 /// Arithmetic expression language of Zippel
 // Top-level expression: allows `;` sequencing via seq_exp
 exp         = { let_exp | log_exp | seq_exp | exp_no_seq }
-seq_exp     = { exp_no_seq ~ ";" ~ exp }                             // Universal sequencing: any expr ; cont
+seq_exp     = { exp_no_seq ~ ";" ~ exp? }                             // Universal sequencing: any expr ; cont (trailing ; → Unit)
 
 // Expression without `;` sequencing: binop chain only, used in value positions
 exp_no_seq  = { exp_term ~ (record_set_op | proj_op | bin_op ~ exp_term)* }
@@ -110,8 +110,8 @@ exp_term  = _{
     verify_exp    = { "verify" ~ "(" ~ constraint ~ ")" }             // Assertion (Verifier) expression
     constraint    = { exp_no_seq ~ eq_op ~ exp_no_seq }               // Equality constraint (only inside assert/verify/where)
     app_exp       = { id ~ "(" ~ exps ~ ")" }                         // Function application
-    let_exp       = { "let" ~ id ~ (":" ~ typ)? ~ "=" ~ exp_no_seq ~ ";" ~ exp }  // Let expression (optional type annotation)
-    log_exp       = { id ~ "<-" ~ exp_no_seq ~ ";" ~ exp }                   // Transcript log expression
+    let_exp       = { "let" ~ id ~ (":" ~ typ)? ~ "=" ~ exp_no_seq ~ ";" ~ exp? }  // Let expression (optional type annotation; trailing ; → Unit)
+    log_exp       = { id ~ "<-" ~ exp_no_seq ~ ";" ~ exp? }                   // Transcript log expression (trailing ; → Unit)
     minus_exp     = _{ unary_minus ~ exp_no_seq }                            // Negative expressions
     record_exp    = { "{|" ~ record_field_exp ~ ("," ~ record_field_exp)* ~ "|}" }  // Record construction
     record_field_exp = { id ~ ":" ~ exp_no_seq }                             // Record field with value
@@ -138,8 +138,8 @@ decl = { proto_decl | func_decl | type_decl }
     proto_decl = { "proto" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "where" ~ where_exp ~ "{" ~ exp ~ "}" }
     // where clause: a single expression with == support (via where_eq)
     where_exp = { where_let | where_eq | exp_no_seq }
-    where_let = { "let" ~ id ~ (":" ~ typ)? ~ "=" ~ exp_no_seq ~ ";" ~ where_exp }
-    where_eq = { exp_no_seq ~ eq_op ~ exp_no_seq ~ (";" ~ where_exp)? }
+    where_let = { "let" ~ id ~ (":" ~ typ)? ~ "=" ~ exp_no_seq ~ ";" ~ where_exp? }
+    where_eq = { exp_no_seq ~ eq_op ~ exp_no_seq ~ (";" ~ where_exp?)? }
     func_decl  = { "fn" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ ("->" ~ typ)? ~ "{" ~ exp ~ "}" }
     type_decl  = { "type" ~ id ~ "=" ~ typ ~ ";" }
 

@@ -836,3 +836,63 @@ fn proto_where_let_then_eq_with_cont() {
         _ => panic!("expected Proto body"),
     }
 }
+
+#[test]
+fn proto_body_trailing_semicolon() {
+    // verify(a == a);  — trailing semicolon in proto body
+    let ex = concat!(
+        "proto test<F: Field>(public a: F) ",
+        "where a == a { verify(a == a); }"
+    );
+    let result = ZippelParser::parse(Rule::decl, ex);
+    if let Err(e) = &result {
+        eprintln!("trailing-semicolon body parse error: {e}");
+    }
+    assert!(result.is_ok(), "trailing semicolon in body should parse");
+}
+
+#[test]
+fn where_clause_trailing_semicolon() {
+    // where a == b;  — trailing semicolon in where clause
+    let ex = concat!(
+        "proto test<F: Field>(public a: F, public b: F) ",
+        "where a == b; { verify(a == a) }"
+    );
+    let result = ZippelParser::parse(Rule::decl, ex);
+    if let Err(e) = &result {
+        eprintln!("trailing-semicolon where parse error: {e}");
+    }
+    assert!(result.is_ok(), "trailing semicolon in where should parse");
+}
+
+#[test]
+fn where_let_trailing_semicolon() {
+    // where let x = a + a;  — trailing semicolon after let in where
+    let ex = concat!(
+        "proto test<F: Field>(public a: F) ",
+        "where let x = a + a; { verify(a == a) }"
+    );
+    let result = ZippelParser::parse(Rule::decl, ex);
+    if let Err(e) = &result {
+        eprintln!("trailing-semicolon where-let parse error: {e}");
+    }
+    assert!(
+        result.is_ok(),
+        "trailing semicolon after where-let should parse"
+    );
+}
+
+#[test]
+fn fn_call_in_where_clause() {
+    // fn double(x) -> x + x;  proto where double(a) == a + a
+    let ex = concat!(
+        "fn double<F: Field>(public x: F) -> F { x + x }",
+        "proto test<F: Field>(public a: F) ",
+        "where double(a) == a + a { verify(a == a) }"
+    );
+    let result = ZippelParser::parse(Rule::decls, ex);
+    if let Err(e) = &result {
+        eprintln!("fn-call-in-where parse error: {e}");
+    }
+    assert!(result.is_ok(), "function call in where clause should parse");
+}

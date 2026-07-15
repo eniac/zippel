@@ -2755,3 +2755,26 @@ fn graph_reduce() {
         );
     });
 }
+
+#[test]
+fn graph_fn_call_in_where() {
+    // Function call in where clause: double(a) == a + a
+    let ex = r#"
+        fn double<F: Field>(public x: F) -> F { x + x }
+        proto test<F: Field>(public a: F)
+        where double(a) == a + a {
+            verify(a == a)
+        }"#;
+    let m = UModule::from_str(ex)
+        .unwrap()
+        .concretize(&Ctx::new())
+        .unwrap();
+    debug!("{}", m);
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    gs.write_pdf("graph_fn_in_where").unwrap_or_else(|e| {
+        debug!(
+            "Error writing to PDF, maybe [dot] is not installed? \n\n {}",
+            e
+        );
+    });
+}

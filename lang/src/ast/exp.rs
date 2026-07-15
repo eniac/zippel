@@ -1281,7 +1281,7 @@ impl<'pest> FromPest<'pest> for UExp {
 fn parse_exp<'pest>(pair: Pair<'pest, Rule>) -> Result<UExp, ConversionError<InputError<'pest>>> {
     match pair.as_rule() {
         Rule::let_exp => {
-            // let_exp = { "let" ~ id ~ (":" ~ typ)? ~ "=" ~ exp_no_seq ~ ";" ~ exp }
+            // let_exp = { "let" ~ id ~ (":" ~ typ)? ~ "=" ~ exp_no_seq ~ ";" ~ exp? }
             let mut inner = pair.into_inner();
             let var = Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
             let next = inner.next().unwrap();
@@ -1292,25 +1292,36 @@ fn parse_exp<'pest>(pair: Pair<'pest, Rule>) -> Result<UExp, ConversionError<Inp
                 let val = parse_exp_no_seq(inner.next().unwrap())?;
                 (Some(typ), val)
             };
-            let body = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+            // exp? — optional continuation; trailing `;` → Unit
+            let body = match inner.next() {
+                Some(cont) => Exp::from_pest(&mut Pairs::single(cont))?,
+                None => Exp::Unit,
+            };
             let _ = typ_ann;
             Ok(Exp::letx(var, val, body))
         }
         Rule::log_exp => {
-            // log_exp = { id ~ "<-" ~ exp_no_seq ~ ";" ~ exp }
+            // log_exp = { id ~ "<-" ~ exp_no_seq ~ ";" ~ exp? }
             let mut inner = pair.into_inner();
-            Ok(Exp::logx(
-                Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                parse_exp_no_seq(inner.next().unwrap())?,
-                Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-            ))
+            let id = Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+            let val = parse_exp_no_seq(inner.next().unwrap())?;
+            // exp? — optional continuation; trailing `;` → Unit
+            let cont = match inner.next() {
+                Some(cont) => Exp::from_pest(&mut Pairs::single(cont))?,
+                None => Exp::Unit,
+            };
+            Ok(Exp::logx(id, val, cont))
         }
         Rule::seq_exp => {
-            // seq_exp = { exp_no_seq ~ ";" ~ exp }
+            // seq_exp = { exp_no_seq ~ ";" ~ exp? }
             // ";" is a silent string literal — no pair produced
             let mut inner = pair.into_inner();
             let lhs = parse_exp_no_seq(inner.next().unwrap())?;
-            let rhs = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+            // exp? — optional continuation; trailing `;` → Unit
+            let rhs = match inner.next() {
+                Some(cont) => Exp::from_pest(&mut Pairs::single(cont))?,
+                None => Exp::Unit,
+            };
             Ok(Exp::seq(lhs, rhs))
         }
         Rule::exp_no_seq => parse_exp_no_seq(pair),
@@ -1332,7 +1343,7 @@ fn parse_where_exp<'pest>(
     }
 }
 
-/// where_let = { "let" ~ id ~ (":" ~ typ)? ~ "=" ~ exp_no_seq ~ ";" ~ where_exp }
+/// where_let = { "let" ~ id ~ (":" ~ typ)? ~ "=" ~ exp_no_seq ~ ";" ~ where_exp? }
 fn parse_where_let<'pest>(
     pair: Pair<'pest, Rule>,
 ) -> Result<UExp, ConversionError<InputError<'pest>>> {
@@ -1342,17 +1353,20 @@ fn parse_where_let<'pest>(
     ))?;
     let next = inner.next().ok_or(ConversionError::NoMatch)?;
     let (val, rest) = if next.as_rule() == Rule::exp_no_seq {
-        (parse_exp_no_seq(next)?, inner.next().unwrap())
+        (parse_exp_no_seq(next)?, inner.next())
     } else {
         let val = parse_exp_no_seq(inner.next().ok_or(ConversionError::NoMatch)?)?;
-        (val, inner.next().ok_or(ConversionError::NoMatch)?)
+        (val, inner.next())
     };
-    // rest is Rule::where_exp — unwrap to inner alternative
-    let cont = parse_where_exp(rest.into_inner().next().unwrap())?;
+    // where_exp? — optional continuation; trailing `;` → Unit
+    let cont = match rest {
+        Some(cont) => parse_where_exp(cont.into_inner().next().unwrap())?,
+        None => Exp::Unit,
+    };
     Ok(Exp::letx(var, val, cont))
 }
 
-/// where_eq = { exp_no_seq ~ eq_op ~ exp_no_seq ~ (";" ~ where_exp)? }
+/// where_eq = { exp_no_seq ~ eq_op ~ exp_no_seq ~ (";" ~ where_exp?)? }
 fn parse_where_eq<'pest>(
     pair: Pair<'pest, Rule>,
 ) -> Result<UExp, ConversionError<InputError<'pest>>> {
@@ -1362,10 +1376,14 @@ fn parse_where_eq<'pest>(
     let rhs = parse_exp_no_seq(inner.next().ok_or(ConversionError::NoMatch)?)?;
     match inner.next() {
         // cont is Rule::where_exp — unwrap to inner alternative
-        Some(cont) => Ok(Exp::seq(
-            Exp::assert_eq(lhs, rhs),
-            parse_where_exp(cont.into_inner().next().unwrap())?,
-        )),
+        Some(cont) => {
+            // where_exp? inside — cont may be empty (trailing ;)
+            let where_inner = cont.into_inner().next();
+            match where_inner {
+                Some(actual) => Ok(Exp::seq(Exp::assert_eq(lhs, rhs), parse_where_exp(actual)?)),
+                None => Ok(Exp::seq(Exp::assert_eq(lhs, rhs), Exp::Unit)),
+            }
+        }
         None => Ok(Exp::assert_eq(lhs, rhs)),
     }
 }
