@@ -44,7 +44,7 @@ fn selected_eval_shape<C: ArkConfig>(p: &HOp<C>, range: &lang::typ::CRange) -> S
     SelectedEvalShape::new(input_num_vars, range.len(), max_degree)
 }
 
-fn op_has_loop_param<C: ArkConfig>(op: &GOp<C>, target_level: usize) -> bool {
+pub fn op_has_loop_param<C: ArkConfig>(op: &GOp<C>, target_level: usize) -> bool {
     match op {
         Op::LoopParam(level, _) => *level == target_level,
         Op::Bin(_, a, b, _) => {

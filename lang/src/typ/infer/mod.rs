@@ -566,7 +566,11 @@ impl Typeable for CExp {
                     .infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
-                // Must be a vector and a Fin type (random access/slice)
+                // The index must be a compile-time known integer (Fin type).
+                // Fin types arise from literals, ranges, size parameters, and
+                // loop variables bound to fixed ranges — all compile-time known.
+                // Non-Fin indices (e.g. Scalar-typed runtime values) are rejected
+                // because the GB analysis cannot resolve dynamic RAM reads.
                 match (ta.clone(), tb.clone()) {
                     (CTyp::Vec(box typ, n), CTyp::Fin(r)) => {
                         if r.end <= n {
@@ -582,7 +586,8 @@ impl Typeable for CExp {
                             Err(TypeError::ram(kctx, vctx, a, ta, b, tb))
                         }
                     }
-                    (_, _) => Err(TypeError::ram(kctx, vctx, a, ta, b, tb)),
+                    // Index is not Fin-typed → dynamic RAM, unsupported.
+                    (_, _) => Err(TypeError::ram_dynamic_index(kctx, vctx, a, ta, b, tb)),
                 }
             }
 

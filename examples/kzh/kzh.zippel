@@ -58,25 +58,28 @@ proto kzh<
     // uses them to declare the KZH-2 SRS tensor structure.
     private g_gen:  G1,
     private tau_x:  [F; NX],
-    private tau_y:  [F; NY]
+    private tau_y:  [F; NY],
+    private h_gen:  G2
 ) where
     // KZH-2 SRS tensor structure at the trapdoor (τ_x, τ_y):
     //   H^{i,j} = g · eq(τ_x, i_bits) · eq(τ_y, j_bits)
     //   D^i    = g · eq(τ_x, i_bits)
     //   H^j    = g · eq(τ_y, j_bits)
-    // This captures the x-marginal (d_x) and y-marginal (h_y) of the
-    // full 2D tensor h_xy under the same generator, which is the
-    // structural identity that makes the Fig. 2 pairing check
+    // G2 SRS mirrors the G1 x-marginal: V^i = h · eq(τ_x, i_bits),
+    // and V' = h (the G2 generator). The pairing check
     //   e(C, V') == Σ_x e(D^x, V^x)
-    // succeed for correctly-formed commitments. The V' / V^x tie to a
-    // separate G2 trapdoor is intentionally left off — it would
-    // require exposing h_gen and the y-trapdoor lift, which is more
-    // machinery than the analyzer needs for the primary tensor claim.
-    let eq_x = eq_weights_priv(tau_x);
-    let eq_y = eq_weights_priv(tau_y);
+    // then verifies C is well-formed.
+    //
+    // eq_weights inlined (LSB-first bit decomposition) to avoid
+    // recursive function dispatch in the where clause, which the
+    // static analysis cannot inline.
+    let eq_x = [reduce(*, [tau_x[j] * ((k / (2 ^ j)) % 2) + (1 - tau_x[j]) * (1 - ((k / (2 ^ j)) % 2)) for j in 0..NX]) for k in 0..NXV];
+    let eq_y = [reduce(*, [tau_y[j] * ((k / (2 ^ j)) % 2) + (1 - tau_y[j]) * (1 - ((k / (2 ^ j)) % 2)) for j in 0..NY]) for k in 0..NYV];
     [h_xy[k] for k in 0..NXY] == [g_gen * (eq_x[k / NYV] * eq_y[k % NYV]) for k in 0..NXY];
     [d_x[i] for i in 0..NXV] == [g_gen * eq_x[i] for i in 0..NXV];
-    [h_y[j] for j in 0..NYV] == [g_gen * eq_y[j] for j in 0..NYV]
+    [h_y[j] for j in 0..NYV] == [g_gen * eq_y[j] for j in 0..NYV];
+    v_prime == h_gen;
+    [v_x[i] for i in 0..NXV] == [h_gen * eq_x[i] for i in 0..NXV]
 {
     // -------- Phase 1: commit --------
     let c = dot(f_evals, h_xy);

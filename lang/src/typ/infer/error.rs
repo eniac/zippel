@@ -110,6 +110,9 @@ pub enum TypeError {
     #[error("RamError: Index {4} must be a Fin type within the bounds of the vector {2}:\n\t{0}, {1} |- {2} : {3} [ {4} : {5} ]")]
     Ram(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
 
+    #[error("RamError: Index {4} must be a compile-time constant (literal or range), got {5}:\n\t{0}, {1} |- {2} : {3} [ {4} : {5} ]")]
+    RamDynamicIndex(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
+
     #[error("AppMultipleError: Function has multiple matching definitions in context\n\t{0} |- {1} ( {2} )")]
     AppMultiple(Set<CSig>, Vid, CTyps),
 
@@ -319,6 +322,16 @@ impl TypeError {
         tb: CTyp,
     ) -> Self {
         TypeError::Ram(kctx.clone(), vctx.clone(), a.clone(), ta, b.clone(), tb)
+    }
+    pub fn ram_dynamic_index(
+        kctx: &Ctx<Tid, CKind>,
+        vctx: &Ctx<Vid, CTyp>,
+        a: &CExp,
+        ta: CTyp,
+        b: &CExp,
+        tb: CTyp,
+    ) -> Self {
+        TypeError::RamDynamicIndex(kctx.clone(), vctx.clone(), a.clone(), ta, b.clone(), tb)
     }
     pub fn unit(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::Unit(kctx.clone(), vctx.clone(), e.clone())

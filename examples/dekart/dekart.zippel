@@ -22,9 +22,7 @@ proto dekart<
     private rho_vec: [f; l_chunk],
 
     // Public inputs/SRS
-    public b_vals: [f; b],
     public b_pow: [f; l_chunk],
-    public f_one: f,
     public gen_g1: g1,
     public gen_g2: g2,
     public srs_g2_tau: g2,
@@ -37,6 +35,7 @@ proto dekart<
     [pair(srs_g1_n[i], srs_g2_tau) for i in 0..n] == [pair(srs_g1_n[i+1], gen_g2) for i in 0..n];
     [pair(srs_g1_h[i], srs_g2_tau) for i in 0..h_deg] == [pair(srs_g1_h[i+1], gen_g2) for i in 0..h_deg];
     pair(xi_g1, gen_g2) == pair(gen_g1, srs_g2_xi);
+    f_evals[0] == 0;
     [f_evals[i] for i in 1..n+1] == [reduce(+, [ (let chunk_j = chunks_evals[j]; chunk_j[i] * b_pow[j]) for j in 0..l_chunk ]) for i in 1..n+1]
 {
 
@@ -77,10 +76,10 @@ proto dekart<
 
     // Step 5: Quotient polynomials
     // v_s: vanishing polynomial of the constraint domain H (excluding omega^0 = 1)
-    let v_s = poly([f_one for i in 0..n+1]);
+    let v_s = poly([1 for i in 0..n+1]);
 
     // h_j(X) = \prod_{i=0..b-1} (f_j - i) / v_s
-    let h_j_vec = [ (reduce(*, [f_j_vec[j] - d for d in b_vals])) / v_s for j in 0..l_chunk ];
+    let h_j_vec = [ (reduce(*, [f_j_vec[j] - d for d in 0..b])) / v_s for j in 0..l_chunk ];
 
     // g(X) = (f_hat - \sum b^j f_j) / v_s
     let g = (f_hat - reduce(+, [ f_j_vec[j] * b_pow[j] for j in 0..l_chunk ])) / v_s;
@@ -119,7 +118,7 @@ proto dekart<
 
     // Step 10: Open u at gamma
     let s_blind = random<f>;
-    let q_u = (u - a_u) / poly([-gamma, f_one]);
+    let q_u = (u - a_u) / poly([-gamma, 1]);
 
     let rho_u = mu * (rho + delta_rho) + mu_h * rho_h + reduce(+, [ rho_vec[j] * mu_j[j] for j in 0..l_chunk ]);
 
@@ -140,7 +139,7 @@ proto dekart<
 
     // Verifier Step 11: verify radix decomposition quotient check
     let v_s_at_gamma = v_s(gamma);
-    let prod_j = [ reduce(*, [a_j_log[j] - d for d in b_vals]) for j in 0..l_chunk ];
+    let prod_j = [ reduce(*, [a_j_log[j] - d for d in 0..b]) for j in 0..l_chunk ];
     let sum_val = reduce(+, [ beta_pow[j] * prod_j[j] for j in 0..l_chunk ]);
     let diff_val = a - reduce(+, [ a_j_log[j] * b_pow[j] for j in 0..l_chunk ]);
     verify(a_h * v_s_at_gamma == beta * diff_val + sum_val)

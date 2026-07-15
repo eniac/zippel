@@ -52,11 +52,11 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     }
 
     /// Like [`build`](Self::build), but concretizes args whose `Ref`
-    /// appears in `partial_values`. Each matching arg is bound to
-    /// constant polynomials via `link_to_polys` (replacing the free
-    /// variable with known constants), and excluded from the
-    /// divisor-invertibility constraints (a known constant's leading
-    /// coefficient is not a free variable that needs an inverse).
+    /// appears in `partial_values`. Each matching arg is constrained to
+    /// known constants via [`constrain_partial_value`](Self::constrain_partial_value),
+    /// and excluded from the divisor-invertibility constraints (a known
+    /// constant's leading coefficient is not a free variable that needs
+    /// an inverse).
     pub fn build_with_partial(
         &mut self,
         tc: TransClos<C>,
@@ -70,11 +70,10 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             ideal.register(var);
         }
 
-        // Bind concretized args to constant polynomials.
+        // Constrain args with known partial values.
         for arg in tc.vars.iter() {
             if let Some(value) = partial_values.get(&arg.reference) {
-                let polys = PolySource::<C>::to_poly_value(value);
-                link_to_polys(&mut ideal, arg, polys);
+                Self::constrain_partial_value(&mut ideal, arg, value);
             }
         }
 
@@ -143,6 +142,30 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             ideal.var_order.push(var);
         }
         ideal
+    }
+
+    /// Constrain an arg variable to a known partial value.
+    ///
+    /// This is distinct from `PolySource::to_poly_value` (which encodes
+    /// literal `Op::Value` constants into the ideal). Partial value
+    /// constraining is about pinning a formal variable to a known value.
+    ///
+    /// **Contract**: The caller must provide the value in a form that
+    /// matches the arg's type:
+    /// - **Scalar-typed args** (Scalar, Fin, VecScalar, VecIndex): provide
+    ///   the scalar value directly as `Value::Scalar` / `Value::VecScalar` /
+    ///   `Value::Index` / `Value::VecIndex`.
+    /// - **Group-typed args** (G1, G2, GT, VecG1, etc.): provide the
+    ///   **discrete-log scalar** as `Value::Scalar` (or `Value::VecScalar`
+    ///   for vector-typed group args). The where-clause constraints (e.g.
+    ///   `alpha_g1 == alpha * gen_g1`) then propagate the scalar to the
+    ///   group element's formal variable.
+    ///
+    /// For both cases, the value is converted to constant polynomials via
+    /// `to_poly_value` and bound to the arg's slots via `link_to_polys`.
+    fn constrain_partial_value(ideal: &mut Ideal<C>, arg: &Var, value: &Value<C>) {
+        let polys = PolySource::<C>::to_poly_value(value);
+        link_to_polys(ideal, arg, polys);
     }
 
     pub(crate) fn sentinel_var(&mut self, name: &str, typ: ATyp, ideal: &mut Ideal<C>) -> Var {

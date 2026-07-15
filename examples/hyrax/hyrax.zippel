@@ -16,7 +16,9 @@ proto hyrax<G: Group, F: Scalar<G>, L: Size, M: Size, NR: 2^L, NC: 2^M, NT: 2^(L
     public y:      F,
     public g_vec:  [G; NC],
     public g_base: G,
-    public h_base: G
+    public h_base: G,
+    private g_traps: [F; NC],
+    private h_trap:  F
 ) where
     // Hyrax proves y == p̃(z_row, z_col), where p̃ is the multilinear
     // extension of `p` indexed as a NR×NC matrix (row-major: p[i*NC + j]).
@@ -26,7 +28,9 @@ proto hyrax<G: Group, F: Scalar<G>, L: Size, M: Size, NR: 2^L, NC: 2^M, NT: 2^(L
     let l_vec = eq_weights(z_row);
     let r_vec = eq_weights(z_col);
     let eq_full = [l_vec[i / NC] * r_vec[i % NC] for i in 0..NT];
-    y == dot(eq_full, p)
+    y == dot(eq_full, p);
+    [g_vec[i] for i in 0..NC] == [g_base * g_traps[i] for i in 0..NC];
+    h_base == g_base * h_trap
 {
     let r_rows = [random<F> for i in 0..NR];
     c_rows <- [

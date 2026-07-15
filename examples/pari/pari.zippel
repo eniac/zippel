@@ -124,7 +124,12 @@ proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
     //     Quotient basis: Σ_q[i] = (τ^i / δ_2)·G. State multiplicatively
     //     to avoid F-division in the where clause:
     //       Σ_q[i] · δ_2 = τ^i · G.
-    [sigma_q[i] * delta2 for i in 0..K] == [g_g1 * (tau ^ i) for i in 0..K]
+    [sigma_q[i] * delta2 for i in 0..K] == [g_g1 * (tau ^ i) for i in 0..K];
+    // (3) Field constants used by the verifier's Lagrange shortcut.
+    f_one == 1;
+    k_inv * K == 1;
+    //     omegas[i] are K-th roots of unity (ω^{K-N+i}).
+    [omegas[i] ^ K for i in 0..N] == [f_one for i in 0..N]
     // (Structural identity for sigma_w — which pins the witness-side
     // basis Σ_w[i] = (α a_i(τ) + β b_i(τ))/δ_2 · G to the A/B Lagrange
     // polynomials — is intentionally omitted: it would require

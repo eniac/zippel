@@ -164,11 +164,6 @@ fn build_inputs(
     }
 
     // Range constants
-    let mut b_vals = Vec::new();
-    for i in 0..b_size {
-        b_vals.push(F::from(i as u64));
-    }
-
     let mut b_pow = Vec::new();
     let mut current_pow = F::one();
     let b_scalar = F::from(b_size as u64);
@@ -197,9 +192,7 @@ fn build_inputs(
         (Vid("delta_rho".to_string()), Value::Scalar(delta_rho)),
         (Vid("rho_h".to_string()), Value::Scalar(rho_h)),
         (Vid("rho_vec".to_string()), Value::VecScalar(rho_vec)),
-        (Vid("b_vals".to_string()), Value::VecScalar(b_vals.clone())),
         (Vid("b_pow".to_string()), Value::VecScalar(b_pow.clone())),
-        (Vid("f_one".to_string()), Value::Scalar(F::one())),
         (Vid("gen_g1".to_string()), Value::G1(gen_g1)),
         (Vid("gen_g2".to_string()), Value::G2(gen_g2)),
         (Vid("srs_g2_tau".to_string()), Value::G2(srs_g2_tau)),
@@ -214,9 +207,7 @@ fn build_inputs(
     ]);
 
     let public_inputs = Ctx::<Vid, Value<C>>::from_iter([
-        (Vid("b_vals".to_string()), Value::VecScalar(b_vals)),
         (Vid("b_pow".to_string()), Value::VecScalar(b_pow)),
-        (Vid("f_one".to_string()), Value::Scalar(F::one())),
         (Vid("gen_g1".to_string()), Value::G1(gen_g1)),
         (Vid("gen_g2".to_string()), Value::G2(gen_g2)),
         (Vid("srs_g2_tau".to_string()), Value::G2(srs_g2_tau)),

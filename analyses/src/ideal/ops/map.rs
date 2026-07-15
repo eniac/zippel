@@ -18,17 +18,34 @@ use super::PolySource;
 use super::{EncodeCtx, link_to_polys, link_to_witness};
 
 /// Constant-fold an integer (`Fin`/`Unit`) subexpression over the enclosing
-/// loop indices. Returns `Some(value)` only when `op` is integer-typed and
-/// every enclosing loop binder has a concrete value; otherwise `None`.
+/// loop indices. Returns `Some(value)` when `op` is integer-typed and every
+/// loop level it references has a concrete value; otherwise `None`.
+///
+/// `loop_vals` may contain `None` entries for loop levels whose domains are
+/// non-literal (e.g. a public arg used as a reduce domain). If the op does
+/// not reference such a level, the `None` entry is irrelevant and a dummy
+/// fill is safe. If it does reference a `None` level, we return `None`.
 fn const_eval_int<C: ArkConfig>(op: &HOp<C>, loop_vals: &[Option<Value<C>>]) -> Option<Value<C>> {
     let t = op.typ();
     if !(t.is_fin() || t.is_unit()) {
         return None;
     }
+    // If the op references a loop level whose value is None, we can't eval.
+    for (level, val) in loop_vals.iter().enumerate() {
+        if val.is_none() && graph::eval::op_has_loop_param(op.get(), level) {
+            return None;
+        }
+    }
+    // All referenced levels have concrete values; fill None entries with a
+    // dummy (never accessed) so the params vector has the right length.
     let params: Vec<std::sync::Arc<Value<C>>> = loop_vals
         .iter()
-        .map(|v| v.clone().map(std::sync::Arc::new))
-        .collect::<Option<_>>()?;
+        .map(|v| {
+            v.clone()
+                .map(std::sync::Arc::new)
+                .unwrap_or_else(|| std::sync::Arc::new(Value::Index(0)))
+        })
+        .collect();
     let env: HashMap<Ref, std::sync::Arc<Value<C>>> = HashMap::new();
     let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(0);
     let mut check_sink = Vec::new();

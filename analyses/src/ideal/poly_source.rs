@@ -400,6 +400,15 @@ impl<C: ArkConfig> PolySource<C> {
     }
 
     /// Convert a literal `Value` to a vector of constant polynomials.
+    ///
+    /// This is used for encoding `Op::Value` literals into the ideal.
+    /// Only scalar-valued types are supported (Scalar, Index, VecScalar,
+    /// VecIndex, and nested Vec of these). Group elements and polynomial
+    /// types are not supported — they are formal variables in the ideal,
+    /// not literal constants.
+    ///
+    /// For partial value constraining of group-typed args, see
+    /// [`IdealBuilder::constrain_partial_value`](super::IdealBuilder::constrain_partial_value).
     pub fn to_poly_value(v: &Value<C>) -> Vec<Polynomial<C::F>> {
         match v {
             Value::Scalar(s) => vec![Polynomial::lit(s)],
