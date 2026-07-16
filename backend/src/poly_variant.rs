@@ -131,14 +131,8 @@ fn fix_first_variables_parallel<F: Field>(
     if dim == 0 {
         return mle.clone();
     }
-    // First fold pass reads the original table by reference — cloning the full
-    // 2^nv evaluations upfront was pure waste (the clone is immediately folded
-    // to half size). Subsequent passes read the previous half-size buffer.
-    // Matches arkworks' `fix_variables`, which never clones the source table.
-    let mut data: Vec<F> = {
-        let r = partial_point[0];
-        let half = 1usize << (nv - 1);
-        let src = &mle.evaluations;
+    // Fold one variable: halve `src` into a fresh buffer via `left + r·(right-left)`.
+    fn fold_step<F: Field>(src: &[F], r: F, half: usize) -> Vec<F> {
         let mut next = vec![F::zero(); half];
         next.par_iter_mut().enumerate().for_each(|(b, slot)| {
             let left = src[b << 1];
@@ -146,18 +140,17 @@ fn fix_first_variables_parallel<F: Field>(
             *slot = left + r * (right - left);
         });
         next
-    };
-    for (i, &r) in partial_point.iter().enumerate().skip(1) {
-        let half = 1usize << (nv - i - 1);
-        let mut next = vec![F::zero(); half];
-        next.par_iter_mut().enumerate().for_each(|(b, slot)| {
-            let left = data[b << 1];
-            let right = data[(b << 1) + 1];
-            *slot = left + r * (right - left);
-        });
-        data = next;
     }
-    DenseMultilinearExtension::from_evaluations_slice(nv - dim, &data[..(1 << (nv - dim))])
+    // First pass reads the original table by reference — cloning the full 2^nv
+    // evaluations upfront would be pure waste (immediately folded to half size).
+    // Matches arkworks' `fix_variables`, which never clones the source table.
+    let mut data = fold_step(&mle.evaluations, partial_point[0], 1 << (nv - 1));
+    for (i, &r) in partial_point.iter().enumerate().skip(1) {
+        data = fold_step(&data, r, 1 << (nv - i - 1));
+    }
+    // `data` is already exactly `1 << (nv - dim)` long, so move it in rather
+    // than copying a slice.
+    DenseMultilinearExtension::from_evaluations_vec(nv - dim, data)
 }
 
 fn fixed_index_for_var(free_range: CRange, var_idx: usize) -> Option<usize> {
