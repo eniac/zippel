@@ -2946,6 +2946,7 @@ fn hypercube_reduce_selected_mle_products<C: ArkConfig>(
                 _ => unreachable!("validated factor variant"),
             })
             .collect();
+        let coeff_is_one = coefficient.is_one();
 
         // Field addition is associative and commutative, so the parallel
         // reduction over independent tail vertices is bit-identical to the
@@ -2956,7 +2957,14 @@ fn hypercube_reduce_selected_mle_products<C: ArkConfig>(
             let mut acc = vec![C::F::zero(); degree_cap.max(1)];
             let mut term = vec![C::F::zero(); degree_cap.max(1)];
             for tail_index in 0..tail_count {
-                let n = accumulate_term(&mut term, *coefficient, &factors, tail_index, degree_cap);
+                let n = accumulate_term(
+                    &mut term,
+                    *coefficient,
+                    coeff_is_one,
+                    &factors,
+                    tail_index,
+                    degree_cap,
+                );
                 add_coeffs_assign(&mut acc, &term[..n]);
             }
             acc
@@ -2974,6 +2982,7 @@ fn hypercube_reduce_selected_mle_products<C: ArkConfig>(
                         let n = accumulate_term(
                             &mut term,
                             *coefficient,
+                            coeff_is_one,
                             &factors,
                             tail_index,
                             degree_cap,
@@ -3044,21 +3053,38 @@ enum FactorRef<'a, F> {
 fn accumulate_term<F: Field>(
     term: &mut [F],
     coefficient: F,
+    coeff_is_one: bool,
     factors: &[FactorRef<F>],
     tail_index: usize,
     degree_cap: usize,
 ) -> usize {
-    term[0] = coefficient;
-    let mut len = 1usize;
     let base = tail_index << 1;
-    for f in factors {
-        let (v0, v1) = match f {
+    #[inline]
+    fn endpoints<F: Field>(f: &FactorRef<F>, base: usize) -> (F, F) {
+        match f {
             FactorRef::Dense(evals) => (evals[base], evals[base | 1]),
             FactorRef::Sparse(map) => (
                 map.get(&base).copied().unwrap_or_else(F::zero),
                 map.get(&(base | 1)).copied().unwrap_or_else(F::zero),
             ),
-        };
+        }
+    }
+    // When the product coefficient is 1 (the common case — every `base^md`
+    // product has coefficient 1), the first factor's two multiplies are
+    // `1·v0` and `1·delta`: pure no-ops. Seed the term directly with the first
+    // factor's `[v0, delta]` and start the convolution at factor 1, saving two
+    // field multiplies per tail. Bit-identical (`1·x == x`).
+    let (mut len, start) = if coeff_is_one && !factors.is_empty() && degree_cap >= 2 {
+        let (v0, v1) = endpoints(&factors[0], base);
+        term[0] = v0;
+        term[1] = v1 - v0;
+        (2usize, 1usize)
+    } else {
+        term[0] = coefficient;
+        (1usize, 0usize)
+    };
+    for f in &factors[start..] {
+        let (v0, v1) = endpoints(f, base);
         let delta = v1 - v0;
         let new_len = (len + 1).min(degree_cap).max(1);
         for i in (0..new_len).rev() {

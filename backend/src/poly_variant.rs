@@ -128,8 +128,26 @@ fn fix_first_variables_parallel<F: Field>(
     );
     let nv = mle.num_vars();
     let dim = partial_point.len();
-    let mut data: Vec<F> = mle.evaluations.clone();
-    for (i, &r) in partial_point.iter().enumerate() {
+    if dim == 0 {
+        return mle.clone();
+    }
+    // First fold pass reads the original table by reference — cloning the full
+    // 2^nv evaluations upfront was pure waste (the clone is immediately folded
+    // to half size). Subsequent passes read the previous half-size buffer.
+    // Matches arkworks' `fix_variables`, which never clones the source table.
+    let mut data: Vec<F> = {
+        let r = partial_point[0];
+        let half = 1usize << (nv - 1);
+        let src = &mle.evaluations;
+        let mut next = vec![F::zero(); half];
+        next.par_iter_mut().enumerate().for_each(|(b, slot)| {
+            let left = src[b << 1];
+            let right = src[(b << 1) + 1];
+            *slot = left + r * (right - left);
+        });
+        next
+    };
+    for (i, &r) in partial_point.iter().enumerate().skip(1) {
         let half = 1usize << (nv - i - 1);
         let mut next = vec![F::zero(); half];
         next.par_iter_mut().enumerate().for_each(|(b, slot)| {
