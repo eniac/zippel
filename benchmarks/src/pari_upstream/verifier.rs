@@ -12,19 +12,19 @@ use ark_std::{end_timer, ops::Neg, start_timer};
 use super::{batch_inversion_and_mul, msm_bigint_wnaf};
 
 impl<E: Pairing> Pari<E> {
-    pub fn verify(proof: &Proof<E>, vk: &VerifyingKey<E>, public_input: &[E::ScalarField]) -> bool
+    pub fn verify(proof: &Proof<E>, vk: &VerifyingKey<E>, instance_input: &[E::ScalarField]) -> bool
     where
         <E::G1Affine as AffineRepr>::BaseField: PrimeField,
         E::G1Affine: Neg<Output = E::G1Affine>,
     {
         let timer_verify =
             start_timer!(|| format!("Verification (|x|= {})", vk.succinct_index.instance_len));
-        debug_assert_eq!(public_input.len(), vk.succinct_index.instance_len - 1);
+        debug_assert_eq!(instance_input.len(), vk.succinct_index.instance_len - 1);
         let Proof { t_g, u_g, v_a, v_b } = proof;
 
         /////////////////////// Challenge Computation ///////////////////////
         let timer_transcript_init = start_timer!(|| "Computing Challenge");
-        let challenge = compute_chall::<E>(vk, public_input, t_g);
+        let challenge = compute_chall::<E>(vk, instance_input, t_g);
         end_timer!(timer_transcript_init);
         /////////////////////// Computing polynomials x_A ///////////////////////
 
@@ -34,7 +34,7 @@ impl<E: Pairing> Pari<E> {
         let r1cs_orig_num_cnstrs = vk.succinct_index.num_constraints - instance_size;
 
         px_evaluations.push(E::ScalarField::ONE);
-        px_evaluations.extend_from_slice(&public_input[..(instance_size - 1)]);
+        px_evaluations.extend_from_slice(&instance_input[..(instance_size - 1)]);
         let lag_coeffs_time = start_timer!(|| "Computing last lagrange coefficients");
         let (lagrange_coeffs, vanishing_poly_at_chall_inv) =
             Self::eval_last_lagrange_coeffs::<E::ScalarField>(
@@ -50,7 +50,7 @@ impl<E: Pairing> Pari<E> {
             let mut solidifier = Solidifier::<E>::new();
             solidifier.set_vk(&vk);
             solidifier.set_proof(&proof);
-            solidifier.set_input(public_input);
+            solidifier.set_input(instance_input);
             let (_, neg_h_i, nom_i) = Self::eval_last_lagrange_coeffs_traced::<E::ScalarField>(
                 &vk.domain,
                 challenge,

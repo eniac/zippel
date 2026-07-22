@@ -73,7 +73,7 @@ struct BenchData {
     h_size: usize,
     domain_size: usize,
     ark_proof: Proof<E>,
-    public_inputs: Vec<F>,
+    instance_inputs: Vec<F>,
 }
 
 fn build_dense_matrix_a(
@@ -158,7 +158,7 @@ fn setup_bench(num_constraints: usize) -> BenchData {
 
     let ark_proof =
         Groth16::<E>::create_random_proof_with_reduction(circuit, &pk, &mut rng).unwrap();
-    let public_inputs = instance_assignment[1..].to_vec();
+    let instance_inputs = instance_assignment[1..].to_vec();
 
     BenchData {
         pk,
@@ -175,7 +175,7 @@ fn setup_bench(num_constraints: usize) -> BenchData {
         h_size,
         domain_size,
         ark_proof,
-        public_inputs,
+        instance_inputs,
     }
 }
 
@@ -213,7 +213,8 @@ fn groth16_bench(c: &mut Criterion) {
             let pvk = ark_groth16::prepare_verifying_key(&data.vk);
             group.bench_with_input(BenchmarkId::new("arkworks_verifier", size), &(), |b, ()| {
                 b.iter(|| {
-                    Groth16::<E>::verify_proof(&pvk, &data.ark_proof, &data.public_inputs).unwrap()
+                    Groth16::<E>::verify_proof(&pvk, &data.ark_proof, &data.instance_inputs)
+                        .unwrap()
                 });
             });
         }
@@ -347,29 +348,6 @@ fn groth16_bench(c: &mut Criterion) {
                 sizes.insert(&Tid::new("H"), &h);
                 handler.compile(&sizes);
 
-                let public_input_names = [
-                    "gen_g1",
-                    "gen_g2",
-                    "alpha_g1",
-                    "beta_g2",
-                    "gamma_g2",
-                    "delta_g2",
-                    "gamma_abc_g1",
-                    "beta_g1",
-                    "delta_g1",
-                    "a_query",
-                    "b_g1_query",
-                    "b_g2_query",
-                    "h_query",
-                    "l_query",
-                    "instance_assignment",
-                ];
-                let public_inputs_ctx: Ctx<Vid, Value<ArkBls12_381>> = zippel_inputs
-                    .clone()
-                    .into_iter()
-                    .filter(|(vid, _)| public_input_names.contains(&vid.0.as_str()))
-                    .collect();
-                handler.set_public_inputs(public_inputs_ctx);
                 let mut prover_inputs = zippel_inputs.clone();
                 let mut h_coeffs_padded = data.h_coeffs.clone();
                 h_coeffs_padded.resize(data.h_size, F::zero());
@@ -378,7 +356,8 @@ fn groth16_bench(c: &mut Criterion) {
                     &Value::VecScalar(h_coeffs_padded),
                 );
                 let proof = handler.run_prover(&prover_inputs).unwrap();
-                let passed = check_verification(&handler.run_verifier(&proof).unwrap());
+                let passed =
+                    check_verification(&handler.run_verifier(&proof, &prover_inputs).unwrap());
                 assert!(passed, "opt verification failed in bench setup");
 
                 group.bench_with_input(
@@ -387,7 +366,7 @@ fn groth16_bench(c: &mut Criterion) {
                     |b, ()| {
                         b.iter_batched(
                             || proof.clone(),
-                            |proof| handler.run_verifier(&proof).unwrap(),
+                            |proof| handler.run_verifier(&proof, &prover_inputs).unwrap(),
                             criterion::BatchSize::SmallInput,
                         );
                     },
@@ -523,35 +502,9 @@ fn groth16_bench(c: &mut Criterion) {
                 sizes.insert(&Tid::new("D"), &d);
                 handler.compile(&sizes);
 
-                let public_input_names = [
-                    "gen_g1",
-                    "gen_g2",
-                    "alpha_g1",
-                    "beta_g2",
-                    "gamma_g2",
-                    "delta_g2",
-                    "gamma_abc_g1",
-                    "beta_g1",
-                    "delta_g1",
-                    "a_query",
-                    "b_g1_query",
-                    "b_g2_query",
-                    "h_query",
-                    "l_query",
-                    "instance_assignment",
-                    "mat_a",
-                    "mat_b",
-                    "mat_c",
-                    "coset_offset",
-                ];
-                let public_inputs_ctx: Ctx<Vid, Value<ArkBls12_381>> = noh_inputs
-                    .clone()
-                    .into_iter()
-                    .filter(|(vid, _)| public_input_names.contains(&vid.0.as_str()))
-                    .collect();
-                handler.set_public_inputs(public_inputs_ctx);
                 let proof = handler.run_prover(&noh_inputs).unwrap();
-                let passed = check_verification(&handler.run_verifier(&proof).unwrap());
+                let passed =
+                    check_verification(&handler.run_verifier(&proof, &noh_inputs).unwrap());
                 assert!(passed, "noh verification failed in bench setup");
 
                 group.bench_with_input(
@@ -560,7 +513,7 @@ fn groth16_bench(c: &mut Criterion) {
                     |b, ()| {
                         b.iter_batched(
                             || proof.clone(),
-                            |proof| handler.run_verifier(&proof).unwrap(),
+                            |proof| handler.run_verifier(&proof, &noh_inputs).unwrap(),
                             criterion::BatchSize::SmallInput,
                         );
                     },

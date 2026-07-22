@@ -28,12 +28,12 @@
 // evaluation statement:  y == dot(eq_mle(z), p) == p̃(z).
 // =============================================================================
 fn eq_mle<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
-    public z: [F; 1]
+    instance z: [F; 1]
 ) -> [F; 2] {
     [ 1 - z[0], z[0] ]
 }
 fn eq_mle<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 2..21>(
-    public z: [F; K]
+    instance z: [F; K]
 ) -> [F; 2^K] {
     let a    = z[0];          // first variable = MSB (peeled first)
     let rest = z[1..K];
@@ -41,7 +41,7 @@ fn eq_mle<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 2..21
     (prev * (1 - a)) ++ (prev * a)
 }
 
-// Same as eq_mle but accepts `private z`. Used by the proto's `where`
+// Same as eq_mle but accepts `witness z`. Used by the proto's `where`
 // clause to expand the trusted-setup trapdoor α into its corresponding
 // Lagrange-basis weights, so the static analyzer can see the structural
 // identity ck_N[i] == eq_N(α, i) · g_gen. The body is identical to
@@ -50,12 +50,12 @@ fn eq_mle<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 2..21
 // on qualifier because qualifier-poly function dispatch isn't
 // established elsewhere in the language.
 fn eq_mle_priv<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
-    private z: [F; 1]
+    witness z: [F; 1]
 ) -> [F; 2] {
     [ 1 - z[0], z[0] ]
 }
 fn eq_mle_priv<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 2..21>(
-    private z: [F; K]
+    witness z: [F; K]
 ) -> [F; 2^K] {
     let a    = z[0];
     let rest = z[1..K];
@@ -68,8 +68,8 @@ fn eq_mle_priv<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 
 //   C_p = dot(p, ck_N) = p(alpha) * G
 // =============================================================================
 fn pst13_commit<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: 1..21>(
-    private p: [F; 2^M],
-    public ck_N: [G1; 2^M]
+    witness p: [F; 2^M],
+    instance ck_N: [G1; 2^M]
 ) -> G1 {
     dot(p, ck_N)
 }
@@ -79,16 +79,16 @@ fn pst13_commit<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M:
 // Logs the final quotient commitment and returns the singleton list [π_last].
 // =============================================================================
 fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
-    private p_curr: [F; 2],
-    public ck_curr: [G1; 2],
-    public z_curr: [F; 1]
+    witness p_curr: [F; 2],
+    instance ck_curr: [G1; 2],
+    instance z_curr: [F; 1]
 ) -> [G1; 1] {
     let ck_0 = ck_curr[0..1] + ck_curr[1..2];
     let p_lo = p_curr[0..1];
     let p_hi = p_curr[1..2];
     let q    = p_hi - p_lo;
     // `pi_last` is the transcript-bound name; the verifier reads it from
-    // the proof transcript instead of recomputing from the private `q`.
+    // the proof transcript instead of recomputing from the witness `q`.
     pi_last <- dot(q, ck_0);
     [pi_last]
 }
@@ -99,9 +99,9 @@ fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2
 // Returns the full list of π's collected across rounds.
 // =============================================================================
 fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 2..21>(
-    private p_curr: [F; 2^K],
-    public ck_curr: [G1; 2^K],
-    public z_curr: [F; K]
+    witness p_curr: [F; 2^K],
+    instance ck_curr: [G1; 2^K],
+    instance z_curr: [F; K]
 ) -> [G1; K] {
     // ck_{K-1}[i] = ck_curr[i] + ck_curr[i + 2^(K-1)] (Lagrange-basis split).
     let ck_lo  = ck_curr[0..2^(K-1)];
@@ -126,30 +126,30 @@ fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2
 //   Verifier checks ONE fused multi_pairing:
 //       dot([c_p − y·g, −π_1, ..., −π_N], [h, α_H[1] − z_1·h, ..., α_H[N] − z_N·h]) == 0_GT.
 //
-// All proving-key material (ck_N, alpha_H, g_gen, h_gen) is public; the
-// polynomial p is private; (z, y) is the public statement.
+// All proving-key material (ck_N, alpha_H, g_gen, h_gen) is instance; the
+// polynomial p is witness; (z, y) is the instance statement.
 // =============================================================================
 proto pst13<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>(
-    private p: [F; 2^N],         // polynomial coefficients indexed by {0,1}^N
-    public z: [F; N],            // evaluation point (z_1, ..., z_N)
-    public y: F,                 // claimed evaluation p(z)
+    witness p: [F; 2^N],         // polynomial coefficients indexed by {0,1}^N
+    instance z: [F; N],            // evaluation point (z_1, ..., z_N)
+    instance y: F,                 // claimed evaluation p(z)
     // ck_N is the prover's commitment key; the verifier doesn't reference
     // it (only α_H, g_gen, h_gen enter the pairing check). Marking it
-    // `private` keeps it out of the verifier's FS sponge — at N=16 this
+    // `extra` keeps it out of the verifier's FS sponge — at N=16 this
     // is ~3 MB of G1 the verifier would otherwise hash for no reason.
     // The verifier's binding to ck_N flows through c_p (committed via
     // `pst13_commit(p, ck_N)`) and the recursion's structure.
-    private ck_N: [G1; 2^N],     // [eq_N(α, i)·G  for i in {0,1}^N]
-    public g_gen: G1,
-    public h_gen: G2,
-    public alpha_H: [G2; N],     // [α_i · H  for i in 1..N]
+    extra ck_N: [G1; 2^N],     // [eq_N(α, i)·G  for i in {0,1}^N]
+    instance g_gen: G1,
+    instance h_gen: G2,
+    instance alpha_H: [G2; N],     // [α_i · H  for i in 1..N]
     // Relation-only witness: the trusted-setup trapdoor α. The proto body
     // and the verifier do not reference it; it exists so the `where`
     // clause can declare the structural identities
     //   ck_N[i] == eq_N(α, i) · g_gen   and   alpha_H[j] == α[j] · h_gen.
     // Without these the static completeness analyzer can't close the
     // verifier's multi-pairing accumulator.
-    private alpha: [F; N]
+    witness alpha: [F; N]
 ) where
     let eq_alpha = eq_mle_priv(alpha);
     y == dot(eq_mle(z), p);

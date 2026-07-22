@@ -67,11 +67,11 @@ impl Var {
         }
     }
 
-    pub fn is_public(&self) -> bool {
-        self.qualifier.is_public()
+    pub fn is_witness(&self) -> bool {
+        self.qualifier.is_witness()
     }
-    pub fn is_private(&self) -> bool {
-        self.qualifier.is_private()
+    pub fn is_instance(&self) -> bool {
+        self.qualifier.is_instance()
     }
     pub fn is_local(&self) -> bool {
         self.qualifier.is_local()

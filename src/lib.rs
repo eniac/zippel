@@ -92,9 +92,6 @@ pub struct ZippelHandler<C: ArkConfig> {
     concrete_module: Option<CModule>,
     pub prover_graph: Option<UDag<C>>,
     pub verifier_graph: Option<UDag<C>>,
-    public_inputs: Option<Ctx<Vid, Value<C>>>,
-    /// Names of all prover Arg nodes (used by verifier to find additional args).
-    prover_args: Option<Vec<Vid>>,
     analyze_graph: Option<Dag<C, Qualifier>>,
 }
 
@@ -111,8 +108,6 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             concrete_module: None,
             prover_graph: None,
             verifier_graph: None,
-            public_inputs: None,
-            prover_args: None,
             analyze_graph: None,
         }
     }
@@ -296,24 +291,6 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         self.output_pdf(&combined, "combined_graph");
     }
 
-    /// # Panics
-    /// If `compile()` has not been called first.
-    pub fn set_public_inputs(&mut self, public_inputs: Ctx<Vid, Value<C>>) {
-        self.public_inputs = Some(public_inputs);
-        let prover = self.prover_graph.as_ref().unwrap();
-
-        // save prover arg names
-        let prover_args: Vec<Vid> = prover
-            .input_args()
-            .into_iter()
-            .filter_map(|n| match &prover[n] {
-                Node::Arg(name, _, _, _, _) => Some(name.clone()),
-                _ => None,
-            })
-            .collect();
-        self.prover_args = Some(prover_args);
-    }
-
     /// Run prover, takes inputs and returns proof
     ///
     /// # Errors
@@ -334,7 +311,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             .filter_map(|n| match &prover[n] {
                 Node::Arg(name, _, qual, _, kind) => Some((
                     name.clone(),
-                    qual.is_public(),
+                    qual.is_instance(),
                     matches!(kind, ArgKind::TranscriptInput),
                 )),
                 _ => None,
@@ -364,30 +341,12 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             ));
         }
 
-        let public_args: Vec<Vid> = prover_arg_info
-            .iter()
-            .filter(|(_, is_public, _)| *is_public)
-            .map(|(name, _, _)| name.clone())
-            .collect();
-        let public_inputs = inputs
-            .clone()
-            .into_iter()
-            .filter(|(vid, _)| public_args.contains(vid))
-            .collect::<Ctx<Vid, Value<C>>>();
-
         let domain_separator_session = self.args.domain_separator_session();
         let prover_seperator = ZippelDomainSeparator::new_zippel_domain_seperator(
             &domain_separator_session,
             &prover.clone(),
         );
 
-        self.prover_args = Some(
-            prover_arg_info
-                .iter()
-                .map(|(name, _, _)| name.clone())
-                .collect(),
-        );
-        self.public_inputs = Some(public_inputs);
         let mut prover_state = prover_seperator.std_prover();
         let result = MutexGraph::run_graph(
             Arc::new(MutexGraph::new(prover.clone())),
@@ -403,38 +362,56 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         }
     }
 
-    /// Run verifier, takes proof and returns result
+    /// Run verifier, takes proof and inputs and returns result
     ///
     /// # Errors
     /// Returns `RuntimeError` if verification fails.
     ///
     /// # Panics
     /// If `compile()` has not been called first.
-    pub fn run_verifier(&mut self, proof: &[Value<C>]) -> Result<Vec<bool>, RuntimeError> {
+    pub fn run_verifier(
+        &mut self,
+        proof: &[Value<C>],
+        inputs: &Ctx<Vid, Value<C>>,
+    ) -> Result<Vec<bool>, RuntimeError> {
         let verifier = self.verifier_graph.as_ref().unwrap();
-        let prover_arg_names: std::collections::HashSet<&Vid> =
-            self.prover_args.as_ref().unwrap().iter().collect();
 
-        let verifier_args: Vec<Vid> = verifier
+        // Instance inputs: filter by qual.is_instance() from verifier graph.
+        let instance_args: Vec<Vid> = verifier
             .input_args()
             .into_iter()
             .filter_map(|n| match &verifier[n] {
-                Node::Arg(name, _, _, _, _) => Some(name.clone()),
+                Node::Arg(name, _, qual, _, ArgKind::Input) if qual.is_instance() => {
+                    Some(name.clone())
+                }
                 _ => None,
             })
             .collect();
-        let pg_additional_args = verifier_args
+        let instance_inputs: Ctx<Vid, Value<C>> = inputs
             .iter()
-            .filter(|name| !prover_arg_names.contains(name))
+            .filter(|(vid, _)| instance_args.contains(vid))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        // Transcript inputs: identify by ArgKind::TranscriptInput, zip with proof.
+        let transcript_args: Vec<Vid> = verifier
+            .input_args()
+            .into_iter()
+            .filter_map(|n| match &verifier[n] {
+                Node::Arg(name, _, _, _, ArgKind::TranscriptInput) => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        let transcript_inputs: Ctx<Vid, Value<C>> = transcript_args
+            .iter()
             .zip(proof.iter())
             .map(|(name, val)| (name.clone(), val.clone()))
-            .collect::<Ctx<Vid, Value<C>>>();
-        let inputs = self.public_inputs.as_ref().unwrap().clone();
-        let mut inputs = inputs;
-        inputs.append(&pg_additional_args);
+            .collect();
 
-        // Verifier uses the same public inputs (instance) as the prover
-        // The instance should only contain the public statement, not the proof
+        // Combine instance + transcript inputs.
+        let mut all_inputs = instance_inputs;
+        all_inputs.append(&transcript_inputs);
+
         let domain_separator_session = self.args.domain_separator_session();
         let verifier_seperator = ZippelDomainSeparator::new_zippel_domain_seperator(
             &domain_separator_session,
@@ -445,7 +422,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         let mut verifier_state = verifier_seperator.std_prover();
         let result = MutexGraph::run_graph(
             Arc::new(MutexGraph::new(verifier.clone())),
-            Arc::new(inputs),
+            Arc::new(all_inputs),
             &mut verifier_state,
             ResultKind::Verifier,
         )?;
@@ -608,7 +585,7 @@ mod tests {
         // Protocol where N: 1..S appears before S: Size in a different declaration
         let src = r"
             fn foo<F: Field, N: 1..S, S: Size>(a: [F; N]) -> F { a[0] }
-            proto bar<F: Field, S: Size, M: 2..S+1>(public x: F) where x == x {
+            proto bar<F: Field, S: Size, M: 2..S+1>(instance x: F) where x == x {
                 verify(x == x)
             }
         ";
@@ -627,7 +604,7 @@ mod tests {
     #[test]
     fn test_runtime_multiple_verify_positive() {
         let src = r"
-proto eq_proof<F: Field>(private a: F, private b: F) where a == b {
+proto eq_proof<F: Field>(witness a: F, witness b: F) where a == b {
     let r = random<F>;
     x <- a * r;
     y <- b * r;
@@ -653,7 +630,9 @@ proto eq_proof<F: Field>(private a: F, private b: F) where a == b {
         );
 
         let proof = handler.run_prover(&inputs).expect("run_prover failed");
-        let verifier_result = handler.run_verifier(&proof).expect("run_verifier failed");
+        let verifier_result = handler
+            .run_verifier(&proof, &inputs)
+            .expect("run_verifier failed");
         let passed = check_verification(&verifier_result);
         assert!(passed, "eq_proof with a == b should pass verification");
     }
@@ -664,7 +643,7 @@ proto eq_proof<F: Field>(private a: F, private b: F) where a == b {
     fn test_runtime_issue_157_transcript_relogs_after_challenge() {
         const EXPECTED_PROOF_VALUES: usize = 6;
         let src = r"
-proto repro<F: Field>(private s: F) where s == s {
+proto repro<F: Field>(witness s: F) where s == s {
     c <- challenge<F>;
     a <- c;
     b <- a;
@@ -696,7 +675,9 @@ proto repro<F: Field>(private s: F) where s == s {
             "issue #157 repro should emit all six non-challenge transcript proof values"
         );
 
-        let verifier_result = handler.run_verifier(&proof).expect("run_verifier failed");
+        let verifier_result = handler
+            .run_verifier(&proof, &inputs)
+            .expect("run_verifier failed");
         let passed = check_verification(&verifier_result);
         assert!(
             passed,
@@ -709,7 +690,7 @@ proto repro<F: Field>(private s: F) where s == s {
     #[test]
     fn test_runtime_multiple_verify_negative_wrong_condition() {
         let src = r"
-proto bad_check<F: Field>(private a: F, private b: F, public c: F) where a == b {
+proto bad_check<F: Field>(witness a: F, witness b: F, instance c: F) where a == b {
     let r = random<F>;
     x <- a * r;
     y <- b * r;
@@ -739,7 +720,9 @@ proto bad_check<F: Field>(private a: F, private b: F, public c: F) where a == b 
         );
 
         let proof = handler.run_prover(&inputs).expect("run_prover failed");
-        let verifier_result = handler.run_verifier(&proof).expect("run_verifier failed");
+        let verifier_result = handler
+            .run_verifier(&proof, &inputs)
+            .expect("run_verifier failed");
         let passed = check_verification(&verifier_result);
         assert!(
             !passed,

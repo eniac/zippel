@@ -32,7 +32,7 @@ pub const CYCLIC_SIZES: &[usize] = &[4, 5];
 // ---------------------------------------------------------------------------
 
 pub fn mk_var(name: &str) -> Var {
-    Var::from_var(name, NodeIndex::new(0), ATyp::scalar(), Qualifier::Private)
+    Var::from_var(name, NodeIndex::new(0), ATyp::scalar(), Qualifier::Witness)
 }
 
 pub fn mk_vars(prefix: &str, count: usize) -> Vec<Var> {

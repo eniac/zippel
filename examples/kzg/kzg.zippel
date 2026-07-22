@@ -4,14 +4,14 @@
 // trapdoor tau, then derive the SRS as powers of tau times the generators.
 // This replaces the previous indirect pairing-based SRS check.
 //
-// `srs_g1` is `private` even though the SRS is not cryptographically secret
+// `srs_g1` is `extra` even though the SRS is not cryptographically secret
 // — the verifier graph never consumes it (only the prover does, for the
 // commit + opening MSMs), and zippel's runtime currently requires every
-// `public` input to be passed to the verifier. Privatizing it sidesteps
+// `instance` input to be passed to the verifier. Marking it `extra` sidesteps
 // the unused-input overhead.
 proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>
-        (private poly_x: Uni<F, N-1>, public eval_point: F, public eval_result: F, private srs_g1: [G1; N],
-        public gen_g1: G1, public gen_g2: G2, public srs_g2_s: G2)
+        (witness poly_x: Uni<F, N-1>, instance eval_point: F, instance eval_result: F, extra srs_g1: [G1; N],
+        instance gen_g1: G1, instance gen_g2: G2, instance srs_g2_s: G2)
         where let tau = random<F>;
               srs_g1 == [tau^i * gen_g1 for i in 0..N];
               srs_g2_s == tau * gen_g2;

@@ -156,16 +156,9 @@ fn run_and_verify(
     zippel_path: &str,
     sizes: &Ctx<Tid, usize>,
     inputs: &Ctx<Vid, Value<ArkBls12_381>>,
-    public_input_names: &[&str],
     vk: &ark_groth16::VerifyingKey<E>,
     instance_assignment: &[F],
 ) {
-    let public_inputs_ctx: Ctx<Vid, Value<ArkBls12_381>> = inputs
-        .clone()
-        .into_iter()
-        .filter(|(vid, _)| public_input_names.contains(&vid.0.as_str()))
-        .collect();
-
     let args = ZippelArgs::new(PathBuf::from(zippel_path));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile(sizes);
@@ -182,9 +175,8 @@ fn run_and_verify(
     let verifier_args = ZippelArgs::new(PathBuf::from(zippel_path));
     let mut verifier_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(verifier_args);
     verifier_handler.compile(sizes);
-    verifier_handler.set_public_inputs(public_inputs_ctx);
     let verifier_start = Instant::now();
-    let verifier_result = verifier_handler.run_verifier(&proof).unwrap();
+    let verifier_result = verifier_handler.run_verifier(&proof, inputs).unwrap();
     let verifier_elapsed = verifier_start.elapsed();
     let passed = check_verification(&verifier_result);
     println!("Zippel verifier time: {verifier_elapsed:.2?}");
@@ -235,24 +227,6 @@ fn run_groth16(
 
     let inputs: Ctx<Vid, Value<ArkBls12_381>> = Ctx::from_iter(entries);
 
-    let public_input_names = [
-        "gen_g1",
-        "gen_g2",
-        "alpha_g1",
-        "beta_g2",
-        "gamma_g2",
-        "delta_g2",
-        "gamma_abc_g1",
-        "beta_g1",
-        "delta_g1",
-        "a_query",
-        "b_g1_query",
-        "b_g2_query",
-        "h_query",
-        "l_query",
-        "instance_assignment",
-    ];
-
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("M"), &m);
     sizes.insert(&Tid::new("L"), &l);
@@ -262,7 +236,6 @@ fn run_groth16(
         "examples/groth16/groth16.zippel",
         &sizes,
         &inputs,
-        &public_input_names,
         vk,
         instance_assignment,
     );

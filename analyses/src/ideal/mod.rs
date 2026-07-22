@@ -361,14 +361,14 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         // First: bind Vec of scalars on node 0, then Poly on node 1.
-        let var_v = Var::from_node(NodeIndex::new(0), ATyp::VPoly(1, 2), Qualifier::Private);
+        let var_v = Var::from_node(NodeIndex::new(0), ATyp::VPoly(1, 2), Qualifier::Witness);
         ideal.register(&var_v);
         let coefs: Vec<_> = (1..=3u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
         builder.add_op(var_v.clone(), Op::Vec(coefs), &mut ideal);
 
-        let var_p = Var::from_node(NodeIndex::new(1), ATyp::VPoly(1, 2), Qualifier::Private);
+        let var_p = Var::from_node(NodeIndex::new(1), ATyp::VPoly(1, 2), Qualifier::Witness);
         let op_poly: GOp<ArkBls12_381> = Op::Poly(mk::<ArkBls12_381>(Op::Ref(
             graph::Ref::new(NodeIndex::new(0)),
             ATyp::VPoly(1, 2),
@@ -398,7 +398,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         // First: bind Vec of scalars on node 0, then Poly on node 1.
-        let var_v = Var::from_node(NodeIndex::new(0), ATyp::VPoly(1, 2), Qualifier::Private);
+        let var_v = Var::from_node(NodeIndex::new(0), ATyp::VPoly(1, 2), Qualifier::Witness);
         ideal.register(&var_v);
         let coefs: Vec<_> = (1..=3u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
@@ -406,7 +406,7 @@ mod tests {
         builder.add_op(var_v.clone(), Op::Vec(coefs), &mut ideal);
 
         // Poly: reads the Vec's slots via Ref.
-        let var_p = Var::from_node(NodeIndex::new(1), ATyp::VPoly(1, 2), Qualifier::Private);
+        let var_p = Var::from_node(NodeIndex::new(1), ATyp::VPoly(1, 2), Qualifier::Witness);
         ideal.register(&var_p);
         builder.add_op(
             var_p.clone(),
@@ -419,7 +419,7 @@ mod tests {
 
         // Then: Op::Coef reading the VPoly back into a Uni(2) output
         // (degree 2 = 3 coefficient slots, per docs/poly-encoding.md).
-        let var_c = Var::from_node(NodeIndex::new(2), ATyp::Uni(2), Qualifier::Private);
+        let var_c = Var::from_node(NodeIndex::new(2), ATyp::Uni(2), Qualifier::Witness);
         let ref_p: GOp<ArkBls12_381> =
             Op::Ref(graph::Ref::new(NodeIndex::new(1)), ATyp::VPoly(1, 2));
         builder.add_op(
@@ -453,14 +453,14 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         // First: bind Vec of scalars on node 0, then Mle on node 1.
-        let var_v = Var::from_node(NodeIndex::new(0), ATyp::Mle(2), Qualifier::Private);
+        let var_v = Var::from_node(NodeIndex::new(0), ATyp::Mle(2), Qualifier::Witness);
         ideal.register(&var_v);
         let vals: Vec<_> = (1..=4u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
         builder.add_op(var_v.clone(), Op::Vec(vals), &mut ideal);
 
-        let var_m = Var::from_node(NodeIndex::new(1), ATyp::Mle(2), Qualifier::Private);
+        let var_m = Var::from_node(NodeIndex::new(1), ATyp::Mle(2), Qualifier::Witness);
         ideal.register(&var_m);
         builder.add_op(
             var_m.clone(),
@@ -495,7 +495,7 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var = Var::from_node(NodeIndex::new(100), ATyp::scalar(), Qualifier::Public);
+        let var = Var::from_node(NodeIndex::new(100), ATyp::scalar(), Qualifier::Instance);
 
         builder.add_op(
             var.clone(),
@@ -526,7 +526,7 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var = Var::from_node(NodeIndex::new(101), ATyp::scalar(), Qualifier::Private);
+        let var = Var::from_node(NodeIndex::new(101), ATyp::scalar(), Qualifier::Witness);
 
         builder.add_op(var.clone(), Op::Random(ATyp::scalar(), false), &mut ideal);
 
@@ -553,7 +553,8 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         // Create a challenge Var
-        let challenge_var = Var::from_node(NodeIndex::new(200), ATyp::scalar(), Qualifier::Public);
+        let challenge_var =
+            Var::from_node(NodeIndex::new(200), ATyp::scalar(), Qualifier::Instance);
         ideal.register(&challenge_var);
         builder.add_op(
             challenge_var.clone(),
@@ -561,12 +562,12 @@ mod tests {
             &mut ideal,
         );
 
-        // Create a private variable
-        let x_var = Var::from_node(NodeIndex::new(201), ATyp::scalar(), Qualifier::Private);
+        // Create a witness variable
+        let x_var = Var::from_node(NodeIndex::new(201), ATyp::scalar(), Qualifier::Witness);
         ideal.register(&x_var);
 
         // Create a polynomial operation that uses the challenge: y = x + c
-        let y_var = Var::from_node(NodeIndex::new(202), ATyp::scalar(), Qualifier::Public);
+        let y_var = Var::from_node(NodeIndex::new(202), ATyp::scalar(), Qualifier::Instance);
         ideal.register(&y_var);
 
         builder.add_op(
@@ -614,13 +615,13 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let g1_var = Var::from_node(NodeIndex::new(300), ATyp::g1(), Qualifier::Public);
+        let g1_var = Var::from_node(NodeIndex::new(300), ATyp::g1(), Qualifier::Instance);
         ideal.register(&g1_var);
 
-        let g2_var = Var::from_node(NodeIndex::new(301), ATyp::g2(), Qualifier::Public);
+        let g2_var = Var::from_node(NodeIndex::new(301), ATyp::g2(), Qualifier::Instance);
         ideal.register(&g2_var);
 
-        let pair_ideal_var = Var::from_node(NodeIndex::new(302), ATyp::gt(), Qualifier::Public);
+        let pair_ideal_var = Var::from_node(NodeIndex::new(302), ATyp::gt(), Qualifier::Instance);
         ideal.register(&pair_ideal_var);
 
         builder.add_op(

@@ -5,17 +5,17 @@
 // It uses the Fiat-Shamir heuristic via the 'challenge' primitive for non-interaction.
 
 proto prove_commitment_equality<G: Group, F: Scalar<G>>(
-    // Private witness known only to the prover:
-    private m1: F,         // Value for first commitment
-    private r1: F,         // Randomness for first commitment
-    private m2: F,         // Value for second commitment (must equal m1)
-    private r2: F,         // Randomness for second commitment
+    // Witness known only to the prover:
+    witness m1: F,         // Value for first commitment
+    witness r1: F,         // Randomness for first commitment
+    witness m2: F,         // Value for second commitment (must equal m1)
+    witness r2: F,         // Randomness for second commitment
 
-    // Public inputs known to prover and verifier:
-    public g: G,           // Base for value in Pedersen commitments
-    public h: G,           // Base for randomness in Pedersen commitments
-    public c1: G,          // First commitment C1 = g*m1 + h*r1
-    public c2: G           // Second commitment C2 = g*m2 + h*r2
+    // Instance inputs known to prover and verifier:
+    instance g: G,           // Base for value in Pedersen commitments
+    instance h: G,           // Base for randomness in Pedersen commitments
+    instance c1: G,          // First commitment C1 = g*m1 + h*r1
+    instance c2: G           // Second commitment C2 = g*m2 + h*r2
 )
 // The 'where' clause defines the conditions the prover must satisfy:
 // 1. c1 is a valid commitment to m1 with randomness r1.
@@ -44,7 +44,7 @@ where c1 == g*m1 + h*r1; c2 == g*m2 + h*r2; m1 == m2 {
       t <- schnorr_t;
 
       // 4. Generate the Fiat-Shamir challenge 'c'.
-      //    The challenge function implicitly hashes the public inputs and the transcript state (incl. 't').
+      //    The challenge function implicitly hashes the instance inputs and the transcript state (incl. 't').
       c <- challenge<F>;
 
       // 5. Compute the Schnorr response 'z'.
@@ -54,9 +54,9 @@ where c1 == g*m1 + h*r1; c2 == g*m2 + h*r2; m1 == m2 {
       z <- schnorr_z;
 
       // --- Verification Logic (encoded using 'verify') ---
-      // The verifier checks the Schnorr equation using public inputs (c1, c2, h)
+      // The verifier checks the Schnorr equation using instance inputs (c1, c2, h)
       // and values from the transcript (t, c, z).
-      // Note: c_diff is re-computed here from public c1, c2 for clarity,
+      // Note: c_diff is re-computed here from instance c1, c2 for clarity,
       // or could be passed/precomputed.
       verify(h * z == t + (c1 - c2) * c)
       // This expands to: h * (k + r_diff*c) == h*k + (h*r_diff)*c

@@ -76,8 +76,8 @@ pub enum GraphError {
     NodeNotFound(usize),
     #[error("Relation not found in {0}")]
     RelationNotFound(Vid),
-    #[error("Private node found in verifier: {0}: {1}")]
-    PrivateNodeInVerifier(String, String),
+    #[error("Non-instance node found in verifier: {0}: {1}")]
+    NonInstanceNodeInVerifier(String, String),
     #[error("{0}\n\n{1}")]
     Next(Box<GraphError>, Box<GraphError>),
     #[error(transparent)]
@@ -104,8 +104,8 @@ impl GraphError {
     pub fn var_not_found(vid: &Vid) -> Self {
         GraphError::VarNotFound(vid.clone())
     }
-    pub fn private_node_in_verifier<C: ArkConfig>(op: &GOp<C>, r: &Ref) -> Self {
-        GraphError::PrivateNodeInVerifier(op.to_string(), r.to_string())
+    pub fn non_instance_node_in_verifier<C: ArkConfig>(op: &GOp<C>, r: &Ref) -> Self {
+        GraphError::NonInstanceNodeInVerifier(op.to_string(), r.to_string())
     }
     pub fn relation_not_found(vid: &Vid) -> Self {
         GraphError::RelationNotFound(vid.clone())
@@ -754,12 +754,12 @@ impl<C: HasOpFactory, A> Dag<C, A> {
     {
         let mut verifier = Dag::new();
 
-        // Public inputs that survive into the verifier (with their source-dag NodeIndex).
-        let public_args: Vec<(NodeIndex, Vid)> = self
+        // Instance inputs that survive into the verifier (with their source-dag NodeIndex).
+        let instance_args: Vec<(NodeIndex, Vid)> = self
             .input_args()
             .into_iter()
             .filter_map(|n| match &self[n] {
-                Node::Arg(name, _, qual, _, _) if qual.is_public() => Some((n, name.clone())),
+                Node::Arg(name, _, qual, _, _) if qual.is_instance() => Some((n, name.clone())),
                 _ => None,
             })
             .collect();
@@ -768,11 +768,11 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         // Associate old node indices with new node indices
         let mut node_map_self = HashMap::<NodeIndex, NodeIndex>::new();
 
-        // Make new input node + replicate public Args.
+        // Make new input node + replicate instance Args.
         let n_input = verifier.add_node(Node::Inp(name));
         node_map_self.insert(self.input_node(), n_input);
 
-        for (old_arg_idx, _) in &public_args {
+        for (old_arg_idx, _) in &instance_args {
             let new_arg = verifier.add_node(self[*old_arg_idx].clone());
             verifier.add_edge(n_input, new_arg, Dep::data());
             node_map_self.insert(*old_arg_idx, new_arg);
@@ -807,17 +807,17 @@ impl<C: HasOpFactory, A> Dag<C, A> {
                 continue;
             }
 
-            // Check if the node refers to a private argument, then it is a leak
+            // Check if the node refers to a non-instance argument, then it is a leak
             let op = self[n].clone().into_op();
             for r in op.references() {
                 let target = r.node();
                 if self[target].is_input_arg() {
-                    let is_private_input = matches!(
+                    let is_non_instance_input = matches!(
                         &self[target],
-                        Node::Arg(_, _, qual, _, _) if qual.is_private()
+                        Node::Arg(_, _, qual, _, _) if !qual.is_instance()
                     );
-                    if is_private_input {
-                        return Err(GraphError::private_node_in_verifier(&op, &r));
+                    if is_non_instance_input {
+                        return Err(GraphError::non_instance_node_in_verifier(&op, &r));
                     }
                 }
             }
@@ -896,8 +896,9 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             // Determine/create the Arg node for this transcript var.
             let arg_node = if let Some(&n) = transcript_arg_nodes.get(&transcript_var) {
                 n
-            } else if let Some((old, _)) =
-                public_args.iter().find(|(_, name)| name == &transcript_var)
+            } else if let Some((old, _)) = instance_args
+                .iter()
+                .find(|(_, name)| name == &transcript_var)
             {
                 node_map_self[old]
             } else {
@@ -908,7 +909,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
                 let arg_node = verifier.add_node(Node::Arg(
                     transcript_var.clone(),
                     typ,
-                    Qualifier::Public,
+                    Qualifier::Instance,
                     Distribution::default(),
                     ArgKind::TranscriptInput,
                 ));
@@ -2666,11 +2667,11 @@ use share::unwrap;
 #[test]
 fn graph_sum() {
     let ex = r#"
-        fn sum<N: 1..4, F: Field>(public a: [F; 2^N]) -> F {
+        fn sum<N: 1..4, F: Field>(instance a: [F; 2^N]) -> F {
             sum(a[0..2^(N-1)]) + sum(a[2^(N-1)..2^N])
         }
 
-        fn sum<F: Field>(public a: [F; 1]) -> F {
+        fn sum<F: Field>(instance a: [F; 1]) -> F {
            a[0]
         }"#;
     let m = UModule::from_str(ex)
@@ -2691,7 +2692,7 @@ fn graph_sum() {
 #[test]
 fn graph_foo() {
     let ex = r#"
-        proto foo<F: Field>(private s: F, public v: [F; 10]) where s == s {
+        proto foo<F: Field>(witness s: F, instance v: [F; 10]) where s == s {
             let r = random<F>;
             c <- challenge<F>;
             a <- r * c;
@@ -2717,7 +2718,7 @@ fn graph_foo() {
 #[test]
 fn graph_poly() {
     let ex = r#"
-        proto poly_mul<F: Field>(public a: Uni<F, 4>, public b: Uni<F, 4>) where a == a {
+        proto poly_mul<F: Field>(instance a: Uni<F, 4>, instance b: Uni<F, 4>) where a == a {
             let r = random<F*>;
             let p = a * b;
             verify(p(r) == (a(r) * b(r)))
@@ -2739,7 +2740,7 @@ fn graph_poly() {
 #[test]
 fn graph_reduce() {
     let ex = r#"
-        fn reduction_foo<F: Field>(public a: [F; 10]) -> F {
+        fn reduction_foo<F: Field>(instance a: [F; 10]) -> F {
             reduce(+, a)
         }"#;
     let m = UModule::from_str(ex)
@@ -2760,8 +2761,8 @@ fn graph_reduce() {
 fn graph_fn_call_in_where() {
     // Function call in where clause: double(a) == a + a
     let ex = r#"
-        fn double<F: Field>(public x: F) -> F { x + x }
-        proto test<F: Field>(public a: F)
+        fn double<F: Field>(instance x: F) -> F { x + x }
+        proto test<F: Field>(instance a: F)
         where double(a) == a + a {
             verify(a == a)
         }"#;

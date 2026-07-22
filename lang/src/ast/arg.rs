@@ -49,17 +49,25 @@ impl<T, N> Arg<T, N> {
             typ,
         }
     }
-    pub fn public(id: &str, typ: Typ<T, N>) -> Self {
+    pub fn instance(id: &str, typ: Typ<T, N>) -> Self {
         Arg {
-            qualifier: Qualifier::Public,
+            qualifier: Qualifier::Instance,
             distribution: Distribution::Nonuniform,
             id: Vid::new(id),
             typ,
         }
     }
-    pub fn private(id: &str, typ: Typ<T, N>) -> Self {
+    pub fn witness(id: &str, typ: Typ<T, N>) -> Self {
         Arg {
-            qualifier: Qualifier::Private,
+            qualifier: Qualifier::Witness,
+            distribution: Distribution::Nonuniform,
+            id: Vid::new(id),
+            typ,
+        }
+    }
+    pub fn extra(id: &str, typ: Typ<T, N>) -> Self {
+        Arg {
+            qualifier: Qualifier::Extra,
             distribution: Distribution::Nonuniform,
             id: Vid::new(id),
             typ,
@@ -73,43 +81,62 @@ impl<T, N> Arg<T, N> {
             typ,
         }
     }
-    pub fn public_uniform(id: &str, typ: Typ<T, N>) -> Self {
+    pub fn instance_uniform(id: &str, typ: Typ<T, N>) -> Self {
         Arg {
-            qualifier: Qualifier::Public,
+            qualifier: Qualifier::Instance,
             distribution: Distribution::Uniform,
             id: Vid::new(id),
             typ,
         }
     }
-    pub fn private_uniform(id: &str, typ: Typ<T, N>) -> Self {
+    pub fn witness_uniform(id: &str, typ: Typ<T, N>) -> Self {
         Arg {
-            qualifier: Qualifier::Private,
+            qualifier: Qualifier::Witness,
             distribution: Distribution::Uniform,
             id: Vid::new(id),
             typ,
         }
     }
-    pub fn public_uniform_nz(id: &str, typ: Typ<T, N>) -> Self {
+    pub fn extra_uniform(id: &str, typ: Typ<T, N>) -> Self {
         Arg {
-            qualifier: Qualifier::Public,
+            qualifier: Qualifier::Extra,
+            distribution: Distribution::Uniform,
+            id: Vid::new(id),
+            typ,
+        }
+    }
+    pub fn instance_uniform_nz(id: &str, typ: Typ<T, N>) -> Self {
+        Arg {
+            qualifier: Qualifier::Instance,
             distribution: Distribution::UniformNonZero,
             id: Vid::new(id),
             typ,
         }
     }
-    pub fn private_uniform_nz(id: &str, typ: Typ<T, N>) -> Self {
+    pub fn witness_uniform_nz(id: &str, typ: Typ<T, N>) -> Self {
         Arg {
-            qualifier: Qualifier::Private,
+            qualifier: Qualifier::Witness,
             distribution: Distribution::UniformNonZero,
             id: Vid::new(id),
             typ,
         }
     }
-    pub fn is_private(&self) -> bool {
-        self.qualifier.is_private()
+    pub fn extra_uniform_nz(id: &str, typ: Typ<T, N>) -> Self {
+        Arg {
+            qualifier: Qualifier::Extra,
+            distribution: Distribution::UniformNonZero,
+            id: Vid::new(id),
+            typ,
+        }
     }
-    pub fn is_public(&self) -> bool {
-        self.qualifier.is_public()
+    pub fn is_witness(&self) -> bool {
+        self.qualifier.is_witness()
+    }
+    pub fn is_instance(&self) -> bool {
+        self.qualifier.is_instance()
+    }
+    pub fn is_extra(&self) -> bool {
+        self.qualifier.is_extra()
     }
 }
 
@@ -362,7 +389,7 @@ impl<'pest> FromPest<'pest> for GArg<Size> {
         match pair.as_rule() {
             Rule::arg => {
                 let mut inner = pair.into_inner();
-                let mut qualifier = Qualifier::Public;
+                let mut qualifier = Qualifier::Instance;
                 let mut distribution = Distribution::Nonuniform;
 
                 // Check for optional qualifier
@@ -418,19 +445,19 @@ impl<'pest> FromPest<'pest> for GArgs<Size> {
 use pest::Parser;
 #[test]
 fn arg_parser() {
-    let ex = "public a: F, private uniform foo: X";
+    let ex = "instance a: F, witness uniform foo: X";
     let mut pairs = ZippelParser::parse(Rule::args, ex).unwrap();
     assert_eq!(
         Args::from_pest(&mut pairs),
         Ok(Args(vec![
             Arg::new(
-                Qualifier::Public,
+                Qualifier::Instance,
                 Distribution::Nonuniform,
                 "a",
                 Typ::varstr("F")
             ),
             Arg::new(
-                Qualifier::Private,
+                Qualifier::Witness,
                 Distribution::Uniform,
                 "foo",
                 Typ::varstr("X")
@@ -438,25 +465,25 @@ fn arg_parser() {
         ]))
     );
 
-    let ex = "public uniform* a: F";
+    let ex = "instance uniform* a: F";
     let mut pairs = ZippelParser::parse(Rule::arg, ex).unwrap();
     assert_eq!(
         Arg::from_pest(&mut pairs),
-        Ok(Arg::public_uniform_nz("a", Typ::varstr("F")))
+        Ok(Arg::instance_uniform_nz("a", Typ::varstr("F")))
     );
 
     let ex = "a: F";
     let mut pairs = ZippelParser::parse(Rule::arg, ex).unwrap();
     assert_eq!(
         Arg::from_pest(&mut pairs),
-        Ok(Arg::public("a", Typ::varstr("F")))
+        Ok(Arg::instance("a", Typ::varstr("F")))
     );
 }
 
 #[test]
 fn arg_traversal() {
     let arg = GArg::new(
-        Qualifier::Public,
+        Qualifier::Instance,
         Distribution::Uniform,
         "a",
         Typ::fin(Range {
@@ -469,7 +496,7 @@ fn arg_traversal() {
         arg.traverse2(&mut |x| x.eval(&Ctx::singleton("N".into(), 2)))
             .unwrap(),
         Arg::new(
-            Qualifier::Public,
+            Qualifier::Instance,
             Distribution::Uniform,
             "a",
             Typ::fin(Range {

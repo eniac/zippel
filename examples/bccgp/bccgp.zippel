@@ -2,12 +2,12 @@
 
 // Base case (n=1)
 fn bccgp_recursive<G: Group, F: Scalar<G>>(
-    public g_vec: [G; 1],
-    public h_vec: [G; 1],
-    public p_commitment: G,
-    public c_val: F,
-    private a_vec: [F; 1],
-    private b_vec: [F; 1]
+    instance g_vec: [G; 1],
+    instance h_vec: [G; 1],
+    instance p_commitment: G,
+    instance c_val: F,
+    witness a_vec: [F; 1],
+    witness b_vec: [F; 1]
 ) -> Unit {
     let a_scalar = a_vec[0];
     let b_scalar = b_vec[0];
@@ -27,12 +27,12 @@ fn bccgp_recursive<G: Group, F: Scalar<G>>(
 
 // Recursive step (n > 1)
 fn bccgp_recursive<G: Group, F: Scalar<G>, S: Size, N: 1..S+1>(
-    public g_vec: [G; 2^N],
-    public h_vec: [G; 2^N],
-    public p_commitment: G,
-    public c_val: F,
-    private a_vec: [F; 2^N],
-    private b_vec: [F; 2^N]
+    instance g_vec: [G; 2^N],
+    instance h_vec: [G; 2^N],
+    instance p_commitment: G,
+    instance c_val: F,
+    witness a_vec: [F; 2^N],
+    witness b_vec: [F; 2^N]
 ) -> Unit {
     let a_l = a_vec[0..2^(N-1)];
     let a_r = a_vec[2^(N-1)..2^N];
@@ -82,12 +82,12 @@ fn bccgp_recursive<G: Group, F: Scalar<G>, S: Size, N: 1..S+1>(
 }
 
 proto bccgp_ipa<G: Group, F: Scalar<G>, S: Size, N_CONST: 2^S>(
-    public g_vec: [G; N_CONST],
-    public h_vec: [G; N_CONST],
-    public p_commitment: G,
-    public c_val: F,
-    private a_vec: [F; N_CONST],
-    private b_vec: [F; N_CONST]
+    instance g_vec: [G; N_CONST],
+    instance h_vec: [G; N_CONST],
+    instance p_commitment: G,
+    instance c_val: F,
+    witness a_vec: [F; N_CONST],
+    witness b_vec: [F; N_CONST]
 ) where
     p_commitment == dot(g_vec, a_vec) + dot(h_vec, b_vec); c_val == dot(a_vec, b_vec)
 {

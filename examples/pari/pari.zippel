@@ -16,22 +16,22 @@
 //     everywhere (so x̂_B ≡ 0 on K).
 //   - Constraints K-N..K (the last N): A row = e_i (e.g. A[K-N+i][i]=1)
 //     so that x̂_A(ω^{K-N+i}) = x[i].
-// Under this layout, x̂_A is determined by the N public inputs alone, and
+// Under this layout, x̂_A is determined by the N instance inputs alone, and
 // the verifier can compute x̂_A(r) via the closed-form Lagrange shortcut:
 //   x̂_A(r) = (v_K(r) / K) · Σ_{i=0..N} omegas[i] · x[i] / (r - omegas[i])
 // where omegas[i] = ω^{K-N+i}.
 //
 // Prover-side simplification: instead of feeding A, B as sparse matrices
 // (no zippel support), the prover precomputes and feeds:
-//     z_a_evals := A·z       (length K, private)
-//     z_b_evals := B·z       (length K, private)
-//     w_a_evals := A·(0∥w)   (length K, private; = z_a_evals − x̂_A on K)
-//     w_b_evals := B·(0∥w)   (length K, private; = z_b_evals under layout)
+//     z_a_evals := A·z       (length K, witness)
+//     z_b_evals := B·z       (length K, witness)
+//     w_a_evals := A·(0∥w)   (length K, witness; = z_a_evals − x̂_A on K)
+//     w_b_evals := B·(0∥w)   (length K, witness; = z_b_evals under layout)
 //
 // Parameters:
 //   M    : log_2(K) where K is the constraint-domain size.
 //   K    : number of constraints (= 2^M). K is a smooth subgroup.
-//   N    : number of public input variables (z[0]=1 plus user inputs).
+//   N    : number of instance input variables (z[0]=1 plus user inputs).
 //   KMN  : k - N where k = total number of variables. The witness w lives in F^KMN.
 //
 // Soundness in AGM (per the paper); not zero-knowledge in this version
@@ -40,31 +40,31 @@
 proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
             M: Size, K: 2^M, N: Size, KMN: Size>(
     // --- Witness side (prover-only) ---
-    private z_a_evals: [F; K],                   // A · z, on K
-    private z_b_evals: [F; K],                   // B · z, on K
-    private w_a_evals: [F; K],                   // A · (0∥w), on K
-    private w_b_evals: [F; K],                   // B · (0∥w), on K
-    private w:         [F; KMN],                 // witness portion of z (size k-N)
+    witness z_a_evals: [F; K],                   // A · z, on K
+    witness z_b_evals: [F; K],                   // B · z, on K
+    witness w_a_evals: [F; K],                   // A · (0∥w), on K
+    witness w_b_evals: [F; K],                   // B · (0∥w), on K
+    witness w:         [F; KMN],                 // witness portion of z (size k-N)
 
     // --- Instance side (verifier-known, length N) ---
-    public  x:         [F; N],                   // public inputs (z[0]=1, then user inputs)
-    public  omegas:    [F; N],                   // omegas[i] = ω^{K-N+i}
+    instance  x:         [F; N],                   // instance inputs (z[0]=1, then user inputs)
+    instance  omegas:    [F; N],                   // omegas[i] = ω^{K-N+i}
 
     // --- Setup keys (from Generator G in Fig. 6) ---
-    // SRS bases are marked `private` so they only flow to the prover
+    // SRS bases are marked `extra` so they only flow to the prover
     // and don't enter the FS transcript. The native verifier doesn't
     // hash the SRS either: it binds the setup via the succinct
-    // verifier key. Marking these `public` (or worse, leaving them in
+    // verifier key. Marking these `extra` (or worse, leaving them `instance`…
     // the FS absorption) would make the zippel verifier do O(K) hash
     // work per call, defeating the verifier-time speedup we get from
     // the Lagrange shortcut below.
 
     // Witness commitment basis: Σ[i] = (α a_i(τ) + β b_i(τ))/δ_2 · G,
     //   for i = n+1, …, k.
-    private sigma_w:       [G1; KMN],
+    extra sigma_w:       [G1; KMN],
 
     // Quotient commitment basis: Σ_q[i] = τ^i / δ_2 · G, for i = 0, …, K-1.
-    private sigma_q:       [G1; K],
+    extra sigma_q:       [G1; K],
 
     // Opening proof bases (no δ_1 — matches the reference impl
     // arkworks-rs/garuda-pari, which omits δ_1 entirely; δ_1 only
@@ -72,38 +72,38 @@ proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
     //   Σ_A[i]    = α τ^i · G
     //   Σ_B[i]    = β τ^i · G
     //   Σ_q'[i]   =   τ^i · G                       for i = 0, …, K-1.
-    private sigma_a:       [G1; K],
-    private sigma_b:       [G1; K],
-    private sigma_q_prime: [G1; K],
+    extra sigma_a:       [G1; K],
+    extra sigma_b:       [G1; K],
+    extra sigma_q_prime: [G1; K],
 
     // --- Verifier keys ---
-    public  alpha_g:  G1,
-    public  beta_g:   G1,
-    public  g_g1:     G1,
-    public  delta2_h: G2,        // δ_2 · H
-    public  tau_h:    G2,        // τ · H
-    public  h_g2:     G2,        // H
+    instance  alpha_g:  G1,
+    instance  beta_g:   G1,
+    instance  g_g1:     G1,
+    instance  delta2_h: G2,        // δ_2 · H
+    instance  tau_h:    G2,        // τ · H
+    instance  h_g2:     G2,        // H
 
     // --- Constants supplied as inputs (avoids field-literal coercion) ---
     // v_K(X) = X^K - 1 coefficients (length K+1). Only the prover needs
     // it (to build v_K(X) for the quotient division); the verifier just
-    // evaluates v_K(r) = r^K − 1 directly, so we keep this `private` to
+    // evaluates v_K(r) = r^K − 1 directly, so we keep this `extra` to
     // skip O(K) FS absorption.
-    private v_k_poly:   Uni<F, K>,
+    extra v_k_poly:   Uni<F, K>,
     // The field element 1, used to negate via subtraction and to construct
     // (X - r) as a polynomial.
-    public  f_one:      F,
+    instance  f_one:      F,
     // 1/K (mod the scalar field), precomputed by the verifier once at setup.
-    public  k_inv:      F,
+    instance  k_inv:      F,
 
-    // Relation-only trapdoor witnesses (analogous to pst13's private
+    // Relation-only trapdoor witnesses (analogous to pst13's witness
     // alpha). Body/verifier don't reference these; the `where` clause
     // uses them to declare the SRS structural identities so the static
     // completeness analyzer can close the verifier's pairing check.
-    private tau:        F,
-    private alpha:      F,
-    private beta:       F,
-    private delta2:     F
+    witness tau:        F,
+    witness alpha:      F,
+    witness beta:       F,
+    witness delta2:     F
 ) where
     // (1) SR1CS satisfaction on the constraint domain K:
     //       (A z) ⊙ (A z) == (B z), element-wise.

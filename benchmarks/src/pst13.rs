@@ -12,7 +12,7 @@
 //!   - Both verifiers compute a single fused `multi_pairing` over [(c_p − y·g),
 //!     (−π_i)_i] × [h, (α_h_i − z_i·h)_i] — the same path the zippel proto
 //!     hits via `dot(VecG1, VecG2) → GT`.
-//!   - The commitment-key SRS (`ck`, length 2^N) is `public` in the proto
+//!   - The commitment-key SRS (`ck`, length 2^N) is `instance` in the proto
 //!     so the verifier graph sees it. PST13's verifier doesn't actually
 //!     touch `ck` (only α_H matters), so this contributes O(2^N) bytes
 //!     of FS absorption to zippel verify time. We document the cost
@@ -242,7 +242,7 @@ pub mod native_side {
             let point: Vec<Fr> = (0..self.n).map(|_| Fr::rand(&mut rng)).collect();
 
             // The claimed evaluation `y = p̃(z)` is the prover's
-            // statement-of-fact — the zippel side takes it as a public
+            // statement-of-fact — the zippel side takes it as an instance
             // input rather than recomputing it, so timing `poly.evaluate`
             // here would penalize native for work the zippel proto
             // simply skips. Compute it ONCE outside the timed region;
@@ -489,7 +489,7 @@ pub mod zippel_side {
                 ),
                 // Trusted-setup trapdoor α. Relation-only witness — the
                 // proto body doesn't reference it, but it's a formal
-                // arg (declared `private alpha: [F; N]` in the proto)
+                // arg (declared `witness alpha: [F; N]` in the proto)
                 // so run_prover validates its presence regardless of
                 // skip_analyses.
                 (
@@ -541,7 +541,7 @@ pub mod zippel_side {
                 let t = Instant::now();
                 let verifier_result = self
                     .handler
-                    .run_verifier(&proof_c)
+                    .run_verifier(&proof_c, &self.inputs_base)
                     .expect("zippel pst13 verifier failed");
                 verify_sum += t.elapsed();
                 last_result = Some(verifier_result);
@@ -638,7 +638,7 @@ mod cross_tests {
             cross_proof.push(Value::G1(*pi));
         }
         let verifier_result = handler
-            .run_verifier(&cross_proof)
+            .run_verifier(&cross_proof, &zip_inputs(&shared))
             .expect("zippel run_verifier on cross-proof");
         let result = check_verification(&verifier_result);
         assert!(

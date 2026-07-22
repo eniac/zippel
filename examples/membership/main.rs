@@ -24,11 +24,6 @@ fn main() {
     handler.compile(&sizes);
 
     let inputs = prover_create_inputs(n_size, m_size);
-    let public_inputs = inputs
-        .clone()
-        .into_iter()
-        .filter(|(vid, _)| vid.0 != "f_coeffs")
-        .collect::<Ctx<Vid, Value<ArkBls12_381>>>();
     let prover_start = Instant::now();
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
@@ -42,10 +37,9 @@ fn main() {
     let args = ZippelArgs::new(PathBuf::from("examples/membership/membership.zippel"));
     let mut verifier_handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     verifier_handler.compile(&sizes);
-    verifier_handler.set_public_inputs(public_inputs);
     let verifier_start = Instant::now();
     let verifier_result = verifier_handler
-        .run_verifier(&proof)
+        .run_verifier(&proof, &inputs)
         .expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     let passed = check_verification(&verifier_result);

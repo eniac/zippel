@@ -11,20 +11,20 @@
 // N_current: Current dimension of vectors g, h, a, b.
 // u_base_for_ipa: The 'u' base to be used for L,R commitments and base case check in this IPA run.
 fn ipa_recursive<G: Group, F: Scalar<G>>(
-    public g_vec_k: [G; 1],          // Current g bases for this round
-    public h_vec_k: [G; 1],          // Current h bases for this round
-    public u_base_for_ipa: G,                // The 'u' to use for this IPA instance's L,R, and base check
-    public p_commitment_k: G,                // Current P commitment for this round
-    private a_vec_k_private: [F; 1],  // Prover's current 'a' vector (private)
-    private b_vec_k_private: [F; 1]   // Prover's current 'b' vector (private)
+    instance g_vec_k: [G; 1],          // Current g bases for this round
+    instance h_vec_k: [G; 1],          // Current h bases for this round
+    instance u_base_for_ipa: G,                // The 'u' to use for this IPA instance's L,R, and base check
+    instance p_commitment_k: G,                // Current P commitment for this round
+    witness a_vec_k: [F; 1],  // Prover's current 'a' vector (witness)
+    witness b_vec_k: [F; 1]   // Prover's current 'b' vector (witness)
 ) -> Unit {
         // BASE CASE (n=1)
         // Prover "sends" a and b scalars. In non-interactive, these are the final results
         // of the prover's computation, used for the verifier's final check.
-        final_a_scalar <- a_vec_k_private[0];
-        final_b_scalar <- b_vec_k_private[0];
+        final_a_scalar <- a_vec_k[0];
+        final_b_scalar <- b_vec_k[0];
 
-        // Verifier recomputes these locally using its public bases and the
+        // Verifier recomputes these locally using its instance bases and the
         // proof-supplied final scalars. Soundness depends on it: ga, hb,
         // and ip_val_at_base are NOT proof elements.
         let ga = g_vec_k[0] * final_a_scalar;
@@ -40,23 +40,23 @@ fn ipa_recursive<G: Group, F: Scalar<G>>(
 }
 
 fn ipa_recursive<G: Group, F: Scalar<G>, S: Size, N_current: 1..S+1>(
-    public g_vec_k: [G; 2^N_current],          // Current g bases for this round
-    public h_vec_k: [G; 2^N_current],          // Current h bases for this round
-    public u_base_for_ipa: G,                  // The 'u' to use for this IPA instance's L,R, and base check
-    public p_commitment_k: G,                   // Current P commitment for this round
-    private a_vec_k_private: [F; 2^N_current],  // Prover's current 'a' vector (private)
-    private b_vec_k_private: [F; 2^N_current]   // Prover's current 'b' vector (private)
+    instance g_vec_k: [G; 2^N_current],          // Current g bases for this round
+    instance h_vec_k: [G; 2^N_current],          // Current h bases for this round
+    instance u_base_for_ipa: G,                  // The 'u' to use for this IPA instance's L,R, and base check
+    instance p_commitment_k: G,                   // Current P commitment for this round
+    witness a_vec_k: [F; 2^N_current],  // Prover's current 'a' vector (witness)
+    witness b_vec_k: [F; 2^N_current]   // Prover's current 'b' vector (witness)
 ) -> Unit {
         // RECURSIVE STEP (n > 1)
 
         // Prover computes c_L, c_R and then L, R.
-        // Slice prover's private vectors a and b
-        let a_p_lo = a_vec_k_private[0..2^(N_current-1)];
-        let a_p_hi = a_vec_k_private[2^(N_current-1)..2^N_current];
-        let b_p_lo = b_vec_k_private[0..2^(N_current-1)];
-        let b_p_hi = b_vec_k_private[2^(N_current-1)..2^N_current];
+        // Slice prover's witness vectors a and b
+        let a_p_lo = a_vec_k[0..2^(N_current-1)];
+        let a_p_hi = a_vec_k[2^(N_current-1)..2^N_current];
+        let b_p_lo = b_vec_k[0..2^(N_current-1)];
+        let b_p_hi = b_vec_k[2^(N_current-1)..2^N_current];
 
-        // Slice current g and h base vectors (these are public for this round)
+        // Slice current g and h base vectors (these are instance for this round)
         let g_v_lo = g_vec_k[0..2^(N_current-1)];
         let g_v_hi = g_vec_k[2^(N_current-1)..2^N_current];
         let h_v_lo = h_vec_k[0..2^(N_current-1)];
@@ -89,9 +89,9 @@ fn ipa_recursive<G: Group, F: Scalar<G>, S: Size, N_current: 1..S+1>(
                          + p_commitment_k
                          + (r_transcript * inv_sq);
 
-        // Prover computes a' and b' for its private input to the next recursive call
-        let a_prime_private = (a_p_lo * x_challenge) + (a_p_hi * inverse);
-        let b_prime_private = (b_p_lo * inverse) + (b_p_hi * x_challenge);
+        // Prover computes a' and b' for its witness input to the next recursive call
+        let a_prime = (a_p_lo * x_challenge) + (a_p_hi * inverse);
+        let b_prime = (b_p_lo * inverse) + (b_p_hi * x_challenge);
 
         // Recursively call protocol_2_ipa_recursive for the next smaller problem instance.
         // The N_current for the recursive call is (N_current / 2).
@@ -101,26 +101,26 @@ fn ipa_recursive<G: Group, F: Scalar<G>, S: Size, N_current: 1..S+1>(
             h_prime_next,
             u_base_for_ipa, // Pass the same u received by this function call
             p_prime_next,
-            a_prime_private,
-            b_prime_private
+            a_prime,
+            b_prime
         )
 }
 
 
 proto ipa_wrapper<G: Group, F: Scalar<G>, S: Size, N_val_const: 2^S>(
-    // --- Public Inputs ---
-    public g_vec: [G; N_val_const],    // Corresponds to 'g' in the paper (vector of group elements)
-    public h_vec: [G; N_val_const],    // Corresponds to 'h' in the paper (vector of group elements)
+    // --- Instance Inputs ---
+    instance g_vec: [G; N_val_const],    // Corresponds to 'g' in the paper (vector of group elements)
+    instance h_vec: [G; N_val_const],    // Corresponds to 'h' in the paper (vector of group elements)
     // Generator weighting factors (g_factors, h_factors in the Rust implementation)
-    public g_factors: [F; N_val_const],
-    public h_factors: [F; N_val_const],
-    public p_initial_commitment: G,   // Corresponds to 'P' in the paper
-    public ip_val_claimed: F,         // Corresponds to 'c' (the inner product value) in the paper
-    public u_aux_base: G,             // Corresponds to 'u' in the paper
+    instance g_factors: [F; N_val_const],
+    instance h_factors: [F; N_val_const],
+    instance p_initial_commitment: G,   // Corresponds to 'P' in the paper
+    instance ip_val_claimed: F,         // Corresponds to 'c' (the inner product value) in the paper
+    instance u_aux_base: G,             // Corresponds to 'u' in the paper
 
-    // --- Private Inputs ---
-    private a_vec_witness: [F; N_val_const],   // Corresponds to 'a' in the paper (vector of field elements)
-    private b_vec_witness: [F; N_val_const]    // Corresponds to 'b' in the paper (vector of field elements)
+    // --- Witness Inputs ---
+    witness a_vec_witness: [F; N_val_const],   // Corresponds to 'a' in the paper (vector of field elements)
+    witness b_vec_witness: [F; N_val_const]    // Corresponds to 'b' in the paper (vector of field elements)
 ) where
         // p_initial_commitment is a Pedersen-style commitment using weighted bases:
         //   G'_i = G_i * G_factors_i,  H'_i = H_i * H_factors_i
@@ -144,9 +144,9 @@ proto ipa_wrapper<G: Group, F: Scalar<G>, S: Size, N_val_const: 2^S>(
 
     // 3. "Run Protocol 2 (ipa recursive) on Input(g, h, u^x, P'; a, b)"
     //    We call the assumed 'protocol_2' function.
-    //    The inputs g_vec, h_vec are the original public base vectors.
+    //    The inputs g_vec, h_vec are the original instance base vectors.
     //    u_raised_to_x and p_prime are the values computed above.
-    //    a_vec_witness and b_vec_witness are the original private witness vectors.
+    //    a_vec_witness and b_vec_witness are the original witness vectors.
     // Apply generator weighting once at the start (g_factors, h_factors) to obtain
     // the effective bases G', H' used by the recursive IPA, analogous to the
     // "H' = H * y_inv" / "g_factors, h_factors" trick in the Rust code.

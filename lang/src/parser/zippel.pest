@@ -127,9 +127,10 @@ star = { "*" }
 
 /// Function and protocol arguments
 arg = { qualifier? ~ distribution? ~ id ~ ":" ~ typ }
-   qualifier = { public | private }
-   public = { "public" }
-   private = { "private" }
+   qualifier = { instance | witness | extra }
+   instance = { "instance" }
+   witness = { "witness" }
+   extra = { "extra" }
    distribution = { "uniform" ~ star? }
 args = { arg? ~ ("," ~ arg)* }
 

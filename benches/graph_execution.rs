@@ -64,7 +64,11 @@ fn bench_schnorr_verifier(c: &mut Criterion) {
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
     group.bench_function("verifier", |b| {
-        b.iter(|| handler.run_verifier(&proof).expect("run_verifier failed"));
+        b.iter(|| {
+            handler
+                .run_verifier(&proof, &inputs)
+                .expect("run_verifier failed")
+        });
     });
 
     group.finish();
@@ -151,7 +155,11 @@ fn bench_hadamard_verifier(c: &mut Criterion) {
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
     group.bench_function("verifier", |b| {
-        b.iter(|| handler.run_verifier(&proof).expect("run_verifier failed"));
+        b.iter(|| {
+            handler
+                .run_verifier(&proof, &inputs)
+                .expect("run_verifier failed")
+        });
     });
 
     group.finish();
@@ -215,7 +223,11 @@ fn bench_pedersen_eq_verifier(c: &mut Criterion) {
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
     group.bench_function("verifier", |b| {
-        b.iter(|| handler.run_verifier(&proof).expect("run_verifier failed"));
+        b.iter(|| {
+            handler
+                .run_verifier(&proof, &inputs)
+                .expect("run_verifier failed")
+        });
     });
 
     group.finish();
@@ -294,7 +306,11 @@ fn bench_ipa_verifier(c: &mut Criterion) {
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
     group.bench_function(format!("verifier/S={}", IPA_S).as_str(), |b| {
-        b.iter(|| handler.run_verifier(&proof).expect("run_verifier failed"));
+        b.iter(|| {
+            handler
+                .run_verifier(&proof, &inputs)
+                .expect("run_verifier failed")
+        });
     });
 
     group.finish();
@@ -334,14 +350,14 @@ fn hyrax_ipa_inputs(s: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("xi".to_string()), Value::G1(xi_val)),
         (Vid("tau".to_string()), Value::G1(tau_val)),
-        (Vid("a_vec_public".to_string()), a_vec),
-        (Vid("g_vec_public".to_string()), g_vec),
+        (Vid("a_vec".to_string()), a_vec),
+        (Vid("g_vec".to_string()), g_vec),
         (Vid("g_base".to_string()), Value::G1(g_base)),
         (Vid("h_base".to_string()), Value::G1(h_base)),
-        (Vid("x_vec_private".to_string()), x_vec),
-        (Vid("y_private".to_string()), y),
-        (Vid("r_xi_private".to_string()), Value::Scalar(r_xi)),
-        (Vid("r_tau_private".to_string()), Value::Scalar(r_tau)),
+        (Vid("x_vec".to_string()), x_vec),
+        (Vid("y".to_string()), y),
+        (Vid("r_xi".to_string()), Value::Scalar(r_xi)),
+        (Vid("r_tau".to_string()), Value::Scalar(r_tau)),
     ])
 }
 
@@ -380,7 +396,11 @@ fn bench_hyrax_ipa_verifier(c: &mut Criterion) {
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
     group.bench_function(format!("verifier/S={}", HYRAX_IPA_S).as_str(), |b| {
-        b.iter(|| handler.run_verifier(&proof).expect("run_verifier failed"));
+        b.iter(|| {
+            handler
+                .run_verifier(&proof, &inputs)
+                .expect("run_verifier failed")
+        });
     });
 
     group.finish();
@@ -505,7 +525,11 @@ fn bench_dory_verifier(c: &mut Criterion) {
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
     group.bench_function(format!("verifier/S={}", DORY_LOG_N).as_str(), |b| {
-        b.iter(|| handler.run_verifier(&proof).expect("run_verifier failed"));
+        b.iter(|| {
+            handler
+                .run_verifier(&proof, &inputs)
+                .expect("run_verifier failed")
+        });
     });
 
     group.finish();
@@ -582,12 +606,6 @@ fn bench_kzg_verifier(c: &mut Criterion) {
     handler.compile(&sizes);
     let inputs = kzg_inputs();
 
-    // Extract public inputs (private params are poly_coeffs, srs_g1)
-    let public_inputs = inputs
-        .clone()
-        .into_iter()
-        .filter(|(vid, _)| vid.0 != "poly_coeffs" && vid.0 != "srs_g1")
-        .collect::<Ctx<Vid, Value<ArkBls12_381>>>();
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
     group.bench_function("verifier", |b| {
@@ -595,9 +613,8 @@ fn bench_kzg_verifier(c: &mut Criterion) {
             let mut verifier_handler: ZippelHandler<ArkBls12_381> =
                 ZippelHandler::new(ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel")));
             verifier_handler.compile(&sizes);
-            verifier_handler.set_public_inputs(public_inputs.clone());
             verifier_handler
-                .run_verifier(&proof)
+                .run_verifier(&proof, &inputs)
                 .expect("run_verifier failed")
         });
     });

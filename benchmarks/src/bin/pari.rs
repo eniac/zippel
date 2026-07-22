@@ -16,7 +16,7 @@ struct Args {
     /// log_2 of the number of constraints (K = 2^M).
     #[arg(long, default_value_t = DEFAULT_M_LOG)]
     m: usize,
-    /// Number of public input variables (includes the implicit constant 1).
+    /// Number of instance input variables (includes the implicit constant 1).
     #[arg(long, default_value_t = DEFAULT_N_PUB)]
     n: usize,
     /// Total number of variables (`num_vars = 2*n + m_witness`). With the

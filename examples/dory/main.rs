@@ -32,7 +32,9 @@ fn main() {
     println!("Generating default schedule for verifier...");
     println!("Running verifier...");
     let verifier_start = Instant::now();
-    let verifier_result = handler.run_verifier(&proof).expect("run_verifier failed");
+    let verifier_result = handler
+        .run_verifier(&proof, &inputs)
+        .expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     let passed = check_verification(&verifier_result);
     println!("Verifier time:  {verifier_elapsed:.2?}");

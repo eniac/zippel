@@ -482,7 +482,7 @@ mod tests {
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_p = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 2), Qualifier::Private);
+        let var_p = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 2), Qualifier::Witness);
         ideal.register(&var_p);
 
         let op: GOp<ArkBls12_381> = Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 2));
@@ -507,7 +507,7 @@ mod tests {
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_p = Var::from_node(NodeIndex::new(0), ATyp::Mle(3), Qualifier::Private);
+        let var_p = Var::from_node(NodeIndex::new(0), ATyp::Mle(3), Qualifier::Witness);
         ideal.register(&var_p);
 
         let op: GOp<ArkBls12_381> = Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(3));
@@ -524,7 +524,7 @@ mod tests {
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
 
-        let src = Var::from_node(NodeIndex::new(10), ATyp::Mle(1), Qualifier::Private);
+        let src = Var::from_node(NodeIndex::new(10), ATyp::Mle(1), Qualifier::Witness);
         let g0 = Polynomial::<ark_bls12_381::Fr>::var(&src.clone().with_index(0).unwrap());
         let g1 = Polynomial::<ark_bls12_381::Fr>::var(&src.clone().with_index(1).unwrap());
         let lifted = PolySource::<ArkBls12_381> {
@@ -550,7 +550,7 @@ mod tests {
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Private);
+        let var = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Witness);
         ideal.register(&var);
         let src = PolySource::<ArkBls12_381>::from_ref_vars(
             &ideal.vars,
@@ -583,7 +583,7 @@ mod tests {
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var = Var::from_node(NodeIndex::new(0), ATyp::Mle(2), Qualifier::Private);
+        let var = Var::from_node(NodeIndex::new(0), ATyp::Mle(2), Qualifier::Witness);
         ideal.register(&var);
         let src = PolySource::<ArkBls12_381>::from_ref_vars(
             &ideal.vars,
@@ -616,7 +616,7 @@ mod tests {
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 2), Qualifier::Private);
+        let var = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 2), Qualifier::Witness);
         ideal.register(&var);
         let src = PolySource::<ArkBls12_381>::from_ref_vars(
             &ideal.vars,
@@ -648,7 +648,7 @@ mod tests {
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 2), Qualifier::Private);
+        let var = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 2), Qualifier::Witness);
         ideal.register(&var);
         let src = PolySource::<ArkBls12_381>::from_ref_vars(
             &ideal.vars,
@@ -743,7 +743,7 @@ mod tests {
         use petgraph::graph::NodeIndex;
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Private);
+        let var = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Witness);
         ideal.register(&var);
         let src = PolySource::<ArkBls12_381>::from_ref_vars(
             &ideal.vars,
@@ -775,10 +775,10 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let var_src = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Private);
+        let var_src = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Witness);
         ideal.register(&var_src);
 
-        let var_dst = Var::from_node(NodeIndex::new(1), ATyp::Uni(4), Qualifier::Private);
+        let var_dst = Var::from_node(NodeIndex::new(1), ATyp::Uni(4), Qualifier::Witness);
         ideal.register(&var_dst);
 
         builder.add_op(
@@ -820,7 +820,7 @@ mod tests {
         let scalar_poly = Polynomial::<ark_bls12_381::Fr>::var(&Var::from_node(
             petgraph::graph::NodeIndex::new(0),
             ATyp::scalar(),
-            lang::typ::Qualifier::Private,
+            lang::typ::Qualifier::Witness,
         ));
         let src = PolySource::<ArkBls12_381>::new(vec![scalar_poly.clone()], ATyp::scalar());
         let broadcast = src.broadcast_scalar_to(&ATyp::VPoly(2, 2));

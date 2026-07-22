@@ -583,7 +583,7 @@ use crate::{
 
 #[test]
 fn proto_easy() {
-    let ex = "proto test<F: Field>(public a: F) where a == a { verify(a == a) }";
+    let ex = "proto test<F: Field>(instance a: F) where a == a { verify(a == a) }";
 
     let pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
     UDecl::from_pest(&mut pairs.into_iter()).unwrap();
@@ -592,7 +592,7 @@ fn proto_easy() {
 #[test]
 fn proto_parser() {
     let ex = concat!(
-        "proto test<F: Field>(public a: F) where a == a {\n",
+        "proto test<F: Field>(instance a: F) where a == a {\n",
         "    let x = 3*a;\n",
         "    verify(x == x)\n",
         "}"
@@ -603,7 +603,7 @@ fn proto_parser() {
         UDecl::proto(
             Vid::from("test"),
             TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
-            GArgs::from([GArg::public("a", GTyp::varstr("F"))]),
+            GArgs::from([GArg::instance("a", GTyp::varstr("F"))]),
             UExp::assert_eq(UExp::varstr("a"), UExp::varstr("a")),
             UExp::letx(
                 Vid::from("x"),
@@ -617,7 +617,7 @@ fn proto_parser() {
 #[test]
 fn fn_parser1() {
     let ex = concat!(
-        "fn test<F: Field, N: 0..10>(private a: [F; N]) -> F {\n",
+        "fn test<F: Field, N: 0..10>(witness a: [F; N]) -> F {\n",
         "    let x = 3*a[0];\n",
         "    x + x\n",
         "}"
@@ -638,7 +638,7 @@ fn fn_parser1() {
                     })
                 )
             ]),
-            GArgs::from([GArg::private(
+            GArgs::from([GArg::witness(
                 "a",
                 GTyp::vec(&GTyp::varstr("F"), Size::from("N"))
             )]),
@@ -655,7 +655,7 @@ fn fn_parser1() {
 #[test]
 fn fn_parser2() {
     let ex = concat!(
-        "fn test<F: Field>(public a: F) -> F {\n",
+        "fn test<F: Field>(instance a: F) -> F {\n",
         "    let v = [1,2,3];\n",
         "    p <- interpolate([0,1,2], v * [0,1,2]);\n",
         "    x <- challenge<F>;\n",
@@ -668,7 +668,7 @@ fn fn_parser2() {
         UDecl::func(
             Vid::from("test"),
             TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
-            GArgs::from([GArg::public("a", GTyp::varstr("F"))]),
+            GArgs::from([GArg::instance("a", GTyp::varstr("F"))]),
             GTyp::varstr("F"),
             UExp::letx(
                 Vid::from("v"),
@@ -695,7 +695,7 @@ fn fn_parser2() {
 
 #[test]
 fn fn_default_unit_return() {
-    let ex = "fn test<F: Field>(public a: F) { verify(a == a) }";
+    let ex = "fn test<F: Field>(instance a: F) { verify(a == a) }";
     let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
     let decl = UDecl::from_pest(&mut pairs).unwrap();
     assert_eq!(decl.sig.ret, GTyp::unit());
@@ -704,7 +704,7 @@ fn fn_default_unit_return() {
 #[test]
 fn proto_where_with_let() {
     let ex = concat!(
-        "proto test<F: Field>(public a: F, public b: F) ",
+        "proto test<F: Field>(instance a: F, instance b: F) ",
         "where let x = a + b; x == x { verify(a == a) }"
     );
     let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
@@ -714,11 +714,11 @@ fn proto_where_with_let() {
 #[test]
 fn decls_parser() {
     let ex = concat!(
-        "proto test<F: Field>(public a: F) where a == a {\n",
+        "proto test<F: Field>(instance a: F) where a == a {\n",
         "    let x = 3*a;\n",
         "    verify(x == x)\n",
         "}\n",
-        "fn test<F: Field, N: 0..10>(public a: [F; N]) -> F {\n",
+        "fn test<F: Field, N: 0..10>(instance a: [F; N]) -> F {\n",
         "    let x = 3*a[0];\n",
         "    x + x\n",
         "}"
@@ -730,7 +730,7 @@ fn decls_parser() {
             UDecl::proto(
                 Vid::from("test"),
                 TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
-                GArgs::from([GArg::public("a", GTyp::varstr("F"))]),
+                GArgs::from([GArg::instance("a", GTyp::varstr("F"))]),
                 UExp::assert_eq(UExp::varstr("a"), UExp::varstr("a")),
                 UExp::letx(
                     Vid::from("x"),
@@ -751,7 +751,7 @@ fn decls_parser() {
                         })
                     ),
                 ]),
-                GArgs::from([GArg::public(
+                GArgs::from([GArg::instance(
                     "a",
                     GTyp::vec(&GTyp::varstr("F"), Size::from("N"))
                 )]),
@@ -770,7 +770,7 @@ fn decls_parser() {
 fn proto_where_eq_no_cont() {
     // where a == a  →  Assert(a, a)  (no continuation, no Unit)
     let ex = concat!(
-        "proto test<F: Field>(public a: F) ",
+        "proto test<F: Field>(instance a: F) ",
         "where a == a { verify(a == a) }"
     );
     let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
@@ -790,7 +790,7 @@ fn proto_where_eq_no_cont() {
 fn proto_where_eq_with_cont() {
     // where a == a; b == b  →  seq(Assert(a, a), Assert(b, b))
     let ex = concat!(
-        "proto test<F: Field>(public a: F, public b: F) ",
+        "proto test<F: Field>(instance a: F, instance b: F) ",
         "where a == a; b == b { verify(a == a) }"
     );
     let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
@@ -814,7 +814,7 @@ fn proto_where_let_then_eq_with_cont() {
     // where let x = a + b; x == x; a == b
     // →  Let(x, a+b, seq(Assert(x, x), Assert(a, b)))
     let ex = concat!(
-        "proto test<F: Field>(public a: F, public b: F) ",
+        "proto test<F: Field>(instance a: F, instance b: F) ",
         "where let x = a + b; x == x; a == b { verify(a == a) }"
     );
     let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
@@ -841,7 +841,7 @@ fn proto_where_let_then_eq_with_cont() {
 fn proto_body_trailing_semicolon() {
     // verify(a == a);  — trailing semicolon in proto body
     let ex = concat!(
-        "proto test<F: Field>(public a: F) ",
+        "proto test<F: Field>(instance a: F) ",
         "where a == a { verify(a == a); }"
     );
     let result = ZippelParser::parse(Rule::decl, ex);
@@ -855,7 +855,7 @@ fn proto_body_trailing_semicolon() {
 fn where_clause_trailing_semicolon() {
     // where a == b;  — trailing semicolon in where clause
     let ex = concat!(
-        "proto test<F: Field>(public a: F, public b: F) ",
+        "proto test<F: Field>(instance a: F, instance b: F) ",
         "where a == b; { verify(a == a) }"
     );
     let result = ZippelParser::parse(Rule::decl, ex);
@@ -869,7 +869,7 @@ fn where_clause_trailing_semicolon() {
 fn where_let_trailing_semicolon() {
     // where let x = a + a;  — trailing semicolon after let in where
     let ex = concat!(
-        "proto test<F: Field>(public a: F) ",
+        "proto test<F: Field>(instance a: F) ",
         "where let x = a + a; { verify(a == a) }"
     );
     let result = ZippelParser::parse(Rule::decl, ex);
@@ -886,8 +886,8 @@ fn where_let_trailing_semicolon() {
 fn fn_call_in_where_clause() {
     // fn double(x) -> x + x;  proto where double(a) == a + a
     let ex = concat!(
-        "fn double<F: Field>(public x: F) -> F { x + x }",
-        "proto test<F: Field>(public a: F) ",
+        "fn double<F: Field>(instance x: F) -> F { x + x }",
+        "proto test<F: Field>(instance a: F) ",
         "where double(a) == a + a { verify(a == a) }"
     );
     let result = ZippelParser::parse(Rule::decls, ex);

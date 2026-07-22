@@ -204,7 +204,7 @@ impl<T: Clone> From<Vec<(Tid, T)>> for Substs<T> {
 use crate::ast::decl::Decl;
 #[test]
 fn size_substs_from_typevars() {
-    let decl = Decl::from_str("fn test<N: 0..4, M: 1..3>(public a: N) -> N { 1 }").unwrap();
+    let decl = Decl::from_str("fn test<N: 0..4, M: 1..3>(instance a: N) -> N { 1 }").unwrap();
     assert_eq!(
         SizeSubsts::from_typevars(&decl.sig.typevars, &Ctx::new()).unwrap(),
         Set::from(vec![
@@ -223,7 +223,7 @@ fn size_substs_from_typevars() {
 #[test]
 fn size_substs_pinning() {
     // Pin N=2 within range 0..4 — should produce only N=2 combinations
-    let decl = Decl::from_str("fn test<N: 0..4, M: 1..3>(public a: N) -> N { 1 }").unwrap();
+    let decl = Decl::from_str("fn test<N: 0..4, M: 1..3>(instance a: N) -> N { 1 }").unwrap();
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::from("N"), &2);
     assert_eq!(
@@ -238,7 +238,7 @@ fn size_substs_pinning() {
 #[test]
 fn size_substs_dependent_range_from_singleton_typevar() {
     let decl = Decl::from_str(
-        "fn test<F: Field, NUM_VARS_CONST: 10, V: 2..NUM_VARS_CONST>(public a: [F; V]) -> F { a[0] }",
+        "fn test<F: Field, NUM_VARS_CONST: 10, V: 2..NUM_VARS_CONST>(instance a: [F; V]) -> F { a[0] }",
     )
     .unwrap();
 
@@ -257,7 +257,7 @@ fn size_substs_dependent_range_from_singleton_typevar() {
 #[test]
 fn size_substs_pinning_out_of_range() {
     // Pin N=10 outside range 0..4 — should error
-    let decl = Decl::from_str("fn test<N: 0..4>(public a: N) -> N { 1 }").unwrap();
+    let decl = Decl::from_str("fn test<N: 0..4>(instance a: N) -> N { 1 }").unwrap();
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::from("N"), &10);
     assert_eq!(

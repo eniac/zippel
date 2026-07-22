@@ -54,13 +54,13 @@ pub fn scalar_poly_binop_ideal(
     let mut ideal = Ideal::<ArkBls12_381>::new();
 
     let scalar_typ = ATyp::scalar();
-    let var_s = Var::from_node(NodeIndex::new(0), scalar_typ.clone(), Qualifier::Public);
+    let var_s = Var::from_node(NodeIndex::new(0), scalar_typ.clone(), Qualifier::Instance);
     ideal.register(&var_s);
 
-    let var_p = Var::from_node(NodeIndex::new(1), poly_typ.clone(), Qualifier::Public);
+    let var_p = Var::from_node(NodeIndex::new(1), poly_typ.clone(), Qualifier::Instance);
     ideal.register(&var_p);
 
-    let var_r = Var::from_node(NodeIndex::new(2), poly_typ.clone(), Qualifier::Public);
+    let var_r = Var::from_node(NodeIndex::new(2), poly_typ.clone(), Qualifier::Instance);
     ideal.register(&var_r);
 
     let scalar_op = mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), scalar_typ));

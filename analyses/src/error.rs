@@ -51,7 +51,7 @@ pub enum AnalysisError<C: ArkConfig> {
     #[error("Incomplete protocol: {0}")]
     Incomplete(Polynomial<C::F>),
 
-    /// A polynomial relating public and private variables, leaking knowledge.
+    /// A polynomial relating instance and witness variables, leaking knowledge.
     #[error("Knowledge leak: {0}")]
     KnowledgeLeak(Polynomial<C::F>),
 

@@ -119,7 +119,7 @@ pub mod zippel_side {
                 let t = Instant::now();
                 let verifier_result = self
                     .handler
-                    .run_verifier(&proof_c)
+                    .run_verifier(&proof_c, &self.inputs)
                     .expect("zippel hyrax verifier failed");
                 verify_sum += t.elapsed();
                 last_result = Some(verifier_result);
@@ -160,11 +160,11 @@ pub mod zippel_side {
         let ncols = 1usize << m;
         let ntot = nrows * ncols;
         format!(
-            r#"fn eq_weights<G: Group, F: Scalar<G>>(public x: [F; 1]) -> [F; 2] {{
+            r#"fn eq_weights<G: Group, F: Scalar<G>>(instance x: [F; 1]) -> [F; 2] {{
     [ (1 - x[0]), x[0] ]
 }}
 
-fn eq_weights<G: Group, F: Scalar<G>, K: 2..21>(public x: [F; K]) -> [F; 2^K] {{
+fn eq_weights<G: Group, F: Scalar<G>, K: 2..21>(instance x: [F; K]) -> [F; 2^K] {{
     let x_lo = x[0..(K-1)];
     let a    = x[K-1];
     let prev = eq_weights(x_lo);
@@ -172,13 +172,13 @@ fn eq_weights<G: Group, F: Scalar<G>, K: 2..21>(public x: [F; K]) -> [F; 2^K] {{
 }}
 
 proto hyrax<G: Group, F: Scalar<G>>(
-    private p:     [F; {ntot}],
-    public z_row:  [F; {l}],
-    public z_col:  [F; {m}],
-    public y:      F,
-    public g_vec:  [G; {ncols}],
-    public g_base: G,
-    public h_base: G
+    witness p:     [F; {ntot}],
+    instance z_row:  [F; {l}],
+    instance z_col:  [F; {m}],
+    instance y:      F,
+    instance g_vec:  [G; {ncols}],
+    instance g_base: G,
+    instance h_base: G
 ) where
     // Hyrax proves y == p̃(z_row, z_col), where p̃ is the multilinear
     // extension of `p` indexed row-major as a {nrows}×{ncols} matrix.

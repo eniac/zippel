@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_sig_unify_success() {
-        let sig = make_csig("fn foo<T: Field>(public x: T) -> T { x }");
+        let sig = make_csig("fn foo<T: Field>(instance x: T) -> T { x }");
 
         let t_f = Tid::from("F");
         let arg_typ = CTyp::base(&t_f);
@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn test_sig_unify_arity_mismatch() {
-        let sig = make_csig("fn foo<T: Field>(public x: T) -> T { x }");
+        let sig = make_csig("fn foo<T: Field>(instance x: T) -> T { x }");
         let kctx = Ctx::new();
         let res = sig.clone().unify(&Typs(vec![]), &kctx);
         assert_eq!(res, Err(SigError::ArityMismatch(1, 0)));
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn test_sig_unify_type_mismatch() {
-        let sig = make_csig("fn foo<T: Group>(public x: T) -> T { x }");
+        let sig = make_csig("fn foo<T: Group>(instance x: T) -> T { x }");
 
         let t_f = Tid::from("F");
         let arg_typ = CTyp::base(&t_f);
@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn test_sig_helpers() {
-        let mut sig = make_csig("fn foo<T: Field>(public x: T) -> T { x }");
+        let mut sig = make_csig("fn foo<T: Field>(instance x: T) -> T { x }");
         sig.tid_subst(&Tid::from("T"), &Tid::from("U"));
         assert_eq!(sig.ret, CTyp::base(&Tid::from("U")));
 

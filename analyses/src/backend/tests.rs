@@ -17,7 +17,7 @@ mod backend_tests {
             name.to_string(),
             NodeIndex::new(idx),
             ATyp::scalar(),
-            Qualifier::Public,
+            Qualifier::Instance,
         )
     }
 
@@ -115,7 +115,7 @@ mod singular_tests {
             name.to_string(),
             NodeIndex::new(idx),
             ATyp::scalar(),
-            Qualifier::Public,
+            Qualifier::Instance,
         )
     }
 

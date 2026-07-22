@@ -40,35 +40,35 @@ fn generate_proto(m: usize) -> String {
     assert_eq!(nrows * ncols, two_nw);
 
     format!(
-        r"fn eq_weights<G: Group, F: Scalar<G>>(public x: [F; 1]) -> [F; 2] {{
+        r"fn eq_weights<G: Group, F: Scalar<G>>(instance x: [F; 1]) -> [F; 2] {{
     [(1 - x[0]), x[0]]
 }}
-fn eq_weights<G: Group, F: Scalar<G>, EK: 2..21>(public x: [F; EK]) -> [F; 2^EK] {{
+fn eq_weights<G: Group, F: Scalar<G>, EK: 2..21>(instance x: [F; EK]) -> [F; 2^EK] {{
     let x_lo = x[0..(EK-1)];
     let a    = x[EK-1];
     let prev = eq_weights(x_lo);
     (prev * (1 - a)) ++ (prev * a)
 }}
 
-fn draw_taus<G: Group, F: Scalar<G>>(public placeholder: [F; 1]) -> [F; 1] {{
+fn draw_taus<G: Group, F: Scalar<G>>(instance placeholder: [F; 1]) -> [F; 1] {{
     t <- challenge<F>;
     [t]
 }}
-fn draw_taus<G: Group, F: Scalar<G>, DK: 2..21>(public placeholder: [F; DK]) -> [F; DK] {{
+fn draw_taus<G: Group, F: Scalar<G>, DK: 2..21>(instance placeholder: [F; DK]) -> [F; DK] {{
     let prev = draw_taus(placeholder[0..(DK-1)]);
     t <- challenge<F>;
     prev ++ [t]
 }}
 
 fn sc_recurse_d3<G: Group, F: Scalar<G>, SC: Size, V: 2..SC>(
-    public curr_poly:       Poly<F, V, 3>,
-    public points:          [F; 4],
-    public prev_challenges: [F; SC - V],
-    public prev_eval:       F,
-    public round_challenge: F,
-    public curr_round:      Fin<SC>,
-    public g_evs_d3:        [G; 4],
-    public h_evs:           G
+    instance curr_poly:       Poly<F, V, 3>,
+    instance points:          [F; 4],
+    instance prev_challenges: [F; SC - V],
+    instance prev_eval:       F,
+    instance round_challenge: F,
+    instance curr_round:      Fin<SC>,
+    instance g_evs_d3:        [G; 4],
+    instance h_evs:           G
 ) -> {{ final_eval: F, challenges: [F; SC] }} {{
     let cfg = {{| poly: curr_poly, num_variables: SC, max_degree: 3, round: curr_round, challenge: round_challenge |}};
     let out = marginalize(cfg);
@@ -100,14 +100,14 @@ fn sc_recurse_d3<G: Group, F: Scalar<G>, SC: Size, V: 2..SC>(
     sc_recurse_d3(out.next_poly, points, new_challenges, next_prev, r_next, curr_round + 1, g_evs_d3, h_evs)
 }}
 fn sc_recurse_d3<G: Group, F: Scalar<G>, SC: Size>(
-    public curr_poly:       Poly<F, 1, 3>,
-    public points:          [F; 4],
-    public prev_challenges: [F; SC - 1],
-    public prev_eval:       F,
-    public round_challenge: F,
-    public curr_round:      Fin<SC>,
-    public g_evs_d3:        [G; 4],
-    public h_evs:           G
+    instance curr_poly:       Poly<F, 1, 3>,
+    instance points:          [F; 4],
+    instance prev_challenges: [F; SC - 1],
+    instance prev_eval:       F,
+    instance round_challenge: F,
+    instance curr_round:      Fin<SC>,
+    instance g_evs_d3:        [G; 4],
+    instance h_evs:           G
 ) -> {{ final_eval: F, challenges: [F; SC] }} {{
     let cfg = {{| poly: curr_poly, num_variables: SC, max_degree: 3, round: curr_round, challenge: round_challenge |}};
     let out = marginalize(cfg);
@@ -139,14 +139,14 @@ fn sc_recurse_d3<G: Group, F: Scalar<G>, SC: Size>(
 }}
 
 fn sc_recurse_d2<G: Group, F: Scalar<G>, SC: Size, V: 2..SC>(
-    public curr_poly:       Poly<F, V, 2>,
-    public points:          [F; 3],
-    public prev_challenges: [F; SC - V],
-    public prev_eval:       F,
-    public round_challenge: F,
-    public curr_round:      Fin<SC>,
-    public g_evs_d2:        [G; 3],
-    public h_evs:           G
+    instance curr_poly:       Poly<F, V, 2>,
+    instance points:          [F; 3],
+    instance prev_challenges: [F; SC - V],
+    instance prev_eval:       F,
+    instance round_challenge: F,
+    instance curr_round:      Fin<SC>,
+    instance g_evs_d2:        [G; 3],
+    instance h_evs:           G
 ) -> {{ final_eval: F, challenges: [F; SC] }} {{
     let cfg = {{| poly: curr_poly, num_variables: SC, max_degree: 2, round: curr_round, challenge: round_challenge |}};
     let out = marginalize(cfg);
@@ -178,14 +178,14 @@ fn sc_recurse_d2<G: Group, F: Scalar<G>, SC: Size, V: 2..SC>(
     sc_recurse_d2(out.next_poly, points, new_challenges, next_prev, r_next, curr_round + 1, g_evs_d2, h_evs)
 }}
 fn sc_recurse_d2<G: Group, F: Scalar<G>, SC: Size>(
-    public curr_poly:       Poly<F, 1, 2>,
-    public points:          [F; 3],
-    public prev_challenges: [F; SC - 1],
-    public prev_eval:       F,
-    public round_challenge: F,
-    public curr_round:      Fin<SC>,
-    public g_evs_d2:        [G; 3],
-    public h_evs:           G
+    instance curr_poly:       Poly<F, 1, 2>,
+    instance points:          [F; 3],
+    instance prev_challenges: [F; SC - 1],
+    instance prev_eval:       F,
+    instance round_challenge: F,
+    instance curr_round:      Fin<SC>,
+    instance g_evs_d2:        [G; 3],
+    instance h_evs:           G
 ) -> {{ final_eval: F, challenges: [F; SC] }} {{
     let cfg = {{| poly: curr_poly, num_variables: SC, max_degree: 2, round: curr_round, challenge: round_challenge |}};
     let out = marginalize(cfg);
@@ -216,10 +216,10 @@ fn sc_recurse_d2<G: Group, F: Scalar<G>, SC: Size>(
     {{| final_eval: final_eval, challenges: prev_challenges ++ [r_final] |}}
 }}
 
-fn compute_s_vec<G: Group, F: Scalar<G>>(public c: [F; 1], public c_inv: [F; 1]) -> [F; 2] {{
+fn compute_s_vec<G: Group, F: Scalar<G>>(instance c: [F; 1], instance c_inv: [F; 1]) -> [F; 2] {{
     [c_inv[0], c[0]]
 }}
-fn compute_s_vec<G: Group, F: Scalar<G>, K: 2..21>(public c: [F; K], public c_inv: [F; K]) -> [F; 2^K] {{
+fn compute_s_vec<G: Group, F: Scalar<G>, K: 2..21>(instance c: [F; K], instance c_inv: [F; K]) -> [F; 2^K] {{
     let curr_c = c[0];
     let curr_c_inv = c_inv[0];
     let c_rest = c[1..K];
@@ -229,13 +229,13 @@ fn compute_s_vec<G: Group, F: Scalar<G>, K: 2..21>(public c: [F; K], public c_in
 }}
 
 fn bullet_collect<G: Group, F: Scalar<G>>(
-    public g_base: G,
-    public h_base: G,
-    private g_folded: [G; 2],
-    private a_folded: [F; 2],
-    private x_folded: [F; 2],
-    private y_folded: F,
-    private r_Upsilon_folded: F
+    instance g_base: G,
+    instance h_base: G,
+    witness g_folded: [G; 2],
+    witness a_folded: [F; 2],
+    witness x_folded: [F; 2],
+    witness y_folded: F,
+    witness r_Upsilon_folded: F
 ) -> {{ challenges: [F; 1], challenges_inv: [F; 1], Ls: [G; 1], Rs: [G; 1], final_x: F, final_y: F, final_r: F }} {{
     let x_1 = x_folded[0..1];
     let x_2 = x_folded[1..2];
@@ -268,13 +268,13 @@ fn bullet_collect<G: Group, F: Scalar<G>>(
 }}
 
 fn bullet_collect<G: Group, F: Scalar<G>, S: Size, N: 2..S+1>(
-    public g_base: G,
-    public h_base: G,
-    private g_folded: [G; 2^N],
-    private a_folded: [F; 2^N],
-    private x_folded: [F; 2^N],
-    private y_folded: F,
-    private r_Upsilon_folded: F
+    instance g_base: G,
+    instance h_base: G,
+    witness g_folded: [G; 2^N],
+    witness a_folded: [F; 2^N],
+    witness x_folded: [F; 2^N],
+    witness y_folded: F,
+    witness r_Upsilon_folded: F
 ) -> {{ challenges: [F; N], challenges_inv: [F; N], Ls: [G; N], Rs: [G; N], final_x: F, final_y: F, final_r: F }} {{
     let x_1 = x_folded[0..2^(N-1)];
     let x_2 = x_folded[2^(N-1)..2^N];
@@ -310,22 +310,22 @@ fn bullet_collect<G: Group, F: Scalar<G>, S: Size, N: 2..S+1>(
 }}
 
 proto spartan<G: Group, F: Scalar<G>>(
-    public mat_a_t:   Poly<F, {two_m_vars}, 1>,
-    public mat_b_t:   Poly<F, {two_m_vars}, 1>,
-    public mat_c_t:   Poly<F, {two_m_vars}, 1>,
-    public io:        [F; {io_len}],
-    private w:        [F; {two_nw}],
-    private az:       [F; {two_m}],
-    private bz:       [F; {two_m}],
-    private cz:       [F; {two_m}],
-    public g_vec_w:   [G; {ncols}],
-    public g_base_w:  G,
-    public h_base_w:  G,
-    public g_evs_d3:  [G; 4],
-    public g_evs_d2:  [G; 3],
-    public h_evs:     G,
-    public placeholder_tau: [F; {m_lit}],
-    public f_one:     F
+    instance mat_a_t:   Poly<F, {two_m_vars}, 1>,
+    instance mat_b_t:   Poly<F, {two_m_vars}, 1>,
+    instance mat_c_t:   Poly<F, {two_m_vars}, 1>,
+    instance io:        [F; {io_len}],
+    witness w:        [F; {two_nw}],
+    witness az:       [F; {two_m}],
+    witness bz:       [F; {two_m}],
+    witness cz:       [F; {two_m}],
+    instance g_vec_w:   [G; {ncols}],
+    instance g_base_w:  G,
+    instance h_base_w:  G,
+    instance g_evs_d3:  [G; 4],
+    instance g_evs_d2:  [G; 3],
+    instance h_evs:     G,
+    instance placeholder_tau: [F; {m_lit}],
+    instance f_one:     F
 ) where
     az * bz == cz
 {{

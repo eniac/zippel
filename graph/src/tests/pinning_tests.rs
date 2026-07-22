@@ -65,27 +65,27 @@ fn expected_rel(g: &mut UDag<B>, name: &str, args: &[ArgSpec]) -> (NodeIndex, Ve
 }
 
 /// Per-test arg-spec helpers used by the transformed test bodies.
-fn pub_s(name: &str) -> ArgSpec {
+fn instance_s(name: &str) -> ArgSpec {
     (
         Vid::new(name),
         ATyp::scalar(),
-        Qualifier::Public,
+        Qualifier::Instance,
         Distribution::Nonuniform,
     )
 }
-fn priv_s(name: &str) -> ArgSpec {
+fn witness_s(name: &str) -> ArgSpec {
     (
         Vid::new(name),
         ATyp::scalar(),
-        Qualifier::Private,
+        Qualifier::Witness,
         Distribution::Nonuniform,
     )
 }
-fn pub_t(name: &str, typ: ATyp) -> ArgSpec {
+fn instance_t(name: &str, typ: ATyp) -> ArgSpec {
     (
         Vid::new(name),
         typ,
-        Qualifier::Public,
+        Qualifier::Instance,
         Distribution::Nonuniform,
     )
 }
@@ -119,12 +119,12 @@ fn pin_func_lit_in_binop() {
     // `a + 1` exercises CExp::Lit(1) as an operand in a Bin expression.
     // `1` alone can also be returned from `-> F` now that the body return
     // check uses `lub_equ` instead of strict `==`; see `pin_func_lit_return`.
-    let gs = parse_and_build("fn f<F: Field>(public a: F) -> F { a + 1 }");
+    let gs = parse_and_build("fn f<F: Field>(instance a: F) -> F { a + 1 }");
 
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let s = ATyp::scalar();
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a")]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a")]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, s.clone());
     let lit_1 = GOp::<B>::Value(backend::Value::Index(1));
@@ -139,11 +139,11 @@ fn pin_func_lit_in_binop() {
 /// `add_top_exp` short-circuits and emits no `Ret` node.
 #[test]
 fn pin_func_var() {
-    let gs = parse_and_build("fn f<F: Field>(public a: F) -> F { a }");
+    let gs = parse_and_build("fn f<F: Field>(instance a: F) -> F { a }");
 
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a")]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a")]);
     let _arg_a = _inp_args[0];
     // Body `a` resolves to a Ref → add_top_exp does not add a Ret
     // (`if !op.is_ref() { add Ret }` short-circuits).
@@ -158,7 +158,7 @@ fn pin_func_var() {
 #[test]
 fn pin_proto_simple() {
     let src = r#"
-        proto foo<F: Field>(private s: F) where s == s {
+        proto foo<F: Field>(witness s: F) where s == s {
             verify(s == s)
         }
     "#;
@@ -168,7 +168,7 @@ fn pin_proto_simple() {
     let s = Vid::new("s");
 
     // Body: Inp + Verify(var_s, var_s) + Ret(Lit(0))
-    let (_inp, _inp_args) = expected_inp(&mut expected, "foo", &[priv_s("s")]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "foo", &[witness_s("s")]);
     let arg_s = _inp_args[0];
     let var_s_body = GOp::<B>::var(&s, arg_s, ATyp::scalar());
 
@@ -182,7 +182,7 @@ fn pin_proto_simple() {
     expected.add_edges(DepType::Data, ret, unit);
 
     // Relation: Rel + Assert(var_s_rel, var_s_rel)
-    let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[priv_s("s")]);
+    let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[witness_s("s")]);
     let rel_arg_s = _rel_args[0];
     let var_s_rel = GOp::<B>::var(&s, rel_arg_s, ATyp::scalar());
     let check_rel = expected.add_node(Node::assert(&var_s_rel, &var_s_rel));
@@ -200,7 +200,7 @@ fn pin_proto_simple() {
 #[test]
 fn pin_range() {
     let src = r#"
-        fn f<F: Field>(public a: [F; 10]) -> [F; 5] {
+        fn f<F: Field>(instance a: [F; 10]) -> [F; 5] {
             a[0..5]
         }
     "#;
@@ -210,7 +210,7 @@ fn pin_range() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let vs10 = ATyp::vec_scalar(10);
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", vs10.clone())]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_t("a", vs10.clone())]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, vs10);
     let ram_op = GOp::<B>::ram(var_a, GOp::<B>::range(lang::typ::CRange::new(0, 5)));
@@ -229,7 +229,7 @@ fn pin_range() {
 /// Helper to test a binary operation between two scalar arguments.
 fn assert_binop(op_str: &str, binop: BinOp, result_typ: ATyp) {
     let src = format!(
-        "fn f<F: Field>(public a: F, public b: F) -> F {{ a {} b }}",
+        "fn f<F: Field>(instance a: F, instance b: F) -> F {{ a {} b }}",
         op_str
     );
     let gs = parse_and_build(&src);
@@ -237,7 +237,7 @@ fn assert_binop(op_str: &str, binop: BinOp, result_typ: ATyp) {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let b = Vid::new("b");
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a"), instance_s("b")]);
     let arg_a = _inp_args[0];
     let arg_b = _inp_args[1];
     let var_a = GOp::<B>::var(&a, arg_a, ATyp::scalar());
@@ -277,11 +277,11 @@ fn pin_bin_div() {
 /// Tests: CExp::Random, Node::random.
 #[test]
 fn pin_random() {
-    let src = "fn f<F: Field>(public a: F) -> F { random<F> }";
+    let src = "fn f<F: Field>(instance a: F) -> F { random<F> }";
     let gs = parse_and_build(src);
 
     let mut expected = UDag::<B>::new();
-    let (_inp, __inp_args) = expected_inp(&mut expected, "f", &[pub_s("a")]);
+    let (_inp, __inp_args) = expected_inp(&mut expected, "f", &[instance_s("a")]);
     let _arg_a = __inp_args[0];
     let _rand = expected.add_node(Node::random(&ATyp::scalar(), false));
 
@@ -291,11 +291,11 @@ fn pin_random() {
 /// Random non-zero scalar.
 #[test]
 fn pin_random_nz() {
-    let src = "fn f<F: Field>(public a: F) -> F { random<F*> }";
+    let src = "fn f<F: Field>(instance a: F) -> F { random<F*> }";
     let gs = parse_and_build(src);
 
     let mut expected = UDag::<B>::new();
-    let (_inp, __inp_args) = expected_inp(&mut expected, "f", &[pub_s("a")]);
+    let (_inp, __inp_args) = expected_inp(&mut expected, "f", &[instance_s("a")]);
     let _arg_a = __inp_args[0];
     let _rand = expected.add_node(Node::random(&ATyp::scalar(), true));
 
@@ -306,11 +306,11 @@ fn pin_random_nz() {
 /// Tests: CExp::Challenge, Node::challenge, transcript edge.
 #[test]
 fn pin_challenge() {
-    let src = "fn f<F: Field>(public a: F) -> F { challenge<F> }";
+    let src = "fn f<F: Field>(instance a: F) -> F { challenge<F> }";
     let gs = parse_and_build(src);
 
     let mut expected = UDag::<B>::new();
-    let (inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a")]);
+    let (inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a")]);
     let _arg_a = _inp_args[0];
     let ch = expected.add_node(Node::challenge(&ATyp::scalar(), false));
     expected.add_edge(inp, ch, Dep::transcript());
@@ -321,11 +321,11 @@ fn pin_challenge() {
 /// Challenge non-zero.
 #[test]
 fn pin_challenge_nz() {
-    let src = "fn f<F: Field>(public a: F) -> F { challenge<F*> }";
+    let src = "fn f<F: Field>(instance a: F) -> F { challenge<F*> }";
     let gs = parse_and_build(src);
 
     let mut expected = UDag::<B>::new();
-    let (inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a")]);
+    let (inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a")]);
     let _arg_a = _inp_args[0];
     let ch = expected.add_node(Node::challenge(&ATyp::scalar(), true));
     expected.add_edge(inp, ch, Dep::transcript());
@@ -342,7 +342,7 @@ fn pin_challenge_nz() {
 #[test]
 fn pin_let_named() {
     let src = r#"
-        fn f<F: Field>(public a: F, public b: F) -> F {
+        fn f<F: Field>(instance a: F, instance b: F) -> F {
             let c = a + b;
             c
         }
@@ -354,7 +354,7 @@ fn pin_let_named() {
     let b = Vid::new("b");
     let c = Vid::new("c");
     let s = ATyp::scalar();
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a"), instance_s("b")]);
     let arg_a = _inp_args[0];
     let arg_b = _inp_args[1];
     let var_a = GOp::<B>::var(&a, arg_a, s.clone());
@@ -379,7 +379,7 @@ fn pin_let_named() {
 #[test]
 fn pin_let_anon() {
     let src = r#"
-        fn f<F: Field>(public a: F, public b: F) -> F {
+        fn f<F: Field>(instance a: F, instance b: F) -> F {
             let _ = a + b;
             a * b
         }
@@ -390,7 +390,7 @@ fn pin_let_anon() {
     let a = Vid::new("a");
     let b = Vid::new("b");
     let s = ATyp::scalar();
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a"), instance_s("b")]);
     let arg_a = _inp_args[0];
     let arg_b = _inp_args[1];
     let var_a = GOp::<B>::var(&a, arg_a, s.clone());
@@ -416,7 +416,7 @@ fn pin_let_anon() {
 #[test]
 fn pin_assert() {
     let src = r#"
-        fn f<F: Field>(public a: F, public b: F) -> Unit {
+        fn f<F: Field>(instance a: F, instance b: F) -> Unit {
             assert(a == b)
         }
     "#;
@@ -425,7 +425,7 @@ fn pin_assert() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let b = Vid::new("b");
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a"), instance_s("b")]);
     let arg_a = _inp_args[0];
     let arg_b = _inp_args[1];
     let var_a = GOp::<B>::var(&a, arg_a, ATyp::scalar());
@@ -450,7 +450,7 @@ fn pin_assert() {
 #[test]
 fn pin_verify() {
     let src = r#"
-        fn f<F: Field>(public a: F, public b: F) -> Unit {
+        fn f<F: Field>(instance a: F, instance b: F) -> Unit {
             verify(a == b)
         }
     "#;
@@ -459,7 +459,7 @@ fn pin_verify() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let b = Vid::new("b");
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a"), instance_s("b")]);
     let arg_a = _inp_args[0];
     let arg_b = _inp_args[1];
     let var_a = GOp::<B>::var(&a, arg_a, ATyp::scalar());
@@ -486,7 +486,7 @@ fn pin_verify() {
 #[test]
 fn pin_log_node_ref() {
     let src = r#"
-        proto foo<F: Field>(private s: F) where s == s {
+        proto foo<F: Field>(witness s: F) where s == s {
             a <- s + s;
             verify(a == s)
         }
@@ -498,7 +498,7 @@ fn pin_log_node_ref() {
     let a_vid = Vid::new("a");
 
     // Body
-    let (inp, _inp_args) = expected_inp(&mut expected, "foo", &[priv_s("s")]);
+    let (inp, _inp_args) = expected_inp(&mut expected, "foo", &[witness_s("s")]);
     let arg_s = _inp_args[0];
     let var_s = GOp::<B>::var(&s_vid, arg_s, ATyp::scalar());
 
@@ -526,7 +526,7 @@ fn pin_log_node_ref() {
     expected.add_edges(DepType::Data, ret, unit);
 
     // Relation: Rel + Assert(var_s_rel, var_s_rel)
-    let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[priv_s("s")]);
+    let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[witness_s("s")]);
     let rel_arg_s = _rel_args[0];
     let var_s_rel = GOp::<B>::var(&s_vid, rel_arg_s, ATyp::scalar());
     let check_rel = expected.add_node(Node::assert(&var_s_rel, &var_s_rel));
@@ -541,7 +541,7 @@ fn pin_log_node_ref() {
 #[test]
 fn pin_log_new_transcr() {
     let src = r#"
-        proto foo<F: Field>(private s: F) where s == s {
+        proto foo<F: Field>(witness s: F) where s == s {
             a <- 1;
             verify(s == s)
         }
@@ -553,7 +553,7 @@ fn pin_log_new_transcr() {
     let a_vid = Vid::new("a");
 
     // Body
-    let (inp, _inp_args) = expected_inp(&mut expected, "foo", &[priv_s("s")]);
+    let (inp, _inp_args) = expected_inp(&mut expected, "foo", &[witness_s("s")]);
     let arg_s = _inp_args[0];
 
     // `1` is Value(Index(1)), not a Ref → second branch of Log: creates new Transcr node
@@ -575,7 +575,7 @@ fn pin_log_new_transcr() {
     expected.add_edges(DepType::Data, ret, unit);
 
     // Relation: Rel + Assert(var_s_rel, var_s_rel)
-    let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[priv_s("s")]);
+    let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[witness_s("s")]);
     let rel_arg_s = _rel_args[0];
     let var_s_rel = GOp::<B>::var(&s_vid, rel_arg_s, ATyp::scalar());
     let check_rel = expected.add_node(Node::assert(&var_s_rel, &var_s_rel));
@@ -594,7 +594,7 @@ fn pin_log_new_transcr() {
 #[test]
 fn pin_poly() {
     let src = r#"
-        fn f<F: Field>(public a: [F; 4]) -> Uni<F, 3> {
+        fn f<F: Field>(instance a: [F; 4]) -> Uni<F, 3> {
             poly(a)
         }
     "#;
@@ -603,7 +603,7 @@ fn pin_poly() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let vec_typ = ATyp::vec_scalar(4);
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", vec_typ.clone())]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_t("a", vec_typ.clone())]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, vec_typ);
 
@@ -618,7 +618,7 @@ fn pin_poly() {
 #[test]
 fn pin_coef() {
     let src = r#"
-        fn f<F: Field>(public a: Uni<F, 4>) -> [F; 5] {
+        fn f<F: Field>(instance a: Uni<F, 4>) -> [F; 5] {
             coef(a)
         }
     "#;
@@ -627,7 +627,7 @@ fn pin_coef() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let poly_typ = ATyp::Uni(4);
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", poly_typ.clone())]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_t("a", poly_typ.clone())]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, poly_typ);
 
@@ -645,7 +645,7 @@ fn pin_interpolate() {
     // (4 coefficients under the m+1 convention), so the result type is
     // Uni<F, 3>.
     let src = r#"
-        fn f<F: Field>(public a: [F; 4]) -> Uni<F, 3> {
+        fn f<F: Field>(instance a: [F; 4]) -> Uni<F, 3> {
             interpolate([0,1,2,3], a)
         }
     "#;
@@ -654,7 +654,7 @@ fn pin_interpolate() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let vec_typ = ATyp::vec_scalar(4);
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", vec_typ.clone())]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_t("a", vec_typ.clone())]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, vec_typ);
 
@@ -685,7 +685,7 @@ fn pin_fft() {
     // (pow2 — required for FFT-grid eval to typecheck). eval() returns a
     // length-4 vector matching the coefficient count.
     let src = r#"
-        fn f<F: Field>(public a: Uni<F, 3>) -> [F; 4] {
+        fn f<F: Field>(instance a: Uni<F, 3>) -> [F; 4] {
             eval(a)
         }
     "#;
@@ -694,7 +694,7 @@ fn pin_fft() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let poly_typ = ATyp::Uni(3);
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", poly_typ.clone())]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_t("a", poly_typ.clone())]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, poly_typ);
 
@@ -707,7 +707,7 @@ fn pin_fft() {
 #[test]
 fn grid_eval_let_reuse_materializes_one_node() {
     let src = r#"
-        fn f<F: Field>(public p: Uni<F, 3>) -> F {
+        fn f<F: Field>(instance p: Uni<F, 3>) -> F {
             let evs = eval(p);
             evs[0] + evs[1]
         }
@@ -800,7 +800,7 @@ fn inline_grid_eval_count_inside_consumers(op: &GOp<B>) -> usize {
 #[test]
 fn pin_mle() {
     let src = r#"
-        fn f<F: Field>(public a: [F; 4]) -> Mle<F, 2> {
+        fn f<F: Field>(instance a: [F; 4]) -> Mle<F, 2> {
             mle(a)
         }
     "#;
@@ -809,7 +809,7 @@ fn pin_mle() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let vec_typ = ATyp::vec_scalar(4);
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", vec_typ.clone())]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_t("a", vec_typ.clone())]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, vec_typ);
 
@@ -828,7 +828,7 @@ fn pin_mle() {
 #[test]
 fn pin_vec() {
     let src = r#"
-        fn f<F: Field>(public a: F, public b: F) -> [F; 2] {
+        fn f<F: Field>(instance a: F, instance b: F) -> [F; 2] {
             [a, b]
         }
     "#;
@@ -840,7 +840,7 @@ fn pin_vec() {
     let a = Vid::new("a");
     let b = Vid::new("b");
     let s = ATyp::scalar();
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a"), instance_s("b")]);
     let arg_a = _inp_args[0];
     let arg_b = _inp_args[1];
     let var_a = GOp::<B>::var(&a, arg_a, s.clone());
@@ -861,7 +861,7 @@ fn pin_vec() {
 #[test]
 fn pin_record() {
     let src = r#"
-        fn f<F: Field>(public a: F, public b: F) -> { x: F, y: F } {
+        fn f<F: Field>(instance a: F, instance b: F) -> { x: F, y: F } {
             {| x: a, y: b |}
         }
     "#;
@@ -871,7 +871,7 @@ fn pin_record() {
     // Not a Ref → ret node created
     let mut expected = UDag::<B>::new();
     let s = ATyp::scalar();
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a"), instance_s("b")]);
     let arg_a = _inp_args[0];
     let arg_b = _inp_args[1];
     let var_a = GOp::<B>::var(&Vid::new("a"), arg_a, s.clone());
@@ -893,7 +893,7 @@ fn pin_record() {
 #[test]
 fn pin_proj_record_literal() {
     let src = r#"
-        fn f<F: Field>(public a: F, public b: F) -> F {
+        fn f<F: Field>(instance a: F, instance b: F) -> F {
             {| x: a, y: b |}.x
         }
     "#;
@@ -902,7 +902,7 @@ fn pin_proj_record_literal() {
     // { x: a, y: b }.x reduces directly to `a`, which is a Ref → no Ret.
     let mut expected = UDag::<B>::new();
     let _a = Vid::new("a");
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a"), instance_s("b")]);
 
     assert!(gs[0] == expected);
 }
@@ -916,8 +916,8 @@ fn pin_proj_record_literal() {
 #[test]
 fn pin_app_function() {
     let src = r#"
-        fn double<F: Field>(public x: F) -> F { x + x }
-        fn f<F: Field>(public a: F) -> F { double(a) }
+        fn double<F: Field>(instance x: F) -> F { x + x }
+        fn f<F: Field>(instance a: F) -> F { double(a) }
     "#;
     let gs = parse_and_build(src);
 
@@ -930,7 +930,7 @@ fn pin_app_function() {
     let mut expected_f = UDag::<B>::new();
     let a = Vid::new("a");
     let s = ATyp::scalar();
-    let (_inp, _inp_args) = expected_inp(&mut expected_f, "f", &[pub_s("a")]);
+    let (_inp, _inp_args) = expected_inp(&mut expected_f, "f", &[instance_s("a")]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, s.clone());
     let bin = expected_f.add_node(Node::bin(BinOp::Add, &var_a, &var_a, &s));
@@ -949,7 +949,7 @@ fn pin_app_function() {
 #[test]
 fn pin_proto_full() {
     let src = r#"
-        proto foo<F: Field>(private s: F, public v: [F; 10]) where s == s {
+        proto foo<F: Field>(witness s: F, instance v: [F; 10]) where s == s {
             let r = random<F>;
             c <- challenge<F>;
             a <- r * c;
@@ -972,7 +972,7 @@ fn pin_proto_full() {
 #[test]
 fn pin_bin_pow() {
     let src = r#"
-        fn f<F: Field>(public a: F) -> F { a ^ 2 }
+        fn f<F: Field>(instance a: F) -> F { a ^ 2 }
     "#;
     let gs = parse_and_build(src);
 
@@ -980,7 +980,7 @@ fn pin_bin_pow() {
     let a = Vid::new("a");
     let s = ATyp::scalar();
 
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a")]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a")]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, s.clone());
     let lit_2 = GOp::<B>::Value(backend::Value::Index(2));
@@ -997,7 +997,7 @@ fn pin_bin_pow() {
 #[test]
 fn pin_bin_dot() {
     let src = r#"
-        fn f<F: Field>(public a: [F; 2], public b: [F; 2]) -> F { dot(a, b) }
+        fn f<F: Field>(instance a: [F; 2], instance b: [F; 2]) -> F { dot(a, b) }
     "#;
     let gs = parse_and_build(src);
 
@@ -1010,7 +1010,7 @@ fn pin_bin_dot() {
     let (_inp, _inp_args) = expected_inp(
         &mut expected,
         "f",
-        &[pub_t("a", vs2.clone()), pub_t("b", vs2.clone())],
+        &[instance_t("a", vs2.clone()), instance_t("b", vs2.clone())],
     );
     let arg_a = _inp_args[0];
     let arg_b = _inp_args[1];
@@ -1029,7 +1029,7 @@ fn pin_bin_dot() {
 #[test]
 fn pin_bin_concat() {
     let src = r#"
-        fn f<F: Field>(public a: [F; 2], public b: [F; 2]) -> [F; 4] { a ++ b }
+        fn f<F: Field>(instance a: [F; 2], instance b: [F; 2]) -> [F; 4] { a ++ b }
     "#;
     let gs = parse_and_build(src);
 
@@ -1042,7 +1042,7 @@ fn pin_bin_concat() {
     let (_inp, _inp_args) = expected_inp(
         &mut expected,
         "f",
-        &[pub_t("a", vs2.clone()), pub_t("b", vs2.clone())],
+        &[instance_t("a", vs2.clone()), instance_t("b", vs2.clone())],
     );
     let arg_a = _inp_args[0];
     let arg_b = _inp_args[1];
@@ -1061,7 +1061,7 @@ fn pin_bin_concat() {
 #[test]
 fn pin_bin_rem() {
     let src = r#"
-        fn f<F: Field>(public a: Uni<F, 3>, public b: Uni<F, 2>) -> Uni<F, 1> { a % b }
+        fn f<F: Field>(instance a: Uni<F, 3>, instance b: Uni<F, 2>) -> Uni<F, 1> { a % b }
     "#;
     let gs = parse_and_build(src);
 
@@ -1075,7 +1075,7 @@ fn pin_bin_rem() {
     let (_inp, _inp_args) = expected_inp(
         &mut expected,
         "f",
-        &[pub_t("a", at_a.clone()), pub_t("b", at_b.clone())],
+        &[instance_t("a", at_a.clone()), instance_t("b", at_b.clone())],
     );
     let arg_a = _inp_args[0];
     let arg_b = _inp_args[1];
@@ -1098,7 +1098,7 @@ fn pin_bin_rem() {
 #[test]
 fn pin_map() {
     let src = r#"
-        fn f<F: Field>(public a: [F; 2]) -> [F; 2] { [x + x for x in a] }
+        fn f<F: Field>(instance a: [F; 2]) -> [F; 2] { [x + x for x in a] }
     "#;
     let gs = parse_and_build(src);
 
@@ -1107,7 +1107,7 @@ fn pin_map() {
     let vs2 = ATyp::vec_scalar(2);
     let s = ATyp::scalar();
 
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", vs2.clone())]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_t("a", vs2.clone())]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, vs2);
 
@@ -1135,7 +1135,7 @@ fn pin_map_poly_to_scalar_binder_type() {
             let c = coef(p);
             c[0]
         }
-        fn f<F: Field>(public pv: [Uni<F, 3>; 2]) -> [F; 2] {
+        fn f<F: Field>(instance pv: [Uni<F, 3>; 2]) -> [F; 2] {
             [first_coef(x) for x in pv]
         }
     "#;
@@ -1165,7 +1165,7 @@ fn pin_map_poly_to_scalar_binder_type() {
 #[test]
 fn pin_ram_expr() {
     let src = r#"
-        fn f<F: Field>(public a: [F; 4]) -> F { a[0] }
+        fn f<F: Field>(instance a: [F; 4]) -> F { a[0] }
     "#;
     let gs = parse_and_build(src);
 
@@ -1173,7 +1173,7 @@ fn pin_ram_expr() {
     let a = Vid::new("a");
     let vs4 = ATyp::vec_scalar(4);
 
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", vs4.clone())]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_t("a", vs4.clone())]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, vs4);
 
@@ -1191,7 +1191,7 @@ fn pin_ram_expr() {
 #[test]
 fn pin_eval() {
     let src = r#"
-        fn f<F: Field>(public p: Uni<F, 4>, public x: F) -> F { eval(p, x) }
+        fn f<F: Field>(instance p: Uni<F, 4>, instance x: F) -> F { eval(p, x) }
     "#;
     let gs = parse_and_build(src);
 
@@ -1204,7 +1204,7 @@ fn pin_eval() {
     let (_inp, _inp_args) = expected_inp(
         &mut expected,
         "f",
-        &[pub_t("p", at_p.clone()), pub_t("x", at_x.clone())],
+        &[instance_t("p", at_p.clone()), instance_t("x", at_x.clone())],
     );
     let arg_p = _inp_args[0];
     let arg_x = _inp_args[1];
@@ -1229,7 +1229,7 @@ fn pin_eval() {
 #[test]
 fn pin_pair() {
     let src = r#"
-        fn f<G1: Group, G2: Group, GT: Pairing<G1, G2>>(public a: G1, public b: G2) -> GT {
+        fn f<G1: Group, G2: Group, GT: Pairing<G1, G2>>(instance a: G1, instance b: G2) -> GT {
             pair(a, b)
         }
     "#;
@@ -1242,7 +1242,7 @@ fn pin_pair() {
     let (_inp, _inp_args) = expected_inp(
         &mut expected,
         "f",
-        &[pub_t("a", ATyp::g1()), pub_t("b", ATyp::g2())],
+        &[instance_t("a", ATyp::g1()), instance_t("b", ATyp::g2())],
     );
     let arg_a = _inp_args[0];
     let arg_b = _inp_args[1];
@@ -1266,7 +1266,7 @@ fn pin_pair() {
 #[test]
 fn pin_proj_var() {
     let src = r#"
-        fn f<F: Field>(public r: { x: F, y: F }) -> F { r.x }
+        fn f<F: Field>(instance r: { x: F, y: F }) -> F { r.x }
     "#;
     let gs = parse_and_build(src);
 
@@ -1278,7 +1278,7 @@ fn pin_proj_var() {
     record_fields.insert(&"y".to_string(), &s);
     let record_typ = ATyp::Record(record_fields);
 
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("r", record_typ)]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_t("r", record_typ)]);
     let _arg_r = _inp_args[0];
 
     // r.x → Ref(arg_r); since the body is a Ref, no Ret is added.
@@ -1291,7 +1291,7 @@ fn pin_proj_var() {
 #[test]
 fn pin_set_record() {
     let src = r#"
-        fn f<F: Field>(public r: { x: F, y: F }, public v: F) -> { x: F, y: F } {
+        fn f<F: Field>(instance r: { x: F, y: F }, instance v: F) -> { x: F, y: F } {
             r.set(x, v)
         }
     "#;
@@ -1305,7 +1305,11 @@ fn pin_set_record() {
     record_fields.insert(&"y".to_string(), &s);
     let record_typ = ATyp::Record(record_fields);
 
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("r", record_typ), pub_s("v")]);
+    let (_inp, _inp_args) = expected_inp(
+        &mut expected,
+        "f",
+        &[instance_t("r", record_typ), instance_s("v")],
+    );
     let arg_r = _inp_args[0];
     let arg_v = _inp_args[1];
 
@@ -1336,7 +1340,7 @@ fn pin_set_record() {
 #[test]
 fn pin_log_var_ref() {
     let src = r#"
-        proto foo<F: Field>(private s: F) where s == s {
+        proto foo<F: Field>(witness s: F) where s == s {
             let x = s + s;
             a <- x;
             verify(a == s)
@@ -1348,7 +1352,7 @@ fn pin_log_var_ref() {
     let s_vid = Vid::new("s");
     let a_vid = Vid::new("a");
     // Body
-    let (inp, _inp_args) = expected_inp(&mut expected, "foo", &[priv_s("s")]);
+    let (inp, _inp_args) = expected_inp(&mut expected, "foo", &[witness_s("s")]);
     let arg_s = _inp_args[0];
     let var_s = GOp::<B>::var(&s_vid, arg_s, ATyp::scalar());
 
@@ -1378,7 +1382,7 @@ fn pin_log_var_ref() {
     expected.add_edges(DepType::Data, ret, unit);
 
     // Relation: Rel + Assert(var_s_rel, var_s_rel)
-    let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[priv_s("s")]);
+    let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[witness_s("s")]);
     let rel_arg_s = _rel_args[0];
     let var_s_rel = GOp::<B>::var(&s_vid, rel_arg_s, ATyp::scalar());
     let check_rel = expected.add_node(Node::assert(&var_s_rel, &var_s_rel));
@@ -1399,7 +1403,7 @@ fn pin_log_var_ref() {
 #[test]
 fn pin_proj_var_record() {
     let src = r#"
-        fn f<F: Field>(public a: F, public b: F) -> F {
+        fn f<F: Field>(instance a: F, instance b: F) -> F {
             let r = {| x: a, y: b |};
             r.x
         }
@@ -1409,7 +1413,7 @@ fn pin_proj_var_record() {
     let mut expected = UDag::<B>::new();
     let s = ATyp::scalar();
 
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a"), instance_s("b")]);
     let _arg_a = _inp_args[0];
     let _arg_b = _inp_args[1];
 
@@ -1441,7 +1445,7 @@ fn pin_proj_var_record() {
 #[test]
 fn pin_app_univariate_poly() {
     let src = r#"
-        fn f<F: Field>(public p: Uni<F, 2>, public x: F) -> F { p(x) }
+        fn f<F: Field>(instance p: Uni<F, 2>, instance x: F) -> F { p(x) }
     "#;
     let gs = parse_and_build(src);
 
@@ -1451,7 +1455,7 @@ fn pin_app_univariate_poly() {
     let (_inp, _inp_args) = expected_inp(
         &mut expected,
         "f",
-        &[pub_t("p", ATyp::Uni(2)), pub_t("x", s.clone())],
+        &[instance_t("p", ATyp::Uni(2)), instance_t("x", s.clone())],
     );
     let arg_p = _inp_args[0];
     let arg_x = _inp_args[1];
@@ -1510,7 +1514,7 @@ fn pin_fun_lit() {
 #[test]
 fn pin_get_prover_basic() {
     let src = r#"
-        proto foo<F: Field>(private s: F, public v: F) where s == s {
+        proto foo<F: Field>(witness s: F, instance v: F) where s == s {
             a <- s + v;
             verify(a == v)
         }
@@ -1532,11 +1536,11 @@ fn pin_get_prover_basic() {
 }
 
 /// get_verifier extracts the verifier subgraph.
-/// Tests: get_verifier() produces subgraph with public inputs, transcript vars, challenges, check node.
+/// Tests: get_verifier() produces subgraph with instance inputs, transcript vars, challenges, check node.
 #[test]
 fn pin_get_verifier_basic() {
     let src = r#"
-        proto foo<F: Field>(private s: F, public v: F) where s == s {
+        proto foo<F: Field>(witness s: F, instance v: F) where s == s {
             a <- s + v;
             verify(a == v)
         }
@@ -1550,17 +1554,17 @@ fn pin_get_verifier_basic() {
     assert!(!verifier.find_verify().is_empty());
     // Verifier name matches
     assert_eq!(verifier.name(), Vid::new("foo"));
-    // Verifier should not have private-only computations
-    // Verifier args should only include public inputs (v) and transcript vars (a)
+    // Verifier should not have witness-only computations
+    // Verifier args should only include instance inputs (v) and transcript vars (a)
     let args: Vec<bool> = verifier
         .input_args()
         .into_iter()
         .filter_map(|n| match &verifier[n] {
-            Node::Arg(_, _, qual, _, _) => Some(qual.is_public()),
+            Node::Arg(_, _, qual, _, _) => Some(qual.is_instance()),
             _ => None,
         })
         .collect();
-    assert!(args.iter().all(|is_public| *is_public));
+    assert!(args.iter().all(|is_instance| *is_instance));
 }
 
 /// get_relation extracts the relation subgraph from the Rel node.
@@ -1568,7 +1572,7 @@ fn pin_get_verifier_basic() {
 #[test]
 fn pin_get_relation_basic() {
     let src = r#"
-        proto foo<F: Field>(private s: F, public v: F) where s == v {
+        proto foo<F: Field>(witness s: F, instance v: F) where s == v {
             verify(s == v)
         }
     "#;
@@ -1588,7 +1592,7 @@ fn pin_get_relation_basic() {
 #[test]
 fn pin_get_relation_no_duplicate_edges() {
     let src = r#"
-        proto foo<F: Field>(private s: F, public v: F) where s == v {
+        proto foo<F: Field>(witness s: F, instance v: F) where s == v {
             verify(s == v)
         }
     "#;
@@ -1604,23 +1608,23 @@ fn pin_get_relation_no_duplicate_edges() {
     );
 }
 
-/// get_verifier returns error when verifier body references a private input directly.
-/// Tests: GraphError::PrivateNodeInVerifier.
+/// get_verifier returns error when verifier body references a witness input directly.
+/// Tests: GraphError::NonInstanceNodeInVerifier.
 #[test]
-fn pin_get_verifier_private_leak() {
+fn pin_get_verifier_witness_leak() {
     let src = r#"
-        proto foo<F: Field>(private s: F) where s == s {
+        proto foo<F: Field>(witness s: F) where s == s {
             verify(s == s)
         }
     "#;
     let gs = parse_and_build(src);
     let dag = &gs[0];
 
-    // The verifier assertion `s == s` directly uses private `s`.
+    // The verifier assertion `s == s` directly uses witness `s`.
     let result = dag.get_verifier();
     match result {
-        Err(GraphError::PrivateNodeInVerifier(_, _)) => {}
-        Err(e) => panic!("Expected PrivateNodeInVerifier, got: {}", e),
+        Err(GraphError::NonInstanceNodeInVerifier(_, _)) => {}
+        Err(e) => panic!("Expected NonInstanceNodeInVerifier, got: {}", e),
         Ok(_) => panic!("Expected error but got Ok"),
     }
 }
@@ -1630,7 +1634,7 @@ fn pin_get_verifier_private_leak() {
 #[test]
 fn pin_get_relation_no_relation() {
     let src = r#"
-        fn f<F: Field>(public a: F) -> F { a }
+        fn f<F: Field>(instance a: F) -> F { a }
     "#;
     let gs = parse_and_build(src);
     let dag = &gs[0];
@@ -1651,7 +1655,7 @@ fn pin_get_relation_no_relation() {
 #[test]
 fn pin_node_edge_counts() {
     let src = r#"
-        fn f<F: Field>(public a: F, public b: F) -> F { a + b }
+        fn f<F: Field>(instance a: F, instance b: F) -> F { a + b }
     "#;
     let gs = parse_and_build(src);
     let dag = &gs[0];
@@ -1666,7 +1670,7 @@ fn pin_node_edge_counts() {
 #[test]
 fn pin_op_nodes_filter() {
     let src = r#"
-        proto foo<F: Field>(private s: F) where s == s {
+        proto foo<F: Field>(witness s: F) where s == s {
             verify(s == s)
         }
     "#;
@@ -1688,7 +1692,7 @@ fn pin_op_nodes_filter() {
 #[test]
 fn pin_find_var_find_ref() {
     let src = r#"
-        proto foo<F: Field>(private a: F, private b: F) where a == b {
+        proto foo<F: Field>(witness a: F, witness b: F) where a == b {
             c <- a + b;
             verify(c == a)
         }
@@ -1710,7 +1714,7 @@ fn pin_find_var_find_ref() {
 #[test]
 fn pin_transcript_nodes_order() {
     let src = r#"
-        proto foo<F: Field>(private s: F) where s == s {
+        proto foo<F: Field>(witness s: F) where s == s {
             a <- s + s;
             c <- challenge<F>;
             verify(a == c)
@@ -1742,7 +1746,7 @@ fn pin_transcript_nodes_order() {
 #[test]
 fn pin_proof_vs_challenge_nodes() {
     let src = r#"
-        proto foo<F: Field>(private s: F) where s == s {
+        proto foo<F: Field>(witness s: F) where s == s {
             a <- s + s;
             c <- challenge<F>;
             verify(a == c)
@@ -1769,7 +1773,7 @@ fn pin_proof_vs_challenge_nodes() {
 #[test]
 fn pin_transcript_nodes_preserve_post_challenge_relogs_issue_157() {
     let src = r#"
-        proto repro<F: Field>(private s: F) where s == s {
+        proto repro<F: Field>(witness s: F) where s == s {
             c <- challenge<F>;
             a <- c;
             b <- a;
@@ -1824,7 +1828,7 @@ fn pin_transcript_nodes_preserve_post_challenge_relogs_issue_157() {
 #[test]
 fn pin_trc_reachability() {
     let src = r#"
-        fn f<F: Field>(public a: F, public b: F) -> F {
+        fn f<F: Field>(instance a: F, instance b: F) -> F {
             let c = a + b;
             c * c
         }
@@ -1856,7 +1860,7 @@ fn pin_trc_reachability() {
 #[test]
 fn pin_find_verify() {
     let proto_src = r#"
-        proto foo<F: Field>(private s: F) where s == s {
+        proto foo<F: Field>(witness s: F) where s == s {
             verify(s == s)
         }
     "#;
@@ -1867,7 +1871,7 @@ fn pin_find_verify() {
     );
 
     let fn_src = r#"
-        fn f<F: Field>(public a: F) -> F { a + a }
+        fn f<F: Field>(instance a: F) -> F { a + a }
     "#;
     let fn_gs = parse_and_build(fn_src);
     assert!(
@@ -1881,7 +1885,7 @@ fn pin_find_verify() {
 fn pin_find_verify_multiple() {
     // Two separate verify statements produce two Verify nodes
     let src = r#"
-        proto two_verify<F: Field>(private x: F, private y: F) where 1 == 1 {
+        proto two_verify<F: Field>(witness x: F, witness y: F) where 1 == 1 {
             verify(x == x);
             verify(y == y)
         }
@@ -1896,7 +1900,7 @@ fn pin_find_verify_multiple() {
 
     // Three separate verify statements produce three Verify nodes
     let src3 = r#"
-        proto three_verify<F: Field>(private x: F, private y: F, private z: F) where 1 == 1 {
+        proto three_verify<F: Field>(witness x: F, witness y: F, witness z: F) where 1 == 1 {
             verify(x == x);
             verify(y == y);
             verify(z == z)
@@ -1916,7 +1920,7 @@ fn pin_find_verify_multiple() {
 #[test]
 fn pin_get_verifier_multiple_checks() {
     let src = r#"
-        proto two_verify<F: Field>(private s: F, private t: F, public v: F) where 1 == 1 {
+        proto two_verify<F: Field>(witness s: F, witness t: F, instance v: F) where 1 == 1 {
             a <- s + v;
             b <- t + v;
             verify(a == v);
@@ -1937,16 +1941,16 @@ fn pin_get_verifier_multiple_checks() {
     );
     // Verifier name matches
     assert_eq!(verifier.name(), Vid::new("two_verify"));
-    // Verifier args should only include public inputs
+    // Verifier args should only include instance inputs
     let args: Vec<bool> = verifier
         .input_args()
         .into_iter()
         .filter_map(|n| match &verifier[n] {
-            Node::Arg(_, _, qual, _, _) => Some(qual.is_public()),
+            Node::Arg(_, _, qual, _, _) => Some(qual.is_instance()),
             _ => None,
         })
         .collect();
-    assert!(args.iter().all(|is_public| *is_public));
+    assert!(args.iter().all(|is_instance| *is_instance));
 }
 
 /// get_prover works correctly with multiple check nodes.
@@ -1954,7 +1958,7 @@ fn pin_get_verifier_multiple_checks() {
 #[test]
 fn pin_get_prover_multiple_checks() {
     let src = r#"
-        proto two_verify<F: Field>(private s: F, private t: F, public v: F) where 1 == 1 {
+        proto two_verify<F: Field>(witness s: F, witness t: F, instance v: F) where 1 == 1 {
             a <- s + v;
             b <- t + v;
             verify(a == v);
@@ -1979,7 +1983,7 @@ fn pin_get_prover_multiple_checks() {
 #[test]
 fn pin_find_verify_scattered() {
     let src = r#"
-        proto scattered<F: Field>(private s: F, public v: F) where 1 == 1 {
+        proto scattered<F: Field>(witness s: F, instance v: F) where 1 == 1 {
             a <- s + v;
             verify(a == a);
             b <- a * 2;
@@ -2002,7 +2006,7 @@ fn pin_find_verify_scattered() {
 #[test]
 fn pin_find_verify_interleaved_with_challenge() {
     let src = r#"
-        proto interleaved<F: Field>(private s: F, public v: F) where 1 == 1 {
+        proto interleaved<F: Field>(witness s: F, instance v: F) where 1 == 1 {
             a <- s + v;
             verify(a == a);
             c <- challenge<F>;
@@ -2023,11 +2027,11 @@ fn pin_find_verify_interleaved_with_challenge() {
 }
 
 /// Verifier subgraph from a protocol with scattered verify statements includes all
-/// necessary dependencies and all args are public.
+/// necessary dependencies and all args are instance.
 #[test]
 fn pin_get_verifier_scattered_checks() {
     let src = r#"
-        proto scattered<F: Field>(private s: F, public v: F) where 1 == 1 {
+        proto scattered<F: Field>(witness s: F, instance v: F) where 1 == 1 {
             a <- s + v;
             verify(a == a);
             b <- a * 2;
@@ -2045,18 +2049,18 @@ fn pin_get_verifier_scattered_checks() {
         checks.len()
     );
 
-    // Verifier args should only include public inputs
+    // Verifier args should only include instance inputs
     let args: Vec<bool> = verifier
         .input_args()
         .into_iter()
         .filter_map(|n| match &verifier[n] {
-            Node::Arg(_, _, qual, _, _) => Some(qual.is_public()),
+            Node::Arg(_, _, qual, _, _) => Some(qual.is_instance()),
             _ => None,
         })
         .collect();
     assert!(
-        args.iter().all(|is_public| *is_public),
-        "All verifier args should be public"
+        args.iter().all(|is_instance| *is_instance),
+        "All verifier args should be instance"
     );
 }
 
@@ -2064,7 +2068,7 @@ fn pin_get_verifier_scattered_checks() {
 #[test]
 fn pin_get_prover_scattered_checks() {
     let src = r#"
-        proto scattered<F: Field>(private s: F, public v: F) where 1 == 1 {
+        proto scattered<F: Field>(witness s: F, instance v: F) where 1 == 1 {
             a <- s + v;
             verify(a == a);
             b <- a * 2;
@@ -2086,12 +2090,12 @@ fn pin_get_prover_scattered_checks() {
 #[test]
 fn pin_dags_multiple_verify_protocols() {
     let src = r#"
-        fn helper<F: Field>(public x: F) -> F { x }
+        fn helper<F: Field>(instance x: F) -> F { x }
         fn with_verify<F: Field>(x: F) -> F {
             verify(x == x);
             x
         }
-        proto two_verify<F: Field>(private s: F, public v: F) where 1 == 1 {
+        proto two_verify<F: Field>(witness s: F, instance v: F) where 1 == 1 {
             verify(s == s);
             verify(v == v)
         }
@@ -2132,7 +2136,7 @@ fn pin_find_verify_cross_function_verify() {
             verify(x == x);
             x
         }
-        proto caller<F: Field>(private s: F, public v: F) where s == v {
+        proto caller<F: Field>(witness s: F, instance v: F) where s == v {
             a <- with_verify(v);
             verify(a == v)
         }
@@ -2165,7 +2169,7 @@ fn pin_find_verify_cross_function_verify() {
 #[test]
 fn pin_erase_ann() {
     let src = r#"
-        fn f<F: Field>(public a: F, public b: F) -> F { a + b }
+        fn f<F: Field>(instance a: F, instance b: F) -> F { a + b }
     "#;
     let gs = parse_and_build(src);
     let dag = &gs[0];
@@ -2186,8 +2190,8 @@ fn pin_erase_ann() {
 #[test]
 fn pin_combine_dag() {
     let src = r#"
-        fn f<F: Field>(public a: F) -> F { a + a }
-        fn g<F: Field>(public b: F) -> F { b + b }
+        fn f<F: Field>(instance a: F) -> F { a + a }
+        fn g<F: Field>(instance b: F) -> F { b + b }
     "#;
     let gs = parse_and_build(src);
     let dag_f = &gs[0];
@@ -2210,7 +2214,7 @@ fn pin_combine_dag() {
 #[test]
 fn pin_map_annotations_dag() {
     let src = r#"
-        fn f<F: Field>(public a: F, public b: F) -> F { a + b }
+        fn f<F: Field>(instance a: F, instance b: F) -> F { a + b }
     "#;
     let gs = parse_and_build(src);
     let dag = &gs[0];
@@ -2235,8 +2239,8 @@ fn pin_map_annotations_dag() {
 #[test]
 fn pin_dags_protocols_vs_functions() {
     let src = r#"
-        fn double<F: Field>(public x: F) -> F { x + x }
-        proto foo<F: Field>(private s: F) where s == s {
+        fn double<F: Field>(instance x: F) -> F { x + x }
+        proto foo<F: Field>(witness s: F) where s == s {
             verify(s == s)
         }
     "#;
@@ -2259,8 +2263,8 @@ fn pin_dags_protocols_vs_functions() {
 #[test]
 fn pin_dags_get_proto() {
     let src = r#"
-        fn helper<F: Field>(public x: F) -> F { x }
-        proto bar<F: Field>(private s: F) where s == s {
+        fn helper<F: Field>(instance x: F) -> F { x }
+        proto bar<F: Field>(witness s: F) where s == s {
             verify(s == s)
         }
     "#;
@@ -2285,7 +2289,7 @@ fn pin_dags_get_proto() {
 #[test]
 fn pin_error_non_polynomial_fun() {
     let src = r#"
-        fn f<F: Field>(public a: F) -> Uni<F, 2> { fun x => x ^ 2 }
+        fn f<F: Field>(instance a: F) -> Uni<F, 2> { fun x => x ^ 2 }
     "#;
     let result = try_parse_and_build(src);
     match result {
@@ -2299,7 +2303,7 @@ fn pin_error_non_polynomial_fun() {
 #[test]
 fn pin_error_fun_unbound_var() {
     let src = r#"
-        fn f<F: Field>(public a: F) -> Uni<F, 1> { fun x => y }
+        fn f<F: Field>(instance a: F) -> Uni<F, 1> { fun x => y }
     "#;
     // This may fail at parse/typecheck (unwrap in try_parse_and_build) or at graph building
     let result = std::panic::catch_unwind(|| try_parse_and_build(src));
@@ -2318,7 +2322,7 @@ fn pin_error_fun_unbound_var() {
 #[test]
 fn pin_nested_let_chain() {
     let src = r#"
-        fn f<F: Field>(public x: F, public y: F) -> F {
+        fn f<F: Field>(instance x: F, instance y: F) -> F {
             let a = x + y;
             let b = a + x;
             let c = b + y;
@@ -2329,7 +2333,7 @@ fn pin_nested_let_chain() {
 
     let mut expected = UDag::<B>::new();
     let s = ATyp::scalar();
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("x"), pub_s("y")]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("x"), instance_s("y")]);
     let arg_x = _inp_args[0];
     let arg_y = _inp_args[1];
     let var_x = GOp::<B>::var(&Vid::new("x"), arg_x, s.clone());
@@ -2370,7 +2374,7 @@ fn pin_nested_let_chain() {
 #[test]
 fn pin_multi_transcript() {
     let src = r#"
-        proto foo<F: Field>(private s: F) where s == s {
+        proto foo<F: Field>(witness s: F) where s == s {
             a <- s + s;
             c <- challenge<F>;
             b <- s + c;
@@ -2437,7 +2441,7 @@ fn pin_fun_multilinear() {
 #[test]
 fn pin_map_nested_binop() {
     let src = r#"
-        fn f<F: Field>(public a: [F; 2]) -> [F; 2] { [x * x + x for x in a] }
+        fn f<F: Field>(instance a: [F; 2]) -> [F; 2] { [x * x + x for x in a] }
     "#;
     let gs = parse_and_build(src);
 
@@ -2445,7 +2449,7 @@ fn pin_map_nested_binop() {
     let a = Vid::new("a");
     let vs2 = ATyp::vec_scalar(2);
     let s = ATyp::scalar();
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", vs2.clone())]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_t("a", vs2.clone())]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, vs2);
 
@@ -2470,7 +2474,7 @@ fn pin_map_nested_binop() {
 #[test]
 fn pin_diamond_dag() {
     let src = r#"
-        fn f<F: Field>(public a: F, public b: F) -> F {
+        fn f<F: Field>(instance a: F, instance b: F) -> F {
             let c = a + b;
             c * c
         }
@@ -2479,7 +2483,7 @@ fn pin_diamond_dag() {
 
     let mut expected = UDag::<B>::new();
     let s = ATyp::scalar();
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a"), instance_s("b")]);
     let arg_a = _inp_args[0];
     let arg_b = _inp_args[1];
     let var_a = GOp::<B>::var(&Vid::new("a"), arg_a, s.clone());
@@ -2505,9 +2509,9 @@ fn pin_diamond_dag() {
 #[test]
 fn pin_three_declarations() {
     let src = r#"
-        fn add1<F: Field>(public x: F) -> F { x + 1 }
-        fn double<F: Field>(public x: F) -> F { x + x }
-        fn composed<F: Field>(public a: F) -> F { double(add1(a)) }
+        fn add1<F: Field>(instance x: F) -> F { x + 1 }
+        fn double<F: Field>(instance x: F) -> F { x + x }
+        fn composed<F: Field>(instance a: F) -> F { double(add1(a)) }
     "#;
     let gs = parse_and_build(src);
 
@@ -2524,7 +2528,7 @@ fn pin_three_declarations() {
 #[test]
 fn pin_app_mle() {
     let src = r#"
-        fn f<F: Field>(public p: Mle<F, 2>, public x: F) -> Mle<F, 1> { p(x) }
+        fn f<F: Field>(instance p: Mle<F, 2>, instance x: F) -> Mle<F, 1> { p(x) }
     "#;
     let gs = parse_and_build(src);
 
@@ -2548,7 +2552,7 @@ fn pin_app_mle() {
 #[test]
 fn pin_reduce_add() {
     let src = r#"
-        fn f<F: Field>(public v: [F; 3]) -> F {
+        fn f<F: Field>(instance v: [F; 3]) -> F {
             reduce(+, v)
         }
     "#;
@@ -2556,7 +2560,8 @@ fn pin_reduce_add() {
     let _dag = &gs[0];
 
     let mut expected = UDag::<B>::new();
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("v", ATyp::vec_scalar(3))]);
+    let (_inp, _inp_args) =
+        expected_inp(&mut expected, "f", &[instance_t("v", ATyp::vec_scalar(3))]);
     let arg_v = _inp_args[0];
     let var_v = GOp::<B>::var(&Vid::new("v"), arg_v, ATyp::vec_scalar(3));
 
@@ -2570,7 +2575,7 @@ fn pin_reduce_add() {
 #[test]
 fn pin_reduce_mul() {
     let src = r#"
-        fn f<F: Field>(public v: [F; 4]) -> F {
+        fn f<F: Field>(instance v: [F; 4]) -> F {
             reduce(*, v)
         }
     "#;
@@ -2578,7 +2583,8 @@ fn pin_reduce_mul() {
     let _dag = &gs[0];
 
     let mut expected = UDag::<B>::new();
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("v", ATyp::vec_scalar(4))]);
+    let (_inp, _inp_args) =
+        expected_inp(&mut expected, "f", &[instance_t("v", ATyp::vec_scalar(4))]);
     let arg_v = _inp_args[0];
     let var_v = GOp::<B>::var(&Vid::new("v"), arg_v, ATyp::vec_scalar(4));
 
@@ -2592,7 +2598,7 @@ fn pin_reduce_mul() {
 #[test]
 fn pin_reduce_sub() {
     let src = r#"
-        fn f<F: Field>(public v: [F; 3]) -> F {
+        fn f<F: Field>(instance v: [F; 3]) -> F {
             reduce(-, v)
         }
     "#;
@@ -2600,7 +2606,8 @@ fn pin_reduce_sub() {
     let _dag = &gs[0];
 
     let mut expected = UDag::<B>::new();
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("v", ATyp::vec_scalar(3))]);
+    let (_inp, _inp_args) =
+        expected_inp(&mut expected, "f", &[instance_t("v", ATyp::vec_scalar(3))]);
     let arg_v = _inp_args[0];
     let var_v = GOp::<B>::var(&Vid::new("v"), arg_v, ATyp::vec_scalar(3));
 

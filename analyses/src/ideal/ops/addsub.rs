@@ -240,17 +240,17 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let var_a = {
-            let p = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 1), Qualifier::Private);
+            let p = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 1), Qualifier::Witness);
             ideal.register(&p);
             p
         };
         let var_b = {
-            let p = Var::from_node(NodeIndex::new(1), ATyp::VPoly(2, 1), Qualifier::Private);
+            let p = Var::from_node(NodeIndex::new(1), ATyp::VPoly(2, 1), Qualifier::Witness);
             ideal.register(&p);
             p
         };
 
-        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(2, 1), Qualifier::Private);
+        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(2, 1), Qualifier::Witness);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Add,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 1))),
@@ -291,17 +291,17 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let var_a = {
-            let p = Var::from_node(NodeIndex::new(0), ATyp::Mle(2), Qualifier::Private);
+            let p = Var::from_node(NodeIndex::new(0), ATyp::Mle(2), Qualifier::Witness);
             ideal.register(&p);
             p
         };
         let var_b = {
-            let p = Var::from_node(NodeIndex::new(1), ATyp::Mle(2), Qualifier::Private);
+            let p = Var::from_node(NodeIndex::new(1), ATyp::Mle(2), Qualifier::Witness);
             ideal.register(&p);
             p
         };
 
-        let var = Var::from_node(NodeIndex::new(2), ATyp::Mle(2), Qualifier::Private);
+        let var = Var::from_node(NodeIndex::new(2), ATyp::Mle(2), Qualifier::Witness);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Add,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(2))),
@@ -331,12 +331,12 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_a = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 2), Qualifier::Private);
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::VPoly(2, 2), Qualifier::Witness);
         ideal.register(&var_a);
-        let var_b = Var::from_node(NodeIndex::new(1), ATyp::VPoly(2, 2), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::VPoly(2, 2), Qualifier::Witness);
         ideal.register(&var_b);
 
-        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(2, 2), Qualifier::Private);
+        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(2, 2), Qualifier::Witness);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Sub,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 2))),
@@ -360,7 +360,7 @@ mod tests {
     #[test]
     fn ideal_vec_add_1d() {
         let src = r#"
-            proto va1d<F: Field>(public a: F, public b: F, public c: F, public d: F) where a == a {
+            proto va1d<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F) where a == a {
                 let v = [a, b] + [c, d];
                 verify(v[0] == a + c)
             }"#;
@@ -387,8 +387,8 @@ mod tests {
     fn ideal_vec_add_2d() {
         let src = r#"
             proto va2d<F: Field>(
-                public a: F, public b: F, public c: F, public d: F,
-                public e: F, public f: F, public g: F, public h: F
+                instance a: F, instance b: F, instance c: F, instance d: F,
+                instance e: F, instance f: F, instance g: F, instance h: F
             ) where a == a {
                 let m1 = [[a, b], [c, d]];
                 let m2 = [[e, f], [g, h]];
@@ -415,11 +415,11 @@ mod tests {
             gr.generating_set.len()
         );
 
-        // Namespace should register all 8 public inputs
+        // Namespace should register all 8 instance inputs
         let ns_named_count = gr.vars.values().filter(|p| !p.name.is_empty()).count();
         assert!(
             ns_named_count >= 8,
-            "namespace should register >= 8 named public vars, got {}",
+            "namespace should register >= 8 named instance vars, got {}",
             ns_named_count
         );
     }
@@ -428,8 +428,8 @@ mod tests {
     fn ideal_vec_add_3d() {
         let src = r#"
             proto va3d<F: Field>(
-                public a: F, public b: F, public c: F, public d: F,
-                public e: F, public f: F, public g: F, public h: F
+                instance a: F, instance b: F, instance c: F, instance d: F,
+                instance e: F, instance f: F, instance g: F, instance h: F
             ) where a == a {
                 let t1 = [[[a, b], [c, d]], [[e, f], [g, h]]];
                 let t2 = [[[a, b], [c, d]], [[e, f], [g, h]]];
@@ -458,7 +458,7 @@ mod tests {
         let ns_named_count = gr.vars.values().filter(|p| !p.name.is_empty()).count();
         assert!(
             ns_named_count >= 8,
-            "namespace should register >= 8 named public vars, got {}",
+            "namespace should register >= 8 named instance vars, got {}",
             ns_named_count
         );
     }
@@ -479,21 +479,21 @@ mod tests {
         let uni4 = ATyp::Uni(4);
         let uni4_ideal = ATyp::Uni(4);
 
-        let var_a = Var::from_node(NodeIndex::new(0), uni2.clone(), Qualifier::Private);
+        let var_a = Var::from_node(NodeIndex::new(0), uni2.clone(), Qualifier::Witness);
         ideal.register(&var_a);
         let coefs_a: Vec<_> = (1..=3u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
         builder.add_op(var_a.clone(), Op::Vec(coefs_a), &mut ideal);
 
-        let var_b = Var::from_node(NodeIndex::new(1), uni4.clone(), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), uni4.clone(), Qualifier::Witness);
         ideal.register(&var_b);
         let coefs_b: Vec<_> = (1..=5u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
         builder.add_op(var_b.clone(), Op::Vec(coefs_b), &mut ideal);
 
-        let var_r = Var::from_node(NodeIndex::new(2), uni4_ideal.clone(), Qualifier::Private);
+        let var_r = Var::from_node(NodeIndex::new(2), uni4_ideal.clone(), Qualifier::Witness);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -638,16 +638,16 @@ mod tests {
         let vec_a = ATyp::Vec(Box::new(elem_a.clone()), 2);
         let b_t = ATyp::VPoly(1, 1);
 
-        let var_a = Var::from_node(NodeIndex::new(0), vec_a.clone(), Qualifier::Private);
+        let var_a = Var::from_node(NodeIndex::new(0), vec_a.clone(), Qualifier::Witness);
         ideal.register(&var_a);
 
-        let var_b = Var::from_node(NodeIndex::new(1), b_t.clone(), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), b_t.clone(), Qualifier::Witness);
         ideal.register(&var_b);
 
         // lub_add(Vec(VPoly(1,2),2), VPoly(1,1)) = Vec(lub_add(VPoly(1,2), VPoly(1,1)), 2)
         //                                        = Vec(VPoly(1,2), 2)
         let result_t = ATyp::Vec(Box::new(ATyp::VPoly(1, 2)), 2);
-        let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Private);
+        let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Witness);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -691,14 +691,14 @@ mod tests {
         let vec_a = ATyp::Vec(Box::new(elem_a.clone()), 2);
         let b_t = ATyp::VPoly(1, 1);
 
-        let var_a = Var::from_node(NodeIndex::new(0), vec_a.clone(), Qualifier::Private);
+        let var_a = Var::from_node(NodeIndex::new(0), vec_a.clone(), Qualifier::Witness);
         ideal.register(&var_a);
 
-        let var_b = Var::from_node(NodeIndex::new(1), b_t.clone(), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), b_t.clone(), Qualifier::Witness);
         ideal.register(&var_b);
 
         let result_t = ATyp::Vec(Box::new(ATyp::VPoly(1, 2)), 2);
-        let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Private);
+        let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Witness);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -741,16 +741,16 @@ mod tests {
         let elem_b = ATyp::VPoly(1, 1);
         let vec_b = ATyp::Vec(Box::new(elem_b.clone()), 2);
 
-        let var_a = Var::from_node(NodeIndex::new(0), a_t.clone(), Qualifier::Private);
+        let var_a = Var::from_node(NodeIndex::new(0), a_t.clone(), Qualifier::Witness);
         ideal.register(&var_a);
 
-        let var_b = Var::from_node(NodeIndex::new(1), vec_b.clone(), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), vec_b.clone(), Qualifier::Witness);
         ideal.register(&var_b);
 
         // lub_add(VPoly(1,2), Vec(VPoly(1,1),2)) = Vec(lub_add(VPoly(1,2), VPoly(1,1)), 2)
         //                                        = Vec(VPoly(1,2), 2)
         let result_t = ATyp::Vec(Box::new(ATyp::VPoly(1, 2)), 2);
-        let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Private);
+        let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Witness);
         ideal.register(&var_r);
 
         builder.add_op(

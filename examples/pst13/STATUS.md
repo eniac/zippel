@@ -12,10 +12,10 @@ The compiler stack-overflows on recursive functions whose arguments have **mixed
 
 ```
 fn pst13_open_rounds<..., K: 2..10>(
-    private p_curr:      [F;  2^K],  // size 2^K
-    public  ck_curr:     [G1; 2^K],  // size 2^K
-    public  z_curr:      [F;  K],    // size K  ← mixed
-    public  alpha_H_curr:[G2; K],    // size K  ← mixed
+    witness  p_curr:      [F;  2^K],  // size 2^K
+    instance  ck_curr:     [G1; 2^K],  // size 2^K
+    instance  z_curr:      [F;  K],    // size K  ← mixed
+    instance  alpha_H_curr:[G2; K],    // size K  ← mixed
     ...
 )
 ```

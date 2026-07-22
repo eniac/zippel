@@ -1,26 +1,26 @@
 // The Cramer-Damgård-Schoenmakers (CDS) protocol for proofs of partial knowledge.
 // Proves knowledge of (N-K) out of N discrete logs (Schnorr witnesses).
 proto cds<G: Group, F: Scalar<G>, N: 2, K: 1>(
-    // Public inputs
-    public g: G,
-    public public_keys: [G; N],
-    public eval_points: [F; N],
+    // Instance inputs
+    instance g: G,
+    instance keys: [G; N],
+    instance eval_points: [F; N],
 
-    // Private witnesses known only to the prover (real instances only)
-    private w: [F; N],          
-    private r: [F; N],          
+    // Witness variables known only to the prover (real instances only)
+    witness w: [F; N],          
+    witness r: [F; N],          
     
-    // Private indicator: 1 if real, 0 if simulated
-    private b: [F; N],          
+    // Witness indicator: 1 if real, 0 if simulated
+    witness b: [F; N],          
     
-    // Private inputs for the simulated instances
-    private c_sim: [F; N],
-    private m2_sim: [F; N],
+    // Witness inputs for the simulated instances
+    witness c_sim: [F; N],
+    witness m2_sim: [F; N],
     
     // The subset of K indices (1-based) where the witness is unknown
-    private u_points: [F; K],
-    private u_evals: [F; K]
-) where [public_keys[i] for i in 0..N] == [g * w[i] for i in 0..N];
+    witness u_points: [F; K],
+    witness u_evals: [F; K]
+) where [keys[i] for i in 0..N] == [g * w[i] for i in 0..N];
     [b[i] * (1 - b[i]) for i in 0..N] == [0 for i in 0..N];
     [(1 - b[i]) * (eval_points[i] - u_points[0]) for i in 0..N] == [0 for i in 0..N];
     [(1 - b[i]) * (c_sim[i] - u_evals[0]) for i in 0..N] == [0 for i in 0..N] {
@@ -28,7 +28,7 @@ proto cds<G: Group, F: Scalar<G>, N: 2, K: 1>(
     // Step 1: Initial Commitments
     // For i in A: m1 = g * r[i]
     // For i in U: m1 = g * m2_sim[i] - pk[i] * c_sim[i]
-    let m1 = [ b[i] * (g * r[i]) + (1 - b[i]) * (g * m2_sim[i] + public_keys[i] * (-c_sim[i])) for i in 0..N ];
+    let m1 = [ b[i] * (g * r[i]) + (1 - b[i]) * (g * m2_sim[i] + keys[i] * (-c_sim[i])) for i in 0..N ];
     m1_transcript <- m1;
     
     // Step 2: Verifier Challenge
@@ -55,7 +55,7 @@ proto cds<G: Group, F: Scalar<G>, N: 2, K: 1>(
     // 5.a: Verify underlying Schnorr proofs: g * m2 == m1 + pk * c
     // Vector equality: [g * m2[i] for i in 0..N] == [m1[i] + pk[i] * c[i] for i in 0..N]
     verify(
-        [g * m2_transcript[i] for i in 0..N] == [m1_transcript[i] + public_keys[i] * c_transcript[i] for i in 0..N]
+        [g * m2_transcript[i] for i in 0..N] == [m1_transcript[i] + keys[i] * c_transcript[i] for i in 0..N]
     );
 
     // 5.b: Verify c_transcript is a valid degree K threshold sharing of s

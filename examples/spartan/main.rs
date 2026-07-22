@@ -162,7 +162,9 @@ fn run_one(m: usize, invalid: bool, manual_zippel: Option<&str>) -> RunResult {
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkCurve25519>(&proof);
     let verifier_start = Instant::now();
-    let verifier_result = handler.run_verifier(&proof).expect("run_verifier failed");
+    let verifier_result = handler
+        .run_verifier(&proof, &inputs)
+        .expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     if std::env::var("SPARTAN_DEBUG_VERIFIES").is_ok() {
         for (i, v) in verifier_result.iter().enumerate() {

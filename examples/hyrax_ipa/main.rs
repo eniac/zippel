@@ -59,13 +59,13 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("xi".to_string()), Value::G1(xi_val)),
         (Vid("tau".to_string()), Value::G1(tau_val)),
-        (Vid("a_vec_public".to_string()), a_vec),
-        (Vid("g_vec_public".to_string()), g_vec),
+        (Vid("a_vec".to_string()), a_vec),
+        (Vid("g_vec".to_string()), g_vec),
         (Vid("g_base".to_string()), Value::G1(g_base)),
         (Vid("h_base".to_string()), Value::G1(h_base)),
-        (Vid("x_vec_private".to_string()), x_vec),
-        (Vid("y_private".to_string()), y),
-        (Vid("r_xi_private".to_string()), Value::Scalar(r_xi)),
-        (Vid("r_tau_private".to_string()), Value::Scalar(r_tau)),
+        (Vid("x_vec".to_string()), x_vec),
+        (Vid("y".to_string()), y),
+        (Vid("r_xi".to_string()), Value::Scalar(r_xi)),
+        (Vid("r_tau".to_string()), Value::Scalar(r_tau)),
     ])
 }

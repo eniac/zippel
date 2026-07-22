@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn completeness_test() {
         let ex = r#"
-            proto ex_complete<F: Field>(private s: F, private s': F) where s == s' {
+            proto ex_complete<F: Field>(witness s: F, witness s': F) where s == s' {
                 let r = random<F*>;
                 a <- s * r;
                 b <- s' * r;
@@ -140,7 +140,7 @@ mod tests {
     #[test]
     fn schnorr_completeness() {
         let ex = r#"
-            proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+            proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
                 let r = random<F>;
                 u <- g*r;
                 c <- challenge<F>;
@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn completeness_relation_namespace() {
         let ex = r#"
-            proto eq_proof<F: Field>(private a: F, private b: F) where a == b {
+            proto eq_proof<F: Field>(witness a: F, witness b: F) where a == b {
                 let r = random<F>;
                 x <- a * r;
                 y <- b * r;
@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn completeness_multiple_verify() {
         let ex = r#"
-            proto eq_proof<F: Field>(private a: F, private b: F) where a == b {
+            proto eq_proof<F: Field>(witness a: F, witness b: F) where a == b {
                 let r = random<F>;
                 x <- a * r;
                 y <- b * r;
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn completeness_multiple_verify_independent() {
         let ex = r#"
-            proto eq_proof<F: Field>(private a: F, private b: F) where a == b {
+            proto eq_proof<F: Field>(witness a: F, witness b: F) where a == b {
                 let r = random<F>;
                 let s = random<F>;
                 x <- a * r;
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn completeness_multiple_verify_negative() {
         let ex = r#"
-            proto incomplete<F: Field>(private a: F, private b: F) where a == b {
+            proto incomplete<F: Field>(witness a: F, witness b: F) where a == b {
                 let r = random<F>;
                 x <- a * r;
                 y <- b * r;
@@ -268,7 +268,7 @@ mod tests {
                 verify(x == x);
                 x
             }
-            proto caller<F: Field>(private a: F, private b: F) where a == b {
+            proto caller<F: Field>(witness a: F, witness b: F) where a == b {
                 let r = random<F>;
                 x <- a * r;
                 y <- b * r;
@@ -309,7 +309,7 @@ mod tests {
                 name.to_string(),
                 NodeIndex::new(idx),
                 ATyp::scalar(),
-                Qualifier::Public,
+                Qualifier::Instance,
             )
         };
         let g_var = mk_var("g", 0);
@@ -343,7 +343,7 @@ mod tests {
     #[test]
     fn incomplete_wrong_verify() {
         let ex = r#"
-            proto incomplete<F: Field>(private a: F, private b: F) where a == b {
+            proto incomplete<F: Field>(witness a: F, witness b: F) where a == b {
                 let r = random<F>;
                 x <- a * r;
                 y <- b * r;
@@ -365,9 +365,9 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_unused_public_input() {
+    fn incomplete_unused_instance_input() {
         let ex = r#"
-            proto incomplete<F: Field>(private a: F, private b: F, public c: F) where a == b {
+            proto incomplete<F: Field>(witness a: F, witness b: F, instance c: F) where a == b {
                 let r = random<F>;
                 x <- a * r;
                 y <- b * r;
@@ -384,7 +384,7 @@ mod tests {
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
             ca.run().is_err(),
-            "Protocol with unused public input c == 0 should be incomplete"
+            "Protocol with unused instance input c == 0 should be incomplete"
         );
     }
 
@@ -394,8 +394,8 @@ mod tests {
 
         let ex = r#"
             proto mle_mul_rel<F: Field, N: Size>(
-                public a: Mle<F, N>,
-                public b: Mle<F, N>
+                instance a: Mle<F, N>,
+                instance b: Mle<F, N>
             ) where a == b {
                 let p = a * a;
                 let q = a * b;
@@ -418,7 +418,7 @@ mod tests {
     #[test]
     fn named_let_scalar_product_completeness() {
         let ex = r#"
-            proto named_scalar<F: Field>(private a: F) where a == a {
+            proto named_scalar<F: Field>(witness a: F) where a == a {
                 c1 <- challenge<F>;
                 c2 <- challenge<F>;
                 let rr = c1 * c2;
@@ -444,7 +444,7 @@ mod tests {
         use lang::id::Tid;
 
         let ex = r#"
-            proto named_eval<F: Field, N: Size>(public a: Mle<F, N>) where a == a {
+            proto named_eval<F: Field, N: Size>(instance a: Mle<F, N>) where a == a {
                 r1 <- challenge<F>;
                 r2 <- challenge<F>;
                 let l = eval(a, [r1, r2]);
@@ -466,7 +466,7 @@ mod tests {
         use lang::id::Tid;
 
         let ex = r#"
-            proto named_partial<F: Field, N: Size>(public a: Mle<F, N>) where a == a {
+            proto named_partial<F: Field, N: Size>(instance a: Mle<F, N>) where a == a {
                 r1 <- challenge<F>;
                 let q = eval(a, [r1]);
                 verify(q == q)
@@ -488,7 +488,7 @@ mod tests {
     #[test]
     fn materialized_partial_mle_eval_keeps_inferred_uni_shape() {
         let ex = r#"
-            proto materialized_partial<F: Field>(public vals: [F; 4]) where vals == vals {
+            proto materialized_partial<F: Field>(instance vals: [F; 4]) where vals == vals {
                 x <- challenge<F>;
                 let q = eval(mle(vals), [x]);
                 let z = q + poly([0, 0]);
@@ -510,7 +510,7 @@ mod tests {
     #[test]
     fn trans_clos_partial_mle_eval_boundary_is_mle() {
         let ex = r#"
-            proto trans_clos_eval_shape<F: Field>(public vals: [F; 4]) where vals == vals {
+            proto trans_clos_eval_shape<F: Field>(instance vals: [F; 4]) where vals == vals {
                 x <- challenge<F>;
                 let q = eval(mle(vals), [x]);
                 let z = q + poly([0, 0]);
@@ -545,7 +545,7 @@ mod tests {
         use lang::id::Tid;
 
         let ex = r#"
-            proto named_uni<F: Field, N: Size>(public a: Uni<F, N>) where a == a {
+            proto named_uni<F: Field, N: Size>(instance a: Uni<F, N>) where a == a {
                 r1 <- challenge<F>;
                 let l = a(r1);
                 verify(l == l)
@@ -570,8 +570,8 @@ mod tests {
 
         let ex = r#"
             proto mle_eval_product<F: Field, N: Size>(
-                public a: Mle<F, N>,
-                public b: Mle<F, N>
+                instance a: Mle<F, N>,
+                instance b: Mle<F, N>
             ) where a == a {
                 let p = a * b;
                 r1 <- challenge<F>;
@@ -643,7 +643,7 @@ mod tests {
     #[test]
     fn ifft_roundtrip_completeness() {
         let ex = r#"
-            proto ifft_roundtrip<F: Field>(public v: [F; 2]) where v == v {
+            proto ifft_roundtrip<F: Field>(instance v: [F; 2]) where v == v {
                 let p = interpolate(v);
                 let u = eval(p);
                 verify(u == v)
@@ -666,8 +666,8 @@ mod tests {
     fn fft_linearity_completeness() {
         let ex = r#"
             proto fft_linearity<F: Field>(
-                public a: Poly<F, 1, 3>,
-                public b: Poly<F, 1, 3>
+                instance a: Poly<F, 1, 3>,
+                instance b: Poly<F, 1, 3>
             ) where a == a {
                 let c = a + b;
                 let va = eval(a);
@@ -693,8 +693,8 @@ mod tests {
     fn ifft_linearity_completeness() {
         let ex = r#"
             proto ifft_linearity<F: Field>(
-                public u: [F; 2],
-                public v: [F; 2]
+                instance u: [F; 2],
+                instance v: [F; 2]
             ) where u == u {
                 let w = u + v;
                 let pu = interpolate(u);
@@ -719,7 +719,7 @@ mod tests {
     #[test]
     fn reduce_add_completeness() {
         let ex = r#"
-            proto reduce_add<F: Field>(public a: F, public b: F, public c: F) where a == a {
+            proto reduce_add<F: Field>(instance a: F, instance b: F, instance c: F) where a == a {
                 let v = [a, b, c];
                 let s = reduce(+, v);
                 verify(s == a + b + c)
@@ -741,7 +741,7 @@ mod tests {
     #[test]
     fn reduce_mul_completeness() {
         let ex = r#"
-            proto reduce_mul<F: Field>(public a: F, public b: F, public c: F) where a == a {
+            proto reduce_mul<F: Field>(instance a: F, instance b: F, instance c: F) where a == a {
                 let v = [a, b, c];
                 let p = reduce(*, v);
                 verify(p == a * b * c)
@@ -763,7 +763,7 @@ mod tests {
     #[test]
     fn reduce_sub_completeness() {
         let ex = r#"
-            proto reduce_sub<F: Field>(public a: F, public b: F, public c: F) where a == a {
+            proto reduce_sub<F: Field>(instance a: F, instance b: F, instance c: F) where a == a {
                 let v = [a, b, c];
                 let s = reduce(-, v);
                 verify(s == a - b - c)
@@ -785,7 +785,7 @@ mod tests {
     #[test]
     fn literal_scalar_binding_completeness() {
         let ex = r#"
-            proto literal_scalar<F: Field>(public x: F) where x == x {
+            proto literal_scalar<F: Field>(instance x: F) where x == x {
                 let c = 7;
                 verify(c == 7)
             }"#;
@@ -807,7 +807,7 @@ mod tests {
     fn pair_bilinear_shift_completeness() {
         let ex = r#"
             proto pair_shift<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>
-                (public p: G1, public q: G2, public a: F) where a == a {
+                (instance p: G1, instance q: G2, instance a: F) where a == a {
                 let lhs = pair(a * p, q);
                 let rhs = pair(p, a * q);
                 verify(lhs == rhs)
@@ -830,7 +830,7 @@ mod tests {
     fn pair_bilinear_additive_completeness() {
         let ex = r#"
             proto pair_additive<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>
-                (public p1: G1, public p2: G1, public q: G2) where p1 == p1 {
+                (instance p1: G1, instance p2: G1, instance q: G2) where p1 == p1 {
                 let lhs = pair(p1 + p2, q);
                 let rhs = pair(p1, q) + pair(p2, q);
                 verify(lhs == rhs)
@@ -853,7 +853,7 @@ mod tests {
     fn pair_reflexive_completeness() {
         let ex = r#"
             proto pair_trivial<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>
-                (public p: G1, public q: G2) where p == p {
+                (instance p: G1, instance q: G2) where p == p {
                 let u = pair(p, q);
                 verify(u == u)
             }"#;
@@ -875,7 +875,7 @@ mod tests {
     fn pair_bilinear_product_completeness() {
         let ex = r#"
             proto pair_product<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>
-                (public p: G1, public q: G2, public a: F, public b: F) where a == a {
+                (instance p: G1, instance q: G2, instance a: F, instance b: F) where a == a {
                 let lhs = pair((a * b) * p, q);
                 let rhs = pair(a * p, b * q);
                 verify(lhs == rhs)
@@ -898,8 +898,8 @@ mod tests {
     fn poly_div_exact_completeness() {
         let ex = r#"
             proto poly_div_exact<F: Field>(
-                public p: Poly<F, 1, 1>,
-                public d: Poly<F, 1, 1>
+                instance p: Poly<F, 1, 1>,
+                instance d: Poly<F, 1, 1>
             ) where p == p {
                 let prod = p * d;
                 let q = prod / d;
@@ -923,8 +923,8 @@ mod tests {
     fn poly_divmod_identity_completeness() {
         let ex = r#"
             proto poly_divmod<F: Field>(
-                public p: Poly<F, 1, 2>,
-                public d: Poly<F, 1, 1>
+                instance p: Poly<F, 1, 2>,
+                instance d: Poly<F, 1, 1>
             ) where p == p {
                 let q = p / d;
                 let r = p % d;
@@ -947,7 +947,7 @@ mod tests {
     #[test]
     fn completeness_does_not_skip_verifier_equation_after_vars_refactor() {
         let ex = r#"
-            proto challenge_visibility<F: Field>(private x: F) where x == x {
+            proto challenge_visibility<F: Field>(witness x: F) where x == x {
                 c <- challenge<F>;
                 y <- x + c;
                 verify(y == c)
@@ -970,7 +970,7 @@ mod tests {
     #[test]
     fn transcript_inline_completeness() {
         let ex = r#"
-            proto simple<F: Field>(public a: F, public b: F) where a == a {
+            proto simple<F: Field>(instance a: F, instance b: F) where a == a {
                 c <- a * b;
                 verify(c == a * b)
             }"#;
@@ -992,7 +992,7 @@ mod tests {
     #[test]
     fn unit_ideal_detection_smoke() {
         let ex = r#"
-            proto contradiction<F: Field>(public x: F) where x == x + 1 {
+            proto contradiction<F: Field>(instance x: F) where x == x + 1 {
                 t <- x;
                 verify(t == t)
             }"#;

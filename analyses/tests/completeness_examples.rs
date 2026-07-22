@@ -412,7 +412,7 @@ fn pick_backend() -> GbBackendKind {
 }
 
 /// Parse + concretize + build the analysis DAG (inlines `ZippelHandler::compile`
-/// + `build_analyze_graph` without the PDF/caching/public-inputs machinery).
+/// + `build_analyze_graph` without the PDF/caching/instance-inputs machinery).
 fn compile_to_dag(path: &PathBuf, sizes: &[(&str, usize)]) -> AnalysisDag {
     lang::init_parser();
     let source = std::fs::read_to_string(path)

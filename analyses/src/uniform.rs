@@ -380,7 +380,7 @@ mod tests {
     #[test]
     fn uniformity_prop() {
         let ex = r#"
-            proto foo<F: Field>(private uniform* s: F, public x: F) where 1 == 1 {
+            proto foo<F: Field>(witness uniform* s: F, instance x: F) where 1 == 1 {
                 let r = random<F>;
                 a <- r * s;
                 b <- r * x;
@@ -402,7 +402,7 @@ mod tests {
     #[test]
     fn test_uniformity_from_dag_simple() {
         let ex = r#"
-            proto simple<F: Field>(private x: F) where 1 == 1 {
+            proto simple<F: Field>(witness x: F) where 1 == 1 {
                 verify(x == x)
             }"#;
         let m = UModule::from_str(ex)
@@ -419,7 +419,7 @@ mod tests {
     #[test]
     fn test_uniformity_from_dag_multiple_checks() {
         let ex = r#"
-            proto two_checks<F: Field>(private x: F, private y: F) where 1 == 1 {
+            proto two_checks<F: Field>(witness x: F, witness y: F) where 1 == 1 {
                 let r = random<F>;
                 a <- r * x;
                 b <- r * y;

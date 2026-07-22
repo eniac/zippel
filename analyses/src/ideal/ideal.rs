@@ -237,13 +237,13 @@ mod tests {
             "pl_v",
             NodeIndex::new(10),
             ATyp::scalar(),
-            Qualifier::Public,
+            Qualifier::Instance,
         );
         let basis_ref = Var::from_var(
             "basis_v",
             NodeIndex::new(11),
             ATyp::scalar(),
-            Qualifier::Public,
+            Qualifier::Instance,
         );
 
         let mut ideal = Ideal::<ArkBls12_381>::new();

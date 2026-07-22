@@ -9,10 +9,10 @@
 // edits needed in this file.
 
 // Build the Lagrange (eq) basis at x ∈ F^K: 2^K evaluations of eq(x, ·), LSB-first.
-fn eq_weights<F: Field>(public x: [F; 1]) -> [F; 2] {
+fn eq_weights<F: Field>(instance x: [F; 1]) -> [F; 2] {
     [(1 - x[0]), x[0]]
 }
-fn eq_weights<F: Field, K: 2..16>(public x: [F; K]) -> [F; 2^K] {
+fn eq_weights<F: Field, K: 2..16>(instance x: [F; K]) -> [F; 2^K] {
     let x_lo = x[0..(K-1)];
     let a    = x[K-1];
     let prev = eq_weights(x_lo);
@@ -20,11 +20,11 @@ fn eq_weights<F: Field, K: 2..16>(public x: [F; K]) -> [F; 2^K] {
 }
 
 // Draw S taus: recursive, dispatched on shrinking placeholder size.
-fn draw_taus<F: Field>(public placeholder: [F; 1]) -> [F; 1] {
+fn draw_taus<F: Field>(instance placeholder: [F; 1]) -> [F; 1] {
     t <- challenge<F>;
     [t]
 }
-fn draw_taus<F: Field, K: 2..16>(public placeholder: [F; K]) -> [F; K] {
+fn draw_taus<F: Field, K: 2..16>(instance placeholder: [F; K]) -> [F; K] {
     let prev = draw_taus(placeholder[0..(K-1)]);
     t <- challenge<F>;
     prev ++ [t]
@@ -33,16 +33,16 @@ fn draw_taus<F: Field, K: 2..16>(public placeholder: [F; K]) -> [F; K] {
 // Recursive sumcheck rounds for ProductCheck. Base case (V = 1) runs the
 // last round and the verifier closing check.
 fn pc_round<F: Field, S: Size, N: 2^S>(
-    public curr_poly:        Poly<F, 2, 3>,
-    public points:           [F; 4],
-    public prev_challenges:  [F; S - 1],
-    public prev_eval:        F,
-    public round_challenge:  F,
-    public curr_round:       Fin<S>,
-    public sent_v:           [F; 2^(S+1)],
-    public f_evs:            [F; N],
-    public eq_tau_evs:       [F; N],
-    public alpha:            F
+    instance curr_poly:        Poly<F, 2, 3>,
+    instance points:           [F; 4],
+    instance prev_challenges:  [F; S - 1],
+    instance prev_eval:        F,
+    instance round_challenge:  F,
+    instance curr_round:       Fin<S>,
+    instance sent_v:           [F; 2^(S+1)],
+    instance f_evs:            [F; N],
+    instance eq_tau_evs:       [F; N],
+    instance alpha:            F
 ) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let evs_local = [residual_poly(t) for t in points];
@@ -77,16 +77,16 @@ fn pc_round<F: Field, S: Size, N: 2^S>(
     verify(final_eval == (f_hat_at_r + alpha * g_hat_at_r) * eq_at_r)
 }
 fn pc_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
-    public curr_poly:        Poly<F, V, 3>,
-    public points:           [F; 4],
-    public prev_challenges:  [F; S - V + 1],
-    public prev_eval:        F,
-    public round_challenge:  F,
-    public curr_round:       Fin<S>,
-    public sent_v:           [F; 2^(S+1)],
-    public f_evs:            [F; N],
-    public eq_tau_evs:       [F; N],
-    public alpha:            F
+    instance curr_poly:        Poly<F, V, 3>,
+    instance points:           [F; 4],
+    instance prev_challenges:  [F; S - V + 1],
+    instance prev_eval:        F,
+    instance round_challenge:  F,
+    instance curr_round:       Fin<S>,
+    instance sent_v:           [F; 2^(S+1)],
+    instance f_evs:            [F; N],
+    instance eq_tau_evs:       [F; N],
+    instance alpha:            F
 ) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let zero = points[0] - points[0];
@@ -113,14 +113,14 @@ fn pc_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
 }
 
 // ===== Relation helper (used in the where clause) =====
-fn product<F: Field, S: Size, N: 2^S>(public f: [F; N]) -> F {
+fn product<F: Field, S: Size, N: 2^S>(instance f: [F; N]) -> F {
     reduce(*, [f[i] for i in 0..N])
 }
 
 proto hyperplonk_productcheck<F: Field, S: Size, N: 2^S>(
-    public f_evs:   [F; N],
-    public v_evs:   [F; 2^(S+1)],
-    public claimed: F
+    instance f_evs:   [F; N],
+    instance v_evs:   [F; 2^(S+1)],
+    instance claimed: F
 ) where
     // ProductCheck proves that the product of f over the boolean
     // hypercube equals `claimed`:

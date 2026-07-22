@@ -1,4 +1,4 @@
-proto schnorr_3round<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+proto schnorr_3round<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
     let r1 = random<F>;
     u1 <- g*r1;
     c1 <- challenge<F*>;

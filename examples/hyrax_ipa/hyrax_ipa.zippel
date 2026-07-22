@@ -3,14 +3,14 @@
 // BASE CASE (n=1)
 // Figure 8: bullet-reduce(upsilon, a, g) for n=1
 fn bullet_reduce<G: Group, F: Scalar<G>>(
-    public upsilon: G,
-    public a_hat: [F; 1],
-    public g_hat: [G; 1],
-    public g_base: G,
-    public h_base: G,
-    private x_hat: [F; 1],
-    private y_hat: F,
-    private r_Upsilon_hat: F
+    instance upsilon: G,
+    instance a_hat: [F; 1],
+    instance g_hat: [G; 1],
+    instance g_base: G,
+    instance h_base: G,
+    witness x_hat: [F; 1],
+    witness y_hat: F,
+    witness r_Upsilon_hat: F
 ) -> Unit {
     // Prover Step 5
     let d = random<F>;
@@ -37,14 +37,14 @@ fn bullet_reduce<G: Group, F: Scalar<G>>(
 
 // RECURSIVE STEP (n > 1)
 fn bullet_reduce<G: Group, F: Scalar<G>, S: Size, N: 1..S+1>(
-    public upsilon: G,
-    public a_vec: [F; 2^N],
-    public g_vec: [G; 2^N],
-    public g_base: G,
-    public h_base: G,
-    private x_vec: [F; 2^N],
-    private y: F,
-    private r_Upsilon: F
+    instance upsilon: G,
+    instance a_vec: [F; 2^N],
+    instance g_vec: [G; 2^N],
+    instance g_base: G,
+    instance h_base: G,
+    witness x_vec: [F; 2^N],
+    witness y: F,
+    witness r_Upsilon: F
 ) -> Unit {
     let x_1 = x_vec[0..2^(N-1)];
     let x_2 = x_vec[2^(N-1)..2^N];
@@ -85,7 +85,7 @@ fn bullet_reduce<G: Group, F: Scalar<G>, S: Size, N: 1..S+1>(
     // g' = g_1^{c^{-1}} circ g_2^c
     let g_prime = g_1 * c_inv + g_2 * c;
 
-    // Prover Step 4 (Private witness computation)
+    // Prover Step 4 (Witness computation)
     // x' = c * x_1 + c^{-1} * x_2
     let x_prime = x_1 * c + x_2 * c_inv;
     
@@ -110,44 +110,44 @@ fn bullet_reduce<G: Group, F: Scalar<G>, S: Size, N: 1..S+1>(
 
 // Corrected Figure 7 protocol wrapper
 proto proof_log_of_dot_prod<G: Group, F: Scalar<G>, S: Size, N_CONST: 2^S>(
-    // Public Inputs
-    public xi: G,
-    public tau: G,
-    public a_vec_public: [F; N_CONST],
-    public g_vec_public: [G; N_CONST],
-    public g_base: G,
-    public h_base: G,
+    // Instance Inputs
+    instance xi: G,
+    instance tau: G,
+    instance a_vec: [F; N_CONST],
+    instance g_vec: [G; N_CONST],
+    instance g_base: G,
+    instance h_base: G,
     
-    // Private Inputs
-    private x_vec_private: [F; N_CONST],
-    private y_private: F,
-    private r_xi_private: F,
-    private r_tau_private: F
+    // Witness Inputs
+    witness x_vec: [F; N_CONST],
+    witness y: F,
+    witness r_xi: F,
+    witness r_tau: F
 ) where 
-    xi == h_base * r_xi_private + dot(g_vec_public, x_vec_private);
-    tau == g_base * y_private + h_base * r_tau_private;
-    y_private == dot(x_vec_private, a_vec_public) 
+    xi == h_base * r_xi + dot(g_vec, x_vec);
+    tau == g_base * y + h_base * r_tau;
+    y == dot(x_vec, a_vec) 
 {
     // Verifier Step 1
     rho <- challenge<F>;
 
     // Step 2 & 3
     let upsilon = xi + tau * rho;
-    let r_Upsilon = r_xi_private + r_tau_private * rho;
-    let a_rho = a_vec_public * rho;
+    let r_Upsilon = r_xi + r_tau * rho;
+    let a_rho = a_vec * rho;
     
     // To maintain correctness of the evaluations inside bullet-reduce, y must be scaled by rho
     // y_hat = x_hat * a_hat -> In our context, since a is scaled by rho, y must also be scaled.
-    let y_rho = y_private * rho;
+    let y_rho = y * rho;
 
     // Step 4: Execute bullet-reduce
     bullet_reduce(
         upsilon,
         a_rho,
-        g_vec_public,
+        g_vec,
         g_base,
         h_base,
-        x_vec_private,
+        x_vec,
         y_rho,
         r_Upsilon
     )

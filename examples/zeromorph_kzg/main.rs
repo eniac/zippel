@@ -9,8 +9,6 @@ use zippel::*;
 #[path = "../common/analysis.rs"]
 mod common;
 
-const PUBLIC_INPUT_NAMES: &[&str] = &["u", "v", "srs_g1", "gen_g1", "gen_g2", "srs_g2"];
-
 fn main() {
     println!("=== Zeromorph Hiding KZG ===");
     let args = ZippelArgs::new(PathBuf::from("examples/zeromorph_kzg/zeromorph_kzg.zippel"));
@@ -21,12 +19,6 @@ fn main() {
     handler.compile(&sizes);
 
     let inputs = prover_create_inputs(n_size);
-    let public_inputs = inputs
-        .clone()
-        .into_iter()
-        .filter(|(vid, _)| PUBLIC_INPUT_NAMES.contains(&vid.0.as_str()))
-        .collect::<Ctx<Vid, Value<ArkBls12_381>>>();
-    handler.set_public_inputs(public_inputs);
     common::run_prover_and_verify(&mut handler, &inputs);
 
     println!("\n--- Static Analysis ---");

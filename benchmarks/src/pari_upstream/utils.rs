@@ -4,13 +4,13 @@ use ark_ec::pairing::Pairing;
 #[cfg(not(feature = "sol"))]
 pub fn compute_chall<E: Pairing>(
     vk: &VerifyingKey<E>,
-    public_input: &[E::ScalarField],
+    instance_input: &[E::ScalarField],
     t_g: &E::G1Affine,
 ) -> E::ScalarField {
     use super::transcript::IOPTranscript;
     let mut transcript = IOPTranscript::<E::ScalarField>::new(super::Pari::<E>::SNARK_NAME);
     let _ = transcript.append_serializable_element(b"vk", vk);
-    let _ = transcript.append_serializable_element(b"input", &public_input.to_vec());
+    let _ = transcript.append_serializable_element(b"input", &instance_input.to_vec());
     let _ = transcript.append_serializable_element(b"comm", t_g);
     let challenge = transcript.get_and_append_challenge("r".as_bytes()).unwrap();
     challenge
@@ -23,7 +23,7 @@ use ark_ff::PrimeField;
 #[cfg(feature = "sol")]
 pub fn compute_chall<E: Pairing>(
     vk: &VerifyingKey<E>,
-    public_input: &[E::ScalarField],
+    instance_input: &[E::ScalarField],
     t_g: &E::G1Affine,
 ) -> E::ScalarField
 where
@@ -53,7 +53,7 @@ where
     hasher.update(&encode_packed(t_g.x().unwrap()));
     hasher.update(&encode_packed(t_g.y().unwrap()));
     hasher.update(&encode_packed(E::ScalarField::from(1)));
-    for elem in public_input.iter() {
+    for elem in instance_input.iter() {
         hasher.update(&encode_packed(*elem));
     }
 

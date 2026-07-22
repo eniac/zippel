@@ -39,7 +39,7 @@ fn try_parse_and_build(src: &str) -> Result<UDags<B>, GraphError> {
 #[test]
 fn pair_type_mismatch_propagates_as_type_error() {
     let src = r#"
-        fn f<F: Field, G1: Group, G2: Group, GT: Pairing<G1, G2>>(public a: F, public b: G2) -> GT {
+        fn f<F: Field, G1: Group, G2: Group, GT: Pairing<G1, G2>>(instance a: F, instance b: G2) -> GT {
             pair(a, b)
         }
     "#;
@@ -56,7 +56,7 @@ fn pair_type_mismatch_propagates_as_type_error() {
 #[test]
 fn bin_type_mismatch_propagates_as_type_error() {
     let src = r#"
-        fn f<F: Field, G: Group>(public a: F, public b: G) -> G {
+        fn f<F: Field, G: Group>(instance a: F, instance b: G) -> G {
             a + b
         }
     "#;

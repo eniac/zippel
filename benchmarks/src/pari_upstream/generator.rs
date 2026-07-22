@@ -87,7 +87,7 @@ impl<E: Pairing> Pari<E> {
         end_timer!(timer_compute_a_b);
         /////////////////////// Succinct Index ///////////////////////
         let timer_succinct_index = start_timer!(|| "Generating Succinct Index");
-        let num_public_inputs = cs.num_instance_variables();
+        let num_instance_inputs = cs.num_instance_variables();
         let succinct_index = SuccinctIndex {
             num_constraints,
             instance_len,
@@ -154,9 +154,9 @@ impl<E: Pairing> Pari<E> {
         // Construct sigma, It's also denoted by sigma in the paper: step 6, fig 6, https://eprint.iacr.org/2024/1245.pdf
         // Sigma = [((alpha a_i(tau)+ beta b_(tau))/delta_2).G]_{i=n+1}^k
         let timer_sigma = start_timer!(|| "Computing sigma");
-        let sigma_powers = a[num_public_inputs..]
+        let sigma_powers = a[num_instance_inputs..]
             .par_iter()
-            .zip(&b[num_public_inputs..])
+            .zip(&b[num_instance_inputs..])
             .map(|(a_i, b_i)| *a_i * alpha_over_delta_two + *b_i * beta_over_delta_two)
             // .map(|(a_i, b_i)|  *a_i * alpha_over_delta_two + *b_i * beta_over_delta_two)
             .collect::<Vec<_>>();

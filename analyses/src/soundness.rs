@@ -23,7 +23,7 @@ pub struct SpecialSoundnessAnalysis<C: ArkConfig> {
     /// relation) under lex order. Computed in `from_input_with_backend`.
     /// Snapshotable.
     pub search_gb: GbBasis<C::F>,
-    /// Witness slots (private args) for extractor search in `run()`.
+    /// Witness slots (witness args) for extractor search in `run()`.
     witness_slots: Vec<Var>,
     /// Variables visible to the verifier (used for extractor validation).
     verifier_visible: Set<Var>,
@@ -160,7 +160,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
         let witness_slots: Vec<Var> = crate::var::dag_args(dag)
             .into_iter()
-            .filter(|a| a.is_private())
+            .filter(|a| a.is_witness())
             .filter(|a| !partial_values.contains(&a.reference))
             .flat_map(|a| a.slots())
             .collect();
@@ -285,8 +285,8 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         }
 
         let mut verifier_visible: Set<Var> = Set::new();
-        let mut pub_vars: Vec<Var> = Vec::new();
-        let mut priv_vars: Vec<Var> = Vec::new();
+        let mut non_witness_vars: Vec<Var> = Vec::new();
+        let mut witness_vars: Vec<Var> = Vec::new();
 
         for eq in &all_d_equations {
             grev_search.generating_set.push(eq.clone());
@@ -304,10 +304,10 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                 verifier_visible.insert(var.clone());
             }
             for var in tc.vars.iter() {
-                if var.qualifier.is_private() {
-                    priv_vars.push(var.clone());
+                if var.qualifier.is_witness() {
+                    witness_vars.push(var.clone());
                 } else {
-                    pub_vars.push(var.clone());
+                    non_witness_vars.push(var.clone());
                 }
             }
             let copy_result = grev_builder.build_with_partial(tc, partial_values);
@@ -317,10 +317,10 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
         let rel_tc = TransClos::relation(dag);
         for var in rel_tc.vars.iter() {
-            if var.qualifier.is_private() {
-                priv_vars.push(var.clone());
+            if var.qualifier.is_witness() {
+                witness_vars.push(var.clone());
             } else {
-                pub_vars.push(var.clone());
+                non_witness_vars.push(var.clone());
             }
         }
         let mut rel_locals = extract_locals(&grev_builder, &rel_tc);
@@ -331,13 +331,13 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         grev_search.merge(&grev_rel_result);
 
         // Phase 2: Build lex ordering as runtime data.
-        // Priority: rel_locals > priv_vars > other_locals > pub_vars.
+        // Priority: rel_locals > witness_vars > other_locals > non_witness_vars.
         // In MonoOrder::lex, the first variable has the highest elimination
         // priority. Within each group, sort by Var::Ord for determinism.
         let lex_var_order: Vec<Var> = {
             let rel_locals_set: Set<Var> = grev_rel_result.var_order.iter().cloned().collect();
-            let priv_set: Set<Var> = priv_vars.iter().cloned().collect();
-            let pub_set: Set<Var> = pub_vars.iter().cloned().collect();
+            let witness_set: Set<Var> = witness_vars.iter().cloned().collect();
+            let non_witness_set: Set<Var> = non_witness_vars.iter().cloned().collect();
 
             let all_vars: Set<Var> = grev_search.vars();
 
@@ -347,33 +347,37 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                 .cloned()
                 .collect();
             rel.sort();
-            let mut priv_v: Vec<Var> = all_vars
+            let mut witness_v: Vec<Var> = all_vars
                 .iter()
-                .filter(|v| priv_set.contains(v) && !rel_locals_set.contains(v))
+                .filter(|v| witness_set.contains(v) && !rel_locals_set.contains(v))
                 .cloned()
                 .collect();
-            priv_v.sort();
-            let mut pub_v: Vec<Var> = all_vars
+            witness_v.sort();
+            let mut non_witness_v: Vec<Var> = all_vars
                 .iter()
                 .filter(|v| {
-                    pub_set.contains(v) && !rel_locals_set.contains(v) && !priv_set.contains(v)
+                    non_witness_set.contains(v)
+                        && !rel_locals_set.contains(v)
+                        && !witness_set.contains(v)
                 })
                 .cloned()
                 .collect();
-            pub_v.sort();
+            non_witness_v.sort();
             let mut other: Vec<Var> = all_vars
                 .iter()
                 .filter(|v| {
-                    !rel_locals_set.contains(v) && !priv_set.contains(v) && !pub_set.contains(v)
+                    !rel_locals_set.contains(v)
+                        && !witness_set.contains(v)
+                        && !non_witness_set.contains(v)
                 })
                 .cloned()
                 .collect();
             other.sort();
 
             rel.into_iter()
-                .chain(priv_v)
+                .chain(witness_v)
                 .chain(other)
-                .chain(pub_v)
+                .chain(non_witness_v)
                 .collect()
         };
         let lex_order = MonoOrder::lex(lex_var_order);
@@ -548,7 +552,7 @@ fn build_round_map<C: ArkConfig>(
         while let Some(node) = queue.pop_front() {
             if let Some(typ) = dag[node].typ() {
                 let r = dag.find_ref(node);
-                let base = Var::from_node(node, typ.clone(), Qualifier::Public);
+                let base = Var::from_node(node, typ.clone(), Qualifier::Instance);
                 for slot in base.slots() {
                     round_map
                         .entry((r, slot.index))
@@ -671,7 +675,7 @@ mod tests {
     }
 
     const SCHNORR_PROTO: &str = r#"
-        proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+        proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
             let r = random<F>;
             u <- g*r;
             c <- challenge<F*>;
@@ -717,7 +721,7 @@ mod tests {
     #[test]
     fn reject_no_challenge() {
         let proto = r#"
-            proto foo<F: Field>(public s: F) where s == s {
+            proto foo<F: Field>(instance s: F) where s == s {
                 verify(s == s)
             }
         "#;
@@ -728,7 +732,7 @@ mod tests {
     #[test]
     fn unused_witness_has_no_extractor() {
         let proto = r#"
-            proto foo<G: Group, F: Scalar<G>>(private x: F, private w: F, public g: G, public h: G) where h == g*x {
+            proto foo<G: Group, F: Scalar<G>>(witness x: F, witness w: F, instance g: G, instance h: G) where h == g*x {
                 let r = random<F>;
                 u <- g*r;
                 c <- challenge<F*>;
@@ -761,14 +765,14 @@ mod tests {
 
         let witness_names: Set<String> = crate::var::dag_args(&g)
             .into_iter()
-            .filter(|a| a.is_private())
+            .filter(|a| a.is_witness())
             .flat_map(|a| a.slots())
             .map(|w| w.name().to_string())
             .collect();
         assert!(witness_names.contains(&"x".to_string()));
         let witness_count: usize = crate::var::dag_args(&g)
             .into_iter()
-            .filter(|a| a.is_private())
+            .filter(|a| a.is_witness())
             .flat_map(|a| a.slots())
             .count();
         assert_eq!(witness_count, 1);
@@ -776,9 +780,9 @@ mod tests {
 
     const CHAUM_PEDERSEN_PROTO: &str = r#"
         proto chaum_pedersen<G: Group, F: Scalar<G>>(
-            private x: F,
-            public g: G, public g2: G,
-            public h1: G, public h2: G
+            witness x: F,
+            instance g: G, instance g2: G,
+            instance h1: G, instance h2: G
         ) where h1 == g*x; h2 == g2*x {
             let r = random<F>;
             u <- g*r;
@@ -792,7 +796,7 @@ mod tests {
     #[test]
     fn schnorr_g_identity_no_extractor() {
         let proto = r#"
-            proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where g == g - g; h == g*x {
+            proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where g == g - g; h == g*x {
                 let r = random<F>;
                 u <- g*r;
                 c <- challenge<F*>;
@@ -823,7 +827,7 @@ mod tests {
     #[test]
     fn consecutive_challenges_not_sound_as_vector() {
         let proto = r#"
-            proto vec_challenge<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+            proto vec_challenge<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
                 let r = random<F>;
                 u <- g*r;
                 c1 <- challenge<F*>;
@@ -843,7 +847,7 @@ mod tests {
     #[test]
     fn schnorr_two_challenge_not_sound_as_vector() {
         let proto = r#"
-            proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+            proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
                 let r1 = random<F>;
                 u1 <- g * r1;
                 let r2 = random<F>;
@@ -861,7 +865,7 @@ mod tests {
     #[test]
     fn schnorr_quadratic_two_challenge_special_soundness() {
         let proto = r#"
-            proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+            proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
                 let r = random<F>;
                 let s = random<F>;
                 u <- g*r;
@@ -879,7 +883,7 @@ mod tests {
     #[test]
     fn multi_round_schnorr_special_soundness() {
         let proto = r#"
-            proto multi_schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+            proto multi_schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
                 let r1 = random<F>;
                 u1 <- g*r1;
                 c1 <- challenge<F*>;
@@ -897,7 +901,7 @@ mod tests {
     #[test]
     fn reject_challenge_before_any_prover_message() {
         let proto = r#"
-            proto bad<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+            proto bad<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
                 c <- challenge<F*>;
                 u <- g*x;
                 verify(g*x == u)
@@ -913,7 +917,7 @@ mod tests {
     #[test]
     fn reject_trailing_challenge() {
         let proto = r#"
-            proto bad<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+            proto bad<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
                 let r = random<F>;
                 u <- g*r;
                 c <- challenge<F*>;
@@ -932,7 +936,7 @@ mod tests {
     #[test]
     fn reject_challenge_count_mismatch() {
         let proto = r#"
-            proto bad<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+            proto bad<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
                 let r = random<F>;
                 u <- g*r;
                 c1 <- challenge<F*>;
@@ -974,7 +978,7 @@ mod tests {
 
         let witness_slots: Vec<Var> = crate::var::dag_args(&g)
             .into_iter()
-            .filter(|a| a.is_private())
+            .filter(|a| a.is_witness())
             .flat_map(|a| a.slots())
             .collect();
         assert_eq!(witness_slots.len(), 1);
@@ -990,7 +994,7 @@ mod tests {
     #[test]
     fn vec_witness_multi_slot_soundness() {
         let proto = r#"
-            proto vec_wit<G: Group, F: Scalar<G>>(private x: [F; 2], public g: G, public h1: G, public h2: G) where h1 == g*x[0]; h2 == g*x[1] {
+            proto vec_wit<G: Group, F: Scalar<G>>(witness x: [F; 2], instance g: G, instance h1: G, instance h2: G) where h1 == g*x[0]; h2 == g*x[1] {
                 let r0 = random<F>;
                 let r1 = random<F>;
                 u0 <- g*r0;
@@ -1019,7 +1023,7 @@ mod tests {
     #[test]
     fn consecutive_vec_challenge_two_witnesses_not_sound() {
         let proto = r#"
-            proto vec_two_wit<G: Group, F: Scalar<G>>(private x1: F, private x2: F, public g: G, public h1: G, public h2: G) where h1 == g*x1; h2 == g*x2 {
+            proto vec_two_wit<G: Group, F: Scalar<G>>(witness x1: F, witness x2: F, instance g: G, instance h1: G, instance h2: G) where h1 == g*x1; h2 == g*x2 {
                 let r = random<F>;
                 u <- g*r;
                 c1 <- challenge<F*>;
@@ -1039,7 +1043,7 @@ mod tests {
     #[test]
     fn vector_challenge_independent_responses() {
         let proto = r#"
-            proto vec_indep<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+            proto vec_indep<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
                 let r = random<F>;
                 let s = random<F>;
                 u1 <- g*r;

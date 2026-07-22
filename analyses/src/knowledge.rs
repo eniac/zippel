@@ -12,11 +12,11 @@ use lang::typ::Distribution;
 use log::warn;
 use share::Ctx;
 
-/// Knowledge-analysis elimination predicate: Local variables and private-uniform
+/// Knowledge-analysis elimination predicate: Local variables and witness-uniform
 /// variables (random masks) are eliminated first.
 fn is_elim_var(v: &Var, dist_map: &Ctx<Ref, Distribution>) -> bool {
     v.qualifier == lang::typ::Qualifier::Local
-        || (v.qualifier == lang::typ::Qualifier::Private
+        || (v.qualifier == lang::typ::Qualifier::Witness
             && dist_map
                 .get(&v.reference)
                 .map(|d| d.is_uniform())
@@ -115,25 +115,25 @@ impl<C: HasOpFactory> KnowledgeAnalysis<C> {
 
     fn is_leak(&self, p: &Polynomial<C::F>) -> bool {
         let vars = p.vars();
-        let has_public = vars.iter().any(|v| v.is_public());
-        let has_private = vars.iter().any(|v| v.is_private());
+        let has_non_witness = vars.iter().any(|v| !v.is_witness());
+        let has_witness = vars.iter().any(|v| v.is_witness());
 
-        if !has_public || !has_private {
+        if !has_non_witness || !has_witness {
             return false;
         }
 
-        !self.has_private_uniform_linear_mask(p)
+        !self.has_witness_uniform_linear_mask(p)
     }
 
-    fn has_private_uniform_linear_mask(&self, p: &Polynomial<C::F>) -> bool {
-        // A polynomial with a private uniform variable appearing at degree 1
+    fn has_witness_uniform_linear_mask(&self, p: &Polynomial<C::F>) -> bool {
+        // A polynomial with a witness uniform variable appearing at degree 1
         // alone in its own term is safe — it acts as a one-time pad mask.
-        // E.g., r + c*x - z where r is private uniform.
+        // E.g., r + c*x - z where r is witness uniform.
         p.terms.iter().any(|(term, _coeff)| {
             let term_vars: Vec<_> = term.iter().collect();
             term_vars.len() == 1
                 && *term_vars[0].1 == 1
-                && term_vars[0].0.is_private()
+                && term_vars[0].0.is_witness()
                 && (self.is_uniform(term_vars[0].0) || self.is_uniform_nz(term_vars[0].0))
         })
     }
@@ -144,14 +144,14 @@ impl<C: HasOpFactory> KnowledgeAnalysis<C> {
             if vars.is_empty() {
                 return true;
             }
-            // Remove polynomials where ALL variables are private uniform
-            let all_private_uniform = vars.iter().all(|v| v.is_private() && self.is_uniform(v));
-            if all_private_uniform {
+            // Remove polynomials where ALL variables are witness uniform
+            let all_witness_uniform = vars.iter().all(|v| v.is_witness() && self.is_uniform(v));
+            if all_witness_uniform {
                 return false;
             }
             // Remove polynomials containing internal variables — these are
             // prover/Groebner-builder computations that the verifier cannot observe.
-            // Keep private-uniform handling as-is: mixed uniform-mask polynomials
+            // Keep witness-uniform handling as-is: mixed uniform-mask polynomials
             // are classified by `is_leak` below rather than dropped here.
             let contains_internal_variable = vars.iter().any(|v| v.is_local());
             !contains_internal_variable
@@ -220,7 +220,7 @@ mod tests {
     #[test]
     fn knowledge_foo() {
         let ex = r#"
-        proto foo<F: Field>(private s: F, private s': F) where s == s' {
+        proto foo<F: Field>(witness s: F, witness s': F) where s == s' {
             let r = random<F>;
             c <- challenge<F>;
             a <- r * c;
@@ -255,7 +255,7 @@ mod tests {
     #[test]
     fn groebner_bar() {
         let ex = r#"
-        proto foo<F: Field>(private s: F, private s': F) where s == s' {
+        proto foo<F: Field>(witness s: F, witness s': F) where s == s' {
             let r = random<F>;
             a <- r * s;
             b <- r * s';
@@ -290,7 +290,7 @@ mod tests {
     #[test]
     fn groebner_baz() {
         let ex = r#"
-        proto baz<F: Field, N: 4..8>(private s: [F; N], private s': F) where s[3] == s' {
+        proto baz<F: Field, N: 4..8>(witness s: [F; N], witness s': F) where s[3] == s' {
             let r = random<F>;
             a <- r * s[3];
             b <- r * s';
@@ -322,7 +322,7 @@ mod tests {
     }
 
     /// This example is somewhat contrived. Here is how we leak s = s'.
-    /// 1. We have two private inputs s and s'.
+    /// 1. We have two witness inputs s and s'.
     /// 2. a - b = s - s'
     /// 3. g*a = g*b from [verify]
     /// 4. g*(a - b) = g *(s - s') = 0 from [2]
@@ -331,7 +331,7 @@ mod tests {
     #[test]
     fn groebner_ex3() {
         let ex = r#"
-        proto foo<G: Group, F: Scalar<G>>(private s: F, private s': F, public g: G) where s == s {
+        proto foo<G: Group, F: Scalar<G>>(witness s: F, witness s': F, instance g: G) where s == s {
             let r = random<F>;
             let a = r + s;
             let b = r + s';
@@ -364,21 +364,21 @@ mod tests {
 
     /// Known false positive after qualifier propagation fix.
     ///
-    /// The bidirectional walk now correctly assigns `Private` to the
+    /// The bidirectional walk now correctly assigns `Witness` to the
     /// relation-side computation `g*x` (node 20). Previously it defaulted to
     /// `Local` (unreachable from the old backward-only walk), which caused
     /// `eliminate_var` to drop any polynomial containing it.
     ///
-    /// With the correct `Private` qualifier, node 20 survives elimination and
+    /// With the correct `Witness` qualifier, node 20 survives elimination and
     /// appears in the verification equation `c*node20 + g*z - u = 0` alongside
-    /// public vars (c, g, z, u). Since node 20 is Private but not uniform,
-    /// `has_private_uniform_linear_mask` finds no degree-1 uniform mask, so
+    /// non-secret vars (c, g, z, u). Since node 20 is Witness but not uniform,
+    /// `has_witness_uniform_linear_mask` finds no degree-1 uniform mask, so
     /// `is_leak` flags it.
     ///
-    /// This is not a real leak — node 20 is `h` (a public input) expressed via
+    /// This is not a real leak — node 20 is `h` (an instance input) expressed via
     /// the relation `h == g*x`. The knowledge analysis does not currently
-    /// identify relation-side computations with their public input
-    /// counterparts, so it treats node 20 as an opaque Private variable.
+    /// identify relation-side computations with their instance input
+    /// counterparts, so it treats node 20 as an opaque Witness variable.
     /// Fixing this requires teaching `eliminate_var` that relation-side
     /// computations are internal (not verifier-observable), which is a
     /// separate improvement.
@@ -386,7 +386,7 @@ mod tests {
     #[ignore = "known false positive: relation-side g*x now correctly Private but not eliminated"]
     fn schnorr_zk() {
         let ex = r#"
-        proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+        proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
             let r = random<F>;
             u <- g*r;
             c <- challenge<F*>;
@@ -410,7 +410,7 @@ mod tests {
     #[test]
     fn zk_regression_direct_secret_leak() {
         let ex = r#"
-        proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+        proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
             let r = random<F>;
             u <- g*r;
             d <- x;
@@ -432,16 +432,16 @@ mod tests {
         }
         assert!(
             result.is_err(),
-            "d <- x directly leaks private x to transcript"
+            "d <- x directly leaks witness x to transcript"
         );
     }
 
-    /// Leak: transcript contains x + public_val (no blinding).
+    /// Leak: transcript contains x + instance_val (no blinding).
     /// Verifier computes x = d - y.
     #[test]
     fn zk_leak_unblinded_linear_combination() {
         let ex = r#"
-        proto leak<F: Field>(private x: F, public y: F) where x == x {
+        proto leak<F: Field>(witness x: F, instance y: F) where x == x {
             d <- x + y;
             verify(d == d)
         }"#;
@@ -464,7 +464,7 @@ mod tests {
     #[test]
     fn zk_leak_no_random_blinding() {
         let ex = r#"
-        proto leak<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+        proto leak<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
             c <- challenge<F*>;
             z <- x * c;
             verify(g*z == h*c)
@@ -488,7 +488,7 @@ mod tests {
     #[test]
     fn zk_leak_secret_difference_on_transcript() {
         let ex = r#"
-        proto leak<F: Field>(private s: F, private t: F, public y: F) where y == y {
+        proto leak<F: Field>(witness s: F, witness t: F, instance y: F) where y == y {
             a <- s + y;
             b <- t + y;
             verify(a == b)
@@ -515,7 +515,7 @@ mod tests {
     #[ignore = "known false positive: relation-side g*x now correctly Private but not eliminated"]
     fn zk_safe_schnorr_with_blinding() {
         let ex = r#"
-        proto safe<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+        proto safe<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
             let r = random<F>;
             u <- g*r;
             c <- challenge<F*>;
@@ -536,14 +536,14 @@ mod tests {
         );
     }
 
-    /// Leak: the two verify statements together leak private information.
+    /// Leak: the two verify statements together leak witness information.
     /// Each check is a trivial self-equality on a transcript value (`a == a` and `b == b`).
     /// Since `a = s + r` and `b = t + r` reuse the same blinding value `r`, publishing both
     /// values reveals `a - b = s - t`, so the transcript leaks information about the secrets.
     #[test]
     fn zk_multiple_verify_one_safe_one_subtle_leak() {
         let ex = r#"
-        proto mixed<F: Field>(private s: F, private t: F, public y: F) where y == y {
+        proto mixed<F: Field>(witness s: F, witness t: F, instance y: F) where y == y {
             let r = random<F>;
             a <- s + r;
             b <- t + r;
@@ -565,11 +565,11 @@ mod tests {
     }
 
     /// Safe: both verify statements are properly blinded with independent random values.
-    /// Each check uses a separate random blinding factor, so no private information leaks.
+    /// Each check uses a separate random blinding factor, so no witness information leaks.
     #[test]
     fn zk_multiple_verify_both_safe() {
         let ex = r#"
-        proto safe<F: Field>(private a: F, private b: F) where a == b {
+        proto safe<F: Field>(witness a: F, witness b: F) where a == b {
             let r = random<F>;
             let s = random<F>;
             x <- a * r;
@@ -606,7 +606,7 @@ mod tests {
         use lang::id::Tid;
 
         let ex = r#"
-        proto ke<F: Field, N: Size>(public a: Uni<F, N>) where a == a {
+        proto ke<F: Field, N: Size>(instance a: Uni<F, N>) where a == a {
             r1 <- challenge<F>;
             let l = a(r1);
             verify(l == l)
@@ -619,10 +619,10 @@ mod tests {
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut kz = KnowledgeAnalysis::from_input(&g);
-        // All inputs are public so nothing could leak; trivially ZK.
+        // All inputs are instance so nothing could leak; trivially ZK.
         assert!(
             kz.run().is_ok(),
-            "public-only eval protocol should be ZK (no private secrets to leak)"
+            "instance-only eval protocol should be ZK (no witness secrets to leak)"
         );
     }
 
@@ -630,9 +630,9 @@ mod tests {
     fn knowledge_relation_basis_div_wit_cache_is_clean() {
         let ex = r#"
         proto clean_rel<F: Field>(
-            private p: Poly<F, 1, 2>,
-            public d: Poly<F, 1, 1>,
-            public q: Poly<F, 1, 1>
+            witness p: Poly<F, 1, 2>,
+            instance d: Poly<F, 1, 1>,
+            instance q: Poly<F, 1, 1>
         ) where q == p / d {
             let z = p / d;
             verify(z == q)

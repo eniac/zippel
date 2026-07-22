@@ -496,9 +496,9 @@ fn test_app() {
             TypeVar::new_str("G", Kind::Group),
         ]),
         args: Args::from([
-            CArg::public("a", CTyp::Base(Tid::from("F"))),
-            CArg::public("b", CTyp::Base(Tid::from("F"))),
-            CArg::public("c", CTyp::Base(Tid::from("G"))),
+            CArg::instance("a", CTyp::Base(Tid::from("F"))),
+            CArg::instance("b", CTyp::Base(Tid::from("F"))),
+            CArg::instance("c", CTyp::Base(Tid::from("G"))),
         ]),
         ret: CTyp::Base(Tid::from("G")),
     });
@@ -1682,7 +1682,7 @@ fn test_type_alias_cycle_returns_error_instead_of_overflow() {
     let ex = concat!(
         "type A = B;\n",
         "type B = A;\n",
-        "fn f<F: Field>(public a: A) -> F {\n",
+        "fn f<F: Field>(instance a: A) -> F {\n",
         "    a\n",
         "}\n"
     );

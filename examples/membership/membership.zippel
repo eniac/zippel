@@ -2,8 +2,8 @@
 // https://solvable.group/posts/membership-proofs-from-polynomial-commitments/
 
 proto membership<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size, M: Size, L: (N-1)*M, S: Size>
-        (private f_coeffs: [F; N], public s: [F; M], public srs_g1: [G1; S],
-        public gen_g1: G1, public gen_g2: G2, public srs_g2_s: G2)
+        (witness f_coeffs: [F; N], instance s: [F; M], extra srs_g1: [G1; S],
+        instance gen_g1: G1, instance gen_g2: G2, instance srs_g2_s: G2)
         where srs_g1[0] == gen_g1; [pair(srs_g1[i], srs_g2_s) for i in 0..S-1] == [pair(srs_g1[i+1], gen_g2) for i in 0..S-1];
         reduce(*, [f_coeffs[0] - r for r in s]) == 0 {
 

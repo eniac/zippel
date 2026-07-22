@@ -11,26 +11,26 @@ proto dekart<
     l_chunk: Size,
     h_deg: (b-1)*n
 >(
-    // Private inputs (witness)
-    private f_evals: [f; n+1],
-    private chunks_evals: [[f; n+1]; l_chunk],
+    // Witness inputs
+    witness f_evals: [f; n+1],
+    witness chunks_evals: [[f; n+1]; l_chunk],
 
-    // Blinding factors (private)
-    private rho: f,
-    private delta_rho: f,
-    private rho_h: f,
-    private rho_vec: [f; l_chunk],
+    // Blinding factors (witness)
+    witness rho: f,
+    witness delta_rho: f,
+    witness rho_h: f,
+    witness rho_vec: [f; l_chunk],
 
-    // Public inputs/SRS
-    public b_pow: [f; l_chunk],
-    public gen_g1: g1,
-    public gen_g2: g2,
-    public srs_g2_tau: g2,
-    public srs_g2_xi: g2,
-    public xi_g1: g1,
-    public s0_commit: g1,
-    private srs_g1_n: [g1; n+1],
-    private srs_g1_h: [g1; h_deg+1]
+    // Instance inputs/SRS
+    instance b_pow: [f; l_chunk],
+    instance gen_g1: g1,
+    instance gen_g2: g2,
+    instance srs_g2_tau: g2,
+    instance srs_g2_xi: g2,
+    instance xi_g1: g1,
+    instance s0_commit: g1,
+    extra srs_g1_n: [g1; n+1],
+    extra srs_g1_h: [g1; h_deg+1]
 ) where srs_g1_n[0] == gen_g1; srs_g1_h[0] == gen_g1;
     [pair(srs_g1_n[i], srs_g2_tau) for i in 0..n] == [pair(srs_g1_n[i+1], gen_g2) for i in 0..n];
     [pair(srs_g1_h[i], srs_g2_tau) for i in 0..h_deg] == [pair(srs_g1_h[i+1], gen_g2) for i in 0..h_deg];

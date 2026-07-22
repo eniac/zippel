@@ -39,7 +39,7 @@ impl<C: HasOpFactory> GraphBuilder<C> {
         let arg = self.dag.add_node(Node::Arg(
             vid,
             typ,
-            Qualifier::Private,
+            Qualifier::Witness,
             Distribution::Nonuniform,
             ArgKind::Input,
         ));
@@ -258,7 +258,7 @@ mod tests {
 
         // Protocol with two separate verify statements → two Check nodes
         let src = r#"
-            proto two_checks<F: Field>(public x: F, public y: F) where 1 == 1 {
+            proto two_checks<F: Field>(instance x: F, instance y: F) where 1 == 1 {
                 verify(x == x);
                 verify(y == y)
             }
@@ -300,7 +300,7 @@ mod tests {
 
         // Protocol with scattered verify statements throughout the body
         let src = r#"
-            proto scattered<F: Field>(public x: F, public y: F) where 1 == 1 {
+            proto scattered<F: Field>(instance x: F, instance y: F) where 1 == 1 {
                 a <- x + y;
                 verify(a == a);
                 b <- a + x;
@@ -344,7 +344,7 @@ mod tests {
 
         // Second verify has a false condition (x != y)
         let src = r#"
-            proto neg<F: Field>(public x: F, public y: F) where 1 == 1 {
+            proto neg<F: Field>(instance x: F, instance y: F) where 1 == 1 {
                 verify(x == x);
                 verify(x == y)
             }
@@ -380,7 +380,7 @@ mod tests {
 
         // First verify has a false condition (x != y)
         let src = r#"
-            proto neg2<F: Field>(public x: F, public y: F) where 1 == 1 {
+            proto neg2<F: Field>(instance x: F, instance y: F) where 1 == 1 {
                 verify(x == y);
                 verify(y == y)
             }
@@ -421,7 +421,7 @@ mod tests {
                 verify(x == x);
                 x
             }
-            proto caller<F: Field>(public v: F) where v == v {
+            proto caller<F: Field>(instance v: F) where v == v {
                 a <- checked(v);
                 verify(a == v)
             }
@@ -466,7 +466,7 @@ mod tests {
                 verify(x == y);
                 x
             }
-            proto caller<F: Field>(public a: F, public b: F) where a == a {
+            proto caller<F: Field>(instance a: F, instance b: F) where a == a {
                 r <- checked(a, b);
                 verify(r == a)
             }
@@ -549,7 +549,7 @@ mod tests {
             fn do_check<F: Field>(x: F) -> Unit {
                 verify(x == x)
             }
-            proto let_check<F: Field>(public x: F) where x == x {
+            proto let_check<F: Field>(instance x: F) where x == x {
                 let a = do_check(x);
                 verify(a == ())
             }

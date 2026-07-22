@@ -1,8 +1,8 @@
-fn eq_weights<G: Group, F: Scalar<G>>(public x: [F; 1]) -> [F; 2] {
+fn eq_weights<G: Group, F: Scalar<G>>(instance x: [F; 1]) -> [F; 2] {
     [ (1 - x[0]), x[0] ]
 }
 
-fn eq_weights<G: Group, F: Scalar<G>, K: 2..21>(public x: [F; K]) -> [F; 2^K] {
+fn eq_weights<G: Group, F: Scalar<G>, K: 2..21>(instance x: [F; K]) -> [F; 2^K] {
     let x_lo = x[0..(K-1)];
     let a    = x[K-1];
     let prev = eq_weights(x_lo);
@@ -10,15 +10,15 @@ fn eq_weights<G: Group, F: Scalar<G>, K: 2..21>(public x: [F; K]) -> [F; 2^K] {
 }
 
 proto hyrax<G: Group, F: Scalar<G>, L: Size, M: Size, NR: 2^L, NC: 2^M, NT: 2^(L+M)>(
-    private p:     [F; NT],
-    public z_row:  [F; L],
-    public z_col:  [F; M],
-    public y:      F,
-    public g_vec:  [G; NC],
-    public g_base: G,
-    public h_base: G,
-    private g_traps: [F; NC],
-    private h_trap:  F
+    witness p:     [F; NT],
+    instance z_row:  [F; L],
+    instance z_col:  [F; M],
+    instance y:      F,
+    instance g_vec:  [G; NC],
+    instance g_base: G,
+    instance h_base: G,
+    witness g_traps: [F; NC],
+    witness h_trap:  F
 ) where
     // Hyrax proves y == p̃(z_row, z_col), where p̃ is the multilinear
     // extension of `p` indexed as a NR×NC matrix (row-major: p[i*NC + j]).

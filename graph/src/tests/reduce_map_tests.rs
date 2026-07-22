@@ -73,7 +73,7 @@ fn op_has_loop_param(op: &GOp<B>, level: usize) -> bool {
 #[test]
 fn generic_reduce_over_map_lowers_to_reduce_map() {
     let src = r#"
-        fn s<F: Field>(private xs: [F; 4]) -> F {
+        fn s<F: Field>(witness xs: [F; 4]) -> F {
             reduce(+, [x + x for x in xs])
         }
     "#;
@@ -112,7 +112,7 @@ fn generic_reduce_over_map_lowers_to_reduce_map() {
 #[test]
 fn standalone_map_lowers_to_map_op() {
     let src = r#"
-        fn m<F: Field>(private xs: [F; 4]) -> [F; 4] {
+        fn m<F: Field>(witness xs: [F; 4]) -> [F; 4] {
             [x + x for x in xs]
         }
     "#;
@@ -139,7 +139,7 @@ fn standalone_map_lowers_to_map_op() {
 #[test]
 fn nested_map_domain_is_composed_away() {
     let src = r#"
-        fn c<F: Field>(private xs: [F; 4]) -> F {
+        fn c<F: Field>(witness xs: [F; 4]) -> F {
             reduce(+, [x + x for x in [y + y for y in xs]])
         }
     "#;
@@ -172,7 +172,7 @@ fn nested_map_domain_is_composed_away() {
 #[test]
 fn effectful_body_declines_to_unroll() {
     let src = r#"
-        fn e<F: Field>(private xs: [F; 4]) -> F {
+        fn e<F: Field>(witness xs: [F; 4]) -> F {
             reduce(+, [x + random<F> for x in xs])
         }
     "#;
@@ -265,7 +265,7 @@ fn test_reduce_map_fused_optimization_fires() {
 
     // A helper function returning the computed round polynomial
     let src = r#"
-        fn test_opt<F: Field>(private poly: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
+        fn test_opt<F: Field>(witness poly: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
             let zero: F = 0;
             let one = zero + 1;
             reduce(+, [
@@ -334,7 +334,7 @@ fn test_reduce_map_fused_optimization_skips_non_pow_two() {
     // Domain size 3 is not a power of 2, so the optimization must be skipped,
     // but the fallback path should execute correctly and return the correct polynomial.
     let src = r#"
-        fn test_no_opt<F: Field>(private poly: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
+        fn test_no_opt<F: Field>(witness poly: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
             let zero: F = 0;
             let one = zero + 1;
             reduce(+, [
@@ -403,7 +403,7 @@ fn test_reduce_map_fused_optimization_skips_multiplicative() {
     // Multiplicative reduction should not match, so optimization must be skipped,
     // but the fallback path should execute correctly and return the correct polynomial.
     let src = r#"
-        fn test_mul_no_opt<F: Field>(private poly: Poly<F, 3, 1>) -> Poly<F, 1, 4> {
+        fn test_mul_no_opt<F: Field>(witness poly: Poly<F, 3, 1>) -> Poly<F, 1, 4> {
             let zero: F = 0;
             let one = zero + 1;
             reduce(*, [
@@ -478,7 +478,7 @@ fn test_reduce_map_fused_optimization_fallback_on_non_mle() {
     // and route to value_hypercube_reduce_selected, which should detect it's not MLE and
     // fallback to generic evaluation, computing the correct polynomial and not triggering errors.
     let src = r#"
-        fn test_non_mle<F: Field>(private poly: Poly<F, 3, 2>) -> Poly<F, 1, 2> {
+        fn test_non_mle<F: Field>(witness poly: Poly<F, 3, 2>) -> Poly<F, 1, 2> {
             let zero: F = 0;
             let one = zero + 1;
             reduce(+, [
@@ -551,7 +551,7 @@ fn test_reduce_map_fused_optimization_skips_modified_loop_param() {
     // The loop parameter is modified inside the eval call: eval<0>(poly, [t + one for t in tail]).
     // The optimization must skip because the evaluation points are not the exact loop parameter tail coordinates.
     let src = r#"
-        fn test_modified<F: Field>(private poly: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
+        fn test_modified<F: Field>(witness poly: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
             let zero: F = 0;
             let one = zero + 1;
             reduce(+, [
@@ -628,7 +628,7 @@ fn test_reduce_map_fused_optimization_skips_poly_depending_on_loop_param() {
     // Specifically: eval<0>(eval(poly_factory, [tail[0]]), [tail[1]])
     // The optimization must decline to fire because `poly` is not loop-invariant.
     let src = r#"
-        fn test_dependent<F: Field>(private poly_factory: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
+        fn test_dependent<F: Field>(witness poly_factory: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
             let zero: F = 0;
             let one = zero + 1;
             reduce(+, [
@@ -709,8 +709,8 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_hypercube_domain_with_
 
     let src = r#"
         fn test_non_canonical<F: Field>(
-            private poly: Poly<F, 3, 1>, 
-            private domain: [[F; 2]; 4]
+            witness poly: Poly<F, 3, 1>, 
+            witness domain: [[F; 2]; 4]
         ) -> Poly<F, 1, 1> {
             reduce(+, [
                 eval<0>(poly, tail)
@@ -772,8 +772,8 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_indices_domain_with_ma
 
     let src = r#"
         fn test_non_canonical_indices<F: Field>(
-            private poly: Poly<F, 3, 1>,
-            private domain: [Fin<4>; 4]
+            witness poly: Poly<F, 3, 1>,
+            witness domain: [Fin<4>; 4]
         ) -> Poly<F, 1, 1> {
             let zero: F = 0;
             let one = zero + 1;
@@ -842,7 +842,7 @@ fn test_reduce_map_fused_optimization_skips_arity_mismatch() {
     // The fixed mapping only produces 2 bits (j in 0..2).
     // The fast path should detect the arity mismatch and safely fallback to the generic path instead of panicking.
     let src = r#"
-        fn test_opt<F: Field>(private poly: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
+        fn test_opt<F: Field>(witness poly: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
             let zero: F = 0;
             let one = zero + 1;
             reduce(+, [

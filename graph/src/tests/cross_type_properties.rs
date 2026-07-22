@@ -240,7 +240,7 @@ mod mle_differential_tests {
     #[test]
     fn test_mle_app_evaluation_differential() {
         let src = r#"
-            fn f<F: Field>(public p: Mle<F, 2>, public x: F) -> Mle<F, 1> {
+            fn f<F: Field>(instance p: Mle<F, 2>, instance x: F) -> Mle<F, 1> {
                 p(x)
             }
         "#;

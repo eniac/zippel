@@ -4,19 +4,19 @@
 // using Pedersen-like commitments big_x = g*x + h*r_X, big_y = g*y + h*r_Y, big_z = g*(x*y) + h*r_Z.
 
 proto proof_of_product<G: Group, F: Scalar<G>>(
-    // Private witness known only to the prover:
-    private x: F,            // Value committed in big_x
-    private y: F,            // Value committed in big_y
-    private r_X: F,          // Randomness for big_x
-    private r_Y: F,          // Randomness for big_y
-    private r_Z: F,          // Randomness for big_z (such that big_z commits x*y)
+    // Witness known only to the prover:
+    witness x: F,            // Value committed in big_x
+    witness y: F,            // Value committed in big_y
+    witness r_X: F,          // Randomness for big_x
+    witness r_Y: F,          // Randomness for big_y
+    witness r_Z: F,          // Randomness for big_z (such that big_z commits x*y)
 
-    // Public inputs known to prover and verifier:
-    public g: G,           // Base G1 for Pedersen commitments
-    public h: G,           // Base G2 for Pedersen commitments
-    public big_x: G,           // Commitment big_x = g*x + h*r_X
-    public big_y: G,           // Commitment big_y = g*y + h*r_Y
-    public big_z: G            // Commitment big_z = g*(x*y) + h*r_Z
+    // Instance inputs known to prover and verifier:
+    instance g: G,           // Base G1 for Pedersen commitments
+    instance h: G,           // Base G2 for Pedersen commitments
+    instance big_x: G,           // Commitment big_x = g*x + h*r_X
+    instance big_y: G,           // Commitment big_y = g*y + h*r_Y
+    instance big_z: G            // Commitment big_z = g*(x*y) + h*r_Z
 )
 // The 'where' clause defines the exact relations the prover must satisfy.
 where big_x == g*x + h*r_X; big_y == g*y + h*r_Y; big_z == g*(x*y) + h*r_Z {

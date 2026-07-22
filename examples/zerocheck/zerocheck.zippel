@@ -1,6 +1,6 @@
 proto univariate_zero_check<F: Field, S: Size, N: S>(
-    public p: Uni<F, N>,
-    public v: Uni<F, N>
+    instance p: Uni<F, N>,
+    instance v: Uni<F, N>
 ) where p % v == poly([0]) {
     q <- p / v;
     r <- challenge<F>;

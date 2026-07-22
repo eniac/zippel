@@ -2,15 +2,15 @@
 // Unlike sumcheck.zippel (which delegates the final opening to the prover
 // for O(log N) verify), this version threads `orig_poly` through all rounds
 // and checks `g(r_final) == eval(orig_poly, full_challenges)` at the end.
-// This requires the verifier to see the original polynomial (public input).
+// This requires the verifier to see the original polynomial (instance input).
 
 // Sample a univariate polynomial one point at a time via single-scalar
 // application `p(t)`. Binary `eval(p, vector)` on a univariate poly is a type
 // error: a one-variable residual would misread the vector as one multivariate
 // coordinate point instead of a batch of scalar sample points.
 fn sample_univariate<F: Field, MAX_DEGREE_CONST: Size>(
-    public p: Poly<F, 1, MAX_DEGREE_CONST>,
-    public points: [F; MAX_DEGREE_CONST + 1]
+    instance p: Poly<F, 1, MAX_DEGREE_CONST>,
+    instance points: [F; MAX_DEGREE_CONST + 1]
 ) -> [F; MAX_DEGREE_CONST + 1] {
     [p(t) for t in points]
 }
@@ -18,13 +18,13 @@ fn sample_univariate<F: Field, MAX_DEGREE_CONST: Size>(
 // Round 2 onward (prover): check g(0)+g(1) = previous g(r), then recurse on the explicit
 // residual polynomial until `Poly<F,1>`.
 fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, V: 3..NUM_VARS_CONST + 1, MAX_DEGREE_CONST: Size>(
-    public orig_poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>,
-    private curr_poly: Poly<F, V, MAX_DEGREE_CONST>,
-    public points: [F; MAX_DEGREE_CONST + 1],
-    public challenges: [F; NUM_VARS_CONST - V + 1],
-    public prev_eval: F,
-    public challenge: F,
-    public curr_round: Fin<NUM_VARS_CONST>
+    instance orig_poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>,
+    witness curr_poly: Poly<F, V, MAX_DEGREE_CONST>,
+    instance points: [F; MAX_DEGREE_CONST + 1],
+    instance challenges: [F; NUM_VARS_CONST - V + 1],
+    instance prev_eval: F,
+    instance challenge: F,
+    instance curr_round: Fin<NUM_VARS_CONST>
 ) -> Unit {
     let residual_poly = eval(curr_poly, [challenge]);
     // Round polynomial: sum the residual evaluated over the Boolean-tail
@@ -52,13 +52,13 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, V: 3..NUM_VARS_CONST + 1, MAX_
 }
 
 fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
-    public orig_poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>,
-    private curr_poly: Poly<F, 2, MAX_DEGREE_CONST>,
-    public points: [F; MAX_DEGREE_CONST + 1],
-    public challenges: [F; NUM_VARS_CONST - 1],
-    public prev_eval: F,
-    public challenge: F,
-    public curr_round: Fin<NUM_VARS_CONST>
+    instance orig_poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>,
+    witness curr_poly: Poly<F, 2, MAX_DEGREE_CONST>,
+    instance points: [F; MAX_DEGREE_CONST + 1],
+    instance challenges: [F; NUM_VARS_CONST - 1],
+    instance prev_eval: F,
+    instance challenge: F,
+    instance curr_round: Fin<NUM_VARS_CONST>
 ) -> Unit {
     let residual_poly = eval(curr_poly, [challenge]);
     let eval_points = points;
@@ -81,8 +81,8 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
 
 // Round 1: first challenge r1 folds round-1 message; second challenge r2 feeds the first tail round.
 proto sumcheck<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
-    public claimed_sum: F,
-    public poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>
+    instance claimed_sum: F,
+    instance poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>
 ) where let points = 0..MAX_DEGREE_CONST + 1;
         let round_poly0 = reduce(+, [
             eval<0>(poly, tail)

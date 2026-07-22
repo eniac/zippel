@@ -22,7 +22,7 @@ mod runtime_tests {
     #[test]
     fn test_runtime_concurrency_and_evaluation() {
         let src = r#"
-            proto test_eval_strong<F: Field>(public a: F, public b: F) where 1 == 1 {
+            proto test_eval_strong<F: Field>(instance a: F, instance b: F) where 1 == 1 {
                 x <- a * a;
                 y <- b * b;
                 c <- challenge<F>;
@@ -132,7 +132,7 @@ mod runtime_tests {
     #[test]
     fn test_runtime_error_propagation() {
         let src = r#"
-            proto test_err<F: Field>(public a: F, public b: F) where 1 == 1 {
+            proto test_err<F: Field>(instance a: F, instance b: F) where 1 == 1 {
                 verify(b == 999);
                 x1 <- a * a;
                 x2 <- x1 * x1;

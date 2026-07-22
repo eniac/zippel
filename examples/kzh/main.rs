@@ -101,6 +101,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     // the where clause without needing cryptographically-meaningful
     // values.
     let g_gen = <ArkBls12_381 as ArkConfig>::G1::zero();
+    let h_gen = <ArkBls12_381 as ArkConfig>::G2::zero();
     let tau_x = vec![<ArkBls12_381 as ArkConfig>::F::zero(); NX];
     let tau_y = vec![<ArkBls12_381 as ArkConfig>::F::zero(); NY];
 
@@ -112,6 +113,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("v_prime".to_string()), Value::G2(v_prime)),
         (Vid("v_x".to_string()), Value::VecG2(v_x_vals)),
         (Vid("g_gen".to_string()), Value::G1(g_gen)),
+        (Vid("h_gen".to_string()), Value::G2(h_gen)),
         (Vid("tau_x".to_string()), Value::VecScalar(tau_x)),
         (Vid("tau_y".to_string()), Value::VecScalar(tau_y)),
     ])

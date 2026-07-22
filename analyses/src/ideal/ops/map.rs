@@ -22,7 +22,7 @@ use super::{EncodeCtx, link_to_polys, link_to_witness};
 /// loop level it references has a concrete value; otherwise `None`.
 ///
 /// `loop_vals` may contain `None` entries for loop levels whose domains are
-/// non-literal (e.g. a public arg used as a reduce domain). If the op does
+/// non-literal (e.g. an instance arg used as a reduce domain). If the op does
 /// not reference such a level, the `None` entry is irrelevant and a dummy
 /// fill is safe. If it does reference a `None` level, we return `None`.
 fn const_eval_int<C: ArkConfig>(op: &HOp<C>, loop_vals: &[Option<Value<C>>]) -> Option<Value<C>> {

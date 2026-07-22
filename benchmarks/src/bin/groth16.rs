@@ -2,7 +2,7 @@
 //! (BLS12-381).
 //!
 //! Both sides prove the same R1CS instance (`BenchCircuit`: squaring
-//! chain `w[i+1] = w[i] * w[i]` with a single public output). Shared setup lives in
+//! chain `w[i+1] = w[i] * w[i]` with a single instance output). Shared setup lives in
 //! `benchmarks::groth16::shared`; the zippel side byte-translates the
 //! v0.5 proving/verifying keys into git-main types and runs against
 //! `examples/groth16/groth16.zippel`.
@@ -26,7 +26,7 @@ fn main() {
     let log_sizes = args.sweep.unwrap_or_else(|| vec![args.log_size]);
 
     println!("=== Groth16: zippel vs. vendored native (BLS12-381, git-main arkworks) ===");
-    println!("statement: BenchCircuit — squaring chain w[i+1]=w[i]*w[i], single public output");
+    println!("statement: BenchCircuit — squaring chain w[i+1]=w[i]*w[i], single instance output");
     println!("native side  = vendored Groth16 prover/verifier (git-main ark_ec + multi_pairing)");
     println!("zippel side  = examples/groth16/groth16.zippel\n");
     println!(

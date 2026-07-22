@@ -1,3 +1,4 @@
+use ark_ff::Zero;
 use ark_std::One;
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, Value};
@@ -35,7 +36,9 @@ fn main() {
     println!("Prover time:    {:.2?}", t.elapsed());
     println!("Proof items:    {}", proof.len());
     let t = Instant::now();
-    let verifier_result = handler.run_verifier(&proof).expect("run_verifier failed");
+    let verifier_result = handler
+        .run_verifier(&proof, &inputs)
+        .expect("run_verifier failed");
     println!("Verifier time:  {:.2?}", t.elapsed());
 
     let passed = check_verification(&verifier_result);
@@ -90,6 +93,11 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let g_base = G1::rand(&mut rng);
     let h_base = G1::rand(&mut rng);
 
+    // Relation-only trapdoor witnesses required by the `where` clause.
+    // The proto body never reads them; zeros are fine at runtime.
+    let g_traps: Vec<F> = vec![F::zero(); NCOLS];
+    let h_trap = F::zero();
+
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("p".to_string()), Value::VecScalar(p)),
         (Vid("z_row".to_string()), Value::VecScalar(z_row)),
@@ -98,6 +106,8 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("g_vec".to_string()), Value::VecG1(g_vec)),
         (Vid("g_base".to_string()), Value::G1(g_base)),
         (Vid("h_base".to_string()), Value::G1(h_base)),
+        (Vid("g_traps".to_string()), Value::VecScalar(g_traps)),
+        (Vid("h_trap".to_string()), Value::Scalar(h_trap)),
     ])
 }
 

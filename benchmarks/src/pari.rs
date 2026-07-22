@@ -93,7 +93,7 @@ pub mod inst_gen {
         let num_vars = 2 * n_pub + m_witness;
         let original_k = k - n_pub;
 
-        // --- Build z: 1, public, real witness, aux (= squares of x) ---
+        // --- Build z: 1, instance, real witness, aux (= squares of x) ---
         let mut z = vec![F::zero(); num_vars];
         z[0] = F::one();
         for i in 1..n_pub {
@@ -444,27 +444,11 @@ pub mod zippel_side {
                 // proto's `where` clause. Body/verifier don't read
                 // them; `with_skip_analyses()` keeps the where out of
                 // the executable graph, but `run_prover` still checks
-                // every formal private input is present. Zeros suffice.
+                // every formal witness input is present. Zeros suffice.
                 (Vid("tau".to_string()), Value::Scalar(F::zero())),
                 (Vid("alpha".to_string()), Value::Scalar(F::zero())),
                 (Vid("beta".to_string()), Value::Scalar(F::zero())),
                 (Vid("delta2".to_string()), Value::Scalar(F::zero())),
-            ]);
-
-            let public_inputs = Ctx::<Vid, Value<C>>::from_iter([
-                (Vid("x".to_string()), Value::VecScalar(x_vec)),
-                (
-                    Vid("omegas".to_string()),
-                    Value::VecScalar(self.srs.omegas.clone()),
-                ),
-                (Vid("alpha_g".to_string()), Value::G1(self.srs.alpha_g)),
-                (Vid("beta_g".to_string()), Value::G1(self.srs.beta_g)),
-                (Vid("g_g1".to_string()), Value::G1(self.srs.g_g1)),
-                (Vid("delta2_h".to_string()), Value::G2(self.srs.delta2_h)),
-                (Vid("tau_h".to_string()), Value::G2(self.srs.tau_h)),
-                (Vid("h_g2".to_string()), Value::G2(self.srs.h_g2)),
-                (Vid("f_one".to_string()), Value::Scalar(F::one())),
-                (Vid("k_inv".to_string()), Value::Scalar(self.srs.k_inv)),
             ]);
 
             // --- Time prove (mean of PROVER_SAMPLES samples) ---
@@ -484,7 +468,6 @@ pub mod zippel_side {
             let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             // --- Time verify (mean of VERIFY_SAMPLES samples) ---
-            self.handler.set_public_inputs(public_inputs);
             let mut verify_sum = std::time::Duration::ZERO;
             let mut last_result = None;
             for _ in 0..crate::VERIFY_SAMPLES {
@@ -492,7 +475,7 @@ pub mod zippel_side {
                 let t = Instant::now();
                 let verifier_result = self
                     .handler
-                    .run_verifier(&proof_c)
+                    .run_verifier(&proof_c, &inputs)
                     .expect("zippel pari verifier failed");
                 verify_sum += t.elapsed();
                 last_result = Some(verifier_result);
@@ -544,7 +527,7 @@ pub mod native_side {
     pub struct Setup {
         instance_assignment: Vec<F>,
         witness_assignment: Vec<F>,
-        public_inputs: Vec<F>,
+        instance_inputs: Vec<F>,
         a_mat: Vec<Vec<(F, usize)>>,
         b_mat: Vec<Vec<(F, usize)>>,
         pk: ProvingKey<E>,
@@ -555,9 +538,9 @@ pub mod native_side {
         pub fn new(inst: &Instance<F>) -> Self {
             let instance_assignment = inst.z[..inst.instance_len].to_vec();
             let witness_assignment = inst.z[inst.instance_len..].to_vec();
-            // Verifier's public input is `instance_assignment[1..]` (the
+            // Verifier's instance input is `instance_assignment[1..]` (the
             // constant-1 at position 0 is implicit) — matches upstream.
-            let public_inputs = instance_assignment[1..].to_vec();
+            let instance_inputs = instance_assignment[1..].to_vec();
             // Cache (pk, vk) — these depend only on the matrices and the
             // seeded rng. log_size = log_2(k).
             let log_size = inst.k.trailing_zeros() as usize;
@@ -581,7 +564,7 @@ pub mod native_side {
             Setup {
                 instance_assignment,
                 witness_assignment,
-                public_inputs,
+                instance_inputs,
                 a_mat: inst.a_mat.clone(),
                 b_mat: inst.b_mat.clone(),
                 pk,
@@ -612,7 +595,7 @@ pub mod native_side {
             let mut last_ok = false;
             for _ in 0..crate::VERIFY_SAMPLES {
                 let t = Instant::now();
-                let ok = Pari::<E>::verify(&proof, &self.vk, &self.public_inputs);
+                let ok = Pari::<E>::verify(&proof, &self.vk, &self.instance_inputs);
                 verify_sum += t.elapsed();
                 last_ok = ok;
             }

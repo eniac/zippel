@@ -1,37 +1,37 @@
 // E-Cash Coin Validity Proof from https://eprint.iacr.org/2012/226.pdf
 
 proto coin_proof<G: Group, F: Scalar<G>>(
-    // Private witnesses
-    private x1: F,
-    private x2: F,
-    private r_y: F,
-    private sk_u: F,
-    private alpha: F,
-    private beta: F,
-    private s: F,
-    private t: F,
-    private r_b: F,
-    private r_c: F,
-    private r_d: F,
-    private r_beta: F,
-    private r_c_alpha: F,
-    private r_d_beta: F,
+    // Witness variables
+    witness x1: F,
+    witness x2: F,
+    witness r_y: F,
+    witness sk_u: F,
+    witness alpha: F,
+    witness beta: F,
+    witness s: F,
+    witness t: F,
+    witness r_b: F,
+    witness r_c: F,
+    witness r_d: F,
+    witness r_beta: F,
+    witness r_c_alpha: F,
+    witness r_d_beta: F,
     
-    // Public parameters
-    public f: G,
-    public g: G,
-    public h: G,
-    public h1: G,
-    public h2: G,
+    // Instance parameters
+    instance f: G,
+    instance g: G,
+    instance h: G,
+    instance h1: G,
+    instance h2: G,
     
-    // Public inputs
-    public big_y: G,
-    public big_s: G,
-    public big_t: G,
-    public big_b: G,
-    public big_c: G,
-    public big_d: G,
-    public j: F
+    // Instance inputs
+    instance big_y: G,
+    instance big_s: G,
+    instance big_t: G,
+    instance big_b: G,
+    instance big_c: G,
+    instance big_d: G,
+    instance j: F
 ) where
     big_b == g * sk_u + h * r_b;
     big_c == g * s + h * r_c;

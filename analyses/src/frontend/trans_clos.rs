@@ -200,8 +200,8 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
     /// Transitive closure of the prover view.
     ///
     /// Walks backward from transcript nodes to input args and processes
-    /// every node encountered. Prefs are all input args (both public and
-    /// private).
+    /// every node encountered. Prefs are all input args (both instance and
+    /// witness).
     pub fn prover(dag: &QDag<C>) -> Self {
         let vars = Self::vars_from_marker(dag, dag.input_node());
         let transcripts_vec = dag.transcript_nodes();
@@ -228,7 +228,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
     ///
     /// Walks backwards from verifier assertion (`Check`) nodes, stopping at
     /// transcript source nodes (Challenge/Random) which are opaque inputs
-    /// to the verifier. Prefs include public input args and transcript sources.
+    /// to the verifier. Prefs include instance input args and transcript sources.
     ///
     /// Transcript source nodes are pre-populated in the index so that
     /// `trans_clos_op` does not recurse past them into prover-only nodes.
@@ -238,7 +238,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             .into_iter()
             .filter_map(|n| match &dag[n] {
                 Node::Arg(name, typ, qual, _dist, _kind) => {
-                    if qual.is_public() {
+                    if qual.is_instance() {
                         let var = Var::new_named(Ref(n), name.0.clone(), typ.clone(), *qual);
                         Some(var)
                     } else {
@@ -265,7 +265,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         // Pre-populate seen with transcript source nodes so trans_clos_ref
         // doesn't recurse past them into prover-only nodes. Also add
         // transcript source Vars to vars — they are opaque inputs to
-        // the verifier, analogous to public args. These are leaf nodes
+        // the verifier, analogous to instance args. These are leaf nodes
         // and are NOT added to clos.
         for &n in &transcripts_vec {
             match &dag[n] {
@@ -492,7 +492,7 @@ mod tests {
     fn trans_clos_prover_not_empty() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field>(private s: [F; 10], private s': F, public i: Fin<5>) where s == s {
+            proto foo<F: Field>(witness s: [F; 10], witness s': F, instance i: Fin<5>) where s == s {
                 let r = random<F>;
                 a <- r * s[i + 2];
                 b <- r * s';
@@ -504,12 +504,12 @@ mod tests {
 
         assert!(!tc.vars.is_empty(), "vars should not be empty");
         assert!(
-            tc.vars.iter().any(|p| p.is_private()),
-            "prover should include private args"
+            tc.vars.iter().any(|p| p.is_witness()),
+            "prover should include witness args"
         );
         assert!(
-            tc.vars.iter().any(|p| p.is_public()),
-            "prover should include public args"
+            tc.vars.iter().any(|p| p.is_instance()),
+            "prover should include instance args"
         );
         assert!(!tc.clos.is_empty(), "clos should not be empty");
 
@@ -529,7 +529,7 @@ mod tests {
     fn trans_clos_relation_uses_input_namespace() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field>(private s: [F; 10], private s': F, public i: Fin<5>) where s == s {
+            proto foo<F: Field>(witness s: [F; 10], witness s': F, instance i: Fin<5>) where s == s {
                 let r = random<F>;
                 a <- r * s[i + 2];
                 b <- r * s';
@@ -573,7 +573,7 @@ mod tests {
     fn trans_clos_parametric() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field, N: 2..4>(private s: [F; N], private s': F, public i: Fin<2>) where s == s {
+            proto foo<F: Field, N: 2..4>(witness s: [F; N], witness s': F, instance i: Fin<2>) where s == s {
                 let r = random<F>;
                 a <- r * s[i];
                 b <- r * s';
@@ -599,7 +599,7 @@ mod tests {
     fn trans_clos_prover_sees_all_inputs() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field>(private a: F, public b: F) where a == a {
+            proto foo<F: Field>(witness a: F, instance b: F) where a == a {
                 let r = random<F>;
                 c <- r * a;
                 verify(c == c)
@@ -609,12 +609,12 @@ mod tests {
         let tc_prover = TransClos::prover(&g);
 
         assert!(
-            tc_prover.vars.iter().any(|p| p.is_private()),
-            "prover should see private inputs"
+            tc_prover.vars.iter().any(|p| p.is_witness()),
+            "prover should see witness inputs"
         );
         assert!(
-            tc_prover.vars.iter().any(|p| p.is_public()),
-            "prover should see public inputs"
+            tc_prover.vars.iter().any(|p| p.is_instance()),
+            "prover should see instance inputs"
         );
     }
 
@@ -622,7 +622,7 @@ mod tests {
     fn trans_clos_prover_stops_at_transcript() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field>(private a: F, public b: F) where a == b {
+            proto foo<F: Field>(witness a: F, instance b: F) where a == b {
                 let r = random<F>;
                 c <- r * a;
                 verify(c == r * b)
@@ -636,14 +636,14 @@ mod tests {
             "prover should have reachable ops"
         );
 
-        // Prover should include both private and public input vars
+        // Prover should include both witness and instance input vars
         assert!(
-            tc_prover.vars.iter().any(|p| p.is_private()),
-            "prover should see private inputs"
+            tc_prover.vars.iter().any(|p| p.is_witness()),
+            "prover should see witness inputs"
         );
         assert!(
-            tc_prover.vars.iter().any(|p| p.is_public()),
-            "prover should see public inputs"
+            tc_prover.vars.iter().any(|p| p.is_instance()),
+            "prover should see instance inputs"
         );
     }
 
@@ -651,7 +651,7 @@ mod tests {
     fn trans_clos_verifier_does_not_leak_prover_ops() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field>(private a: F, public b: F) where a == b {
+            proto foo<F: Field>(witness a: F, instance b: F) where a == b {
                 let r = random<F>;
                 c <- r * a;
                 verify(c == r * b)
@@ -661,13 +661,13 @@ mod tests {
         let tc = TransClos::verifier(&g);
 
         assert!(
-            tc.vars.iter().all(|p| p.is_public()),
-            "verifier vars should all be public, got: {:?}",
+            tc.vars.iter().all(|p| p.is_instance()),
+            "verifier vars should all be instance, got: {:?}",
             tc.vars
         );
         assert!(
             !tc.vars.is_empty(),
-            "verifier should have at least one public arg"
+            "verifier should have at least one instance arg"
         );
         assert!(!tc.clos.is_empty(), "verifier should have reachable ops");
 
@@ -680,19 +680,19 @@ mod tests {
             "verifier should see at least one transcript source (Challenge/Random)"
         );
 
-        // Verifier clos should not contain any private-input Vars
-        let private_vars: HashSet<NodeIndex> = g
+        // Verifier clos should not contain any witness-input Vars
+        let witness_vars: HashSet<NodeIndex> = g
             .input_args()
             .into_iter()
             .filter(|n| match &g[*n] {
-                Node::Arg(_, _, qual, _, _) => qual.is_private(),
+                Node::Arg(_, _, qual, _, _) => qual.is_witness(),
                 _ => false,
             })
             .collect();
         for (verifier_var, _) in tc.clos.iter() {
             assert!(
-                !private_vars.contains(&verifier_var.node()),
-                "verifier clos entry at node {:?} should not be a private input",
+                !witness_vars.contains(&verifier_var.node()),
+                "verifier clos entry at node {:?} should not be a witness input",
                 verifier_var.node()
             );
         }
@@ -702,7 +702,7 @@ mod tests {
     fn trans_clos_remap_preserves_structure() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field>(private s: F, public b: F) where s == b {
+            proto foo<F: Field>(witness s: F, instance b: F) where s == b {
                 let r = random<F>;
                 c <- r * s;
                 verify(c == r * b)
@@ -740,7 +740,7 @@ mod tests {
     fn trans_clos_check_unwrapped() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field>(private a: F, public b: F) where a == b {
+            proto foo<F: Field>(witness a: F, instance b: F) where a == b {
                 verify(a == b)
             }"#,
         );
@@ -785,7 +785,7 @@ mod tests {
     fn trans_clos_prover_topological_order() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field>(private s: [F; 10], private s': F, public i: Fin<5>) where s == s {
+            proto foo<F: Field>(witness s: [F; 10], witness s': F, instance i: Fin<5>) where s == s {
                 let r = random<F>;
                 a <- r * s[i + 2];
                 b <- r * s';
@@ -801,7 +801,7 @@ mod tests {
     fn trans_clos_verifier_topological_order() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field>(private a: F, public b: F) where a == b {
+            proto foo<F: Field>(witness a: F, instance b: F) where a == b {
                 let r = random<F>;
                 c <- r * a;
                 verify(c == r * b)
@@ -816,7 +816,7 @@ mod tests {
     fn trans_clos_relation_topological_order() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field>(private s: [F; 10], private s': F, public i: Fin<5>) where s == s {
+            proto foo<F: Field>(witness s: [F; 10], witness s': F, instance i: Fin<5>) where s == s {
                 let r = random<F>;
                 a <- r * s[i + 2];
                 b <- r * s';

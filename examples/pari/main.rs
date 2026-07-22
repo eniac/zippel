@@ -1,6 +1,6 @@
 //! PARI (Square R1CS SNARK) — small sanity check.
 //!
-//! Generates a tiny SR1CS instance (K=16 constraints, N=1 public input,
+//! Generates a tiny SR1CS instance (K=16 constraints, N=1 instance input,
 //! `K_VARS=3` variables) in the upstream "instance outliner" layout, runs
 //! PARI's setup (G), prover (P), and verifier (V), and asserts that
 //! verification passes. Matches the matrix-layout assumptions in
@@ -25,7 +25,7 @@ type G2 = <C as ArkConfig>::G2;
 
 const M_LOG: usize = 4;
 const K: usize = 1 << M_LOG; // = 16 constraints
-const N_PUB: usize = 1; // public inputs (includes the constant 1 at z[0])
+const N_PUB: usize = 1; // instance inputs (includes the constant 1 at z[0])
 const M_WIT: usize = 1; // "real" witness variables
 // Total variables under the instance-outliner layout:
 //   z = [1, x[1..N], w[0..M_WIT], aux[0..N]]   with aux[i] = z[i]^2.
@@ -43,7 +43,7 @@ fn main() {
     sizes.insert(&Tid::new("KMN"), &KMN);
     handler.compile(&sizes);
 
-    let (inputs, public_inputs) = build_inputs();
+    let inputs = build_inputs();
     let prover_start = Instant::now();
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
@@ -66,10 +66,9 @@ fn main() {
     let args = ZippelArgs::new(PathBuf::from("examples/pari/pari.zippel"));
     let mut verifier_handler: ZippelHandler<C> = ZippelHandler::new(args);
     verifier_handler.compile(&sizes);
-    verifier_handler.set_public_inputs(public_inputs);
     let verifier_start = Instant::now();
     let verifier_result = verifier_handler
-        .run_verifier(&proof)
+        .run_verifier(&proof, &inputs)
         .expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     let passed = check_verification(&verifier_result);
@@ -111,9 +110,8 @@ fn main() {
 }
 
 /// Build a satisfying SR1CS instance in the upstream instance-outliner
-/// layout (matching `pari.zippel`'s Lagrange shortcut requirement) and
-/// return (`full_inputs`, `public_inputs`).
-fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
+/// layout (matching `pari.zippel`'s Lagrange shortcut requirement).
+fn build_inputs() -> Ctx<Vid, Value<C>> {
     let mut rng = test_rng();
 
     // --- z = [1, x[1..N], w[0..M_WIT], aux[0..N]],  aux[i] = z[i]^2 ---
@@ -276,28 +274,28 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
     let f_one_value = Value::Scalar(F::one());
     let k_inv_value = Value::Scalar(k_inv);
 
-    let inputs = Ctx::<Vid, Value<C>>::from_iter([
+    Ctx::<Vid, Value<C>>::from_iter([
         (Vid("z_a_evals".to_string()), z_a_value),
         (Vid("z_b_evals".to_string()), z_b_value),
         (Vid("w_a_evals".to_string()), w_a_value),
         (Vid("w_b_evals".to_string()), w_b_value),
         (Vid("w".to_string()), w_value),
-        (Vid("x".to_string()), x_value.clone()),
-        (Vid("omegas".to_string()), omegas_value.clone()),
+        (Vid("x".to_string()), x_value),
+        (Vid("omegas".to_string()), omegas_value),
         (Vid("sigma_w".to_string()), sigma_w_value),
         (Vid("sigma_q".to_string()), sigma_q_value),
         (Vid("sigma_a".to_string()), sigma_a_value),
         (Vid("sigma_b".to_string()), sigma_b_value),
         (Vid("sigma_q_prime".to_string()), sigma_q_prime_value),
-        (Vid("alpha_g".to_string()), alpha_g_value.clone()),
-        (Vid("beta_g".to_string()), beta_g_value.clone()),
-        (Vid("g_g1".to_string()), g_g1_value.clone()),
-        (Vid("delta2_h".to_string()), delta2_h_value.clone()),
-        (Vid("tau_h".to_string()), tau_h_value.clone()),
-        (Vid("h_g2".to_string()), h_g2_value.clone()),
+        (Vid("alpha_g".to_string()), alpha_g_value),
+        (Vid("beta_g".to_string()), beta_g_value),
+        (Vid("g_g1".to_string()), g_g1_value),
+        (Vid("delta2_h".to_string()), delta2_h_value),
+        (Vid("tau_h".to_string()), tau_h_value),
+        (Vid("h_g2".to_string()), h_g2_value),
         (Vid("v_k_poly".to_string()), v_k_coeffs_value),
-        (Vid("f_one".to_string()), f_one_value.clone()),
-        (Vid("k_inv".to_string()), k_inv_value.clone()),
+        (Vid("f_one".to_string()), f_one_value),
+        (Vid("k_inv".to_string()), k_inv_value),
         // Relation-only trapdoor witnesses required by the `where`
         // clause. Body/verifier don't reference them; zeros are fine
         // at runtime — the where clause is consumed by static analyses,
@@ -306,22 +304,7 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
         (Vid("alpha".to_string()), Value::Scalar(F::zero())),
         (Vid("beta".to_string()), Value::Scalar(F::zero())),
         (Vid("delta2".to_string()), Value::Scalar(F::zero())),
-    ]);
-
-    let public_inputs = Ctx::<Vid, Value<C>>::from_iter([
-        (Vid("x".to_string()), x_value),
-        (Vid("omegas".to_string()), omegas_value),
-        (Vid("alpha_g".to_string()), alpha_g_value),
-        (Vid("beta_g".to_string()), beta_g_value),
-        (Vid("g_g1".to_string()), g_g1_value),
-        (Vid("delta2_h".to_string()), delta2_h_value),
-        (Vid("tau_h".to_string()), tau_h_value),
-        (Vid("h_g2".to_string()), h_g2_value),
-        (Vid("f_one".to_string()), f_one_value),
-        (Vid("k_inv".to_string()), k_inv_value),
-    ]);
-
-    (inputs, public_inputs)
+    ])
 }
 
 fn nonzero<R: rand::Rng>(rng: &mut R) -> F {

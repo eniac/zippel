@@ -10,14 +10,14 @@
 //
 // Note: phase 2's k=2 fold randomness r2, the universal-hash r, the s_id
 // index encoding, and the rational product tree v_evs are computed by the
-// driver (simulating Fiat-Shamir) and passed in as public inputs. The
+// driver (simulating Fiat-Shamir) and passed in as instance inputs. The
 // gate-identity ZeroCheck randomness tau is drawn inside the proto.
 
 // Lagrange (eq) basis at x ∈ F^K: 2^K evaluations of eq(x, ·), LSB-first.
-fn eq_weights<F: Field>(public x: [F; 1]) -> [F; 2] {
+fn eq_weights<F: Field>(instance x: [F; 1]) -> [F; 2] {
     [(1 - x[0]), x[0]]
 }
-fn eq_weights<F: Field, K: 2..16>(public x: [F; K]) -> [F; 2^K] {
+fn eq_weights<F: Field, K: 2..16>(instance x: [F; K]) -> [F; 2^K] {
     let x_lo = x[0..(K-1)];
     let a    = x[K-1];
     let prev = eq_weights(x_lo);
@@ -25,11 +25,11 @@ fn eq_weights<F: Field, K: 2..16>(public x: [F; K]) -> [F; 2^K] {
 }
 
 // Draw S taus, recursive dispatch on placeholder size.
-fn draw_taus<F: Field>(public placeholder: [F; 1]) -> [F; 1] {
+fn draw_taus<F: Field>(instance placeholder: [F; 1]) -> [F; 1] {
     t <- challenge<F>;
     [t]
 }
-fn draw_taus<F: Field, K: 2..16>(public placeholder: [F; K]) -> [F; K] {
+fn draw_taus<F: Field, K: 2..16>(instance placeholder: [F; K]) -> [F; K] {
     let prev = draw_taus(placeholder[0..(K-1)]);
     t <- challenge<F>;
     prev ++ [t]
@@ -37,21 +37,21 @@ fn draw_taus<F: Field, K: 2..16>(public placeholder: [F; K]) -> [F; K] {
 
 // ===== Phase 1 — Gate identity ZeroCheck (max_degree = 4) =====
 fn gate_round<F: Field, S: Size, N: 2^S>(
-    public curr_poly:        Poly<F, 2, 4>,
-    public points:           [F; 5],
-    public prev_challenges:  [F; S - 1],
-    public prev_eval:        F,
-    public round_challenge:  F,
-    public curr_round:       Fin<S>,
-    public a_evs:            [F; N],
-    public b_evs:            [F; N],
-    public c_evs:            [F; N],
-    public q_l_evs:          [F; N],
-    public q_r_evs:          [F; N],
-    public q_o_evs:          [F; N],
-    public q_m_evs:          [F; N],
-    public q_c_evs:          [F; N],
-    public eq_tau_evs:       [F; N]
+    instance curr_poly:        Poly<F, 2, 4>,
+    instance points:           [F; 5],
+    instance prev_challenges:  [F; S - 1],
+    instance prev_eval:        F,
+    instance round_challenge:  F,
+    instance curr_round:       Fin<S>,
+    instance a_evs:            [F; N],
+    instance b_evs:            [F; N],
+    instance c_evs:            [F; N],
+    instance q_l_evs:          [F; N],
+    instance q_r_evs:          [F; N],
+    instance q_o_evs:          [F; N],
+    instance q_m_evs:          [F; N],
+    instance q_c_evs:          [F; N],
+    instance eq_tau_evs:       [F; N]
 ) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let evs_local = [residual_poly(t) for t in points];
@@ -85,21 +85,21 @@ fn gate_round<F: Field, S: Size, N: 2^S>(
     verify(final_eval == gate_at_r * eq_at_r)
 }
 fn gate_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
-    public curr_poly:        Poly<F, V, 4>,
-    public points:           [F; 5],
-    public prev_challenges:  [F; S - V + 1],
-    public prev_eval:        F,
-    public round_challenge:  F,
-    public curr_round:       Fin<S>,
-    public a_evs:            [F; N],
-    public b_evs:            [F; N],
-    public c_evs:            [F; N],
-    public q_l_evs:          [F; N],
-    public q_r_evs:          [F; N],
-    public q_o_evs:          [F; N],
-    public q_m_evs:          [F; N],
-    public q_c_evs:          [F; N],
-    public eq_tau_evs:       [F; N]
+    instance curr_poly:        Poly<F, V, 4>,
+    instance points:           [F; 5],
+    instance prev_challenges:  [F; S - V + 1],
+    instance prev_eval:        F,
+    instance round_challenge:  F,
+    instance curr_round:       Fin<S>,
+    instance a_evs:            [F; N],
+    instance b_evs:            [F; N],
+    instance c_evs:            [F; N],
+    instance q_l_evs:          [F; N],
+    instance q_r_evs:          [F; N],
+    instance q_o_evs:          [F; N],
+    instance q_m_evs:          [F; N],
+    instance q_c_evs:          [F; N],
+    instance eq_tau_evs:       [F; N]
 ) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let zero = points[0] - points[0];
@@ -128,17 +128,17 @@ fn gate_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
 
 // ===== Phase 2 — Permutation PIOP (max_degree = 3) =====
 fn perm_round<F: Field, S: Size, N: 2^S>(
-    public curr_poly:        Poly<F, 2, 3>,
-    public points:           [F; 4],
-    public prev_challenges:  [F; S - 1],
-    public prev_eval:        F,
-    public round_challenge:  F,
-    public curr_round:       Fin<S>,
-    public sent_v:           [F; 2^(S+1)],
-    public f_shift_evs:      [F; N],
-    public g_shift_evs:      [F; N],
-    public eq_sau_evs:       [F; N],
-    public alpha:            F
+    instance curr_poly:        Poly<F, 2, 3>,
+    instance points:           [F; 4],
+    instance prev_challenges:  [F; S - 1],
+    instance prev_eval:        F,
+    instance round_challenge:  F,
+    instance curr_round:       Fin<S>,
+    instance sent_v:           [F; 2^(S+1)],
+    instance f_shift_evs:      [F; N],
+    instance g_shift_evs:      [F; N],
+    instance eq_sau_evs:       [F; N],
+    instance alpha:            F
 ) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let evs_local = [residual_poly(t) for t in points];
@@ -173,17 +173,17 @@ fn perm_round<F: Field, S: Size, N: 2^S>(
     verify(final_eval == (f_rel_at_r + alpha * g_rel_at_r) * eq_at_r)
 }
 fn perm_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
-    public curr_poly:        Poly<F, V, 3>,
-    public points:           [F; 4],
-    public prev_challenges:  [F; S - V + 1],
-    public prev_eval:        F,
-    public round_challenge:  F,
-    public curr_round:       Fin<S>,
-    public sent_v:           [F; 2^(S+1)],
-    public f_shift_evs:      [F; N],
-    public g_shift_evs:      [F; N],
-    public eq_sau_evs:       [F; N],
-    public alpha:            F
+    instance curr_poly:        Poly<F, V, 3>,
+    instance points:           [F; 4],
+    instance prev_challenges:  [F; S - V + 1],
+    instance prev_eval:        F,
+    instance round_challenge:  F,
+    instance curr_round:       Fin<S>,
+    instance sent_v:           [F; 2^(S+1)],
+    instance f_shift_evs:      [F; N],
+    instance g_shift_evs:      [F; N],
+    instance eq_sau_evs:       [F; N],
+    instance alpha:            F
 ) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let zero = points[0] - points[0];
@@ -211,34 +211,34 @@ fn perm_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
 
 // ===== Relation helpers (used in the where clause) =====
 fn gate_identity<F: Field, S: Size, N: 2^S>(
-    public a: [F; N], public b: [F; N], public c: [F; N],
-    public ql: [F; N], public qr: [F; N], public qo: [F; N],
-    public qm: [F; N], public qc: [F; N]
+    instance a: [F; N], instance b: [F; N], instance c: [F; N],
+    instance ql: [F; N], instance qr: [F; N], instance qo: [F; N],
+    instance qm: [F; N], instance qc: [F; N]
 ) -> [F; N] {
     [ql[i] * a[i] + qr[i] * b[i] + qo[i] * c[i]
         + qm[i] * a[i] * b[i] + qc[i] for i in 0..N]
 }
 
 fn perm_product<F: Field, S: Size, N: 2^S>(
-    public r: F, public s: [F; N], public r2: F, public x: [F; N]
+    instance r: F, instance s: [F; N], instance r2: F, instance x: [F; N]
 ) -> F {
     reduce(*, [r + s[i] + r2 * x[i] for i in 0..N])
 }
 
 proto hyperplonk<F: Field, S: Size, N: 2^S>(
-    public a_evs:        [F; N],
-    public b_evs:        [F; N],
-    public c_evs:        [F; N],
-    public q_l_evs:      [F; N],
-    public q_r_evs:      [F; N],
-    public q_o_evs:      [F; N],
-    public q_m_evs:      [F; N],
-    public q_c_evs:      [F; N],
-    public s_sigma_evs:  [F; N],
-    public s_id_evs:     [F; N],
-    public r2:           F,
-    public r:            F,
-    public v_evs:        [F; 2^(S+1)]
+    instance a_evs:        [F; N],
+    instance b_evs:        [F; N],
+    instance c_evs:        [F; N],
+    instance q_l_evs:      [F; N],
+    instance q_r_evs:      [F; N],
+    instance q_o_evs:      [F; N],
+    instance q_m_evs:      [F; N],
+    instance q_c_evs:      [F; N],
+    instance s_sigma_evs:  [F; N],
+    instance s_id_evs:     [F; N],
+    instance r2:           F,
+    instance r:            F,
+    instance v_evs:        [F; 2^(S+1)]
 ) where
     // HyperPlonk proves TWO things jointly:
     //   (1) Gate identity holds on every gate i in 0..N:

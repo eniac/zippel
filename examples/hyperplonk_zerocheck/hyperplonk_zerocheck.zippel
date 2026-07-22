@@ -10,10 +10,10 @@
 
 // Build the Lagrange (eq) basis at x in F^K: returns the 2^K evaluations
 // of eq(x, ·) on the hypercube, LSB-first.
-fn eq_weights<F: Field>(public x: [F; 1]) -> [F; 2] {
+fn eq_weights<F: Field>(instance x: [F; 1]) -> [F; 2] {
     [(1 - x[0]), x[0]]
 }
-fn eq_weights<F: Field, K: 2..16>(public x: [F; K]) -> [F; 2^K] {
+fn eq_weights<F: Field, K: 2..16>(instance x: [F; K]) -> [F; 2^K] {
     let x_lo = x[0..(K-1)];
     let a    = x[K-1];
     let prev = eq_weights(x_lo);
@@ -24,16 +24,16 @@ fn eq_weights<F: Field, K: 2..16>(public x: [F; K]) -> [F; 2^K] {
 // Base case (V = 1, i.e. last variable): draw the final challenge and
 // invoke the verifier closing check.
 fn zc_round<F: Field, S: Size, N: 2^S>(
-    public curr_poly:        Poly<F, 2, 3>,
-    public points:           [F; 4],
-    public prev_challenges:  [F; S - 1],
-    public prev_eval:        F,
-    public round_challenge:  F,
-    public curr_round:       Fin<S>,
-    public a_evs:            [F; N],
-    public b_evs:            [F; N],
-    public c_evs:            [F; N],
-    public eq_tau_evs:       [F; N]
+    instance curr_poly:        Poly<F, 2, 3>,
+    instance points:           [F; 4],
+    instance prev_challenges:  [F; S - 1],
+    instance prev_eval:        F,
+    instance round_challenge:  F,
+    instance curr_round:       Fin<S>,
+    instance a_evs:            [F; N],
+    instance b_evs:            [F; N],
+    instance c_evs:            [F; N],
+    instance eq_tau_evs:       [F; N]
 ) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let evs_local = [residual_poly(t) for t in points];
@@ -58,16 +58,16 @@ fn zc_round<F: Field, S: Size, N: 2^S>(
     verify(final_eval == (a_at_r * b_at_r - c_at_r) * eq_at_r)
 }
 fn zc_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
-    public curr_poly:        Poly<F, V, 3>,
-    public points:           [F; 4],
-    public prev_challenges:  [F; S - V + 1],
-    public prev_eval:        F,
-    public round_challenge:  F,
-    public curr_round:       Fin<S>,
-    public a_evs:            [F; N],
-    public b_evs:            [F; N],
-    public c_evs:            [F; N],
-    public eq_tau_evs:       [F; N]
+    instance curr_poly:        Poly<F, V, 3>,
+    instance points:           [F; 4],
+    instance prev_challenges:  [F; S - V + 1],
+    instance prev_eval:        F,
+    instance round_challenge:  F,
+    instance curr_round:       Fin<S>,
+    instance a_evs:            [F; N],
+    instance b_evs:            [F; N],
+    instance c_evs:            [F; N],
+    instance eq_tau_evs:       [F; N]
 ) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let zero = points[0] - points[0];
@@ -96,20 +96,20 @@ fn zc_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
 // Draw S taus via a recursive helper. Each call draws one challenge and
 // appends it to the accumulator; recursion is dispatched on the shrinking
 // "remaining" array's size.
-fn draw_taus<F: Field>(public remaining: [F; 1]) -> [F; 1] {
+fn draw_taus<F: Field>(instance remaining: [F; 1]) -> [F; 1] {
     t <- challenge<F>;
     [t]
 }
-fn draw_taus<F: Field, K: 2..16>(public remaining: [F; K]) -> [F; K] {
+fn draw_taus<F: Field, K: 2..16>(instance remaining: [F; K]) -> [F; K] {
     let prev = draw_taus(remaining[0..(K-1)]);
     t <- challenge<F>;
     prev ++ [t]
 }
 
 proto hyperplonk_zerocheck<F: Field, S: Size, N: 2^S>(
-    public a_evs: [F; N],
-    public b_evs: [F; N],
-    public c_evs: [F; N]
+    instance a_evs: [F; N],
+    instance b_evs: [F; N],
+    instance c_evs: [F; N]
 ) where
     a_evs * b_evs == c_evs
 {

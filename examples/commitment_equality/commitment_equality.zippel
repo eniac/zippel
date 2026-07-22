@@ -3,13 +3,13 @@
 // Prover knows secrets x, r1, r2. Verifier knows commitments C1, C2.
 // Prover wants to prove that the value committed in C1 equals the value in C2.
 proto prove_commitment_equality<G: Group, F: Scalar<G>>(
-    private x: F,          // The secret value, same in both commitments
-    private r1: F,         // Randomness for first commitment
-    private r2: F,         // Randomness for second commitment
-    public g: G,           // Base for value
-    public h: G,           // Base for randomness
-    public c1: G,          // Commitment C1 = g*x + h*r1
-    public c2: G           // Commitment C2 = g*x + h*r2
+    witness x: F,          // The secret value, same in both commitments
+    witness r1: F,         // Randomness for first commitment
+    witness r2: F,         // Randomness for second commitment
+    instance g: G,           // Base for value
+    instance h: G,           // Base for randomness
+    instance c1: G,          // Commitment C1 = g*x + h*r1
+    instance c2: G           // Commitment C2 = g*x + h*r2
 ) where c1 == g*x + h*r1; c2 == g*x + h*r2 {
       // Prove that c1 - c2 commits to 0, using randomness r1 - r2
       // Let c_diff = c1 - c2 = g*x + h*r1 - (g*x + h*r2) = h*(r1 - r2)
@@ -17,7 +17,7 @@ proto prove_commitment_equality<G: Group, F: Scalar<G>>(
       let r_diff = r1 - r2; // The secret randomness for the difference commitment c_diff
 
       let k = random<F>;    // Fresh randomness for the ZK proof itself
-      c_diff <- c1 - c2;    // Make the difference public (usually computed by verifier)
+      c_diff <- c1 - c2;    // Make the difference instance (usually computed by verifier)
       t <- h*k;             // Commitment to the randomness k
 
       c <- challenge<F>;

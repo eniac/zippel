@@ -39,7 +39,7 @@ struct Args {
     /// Inclusive upper bound on M. Default 20.
     #[arg(long, default_value_t = 20)]
     m_hi: u32,
-    /// Number of public inputs (|io|).
+    /// Number of instance inputs (|io|).
     #[arg(long, default_value_t = 1)]
     num_inputs: usize,
     /// "nizk", "snark", or "both" (default).

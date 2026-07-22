@@ -78,7 +78,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("g".to_string()), Value::G1(g)),
-        (Vid("public_keys".to_string()), Value::VecG1Affine(pk_vec)),
+        (Vid("keys".to_string()), Value::VecG1Affine(pk_vec)),
         (
             Vid("eval_points".to_string()),
             Value::VecScalar(eval_points_vec),

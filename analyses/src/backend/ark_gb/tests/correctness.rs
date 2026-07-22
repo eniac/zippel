@@ -344,7 +344,7 @@ fn cyclic_3_dim_order_invariant() {
 }
 
 // ---------------------------------------------------------------------------
-// Cross-order consistency: elim with all-private vars should match grevlex.
+// Cross-order consistency: elim with all-witness vars should match grevlex.
 // ---------------------------------------------------------------------------
 
 #[test]

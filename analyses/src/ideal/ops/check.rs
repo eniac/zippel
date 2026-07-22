@@ -86,13 +86,13 @@ mod tests {
         let vec_uni4 = ATyp::Vec(Box::new(uni4.clone()), 2);
         let unit_typ = ATyp::unit();
 
-        let var_a = Var::from_node(NodeIndex::new(0), vec_uni2.clone(), Qualifier::Private);
+        let var_a = Var::from_node(NodeIndex::new(0), vec_uni2.clone(), Qualifier::Witness);
         ideal.register(&var_a);
 
-        let var_b = Var::from_node(NodeIndex::new(1), vec_uni4.clone(), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), vec_uni4.clone(), Qualifier::Witness);
         ideal.register(&var_b);
 
-        let var_r = Var::from_node(NodeIndex::new(2), unit_typ.clone(), Qualifier::Private);
+        let var_r = Var::from_node(NodeIndex::new(2), unit_typ.clone(), Qualifier::Witness);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -125,11 +125,11 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let var_a = Var::from_node(NodeIndex::new(0), ATyp::scalar(), Qualifier::Private);
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::scalar(), Qualifier::Witness);
         ideal.register(&var_a);
-        let var_b = Var::from_node(NodeIndex::new(1), ATyp::scalar(), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::scalar(), Qualifier::Witness);
         ideal.register(&var_b);
-        let var_r = Var::from_node(NodeIndex::new(2), ATyp::unit(), Qualifier::Private);
+        let var_r = Var::from_node(NodeIndex::new(2), ATyp::unit(), Qualifier::Witness);
 
         builder.add_op(
             var_r.clone(),
@@ -160,11 +160,11 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let var_a = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Private);
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Witness);
         ideal.register(&var_a);
-        let var_b = Var::from_node(NodeIndex::new(1), ATyp::Uni(2), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::Uni(2), Qualifier::Witness);
         ideal.register(&var_b);
-        let var_r = Var::from_node(NodeIndex::new(2), ATyp::unit(), Qualifier::Private);
+        let var_r = Var::from_node(NodeIndex::new(2), ATyp::unit(), Qualifier::Witness);
 
         builder.add_op(
             var_r.clone(),
@@ -203,11 +203,11 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let var_a = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Private);
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Witness);
         ideal.register(&var_a);
-        let var_b = Var::from_node(NodeIndex::new(1), ATyp::Uni(4), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::Uni(4), Qualifier::Witness);
         ideal.register(&var_b);
-        let var_r = Var::from_node(NodeIndex::new(2), ATyp::unit(), Qualifier::Private);
+        let var_r = Var::from_node(NodeIndex::new(2), ATyp::unit(), Qualifier::Witness);
 
         builder.add_op(
             var_r.clone(),
@@ -249,7 +249,7 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let var_r = Var::from_node(NodeIndex::new(0), ATyp::unit(), Qualifier::Private);
+        let var_r = Var::from_node(NodeIndex::new(0), ATyp::unit(), Qualifier::Witness);
 
         builder.add_op(
             var_r.clone(),

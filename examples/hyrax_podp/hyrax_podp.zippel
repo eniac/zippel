@@ -1,12 +1,12 @@
 // Helper function for Pedersen vector commitment: h*r + reduce(+, g_vec * x_vec)
-fn Com_Vec<G: Group, F: Scalar<G>, S: Size, N: S>(public g_vec: [G; N], public h: G, public x_vec: [F; N], public r: F) -> G {
+fn Com_Vec<G: Group, F: Scalar<G>, S: Size, N: S>(instance g_vec: [G; N], instance h: G, instance x_vec: [F; N], instance r: F) -> G {
   let gx = g_vec * x_vec;
   let term_sum = reduce(+, gx); // Assumes element-wise G*F multiplication then reduce
   h*r + term_sum
 }
 
 // Helper function for Pedersen scalar commitment: g*y + h*r
-fn Com_Scal<G: Group, F: Scalar<G>>(public g: G, public h: G, public y: F, public r: F) -> G {
+fn Com_Scal<G: Group, F: Scalar<G>>(instance g: G, instance h: G, instance y: F, instance r: F) -> G {
   g*y + h*r
 }
 
@@ -16,19 +16,19 @@ fn Com_Scal<G: Group, F: Scalar<G>>(public g: G, public h: G, public y: F, publi
 // Proves y = <x_vec, a_vec> where xi commits x_vec and tau commits y.
 
 proto proof_of_dot_product<G: Group, F: Scalar<G>, S: Size, N: S>(
-    // Private witness known only to the prover:
-    private x_vec: [F; N],    // Vector committed in xi
-    private r_xi: F,         // Randomness for xi commitment
-    private y: F,            // Scalar committed in tau (must equal <x_vec, a_vec>)
-    private r_tau: F,        // Randomness for tau commitment
+    // Witness known only to the prover:
+    witness x_vec: [F; N],    // Vector committed in xi
+    witness r_xi: F,         // Randomness for xi commitment
+    witness y: F,            // Scalar committed in tau (must equal <x_vec, a_vec>)
+    witness r_tau: F,        // Randomness for tau commitment
 
-    // Public inputs known to prover and verifier:
-    public g_vec: [G; N],    // Vector of bases for vector commitment
-    public a_vec: [F; N],    // Public vector for dot product
-    public g: G,             // Base for scalar value commitment (in tau)
-    public h: G,             // Base for randomness (in xi, tau, delta, beta)
-    public xi: G,            // Commitment xi = Com_Vec(g_vec, h, x_vec, r_xi)
-    public tau: G            // Commitment tau = Com_Scal(g, h, y, r_tau)
+    // Instance inputs known to prover and verifier:
+    instance g_vec: [G; N],    // Vector of bases for vector commitment
+    instance a_vec: [F; N],    // Instance vector for dot product
+    instance g: G,             // Base for scalar value commitment (in tau)
+    instance h: G,             // Base for randomness (in xi, tau, delta, beta)
+    instance xi: G,            // Commitment xi = Com_Vec(g_vec, h, x_vec, r_xi)
+    instance tau: G            // Commitment tau = Com_Scal(g, h, y, r_tau)
 )
 // The 'where' clause defines the exact relations the prover must satisfy.
 // It uses the conceptual helper functions for clarity.

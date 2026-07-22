@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crate::error::RuntimeError;
 use crate::queue::{SyncMessage, SyncSender, sync_channel};
 
-/// Size threshold (in bytes of serialized form) above which a public
+/// Size threshold (in bytes of serialized form) above which an instance
 /// input is absorbed into the Fiat-Shamir sponge via a Blake3 digest
 /// instead of its raw byte representation.
 ///
@@ -32,13 +32,13 @@ const FS_DIGEST_THRESHOLD_BYTES: usize = 64 * 1024;
 ///   bytes if both schemes were ever fed into the same sponge.
 const FS_DIGEST_DOMAIN: &[u8] = b"zippel-fs-pubinp-digest-v1";
 
-/// Absorb a public input value into the Fiat-Shamir sponge.
+/// Absorb an instance input value into the Fiat-Shamir sponge.
 ///
 /// For values below `FS_DIGEST_THRESHOLD_BYTES`, serialize as before
 /// (preserves transcript bytes for existing small-input protocols). For
 /// large values, stream the serialized bytes through a Blake3 hasher and
 /// absorb the 32-byte digest — symmetric on prover and verifier sides.
-fn absorb_public_input<C: ArkConfig, H>(prover_state: &mut ProverState<H>, value: &Value<C>)
+fn absorb_instance_input<C: ArkConfig, H>(prover_state: &mut ProverState<H>, value: &Value<C>)
 where
     H: DuplexSpongeInterface<U = u8>,
 {
@@ -147,7 +147,7 @@ pub struct MutexGraph<C: ArkConfig> {
 /// Returns true if the node requires sponge processing on the main thread.
 ///
 /// Sync nodes are `Inp` and `Transcr` nodes:
-/// - `Inp` is source node that sends public values through the
+/// - `Inp` is source node that sends instance values through the
 ///   sponge before their successors can run.
 /// - `Transcr` nodes (including `Challenge`) require sequential sponge
 ///   state updates.
@@ -405,7 +405,7 @@ impl<C: ArkConfig> MutexGraph<C> {
     ///
     /// Sync nodes (Inp and Transcr) are processed on the main
     /// thread because they require sequential sponge state updates.
-    /// Inp node sends public values through the sponge;
+    /// Inp node sends instance values through the sponge;
     /// Transcr nodes (including Challenge) update or squeeze sponge state.
     ///
     /// # Parallel execution
@@ -575,7 +575,7 @@ impl<C: ArkConfig> MutexGraph<C> {
 
             match &g.mutex_graph[node_idx] {
                 Node::Inp(_) => {
-                    // Walk Arg children to send public values through the sponge.
+                    // Walk Arg children to send instance values through the sponge.
                     let mut arg_children: Vec<NodeIndex> = g
                         .mutex_graph
                         .nodes_from(node_idx)
@@ -589,7 +589,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                     );
                     for arg_idx in arg_children {
                         if let Node::Arg(name, _, qual, _, kind) = &g.mutex_graph[arg_idx]
-                            && qual.is_public()
+                            && qual.is_instance()
                             && !matches!(kind, ArgKind::TranscriptInput)
                         {
                             let vid = name.clone();
@@ -603,7 +603,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                                     return Err(err);
                                 }
                             };
-                            absorb_public_input::<C, H>(prover_state, &**value);
+                            absorb_instance_input::<C, H>(prover_state, &**value);
                         }
                     }
                 }

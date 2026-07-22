@@ -24,10 +24,10 @@
 //!
 //! Size knob: `log_constraints = log_2(num_constraints)`. The bench
 //! circuit is a squaring chain (`w[i+1] = w[i] * w[i]`) emitting one
-//! constraint per row, one witness per row, and a single public output
+//! constraint per row, one witness per row, and a single instance output
 //! (the final value). So `num_inputs = 2` (constant 1 + the output)
 //! and `num_witnesses = num_constraints`, giving near-square R1CS
-//! matrices N × (N+2). Fixed M means the verifier's public-input
+//! matrices N × (N+2). Fixed M means the verifier's instance-input
 //! absorption cost is O(1) in N, matching how Groth16 is used in
 //! practice (e.g., proving knowledge of a preimage with a fixed-size
 //! digest as the public statement).
@@ -57,10 +57,10 @@ pub mod shared {
     pub type E = Bls12_381;
     pub type F = Fr;
 
-    /// Bench circuit: a squaring chain producing one public output.
+    /// Bench circuit: a squaring chain producing one instance output.
     ///
     /// Layout with `num_constraints = N`:
-    ///   * 1 public input  (`y` = final squared value, M=2 incl. constant 1)
+    ///   * 1 instance input  (`y` = final squared value, M=2 incl. constant 1)
     ///   * N witness vars  (`w[0..N]`, with `w[0]` a random seed)
     ///   * N constraints:
     ///       row i in [0, N-2]:  w[i] * w[i] = w[i+1]
@@ -68,7 +68,7 @@ pub mod shared {
     ///
     /// R1CS matrices are N × (N+2) — near-square (vs. the prior
     /// N × (3N+1) shape). Crucially, **M is constant in N** so the
-    /// verifier's public-input absorption cost is O(1), making the
+    /// verifier's instance-input absorption cost is O(1), making the
     /// verify-side numbers reflect "Groth16 as actually deployed"
     /// rather than the degenerate "every output is public" case.
     #[derive(Clone)]
@@ -85,7 +85,7 @@ pub mod shared {
             let n = self.num_constraints;
 
             // Compute witness values up-front so we can allocate the
-            // single public output before declaring witnesses (matches
+            // single instance output before declaring witnesses (matches
             // ark-relations' convention: instance vars come first).
             let w0 = F::rand(&mut rng);
             let mut wit_vals = Vec::with_capacity(n);
@@ -96,7 +96,7 @@ pub mod shared {
             }
             let y_val = cur; // = w0^(2^N)
 
-            // 1 public output.
+            // 1 instance output.
             let y = cs.new_input_variable(|| Ok(y_val))?;
 
             // N witness vars.
@@ -425,7 +425,6 @@ pub mod zippel_side {
     pub struct Setup<'a> {
         handler: ZippelHandler<ArkBls12_381>,
         inputs_base: Ctx<Vid, Value<ArkBls12_381>>,
-        public_inputs: Ctx<Vid, Value<ArkBls12_381>>,
         translated: &'a Translated,
         compile_time: std::time::Duration,
     }
@@ -501,7 +500,7 @@ pub mod zippel_side {
                 // them, and `with_skip_analyses()` keeps the where
                 // clause out of the executable graph — but
                 // `run_prover` still validates that every formal
-                // private input has a value. Zeros are fine: they
+                // witness input has a value. Zeros are fine: they
                 // would falsify the where clause analytically, but
                 // analyses are skipped here.
                 (
@@ -521,26 +520,11 @@ pub mod zippel_side {
 
             // Only verifier-relevant inputs: alpha_g1, beta_g2, gamma_g2,
             // delta_g2 appear in the pairing equation; gamma_abc_g1 + the
-            // public instance_assignment build IC. beta_g1, delta_g1,
+            // instance_assignment build IC. beta_g1, delta_g1,
             // a_query, b_g1_query, b_g2_query, h_query, l_query are
-            // prover-only (now `private` in the proto), so they must NOT
+            // prover-only (now `extra` in the proto), so they must NOT
             // be in the verifier's input ctx — absorbing them into FS
             // would dominate verify time at large M+L.
-            let public_input_names = [
-                "gen_g1",
-                "gen_g2",
-                "alpha_g1",
-                "beta_g2",
-                "gamma_g2",
-                "delta_g2",
-                "gamma_abc_g1",
-                "instance_assignment",
-            ];
-            let public_inputs: Ctx<Vid, Value<ArkBls12_381>> = inputs_base
-                .clone()
-                .into_iter()
-                .filter(|(vid, _)| public_input_names.contains(&vid.0.as_str()))
-                .collect();
 
             let compile_start = Instant::now();
             let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"))
@@ -556,7 +540,6 @@ pub mod zippel_side {
             Setup {
                 handler,
                 inputs_base,
-                public_inputs,
                 translated,
                 compile_time,
             }
@@ -569,6 +552,7 @@ pub mod zippel_side {
         pub fn time_protocol(&mut self) -> Timing {
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_proof = None;
+            let mut last_inputs = None;
             for _ in 0..*crate::PROVER_SAMPLES {
                 let t = Instant::now();
                 let mut h_coeffs = witness_map(
@@ -586,11 +570,12 @@ pub mod zippel_side {
                     .expect("zippel groth16 prover failed");
                 prove_sum += t.elapsed();
                 last_proof = Some(proof);
+                last_inputs = Some(inputs);
             }
             let prove = prove_sum / *crate::PROVER_SAMPLES;
             let proof = last_proof.expect("PROVER_SAMPLES > 0");
+            let inputs = last_inputs.expect("PROVER_SAMPLES > 0");
 
-            self.handler.set_public_inputs(self.public_inputs.clone());
             let mut verify_sum = std::time::Duration::ZERO;
             let mut last_result = None;
             for _ in 0..crate::VERIFY_SAMPLES {
@@ -598,7 +583,7 @@ pub mod zippel_side {
                 let t = Instant::now();
                 let verifier_result = self
                     .handler
-                    .run_verifier(&proof_c)
+                    .run_verifier(&proof_c, &inputs)
                     .expect("zippel groth16 verifier failed");
                 verify_sum += t.elapsed();
                 last_result = Some(verifier_result);
@@ -715,13 +700,13 @@ pub mod native_side {
             let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             // Verifier convention: drop the leading constant-1 from the
-            // public-input vector (matches ark-groth16's verify_proof).
-            let public_inputs = &self.translated.instance_assignment[1..];
+            // instance-input vector (matches ark-groth16's verify_proof).
+            let instance_inputs = &self.translated.instance_assignment[1..];
             let mut verify_sum = std::time::Duration::ZERO;
             let mut last_ok = false;
             for _ in 0..crate::VERIFY_SAMPLES {
                 let t = Instant::now();
-                let ok = verify(&self.keys, &proof, public_inputs);
+                let ok = verify(&self.keys, &proof, instance_inputs);
                 verify_sum += t.elapsed();
                 last_ok = ok;
             }
@@ -835,12 +820,12 @@ pub mod native_side {
     /// single 3-pair `multi_pairing` (one Miller loop + one
     /// final-exponentiation), then GT identity check via `result == result − result`.
     #[allow(clippy::eq_op)]
-    pub fn verify(keys: &AffineKeys, proof: &Proof, public_inputs: &[GitFr]) -> bool {
-        // IC = gamma_abc_g1[0] + MSM(gamma_abc_g1[1..], public_inputs).
-        // public_inputs already drops the constant-1, matching the v0.5
+    pub fn verify(keys: &AffineKeys, proof: &Proof, instance_inputs: &[GitFr]) -> bool {
+        // IC = gamma_abc_g1[0] + MSM(gamma_abc_g1[1..], instance_inputs).
+        // instance_inputs already drops the constant-1, matching the v0.5
         // ark-groth16 convention.
         let inputs_bi: Vec<<GitFr as PrimeField>::BigInt> =
-            public_inputs.iter().map(|x| x.into_bigint()).collect();
+            instance_inputs.iter().map(|x| x.into_bigint()).collect();
         let ic_msm = G1Projective::msm_bigint(&keys.gamma_abc_g1[1..], &inputs_bi);
         let ic = keys.gamma_abc_g1[0].into_group() + ic_msm;
 
@@ -1045,9 +1030,9 @@ mod cross_tests {
         // Sanity: native's own verifier accepts native's proof (drop the
         // leading constant-1 from instance assignment, matching the
         // libsnark convention).
-        let public_inputs = &t.instance_assignment[1..];
+        let instance_inputs = &t.instance_assignment[1..];
         assert!(
-            verify(&keys, &proof_n, public_inputs),
+            verify(&keys, &proof_n, instance_inputs),
             "log_constraints={log_constraints}: native verifier rejected its own proof — bug in this test"
         );
 
@@ -1067,7 +1052,7 @@ mod cross_tests {
             Value::G1(proof_n.c),
         ];
         let verifier_result = handler
-            .run_verifier(&cross_proof)
+            .run_verifier(&cross_proof, &zip_inputs)
             .expect("zippel run_verifier on cross-proof");
         let result = check_verification(&verifier_result);
         assert!(
@@ -1126,9 +1111,9 @@ mod cross_tests {
 
         // ---- Native: verify the zippel-produced proof --------------------
         let keys = AffineKeys::from(&t);
-        let public_inputs = &t.instance_assignment[1..];
+        let instance_inputs = &t.instance_assignment[1..];
         assert!(
-            verify(&keys, &proof_z, public_inputs),
+            verify(&keys, &proof_z, instance_inputs),
             "log_constraints={log_constraints}: CROSS-VERIFY FAILED: native verifier rejected zippel-produced proof"
         );
     }

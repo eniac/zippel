@@ -42,13 +42,13 @@ impl<C: ArkConfig> ZippelDomainSeparator<C> {
     }
 
     pub fn new_zippel_domain_seperator<A>(session: &str, dag: &Dag<C, A>) -> Self {
-        // Collect public, non-transcript Arg nodes sorted by name.
-        let mut public_args: Vec<(&Vid, &backend::ATyp)> = dag
+        // Collect instance, non-transcript Arg nodes sorted by name.
+        let mut instance_args: Vec<(&Vid, &backend::ATyp)> = dag
             .input_args()
             .into_iter()
             .filter_map(|n| match &dag[n] {
                 Node::Arg(name, typ, qual, _, ArgKind::Input) => {
-                    if qual.is_public() {
+                    if qual.is_instance() {
                         Some((name, typ))
                     } else {
                         None
@@ -58,10 +58,10 @@ impl<C: ArkConfig> ZippelDomainSeparator<C> {
             })
             .collect();
 
-        public_args.sort_by_key(|(name, _)| name.0.as_str());
+        instance_args.sort_by_key(|(name, _)| name.0.as_str());
 
         let mut instance_buf = Vec::new();
-        for (vid, typ) in public_args {
+        for (vid, typ) in instance_args {
             let vid_bytes = vid.0.as_bytes();
             instance_buf.extend_from_slice(vid_bytes);
 
@@ -89,7 +89,7 @@ impl<C: ArkConfig> ZippelDomainSeparator<C> {
 #[test]
 fn test_domain_separator() {
     let ex = r#"
-    proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+    proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
         let r = random<F>;
         u <- g*r;
         c <- challenge<F>;

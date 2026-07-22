@@ -3,8 +3,8 @@
 // error: a one-variable residual would misread the vector as one multivariate
 // coordinate point instead of a batch of scalar sample points.
 fn sample_univariate<F: Field, MAX_DEGREE_CONST: Size>(
-    public p: Poly<F, 1, MAX_DEGREE_CONST>,
-    public points: [F; MAX_DEGREE_CONST + 1]
+    instance p: Poly<F, 1, MAX_DEGREE_CONST>,
+    instance points: [F; MAX_DEGREE_CONST + 1]
 ) -> [F; MAX_DEGREE_CONST + 1] {
     [p(t) for t in points]
 }
@@ -21,12 +21,12 @@ fn sample_univariate<F: Field, MAX_DEGREE_CONST: Size>(
 // was the dominant O(2^NV) cost in verify) — making verify O(log N)
 // instead of O(N).
 fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, V: 3..NUM_VARS_CONST + 1, MAX_DEGREE_CONST: Size>(
-    private curr_poly: Poly<F, V, MAX_DEGREE_CONST>,
-    public points: [F; MAX_DEGREE_CONST + 1],
-    public challenges: [F; NUM_VARS_CONST - V + 1],
-    public prev_eval: F,
-    public challenge: F,
-    public curr_round: Fin<NUM_VARS_CONST>
+    witness curr_poly: Poly<F, V, MAX_DEGREE_CONST>,
+    instance points: [F; MAX_DEGREE_CONST + 1],
+    instance challenges: [F; NUM_VARS_CONST - V + 1],
+    instance prev_eval: F,
+    instance challenge: F,
+    instance curr_round: Fin<NUM_VARS_CONST>
 ) -> Unit {
     let residual_poly = eval(curr_poly, [challenge]);
     // Round polynomial: sum the residual evaluated over the Boolean-tail
@@ -54,12 +54,12 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, V: 3..NUM_VARS_CONST + 1, MAX_
 }
 
 fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
-    private curr_poly: Poly<F, 2, MAX_DEGREE_CONST>,
-    public points: [F; MAX_DEGREE_CONST + 1],
-    public challenges: [F; NUM_VARS_CONST - 1],
-    public prev_eval: F,
-    public challenge: F,
-    public curr_round: Fin<NUM_VARS_CONST>
+    witness curr_poly: Poly<F, 2, MAX_DEGREE_CONST>,
+    instance points: [F; MAX_DEGREE_CONST + 1],
+    instance challenges: [F; NUM_VARS_CONST - 1],
+    instance prev_eval: F,
+    instance challenge: F,
+    instance curr_round: Fin<NUM_VARS_CONST>
 ) -> Unit {
     let residual_poly = eval(curr_poly, [challenge]);
     let eval_points = points;
@@ -78,8 +78,8 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
 
 // Round 1: first challenge r1 folds round-1 message; second challenge r2 feeds the first tail round.
 proto sumcheck<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
-    public claimed_sum: F,
-    private poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>
+    instance claimed_sum: F,
+    witness poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>
 ) where let points = 0..MAX_DEGREE_CONST + 1;
         let round_poly0 = reduce(+, [
             eval<0>(poly, tail)

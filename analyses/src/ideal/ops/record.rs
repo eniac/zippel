@@ -111,9 +111,9 @@ mod tests {
         rec_fields.insert(&"y".to_string(), &s);
         let rec_typ = ATyp::Record(rec_fields);
 
-        let var_a = Var::from_node(NodeIndex::new(0), s.clone(), Qualifier::Public);
+        let var_a = Var::from_node(NodeIndex::new(0), s.clone(), Qualifier::Instance);
         ideal.register(&var_a);
-        let var_b = Var::from_node(NodeIndex::new(1), s.clone(), Qualifier::Public);
+        let var_b = Var::from_node(NodeIndex::new(1), s.clone(), Qualifier::Instance);
         ideal.register(&var_b);
 
         let mut fields = Ctx::<String, HOp<ArkBls12_381>>::new();
@@ -126,7 +126,7 @@ mod tests {
             &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), s.clone())),
         );
 
-        let var_r = Var::from_node(NodeIndex::new(2), rec_typ, Qualifier::Public);
+        let var_r = Var::from_node(NodeIndex::new(2), rec_typ, Qualifier::Instance);
         ideal.register(&var_r);
 
         builder.add_op(var_r.clone(), Op::Record(fields), &mut ideal);
@@ -172,10 +172,10 @@ mod tests {
         rec_fields.insert(&"p".to_string(), &uni_typ);
         let rec_typ = ATyp::Record(rec_fields);
 
-        let var_scalar = Var::from_node(NodeIndex::new(0), s.clone(), Qualifier::Public);
+        let var_scalar = Var::from_node(NodeIndex::new(0), s.clone(), Qualifier::Instance);
         ideal.register(&var_scalar);
 
-        let var_poly = Var::from_node(NodeIndex::new(1), uni_typ.clone(), Qualifier::Public);
+        let var_poly = Var::from_node(NodeIndex::new(1), uni_typ.clone(), Qualifier::Instance);
         ideal.register(&var_poly);
 
         let mut fields = Ctx::<String, HOp<ArkBls12_381>>::new();
@@ -188,7 +188,7 @@ mod tests {
             &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), uni_typ.clone())),
         );
 
-        let var_r = Var::from_node(NodeIndex::new(2), rec_typ, Qualifier::Public);
+        let var_r = Var::from_node(NodeIndex::new(2), rec_typ, Qualifier::Instance);
         ideal.register(&var_r);
 
         builder.add_op(var_r.clone(), Op::Record(fields), &mut ideal);
@@ -238,10 +238,10 @@ mod tests {
         let phys_len = rec_typ.physical_len();
         assert_eq!(phys_len, 4, "1 scalar + 3 Vec scalars = 4");
 
-        let var_x = Var::from_node(NodeIndex::new(0), s.clone(), Qualifier::Public);
+        let var_x = Var::from_node(NodeIndex::new(0), s.clone(), Qualifier::Instance);
         ideal.register(&var_x);
 
-        let var_v = Var::from_node(NodeIndex::new(1), v2.clone(), Qualifier::Public);
+        let var_v = Var::from_node(NodeIndex::new(1), v2.clone(), Qualifier::Instance);
         ideal.register(&var_v);
 
         let mut fields = Ctx::<String, HOp<ArkBls12_381>>::new();
@@ -254,7 +254,7 @@ mod tests {
             &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), v2.clone())),
         );
 
-        let var_r = Var::from_node(NodeIndex::new(2), rec_typ, Qualifier::Public);
+        let var_r = Var::from_node(NodeIndex::new(2), rec_typ, Qualifier::Instance);
         ideal.register(&var_r);
 
         builder.add_op(var_r.clone(), Op::Record(fields), &mut ideal);
@@ -282,12 +282,12 @@ mod tests {
         rec_fields.insert(&"y".to_string(), &s);
         let rec_typ = ATyp::Record(rec_fields);
 
-        let var_rec = Var::from_node(NodeIndex::new(0), rec_typ.clone(), Qualifier::Public);
+        let var_rec = Var::from_node(NodeIndex::new(0), rec_typ.clone(), Qualifier::Instance);
         ideal.register(&var_rec);
 
         let inner_op: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(0)), rec_typ);
 
-        let var_proj = Var::from_node(NodeIndex::new(1), s.clone(), Qualifier::Public);
+        let var_proj = Var::from_node(NodeIndex::new(1), s.clone(), Qualifier::Instance);
         ideal.register(&var_proj);
 
         builder.add_op(
@@ -325,12 +325,12 @@ mod tests {
         rec_fields.insert(&"b".to_string(), &v3);
         let rec_typ = ATyp::Record(rec_fields);
 
-        let var_rec = Var::from_node(NodeIndex::new(0), rec_typ.clone(), Qualifier::Public);
+        let var_rec = Var::from_node(NodeIndex::new(0), rec_typ.clone(), Qualifier::Instance);
         ideal.register(&var_rec);
 
         let inner_op: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(0)), rec_typ);
 
-        let var_proj = Var::from_node(NodeIndex::new(1), v3.clone(), Qualifier::Public);
+        let var_proj = Var::from_node(NodeIndex::new(1), v3.clone(), Qualifier::Instance);
         ideal.register(&var_proj);
 
         builder.add_op(
@@ -380,12 +380,12 @@ mod tests {
         rec_fields.insert(&"b".to_string(), &s);
         let rec_typ = ATyp::Record(rec_fields);
 
-        let var_rec = Var::from_node(NodeIndex::new(0), rec_typ.clone(), Qualifier::Public);
+        let var_rec = Var::from_node(NodeIndex::new(0), rec_typ.clone(), Qualifier::Instance);
         ideal.register(&var_rec);
 
         let inner_op: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(0)), rec_typ);
 
-        let var_proj = Var::from_node(NodeIndex::new(1), uni2.clone(), Qualifier::Public);
+        let var_proj = Var::from_node(NodeIndex::new(1), uni2.clone(), Qualifier::Instance);
         ideal.register(&var_proj);
 
         builder.add_op(
@@ -438,12 +438,12 @@ mod tests {
         let rec_typ = ATyp::Record(rec_fields);
 
         // Register the record Var.
-        let var_rec = Var::from_node(NodeIndex::new(0), rec_typ.clone(), Qualifier::Public);
+        let var_rec = Var::from_node(NodeIndex::new(0), rec_typ.clone(), Qualifier::Instance);
         ideal.register(&var_rec);
 
         // Register scalar refs for a and b.
-        let var_a = Var::from_node(NodeIndex::new(1), s.clone(), Qualifier::Public);
-        let var_b = Var::from_node(NodeIndex::new(2), s.clone(), Qualifier::Public);
+        let var_a = Var::from_node(NodeIndex::new(1), s.clone(), Qualifier::Instance);
+        let var_b = Var::from_node(NodeIndex::new(2), s.clone(), Qualifier::Instance);
         ideal.register(&var_a);
         ideal.register(&var_b);
 
@@ -461,7 +461,7 @@ mod tests {
         builder.add_op(var_rec.clone(), Op::Record(field_ops), &mut ideal);
 
         // Project field "a" from the record.
-        let var_proj = Var::from_node(NodeIndex::new(3), s.clone(), Qualifier::Public);
+        let var_proj = Var::from_node(NodeIndex::new(3), s.clone(), Qualifier::Instance);
         ideal.register(&var_proj);
 
         let inner_op: GOp<ArkBls12_381> =

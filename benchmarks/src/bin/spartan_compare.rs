@@ -38,7 +38,7 @@ fn main() {
     println!(
         "matrix-bind    = throwaway merlin transcript absorbing serialized\n\
                   Instance + io bytes. Added to both native timers because\n\
-                  zippel's runtime auto-absorbs every `public` Inp on both\n\
+                  zippel's runtime auto-absorbs every `instance` Inp on both\n\
                   prover and verifier; libspartan binds matrices implicitly\n\
                   via the verifier's eval step instead. Equalizes the byte-\n\
                   shoveling cost so the comparison reflects protocol +\n\

@@ -90,13 +90,13 @@ mod tests {
         let vec_g2 = ATyp::Vec(Box::new(g2.clone()), 2);
         let vec_gt = ATyp::Vec(Box::new(gt.clone()), 2);
 
-        let var_a = Var::from_node(NodeIndex::new(0), vec_g1.clone(), Qualifier::Private);
+        let var_a = Var::from_node(NodeIndex::new(0), vec_g1.clone(), Qualifier::Witness);
         ideal.register(&var_a);
 
-        let var_b = Var::from_node(NodeIndex::new(1), vec_g2.clone(), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), vec_g2.clone(), Qualifier::Witness);
         ideal.register(&var_b);
 
-        let var_r = Var::from_node(NodeIndex::new(2), vec_gt.clone(), Qualifier::Private);
+        let var_r = Var::from_node(NodeIndex::new(2), vec_gt.clone(), Qualifier::Witness);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -134,13 +134,13 @@ mod tests {
         let g2 = ATyp::g2();
         let gt = ATyp::gt();
 
-        let var_a = Var::from_node(NodeIndex::new(0), g1.clone(), Qualifier::Private);
+        let var_a = Var::from_node(NodeIndex::new(0), g1.clone(), Qualifier::Witness);
         ideal.register(&var_a);
 
-        let var_b = Var::from_node(NodeIndex::new(1), g2.clone(), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), g2.clone(), Qualifier::Witness);
         ideal.register(&var_b);
 
-        let var_r = Var::from_node(NodeIndex::new(2), gt.clone(), Qualifier::Private);
+        let var_r = Var::from_node(NodeIndex::new(2), gt.clone(), Qualifier::Witness);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -185,13 +185,13 @@ mod tests {
         let vec_vec_g2 = ATyp::Vec(Box::new(vec_g2.clone()), 2);
         let vec_vec_gt = ATyp::Vec(Box::new(vec_gt.clone()), 2);
 
-        let var_a = Var::from_node(NodeIndex::new(0), vec_vec_g1.clone(), Qualifier::Private);
+        let var_a = Var::from_node(NodeIndex::new(0), vec_vec_g1.clone(), Qualifier::Witness);
         ideal.register(&var_a);
 
-        let var_b = Var::from_node(NodeIndex::new(1), vec_vec_g2.clone(), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), vec_vec_g2.clone(), Qualifier::Witness);
         ideal.register(&var_b);
 
-        let var_r = Var::from_node(NodeIndex::new(2), vec_vec_gt.clone(), Qualifier::Private);
+        let var_r = Var::from_node(NodeIndex::new(2), vec_vec_gt.clone(), Qualifier::Witness);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -245,13 +245,13 @@ mod tests {
         let vec_g2 = ATyp::Vec(Box::new(g2.clone()), 2);
         let vec_gt = ATyp::Vec(Box::new(gt.clone()), 2);
 
-        let var_a = Var::from_node(NodeIndex::new(0), vec_g1.clone(), Qualifier::Private);
+        let var_a = Var::from_node(NodeIndex::new(0), vec_g1.clone(), Qualifier::Witness);
         ideal.register(&var_a);
 
-        let var_b = Var::from_node(NodeIndex::new(1), vec_g2.clone(), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), vec_g2.clone(), Qualifier::Witness);
         ideal.register(&var_b);
 
-        let var_r = Var::from_node(NodeIndex::new(2), vec_gt.clone(), Qualifier::Private);
+        let var_r = Var::from_node(NodeIndex::new(2), vec_gt.clone(), Qualifier::Witness);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -295,13 +295,13 @@ mod tests {
         let vec_g1 = ATyp::Vec(Box::new(g1.clone()), 2);
         let vec_gt = ATyp::Vec(Box::new(gt.clone()), 2);
 
-        let var_a = Var::from_node(NodeIndex::new(0), vec_g1.clone(), Qualifier::Private);
+        let var_a = Var::from_node(NodeIndex::new(0), vec_g1.clone(), Qualifier::Witness);
         ideal.register(&var_a);
 
-        let var_b = Var::from_node(NodeIndex::new(1), g2.clone(), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), g2.clone(), Qualifier::Witness);
         ideal.register(&var_b);
 
-        let var_r = Var::from_node(NodeIndex::new(2), vec_gt.clone(), Qualifier::Private);
+        let var_r = Var::from_node(NodeIndex::new(2), vec_gt.clone(), Qualifier::Witness);
         ideal.register(&var_r);
 
         builder.add_op(
@@ -345,13 +345,13 @@ mod tests {
         let vec_g2 = ATyp::Vec(Box::new(g2.clone()), 2);
         let vec_gt = ATyp::Vec(Box::new(gt.clone()), 2);
 
-        let var_a = Var::from_node(NodeIndex::new(0), g1.clone(), Qualifier::Private);
+        let var_a = Var::from_node(NodeIndex::new(0), g1.clone(), Qualifier::Witness);
         ideal.register(&var_a);
 
-        let var_b = Var::from_node(NodeIndex::new(1), vec_g2.clone(), Qualifier::Private);
+        let var_b = Var::from_node(NodeIndex::new(1), vec_g2.clone(), Qualifier::Witness);
         ideal.register(&var_b);
 
-        let var_r = Var::from_node(NodeIndex::new(2), vec_gt.clone(), Qualifier::Private);
+        let var_r = Var::from_node(NodeIndex::new(2), vec_gt.clone(), Qualifier::Witness);
         ideal.register(&var_r);
 
         builder.add_op(

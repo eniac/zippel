@@ -2,28 +2,28 @@
 // Proves knowledge of witness w such that Az ∘ Bz = Cz where z = (x, w)
 // Uses Pedersen vector commitments over a field: Commit(ck, v; ω) = dot(ck, v) + h*ω
 //
-// Generic over: N (total variables), n (public inputs, n < N), m (constraints).
+// Generic over: N (total variables), n (instance inputs, n < N), m (constraints).
 // w ∈ F^(N-n), z ∈ F^N, A/B/C are m×N (stored flat as [F; m*N]).
 
 // Matrix-vector product for an m×N matrix (flat, row-major) times an N-vector.
 fn matvec<G: Group, F: Scalar<G>, N: Size, m: Size>(
-    public mat: [F; m * N],
-    public v: [F; N]
+    instance mat: [F; m * N],
+    instance v: [F; N]
 ) -> [F; m] {
     [reduce(+, [mat[i * N + j] * v[j] for j in 0..N]) for i in 0..m]
 }
 
 proto r1cs_sigma<G: Group, F: Scalar<G>, N: Size, n: 1..N, m: Size>(
-    // Public inputs
-    public ck: [G; m],          // Commitment key (m generators)
-    public h_base: G,           // Blinding base
-    public mat_A: [F; m * N],   // Matrix A (m × N, flattened row-major)
-    public mat_B: [F; m * N],   // Matrix B
-    public mat_C: [F; m * N],   // Matrix C
-    public x: [F; n],           // Public input portion of z
+    // Instance inputs
+    instance ck: [G; m],          // Commitment key (m generators)
+    instance h_base: G,           // Blinding base
+    instance mat_A: [F; m * N],   // Matrix A (m × N, flattened row-major)
+    instance mat_B: [F; m * N],   // Matrix B
+    instance mat_C: [F; m * N],   // Matrix C
+    instance x: [F; n],           // Instance input portion of z
 
-    // Private inputs
-    private w: [F; N - n]       // Witness portion of z
+    // Witness inputs
+    witness w: [F; N - n]       // Witness portion of z
 ) where
     matvec(mat_A, x ++ w) * matvec(mat_B, x ++ w)
     == matvec(mat_C, x ++ w)

@@ -13,13 +13,13 @@ fn dory_reduce<
     GT: Pairing<G1, G2>,
     F: Scalar<G1, G2>
 >(
-    public c1: GT,
-    public c2: GT,
-    public c3: GT,
-    public final_gamma1: G1,
-    public final_gamma2: G2,
-    private u_vec: [G1; 1],
-    private g_vec: [G2; 1]
+    instance c1: GT,
+    instance c2: GT,
+    instance c3: GT,
+    instance final_gamma1: G1,
+    instance final_gamma2: G2,
+    witness u_vec: [G1; 1],
+    witness g_vec: [G2; 1]
 ) -> Unit {
     // Prover sends u and g
     log_u <- u_vec[0];
@@ -39,24 +39,24 @@ fn dory_reduce<
     GT: Pairing<G1, G2>,
     F: Scalar<G1, G2>
 >(
-    public c1: GT,
-    public c2: GT,
-    public c3: GT,
-    public hash1_l_vec: [GT; 1],
-    public hash1_r_vec: [GT; 1],
-    public hash2_l_vec: [GT; 1],
-    public hash2_r_vec: [GT; 1],
-    public gamma_pair_ipp_vec: [GT; 1],
-    public final_gamma1: G1,
-    public final_gamma2: G2,
+    instance c1: GT,
+    instance c2: GT,
+    instance c3: GT,
+    instance hash1_l_vec: [GT; 1],
+    instance hash1_r_vec: [GT; 1],
+    instance hash2_l_vec: [GT; 1],
+    instance hash2_r_vec: [GT; 1],
+    instance gamma_pair_ipp_vec: [GT; 1],
+    instance final_gamma1: G1,
+    instance final_gamma2: G2,
 
-    // Prover's private state
-    private gamma1: [G1; 2],
-    private gamma2: [G2; 2],
-    private gamma1_prime: [G1; 1],
-    private gamma2_prime: [G2; 1],
-    private u_vec: [G1; 2],
-    private g_vec: [G2; 2]
+    // Prover's witness state
+    witness gamma1: [G1; 2],
+    witness gamma2: [G2; 2],
+    witness gamma1_prime: [G1; 1],
+    witness gamma2_prime: [G2; 1],
+    witness u_vec: [G1; 2],
+    witness g_vec: [G2; 2]
 ) -> Unit {
     // 1. Prover computes left/right commitments using the next level's bases
     let u_l = u_vec[0..1];
@@ -75,7 +75,7 @@ fn dory_reduce<
     let hash2_r = hash2_r_vec[0];
     let gamma_pair_ipp = gamma_pair_ipp_vec[0];
 
-    // Prover verifies hash structures privately, but Verifier uses the public hashes provided
+    // Prover verifies hash structures privately, but Verifier uses the instance hashes provided
 
 
     let d1_l = reduce(+, [pair(u_l[0], gamma2_prime[0]) for i in 0..1]);
@@ -137,25 +137,25 @@ fn dory_reduce<
     S: Size,
     LOG_N: 2..S+1
 >(
-    public c1: GT,
-    public c2: GT,
-    public c3: GT,
+    instance c1: GT,
+    instance c2: GT,
+    instance c3: GT,
     // Preprocessed evaluations
-    public hash1_l_vec: [GT; LOG_N],
-    public hash1_r_vec: [GT; LOG_N],
-    public hash2_l_vec: [GT; LOG_N],
-    public hash2_r_vec: [GT; LOG_N],
-    public gamma_pair_ipp_vec: [GT; LOG_N],
-    public final_gamma1: G1,
-    public final_gamma2: G2,
+    instance hash1_l_vec: [GT; LOG_N],
+    instance hash1_r_vec: [GT; LOG_N],
+    instance hash2_l_vec: [GT; LOG_N],
+    instance hash2_r_vec: [GT; LOG_N],
+    instance gamma_pair_ipp_vec: [GT; LOG_N],
+    instance final_gamma1: G1,
+    instance final_gamma2: G2,
 
-    // Prover's private state
-    private gamma1: [G1; 2^LOG_N],
-    private gamma2: [G2; 2^LOG_N],
-    private gamma1_prime: [G1; 2^(LOG_N-1)],
-    private gamma2_prime: [G2; 2^(LOG_N-1)],
-    private u_vec: [G1; 2^LOG_N],
-    private g_vec: [G2; 2^LOG_N]
+    // Prover's witness state
+    witness gamma1: [G1; 2^LOG_N],
+    witness gamma2: [G2; 2^LOG_N],
+    witness gamma1_prime: [G1; 2^(LOG_N-1)],
+    witness gamma2_prime: [G2; 2^(LOG_N-1)],
+    witness u_vec: [G1; 2^LOG_N],
+    witness g_vec: [G2; 2^LOG_N]
 ) -> Unit {
     // 1. Prover computes left/right commitments using the next level's bases
     let u_l = u_vec[0..2^(LOG_N-1)];
@@ -174,7 +174,7 @@ fn dory_reduce<
     let hash2_r = hash2_r_vec[0];
     let gamma_pair_ipp = gamma_pair_ipp_vec[0];
 
-    // Prover verifies hash structures privately, but Verifier uses the public hashes provided
+    // Prover verifies hash structures privately, but Verifier uses the instance hashes provided
 
 
     let d1_l = reduce(+, [pair(u_l[i], gamma2_prime[i]) for i in 0..2^(LOG_N-1)]);
@@ -261,24 +261,24 @@ proto dory_eval<
     LOG_N: S
 >(
     // Inputs (from the top-level LOG_N)
-    public c1: GT,
-    public c2: GT,
-    public c3: GT,
-    public hash1_l_vec: [GT; LOG_N],
-    public hash1_r_vec: [GT; LOG_N],
-    public hash2_l_vec: [GT; LOG_N],
-    public hash2_r_vec: [GT; LOG_N],
-    public gamma_pair_ipp_vec: [GT; LOG_N],
-    public final_gamma1: G1,
-    public final_gamma2: G2,
+    instance c1: GT,
+    instance c2: GT,
+    instance c3: GT,
+    instance hash1_l_vec: [GT; LOG_N],
+    instance hash1_r_vec: [GT; LOG_N],
+    instance hash2_l_vec: [GT; LOG_N],
+    instance hash2_r_vec: [GT; LOG_N],
+    instance gamma_pair_ipp_vec: [GT; LOG_N],
+    instance final_gamma1: G1,
+    instance final_gamma2: G2,
 
-    // Prover's private secrets
-    private gamma1: [G1; 2^LOG_N],
-    private gamma2: [G2; 2^LOG_N],
-    private gamma1_prime: [G1; 2^(LOG_N-1)],
-    private gamma2_prime: [G2; 2^(LOG_N-1)],
-    private u_vec: [G1; 2^LOG_N],
-    private g_vec: [G2; 2^LOG_N]
+    // Prover's witness secrets
+    witness gamma1: [G1; 2^LOG_N],
+    witness gamma2: [G2; 2^LOG_N],
+    witness gamma1_prime: [G1; 2^(LOG_N-1)],
+    witness gamma2_prime: [G2; 2^(LOG_N-1)],
+    witness u_vec: [G1; 2^LOG_N],
+    witness g_vec: [G2; 2^LOG_N]
 ) where
     c1 == reduce(+, [pair(u_vec[i], g_vec[i]) for i in 0..2^LOG_N]);
     c2 == reduce(+, [pair(u_vec[i], gamma2[i]) for i in 0..2^LOG_N]);

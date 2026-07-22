@@ -182,11 +182,11 @@ mod tests {
         let var_v = Var::from_node(
             NodeIndex::new(0),
             ATyp::Vec(Box::new(ATyp::scalar()), 3),
-            Qualifier::Private,
+            Qualifier::Witness,
         );
         ideal.register(&var_v);
 
-        let var = Var::from_node(NodeIndex::new(1), ATyp::scalar(), Qualifier::Private);
+        let var = Var::from_node(NodeIndex::new(1), ATyp::scalar(), Qualifier::Witness);
         let op: GOp<ArkBls12_381> = Op::Reduce(
             BinOp::Add,
             mk::<ArkBls12_381>(Op::Ref(
@@ -231,10 +231,10 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let poly_t = ATyp::Uni(2);
         let vec_t = ATyp::Vec(Box::new(poly_t.clone()), 3);
-        let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Private);
+        let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Witness);
         ideal.register(&var_v);
 
-        let var = Var::from_node(NodeIndex::new(1), poly_t.clone(), Qualifier::Private);
+        let var = Var::from_node(NodeIndex::new(1), poly_t.clone(), Qualifier::Witness);
         let op: GOp<ArkBls12_381> = Op::Reduce(
             BinOp::Add,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), vec_t)),
@@ -306,10 +306,10 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 3);
-        let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Private);
+        let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Witness);
         ideal.register(&var_v);
 
-        let var = Var::from_node(NodeIndex::new(1), ATyp::scalar(), Qualifier::Private);
+        let var = Var::from_node(NodeIndex::new(1), ATyp::scalar(), Qualifier::Witness);
         let op: GOp<ArkBls12_381> = Op::Reduce(
             BinOp::Div,
             mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_t)),
@@ -354,10 +354,10 @@ mod tests {
 
         let elem_t = ATyp::Uni(1);
         let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
-        let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Private);
+        let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Witness);
         ideal.register(&var_v);
 
-        let var = Var::from_node(NodeIndex::new(1), ATyp::Uni(3), Qualifier::Private);
+        let var = Var::from_node(NodeIndex::new(1), ATyp::Uni(3), Qualifier::Witness);
         ideal.register(&var);
 
         builder.add_op(
@@ -399,10 +399,10 @@ mod tests {
 
         let elem_t = ATyp::Uni(1);
         let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
-        let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Private);
+        let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Witness);
         ideal.register(&var_v);
 
-        let var = Var::from_node(NodeIndex::new(1), ATyp::Uni(3), Qualifier::Private);
+        let var = Var::from_node(NodeIndex::new(1), ATyp::Uni(3), Qualifier::Witness);
         ideal.register(&var);
 
         // reduce(*, [x for x in polys]) — ReduceMap(Mul) with identity body over a
@@ -437,10 +437,10 @@ mod tests {
 
         let elem_t = ATyp::Uni(3);
         let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
-        let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Private);
+        let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Witness);
         ideal.register(&var_v);
 
-        let var = Var::from_node(NodeIndex::new(1), ATyp::Uni(2), Qualifier::Private);
+        let var = Var::from_node(NodeIndex::new(1), ATyp::Uni(2), Qualifier::Witness);
         ideal.register(&var);
 
         builder.add_op(
@@ -480,10 +480,10 @@ mod tests {
         let poly_t = ATyp::Uni(2);
         let vec_t = ATyp::Vec(Box::new(poly_t.clone()), 2);
 
-        let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Private);
+        let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Witness);
         ideal.register(&var_v);
 
-        let var = Var::from_node(NodeIndex::new(1), poly_t.clone(), Qualifier::Private);
+        let var = Var::from_node(NodeIndex::new(1), poly_t.clone(), Qualifier::Witness);
 
         builder.add_op(
             var.clone(),

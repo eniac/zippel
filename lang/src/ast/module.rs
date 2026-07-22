@@ -325,10 +325,10 @@ where
 #[test]
 fn from_decl_subst1() {
     let ex = concat!(
-        "fn sum<N: 1..4, F: Field>(public a: [F; N]) -> F {\n",
+        "fn sum<N: 1..4, F: Field>(instance a: [F; N]) -> F {\n",
         "    sum(a[0..2^(N-1)]) + sum(a[2^(N-1)..2^N])\n",
         "}\n",
-        "fn sum<F: Field>(public a: [F; 0]) -> F {\n",
+        "fn sum<F: Field>(instance a: [F; 0]) -> F {\n",
         "   a[0]\n",
         "}"
     );
@@ -341,10 +341,10 @@ fn from_decl_subst1() {
 #[test]
 fn from_decl_duplicate() {
     let ex = concat!(
-        "fn sum<N: 1..2, F: Field>(public a: [F; N]) -> F {\n",
+        "fn sum<N: 1..2, F: Field>(instance a: [F; N]) -> F {\n",
         "    sum(a[0..2^(N-1)]) + sum(a[2^(N-1)..2^N])\n",
         "}\n",
-        "fn sum<F: Field>(public a: [F; 1]) -> F {\n",
+        "fn sum<F: Field>(instance a: [F; 1]) -> F {\n",
         "   a[0]\n",
         "}"
     );
@@ -357,7 +357,7 @@ fn from_decl_duplicate() {
 #[test]
 fn from_decl_underflow() {
     let ex = concat!(
-        "fn sum<N: 0..3, F: Field>(public a: [F; N]) -> F {\n",
+        "fn sum<N: 0..3, F: Field>(instance a: [F; N]) -> F {\n",
         "    sum(a[0..2^(N-1)]) + sum(a[2^(N-1)..2^N])\n",
         "}"
     );
@@ -370,13 +370,13 @@ fn from_decl_underflow() {
 #[test]
 fn from_decl_subst2() {
     let ex = concat!(
-        "fn sum<N: 1..4, F: Field>(public a: [F; N]) -> F {\n",
+        "fn sum<N: 1..4, F: Field>(instance a: [F; N]) -> F {\n",
         "    sum(a[0..2^(N-1)]) + sum(a[2^(N-1)..2^N])\n",
         "}\n",
-        "fn sum<F: Field>(public a: [F; 0]) -> F {\n",
+        "fn sum<F: Field>(instance a: [F; 0]) -> F {\n",
         "   a[0]\n",
         "}\n",
-        "fn prod_sum<N: 0..4, M: 0..3, F: Field>(public a: [F; N], public b: [F; M]) -> F {\n",
+        "fn prod_sum<N: 0..4, M: 0..3, F: Field>(instance a: [F; N], instance b: [F; M]) -> F {\n",
         "   sum(a) * sum(b)\n",
         "}\n"
     );
@@ -390,7 +390,7 @@ fn from_decl_subst2() {
 fn type_alias_record() {
     let ex = concat!(
         "type Point = { x: F, y: F };\n",
-        "fn origin<F: Field>(public zero: F) -> Point {\n",
+        "fn origin<F: Field>(instance zero: F) -> Point {\n",
         "    {| x: zero, y: zero |}\n",
         "}\n"
     );
@@ -410,7 +410,7 @@ fn type_alias_record() {
 fn type_alias_in_args() {
     let ex = concat!(
         "type Vec3 = [F; 3];\n",
-        "fn dot<F: Field>(public a: Vec3, public b: Vec3) -> F {\n",
+        "fn dot<F: Field>(instance a: Vec3, instance b: Vec3) -> F {\n",
         "    reduce(+, a * b)\n",
         "}\n"
     );
@@ -428,7 +428,7 @@ fn type_alias_in_args() {
 #[test]
 fn typed_let_binding() {
     let ex = concat!(
-        "fn f<F: Field>(public a: F, public b: F) -> F {\n",
+        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n",
         "    let c: F = a + b;\n",
         "    c\n",
         "}\n"
@@ -441,7 +441,7 @@ fn typed_let_binding() {
 
 #[test]
 fn test_concretize_size_var() {
-    let ex = "fn foo<S: Size, F: Field>(public a: [F; S]) -> F { a[0] }";
+    let ex = "fn foo<S: Size, F: Field>(instance a: [F; S]) -> F { a[0] }";
     let umod = UModule::from_str(ex).unwrap();
     assert_eq!(umod.len(), 1);
 
@@ -462,10 +462,10 @@ fn test_concretize_size_var() {
 #[test]
 fn test_module_round_trip() {
     let ex = concat!(
-        "fn f<F: Field>(public a: F) -> F {\n",
+        "fn f<F: Field>(instance a: F) -> F {\n",
         "    a\n",
         "}\n",
-        "fn g<F: Field>(public a: F) -> F {\n",
+        "fn g<F: Field>(instance a: F) -> F {\n",
         "    a\n",
         "}\n"
     );
@@ -478,10 +478,10 @@ fn test_module_round_trip() {
 #[test]
 fn test_module_overlap_error_message() {
     let ex = concat!(
-        "fn sum<N: 1..2, F: Field>(public a: [F; N]) -> F {\n",
+        "fn sum<N: 1..2, F: Field>(instance a: [F; N]) -> F {\n",
         "    a[0]\n",
         "}\n",
-        "fn sum<F: Field>(public a: [F; 1]) -> F {\n",
+        "fn sum<F: Field>(instance a: [F; 1]) -> F {\n",
         "    a[0]\n",
         "}\n"
     );
@@ -502,17 +502,17 @@ fn test_module_overlap_error_message() {
 #[test]
 fn test_issue_173_overload_resolution_with_size_var() {
     let ex = concat!(
-        "fn eq_weights<F: Field>(public x: [F; 1]) -> [F; 2] {\n",
+        "fn eq_weights<F: Field>(instance x: [F; 1]) -> [F; 2] {\n",
         "    [(1 - x[0]), x[0]]\n",
         "}\n",
-        "fn eq_weights<F: Field, N: 2..20>(public x: [F; N]) -> [F; 2^N] {\n",
+        "fn eq_weights<F: Field, N: 2..20>(instance x: [F; N]) -> [F; 2^N] {\n",
         "    let x_lo = x[0..(N-1)];\n",
         "    let a    = x[N-1];\n",
         "    let prev = eq_weights(x_lo);\n",
         "    (prev * (1 - a)) ++ (prev * a)\n",
         "}\n",
         "proto spartan<F: Field, M: Size>(\n",
-        "    public placeholder_tau: [F; M]\n",
+        "    instance placeholder_tau: [F; M]\n",
         ") where placeholder_tau[0] == placeholder_tau[0] {\n",
         "    let tau = eq_weights(placeholder_tau);\n",
         "    verify(placeholder_tau[0] == placeholder_tau[0])\n",

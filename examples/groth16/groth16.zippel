@@ -8,29 +8,29 @@
 // values.
 //
 // Size parameters (following Groth16 paper):
-//   M: number of public inputs (including the constant 1)
-//   L: number of private witness variables
+//   M: number of instance inputs (including the constant 1)
+//   L: number of witness variables
 //   H: length of h_query and h_coeffs (= domain_size - 1)
 //   Total QAP variables = M + L
 
 proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: Size, L: Size, H: Size>(
-    public gen_g1: G1,
-    public gen_g2: G2,
-    public alpha_g1: G1,
-    public beta_g2: G2,
-    public gamma_g2: G2,
-    public delta_g2: G2,
-    public gamma_abc_g1: [G1; M],
-    private beta_g1: G1,
-    private delta_g1: G1,
-    private a_query: [G1; M+L],
-    private b_g1_query: [G1; M+L],
-    private b_g2_query: [G2; M+L],
-    private h_query: [G1; H],
-    private l_query: [G1; L],
-    public instance_assignment: [F; M],
-    private witness_assignment: [F; L],
-    private h_coeffs: [F; H]
+    instance gen_g1: G1,
+    instance gen_g2: G2,
+    instance alpha_g1: G1,
+    instance beta_g2: G2,
+    instance gamma_g2: G2,
+    instance delta_g2: G2,
+    instance gamma_abc_g1: [G1; M],
+    extra beta_g1: G1,
+    extra delta_g1: G1,
+    extra a_query: [G1; M+L],
+    extra b_g1_query: [G1; M+L],
+    extra b_g2_query: [G2; M+L],
+    extra h_query: [G1; H],
+    extra l_query: [G1; L],
+    instance instance_assignment: [F; M],
+    witness witness_assignment: [F; L],
+    witness h_coeffs: [F; H]
 ) where let tau = random<F>;
     let alpha = random<F>;
     let beta = random<F>;

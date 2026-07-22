@@ -1,9 +1,9 @@
 proto pedersen_schnorr<G: Group, F: Scalar<G>>(
-    private x: F,
-    private r: F,
-    public g: G,
-    public h: G,
-    public comm: G
+    witness x: F,
+    witness r: F,
+    instance g: G,
+    instance h: G,
+    instance comm: G
 ) where comm == g*x + h*r {
     let rx = random<F>;
     let rr = random<F>;

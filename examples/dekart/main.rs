@@ -30,7 +30,7 @@ fn main() {
     sizes.insert(&Tid::new("h_deg"), &h_deg);
     handler.compile(&sizes);
 
-    let (inputs, public_inputs) = build_inputs(n_size, b_size, l_chunk, h_deg);
+    let inputs = build_inputs(n_size, b_size, l_chunk, h_deg);
     let prover_start = Instant::now();
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
@@ -44,10 +44,9 @@ fn main() {
     let args = ZippelArgs::new(PathBuf::from("examples/dekart/dekart.zippel"));
     let mut verifier_handler: ZippelHandler<C> = ZippelHandler::new(args);
     verifier_handler.compile(&sizes);
-    verifier_handler.set_public_inputs(public_inputs);
     let verifier_start = Instant::now();
     let verifier_result = verifier_handler
-        .run_verifier(&proof)
+        .run_verifier(&proof, &inputs)
         .expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     let passed = check_verification(&verifier_result);
@@ -92,12 +91,7 @@ fn main() {
     }
 }
 
-fn build_inputs(
-    n_size: usize,
-    b_size: usize,
-    l_chunk: usize,
-    h_deg: usize,
-) -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
+fn build_inputs(n_size: usize, b_size: usize, l_chunk: usize, h_deg: usize) -> Ctx<Vid, Value<C>> {
     let mut rng = test_rng();
 
     // 1. Setup generators & trapdoors
@@ -185,7 +179,7 @@ fn build_inputs(
         s0_commit += *g * *coeff;
     }
 
-    let inputs = Ctx::<Vid, Value<C>>::from_iter([
+    Ctx::<Vid, Value<C>>::from_iter([
         (Vid("f_evals".to_string()), Value::VecScalar(f_evals)),
         (Vid("chunks_evals".to_string()), Value::Vec(chunks_evals)),
         (Vid("rho".to_string()), Value::Scalar(rho)),
@@ -204,17 +198,5 @@ fn build_inputs(
             Value::VecG1(srs_g1_n_vec.clone()),
         ),
         (Vid("srs_g1_h".to_string()), Value::VecG1(srs_g1_h_vec)),
-    ]);
-
-    let public_inputs = Ctx::<Vid, Value<C>>::from_iter([
-        (Vid("b_pow".to_string()), Value::VecScalar(b_pow)),
-        (Vid("gen_g1".to_string()), Value::G1(gen_g1)),
-        (Vid("gen_g2".to_string()), Value::G2(gen_g2)),
-        (Vid("srs_g2_tau".to_string()), Value::G2(srs_g2_tau)),
-        (Vid("srs_g2_xi".to_string()), Value::G2(srs_g2_xi)),
-        (Vid("xi_g1".to_string()), Value::G1(xi_g1)),
-        (Vid("s0_commit".to_string()), Value::G1(s0_commit)),
-    ]);
-
-    (inputs, public_inputs)
+    ])
 }

@@ -9,8 +9,6 @@ use zippel::*;
 #[path = "../common/analysis.rs"]
 mod common;
 
-const PUBLIC_INPUT_NAMES: &[&str] = &["z", "y", "ss", "g", "h", "h_val"];
-
 fn main() {
     println!("=== ZK-KZG (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/zk_kzg/zk_kzg.zippel"));
@@ -20,12 +18,6 @@ fn main() {
     handler.compile(&sizes);
 
     let inputs = prover_create_inputs();
-    let public_inputs = inputs
-        .clone()
-        .into_iter()
-        .filter(|(vid, _)| PUBLIC_INPUT_NAMES.contains(&vid.0.as_str()))
-        .collect::<Ctx<Vid, Value<ArkBls12_381>>>();
-    handler.set_public_inputs(public_inputs);
     common::run_prover_and_verify(&mut handler, &inputs);
 
     println!("\n--- Static Analysis ---");

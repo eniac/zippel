@@ -23,7 +23,7 @@ type AnalysisDag = graph::Dag<ArkBls12_381, lang::typ::Qualifier>;
 const ANALYSIS_STACK_SIZE: usize = 256 * 1024 * 1024;
 
 const SCHNORR_PROTO: &str = r#"
-    proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+    proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
         let r = random<F>;
         u <- g*r;
         c <- challenge<F>;
@@ -109,7 +109,7 @@ fn schnorr_partial_incompleteness_detected() {
         .expect("thread panicked");
 }
 
-/// Soundness with all private witnesses concretized is degenerate:
+/// Soundness with all witnesses concretized is degenerate:
 /// there are no witnesses to extract, so the relation can't be derived
 /// from the transcript alone (the extractor is the bridge). This test
 /// verifies that the analysis correctly reports `ExtractorInvalid`

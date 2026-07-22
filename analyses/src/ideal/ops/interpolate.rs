@@ -200,7 +200,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let evals_typ = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let var_evals = Var::from_node(NodeIndex::new(0), evals_typ.clone(), Qualifier::Private);
+        let var_evals = Var::from_node(NodeIndex::new(0), evals_typ.clone(), Qualifier::Witness);
         ideal.register(&var_evals);
 
         let points: GOp<ArkBls12_381> =
@@ -209,7 +209,7 @@ mod tests {
             Op::Ref(graph::Ref::new(NodeIndex::new(0)), evals_typ.clone());
 
         let ideal_typ = ATyp::uni(2);
-        let var_ideal = Var::from_node(NodeIndex::new(1), ideal_typ.clone(), Qualifier::Private);
+        let var_ideal = Var::from_node(NodeIndex::new(1), ideal_typ.clone(), Qualifier::Witness);
         ideal.register(&var_ideal);
 
         let op: GOp<ArkBls12_381> =
@@ -269,7 +269,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let evals_typ = ATyp::Vec(Box::new(ATyp::scalar()), 3);
-        let var_evals = Var::from_node(NodeIndex::new(0), evals_typ.clone(), Qualifier::Private);
+        let var_evals = Var::from_node(NodeIndex::new(0), evals_typ.clone(), Qualifier::Witness);
         ideal.register(&var_evals);
 
         let points: GOp<ArkBls12_381> = Op::Value(Value::VecScalar(
@@ -279,7 +279,7 @@ mod tests {
             Op::Ref(graph::Ref::new(NodeIndex::new(0)), evals_typ.clone());
 
         let ideal_typ = ATyp::uni(3);
-        let var_ideal = Var::from_node(NodeIndex::new(1), ideal_typ.clone(), Qualifier::Private);
+        let var_ideal = Var::from_node(NodeIndex::new(1), ideal_typ.clone(), Qualifier::Witness);
         ideal.register(&var_ideal);
 
         let op: GOp<ArkBls12_381> =
@@ -342,7 +342,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let var_points = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Private);
+        let var_points = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Witness);
         ideal.register(&var_points);
 
         let coefs: Vec<_> = [0u64, 1]
@@ -351,11 +351,11 @@ mod tests {
             .collect();
         builder.add_op(var_points.clone(), Op::Vec(coefs), &mut ideal);
 
-        let var_evals = Var::from_node(NodeIndex::new(1), vec_t.clone(), Qualifier::Private);
+        let var_evals = Var::from_node(NodeIndex::new(1), vec_t.clone(), Qualifier::Witness);
         ideal.register(&var_evals);
 
         let ideal_typ = ATyp::uni(2);
-        let var_ideal = Var::from_node(NodeIndex::new(2), ideal_typ.clone(), Qualifier::Private);
+        let var_ideal = Var::from_node(NodeIndex::new(2), ideal_typ.clone(), Qualifier::Witness);
         ideal.register(&var_ideal);
 
         let points: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_t.clone());
@@ -406,13 +406,13 @@ mod tests {
         // Two symbolic points x0, x1 stored as Var variables
         let scalar_t = ATyp::scalar();
         let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let var_x0 = Var::from_node(NodeIndex::new(0), scalar_t.clone(), Qualifier::Private);
-        let var_x1 = Var::from_node(NodeIndex::new(1), scalar_t.clone(), Qualifier::Private);
+        let var_x0 = Var::from_node(NodeIndex::new(0), scalar_t.clone(), Qualifier::Witness);
+        let var_x1 = Var::from_node(NodeIndex::new(1), scalar_t.clone(), Qualifier::Witness);
         ideal.register(&var_x0);
         ideal.register(&var_x1);
 
         // Points = [x0, x1]
-        let var_points = Var::from_node(NodeIndex::new(2), vec_t.clone(), Qualifier::Private);
+        let var_points = Var::from_node(NodeIndex::new(2), vec_t.clone(), Qualifier::Witness);
         ideal.register(&var_points);
         let x0_slot = var_points.clone().with_index(0).unwrap();
         let x1_slot = var_points.clone().with_index(1).unwrap();
@@ -420,12 +420,12 @@ mod tests {
         ideal.pl.insert(&x1_slot, &Polynomial::var(&var_x1));
 
         // Evals = [y0, y1]
-        let var_y0 = Var::from_node(NodeIndex::new(3), scalar_t.clone(), Qualifier::Private);
-        let var_y1 = Var::from_node(NodeIndex::new(4), scalar_t.clone(), Qualifier::Private);
+        let var_y0 = Var::from_node(NodeIndex::new(3), scalar_t.clone(), Qualifier::Witness);
+        let var_y1 = Var::from_node(NodeIndex::new(4), scalar_t.clone(), Qualifier::Witness);
         ideal.register(&var_y0);
         ideal.register(&var_y1);
 
-        let var_evals = Var::from_node(NodeIndex::new(5), vec_t.clone(), Qualifier::Private);
+        let var_evals = Var::from_node(NodeIndex::new(5), vec_t.clone(), Qualifier::Witness);
         ideal.register(&var_evals);
         let y0_slot = var_evals.clone().with_index(0).unwrap();
         let y1_slot = var_evals.clone().with_index(1).unwrap();
@@ -437,7 +437,7 @@ mod tests {
         //      = y0 * d01 * t - y0 * d01 * x1 + y1 * d10 * t - y1 * d10 * x0
         // where d01 * (x0 - x1) = 1 and d10 * (x1 - x0) = 1
         let ideal_typ = ATyp::uni(2);
-        let var_ideal = Var::from_node(NodeIndex::new(6), ideal_typ.clone(), Qualifier::Private);
+        let var_ideal = Var::from_node(NodeIndex::new(6), ideal_typ.clone(), Qualifier::Witness);
         ideal.register(&var_ideal);
 
         let points: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(2)), vec_t.clone());
@@ -523,10 +523,10 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let evals_typ = ATyp::vec_scalar(3);
-        let var_evals = Var::from_node(NodeIndex::new(1), evals_typ.clone(), Qualifier::Private);
+        let var_evals = Var::from_node(NodeIndex::new(1), evals_typ.clone(), Qualifier::Witness);
         ideal.register(&var_evals);
 
-        let var_ideal = Var::from_node(NodeIndex::new(2), ATyp::uni(3), Qualifier::Private);
+        let var_ideal = Var::from_node(NodeIndex::new(2), ATyp::uni(3), Qualifier::Witness);
         ideal.register(&var_ideal);
 
         let points = Op::Value(Value::VecIndex(vec![0, 0, 1]));

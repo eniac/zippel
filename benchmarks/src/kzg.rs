@@ -22,14 +22,14 @@ pub const DEFAULT_N: usize = 4;
 /// baseline trusts its setup and doesn't re-verify it per call; this
 /// version makes the comparison apples-to-apples on the verifier side.
 ///
-/// Mirrors examples/kzg/kzg.zippel's `private srs_g1` decision so that
+/// Mirrors examples/kzg/kzg.zippel's `extra srs_g1` decision so that
 /// the only meaningful difference is the `where` clause (which is what
 /// the diagnostic is supposed to isolate). N is the type-parameter
 /// default; the caller still rebinds it via `sizes.insert("N", n)`.
 fn render_zippel_source_no_srs_check() -> &'static str {
     r#"proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>
-        (private poly_coeffs: [F; N], public eval_point: F, public eval_result: F, private srs_g1: [G1; N],
-        public gen_g1: G1, public gen_g2: G2, public srs_g2_s: G2)
+        (witness poly_coeffs: [F; N], instance eval_point: F, instance eval_result: F, witness srs_g1: [G1; N],
+        instance gen_g1: G1, instance gen_g2: G2, instance srs_g2_s: G2)
         where dot(poly_coeffs, [eval_point ^ i for i in 0..N]) == eval_result {
 
         let poly_x = poly(poly_coeffs);
@@ -212,7 +212,7 @@ pub mod zippel_side {
                 let t = Instant::now();
                 let verifier_result = self
                     .handler
-                    .run_verifier(&proof_c)
+                    .run_verifier(&proof_c, &inputs)
                     .expect("run_verifier failed");
                 verify_sum += t.elapsed();
                 last_result = Some(verifier_result);

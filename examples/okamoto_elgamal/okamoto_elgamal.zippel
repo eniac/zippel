@@ -1,11 +1,11 @@
 proto okamoto_elgamal<G: Group, F: Scalar<G>>(
     // Perfectly binding ElGamal commitment: g must be a generator of G.
-    private x: F,
-    private r: F,
-    public g: G,
-    public h: G,
-    public c1: G,
-    public c2: G
+    witness x: F,
+    witness r: F,
+    instance g: G,
+    instance h: G,
+    instance c1: G,
+    instance c2: G
 ) where c1 == g*r; c2 == h*r + g*x {
     let rx = random<F>;
     let rr = random<F>;
