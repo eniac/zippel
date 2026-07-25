@@ -852,6 +852,25 @@ impl BinOp {
             BinOp::Rem => 7,
         }
     }
+
+    /// Precedence matching `AEXP_PARSER` (the parser's Pratt table, exp.rs:1219-1233).
+    /// Lower binds looser. This is what the pretty printer must use to produce
+    /// text that re-parses to the same AST — `precedence()` above gives a
+    /// DIFFERENT ordering (Rem=7, Concat=6) that does not match the parser.
+    pub fn parser_precedence(&self) -> usize {
+        match self {
+            BinOp::Add | BinOp::Sub => 1,
+            BinOp::Mul | BinOp::Div | BinOp::Rem => 2,
+            BinOp::Concat => 3,
+            BinOp::Pow => 4,
+            BinOp::Dot => 5, // not infix in grammar; programmatic-only
+        }
+    }
+
+    /// Right-associative? (Only Pow; all other infix binops are left-assoc.)
+    pub fn is_right_assoc(&self) -> bool {
+        matches!(self, BinOp::Pow)
+    }
 }
 
 /// Pretty printer instance
@@ -951,11 +970,29 @@ where
                 allocator.intersperse(ts.into_iter().map(|x| x.pretty(allocator)), ", "),
                 allocator.text("]"),
             ]),
-            Exp::Bin(op, a, b) => allocator.concat([
-                (*a).pretty(allocator),
-                op.pretty(allocator),
-                (*b).pretty(allocator),
-            ]),
+            Exp::Bin(op, a, b) => {
+                let parent_prec = op.parser_precedence();
+                let right_assoc = op.is_right_assoc();
+                let lhs_needs_paren = matches!(a.as_ref(),
+                    Exp::Bin(child_op, _, _) if child_op.parser_precedence() < parent_prec
+                        || (child_op.parser_precedence() == parent_prec && right_assoc));
+                let rhs_needs_paren = matches!(b.as_ref(),
+                    Exp::Bin(child_op, _, _) if child_op.parser_precedence() < parent_prec
+                        || (child_op.parser_precedence() == parent_prec && !right_assoc));
+                let lhs = (*a).pretty(allocator);
+                let lhs = if lhs_needs_paren {
+                    allocator.concat([allocator.text("("), lhs, allocator.text(")")])
+                } else {
+                    lhs
+                };
+                let rhs = (*b).pretty(allocator);
+                let rhs = if rhs_needs_paren {
+                    allocator.concat([allocator.text("("), rhs, allocator.text(")")])
+                } else {
+                    rhs
+                };
+                allocator.concat([lhs, op.pretty(allocator), rhs])
+            }
             Exp::Map(x, id, range) => allocator.concat([
                 allocator.text("["),
                 x.pretty(allocator),
@@ -992,8 +1029,9 @@ where
                 allocator.text(">"),
             ]),
             Exp::Pair(box t, box e) => allocator.concat([
-                t.pretty(allocator),
                 allocator.text("pair("),
+                t.pretty(allocator),
+                allocator.text(", "),
                 e.pretty(allocator),
                 allocator.text(")"),
             ]),
@@ -2291,4 +2329,77 @@ fn parser_assert_no_cont() {
             Box::new(Exp::from(2)),
         ))
     );
+}
+
+#[test]
+fn pretty_bin_parens() {
+    // (a + b) * c must print with parens, not as "a + b * c"
+    let expr: UExp = Exp::mul(
+        Exp::add(Exp::varstr("a"), Exp::varstr("b")),
+        Exp::varstr("c"),
+    );
+    assert_eq!(format!("{}", expr), "(a + b) * c");
+
+    // a * b + c needs no parens (higher prec child on left of lower prec parent)
+    let expr: UExp = Exp::add(
+        Exp::mul(Exp::varstr("a"), Exp::varstr("b")),
+        Exp::varstr("c"),
+    );
+    assert_eq!(format!("{}", expr), "a * b + c");
+
+    // a - (b - c) needs rhs parens (left-assoc, same prec)
+    let expr: UExp = Exp::sub(
+        Exp::varstr("a"),
+        Exp::sub(Exp::varstr("b"), Exp::varstr("c")),
+    );
+    assert_eq!(format!("{}", expr), "a - (b - c)");
+
+    // a - b - c needs no parens (left-assoc, left child same prec)
+    let expr: UExp = Exp::sub(
+        Exp::sub(Exp::varstr("a"), Exp::varstr("b")),
+        Exp::varstr("c"),
+    );
+    assert_eq!(format!("{}", expr), "a - b - c");
+
+    // a ^ b ^ c needs no rhs parens (right-assoc)
+    let expr: UExp = Exp::pow(
+        Exp::varstr("a"),
+        Exp::pow(Exp::varstr("b"), Exp::varstr("c")),
+    );
+    assert_eq!(format!("{}", expr), "a ^ b ^ c");
+
+    // (a ^ b) ^ c needs lhs parens (right-assoc, left child same prec)
+    let expr: UExp = Exp::pow(
+        Exp::pow(Exp::varstr("a"), Exp::varstr("b")),
+        Exp::varstr("c"),
+    );
+    assert_eq!(format!("{}", expr), "(a ^ b) ^ c");
+
+    // a % b + c — Rem is same prec as Mul (AEXP_PARSER level 2), higher than Add
+    let expr: UExp = Exp::add(
+        Exp::rem(Exp::varstr("a"), Exp::varstr("b")),
+        Exp::varstr("c"),
+    );
+    assert_eq!(format!("{}", expr), "a % b + c");
+
+    // (a + b) ++ c — Concat is higher prec than Add
+    let expr: UExp = Exp::concat(
+        Exp::add(Exp::varstr("a"), Exp::varstr("b")),
+        Exp::varstr("c"),
+    );
+    assert_eq!(format!("{}", expr), "(a + b) ++ c");
+
+    // (a + b) + (c + d) — left-assoc: lhs no parens, rhs parens
+    let expr: UExp = Exp::add(
+        Exp::add(Exp::varstr("a"), Exp::varstr("b")),
+        Exp::add(Exp::varstr("c"), Exp::varstr("d")),
+    );
+    assert_eq!(format!("{}", expr), "a + b + (c + d)");
+}
+
+#[test]
+fn pretty_pair() {
+    // pair(t, e) not t pair(e)
+    let expr: UExp = Exp::pair(Exp::varstr("g1"), Exp::varstr("g2"));
+    assert_eq!(format!("{}", expr), "pair(g1, g2)");
 }
