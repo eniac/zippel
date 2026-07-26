@@ -1,9 +1,6 @@
-use from_pest::{ConversionError, FromPest};
-use pest::iterators::Pairs;
 use std::cmp::Ordering;
 use std::fmt;
 
-use crate::parser::*;
 use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -89,44 +86,6 @@ impl fmt::Display for Qualifier {
     }
 }
 
-impl<'pest> FromPest<'pest> for Qualifier {
-    type Rule = Rule;
-    type FatalError = InputError<'pest>;
-
-    fn from_pest(
-        pest: &mut Pairs<'pest, Self::Rule>,
-    ) -> Result<Self, ConversionError<Self::FatalError>> {
-        let pair = pest.next().ok_or(ConversionError::NoMatch)?;
-        match pair.as_rule() {
-            Rule::qualifier => Qualifier::from_pest(&mut pair.into_inner()),
-            Rule::witness => Ok(Qualifier::Witness),
-            Rule::extra => Ok(Qualifier::Extra),
-            Rule::instance => Ok(Qualifier::Instance),
-            _ => unreachable!(),
-        }
-    }
-}
-
-#[cfg(test)]
-use pest::Parser;
-#[test]
-fn qualifier_parser() {
-    let mut pairs = ZippelParser::parse(Rule::qualifier, "witness").unwrap();
-    let qual = Qualifier::from_pest(&mut pairs).unwrap();
-    assert_eq!(qual, Qualifier::Witness);
-
-    let input = "instance";
-    let mut pairs = ZippelParser::parse(Rule::qualifier, input).unwrap();
-    let qual = Qualifier::from_pest(&mut pairs).unwrap();
-    assert_eq!(qual, Qualifier::Instance);
-
-    let input = "extra";
-    let mut pairs = ZippelParser::parse(Rule::qualifier, input).unwrap();
-    let qual = Qualifier::from_pest(&mut pairs).unwrap();
-    assert_eq!(qual, Qualifier::Extra);
-}
-
-/// Regression: join must be a proper meet (min) on Witness ≤ Local ≤ Extra ≤ Instance.
 #[test]
 fn qualifier_join_lattice_consistency() {
     use Qualifier::*;

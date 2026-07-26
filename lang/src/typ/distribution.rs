@@ -1,8 +1,5 @@
-use from_pest::{ConversionError, FromPest};
-use pest::iterators::Pairs;
 use std::fmt;
 
-use crate::parser::*;
 use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd, Default)]
@@ -124,29 +121,6 @@ impl fmt::Display for Distribution {
         <Distribution as Pretty<'_, BoxAllocator, ()>>::pretty(*self, &BoxAllocator)
             .1
             .render_fmt(20, f)
-    }
-}
-
-impl<'pest> FromPest<'pest> for Distribution {
-    type Rule = Rule;
-    type FatalError = InputError<'pest>;
-
-    fn from_pest(
-        pest: &mut Pairs<'pest, Self::Rule>,
-    ) -> Result<Self, ConversionError<Self::FatalError>> {
-        let pair = pest.next().ok_or(ConversionError::NoMatch)?;
-        match pair.as_rule() {
-            Rule::distribution => {
-                let inner = pair.into_inner();
-                if let Some(star_pair) = inner.peek() {
-                    if star_pair.as_rule() == Rule::star {
-                        return Ok(Distribution::UniformNonZero);
-                    }
-                }
-                Ok(Distribution::Uniform)
-            }
-            _ => Err(ConversionError::NoMatch),
-        }
     }
 }
 

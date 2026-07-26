@@ -7,11 +7,7 @@ authors = ["Lef Ioannidis <elefthei@seas.upenn.edu>", "Alireza Shirzad <alrshir@
 [dependencies]
 share = { path = "../share" }
 itertools = "0.12.0"
-pest = "2.7.8"
-pest_derive = "2.7.8"
-from-pest = "0.3.2"
 lazy_static = "1.4.0"
-pest-ast = "0.3.4"
 thiserror = "1.0.58"
 rayon = "1.10.0"
 log = "0.4.22"
@@ -21,6 +17,10 @@ arbtest = "0.3.1"
 bumpalo = "3.17.0"
 num = "0.4.3"
 rand = { version = "0.8", features = ["std"] }
+logos = "0.14"
+num-derive = "0.5"
+num-traits = "0.2"
+chumsky = { version = "0.13", features = ["pratt"] }
 
 [lib]
 doctest = false

@@ -11,7 +11,7 @@ pub mod subst;
 mod typevar;
 pub mod unify;
 
-use crate::id::{Tid, TidSubst, Vid};
+use crate::id::{Tid, TidSubst};
 
 pub use ark::Ark;
 pub use distribution::Distribution;
@@ -25,9 +25,6 @@ pub use size::{EvalError, Size};
 pub use subst::{AliasSubsts, SizeSubsts};
 pub use typevar::{CTypeVar, CTypeVars, TypeVar, TypeVars, UTypeVar, UTypeVars};
 
-use crate::parser::*;
-use from_pest::{ConversionError, FromPest};
-use pest::iterators::Pairs;
 use share::traversal::{ToTraversal1, ToTraversal2};
 use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 use std::fmt;
@@ -475,120 +472,4 @@ impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone, T: Pretty<'a, BoxAllocator, ()
             .1
             .render_fmt(100, f)
     }
-}
-
-/// Parser for zippel types.
-impl<'pest> FromPest<'pest> for UTyp {
-    type Rule = Rule;
-    type FatalError = InputError<'pest>;
-
-    fn from_pest(
-        pest: &mut Pairs<'pest, Self::Rule>,
-    ) -> Result<Self, ConversionError<Self::FatalError>> {
-        let pair = pest.next().ok_or(ConversionError::NoMatch)?;
-        match pair.as_rule() {
-            Rule::typ => Typ::from_pest(&mut pair.into_inner()), // Go into typ here
-            Rule::base_ty => Ok(Typ::Base(Tid::from_pest(&mut pair.into_inner())?)),
-            Rule::uni_ty => {
-                let mut inner = pair.into_inner();
-                let id = Tid::from_pest(&mut inner)?;
-                let size = Size::from_pest(&mut inner)?;
-                Ok(Typ::Poly(id, Size::one(), size))
-            }
-            Rule::mle_ty => {
-                let mut inner = pair.into_inner();
-                let id = Tid::from_pest(&mut inner)?;
-                let size = Size::from_pest(&mut inner)?;
-                Ok(Typ::Poly(id, size, Size::one()))
-            }
-            Rule::poly_ty => {
-                let mut inner = pair.into_inner();
-                let id = Tid::from_pest(&mut inner)?;
-                // Each size_ty is a complete subtree, get its inner pairs
-                let m_pair = inner.next().ok_or(ConversionError::NoMatch)?;
-                let m = Size::from_pest(&mut m_pair.into_inner())?;
-                let n_pair = inner.next().ok_or(ConversionError::NoMatch)?;
-                let n = Size::from_pest(&mut n_pair.into_inner())?;
-                Ok(Typ::Poly(id, m, n))
-            }
-            Rule::fin_ty => Ok(Typ::fin(Range::from_pest(&mut pair.into_inner())?)),
-            Rule::unit_ty => Ok(Typ::Unit),
-            Rule::vec_ty => {
-                let mut inner = pair.into_inner();
-                let id = Typ::from_pest(&mut inner)?;
-                let size = Size::from_pest(&mut inner)?;
-                Ok(Typ::vec(&id, size))
-            }
-            Rule::record_ty => {
-                let inner = pair.into_inner();
-                let mut fields = Ctx::new();
-                for field_pair in inner {
-                    if field_pair.as_rule() == Rule::record_field {
-                        let mut field_inner = field_pair.into_inner();
-                        let field_name = Vid::from_pest(&mut field_inner)?.0;
-                        let field_typ = Typ::from_pest(&mut field_inner)?;
-                        fields.insert(&field_name, &field_typ);
-                    }
-                }
-                Ok(Typ::Record(fields))
-            }
-            _ => unreachable!(),
-        }
-    }
-}
-
-#[cfg(test)]
-use pest::Parser;
-
-#[test]
-fn typ_parser() {
-    let mut pairs = ZippelParser::parse(Rule::typ, "A").unwrap();
-    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::varstr("A"));
-
-    pairs = ZippelParser::parse(Rule::typ, "Uni<X, N>").unwrap();
-    assert_eq!(
-        Typ::from_pest(&mut pairs).unwrap(),
-        GTyp::Poly(Tid::from("X"), Size::from(1), Size::from("N"))
-    );
-
-    pairs = ZippelParser::parse(Rule::typ, "Mle<X, 2>").unwrap();
-    assert_eq!(
-        Typ::from_pest(&mut pairs).unwrap(),
-        GTyp::Poly(Tid::from("X"), Size::from(2), Size::from(1))
-    );
-
-    pairs = ZippelParser::parse(Rule::typ, "Poly<X, 1, 2>").unwrap();
-    assert_eq!(
-        Typ::from_pest(&mut pairs).unwrap(),
-        GTyp::Poly(Tid::from("X"), Size::from(1), Size::from(2))
-    );
-
-    pairs = ZippelParser::parse(Rule::typ, "[A; N]").unwrap();
-    assert_eq!(
-        Typ::from_pest(&mut pairs).unwrap(),
-        GTyp::vec(&Typ::varstr("A"), Size::from("N"))
-    );
-
-    pairs = ZippelParser::parse(Rule::typ, "Fin<0..N>").unwrap();
-    assert_eq!(
-        Typ::from_pest(&mut pairs).unwrap(),
-        GTyp::fin(Range {
-            start: Size::zero(),
-            step: Size::one(),
-            end: Size::from("N")
-        })
-    );
-
-    pairs = ZippelParser::parse(Rule::typ, "Fin<10>").unwrap();
-    assert_eq!(
-        Typ::from_pest(&mut pairs).unwrap(),
-        GTyp::fin(Range {
-            start: Size::zero(),
-            step: Size::one(),
-            end: Size::from(10)
-        })
-    );
-
-    pairs = ZippelParser::parse(Rule::typ, "Unit").unwrap();
-    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::Unit);
 }

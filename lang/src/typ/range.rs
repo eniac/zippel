@@ -1,13 +1,10 @@
-use from_pest::{ConversionError, FromPest};
-use pest::iterators::Pairs;
 use rand::Rng;
 use std::fmt;
 use thiserror::Error;
 
-use crate::parser::*;
 use crate::typ::Size;
 use share::traversal::ToTraversal1;
-use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
+use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 
 #[derive(Error, PartialEq, Debug)]
 pub enum RangeError {
@@ -408,90 +405,6 @@ where
     }
 }
 
-impl<'pest> FromPest<'pest> for CRange {
-    type Rule = Rule;
-    type FatalError = InputError<'pest>;
-
-    fn from_pest(
-        pest: &mut Pairs<'pest, Self::Rule>,
-    ) -> Result<Self, ConversionError<Self::FatalError>> {
-        let r: Range<Size> = Range::from_pest(pest)?;
-        // Evaluate Size with empty context ~ cast to usize
-        let start = r.start.eval(&Ctx::new())?;
-        let step = r.step.eval(&Ctx::new())?;
-        let end = r.end.eval(&Ctx::new())?;
-
-        // Check if the range is well formed
-        Ok(Range::from_num(start, step, end)?)
-    }
-}
-
-impl<'pest> FromPest<'pest> for Range<Size> {
-    type Rule = Rule;
-    type FatalError = InputError<'pest>;
-
-    fn from_pest(
-        pest: &mut Pairs<'pest, Self::Rule>,
-    ) -> Result<Self, ConversionError<Self::FatalError>> {
-        let pair = pest.next().ok_or(ConversionError::NoMatch)?;
-        match pair.as_rule() {
-            Rule::range => Range::from_pest(&mut pair.into_inner()),
-            Rule::step_r => {
-                let mut inner = pair.into_inner();
-                let start = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                let step = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                let end = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                Ok(Range { start, step, end })
-            }
-            Rule::unit_r => {
-                let mut inner = pair.into_inner();
-                let start = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                let end = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                Ok(Range {
-                    start,
-                    step: Size::one(),
-                    end,
-                })
-            }
-            Rule::size_ty => {
-                let mut inner = pair.into_inner();
-                let end = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                Ok(Range {
-                    start: Size::zero(),
-                    step: Size::one(),
-                    end,
-                })
-            }
-            _ => unreachable!(),
-        }
-    }
-}
-
-#[cfg(test)]
-use pest::Parser;
-#[test]
-fn range_parser() {
-    let mut pairs = ZippelParser::parse(Rule::range, "0..10").unwrap();
-    assert_eq!(
-        Range::from_pest(&mut pairs).unwrap(),
-        Range {
-            start: Size::from(0),
-            step: Size::one(),
-            end: Size::from(10)
-        }
-    );
-
-    pairs = ZippelParser::parse(Rule::range, "0, 2..2^N").unwrap();
-    assert_eq!(
-        Range::from_pest(&mut pairs).unwrap(),
-        Range {
-            start: Size::from(0),
-            step: Size::from(2),
-            end: Size::from(2) ^ Size::from("N")
-        }
-    );
-}
-
 #[test]
 fn range_traversal() {
     let r = Range {
@@ -500,7 +413,7 @@ fn range_traversal() {
         end: Size::from(10),
     };
     assert_eq!(
-        r.traverse1(&mut |x| x.eval(&Ctx::singleton("N".into(), 0)))
+        r.traverse1(&mut |x| x.eval(&share::Ctx::singleton("N".into(), 0)))
             .unwrap(),
         Range {
             start: 0,

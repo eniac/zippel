@@ -3,11 +3,8 @@ use share::traversal::ToTraversal1;
 use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty, Set};
 use std::fmt;
 
-use crate::parser::*;
 use crate::typ::range::{Range, RangeTraversal};
 use crate::typ::Size;
-use from_pest::{ConversionError, FromPest};
-use pest::iterators::Pairs;
 
 /// The kinds of type variables, parameterized by size type N
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
@@ -135,71 +132,9 @@ impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone + 'a> fmt::Display for Kind<N> 
     }
 }
 
-impl<'pest> FromPest<'pest> for UKind {
-    type Rule = Rule;
-    type FatalError = InputError<'pest>;
-
-    fn from_pest(
-        pest: &mut Pairs<'pest, Self::Rule>,
-    ) -> Result<Self, ConversionError<Self::FatalError>> {
-        let pair = pest.next().ok_or(ConversionError::NoMatch)?;
-        match pair.as_rule() {
-            Rule::kind_ty => UKind::from_pest(&mut pair.into_inner()),
-            Rule::field_ty => Ok(Kind::Field),
-            Rule::group_ty => Ok(Kind::Group),
-            Rule::scalar_ty => {
-                let inner = pair.into_inner();
-                let mut idents: Vec<Tid> = Vec::new();
-                for inner in inner {
-                    let t = Tid::from_pest(&mut Pairs::single(inner))?;
-                    idents.push(t);
-                }
-                let len = idents.len();
-                let set = Set::from(idents.clone());
-                if len != set.len() {
-                    return Err(ConversionError::Malformed(InputError::DuplicateIdents(
-                        idents
-                            .iter()
-                            .map(|t| t.to_string())
-                            .collect::<Vec<String>>()
-                            .join(", "),
-                    )));
-                }
-                Ok(Kind::Scalar(set))
-            }
-            Rule::pairing_ty => {
-                let mut inner = pair.into_inner();
-                let g1 = Tid::from_pest(&mut inner)?;
-                let g2 = Tid::from_pest(&mut inner)?;
-                Ok(Kind::Pairing(g1, g2))
-            }
-            Rule::range_ty => Ok(Kind::Range(Range::from_pest(&mut pair.into_inner())?)),
-            Rule::positive => {
-                let n: u32 = pair.as_str().parse().unwrap();
-                Ok(Kind::Range(Range {
-                    start: Size::Lit(n),
-                    step: Size::one(),
-                    end: Size::Lit(n + 1),
-                }))
-            }
-            Rule::size_var_ty => Ok(Kind::SizeVar),
-            Rule::size_ref_ty => {
-                let size = Size::from_pest(&mut pair.into_inner())?;
-                Ok(Kind::Range(Range {
-                    start: size.clone(),
-                    step: Size::one(),
-                    end: size + Size::one(),
-                }))
-            }
-            _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pest::Parser;
 
     #[test]
     fn test_kind_relations() {
@@ -241,58 +176,5 @@ mod tests {
         assert_eq!(p.get_pairing_of(&t_g2), Some((t_g1.clone(), t_g2.clone())));
         assert_eq!(p.get_pairing_of(&t_g3), None);
         assert_eq!(g.get_pairing_of(&t_g1), None);
-    }
-
-    #[test]
-    fn test_kind_parsing_success() {
-        // Field
-        let mut pairs = ZippelParser::parse(Rule::kind_ty, "Field").unwrap();
-        assert_eq!(UKind::from_pest(&mut pairs).unwrap(), Kind::Field);
-
-        // Group
-        let mut pairs = ZippelParser::parse(Rule::kind_ty, "Group").unwrap();
-        assert_eq!(UKind::from_pest(&mut pairs).unwrap(), Kind::Group);
-
-        // Size
-        let mut pairs = ZippelParser::parse(Rule::kind_ty, "Size").unwrap();
-        assert_eq!(UKind::from_pest(&mut pairs).unwrap(), Kind::SizeVar);
-
-        // Scalar
-        let mut pairs = ZippelParser::parse(Rule::kind_ty, "Scalar<A, B>").unwrap();
-        assert_eq!(
-            UKind::from_pest(&mut pairs).unwrap(),
-            Kind::scalar2("A", "B")
-        );
-
-        // Pairing
-        let mut pairs = ZippelParser::parse(Rule::kind_ty, "Pairing<G1, G2>").unwrap();
-        assert_eq!(
-            UKind::from_pest(&mut pairs).unwrap(),
-            Kind::pairing("G1", "G2")
-        );
-
-        // Range
-        let mut pairs = ZippelParser::parse(Rule::kind_ty, "1..5").unwrap();
-        assert_eq!(
-            UKind::from_pest(&mut pairs).unwrap(),
-            Kind::Range(Range {
-                start: Size::from(1),
-                step: Size::one(),
-                end: Size::from(5)
-            })
-        );
-    }
-
-    #[test]
-    fn test_kind_parsing_duplicate_idents() {
-        let mut pairs = ZippelParser::parse(Rule::kind_ty, "Scalar<A, A>").unwrap();
-        let res = UKind::from_pest(&mut pairs);
-        assert!(res.is_err());
-        match res.unwrap_err() {
-            ConversionError::Malformed(InputError::DuplicateIdents(s)) => {
-                assert!(s.contains("A"));
-            }
-            e => panic!("Expected DuplicateIdents error, got {:?}", e),
-        }
     }
 }

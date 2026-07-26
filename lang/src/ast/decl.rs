@@ -1,13 +1,9 @@
 use bumpalo::Bump;
-use from_pest::{ConversionError, FromPest};
-use pest::iterators::Pairs;
-use pest::Parser;
 use std::fmt;
 use thiserror::Error;
 
 use crate::ast::{CSig, Exp, FreeVars, GArgs, Sig};
 use crate::id::{Tid, TidSubst, Vid};
-use crate::parser::*;
 use crate::typ::infer::{TypeError, Typeable};
 use crate::typ::lub::Lub;
 use crate::typ::subst::SubstError;
@@ -46,10 +42,12 @@ pub enum Body<N> {
 }
 
 /// A zippel declaration is either a protocol or a function.
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub struct Decl<N> {
     pub sig: Sig<N>,
     pub body: Body<N>,
+    /// Byte span in the source text (for error reporting and tooling).
+    pub span: std::ops::Range<usize>,
 }
 
 #[derive(Error, PartialEq, Debug)]
@@ -116,7 +114,11 @@ impl<N> Decl<N> {
             ret: GTyp::unit(),
         };
         let body = Body::Proto { relation, body };
-        Decl { sig, body }
+        Decl {
+            sig,
+            body,
+            span: 0..0,
+        }
     }
 
     pub fn func(
@@ -133,7 +135,11 @@ impl<N> Decl<N> {
             ret,
         };
         let body = Body::Func { body };
-        Decl { sig, body }
+        Decl {
+            sig,
+            body,
+            span: 0..0,
+        }
     }
 
     pub fn type_alias(name: Vid, typ: GTyp<N>) -> Self {
@@ -147,12 +153,13 @@ impl<N> Decl<N> {
         Decl {
             sig,
             body: Body::TypeAlias,
+            span: 0..0,
         }
     }
 }
 
 /// A collection of declarations
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub struct Decls<N>(pub Vec<Decl<N>>);
 
 /// Untyped body with symbolic sizes
@@ -176,9 +183,16 @@ pub type CDecls = Decls<usize>;
 impl UDecl {
     /// Parse a string into a Zippel declaration
     #[allow(clippy::should_implement_trait)]
-    pub fn from_str<'a>(input_str: &'a str) -> Result<Self, ConversionError<InputError<'a>>> {
-        let mut pairs = ZippelParser::parse(Rule::decl, input_str).unwrap();
-        UDecl::from_pest(&mut pairs)
+    pub fn from_str(input_str: &str) -> Result<Self, crate::parser::ParseError> {
+        let (mut decls, errors) = crate::parser::parse_decls(input_str);
+        if let Some(e) = errors.into_iter().next() {
+            return Err(e);
+        }
+        decls.pop().ok_or_else(|| {
+            crate::parser::ParseError::custom(
+                "empty input: expected at least one declaration".to_string(),
+            )
+        })
     }
 
     /// Each declaration has typevariables that can be concretized to different sizes.
@@ -219,6 +233,7 @@ impl UDecl {
                     Ok(r)
                 })
                 .map_err(|e| DeclError::InvalidRange(csig.clone(), e))?,
+            span: self.span.clone(),
         })
     }
 }
@@ -227,19 +242,18 @@ impl UDecl {
 impl UDecls {
     /// Parse a string into a Zippel declarations list
     #[allow(clippy::should_implement_trait)]
-    pub fn from_str<'a>(input_str: &'a str) -> Result<Self, ConversionError<InputError<'a>>> {
-        let mut pairs = ZippelParser::parse(Rule::decls, input_str).unwrap();
-        Decls::from_pest(&mut pairs)
+    pub fn from_str(input_str: &str) -> Result<Self, crate::parser::ParseError> {
+        let (decls, errors) = crate::parser::parse_decls(input_str);
+        if let Some(e) = errors.into_iter().next() {
+            return Err(e);
+        }
+        Ok(Decls(decls))
     }
 
     /// Parse a file into a Zippel declarations list
-    pub fn from_file<'a>(
-        file: &str,
-        allocator: &'a Bump,
-    ) -> Result<Self, ConversionError<InputError<'a>>> {
+    pub fn from_file(file: &str, _allocator: &Bump) -> Result<Self, crate::parser::ParseError> {
         let input_str = std::fs::read_to_string(file).unwrap();
-        let stored_str = allocator.alloc_str(&input_str);
-        Decls::from_str(stored_str)
+        Decls::from_str(&input_str)
     }
 }
 
@@ -376,6 +390,7 @@ where
         Decl {
             sig: self.sig.type_inline(ctx),
             body: self.body.type_inline(ctx),
+            span: self.span,
         }
     }
 }
@@ -424,7 +439,7 @@ where
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        let Decl { sig, body } = self;
+        let Decl { sig, body, .. } = self;
         allocator.concat([
             if body.is_proto() {
                 allocator.text("proto")
@@ -484,415 +499,4 @@ where
             .1
             .render_fmt(100, f)
     }
-}
-
-impl<'pest> FromPest<'pest> for UDecl {
-    type Rule = Rule;
-    type FatalError = InputError<'pest>;
-
-    fn from_pest(
-        pest: &mut Pairs<'pest, Self::Rule>,
-    ) -> Result<Self, ConversionError<Self::FatalError>> {
-        let pair = pest.next().ok_or(ConversionError::NoMatch)?;
-        match pair.as_rule() {
-            Rule::decl => Decl::from_pest(&mut pair.into_inner()),
-            // Protocol with a [where] clause
-            Rule::proto_decl => {
-                let mut inner = pair.into_inner();
-                // Protocol's name
-                let name = Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                // Type variables
-                let typevars = TypeVars::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                // Arguments
-                let args = GArgs::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                // Relation (where clause) — parsed directly as an Exp
-                let relation = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                // Body expression
-                let body = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                Ok(Decl::proto(name, typevars, args, relation, body))
-            }
-            Rule::func_decl => {
-                let mut inner = pair.into_inner();
-                // Function's name
-                let name = Vid::from_pest(&mut inner)?;
-                // Type variables
-                let typevars = TypeVars::from_pest(&mut inner)?;
-                // Function's arguments
-                let args = GArgs::from_pest(&mut inner)?;
-                // Optional return type — if omitted, default to Unit.
-                // `typ` is a silent rule, so the pair will be one of its
-                // sub-rules (base_ty, vec_ty, etc.), never Rule::typ.
-                // Distinguish by checking if the next pair is Rule::exp
-                // (the body) — if not, it's the return type.
-                let next = inner.next().ok_or(ConversionError::NoMatch)?;
-                let (ret, body) = if next.as_rule() == Rule::exp {
-                    (GTyp::unit(), Exp::from_pest(&mut Pairs::single(next))?)
-                } else {
-                    let ret = GTyp::from_pest(&mut Pairs::single(next))?;
-                    let body = Exp::from_pest(&mut Pairs::single(
-                        inner.next().ok_or(ConversionError::NoMatch)?,
-                    ))?;
-                    (ret, body)
-                };
-                Ok(Decl::func(name, typevars, args, ret, body))
-            }
-            Rule::type_decl => {
-                let mut inner = pair.into_inner();
-                let name = Vid(inner.next().unwrap().as_str().to_string());
-                let typ = GTyp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                Ok(Decl::type_alias(name, typ))
-            }
-            _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
-        }
-    }
-}
-
-/// A collection of declarations is also a module
-impl<'pest> FromPest<'pest> for UDecls {
-    type Rule = Rule;
-    type FatalError = InputError<'pest>;
-
-    fn from_pest(
-        pest: &mut Pairs<'pest, Self::Rule>,
-    ) -> Result<Self, ConversionError<Self::FatalError>> {
-        let pair = pest.next().ok_or(ConversionError::NoMatch)?;
-        match pair.as_rule() {
-            Rule::decls => {
-                let mut decls = Vec::new();
-                for p in pair.into_inner() {
-                    match p.as_rule() {
-                        Rule::decl => {
-                            decls.push(Decl::from_pest(&mut Pairs::single(p))?);
-                        }
-                        Rule::EOI => (),
-                        _ => unreachable!(),
-                    }
-                }
-                Ok(Decls(decls))
-            }
-            _ => unreachable!(),
-        }
-    }
-}
-
-#[cfg(test)]
-use crate::{
-    ast::{Exps, GArg, UExp},
-    typ::{Kind, TypeVar},
-};
-
-#[test]
-fn proto_easy() {
-    let ex = "proto test<F: Field>(instance a: F) where a == a { verify(a == a) }";
-
-    let pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
-    UDecl::from_pest(&mut pairs.into_iter()).unwrap();
-}
-
-#[test]
-fn proto_parser() {
-    let ex = concat!(
-        "proto test<F: Field>(instance a: F) where a == a {\n",
-        "    let x = 3*a;\n",
-        "    verify(x == x)\n",
-        "}"
-    );
-    let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
-    assert_eq!(
-        UDecl::from_pest(&mut pairs).unwrap(),
-        UDecl::proto(
-            Vid::from("test"),
-            TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
-            GArgs::from([GArg::instance("a", GTyp::varstr("F"))]),
-            UExp::assert_eq(UExp::varstr("a"), UExp::varstr("a")),
-            UExp::letx(
-                Vid::from("x"),
-                UExp::from(3) * UExp::varstr("a"),
-                UExp::verify_eq(UExp::varstr("x"), UExp::varstr("x"))
-            )
-        )
-    );
-}
-
-#[test]
-fn fn_parser1() {
-    let ex = concat!(
-        "fn test<F: Field, N: 0..10>(witness a: [F; N]) -> F {\n",
-        "    let x = 3*a[0];\n",
-        "    x + x\n",
-        "}"
-    );
-    let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
-    assert_eq!(
-        UDecl::from_pest(&mut pairs).unwrap(),
-        UDecl::func(
-            Vid::from("test"),
-            TypeVars(vec![
-                TypeVar::new_str("F", Kind::Field),
-                TypeVar::new_str(
-                    "N",
-                    Kind::Range(Range {
-                        start: Size::Lit(0),
-                        step: Size::Lit(1),
-                        end: Size::Lit(10)
-                    })
-                )
-            ]),
-            GArgs::from([GArg::witness(
-                "a",
-                GTyp::vec(&GTyp::varstr("F"), Size::from("N"))
-            )]),
-            GTyp::varstr("F"),
-            UExp::letx(
-                Vid::from("x"),
-                UExp::from(3) * UExp::ram(UExp::from("a"), UExp::from(0)),
-                UExp::varstr("x") + UExp::varstr("x")
-            )
-        )
-    );
-}
-
-#[test]
-fn fn_parser2() {
-    let ex = concat!(
-        "fn test<F: Field>(instance a: F) -> F {\n",
-        "    let v = [1,2,3];\n",
-        "    p <- interpolate([0,1,2], v * [0,1,2]);\n",
-        "    x <- challenge<F>;\n",
-        "    p(x)\n",
-        "}"
-    );
-    let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
-    assert_eq!(
-        UDecl::from_pest(&mut pairs).unwrap(),
-        UDecl::func(
-            Vid::from("test"),
-            TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
-            GArgs::from([GArg::instance("a", GTyp::varstr("F"))]),
-            GTyp::varstr("F"),
-            UExp::letx(
-                Vid::from("v"),
-                UExp::vec(vec![UExp::from(1), UExp::from(2), UExp::from(3)]),
-                UExp::logx(
-                    Vid::from("p"),
-                    UExp::interpolate_at(
-                        UExp::vec(vec![UExp::from(0), UExp::from(1), UExp::from(2)]),
-                        UExp::mul(
-                            UExp::varstr("v"),
-                            UExp::vec(vec![UExp::from(0), UExp::from(1), UExp::from(2)]),
-                        ),
-                    ),
-                    UExp::logx(
-                        Vid::from("x"),
-                        UExp::challenge(Tid::from("F")),
-                        UExp::app(Vid::from("p"), Exps::from([UExp::varstr("x")])),
-                    ),
-                ),
-            ),
-        ),
-    );
-}
-
-#[test]
-fn fn_default_unit_return() {
-    let ex = "fn test<F: Field>(instance a: F) { verify(a == a) }";
-    let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
-    let decl = UDecl::from_pest(&mut pairs).unwrap();
-    assert_eq!(decl.sig.ret, GTyp::unit());
-}
-
-#[test]
-fn proto_where_with_let() {
-    let ex = concat!(
-        "proto test<F: Field>(instance a: F, instance b: F) ",
-        "where let x = a + b; x == x { verify(a == a) }"
-    );
-    let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
-    UDecl::from_pest(&mut pairs).unwrap();
-}
-
-#[test]
-fn decls_parser() {
-    let ex = concat!(
-        "proto test<F: Field>(instance a: F) where a == a {\n",
-        "    let x = 3*a;\n",
-        "    verify(x == x)\n",
-        "}\n",
-        "fn test<F: Field, N: 0..10>(instance a: [F; N]) -> F {\n",
-        "    let x = 3*a[0];\n",
-        "    x + x\n",
-        "}"
-    );
-    let mut pairs = ZippelParser::parse(Rule::decls, ex).unwrap();
-    assert_eq!(
-        UDecls::from_pest(&mut pairs).unwrap(),
-        Decls(vec![
-            UDecl::proto(
-                Vid::from("test"),
-                TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
-                GArgs::from([GArg::instance("a", GTyp::varstr("F"))]),
-                UExp::assert_eq(UExp::varstr("a"), UExp::varstr("a")),
-                UExp::letx(
-                    Vid::from("x"),
-                    UExp::mul(UExp::from(3), UExp::varstr("a")),
-                    UExp::verify_eq(UExp::varstr("x"), UExp::varstr("x"))
-                )
-            ),
-            UDecl::func(
-                Vid::from("test"),
-                TypeVars(vec![
-                    TypeVar::new_str("F", Kind::Field),
-                    TypeVar::new_str(
-                        "N",
-                        Kind::Range(Range {
-                            start: Size::Lit(0),
-                            step: Size::Lit(1),
-                            end: Size::Lit(10)
-                        })
-                    ),
-                ]),
-                GArgs::from([GArg::instance(
-                    "a",
-                    GTyp::vec(&GTyp::varstr("F"), Size::from("N"))
-                )]),
-                GTyp::varstr("F"),
-                UExp::letx(
-                    Vid::from("x"),
-                    UExp::mul(UExp::from(3), UExp::ram(UExp::varstr("a"), UExp::from(0))),
-                    UExp::varstr("x") + UExp::varstr("x")
-                )
-            )
-        ])
-    );
-}
-
-#[test]
-fn proto_where_eq_no_cont() {
-    // where a == a  →  Assert(a, a)  (no continuation, no Unit)
-    let ex = concat!(
-        "proto test<F: Field>(instance a: F) ",
-        "where a == a { verify(a == a) }"
-    );
-    let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
-    let decl = UDecl::from_pest(&mut pairs).unwrap();
-    match decl.body {
-        Body::Proto { relation, .. } => {
-            assert_eq!(
-                relation,
-                UExp::assert_eq(UExp::varstr("a"), UExp::varstr("a"))
-            );
-        }
-        _ => panic!("expected Proto body"),
-    }
-}
-
-#[test]
-fn proto_where_eq_with_cont() {
-    // where a == a; b == b  →  seq(Assert(a, a), Assert(b, b))
-    let ex = concat!(
-        "proto test<F: Field>(instance a: F, instance b: F) ",
-        "where a == a; b == b { verify(a == a) }"
-    );
-    let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
-    let decl = UDecl::from_pest(&mut pairs).unwrap();
-    match decl.body {
-        Body::Proto { relation, .. } => {
-            assert_eq!(
-                relation,
-                UExp::seq(
-                    UExp::assert_eq(UExp::varstr("a"), UExp::varstr("a")),
-                    UExp::assert_eq(UExp::varstr("b"), UExp::varstr("b")),
-                )
-            );
-        }
-        _ => panic!("expected Proto body"),
-    }
-}
-
-#[test]
-fn proto_where_let_then_eq_with_cont() {
-    // where let x = a + b; x == x; a == b
-    // →  Let(x, a+b, seq(Assert(x, x), Assert(a, b)))
-    let ex = concat!(
-        "proto test<F: Field>(instance a: F, instance b: F) ",
-        "where let x = a + b; x == x; a == b { verify(a == a) }"
-    );
-    let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
-    let decl = UDecl::from_pest(&mut pairs).unwrap();
-    match decl.body {
-        Body::Proto { relation, .. } => {
-            assert_eq!(
-                relation,
-                UExp::letx(
-                    Vid::from("x"),
-                    UExp::varstr("a") + UExp::varstr("b"),
-                    UExp::seq(
-                        UExp::assert_eq(UExp::varstr("x"), UExp::varstr("x")),
-                        UExp::assert_eq(UExp::varstr("a"), UExp::varstr("b")),
-                    )
-                )
-            );
-        }
-        _ => panic!("expected Proto body"),
-    }
-}
-
-#[test]
-fn proto_body_trailing_semicolon() {
-    // verify(a == a);  — trailing semicolon in proto body
-    let ex = concat!(
-        "proto test<F: Field>(instance a: F) ",
-        "where a == a { verify(a == a); }"
-    );
-    let result = ZippelParser::parse(Rule::decl, ex);
-    if let Err(e) = &result {
-        eprintln!("trailing-semicolon body parse error: {e}");
-    }
-    assert!(result.is_ok(), "trailing semicolon in body should parse");
-}
-
-#[test]
-fn where_clause_trailing_semicolon() {
-    // where a == b;  — trailing semicolon in where clause
-    let ex = concat!(
-        "proto test<F: Field>(instance a: F, instance b: F) ",
-        "where a == b; { verify(a == a) }"
-    );
-    let result = ZippelParser::parse(Rule::decl, ex);
-    if let Err(e) = &result {
-        eprintln!("trailing-semicolon where parse error: {e}");
-    }
-    assert!(result.is_ok(), "trailing semicolon in where should parse");
-}
-
-#[test]
-fn where_let_trailing_semicolon() {
-    // where let x = a + a;  — trailing semicolon after let in where
-    let ex = concat!(
-        "proto test<F: Field>(instance a: F) ",
-        "where let x = a + a; { verify(a == a) }"
-    );
-    let result = ZippelParser::parse(Rule::decl, ex);
-    if let Err(e) = &result {
-        eprintln!("trailing-semicolon where-let parse error: {e}");
-    }
-    assert!(
-        result.is_ok(),
-        "trailing semicolon after where-let should parse"
-    );
-}
-
-#[test]
-fn fn_call_in_where_clause() {
-    // fn double(x) -> x + x;  proto where double(a) == a + a
-    let ex = concat!(
-        "fn double<F: Field>(instance x: F) -> F { x + x }",
-        "proto test<F: Field>(instance a: F) ",
-        "where double(a) == a + a { verify(a == a) }"
-    );
-    let result = ZippelParser::parse(Rule::decls, ex);
-    if let Err(e) = &result {
-        eprintln!("fn-call-in-where parse error: {e}");
-    }
-    assert!(result.is_ok(), "function call in where clause should parse");
 }

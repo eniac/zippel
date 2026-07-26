@@ -98,10 +98,6 @@ pub struct ZippelHandler<C: ArkConfig> {
 impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     #[must_use]
     pub fn new(args: ZippelArgs) -> Self {
-        // Enable detailed error messages from pest parser
-        // This provides more comprehensive error messages for debugging parser errors
-        lang::init_parser();
-
         Self {
             args,
             sized_module: None,

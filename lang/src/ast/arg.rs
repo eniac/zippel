@@ -1,9 +1,6 @@
-use from_pest::{ConversionError, FromPest};
-use pest::iterators::Pairs;
 use std::fmt;
 
 use crate::id::{Tid, TidSubst, Vid};
-use crate::parser::*;
 use crate::typ::{Distribution, GTyp, Qualifier, Range, RangeTraversal, Size, Typ, TypeInline};
 use share::traversal::{ToTraversal1, ToTraversal2};
 use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
@@ -375,109 +372,6 @@ where
             .1
             .render_fmt(140, f)
     }
-}
-
-/// Parser instances
-impl<'pest> FromPest<'pest> for GArg<Size> {
-    type Rule = Rule;
-    type FatalError = InputError<'pest>;
-
-    fn from_pest(
-        pest: &mut Pairs<'pest, Self::Rule>,
-    ) -> Result<Self, ConversionError<Self::FatalError>> {
-        let pair = pest.next().ok_or(ConversionError::NoMatch)?;
-        match pair.as_rule() {
-            Rule::arg => {
-                let mut inner = pair.into_inner();
-                let mut qualifier = Qualifier::Instance;
-                let mut distribution = Distribution::Nonuniform;
-
-                // Check for optional qualifier
-                if let Some(qualifier_pair) = inner.peek() {
-                    if qualifier_pair.as_rule() == Rule::qualifier {
-                        qualifier = Qualifier::from_pest(&mut inner)?;
-                    }
-                }
-                // Check for optional Distribution
-                if let Some(distr_pair) = inner.peek() {
-                    if distr_pair.as_rule() == Rule::distribution {
-                        distribution = Distribution::from_pest(&mut inner)?;
-                    }
-                }
-
-                let id = Vid::from_pest(&mut inner)?;
-                let typ = Typ::from_pest(&mut inner)?;
-                Ok(Arg {
-                    qualifier,
-                    distribution,
-                    id,
-                    typ,
-                })
-            }
-            _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
-        }
-    }
-}
-
-impl<'pest> FromPest<'pest> for GArgs<Size> {
-    type Rule = Rule;
-    type FatalError = InputError<'pest>;
-
-    fn from_pest(
-        pest: &mut Pairs<'pest, Self::Rule>,
-    ) -> Result<Self, ConversionError<Self::FatalError>> {
-        let pair = pest.next().ok_or(ConversionError::NoMatch)?;
-        match pair.as_rule() {
-            Rule::args => {
-                let mut args = Vec::new();
-                for pair in pair.into_inner() {
-                    let mut p = Pairs::single(pair);
-                    args.push(Arg::from_pest(&mut p)?);
-                }
-                Ok(Args(args))
-            }
-            _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
-        }
-    }
-}
-
-#[cfg(test)]
-use pest::Parser;
-#[test]
-fn arg_parser() {
-    let ex = "instance a: F, witness uniform foo: X";
-    let mut pairs = ZippelParser::parse(Rule::args, ex).unwrap();
-    assert_eq!(
-        Args::from_pest(&mut pairs),
-        Ok(Args(vec![
-            Arg::new(
-                Qualifier::Instance,
-                Distribution::Nonuniform,
-                "a",
-                Typ::varstr("F")
-            ),
-            Arg::new(
-                Qualifier::Witness,
-                Distribution::Uniform,
-                "foo",
-                Typ::varstr("X")
-            )
-        ]))
-    );
-
-    let ex = "instance uniform* a: F";
-    let mut pairs = ZippelParser::parse(Rule::arg, ex).unwrap();
-    assert_eq!(
-        Arg::from_pest(&mut pairs),
-        Ok(Arg::instance_uniform_nz("a", Typ::varstr("F")))
-    );
-
-    let ex = "a: F";
-    let mut pairs = ZippelParser::parse(Rule::arg, ex).unwrap();
-    assert_eq!(
-        Arg::from_pest(&mut pairs),
-        Ok(Arg::instance("a", Typ::varstr("F")))
-    );
 }
 
 #[test]

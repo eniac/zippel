@@ -1,10 +1,6 @@
 use share::{DocAllocator, DocBuilder, Pretty, Set};
 use std::fmt;
 
-use crate::parser::*;
-use from_pest::{ConversionError, FromPest};
-use pest::iterators::Pairs;
-
 /// Generate a new identifier not in the set
 pub trait Fresh: Ord + Sized {
     fn fresh(root: &str, s: &mut Set<Self>) -> Self;
@@ -161,42 +157,6 @@ impl Vid {
     }
 }
 
-impl<'pest> FromPest<'pest> for Vid {
-    type Rule = Rule;
-    type FatalError = InputError<'pest>;
-
-    fn from_pest(
-        pest: &mut Pairs<'pest, Self::Rule>,
-    ) -> Result<Self, ConversionError<Self::FatalError>> {
-        let pair = pest.next().ok_or(ConversionError::NoMatch)?;
-        match pair.as_rule() {
-            Rule::id => {
-                let s = pair.as_str();
-                Ok(Vid::from(s))
-            }
-            _ => unreachable!(),
-        }
-    }
-}
-
-impl<'pest> FromPest<'pest> for Tid {
-    type Rule = Rule;
-    type FatalError = InputError<'pest>;
-
-    fn from_pest(
-        pest: &mut Pairs<'pest, Self::Rule>,
-    ) -> Result<Self, ConversionError<Self::FatalError>> {
-        let pair = pest.next().ok_or(ConversionError::NoMatch)?;
-        match pair.as_rule() {
-            Rule::id => {
-                let s = pair.as_str();
-                Ok(Tid::from(s))
-            }
-            _ => unreachable!(),
-        }
-    }
-}
-
 fn split_alphanumeric(input: &str) -> (String, i32) {
     let last_non_digit_pos = input
         .char_indices()
@@ -287,24 +247,4 @@ fn vid_fresh() {
     let mut bound = Set::from(vec![Vid("v".to_string()), Vid("v1".to_string())]);
     let t = Vid::fresh("v", &mut bound);
     assert_eq!(t, Vid("v2".to_string()));
-}
-
-////////////////////////////////////////////////////////////////////////////////////////
-/// Parser tests
-////////////////////////////////////////////////////////////////////////////////////////
-#[cfg(test)]
-use pest::Parser;
-#[test]
-fn id_parser() {
-    let mut pairs = ZippelParser::parse(Rule::id, "N").unwrap();
-    assert_eq!(Tid::from_pest(&mut pairs).unwrap(), Tid::new("N"));
-
-    pairs = ZippelParser::parse(Rule::id, "foo").unwrap();
-    assert_eq!(Tid::from_pest(&mut pairs).unwrap(), Tid::new("foo"));
-
-    pairs = ZippelParser::parse(Rule::id, "Foo").unwrap();
-    assert_eq!(Tid::from_pest(&mut pairs).unwrap(), Tid::new("Foo"));
-
-    pairs = ZippelParser::parse(Rule::id, "Foo").unwrap();
-    assert_eq!(Vid::from_pest(&mut pairs).unwrap(), Vid::new("Foo"));
 }

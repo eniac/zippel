@@ -1,13 +1,8 @@
-use from_pest::{ConversionError, FromPest};
-use lazy_static::lazy_static;
-use pest::iterators::Pairs;
-use pest::pratt_parser::{Assoc, Op, PrattParser};
 use std::fmt;
 use std::ops::{Add, BitXor, Div, Mul, Sub};
 use thiserror::Error;
 
 use crate::id::Tid;
-use crate::parser::*;
 use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 use share::{Ctx, Set};
 
@@ -434,44 +429,6 @@ impl fmt::Display for Size {
     }
 }
 
-lazy_static! {
-    pub static ref SIZE_PARSER: PrattParser<Rule> = {
-        use Assoc::*;
-        use Rule::*;
-
-        PrattParser::new()
-            .op(Op::infix(add_op, Left) | Op::infix(sub_op, Left))
-            .op(Op::infix(mul_op, Left) | Op::infix(div_op, Left))
-            .op(Op::infix(pow_op, Right))
-    };
-}
-
-impl<'pest> FromPest<'pest> for Size {
-    type Rule = Rule;
-    type FatalError = InputError<'pest>;
-
-    fn from_pest(
-        expression: &mut Pairs<'pest, Self::Rule>,
-    ) -> Result<Self, ConversionError<Self::FatalError>> {
-        SIZE_PARSER
-            .map_primary(|pair| match pair.as_rule() {
-                Rule::size_ty => Size::from_pest(&mut pair.into_inner()),
-                Rule::size_var => Ok(Size::var(Tid::from_pest(&mut pair.into_inner())?)),
-                Rule::positive => Ok(Size::Lit(pair.as_str().parse().unwrap())),
-                _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
-            })
-            .map_infix(|lhs, op, rhs| match op.clone().as_rule() {
-                Rule::add_op => Ok(lhs? + rhs?),
-                Rule::sub_op => Ok(lhs? - rhs?),
-                Rule::mul_op => Ok(lhs? * rhs?),
-                Rule::div_op => Ok(lhs? / rhs?),
-                Rule::pow_op => Ok(lhs? ^ rhs?),
-                _ => unreachable!(),
-            })
-            .parse(expression)
-    }
-}
-
 /// Arbitrary instance for Size
 #[cfg(test)]
 use arbitrary::{Arbitrary, Unstructured};
@@ -501,32 +458,6 @@ impl<'a> Arbitrary<'a> for Size {
 ////////////////////////////////////////////////////////////////////////////////////////
 /// Parser tests
 ////////////////////////////////////////////////////////////////////////////////////////
-#[cfg(test)]
-use pest::Parser;
-#[test]
-fn size_parser() {
-    let mut pairs = ZippelParser::parse(Rule::size_ty, "N+1").unwrap();
-    assert_eq!(Size::from_pest(&mut pairs).unwrap(), Size::varstr("N") + 1);
-
-    pairs = ZippelParser::parse(Rule::size_ty, "2*N+1").unwrap();
-    assert_eq!(
-        Size::from_pest(&mut pairs).unwrap(),
-        Size::from(2) * Size::varstr("N") + 1
-    );
-
-    pairs = ZippelParser::parse(Rule::size_ty, "2^N*2").unwrap();
-    assert_eq!(
-        Size::from_pest(&mut pairs).unwrap(),
-        (Size::from(2) ^ Size::varstr("N")) * 2
-    );
-
-    pairs = ZippelParser::parse(Rule::size_ty, "2^(N-1) / N").unwrap();
-    assert_eq!(
-        Size::from_pest(&mut pairs).unwrap(),
-        (Size::from(2) ^ (Size::varstr("N") - 1)) / Size::varstr("N")
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -789,42 +720,5 @@ mod tests {
     fn test_is_nil() {
         let size = Size::Lit(42);
         assert!(!<Size as Pretty<'_, BoxAllocator, ()>>::is_nil(&size));
-    }
-
-    // Property-based test for Size parsing and pretty-printing round-trip
-    #[test]
-    fn test_size_round_trip_pbt() {
-        fn is_parseable(size: &Size) -> bool {
-            match size {
-                Size::Max(_, _) | Size::Min(_, _) => false,
-                Size::Var(_) | Size::Lit(_) => true,
-                Size::Add(a, b)
-                | Size::Sub(a, b)
-                | Size::Mul(a, b)
-                | Size::Div(a, b)
-                | Size::Pow(a, b) => is_parseable(a) && is_parseable(b),
-            }
-        }
-
-        arbtest::arbtest(|u| {
-            let size: Size = u.arbitrary()?;
-            if !is_parseable(&size) {
-                return Ok(());
-            }
-            let size_str = size.to_string();
-            let mut pairs = match ZippelParser::parse(Rule::size_ty, &size_str) {
-                Ok(p) => p,
-                Err(e) => {
-                    panic!("Failed to parse size string '{}': {:?}", size_str, e);
-                }
-            };
-            let parsed = Size::from_pest(&mut pairs).unwrap();
-            assert_eq!(
-                size, parsed,
-                "Failed to round-trip size: {:?} printed as '{}'",
-                size, size_str
-            );
-            Ok(())
-        });
     }
 }

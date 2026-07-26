@@ -3,12 +3,9 @@ use crate::ast::{Body, CSig, Sig};
 use crate::id::Tid;
 
 use bumpalo::Bump;
-use from_pest::{ConversionError, FromPest};
-use pest::Parser;
 use std::fmt;
 use thiserror::Error;
 
-use crate::parser::*;
 use crate::typ::{Size, TypeInline, UTyp};
 use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 
@@ -110,9 +107,8 @@ impl UModule {
     /// untyped module, with symbolic sizes.
     /// Type aliases (`type X = T;`) are expanded inline before returning.
     #[allow(clippy::should_implement_trait)]
-    pub fn from_str<'a>(input_str: &'a str) -> Result<Self, ConversionError<InputError<'a>>> {
-        let mut pairs = ZippelParser::parse(Rule::decls, input_str).unwrap();
-        let decls = UDecls::from_pest(&mut pairs)?;
+    pub fn from_str(input_str: &str) -> Result<Self, crate::parser::ParseError> {
+        let decls = UDecls::from_str(input_str)?;
 
         // Collect type aliases from type_decl declarations
         let mut type_ctx: Ctx<Tid, UTyp> = Ctx::new();
@@ -124,44 +120,57 @@ impl UModule {
         }
 
         // Validate type aliases do not have cycles
-        detect_alias_cycles(&type_ctx).map_err(ConversionError::Malformed)?;
+        detect_alias_cycles(&type_ctx)
+            .map_err(|e| crate::parser::ParseError::custom(e.to_string()))?;
 
         let mut m = Ctx::new();
-        for d in decls.into_iter() {
+        // Track seen decls (sig → span) for duplicate error reporting.
+        let mut seen: std::collections::HashMap<String, std::ops::Range<usize>> =
+            std::collections::HashMap::new();
+        for d in decls.0.into_iter() {
             if d.body.is_type_alias() {
                 // Already stored and validated, type aliases do not go to Module execution decls
                 continue;
-            } else {
-                // Inline type aliases in the declaration
-                let d = if type_ctx.is_empty() {
-                    d
-                } else {
-                    d.type_inline(&type_ctx)
-                };
-                m.insert_with(d.sig, d.body, &|sig, _, _| {
-                    Err(ConversionError::Malformed(InputError::DuplicateDecl(
-                        sig.clone(),
-                    )))
-                })?;
             }
+            // Inline type aliases in the declaration
+            let d = if type_ctx.is_empty() {
+                d
+            } else {
+                d.type_inline(&type_ctx)
+            };
+            let key = format!("{:?}", d.sig);
+            if let Some(orig_span) = seen.get(&key) {
+                let (line, col, src_line) = crate::parser::line_col_at(input_str, d.span.start);
+                return Err(crate::parser::ParseError {
+                    span: d.span.clone(),
+                    line,
+                    col,
+                    source_line: src_line,
+                    found: None,
+                    expected: vec![],
+                    message: Some(format!(
+                        "duplicate declaration: {}\n  first defined at byte offset {}",
+                        key, orig_span.start
+                    )),
+                });
+            }
+            seen.insert(key, d.span.clone());
+            m.insert(&d.sig, &d.body);
         }
         Ok(Module(m))
     }
 
     /// Parse a file into a Zippel declarations list
-    pub fn from_file<'a>(
-        file: &str,
-        allocator: &'a Bump,
-    ) -> Result<Self, ConversionError<InputError<'a>>> {
+    pub fn from_file(file: &str, _allocator: &Bump) -> Result<Self, crate::parser::ParseError> {
         let input_str = std::fs::read_to_string(file).unwrap();
-        let stored_str = allocator.alloc_str(&input_str);
-        Self::from_str(stored_str)
+        Self::from_str(&input_str)
     }
 
     pub fn iter_decls(&self) -> impl Iterator<Item = UDecl> + '_ {
         self.0.iter().map(|(sig, body)| UDecl {
             sig: sig.clone(),
             body: body.clone(),
+            span: 0..0,
         })
     }
 
@@ -219,14 +228,14 @@ fn type_dependencies(typ: &UTyp) -> share::Set<Tid> {
 }
 
 // DFS cycle checker
-fn check_cycle<'pest>(
+fn check_cycle(
     node: &Tid,
     type_ctx: &Ctx<Tid, UTyp>,
     visiting: &mut share::Set<Tid>,
     visited: &mut share::Set<Tid>,
-) -> Result<(), InputError<'pest>> {
+) -> Result<(), String> {
     if visiting.contains(node) {
-        return Err(InputError::CyclicTypeAlias(node.clone()));
+        return Err(format!("cyclic type alias: {}", node));
     }
     if visited.contains(node) {
         return Ok(());
@@ -244,7 +253,7 @@ fn check_cycle<'pest>(
     Ok(())
 }
 
-fn detect_alias_cycles<'pest>(type_ctx: &Ctx<Tid, UTyp>) -> Result<(), InputError<'pest>> {
+fn detect_alias_cycles(type_ctx: &Ctx<Tid, UTyp>) -> Result<(), String> {
     let mut visiting = share::Set::new();
     let mut visited = share::Set::new();
 
