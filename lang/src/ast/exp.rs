@@ -1771,17 +1771,17 @@ fn parser_bin() {
 
 #[test]
 fn parser_eval() {
-    let ex = "eval(poly, 3)";
+    let ex = "eval(p, 3)";
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::evaluate_at(Exp::varstr("poly"), Exp::from(3)))
+        Ok(Exp::evaluate_at(Exp::varstr("p"), Exp::from(3)))
     );
 }
 
 #[test]
 fn parser_eval_selected_unit() {
-    let ex = "eval<0>(poly, xs)";
+    let ex = "eval<0>(p, xs)";
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
@@ -1791,7 +1791,7 @@ fn parser_eval_selected_unit() {
                 step: Size::from(1),
                 end: Size::from(0) + Size::one(),
             },
-            Exp::varstr("poly"),
+            Exp::varstr("p"),
             Exp::varstr("xs"),
         ))
     );
@@ -1799,7 +1799,7 @@ fn parser_eval_selected_unit() {
 
 #[test]
 fn parser_eval_selected_range() {
-    let ex = "eval<0..1>(poly, xs)";
+    let ex = "eval<0..1>(p, xs)";
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
@@ -1809,7 +1809,7 @@ fn parser_eval_selected_range() {
                 step: Size::from(1),
                 end: Size::from(1),
             },
-            Exp::varstr("poly"),
+            Exp::varstr("p"),
             Exp::varstr("xs"),
         ))
     );
@@ -1817,7 +1817,7 @@ fn parser_eval_selected_range() {
 
 #[test]
 fn parser_rejects_eval_selected_unit_without_points() {
-    let ex = "eval<0>(poly)";
+    let ex = "eval<0>(p)";
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert!(matches!(
         UExp::from_pest(&mut pairs),
@@ -1829,7 +1829,7 @@ fn parser_rejects_eval_selected_unit_without_points() {
 
 #[test]
 fn parser_rejects_eval_selected_range_without_points() {
-    let ex = "eval<0..1>(poly)";
+    let ex = "eval<0..1>(p)";
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert!(matches!(
         UExp::from_pest(&mut pairs),
@@ -1841,11 +1841,11 @@ fn parser_rejects_eval_selected_range_without_points() {
 
 #[test]
 fn parser_eval_grid() {
-    let ex = "eval(poly)";
+    let ex = "eval(p)";
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::evaluate_grid(Exp::varstr("poly")))
+        Ok(Exp::evaluate_grid(Exp::varstr("p")))
     );
 }
 

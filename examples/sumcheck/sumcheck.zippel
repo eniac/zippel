@@ -25,10 +25,10 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, V: 3..NUM_VARS_CONST + 1, MAX_
     instance points: [F; MAX_DEGREE_CONST + 1],
     instance challenges: [F; NUM_VARS_CONST - V + 1],
     instance prev_eval: F,
-    instance challenge: F,
+    instance ch: F,
     instance curr_round: Fin<NUM_VARS_CONST>
 ) -> Unit {
-    let residual_poly = eval(curr_poly, [challenge]);
+    let residual_poly = eval(curr_poly, [ch]);
     // Round polynomial: sum the residual evaluated over the Boolean-tail
     // hypercube. This lowers to a generic materialized reduce-map (the 2^k
     // tail domain is materialized; Groebner completeness const-folds the bits).
@@ -58,10 +58,10 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
     instance points: [F; MAX_DEGREE_CONST + 1],
     instance challenges: [F; NUM_VARS_CONST - 1],
     instance prev_eval: F,
-    instance challenge: F,
+    instance ch: F,
     instance curr_round: Fin<NUM_VARS_CONST>
 ) -> Unit {
-    let residual_poly = eval(curr_poly, [challenge]);
+    let residual_poly = eval(curr_poly, [ch]);
     let eval_points = points;
     let evs = sample_univariate(residual_poly, eval_points);
     evs_msg <- evs;
@@ -79,10 +79,10 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
 // Round 1: first challenge r1 folds round-1 message; second challenge r2 feeds the first tail round.
 proto sumcheck<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
     instance claimed_sum: F,
-    witness poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>
+    witness p: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>
 ) where let points = 0..MAX_DEGREE_CONST + 1;
         let round_poly0 = reduce(+, [
-            eval<0>(poly, tail)
+            eval<0>(p, tail)
             for tail in [
                 [((i / (2^j)) % 2) for j in 0..(NUM_VARS_CONST - 1)]
                 for i in 0..(2^(NUM_VARS_CONST - 1))
@@ -92,7 +92,7 @@ proto sumcheck<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
         claimed_sum == evs0[0] + evs0[1] {
     let points = 0..MAX_DEGREE_CONST + 1;
     let round_poly0 = reduce(+, [
-        eval<0>(poly, tail)
+        eval<0>(p, tail)
         for tail in [
             [((i / (2^j)) % 2) for j in 0..(NUM_VARS_CONST - 1)]
             for i in 0..(2^(NUM_VARS_CONST - 1))
@@ -105,5 +105,5 @@ proto sumcheck<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
     r1 <- challenge<F>;
     let g = interpolate(points, evs0_msg);
     let prev = g(r1);
-    sumcheck_round(poly, points, [r1], prev, r1, 1)
+    sumcheck_round(p, points, [r1], prev, r1, 1)
 }

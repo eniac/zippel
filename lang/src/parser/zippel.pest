@@ -18,7 +18,10 @@ eq_op = @{ "==" }
 unary_minus = @{ "-" }
 
 /// Identifiers for functions, variables, type variables
-keyword = {"let" | "fn" | "proto" | "type" }
+keyword = { "let" | "fn" | "proto" | "type"
+           | "fun" | "for" | "in" | "interpolate" | "poly" | "eval" | "coef" | "mle" | "dot" | "reduce" | "random" | "challenge" | "assert" | "verify" | "pair" | "where"
+           | "instance" | "witness" | "extra" | "uniform"
+           }
 id = @{ !(keyword ~ !(ASCII_ALPHANUMERIC | "_" | "'")) ~ (ASCII_ALPHANUMERIC | "_" | "'" )+ }
 ids = _{ id ~ ("," ~ id)* }
 

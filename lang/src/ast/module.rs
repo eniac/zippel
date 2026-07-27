@@ -410,7 +410,7 @@ fn type_alias_record() {
 fn type_alias_in_args() {
     let ex = concat!(
         "type Vec3 = [F; 3];\n",
-        "fn dot<F: Field>(instance a: Vec3, instance b: Vec3) -> F {\n",
+        "fn dotprod<F: Field>(instance a: Vec3, instance b: Vec3) -> F {\n",
         "    reduce(+, a * b)\n",
         "}\n"
     );

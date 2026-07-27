@@ -265,11 +265,11 @@ fn test_reduce_map_fused_optimization_fires() {
 
     // A helper function returning the computed round polynomial
     let src = r#"
-        fn test_opt<F: Field>(witness poly: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
+        fn test_opt<F: Field>(witness p: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
             let zero: F = 0;
             let one = zero + 1;
             reduce(+, [
-                eval<0>(poly, tail)
+                eval<0>(p, tail)
                 for tail in [
                     [(((i / (2^j)) % 2) * one) for j in 0..2]
                     for i in 0..4
@@ -283,7 +283,7 @@ fn test_reduce_map_fused_optimization_fires() {
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
     let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
-    inputs.insert(&lang::id::Vid::from("poly"), &poly_val.clone());
+    inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
 
     reset_optimization_stats();
     let before = optimization_stats_snapshot();
@@ -334,11 +334,11 @@ fn test_reduce_map_fused_optimization_skips_non_pow_two() {
     // Domain size 3 is not a power of 2, so the optimization must be skipped,
     // but the fallback path should execute correctly and return the correct polynomial.
     let src = r#"
-        fn test_no_opt<F: Field>(witness poly: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
+        fn test_no_opt<F: Field>(witness p: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
             let zero: F = 0;
             let one = zero + 1;
             reduce(+, [
-                eval<0>(poly, tail)
+                eval<0>(p, tail)
                 for tail in [
                     [(((i / (2^j)) % 2) * one) for j in 0..2]
                     for i in 0..3
@@ -352,7 +352,7 @@ fn test_reduce_map_fused_optimization_skips_non_pow_two() {
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
     let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
-    inputs.insert(&lang::id::Vid::from("poly"), &poly_val.clone());
+    inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
 
     reset_optimization_stats();
     let before = optimization_stats_snapshot();
@@ -403,11 +403,11 @@ fn test_reduce_map_fused_optimization_skips_multiplicative() {
     // Multiplicative reduction should not match, so optimization must be skipped,
     // but the fallback path should execute correctly and return the correct polynomial.
     let src = r#"
-        fn test_mul_no_opt<F: Field>(witness poly: Poly<F, 3, 1>) -> Poly<F, 1, 4> {
+        fn test_mul_no_opt<F: Field>(witness p: Poly<F, 3, 1>) -> Poly<F, 1, 4> {
             let zero: F = 0;
             let one = zero + 1;
             reduce(*, [
-                eval<0>(poly, tail)
+                eval<0>(p, tail)
                 for tail in [
                     [(((i / (2^j)) % 2) * one) for j in 0..2]
                     for i in 0..4
@@ -421,7 +421,7 @@ fn test_reduce_map_fused_optimization_skips_multiplicative() {
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
     let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
-    inputs.insert(&lang::id::Vid::from("poly"), &poly_val.clone());
+    inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
 
     reset_optimization_stats();
     let before = optimization_stats_snapshot();
@@ -478,11 +478,11 @@ fn test_reduce_map_fused_optimization_fallback_on_non_mle() {
     // and route to value_hypercube_reduce_selected, which should detect it's not MLE and
     // fallback to generic evaluation, computing the correct polynomial and not triggering errors.
     let src = r#"
-        fn test_non_mle<F: Field>(witness poly: Poly<F, 3, 2>) -> Poly<F, 1, 2> {
+        fn test_non_mle<F: Field>(witness p: Poly<F, 3, 2>) -> Poly<F, 1, 2> {
             let zero: F = 0;
             let one = zero + 1;
             reduce(+, [
-                eval<0>(poly, tail)
+                eval<0>(p, tail)
                 for tail in [
                     [(((i / (2^j)) % 2) * one) for j in 0..2]
                     for i in 0..4
@@ -513,7 +513,7 @@ fn test_reduce_map_fused_optimization_fallback_on_non_mle() {
     let p = SparseMultivariatePolynomial { num_vars: 3, terms };
     let poly_variant = PolyVariant::SparseMultivariate(p);
     let poly_val = Value::Poly(VirtualPolynomial::from_poly(poly_variant));
-    inputs.insert(&lang::id::Vid::from("poly"), &poly_val);
+    inputs.insert(&lang::id::Vid::from("p"), &poly_val);
 
     reset_optimization_stats();
     let before = optimization_stats_snapshot();
@@ -548,14 +548,14 @@ fn test_reduce_map_fused_optimization_skips_modified_loop_param() {
     use crate::tests::test_helpers::execute_graph;
     use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
-    // The loop parameter is modified inside the eval call: eval<0>(poly, [t + one for t in tail]).
+    // The loop parameter is modified inside the eval call: eval<0>(p, [t + one for t in tail]).
     // The optimization must skip because the evaluation points are not the exact loop parameter tail coordinates.
     let src = r#"
-        fn test_modified<F: Field>(witness poly: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
+        fn test_modified<F: Field>(witness p: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
             let zero: F = 0;
             let one = zero + 1;
             reduce(+, [
-                eval<0>(poly, [t + one for t in tail])
+                eval<0>(p, [t + one for t in tail])
                 for tail in [
                     [(((i / (2^j)) % 2) * one) for j in 0..2]
                     for i in 0..4
@@ -569,7 +569,7 @@ fn test_reduce_map_fused_optimization_skips_modified_loop_param() {
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
     let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
-    inputs.insert(&lang::id::Vid::from("poly"), &poly_val.clone());
+    inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
 
     reset_optimization_stats();
     let before = optimization_stats_snapshot();
@@ -623,10 +623,10 @@ fn test_reduce_map_fused_optimization_skips_poly_depending_on_loop_param() {
     use crate::tests::test_helpers::execute_graph;
     use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
-    // Here, the polynomial being evaluated (which is `poly` in the eval expression)
+    // Here, the polynomial being evaluated (which is `p` in the eval expression)
     // actually depends on `tail` (the loop parameter).
     // Specifically: eval<0>(eval(poly_factory, [tail[0]]), [tail[1]])
-    // The optimization must decline to fire because `poly` is not loop-invariant.
+    // The optimization must decline to fire because `p` is not loop-invariant.
     let src = r#"
         fn test_dependent<F: Field>(witness poly_factory: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
             let zero: F = 0;
@@ -679,10 +679,10 @@ fn test_reduce_map_fused_optimization_skips_non_vec_domain() {
 
     // fixed has LoopParam
     let fixed = mk::<B>(Op::LoopParam(0, scalar_t.clone()));
-    let poly = mk::<B>(Op::Value(Value::Poly(
+    let p = mk::<B>(Op::Value(Value::Poly(
         backend::VirtualPolynomial::constant_with_num_vars(<B as backend::ArkConfig>::F::one(), 2),
     )));
-    let body = Op::Evaluate(poly, Some(lang::typ::CRange::new(0, 1)), Some(fixed));
+    let body = Op::Evaluate(p, Some(lang::typ::CRange::new(0, 1)), Some(fixed));
 
     let rm = GOp::reduce_map(BinOp::Add, domain, body);
 
@@ -709,11 +709,11 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_hypercube_domain_with_
 
     let src = r#"
         fn test_non_canonical<F: Field>(
-            witness poly: Poly<F, 3, 1>, 
+            witness p: Poly<F, 3, 1>,
             witness domain: [[F; 2]; 4]
         ) -> Poly<F, 1, 1> {
             reduce(+, [
-                eval<0>(poly, tail)
+                eval<0>(p, tail)
                 for tail in domain
             ])
         }
@@ -724,7 +724,7 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_hypercube_domain_with_
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
     let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
-    inputs.insert(&lang::id::Vid::from("poly"), &poly_val.clone());
+    inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
 
     // Construct a non-canonical coordinate domain: [[1, 1], [1, 1], [1, 1], [1, 1]]
     let one = <B as backend::ArkConfig>::F::one();
@@ -772,13 +772,13 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_indices_domain_with_ma
 
     let src = r#"
         fn test_non_canonical_indices<F: Field>(
-            witness poly: Poly<F, 3, 1>,
+            witness p: Poly<F, 3, 1>,
             witness domain: [Fin<4>; 4]
         ) -> Poly<F, 1, 1> {
             let zero: F = 0;
             let one = zero + 1;
             reduce(+, [
-                eval<0>(poly, [(((i / (2^j)) % 2) * one) for j in 0..2])
+                eval<0>(p, [(((i / (2^j)) % 2) * one) for j in 0..2])
                 for i in domain
             ])
         }
@@ -789,7 +789,7 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_indices_domain_with_ma
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
     let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
-    inputs.insert(&lang::id::Vid::from("poly"), &poly_val.clone());
+    inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
 
     // Construct a non-canonical in-bounds index domain: [3, 2, 1, 0] (permutation of 0..3)
     let three = 3usize;
@@ -842,11 +842,11 @@ fn test_reduce_map_fused_optimization_skips_arity_mismatch() {
     // The fixed mapping only produces 2 bits (j in 0..2).
     // The fast path should detect the arity mismatch and safely fallback to the generic path instead of panicking.
     let src = r#"
-        fn test_opt<F: Field>(witness poly: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
+        fn test_opt<F: Field>(witness p: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
             let zero: F = 0;
             let one = zero + 1;
             reduce(+, [
-                eval<0>(poly, tail)
+                eval<0>(p, tail)
                 for tail in [
                     [(((i / (2^j)) % 2) * one) for j in 0..2]
                     for i in 0..8
@@ -860,7 +860,7 @@ fn test_reduce_map_fused_optimization_skips_arity_mismatch() {
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
     let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
-    inputs.insert(&lang::id::Vid::from("poly"), &poly_val.clone());
+    inputs.insert(&lang::id::Vid::from("p"), &poly_val.clone());
 
     reset_optimization_stats();
     let before = optimization_stats_snapshot();

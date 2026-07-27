@@ -19,10 +19,10 @@ fn sumcheck_round<F: Field, NUM_VARS: Size, V: 3..NUM_VARS + 1>(
     instance curr_poly: Poly<F, V, 1>,
     instance challenges: [F; NUM_VARS - V + 1],
     instance prev_eval: F,
-    instance challenge: F,
+    instance ch: F,
     instance curr_round: Fin<NUM_VARS>
 ) -> Unit {
-    let residual_poly = eval(curr_poly, [challenge]);
+    let residual_poly = eval(curr_poly, [ch]);
     // Round polynomial: sum the residual over the Boolean-tail hypercube.
     // This lowers to a generic materialized reduce-map.
     let round_poly = reduce(+, [
@@ -53,10 +53,10 @@ fn sumcheck_round<F: Field, NUM_VARS: Size>(
     instance curr_poly: Poly<F, 2, 1>,
     instance challenges: [F; NUM_VARS - 1],
     instance prev_eval: F,
-    instance challenge: F,
+    instance ch: F,
     instance curr_round: Fin<NUM_VARS>
 ) -> Unit {
-    let residual_poly = eval(curr_poly, [challenge]);
+    let residual_poly = eval(curr_poly, [ch]);
     let points = 0..2;
     let evs = sample_univariate(residual_poly, points);
     evs_msg <- evs;
@@ -78,10 +78,10 @@ fn sumcheck_round<F: Field, NUM_VARS: Size>(
 // Initial round: fold round-1 message
 proto sumcheck<F: Field, NUM_VARS: Size>(
     instance claimed_sum: F,
-    instance poly: Poly<F, NUM_VARS, 1>
+    instance p: Poly<F, NUM_VARS, 1>
 ) where let points = 0..2;
         let round_poly0 = reduce(+, [
-            eval<0>(poly, tail)
+            eval<0>(p, tail)
             for tail in [
                 [((i / (2^j)) % 2) for j in 0..(NUM_VARS - 1)]
                 for i in 0..(2^(NUM_VARS - 1))
@@ -92,7 +92,7 @@ proto sumcheck<F: Field, NUM_VARS: Size>(
 
     let points = 0..2;
     let round_poly0 = reduce(+, [
-        eval<0>(poly, tail)
+        eval<0>(p, tail)
         for tail in [
             [((i / (2^j)) % 2) for j in 0..(NUM_VARS - 1)]
             for i in 0..(2^(NUM_VARS - 1))
@@ -105,5 +105,5 @@ proto sumcheck<F: Field, NUM_VARS: Size>(
     r1 <- challenge<F>;
     let g = interpolate(points, evs0_msg);
     let prev = g(r1);
-    sumcheck_round(poly, poly, [r1], prev, r1, 1)
+    sumcheck_round(p, p, [r1], prev, r1, 1)
 }
