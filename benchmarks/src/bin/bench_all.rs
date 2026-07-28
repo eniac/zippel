@@ -1,4 +1,4 @@
-//! Runs every benchmark (schnorr, sumcheck, ipa, kzg, pari) at the rayon
+//! Runs every benchmark (schnorr, sumcheck, ipa, kzg, pari, groth16, pst13, hyrax, spartan) at the rayon
 //! thread count of the current process and writes a single CSV.
 //!
 //! Columns: system, threads, log_size, prover_time_ms, verifier_time_ms,
@@ -12,9 +12,12 @@
 //!   kzg      : log_2(N)    (N = coefficient count; degree = N-1)
 //!   pari     : M           (K = 2^M constraints)
 //!   groth16  : log_2(C)    (C = num_constraints in the bench circuit)
+//!   pst13    : log_2(N)    (N = coefficient count)
+//!   hyrax    : log_size    (n = total multilinear variables)
+//!   spartan  : M           (num_constraints = 2^M)
 //!
 //! Thread sweeping is done by running this binary multiple times with
-//! different `RAYON_NUM_THREADS`. The wrapper script `run_all.sh` does that
+//! different `RAYON_NUM_THREADS`. The wrapper script `run_sweep.sh` does that
 //! and concatenates the CSVs. We tried `rayon::ThreadPool::install` to vary
 //! threads in-process, but arkworks' `parallel` feature hangs on a
 //! single-thread pool installed mid-process — running with the global pool
@@ -93,12 +96,8 @@ const ZIPPEL_KZG: &str = include_str!("../../../examples/kzg/kzg.zippel");
 const ZIPPEL_PARI: &str = include_str!("../../../examples/pari/pari.zippel");
 const ZIPPEL_GROTH16: &str = include_str!("../../../examples/groth16/groth16.zippel");
 const ZIPPEL_PST13: &str = include_str!("../../../examples/pst13/pst13.zippel");
-// `examples/hyrax/hyrax.zippel` is intentionally NOT pulled in here —
-// the bench renders a sized proto at run time via
-// `hyrax::zippel_side::render_proto(l, m)`, and `zippel_ncloc("hyrax")`
-// counts THAT rendered text so the printed LOC matches exactly what
-// the benchmark actually executes (not the hardcoded n=8 example file).
-const SPARTAN_WRAPPER_RS: &str = include_str!("../../src/spartan.rs");
+const ZIPPEL_HYRAX: &str = include_str!("../../../examples/hyrax/hyrax.zippel");
+const ZIPPEL_SPARTAN: &str = include_str!("../../../examples/spartan/spartan.zippel");
 
 const NATIVE_IPA_RS: &str = include_str!("../../src/ipa.rs");
 // Upstream PARI baseline: vendored from alireza-shirzad/garuda-pari (commit
@@ -131,16 +130,13 @@ const NATIVE_HYRAX_MOD_RS: &str = include_str!("../../src/hyrax_upstream/mod.rs"
 // For systems delegating to external crates, native = prover + verifier code
 // in the underlying crate (counted once locally with `cloc`-style NCLOC, pinned
 // to the version in benchmarks/Cargo.lock at the time these were measured).
-// Update when bumping crate versions.
 const SCHNORR_EXT_NCLOC: usize = 186;   // ark-crypto-primitives-0.6.0 src/signature/schnorr/mod.rs
 const SUMCHECK_EXT_NCLOC: usize = 1544; // vendored from hyperplonk: src/sumcheck_upstream/{arithmetic,poly_iop,transcript}/*.rs (ported to ark 0.6)
 const KZG_EXT_NCLOC: usize = 527;       // ark-poly-commit-0.6.0 src/kzg10/mod.rs
 const GROTH16_EXT_NCLOC: usize = 458;   // ark-groth16-0.6.0 src/{prover,verifier,r1cs_to_qap}.rs
-// PST13 native NCLOC is computed dynamically from the vendored module
-// (see NATIVE_PST13_*_RS above); no static constant needed.
 const SPARTAN_EXT_NCLOC: usize = 1867;  // spartan-0.9.0 src/{r1csproof,sumcheck}.rs + src/nizk/{mod,bullet}.rs
-// Hyrax native NCLOC is computed dynamically from the vendored module
-// (see NATIVE_HYRAX_MOD_RS above); no static constant needed.
+// PST13, Hyrax, PARI, and IPA native NCLOC are computed dynamically from their
+// respective source files above.
 
 fn count_ncloc_line_comments(src: &str) -> usize {
     src.lines()
@@ -203,26 +199,7 @@ fn extract_braced_block<'a>(src: &'a str, header: &str) -> &'a str {
     body
 }
 
-fn extract_raw_string<'a>(src: &'a str, header: &str) -> &'a str {
-    let Some(start) = src.find(header) else {
-        return "";
-    };
-    let after = &src[start..];
-    let Some(rs) = after.find("r#\"") else {
-        return "";
-    };
-    let body_start = rs + 3;
-    let body = &after[body_start..];
-    let Some(end) = body.find("\"#") else {
-        return body;
-    };
-    &body[..end]
-}
 
-fn spartan_zippel_ncloc() -> usize {
-    let proto = extract_raw_string(SPARTAN_WRAPPER_RS, "fn generate_proto");
-    count_ncloc_line_comments(proto)
-}
 
 
 fn zippel_ncloc(sys: &str) -> usize {
@@ -234,13 +211,8 @@ fn zippel_ncloc(sys: &str) -> usize {
         "pari" => count_ncloc_line_comments(ZIPPEL_PARI),
         "groth16" => count_ncloc_line_comments(ZIPPEL_GROTH16),
         "pst13" => count_ncloc_line_comments(ZIPPEL_PST13),
-        // The hyrax bench RENDERS a sized proto from a template at
-        // run time rather than running examples/hyrax/hyrax.zippel
-        // verbatim, so count the rendered text (defaulting to the
-        // l=m=4 → n=8 instance — any size is structurally identical).
-        // This guarantees the LOC matches exactly what's executed.
-        "hyrax" => count_ncloc_line_comments(&hyrax::zippel_side::render_proto(4, 4)),
-        "spartan" => spartan_zippel_ncloc(),
+        "hyrax" => count_ncloc_line_comments(ZIPPEL_HYRAX),
+        "spartan" => count_ncloc_line_comments(ZIPPEL_SPARTAN),
         _ => 0,
     }
 }

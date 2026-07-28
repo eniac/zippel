@@ -10,17 +10,15 @@ pub mod zippel_side {
     use ark_std::UniformRand;
     use ark_std::rand::SeedableRng;
     use backend::{ArkBls12_381, Value};
-    use lang::id::Vid;
+    use lang::id::{Tid, Vid};
     use share::Ctx;
-    use std::io::Write;
+    use std::path::PathBuf;
     use std::time::Instant;
-    use tempfile::NamedTempFile;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
         inputs: Ctx<Vid, Value<ArkBls12_381>>,
-        _source_file: NamedTempFile,
         compile_time: std::time::Duration,
     }
 
@@ -36,10 +34,14 @@ pub mod zippel_side {
             let ncols = 1usize << m;
             let ntot = nrows * ncols;
 
-            let mut source_file = NamedTempFile::with_suffix(".zippel").expect("tempfile");
-            source_file
-                .write_all(render_proto(l, m).as_bytes())
-                .expect("write tempfile");
+            let zippel_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("examples/hyrax/hyrax.zippel");
+            let zippel_path = if zippel_path.exists() {
+                zippel_path
+            } else {
+                PathBuf::from("examples/hyrax/hyrax.zippel")
+            };
 
             let mut seed_bytes = [0u8; 32];
             seed_bytes[..8].copy_from_slice(&(0xFEEDFACE_u64 ^ n as u64).to_le_bytes());
@@ -64,6 +66,9 @@ pub mod zippel_side {
             let g_base = G1Projective::rand(&mut rng);
             let h_base = G1Projective::rand(&mut rng);
 
+            let g_traps: Vec<Fr> = vec![Fr::zero(); ncols];
+            let h_trap = Fr::zero();
+
             let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
                 (Vid("p".to_string()), Value::VecScalar(p)),
                 (Vid("z_row".to_string()), Value::VecScalar(z_row)),
@@ -72,6 +77,8 @@ pub mod zippel_side {
                 (Vid("g_vec".to_string()), Value::VecG1Affine(g_vec_aff)),
                 (Vid("g_base".to_string()), Value::G1(g_base)),
                 (Vid("h_base".to_string()), Value::G1(h_base)),
+                (Vid("g_traps".to_string()), Value::VecScalar(g_traps)),
+                (Vid("h_trap".to_string()), Value::Scalar(h_trap)),
             ]);
 
             // Time the zippel compiler: source → executable graph.
@@ -80,15 +87,17 @@ pub mod zippel_side {
             // graph→TDag work the runtime does) and excludes the actual
             // prove/verify execution.
             let compile_start = Instant::now();
-            let args = ZippelArgs::new(source_file.path().to_path_buf());
+            let args = ZippelArgs::new(zippel_path);
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-            handler.compile(&Ctx::new());
+            let mut sizes = Ctx::new();
+            sizes.insert(&Tid::new("L"), &l);
+            sizes.insert(&Tid::new("M"), &m);
+            handler.compile(&sizes);
             let compile_time = compile_start.elapsed();
 
             Setup {
                 handler,
                 inputs,
-                _source_file: source_file,
                 compile_time,
             }
         }
@@ -153,79 +162,6 @@ pub mod zippel_side {
             size *= 2;
         }
         out
-    }
-
-    pub fn render_proto(l: usize, m: usize) -> String {
-        let nrows = 1usize << l;
-        let ncols = 1usize << m;
-        let ntot = nrows * ncols;
-        format!(
-            r#"fn eq_weights<G: Group, F: Scalar<G>>(instance x: [F; 1]) -> [F; 2] {{
-    [ (1 - x[0]), x[0] ]
-}}
-
-fn eq_weights<G: Group, F: Scalar<G>, K: 2..21>(instance x: [F; K]) -> [F; 2^K] {{
-    let x_lo = x[0..(K-1)];
-    let a    = x[K-1];
-    let prev = eq_weights(x_lo);
-    (prev * (1 - a)) ++ (prev * a)
-}}
-
-proto hyrax<G: Group, F: Scalar<G>>(
-    witness p:     [F; {ntot}],
-    instance z_row:  [F; {l}],
-    instance z_col:  [F; {m}],
-    instance y:      F,
-    instance g_vec:  [G; {ncols}],
-    instance g_base: G,
-    instance h_base: G
-) where
-    // Hyrax proves y == p̃(z_row, z_col), where p̃ is the multilinear
-    // extension of `p` indexed row-major as a {nrows}×{ncols} matrix.
-    // Flatten the tensored eq-basis over (z_row, z_col) into one vector
-    // so the relation is a single dot product against `p`, matching how
-    // pst13.zippel expresses `y == dot(eq_mle(z), p)`.
-    let l_vec = eq_weights(z_row);
-    let r_vec = eq_weights(z_col);
-    let eq_full = [l_vec[i / {ncols}] * r_vec[i % {ncols}] for i in 0..{ntot}];
-    y == dot(eq_full, p)
-{{
-    let r_rows = [random<F> for i in 0..{nrows}];
-    c_rows <- [
-        h_base * r_rows[i] + dot(g_vec, [p[i*{ncols} + j] for j in 0..{ncols}])
-        for i in 0..{nrows}
-    ];
-
-    let l_vec = eq_weights(z_row);
-    let r_vec = eq_weights(z_col);
-    let big_t   = dot(l_vec, c_rows);
-    let r_big_t = dot(l_vec, r_rows);
-    let u = [
-        dot(l_vec, [p[i*{ncols} + j] for i in 0..{nrows}])
-        for j in 0..{ncols}
-    ];
-
-    let r_tau   = random<F>;
-    let d_vec   = [random<F> for i in 0..{ncols}];
-    let r_delta = random<F>;
-    let r_beta  = random<F>;
-
-    tau   <- g_base * y + h_base * r_tau;
-    delta <- h_base * r_delta + dot(g_vec, d_vec);
-    beta  <- g_base * dot(d_vec, r_vec) + h_base * r_beta;
-
-    c <- challenge<F>;
-
-    z_vec   <- [c * u[i] + d_vec[i] for i in 0..{ncols}];
-    z_delta <- c * r_big_t + r_delta;
-    z_beta  <- c * r_tau + r_beta;
-
-    let check1 = big_t * c + delta == h_base * z_delta + dot(g_vec, z_vec);
-    let check2 = tau   * c + beta  == g_base * dot(z_vec, r_vec) + h_base * z_beta;
-    verify(check1 && check2)
-}}
-"#
-        )
     }
 }
 
