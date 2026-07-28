@@ -79,7 +79,7 @@ pub mod zippel_side {
             }
             let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
                 (Vid("claimed_sum".to_string()), Value::Scalar(claimed_sum)),
-                (Vid("poly".to_string()), Value::Poly(full_poly)),
+                (Vid("p".to_string()), Value::Poly(full_poly)),
             ]);
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_proof = None;

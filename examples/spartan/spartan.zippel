@@ -1,4 +1,4 @@
-// Spartan protocol (Setty, Vuvisk, Panitchawadi 2020).
+// Spartan protocol (Setty 2020).
 // Parametric over M (the number of variables in the R1CS constraint system).
 // Pin M in main.rs via sizes.insert(&Tid::new("M"), &M).
 //
