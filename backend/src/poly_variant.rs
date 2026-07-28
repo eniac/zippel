@@ -128,18 +128,23 @@ fn fix_first_variables_parallel<F: Field>(
     );
     let nv = mle.num_vars();
     let dim = partial_point.len();
-    let mut data: Vec<F> = mle.evaluations.clone();
-    for (i, &r) in partial_point.iter().enumerate() {
-        let half = 1usize << (nv - i - 1);
+    if dim == 0 {
+        return mle.clone();
+    }
+    fn fold_step<F: Field>(src: &[F], r: F, half: usize) -> Vec<F> {
         let mut next = vec![F::zero(); half];
         next.par_iter_mut().enumerate().for_each(|(b, slot)| {
-            let left = data[b << 1];
-            let right = data[(b << 1) + 1];
+            let left = src[b << 1];
+            let right = src[(b << 1) + 1];
             *slot = left + r * (right - left);
         });
-        data = next;
+        next
     }
-    DenseMultilinearExtension::from_evaluations_slice(nv - dim, &data[..(1 << (nv - dim))])
+    let mut data = fold_step(&mle.evaluations, partial_point[0], 1 << (nv - 1));
+    for (i, &r) in partial_point.iter().enumerate().skip(1) {
+        data = fold_step(&data, r, 1 << (nv - i - 1));
+    }
+    DenseMultilinearExtension::from_evaluations_vec(nv - dim, data)
 }
 
 fn fixed_index_for_var(free_range: CRange, var_idx: usize) -> Option<usize> {

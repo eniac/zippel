@@ -1786,22 +1786,21 @@ impl<C: ArkConfig> Value<C> {
             .expect("hypercube reduce tail arity exceeds usize bit width");
         let degree = shape.max_degree.max(poly.degree_bound());
         let evals: Vec<C::F> = (0..=degree)
-            .into_par_iter()
             .map(|t_idx| {
                 let t = C::FOps::from_usize(t_idx);
-                let mut sum = C::F::zero();
-                for tail_index in 0..tail_count {
-                    let mut point = Vec::with_capacity(shape.input_num_vars);
-                    point.push(t);
-                    for bit_index in 0..tail_num_vars {
-                        let bit = (tail_index >> bit_index) & 1;
-                        point.push(if bit == 0 { C::F::zero() } else { C::F::one() });
-                    }
-                    sum += poly
-                        .evaluate_mv(&point)
-                        .expect("hypercube reduce selected evaluation failed");
-                }
-                sum
+                (0..tail_count)
+                    .into_par_iter()
+                    .map(|tail_index| {
+                        let mut point = Vec::with_capacity(shape.input_num_vars);
+                        point.push(t);
+                        for bit_index in 0..tail_num_vars {
+                            let bit = (tail_index >> bit_index) & 1;
+                            point.push(if bit == 0 { C::F::zero() } else { C::F::one() });
+                        }
+                        poly.evaluate_mv(&point)
+                            .expect("hypercube reduce selected evaluation failed")
+                    })
+                    .sum()
             })
             .collect();
 
@@ -2880,6 +2879,59 @@ impl<C: ArkConfig> Value<C> {
     }
 }
 
+const HYPERCUBE_PARALLEL_TAIL_THRESHOLD: usize = 1024;
+
+enum FactorRef<'a, F> {
+    Dense(&'a [F]),
+    Sparse(&'a std::collections::HashMap<usize, F>),
+}
+
+fn accumulate_term<F: Field>(
+    term: &mut [F],
+    coefficient: F,
+    coeff_is_one: bool,
+    factors: &[FactorRef<F>],
+    tail_index: usize,
+    degree_cap: usize,
+) -> usize {
+    let base = tail_index << 1;
+    #[inline]
+    fn endpoints<F: Field>(f: &FactorRef<F>, base: usize) -> (F, F) {
+        match f {
+            FactorRef::Dense(evals) => (evals[base], evals[base | 1]),
+            FactorRef::Sparse(map) => (
+                map.get(&base).copied().unwrap_or_else(F::zero),
+                map.get(&(base | 1)).copied().unwrap_or_else(F::zero),
+            ),
+        }
+    }
+    let (mut len, start) = if coeff_is_one && !factors.is_empty() && degree_cap >= 2 {
+        let (v0, v1) = endpoints(&factors[0], base);
+        term[0] = v0;
+        term[1] = v1 - v0;
+        (2usize, 1usize)
+    } else {
+        term[0] = coefficient;
+        (1usize, 0usize)
+    };
+    for f in &factors[start..] {
+        let (v0, v1) = endpoints(f, base);
+        let delta = v1 - v0;
+        let new_len = (len + 1).min(degree_cap).max(1);
+        for i in (0..new_len).rev() {
+            let hi = if i < len { term[i] * v0 } else { F::zero() };
+            let lo = if i >= 1 && i - 1 < len {
+                term[i - 1] * delta
+            } else {
+                F::zero()
+            };
+            term[i] = hi + lo;
+        }
+        len = new_len;
+    }
+    len
+}
+
 fn hypercube_reduce_selected_mle_products<C: ArkConfig>(
     poly: &VirtualPolynomial<C::F>,
     tail_num_vars: usize,
@@ -2890,11 +2942,28 @@ fn hypercube_reduce_selected_mle_products<C: ArkConfig>(
     }
     let tail_count = 1usize.checked_shl(tail_num_vars as u32)?;
     let degree_cap = shape.max_degree.max(poly.degree_bound()) + 1;
-    let mut total = vec![C::F::zero(); degree_cap.max(1)];
+
+    for (_coefficient, indices) in &poly.products {
+        for &idx in indices {
+            match poly.flattened_polys.get(idx)?.as_ref() {
+                PolyVariant::DenseMle(mle) => {
+                    if mle.num_vars() != shape.input_num_vars {
+                        return None;
+                    }
+                }
+                PolyVariant::SparseMle { num_vars, .. } => {
+                    if *num_vars != shape.input_num_vars {
+                        return None;
+                    }
+                }
+                _ => return None,
+            }
+        }
+    }
 
     let sparse_mle_maps: Vec<Option<std::collections::HashMap<usize, C::F>>> = poly
         .flattened_polys
-        .iter()
+        .par_iter()
         .map(|poly_ref| match poly_ref.as_ref() {
             PolyVariant::SparseMle { evals, .. } => {
                 let mut map = std::collections::HashMap::with_capacity(evals.len());
@@ -2907,36 +2976,69 @@ fn hypercube_reduce_selected_mle_products<C: ArkConfig>(
         })
         .collect();
 
+    let mut total = vec![C::F::zero(); degree_cap.max(1)];
+
     for (coefficient, indices) in &poly.products {
-        for tail_index in 0..tail_count {
-            let mut term = vec![*coefficient];
-            for &idx in indices {
-                let factor = match poly.flattened_polys[idx].as_ref() {
-                    PolyVariant::DenseMle(mle) => {
-                        if mle.num_vars() != shape.input_num_vars {
-                            return None;
-                        }
-                        let base_idx = tail_index.checked_shl(1)?;
-                        let v0 = *mle.evaluations.get(base_idx)?;
-                        let v1 = *mle.evaluations.get(base_idx | 1)?;
-                        [v0, v1 - v0]
-                    }
-                    PolyVariant::SparseMle { num_vars, .. } => {
-                        if *num_vars != shape.input_num_vars {
-                            return None;
-                        }
-                        let map = sparse_mle_maps[idx].as_ref()?;
-                        let base_idx = tail_index.checked_shl(1)?;
-                        let v0 = map.get(&base_idx).copied().unwrap_or_else(C::F::zero);
-                        let v1 = map.get(&(base_idx | 1)).copied().unwrap_or_else(C::F::zero);
-                        [v0, v1 - v0]
-                    }
-                    _ => return None,
-                };
-                term = mul_coeffs_truncated::<C::F>(&term, &factor, degree_cap);
+        let factors: Vec<FactorRef<C::F>> = indices
+            .iter()
+            .map(|&idx| match poly.flattened_polys[idx].as_ref() {
+                PolyVariant::DenseMle(mle) => FactorRef::Dense(&mle.evaluations),
+                PolyVariant::SparseMle { .. } => {
+                    FactorRef::Sparse(sparse_mle_maps[idx].as_ref().unwrap())
+                }
+                _ => unreachable!(),
+            })
+            .collect();
+        let coeff_is_one = coefficient.is_one();
+
+        let product_total = if tail_count < HYPERCUBE_PARALLEL_TAIL_THRESHOLD {
+            let mut acc = vec![C::F::zero(); degree_cap.max(1)];
+            let mut term = vec![C::F::zero(); degree_cap.max(1)];
+            for tail_index in 0..tail_count {
+                let n = accumulate_term(
+                    &mut term,
+                    *coefficient,
+                    coeff_is_one,
+                    &factors,
+                    tail_index,
+                    degree_cap,
+                );
+                add_coeffs_assign(&mut acc, &term[..n]);
             }
-            add_coeffs_assign(&mut total, &term);
-        }
+            acc
+        } else {
+            (0..tail_count)
+                .into_par_iter()
+                .fold(
+                    || {
+                        (
+                            vec![C::F::zero(); degree_cap.max(1)],
+                            vec![C::F::zero(); degree_cap.max(1)],
+                        )
+                    },
+                    |(mut acc, mut term), tail_index| {
+                        let n = accumulate_term(
+                            &mut term,
+                            *coefficient,
+                            coeff_is_one,
+                            &factors,
+                            tail_index,
+                            degree_cap,
+                        );
+                        add_coeffs_assign(&mut acc, &term[..n]);
+                        (acc, term)
+                    },
+                )
+                .map(|(acc, _)| acc)
+                .reduce(
+                    || vec![C::F::zero(); degree_cap.max(1)],
+                    |mut a, b| {
+                        add_coeffs_assign(&mut a, &b);
+                        a
+                    },
+                )
+        };
+        add_coeffs_assign(&mut total, &product_total);
     }
 
     trim_trailing_zero_coeffs(&mut total);
@@ -2970,19 +3072,6 @@ fn sparse_mle_factor_as_univariate<C: ArkConfig>(
         }
     }
     Some([v0, v1 - v0])
-}
-
-fn mul_coeffs_truncated<F: Field>(left: &[F], right: &[F; 2], max_len: usize) -> Vec<F> {
-    let mut result = vec![F::zero(); (left.len() + 1).min(max_len).max(1)];
-    for (i, coeff) in left.iter().enumerate() {
-        if i < result.len() {
-            result[i] += *coeff * right[0];
-        }
-        if i + 1 < result.len() {
-            result[i + 1] += *coeff * right[1];
-        }
-    }
-    result
 }
 
 fn reduce_univariate_poly_sum<C: ArkConfig>(

@@ -289,12 +289,7 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
             .flattened_polys
             .par_iter()
             .map(|poly_arc| -> Result<Arc<PolyVariant<F>>, PolyError<F>> {
-                let fixed_variant = match &**poly_arc {
-                    PolyVariant::DenseMle(mle) => {
-                        PolyVariant::DenseMle(mle.clone()).evaluate_or_fix_mle(points)?
-                    }
-                    other => other.clone(),
-                };
+                let fixed_variant = (**poly_arc).evaluate_or_fix_mle(points)?;
                 Ok(Arc::new(fixed_variant))
             })
             .collect::<Result<_, _>>()?;

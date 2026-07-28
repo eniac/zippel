@@ -170,13 +170,13 @@ fn verify_domain_is_canonical_indices<C: ArkConfig>(dom_val: &Value<C>, n: usize
             if v.len() != n {
                 return false;
             }
-            v.iter().enumerate().all(|(i, &val)| val == i)
+            v.par_iter().enumerate().all(|(i, &val)| val == i)
         }
         Value::VecScalar(v) => {
             if v.len() != n {
                 return false;
             }
-            v.iter()
+            v.par_iter()
                 .enumerate()
                 .all(|(i, &val)| val == <C::F as From<u64>>::from(i as u64))
         }
@@ -184,7 +184,7 @@ fn verify_domain_is_canonical_indices<C: ArkConfig>(dom_val: &Value<C>, n: usize
             if v.len() != n {
                 return false;
             }
-            v.iter().enumerate().all(|(i, val)| match val {
+            v.par_iter().enumerate().all(|(i, val)| match val {
                 Value::Index(idx) => *idx == i,
                 Value::Scalar(f) => *f == <C::F as From<u64>>::from(i as u64),
                 _ => false,
@@ -246,7 +246,7 @@ fn verify_domain_is_canonical_coordinates<C: ArkConfig>(
         Value::Vec(elements) => {
             elements.len() == n
                 && elements
-                    .iter()
+                    .par_iter()
                     .enumerate()
                     .all(|(i, val)| is_canonical_hypercube_vector::<C>(val, i, k))
         }
@@ -410,27 +410,31 @@ where
     }
     let tail_num_vars = n.trailing_zeros() as usize;
 
-    // Evaluate domain
-    let dom_val = Arc::unwrap_or_clone(eval_op_with_loop_params(
-        domain,
-        env,
-        rng,
-        loop_params,
-        check_sink,
-    )?);
-    if !is_vector_value(&dom_val) {
+    // Evaluate the domain, borrowing an inline `Op::Value` (the lowered sumcheck
+    // domain is always `Op::Value(VecIndex(0..n))`) to avoid cloning a
+    // `Vec<usize>` of `n` entries on every round; only non-inline domains are
+    // materialized into an owned `Arc`.
+    let dom_arc: Arc<Value<C>>;
+    let dom_ref: &Value<C> = match domain.get() {
+        Op::Value(v) => v,
+        _ => {
+            dom_arc = eval_op_with_loop_params(domain, env, rng, loop_params, check_sink)?;
+            &dom_arc
+        }
+    };
+    if !is_vector_value(dom_ref) {
         return Err(EvalError::TypeMismatch {
             expected: "vector".to_string(),
-            got: format!("{}", dom_val),
+            got: format!("{}", dom_ref),
         });
     }
     // Verify that evaluating fixed at each index of the domain produces canonical hypercube coordinates
     let is_hypercube = match fixed.get() {
         Op::LoopParam(level, _) if *level == loop_params.len() => {
-            verify_domain_is_canonical_coordinates(&dom_val, n, tail_num_vars)
+            verify_domain_is_canonical_coordinates(dom_ref, n, tail_num_vars)
         }
         _ => {
-            verify_domain_is_canonical_indices(&dom_val, n)
+            verify_domain_is_canonical_indices(dom_ref, n)
                 && (try_match_canonical_hypercube_ast(fixed, env, rng, loop_params, check_sink)?
                     || verify_hypercube_coordinates(
                         fixed,
@@ -438,7 +442,7 @@ where
                         rng,
                         loop_params,
                         check_sink,
-                        &dom_val,
+                        dom_ref,
                         n,
                         tail_num_vars,
                     )?)
@@ -463,12 +467,13 @@ where
             ))))
         } else {
             // Fallback using already evaluated dom_val
-            let results = eval_loop_body_each(body, env, dom_val.into_elements(), loop_params)?;
+            let results =
+                eval_loop_body_each(body, env, dom_ref.clone().into_elements(), loop_params)?;
             Ok(Some(Arc::new(Value::value_vec(results).value_reduce(op))))
         }
     } else {
         // Fallback using already evaluated dom_val
-        let results = eval_loop_body_each(body, env, dom_val.into_elements(), loop_params)?;
+        let results = eval_loop_body_each(body, env, dom_ref.clone().into_elements(), loop_params)?;
         Ok(Some(Arc::new(Value::value_vec(results).value_reduce(op))))
     }
 }
