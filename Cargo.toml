@@ -1,7 +1,7 @@
 [workspace]
-members = ["lang", "runtime", "share", "graph", "backend", "analyses"]
+members = ["lang", "runtime", "share", "graph", "backend", "analyses", "egraph"]
 exclude = ["sumcheck_compare", "benchmarks"]
-default-members = [".", "lang", "runtime", "share", "graph", "backend", "analyses"]
+default-members = [".", "lang", "runtime", "share", "graph", "backend", "analyses", "egraph"]
 resolver = "2"
 
 [lints.rust]
