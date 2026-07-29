@@ -435,20 +435,11 @@ pub mod zippel_side {
                 (Vid("tau_h".to_string()), Value::G2(self.srs.tau_h)),
                 (Vid("h_g2".to_string()), Value::G2(self.srs.h_g2)),
                 (
-                    Vid("v_k_coeffs".to_string()),
-                    Value::VecScalar(self.srs.v_k_coeffs.clone()),
+                    Vid("v_k_poly".to_string()),
+                    Value::VecScalar(self.srs.v_k_coeffs.clone()).value_poly(),
                 ),
                 (Vid("f_one".to_string()), Value::Scalar(F::one())),
                 (Vid("k_inv".to_string()), Value::Scalar(self.srs.k_inv)),
-                // Relation-only trapdoor witnesses required by the
-                // proto's `where` clause. Body/verifier don't read
-                // them; `with_skip_analyses()` keeps the where out of
-                // the executable graph, but `run_prover` still checks
-                // every formal witness input is present. Zeros suffice.
-                (Vid("tau".to_string()), Value::Scalar(F::zero())),
-                (Vid("alpha".to_string()), Value::Scalar(F::zero())),
-                (Vid("beta".to_string()), Value::Scalar(F::zero())),
-                (Vid("delta2".to_string()), Value::Scalar(F::zero())),
             ]);
 
             // --- Time prove (mean of PROVER_SAMPLES samples) ---

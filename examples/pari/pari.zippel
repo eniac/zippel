@@ -94,24 +94,20 @@ proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
     // (X - r) as a polynomial.
     instance  f_one:      F,
     // 1/K (mod the scalar field), precomputed by the verifier once at setup.
-    instance  k_inv:      F,
-
-    // Relation-only trapdoor witnesses (analogous to pst13's witness
-    // alpha). Body/verifier don't reference these; the `where` clause
-    // uses them to declare the SRS structural identities so the static
-    // completeness analyzer can close the verifier's pairing check.
-    witness tau:        F,
-    witness alpha:      F,
-    witness beta:       F,
-    witness delta2:     F
+    instance  k_inv:      F
 ) where
+    // Trusted setup: sample the trapdoors (τ, α, β, δ_2), then derive
+    // the SRS elements from them (Fig. 6 Generator).
+    let tau    = random<F>;
+    let alpha  = random<F>;
+    let beta   = random<F>;
+    let delta2 = random<F>;
     // (1) SR1CS satisfaction on the constraint domain K:
     //       (A z) ⊙ (A z) == (B z), element-wise.
     //     With Az and Bz supplied as inputs this is the prover
     //     precondition; the protocol body attests to it succinctly.
     [z_a_evals[i] * z_a_evals[i] for i in 0..K] == [z_b_evals[i] for i in 0..K];
-    // (2) SRS trapdoor identities (Fig. 6 Generator).
-    //     Verifier keys expose (alpha, beta, tau, delta2) via G1/G2:
+    // (2) Verifier keys expose (alpha, beta, tau, delta2) via G1/G2:
     alpha_g   == g_g1 * alpha;
     beta_g    == g_g1 * beta;
     tau_h     == h_g2 * tau;

@@ -66,9 +66,6 @@ pub mod zippel_side {
             let g_base = G1Projective::rand(&mut rng);
             let h_base = G1Projective::rand(&mut rng);
 
-            let g_traps: Vec<Fr> = vec![Fr::zero(); ncols];
-            let h_trap = Fr::zero();
-
             let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
                 (Vid("p".to_string()), Value::VecScalar(p)),
                 (Vid("z_row".to_string()), Value::VecScalar(z_row)),
@@ -77,8 +74,6 @@ pub mod zippel_side {
                 (Vid("g_vec".to_string()), Value::VecG1Affine(g_vec_aff)),
                 (Vid("g_base".to_string()), Value::G1(g_base)),
                 (Vid("h_base".to_string()), Value::G1(h_base)),
-                (Vid("g_traps".to_string()), Value::VecScalar(g_traps)),
-                (Vid("h_trap".to_string()), Value::Scalar(h_trap)),
             ]);
 
             // Time the zippel compiler: source → executable graph.

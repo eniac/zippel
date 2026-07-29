@@ -23,26 +23,6 @@ fn eq_weights<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 2
     (prev * (1 - a)) ++ (prev * a)
 }
 
-// Witness-input variant of eq_weights, used by the proto's `where`
-// clause to expand the trusted-setup trapdoors (tau_x, tau_y) into
-// their Lagrange-basis weights so the SRS tensor identity can be
-// declared structurally. Body is identical; only the qualifier differs
-// (qualifier-poly function dispatch isn't established elsewhere).
-fn eq_weights_witness<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
-    witness x: [F; 1]
-) -> [F; 2] {
-    [ (1 - x[0]), x[0] ]
-}
-
-fn eq_weights_witness<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 2..16>(
-    witness x: [F; K]
-) -> [F; 2^K] {
-    let x_lo = x[0..(K-1)];
-    let a = x[K-1];
-    let prev = eq_weights_witness(x_lo);
-    (prev * (1 - a)) ++ (prev * a)
-}
-
 proto kzh<
     G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
     NX: Size, NY: Size, NXV: 2^NX, NYV: 2^NY, NXY: 2^(NX+NY)
@@ -53,28 +33,37 @@ proto kzh<
     instance d_x:     [G1; NXV],
     instance v_prime: G2,
     instance v_x:     [G2; NXV],
-    // Relation-only trapdoor witnesses (analogous to pst13's witness
-    // alpha). Body/verifier don't reference these; the `where` clause
-    // uses them to declare the KZH-2 SRS tensor structure.
-    witness g_gen:  G1,
-    witness tau_x:  [F; NX],
-    witness tau_y:  [F; NY],
-    witness h_gen:  G2
+    instance g_gen:   G1,
+    instance h_gen:   G2
 ) where
-    // KZH-2 SRS tensor structure at the trapdoor (τ_x, τ_y):
+    // Trusted setup: sample the trapdoors (τ_x, τ_y), then derive the
+    // KZH-2 SRS tensor structure at those trapdoors.
     //   H^{i,j} = g · eq(τ_x, i_bits) · eq(τ_y, j_bits)
     //   D^i    = g · eq(τ_x, i_bits)
     //   H^j    = g · eq(τ_y, j_bits)
-    // G2 SRS mirrors the G1 x-marginal: V^i = h · eq(τ_x, i_bits),
-    // and V' = h (the G2 generator). The pairing check
-    //   e(C, V') == Σ_x e(D^x, V^x)
-    // then verifies C is well-formed.
-    //
-    // eq_weights inlined (LSB-first bit decomposition) to avoid
-    // recursive function dispatch in the where clause, which the
-    // static analysis cannot inline.
-    let eq_x = [reduce(*, [tau_x[j] * ((k / (2 ^ j)) % 2) + (1 - tau_x[j]) * (1 - ((k / (2 ^ j)) % 2)) for j in 0..NX]) for k in 0..NXV];
-    let eq_y = [reduce(*, [tau_y[j] * ((k / (2 ^ j)) % 2) + (1 - tau_y[j]) * (1 - ((k / (2 ^ j)) % 2)) for j in 0..NY]) for k in 0..NYV];
+    //   V^i    = h · eq(τ_x, i_bits),   V' = h.
+    // The pairing check e(C, V') == Σ_x e(D^x, V^x) then verifies that
+    // C is well-formed. eq_weights inlined LSB-first (bit_j(k) =
+    // (k / 2^j) % 2) because the analyzer can't dispatch recursive
+    // function calls inside `where`.
+    let tau_x = [random<F> for i in 0..NX];
+    let tau_y = [random<F> for i in 0..NY];
+    let eq_x = [
+        reduce(*, [
+            tau_x[j] * ((k / (2^j)) % 2)
+                + (1 - tau_x[j]) * (1 - ((k / (2^j)) % 2))
+            for j in 0..NX
+        ])
+        for k in 0..NXV
+    ];
+    let eq_y = [
+        reduce(*, [
+            tau_y[j] * ((k / (2^j)) % 2)
+                + (1 - tau_y[j]) * (1 - ((k / (2^j)) % 2))
+            for j in 0..NY
+        ])
+        for k in 0..NYV
+    ];
     [h_xy[k] for k in 0..NXY] == [g_gen * (eq_x[k / NYV] * eq_y[k % NYV]) for k in 0..NXY];
     [d_x[i] for i in 0..NXV] == [g_gen * eq_x[i] for i in 0..NXV];
     [h_y[j] for j in 0..NYV] == [g_gen * eq_y[j] for j in 0..NYV];

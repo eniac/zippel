@@ -1,6 +1,6 @@
 // HyperPlonk example driver.
 
-use ark_ff::{Field, Zero};
+use ark_ff::{Field, One, Zero};
 use backend::{ArkBls12_381, ArkConfig, Value};
 use lang::id::{Tid, Vid};
 use rand::Rng;
@@ -17,13 +17,14 @@ fn main() {
     let zippel_file =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/hyperplonk/hyperplonk.zippel");
 
-    println!("=== HyperPlonk (gate identity + wiring) ===");
+    println!("=== HyperPlonk (gate identity + 3-wire wiring) ===");
     println!("num_gates = {NUM_GATES}, s = log num_gates = {S}");
 
     let args = ZippelArgs::new(zippel_file.clone());
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &S);
+    sizes.insert(&Tid::new("N"), &NUM_GATES);
     handler.compile(&sizes);
 
     let inputs = prover_create_inputs();
@@ -56,6 +57,7 @@ fn main() {
         let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
         let mut analysis_sizes = Ctx::new();
         analysis_sizes.insert(&Tid::new("S"), &S);
+        analysis_sizes.insert(&Tid::new("N"), &NUM_GATES);
         analysis_handler.compile(&analysis_sizes);
 
         let completeness_start = Instant::now();
@@ -86,11 +88,17 @@ struct PlonkishInstance<F> {
     q_o: Vec<F>,
     q_m: Vec<F>,
     q_c: Vec<F>,
-    s_sigma: Vec<F>,
-    s_id: Vec<F>,
+    s_id_a: Vec<F>,
+    s_id_b: Vec<F>,
+    s_id_c: Vec<F>,
+    s_sigma_a: Vec<F>,
+    s_sigma_b: Vec<F>,
+    s_sigma_c: Vec<F>,
     r2: F,
     r: F,
-    v_evs: Vec<F>,
+    v_a: Vec<F>,
+    v_b: Vec<F>,
+    v_c: Vec<F>,
 }
 
 fn build_v_tree<F: Field + Zero>(leaves: &[F]) -> Vec<F> {
@@ -122,10 +130,10 @@ fn build_v_tree<F: Field + Zero>(leaves: &[F]) -> Vec<F> {
     v
 }
 
-/// Build a random satisfying Plonkish instance.
+/// Build a random satisfying Plonkish instance with a full 3N-cell σ.
 fn random_plonkish<F, R>(rng: &mut R, num_gates: usize) -> PlonkishInstance<F>
 where
-    F: Field + Zero,
+    F: Field + Zero + One,
     R: Rng + ?Sized,
 {
     let q_l: Vec<F> = (0..num_gates).map(|_| F::rand(rng)).collect();
@@ -142,10 +150,11 @@ where
         })
         .collect();
 
+    // a is random; shuffled gives b[i] = a[shuffled[i]].
     let a: Vec<F> = (0..num_gates).map(|_| F::rand(rng)).collect();
-    let mut sigma: Vec<usize> = (0..num_gates).collect();
-    sigma.shuffle(rng);
-    let b: Vec<F> = sigma.iter().map(|&j| a[j]).collect();
+    let mut shuffled: Vec<usize> = (0..num_gates).collect();
+    shuffled.shuffle(rng);
+    let b: Vec<F> = shuffled.iter().map(|&j| a[j]).collect();
     let c: Vec<F> = (0..num_gates)
         .map(|i| {
             let lhs = q_l[i] * a[i] + q_r[i] * b[i] + q_m[i] * a[i] * b[i] + q_c[i];
@@ -153,19 +162,64 @@ where
         })
         .collect();
 
-    let s_sigma: Vec<F> = sigma.iter().map(|&j| F::from(j as u64)).collect();
-    let s_id: Vec<F> = (0..num_gates).map(|i| F::from(i as u64)).collect();
+    // Build the 3N-cell permutation σ. Cells are indexed
+    //   0..N       -> a-cells   (row i -> index i)
+    //   N..2N      -> b-cells   (row i -> index N + i)
+    //   2N..3N     -> c-cells   (row i -> index 2N + i)
+    // For each row i, b[i] == a[shuffled[i]] gives the equivalence class
+    //   { a-cell shuffled[i], b-cell i },
+    // which we realize as a 2-cycle. All c-cells sit in singleton classes
+    // (their values are, w.h.p., distinct from all a/b values), so σ acts
+    // as the identity on them. This yields a valid permutation on the 3N
+    // slots with w[σ(k)] == w[k] everywhere.
+    let mut sigma_a: Vec<usize> = (0..num_gates).collect();
+    let mut sigma_b: Vec<usize> = (0..num_gates).map(|i| num_gates + i).collect();
+    let sigma_c: Vec<usize> = (0..num_gates).map(|i| 2 * num_gates + i).collect();
+    for i in 0..num_gates {
+        let j = shuffled[i];
+        sigma_a[j] = num_gates + i;
+        sigma_b[i] = j;
+    }
+
+    let s_id_a: Vec<F> = (0..num_gates).map(|i| F::from(i as u64)).collect();
+    let s_id_b: Vec<F> = (0..num_gates)
+        .map(|i| F::from((num_gates + i) as u64))
+        .collect();
+    let s_id_c: Vec<F> = (0..num_gates)
+        .map(|i| F::from((2 * num_gates + i) as u64))
+        .collect();
+    let s_sigma_a: Vec<F> = sigma_a.iter().map(|&j| F::from(j as u64)).collect();
+    let s_sigma_b: Vec<F> = sigma_b.iter().map(|&j| F::from(j as u64)).collect();
+    let s_sigma_c: Vec<F> = sigma_c.iter().map(|&j| F::from(j as u64)).collect();
 
     // Simulate verifier-side FS draws of r2 and r for the permutation phase.
     let r2 = F::rand(rng);
     let r = F::rand(rng);
 
-    let f_hat: Vec<F> = (0..num_gates).map(|i| s_id[i] + r2 * a[i]).collect();
-    let g_hat: Vec<F> = (0..num_gates).map(|i| s_sigma[i] + r2 * b[i]).collect();
-    let leaves: Vec<F> = (0..num_gates)
-        .map(|i| (r + f_hat[i]) * (r + g_hat[i]).inverse().expect("r + g_hat[i] nonzero"))
-        .collect();
-    let v_evs = build_v_tree(&leaves);
+    // Per-column rational leaves and their grand-product trees.
+    let build_leaves = |s_id: &[F], s_sigma: &[F], w: &[F]| -> Vec<F> {
+        (0..num_gates)
+            .map(|i| {
+                let num = r + s_id[i] + r2 * w[i];
+                let den = r + s_sigma[i] + r2 * w[i];
+                num * den.inverse().expect("r + s_sigma + r2*w nonzero")
+            })
+            .collect()
+    };
+    let leaves_a = build_leaves(&s_id_a, &s_sigma_a, &a);
+    let leaves_b = build_leaves(&s_id_b, &s_sigma_b, &b);
+    let leaves_c = build_leaves(&s_id_c, &s_sigma_c, &c);
+    let v_a = build_v_tree(&leaves_a);
+    let v_b = build_v_tree(&leaves_b);
+    let v_c = build_v_tree(&leaves_c);
+
+    // Sanity: the coupling identity that the proto checks.
+    let root_prod = v_a[num_gates - 1] * v_b[num_gates - 1] * v_c[num_gates - 1];
+    assert_eq!(
+        root_prod,
+        F::one(),
+        "coupling identity v_a[N-1] * v_b[N-1] * v_c[N-1] != 1"
+    );
 
     PlonkishInstance {
         a,
@@ -176,11 +230,17 @@ where
         q_o,
         q_m,
         q_c,
-        s_sigma,
-        s_id,
+        s_id_a,
+        s_id_b,
+        s_id_c,
+        s_sigma_a,
+        s_sigma_b,
+        s_sigma_c,
         r2,
         r,
-        v_evs,
+        v_a,
+        v_b,
+        v_c,
     }
 }
 
@@ -209,13 +269,25 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("q_o_evs".to_string()), Value::VecScalar(inst.q_o)),
         (Vid("q_m_evs".to_string()), Value::VecScalar(inst.q_m)),
         (Vid("q_c_evs".to_string()), Value::VecScalar(inst.q_c)),
+        (Vid("s_id_a_evs".to_string()), Value::VecScalar(inst.s_id_a)),
+        (Vid("s_id_b_evs".to_string()), Value::VecScalar(inst.s_id_b)),
+        (Vid("s_id_c_evs".to_string()), Value::VecScalar(inst.s_id_c)),
         (
-            Vid("s_sigma_evs".to_string()),
-            Value::VecScalar(inst.s_sigma),
+            Vid("s_sigma_a_evs".to_string()),
+            Value::VecScalar(inst.s_sigma_a),
         ),
-        (Vid("s_id_evs".to_string()), Value::VecScalar(inst.s_id)),
+        (
+            Vid("s_sigma_b_evs".to_string()),
+            Value::VecScalar(inst.s_sigma_b),
+        ),
+        (
+            Vid("s_sigma_c_evs".to_string()),
+            Value::VecScalar(inst.s_sigma_c),
+        ),
         (Vid("r2".to_string()), Value::Scalar(inst.r2)),
         (Vid("r".to_string()), Value::Scalar(inst.r)),
-        (Vid("v_evs".to_string()), Value::VecScalar(inst.v_evs)),
+        (Vid("v_a_evs".to_string()), Value::VecScalar(inst.v_a)),
+        (Vid("v_b_evs".to_string()), Value::VecScalar(inst.v_b)),
+        (Vid("v_c_evs".to_string()), Value::VecScalar(inst.v_c)),
     ])
 }

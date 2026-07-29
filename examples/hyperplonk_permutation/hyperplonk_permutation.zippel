@@ -119,10 +119,15 @@ fn perm_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
 }
 
 // ===== Relation helper (used in the where clause) =====
-fn perm_product<F: Field, S: Size, N: 2^S>(
-    instance r: F, instance s: [F; N], instance r2: F, instance x: [F; N]
-) -> F {
-    reduce(*, [r + s[i] + r2 * x[i] for i in 0..N])
+// Bivariate characteristic polynomial of a pair-vector:
+//   pair_char_poly(s, x)(X) = Π_i (s[i] + y*x[i] + X)
+// with y sampled once at analysis time. By Schwartz-Zippel over F[X],
+// two pair-vectors have equal pair_char_poly for a random y iff they
+// are equal as MULTISETS OF PAIRS.
+fn pair_char_poly<F: Field, S: Size, N: 2^S>(
+    instance s: [F; N], instance x: [F; N], instance y: F
+) -> Uni<F, N> {
+    reduce(*, [poly([s[i] + y * x[i], 1]) for i in 0..N])
 }
 
 proto hyperplonk_permutation<F: Field, S: Size, N: 2^S>(
@@ -134,13 +139,14 @@ proto hyperplonk_permutation<F: Field, S: Size, N: 2^S>(
     instance r:           F,         // universal-hash randomness  (FS on driver)
     instance v_evs:       [F; 2^(S+1)]
 ) where
-    // Permutation check proves the multisets {(s_id[i], f[i])} and
-    // {(s_sigma[i], g[i])} coincide — i.e. g is the permutation of f
-    // determined by (s_id, s_sigma). Using the k=2 multiset fold at
-    // r2 and specializing the multiset-equality PIOP at the FS r:
-    //   Prod_i (r + s_id[i]    + r2*f_evs[i])
-    // = Prod_i (r + s_sigma[i] + r2*g_evs[i]).
-    perm_product(r, s_id_evs, r2, f_evs) == perm_product(r, s_sigma_evs, r2, g_evs)
+    // Relation: the multisets {(s_id[i], f[i])} and {(s_sigma[i], g[i])}
+    // coincide — i.e. g is the permutation of f encoded by (s_id, s_sigma).
+    // Stated as a bivariate polynomial identity, collapsed to a univariate
+    // via a fresh random y drawn at analysis time:
+    //   Π_i (s_id[i]    + y·f[i] + X) == Π_i (s_sigma[i] + y·g[i] + X).
+    // Independent of the proto's FS challenges r, r2.
+    let y = random<F>;
+    pair_char_poly(s_id_evs, f_evs, y) == pair_char_poly(s_sigma_evs, g_evs, y)
 {
     let one  = f_evs[0] - f_evs[0] + 1;
     let zero = f_evs[0] - f_evs[0];

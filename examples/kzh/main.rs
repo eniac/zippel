@@ -95,15 +95,12 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         })
         .collect();
 
-    // Relation-only trapdoor witnesses required by the `where` clause.
-    // The proto body never reads them; zeros are fine at runtime — the
-    // static analyzer is where they matter, and it consumes them via
-    // the where clause without needing cryptographically-meaningful
-    // values.
+    // g_gen / h_gen are the generators referenced by the proto's `where`
+    // clause to state the SRS tensor structure. The body doesn't read
+    // them, so runtime values are unconstrained; use the group
+    // generators for semantic clarity.
     let g_gen = <ArkBls12_381 as ArkConfig>::G1::zero();
     let h_gen = <ArkBls12_381 as ArkConfig>::G2::zero();
-    let tau_x = vec![<ArkBls12_381 as ArkConfig>::F::zero(); NX];
-    let tau_y = vec![<ArkBls12_381 as ArkConfig>::F::zero(); NY];
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("f_evals".to_string()), Value::VecScalar(f_evals)),
@@ -114,7 +111,5 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("v_x".to_string()), Value::VecG2(v_x_vals)),
         (Vid("g_gen".to_string()), Value::G1(g_gen)),
         (Vid("h_gen".to_string()), Value::G2(h_gen)),
-        (Vid("tau_x".to_string()), Value::VecScalar(tau_x)),
-        (Vid("tau_y".to_string()), Value::VecScalar(tau_y)),
     ])
 }

@@ -296,14 +296,6 @@ fn build_inputs() -> Ctx<Vid, Value<C>> {
         (Vid("v_k_poly".to_string()), v_k_coeffs_value),
         (Vid("f_one".to_string()), f_one_value),
         (Vid("k_inv".to_string()), k_inv_value),
-        // Relation-only trapdoor witnesses required by the `where`
-        // clause. Body/verifier don't reference them; zeros are fine
-        // at runtime — the where clause is consumed by static analyses,
-        // which don't require cryptographically-meaningful values.
-        (Vid("tau".to_string()), Value::Scalar(F::zero())),
-        (Vid("alpha".to_string()), Value::Scalar(F::zero())),
-        (Vid("beta".to_string()), Value::Scalar(F::zero())),
-        (Vid("delta2".to_string()), Value::Scalar(F::zero())),
     ])
 }
 

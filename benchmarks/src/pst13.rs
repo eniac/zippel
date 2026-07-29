@@ -487,15 +487,6 @@ pub mod zippel_side {
                     Vid("alpha_H".to_string()),
                     Value::VecG2(shared.alpha_h.clone()),
                 ),
-                // Trusted-setup trapdoor α. Relation-only witness — the
-                // proto body doesn't reference it, but it's a formal
-                // arg (declared `witness alpha: [F; N]` in the proto)
-                // so run_prover validates its presence regardless of
-                // skip_analyses.
-                (
-                    Vid("alpha".to_string()),
-                    Value::VecScalar(shared.alpha.clone()),
-                ),
             ]);
 
             let compile_start = Instant::now();
@@ -590,10 +581,6 @@ mod cross_tests {
             (Vid("p".to_string()), Value::VecScalar(shared.p.clone())),
             (Vid("z".to_string()), Value::VecScalar(shared.z.clone())),
             (Vid("y".to_string()), Value::Scalar(shared.y)),
-            (
-                Vid("alpha".to_string()),
-                Value::VecScalar(shared.alpha.clone()),
-            ),
             (
                 Vid("ck_N".to_string()),
                 Value::VecG1Affine(shared.ck_affine.clone()),

@@ -16,9 +16,7 @@ proto hyrax<G: Group, F: Scalar<G>, L: Size, M: Size, NR: 2^L, NC: 2^M, NT: 2^(L
     instance y:      F,
     instance g_vec:  [G; NC],
     instance g_base: G,
-    instance h_base: G,
-    witness g_traps: [F; NC],
-    witness h_trap:  F
+    instance h_base: G
 ) where
     // Hyrax proves y == p̃(z_row, z_col), where p̃ is the multilinear
     // extension of `p` indexed as a NR×NC matrix (row-major: p[i*NC + j]).
@@ -29,6 +27,10 @@ proto hyrax<G: Group, F: Scalar<G>, L: Size, M: Size, NR: 2^L, NC: 2^M, NT: 2^(L
     let r_vec = eq_weights(z_col);
     let eq_full = [l_vec[i / NC] * r_vec[i % NC] for i in 0..NT];
     y == dot(eq_full, p);
+    // Trusted setup: the Pedersen bases g_vec[i] and h_base are derived
+    // from group generator g_base by hidden scalars.
+    let g_traps = [random<F> for i in 0..NC];
+    let h_trap  = random<F>;
     [g_vec[i] for i in 0..NC] == [g_base * g_traps[i] for i in 0..NC];
     h_base == g_base * h_trap
 {

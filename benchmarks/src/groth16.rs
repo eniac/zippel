@@ -495,27 +495,6 @@ pub mod zippel_side {
                     Vid("witness_assignment".to_string()),
                     Value::VecScalar(translated.witness_assignment.clone()),
                 ),
-                // Relation-only trapdoor witnesses required by the
-                // proto's `where` clause. The proto body never reads
-                // them, and `with_skip_analyses()` keeps the where
-                // clause out of the executable graph — but
-                // `run_prover` still validates that every formal
-                // witness input has a value. Zeros are fine: they
-                // would falsify the where clause analytically, but
-                // analyses are skipped here.
-                (
-                    Vid("a_evs".to_string()),
-                    Value::VecScalar(vec![GitFr::zero(); translated.m + translated.l]),
-                ),
-                (
-                    Vid("b_evs".to_string()),
-                    Value::VecScalar(vec![GitFr::zero(); translated.m + translated.l]),
-                ),
-                (
-                    Vid("c_evs".to_string()),
-                    Value::VecScalar(vec![GitFr::zero(); translated.m + translated.l]),
-                ),
-                (Vid("t_at_tau".to_string()), Value::Scalar(GitFr::zero())),
             ]);
 
             // Only verifier-relevant inputs: alpha_g1, beta_g2, gamma_g2,
@@ -980,21 +959,6 @@ mod cross_tests {
                 Value::VecScalar(t.witness_assignment.clone()),
             ),
             (Vid("h_coeffs".to_string()), Value::VecScalar(h_coeffs)),
-            // Relation-only QAP witnesses (zeros are fine at runtime;
-            // analyses are skipped in cross-tests).
-            (
-                Vid("a_evs".to_string()),
-                Value::VecScalar(vec![GitFr::zero(); t.m + t.l]),
-            ),
-            (
-                Vid("b_evs".to_string()),
-                Value::VecScalar(vec![GitFr::zero(); t.m + t.l]),
-            ),
-            (
-                Vid("c_evs".to_string()),
-                Value::VecScalar(vec![GitFr::zero(); t.m + t.l]),
-            ),
-            (Vid("t_at_tau".to_string()), Value::Scalar(GitFr::zero())),
         ])
     }
 

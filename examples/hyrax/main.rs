@@ -93,11 +93,6 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let g_base = G1::rand(&mut rng);
     let h_base = G1::rand(&mut rng);
 
-    // Relation-only trapdoor witnesses required by the `where` clause.
-    // The proto body never reads them; zeros are fine at runtime.
-    let g_traps: Vec<F> = vec![F::zero(); NCOLS];
-    let h_trap = F::zero();
-
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("p".to_string()), Value::VecScalar(p)),
         (Vid("z_row".to_string()), Value::VecScalar(z_row)),
@@ -106,8 +101,6 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("g_vec".to_string()), Value::VecG1(g_vec)),
         (Vid("g_base".to_string()), Value::G1(g_base)),
         (Vid("h_base".to_string()), Value::G1(h_base)),
-        (Vid("g_traps".to_string()), Value::VecScalar(g_traps)),
-        (Vid("h_trap".to_string()), Value::Scalar(h_trap)),
     ])
 }
 
