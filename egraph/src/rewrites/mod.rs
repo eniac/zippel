@@ -14,7 +14,7 @@ pub mod seq;
 pub mod syntactic;
 
 #[cfg(test)]
-mod tests;
+mod test_utils;
 
 use crate::lang::ZIR;
 use backend::ArkConfig;

@@ -238,10 +238,12 @@ impl<C: ArkConfig + std::fmt::Debug> Applier<ZIR<C>, ZAnalysis<C>> for MapFusion
             let mut found = None;
             for node in &egraph[inner_map_class].nodes {
                 if let ZIR::Map(t, [d, b]) = node
-                    && egraph.find(*d) == dom_class && egraph.find(*b) == body1_class {
-                        found = Some(*t);
-                        break;
-                    }
+                    && egraph.find(*d) == dom_class
+                    && egraph.find(*b) == body1_class
+                {
+                    found = Some(*t);
+                    break;
+                }
             }
             match found {
                 Some(t) => t,
@@ -254,10 +256,12 @@ impl<C: ArkConfig + std::fmt::Debug> Applier<ZIR<C>, ZAnalysis<C>> for MapFusion
             let mut found = None;
             for node in &egraph[outer_class].nodes {
                 if let ZIR::Map(t, [im, b2]) = node
-                    && egraph.find(*im) == inner_map_class && egraph.find(*b2) == body2_class {
-                        found = Some(*t);
-                        break;
-                    }
+                    && egraph.find(*im) == inner_map_class
+                    && egraph.find(*b2) == body2_class
+                {
+                    found = Some(*t);
+                    break;
+                }
             }
             match found {
                 Some(t) => t,
@@ -290,4 +294,136 @@ pub fn rewrites<C: ArkConfig + std::fmt::Debug + Clone + 'static>()
         )
         .unwrap(),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use backend::{ArkBls12_381, Value};
+    use egg::{EGraph, Symbol};
+
+    use super::super::test_utils::{ZEgraph, saturate};
+    use crate::lang::ZIR;
+
+    #[test]
+    fn test_map_fusion_basic() {
+        let mut eg: ZEgraph = EGraph::default();
+
+        let dom = eg.add(ZIR::Constant(Value::VecScalar(vec![
+            <ArkBls12_381 as backend::ArkConfig>::F::from(0),
+            <ArkBls12_381 as backend::ArkConfig>::F::from(1),
+            <ArkBls12_381 as backend::ArkConfig>::F::from(2),
+        ])));
+
+        let tag1 = Symbol::from("x");
+        let var_x = eg.add(ZIR::Var(tag1));
+        let one = eg.add(ZIR::Constant(Value::Scalar(
+            <ArkBls12_381 as backend::ArkConfig>::F::from(1),
+        )));
+        let body1 = eg.add(ZIR::Add([var_x, one]));
+        let inner_map = eg.add(ZIR::Map(tag1, [dom, body1]));
+
+        let tag2 = Symbol::from("y");
+        let var_y = eg.add(ZIR::Var(tag2));
+        let two = eg.add(ZIR::Constant(Value::Scalar(
+            <ArkBls12_381 as backend::ArkConfig>::F::from(2),
+        )));
+        let body2 = eg.add(ZIR::Mul([var_y, two]));
+        let outer_map = eg.add(ZIR::Map(tag2, [inner_map, body2]));
+
+        saturate(&mut eg);
+
+        let outer_class = &eg[eg.find(outer_map)];
+        let has_fused = outer_class.nodes.iter().any(|n| {
+            if let ZIR::Map(t, [d, b]) = n {
+                *t == tag1
+                    && eg.find(*d) == eg.find(dom)
+                    && !eg[eg.find(*b)].data.free_vars.contains(&tag2)
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_fused,
+            "loop fusion should produce Map(tag1, [dom, fused_body]) without tag2"
+        );
+    }
+
+    #[test]
+    fn test_map_fusion_blocked_by_side_effect() {
+        let mut eg: ZEgraph = EGraph::default();
+
+        let dom = eg.add(ZIR::Constant(Value::VecScalar(vec![
+            <ArkBls12_381 as backend::ArkConfig>::F::from(0),
+            <ArkBls12_381 as backend::ArkConfig>::F::from(1),
+        ])));
+
+        let tag1 = Symbol::from("x");
+        let var_x = eg.add(ZIR::Var(tag1));
+        let rand = eg.add(ZIR::Random(Symbol::from("r1"), false));
+        let body1 = eg.add(ZIR::Add([var_x, rand]));
+        let inner_map = eg.add(ZIR::Map(tag1, [dom, body1]));
+
+        let tag2 = Symbol::from("y");
+        let var_y = eg.add(ZIR::Var(tag2));
+        let two = eg.add(ZIR::Constant(Value::Scalar(
+            <ArkBls12_381 as backend::ArkConfig>::F::from(2),
+        )));
+        let body2 = eg.add(ZIR::Mul([var_y, two]));
+        let outer_map = eg.add(ZIR::Map(tag2, [inner_map, body2]));
+
+        saturate(&mut eg);
+
+        let outer_class = &eg[eg.find(outer_map)];
+        let has_fused = outer_class.nodes.iter().any(|n| {
+            if let ZIR::Map(t, [_, b]) = n {
+                *t == tag1 && !eg[eg.find(*b)].data.free_vars.contains(&tag2)
+            } else {
+                false
+            }
+        });
+        assert!(
+            !has_fused,
+            "loop fusion should NOT fire when inner body has side effect"
+        );
+    }
+
+    #[test]
+    fn test_map_fusion_blocked_when_body2_no_tag2() {
+        let mut eg: ZEgraph = EGraph::default();
+
+        let dom = eg.add(ZIR::Constant(Value::VecScalar(vec![
+            <ArkBls12_381 as backend::ArkConfig>::F::from(0),
+            <ArkBls12_381 as backend::ArkConfig>::F::from(1),
+        ])));
+
+        let tag1 = Symbol::from("x");
+        let var_x = eg.add(ZIR::Var(tag1));
+        let one = eg.add(ZIR::Constant(Value::Scalar(
+            <ArkBls12_381 as backend::ArkConfig>::F::from(1),
+        )));
+        let body1 = eg.add(ZIR::Add([var_x, one]));
+        let inner_map = eg.add(ZIR::Map(tag1, [dom, body1]));
+
+        let tag2 = Symbol::from("y");
+        let two = eg.add(ZIR::Constant(Value::Scalar(
+            <ArkBls12_381 as backend::ArkConfig>::F::from(2),
+        )));
+        let body2 = eg.add(ZIR::Mul([two, two]));
+        let outer_map = eg.add(ZIR::Map(tag2, [inner_map, body2]));
+
+        saturate(&mut eg);
+
+        let outer_class = &eg[eg.find(outer_map)];
+        let has_fused = outer_class.nodes.iter().any(|n| {
+            if let ZIR::Map(t, [_, b]) = n {
+                *t == tag1 && !eg[eg.find(*b)].data.free_vars.contains(&tag2)
+            } else {
+                false
+            }
+        });
+        assert!(
+            !has_fused,
+            "loop fusion should NOT fire when body2 doesn't reference tag2"
+        );
+    }
 }

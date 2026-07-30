@@ -109,14 +109,16 @@ impl<C: ArkConfig + std::fmt::Debug> Applier<ZIR<C>, ZAnalysis<C>> for ReduceDot
                         let body_class = egraph.find(*body_id);
                         for body_node in &egraph[body_class].nodes {
                             if let ZIR::Mul([a, b]) = body_node
-                                && egraph.find(*a) == a_class && egraph.find(*b) == b_class {
-                                    // Create Dot(a, b) and union
-                                    let dot = egraph.add(ZIR::Dot([a_class, b_class]));
-                                    if egraph.union(eclass, dot) {
-                                        return vec![dot];
-                                    }
-                                    return vec![];
+                                && egraph.find(*a) == a_class
+                                && egraph.find(*b) == b_class
+                            {
+                                // Create Dot(a, b) and union
+                                let dot = egraph.add(ZIR::Dot([a_class, b_class]));
+                                if egraph.union(eclass, dot) {
+                                    return vec![dot];
                                 }
+                                return vec![];
+                            }
                         }
                     }
                 }
@@ -136,4 +138,44 @@ pub fn rewrites<C: ArkConfig + std::fmt::Debug + Clone + 'static>()
         )
         .unwrap(),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use backend::{ArkBls12_381, Value};
+    use egg::{EGraph, Symbol};
+
+    use super::super::test_utils::{ZEgraph, saturate};
+    use crate::lang::ZIR;
+    use lang::ast::BinOp;
+
+    #[test]
+    fn test_reduce_dot() {
+        let mut eg: ZEgraph = EGraph::default();
+
+        let vec_a = eg.add(ZIR::Constant(Value::VecScalar(vec![
+            <ArkBls12_381 as backend::ArkConfig>::F::from(1),
+            <ArkBls12_381 as backend::ArkConfig>::F::from(2),
+            <ArkBls12_381 as backend::ArkConfig>::F::from(3),
+        ])));
+        let vec_b = eg.add(ZIR::Constant(Value::VecScalar(vec![
+            <ArkBls12_381 as backend::ArkConfig>::F::from(4),
+            <ArkBls12_381 as backend::ArkConfig>::F::from(5),
+            <ArkBls12_381 as backend::ArkConfig>::F::from(6),
+        ])));
+
+        let mul = eg.add(ZIR::Mul([vec_a, vec_b]));
+        let tag = Symbol::from("i");
+        let map = eg.add(ZIR::Map(tag, [vec_a, mul]));
+        let reduce = eg.add(ZIR::Reduce(BinOp::Add, [map]));
+
+        saturate(&mut eg);
+
+        let reduce_class = &eg[eg.find(reduce)];
+        let has_dot = reduce_class.nodes.iter().any(|n| matches!(n, ZIR::Dot(_)));
+        assert!(
+            has_dot,
+            "reduce-dot should produce Dot(vec_a, vec_b) in the reduce e-class"
+        );
+    }
 }

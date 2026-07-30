@@ -185,3 +185,103 @@ pub fn rewrites<C: ArkConfig + std::fmt::Debug + Clone + 'static>()
         .unwrap(),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use backend::{ArkBls12_381, Value};
+    use egg::{EGraph, Symbol};
+
+    use super::super::test_utils::{ZEgraph, saturate};
+    use crate::lang::ZIR;
+
+    #[test]
+    fn test_const_prop_add() {
+        let mut eg: ZEgraph = EGraph::default();
+        let a = eg.add(ZIR::Constant(Value::Scalar(
+            <ArkBls12_381 as backend::ArkConfig>::F::from(3),
+        )));
+        let b = eg.add(ZIR::Constant(Value::Scalar(
+            <ArkBls12_381 as backend::ArkConfig>::F::from(4),
+        )));
+        let add = eg.add(ZIR::Add([a, b]));
+
+        saturate(&mut eg);
+
+        let add_class = &eg[eg.find(add)];
+        let has_seven = add_class.nodes.iter().any(|n| {
+            matches!(n, ZIR::Constant(Value::Scalar(v))
+                if v == &<ArkBls12_381 as backend::ArkConfig>::F::from(7))
+        });
+        assert!(has_seven, "const-prop should fold Add(3, 4) to Constant(7)");
+    }
+
+    #[test]
+    fn test_const_prop_mul() {
+        let mut eg: ZEgraph = EGraph::default();
+        let a = eg.add(ZIR::Constant(Value::Scalar(
+            <ArkBls12_381 as backend::ArkConfig>::F::from(5),
+        )));
+        let b = eg.add(ZIR::Constant(Value::Scalar(
+            <ArkBls12_381 as backend::ArkConfig>::F::from(6),
+        )));
+        let mul = eg.add(ZIR::Mul([a, b]));
+
+        saturate(&mut eg);
+
+        let mul_class = &eg[eg.find(mul)];
+        let has_thirty = mul_class.nodes.iter().any(|n| {
+            matches!(n, ZIR::Constant(Value::Scalar(v))
+                if v == &<ArkBls12_381 as backend::ArkConfig>::F::from(30))
+        });
+        assert!(
+            has_thirty,
+            "const-prop should fold Mul(5, 6) to Constant(30)"
+        );
+    }
+
+    #[test]
+    fn test_const_prop_sub() {
+        let mut eg: ZEgraph = EGraph::default();
+        let a = eg.add(ZIR::Constant(Value::Scalar(
+            <ArkBls12_381 as backend::ArkConfig>::F::from(10),
+        )));
+        let b = eg.add(ZIR::Constant(Value::Scalar(
+            <ArkBls12_381 as backend::ArkConfig>::F::from(3),
+        )));
+        let sub = eg.add(ZIR::Sub([a, b]));
+
+        saturate(&mut eg);
+
+        let sub_class = &eg[eg.find(sub)];
+        let has_seven = sub_class.nodes.iter().any(|n| {
+            matches!(n, ZIR::Constant(Value::Scalar(v))
+                if v == &<ArkBls12_381 as backend::ArkConfig>::F::from(7))
+        });
+        assert!(
+            has_seven,
+            "const-prop should fold Sub(10, 3) to Constant(7)"
+        );
+    }
+
+    #[test]
+    fn test_const_prop_does_not_fire_on_non_constant() {
+        let mut eg: ZEgraph = EGraph::default();
+        let a = eg.add(ZIR::Constant(Value::Scalar(
+            <ArkBls12_381 as backend::ArkConfig>::F::from(3),
+        )));
+        let var = eg.add(ZIR::Var(Symbol::from("x")));
+        let add = eg.add(ZIR::Add([a, var]));
+
+        saturate(&mut eg);
+
+        let add_class = &eg[eg.find(add)];
+        let has_constant = add_class
+            .nodes
+            .iter()
+            .any(|n| matches!(n, ZIR::Constant(_)));
+        assert!(
+            !has_constant,
+            "const-prop should NOT fire when one operand is not Constant"
+        );
+    }
+}

@@ -212,3 +212,296 @@ pub fn rewrites<C: ArkConfig + std::fmt::Debug + Clone + 'static>()
         .unwrap(),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use ark_ff::Zero;
+    use backend::{ArkBls12_381, Value};
+    use egg::{EGraph, Symbol};
+
+    use super::super::test_utils::{ZEgraph, saturate};
+    use crate::lang::ZIR;
+
+    #[test]
+    fn test_licm_lifts_scalar_from_map() {
+        let mut eg: ZEgraph = EGraph::default();
+
+        let m = eg.add(ZIR::Constant(Value::Scalar(
+            <ArkBls12_381 as backend::ArkConfig>::F::from(42),
+        )));
+        let dom = eg.add(ZIR::Constant(Value::VecScalar(vec![
+            <ArkBls12_381 as backend::ArkConfig>::F::from(0),
+            <ArkBls12_381 as backend::ArkConfig>::F::from(1),
+            <ArkBls12_381 as backend::ArkConfig>::F::from(2),
+        ])));
+        let tag = Symbol::from("i");
+        let var_i = eg.add(ZIR::Var(tag));
+        let body = eg.add(ZIR::Add([m, var_i]));
+        let map = eg.add(ZIR::Map(tag, [dom, body]));
+
+        saturate(&mut eg);
+
+        let map_class = &eg[eg.find(map)];
+        let has_lifted_add = map_class.nodes.iter().any(|n| {
+            if let ZIR::Add([a, b]) = n {
+                let a_class = &eg[eg.find(*a)];
+                let a_is_scalar = a_class.nodes.iter().any(|an| {
+                    matches!(an, ZIR::Constant(Value::Scalar(v))
+                        if v == &<ArkBls12_381 as backend::ArkConfig>::F::from(42))
+                });
+                let b_class = &eg[eg.find(*b)];
+                let b_is_map = b_class.nodes.iter().any(|bn| matches!(bn, ZIR::Map(_, _)));
+                a_is_scalar && b_is_map
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_lifted_add,
+            "LICM should produce Add(m, Map(tag, [dom, Var(tag)])) in the map e-class"
+        );
+    }
+
+    #[test]
+    fn test_licm_blocked_by_random() {
+        let mut eg: ZEgraph = EGraph::default();
+
+        let r = eg.add(ZIR::Random(Symbol::from("r1"), false));
+        let dom = eg.add(ZIR::Constant(Value::VecScalar(vec![
+            <ArkBls12_381 as backend::ArkConfig>::F::from(0),
+            <ArkBls12_381 as backend::ArkConfig>::F::from(1),
+        ])));
+        let tag = Symbol::from("i");
+        let var_i = eg.add(ZIR::Var(tag));
+        let body = eg.add(ZIR::Add([r, var_i]));
+        let map = eg.add(ZIR::Map(tag, [dom, body]));
+
+        saturate(&mut eg);
+
+        let map_class = &eg[eg.find(map)];
+        let has_lifted = map_class.nodes.iter().any(|n| {
+            if let ZIR::Add([a, b]) = n {
+                let a_class = &eg[eg.find(*a)];
+                let a_is_random = a_class
+                    .nodes
+                    .iter()
+                    .any(|an| matches!(an, ZIR::Random(_, _)));
+                let b_class = &eg[eg.find(*b)];
+                let b_is_map = b_class.nodes.iter().any(|bn| matches!(bn, ZIR::Map(_, _)));
+                a_is_random && b_is_map
+            } else {
+                false
+            }
+        });
+        assert!(
+            !has_lifted,
+            "LICM should NOT lift Random out of Map (has_side_effect blocks it)"
+        );
+    }
+
+    #[test]
+    fn test_licm_blocked_by_loop_variant() {
+        let mut eg: ZEgraph = EGraph::default();
+
+        let tag = Symbol::from("i");
+        let var_i = eg.add(ZIR::Var(tag));
+        let dom = eg.add(ZIR::Constant(Value::VecScalar(vec![
+            <ArkBls12_381 as backend::ArkConfig>::F::from(0),
+            <ArkBls12_381 as backend::ArkConfig>::F::from(1),
+        ])));
+        let body = eg.add(ZIR::Add([var_i, var_i]));
+        let map = eg.add(ZIR::Map(tag, [dom, body]));
+
+        saturate(&mut eg);
+
+        let map_class = &eg[eg.find(map)];
+        let has_lifted = map_class.nodes.iter().any(|n| {
+            if let ZIR::Add([a, b]) = n {
+                let b_class = &eg[eg.find(*b)];
+                let b_is_map = b_class.nodes.iter().any(|bn| matches!(bn, ZIR::Map(_, _)));
+                let a_class = &eg[eg.find(*a)];
+                let a_is_var = a_class.nodes.iter().any(|an| matches!(an, ZIR::Var(_)));
+                a_is_var && b_is_map
+            } else {
+                false
+            }
+        });
+        assert!(
+            !has_lifted,
+            "LICM should NOT lift Var(tag) out of Map (not loop-invariant)"
+        );
+    }
+
+    #[test]
+    fn test_licm_lifts_second_operand() {
+        let mut eg: ZEgraph = EGraph::default();
+
+        let m = eg.add(ZIR::Constant(Value::Scalar(
+            <ArkBls12_381 as backend::ArkConfig>::F::from(42),
+        )));
+        let dom = eg.add(ZIR::Constant(Value::VecScalar(vec![
+            <ArkBls12_381 as backend::ArkConfig>::F::from(0),
+            <ArkBls12_381 as backend::ArkConfig>::F::from(1),
+        ])));
+        let tag = Symbol::from("i");
+        let var_i = eg.add(ZIR::Var(tag));
+        let body = eg.add(ZIR::Sub([var_i, m]));
+        let map = eg.add(ZIR::Map(tag, [dom, body]));
+
+        saturate(&mut eg);
+
+        let map_class = &eg[eg.find(map)];
+        let has_lifted = map_class.nodes.iter().any(|n| {
+            if let ZIR::Sub([a, b]) = n {
+                let a_class = &eg[eg.find(*a)];
+                let a_is_map = a_class.nodes.iter().any(|bn| matches!(bn, ZIR::Map(_, _)));
+                let b_class = &eg[eg.find(*b)];
+                let b_is_scalar = b_class.nodes.iter().any(|bn| {
+                    matches!(bn, ZIR::Constant(Value::Scalar(v))
+                        if v == &<ArkBls12_381 as backend::ArkConfig>::F::from(42))
+                });
+                a_is_map && b_is_scalar
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_lifted,
+            "LICM should lift second operand: Sub(Map(tag, [dom, Var(tag)]), m)"
+        );
+    }
+
+    #[test]
+    fn test_licm_rem() {
+        let mut eg: ZEgraph = EGraph::default();
+
+        let m = eg.add(ZIR::Constant(Value::Index(7)));
+        let dom = eg.add(ZIR::Constant(Value::VecIndex(vec![0, 1, 2, 3])));
+        let tag = Symbol::from("i");
+        let var_i = eg.add(ZIR::Var(tag));
+        let body = eg.add(ZIR::Rem([var_i, m]));
+        let map = eg.add(ZIR::Map(tag, [dom, body]));
+
+        saturate(&mut eg);
+
+        let map_class = &eg[eg.find(map)];
+        let has_lifted = map_class.nodes.iter().any(|n| {
+            if let ZIR::Rem([a, b]) = n {
+                let a_class = &eg[eg.find(*a)];
+                let a_is_map = a_class.nodes.iter().any(|bn| matches!(bn, ZIR::Map(_, _)));
+                let b_class = &eg[eg.find(*b)];
+                let b_is_const = b_class
+                    .nodes
+                    .iter()
+                    .any(|bn| matches!(bn, ZIR::Constant(Value::Index(7))));
+                a_is_map && b_is_const
+            } else {
+                false
+            }
+        });
+        assert!(has_lifted, "LICM should lift Rem's invariant operand");
+    }
+
+    #[test]
+    fn test_licm_pow() {
+        let mut eg: ZEgraph = EGraph::default();
+
+        let exp = eg.add(ZIR::Constant(Value::Index(3)));
+        let dom = eg.add(ZIR::Constant(Value::VecIndex(vec![0, 1, 2])));
+        let tag = Symbol::from("i");
+        let var_i = eg.add(ZIR::Var(tag));
+        let body = eg.add(ZIR::Pow([var_i, exp]));
+        let map = eg.add(ZIR::Map(tag, [dom, body]));
+
+        saturate(&mut eg);
+
+        let map_class = &eg[eg.find(map)];
+        let has_lifted = map_class.nodes.iter().any(|n| {
+            if let ZIR::Pow([a, b]) = n {
+                let a_class = &eg[eg.find(*a)];
+                let a_is_map = a_class.nodes.iter().any(|bn| matches!(bn, ZIR::Map(_, _)));
+                let b_class = &eg[eg.find(*b)];
+                let b_is_const = b_class
+                    .nodes
+                    .iter()
+                    .any(|bn| matches!(bn, ZIR::Constant(Value::Index(3))));
+                a_is_map && b_is_const
+            } else {
+                false
+            }
+        });
+        assert!(has_lifted, "LICM should lift Pow's invariant operand");
+    }
+
+    #[test]
+    fn test_licm_pow_lifts_base() {
+        let mut eg: ZEgraph = EGraph::default();
+
+        let base = eg.add(ZIR::Constant(Value::Scalar(
+            <ArkBls12_381 as backend::ArkConfig>::F::from(2),
+        )));
+        let dom = eg.add(ZIR::Constant(Value::VecIndex(vec![0, 1, 2])));
+        let tag = Symbol::from("i");
+        let var_i = eg.add(ZIR::Var(tag));
+        let body = eg.add(ZIR::Pow([base, var_i]));
+        let map = eg.add(ZIR::Map(tag, [dom, body]));
+
+        saturate(&mut eg);
+
+        let map_class = &eg[eg.find(map)];
+        let has_lifted = map_class.nodes.iter().any(|n| {
+            if let ZIR::Pow([a, b]) = n {
+                let a_class = &eg[eg.find(*a)];
+                let a_is_scalar = a_class.nodes.iter().any(|an| {
+                    matches!(an, ZIR::Constant(Value::Scalar(v))
+                        if v == &<ArkBls12_381 as backend::ArkConfig>::F::from(2))
+                });
+                let b_class = &eg[eg.find(*b)];
+                let b_is_map = b_class.nodes.iter().any(|bn| matches!(bn, ZIR::Map(_, _)));
+                a_is_scalar && b_is_map
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_lifted,
+            "LICM should lift Pow's base: Pow(scalar, Map(...)) is now valid"
+        );
+    }
+
+    #[test]
+    fn test_licm_pair() {
+        let mut eg: ZEgraph = EGraph::default();
+
+        let g1 = eg.add(ZIR::Constant(Value::G1(
+            <ArkBls12_381 as backend::ArkConfig>::G1::zero(),
+        )));
+        let dom = eg.add(ZIR::Constant(Value::VecScalar(vec![
+            <ArkBls12_381 as backend::ArkConfig>::F::from(0),
+            <ArkBls12_381 as backend::ArkConfig>::F::from(1),
+        ])));
+        let tag = Symbol::from("i");
+        let var_i = eg.add(ZIR::Var(tag));
+        let body = eg.add(ZIR::Pair([g1, var_i]));
+        let map = eg.add(ZIR::Map(tag, [dom, body]));
+
+        saturate(&mut eg);
+
+        let map_class = &eg[eg.find(map)];
+        let has_lifted = map_class.nodes.iter().any(|n| {
+            if let ZIR::Pair([a, b]) = n {
+                let a_class = &eg[eg.find(*a)];
+                let a_is_g1 = a_class
+                    .nodes
+                    .iter()
+                    .any(|an| matches!(an, ZIR::Constant(Value::G1(_))));
+                let b_class = &eg[eg.find(*b)];
+                let b_is_map = b_class.nodes.iter().any(|bn| matches!(bn, ZIR::Map(_, _)));
+                a_is_g1 && b_is_map
+            } else {
+                false
+            }
+        });
+        assert!(has_lifted, "LICM should lift Pair's invariant G1 operand");
+    }
+}

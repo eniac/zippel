@@ -44,3 +44,68 @@ pub fn rewrites<C: ArkConfig + std::fmt::Debug + Clone + 'static>()
         .unwrap(),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use backend::{ArkBls12_381, Value};
+    use egg::{EGraph, Symbol};
+
+    use super::super::test_utils::{ZEgraph, saturate};
+    use crate::lang::ZIR;
+
+    #[test]
+    fn test_seq_eliminate_no_side_effect() {
+        let mut eg: ZEgraph = EGraph::default();
+        let first = eg.add(ZIR::Constant(Value::Scalar(
+            <ArkBls12_381 as backend::ArkConfig>::F::from(1),
+        )));
+        let second = eg.add(ZIR::Constant(Value::Scalar(
+            <ArkBls12_381 as backend::ArkConfig>::F::from(2),
+        )));
+        let seq = eg.add(ZIR::Seq([first, second]));
+
+        saturate(&mut eg);
+
+        assert_eq!(
+            eg.find(seq),
+            eg.find(second),
+            "seq-eliminate should unify Seq(no-side-effect, second) with second"
+        );
+    }
+
+    #[test]
+    fn test_seq_eliminate_with_random() {
+        let mut eg: ZEgraph = EGraph::default();
+        let random = eg.add(ZIR::Random(Symbol::from("r1"), false));
+        let second = eg.add(ZIR::Constant(Value::Scalar(
+            <ArkBls12_381 as backend::ArkConfig>::F::from(2),
+        )));
+        let seq = eg.add(ZIR::Seq([random, second]));
+
+        saturate(&mut eg);
+
+        assert_eq!(
+            eg.find(seq),
+            eg.find(second),
+            "seq-eliminate should eliminate Seq with Random first (not visible side effect)"
+        );
+    }
+
+    #[test]
+    fn test_seq_not_eliminated_with_challenge() {
+        let mut eg: ZEgraph = EGraph::default();
+        let challenge = eg.add(ZIR::Challenge(Symbol::from("c1"), false));
+        let second = eg.add(ZIR::Constant(Value::Scalar(
+            <ArkBls12_381 as backend::ArkConfig>::F::from(2),
+        )));
+        let seq = eg.add(ZIR::Seq([challenge, second]));
+
+        saturate(&mut eg);
+
+        assert_ne!(
+            eg.find(seq),
+            eg.find(second),
+            "seq-eliminate should NOT eliminate Seq with Challenge first (visible side effect)"
+        );
+    }
+}

@@ -238,3 +238,265 @@ pub fn rewrites<C: ArkConfig + std::fmt::Debug + Clone + 'static>()
         .unwrap(),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use ark_ff::Zero;
+    use backend::{ArkBls12_381, Value};
+    use egg::EGraph;
+
+    use super::super::test_utils::{ZEgraph, saturate};
+    use crate::lang::ZIR;
+
+    #[test]
+    fn test_pairing_rewrite() {
+        let mut eg: ZEgraph = EGraph::default();
+
+        let g1_a = eg.add(ZIR::Constant(Value::G1(
+            <ArkBls12_381 as backend::ArkConfig>::G1::zero(),
+        )));
+        let g2_b = eg.add(ZIR::Constant(Value::G2(
+            <ArkBls12_381 as backend::ArkConfig>::G2::zero(),
+        )));
+        let g1_c = eg.add(ZIR::Constant(Value::G1(
+            <ArkBls12_381 as backend::ArkConfig>::G1::zero(),
+        )));
+        let g2_d = eg.add(ZIR::Constant(Value::G2(
+            <ArkBls12_381 as backend::ArkConfig>::G2::zero(),
+        )));
+
+        let pair1 = eg.add(ZIR::Pair([g1_a, g2_b]));
+        let pair2 = eg.add(ZIR::Pair([g1_c, g2_d]));
+        let assert = eg.add(ZIR::Assert([pair1, pair2]));
+
+        saturate(&mut eg);
+
+        let assert_class = &eg[eg.find(assert)];
+        let has_dot_assert = assert_class.nodes.iter().any(|n| {
+            if let ZIR::Assert([dot, _gt_zero]) = n {
+                let dot_class = &eg[eg.find(*dot)];
+                dot_class.nodes.iter().any(|dn| matches!(dn, ZIR::Dot(_)))
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_dot_assert,
+            "pairing rewrite should produce Assert(Dot(...), Constant(GT_zero))"
+        );
+
+        let has_dot_with_vecs = assert_class.nodes.iter().any(|n| {
+            if let ZIR::Assert([dot, _]) = n {
+                let dot_class = &eg[eg.find(*dot)];
+                dot_class.nodes.iter().any(|dn| {
+                    if let ZIR::Dot([a, b]) = dn {
+                        let a_class = &eg[eg.find(*a)];
+                        let b_class = &eg[eg.find(*b)];
+                        a_class.nodes.iter().any(|vn| matches!(vn, ZIR::Vec(_)))
+                            && b_class.nodes.iter().any(|vn| matches!(vn, ZIR::Vec(_)))
+                    } else {
+                        false
+                    }
+                })
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_dot_with_vecs,
+            "pairing rewrite Dot should have Vec children"
+        );
+    }
+
+    #[test]
+    fn test_pairing_rewrite_verify() {
+        let mut eg: ZEgraph = EGraph::default();
+
+        let g1_a = eg.add(ZIR::Constant(Value::G1(
+            <ArkBls12_381 as backend::ArkConfig>::G1::zero(),
+        )));
+        let g2_b = eg.add(ZIR::Constant(Value::G2(
+            <ArkBls12_381 as backend::ArkConfig>::G2::zero(),
+        )));
+        let g1_c = eg.add(ZIR::Constant(Value::G1(
+            <ArkBls12_381 as backend::ArkConfig>::G1::zero(),
+        )));
+        let g2_d = eg.add(ZIR::Constant(Value::G2(
+            <ArkBls12_381 as backend::ArkConfig>::G2::zero(),
+        )));
+
+        let pair1 = eg.add(ZIR::Pair([g1_a, g2_b]));
+        let pair2 = eg.add(ZIR::Pair([g1_c, g2_d]));
+        let verify = eg.add(ZIR::Verify([pair1, pair2]));
+
+        saturate(&mut eg);
+
+        let verify_class = &eg[eg.find(verify)];
+        let has_dot_verify = verify_class.nodes.iter().any(|n| {
+            if let ZIR::Verify([dot, _gt_zero]) = n {
+                let dot_class = &eg[eg.find(*dot)];
+                dot_class.nodes.iter().any(|dn| matches!(dn, ZIR::Dot(_)))
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_dot_verify,
+            "pairing rewrite should work for Verify: Verify(Dot(...), Constant(GT_zero))"
+        );
+    }
+
+    #[test]
+    fn test_pairing_rewrite_n_pairs() {
+        let mut eg: ZEgraph = EGraph::default();
+
+        let g1_a = eg.add(ZIR::Constant(Value::G1(
+            <ArkBls12_381 as backend::ArkConfig>::G1::zero(),
+        )));
+        let g2_b = eg.add(ZIR::Constant(Value::G2(
+            <ArkBls12_381 as backend::ArkConfig>::G2::zero(),
+        )));
+        let g1_c = eg.add(ZIR::Constant(Value::G1(
+            <ArkBls12_381 as backend::ArkConfig>::G1::zero(),
+        )));
+        let g2_d = eg.add(ZIR::Constant(Value::G2(
+            <ArkBls12_381 as backend::ArkConfig>::G2::zero(),
+        )));
+        let g1_e = eg.add(ZIR::Neg([g1_a]));
+        let g2_f = eg.add(ZIR::Constant(Value::G2(
+            <ArkBls12_381 as backend::ArkConfig>::G2::zero(),
+        )));
+        let g1_g = eg.add(ZIR::Neg([g1_c]));
+        let g2_h = eg.add(ZIR::Constant(Value::G2(
+            <ArkBls12_381 as backend::ArkConfig>::G2::zero(),
+        )));
+
+        let pair1 = eg.add(ZIR::Pair([g1_a, g2_b]));
+        let pair2 = eg.add(ZIR::Pair([g1_e, g2_f]));
+        let lhs = eg.add(ZIR::Add([pair1, pair2]));
+
+        let pair3 = eg.add(ZIR::Pair([g1_c, g2_d]));
+        let pair4 = eg.add(ZIR::Pair([g1_g, g2_h]));
+        let rhs = eg.add(ZIR::Add([pair3, pair4]));
+
+        let assert = eg.add(ZIR::Assert([lhs, rhs]));
+
+        saturate(&mut eg);
+
+        let assert_class = &eg[eg.find(assert)];
+        let has_dot = assert_class.nodes.iter().any(|n| {
+            if let ZIR::Assert([dot, _]) = n {
+                let dot_class = &eg[eg.find(*dot)];
+                dot_class.nodes.iter().any(|dn| {
+                    if let ZIR::Dot([a, b]) = dn {
+                        let a_class = &eg[eg.find(*a)];
+                        let b_class = &eg[eg.find(*b)];
+                        a_class.nodes.iter().any(|vn| {
+                            if let ZIR::Vec(ids) = vn {
+                                ids.len() == 4
+                            } else {
+                                false
+                            }
+                        }) && b_class.nodes.iter().any(|vn| {
+                            if let ZIR::Vec(ids) = vn {
+                                ids.len() == 4
+                            } else {
+                                false
+                            }
+                        })
+                    } else {
+                        false
+                    }
+                })
+            } else {
+                false
+            }
+        });
+        assert!(has_dot, "pairing rewrite should fire for Add-chained pairs");
+    }
+
+    #[test]
+    fn test_pairing_rewrite_negates_g1s_both_forms() {
+        let mut eg: ZEgraph = EGraph::default();
+
+        let g1_a = eg.add(ZIR::Constant(Value::G1(
+            <ArkBls12_381 as backend::ArkConfig>::G1::zero(),
+        )));
+        let g2_b = eg.add(ZIR::Constant(Value::G2(
+            <ArkBls12_381 as backend::ArkConfig>::G2::zero(),
+        )));
+        let g1_c = eg.add(ZIR::Constant(Value::G1(
+            <ArkBls12_381 as backend::ArkConfig>::G1::zero(),
+        )));
+        let g2_d = eg.add(ZIR::Constant(Value::G2(
+            <ArkBls12_381 as backend::ArkConfig>::G2::zero(),
+        )));
+
+        let pair1 = eg.add(ZIR::Pair([g1_a, g2_b]));
+        let pair2 = eg.add(ZIR::Pair([g1_c, g2_d]));
+        let assert = eg.add(ZIR::Assert([pair1, pair2]));
+
+        saturate(&mut eg);
+
+        let assert_class = &eg[eg.find(assert)];
+
+        let g1_has_neg = assert_class.nodes.iter().any(|n| {
+            if let ZIR::Assert([dot, _]) = n {
+                let dot_class = &eg[eg.find(*dot)];
+                dot_class.nodes.iter().any(|dn| {
+                    if let ZIR::Dot([g1_vec, _]) = dn {
+                        let g1_class = &eg[eg.find(*g1_vec)];
+                        g1_class.nodes.iter().any(|vn| {
+                            if let ZIR::Vec(ids) = vn {
+                                ids.iter().any(|id| {
+                                    eg[eg.find(*id)]
+                                        .nodes
+                                        .iter()
+                                        .any(|n| matches!(n, ZIR::Neg(_)))
+                                })
+                            } else {
+                                false
+                            }
+                        })
+                    } else {
+                        false
+                    }
+                })
+            } else {
+                false
+            }
+        });
+        assert!(
+            g1_has_neg,
+            "pairing rewrite should negate G1s (cheaper than G2s)"
+        );
+
+        let g2_has_no_neg = assert_class.nodes.iter().any(|n| {
+            if let ZIR::Assert([dot, _]) = n {
+                let dot_class = &eg[eg.find(*dot)];
+                dot_class.nodes.iter().any(|dn| {
+                    if let ZIR::Dot([_, g2_vec]) = dn {
+                        let g2_class = &eg[eg.find(*g2_vec)];
+                        g2_class.nodes.iter().any(|vn| {
+                            if let ZIR::Vec(ids) = vn {
+                                !ids.iter().any(|id| {
+                                    eg[eg.find(*id)]
+                                        .nodes
+                                        .iter()
+                                        .any(|n| matches!(n, ZIR::Neg(_)))
+                                })
+                            } else {
+                                false
+                            }
+                        })
+                    } else {
+                        false
+                    }
+                })
+            } else {
+                false
+            }
+        });
+        assert!(g2_has_no_neg, "pairing rewrite should NOT negate any G2s");
+    }
+}
