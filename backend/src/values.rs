@@ -1545,6 +1545,27 @@ impl<C: ArkConfig> Value<C> {
                     .collect();
                 *other = Value::VecScalar(result);
             }
+            // Vec<Index> ^ Vec<Index> = Vec<Index> (element-wise)
+            (Value::VecIndex(vs), Value::VecIndex(_)) => {
+                other
+                    .into_vec_index_mut()
+                    .par_iter_mut()
+                    .zip(vs.par_iter())
+                    .for_each(|(v, &i)| *v = pow64(i, *v));
+            }
+            // Vec<Scalar> ^ Vec<Index> = Vec<Scalar> (element-wise)
+            (Value::VecScalar(vs), Value::VecIndex(es)) => {
+                let result: Vec<_> = vs
+                    .par_iter()
+                    .zip(es.par_iter())
+                    .map(|(v, &e)| {
+                        let mut tmp = *v;
+                        C::FOps::pow(&mut tmp, e as u64);
+                        tmp
+                    })
+                    .collect();
+                *other = Value::VecScalar(result);
+            }
             (a, b) => panic!("Mismatched values {} ^ {}", a, b),
         }
     }
