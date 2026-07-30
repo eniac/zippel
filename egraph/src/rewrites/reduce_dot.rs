@@ -8,6 +8,7 @@
 
 use std::marker::PhantomData;
 
+use super::v;
 use crate::lang::{ZAnalysis, ZIR};
 use backend::{ATyp, ArkConfig};
 use egg::{Applier, EGraph, Id, PatternAst, Rewrite, SearchMatches, Subst, Symbol, Var};
@@ -16,6 +17,7 @@ use lang::ast::BinOp;
 /// Custom Searcher for reduce→dot.
 /// Walks e-classes looking for `Reduce(Add, [Map(tag, [dom, Mul([a, b])])])`
 /// where a and b are vector-typed.
+/// Binds `?a` and `?b` to the Mul's two child e-class Ids.
 pub struct ReduceDotSearcher<C: ArkConfig>(PhantomData<C>);
 
 impl<C: ArkConfig + std::fmt::Debug> egg::Searcher<ZIR<C>, ZAnalysis<C>> for ReduceDotSearcher<C> {
@@ -25,8 +27,13 @@ impl<C: ArkConfig + std::fmt::Debug> egg::Searcher<ZIR<C>, ZAnalysis<C>> for Red
         eclass: Id,
         limit: usize,
     ) -> Option<SearchMatches<'_, ZIR<C>>> {
+        if limit == 0 {
+            return None;
+        }
+        let a_var = v("?a");
+        let b_var = v("?b");
         let mut substs = vec![];
-        for node in &egraph[eclass].nodes {
+        'outer: for node in &egraph[eclass].nodes {
             // Look for Reduce(BinOp::Add, [map_id])
             if let ZIR::Reduce(BinOp::Add, [map_id]) = node {
                 let map_class = egraph.find(*map_id);
@@ -45,9 +52,12 @@ impl<C: ArkConfig + std::fmt::Debug> egg::Searcher<ZIR<C>, ZAnalysis<C>> for Red
                                 if matches!(a_typ, ATyp::Vec(_, _))
                                     && matches!(b_typ, ATyp::Vec(_, _))
                                 {
-                                    substs.push(Subst::default());
+                                    let mut subst = Subst::default();
+                                    subst.insert(a_var, a_id);
+                                    subst.insert(b_var, b_id);
+                                    substs.push(subst);
                                     if substs.len() >= limit {
-                                        break;
+                                        break 'outer;
                                     }
                                 }
                             }
@@ -68,13 +78,13 @@ impl<C: ArkConfig + std::fmt::Debug> egg::Searcher<ZIR<C>, ZAnalysis<C>> for Red
     }
 
     fn vars(&self) -> Vec<Var> {
-        vec![]
+        vec![v("?a"), v("?b")]
     }
 }
 
 /// Custom Applier for reduce→dot.
-/// Reconstructs the Mul children from the matched Reduce/Map/Mul structure
-/// and creates `Dot(a, b)`, unioning with the matched e-class.
+/// Uses `?a` and `?b` from the Subst to find the specific Mul node,
+/// creates `Dot(a, b)`, unions with the matched e-class.
 pub struct ReduceDotApplier<C: ArkConfig>(PhantomData<C>);
 
 impl<C: ArkConfig + std::fmt::Debug> Applier<ZIR<C>, ZAnalysis<C>> for ReduceDotApplier<C> {
@@ -82,72 +92,37 @@ impl<C: ArkConfig + std::fmt::Debug> Applier<ZIR<C>, ZAnalysis<C>> for ReduceDot
         &self,
         egraph: &mut EGraph<ZIR<C>, ZAnalysis<C>>,
         eclass: Id,
-        _subst: &Subst,
+        subst: &Subst,
         _searcher_ast: Option<&PatternAst<ZIR<C>>>,
         _rule_name: Symbol,
     ) -> Vec<Id> {
-        // Find all Reduce(Add, [map_id]) nodes in this e-class
-        let reduce_nodes: Vec<Id> = egraph[eclass]
-            .nodes
-            .iter()
-            .filter_map(|n| {
-                if let ZIR::Reduce(BinOp::Add, [map_id]) = n {
-                    Some(*map_id)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let a_class = egraph.find(subst[v("?a")]);
+        let b_class = egraph.find(subst[v("?b")]);
 
-        let mut added = vec![];
-        for map_id in reduce_nodes {
-            let map_class = egraph.find(map_id);
-            // Find Map(tag, [dom, body]) in the map's e-class
-            let map_nodes: Vec<(Symbol, Id, Id)> = egraph[map_class]
-                .nodes
-                .iter()
-                .filter_map(|n| {
-                    if let ZIR::Map(tag, [dom_id, body_id]) = n {
-                        Some((*tag, *dom_id, *body_id))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            for (_tag, _dom_id, body_id) in map_nodes {
-                let body_class = egraph.find(body_id);
-                // Find Mul([a, b]) in the body's e-class
-                let mul_nodes: Vec<[Id; 2]> = egraph[body_class]
-                    .nodes
-                    .iter()
-                    .filter_map(|n| {
-                        if let ZIR::Mul(ids) = n {
-                            Some(*ids)
-                        } else {
-                            None
+        // Find the specific Reduce(Add, [Map(tag, [dom, Mul([a, b])])])
+        // in this e-class that references our bound a and b
+        for node in &egraph[eclass].nodes {
+            if let ZIR::Reduce(BinOp::Add, [map_id]) = node {
+                let map_class = egraph.find(*map_id);
+                for map_node in &egraph[map_class].nodes {
+                    if let ZIR::Map(_tag, [_dom_id, body_id]) = map_node {
+                        let body_class = egraph.find(*body_id);
+                        for body_node in &egraph[body_class].nodes {
+                            if let ZIR::Mul([a, b]) = body_node
+                                && egraph.find(*a) == a_class && egraph.find(*b) == b_class {
+                                    // Create Dot(a, b) and union
+                                    let dot = egraph.add(ZIR::Dot([a_class, b_class]));
+                                    if egraph.union(eclass, dot) {
+                                        return vec![dot];
+                                    }
+                                    return vec![];
+                                }
                         }
-                    })
-                    .collect();
-
-                for [a, b] in mul_nodes {
-                    let a_id = egraph.find(a);
-                    let b_id = egraph.find(b);
-                    // Type guard: both must be vector-typed
-                    let a_typ = &egraph[a_id].data.typ;
-                    let b_typ = &egraph[b_id].data.typ;
-                    if !matches!(a_typ, ATyp::Vec(_, _)) || !matches!(b_typ, ATyp::Vec(_, _)) {
-                        continue;
-                    }
-                    // Create Dot(a, b) and union with the matched e-class
-                    let dot = egraph.add(ZIR::Dot([a_id, b_id]));
-                    if egraph.union(eclass, dot) {
-                        added.push(dot);
                     }
                 }
             }
         }
-        added
+        vec![]
     }
 }
 

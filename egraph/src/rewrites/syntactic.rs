@@ -154,7 +154,7 @@ pub fn rewrites<C: ArkConfig + std::fmt::Debug + Clone + 'static>()
 }
 
 /// Identity rewrites: `(+ ?a 0)` → `?a`, `(* ?a 1)` → `?a`, `(- ?a ?a)` → `0`,
-/// `(?a ^ 0)` → `1`, `(?a ^ 1)` → `?a`, `(* ?a 0)` → `0`.
+/// `(?a ^ 0)` → `1`, `(?a ^ 1)` → `?a`, `(* ?a 0)` → `0`, `(neg (neg ?a))` → `?a`.
 fn identity_rewrites<C: ArkConfig + std::fmt::Debug + Clone + 'static>(
     rules: &mut Vec<Rewrite<ZIR<C>, ZAnalysis<C>>>,
 ) {
@@ -283,6 +283,20 @@ fn identity_rewrites<C: ArkConfig + std::fmt::Debug + Clone + 'static>(
                 ENodeOrVar::Var(v("?a")),
                 ENodeOrVar::ENode(ZIR::Constant(Value::Index(1))),
                 ENodeOrVar::ENode(ZIR::Pow([Id::from(0), Id::from(1)])),
+            ]),
+            pat(vec![ENodeOrVar::Var(v("?a"))]),
+        )
+        .unwrap(),
+    );
+
+    // (neg (neg ?a)) → ?a
+    rules.push(
+        Rewrite::new(
+            "neg-neg",
+            pat(vec![
+                ENodeOrVar::Var(v("?a")),
+                ENodeOrVar::ENode(ZIR::Neg([Id::from(0)])),
+                ENodeOrVar::ENode(ZIR::Neg([Id::from(1)])),
             ]),
             pat(vec![ENodeOrVar::Var(v("?a"))]),
         )

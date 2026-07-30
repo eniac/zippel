@@ -4,6 +4,9 @@
 //! `Pattern` (no `rewrite!` macro — no `FromOp`). See
 //! `docs/egraph-design-log.md` §4.2 for API notes.
 
+pub mod const_prop;
+pub mod licm;
+pub mod map_fusion;
 pub mod pairing;
 pub mod record;
 pub mod reduce_dot;
@@ -33,7 +36,7 @@ pub fn v(s: &str) -> Var {
     s.parse().expect("valid var")
 }
 
-/// Collect all ZIR rewrites for Phase 2.
+/// Collect all ZIR rewrites for Phases 2–3.
 pub fn all_zir_rewrites<C: ArkConfig + std::fmt::Debug + Clone + 'static>()
 -> Vec<egg::Rewrite<ZIR<C>, crate::lang::ZAnalysis<C>>> {
     let mut rules = vec![];
@@ -42,5 +45,8 @@ pub fn all_zir_rewrites<C: ArkConfig + std::fmt::Debug + Clone + 'static>()
     rules.extend(record::rewrites::<C>());
     rules.extend(pairing::rewrites::<C>());
     rules.extend(reduce_dot::rewrites::<C>());
+    rules.extend(licm::rewrites::<C>());
+    rules.extend(map_fusion::rewrites::<C>());
+    rules.extend(const_prop::rewrites::<C>());
     rules
 }

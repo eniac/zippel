@@ -8,78 +8,14 @@
 
 use std::marker::PhantomData;
 
+use super::v;
 use crate::lang::{ZAnalysis, ZIR};
 use backend::ArkConfig;
 use egg::{Applier, EGraph, Id, PatternAst, Rewrite, SearchMatches, Subst, Symbol, Var};
 
-/// A Record's field names and value e-class IDs.
-type RecordData = (Box<[Symbol]>, Box<[Id]>);
-
-/// Custom Applier for projection resolution.
-/// Looks at the matched e-class's Proj nodes, finds matching Record children,
-/// and unions the Proj's e-class with the corresponding value's e-class.
-pub struct ProjApplier<C: ArkConfig>(PhantomData<C>);
-
-impl<C: ArkConfig + std::fmt::Debug> Applier<ZIR<C>, ZAnalysis<C>> for ProjApplier<C> {
-    fn apply_one(
-        &self,
-        egraph: &mut EGraph<ZIR<C>, ZAnalysis<C>>,
-        eclass: Id,
-        _subst: &Subst,
-        _searcher_ast: Option<&PatternAst<ZIR<C>>>,
-        _rule_name: Symbol,
-    ) -> Vec<Id> {
-        // Collect all Proj e-nodes in this e-class
-        let proj_nodes: Vec<(Symbol, Id)> = egraph[eclass]
-            .nodes
-            .iter()
-            .filter_map(|n| {
-                if let ZIR::Proj(field, [rec_id]) = n {
-                    Some((*field, *rec_id))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let mut added = vec![];
-        for (field, rec_id) in proj_nodes {
-            let rec_class = egraph.find(rec_id);
-            // Guard: no visible side effect on the record's e-class
-            if egraph[rec_class].data.has_visible_side_effect {
-                continue;
-            }
-
-            // Find a Record e-node in the record's e-class with matching field
-            let rec_nodes: Vec<RecordData> = egraph[rec_class]
-                .nodes
-                .iter()
-                .filter_map(|n| {
-                    if let ZIR::Record(names, values) = n {
-                        Some((names.clone(), values.clone()))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            for (names, values) in rec_nodes {
-                if let Some(idx) = names.iter().position(|n| *n == field)
-                    && idx < values.len()
-                {
-                    let val_id = egraph.find(values[idx]);
-                    if egraph.union(eclass, val_id) {
-                        added.push(val_id);
-                    }
-                }
-            }
-        }
-        added
-    }
-}
-
 /// Custom Searcher for projection resolution.
 /// Walks e-classes looking for `Proj(field, [Record(...)])` patterns.
+/// Binds `?rec` to the Record child's e-class Id for each match.
 pub struct ProjSearcher<C: ArkConfig>(PhantomData<C>);
 
 impl<C: ArkConfig + std::fmt::Debug> egg::Searcher<ZIR<C>, ZAnalysis<C>> for ProjSearcher<C> {
@@ -89,6 +25,10 @@ impl<C: ArkConfig + std::fmt::Debug> egg::Searcher<ZIR<C>, ZAnalysis<C>> for Pro
         eclass: Id,
         limit: usize,
     ) -> Option<SearchMatches<'_, ZIR<C>>> {
+        if limit == 0 {
+            return None;
+        }
+        let rec_var = v("?rec");
         let mut substs = vec![];
         for node in &egraph[eclass].nodes {
             if let ZIR::Proj(field, [rec_id]) = node {
@@ -107,7 +47,9 @@ impl<C: ArkConfig + std::fmt::Debug> egg::Searcher<ZIR<C>, ZAnalysis<C>> for Pro
                     }
                 });
                 if has_match {
-                    substs.push(Subst::default());
+                    let mut subst = Subst::default();
+                    subst.insert(rec_var, rec_class);
+                    substs.push(subst);
                     if substs.len() >= limit {
                         break;
                     }
@@ -126,6 +68,49 @@ impl<C: ArkConfig + std::fmt::Debug> egg::Searcher<ZIR<C>, ZAnalysis<C>> for Pro
     }
 
     fn vars(&self) -> Vec<Var> {
+        vec![v("?rec")]
+    }
+}
+
+/// Custom Applier for projection resolution.
+/// Uses `?rec` from the Subst to find the specific Proj(field, [?rec]) node,
+/// extracts the field name, finds the matching value in the Record, and
+/// unions the Proj's e-class with the value's e-class.
+pub struct ProjApplier<C: ArkConfig>(PhantomData<C>);
+
+impl<C: ArkConfig + std::fmt::Debug> Applier<ZIR<C>, ZAnalysis<C>> for ProjApplier<C> {
+    fn apply_one(
+        &self,
+        egraph: &mut EGraph<ZIR<C>, ZAnalysis<C>>,
+        eclass: Id,
+        subst: &Subst,
+        _searcher_ast: Option<&PatternAst<ZIR<C>>>,
+        _rule_name: Symbol,
+    ) -> Vec<Id> {
+        let rec_class = egraph.find(subst[v("?rec")]);
+
+        // Find the specific Proj(field, [rec]) in this e-class
+        // that references our bound record e-class
+        for node in &egraph[eclass].nodes {
+            if let ZIR::Proj(field, [rec_id]) = node {
+                if egraph.find(*rec_id) != rec_class {
+                    continue;
+                }
+                // Find the matching Record in rec's e-class
+                for rec_node in &egraph[rec_class].nodes {
+                    if let ZIR::Record(names, values) = rec_node
+                        && let Some(idx) = names.iter().position(|n| *n == *field)
+                            && idx < values.len()
+                        {
+                            let val_id = egraph.find(values[idx]);
+                            if egraph.union(eclass, val_id) {
+                                return vec![val_id];
+                            }
+                            return vec![];
+                        }
+                }
+            }
+        }
         vec![]
     }
 }

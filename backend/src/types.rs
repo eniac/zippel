@@ -344,7 +344,7 @@ impl Lub for ABase {
                 CRange::lub_pow(r1, r2, ctx)
                     .map_err(|e| LubError::next(LubError::pow(&a, &b), e))?,
             )),
-            (ABase::Scalar, ABase::Fin(_)) => Ok(ABase::Scalar),
+            (ABase::Scalar, ABase::Fin(_)) | (ABase::Fin(_), ABase::Scalar) => Ok(ABase::Scalar),
             (a, b) => Err(LubError::pow(&a, &b)),
         }
     }
@@ -666,9 +666,9 @@ impl Lub for ATyp {
                 1,
                 n.checked_sub(1).ok_or_else(|| LubError::rem(&x, &y))?,
             )),
-            // Vec<A> % C = Vec<lub_rem(A, C)>; scalar-left vector remainder
-            // is not Groebner-lowerable and falls through to an error.
-            (ATyp::Vec(box t1, n1), b) => {
+            // Vec<A> % C or C % Vec<A> = Vec<lub_rem(A, C)>; both directions
+            // supported at runtime (Op::rem handles Vec % scalar and scalar % Vec).
+            (ATyp::Vec(box t1, n1), b) | (b, ATyp::Vec(box t1, n1)) => {
                 let t = ATyp::lub_rem(t1, b, ctx)
                     .map_err(|e| LubError::next(LubError::rem(&x, &y), e))?;
                 Ok(ATyp::vec(&t, *n1))
@@ -687,9 +687,12 @@ impl Lub for ATyp {
                 n1.checked_mul(r.len())
                     .ok_or_else(|| LubError::pow(&x, &y))?,
             )),
-            // Vec<C> ^ C. Vector exponents and scalar-left vector
-            // exponentiation are not runtime-supported.
-            (ATyp::Vec(box t1, n1), b) => {
+            // Vec<C> ^ C or C ^ Vec<C> = Vec<lub_pow(C, C)>. Both
+            // directions supported: runtime value_pow handles Vec ^ Index
+            // and scalar ^ Vec<Index> (broadcast base).
+            (ATyp::Vec(box t1, n1), b) | (b, ATyp::Vec(box t1, n1))
+                if !matches!(b, ATyp::Vec(_, _)) =>
+            {
                 let t = ATyp::lub_pow(t1, b, ctx)
                     .map_err(|e| LubError::next(LubError::pow(&x, &y), e))?;
                 Ok(ATyp::vec(&t, *n1))
@@ -1463,18 +1466,21 @@ mod tests {
     }
 
     #[test]
-    fn lub_rem_rejects_scalar_left_vector() {
+    fn lub_rem_both_directions_vector() {
         let fin = ATyp::fin(CRange::singleton(3));
         assert!(ATyp::lub_rem(&ATyp::vec(&fin, 2), &fin, &Nothing).is_ok());
-        assert!(ATyp::lub_rem(&fin, &ATyp::vec(&fin, 2), &Nothing).is_err());
+        assert!(ATyp::lub_rem(&fin, &ATyp::vec(&fin, 2), &Nothing).is_ok());
     }
 
     #[test]
-    fn lub_pow_rejects_scalar_left_vector_and_vec_exponents() {
+    fn lub_pow_both_directions_vector() {
         let fin = ATyp::fin(CRange::singleton(3));
+        // Vec ^ scalar — always supported
         assert!(ATyp::lub_pow(&ATyp::vec(&fin, 2), &fin, &Nothing).is_ok());
-        assert!(ATyp::lub_pow(&fin, &ATyp::vec(&fin, 2), &Nothing).is_err());
-        assert!(ATyp::lub_pow(&ATyp::scalar(), &ATyp::vec(&fin, 2), &Nothing).is_err());
+        // scalar ^ Vec — now supported (broadcast base), matching CTyp
+        assert!(ATyp::lub_pow(&fin, &ATyp::vec(&fin, 2), &Nothing).is_ok());
+        assert!(ATyp::lub_pow(&ATyp::scalar(), &ATyp::vec(&fin, 2), &Nothing).is_ok());
+        // Vec ^ Vec — still rejected (element-wise pow on vectors not supported)
         assert!(ATyp::lub_pow(&ATyp::vec(&fin, 2), &ATyp::vec(&fin, 2), &Nothing).is_err());
     }
 

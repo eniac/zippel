@@ -1527,6 +1527,24 @@ impl<C: ArkConfig> Value<C> {
                 vs.par_iter_mut().for_each(|v| Value::value_pow(other, v));
                 *other = Value::Vec(vs);
             }
+            // Index ^ Vec<Index> = Vec<Index> (broadcast base)
+            (Value::Index(a), Value::VecIndex(vs)) => {
+                let mut vs = vs.clone();
+                vs.par_iter_mut().for_each(|v| *v = pow64(*a, *v));
+                *other = Value::VecIndex(vs);
+            }
+            // Scalar ^ Vec<Index> = Vec<Scalar> (broadcast base)
+            (Value::Scalar(a), Value::VecIndex(vs)) => {
+                let result: Vec<_> = vs
+                    .par_iter()
+                    .map(|v| {
+                        let mut tmp = *a;
+                        C::FOps::pow(&mut tmp, *v as u64);
+                        tmp
+                    })
+                    .collect();
+                *other = Value::VecScalar(result);
+            }
             (a, b) => panic!("Mismatched values {} ^ {}", a, b),
         }
     }
