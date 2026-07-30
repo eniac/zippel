@@ -1,0 +1,13 @@
+[package]
+name = "egraph"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+egg = "0.11"
+lang = { path = "../lang" }
+backend = { path = "../backend" }
+ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
+
+[dev-dependencies]
+share = { path = "../share" }
