@@ -6,6 +6,8 @@
 //!
 //! The token stream is lossless: `src == tokens.map(|(t, s)| &src[s]).collect()`.
 
+use std::borrow::Cow;
+
 use chumsky::span::SimpleSpan;
 use logos::{Lexer, Logos};
 
@@ -38,14 +40,16 @@ fn block_comment_end(lex: &mut Lexer<RawToken>) -> Result<(), LexingError> {
 }
 
 /// A token produced by the lexer. Data-carrying variants hold the source text
-/// (`Id`, `Positive`); all other variants are unit. Span is separated — see
-/// `lex_iter()` which yields `(Token, SimpleSpan)` pairs.
+/// (`Id`, `Positive`) as `Cow<'src, str>` — borrowed from the source during
+/// parsing, owned when stored in `ParseError` (via `into_owned`). All other
+/// variants are unit. Span is separated — see `lex_iter()` which yields
+/// `(Token<'src>, SimpleSpan)` pairs.
 ///
 /// `PartialEq` is derived: unit variants compare trivially, data variants
 /// compare by text. This is correct because `just()` (which requires
 /// `PartialEq`) is only used for unit variants; data variants use `select!`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Token {
+pub enum Token<'src> {
     // Punctuation
     LParen,
     RParen,
@@ -75,10 +79,10 @@ pub enum Token {
     Caret,
     Percent,
     PlusPlus,
-    // Literals — carry source text
-    Positive(String),
-    // Identifiers — carry source text
-    Id(String),
+    // Literals — carry source text (borrowed during parsing)
+    Positive(Cow<'src, str>),
+    // Identifiers — carry source text (borrowed during parsing)
+    Id(Cow<'src, str>),
     // Keywords
     KwLet,
     KwFn,
@@ -122,7 +126,7 @@ pub enum Token {
     Error,
 }
 
-impl Token {
+impl<'src> Token<'src> {
     /// Trivia tokens are preserved in the token stream but carry no semantic
     /// meaning. The parser skips them; the formatter keeps them.
     pub fn is_trivia(&self) -> bool {
@@ -131,9 +135,83 @@ impl Token {
             Token::Whitespace | Token::LineComment | Token::BlockComment
         )
     }
+
+    /// Convert a borrowed token into an owned one (detaches from source).
+    /// Used when storing tokens in `ParseError`, which must outlive the source.
+    pub fn into_owned(self) -> Token<'static> {
+        match self {
+            Token::Id(s) => Token::Id(Cow::Owned(s.into_owned())),
+            Token::Positive(s) => Token::Positive(Cow::Owned(s.into_owned())),
+            Token::LParen => Token::LParen,
+            Token::RParen => Token::RParen,
+            Token::LBrace => Token::LBrace,
+            Token::RBrace => Token::RBrace,
+            Token::LBrack => Token::LBrack,
+            Token::RBrack => Token::RBrack,
+            Token::LAngle => Token::LAngle,
+            Token::RAngle => Token::RAngle,
+            Token::Comma => Token::Comma,
+            Token::Semi => Token::Semi,
+            Token::Colon => Token::Colon,
+            Token::Eq => Token::Eq,
+            Token::Arrow => Token::Arrow,
+            Token::FatArrow => Token::FatArrow,
+            Token::EqEq => Token::EqEq,
+            Token::Dot => Token::Dot,
+            Token::DotDot => Token::DotDot,
+            Token::LArrow => Token::LArrow,
+            Token::LBraceBar => Token::LBraceBar,
+            Token::BarRBrace => Token::BarRBrace,
+            Token::Plus => Token::Plus,
+            Token::Minus => Token::Minus,
+            Token::Star => Token::Star,
+            Token::Slash => Token::Slash,
+            Token::Caret => Token::Caret,
+            Token::Percent => Token::Percent,
+            Token::PlusPlus => Token::PlusPlus,
+            Token::KwLet => Token::KwLet,
+            Token::KwFn => Token::KwFn,
+            Token::KwProto => Token::KwProto,
+            Token::KwType => Token::KwType,
+            Token::KwFun => Token::KwFun,
+            Token::KwFor => Token::KwFor,
+            Token::KwIn => Token::KwIn,
+            Token::KwInterpolate => Token::KwInterpolate,
+            Token::KwPoly => Token::KwPoly,
+            Token::KwEval => Token::KwEval,
+            Token::KwCoef => Token::KwCoef,
+            Token::KwMle => Token::KwMle,
+            Token::KwDot => Token::KwDot,
+            Token::KwReduce => Token::KwReduce,
+            Token::KwRandom => Token::KwRandom,
+            Token::KwChallenge => Token::KwChallenge,
+            Token::KwAssert => Token::KwAssert,
+            Token::KwVerify => Token::KwVerify,
+            Token::KwPair => Token::KwPair,
+            Token::KwWhere => Token::KwWhere,
+            Token::KwInstance => Token::KwInstance,
+            Token::KwWitness => Token::KwWitness,
+            Token::KwExtra => Token::KwExtra,
+            Token::KwUniform => Token::KwUniform,
+            Token::KwField => Token::KwField,
+            Token::KwGroup => Token::KwGroup,
+            Token::KwPairing => Token::KwPairing,
+            Token::KwScalar => Token::KwScalar,
+            Token::KwSize => Token::KwSize,
+            Token::KwUnit => Token::KwUnit,
+            Token::KwFin => Token::KwFin,
+            Token::KwPolyTy => Token::KwPolyTy,
+            Token::KwUni => Token::KwUni,
+            Token::KwMleTy => Token::KwMleTy,
+            Token::Whitespace => Token::Whitespace,
+            Token::LineComment => Token::LineComment,
+            Token::BlockComment => Token::BlockComment,
+            Token::Error => Token::Error,
+        }
+    }
 }
 
-impl std::fmt::Display for Token {
+impl<'src> std::fmt::Display for Token<'src> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Token::Id(s) | Token::Positive(s) => write!(f, "{s}"),
@@ -335,7 +413,8 @@ enum RawToken {
 }
 
 /// Keyword lookup table. Maps keyword text to the corresponding `Token` variant.
-const KEYWORDS: &[(&str, Token)] = &[
+/// All keyword tokens are unit variants (no data), so they are `Token<'static>`.
+const KEYWORDS: &[(&str, Token<'static>)] = &[
     // Declaration keywords
     ("let", Token::KwLet),
     ("fn", Token::KwFn),
@@ -377,7 +456,7 @@ const KEYWORDS: &[(&str, Token)] = &[
 ];
 
 /// Map a `RawToken` to a `Token`, performing keyword lookup for identifiers.
-fn raw_to_token(raw: &RawToken, text: &str) -> Token {
+fn raw_to_token<'src>(raw: &RawToken, text: &'src str) -> Token<'src> {
     match raw {
         RawToken::Whitespace => Token::Whitespace,
         RawToken::LineComment => Token::LineComment,
@@ -409,7 +488,7 @@ fn raw_to_token(raw: &RawToken, text: &str) -> Token {
         RawToken::Slash => Token::Slash,
         RawToken::Caret => Token::Caret,
         RawToken::Percent => Token::Percent,
-        RawToken::Positive => Token::Positive(text.to_string()),
+        RawToken::Positive => Token::Positive(Cow::Borrowed(text)),
         RawToken::Ident => {
             // Binary search would be faster, but the table is small (34 entries)
             // and linear search is branch-predictable.
@@ -417,7 +496,7 @@ fn raw_to_token(raw: &RawToken, text: &str) -> Token {
                 .iter()
                 .find(|(kw, _)| *kw == text)
                 .map(|(_, tok)| tok.clone())
-                .unwrap_or_else(|| Token::Id(text.to_string()))
+                .unwrap_or_else(|| Token::Id(Cow::Borrowed(text)))
         }
         RawToken::Unknown => Token::Error,
     }
@@ -430,7 +509,7 @@ fn raw_to_token(raw: &RawToken, text: &str) -> Token {
 /// reproduces the original source.
 ///
 /// Unknown characters produce `Token::Error` tokens (one per character).
-pub fn lex_iter<'src>(src: &'src str) -> impl Iterator<Item = (Token, SimpleSpan)> + 'src {
+pub fn lex_iter<'src>(src: &'src str) -> impl Iterator<Item = (Token<'src>, SimpleSpan)> + 'src {
     let mut lexer = RawToken::lexer(src);
     let mut done = false;
 
@@ -465,15 +544,19 @@ mod tests {
     use super::*;
 
     /// Collect all tokens from `lex_iter` into a `Vec` (test helper).
-    fn lex(src: &str) -> Vec<(Token, SimpleSpan)> {
+    fn lex(src: &str) -> Vec<(Token<'_>, SimpleSpan)> {
         lex_iter(src).collect()
     }
 
     /// Assert that lexing `src` produces exactly the expected tokens
     /// (ignoring spans). Convenience for readable tests.
-    fn assert_tokens(src: &str, expected: &[Token]) {
-        let tokens: Vec<Token> = lex(src).into_iter().map(|(t, _)| t).collect();
-        assert_eq!(tokens, expected, "source: {:?}", src);
+    /// Expected tokens use `Cow::Owned` so they are `Token<'static>`.
+    fn assert_tokens(src: &str, expected: &[Token<'static>]) {
+        let tokens: Vec<Token<'_>> = lex(src).into_iter().map(|(t, _)| t).collect();
+        // Compare by converting both sides to owned tokens
+        let tokens_owned: Vec<Token<'static>> =
+            tokens.into_iter().map(|t| t.into_owned()).collect();
+        assert_eq!(tokens_owned, expected, "source: {:?}", src);
     }
 
     #[test]
@@ -620,31 +703,31 @@ mod tests {
 
     #[test]
     fn lex_positive() {
-        assert_tokens("42", &[Token::Positive("42".to_string())]);
+        assert_tokens("42", &[Token::Positive(Cow::Owned("42".to_string()))]);
         assert_tokens(
             "0 1 123",
             &[
-                Token::Positive("0".to_string()),
+                Token::Positive(Cow::Owned("0".to_string())),
                 Token::Whitespace,
-                Token::Positive("1".to_string()),
+                Token::Positive(Cow::Owned("1".to_string())),
                 Token::Whitespace,
-                Token::Positive("123".to_string()),
+                Token::Positive(Cow::Owned("123".to_string())),
             ],
         );
     }
 
     #[test]
     fn lex_identifier() {
-        assert_tokens("foo", &[Token::Id("foo".to_string())]);
-        assert_tokens("x_1'", &[Token::Id("x_1'".to_string())]);
+        assert_tokens("foo", &[Token::Id(Cow::Owned("foo".to_string()))]);
+        assert_tokens("x_1'", &[Token::Id(Cow::Owned("x_1'".to_string()))]);
         assert_tokens(
             "a b c",
             &[
-                Token::Id("a".to_string()),
+                Token::Id(Cow::Owned("a".to_string())),
                 Token::Whitespace,
-                Token::Id("b".to_string()),
+                Token::Id(Cow::Owned("b".to_string())),
                 Token::Whitespace,
-                Token::Id("c".to_string()),
+                Token::Id(Cow::Owned("c".to_string())),
             ],
         );
     }
@@ -694,11 +777,11 @@ mod tests {
     #[test]
     fn lex_keyword_not_prefix() {
         // "leto" should be an identifier, not KW_LET + "o"
-        assert_tokens("leto", &[Token::Id("leto".to_string())]);
+        assert_tokens("leto", &[Token::Id(Cow::Owned("leto".to_string()))]);
         // "fnord" should be an identifier
-        assert_tokens("fnord", &[Token::Id("fnord".to_string())]);
+        assert_tokens("fnord", &[Token::Id(Cow::Owned("fnord".to_string()))]);
         // "types" should be an identifier
-        assert_tokens("types", &[Token::Id("types".to_string())]);
+        assert_tokens("types", &[Token::Id(Cow::Owned("types".to_string()))]);
     }
 
     #[test]
@@ -708,9 +791,9 @@ mod tests {
         // Verify the first few tokens
         assert_eq!(tokens[0].0, Token::KwProto);
         assert_eq!(tokens[1].0, Token::Whitespace);
-        assert_eq!(tokens[2].0, Token::Id("schnorr".to_string()));
+        assert_eq!(tokens[2].0, Token::Id(Cow::Owned("schnorr".to_string())));
         assert_eq!(tokens[3].0, Token::LAngle);
-        assert_eq!(tokens[4].0, Token::Id("G".to_string()));
+        assert_eq!(tokens[4].0, Token::Id(Cow::Owned("G".to_string())));
         assert_eq!(tokens[5].0, Token::Colon);
         assert_eq!(tokens[6].0, Token::Whitespace);
         assert_eq!(tokens[7].0, Token::KwGroup);
@@ -721,9 +804,9 @@ mod tests {
         assert_tokens(
             "0..N",
             &[
-                Token::Positive("0".to_string()),
+                Token::Positive(Cow::Owned("0".to_string())),
                 Token::DotDot,
-                Token::Id("N".to_string()),
+                Token::Id(Cow::Owned("N".to_string())),
             ],
         );
     }
@@ -734,18 +817,18 @@ mod tests {
         assert_tokens(
             "a.b",
             &[
-                Token::Id("a".to_string()),
+                Token::Id(Cow::Owned("a".to_string())),
                 Token::Dot,
-                Token::Id("b".to_string()),
+                Token::Id(Cow::Owned("b".to_string())),
             ],
         );
         // `a..b` → ID DOTDOT ID (range)
         assert_tokens(
             "a..b",
             &[
-                Token::Id("a".to_string()),
+                Token::Id(Cow::Owned("a".to_string())),
                 Token::DotDot,
-                Token::Id("b".to_string()),
+                Token::Id(Cow::Owned("b".to_string())),
             ],
         );
     }
@@ -757,10 +840,10 @@ mod tests {
             &[
                 Token::LBraceBar,
                 Token::Whitespace,
-                Token::Id("x".to_string()),
+                Token::Id(Cow::Owned("x".to_string())),
                 Token::Colon,
                 Token::Whitespace,
-                Token::Positive("1".to_string()),
+                Token::Positive(Cow::Owned("1".to_string())),
                 Token::Whitespace,
                 Token::BarRBrace,
             ],
@@ -772,13 +855,13 @@ mod tests {
         assert_tokens(
             "u <- g*r",
             &[
-                Token::Id("u".to_string()),
+                Token::Id(Cow::Owned("u".to_string())),
                 Token::Whitespace,
                 Token::LArrow,
                 Token::Whitespace,
-                Token::Id("g".to_string()),
+                Token::Id(Cow::Owned("g".to_string())),
                 Token::Star,
-                Token::Id("r".to_string()),
+                Token::Id(Cow::Owned("r".to_string())),
             ],
         );
     }

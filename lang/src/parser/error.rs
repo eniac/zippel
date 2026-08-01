@@ -21,10 +21,13 @@ use super::lexer::Token;
 /// Construct-level labels (`Context`) are NOT stored here — they appear
 /// in `ParseError::contexts` instead, which tells what the parser was
 /// doing when the error occurred.
+///
+/// Tokens are `Token<'static>` (owned) so that `Expected` can outlive the
+/// source string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expected {
     /// A concrete token.
-    Token(Token),
+    Token(Token<'static>),
     /// A terminal-level label from `.labelled()` (e.g. `Terminal::Identifier`).
     Terminal(Terminal),
     /// End of input.
@@ -33,7 +36,7 @@ pub enum Expected {
 
 impl Expected {
     /// Return `true` if this is a `Token` matching the given token.
-    fn is_token(&self, tok: &Token) -> bool {
+    fn is_token(&self, tok: &Token<'_>) -> bool {
         matches!(self, Expected::Token(t) if t == tok)
     }
 }
@@ -59,7 +62,8 @@ pub struct ParseError {
     /// Byte span in the source text where the error occurred.
     pub span: std::ops::Range<usize>,
     /// The token that was found (`None` if at end of input).
-    pub found: Option<Token>,
+    /// Owned (`Token<'static>`) so the error can outlive the source.
+    pub found: Option<Token<'static>>,
     /// What was expected (typed: token vs label vs end-of-input).
     pub expected: Vec<Expected>,
     /// Custom error message (for semantic errors like duplicate decls).
@@ -96,7 +100,7 @@ trait TokenExt {
     fn is_punctuation(&self) -> bool;
 }
 
-impl TokenExt for Token {
+impl TokenExt for Token<'_> {
     fn is_punctuation(&self) -> bool {
         matches!(
             self,
@@ -198,7 +202,7 @@ fn summarize_expected(
     }
     if has_ctx(Context::Expression) {
         // Expression context: either atom-start (many expr tokens)
-        // or operator-continuation (operators + maybe a closer).
+        // or operator-continuation (operators + maybe `,` + maybe a closer).
         // Distinguish by checking if expression-atom keywords are present.
         let has_expr_atoms = expected.iter().any(|e| {
             matches!(
@@ -228,11 +232,19 @@ fn summarize_expected(
             }
             return "an expression".to_string();
         } else {
-            // Operator-continuation: "an operator" (optionally with a closer).
-            if let Some(c) = closer {
-                return format!("an operator or {c}");
+            // Operator-continuation: "an operator", plus `,` if inside a
+            // call argument list, and a closer if present.
+            let mut parts: Vec<String> = vec!["an operator".to_string()];
+            if has_ctx(Context::CallArgs) {
+                parts.push("','".to_string());
             }
-            return "an operator".to_string();
+            if let Some(c) = closer {
+                parts.push(c);
+            }
+            if parts.len() == 1 {
+                return parts[0].clone();
+            }
+            return format!("{} or {}", parts[0], parts[1..].join(" or "));
         }
     }
 
@@ -253,7 +265,7 @@ fn summarize_expected(
 /// likely user mistake. Returns a help message rendered as a blue "Help:"
 /// note by ariadne (like rustc's help tips).
 fn detect_help(
-    found: &Option<Token>,
+    found: &Option<Token<'static>>,
     expected: &[Expected],
     contexts: &[(Context, std::ops::Range<usize>)],
 ) -> Option<String> {
@@ -266,6 +278,7 @@ fn detect_help(
     let in_where_clause = contexts.iter().any(|(c, _)| *c == Context::WhereClause);
     let in_type_alias = contexts.iter().any(|(c, _)| *c == Context::TypeAlias);
     let in_range_bound = contexts.iter().any(|(c, _)| *c == Context::RangeBound);
+    let in_call_args = contexts.iter().any(|(c, _)| *c == Context::CallArgs);
 
     // Helper: does the expected list contain a specific token?
     let expects = |tok: &Token| expected.iter().any(|e| e.is_token(tok));
@@ -472,15 +485,16 @@ fn detect_help(
         return Some("record values use `,` between fields (not `;`)".to_string());
     }
 
-    // Using `;` instead of `,` in function-like expression: found `;`, expected `,`,
-    // `;` is NOT expected, in expression.
+    // Using `;` instead of `,` in function call: found `;`, in call arguments,
+    // `)` is NOT expected (i.e. not at the end of the last argument).
     // e.g. `reduce(+; [a, b])` should be `reduce(+, [a, b])`
-    // If `;` were also expected, we'd be in an expression-continuation context
-    // where `;` is a valid sequencing operator — not a typo.
+    // e.g. `dot(a; b)` should be `dot(a, b)`
+    // When `)` is expected (e.g. `assert(a == b; c)`), the `;` is more likely
+    // a misplaced `)` — the error message already lists `)` as expected.
     if matches!(found, Some(Token::Semi))
-        && in_expr
-        && expects(&Token::Comma)
+        && in_call_args
         && !expects(&Token::Semi)
+        && !expects(&Token::RParen)
     {
         return Some("use `,` between arguments (not `;`)".to_string());
     }
@@ -687,8 +701,8 @@ pub(super) fn rich_to_parse_error(e: &CtxError) -> ParseError {
         };
     }
 
-    // Found token — clone the owned Token.
-    let found = e.found().cloned();
+    // Found token — convert borrowed token to owned (detaches from source).
+    let found = e.found().map(|t| (*t).clone().into_owned());
 
     // Expected tokens — convert RichPattern to owned Expected.
     // Context labels never appear here (CtxError's label_with is a no-op
@@ -696,7 +710,7 @@ pub(super) fn rich_to_parse_error(e: &CtxError) -> ParseError {
     let expected: Vec<Expected> = e
         .expected()
         .filter_map(|p| match p {
-            RichPattern::Token(t) => Some(Expected::Token((**t).clone())),
+            RichPattern::Token(t) => Some(Expected::Token((**t).clone().into_owned())),
             RichPattern::Label(cow) => Terminal::try_from(cow.as_ref())
                 .ok()
                 .map(Expected::Terminal),

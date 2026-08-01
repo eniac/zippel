@@ -47,6 +47,10 @@ pub enum Context {
     TypeAlias,
     /// Range end bound after `..` (e.g. `0..N`).
     RangeBound,
+    /// Arguments inside `(...)` of a comma-separated function call or builtin
+    /// operator (e.g. `dot(a, b)`, `poly(a)`, `f(a, b)`). Not used for
+    /// `assert`/`verify` which use `==` between their two arguments.
+    CallArgs,
 }
 
 impl Context {
@@ -63,6 +67,7 @@ impl Context {
             Context::ArgumentList => "argument list",
             Context::TypeAlias => "type alias",
             Context::RangeBound => "range bound",
+            Context::CallArgs => "call arguments",
         }
     }
 }
@@ -80,6 +85,7 @@ impl std::fmt::Display for Context {
             Context::ArgumentList => "an argument list",
             Context::TypeAlias => "a type alias",
             Context::RangeBound => "a range bound",
+            Context::CallArgs => "call arguments",
         })
     }
 }
@@ -87,7 +93,7 @@ impl std::fmt::Display for Context {
 /// Convert a `Context` to a chumsky `RichPattern` for `.labelled()`.
 /// This lets the parser use `.labelled(Context::Type)` directly instead of
 /// `.labelled("type")`, eliminating the string intermediary.
-impl TryFrom<Context> for RichPattern<'_, Token> {
+impl<'a, 'src> TryFrom<Context> for RichPattern<'a, Token<'src>> {
     type Error = ();
     fn try_from(ctx: Context) -> Result<Self, ()> {
         Ok(RichPattern::Label(Cow::Borrowed(ctx.as_str())))
@@ -111,6 +117,7 @@ impl TryFrom<&str> for Context {
             "argument list" => Ok(Context::ArgumentList),
             "type alias" => Ok(Context::TypeAlias),
             "range bound" => Ok(Context::RangeBound),
+            "call arguments" => Ok(Context::CallArgs),
             _ => Err(()),
         }
     }
@@ -149,7 +156,7 @@ impl std::fmt::Display for Terminal {
     }
 }
 
-impl TryFrom<Terminal> for RichPattern<'_, Token> {
+impl<'a, 'src> TryFrom<Terminal> for RichPattern<'a, Token<'src>> {
     type Error = ();
     fn try_from(term: Terminal) -> Result<Self, ()> {
         Ok(RichPattern::Label(Cow::Borrowed(term.as_str())))
@@ -182,7 +189,7 @@ impl TryFrom<&str> for Terminal {
 /// messages. For `Terminal` labels, `label_with` is the primary effect
 /// (replacing raw tokens with "identifier" / "positive integer"), so it
 /// delegates to `Rich` normally.
-pub struct CtxError<'src>(pub Rich<'src, Token, SimpleSpan>);
+pub struct CtxError<'src>(pub Rich<'src, Token<'src>, SimpleSpan>);
 
 impl<'src> std::fmt::Debug for CtxError<'src> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -200,30 +207,28 @@ impl<'src> Clone for CtxError<'src> {
 // Delegates to inner Rich. Requires LabelError for DefaultExpected.
 impl<'src, I> Error<'src, I> for CtxError<'src>
 where
-    I: Input<'src, Token = Token, Span = SimpleSpan>,
+    I: Input<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     fn merge(self, other: Self) -> Self {
-        Self(<Rich<'src, Token, SimpleSpan> as Error<'src, I>>::merge(
-            self.0, other.0,
-        ))
+        Self(<Rich<'src, Token<'src>, SimpleSpan> as Error<'src, I>>::merge(self.0, other.0))
     }
 }
 
 // LabelError for DefaultExpected — required by Error trait.
 // Both label_with and in_context delegate to Rich (normal behavior).
-impl<'src, I> LabelError<'src, I, DefaultExpected<'src, Token>> for CtxError<'src>
+impl<'src, I> LabelError<'src, I, DefaultExpected<'src, Token<'src>>> for CtxError<'src>
 where
-    I: Input<'src, Token = Token, Span = SimpleSpan>,
+    I: Input<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
-    fn expected_found<E: IntoIterator<Item = DefaultExpected<'src, Token>>>(
+    fn expected_found<E: IntoIterator<Item = DefaultExpected<'src, Token<'src>>>>(
         expected: E,
-        found: Option<MaybeRef<'src, Token>>,
+        found: Option<MaybeRef<'src, Token<'src>>>,
         span: SimpleSpan,
     ) -> Self {
-        Self(<Rich<'src, Token, SimpleSpan> as LabelError<
+        Self(<Rich<'src, Token<'src>, SimpleSpan> as LabelError<
             'src,
             I,
-            DefaultExpected<'src, Token>,
+            DefaultExpected<'src, Token<'src>>,
         >>::expected_found(expected, found, span))
     }
 }
@@ -238,14 +243,14 @@ where
 // with a single label) because we never call Rich's label_with.
 impl<'src, I> LabelError<'src, I, Context> for CtxError<'src>
 where
-    I: Input<'src, Token = Token, Span = SimpleSpan>,
+    I: Input<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     fn expected_found<E: IntoIterator<Item = Context>>(
         expected: E,
-        found: Option<MaybeRef<'src, Token>>,
+        found: Option<MaybeRef<'src, Token<'src>>>,
         span: SimpleSpan,
     ) -> Self {
-        Self(<Rich<'src, Token, SimpleSpan> as LabelError<
+        Self(<Rich<'src, Token<'src>, SimpleSpan> as LabelError<
             'src,
             I,
             Context,
@@ -258,7 +263,7 @@ where
         // chumsky would normally call label_with (replacing expected tokens).
         // We keep the real expected tokens and add context instead.
         let span = *self.0.span();
-        <Rich<'src, Token, SimpleSpan> as LabelError<'src, I, Context>>::in_context(
+        <Rich<'src, Token<'src>, SimpleSpan> as LabelError<'src, I, Context>>::in_context(
             &mut self.0,
             label,
             span,
@@ -266,7 +271,7 @@ where
     }
 
     fn in_context(&mut self, label: Context, span: SimpleSpan) {
-        <Rich<'src, Token, SimpleSpan> as LabelError<'src, I, Context>>::in_context(
+        <Rich<'src, Token<'src>, SimpleSpan> as LabelError<'src, I, Context>>::in_context(
             &mut self.0,
             label,
             span,
@@ -278,14 +283,14 @@ where
 // (Terminal labels use label_with as their primary effect).
 impl<'src, I> LabelError<'src, I, Terminal> for CtxError<'src>
 where
-    I: Input<'src, Token = Token, Span = SimpleSpan>,
+    I: Input<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     fn expected_found<E: IntoIterator<Item = Terminal>>(
         expected: E,
-        found: Option<MaybeRef<'src, Token>>,
+        found: Option<MaybeRef<'src, Token<'src>>>,
         span: SimpleSpan,
     ) -> Self {
-        Self(<Rich<'src, Token, SimpleSpan> as LabelError<
+        Self(<Rich<'src, Token<'src>, SimpleSpan> as LabelError<
             'src,
             I,
             Terminal,

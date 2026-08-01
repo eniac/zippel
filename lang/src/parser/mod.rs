@@ -12,6 +12,8 @@ pub use error::{render_error, ParseError};
 pub use label::{Context, CtxError, Terminal};
 pub use lexer::{lex_iter, Token};
 
+use std::borrow::Cow;
+
 use chumsky::input::{Stream, ValueInput};
 use chumsky::pratt::{self, Associativity};
 use chumsky::prelude::*;
@@ -28,23 +30,23 @@ use error::rich_to_parse_error;
 // ── Token matching helpers ─────────────────────────────────────────────
 
 /// Match an identifier, returning its name as a `Vid`.
-fn id_tok<'src, I: ValueInput<'src, Token = Token, Span = SimpleSpan>>(
+fn id_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>(
 ) -> impl Parser<'src, I, Vid, extra::Err<CtxError<'src>>> + Clone {
     select! { Token::Id(s) => s }
         .labelled(Terminal::Identifier)
-        .map(Vid)
+        .map(|s| Vid(s.into_owned()))
 }
 
 /// Match an identifier, returning its name as a `Tid`.
-fn tid_tok<'src, I: ValueInput<'src, Token = Token, Span = SimpleSpan>>(
+fn tid_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>(
 ) -> impl Parser<'src, I, Tid, extra::Err<CtxError<'src>>> + Clone {
     select! { Token::Id(s) => s }
         .labelled(Terminal::Identifier)
-        .map(Tid::from)
+        .map(|s| Tid::from(s.into_owned()))
 }
 
 /// Match a positive integer literal, returning its value.
-fn positive_tok<'src, I: ValueInput<'src, Token = Token, Span = SimpleSpan>>(
+fn positive_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>(
 ) -> impl Parser<'src, I, u32, extra::Err<CtxError<'src>>> + Clone {
     select! { Token::Positive(s) => s }
         .labelled(Terminal::PositiveInteger)
@@ -59,7 +61,7 @@ fn positive_tok<'src, I: ValueInput<'src, Token = Token, Span = SimpleSpan>>(
 ///   size_ty_term = _{ "(" ~ size_ty ~ ")" | positive | size_var }
 fn size_ty_parser<'src, I>() -> impl Parser<'src, I, Size, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     recursive(|size_rec| {
         let atom = choice((
@@ -110,7 +112,7 @@ where
 ///   unit_r = { size_ty ~ ".." ~ size_ty }
 fn range_parser<'src, I>() -> impl Parser<'src, I, Range<Size>, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     choice((
         // step_r: start, step, "..", end
@@ -139,7 +141,7 @@ where
 ///   kind_ty = { field_ty | group_ty | range_ty | pairing_ty | scalar_ty | size_var_ty | size_ref_ty | positive }
 fn kind_parser<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     choice((
         kw_field(),
@@ -171,26 +173,26 @@ where
 
 fn kw_field<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     just(Token::KwField).ignored().to(Kind::Field)
 }
 fn kw_group<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     just(Token::KwGroup).ignored().to(Kind::Group)
 }
 fn kw_size<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     just(Token::KwSize).ignored().to(Kind::SizeVar)
 }
 
 fn pairing_kind<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     just(Token::KwPairing)
         .ignored()
@@ -205,7 +207,7 @@ where
 /// Scalar<ids> — takes a comma-separated list of group type variables.
 fn scalar_kind<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     just(Token::KwScalar)
         .ignored()
@@ -227,7 +229,7 @@ where
 ///   typ = _{ poly_ty | uni_ty | mle_ty | vec_ty | fin_ty | unit_ty | base_ty | record_ty }
 fn typ_parser<'src, I>() -> impl Parser<'src, I, GTyp<Size>, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     recursive(|typ_rec| {
         choice((
@@ -319,7 +321,7 @@ where
 /// Mirrors `tvar = { id ~ ":" ~ kind_ty }`
 fn tvar_parser<'src, I>() -> impl Parser<'src, I, TypeVar<Size>, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     tid_tok()
         .then_ignore(just(Token::Colon).ignored())
@@ -332,7 +334,7 @@ where
 fn tvars_parser<'src, I>(
 ) -> impl Parser<'src, I, TypeVars<Size>, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     tvar_parser()
         .separated_by(just(Token::Comma).ignored())
@@ -349,7 +351,7 @@ where
 /// Mirrors `qualifier = { instance | witness | extra }`
 fn qualifier_parser<'src, I>() -> impl Parser<'src, I, Qualifier, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     choice((
         just(Token::KwInstance).ignored().to(Qualifier::Instance),
@@ -363,7 +365,7 @@ where
 fn distribution_parser<'src, I>(
 ) -> impl Parser<'src, I, Distribution, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     just(Token::KwUniform)
         .ignored()
@@ -381,7 +383,7 @@ where
 /// Mirrors `arg = { qualifier? ~ distribution? ~ id ~ ":" ~ typ }`
 fn arg_parser<'src, I>() -> impl Parser<'src, I, GArg<Size>, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     qualifier_parser()
         .or_not()
@@ -405,7 +407,7 @@ where
 /// Mirrors `bin_op = _{ concat_op | add_op | sub_op | mul_op | div_op | pow_op | rem_op }`
 fn bin_op_parser<'src, I>() -> impl Parser<'src, I, BinOp, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     choice((
         just(Token::PlusPlus).ignored().to(BinOp::Concat),
@@ -432,7 +434,7 @@ fn exp_atom<'src, I>(
     exp: ExpParser<'src, I>,
 ) -> impl Parser<'src, I, UExp, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     choice((
         // Range expression: 0..N or 0,1..N
@@ -463,15 +465,20 @@ where
         // interpolate(exp) or interpolate(exp, exp)
         just(Token::KwInterpolate)
             .ignored()
-            .ignore_then(just(Token::LParen).ignored())
-            .ignore_then(exp_no_seq.clone())
-            .then(
-                just(Token::Comma)
+            .ignore_then(
+                just(Token::LParen)
                     .ignored()
                     .ignore_then(exp_no_seq.clone())
-                    .or_not(),
+                    .then(
+                        just(Token::Comma)
+                            .ignored()
+                            .ignore_then(exp_no_seq.clone())
+                            .or_not(),
+                    )
+                    .then_ignore(just(Token::RParen).ignored())
+                    .labelled(Context::CallArgs)
+                    .as_context(),
             )
-            .then_ignore(just(Token::RParen).ignored())
             .map(|(first, second)| match second {
                 None => UExp::Interpolate(None, Box::new(first)),
                 Some(s) => UExp::Interpolate(Some(Box::new(first)), Box::new(s)),
@@ -479,32 +486,52 @@ where
         // poly(exp)
         just(Token::KwPoly)
             .ignored()
-            .ignore_then(just(Token::LParen).ignored())
-            .ignore_then(exp_no_seq.clone())
-            .then_ignore(just(Token::RParen).ignored())
+            .ignore_then(
+                just(Token::LParen)
+                    .ignored()
+                    .ignore_then(exp_no_seq.clone())
+                    .then_ignore(just(Token::RParen).ignored())
+                    .labelled(Context::CallArgs)
+                    .as_context(),
+            )
             .map(|e| UExp::Poly(Box::new(e))),
         // coef(exp)
         just(Token::KwCoef)
             .ignored()
-            .ignore_then(just(Token::LParen).ignored())
-            .ignore_then(exp_no_seq.clone())
-            .then_ignore(just(Token::RParen).ignored())
+            .ignore_then(
+                just(Token::LParen)
+                    .ignored()
+                    .ignore_then(exp_no_seq.clone())
+                    .then_ignore(just(Token::RParen).ignored())
+                    .labelled(Context::CallArgs)
+                    .as_context(),
+            )
             .map(|e| UExp::Coef(Box::new(e))),
         // mle(exp)
         just(Token::KwMle)
             .ignored()
-            .ignore_then(just(Token::LParen).ignored())
-            .ignore_then(exp_no_seq.clone())
-            .then_ignore(just(Token::RParen).ignored())
+            .ignore_then(
+                just(Token::LParen)
+                    .ignored()
+                    .ignore_then(exp_no_seq.clone())
+                    .then_ignore(just(Token::RParen).ignored())
+                    .labelled(Context::CallArgs)
+                    .as_context(),
+            )
             .map(|e| UExp::Mle(Box::new(e))),
         // dot(exp, exp) — dot product → Bin(Dot, a, b)
         just(Token::KwDot)
             .ignored()
-            .ignore_then(just(Token::LParen).ignored())
-            .ignore_then(exp_no_seq.clone())
-            .then_ignore(just(Token::Comma).ignored())
-            .then(exp_no_seq.clone())
-            .then_ignore(just(Token::RParen).ignored())
+            .ignore_then(
+                just(Token::LParen)
+                    .ignored()
+                    .ignore_then(exp_no_seq.clone())
+                    .then_ignore(just(Token::Comma).ignored())
+                    .then(exp_no_seq.clone())
+                    .then_ignore(just(Token::RParen).ignored())
+                    .labelled(Context::CallArgs)
+                    .as_context(),
+            )
             .map(|(a, b)| UExp::dot(a, b)),
         // random<T> or random<T*>
         just(Token::KwRandom)
@@ -535,11 +562,16 @@ where
         // reduce(op, exp)
         just(Token::KwReduce)
             .ignored()
-            .ignore_then(just(Token::LParen).ignored())
-            .ignore_then(bin_op_parser())
-            .then_ignore(just(Token::Comma).ignored())
-            .then(exp_no_seq.clone())
-            .then_ignore(just(Token::RParen).ignored())
+            .ignore_then(
+                just(Token::LParen)
+                    .ignored()
+                    .ignore_then(bin_op_parser())
+                    .then_ignore(just(Token::Comma).ignored())
+                    .then(exp_no_seq.clone())
+                    .then_ignore(just(Token::RParen).ignored())
+                    .labelled(Context::CallArgs)
+                    .as_context(),
+            )
             .map(|(op, e)| UExp::Reduce(op, Box::new(e))),
         // [exp, exp, ...] (vector)
         just(Token::LBrack)
@@ -556,13 +588,18 @@ where
         // pair(exp, exp)
         just(Token::KwPair)
             .ignored()
-            .ignore_then(just(Token::LParen).ignored())
-            .ignore_then(exp_no_seq.clone())
-            .then_ignore(just(Token::Comma).ignored())
-            .then(exp_no_seq.clone())
-            .then_ignore(just(Token::RParen).ignored())
+            .ignore_then(
+                just(Token::LParen)
+                    .ignored()
+                    .ignore_then(exp_no_seq.clone())
+                    .then_ignore(just(Token::Comma).ignored())
+                    .then(exp_no_seq.clone())
+                    .then_ignore(just(Token::RParen).ignored())
+                    .labelled(Context::CallArgs)
+                    .as_context(),
+            )
             .map(|(a, b)| UExp::Pair(Box::new(a), Box::new(b))),
-        // assert(constraint)
+        // assert(constraint) — uses == not , between args, so no CallArgs context
         just(Token::KwAssert)
             .ignored()
             .ignore_then(just(Token::LParen).ignored())
@@ -571,7 +608,7 @@ where
             .then(exp_no_seq.clone())
             .then_ignore(just(Token::RParen).ignored())
             .map(|(lhs, rhs)| UExp::Assert(Box::new(lhs), Box::new(rhs))),
-        // verify(constraint)
+        // verify(constraint) — uses == not , between args, so no CallArgs context
         just(Token::KwVerify)
             .ignored()
             .ignore_then(just(Token::LParen).ignored())
@@ -605,15 +642,20 @@ where
         positive_tok().map(|n| UExp::Lit(Size::Lit(n))),
         // app_exp: id(exps) — function application
         id_tok()
-            .then_ignore(just(Token::LParen).ignored())
             .then(
-                exp_no_seq
-                    .clone()
-                    .separated_by(just(Token::Comma).ignored())
-                    .allow_trailing()
-                    .collect::<Vec<_>>(),
+                just(Token::LParen)
+                    .ignored()
+                    .ignore_then(
+                        exp_no_seq
+                            .clone()
+                            .separated_by(just(Token::Comma).ignored())
+                            .allow_trailing()
+                            .collect::<Vec<_>>(),
+                    )
+                    .then_ignore(just(Token::RParen).ignored())
+                    .labelled(Context::CallArgs)
+                    .as_context(),
             )
-            .then_ignore(just(Token::RParen).ignored())
             .map(|(id, args)| UExp::App(id, Exps(args))),
         // ram_exp: id[exp] — array access
         id_tok()
@@ -638,7 +680,7 @@ fn eval_exp_parser<'src, I>(
     exp_no_seq: ExpParser<'src, I>,
 ) -> impl Parser<'src, I, UExp, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     // The selector normalizes both range and size_ty to Range<Size>.
     let selector = just(Token::LAngle)
@@ -657,16 +699,21 @@ where
     just(Token::KwEval)
         .ignored()
         .ignore_then(selector)
-        .then(just(Token::LParen).ignored())
-        .then(exp_no_seq.clone())
         .then(
-            just(Token::Comma)
+            just(Token::LParen)
                 .ignored()
-                .ignore_then(exp_no_seq)
-                .or_not(),
+                .ignore_then(exp_no_seq.clone())
+                .then(
+                    just(Token::Comma)
+                        .ignored()
+                        .ignore_then(exp_no_seq)
+                        .or_not(),
+                )
+                .then_ignore(just(Token::RParen).ignored())
+                .labelled(Context::CallArgs)
+                .as_context(),
         )
-        .then_ignore(just(Token::RParen).ignored())
-        .map(|(((sel, _), poly), second)| match (sel, second) {
+        .map(|(sel, (poly, second))| match (sel, second) {
             (None, None) => UExp::Evaluate(Box::new(poly), None, None),
             (None, Some(s)) => UExp::Evaluate(Box::new(poly), None, Some(Box::new(s))),
             (Some(r), Some(f)) => UExp::Evaluate(Box::new(poly), Some(r), Some(Box::new(f))),
@@ -678,7 +725,7 @@ where
 /// Mirrors `exp_no_seq = { exp_term ~ (record_set_op | proj_op | bin_op ~ exp_term)* }`
 fn exp_no_seq_parser<'src, I>() -> impl Parser<'src, I, UExp, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     recursive(|exp_no_seq_rec| {
         // Build the exp parser using the recursive exp_no_seq reference
@@ -738,7 +785,7 @@ where
                     .ignore_then(
                         select! { Token::Id(s) => s }
                             .labelled(Terminal::Set)
-                            .filter(|s: &String| s == "set"),
+                            .filter(|s: &Cow<'_, str>| s == "set"),
                     )
                     .ignore_then(just(Token::LParen).ignored())
                     .ignore_then(id_tok())
@@ -765,7 +812,7 @@ fn exp_parser_inner<'src, I>(
     exp_no_seq: ExpParser<'src, I>,
 ) -> impl Parser<'src, I, UExp, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     recursive(|exp_rec| {
         choice((
@@ -817,7 +864,7 @@ where
 /// Public entry point — builds the full exp parser from exp_no_seq.
 fn exp_parser<'src, I>() -> impl Parser<'src, I, UExp, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     exp_parser_inner(exp_no_seq_parser().boxed())
 }
@@ -826,7 +873,7 @@ where
 /// Mirrors `where_exp = { where_let | where_eq | exp_no_seq }`
 fn where_exp_parser<'src, I>() -> impl Parser<'src, I, UExp, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     recursive(|where_rec| {
         let exp_no_seq = exp_no_seq_parser().boxed();
@@ -886,7 +933,7 @@ where
 fn arg_list_parser<'src, I>(
 ) -> impl Parser<'src, I, Vec<GArg<Size>>, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     arg_parser()
         .separated_by(just(Token::Comma).ignored())
@@ -900,7 +947,7 @@ where
 /// Mirrors `decl = { proto_decl | func_decl | type_decl }`
 fn decl_parser<'src, I>() -> impl Parser<'src, I, UDecl, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     choice((
         // proto_decl = { "proto" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "where" ~ where_exp ~ "{" ~ exp ~ "}" }
@@ -974,7 +1021,7 @@ where
 /// Validates that no two declarations share the same signature.
 fn decls_parser<'src, I>() -> impl Parser<'src, I, Vec<UDecl>, extra::Err<CtxError<'src>>> + Clone
 where
-    I: ValueInput<'src, Token = Token, Span = SimpleSpan>,
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     decl_parser()
         .repeated()
