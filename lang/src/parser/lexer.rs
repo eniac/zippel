@@ -13,9 +13,8 @@ use logos::{Lexer, Logos};
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub enum LexingError {
     /// `/*` with no matching `*/` before end of input.
-    UnterminatedBlockComment,
     #[default]
-    Other,
+    UnterminatedBlockComment,
 }
 
 /// Callback for block comments. Logos matches the `/*` opening, then this
@@ -454,9 +453,6 @@ pub fn lex_iter<'src>(src: &'src str) -> impl Iterator<Item = (Token, SimpleSpan
                 let span = lexer.span();
                 done = true;
                 Some((Token::Error, (span.start..src.len()).into()))
-            }
-            Some(Err(_)) => {
-                unreachable!("lexer error with Unknown catch-all in place")
             }
         }
     })

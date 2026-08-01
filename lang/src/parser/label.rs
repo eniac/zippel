@@ -33,7 +33,6 @@ pub enum Context {
     Declaration,
     Expression,
     Type,
-    Set,
     /// Kind annotation after `:` in type variables (e.g. `F: Field`).
     Kind,
     /// Function/proto argument (e.g. `instance a: F`).
@@ -57,7 +56,6 @@ impl Context {
             Context::Declaration => "declaration",
             Context::Expression => "expression",
             Context::Type => "type",
-            Context::Set => "set",
             Context::Kind => "kind",
             Context::Argument => "argument",
             Context::WhereClause => "where clause",
@@ -75,7 +73,6 @@ impl std::fmt::Display for Context {
             Context::Declaration => "a declaration",
             Context::Expression => "an expression",
             Context::Type => "a type",
-            Context::Set => "a set",
             Context::Kind => "a kind annotation",
             Context::Argument => "an argument",
             Context::WhereClause => "a where clause",
@@ -107,7 +104,6 @@ impl TryFrom<&str> for Context {
             "declaration" => Ok(Context::Declaration),
             "expression" => Ok(Context::Expression),
             "type" => Ok(Context::Type),
-            "set" => Ok(Context::Set),
             "kind" => Ok(Context::Kind),
             "argument" => Ok(Context::Argument),
             "where clause" => Ok(Context::WhereClause),
@@ -132,6 +128,9 @@ impl TryFrom<&str> for Context {
 pub enum Terminal {
     Identifier,
     PositiveInteger,
+    /// The `.set` method on records — used to label the `select!` filter
+    /// that distinguishes `.set(` from field projection `.field`.
+    Set,
 }
 
 impl Terminal {
@@ -139,6 +138,7 @@ impl Terminal {
         match self {
             Terminal::Identifier => "identifier",
             Terminal::PositiveInteger => "positive integer",
+            Terminal::Set => "set",
         }
     }
 }
@@ -164,6 +164,7 @@ impl TryFrom<&str> for Terminal {
         match s {
             "identifier" => Ok(Terminal::Identifier),
             "positive integer" => Ok(Terminal::PositiveInteger),
+            "set" => Ok(Terminal::Set),
             _ => Err(()),
         }
     }

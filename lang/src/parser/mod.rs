@@ -737,7 +737,7 @@ where
                     .ignored()
                     .ignore_then(
                         select! { Token::Id(s) => s }
-                            .labelled(Context::Set)
+                            .labelled(Terminal::Set)
                             .filter(|s: &String| s == "set"),
                     )
                     .ignore_then(just(Token::LParen).ignored())

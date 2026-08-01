@@ -278,129 +278,129 @@ fn detect_help(
 
     // ── Declaration-level patterns (check before expression patterns) ──
 
-    // 20. Missing `<` to open generics: found identifier, expected `<`, in declaration.
-    //     e.g. `fn f F: Field>(...)` should be `fn f<F: Field>(...)`
-    //     Only fire at declaration level (not inside expressions where `<` is an operator).
+    // Missing `<` to open generics: found identifier, expected `<`, in declaration.
+    // e.g. `fn f F: Field>(...)` should be `fn f<F: Field>(...)`
+    // Only fire at declaration level (not inside expressions where `<` is an operator).
     if in_decl && !in_expr && found_non_punct && expects(&Token::LAngle) {
         return Some("missing `<` to open generic type parameters".to_string());
     }
 
-    // 21. Missing `(` to open argument list: found identifier/keyword, `(` is the sole
-    //     expected token, in declaration.
-    //     e.g. `fn f<F: Field> instance a: F)` should be `fn f<F: Field>(instance a: F)`
-    //     kind_parser also expects `(` (for `Scalar<...>` / `Pairing<...>`) but alongside
-    //     kind keywords, so expects_only(LParen) is false there.
+    // Missing `(` to open argument list: found identifier/keyword, `(` is the sole
+    // expected token, in declaration.
+    // e.g. `fn f<F: Field> instance a: F)` should be `fn f<F: Field>(instance a: F)`
+    // kind_parser also expects `(` (for `Scalar<...>` / `Pairing<...>`) but alongside
+    // kind keywords, so expects_only(LParen) is false there.
     if in_decl && !in_expr && !in_type && found_non_punct && expects_only(&Token::LParen) {
         return Some("missing `(` to open argument list".to_string());
     }
 
-    // 30. Using `=>` instead of `->` in function return type.
-    //     e.g. `fn f(...) => F { a }` should be `fn f(...) -> F { a }`
-    //     More specific than pattern 12 — fires when `=>` is the found token.
+    // Using `=>` instead of `->` in function return type.
+    // e.g. `fn f(...) => F { a }` should be `fn f(...) -> F { a }`
+    // More specific than the missing-`->` check below — fires when `=>` is the found token.
     if matches!(found, Some(Token::FatArrow)) && in_decl && expects(&Token::Arrow) {
         return Some("function return types use `->` (not `=>`)".to_string());
     }
 
-    // 12. Missing `->` before return type: found identifier, expected `->` or `{`.
-    //     e.g. `fn f<F: Field>(a: F) F { a }` — missing `->` before return type
+    // Missing `->` before return type: found identifier, expected `->` or `{`.
+    // e.g. `fn f<F: Field>(a: F) F { a }` — missing `->` before return type
     if in_decl && found_non_punct && expects(&Token::Arrow) && expects(&Token::LBrace) {
         return Some("missing `->` before return type".to_string());
     }
 
-    // 13. Using `=` instead of `->` before return type.
-    //     e.g. `fn f<F: Field>(a: F) = F { a }` — should be `-> F`
+    // Using `=` instead of `->` before return type.
+    // e.g. `fn f<F: Field>(a: F) = F { a }` — should be `-> F`
     if matches!(found, Some(Token::Eq)) && in_decl && expects(&Token::Arrow) {
         return Some("use `->` before return type (not `=`)".to_string());
     }
 
-    // 14. Proto with return type: found `->`, expected `where` or `{`.
-    //     e.g. `proto p<F: Field>(a: F) -> F where ...` — proto has no return type
+    // Proto with return type: found `->`, expected `where` or `{`.
+    // e.g. `proto p<F: Field>(a: F) -> F where ...` — proto has no return type
     if matches!(found, Some(Token::Arrow)) && in_decl && expects(&Token::KwWhere) {
         return Some("proto declarations don't have return types (use `fn` instead)".to_string());
     }
 
-    // 15. Missing `where` keyword in proto: found identifier, expected `where`.
-    //     e.g. `proto p<F: Field>(a: F) a == b { }` — missing `where`
+    // Missing `where` keyword in proto: found identifier, expected `where`.
+    // e.g. `proto p<F: Field>(a: F) a == b { }` — missing `where`
     if in_decl && found_non_punct && expects(&Token::KwWhere) {
         return Some("missing `where` keyword before constraints".to_string());
     }
 
-    // 16. Missing `:` in argument declaration: found identifier, expected `:`, in argument.
-    //     e.g. `fn f<F: Field>(instance a F) -> F { a }` — missing `:` after name
-    //     `in_arg` is specific to argument context — record types and let bindings
-    //     are excluded naturally (they're not in Argument context).
+    // Missing `:` in argument declaration: found identifier, expected `:`, in argument.
+    // e.g. `fn f<F: Field>(instance a F) -> F { a }` — missing `:` after name
+    // `in_arg` is specific to argument context — record types and let bindings
+    // are excluded naturally (they're not in Argument context).
     if in_arg && found_non_punct && expects(&Token::Colon) {
         return Some("missing `:` after argument name".to_string());
     }
 
-    // 3. Missing `>` to close generics: found `(`, expected `>`, in generic params.
-    //    e.g. `proto p<F: Field(instance a: F)` should be `proto p<F: Field>(instance a: F)`
+    // Missing `>` to close generics: found `(`, expected `>`, in generic params.
+    // e.g. `proto p<F: Field(instance a: F)` should be `proto p<F: Field>(instance a: F)`
     if matches!(found, Some(Token::LParen)) && expects(&Token::RAngle) && in_generic_params {
         return Some("missing `>` to close generic type parameters".to_string());
     }
 
-    // 4. Missing `)` to close argument list: found `{`, expected `)`, in argument list.
-    //    e.g. `proto p<F: Field>(instance a: F { }` should be `...(... ) { }`
+    // Missing `)` to close argument list: found `{`, expected `)`, in argument list.
+    // e.g. `proto p<F: Field>(instance a: F { }` should be `...(... ) { }`
     if matches!(found, Some(Token::LBrace)) && expects(&Token::RParen) && in_arg_list {
         return Some("missing `)` to close argument list".to_string());
     }
 
-    // 5. Missing `}` to close declaration body: found EOF, expected `}`, in declaration.
+    // Missing `}` to close declaration body: found EOF, expected `}`, in declaration.
     if found.is_none() && expects(&Token::RBrace) && in_decl {
         return Some("missing `}` to close declaration body".to_string());
     }
 
-    // 23. Type alias using `:` instead of `=`: found `:`, expected `=`, in declaration.
-    //     e.g. `type MyAlias: F;` should be `type MyAlias = F;`
+    // Type alias using `:` instead of `=`: found `:`, expected `=`, in declaration.
+    // e.g. `type MyAlias: F;` should be `type MyAlias = F;`
     if matches!(found, Some(Token::Colon)) && in_decl && !in_type && expects(&Token::Eq) {
         return Some("type aliases use `=` (not `:`)".to_string());
     }
 
-    // 32. Using `=` instead of `:` in type variable declaration.
-    //     e.g. `fn f<F = Field>(...)` should be `fn f<F: Field>(...)`
+    // Using `=` instead of `:` in type variable declaration.
+    // e.g. `fn f<F = Field>(...)` should be `fn f<F: Field>(...)`
     if matches!(found, Some(Token::Eq)) && in_generic_params && expects(&Token::Colon) {
         return Some("type variables use `:` (not `=`) for kind annotations".to_string());
     }
 
-    // 24. Missing `;` after type alias: found EOF, expected `;`, in type alias.
-    //     e.g. `type MyAlias = F` — missing `;` at end of file
+    // Missing `;` after type alias: found EOF, expected `;`, in type alias.
+    // e.g. `type MyAlias = F` — missing `;` at end of file
     if found.is_none() && in_type_alias && expects(&Token::Semi) {
         return Some("missing `;` at end of declaration".to_string());
     }
 
-    // 25. Missing `,` between type parameters: found identifier, expected `,`, in generic params.
-    //     e.g. `Pairing<G H>` should be `Pairing<G, H>`
+    // Missing `,` between type parameters: found identifier, expected `,`, in generic params.
+    // e.g. `Pairing<G H>` should be `Pairing<G, H>`
     if in_generic_params && found_non_punct && expects(&Token::Comma) {
         return Some("missing `,` between type parameters".to_string());
     }
 
-    // 31. Using `==` instead of `=` in assignment.
-    //     e.g. `let x == a;` should be `let x = a;`
-    //     More specific than pattern 26 — fires when `==` is the found token.
+    // Using `==` instead of `=` in assignment.
+    // e.g. `let x == a;` should be `let x = a;`
+    // More specific than the missing-`=` check below — fires when `==` is the found token.
     if matches!(found, Some(Token::EqEq)) && in_decl && !in_type && expects(&Token::Eq) {
         return Some("assignments use `=` (not `==`)".to_string());
     }
 
-    // 26. Missing `=` in let binding or type alias: found identifier, expected `=`, in declaration.
-    //     e.g. `let x: F a;` should be `let x: F = a;`
-    //     or `type MyAlias F;` should be `type MyAlias = F;`
+    // Missing `=` in let binding or type alias: found identifier, expected `=`, in declaration.
+    // e.g. `let x: F a;` should be `let x: F = a;`
+    // or `type MyAlias F;` should be `type MyAlias = F;`
     if in_decl && !in_expr && !in_type && found_non_punct && expects(&Token::Eq) {
         return Some("missing `=` in assignment".to_string());
     }
 
-    // 7. Missing type in argument: found `)`, in argument context.
-    //    e.g. `fn f<F: Field>(instance a: )` — expected type after `:`
-    //    The Type label is filtered from expected, so we use the Argument
-    //    context to know we're parsing an argument.
+    // Missing type in argument: found `)`, in argument context.
+    // e.g. `fn f<F: Field>(instance a: )` — expected type after `:`
+    // The Type label is filtered from expected, so we use the Argument
+    // context to know we're parsing an argument.
     if matches!(found, Some(Token::RParen)) && in_arg {
         return Some("expected a type after `:` in argument declaration".to_string());
     }
 
-    // 8. Missing kind in type variable: found `>`, in generic params, expected
-    //    kind tokens. e.g. `proto p<N: >(instance a: F)` — expected kind after `:`
-    //    Since CtxError preserves the real expected tokens (label_with is a
-    //    no-op for Context), the kind tokens (Field, Group, Size, etc.) are
-    //    in the expected list.
+    // Missing kind in type variable: found `>`, in generic params, expected
+    // kind tokens. e.g. `proto p<N: >(instance a: F)` — expected kind after `:`
+    // Since CtxError preserves the real expected tokens (label_with is a
+    // no-op for Context), the kind tokens (Field, Group, Size, etc.) are
+    // in the expected list.
     if matches!(found, Some(Token::RAngle)) && in_generic_params {
         let kind_tokens = [
             Token::KwField,
@@ -421,23 +421,23 @@ fn detect_help(
 
     // ── Type-level patterns ─────────────────────────────────────────────
 
-    // 22. Record type using `;` instead of `,`: found `;`, expected `,` or `}`, in type.
-    //     e.g. `{ x: F; y: F }` should be `{ x: F, y: F }`
-    //     (record types use `,`; record values also use `,` — but `;` is a common mistake)
+    // Record type using `;` instead of `,`: found `;`, expected `,` or `}`, in type.
+    // e.g. `{ x: F; y: F }` should be `{ x: F, y: F }`
+    // (record types use `,`; record values also use `,` — but `;` is a common mistake)
     if matches!(found, Some(Token::Semi)) && in_type && expects(&Token::Comma) {
         return Some("record types use `,` between fields (not `;`)".to_string());
     }
 
-    // 17. Vector type using `,` instead of `;`: found `,`, expected `;`, in type.
-    //     e.g. `[F, N]` should be `[F; N]`
+    // Vector type using `,` instead of `;`: found `,`, expected `;`, in type.
+    // e.g. `[F, N]` should be `[F; N]`
     if matches!(found, Some(Token::Comma)) && in_type && expects(&Token::Semi) {
         return Some(
             "vector types use `;` to separate element type from size (e.g., `[T; N]`)".to_string(),
         );
     }
 
-    // 27. Vector type using `:` instead of `;`: found `:`, expected `;`, in type.
-    //     e.g. `[F: N]` should be `[F; N]`
+    // Vector type using `:` instead of `;`: found `:`, expected `;`, in type.
+    // e.g. `[F: N]` should be `[F; N]`
     if matches!(found, Some(Token::Colon)) && in_type && expects(&Token::Semi) {
         return Some(
             "vector types use `;` to separate element type from size (e.g., `[T; N]`)".to_string(),
@@ -446,37 +446,37 @@ fn detect_help(
 
     // ── Expression-level patterns ───────────────────────────────────────
 
-    // 29. Missing `(` after a function-like keyword: found expression-start, `(` is the sole
-    //     expected token, in expression.
-    //     e.g. `assert a == b` should be `assert(a == b)`
-    //     or `poly a` should be `poly(a)`
-    //     Function-like keywords (assert, verify, poly, coef, mle, dot, pair,
-    //     interpolate, reduce) expect exactly `(` after the keyword. Expression-
-    //     continuation errors have `(` as one of many tokens, so expects_only
-    //     distinguishes them.
+    // Missing `(` after a function-like keyword: found expression-start, `(` is the sole
+    // expected token, in expression.
+    // e.g. `assert a == b` should be `assert(a == b)`
+    // or `poly a` should be `poly(a)`
+    // Function-like keywords (assert, verify, poly, coef, mle, dot, pair,
+    // interpolate, reduce) expect exactly `(` after the keyword. Expression-
+    // continuation errors have `(` as one of many tokens, so expects_only
+    // distinguishes them.
     if in_expr && found_non_punct && expects_only(&Token::LParen) {
         return Some(
             "missing `(` after keyword (e.g., `assert(expr == expr)`, `poly(expr)`)".to_string(),
         );
     }
 
-    // 18. Lambda using `->` instead of `=>`: found `->`, expected `=>`.
-    //     e.g. `fun x -> x + 1` should be `fun x => x + 1`
+    // Lambda using `->` instead of `=>`: found `->`, expected `=>`.
+    // e.g. `fun x -> x + 1` should be `fun x => x + 1`
     if matches!(found, Some(Token::Arrow)) && expects(&Token::FatArrow) && in_expr {
         return Some("lambda expressions use `=>` (not `->`)".to_string());
     }
 
-    // 19. Record value using `;` instead of `,`: found `;`, expected `|}` or `,`.
-    //     e.g. `{| x: a; y: b |}` should be `{| x: a, y: b |}`
+    // Record value using `;` instead of `,`: found `;`, expected `|}` or `,`.
+    // e.g. `{| x: a; y: b |}` should be `{| x: a, y: b |}`
     if matches!(found, Some(Token::Semi)) && expects(&Token::BarRBrace) && in_expr {
         return Some("record values use `,` between fields (not `;`)".to_string());
     }
 
-    // 28. Using `;` instead of `,` in function-like expression: found `;`, expected `,`,
-    //     `;` is NOT expected, in expression.
-    //     e.g. `reduce(+; [a, b])` should be `reduce(+, [a, b])`
-    //     If `;` were also expected, we'd be in an expression-continuation context
-    //     where `;` is a valid sequencing operator — not a typo.
+    // Using `;` instead of `,` in function-like expression: found `;`, expected `,`,
+    // `;` is NOT expected, in expression.
+    // e.g. `reduce(+; [a, b])` should be `reduce(+, [a, b])`
+    // If `;` were also expected, we'd be in an expression-continuation context
+    // where `;` is a valid sequencing operator — not a typo.
     if matches!(found, Some(Token::Semi))
         && in_expr
         && expects(&Token::Comma)
@@ -485,44 +485,44 @@ fn detect_help(
         return Some("use `,` between arguments (not `;`)".to_string());
     }
 
-    // 1. Where clause missing `==`: found `;`, expected `==`, in where clause.
-    //    e.g. `where random<F>;` should be `where random<F> == something;`
+    // Where clause missing `==`: found `;`, expected `==`, in where clause.
+    // e.g. `where random<F>;` should be `where random<F> == something;`
     if matches!(found, Some(Token::Semi)) && expects(&Token::EqEq) && in_where_clause {
         return Some(
             "where clause constraints use `==` — did you mean `expr == value;`?".to_string(),
         );
     }
 
-    // 2. Using `=` instead of `==`: found `=`, expected `==`, in expression.
-    //    e.g. `where a = b` or `assert(a = b)` — should use `==`
-    //    Keep `in_expr` (not `in_where_clause`) since this also covers assert/verify.
+    // Using `=` instead of `==`: found `=`, expected `==`, in expression.
+    // e.g. `where a = b` or `assert(a = b)` — should use `==`
+    // Keep `in_expr` (not `in_where_clause`) since this also covers assert/verify.
     if matches!(found, Some(Token::Eq)) && expects(&Token::EqEq) && in_expr {
         return Some("use `==` for equality (not `=`)".to_string());
     }
 
-    // 10. Missing `in` in comprehension: found expression-start, expected `in`.
-    //     e.g. `[a for x 0..N]` should be `[a for x in 0..N]`
-    //     Check before pattern 6 (`;`) since `in` is more specific.
+    // Missing `in` in comprehension: found expression-start, expected `in`.
+    // e.g. `[a for x 0..N]` should be `[a for x in 0..N]`
+    // Check before the missing-`;` check since `in` is more specific.
     if in_expr && expects(&Token::KwIn) {
         return Some("missing `in` keyword in list comprehension".to_string());
     }
 
-    // 11. Missing `for` in comprehension: found identifier, expected `for`.
-    //     e.g. `[a x in 0..N]` should be `[a for x in 0..N]`
-    //     Check before pattern 6 (`;`) since `for` is more specific.
+    // Missing `for` in comprehension: found identifier, expected `for`.
+    // e.g. `[a x in 0..N]` should be `[a for x in 0..N]`
+    // Check before the missing-`;` check since `for` is more specific.
     if in_expr && expects(&Token::KwFor) && found_non_punct {
         return Some("missing `for` keyword in list comprehension".to_string());
     }
 
-    // 6. Missing `;` after expression: found expression-starting token, expected `;`.
-    //    e.g. `where a == b c == d` (missing `;` between where constraints)
-    //    or `let x = a x` (missing `;` after let-binding value)
+    // Missing `;` after expression: found expression-starting token, expected `;`.
+    // e.g. `where a == b c == d` (missing `;` between where constraints)
+    // or `let x = a x` (missing `;` after let-binding value)
     if in_expr && expects(&Token::Semi) && found_non_punct {
         return Some("missing `;` after expression".to_string());
     }
 
-    // 9. Incomplete range: found `]` or `)`, in range bound context.
-    //    e.g. `[a for i in 0..]` — range needs an end bound
+    // Incomplete range: found `]` or `)`, in range bound context.
+    // e.g. `[a for i in 0..]` — range needs an end bound
     if matches!(found, Some(Token::RBrack) | Some(Token::RParen)) && in_range_bound {
         return Some("range needs an end bound (e.g., `0..N`)".to_string());
     }
