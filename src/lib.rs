@@ -7,6 +7,7 @@ use graph::domain_seperator::ZippelDomainSeparator;
 use graph::{ArgKind, Node, UDag, UDags};
 use lang::ast::{CModule, UModule};
 use lang::id::{Tid, Vid};
+use lang::render_error;
 use lang::typ::range::Range;
 use lang::typ::{Kind, Qualifier, Size};
 use log::{debug, error, info};
@@ -97,7 +98,7 @@ pub struct ZippelHandler<C: ArkConfig> {
 
 impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     #[must_use]
-    pub fn new(args: ZippelArgs) -> Self {
+    pub const fn new(args: ZippelArgs) -> Self {
         Self {
             args,
             sized_module: None,
@@ -194,7 +195,11 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             );
             process::exit(1);
         });
-        self.sized_module = Some(UModule::from_str(&zfile).unwrap());
+        let filename = self.args.file_path.display().to_string();
+        self.sized_module = Some(UModule::from_str(&zfile).unwrap_or_else(|err| {
+            eprint!("{}", render_error(&err, &filename, &zfile));
+            process::exit(1);
+        }));
     }
 
     /// Will output a PDF if a path is provided, noop otherwise

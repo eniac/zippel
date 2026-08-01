@@ -106,6 +106,8 @@ impl UModule {
     /// Parse a Zippel declarations list into a polymorphic,
     /// untyped module, with symbolic sizes.
     /// Type aliases (`type X = T;`) are expanded inline before returning.
+    /// Duplicate signature detection is performed by the parser (via
+    /// `.validate()` on `decls_parser`).
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(input_str: &str) -> Result<Self, crate::parser::ParseError> {
         let decls = UDecls::from_str(input_str)?;
@@ -124,9 +126,6 @@ impl UModule {
             .map_err(|e| crate::parser::ParseError::custom(e.to_string()))?;
 
         let mut m = Ctx::new();
-        // Track seen decls (sig → span) for duplicate error reporting.
-        let mut seen: std::collections::HashMap<String, std::ops::Range<usize>> =
-            std::collections::HashMap::new();
         for d in decls.0.into_iter() {
             if d.body.is_type_alias() {
                 // Already stored and validated, type aliases do not go to Module execution decls
@@ -138,32 +137,24 @@ impl UModule {
             } else {
                 d.type_inline(&type_ctx)
             };
-            let key = format!("{:?}", d.sig);
-            if let Some(orig_span) = seen.get(&key) {
-                let (line, col, src_line) = crate::parser::line_col_at(input_str, d.span.start);
-                return Err(crate::parser::ParseError {
-                    span: d.span.clone(),
-                    line,
-                    col,
-                    source_line: src_line,
-                    found: None,
-                    expected: vec![],
-                    message: Some(format!(
-                        "duplicate declaration: {}\n  first defined at byte offset {}",
-                        key, orig_span.start
-                    )),
-                });
-            }
-            seen.insert(key, d.span.clone());
             m.insert(&d.sig, &d.body);
         }
         Ok(Module(m))
     }
 
-    /// Parse a file into a Zippel declarations list
+    /// Parse a file into a Zippel declarations list.
+    /// Validates that the file contains at least one `proto` declaration.
     pub fn from_file(file: &str, _allocator: &Bump) -> Result<Self, crate::parser::ParseError> {
         let input_str = std::fs::read_to_string(file).unwrap();
-        Self::from_str(&input_str)
+        let module = Self::from_str(&input_str)?;
+        // Validate: every file must contain at least one proto declaration
+        if !module.0.iter().any(|(_, body)| body.is_proto()) {
+            return Err(crate::parser::ParseError::custom(
+                "no proto declaration found: every file must contain at least one proto"
+                    .to_string(),
+            ));
+        }
+        Ok(module)
     }
 
     pub fn iter_decls(&self) -> impl Iterator<Item = UDecl> + '_ {

@@ -3,7 +3,7 @@
 
 pub mod ast;
 pub mod id;
-pub mod kind;
-pub mod lexer;
-mod parser;
+pub mod parser;
+
+pub use parser::render_error;
 pub mod typ;

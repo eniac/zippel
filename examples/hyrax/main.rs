@@ -1,4 +1,3 @@
-use ark_ff::Zero;
 use ark_std::One;
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, Value};

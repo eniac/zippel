@@ -21,6 +21,7 @@ logos = "0.14"
 num-derive = "0.5"
 num-traits = "0.2"
 chumsky = { version = "0.13", features = ["pratt"] }
+ariadne = "0.5"
 
 [lib]
 doctest = false
