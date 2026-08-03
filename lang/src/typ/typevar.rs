@@ -1,7 +1,8 @@
+use crate::ast::range::{Range, RangeTraversal};
+use crate::ast::spanned::Spanned;
+use crate::ast::Size;
 use crate::id::{Tid, TidSubst};
 use crate::typ::kind::Kind;
-use crate::typ::range::{Range, RangeTraversal};
-use crate::typ::Size;
 use share::traversal::ToTraversal1;
 use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 use std::fmt;
@@ -38,7 +39,7 @@ impl<N> TypeVar<N> {
 
 /// A collection of type variables, parameterized by size type N
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub struct TypeVars<N>(pub Vec<TypeVar<N>>);
+pub struct TypeVars<N>(pub Vec<Spanned<TypeVar<N>>>);
 
 /// Symbolically-sized type variables
 pub type UTypeVars = TypeVars<Size>;
@@ -47,19 +48,19 @@ pub type CTypeVars = TypeVars<usize>;
 
 impl<N> TypeVars<N> {
     pub fn remove(&mut self, id: &Tid) {
-        self.0.retain(|tvar| &tvar.id != id);
+        self.0.retain(|tvar| &tvar.node.id != id);
     }
 
-    pub fn iter(&self) -> std::slice::Iter<'_, TypeVar<N>> {
-        self.0.iter()
+    pub fn iter(&self) -> impl Iterator<Item = &TypeVar<N>> {
+        self.0.iter().map(|s| &s.node)
     }
 
     pub fn ids(&self) -> Vec<Tid> {
-        self.0.iter().map(|tvar| tvar.id.clone()).collect()
+        self.0.iter().map(|tvar| tvar.node.id.clone()).collect()
     }
 
     pub fn contains(&self, id: &Tid) -> bool {
-        self.0.iter().any(|tvar| &tvar.id == id)
+        self.0.iter().any(|tvar| &tvar.node.id == id)
     }
     pub fn to_ctx(&self) -> Ctx<Tid, Kind<N>>
     where
@@ -67,28 +68,28 @@ impl<N> TypeVars<N> {
     {
         self.0
             .iter()
-            .map(|tvar| (tvar.id.clone(), tvar.kind.clone()))
+            .map(|tvar| (tvar.node.id.clone(), tvar.node.kind.clone()))
             .collect()
     }
 }
 
 impl<N> IntoIterator for TypeVars<N> {
-    type Item = TypeVar<N>;
-    type IntoIter = std::vec::IntoIter<TypeVar<N>>;
+    type Item = Spanned<TypeVar<N>>;
+    type IntoIter = std::vec::IntoIter<Spanned<TypeVar<N>>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-impl<N> FromIterator<TypeVar<N>> for TypeVars<N> {
-    fn from_iter<I: IntoIterator<Item = TypeVar<N>>>(iter: I) -> Self {
+impl<N> FromIterator<Spanned<TypeVar<N>>> for TypeVars<N> {
+    fn from_iter<I: IntoIterator<Item = Spanned<TypeVar<N>>>>(iter: I) -> Self {
         TypeVars(iter.into_iter().collect())
     }
 }
 
-impl<N, const L: usize> From<[TypeVar<N>; L]> for TypeVars<N> {
-    fn from(arr: [TypeVar<N>; L]) -> Self {
+impl<N, const L: usize> From<[Spanned<TypeVar<N>>; L]> for TypeVars<N> {
+    fn from(arr: [Spanned<TypeVar<N>>; L]) -> Self {
         TypeVars(arr.into_iter().collect())
     }
 }
@@ -103,12 +104,14 @@ impl<N> TidSubst for TypeVar<N> {
 
 impl<N> TidSubst for TypeVars<N> {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
-        self.0.iter_mut().for_each(|tvar| tvar.tid_subst(from, to));
+        self.0
+            .iter_mut()
+            .for_each(|tvar| tvar.node.tid_subst(from, to));
     }
 }
 
 /// Traversal over the size parameter N
-impl<N> ToTraversal1<N> for TypeVar<N> {
+impl<N: Clone> ToTraversal1<N> for TypeVar<N> {
     type Output<Z> = TypeVar<Z>;
     fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<TypeVar<Z>, E> {
         Ok(TypeVar {
@@ -119,18 +122,21 @@ impl<N> ToTraversal1<N> for TypeVar<N> {
 }
 
 /// Traversal over the size parameter N
-impl<N> ToTraversal1<N> for TypeVars<N> {
+impl<N: Clone> ToTraversal1<N> for TypeVars<N> {
     type Output<Z> = TypeVars<Z>;
     fn traverse1<Z: Clone, E>(
         self,
         f: &mut dyn FnMut(N) -> Result<Z, E>,
     ) -> Result<TypeVars<Z>, E> {
-        Ok(TypeVars(
-            self.0
-                .into_iter()
-                .map(|tv| tv.traverse1(f))
-                .collect::<Result<_, _>>()?,
-        ))
+        let mapped: Result<Vec<_>, E> = self
+            .0
+            .into_iter()
+            .map(|s| {
+                let node = s.node.traverse1(f)?;
+                Ok(Spanned::new(node, s.span))
+            })
+            .collect();
+        Ok(TypeVars(mapped?))
     }
 }
 
@@ -153,12 +159,15 @@ impl<N: Clone> RangeTraversal<N> for TypeVars<N> {
         self,
         f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>,
     ) -> Result<Self, E> {
-        Ok(TypeVars(
-            self.0
-                .into_iter()
-                .map(|tv| tv.range_traverse(f))
-                .collect::<Result<_, _>>()?,
-        ))
+        let mapped: Result<Vec<_>, E> = self
+            .0
+            .into_iter()
+            .map(|s| {
+                let node = s.node.range_traverse(f)?;
+                Ok(Spanned::new(node, s.span))
+            })
+            .collect();
+        Ok(TypeVars(mapped?))
     }
 }
 

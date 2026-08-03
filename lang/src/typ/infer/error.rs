@@ -1,8 +1,9 @@
+use crate::ast::range::{Range, RangeError};
 use crate::ast::sig::CSig;
+use crate::ast::spanned::Spanned;
 use crate::ast::{BinOp, CExp, CExps};
 use crate::id::{Tid, Vid};
 use crate::typ::lub::LubError;
-use crate::typ::range::{Range, RangeError};
 use crate::typ::unify::UnifyError;
 use crate::typ::{CKind, CTyp, CTyps};
 use share::{Ctx, Set};
@@ -300,7 +301,7 @@ impl TypeError {
         r: &Range<usize>,
         e: RangeError,
     ) -> Self {
-        TypeError::Range(kctx.clone(), vctx.clone(), *r, e)
+        TypeError::Range(kctx.clone(), vctx.clone(), r.clone(), e)
     }
     pub fn interp(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: &CTyp) -> Self {
         TypeError::Interp(kctx.clone(), vctx.clone(), a.clone(), ta.clone())
@@ -398,7 +399,7 @@ impl TypeError {
         vctx: &Ctx<Vid, CTyp>,
         e: &CExp,
         field: &str,
-        _fields: &Ctx<String, CTyp>,
+        _fields: &Ctx<String, Spanned<CTyp>>,
     ) -> Self {
         TypeError::FieldNotFound(kctx.clone(), vctx.clone(), e.clone(), field.to_string())
     }

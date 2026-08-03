@@ -34,7 +34,7 @@ use std::sync::Arc;
 /// `runtime::graph::run_graph` sync-channel handling); the bare
 /// `Op::Challenge` arm here preserves the runtime's existing `ThreadRng`
 /// fallback behavior.
-fn selected_eval_shape<C: ArkConfig>(p: &HOp<C>, range: &lang::typ::CRange) -> SelectedEvalShape {
+fn selected_eval_shape<C: ArkConfig>(p: &HOp<C>, range: &lang::ast::CRange) -> SelectedEvalShape {
     let (input_num_vars, max_degree) = match p.typ() {
         ATyp::Uni(d) => (1, d),
         ATyp::Mle(n) => (n, 1),
@@ -397,7 +397,7 @@ where
     }
 
     // (4) Canonical eval<0>: single free variable at position 0
-    if range.len() != 1 || range.start != 0 {
+    if range.len() != 1 || range.start() != 0 {
         return Ok(None);
     }
 
@@ -461,7 +461,7 @@ where
                 check_sink,
             )?);
             Ok(Some(Arc::new(p_val.value_hypercube_reduce_selected(
-                *range,
+                range.clone(),
                 tail_num_vars,
                 shape,
             ))))
@@ -667,9 +667,11 @@ where
                 loop_params,
                 check_sink,
             )?);
-            Ok(Arc::new(
-                p_val.value_eval_selected(*range, fixed_val, shape),
-            ))
+            Ok(Arc::new(p_val.value_eval_selected(
+                range.clone(),
+                fixed_val,
+                shape,
+            )))
         }
         Op::Evaluate(_, Some(_), None) => {
             panic!("Op::Evaluate selected mode requires explicit points/fixed values")

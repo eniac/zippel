@@ -1,10 +1,11 @@
+use crate::ast::size::EvalError;
 use crate::id::{Tid, TidSubst};
-use crate::typ::{EvalError, Kind, UTypeVars};
+use crate::typ::{Kind, UTypeVars};
 use share::traversal::ToTraversal1;
 use share::{Ctx, Set};
 use thiserror::Error;
 
-#[derive(Error, PartialEq, Debug)]
+#[derive(Error, Debug)]
 pub enum SubstError {
     #[error("Size {1} for typevar {0} is outside its declared range")]
     OutOfRange(Tid, usize),
@@ -72,6 +73,7 @@ impl SizeSubsts {
         let mut saw_range = false;
 
         for tv in tv.clone().into_iter() {
+            let tv = tv.node;
             let Kind::Range(r) = tv.kind else {
                 continue;
             };
@@ -260,10 +262,10 @@ fn size_substs_pinning_out_of_range() {
     let decl = Decl::from_str("fn test<N: 0..4>(instance a: N) -> N { 1 }").unwrap();
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::from("N"), &10);
-    assert_eq!(
+    assert!(matches!(
         SizeSubsts::from_typevars(&decl.sig.typevars, &sizes),
-        Err(SubstError::OutOfRange(Tid::from("N"), 10))
-    );
+        Err(SubstError::OutOfRange(_, 10))
+    ));
 }
 
 #[test]

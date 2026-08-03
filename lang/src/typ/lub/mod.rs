@@ -4,9 +4,10 @@ mod tests;
 
 pub use error::LubError;
 
+use crate::ast::range::Range;
+use crate::ast::spanned::Spanned;
 use crate::ast::BinOp;
 use crate::id::Tid;
-use crate::typ::range::Range;
 use crate::typ::{CKind, CTyp, CTypeVar, Kind, Nothing};
 use share::Ctx;
 
@@ -52,15 +53,11 @@ impl Lub for Range<usize> {
             .map_err(|e| LubError::next(LubError::equ(&a, &b), LubError::bad_range(b, e)))?;
 
         // Find the minimum of the starts and maximum of the ends
-        let new_start = std::cmp::min(a.start, b.start);
-        let new_end = std::cmp::max(a.end, b.end);
-        let new_step = num::integer::gcd(a.step, b.step);
+        let new_start = std::cmp::min(a.start(), b.start());
+        let new_end = std::cmp::max(a.end(), b.end());
+        let new_step = num::integer::gcd(a.step(), b.step());
 
-        Ok(Range {
-            start: new_start,
-            step: new_step,
-            end: new_end,
-        })
+        Ok(Range::from_raw(new_start, new_step, new_end))
     }
 
     fn lub_add(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
@@ -70,7 +67,9 @@ impl Lub for Range<usize> {
         b.check()
             .map_err(|e| LubError::next(LubError::add(&a, &b), LubError::bad_range(b, e)))?;
 
-        a.checked_add(*b).ok_or_else(|| LubError::add(&a, &b))
+        a.clone()
+            .checked_add(b.clone())
+            .ok_or_else(|| LubError::add(&a, &b))
     }
 
     fn lub_sub(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
@@ -80,7 +79,9 @@ impl Lub for Range<usize> {
         b.check()
             .map_err(|e| LubError::next(LubError::sub(&a, &b), LubError::bad_range(b, e)))?;
 
-        a.checked_sub(*b).ok_or_else(|| LubError::sub(&a, &b))
+        a.clone()
+            .checked_sub(b.clone())
+            .ok_or_else(|| LubError::sub(&a, &b))
     }
 
     fn lub_mul(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
@@ -90,7 +91,9 @@ impl Lub for Range<usize> {
         b.check()
             .map_err(|e| LubError::next(LubError::mul(&a, &b), LubError::bad_range(b, e)))?;
 
-        a.checked_mul(*b).ok_or_else(|| LubError::mul(&a, &b))
+        a.clone()
+            .checked_mul(b.clone())
+            .ok_or_else(|| LubError::mul(&a, &b))
     }
 
     fn lub_div(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
@@ -101,11 +104,13 @@ impl Lub for Range<usize> {
             .map_err(|e| LubError::next(LubError::div(&a, &b), LubError::bad_range(b, e)))?;
 
         // Check if the divisor range includes zero
-        if b.start == 0 {
+        if b.start() == 0 {
             return Err(LubError::div(&a, &b)); // Division by zero is undefined
         }
 
-        a.checked_div(*b).ok_or_else(|| LubError::div(&a, &b))
+        a.clone()
+            .checked_div(b.clone())
+            .ok_or_else(|| LubError::div(&a, &b))
     }
 
     fn lub_pow(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
@@ -115,7 +120,9 @@ impl Lub for Range<usize> {
         b.check()
             .map_err(|e| LubError::next(LubError::pow(&a, &b), LubError::bad_range(b, e)))?;
 
-        a.checked_pow(*b).ok_or_else(|| LubError::pow(&a, &b))
+        a.clone()
+            .checked_pow(b.clone())
+            .ok_or_else(|| LubError::pow(&a, &b))
     }
 
     fn lub_rem(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
@@ -126,11 +133,13 @@ impl Lub for Range<usize> {
             .map_err(|e| LubError::next(LubError::rem(&a, &b), LubError::bad_range(b, e)))?;
 
         // Check if the divisor range includes zero
-        if b.start == 0 {
+        if b.start() == 0 {
             return Err(LubError::rem(&a, &b)); // Division by zero is undefined
         }
 
-        a.checked_rem(*b).ok_or_else(|| LubError::rem(&a, &b))
+        a.clone()
+            .checked_rem(b.clone())
+            .ok_or_else(|| LubError::rem(&a, &b))
     }
 
     fn lub_dot(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
@@ -363,7 +372,8 @@ impl Lub for CTyp {
             )),
             // [A; N] == [B; M]
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m => Ok(CTyp::vec(
-                &CTyp::lub_equ(a, b, ctx).map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
+                &CTyp::lub_equ(&a.node, &b.node, ctx)
+                    .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
                 *n,
             )),
             // Record types: width-subtyping. LUB is the intersection of common fields,
@@ -372,9 +382,9 @@ impl Lub for CTyp {
                 let mut result_fields = share::Ctx::new();
                 for (name, typ_a) in fields_a.iter() {
                     if let Some(typ_b) = fields_b.get(name) {
-                        let lub_typ = CTyp::lub_equ(typ_a, typ_b, ctx)
+                        let lub_typ = CTyp::lub_equ(&typ_a.node, &typ_b.node, ctx)
                             .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?;
-                        result_fields.insert(name, &lub_typ);
+                        result_fields.insert(name, &Spanned::dummy(lub_typ));
                     }
                 }
                 Ok(CTyp::Record(result_fields))
@@ -787,7 +797,7 @@ impl Lub for CTyp {
 
             // Uni<B> ^ Fin<i..j> = Uni<B*(j-1)>
             (CTyp::Poly(a, 1, n), CTyp::Fin(r)) => r
-                .end
+                .end()
                 .checked_sub(1)
                 .ok_or_else(|| LubError::pow(&x, &y))
                 .and_then(|exp| n.checked_mul(exp).ok_or_else(|| LubError::pow(&x, &y)))

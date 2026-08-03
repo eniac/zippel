@@ -341,9 +341,9 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
         fixed: &[F],
     ) -> Result<Self, PolyError<F>> {
         let free_len = free_range.len();
-        if free_range.step != 1
-            || free_range.start >= free_range.end
-            || free_range.end > shape.input_num_vars
+        if free_range.step() != 1
+            || free_range.start() >= free_range.end()
+            || free_range.end() > shape.input_num_vars
             || free_len == 0
             || free_len != shape.output_num_vars
             || fixed.len() != shape.input_num_vars - free_len
@@ -387,7 +387,7 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
                 .flattened_polys
                 .par_iter()
                 .map(|poly| {
-                    poly.fix_variables_except_range(shape.input_num_vars, free_range, fixed)
+                    poly.fix_variables_except_range(shape.input_num_vars, free_range.clone(), fixed)
                         .map(Arc::new)
                 })
                 .collect::<Result<_, _>>()?;
@@ -447,7 +447,7 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
                 let mut full_point = Vec::with_capacity(shape.input_num_vars);
                 let mut fixed_idx = 0usize;
                 for var_idx in 0..shape.input_num_vars {
-                    if var_idx >= free_range.start && var_idx < free_range.end {
+                    if var_idx >= free_range.start() && var_idx < free_range.end() {
                         full_point.push(*t);
                     } else {
                         full_point.push(fixed[fixed_idx]);
@@ -1707,7 +1707,7 @@ mod tests {
         let selected = p
             .fix_variables_except_range_with_shape(
                 SelectedEvalShape::new(4, 2, 1),
-                CRange::new(1, 3),
+                CRange::from_raw(1, 1, 3),
                 &fixed,
             )
             .unwrap();
@@ -1795,7 +1795,7 @@ mod tests {
         let selected = constant
             .fix_variables_except_range_with_shape(
                 SelectedEvalShape::new(4, 2, 7),
-                CRange::new(1, 3),
+                CRange::from_raw(1, 1, 3),
                 &[Fr::from(2u64), Fr::from(5u64)],
             )
             .unwrap();

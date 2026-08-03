@@ -1,6 +1,6 @@
+use lang::ast::range::CRange;
 use lang::id::Tid;
 pub use lang::typ::lub::{Lub, LubError};
-use lang::typ::range::CRange;
 use lang::typ::{CKind, CTyp, Nothing};
 use share::{Ctx, DocAllocator, DocBuilder, Pretty};
 use std::fmt;
@@ -237,7 +237,7 @@ impl ATyp {
             CTyp::Poly(_, 1, m) => Some(ATyp::Uni(*m)),
             CTyp::Poly(_, n, 1) if *n >= 2 => Some(ATyp::Mle(*n)),
             CTyp::Poly(_, m, n) => Some(ATyp::VPoly(*m, m.checked_mul(*n)?)),
-            CTyp::Fin(r) => Some(ATyp::fin(*r)),
+            CTyp::Fin(r) => Some(ATyp::fin(r.clone())),
             CTyp::Unit => Some(ATyp::unit()),
             CTyp::Record(fields) => {
                 let mut atyp_fields = Ctx::new();
@@ -371,7 +371,7 @@ impl Lub for ABase {
                 CRange::lub_rem(r1, r2, ctx)
                     .map_err(|e| LubError::next(LubError::rem(&a, &b), e))?,
             )),
-            (ABase::Scalar, ABase::Fin(r)) => Ok(ABase::Fin(*r)),
+            (ABase::Scalar, ABase::Fin(r)) => Ok(ABase::Fin(r.clone())),
             (a, b) => Err(LubError::rem(&a, &b)),
         }
     }
@@ -1609,7 +1609,7 @@ mod tests {
     #[test]
     fn atyp_lub_pow_uni_fin_overflow() {
         let a = ATyp::uni(usize::MAX);
-        let r = CRange::new(0, 2); // len = 2
+        let r = CRange::from_raw(0, 1, 2); // len = 2
         let b = ATyp::fin(r);
         assert!(ATyp::lub_pow(&a, &b, &Nothing).is_err());
     }

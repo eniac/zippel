@@ -213,7 +213,7 @@ fn pin_range() {
     let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_t("a", vs10.clone())]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, vs10);
-    let ram_op = GOp::<B>::ram(var_a, GOp::<B>::range(lang::typ::CRange::new(0, 5)));
+    let ram_op = GOp::<B>::ram(var_a, GOp::<B>::range(lang::ast::CRange::from_raw(0, 1, 5)));
 
     // add_exp returned a non-Ref op → add_top_exp adds a Ret node.
     let ret = expected.add_node(Node::ret(&ram_op));

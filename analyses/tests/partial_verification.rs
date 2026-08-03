@@ -116,6 +116,7 @@ fn schnorr_partial_incompleteness_detected() {
 /// rather than crashing or giving a false positive.
 #[test]
 fn schnorr_partial_soundness_all_witnesses_concretized() {
+    #![allow(clippy::result_large_err)]
     let dag = compile_schnorr();
     let partial = schnorr_x_one(&dag);
     std::thread::Builder::new()

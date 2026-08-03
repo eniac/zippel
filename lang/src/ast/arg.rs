@@ -1,7 +1,9 @@
 use std::fmt;
 
+use crate::ast::spanned::Spanned;
+use crate::ast::Size;
 use crate::id::{Tid, TidSubst, Vid};
-use crate::typ::{Distribution, GTyp, Qualifier, Range, RangeTraversal, Size, Typ, TypeInline};
+use crate::typ::{Distribution, GTyp, Qualifier, Range, RangeTraversal, Typ, TypeInline};
 use share::traversal::{ToTraversal1, ToTraversal2};
 use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 
@@ -14,7 +16,7 @@ use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 ///
 ///     In this example, `a` is the identifier of the argument, `F` is the type and `Verifier` is
 ///     the principal.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Arg<T, N> {
     pub qualifier: Qualifier,
     pub distribution: Distribution,
@@ -22,8 +24,8 @@ pub struct Arg<T, N> {
     pub typ: Typ<T, N>,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub struct Args<T, N>(pub Vec<Arg<T, N>>);
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Args<T, N>(pub Vec<Spanned<Arg<T, N>>>);
 
 /// Generic typed argument
 pub type GArg<N> = Arg<Tid, N>;
@@ -138,7 +140,7 @@ impl<T, N> Arg<T, N> {
 }
 
 impl<T, N> Args<T, N> {
-    pub fn iter(&self) -> std::slice::Iter<'_, Arg<T, N>> {
+    pub fn iter(&self) -> std::slice::Iter<'_, Spanned<Arg<T, N>>> {
         self.0.iter()
     }
     pub fn len(&self) -> usize {
@@ -154,21 +156,21 @@ impl<T, N> Args<T, N> {
     {
         self.0
             .iter()
-            .map(|arg| (arg.id.clone(), arg.typ.clone()))
+            .map(|arg| (arg.node.id.clone(), arg.node.typ.clone()))
             .collect()
     }
 }
 
 impl<T, N> IntoIterator for Args<T, N> {
-    type Item = Arg<T, N>;
-    type IntoIter = std::vec::IntoIter<Arg<T, N>>;
+    type Item = Spanned<Arg<T, N>>;
+    type IntoIter = std::vec::IntoIter<Spanned<Arg<T, N>>>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-impl<T, N> FromIterator<Arg<T, N>> for Args<T, N> {
-    fn from_iter<I: IntoIterator<Item = Arg<T, N>>>(iter: I) -> Self {
+impl<T, N> FromIterator<Spanned<Arg<T, N>>> for Args<T, N> {
+    fn from_iter<I: IntoIterator<Item = Spanned<Arg<T, N>>>>(iter: I) -> Self {
         Args(iter.into_iter().collect())
     }
 }
@@ -181,7 +183,9 @@ impl<N: Clone> TidSubst for GArg<N> {
 
 impl<N: Clone> TidSubst for GArgs<N> {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
-        self.0.iter_mut().for_each(|arg| arg.tid_subst(from, to))
+        self.0
+            .iter_mut()
+            .for_each(|arg| arg.node.tid_subst(from, to))
     }
 }
 
@@ -229,14 +233,22 @@ impl<T: Clone, N: Clone> ToTraversal2<N> for Arg<T, N> {
     }
 }
 
-/// How to traverse the second type parameter [N] of [Args<T, N>]
+/// How to traverse the first type parameter [T] of [Args<T, N>]
 impl<T: Clone, N: Clone> ToTraversal1<T> for Args<T, N> {
     type Output<Z> = Args<Z, N>;
     fn traverse1<Z: Clone, E>(
         self,
         f: &mut dyn FnMut(T) -> Result<Z, E>,
     ) -> Result<Self::Output<Z>, E> {
-        Ok(Args(self.0.traverse1(&mut |x| x.traverse1(f))?))
+        let mapped: Result<Vec<_>, E> = self
+            .0
+            .into_iter()
+            .map(|s| {
+                let node = s.node.traverse1(f)?;
+                Ok(Spanned::new(node, s.span))
+            })
+            .collect();
+        Ok(Args(mapped?))
     }
 }
 
@@ -247,7 +259,15 @@ impl<T: Clone, N: Clone> ToTraversal2<N> for Args<T, N> {
         self,
         f: &mut dyn FnMut(N) -> Result<Z, E>,
     ) -> Result<Self::Output<Z>, E> {
-        Ok(Args(self.0.traverse1(&mut |x| x.traverse2(f))?))
+        let mapped: Result<Vec<_>, E> = self
+            .0
+            .into_iter()
+            .map(|s| {
+                let node = s.node.traverse2(f)?;
+                Ok(Spanned::new(node, s.span))
+            })
+            .collect();
+        Ok(Args(mapped?))
     }
 }
 
@@ -270,12 +290,15 @@ impl<T: Clone, N: Clone> RangeTraversal<N> for Args<T, N> {
         self,
         f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>,
     ) -> Result<Self, E> {
-        Ok(Args(
-            self.0
-                .into_iter()
-                .map(|arg| arg.range_traverse(f))
-                .collect::<Result<_, _>>()?,
-        ))
+        let mapped: Result<Vec<_>, E> = self
+            .0
+            .into_iter()
+            .map(|s| {
+                let node = s.node.range_traverse(f)?;
+                Ok(Spanned::new(node, s.span))
+            })
+            .collect();
+        Ok(Args(mapped?))
     }
 }
 
@@ -290,12 +313,17 @@ impl<N: Clone> TypeInline<N> for GArg<N> {
 
 impl<N: Clone> TypeInline<N> for GArgs<N> {
     fn type_inline(self, ctx: &Ctx<Tid, GTyp<N>>) -> Self {
-        Args(self.0.into_iter().map(|a| a.type_inline(ctx)).collect())
+        let mapped = self
+            .0
+            .into_iter()
+            .map(|s| Spanned::new(s.node.type_inline(ctx), s.span))
+            .collect();
+        Args(mapped)
     }
 }
 
-impl<const L: usize, N, T> From<[Arg<T, N>; L]> for Args<T, N> {
-    fn from(args: [Arg<T, N>; L]) -> Self {
+impl<const L: usize, N, T> From<[Spanned<Arg<T, N>>; L]> for Args<T, N> {
+    fn from(args: [Spanned<Arg<T, N>>; L]) -> Self {
         Args(args.into_iter().collect())
     }
 }
@@ -381,23 +409,32 @@ fn arg_traversal() {
         Distribution::Uniform,
         "a",
         Typ::fin(Range {
-            start: Size::varstr("N") / 2,
-            step: Size::one(),
-            end: Size::varstr("N") * 2,
+            start: Spanned::dummy(Size::Div(
+                Box::new(Spanned::dummy(Size::Var(Tid::from("N")))),
+                Box::new(Spanned::dummy(Size::Lit(2))),
+            )),
+            step: None,
+            end: Some(Spanned::dummy(Size::Mul(
+                Box::new(Spanned::dummy(Size::Var(Tid::from("N")))),
+                Box::new(Spanned::dummy(Size::Lit(2))),
+            ))),
         }),
     );
-    assert_eq!(
-        arg.traverse2(&mut |x| x.eval(&Ctx::singleton("N".into(), 2)))
-            .unwrap(),
-        Arg::new(
-            Qualifier::Instance,
-            Distribution::Uniform,
-            "a",
-            Typ::fin(Range {
-                start: 1,
-                step: 1,
-                end: 4
-            })
-        )
+    let result = arg
+        .traverse2(&mut |x| x.eval(&Ctx::singleton("N".into(), 2)))
+        .unwrap();
+    let expected = Arg::<Tid, usize>::new(
+        Qualifier::Instance,
+        Distribution::Uniform,
+        "a",
+        Typ::fin(Range {
+            start: Spanned::dummy(1),
+            step: None,
+            end: Some(Spanned::dummy(4)),
+        }),
     );
+    assert_eq!(result.qualifier, expected.qualifier);
+    assert_eq!(result.distribution, expected.distribution);
+    assert_eq!(result.id, expected.id);
+    assert_eq!(format!("{}", result.typ), format!("{}", expected.typ));
 }

@@ -5,11 +5,12 @@ use graph::Dag;
 use graph::WritePdf;
 use graph::domain_seperator::ZippelDomainSeparator;
 use graph::{ArgKind, Node, UDag, UDags};
+use lang::ast::Size;
+use lang::ast::range::Range;
 use lang::ast::{CModule, UModule};
 use lang::id::{Tid, Vid};
 use lang::render_error;
-use lang::typ::range::Range;
-use lang::typ::{Kind, Qualifier, Size};
+use lang::typ::{Kind, Qualifier};
 use log::{debug, error, info};
 use runtime::RuntimeError;
 use runtime::graph::ResultKind;
@@ -437,6 +438,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
 
     /// # Errors
     /// Returns `AnalysisError` if a completeness leak is detected.
+    #[allow(clippy::result_large_err)]
     pub fn analyze_completeness(&mut self) -> Result<(), analyses::AnalysisError<C>> {
         let g = self.analyze_graph();
         let name = g.name();
@@ -451,6 +453,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
 
     /// # Errors
     /// Returns `AnalysisError` if a knowledge leak is detected.
+    #[allow(clippy::result_large_err)]
     pub fn analyze_knowledge(&mut self) -> Result<(), analyses::AnalysisError<C>> {
         let g = self.analyze_graph();
         let name = g.name();
@@ -465,6 +468,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
 
     /// # Errors
     /// Returns `AnalysisError` if special soundness analysis fails.
+    #[allow(clippy::result_large_err)]
     pub fn analyze_special_soundness(
         &mut self,
         l_vec: Vec<usize>,
@@ -494,7 +498,12 @@ pub fn find_minimal_sizes(module: &UModule) -> Ctx<Tid, usize> {
     for (sig, _body) in module.iter() {
         for tv in &sig.typevars.0 {
             if let Kind::Range(r) = &tv.kind {
-                let fvs = r.start.free_vars().union(r.end.free_vars());
+                let fvs = r.start.node.free_vars().union(
+                    r.end
+                        .as_ref()
+                        .map(|e| e.node.free_vars())
+                        .unwrap_or_default(),
+                );
                 if fvs.iter().any(|v| size_vars.contains(v)) {
                     ranges.push(r.clone());
                 }
@@ -512,13 +521,18 @@ pub fn find_minimal_sizes(module: &UModule) -> Ctx<Tid, usize> {
             ctx.insert(sv, &candidate);
 
             let all_ok = ranges.iter().all(|r| {
-                let fvs = r.start.free_vars().union(r.end.free_vars());
+                let fvs = r.start.node.free_vars().union(
+                    r.end
+                        .as_ref()
+                        .map(|e| e.node.free_vars())
+                        .unwrap_or_default(),
+                );
                 if !fvs.contains(sv) {
                     return true; // Not dependent on this SizeVar
                 }
                 r.clone()
                     .traverse1(&mut |s| s.eval(&ctx))
-                    .is_ok_and(|cr| cr.start < cr.end)
+                    .is_ok_and(|cr| cr.start() < cr.end())
             });
 
             if all_ok {

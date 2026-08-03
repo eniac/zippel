@@ -2,14 +2,16 @@ use bumpalo::Bump;
 use std::fmt;
 use thiserror::Error;
 
+use crate::ast::size::EvalError;
+use crate::ast::spanned::Spanned;
+use crate::ast::Size;
 use crate::ast::{CSig, Exp, FreeVars, GArgs, Sig};
 use crate::id::{Tid, TidSubst, Vid};
 use crate::typ::infer::{TypeError, Typeable};
 use crate::typ::lub::Lub;
 use crate::typ::subst::SubstError;
 use crate::typ::{
-    CKind, CTyp, EvalError, GTyp, Range, RangeError, RangeTraversal, Size, SizeSubsts, TypeInline,
-    TypeVars,
+    CKind, CTyp, GTyp, Range, RangeError, RangeTraversal, SizeSubsts, TypeInline, TypeVars,
 };
 use share::traversal::ToTraversal1;
 use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty, Set};
@@ -18,7 +20,7 @@ use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty, Set};
 /// Specs are given either by an explicit relation on inputs (precondition)
 /// or by the return type of the function.
 /// Parametrized by `N` the type of sizes and `T` the type of types.
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Body<N> {
     /// A protocol body declaration
     ///
@@ -28,13 +30,16 @@ pub enum Body<N> {
     ///   expression from the `where` clause, structured as
     ///   `Let(r, val, seq(Assert(a, b), seq(Assert(c, d), Unit)))`.
     ///   Let-bindings are evaluated once and shared by all constraints.
-    Proto { body: Exp<N>, relation: Exp<N> },
+    Proto {
+        body: Spanned<Exp<N>>,
+        relation: Spanned<Exp<N>>,
+    },
 
     /// A function body declaration
     ///
     /// # fields
     /// - `body`: The body of the function.
-    Func { body: Exp<N> },
+    Func { body: Spanned<Exp<N>> },
 
     /// A type alias declaration (e.g., `type Point = { x: F, y: F };`)
     /// The aliased type is stored in the Sig's return type.
@@ -42,13 +47,13 @@ pub enum Body<N> {
 }
 
 /// A zippel declaration is either a protocol or a function.
-#[derive(PartialEq, Eq, Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decl<N> {
     pub sig: Sig<N>,
     pub body: Body<N>,
 }
 
-#[derive(Error, PartialEq, Debug)]
+#[derive(Error, Debug)]
 pub enum DeclError {
     #[error("DeclError: Error evaluating size type variables: \n\n{0}")]
     EvalError(#[from] EvalError),
@@ -71,14 +76,14 @@ impl<N> Body<N> {
         matches!(self, Body::TypeAlias)
     }
 
-    pub fn body(self) -> Exp<N> {
+    pub fn body(self) -> Spanned<Exp<N>> {
         match self {
             Body::Proto { body, .. } => body,
             Body::Func { body } => body,
             Body::TypeAlias => panic!("TypeAlias has no body"),
         }
     }
-    pub fn relation(self) -> Option<Exp<N>> {
+    pub fn relation(self) -> Option<Spanned<Exp<N>>> {
         match self {
             Body::Proto { relation, .. } => Some(relation),
             _ => None,
@@ -99,11 +104,11 @@ impl FreeVars for CBody {
 /// Useful constructors
 impl<N> Decl<N> {
     pub fn proto(
-        name: Vid,
-        typevars: TypeVars<N>,
-        args: GArgs<N>,
-        relation: Exp<N>,
-        body: Exp<N>,
+        name: Spanned<Vid>,
+        typevars: Spanned<TypeVars<N>>,
+        args: Spanned<GArgs<N>>,
+        relation: Spanned<Exp<N>>,
+        body: Spanned<Exp<N>>,
     ) -> Self {
         let sig = Sig {
             name,
@@ -116,11 +121,11 @@ impl<N> Decl<N> {
     }
 
     pub fn func(
-        name: Vid,
-        typevars: TypeVars<N>,
-        args: GArgs<N>,
-        ret: Option<GTyp<N>>,
-        body: Exp<N>,
+        name: Spanned<Vid>,
+        typevars: Spanned<TypeVars<N>>,
+        args: Spanned<GArgs<N>>,
+        ret: Option<Spanned<GTyp<N>>>,
+        body: Spanned<Exp<N>>,
     ) -> Self {
         let sig = Sig {
             name,
@@ -132,12 +137,12 @@ impl<N> Decl<N> {
         Decl { sig, body }
     }
 
-    pub fn type_alias(name: Vid, typ: GTyp<N>) -> Self {
+    pub fn type_alias(name: Spanned<Vid>, typ: Spanned<GTyp<N>>) -> Self {
         use crate::ast::arg::Args;
         let sig = Sig {
             name,
-            typevars: TypeVars(vec![]),
-            args: Args(vec![]),
+            typevars: Spanned::dummy(TypeVars(vec![])),
+            args: Spanned::dummy(Args(vec![])),
             ret: Some(typ),
         };
         Decl {
@@ -148,7 +153,7 @@ impl<N> Decl<N> {
 }
 
 /// A collection of declarations
-#[derive(PartialEq, Eq, Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decls<N>(pub Vec<Decl<N>>);
 
 /// Untyped body with symbolic sizes
@@ -191,7 +196,7 @@ impl UDecl {
         &'_ self,
         sizes: &Ctx<Tid, usize>,
     ) -> Result<Set<SizeSubsts>, DeclError> {
-        Ok(SizeSubsts::from_typevars(&self.sig.typevars, sizes)?)
+        Ok(SizeSubsts::from_typevars(&self.sig.typevars.node, sizes)?)
     }
 
     /// Concretize a declaration with a given size substitution
@@ -200,8 +205,9 @@ impl UDecl {
         let cbody = self.body.clone().traverse1(&mut |x| x.eval(&substs.0))?;
 
         // Remove typevars substituted
-        csig.typevars = csig
+        csig.typevars.node = csig
             .typevars
+            .node
             .into_iter()
             .filter(|tv| !substs.contains(&tv.id))
             .collect();
@@ -264,39 +270,39 @@ impl<N> FromIterator<Decl<N>> for Decls<N> {
 impl CBody {
     pub fn typecheck(&self, sig: CSig, fctx: &Set<CSig>) -> Result<(), TypeError> {
         // Kind context
-        let kctx = sig.typevars.to_ctx();
+        let kctx = sig.typevars.node.to_ctx();
         // Add arguments to [vctx] and [vars]
-        let mut vctx = sig.args.to_ctx();
+        let mut vctx = sig.args.node.to_ctx();
         for (tid, kind) in kctx.iter() {
             if let CKind::Range(r) = kind {
-                if r.step == 1 && r.end == r.start + 1 {
-                    vctx.insert(&Vid::new(&tid.0), &CTyp::Fin(*r));
+                if r.step() == 1 && r.end() == r.start() + 1 {
+                    vctx.insert(&Vid::new(&tid.0), &CTyp::Fin(r.clone()));
                 }
             }
         }
         match self {
             Body::Proto { body, relation } => {
                 // Relation must be relation-pure (no Challenge/Log/Verify)
-                if !relation.is_relation_pure() {
+                if !relation.node.is_relation_pure() {
                     return Err(TypeError::decl(
                         &sig.name,
-                        TypeError::not_pure_rel(relation),
+                        TypeError::not_pure_rel(&relation.node),
                     ));
                 }
                 // Relation must infer to Unit (Let/Assert chain ending in Unit)
-                relation.infer(&kctx, fctx, &vctx)?;
+                relation.node.infer(&kctx, fctx, &vctx)?;
                 // Body must infer to Unit
-                let br = body.infer(&kctx, fctx, &vctx)?;
+                let br = body.node.infer(&kctx, fctx, &vctx)?;
                 if br != CTyp::Unit {
                     return Err(TypeError::decl(
                         &sig.name,
-                        TypeError::unit(&kctx, &vctx, body),
+                        TypeError::unit(&kctx, &vctx, &body.node),
                     ));
                 }
                 Ok(())
             }
             Body::Func { body } => {
-                let br = body.infer(&kctx, fctx, &vctx)?;
+                let br = body.node.infer(&kctx, fctx, &vctx)?;
                 // Use lub_equ rather than strict structural equality so that
                 // a body inferred as `Fin<n>` (e.g. a bare numeric literal)
                 // coerces to a `Base(F)` return type via the scalar
@@ -304,12 +310,12 @@ impl CBody {
                 // Same lift the binary operator arms apply via `lub_add`
                 // (`lang/src/typ/lub.rs:597-613`), now extended to the
                 // return-type check.
-                let ret = sig.ret.as_ref().unwrap_or(&CTyp::Unit);
+                let ret = sig.ret.as_ref().map(|r| &r.node).unwrap_or(&CTyp::Unit);
                 match CTyp::lub_equ(&br, ret, &kctx) {
                     Ok(_) => Ok(()),
                     Err(_) => Err(TypeError::decl(
                         &sig.name,
-                        TypeError::func_ret(&kctx, &vctx, body, &sig.name, ret, &br),
+                        TypeError::func_ret(&kctx, &vctx, &body.node, &sig.name.node, ret, &br),
                     )),
                 }
             }
@@ -339,10 +345,10 @@ impl TidSubst for CBody {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         match self {
             Body::Proto { relation, body } => {
-                relation.tid_subst(from, to);
-                body.tid_subst(from, to);
+                relation.node.tid_subst(from, to);
+                body.node.tid_subst(from, to);
             }
-            Body::Func { body } => body.tid_subst(from, to),
+            Body::Func { body } => body.node.tid_subst(from, to),
             Body::TypeAlias => {}
         }
     }
@@ -372,7 +378,7 @@ impl<N: Clone> TypeInline<N> for Body<N> {
     }
 }
 
-impl<N: Clone + Ord> TypeInline<N> for Decl<N>
+impl<N: Clone> TypeInline<N> for Decl<N>
 where
     Sig<N>: TypeInline<N>,
 {

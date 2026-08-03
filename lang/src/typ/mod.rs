@@ -5,12 +5,13 @@ mod kind;
 pub mod lub;
 mod nothing;
 mod qualifier;
-pub mod range;
-mod size;
 pub mod subst;
 mod typevar;
 pub mod unify;
 
+pub use crate::ast::range::{CRange, Range, RangeError, RangeTraversal};
+use crate::ast::spanned::Spanned;
+use crate::ast::Size;
 use crate::id::{Tid, TidSubst};
 
 pub use ark::Ark;
@@ -20,8 +21,6 @@ pub use kind::{CKind, Kind, UKind};
 pub use lub::LubError;
 pub use nothing::Nothing;
 pub use qualifier::Qualifier;
-pub use range::{CRange, Range, RangeError, RangeTraversal};
-pub use size::{EvalError, Size};
 pub use subst::{AliasSubsts, SizeSubsts};
 pub use typevar::{CTypeVar, CTypeVars, TypeVar, TypeVars, UTypeVar, UTypeVars};
 
@@ -30,14 +29,14 @@ use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 use std::fmt;
 
 /// The types of expressions, [N] is the size parameter
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Typ<T, N> {
     /// Polynomial with M variables and degree N over base type T
     /// Poly(F, 1, N) represents univariate polynomials of degree N
     /// Poly(F, M, 1) represents multilinear polynomials of M variables
     Poly(T, N, N),
     /// Vector of size [N] and base type [Typ]
-    Vec(Box<Typ<T, N>>, N),
+    Vec(Box<Spanned<Typ<T, N>>>, N),
     /// Tid type [Tid]
     Base(T),
     /// Fin within range
@@ -45,12 +44,12 @@ pub enum Typ<T, N> {
     /// Unit type (assert/verify/protocol return)
     Unit,
     /// Record type with named fields
-    Record(Ctx<String, Typ<T, N>>),
+    Record(Ctx<String, Spanned<Typ<T, N>>>),
 }
 
 /// Many types
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub struct Typs<T, N>(pub Vec<Typ<T, N>>);
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Typs<T, N>(pub Vec<Spanned<Typ<T, N>>>);
 
 /// Generic type [Tid]
 pub type GTyp<N> = Typ<Tid, N>;
@@ -68,10 +67,10 @@ impl<N: Clone> TidSubst for GTyp<N> {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         match self {
             Typ::Poly(b, _, _) | Typ::Base(b) if b == from => *b = to.clone(),
-            Typ::Vec(b, _) => b.tid_subst(from, to),
+            Typ::Vec(b, _) => b.node.tid_subst(from, to),
             Typ::Record(fields) => {
                 fields.modify(|_, field_typ| {
-                    field_typ.tid_subst(from, to);
+                    field_typ.node.tid_subst(from, to);
                 });
             }
             Typ::Fin(_) | Typ::Unit | Typ::Base(_) | Typ::Poly(_, _, _) => {}
@@ -80,23 +79,23 @@ impl<N: Clone> TidSubst for GTyp<N> {
 }
 
 impl<T, N> IntoIterator for Typs<T, N> {
-    type Item = Typ<T, N>;
-    type IntoIter = std::vec::IntoIter<Typ<T, N>>;
+    type Item = Spanned<Typ<T, N>>;
+    type IntoIter = std::vec::IntoIter<Spanned<Typ<T, N>>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-impl<T, N> FromIterator<Typ<T, N>> for Typs<T, N> {
-    fn from_iter<I: IntoIterator<Item = Typ<T, N>>>(iter: I) -> Self {
+impl<T, N> FromIterator<Spanned<Typ<T, N>>> for Typs<T, N> {
+    fn from_iter<I: IntoIterator<Item = Spanned<Typ<T, N>>>>(iter: I) -> Self {
         Typs(iter.into_iter().collect())
     }
 }
 
 impl<N: Clone> TidSubst for GTyps<N> {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
-        self.0.iter_mut().for_each(|t| t.tid_subst(from, to))
+        self.0.iter_mut().for_each(|t| t.node.tid_subst(from, to))
     }
 }
 
@@ -112,7 +111,7 @@ impl<T, N> Typ<T, N> {
         T: Clone,
         N: Clone,
     {
-        Typ::Vec(Box::new(b.clone()), n)
+        Typ::Vec(Box::new(Spanned::dummy(b.clone())), n)
     }
     pub fn fin(range: Range<N>) -> Self {
         Typ::Fin(range)
@@ -120,10 +119,10 @@ impl<T, N> Typ<T, N> {
     pub fn unit() -> Self {
         Typ::Unit
     }
-    pub fn record(fields: Ctx<String, Typ<T, N>>) -> Self {
+    pub fn record(fields: Ctx<String, Spanned<Typ<T, N>>>) -> Self {
         Typ::Record(fields)
     }
-    pub fn into_vec(self) -> (Self, N) {
+    pub fn into_vec(self) -> (Spanned<Self>, N) {
         match self {
             Typ::Vec(box t, n) => (t, n),
             _ => unreachable!(),
@@ -194,7 +193,7 @@ impl<N> GTyp<N> {
     {
         match self {
             Typ::Vec(box t, n) => {
-                let s = t.to_scalar(ctx)?;
+                let s = t.node.to_scalar(ctx)?;
                 Some((s, n.clone()))
             }
             _ => None,
@@ -224,13 +223,13 @@ impl<T, N> Typs<T, N> {
     pub fn len(&self) -> usize {
         self.0.len()
     }
-    pub fn iter(&self) -> std::slice::Iter<'_, Typ<T, N>> {
+    pub fn iter(&self) -> std::slice::Iter<'_, Spanned<Typ<T, N>>> {
         self.0.iter()
     }
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
-    pub fn last(&self) -> Option<&Typ<T, N>> {
+    pub fn last(&self) -> Option<&Spanned<Typ<T, N>>> {
         self.0.last()
     }
 }

@@ -125,7 +125,7 @@ impl<'a> Arbitrary<'a> for AnyBaseATyp {
             2 => {
                 let lo: usize = u.int_in_range(0..=10)?;
                 let hi: usize = u.int_in_range((lo + 1)..=(lo + 10))?;
-                ATyp::fin(CRange::new(lo, hi))
+                ATyp::fin(CRange::from_raw(lo, 1, hi))
             }
             3 => ATyp::g1(),
             4 => ATyp::g2(),
@@ -254,7 +254,7 @@ mod scaffolding {
             ATyp::g1(),
             ATyp::g2(),
             ATyp::gt(),
-            ATyp::fin(CRange::new(0, 16)),
+            ATyp::fin(CRange::from_raw(0, 1, 16)),
         ] {
             let v: V = Value::random(&mut rng, &t);
             assert!(

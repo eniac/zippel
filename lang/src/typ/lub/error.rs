@@ -1,6 +1,6 @@
+use crate::ast::range::{Range, RangeError};
 use crate::ast::BinOp;
 use crate::id::Tid;
-use crate::typ::range::{Range, RangeError};
 use std::fmt;
 use thiserror::Error;
 
@@ -36,7 +36,7 @@ impl LubError {
         LubError::KindNotFound(id.clone())
     }
     pub fn bad_range(r: &Range<usize>, e: RangeError) -> Self {
-        LubError::BadRange(*r, e)
+        LubError::BadRange(r.clone(), e)
     }
     pub fn equ<K: fmt::Display>(a: &K, b: &K) -> Self {
         LubError::Equ(a.to_string(), b.to_string())

@@ -24,10 +24,11 @@ pub use node::{ArgKind, Node};
 
 use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePolynomial};
 use backend::{ATyp, ArkConfig, PolyVariant, Value, VirtualPolynomial};
-use lang::ast::{Arg, BinOp, CBody, CExp, CModule, CSig};
+use lang::ast::range::CRange;
+use lang::ast::spanned::Spanned;
+use lang::ast::{BinOp, CBody, CExp, CModule, CSig, Exp, Exps};
 use lang::id::{Fresh, Tid, Vid};
 use lang::typ::infer::{TypeError, Typeable};
-use lang::typ::range::CRange;
 use lang::typ::{CKind, CTyp, CTyps, Distribution, Nothing, Qualifier};
 use share::{Ctx, Set, traversal::ToTraversal1};
 
@@ -1125,7 +1126,7 @@ impl<C: HasOpFactory> UDag<C> {
     /// Add a new top-level expression to the graph
     fn add_top_exp(
         &mut self,
-        exp: CExp,
+        exp: Spanned<CExp>,
         start: &mut NodeIndex,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Ctx<CSig, CBody>,
@@ -1162,20 +1163,28 @@ impl<C: HasOpFactory> UDag<C> {
 
         // Add arguments to type and fft contexts
         let mut atyps = Ctx::new();
-        for Arg { id, typ, .. } in sig.args.iter() {
-            let at = ATyp::from_ctyp(typ, &kctx).ok_or_else(|| {
-                TypeError::decl(&sig.name, TypeError::ark(&kctx, &vctx, &CExp::var(id), typ))
+        for arg in sig.args.iter() {
+            let at = ATyp::from_ctyp(&arg.typ, &kctx).ok_or_else(|| {
+                TypeError::decl(
+                    &sig.name,
+                    TypeError::ark(
+                        &kctx,
+                        &vctx,
+                        &Spanned::dummy(Exp::Var(arg.id.clone())),
+                        &arg.typ,
+                    ),
+                )
             })?;
-            atyps.insert(id, &at);
-            vctx.insert(id, typ);
+            atyps.insert(&arg.id, &at);
+            vctx.insert(&arg.id, &arg.typ);
         }
         // Expose singleton range typevars (e.g. N: 4) as term-level constants.
         for (tid, kind) in kctx.iter() {
             if let CKind::Range(r) = kind
-                && r.step == 1
-                && r.end == r.start + 1
+                && r.step() == 1
+                && r.end() == r.start() + 1
             {
-                vctx.insert(&Vid::new(&tid.0), &CTyp::Fin(*r));
+                vctx.insert(&Vid::new(&tid.0), &CTyp::Fin(r.clone()));
             }
         }
 
@@ -1187,7 +1196,7 @@ impl<C: HasOpFactory> UDag<C> {
             CBody::Proto { body, relation } => {
                 debug!("Adding proto: {:?}", sig);
                 // Start node (input marker)
-                let mut start = self.add_node(Node::inp(sig.name.clone()));
+                let mut start = self.add_node(Node::inp(sig.name.node.clone()));
                 let mut vars: Ctx<Vid, GOp<C>> = Ctx::new();
                 for (id, typ) in atyps.iter() {
                     let (qualifier, distribution) = arg_meta
@@ -1206,18 +1215,18 @@ impl<C: HasOpFactory> UDag<C> {
                 }
                 for (tid, kind) in kctx.iter() {
                     if let CKind::Range(r) = kind
-                        && r.step == 1
-                        && r.end == r.start + 1
+                        && r.step() == 1
+                        && r.end() == r.start() + 1
                     {
                         let vid = Vid::new(&tid.0);
-                        vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
+                        vars.insert(&vid, &GOp::Value(Value::Index(r.start())));
                     }
                 }
                 self.add_top_exp(body, &mut start, &kctx, fctx, &vctx, &vars)?;
                 // Relation start: its own per-arg `Node::Arg` children so
                 // walking the relation does not pull in the protocol body
                 // through shared `Arg` nodes.
-                start = self.add_node(Node::rel(sig.name.clone()));
+                start = self.add_node(Node::rel(sig.name.node.clone()));
                 let mut vars: Ctx<Vid, GOp<C>> = Ctx::new();
                 for (id, typ) in atyps.iter() {
                     let (qualifier, distribution) = arg_meta
@@ -1236,11 +1245,11 @@ impl<C: HasOpFactory> UDag<C> {
                 }
                 for (tid, kind) in kctx.iter() {
                     if let CKind::Range(r) = kind
-                        && r.step == 1
-                        && r.end == r.start + 1
+                        && r.step() == 1
+                        && r.end() == r.start() + 1
                     {
                         let vid = Vid::new(&tid.0);
-                        vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
+                        vars.insert(&vid, &GOp::Value(Value::Index(r.start())));
                     }
                 }
                 // Lower the relation as a single Exp. The relation is a
@@ -1258,7 +1267,7 @@ impl<C: HasOpFactory> UDag<C> {
                 )?;
             }
             CBody::Func { body } => {
-                let mut start = self.add_node(Node::inp(sig.name.clone()));
+                let mut start = self.add_node(Node::inp(sig.name.node.clone()));
                 let mut vars: Ctx<Vid, GOp<C>> = Ctx::new();
                 for (id, typ) in atyps.iter() {
                     let (qualifier, distribution) = arg_meta
@@ -1277,11 +1286,11 @@ impl<C: HasOpFactory> UDag<C> {
                 }
                 for (tid, kind) in kctx.iter() {
                     if let CKind::Range(r) = kind
-                        && r.step == 1
-                        && r.end == r.start + 1
+                        && r.step() == 1
+                        && r.end() == r.start() + 1
                     {
                         let vid = Vid::new(&tid.0);
-                        vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
+                        vars.insert(&vid, &GOp::Value(Value::Index(r.start())));
                     }
                 }
                 self.add_top_exp(body, &mut start, &kctx, fctx, &vctx, &vars)?;
@@ -1403,7 +1412,7 @@ impl<C: HasOpFactory> UDag<C> {
         match exp {
             CExp::Lit(n) => Ok(Some(GOp::Value(Value::Index(*n)))),
             CExp::Unit => Ok(Some(GOp::Value(Value::Unit))),
-            CExp::Range(r) => Ok(Some(GOp::range(*r))),
+            CExp::Range(r) => Ok(Some(GOp::range(r.clone()))),
             CExp::Var(id) => {
                 if let Some(level) = binders.iter().rposition(|(v, _)| v == id) {
                     Ok(Some(GOp::loop_param(level, binders[level].1.clone())))
@@ -1470,7 +1479,7 @@ impl<C: HasOpFactory> UDag<C> {
                         else {
                             return Ok(None);
                         };
-                        Ok(Some(GOp::evaluate_selected(lp, *range, lfixed)))
+                        Ok(Some(GOp::evaluate_selected(lp, range.clone(), lfixed)))
                     }
                     (Some(_), None) => Ok(None),
                 }
@@ -1569,12 +1578,12 @@ impl<C: HasOpFactory> UDag<C> {
                 Ok(Some(GOp::map(ld, lb)))
             }
             CExp::Reduce(rop, v) => {
-                if let CExp::Map(body, binder, domain) = v.as_ref() {
+                if let CExp::Map(body, binder, domain) = &v.as_ref().node {
                     self.try_build_reduce_map(
                         *rop,
-                        body.as_ref().clone(),
+                        body.as_ref().node.clone(),
                         binder.clone(),
-                        domain.as_ref().clone(),
+                        domain.as_ref().node.clone(),
                         binders,
                         kctx,
                         fctx,
@@ -1609,44 +1618,104 @@ impl<C: HasOpFactory> UDag<C> {
             | CExp::Challenge(_, _) => exp,
             CExp::Bin(op, a, b) => CExp::Bin(
                 op,
-                Box::new(Self::substitute_var(*a, target, replacement)?),
-                Box::new(Self::substitute_var(*b, target, replacement)?),
+                Box::new(Spanned::dummy(Self::substitute_var(
+                    a.node,
+                    target,
+                    replacement,
+                )?)),
+                Box::new(Spanned::dummy(Self::substitute_var(
+                    b.node,
+                    target,
+                    replacement,
+                )?)),
             ),
             CExp::Ram(a, b) => CExp::Ram(
-                Box::new(Self::substitute_var(*a, target, replacement)?),
-                Box::new(Self::substitute_var(*b, target, replacement)?),
+                Box::new(Spanned::dummy(Self::substitute_var(
+                    a.node,
+                    target,
+                    replacement,
+                )?)),
+                Box::new(Spanned::dummy(Self::substitute_var(
+                    b.node,
+                    target,
+                    replacement,
+                )?)),
             ),
             CExp::Pair(a, b) => CExp::Pair(
-                Box::new(Self::substitute_var(*a, target, replacement)?),
-                Box::new(Self::substitute_var(*b, target, replacement)?),
+                Box::new(Spanned::dummy(Self::substitute_var(
+                    a.node,
+                    target,
+                    replacement,
+                )?)),
+                Box::new(Spanned::dummy(Self::substitute_var(
+                    b.node,
+                    target,
+                    replacement,
+                )?)),
             ),
             CExp::Vec(xs) => {
                 let mut out = Vec::with_capacity(xs.0.len());
                 for e in xs.0 {
-                    out.push(Self::substitute_var(e, target, replacement)?);
+                    out.push(Spanned::dummy(Self::substitute_var(
+                        e.node,
+                        target,
+                        replacement,
+                    )?));
                 }
-                CExp::vec(out)
+                Spanned::dummy(Exp::Vec(Exps(out))).node
             }
             CExp::Evaluate(p, sel, pts) => CExp::Evaluate(
-                Box::new(Self::substitute_var(*p, target, replacement)?),
+                Box::new(Spanned::dummy(Self::substitute_var(
+                    p.node,
+                    target,
+                    replacement,
+                )?)),
                 sel,
                 match pts {
-                    Some(x) => Some(Box::new(Self::substitute_var(*x, target, replacement)?)),
+                    Some(x) => Some(Box::new(Spanned::dummy(Self::substitute_var(
+                        x.node,
+                        target,
+                        replacement,
+                    )?))),
                     None => None,
                 },
             ),
-            CExp::Poly(p) => CExp::Poly(Box::new(Self::substitute_var(*p, target, replacement)?)),
-            CExp::Coef(p) => CExp::Coef(Box::new(Self::substitute_var(*p, target, replacement)?)),
-            CExp::Mle(p) => CExp::Mle(Box::new(Self::substitute_var(*p, target, replacement)?)),
+            CExp::Poly(p) => CExp::Poly(Box::new(Spanned::dummy(Self::substitute_var(
+                p.node,
+                target,
+                replacement,
+            )?))),
+            CExp::Coef(p) => CExp::Coef(Box::new(Spanned::dummy(Self::substitute_var(
+                p.node,
+                target,
+                replacement,
+            )?))),
+            CExp::Mle(p) => CExp::Mle(Box::new(Spanned::dummy(Self::substitute_var(
+                p.node,
+                target,
+                replacement,
+            )?))),
             CExp::Interpolate(pts, evals) => CExp::Interpolate(
                 match pts {
-                    Some(p) => Some(Box::new(Self::substitute_var(*p, target, replacement)?)),
+                    Some(p) => Some(Box::new(Spanned::dummy(Self::substitute_var(
+                        p.node,
+                        target,
+                        replacement,
+                    )?))),
                     None => None,
                 },
-                Box::new(Self::substitute_var(*evals, target, replacement)?),
+                Box::new(Spanned::dummy(Self::substitute_var(
+                    evals.node,
+                    target,
+                    replacement,
+                )?)),
             ),
             CExp::Proj(p, field) => CExp::Proj(
-                Box::new(Self::substitute_var(*p, target, replacement)?),
+                Box::new(Spanned::dummy(Self::substitute_var(
+                    p.node,
+                    target,
+                    replacement,
+                )?)),
                 field,
             ),
             other => {
@@ -1677,7 +1746,7 @@ impl<C: HasOpFactory> UDag<C> {
             };
             body = b2;
             binder = y;
-            domain = *d2;
+            domain = d2.node;
         }
         (body, binder, domain)
     }
@@ -1752,12 +1821,15 @@ impl<C: HasOpFactory> UDag<C> {
             CExp::Vec(xs) | CExp::App(_, xs) => {
                 xs.0.iter().any(|x| Self::exp_mentions_free_var(x, target))
             }
-            CExp::Bin(_, left, right)
-            | CExp::Pair(left, right)
-            | CExp::Ram(left, right)
-            | CExp::Let(None, left, right) => {
+            CExp::Bin(_, left, right) | CExp::Pair(left, right) | CExp::Ram(left, right) => {
                 Self::exp_mentions_free_var(left, target)
                     || Self::exp_mentions_free_var(right, target)
+            }
+            CExp::Let(None, left, right) => {
+                Self::exp_mentions_free_var(left, target)
+                    || right
+                        .as_ref()
+                        .is_some_and(|r| Self::exp_mentions_free_var(r, target))
             }
             CExp::Map(body, binder, domain) => {
                 Self::exp_mentions_free_var(domain, target)
@@ -1765,7 +1837,10 @@ impl<C: HasOpFactory> UDag<C> {
             }
             CExp::Let(Some(id), left, right) | CExp::Log(id, left, right) => {
                 Self::exp_mentions_free_var(left, target)
-                    || (id != target && Self::exp_mentions_free_var(right, target))
+                    || (id != target
+                        && right
+                            .as_ref()
+                            .is_some_and(|r| Self::exp_mentions_free_var(r, target)))
             }
             CExp::Fun(vars, body) => {
                 !vars.iter().any(|v| v == target) && Self::exp_mentions_free_var(body, target)
@@ -1801,7 +1876,7 @@ impl<C: HasOpFactory> UDag<C> {
     #[allow(clippy::too_many_arguments)]
     fn add_exp(
         &mut self,
-        initial_exp: CExp,
+        initial_exp: Spanned<CExp>,
         transcr: &mut NodeIndex,
         edge_type: DepType,
         kctx: &Ctx<Tid, CKind>,
@@ -1817,7 +1892,7 @@ impl<C: HasOpFactory> UDag<C> {
             // Type inference for [self]
             let typ = exp.infer(kctx, &fctx.keys(), &vctx)?;
             // Convert [CExp] to [Op] while creating the graph
-            match exp.clone() {
+            match exp.node.clone() {
                 // Literals get appended to the last node [self.it]
                 CExp::Lit(n) => return Ok(GOp::Value(Value::Index(n))),
 
@@ -2013,7 +2088,11 @@ impl<C: HasOpFactory> UDag<C> {
                 // Create a new [bin] node
                 // Unary negation: lower as 0 - x
                 CExp::Neg(box a) => {
-                    exp = CExp::sub(CExp::Lit(0), a);
+                    exp = Spanned::dummy(Exp::Bin(
+                        BinOp::Sub,
+                        Box::new(Spanned::dummy(Exp::Lit(0))),
+                        Box::new(a),
+                    ));
                     continue;
                 }
                 CExp::Bin(op, box a, box b) => {
@@ -2116,12 +2195,13 @@ impl<C: HasOpFactory> UDag<C> {
                 }
 
                 CExp::Reduce(op, box v) => {
-                    let reduce_map = if let CExp::Map(box body, binder, box domain) = v.clone() {
+                    let reduce_map = if let CExp::Map(box body, binder, box domain) = v.node.clone()
+                    {
                         self.try_build_reduce_map(
                             op,
-                            body,
+                            body.node,
                             binder,
-                            domain,
+                            domain.node,
                             &[],
                             kctx,
                             fctx,
@@ -2191,7 +2271,7 @@ impl<C: HasOpFactory> UDag<C> {
                     // type inference for each parameter
                     let param_types: CTyps = params
                         .iter()
-                        .map(|p| p.infer(kctx, &fctx.keys(), &vctx))
+                        .map(|p| p.infer(kctx, &fctx.keys(), &vctx).map(Spanned::dummy))
                         .collect::<Result<_, _>>()?;
 
                     // Is it a polynomial, MLE, or a function?
@@ -2211,7 +2291,11 @@ impl<C: HasOpFactory> UDag<C> {
                             // implicitly reinterpreting the polynomial as a
                             // coefficient list — that lub_dot(Poly, Vec) arm
                             // has been removed.
-                            let eval_exp = CExp::evaluate_at(CExp::var(&fid), params[0].clone());
+                            let eval_exp = Spanned::dummy(Exp::Evaluate(
+                                Box::new(Spanned::dummy(Exp::Var(fid.clone()))),
+                                None,
+                                Some(Box::new(params[0].clone())),
+                            ));
                             // Trampoline
                             exp = eval_exp;
                             continue;
@@ -2239,19 +2323,38 @@ impl<C: HasOpFactory> UDag<C> {
                             let mut bound_vars = vctx.keys();
                             let coef_var = Vid::fresh(&format!("__coef_{}", fid), &mut bound_vars);
 
-                            let mle_l =
-                                CExp::ram(CExp::var(&coef_var), CExp::range(CRange::new(0, mid)));
+                            let mle_l = Spanned::dummy(Exp::Ram(
+                                Box::new(Spanned::dummy(Exp::Var(coef_var.clone()))),
+                                Box::new(Spanned::dummy(Exp::Range(CRange::from_raw(0, 1, mid)))),
+                            ));
 
-                            let mle_r =
-                                CExp::ram(CExp::var(&coef_var), CExp::range(CRange::new(mid, end)));
+                            let mle_r = Spanned::dummy(Exp::Ram(
+                                Box::new(Spanned::dummy(Exp::Var(coef_var.clone()))),
+                                Box::new(Spanned::dummy(Exp::Range(CRange::from_raw(mid, 1, end)))),
+                            ));
 
                             // mle_l + (mle_r - mle_l) * params[0]
-                            let fold = CExp::add(
-                                mle_l.clone(),
-                                CExp::mul(params[0].clone(), CExp::sub(mle_r, mle_l)),
-                            );
+                            let fold = Spanned::dummy(Exp::Bin(
+                                BinOp::Add,
+                                Box::new(mle_l.clone()),
+                                Box::new(Spanned::dummy(Exp::Bin(
+                                    BinOp::Mul,
+                                    Box::new(params[0].clone()),
+                                    Box::new(Spanned::dummy(Exp::Bin(
+                                        BinOp::Sub,
+                                        Box::new(mle_r),
+                                        Box::new(mle_l),
+                                    ))),
+                                ))),
+                            ));
 
-                            let bound_exp = CExp::letx(coef_var, CExp::coef(CExp::var(&fid)), fold);
+                            let bound_exp = Spanned::dummy(Exp::Let(
+                                Some(coef_var),
+                                Box::new(Spanned::dummy(Exp::Coef(Box::new(Spanned::dummy(
+                                    Exp::Var(fid.clone()),
+                                ))))),
+                                Some(Box::new(fold)),
+                            ));
 
                             // Trampoline
                             exp = bound_exp;
@@ -2261,7 +2364,7 @@ impl<C: HasOpFactory> UDag<C> {
                             let mut matching_sigs: Vec<_> = fctx
                                 .iter()
                                 .filter_map(|(sig, body)| {
-                                    if sig.name != fid {
+                                    if sig.name.node != fid {
                                         return None;
                                     }
                                     let (sig, subs) = sig.clone().unify(&param_types, kctx).ok()?;
@@ -2274,7 +2377,7 @@ impl<C: HasOpFactory> UDag<C> {
                                     sig.args
                                         .iter()
                                         .zip(param_types.0.iter())
-                                        .all(|(a, t)| a.typ == *t)
+                                        .all(|(a, t)| a.typ == t.node)
                                 });
                             }
 
@@ -2308,12 +2411,12 @@ impl<C: HasOpFactory> UDag<C> {
                             let fn_kctx = sig.typevars.to_ctx();
                             for (tid, kind) in fn_kctx.iter() {
                                 if let CKind::Range(r) = kind
-                                    && r.step == 1
-                                    && r.end == r.start + 1
+                                    && r.step() == 1
+                                    && r.end() == r.start() + 1
                                 {
                                     let vid = Vid::new(&tid.0);
-                                    vctx.insert(&vid, &CTyp::Fin(*r));
-                                    vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
+                                    vctx.insert(&vid, &CTyp::Fin(r.clone()));
+                                    vars.insert(&vid, &GOp::Value(Value::Index(r.start())));
                                 }
                             }
                             exp = body.body();
@@ -2321,7 +2424,7 @@ impl<C: HasOpFactory> UDag<C> {
                         }
                     }
                 }
-                CExp::Let(Some(id), box l, box r) => {
+                CExp::Let(Some(id), box l, r) => {
                     // Infer the type of [l]
                     let tl = l.infer(kctx, &fctx.keys(), &vctx)?;
                     // Add left-hand side as node
@@ -2336,16 +2439,26 @@ impl<C: HasOpFactory> UDag<C> {
                     vctx.insert(&id, &tl);
                     vars.insert(&id, &nl);
                     // Trampoline: continue loop with r
-                    exp = r;
-                    continue;
+                    match r {
+                        Some(box r) => {
+                            exp = r;
+                            continue;
+                        }
+                        None => return Ok(GOp::Value(backend::Value::Unit)),
+                    }
                 }
-                CExp::Let(None, box l, box r) => {
+                CExp::Let(None, box l, r) => {
                     self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Trampoline: continue loop with r
-                    exp = r;
-                    continue;
+                    match r {
+                        Some(box r) => {
+                            exp = r;
+                            continue;
+                        }
+                        None => return Ok(GOp::Value(backend::Value::Unit)),
+                    }
                 }
-                CExp::Log(id, box l, box r) => {
+                CExp::Log(id, box l, r) => {
                     // Infer the type of [l]
                     let tl = l.infer(kctx, &fctx.keys(), &vctx)?;
                     // Add left-hand side as node
@@ -2391,8 +2504,13 @@ impl<C: HasOpFactory> UDag<C> {
                     vctx.insert(&id, &tl);
                     vars.insert(&id, &transcr_op);
                     // Trampoline: continue loop with r
-                    exp = r;
-                    continue;
+                    match r {
+                        Some(box r) => {
+                            exp = r;
+                            continue;
+                        }
+                        None => return Ok(GOp::Value(backend::Value::Unit)),
+                    }
                 }
                 CExp::Assert(box lhs, box rhs) => {
                     let oa = self.add_exp(lhs, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
@@ -2461,13 +2579,13 @@ impl<C: HasOpFactory> UDag<C> {
                 CExp::Proj(box record_exp, field_name) => {
                     // For projection, we need to extract the field from the record
                     // Check if the record expression is a Record literal
-                    return match record_exp {
+                    return match &record_exp.node {
                         CExp::Record(fields) => {
                             let field_exp = fields.get(&field_name).ok_or_else(|| {
                                 let mut field_types = Ctx::new();
                                 for (name, exp) in fields.iter() {
                                     if let Ok(typ) = exp.infer(kctx, &fctx.keys(), &vctx) {
-                                        field_types.insert(name, &typ);
+                                        field_types.insert(name, &Spanned::dummy(typ));
                                     }
                                 }
                                 GraphError::from(TypeError::field_not_found(
@@ -2636,13 +2754,13 @@ impl<C: HasOpFactory> UDag<C> {
                         let field_exp = if fname == &field_name {
                             value_exp.clone()
                         } else {
-                            CExp::Proj(Box::new(record_exp.clone()), fname.clone())
+                            Spanned::dummy(CExp::Proj(Box::new(record_exp.clone()), fname.clone()))
                         };
                         new_record_fields.insert(fname, &field_exp);
                     }
                     let new_record_exp = CExp::Record(new_record_fields);
                     // Trampoline
-                    exp = new_record_exp;
+                    exp = Spanned::dummy(new_record_exp);
                     continue;
                 }
             }

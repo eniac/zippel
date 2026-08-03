@@ -4,12 +4,12 @@
 //! comments attached to nodes via tree-walk correlation (Bazel/buildtools
 //! approach). Every comment belongs to exactly one node.
 
+use lang::ast::Size;
 use lang::ast::arg::Arg;
 use lang::ast::decl::{Body, Decl};
 use lang::ast::exp::Exp;
 use lang::ast::spanned::Spanned;
 use lang::parser::{Token, lex_iter};
-use lang::typ::Size;
 use share::{BoxAllocator, DocAllocator, DocBuilder};
 use std::ops::Range;
 
@@ -882,7 +882,7 @@ fn build_cst_args(
         let token_spans = find_arg_token_spans(&tokens.tokens, &span, &arg.qualifier);
 
         arg_nodes.push(CstArg {
-            arg: arg.clone(),
+            arg: arg.node.clone(),
             span,
             comments: CommentAttachment::default(),
             token_spans,
@@ -1093,7 +1093,7 @@ fn build_cst_body(
             else {
                 return CstBody::Func {
                     body: Box::new(CstExp {
-                        exp: body.clone(),
+                        exp: body.node.clone(),
                         span: decl.span.start..decl.span.end,
                         comments: CommentAttachment::default(),
                         body: None,
@@ -1119,13 +1119,13 @@ fn build_cst_body(
             else {
                 return CstBody::Proto {
                     relation: Box::new(CstExp {
-                        exp: relation.clone(),
+                        exp: relation.node.clone(),
                         span: decl.span.start..decl.span.end,
                         comments: CommentAttachment::default(),
                         body: None,
                     }),
                     body: Box::new(CstExp {
-                        exp: body.clone(),
+                        exp: body.node.clone(),
                         span: decl.span.start..decl.span.end,
                         comments: CommentAttachment::default(),
                         body: None,
@@ -1143,7 +1143,7 @@ fn build_cst_body(
             );
             // Relation doesn't have its own brace scope — use the decl span.
             let cst_relation = CstExp {
-                exp: relation.clone(),
+                exp: relation.node.clone(),
                 span: decl.span.start..brace_start,
                 comments: CommentAttachment::default(),
                 body: None,
@@ -1251,18 +1251,16 @@ fn collect_stmts(
     let span = span_start..span_end;
     match exp {
         Exp::Let(x, val, body) => {
-            out.push((
-                Exp::Let(x.clone(), val.clone(), Box::new((**body).clone())),
-                span,
-            ));
-            collect_stmts(body, boundaries, idx + 1, out);
+            out.push((Exp::Let(x.clone(), val.clone(), body.clone()), span));
+            if let Some(b) = body {
+                collect_stmts(b, boundaries, idx + 1, out);
+            }
         }
         Exp::Log(x, val, body) => {
-            out.push((
-                Exp::Log(x.clone(), val.clone(), Box::new((**body).clone())),
-                span,
-            ));
-            collect_stmts(body, boundaries, idx + 1, out);
+            out.push((Exp::Log(x.clone(), val.clone(), body.clone()), span));
+            if let Some(b) = body {
+                collect_stmts(b, boundaries, idx + 1, out);
+            }
         }
         _ => {
             out.push((exp.clone(), span));

@@ -147,11 +147,11 @@ fn fix_first_variables_parallel<F: Field>(
     DenseMultilinearExtension::from_evaluations_vec(nv - dim, data)
 }
 
-fn fixed_index_for_var(free_range: CRange, var_idx: usize) -> Option<usize> {
-    if var_idx < free_range.start {
+fn fixed_index_for_var(free_range: &CRange, var_idx: usize) -> Option<usize> {
+    if var_idx < free_range.start() {
         Some(var_idx)
-    } else if var_idx >= free_range.end {
-        Some(free_range.start + (var_idx - free_range.end))
+    } else if var_idx >= free_range.end() {
+        Some(free_range.start() + (var_idx - free_range.end()))
     } else {
         None
     }
@@ -179,12 +179,12 @@ fn restrict_dense_mle_except_range<F: Field>(
         let mut factor = value;
         for var_idx in 0..input_num_vars {
             let bit = (idx >> var_idx) & 1;
-            if var_idx >= free_range.start && var_idx < free_range.end {
+            if var_idx >= free_range.start() && var_idx < free_range.end() {
                 if bit == 1 {
-                    free_idx |= 1usize << (var_idx - free_range.start);
+                    free_idx |= 1usize << (var_idx - free_range.start());
                 }
             } else {
-                let fixed_value = fixed[fixed_index_for_var(free_range, var_idx).unwrap()];
+                let fixed_value = fixed[fixed_index_for_var(&free_range, var_idx).unwrap()];
                 factor *= if bit == 1 {
                     fixed_value
                 } else {
@@ -223,10 +223,10 @@ fn restrict_dense_mle_except_range_boolean<F: Field>(
     let fill_value = |free_idx: usize| {
         let mut source_idx = 0usize;
         for var_idx in 0..input_num_vars {
-            let bit = if var_idx >= free_range.start && var_idx < free_range.end {
-                ((free_idx >> (var_idx - free_range.start)) & 1) == 1
+            let bit = if var_idx >= free_range.start() && var_idx < free_range.end() {
+                ((free_idx >> (var_idx - free_range.start())) & 1) == 1
             } else {
-                fixed_bits[fixed_index_for_var(free_range, var_idx).unwrap()]
+                fixed_bits[fixed_index_for_var(&free_range, var_idx).unwrap()]
             };
             if bit {
                 source_idx |= 1usize << var_idx;
@@ -260,12 +260,12 @@ fn restrict_sparse_mle_except_range<F: Field>(
         let mut factor = value;
         for var_idx in 0..input_num_vars {
             let bit = (idx >> var_idx) & 1;
-            if var_idx >= free_range.start && var_idx < free_range.end {
+            if var_idx >= free_range.start() && var_idx < free_range.end() {
                 if bit == 1 {
-                    free_idx |= 1usize << (var_idx - free_range.start);
+                    free_idx |= 1usize << (var_idx - free_range.start());
                 }
             } else {
-                let fixed_value = fixed[fixed_index_for_var(free_range, var_idx).unwrap()];
+                let fixed_value = fixed[fixed_index_for_var(&free_range, var_idx).unwrap()];
                 factor *= if bit == 1 {
                     fixed_value
                 } else {
@@ -1056,9 +1056,9 @@ impl<F: Field> PolyVariant<F> {
         fixed: &[F],
     ) -> Result<Self, PolyError<F>> {
         let free_len = free_range.len();
-        if free_range.step != 1
-            || free_range.start >= free_range.end
-            || free_range.end > input_num_vars
+        if free_range.step() != 1
+            || free_range.start() >= free_range.end()
+            || free_range.end() > input_num_vars
             || free_len == 0
             || fixed.len() != input_num_vars - free_len
         {
@@ -1114,13 +1114,13 @@ impl<F: Field> PolyVariant<F> {
                     let mut new_coeff = *coeff;
                     let mut new_term = Vec::with_capacity(term.len());
                     for &(var_idx, pow) in term.iter() {
-                        if var_idx < free_range.start {
+                        if var_idx < free_range.start() {
                             new_coeff *= fixed[var_idx].pow([pow as u64]);
-                        } else if var_idx >= free_range.end {
-                            let fixed_idx = free_range.start + (var_idx - free_range.end);
+                        } else if var_idx >= free_range.end() {
+                            let fixed_idx = free_range.start() + (var_idx - free_range.end());
                             new_coeff *= fixed[fixed_idx].pow([pow as u64]);
                         } else {
-                            new_term.push((var_idx - free_range.start, pow));
+                            new_term.push((var_idx - free_range.start(), pow));
                         }
                     }
                     if !new_coeff.is_zero() {
@@ -1143,8 +1143,8 @@ impl<F: Field> PolyVariant<F> {
             }
             PolyVariant::DenseUni(_) | PolyVariant::SparseUni(_) => {
                 if input_num_vars == 1
-                    && free_range.start == 0
-                    && free_range.end == 1
+                    && free_range.start() == 0
+                    && free_range.end() == 1
                     && fixed.is_empty()
                 {
                     Ok(self.clone())

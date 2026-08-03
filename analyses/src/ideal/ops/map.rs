@@ -146,7 +146,7 @@ fn rebuild_body_op<C: ArkConfig + HasOpFactory>(
         ),
         Op::Evaluate(p, range, pts) => Op::Evaluate(
             body_child(&mut *ctx, p, loops, loop_vals)?,
-            *range,
+            range.clone(),
             match pts {
                 Some(x) => Some(body_child(&mut *ctx, x, loops, loop_vals)?),
                 None => None,

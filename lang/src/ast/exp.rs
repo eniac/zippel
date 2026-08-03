@@ -1,12 +1,13 @@
 use share::Ctx;
 use std::fmt;
-use std::ops::{Add, BitXor, Div, Index, Mul, Rem, Sub};
+use std::ops::Index;
 
 use share::traversal::ToTraversal1;
 
+use crate::ast::range::{Range, RangeTraversal};
+use crate::ast::spanned::Spanned;
+use crate::ast::Size;
 use crate::id::{Tid, TidSubst, Vid};
-use crate::typ::range::{Range, RangeTraversal};
-use crate::typ::Size;
 use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty, Set};
 
 /// Represents binary operations in the Zippel language.
@@ -64,7 +65,7 @@ pub enum BinOp {
 
 /// Represents arithmetic expressions in the Zippel language.
 /// It is parameterized by types `N` representing the sizes of ranges, indices etc
-#[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Exp<N> {
     ///     Numeric literal
     ///     **Zippel Code:**
@@ -98,14 +99,14 @@ pub enum Exp<N> {
     /// let p_grid = interpolate(evals_on_fft_domain);
     /// let q = interpolate([0, 1, 2], [a, b, c]);
     /// ```
-    Interpolate(Option<Box<Exp<N>>>, Box<Exp<N>>),
+    Interpolate(Option<Box<Spanned<Exp<N>>>>, Box<Spanned<Exp<N>>>),
 
     ///     Polynomial from coefficients
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let p = poly(1,2,3);
     ///     ```
-    Poly(Box<Exp<N>>),
+    Poly(Box<Spanned<Exp<N>>>),
 
     /// Evaluate a polynomial. Unary `eval(p)` evaluates on the FFT grid (FFT);
     /// binary `eval(p, points)` evaluates at explicit points (scalar or vector);
@@ -120,21 +121,25 @@ pub enum Exp<N> {
     /// let g   = eval<0>(p, tail);           // unit-range sugar for eval<0..1>
     /// let h   = eval<1..3>(p, fixed);       // keep variables 1 and 2 free
     /// ```
-    Evaluate(Box<Exp<N>>, Option<Range<N>>, Option<Box<Exp<N>>>),
+    Evaluate(
+        Box<Spanned<Exp<N>>>,
+        Option<Range<N>>,
+        Option<Box<Spanned<Exp<N>>>>,
+    ),
 
     ///     Get vector of coefficients of polynomial
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let v = coef(poly(1,2,3));
     ///     ```
-    Coef(Box<Exp<N>>),
+    Coef(Box<Spanned<Exp<N>>>),
 
     ///     Multilinear extension of a matrix, polynomial, etc.
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let g = mle x;
     ///     ```
-    Mle(Box<Exp<N>>),
+    Mle(Box<Spanned<Exp<N>>>),
 
     ///     A vector of elements
     ///     **Zippel Code:**
@@ -148,14 +153,14 @@ pub enum Exp<N> {
     ///     ```zippel
     ///     let sum = 2 + 3;
     ///     ```
-    Bin(BinOp, Box<Exp<N>>, Box<Exp<N>>),
+    Bin(BinOp, Box<Spanned<Exp<N>>>, Box<Spanned<Exp<N>>>),
 
     ///     Unary negation
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let neg = -x;
     ///     ```
-    Neg(Box<Exp<N>>),
+    Neg(Box<Spanned<Exp<N>>>),
 
     ///     **Zippel Code:**
     ///     ```zippel
@@ -168,28 +173,28 @@ pub enum Exp<N> {
     ///     ```zippel
     ///     let squares = [x^2 for x in 0,2..10];
     ///     ```
-    Map(Box<Exp<N>>, Vid, Box<Exp<N>>),
+    Map(Box<Spanned<Exp<N>>>, Vid, Box<Spanned<Exp<N>>>),
 
     ///     Reduce a vector with a binary operation
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let sum = reduce(+, [1,2,3]);
     ///     ```
-    Reduce(BinOp, Box<Exp<N>>),
+    Reduce(BinOp, Box<Spanned<Exp<N>>>),
 
     ///     Random access or slice a vector
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let first = v[0]
     ///     ```
-    Ram(Box<Exp<N>>, Box<Exp<N>>),
+    Ram(Box<Spanned<Exp<N>>>, Box<Spanned<Exp<N>>>),
 
     ///     Bilinear pairing
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let g = pair(g1, g2);
     ///     ```
-    Pair(Box<Exp<N>>, Box<Exp<N>>),
+    Pair(Box<Spanned<Exp<N>>>, Box<Spanned<Exp<N>>>),
 
     ///     Sample pseudo-random number generator
     ///     **Zippel Code:**
@@ -212,7 +217,11 @@ pub enum Exp<N> {
     ///     let x = 5 + 3;
     ///     assert(5 == 3);
     ///     ```
-    Let(Option<Vid>, Box<Exp<N>>, Box<Exp<N>>),
+    Let(
+        Option<Vid>,
+        Box<Spanned<Exp<N>>>,
+        Option<Box<Spanned<Exp<N>>>>,
+    ),
 
     ///     Represents a log-let expression with transcript dependency.
     ///     This variant is used to bind a value to an identifier while logging the operation.
@@ -220,42 +229,42 @@ pub enum Exp<N> {
     ///     ```zippel
     ///     p <- interpolate(v, [0,1,2])
     ///     ```
-    Log(Vid, Box<Exp<N>>, Box<Exp<N>>),
+    Log(Vid, Box<Spanned<Exp<N>>>, Option<Box<Spanned<Exp<N>>>>),
 
     ///     Prover assertion: asserts `lhs == rhs`.
     ///     **Zippel Code:**
     ///     ```zippel
     ///     assert(1 == 1)
     ///     ```
-    Assert(Box<Exp<N>>, Box<Exp<N>>),
+    Assert(Box<Spanned<Exp<N>>>, Box<Spanned<Exp<N>>>),
 
     ///     Verifier check: verifies `lhs == rhs`.
     ///     **Zippel Code:**
     ///     ```zippel
     ///     verify(a == a)
     ///     ```
-    Verify(Box<Exp<N>>, Box<Exp<N>>),
+    Verify(Box<Spanned<Exp<N>>>, Box<Spanned<Exp<N>>>),
 
     ///     Polynomial function definition
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let p = fun x, y => x^2 + 2*x*y + 3*y^2;
     ///     ```
-    Fun(Vec<Vid>, Box<Exp<N>>),
+    Fun(Vec<Vid>, Box<Spanned<Exp<N>>>),
 
     ///     Record construction
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let a = {| name: "Sydnie", balance: 100 |};
     ///     ```
-    Record(Ctx<String, Exp<N>>),
+    Record(Ctx<String, Spanned<Exp<N>>>),
 
     ///     Field projection
     ///     **Zippel Code:**
     ///     ```zippel
     ///     a.name
     ///     ```
-    Proj(Box<Exp<N>>, String),
+    Proj(Box<Spanned<Exp<N>>>, String),
 
     ///     Record update: create a new record identical to the given record
     ///     except with the specified field set to the given value.
@@ -263,7 +272,7 @@ pub enum Exp<N> {
     ///     ```zippel
     ///     let new_record = old_record.set(name, 3);
     ///     ```
-    SetRecord(Box<Exp<N>>, String, Box<Exp<N>>),
+    SetRecord(Box<Spanned<Exp<N>>>, String, Box<Spanned<Exp<N>>>),
 }
 
 /// Free variables
@@ -271,8 +280,8 @@ pub trait FreeVars {
     fn freevars(&self) -> Set<Vid>;
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
-pub struct Exps<N>(pub Vec<Exp<N>>);
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Exps<N>(pub Vec<Spanned<Exp<N>>>);
 
 /// Symbolic sized AST node, as parsed from input
 pub type UExp = Exp<Size>;
@@ -336,16 +345,20 @@ impl<N: Clone> ToTraversal1<N> for Exp<N> {
                 Box::new(x.traverse1(f)?),
                 Box::new(i.traverse1(f)?),
             )),
-            Exp::Let(x, box a, box b) => Ok(Exp::Let(
-                x,
-                Box::new(a.traverse1(f)?),
-                Box::new(b.traverse1(f)?),
-            )),
-            Exp::Log(x, box a, box b) => Ok(Exp::Log(
-                x,
-                Box::new(a.traverse1(f)?),
-                Box::new(b.traverse1(f)?),
-            )),
+            Exp::Let(x, box a, b) => {
+                let b = match b {
+                    Some(b) => Some(Box::new((*b).traverse1(f)?)),
+                    None => None,
+                };
+                Ok(Exp::Let(x, Box::new(a.traverse1(f)?), b))
+            }
+            Exp::Log(x, box a, b) => {
+                let b = match b {
+                    Some(b) => Some(Box::new((*b).traverse1(f)?)),
+                    None => None,
+                };
+                Ok(Exp::Log(x, Box::new(a.traverse1(f)?), b))
+            }
             Exp::Assert(box lhs, box rhs) => Ok(Exp::Assert(
                 Box::new(lhs.traverse1(f)?),
                 Box::new(rhs.traverse1(f)?),
@@ -414,11 +427,21 @@ impl TidSubst for CExp {
             Exp::Bin(_, box a, box b)
             | Exp::Map(box a, _, box b)
             | Exp::Ram(box a, box b)
-            | Exp::Let(_, box a, box b)
-            | Exp::Log(_, box a, box b)
             | Exp::Pair(box a, box b) => {
                 a.tid_subst(from, to);
                 b.tid_subst(from, to);
+            }
+            Exp::Let(_, box a, b) => {
+                a.tid_subst(from, to);
+                if let Some(box b) = b {
+                    b.tid_subst(from, to);
+                }
+            }
+            Exp::Log(_, box a, b) => {
+                a.tid_subst(from, to);
+                if let Some(box b) = b {
+                    b.tid_subst(from, to);
+                }
             }
             Exp::Fun(_, box body) => body.tid_subst(from, to),
             Exp::Record(fields) => {
@@ -474,9 +497,21 @@ impl FreeVars for CExp {
             Exp::Bin(_, box a, box b)
             | Exp::Pair(box a, box b)
             | Exp::Ram(box a, box b)
-            | Exp::Map(box a, _, box b)
-            | Exp::Let(_, box a, box b)
-            | Exp::Log(_, box a, box b) => a.freevars().union(b.freevars()),
+            | Exp::Map(box a, _, box b) => a.freevars().union(b.freevars()),
+            Exp::Let(_, box a, b) => {
+                let mut fv = a.freevars();
+                if let Some(box b) = b {
+                    fv = fv.union(b.freevars());
+                }
+                fv
+            }
+            Exp::Log(_, box a, b) => {
+                let mut fv = a.freevars();
+                if let Some(box b) = b {
+                    fv = fv.union(b.freevars());
+                }
+                fv
+            }
             Exp::Fun(vars, box body) => {
                 let bound_vars: Set<Vid> = vars.iter().cloned().collect();
                 body.freevars()
@@ -511,55 +546,70 @@ impl<N: Clone> RangeTraversal<N> for Exp<N> {
     ) -> Result<Self, E> {
         match self {
             Exp::Range(r) => Ok(Exp::Range(f(r)?)),
-            Exp::Interpolate(po, box evals) => Ok(Exp::interpolate(
+            Exp::Interpolate(po, box evals) => Ok(Exp::Interpolate(
                 match po {
                     None => None,
-                    Some(box p) => Some(p.range_traverse(f)?),
+                    Some(box p) => Some(Box::new(p.range_traverse(f)?)),
                 },
-                evals.range_traverse(f)?,
+                Box::new(evals.range_traverse(f)?),
             )),
-            Exp::Poly(box p) => Ok(Exp::poly(p.range_traverse(f)?)),
-            Exp::Mle(box p) => Ok(Exp::mle(p.range_traverse(f)?)),
+            Exp::Poly(box p) => Ok(Exp::Poly(Box::new(p.range_traverse(f)?))),
+            Exp::Mle(box p) => Ok(Exp::Mle(Box::new(p.range_traverse(f)?))),
             Exp::Vec(v) => Ok(Exp::Vec(v.range_traverse(f)?)),
-            Exp::Evaluate(box p, selector, ox) => Ok(Exp::evaluate(
-                p.range_traverse(f)?,
+            Exp::Evaluate(box p, selector, ox) => Ok(Exp::Evaluate(
+                Box::new(p.range_traverse(f)?),
                 match selector {
                     None => None,
                     Some(r) => Some(f(r)?),
                 },
                 match ox {
                     None => None,
-                    Some(box x) => Some(x.range_traverse(f)?),
+                    Some(box x) => Some(Box::new(x.range_traverse(f)?)),
                 },
             )),
-            Exp::Bin(op, box x, box y) => {
-                Ok(Exp::bin(op, x.range_traverse(f)?, y.range_traverse(f)?))
-            }
-            Exp::Neg(box x) => Ok(Exp::neg(x.range_traverse(f)?)),
-            Exp::Map(box x, id, box r) => {
-                Ok(Exp::map(x.range_traverse(f)?, id, r.range_traverse(f)?))
-            }
-            Exp::Ram(box x, box i) => Ok(Exp::ram(x.range_traverse(f)?, i.range_traverse(f)?)),
-            Exp::Coef(box x) => Ok(Exp::coef(x.range_traverse(f)?)),
-            Exp::Let(Some(x), box t, box e) => {
-                Ok(Exp::letx(x, t.range_traverse(f)?, e.range_traverse(f)?))
-            }
-            Exp::Log(x, box t, box e) => {
-                Ok(Exp::logx(x, t.range_traverse(f)?, e.range_traverse(f)?))
-            }
-            Exp::Let(None, box t, box e) => {
-                Ok(Exp::seq(t.range_traverse(f)?, e.range_traverse(f)?))
-            }
-            Exp::Pair(box t, box e) => Ok(Exp::pair(t.range_traverse(f)?, e.range_traverse(f)?)),
-            Exp::Assert(box lhs, box rhs) => Ok(Exp::assert_eq(
-                lhs.range_traverse(f)?,
-                rhs.range_traverse(f)?,
+            Exp::Bin(op, box x, box y) => Ok(Exp::Bin(
+                op,
+                Box::new(x.range_traverse(f)?),
+                Box::new(y.range_traverse(f)?),
             )),
-            Exp::Verify(box lhs, box rhs) => Ok(Exp::verify_eq(
-                lhs.range_traverse(f)?,
-                rhs.range_traverse(f)?,
+            Exp::Neg(box x) => Ok(Exp::Neg(Box::new(x.range_traverse(f)?))),
+            Exp::Map(box x, id, box r) => Ok(Exp::Map(
+                Box::new(x.range_traverse(f)?),
+                id,
+                Box::new(r.range_traverse(f)?),
             )),
-            Exp::App(x, ts) => Ok(Exp::app(x, ts.range_traverse(f)?)),
+            Exp::Ram(box x, box i) => Ok(Exp::Ram(
+                Box::new(x.range_traverse(f)?),
+                Box::new(i.range_traverse(f)?),
+            )),
+            Exp::Coef(box x) => Ok(Exp::Coef(Box::new(x.range_traverse(f)?))),
+            Exp::Let(x, box t, e) => {
+                let e = match e {
+                    Some(e) => Some(Box::new((*e).range_traverse(f)?)),
+                    None => None,
+                };
+                Ok(Exp::Let(x, Box::new(t.range_traverse(f)?), e))
+            }
+            Exp::Log(x, box t, e) => {
+                let e = match e {
+                    Some(e) => Some(Box::new((*e).range_traverse(f)?)),
+                    None => None,
+                };
+                Ok(Exp::Log(x, Box::new(t.range_traverse(f)?), e))
+            }
+            Exp::Pair(box t, box e) => Ok(Exp::Pair(
+                Box::new(t.range_traverse(f)?),
+                Box::new(e.range_traverse(f)?),
+            )),
+            Exp::Assert(box lhs, box rhs) => Ok(Exp::Assert(
+                Box::new(lhs.range_traverse(f)?),
+                Box::new(rhs.range_traverse(f)?),
+            )),
+            Exp::Verify(box lhs, box rhs) => Ok(Exp::Verify(
+                Box::new(lhs.range_traverse(f)?),
+                Box::new(rhs.range_traverse(f)?),
+            )),
+            Exp::App(x, ts) => Ok(Exp::App(x, ts.range_traverse(f)?)),
             Exp::Fun(vars, box body) => Ok(Exp::Fun(vars, Box::new(body.range_traverse(f)?))),
             Exp::Record(fields) => {
                 let pairs: Vec<_> = fields
@@ -589,7 +639,7 @@ impl<N: Clone> RangeTraversal<N> for Exps<N> {
 }
 
 impl<N> Exps<N> {
-    pub fn iter(&self) -> std::slice::Iter<'_, Exp<N>> {
+    pub fn iter(&self) -> std::slice::Iter<'_, Spanned<Exp<N>>> {
         self.0.iter()
     }
     pub fn is_empty(&self) -> bool {
@@ -599,183 +649,40 @@ impl<N> Exps<N> {
         self.0.len()
     }
     // Parser guarantees that the vector is non-empty
-    pub fn last(&self) -> &Exp<N> {
+    pub fn last(&self) -> &Spanned<Exp<N>> {
         self.0.last().unwrap()
     }
 }
 
 impl<N> IntoIterator for Exps<N> {
-    type Item = Exp<N>;
-    type IntoIter = std::vec::IntoIter<Exp<N>>;
+    type Item = Spanned<Exp<N>>;
+    type IntoIter = std::vec::IntoIter<Spanned<Exp<N>>>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-impl<N> FromIterator<Exp<N>> for Exps<N> {
-    fn from_iter<I: IntoIterator<Item = Exp<N>>>(iter: I) -> Self {
+impl<N> FromIterator<Spanned<Exp<N>>> for Exps<N> {
+    fn from_iter<I: IntoIterator<Item = Spanned<Exp<N>>>>(iter: I) -> Self {
         Exps(iter.into_iter().collect())
     }
 }
 
-impl<const N: usize, T> From<[Exp<T>; N]> for Exps<T> {
-    fn from(arr: [Exp<T>; N]) -> Self {
+impl<const N: usize, T> From<[Spanned<Exp<T>>; N]> for Exps<T> {
+    fn from(arr: [Spanned<Exp<T>>; N]) -> Self {
         Exps(arr.into())
     }
 }
 
 impl<T> Index<usize> for Exps<T> {
-    type Output = Exp<T>;
+    type Output = Spanned<Exp<T>>;
 
     fn index(&self, index: usize) -> &Self::Output {
         self.0.index(index)
     }
 }
 
-/// Construct untyped expressions
 impl<N> Exp<N> {
-    pub fn from_vec(a: Self, ts: &[Self]) -> Self
-    where
-        N: Clone,
-    {
-        ts.iter().fold(a, |acc, a| Exp::seq(acc, a.clone()))
-    }
-    /// Annotated constructors
-    pub fn lit(v: N) -> Self {
-        Exp::Lit(v)
-    }
-    pub fn bin(op: BinOp, l: Self, r: Self) -> Self {
-        Exp::Bin(op, Box::new(l), Box::new(r))
-    }
-    pub fn interpolate(points: Option<Self>, evals: Self) -> Self {
-        Exp::Interpolate(points.map(Box::new), Box::new(evals))
-    }
-    pub fn interpolate_at(points: Self, evals: Self) -> Self {
-        Exp::Interpolate(Some(Box::new(points)), Box::new(evals))
-    }
-    pub fn interpolate_grid(evals: Self) -> Self {
-        Exp::Interpolate(None, Box::new(evals))
-    }
-    pub fn mle(a: Self) -> Self {
-        Exp::Mle(Box::new(a))
-    }
-    pub fn poly(a: Self) -> Self {
-        Exp::Poly(Box::new(a))
-    }
-    pub fn evaluate(p: Self, selector: Option<Range<N>>, points: Option<Self>) -> Self {
-        Exp::Evaluate(Box::new(p), selector, points.map(Box::new))
-    }
-    pub fn evaluate_at(p: Self, points: Self) -> Self {
-        Exp::Evaluate(Box::new(p), None, Some(Box::new(points)))
-    }
-    pub fn evaluate_grid(p: Self) -> Self {
-        Exp::Evaluate(Box::new(p), None, None)
-    }
-    pub fn evaluate_selected(range: Range<N>, p: Self, fixed: Self) -> Self {
-        Exp::Evaluate(Box::new(p), Some(range), Some(Box::new(fixed)))
-    }
-    pub fn coef(a: Self) -> Self {
-        Exp::Coef(Box::new(a))
-    }
-    pub fn challenge(t: Tid) -> Self {
-        Exp::Challenge(t, false)
-    }
-    pub fn challenge_nz(t: Tid) -> Self {
-        Exp::Challenge(t, true)
-    }
-    pub fn random(t: Tid) -> Self {
-        Exp::Random(t, false)
-    }
-    pub fn random_nz(t: Tid) -> Self {
-        Exp::Random(t, true)
-    }
-    pub fn vec(v: Vec<Self>) -> Self {
-        Exp::Vec(Exps(v))
-    }
-    pub fn map(l: Self, x: Vid, range: Self) -> Self {
-        Exp::Map(Box::new(l), x, Box::new(range))
-    }
-    pub fn reduce(op: BinOp, a: Self) -> Self {
-        Exp::Reduce(op, Box::new(a))
-    }
-    pub fn ram(v: Self, i: Self) -> Self {
-        Exp::Ram(Box::new(v), Box::new(i))
-    }
-    pub fn pair(t: Self, e: Self) -> Self {
-        Exp::Pair(Box::new(t), Box::new(e))
-    }
-    pub fn range(r: Range<N>) -> Self {
-        Exp::Range(r)
-    }
-    #[allow(clippy::should_implement_trait)]
-    pub fn add(l: Self, r: Self) -> Self {
-        Exp::Bin(BinOp::Add, Box::new(l), Box::new(r))
-    }
-    #[allow(clippy::should_implement_trait)]
-    pub fn sub(l: Self, r: Self) -> Self {
-        Exp::Bin(BinOp::Sub, Box::new(l), Box::new(r))
-    }
-    #[allow(clippy::should_implement_trait)]
-    pub fn neg(x: Self) -> Self {
-        Exp::Neg(Box::new(x))
-    }
-    #[allow(clippy::should_implement_trait)]
-    pub fn mul(l: Self, r: Self) -> Self {
-        Exp::Bin(BinOp::Mul, Box::new(l), Box::new(r))
-    }
-    #[allow(clippy::should_implement_trait)]
-    pub fn div(l: Self, r: Self) -> Self {
-        Exp::Bin(BinOp::Div, Box::new(l), Box::new(r))
-    }
-    pub fn pow(l: Self, r: Self) -> Self {
-        Exp::Bin(BinOp::Pow, Box::new(l), Box::new(r))
-    }
-    pub fn dot(l: Self, r: Self) -> Self {
-        Exp::Bin(BinOp::Dot, Box::new(l), Box::new(r))
-    }
-    #[allow(clippy::should_implement_trait)]
-    pub fn rem(l: Self, r: Self) -> Self {
-        Exp::Bin(BinOp::Rem, Box::new(l), Box::new(r))
-    }
-    pub fn concat(l: Self, r: Self) -> Self {
-        Exp::Bin(BinOp::Concat, Box::new(l), Box::new(r))
-    }
-    pub fn var(x: &Vid) -> Self {
-        Exp::Var(x.clone())
-    }
-    pub fn varstr(x: &str) -> Self {
-        Exp::Var(Vid::from(x))
-    }
-    pub fn assert_eq(lhs: Exp<N>, rhs: Exp<N>) -> Self {
-        Exp::Assert(Box::new(lhs), Box::new(rhs))
-    }
-    pub fn verify_eq(lhs: Exp<N>, rhs: Exp<N>) -> Self {
-        Exp::Verify(Box::new(lhs), Box::new(rhs))
-    }
-    pub fn letx(a: Vid, d: Self, e: Self) -> Self {
-        Exp::Let(Some(a), Box::new(d), Box::new(e))
-    }
-    pub fn logx(a: Vid, d: Self, e: Self) -> Self {
-        Exp::Log(a, Box::new(d), Box::new(e))
-    }
-    pub fn seq(a: Self, b: Self) -> Self {
-        Exp::Let(None, Box::new(a), Box::new(b))
-    }
-    pub fn app(id: Vid, args: Exps<N>) -> Self {
-        Exp::App(id, args)
-    }
-    pub fn fun(vars: Vec<Vid>, body: Self) -> Self {
-        Exp::Fun(vars, Box::new(body))
-    }
-    pub fn record(fields: Ctx<String, Self>) -> Self {
-        Exp::Record(fields)
-    }
-    pub fn proj(exp: Self, field: String) -> Self {
-        Exp::Proj(Box::new(exp), field)
-    }
-    pub fn set_record(record: Self, field: String, value: Self) -> Self {
-        Exp::SetRecord(Box::new(record), field, Box::new(value))
-    }
     pub fn is_pure(&self) -> bool {
         match self {
             Exp::Lit(_) | Exp::Unit | Exp::Var(_) | Exp::Range(_) => true,
@@ -785,20 +692,20 @@ impl<N> Exp<N> {
             Exp::Poly(box p) => p.is_pure(),
             Exp::Mle(box p) => p.is_pure(),
             Exp::Reduce(_, box p) => p.is_pure(),
-            Exp::Vec(v) => v.iter().all(|e| e.is_pure()),
+            Exp::Vec(v) => v.iter().all(|e| e.node.is_pure()),
             Exp::Bin(_, box a, box b) => a.is_pure() && b.is_pure(),
             Exp::Neg(box a) => a.is_pure(),
             Exp::Evaluate(box p, _, ox) => p.is_pure() && ox.as_ref().is_none_or(|x| x.is_pure()),
             Exp::Pair(box a, box b) => a.is_pure() && b.is_pure(),
             Exp::Map(box a, _, box b) => a.is_pure() && b.is_pure(),
             Exp::Ram(box a, box b) => a.is_pure() && b.is_pure(),
-            Exp::Let(_, box a, box b) => a.is_pure() && b.is_pure(),
-            Exp::Log(_, box _, box _) => false,
+            Exp::Let(_, box a, b) => a.is_pure() && b.as_ref().is_none_or(|b| b.is_pure()),
+            Exp::Log(_, box _, _) => false,
             Exp::Challenge(_, _) | Exp::Random(_, _) => false,
-            Exp::App(_, args) => args.iter().all(|e| e.is_pure()),
+            Exp::App(_, args) => args.iter().all(|e| e.node.is_pure()),
             Exp::Assert(_, _) | Exp::Verify(_, _) => false,
             Exp::Fun(_, box body) => body.is_pure(),
-            Exp::Record(fields) => fields.iter().all(|(_, e)| e.is_pure()),
+            Exp::Record(fields) => fields.iter().all(|(_, e)| e.node.is_pure()),
             Exp::Proj(box exp, _) => exp.is_pure(),
             Exp::SetRecord(box record, _, box value) => record.is_pure() && value.is_pure(),
         }
@@ -817,11 +724,11 @@ impl<N> Exp<N> {
             Exp::Random(_, _) => true,
             // Recurse into all sub-expressions with is_relation_pure
             Exp::Assert(box lhs, box rhs) => lhs.is_relation_pure() && rhs.is_relation_pure(),
-            Exp::Let(Some(_), box val, box cont) | Exp::Let(None, box val, box cont) => {
-                val.is_relation_pure() && cont.is_relation_pure()
+            Exp::Let(_, box val, cont) => {
+                val.is_relation_pure() && cont.as_ref().is_none_or(|c| c.is_relation_pure())
             }
             Exp::Map(box a, _, box b) => a.is_relation_pure() && b.is_relation_pure(),
-            Exp::Vec(v) => v.iter().all(|e| e.is_relation_pure()),
+            Exp::Vec(v) => v.iter().all(|e| e.node.is_relation_pure()),
             Exp::Bin(_, box a, box b) => a.is_relation_pure() && b.is_relation_pure(),
             Exp::Neg(box a) => a.is_relation_pure(),
             Exp::Pair(box a, box b) => a.is_relation_pure() && b.is_relation_pure(),
@@ -835,9 +742,9 @@ impl<N> Exp<N> {
             Exp::Evaluate(box p, _, ox) => {
                 p.is_relation_pure() && ox.as_ref().is_none_or(|x| x.is_relation_pure())
             }
-            Exp::App(_, args) => args.iter().all(|e| e.is_relation_pure()),
+            Exp::App(_, args) => args.iter().all(|e| e.node.is_relation_pure()),
             Exp::Fun(_, box body) => body.is_relation_pure(),
-            Exp::Record(fields) => fields.iter().all(|(_, e)| e.is_relation_pure()),
+            Exp::Record(fields) => fields.iter().all(|(_, e)| e.node.is_relation_pure()),
             Exp::Proj(box exp, _) => exp.is_relation_pure(),
             Exp::SetRecord(box record, _, box value) => {
                 record.is_relation_pure() && value.is_relation_pure()
@@ -845,12 +752,6 @@ impl<N> Exp<N> {
             // Leaves: always valid
             Exp::Lit(_) | Exp::Unit | Exp::Var(_) | Exp::Range(_) => true,
         }
-    }
-}
-
-impl CExp {
-    pub fn zeroes(n: usize) -> Self {
-        Exp::map(Exp::lit(0), Vid::from("_"), Exp::range(Range::new(0, n)))
     }
 }
 
@@ -908,6 +809,23 @@ where
 
     fn is_nil(&self) -> bool {
         false
+    }
+}
+
+/// Blanket Pretty impl for Spanned<T> — delegates to inner T's Pretty.
+/// This lets all Pretty impls work with Spanned wrappers without .node calls.
+impl<'a, D, A, T> Pretty<'a, D, A> for Spanned<T>
+where
+    T: Pretty<'a, D, A>,
+    D: DocAllocator<'a, A>,
+    D::Doc: Clone,
+    A: 'a + Clone,
+{
+    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
+        self.node.pretty(allocator)
+    }
+    fn is_nil(&self) -> bool {
+        self.node.is_nil()
     }
 }
 
@@ -986,19 +904,19 @@ where
             Exp::Bin(op, a, b) => {
                 let parent_prec = op.parser_precedence();
                 let right_assoc = op.is_right_assoc();
-                let lhs_needs_paren = matches!(a.as_ref(),
+                let lhs_needs_paren = matches!(&a.node,
                     Exp::Bin(child_op, _, _) if child_op.parser_precedence() < parent_prec
                         || (child_op.parser_precedence() == parent_prec && right_assoc));
-                let rhs_needs_paren = matches!(b.as_ref(),
+                let rhs_needs_paren = matches!(&b.node,
                     Exp::Bin(child_op, _, _) if child_op.parser_precedence() < parent_prec
                         || (child_op.parser_precedence() == parent_prec && !right_assoc));
-                let lhs = (*a).pretty(allocator);
+                let lhs = a.pretty(allocator);
                 let lhs = if lhs_needs_paren {
                     allocator.concat([allocator.text("("), lhs, allocator.text(")")])
                 } else {
                     lhs
                 };
-                let rhs = (*b).pretty(allocator);
+                let rhs = b.pretty(allocator);
                 let rhs = if rhs_needs_paren {
                     allocator.concat([allocator.text("("), rhs, allocator.text(")")])
                 } else {
@@ -1062,29 +980,41 @@ where
                 (*i).pretty(allocator),
                 allocator.text("]"),
             ]),
-            Exp::Let(Some(x), t, e) => allocator.concat([
-                allocator.text("let "),
-                x.pretty(allocator),
-                allocator.text(" = "),
-                (*t).pretty(allocator),
-                allocator.text(";"),
-                allocator.hardline(),
-                (*e).pretty(allocator),
-            ]),
-            Exp::Let(None, t, e) => allocator.concat([
-                (*t).pretty(allocator),
-                allocator.text(";"),
-                allocator.hardline(),
-                (*e).pretty(allocator),
-            ]),
-            Exp::Log(x, t, e) => allocator.concat([
-                x.pretty(allocator),
-                allocator.text(" <- "),
-                (*t).pretty(allocator),
-                allocator.text(";"),
-                allocator.hardline(),
-                (*e).pretty(allocator),
-            ]),
+            Exp::Let(Some(x), t, e) => {
+                let mut docs = vec![
+                    allocator.text("let "),
+                    x.pretty(allocator),
+                    allocator.text(" = "),
+                    (*t).pretty(allocator),
+                    allocator.text(";"),
+                ];
+                if let Some(e) = e {
+                    docs.push(allocator.hardline());
+                    docs.push((*e).pretty(allocator));
+                }
+                allocator.concat(docs)
+            }
+            Exp::Let(None, t, e) => {
+                let mut docs = vec![(*t).pretty(allocator), allocator.text(";")];
+                if let Some(e) = e {
+                    docs.push(allocator.hardline());
+                    docs.push((*e).pretty(allocator));
+                }
+                allocator.concat(docs)
+            }
+            Exp::Log(x, t, e) => {
+                let mut docs = vec![
+                    x.pretty(allocator),
+                    allocator.text(" <- "),
+                    (*t).pretty(allocator),
+                    allocator.text(";"),
+                ];
+                if let Some(e) = e {
+                    docs.push(allocator.hardline());
+                    docs.push((*e).pretty(allocator));
+                }
+                allocator.concat(docs)
+            }
             Exp::Assert(box lhs, box rhs) => allocator.concat([
                 allocator.text("assert("),
                 lhs.pretty(allocator),
@@ -1165,78 +1095,6 @@ where
     }
 }
 
-impl<N> Add for Exp<N> {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self {
-        Exp::add(self, rhs)
-    }
-}
-
-impl<N> Sub for Exp<N> {
-    type Output = Self;
-
-    fn sub(self, rhs: Self) -> Self {
-        Exp::sub(self, rhs)
-    }
-}
-
-impl<N> Mul for Exp<N> {
-    type Output = Self;
-
-    fn mul(self, rhs: Self) -> Self {
-        Exp::mul(self, rhs)
-    }
-}
-
-impl<N> Div for Exp<N> {
-    type Output = Self;
-
-    fn div(self, rhs: Self) -> Self {
-        Exp::div(self, rhs)
-    }
-}
-
-impl<N> Rem for Exp<N> {
-    type Output = Self;
-
-    fn rem(self, rhs: Self) -> Self {
-        Exp::rem(self, rhs)
-    }
-}
-
-impl<N> BitXor for Exp<N> {
-    type Output = Self;
-
-    fn bitxor(self, rhs: Self) -> Self {
-        Exp::pow(self, rhs)
-    }
-}
-
-impl From<u32> for UExp {
-    fn from(x: u32) -> Self {
-        UExp::lit(Size::from(x))
-    }
-}
-
-impl From<usize> for CExp {
-    fn from(x: usize) -> Self {
-        CExp::lit(x)
-    }
-}
-
-impl From<Vid> for UExp {
-    fn from(x: Vid) -> Self {
-        UExp::Var(x)
-    }
-}
-
-impl From<&str> for UExp {
-    fn from(x: &str) -> Self {
-        UExp::varstr(x)
-    }
-}
-
 /// Display instance calls the pretty printer
 impl fmt::Display for BinOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1268,75 +1126,84 @@ where
     }
 }
 
-#[test]
-fn pretty_bin_parens() {
-    // (a + b) * c must print with parens, not as "a + b * c"
-    let expr: UExp = Exp::mul(
-        Exp::add(Exp::varstr("a"), Exp::varstr("b")),
-        Exp::varstr("c"),
-    );
-    assert_eq!(format!("{}", expr), "(a + b) * c");
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::ast::spanned::Spanned;
+    use crate::ast::Size;
+    use crate::id::Vid;
 
-    // a * b + c needs no parens (higher prec child on left of lower prec parent)
-    let expr: UExp = Exp::add(
-        Exp::mul(Exp::varstr("a"), Exp::varstr("b")),
-        Exp::varstr("c"),
-    );
-    assert_eq!(format!("{}", expr), "a * b + c");
+    fn varstr(x: &str) -> Spanned<Exp<Size>> {
+        Spanned::dummy(Exp::Var(Vid::from(x)))
+    }
+    fn bin(op: BinOp, l: Spanned<Exp<Size>>, r: Spanned<Exp<Size>>) -> Spanned<Exp<Size>> {
+        Spanned::dummy(Exp::Bin(op, Box::new(l), Box::new(r)))
+    }
+    fn add(l: Spanned<Exp<Size>>, r: Spanned<Exp<Size>>) -> Spanned<Exp<Size>> {
+        bin(BinOp::Add, l, r)
+    }
+    fn sub(l: Spanned<Exp<Size>>, r: Spanned<Exp<Size>>) -> Spanned<Exp<Size>> {
+        bin(BinOp::Sub, l, r)
+    }
+    fn mul(l: Spanned<Exp<Size>>, r: Spanned<Exp<Size>>) -> Spanned<Exp<Size>> {
+        bin(BinOp::Mul, l, r)
+    }
+    fn pow(l: Spanned<Exp<Size>>, r: Spanned<Exp<Size>>) -> Spanned<Exp<Size>> {
+        bin(BinOp::Pow, l, r)
+    }
+    fn rem(l: Spanned<Exp<Size>>, r: Spanned<Exp<Size>>) -> Spanned<Exp<Size>> {
+        bin(BinOp::Rem, l, r)
+    }
+    fn concat(l: Spanned<Exp<Size>>, r: Spanned<Exp<Size>>) -> Spanned<Exp<Size>> {
+        bin(BinOp::Concat, l, r)
+    }
+    fn pair(t: Spanned<Exp<Size>>, e: Spanned<Exp<Size>>) -> Spanned<Exp<Size>> {
+        Spanned::dummy(Exp::Pair(Box::new(t), Box::new(e)))
+    }
 
-    // a - (b - c) needs rhs parens (left-assoc, same prec)
-    let expr: UExp = Exp::sub(
-        Exp::varstr("a"),
-        Exp::sub(Exp::varstr("b"), Exp::varstr("c")),
-    );
-    assert_eq!(format!("{}", expr), "a - (b - c)");
+    #[test]
+    fn pretty_bin_parens() {
+        // (a + b) * c must print with parens, not as "a + b * c"
+        let expr = mul(add(varstr("a"), varstr("b")), varstr("c"));
+        assert_eq!(format!("{}", expr), "(a + b) * c");
 
-    // a - b - c needs no parens (left-assoc, left child same prec)
-    let expr: UExp = Exp::sub(
-        Exp::sub(Exp::varstr("a"), Exp::varstr("b")),
-        Exp::varstr("c"),
-    );
-    assert_eq!(format!("{}", expr), "a - b - c");
+        // a * b + c needs no parens (higher prec child on left of lower prec parent)
+        let expr = add(mul(varstr("a"), varstr("b")), varstr("c"));
+        assert_eq!(format!("{}", expr), "a * b + c");
 
-    // a ^ b ^ c needs no rhs parens (right-assoc)
-    let expr: UExp = Exp::pow(
-        Exp::varstr("a"),
-        Exp::pow(Exp::varstr("b"), Exp::varstr("c")),
-    );
-    assert_eq!(format!("{}", expr), "a ^ b ^ c");
+        // a - (b - c) needs rhs parens (left-assoc, same prec)
+        let expr = sub(varstr("a"), sub(varstr("b"), varstr("c")));
+        assert_eq!(format!("{}", expr), "a - (b - c)");
 
-    // (a ^ b) ^ c needs lhs parens (right-assoc, left child same prec)
-    let expr: UExp = Exp::pow(
-        Exp::pow(Exp::varstr("a"), Exp::varstr("b")),
-        Exp::varstr("c"),
-    );
-    assert_eq!(format!("{}", expr), "(a ^ b) ^ c");
+        // a - b - c needs no parens (left-assoc, left child same prec)
+        let expr = sub(sub(varstr("a"), varstr("b")), varstr("c"));
+        assert_eq!(format!("{}", expr), "a - b - c");
 
-    // a % b + c — Rem is same prec as Mul (AEXP_PARSER level 2), higher than Add
-    let expr: UExp = Exp::add(
-        Exp::rem(Exp::varstr("a"), Exp::varstr("b")),
-        Exp::varstr("c"),
-    );
-    assert_eq!(format!("{}", expr), "a % b + c");
+        // a ^ b ^ c needs no rhs parens (right-assoc)
+        let expr = pow(varstr("a"), pow(varstr("b"), varstr("c")));
+        assert_eq!(format!("{}", expr), "a ^ b ^ c");
 
-    // (a + b) ++ c — Concat is higher prec than Add
-    let expr: UExp = Exp::concat(
-        Exp::add(Exp::varstr("a"), Exp::varstr("b")),
-        Exp::varstr("c"),
-    );
-    assert_eq!(format!("{}", expr), "(a + b) ++ c");
+        // (a ^ b) ^ c needs lhs parens (right-assoc, left child same prec)
+        let expr = pow(pow(varstr("a"), varstr("b")), varstr("c"));
+        assert_eq!(format!("{}", expr), "(a ^ b) ^ c");
 
-    // (a + b) + (c + d) — left-assoc: lhs no parens, rhs parens
-    let expr: UExp = Exp::add(
-        Exp::add(Exp::varstr("a"), Exp::varstr("b")),
-        Exp::add(Exp::varstr("c"), Exp::varstr("d")),
-    );
-    assert_eq!(format!("{}", expr), "a + b + (c + d)");
-}
+        // a % b + c — Rem is same prec as Mul (AEXP_PARSER level 2), higher than Add
+        let expr = add(rem(varstr("a"), varstr("b")), varstr("c"));
+        assert_eq!(format!("{}", expr), "a % b + c");
 
-#[test]
-fn pretty_pair() {
-    // pair(t, e) not t pair(e)
-    let expr: UExp = Exp::pair(Exp::varstr("g1"), Exp::varstr("g2"));
-    assert_eq!(format!("{}", expr), "pair(g1, g2)");
+        // (a + b) ++ c — Concat is higher prec than Add
+        let expr = concat(add(varstr("a"), varstr("b")), varstr("c"));
+        assert_eq!(format!("{}", expr), "(a + b) ++ c");
+
+        // (a + b) + (c + d) — left-assoc: lhs no parens, rhs parens
+        let expr = add(add(varstr("a"), varstr("b")), add(varstr("c"), varstr("d")));
+        assert_eq!(format!("{}", expr), "a + b + (c + d)");
+    }
+
+    #[test]
+    fn pretty_pair() {
+        // pair(t, e) not t pair(e)
+        let expr = pair(varstr("g1"), varstr("g2"));
+        assert_eq!(format!("{}", expr), "pair(g1, g2)");
+    }
 }

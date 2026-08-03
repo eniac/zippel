@@ -197,7 +197,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
-        let fin = ATyp::fin(lang::typ::range::CRange::default());
+        let fin = ATyp::fin(lang::ast::range::CRange::default());
         let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
         let vec_fin = ATyp::Vec(Box::new(fin.clone()), 2);
         let vec_ideal = ATyp::Vec(Box::new(s.clone()), 2);
@@ -375,7 +375,7 @@ mod tests {
         let s = ATyp::scalar();
         let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
         let vec_ideal = ATyp::Vec(Box::new(s.clone()), 2);
-        let fin = ATyp::fin(lang::typ::range::CRange::default());
+        let fin = ATyp::fin(lang::ast::range::CRange::default());
         let vec_fin = ATyp::Vec(Box::new(fin.clone()), 2);
 
         let var_a = Var::from_node(NodeIndex::new(0), vec_s.clone(), Qualifier::Witness);
@@ -415,7 +415,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
-        let fin = ATyp::fin(lang::typ::range::CRange::default());
+        let fin = ATyp::fin(lang::ast::range::CRange::default());
         let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
         let vec_fin = ATyp::Vec(Box::new(fin.clone()), 2);
 
@@ -460,7 +460,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
-        let fin = ATyp::fin(lang::typ::range::CRange::default());
+        let fin = ATyp::fin(lang::ast::range::CRange::default());
 
         let var_a = Var::from_node(NodeIndex::new(0), s.clone(), Qualifier::Witness);
         ideal.register(&var_a);
@@ -694,7 +694,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         let s = ATyp::scalar();
-        let fin = ATyp::fin(lang::typ::range::CRange::default());
+        let fin = ATyp::fin(lang::ast::range::CRange::default());
         let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
         let vec_fin = ATyp::Vec(Box::new(fin.clone()), 2);
 

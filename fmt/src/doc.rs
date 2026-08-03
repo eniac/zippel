@@ -8,9 +8,10 @@
 //! the cursor, which automatically emits comments before each token. This
 //! centralizes all comment handling in the cursor.
 
+use lang::ast::Size;
 use lang::ast::exp::{BinOp, Exp, Exps};
 use lang::ast::sig::Sig;
-use lang::typ::{Distribution, GTyp, Kind, Qualifier, Range, Size, Typ, TypeVar, TypeVars};
+use lang::typ::{Distribution, GTyp, Kind, Qualifier, Range, Typ, TypeVar, TypeVars};
 use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 
 use crate::paren::{lhs_needs_paren, rhs_needs_paren};
@@ -1044,7 +1045,7 @@ fn format_size_func(
 
 fn format_range(r: &Range<Size>, cursor: &mut TokenCursor, end: usize) -> Doc<'static> {
     let dotdot_pos = cursor.find_at_depth0(end, |t| matches!(t, Token::DotDot));
-    let has_step = r.step != Size::Lit(1);
+    let has_step = r.step.is_some();
 
     if has_step {
         let comma_pos = cursor.find_at_depth0(end, |t| matches!(t, Token::Comma));
@@ -1057,7 +1058,7 @@ fn format_range(r: &Range<Size>, cursor: &mut TokenCursor, end: usize) -> Doc<'s
             _ => (end, end, end, end),
         };
 
-        let start_doc = format_size(&r.start, cursor, start_end);
+        let start_doc = format_size(&r.start.node, cursor, start_end);
 
         let comma_comments = if let Some(c) = comma_pos {
             let comments = cursor.advance_to(c);
@@ -1068,7 +1069,7 @@ fn format_range(r: &Range<Size>, cursor: &mut TokenCursor, end: usize) -> Doc<'s
             ALLOC.nil()
         };
 
-        let step_doc = format_size(&r.step, cursor, step_end);
+        let step_doc = format_size(&r.step.as_ref().unwrap().node, cursor, step_end);
 
         let dotdot_comments = if let Some(d) = dotdot_pos {
             let comments = cursor.advance_to(d);
@@ -1079,7 +1080,7 @@ fn format_range(r: &Range<Size>, cursor: &mut TokenCursor, end: usize) -> Doc<'s
             ALLOC.nil()
         };
 
-        let end_doc = format_size(&r.end, cursor, end);
+        let end_doc = format_size(&r.end.as_ref().unwrap().node, cursor, end);
 
         ALLOC.concat([
             start_doc,
@@ -1099,20 +1100,25 @@ fn format_range(r: &Range<Size>, cursor: &mut TokenCursor, end: usize) -> Doc<'s
             None => (end, end),
         };
 
-        let start_doc = format_size(&r.start, cursor, start_end);
+        let start_doc = format_size(&r.start.node, cursor, start_end);
 
-        let dotdot_comments = if let Some(d) = dotdot_pos {
-            let comments = cursor.advance_to(d);
-            let de = cursor.token_end(d).unwrap_or(d + 2);
-            cursor.skip_to(de);
-            comments
+        if let Some(end_spanned) = &r.end {
+            let dotdot_comments = if let Some(d) = dotdot_pos {
+                let comments = cursor.advance_to(d);
+                let de = cursor.token_end(d).unwrap_or(d + 2);
+                cursor.skip_to(de);
+                comments
+            } else {
+                ALLOC.nil()
+            };
+
+            let end_doc = format_size(&end_spanned.node, cursor, end);
+
+            ALLOC.concat([start_doc, dotdot_comments, ALLOC.text(".."), end_doc])
         } else {
-            ALLOC.nil()
-        };
-
-        let end_doc = format_size(&r.end, cursor, end);
-
-        ALLOC.concat([start_doc, dotdot_comments, ALLOC.text(".."), end_doc])
+            // Bare size_ty like `N` → no `..end` part.
+            start_doc
+        }
     }
 }
 
@@ -1194,6 +1200,11 @@ fn format_relation(
                 ALLOC.nil()
             };
 
+            let body_doc = match body {
+                Some(b) => ALLOC.concat([ALLOC.text("; "), format_relation(b, cursor, end, style)]),
+                None => ALLOC.text(";"),
+            };
+
             ALLOC.concat([
                 let_comments,
                 ALLOC.text("let "),
@@ -1203,8 +1214,7 @@ fn format_relation(
                 ALLOC.text(" = "),
                 val_doc,
                 semi_comments,
-                ALLOC.text("; "),
-                format_relation(body, cursor, end, style),
+                body_doc,
             ])
         }
         Exp::Let(None, val, body) => {
@@ -1226,12 +1236,12 @@ fn format_relation(
                 ALLOC.nil()
             };
 
-            ALLOC.concat([
-                val_doc,
-                semi_comments,
-                ALLOC.text("; "),
-                format_relation(body, cursor, end, style),
-            ])
+            let body_doc = match body {
+                Some(b) => ALLOC.concat([ALLOC.text("; "), format_relation(b, cursor, end, style)]),
+                None => ALLOC.text(";"),
+            };
+
+            ALLOC.concat([val_doc, semi_comments, body_doc])
         }
         _ => format_exp(exp, cursor, end, style),
     }
@@ -1460,6 +1470,13 @@ fn format_exp_let_log(
                 ALLOC.nil()
             };
 
+            let body_doc = match body {
+                Some(b) => {
+                    ALLOC.concat([ALLOC.text("; "), format_exp_let_log(b, cursor, end, style)])
+                }
+                None => ALLOC.text(";"),
+            };
+
             ALLOC.concat([
                 let_comments,
                 ALLOC.text("let "),
@@ -1469,8 +1486,7 @@ fn format_exp_let_log(
                 ALLOC.text(" = "),
                 val_doc,
                 semi_comments,
-                ALLOC.text("; "),
-                format_exp_let_log(body, cursor, end, style),
+                body_doc,
             ])
         }
         Exp::Let(None, val, body) => {
@@ -1488,12 +1504,14 @@ fn format_exp_let_log(
                 ALLOC.nil()
             };
 
-            ALLOC.concat([
-                val_doc,
-                semi_comments,
-                ALLOC.text("; "),
-                format_exp_let_log(body, cursor, end, style),
-            ])
+            let body_doc = match body {
+                Some(b) => {
+                    ALLOC.concat([ALLOC.text("; "), format_exp_let_log(b, cursor, end, style)])
+                }
+                None => ALLOC.text(";"),
+            };
+
+            ALLOC.concat([val_doc, semi_comments, body_doc])
         }
         Exp::Log(x, val, body) => {
             let larrow = cursor.find_at_depth0(end, |t| matches!(t, Token::LArrow));
@@ -1531,6 +1549,13 @@ fn format_exp_let_log(
                 ALLOC.nil()
             };
 
+            let body_doc = match body {
+                Some(b) => {
+                    ALLOC.concat([ALLOC.text("; "), format_exp_let_log(b, cursor, end, style)])
+                }
+                None => ALLOC.text(";"),
+            };
+
             ALLOC.concat([
                 id_comments,
                 x.clone().pretty(&ALLOC),
@@ -1538,8 +1563,7 @@ fn format_exp_let_log(
                 ALLOC.text(" <- "),
                 val_doc,
                 semi_comments,
-                ALLOC.text("; "),
-                format_exp_let_log(body, cursor, end, style),
+                body_doc,
             ])
         }
         _ => format_exp(exp, cursor, end, style),

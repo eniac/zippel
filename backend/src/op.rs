@@ -1,9 +1,9 @@
 use crate::{ABase, ATyp, ArkConfig, ArkScalarOps, Value};
 use lang::ast::BinOp;
+use lang::ast::range::CRange;
 use lang::id::Vid;
 use lang::typ::Nothing;
 use lang::typ::lub::Lub;
-use lang::typ::range::CRange;
 
 use hashconsing::{HConsed, HConsign, HashConsign};
 use petgraph::graph::NodeIndex;
@@ -975,7 +975,7 @@ impl<C: HasOpFactory> GOp<C> {
             ),
             Op::Evaluate(a, range, points) => Op::Evaluate(
                 mk::<C>(a.map_node_indices(f)),
-                *range,
+                range.clone(),
                 points.as_ref().map(|b| mk::<C>(b.map_node_indices(f))),
             ),
             Op::LoopParam(i, t) => Op::LoopParam(*i, t.clone()),
@@ -1045,7 +1045,7 @@ impl<C: HasOpFactory> GOp<C> {
             Op::Coef(op) => Op::Coef(mk::<C>(op.map_refs(f))),
             Op::Evaluate(p, range, x) => Op::Evaluate(
                 mk::<C>(p.map_refs(f)),
-                *range,
+                range.clone(),
                 x.as_ref().map(|x| mk::<C>(x.map_refs(f))),
             ),
             Op::LoopParam(i, t) => Op::LoopParam(*i, t.clone()),
@@ -1120,7 +1120,7 @@ impl<C: HasOpFactory> GOp<C> {
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.inline(vars, except))),
             Op::Evaluate(p, range, points) => Op::Evaluate(
                 mk::<C>(p.inline(vars, except)),
-                *range,
+                range.clone(),
                 points.as_ref().map(|x| mk::<C>(x.inline(vars, except))),
             ),
             Op::LoopParam(i, t) => Op::LoopParam(*i, t.clone()),

@@ -6,7 +6,8 @@ use bumpalo::Bump;
 use std::fmt;
 use thiserror::Error;
 
-use crate::typ::{Size, TypeInline, UTyp};
+use crate::ast::Size;
+use crate::typ::{TypeInline, UTyp};
 use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 
 /// Polymorphic Module, a collection of declarations indexed by their typevars and signature
@@ -69,7 +70,7 @@ where
     }
 }
 
-#[derive(Error, PartialEq, Debug)]
+#[derive(Error, Debug)]
 pub enum ModuleError {
     #[error("Overlapping declarations: {0}")]
     OverlapDeclaration(CSig),
@@ -402,7 +403,9 @@ fn type_alias_record() {
     // The return type should be expanded to the record type
     let (sig, _) = umod.iter().next().unwrap();
     assert!(
-        matches!(&sig.ret, Some(crate::typ::Typ::Record(_))),
+        sig.ret
+            .as_ref()
+            .is_some_and(|r| matches!(&r.node, crate::typ::Typ::Record(_))),
         "Return type should be a Record, got {:?}",
         sig.ret
     );
@@ -457,7 +460,7 @@ fn test_concretize_size_var() {
     let arg_typ = &sig.args.0[0].typ;
     assert_eq!(
         arg_typ.clone(),
-        crate::typ::Typ::Vec(Box::new(crate::typ::Typ::base(&Tid::from("F"))), 5)
+        crate::typ::Typ::vec(&crate::typ::Typ::base(&Tid::from("F")), 5)
     );
 }
 

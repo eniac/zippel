@@ -8,7 +8,7 @@ mod op_construction_tests {
     use crate::tests::test_helpers::*;
     use crate::{GOp, Op};
     use backend::{ATyp, Value};
-    use lang::typ::CRange;
+    use lang::ast::CRange;
 
     type C = TestConfig;
 
@@ -122,7 +122,7 @@ mod op_construction_tests {
 
     #[test]
     fn test_range_construction() {
-        let range = CRange::new(0, 5);
+        let range = CRange::from_raw(0, 1, 5);
         let range_op = GOp::<C>::range(range);
 
         match range_op {
@@ -309,7 +309,7 @@ mod op_additional_tests {
     use crate::{GOp, Op, mk};
     use backend::{ABase, ATyp, Value};
     use lang::ast::BinOp;
-    use lang::typ::CRange;
+    use lang::ast::CRange;
 
     type C = TestConfig;
 
@@ -335,7 +335,7 @@ mod op_additional_tests {
 
     #[test]
     fn test_op_one_fin() {
-        let r = CRange::new(0, 5);
+        let r = CRange::from_raw(0, 1, 5);
         let typ = ATyp::Base(ABase::Fin(r));
         let one = GOp::<C>::one(&typ);
         match one {
@@ -346,7 +346,7 @@ mod op_additional_tests {
 
     #[test]
     fn test_op_one_vec_fin() {
-        let r = CRange::new(0, 5);
+        let r = CRange::from_raw(0, 1, 5);
         let typ = ATyp::Vec(Box::new(ATyp::Base(ABase::Fin(r))), 2);
         let one = GOp::<C>::one(&typ);
         match one {
@@ -498,7 +498,7 @@ mod op_additional_tests {
     fn test_op_rem_indices() {
         let a = GOp::<C>::Value(Value::Index(10));
         let b = GOp::<C>::Value(Value::Index(3));
-        let r = CRange::new(0, 20);
+        let r = CRange::from_raw(0, 1, 20);
         let typ = ATyp::Base(ABase::Fin(r));
         let result = Op::rem(a, b, typ);
 

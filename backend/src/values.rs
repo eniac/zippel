@@ -1724,7 +1724,7 @@ impl<C: ArkConfig> Value<C> {
         let mut fixed = fixed;
         let fixed_points = fixed.into_vec_scalar_mut().clone();
         Value::Poly(
-            poly.fix_variables_except_range_with_shape(shape, free_range, &fixed_points)
+            poly.fix_variables_except_range_with_shape(shape, free_range.clone(), &fixed_points)
                 .unwrap_or_else(|e| {
                     panic!(
                         "Selected eval failed for static shape {:?}, range {:?}, fixed arity {}: {:?}",
@@ -1751,7 +1751,8 @@ impl<C: ArkConfig> Value<C> {
             "hypercube reduce fusion currently requires a single free variable"
         );
         assert_eq!(
-            free_range.start, 0,
+            free_range.start(),
+            0,
             "hypercube reduce fusion currently requires the free variable to be at index 0"
         );
         assert_eq!(
@@ -2339,7 +2340,10 @@ impl<C: ArkConfig> Value<C> {
             Value::VecIndex(v) => {
                 let min = *v.iter().min().unwrap();
                 let max = *v.iter().max().unwrap();
-                ATyp::Vec(Box::new(ATyp::fin(CRange::new(min, max + 1))), v.len())
+                ATyp::Vec(
+                    Box::new(ATyp::fin(CRange::from_raw(min, 1, max + 1))),
+                    v.len(),
+                )
             }
             Value::Vec(v) => {
                 let typ = v[0].typ();

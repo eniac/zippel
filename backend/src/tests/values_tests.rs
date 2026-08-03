@@ -45,7 +45,7 @@ fn test_add_comm() {
 
     // Vec<Scalar> + Vec<Index>
     let a = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(10));
-    let b = Value::<TestConfig>::random(&mut rng, &ATyp::vec_fin(CRange::new(0, 10), 10));
+    let b = Value::<TestConfig>::random(&mut rng, &ATyp::vec_fin(CRange::from_raw(0, 1, 10), 10));
     assert_deq!(&a + &b, &b + &a);
 }
 
@@ -911,7 +911,7 @@ fn test_zero_creation() {
         _ => panic!("Expected G1"),
     }
 
-    let index_zero = Value::<TestConfig>::zero(&ATyp::fin(CRange::new(0, 10)));
+    let index_zero = Value::<TestConfig>::zero(&ATyp::fin(CRange::from_raw(0, 1, 10)));
     assert_deq!(index_zero, Value::<TestConfig>::Index(0));
 }
 
@@ -1032,7 +1032,8 @@ fn test_vec_scalar_operations() {
     let _result = &vec_scalar * &scalar;
 
     // VecIndex * Index
-    let vec_idx = Value::<TestConfig>::random(&mut rng, &ATyp::vec_fin(CRange::new(0, 10), 5));
+    let vec_idx =
+        Value::<TestConfig>::random(&mut rng, &ATyp::vec_fin(CRange::from_raw(0, 1, 10), 5));
     let idx = Value::<TestConfig>::Index(2);
     let _result = &vec_idx * &idx;
 }

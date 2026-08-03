@@ -21,10 +21,12 @@ use chumsky::span::SimpleSpan;
 
 use crate::ast::arg::Args;
 use crate::ast::decl::{Decl, UDecl};
+use crate::ast::sig::Sig;
 use crate::ast::spanned::Spanned;
+use crate::ast::Size;
 use crate::ast::{BinOp, Exps, GArg, UExp};
 use crate::id::{Tid, Vid};
-use crate::typ::{Distribution, GTyp, Kind, Qualifier, Range, Size, Typ, TypeVar, TypeVars};
+use crate::typ::{Distribution, GTyp, Kind, Qualifier, Range, Typ, TypeVar, TypeVars};
 
 use error::rich_to_parse_error;
 
@@ -60,7 +62,8 @@ fn positive_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan
 /// Mirrors `size_ty` in the pest grammar:
 ///   size_ty = { size_ty_term ~ (size_bin_op ~ size_ty_term)* }
 ///   size_ty_term = _{ "(" ~ size_ty ~ ")" | positive | size_var }
-fn size_ty_parser<'src, I>() -> impl Parser<'src, I, Size, extra::Err<CtxError<'src>>> + Clone
+fn size_ty_parser<'src, I>(
+) -> impl Parser<'src, I, Spanned<Size>, extra::Err<CtxError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -70,35 +73,56 @@ where
                 .ignored()
                 .ignore_then(size_rec)
                 .then_ignore(just(Token::RParen).ignored()),
-            positive_tok().map(Size::Lit),
-            tid_tok().map(Size::Var),
+            positive_tok().map_with(|n, e| {
+                let sp: SimpleSpan = e.span();
+                Spanned::new(Size::Lit(n), sp.into_range())
+            }),
+            tid_tok().map_with(|t, e| {
+                let sp: SimpleSpan = e.span();
+                Spanned::new(Size::Var(t), sp.into_range())
+            }),
         ));
 
         atom.pratt((
             pratt::infix(
                 Associativity::Left(1),
                 just(Token::Plus).ignored(),
-                |a, _, b, _| Size::Add(Box::new(a), Box::new(b)),
+                |a, _, b, sp| {
+                    let sp: SimpleSpan = sp.span();
+                    Spanned::new(Size::Add(Box::new(a), Box::new(b)), sp.into_range())
+                },
             ),
             pratt::infix(
                 Associativity::Left(1),
                 just(Token::Minus).ignored(),
-                |a, _, b, _| Size::Sub(Box::new(a), Box::new(b)),
+                |a, _, b, sp| {
+                    let sp: SimpleSpan = sp.span();
+                    Spanned::new(Size::Sub(Box::new(a), Box::new(b)), sp.into_range())
+                },
             ),
             pratt::infix(
                 Associativity::Left(2),
                 just(Token::Star).ignored(),
-                |a, _, b, _| Size::Mul(Box::new(a), Box::new(b)),
+                |a, _, b, sp| {
+                    let sp: SimpleSpan = sp.span();
+                    Spanned::new(Size::Mul(Box::new(a), Box::new(b)), sp.into_range())
+                },
             ),
             pratt::infix(
                 Associativity::Left(2),
                 just(Token::Slash).ignored(),
-                |a, _, b, _| Size::Div(Box::new(a), Box::new(b)),
+                |a, _, b, sp| {
+                    let sp: SimpleSpan = sp.span();
+                    Spanned::new(Size::Div(Box::new(a), Box::new(b)), sp.into_range())
+                },
             ),
             pratt::infix(
                 Associativity::Right(3),
                 just(Token::Caret).ignored(),
-                |a, _, b, _| Size::Pow(Box::new(a), Box::new(b)),
+                |a, _, b, sp| {
+                    let sp: SimpleSpan = sp.span();
+                    Spanned::new(Size::Pow(Box::new(a), Box::new(b)), sp.into_range())
+                },
             ),
         ))
     })
@@ -122,15 +146,19 @@ where
             .then(size_ty_parser())
             .then_ignore(just(Token::DotDot).ignored())
             .then(size_ty_parser().labelled(Context::RangeBound).as_context())
-            .map(|((start, step), end)| Range { start, step, end }),
+            .map(|((start, step), end)| Range {
+                start,
+                step: Some(step),
+                end: Some(end),
+            }),
         // unit_r: start, "..", end (step = 1)
         size_ty_parser()
             .then_ignore(just(Token::DotDot).ignored())
             .then(size_ty_parser().labelled(Context::RangeBound).as_context())
             .map(|(start, end)| Range {
                 start: start.clone(),
-                step: Size::Lit(1),
-                end,
+                step: None,
+                end: Some(end),
             }),
     ))
 }
@@ -153,18 +181,19 @@ where
         range_parser().map(Kind::Range),
         // size_ref_ty: a bare size_ty → singleton range
         size_ty_parser().map(|s| {
+            let s = s.node;
             Kind::Range(Range {
-                start: s.clone(),
-                step: Size::Lit(1),
-                end: s + Size::Lit(1),
+                start: Spanned::dummy(s),
+                step: None,
+                end: None,
             })
         }),
         // positive: a bare positive literal → singleton range
         positive_tok().map(|n| {
             Kind::Range(Range {
-                start: Size::Lit(n),
-                step: Size::Lit(1),
-                end: Size::Lit(n + 1),
+                start: Spanned::dummy(Size::Lit(n)),
+                step: None,
+                end: None,
             })
         }),
     ))
@@ -228,7 +257,8 @@ where
 /// Parse a type.
 /// Mirrors `typ` in the pest grammar:
 ///   typ = _{ poly_ty | uni_ty | mle_ty | vec_ty | fin_ty | unit_ty | base_ty | record_ty }
-fn typ_parser<'src, I>() -> impl Parser<'src, I, GTyp<Size>, extra::Err<CtxError<'src>>> + Clone
+fn typ_parser<'src, I>(
+) -> impl Parser<'src, I, Spanned<GTyp<Size>>, extra::Err<CtxError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -244,7 +274,10 @@ where
                 .then_ignore(just(Token::Comma).ignored())
                 .then(size_ty_parser())
                 .then_ignore(just(Token::RAngle).ignored())
-                .map(|((b, m), n)| Typ::Poly(b, m, n)),
+                .map_with(|((b, m), n), e| {
+                    let sp: SimpleSpan = e.span();
+                    Spanned::new(Typ::Poly(b, m.node, n.node), sp.into_range())
+                }),
             // Uni<F, N>
             just(Token::KwUni)
                 .ignored()
@@ -253,7 +286,10 @@ where
                 .then_ignore(just(Token::Comma).ignored())
                 .then(size_ty_parser())
                 .then_ignore(just(Token::RAngle).ignored())
-                .map(|(b, n)| Typ::Poly(b, Size::Lit(1), n)),
+                .map_with(|(b, n), e| {
+                    let sp: SimpleSpan = e.span();
+                    Spanned::new(Typ::Poly(b, Size::Lit(1), n.node), sp.into_range())
+                }),
             // Mle<F, N>
             just(Token::KwMleTy)
                 .ignored()
@@ -262,25 +298,46 @@ where
                 .then_ignore(just(Token::Comma).ignored())
                 .then(size_ty_parser())
                 .then_ignore(just(Token::RAngle).ignored())
-                .map(|(b, n)| Typ::Poly(b, n, Size::Lit(1))),
+                .map_with(|(b, n), e| {
+                    Spanned::new(Typ::Poly(b, n.node, Size::Lit(1)), {
+                        let sp: SimpleSpan = e.span();
+                        sp.into_range()
+                    })
+                }),
             // Fin<range> or Fin<size_ty>
             // A bare size_ty N becomes Range { start: 0, step: 1, end: N }
             just(Token::KwFin)
                 .ignored()
                 .ignore_then(just(Token::LAngle).ignored())
                 .ignore_then(choice((
-                    range_parser().map(Typ::Fin),
-                    size_ty_parser().map(|s| {
-                        Typ::Fin(Range {
-                            start: Size::Lit(0),
-                            step: Size::Lit(1),
-                            end: s,
+                    range_parser().map_with(|r, e| {
+                        Spanned::new(Typ::Fin(r), {
+                            let sp: SimpleSpan = e.span();
+                            sp.into_range()
                         })
+                    }),
+                    size_ty_parser().map_with(|s, e| {
+                        Spanned::new(
+                            Typ::Fin(Range {
+                                start: Spanned::dummy(Size::Lit(0)),
+                                step: None,
+                                end: Some(s),
+                            }),
+                            {
+                                let sp: SimpleSpan = e.span();
+                                sp.into_range()
+                            },
+                        )
                     }),
                 )))
                 .then_ignore(just(Token::RAngle).ignored()),
             // Unit
-            just(Token::KwUnit).ignored().to(Typ::Unit),
+            just(Token::KwUnit).ignored().map_with(|_, e| {
+                Spanned::new(Typ::Unit, {
+                    let sp: SimpleSpan = e.span();
+                    sp.into_range()
+                })
+            }),
             // Vec<T, N>  (vec_ty = { "[" ~ typ ~ ";" ~ size_ty ~ "]" })
             just(Token::LBrack)
                 .ignored()
@@ -288,7 +345,12 @@ where
                 .then_ignore(just(Token::Semi).ignored())
                 .then(size_ty_parser())
                 .then_ignore(just(Token::RBrack).ignored())
-                .map(|(t, n)| Typ::Vec(Box::new(t), n)),
+                .map_with(|(t, n), e| {
+                    Spanned::new(Typ::Vec(Box::new(t), n.node), {
+                        let sp: SimpleSpan = e.span();
+                        sp.into_range()
+                    })
+                }),
             // Record { field: typ, ... }
             just(Token::LBrace)
                 .ignored()
@@ -301,15 +363,23 @@ where
                         .collect::<Vec<_>>(),
                 )
                 .then_ignore(just(Token::RBrace).ignored())
-                .map(|fields: Vec<(Tid, GTyp<Size>)>| {
+                .map_with(|fields: Vec<(Tid, Spanned<GTyp<Size>>)>, e| {
                     let mut ctx = share::Ctx::new();
                     for (name, typ) in fields {
                         ctx.insert(&name.0, &typ);
                     }
-                    Typ::Record(ctx)
+                    Spanned::new(Typ::Record(ctx), {
+                        let sp: SimpleSpan = e.span();
+                        sp.into_range()
+                    })
                 }),
             // Base type variable
-            tid_tok().map(Typ::Base),
+            tid_tok().map_with(|t, e| {
+                Spanned::new(Typ::Base(t), {
+                    let sp: SimpleSpan = e.span();
+                    sp.into_range()
+                })
+            }),
         ))
     })
     .labelled(Context::Type)
@@ -320,20 +390,24 @@ where
 
 /// Parse a type variable declaration.
 /// Mirrors `tvar = { id ~ ":" ~ kind_ty }`
-fn tvar_parser<'src, I>() -> impl Parser<'src, I, TypeVar<Size>, extra::Err<CtxError<'src>>> + Clone
+fn tvar_parser<'src, I>(
+) -> impl Parser<'src, I, Spanned<TypeVar<Size>>, extra::Err<CtxError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     tid_tok()
         .then_ignore(just(Token::Colon).ignored())
         .then(kind_parser())
-        .map(|(id, kind)| TypeVar { id, kind })
+        .map_with(|(id, kind), e| {
+            let sp: SimpleSpan = e.span();
+            Spanned::new(TypeVar { id, kind }, sp.into_range())
+        })
 }
 
 /// Parse a list of type variables.
 /// Mirrors `tvars = { tvar ~ ("," ~ tvar)* }`
 fn tvars_parser<'src, I>(
-) -> impl Parser<'src, I, TypeVars<Size>, extra::Err<CtxError<'src>>> + Clone
+) -> impl Parser<'src, I, Spanned<TypeVars<Size>>, extra::Err<CtxError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -341,7 +415,10 @@ where
         .separated_by(just(Token::Comma).ignored())
         .allow_trailing()
         .collect::<Vec<_>>()
-        .map(|v: Vec<_>| TypeVars(v))
+        .map_with(|v: Vec<_>, e| {
+            let sp: SimpleSpan = e.span();
+            Spanned::new(TypeVars(v), sp.into_range())
+        })
         .labelled(Context::GenericParams)
         .as_context()
 }
@@ -382,7 +459,8 @@ where
 
 /// Parse an argument.
 /// Mirrors `arg = { qualifier? ~ distribution? ~ id ~ ":" ~ typ }`
-fn arg_parser<'src, I>() -> impl Parser<'src, I, GArg<Size>, extra::Err<CtxError<'src>>> + Clone
+fn arg_parser<'src, I>(
+) -> impl Parser<'src, I, Spanned<GArg<Size>>, extra::Err<CtxError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -392,11 +470,17 @@ where
         .then(id_tok())
         .then_ignore(just(Token::Colon).ignored())
         .then(typ_parser())
-        .map(|(((qual, dist), id), typ)| GArg {
-            qualifier: qual.unwrap_or(Qualifier::Local),
-            distribution: dist.unwrap_or(Distribution::Nonuniform),
-            id,
-            typ,
+        .map_with(|(((qual, dist), id), typ), e| {
+            let sp: SimpleSpan = e.span();
+            Spanned::new(
+                GArg {
+                    qualifier: qual.unwrap_or(Qualifier::Local),
+                    distribution: dist.unwrap_or(Distribution::Nonuniform),
+                    id,
+                    typ: typ.node,
+                },
+                sp.into_range(),
+            )
         })
         .labelled(Context::Argument)
         .as_context()
@@ -425,7 +509,7 @@ where
 
 /// Type alias for a boxed expression parser — needed to break the mutual
 /// recursion cycle between exp_atom, exp_no_seq, and exp.
-type ExpParser<'src, I> = Boxed<'src, 'src, I, UExp, extra::Err<CtxError<'src>>>;
+type ExpParser<'src, I> = Boxed<'src, 'src, I, Spanned<UExp>, extra::Err<CtxError<'src>>>;
 
 /// Parse an expression atom (the primary/operand for pratt parsing).
 /// Takes boxed recursive references to break the mutual recursion cycle.
@@ -433,19 +517,25 @@ type ExpParser<'src, I> = Boxed<'src, 'src, I, UExp, extra::Err<CtxError<'src>>>
 fn exp_atom<'src, I>(
     exp_no_seq: ExpParser<'src, I>,
     exp: ExpParser<'src, I>,
-) -> impl Parser<'src, I, UExp, extra::Err<CtxError<'src>>> + Clone
+) -> impl Parser<'src, I, Spanned<UExp>, extra::Err<CtxError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     choice((
         // Range expression: 0..N or 0,1..N
         // Must come before parenthesized expression so (M-1)..(M-1) is parsed as a range, not (M-1)
-        range_parser().map(UExp::Range),
+        range_parser().map_with(|r, e| {
+            let sp: SimpleSpan = e.span();
+            Spanned::new(UExp::Range(r), sp.into_range())
+        }),
         // Unit value: ()
         just(Token::LParen)
             .ignored()
             .then(just(Token::RParen).ignored())
-            .to(UExp::Unit),
+            .map_with(|_, e| {
+                let sp: SimpleSpan = e.span();
+                Spanned::new(UExp::Unit, sp.into_range())
+            }),
         // Parenthesized expression: ( exp )
         just(Token::LParen)
             .ignored()
@@ -462,7 +552,12 @@ where
             )
             .then_ignore(just(Token::FatArrow).ignored())
             .then(exp.clone())
-            .map(|(vars, body)| UExp::Fun(vars, Box::new(body))),
+            .map_with(|(vars, body), e| {
+                Spanned::new(UExp::Fun(vars, Box::new(body)), {
+                    let sp: SimpleSpan = e.span();
+                    sp.into_range()
+                })
+            }),
         // interpolate(exp) or interpolate(exp, exp)
         just(Token::KwInterpolate)
             .ignored()
@@ -480,9 +575,15 @@ where
                     .labelled(Context::CallArgs)
                     .as_context(),
             )
-            .map(|(first, second)| match second {
-                None => UExp::Interpolate(None, Box::new(first)),
-                Some(s) => UExp::Interpolate(Some(Box::new(first)), Box::new(s)),
+            .map_with(|(first, second), e| {
+                let node = match second {
+                    None => UExp::Interpolate(None, Box::new(first)),
+                    Some(s) => UExp::Interpolate(Some(Box::new(first)), Box::new(s)),
+                };
+                Spanned::new(node, {
+                    let sp: SimpleSpan = e.span();
+                    sp.into_range()
+                })
             }),
         // poly(exp)
         just(Token::KwPoly)
@@ -495,7 +596,7 @@ where
                     .labelled(Context::CallArgs)
                     .as_context(),
             )
-            .map(|e| UExp::Poly(Box::new(e))),
+            .map_with(|e, sp| Spanned::new(UExp::Poly(Box::new(e)), sp.span().into_range())),
         // coef(exp)
         just(Token::KwCoef)
             .ignored()
@@ -507,7 +608,7 @@ where
                     .labelled(Context::CallArgs)
                     .as_context(),
             )
-            .map(|e| UExp::Coef(Box::new(e))),
+            .map_with(|e, sp| Spanned::new(UExp::Coef(Box::new(e)), sp.span().into_range())),
         // mle(exp)
         just(Token::KwMle)
             .ignored()
@@ -519,7 +620,7 @@ where
                     .labelled(Context::CallArgs)
                     .as_context(),
             )
-            .map(|e| UExp::Mle(Box::new(e))),
+            .map_with(|e, sp| Spanned::new(UExp::Mle(Box::new(e)), sp.span().into_range())),
         // dot(exp, exp) — dot product → Bin(Dot, a, b)
         just(Token::KwDot)
             .ignored()
@@ -533,7 +634,12 @@ where
                     .labelled(Context::CallArgs)
                     .as_context(),
             )
-            .map(|(a, b)| UExp::dot(a, b)),
+            .map_with(|(a, b), e| {
+                Spanned::new(UExp::Bin(BinOp::Dot, Box::new(a), Box::new(b)), {
+                    let sp: SimpleSpan = e.span();
+                    sp.into_range()
+                })
+            }),
         // random<T> or random<T*>
         just(Token::KwRandom)
             .ignored()
@@ -541,7 +647,12 @@ where
             .ignore_then(tid_tok())
             .then(just(Token::Star).ignored().or_not())
             .then_ignore(just(Token::RAngle).ignored())
-            .map(|(t, star)| UExp::Random(t, star.is_some())),
+            .map_with(|(t, star), e| {
+                Spanned::new(UExp::Random(t, star.is_some()), {
+                    let sp: SimpleSpan = e.span();
+                    sp.into_range()
+                })
+            }),
         // challenge<T> or challenge<T*>
         just(Token::KwChallenge)
             .ignored()
@@ -549,7 +660,12 @@ where
             .ignore_then(tid_tok())
             .then(just(Token::Star).ignored().or_not())
             .then_ignore(just(Token::RAngle).ignored())
-            .map(|(t, star)| UExp::Challenge(t, star.is_some())),
+            .map_with(|(t, star), e| {
+                Spanned::new(UExp::Challenge(t, star.is_some()), {
+                    let sp: SimpleSpan = e.span();
+                    sp.into_range()
+                })
+            }),
         // [exp for x in exp] (map comprehension)
         just(Token::LBrack)
             .ignored()
@@ -559,7 +675,12 @@ where
             .then_ignore(just(Token::KwIn).ignored())
             .then(exp_no_seq.clone())
             .then_ignore(just(Token::RBrack).ignored())
-            .map(|((body, var), iter)| UExp::Map(Box::new(body), var, Box::new(iter))),
+            .map_with(|((body, var), iter), e| {
+                Spanned::new(UExp::Map(Box::new(body), var, Box::new(iter)), {
+                    let sp: SimpleSpan = e.span();
+                    sp.into_range()
+                })
+            }),
         // reduce(op, exp)
         just(Token::KwReduce)
             .ignored()
@@ -573,7 +694,9 @@ where
                     .labelled(Context::CallArgs)
                     .as_context(),
             )
-            .map(|(op, e)| UExp::Reduce(op, Box::new(e))),
+            .map_with(|(op, e), sp| {
+                Spanned::new(UExp::Reduce(op, Box::new(e)), sp.span().into_range())
+            }),
         // [exp, exp, ...] (vector)
         just(Token::LBrack)
             .ignored()
@@ -585,7 +708,12 @@ where
                     .collect::<Vec<_>>(),
             )
             .then_ignore(just(Token::RBrack).ignored())
-            .map(|v: Vec<_>| UExp::Vec(Exps(v))),
+            .map_with(|v: Vec<_>, e| {
+                Spanned::new(UExp::Vec(Exps(v)), {
+                    let sp: SimpleSpan = e.span();
+                    sp.into_range()
+                })
+            }),
         // pair(exp, exp)
         just(Token::KwPair)
             .ignored()
@@ -599,7 +727,12 @@ where
                     .labelled(Context::CallArgs)
                     .as_context(),
             )
-            .map(|(a, b)| UExp::Pair(Box::new(a), Box::new(b))),
+            .map_with(|(a, b), e| {
+                Spanned::new(UExp::Pair(Box::new(a), Box::new(b)), {
+                    let sp: SimpleSpan = e.span();
+                    sp.into_range()
+                })
+            }),
         // assert(constraint) — uses == not , between args, so no CallArgs context
         just(Token::KwAssert)
             .ignored()
@@ -608,7 +741,12 @@ where
             .then_ignore(just(Token::EqEq).ignored())
             .then(exp_no_seq.clone())
             .then_ignore(just(Token::RParen).ignored())
-            .map(|(lhs, rhs)| UExp::Assert(Box::new(lhs), Box::new(rhs))),
+            .map_with(|(lhs, rhs), e| {
+                Spanned::new(UExp::Assert(Box::new(lhs), Box::new(rhs)), {
+                    let sp: SimpleSpan = e.span();
+                    sp.into_range()
+                })
+            }),
         // verify(constraint) — uses == not , between args, so no CallArgs context
         just(Token::KwVerify)
             .ignored()
@@ -617,7 +755,12 @@ where
             .then_ignore(just(Token::EqEq).ignored())
             .then(exp_no_seq.clone())
             .then_ignore(just(Token::RParen).ignored())
-            .map(|(lhs, rhs)| UExp::Verify(Box::new(lhs), Box::new(rhs))),
+            .map_with(|(lhs, rhs), e| {
+                Spanned::new(UExp::Verify(Box::new(lhs), Box::new(rhs)), {
+                    let sp: SimpleSpan = e.span();
+                    sp.into_range()
+                })
+            }),
         // eval<range>(exp) or eval<size>(exp) or eval(exp) or eval(exp, exp)
         eval_exp_parser(exp_no_seq.clone()),
         // Record construction: {| field: val, ... |}
@@ -632,15 +775,23 @@ where
                     .collect::<Vec<_>>(),
             )
             .then_ignore(just(Token::BarRBrace).ignored())
-            .map(|fields: Vec<(Vid, UExp)>| {
+            .map_with(|fields: Vec<(Vid, Spanned<UExp>)>, e| {
                 let mut ctx = share::Ctx::new();
                 for (name, val) in fields {
                     ctx.insert(&name.0, &val);
                 }
-                UExp::Record(ctx)
+                Spanned::new(UExp::Record(ctx), {
+                    let sp: SimpleSpan = e.span();
+                    sp.into_range()
+                })
             }),
         // Positive literal
-        positive_tok().map(|n| UExp::Lit(Size::Lit(n))),
+        positive_tok().map_with(|n, e| {
+            Spanned::new(UExp::Lit(Size::Lit(n)), {
+                let sp: SimpleSpan = e.span();
+                sp.into_range()
+            })
+        }),
         // app_exp: id(exps) — function application
         id_tok()
             .then(
@@ -657,20 +808,36 @@ where
                     .labelled(Context::CallArgs)
                     .as_context(),
             )
-            .map(|(id, args)| UExp::App(id, Exps(args))),
+            .map_with(|(id, args), e| {
+                Spanned::new(UExp::App(id, Exps(args)), {
+                    let sp: SimpleSpan = e.span();
+                    sp.into_range()
+                })
+            }),
         // ram_exp: id[exp] — array access
         id_tok()
+            .map_with(|id, e| {
+                let sp: SimpleSpan = e.span();
+                Spanned::new(UExp::Var(id), sp.into_range())
+            })
             .then_ignore(just(Token::LBrack).ignored())
             .then(exp_no_seq.clone())
             .then_ignore(just(Token::RBrack).ignored())
-            .map(|(id, idx)| UExp::Ram(Box::new(UExp::Var(id)), Box::new(idx))),
+            .map_with(|(id_var, idx), e| {
+                let sp: SimpleSpan = e.span();
+                Spanned::new(UExp::Ram(Box::new(id_var), Box::new(idx)), sp.into_range())
+            }),
         // Bare identifier: uppercase → Size::Var, lowercase → Exp::Var
-        id_tok().map(|id| {
-            if id.0.starts_with(|c: char| c.is_uppercase()) {
+        id_tok().map_with(|id, e| {
+            let node = if id.0.starts_with(|c: char| c.is_uppercase()) {
                 UExp::Lit(Size::Var(Tid::from(id.0)))
             } else {
                 UExp::Var(id)
-            }
+            };
+            Spanned::new(node, {
+                let sp: SimpleSpan = e.span();
+                sp.into_range()
+            })
         }),
     ))
 }
@@ -679,7 +846,7 @@ where
 /// Mirrors `eval_exp = { "eval" ~ eval_selector? ~ "(" ~ exp_no_seq ~ ("," ~ exp_no_seq)? ~ ")" }`
 fn eval_exp_parser<'src, I>(
     exp_no_seq: ExpParser<'src, I>,
-) -> impl Parser<'src, I, UExp, extra::Err<CtxError<'src>>> + Clone
+) -> impl Parser<'src, I, Spanned<UExp>, extra::Err<CtxError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -688,10 +855,13 @@ where
         .ignored()
         .ignore_then(choice((
             range_parser(),
-            size_ty_parser().map(|s| Range {
-                start: s.clone(),
-                step: Size::Lit(1),
-                end: s + Size::Lit(1),
+            size_ty_parser().map(|s| {
+                let s = s.node;
+                Range {
+                    start: Spanned::dummy(s),
+                    step: None,
+                    end: None,
+                }
             }),
         )))
         .then_ignore(just(Token::RAngle).ignored())
@@ -714,17 +884,24 @@ where
                 .labelled(Context::CallArgs)
                 .as_context(),
         )
-        .map(|(sel, (poly, second))| match (sel, second) {
-            (None, None) => UExp::Evaluate(Box::new(poly), None, None),
-            (None, Some(s)) => UExp::Evaluate(Box::new(poly), None, Some(Box::new(s))),
-            (Some(r), Some(f)) => UExp::Evaluate(Box::new(poly), Some(r), Some(Box::new(f))),
-            (Some(_), None) => UExp::Evaluate(Box::new(poly), None, None),
+        .map_with(|(sel, (poly, second)), e| {
+            let node = match (sel, second) {
+                (None, None) => UExp::Evaluate(Box::new(poly), None, None),
+                (None, Some(s)) => UExp::Evaluate(Box::new(poly), None, Some(Box::new(s))),
+                (Some(r), Some(f)) => UExp::Evaluate(Box::new(poly), Some(r), Some(Box::new(f))),
+                (Some(_), None) => UExp::Evaluate(Box::new(poly), None, None),
+            };
+            Spanned::new(node, {
+                let sp: SimpleSpan = e.span();
+                sp.into_range()
+            })
         })
 }
 
 /// Parse an expression without `;` sequencing, using pratt parsing.
 /// Mirrors `exp_no_seq = { exp_term ~ (record_set_op | proj_op | bin_op ~ exp_term)* }`
-fn exp_no_seq_parser<'src, I>() -> impl Parser<'src, I, UExp, extra::Err<CtxError<'src>>> + Clone
+fn exp_no_seq_parser<'src, I>(
+) -> impl Parser<'src, I, Spanned<UExp>, extra::Err<CtxError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -738,42 +915,87 @@ where
             pratt::infix(
                 Associativity::Left(1),
                 just(Token::Plus).ignored(),
-                |a, _, b, _| UExp::add(a, b),
+                |a, _, b, sp| {
+                    let sp: SimpleSpan = sp.span();
+                    Spanned::new(
+                        UExp::Bin(BinOp::Add, Box::new(a), Box::new(b)),
+                        sp.into_range(),
+                    )
+                },
             ),
             pratt::infix(
                 Associativity::Left(1),
                 just(Token::Minus).ignored(),
-                |a, _, b, _| UExp::sub(a, b),
+                |a, _, b, sp| {
+                    let sp: SimpleSpan = sp.span();
+                    Spanned::new(
+                        UExp::Bin(BinOp::Sub, Box::new(a), Box::new(b)),
+                        sp.into_range(),
+                    )
+                },
             ),
             pratt::infix(
                 Associativity::Left(2),
                 just(Token::Star).ignored(),
-                |a, _, b, _| UExp::mul(a, b),
+                |a, _, b, sp| {
+                    let sp: SimpleSpan = sp.span();
+                    Spanned::new(
+                        UExp::Bin(BinOp::Mul, Box::new(a), Box::new(b)),
+                        sp.into_range(),
+                    )
+                },
             ),
             pratt::infix(
                 Associativity::Left(2),
                 just(Token::Slash).ignored(),
-                |a, _, b, _| UExp::div(a, b),
+                |a, _, b, sp| {
+                    let sp: SimpleSpan = sp.span();
+                    Spanned::new(
+                        UExp::Bin(BinOp::Div, Box::new(a), Box::new(b)),
+                        sp.into_range(),
+                    )
+                },
             ),
             pratt::infix(
                 Associativity::Left(2),
                 just(Token::Percent).ignored(),
-                |a, _, b, _| UExp::rem(a, b),
+                |a, _, b, sp| {
+                    let sp: SimpleSpan = sp.span();
+                    Spanned::new(
+                        UExp::Bin(BinOp::Rem, Box::new(a), Box::new(b)),
+                        sp.into_range(),
+                    )
+                },
             ),
             pratt::infix(
                 Associativity::Left(3),
                 just(Token::PlusPlus).ignored(),
-                |a, _, b, _| UExp::concat(a, b),
+                |a, _, b, sp| {
+                    let sp: SimpleSpan = sp.span();
+                    Spanned::new(
+                        UExp::Bin(BinOp::Concat, Box::new(a), Box::new(b)),
+                        sp.into_range(),
+                    )
+                },
             ),
             pratt::infix(
                 Associativity::Right(4),
                 just(Token::Caret).ignored(),
-                |a, _, b, _| UExp::pow(a, b),
+                |a, _, b, sp| {
+                    let sp: SimpleSpan = sp.span();
+                    Spanned::new(
+                        UExp::Bin(BinOp::Pow, Box::new(a), Box::new(b)),
+                        sp.into_range(),
+                    )
+                },
             ),
             // Prefix: unary minus → Exp::Neg(x)
             // Precedence 3 — tighter than `*`/`/`/`%` (2), looser than `^` (4).
             // So `-a * b` = `(-a) * b` and `-a ^ 2` = `-(a ^ 2)`.
-            pratt::prefix(3, just(Token::Minus).ignored(), |_, rhs, _| UExp::neg(rhs)),
+            pratt::prefix(3, just(Token::Minus).ignored(), |_, rhs, sp| {
+                let sp: SimpleSpan = sp.span();
+                Spanned::new(UExp::Neg(Box::new(rhs)), sp.into_range())
+            }),
             // Postfix: record set r.set(field, val) — must come before projection
             // so that `.set(` is not consumed as projection `.set`.
             // record_set_op = { "." ~ "set" ~ "(" ~ id ~ "," ~ exp_no_seq ~ ")" }
@@ -791,13 +1013,22 @@ where
                     .then_ignore(just(Token::Comma).ignored())
                     .then(exp_no_seq_rec.clone().boxed())
                     .then_ignore(just(Token::RParen).ignored()),
-                |lhs, (field, val): (Vid, UExp), _| UExp::set_record(lhs, field.0, val),
+                |lhs, (field, val): (Vid, Spanned<UExp>), sp| {
+                    let sp: SimpleSpan = sp.span();
+                    Spanned::new(
+                        UExp::SetRecord(Box::new(lhs), field.0, Box::new(val)),
+                        sp.into_range(),
+                    )
+                },
             ),
             // Postfix: projection r.field
             pratt::postfix(
                 6,
                 just(Token::Dot).ignored().ignore_then(id_tok()),
-                |lhs, field: Vid, _| UExp::Proj(Box::new(lhs), field.0),
+                |lhs, field: Vid, sp| {
+                    let sp: SimpleSpan = sp.span();
+                    Spanned::new(UExp::Proj(Box::new(lhs), field.0), sp.into_range())
+                },
             ),
         ))
     })
@@ -809,7 +1040,7 @@ where
 /// Mirrors `exp = { let_exp | log_exp | seq_exp | exp_no_seq }`
 fn exp_parser_inner<'src, I>(
     exp_no_seq: ExpParser<'src, I>,
-) -> impl Parser<'src, I, UExp, extra::Err<CtxError<'src>>> + Clone
+) -> impl Parser<'src, I, Spanned<UExp>, extra::Err<CtxError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -829,11 +1060,11 @@ where
                 .then(exp_no_seq.clone())
                 .then_ignore(just(Token::Semi).ignored())
                 .then(exp_rec.clone().or_not())
-                .map(|(((var, _typ), val), body)| {
-                    UExp::Let(
-                        Some(var),
-                        Box::new(val),
-                        Box::new(body.unwrap_or(UExp::Unit)),
+                .map_with(|(((var, _typ), val), body), e| {
+                    let sp: SimpleSpan = e.span();
+                    Spanned::new(
+                        UExp::Let(Some(var), Box::new(val), body.map(Box::new)),
+                        sp.into_range(),
                     )
                 }),
             // id <- exp_no_seq; exp?  (transcript log)
@@ -842,16 +1073,24 @@ where
                 .then(exp_no_seq.clone())
                 .then_ignore(just(Token::Semi).ignored())
                 .then(exp_rec.clone().or_not())
-                .map(|((id, val), body)| {
-                    UExp::Log(id, Box::new(val), Box::new(body.unwrap_or(UExp::Unit)))
+                .map_with(|((id, val), body), e| {
+                    let sp: SimpleSpan = e.span();
+                    Spanned::new(
+                        UExp::Log(id, Box::new(val), body.map(Box::new)),
+                        sp.into_range(),
+                    )
                 }),
             // exp_no_seq; exp?  (sequencing)
             exp_no_seq
                 .clone()
                 .then_ignore(just(Token::Semi).ignored())
                 .then(exp_rec.clone().or_not())
-                .map(|(lhs, rhs)| {
-                    UExp::Let(None, Box::new(lhs), Box::new(rhs.unwrap_or(UExp::Unit)))
+                .map_with(|(lhs, rhs), e| {
+                    let sp: SimpleSpan = e.span();
+                    Spanned::new(
+                        UExp::Let(None, Box::new(lhs), rhs.map(Box::new)),
+                        sp.into_range(),
+                    )
                 }),
             // exp_no_seq (no sequencing)
             exp_no_seq.clone(),
@@ -861,7 +1100,7 @@ where
 
 /// Parse a top-level expression (allows `;` sequencing).
 /// Public entry point — builds the full exp parser from exp_no_seq.
-fn exp_parser<'src, I>() -> impl Parser<'src, I, UExp, extra::Err<CtxError<'src>>> + Clone
+fn exp_parser<'src, I>() -> impl Parser<'src, I, Spanned<UExp>, extra::Err<CtxError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -870,7 +1109,8 @@ where
 
 /// Parse a where clause expression.
 /// Mirrors `where_exp = { where_let | where_eq | exp_no_seq }`
-fn where_exp_parser<'src, I>() -> impl Parser<'src, I, UExp, extra::Err<CtxError<'src>>> + Clone
+fn where_exp_parser<'src, I>(
+) -> impl Parser<'src, I, Spanned<UExp>, extra::Err<CtxError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -891,11 +1131,11 @@ where
                 .then(exp_no_seq.clone())
                 .then_ignore(just(Token::Semi).ignored())
                 .then(where_rec.clone().or_not())
-                .map(|(((var, _typ), val), body)| {
-                    UExp::Let(
-                        Some(var),
-                        Box::new(val),
-                        Box::new(body.unwrap_or(UExp::Unit)),
+                .map_with(|(((var, _typ), val), body), e| {
+                    let sp: SimpleSpan = e.span();
+                    Spanned::new(
+                        UExp::Let(Some(var), Box::new(val), body.map(Box::new)),
+                        sp.into_range(),
                     )
                 }),
             // where_eq: exp_no_seq == exp_no_seq (; where_exp?)?
@@ -910,11 +1150,17 @@ where
                         .ignore_then(where_rec.clone().or_not())
                         .or_not(),
                 )
-                .map(|((lhs, rhs), body)| {
-                    let assert = UExp::Assert(Box::new(lhs), Box::new(rhs));
+                .map_with(|((lhs, rhs), body), e| {
+                    let sp: SimpleSpan = e.span();
+                    let span = sp.into_range();
+                    let assert =
+                        Spanned::new(UExp::Assert(Box::new(lhs), Box::new(rhs)), span.clone());
                     match body {
-                        Some(Some(cont)) => UExp::Let(None, Box::new(assert), Box::new(cont)),
-                        Some(None) => UExp::Let(None, Box::new(assert), Box::new(UExp::Unit)),
+                        Some(Some(cont)) => Spanned::new(
+                            UExp::Let(None, Box::new(assert), Some(Box::new(cont))),
+                            span,
+                        ),
+                        Some(None) => Spanned::new(UExp::Let(None, Box::new(assert), None), span),
                         None => assert,
                     }
                 }),
@@ -930,7 +1176,7 @@ where
 /// Labelled with `Context::ArgumentList` so error reporting can distinguish
 /// errors inside the argument list from errors in generic params or body.
 fn arg_list_parser<'src, I>(
-) -> impl Parser<'src, I, Vec<GArg<Size>>, extra::Err<CtxError<'src>>> + Clone
+) -> impl Parser<'src, I, Vec<Spanned<GArg<Size>>>, extra::Err<CtxError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -966,9 +1212,16 @@ where
             .then_ignore(just(Token::RBrace).ignored())
             .map_with(|((((name, tvars), args), relation), body), e| {
                 let span: SimpleSpan = e.span();
+                let range = span.into_range();
                 Spanned::new(
-                    Decl::proto(name, tvars, Args(args), relation, body),
-                    span.into_range(),
+                    Decl::proto(
+                        Spanned::new(name, range.clone()),
+                        Spanned::new(tvars.node, range.clone()),
+                        Spanned::new(Args(args), range.clone()),
+                        relation,
+                        body,
+                    ),
+                    range,
                 )
             }),
         // func_decl = { "fn" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ ("->" ~ typ)? ~ "{" ~ exp ~ "}" }
@@ -992,9 +1245,16 @@ where
             .then_ignore(just(Token::RBrace).ignored())
             .map_with(|((((name, tvars), args), ret), body), e| {
                 let span: SimpleSpan = e.span();
+                let range = span.into_range();
                 Spanned::new(
-                    Decl::func(name, tvars, Args(args), ret, body),
-                    span.into_range(),
+                    Decl::func(
+                        Spanned::new(name, range.clone()),
+                        Spanned::new(tvars.node, range.clone()),
+                        Spanned::new(Args(args), range.clone()),
+                        ret,
+                        body,
+                    ),
+                    range,
                 )
             }),
         // type_decl = { "type" ~ id ~ "=" ~ typ ~ ";" }
@@ -1006,7 +1266,11 @@ where
             .then_ignore(just(Token::Semi).ignored())
             .map_with(|(name, typ), e| {
                 let span: SimpleSpan = e.span();
-                Spanned::new(Decl::type_alias(Vid(name.0), typ), span.into_range())
+                let range = span.into_range();
+                Spanned::new(
+                    Decl::type_alias(Spanned::new(Vid(name.0), range.clone()), typ),
+                    range,
+                )
             })
             .labelled(Context::TypeAlias)
             .as_context(),
@@ -1025,21 +1289,22 @@ where
 {
     decl_parser().repeated().collect::<Vec<_>>().validate(
         |decls: Vec<Spanned<UDecl>>, _, emitter| {
-            let mut seen: std::collections::HashMap<String, std::ops::Range<usize>> =
-                std::collections::HashMap::new();
+            let mut seen: Vec<(Sig<Size>, std::ops::Range<usize>)> = Vec::new();
             for d in &decls {
                 if d.node.body.is_type_alias() {
                     continue;
                 }
-                let key = format!("{:?}", d.node.sig);
-                if let Some(orig_span) = seen.get(&key) {
+                if let Some((_, orig_span)) = seen.iter().find(|(s, _)| *s == d.node.sig) {
                     // Build a user-friendly description of the declaration.
                     let kind = if d.node.body.is_proto() {
                         "proto"
                     } else {
                         "fn"
                     };
-                    let desc = format!("{kind} {}({})", d.node.sig.name.0, d.node.sig.args);
+                    let desc = format!(
+                        "{kind} {}({})",
+                        d.node.sig.name.node.0, d.node.sig.args.node
+                    );
                     emitter.emit(CtxError(Rich::custom(
                         SimpleSpan::new((), d.span.clone()),
                         format!(
@@ -1048,7 +1313,7 @@ where
                         ),
                     )));
                 }
-                seen.insert(key, d.span.clone());
+                seen.push((d.node.sig.clone(), d.span.clone()));
             }
             decls
         },
@@ -1094,10 +1359,10 @@ mod tests {
             Body::Func { body } => {
                 // Should be Mul(Neg(a), a) = (-a)*a
                 // NOT Neg(Mul(a, a)) = -(a*a)
-                match body {
+                match &body.node {
                     Exp::Bin(op, lhs, _) => {
                         assert_eq!(*op, BinOp::Mul, "top should be Mul");
-                        match lhs.as_ref() {
+                        match &**lhs.as_ref() {
                             Exp::Neg(_) => {}
                             other => panic!("expected Neg on lhs, got {:?}", other),
                         }

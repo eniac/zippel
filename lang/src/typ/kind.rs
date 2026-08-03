@@ -3,8 +3,9 @@ use share::traversal::ToTraversal1;
 use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty, Set};
 use std::fmt;
 
-use crate::typ::range::{Range, RangeTraversal};
-use crate::typ::Size;
+use crate::ast::range::{Range, RangeTraversal};
+use crate::ast::spanned::Spanned;
+use crate::ast::Size;
 
 /// The kinds of type variables, parameterized by size type N
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
@@ -40,7 +41,11 @@ impl<N> Kind<N> {
         Kind::Pairing(Tid::new(a), Tid::new(b))
     }
     pub fn range(start: N, step: N, end: N) -> Self {
-        Kind::Range(Range { start, step, end })
+        Kind::Range(Range {
+            start: Spanned::dummy(start),
+            step: Some(Spanned::dummy(step)),
+            end: Some(Spanned::dummy(end)),
+        })
     }
     pub fn is_scalar(&self) -> bool {
         matches!(self, Kind::Field | Kind::Scalar(_))
@@ -70,7 +75,7 @@ impl<N> Kind<N> {
 }
 
 /// Traversal over the size parameter N
-impl<N> ToTraversal1<N> for Kind<N> {
+impl<N: Clone> ToTraversal1<N> for Kind<N> {
     type Output<Z> = Kind<Z>;
     fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Kind<Z>, E> {
         match self {

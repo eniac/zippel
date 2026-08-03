@@ -179,17 +179,17 @@ pub fn eval_to_poly_as<C: ArkConfig>(
 /// coefficient polys, or `None` for unsupported shapes.
 pub fn selected_eval_to_poly<C: ArkConfig>(
     p: &GOp<C>,
-    range: &lang::typ::CRange,
+    range: &lang::ast::CRange,
     fixed: &GOp<C>,
     vars: &HashMap<Ref, Var>,
 ) -> Option<Vec<Polynomial<C::F>>> {
-    if range.step != 1 || range.len() != 1 {
+    if range.step() != 1 || range.len() != 1 {
         return None;
     }
 
     let fixed_polys = PolySource::ref_vars(fixed, vars);
     match p.typ() {
-        ATyp::VPoly(n, d) if range.end <= n && fixed_polys.len() == n.saturating_sub(1) => {
+        ATyp::VPoly(n, d) if range.end() <= n && fixed_polys.len() == n.saturating_sub(1) => {
             let p_polys = PolySource::ref_vars(p, vars);
             let all_indices = multi_indices(n, d);
             let mut out = vec![
@@ -198,11 +198,11 @@ pub fn selected_eval_to_poly<C: ArkConfig>(
             ];
 
             for (idx, ki) in all_indices.iter().enumerate() {
-                let free_exp = ki[range.start];
+                let free_exp = ki[range.start()];
                 let mut term = p_polys[idx].clone();
                 let mut fixed_idx = 0usize;
                 for (var_idx, &var_exp) in ki.iter().enumerate().take(n) {
-                    if var_idx == range.start {
+                    if var_idx == range.start() {
                         continue;
                     }
                     if var_exp > 0 {
@@ -216,14 +216,14 @@ pub fn selected_eval_to_poly<C: ArkConfig>(
             }
             Some(out)
         }
-        ATyp::Mle(n) if range.end <= n && fixed_polys.len() == n.saturating_sub(1) => {
+        ATyp::Mle(n) if range.end() <= n && fixed_polys.len() == n.saturating_sub(1) => {
             let p_polys = PolySource::ref_vars(p, vars);
             let all_b = hypercube(n);
             let one = Polynomial::<C::F>::lit(&C::F::one());
             let eq = |bi: usize, x: &Polynomial<C::F>| -> Polynomial<C::F> {
                 if bi == 1 { x.clone() } else { &one - x }
             };
-            let free = range.start;
+            let free = range.start();
             let mut out = vec![Polynomial::<C::F>::zero(); 2];
             for (idx, b) in all_b.iter().enumerate() {
                 let mut w = one.clone();
@@ -262,7 +262,7 @@ pub fn evaluate_op<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     p: &GOp<C>,
-    range: Option<lang::typ::CRange>,
+    range: Option<lang::ast::CRange>,
     pts: Option<&GOp<C>>,
 ) {
     match (range, pts) {

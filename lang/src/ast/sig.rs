@@ -1,8 +1,10 @@
+use crate::ast::spanned::Spanned;
+use crate::ast::Size;
 use crate::ast::{GArg, GArgs};
 use crate::id::{Fresh, Tid, TidSubst, Vid};
 use crate::typ::subst::AliasSubsts;
 use crate::typ::unify::{Unify, UnifyError};
-use crate::typ::{CKind, CTyp, CTyps, GTyp, Range, RangeTraversal, Size, TypeInline, TypeVars};
+use crate::typ::{CKind, CTyp, CTyps, GTyp, Range, RangeTraversal, TypeInline, TypeVars};
 use share::traversal::{ToTraversal1, ToTraversal2};
 use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 use std::fmt;
@@ -18,12 +20,12 @@ pub enum SigError {
 }
 
 /// Function and protocol argument signatures
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Sig<N> {
-    pub name: Vid,
-    pub typevars: TypeVars<N>,
-    pub args: GArgs<N>,
-    pub ret: Option<GTyp<N>>,
+    pub name: Spanned<Vid>,
+    pub typevars: Spanned<TypeVars<N>>,
+    pub args: Spanned<GArgs<N>>,
+    pub ret: Option<Spanned<GTyp<N>>>,
 }
 
 /// Symbolic sized signature
@@ -39,8 +41,8 @@ impl CSig {
         kctx: &Ctx<Tid, CKind>,
     ) -> Result<(CSig, AliasSubsts), SigError> {
         // Check arity first
-        if self.args.len() != typs.len() {
-            return Err(SigError::ArityMismatch(self.args.len(), typs.len()));
+        if self.args.node.len() != typs.len() {
+            return Err(SigError::ArityMismatch(self.args.node.len(), typs.len()));
         }
 
         // New substitutions context
@@ -53,11 +55,11 @@ impl CSig {
             shifted.tid_subst(&id, &Tid::fresh(&id.0, &mut keys));
         }
 
-        let kind_ctx = shifted.typevars.to_ctx().union(kctx);
+        let kind_ctx = shifted.typevars.node.to_ctx().union(kctx);
 
         // Unification of arguments and parameters
         let mut args = Vec::new();
-        for (l, r) in shifted.args.iter().zip(typs.iter()) {
+        for (l, r) in shifted.args.node.iter().zip(typs.iter()) {
             let typ = CTyp::unify(&l.typ, r, &kind_ctx, &mut subs)
                 .map_err(|e| SigError::Unify(shifted.clone(), typs.clone(), e))?;
             args.push(GArg {
@@ -96,10 +98,10 @@ impl<N: Clone> ToTraversal1<N> for Sig<N> {
 
 impl<N: Clone> TidSubst for Sig<N> {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
-        self.typevars.tid_subst(from, to);
-        self.args.tid_subst(from, to);
+        self.typevars.node.tid_subst(from, to);
+        self.args.node.tid_subst(from, to);
         if let Some(ret) = &mut self.ret {
-            ret.tid_subst(from, to);
+            ret.node.tid_subst(from, to);
         }
     }
 }
@@ -188,7 +190,7 @@ mod tests {
 
         let t_f = Tid::from("F");
         let arg_typ = CTyp::base(&t_f);
-        let typs = Typs(vec![arg_typ.clone()]);
+        let typs = Typs(vec![Spanned::dummy(arg_typ.clone())]);
 
         let mut kctx = Ctx::new();
         kctx.insert(&t_f, &CKind::Field);
@@ -197,8 +199,11 @@ mod tests {
         assert!(res.is_ok());
 
         let (unified_sig, _subs) = res.unwrap();
-        assert_eq!(unified_sig.ret, Some(arg_typ.clone()));
-        assert_eq!(unified_sig.args.0[0].typ, arg_typ);
+        assert_eq!(
+            unified_sig.ret.as_ref().map(|r| &r.node),
+            Some(&arg_typ.clone())
+        );
+        assert_eq!(unified_sig.args.node.0[0].typ, arg_typ);
     }
 
     #[test]
@@ -209,7 +214,13 @@ mod tests {
         assert_eq!(res, Err(SigError::ArityMismatch(1, 0)));
 
         let t_f = Tid::from("F");
-        let res2 = sig.unify(&Typs(vec![CTyp::base(&t_f), CTyp::base(&t_f)]), &kctx);
+        let res2 = sig.unify(
+            &Typs(vec![
+                Spanned::dummy(CTyp::base(&t_f)),
+                Spanned::dummy(CTyp::base(&t_f)),
+            ]),
+            &kctx,
+        );
         assert_eq!(res2, Err(SigError::ArityMismatch(1, 2)));
     }
 
@@ -219,7 +230,7 @@ mod tests {
 
         let t_f = Tid::from("F");
         let arg_typ = CTyp::base(&t_f);
-        let typs = Typs(vec![arg_typ.clone()]);
+        let typs = Typs(vec![Spanned::dummy(arg_typ.clone())]);
 
         let mut kctx = Ctx::new();
         kctx.insert(&t_f, &CKind::Field);
@@ -233,7 +244,10 @@ mod tests {
     fn test_sig_helpers() {
         let mut sig = make_csig("fn foo<T: Field>(instance x: T) -> T { x }");
         sig.tid_subst(&Tid::from("T"), &Tid::from("U"));
-        assert_eq!(sig.ret, Some(CTyp::base(&Tid::from("U"))));
+        assert_eq!(
+            sig.ret.as_ref().map(|r| r.node.clone()),
+            Some(CTyp::base(&Tid::from("U")))
+        );
 
         let display_str = sig.to_string();
         assert!(display_str.contains("foo"));

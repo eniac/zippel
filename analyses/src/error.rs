@@ -45,7 +45,13 @@ impl<C: ArkConfig> Clone for ExtractorRejection<C> {
 }
 
 /// Errors from static protocol analyses.
+///
+/// `AnalysisError` is large (152 bytes) because `Polynomial<C::F>` wraps a
+/// `HashMap` (48 bytes) and `NoValidExtractor` carries a `Var` (which embeds
+/// an `ATyp`). Boxing would add indirection on every construction/match site
+/// for a rarely-occurring error path, so we allow the lint.
 #[derive(Error, Debug)]
+#[allow(clippy::result_large_err)]
 pub enum AnalysisError<C: ArkConfig> {
     /// A verifier equation that cannot be derived from the prover's Gröbner basis.
     #[error("Incomplete protocol: {0}")]

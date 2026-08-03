@@ -278,7 +278,7 @@ mod tests {
             ATyp::g1(),
             ATyp::g2(),
             ATyp::gt(),
-            ATyp::fin(lang::typ::range::CRange::default()),
+            ATyp::fin(lang::ast::range::CRange::default()),
         ] {
             assert_eq!(typ.physical_len(), 1, "physical_len({typ:?}) should be 1");
         }

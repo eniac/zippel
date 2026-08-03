@@ -682,7 +682,7 @@ fn test_reduce_map_fused_optimization_skips_non_vec_domain() {
     let p = mk::<B>(Op::Value(Value::Poly(
         backend::VirtualPolynomial::constant_with_num_vars(<B as backend::ArkConfig>::F::one(), 2),
     )));
-    let body = Op::Evaluate(p, Some(lang::typ::CRange::new(0, 1)), Some(fixed));
+    let body = Op::Evaluate(p, Some(lang::ast::CRange::from_raw(0, 1, 1)), Some(fixed));
 
     let rm = GOp::reduce_map(BinOp::Add, domain, body);
 

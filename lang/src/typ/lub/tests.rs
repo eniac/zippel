@@ -1,151 +1,72 @@
 use super::*;
+use crate::ast::range::CRange;
 #[test]
 fn lub_range() {
-    let a = Range {
-        start: 0,
-        step: 1,
-        end: 10,
-    };
-    let b = Range {
-        start: 5,
-        step: 1,
-        end: 15,
-    };
+    let a = CRange::from_raw(0, 1, 10);
+    let b = CRange::from_raw(5, 1, 15);
 
     assert_eq!(
         Range::lub_equ(&a, &b, &Nothing),
-        Ok(Range {
-            start: 0,
-            step: 1,
-            end: 15
-        })
+        Ok(CRange::from_raw(0, 1, 15))
     );
     assert_eq!(
         Range::lub_add(&a, &b, &Nothing),
-        Ok(Range {
-            start: 5,
-            step: 1,
-            end: 24
-        })
+        Ok(CRange::from_raw(5, 1, 24))
     );
     // lub_sub(&b, &a): b.start (5) < a_max (9), so checked_sub underflows
     assert!(Range::lub_sub(&b, &a, &Nothing).is_err());
     assert_eq!(
         Range::lub_mul(&a, &b, &Nothing),
-        Ok(Range {
-            start: 0,
-            step: 1,
-            end: 127
-        })
+        Ok(CRange::from_raw(0, 1, 127))
     );
     assert_eq!(
-        Range::lub_div(
-            &b,
-            &Range {
-                start: 1,
-                step: 1,
-                end: 15
-            },
-            &Nothing
-        ),
-        Ok(Range {
-            start: 0,
-            step: 1,
-            end: 15
-        })
+        Range::lub_div(&b, &CRange::from_raw(1, 1, 15), &Nothing),
+        Ok(CRange::from_raw(0, 1, 15))
     );
 }
 
 #[test]
 fn lub_add_overflow() {
-    let a = Range {
-        start: usize::MAX - 5,
-        step: 1,
-        end: usize::MAX,
-    };
-    let b = Range {
-        start: 1,
-        step: 1,
-        end: 10,
-    };
+    let a = CRange::from_raw(usize::MAX - 5, 1, usize::MAX);
+    let b = CRange::from_raw(1, 1, 10);
     assert!(Range::lub_add(&a, &b, &Nothing).is_err());
 }
 
 #[test]
 fn lub_sub_underflow() {
-    let a = Range {
-        start: 1,
-        step: 1,
-        end: 10,
-    };
-    let b = Range {
-        start: 5,
-        step: 1,
-        end: 20,
-    };
+    let a = CRange::from_raw(1, 1, 10);
+    let b = CRange::from_raw(5, 1, 20);
     assert!(Range::lub_sub(&a, &b, &Nothing).is_err());
 }
 
 #[test]
 fn lub_mul_overflow() {
     let big = (usize::MAX as f64).sqrt() as usize + 1;
-    let a = Range {
-        start: big,
-        step: 1,
-        end: big + 1,
-    };
-    let b = Range {
-        start: big,
-        step: 1,
-        end: big + 1,
-    };
+    let a = CRange::from_raw(big, 1, big + 1);
+    let b = CRange::from_raw(big, 1, big + 1);
     // big * big overflows usize
     assert!(Range::lub_mul(&a, &b, &Nothing).is_err());
 }
 
 #[test]
 fn lub_div_by_zero() {
-    let a = Range {
-        start: 0,
-        step: 1,
-        end: 10,
-    };
-    let b = Range {
-        start: 0,
-        step: 1,
-        end: 3,
-    };
+    let a = CRange::from_raw(0, 1, 10);
+    let b = CRange::from_raw(0, 1, 3);
     // b.start == 0 is caught by the explicit zero check
     assert!(Range::lub_div(&a, &b, &Nothing).is_err());
 }
 
 #[test]
 fn lub_rem_by_zero() {
-    let a = Range {
-        start: 0,
-        step: 1,
-        end: 10,
-    };
-    let b = Range {
-        start: 0,
-        step: 1,
-        end: 3,
-    };
+    let a = CRange::from_raw(0, 1, 10);
+    let b = CRange::from_raw(0, 1, 3);
     assert!(Range::lub_rem(&a, &b, &Nothing).is_err());
 }
 
 #[test]
 fn lub_pow_overflow() {
-    let a = Range {
-        start: 2,
-        step: 1,
-        end: 3,
-    };
-    let b = Range {
-        start: 64,
-        step: 1,
-        end: 65,
-    };
+    let a = CRange::from_raw(2, 1, 3);
+    let b = CRange::from_raw(64, 1, 65);
     // 2^64 overflows usize on 64-bit
     assert!(Range::lub_pow(&a, &b, &Nothing).is_err());
 }
@@ -153,16 +74,8 @@ fn lub_pow_overflow() {
 #[test]
 fn lub_dot_overflow() {
     let big = (usize::MAX as f64).sqrt() as usize + 1;
-    let a = Range {
-        start: big,
-        step: 1,
-        end: big + 1,
-    };
-    let b = Range {
-        start: big,
-        step: 1,
-        end: big + 1,
-    };
+    let a = CRange::from_raw(big, 1, big + 1);
+    let b = CRange::from_raw(big, 1, big + 1);
     // dot delegates to mul, which overflows
     assert!(Range::lub_dot(&a, &b, &Nothing).is_err());
 }
@@ -512,12 +425,8 @@ mod error_tests {
 
     #[test]
     fn test_lub_error_bad_range() {
-        use crate::typ::range::{Range, RangeError};
-        let range = Range {
-            start: 0,
-            step: 1,
-            end: 10,
-        };
+        use crate::ast::range::RangeError;
+        let range = CRange::from_raw(0, 1, 10);
         let range_err = RangeError::RangeOrder(0, 1, 0);
         let err = LubError::bad_range(&range, range_err);
         assert!(matches!(err, LubError::BadRange(_, _)));
@@ -591,17 +500,9 @@ mod error_tests {
 
     #[test]
     fn test_lub_op_dispatch() {
-        use crate::typ::range::Range;
-        let a = Range {
-            start: 1,
-            step: 1,
-            end: 10,
-        };
-        let b = Range {
-            start: 2,
-            step: 1,
-            end: 20,
-        };
+        use crate::ast::range::Range;
+        let a = CRange::from_raw(1, 1, 10);
+        let b = CRange::from_raw(2, 1, 20);
         let ctx = Nothing;
 
         assert!(Range::lub_op(BinOp::Add, &a, &b, &ctx).is_ok());
@@ -615,16 +516,8 @@ mod error_tests {
         assert!(Range::lub_op(BinOp::Dot, &a, &b, &ctx).is_ok());
 
         // Concat may succeed or fail depending on ranges - test with contiguous ranges
-        let c = Range {
-            start: 1,
-            step: 1,
-            end: 5,
-        };
-        let d = Range {
-            start: 5,
-            step: 1,
-            end: 10,
-        };
+        let c = CRange::from_raw(1, 1, 5);
+        let d = CRange::from_raw(5, 1, 10);
         // These ranges are contiguous, so concat might succeed
         let _ = Range::lub_op(BinOp::Concat, &c, &d, &ctx);
     }
@@ -632,148 +525,76 @@ mod error_tests {
 
 mod range_lub_tests {
     use super::*;
-    use crate::typ::range::Range;
+    use crate::ast::range::Range;
 
     #[test]
     fn test_range_lub_equ_basic() {
-        let a = Range {
-            start: 1,
-            step: 1,
-            end: 10,
-        };
-        let b = Range {
-            start: 5,
-            step: 2,
-            end: 15,
-        };
+        let a = CRange::from_raw(1, 1, 10);
+        let b = CRange::from_raw(5, 2, 15);
         let result = Range::lub_equ(&a, &b, &Nothing).unwrap();
-        assert_eq!(result.start, 1);
-        assert_eq!(result.end, 15);
+        assert_eq!(result.start(), 1);
+        assert_eq!(result.end(), 15);
     }
 
     #[test]
     fn test_range_lub_add_basic() {
-        let a = Range {
-            start: 1,
-            step: 1,
-            end: 5,
-        };
-        let b = Range {
-            start: 2,
-            step: 1,
-            end: 3,
-        };
+        let a = CRange::from_raw(1, 1, 5);
+        let b = CRange::from_raw(2, 1, 3);
         let result = Range::lub_add(&a, &b, &Nothing).unwrap();
-        assert!(result.start >= a.start + b.start);
+        assert!(result.start() >= a.start() + b.start());
     }
 
     #[test]
     fn test_range_lub_sub_basic() {
-        let a = Range {
-            start: 10,
-            step: 1,
-            end: 20,
-        };
-        let b = Range {
-            start: 1,
-            step: 1,
-            end: 5,
-        };
+        let a = CRange::from_raw(10, 1, 20);
+        let b = CRange::from_raw(1, 1, 5);
         let _result = Range::lub_sub(&a, &b, &Nothing).unwrap();
     }
 
     #[test]
     fn test_range_lub_mul_basic() {
-        let a = Range {
-            start: 2,
-            step: 1,
-            end: 5,
-        };
-        let b = Range {
-            start: 3,
-            step: 1,
-            end: 4,
-        };
+        let a = CRange::from_raw(2, 1, 5);
+        let b = CRange::from_raw(3, 1, 4);
         let result = Range::lub_mul(&a, &b, &Nothing).unwrap();
-        assert!(result.start >= a.start * b.start);
+        assert!(result.start() >= a.start() * b.start());
     }
 
     #[test]
     fn test_range_lub_pow_basic() {
-        let a = Range {
-            start: 2,
-            step: 1,
-            end: 3,
-        };
-        let b = Range {
-            start: 2,
-            step: 1,
-            end: 3,
-        };
+        let a = CRange::from_raw(2, 1, 3);
+        let b = CRange::from_raw(2, 1, 3);
         let result = Range::lub_pow(&a, &b, &Nothing).unwrap();
-        assert!(result.start >= 4); // 2^2
+        assert!(result.start() >= 4); // 2^2
     }
 
     #[test]
     fn test_range_lub_rem_basic() {
-        let a = Range {
-            start: 10,
-            step: 1,
-            end: 20,
-        };
-        let b = Range {
-            start: 3,
-            step: 1,
-            end: 5,
-        };
+        let a = CRange::from_raw(10, 1, 20);
+        let b = CRange::from_raw(3, 1, 5);
         let result = Range::lub_rem(&a, &b, &Nothing).unwrap();
-        assert!(result.end < b.end);
+        assert!(result.end() < b.end());
     }
 
     #[test]
     fn test_range_lub_rem_zero_divisor() {
-        let a = Range {
-            start: 10,
-            step: 1,
-            end: 20,
-        };
-        let b = Range {
-            start: 0,
-            step: 1,
-            end: 5,
-        };
+        let a = CRange::from_raw(10, 1, 20);
+        let b = CRange::from_raw(0, 1, 5);
         let result = Range::lub_rem(&a, &b, &Nothing);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_range_lub_div_zero_divisor() {
-        let a = Range {
-            start: 10,
-            step: 1,
-            end: 20,
-        };
-        let b = Range {
-            start: 0,
-            step: 1,
-            end: 5,
-        };
+        let a = CRange::from_raw(10, 1, 20);
+        let b = CRange::from_raw(0, 1, 5);
         let result = Range::lub_div(&a, &b, &Nothing);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_range_lub_dot() {
-        let a = Range {
-            start: 1,
-            step: 1,
-            end: 5,
-        };
-        let b = Range {
-            start: 2,
-            step: 1,
-            end: 4,
-        };
+        let a = CRange::from_raw(1, 1, 5);
+        let b = CRange::from_raw(2, 1, 4);
         let result = Range::lub_dot(&a, &b, &Nothing).unwrap();
         // Dot should behave like mul
         let mul_result = Range::lub_mul(&a, &b, &Nothing).unwrap();
@@ -782,51 +603,27 @@ mod range_lub_tests {
 
     #[test]
     fn test_range_lub_pair_error() {
-        let a = Range {
-            start: 1,
-            step: 1,
-            end: 5,
-        };
-        let b = Range {
-            start: 2,
-            step: 1,
-            end: 4,
-        };
+        let a = CRange::from_raw(1, 1, 5);
+        let b = CRange::from_raw(2, 1, 4);
         let result = Range::lub_pair(&a, &b, &Nothing);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_range_lub_concat_valid() {
-        let a = Range {
-            start: 1,
-            step: 1,
-            end: 5,
-        };
-        let b = Range {
-            start: 5,
-            step: 1,
-            end: 10,
-        };
+        let a = CRange::from_raw(1, 1, 5);
+        let b = CRange::from_raw(5, 1, 10);
         let result = Range::lub_concat(&a, &b, &Nothing);
         if let Ok(concatenated) = result {
-            assert_eq!(concatenated.start, 1);
-            assert_eq!(concatenated.end, 10);
+            assert_eq!(concatenated.start(), 1);
+            assert_eq!(concatenated.end(), 10);
         }
     }
 
     #[test]
     fn test_range_lub_concat_invalid() {
-        let a = Range {
-            start: 1,
-            step: 1,
-            end: 5,
-        };
-        let b = Range {
-            start: 7,
-            step: 1,
-            end: 10,
-        }; // Gap between ranges
+        let a = CRange::from_raw(1, 1, 5);
+        let b = CRange::from_raw(7, 1, 10); // Gap between ranges
         let result = Range::lub_concat(&a, &b, &Nothing);
         assert!(result.is_err());
     }
@@ -1430,7 +1227,7 @@ mod ctyp_lub_poly_tests {
         let mut fields = share::Ctx::new();
         let names = ["x", "y", "z", "w"];
         for name in names.iter().take(num_fields) {
-            fields.insert(&name.to_string(), &arb_ctyp(u)?);
+            fields.insert(&name.to_string(), &Spanned::dummy(arb_ctyp(u)?));
         }
         Ok(CTyp::Record(fields))
     }
@@ -1439,18 +1236,18 @@ mod ctyp_lub_poly_tests {
     fn test_record_lub_width_intersection() {
         let ctx = kind_ctx();
         let mut fields_a = share::Ctx::new();
-        fields_a.insert(&"x".to_string(), &tf());
+        fields_a.insert(&"x".to_string(), &Spanned::dummy(tf()));
 
         let mut fields_b = share::Ctx::new();
-        fields_b.insert(&"x".to_string(), &tf());
-        fields_b.insert(&"y".to_string(), &CTyp::Poly(f(), 1, 3));
+        fields_b.insert(&"x".to_string(), &Spanned::dummy(tf()));
+        fields_b.insert(&"y".to_string(), &Spanned::dummy(CTyp::Poly(f(), 1, 3)));
 
         let a = CTyp::Record(fields_a);
         let b = CTyp::Record(fields_b);
 
         // Width-subtyping: LUB drops the non-common field `y`, keeping `{x}`.
         let mut expected_fields = share::Ctx::new();
-        expected_fields.insert(&"x".to_string(), &tf());
+        expected_fields.insert(&"x".to_string(), &Spanned::dummy(tf()));
         let expected = CTyp::Record(expected_fields);
 
         assert_eq!(CTyp::lub_equ(&a, &b, &ctx), Ok(expected.clone()));
@@ -1461,10 +1258,16 @@ mod ctyp_lub_poly_tests {
     fn test_record_lub_depth_subtyping() {
         let ctx = kind_ctx();
         let mut fields_a = share::Ctx::new();
-        fields_a.insert(&"x".to_string(), &CTyp::Fin(Range::singleton(1)));
+        fields_a.insert(
+            &"x".to_string(),
+            &Spanned::dummy(CTyp::Fin(Range::singleton(1))),
+        );
 
         let mut fields_b = share::Ctx::new();
-        fields_b.insert(&"x".to_string(), &CTyp::Fin(Range::singleton(2)));
+        fields_b.insert(
+            &"x".to_string(),
+            &Spanned::dummy(CTyp::Fin(Range::singleton(2))),
+        );
 
         let a = CTyp::Record(fields_a);
         let b = CTyp::Record(fields_b);
@@ -1477,12 +1280,12 @@ mod ctyp_lub_poly_tests {
     fn test_record_lub_permutations() {
         let ctx = kind_ctx();
         let mut fields_a = share::Ctx::new();
-        fields_a.insert(&"x".to_string(), &tf());
-        fields_a.insert(&"y".to_string(), &CTyp::Poly(f(), 1, 3));
+        fields_a.insert(&"x".to_string(), &Spanned::dummy(tf()));
+        fields_a.insert(&"y".to_string(), &Spanned::dummy(CTyp::Poly(f(), 1, 3)));
 
         let mut fields_b = share::Ctx::new();
-        fields_b.insert(&"y".to_string(), &CTyp::Poly(f(), 1, 3));
-        fields_b.insert(&"x".to_string(), &tf());
+        fields_b.insert(&"y".to_string(), &Spanned::dummy(CTyp::Poly(f(), 1, 3)));
+        fields_b.insert(&"x".to_string(), &Spanned::dummy(tf()));
 
         let a = CTyp::Record(fields_a);
         let b = CTyp::Record(fields_b);

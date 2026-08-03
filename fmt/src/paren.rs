@@ -7,7 +7,7 @@ use lang::ast::BinOp;
 use lang::ast::Exp;
 
 /// Does the lhs of a binary op need parentheses?
-pub fn lhs_needs_paren(op: BinOp, lhs: &Exp<lang::typ::Size>) -> bool {
+pub fn lhs_needs_paren(op: BinOp, lhs: &Exp<lang::ast::Size>) -> bool {
     // Neg has prefix precedence 0 (lowest), so it always needs parens
     // when it's a child of a Bin — otherwise `-x * y` would re-parse as
     // `-(x * y)` instead of `(-x) * y`.
@@ -22,7 +22,7 @@ pub fn lhs_needs_paren(op: BinOp, lhs: &Exp<lang::typ::Size>) -> bool {
 }
 
 /// Does the rhs of a binary op need parentheses?
-pub fn rhs_needs_paren(op: BinOp, rhs: &Exp<lang::typ::Size>) -> bool {
+pub fn rhs_needs_paren(op: BinOp, rhs: &Exp<lang::ast::Size>) -> bool {
     // Same as lhs: Neg at precedence 0 needs parens inside any Bin.
     if matches!(rhs, Exp::Neg(_)) {
         return true;
