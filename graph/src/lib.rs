@@ -1364,6 +1364,12 @@ impl<C: HasOpFactory> UDag<C> {
                 pa.poly_mul(&pb)
                     .map_err(|e| GraphError::NonPolynomialFun(format!("Mul failed: {}", e)))
             }
+            CExp::Neg(box a) => {
+                let p = Self::exp_to_poly_variant(a, vars, var_map)?;
+                PolyVariant::from_scalar(C::F::zero())
+                    .poly_sub(&p)
+                    .map_err(|e| GraphError::NonPolynomialFun(format!("Neg failed: {}", e)))
+            }
             _ => Err(GraphError::NonPolynomialFun(format!(
                 "Unsupported operation in Fun expression: {:?}",
                 exp
@@ -1738,7 +1744,8 @@ impl<C: HasOpFactory> UDag<C> {
             | CExp::Coef(p)
             | CExp::Mle(p)
             | CExp::Reduce(_, p)
-            | CExp::Proj(p, _) => Self::exp_mentions_free_var(p, target),
+            | CExp::Proj(p, _)
+            | CExp::Neg(p) => Self::exp_mentions_free_var(p, target),
             CExp::Assert(lhs, rhs) | CExp::Verify(lhs, rhs) => {
                 Self::exp_mentions_free_var(lhs, target) || Self::exp_mentions_free_var(rhs, target)
             }
@@ -2004,6 +2011,11 @@ impl<C: HasOpFactory> UDag<C> {
                     return Ok(self.materialize(GOp::pair(va, vb, atyp.clone()), edge_type, atyp));
                 }
                 // Create a new [bin] node
+                // Unary negation: lower as 0 - x
+                CExp::Neg(box a) => {
+                    exp = CExp::sub(CExp::Lit(0), a);
+                    continue;
+                }
                 CExp::Bin(op, box a, box b) => {
                     // Add children first
                     let vl = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;

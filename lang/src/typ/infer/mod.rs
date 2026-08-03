@@ -450,6 +450,11 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
             }
 
+            // Handle unary negation: same type as operand
+            CExp::Neg(box a) => a
+                .infer(kctx, fctx, vctx)
+                .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e)),
+
             // Range expression
             CExp::Range(r) => {
                 // Infer the type of the range expression as a vector of sizes
@@ -703,7 +708,7 @@ impl Typeable for CExp {
                             ))
                         } else {
                             let sig = &matching_sigs[0];
-                            Ok(sig.ret.clone())
+                            Ok(sig.ret.clone().unwrap_or(CTyp::Unit))
                         }
                     }
                 }

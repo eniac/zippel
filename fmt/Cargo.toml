@@ -1,0 +1,14 @@
+[package]
+name = "fmt"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+lang = { path = "../lang" }
+share = { path = "../share" }
+pretty = "0.12.3"
+anyhow = "1.0"
+
+[[bin]]
+name = "zippel-fmt"
+path = "src/bin/zippel-fmt.rs"

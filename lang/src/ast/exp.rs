@@ -150,6 +150,13 @@ pub enum Exp<N> {
     ///     ```
     Bin(BinOp, Box<Exp<N>>, Box<Exp<N>>),
 
+    ///     Unary negation
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     let neg = -x;
+    ///     ```
+    Neg(Box<Exp<N>>),
+
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let r = 0..5;
@@ -315,6 +322,7 @@ impl<N: Clone> ToTraversal1<N> for Exp<N> {
                 Box::new(x.traverse1(f)?),
                 Box::new(y.traverse1(f)?),
             )),
+            Exp::Neg(box x) => Ok(Exp::Neg(Box::new(x.traverse1(f)?))),
             Exp::Map(box x, id, box r) => Ok(Exp::Map(
                 Box::new(x.traverse1(f)?),
                 id,
@@ -393,9 +401,11 @@ impl TidSubst for CExp {
                 p.tid_subst(from, to);
                 x.tid_subst(from, to);
             }
-            Exp::Mle(box p) | Exp::Poly(box p) | Exp::Reduce(_, box p) | Exp::Coef(box p) => {
-                p.tid_subst(from, to)
-            }
+            Exp::Mle(box p)
+            | Exp::Poly(box p)
+            | Exp::Reduce(_, box p)
+            | Exp::Coef(box p)
+            | Exp::Neg(box p) => p.tid_subst(from, to),
             Exp::Assert(box lhs, box rhs) | Exp::Verify(box lhs, box rhs) => {
                 lhs.tid_subst(from, to);
                 rhs.tid_subst(from, to);
@@ -452,9 +462,11 @@ impl FreeVars for CExp {
                 None => p.freevars(),
                 Some(x) => p.freevars().union(x.freevars()),
             },
-            Exp::Mle(box p) | Exp::Poly(box p) | Exp::Reduce(_, box p) | Exp::Coef(box p) => {
-                p.freevars()
-            }
+            Exp::Mle(box p)
+            | Exp::Poly(box p)
+            | Exp::Reduce(_, box p)
+            | Exp::Coef(box p)
+            | Exp::Neg(box p) => p.freevars(),
             Exp::Assert(box lhs, box rhs) | Exp::Verify(box lhs, box rhs) => {
                 lhs.freevars().union(rhs.freevars())
             }
@@ -523,6 +535,7 @@ impl<N: Clone> RangeTraversal<N> for Exp<N> {
             Exp::Bin(op, box x, box y) => {
                 Ok(Exp::bin(op, x.range_traverse(f)?, y.range_traverse(f)?))
             }
+            Exp::Neg(box x) => Ok(Exp::neg(x.range_traverse(f)?)),
             Exp::Map(box x, id, box r) => {
                 Ok(Exp::map(x.range_traverse(f)?, id, r.range_traverse(f)?))
             }
@@ -703,6 +716,10 @@ impl<N> Exp<N> {
         Exp::Bin(BinOp::Sub, Box::new(l), Box::new(r))
     }
     #[allow(clippy::should_implement_trait)]
+    pub fn neg(x: Self) -> Self {
+        Exp::Neg(Box::new(x))
+    }
+    #[allow(clippy::should_implement_trait)]
     pub fn mul(l: Self, r: Self) -> Self {
         Exp::Bin(BinOp::Mul, Box::new(l), Box::new(r))
     }
@@ -770,6 +787,7 @@ impl<N> Exp<N> {
             Exp::Reduce(_, box p) => p.is_pure(),
             Exp::Vec(v) => v.iter().all(|e| e.is_pure()),
             Exp::Bin(_, box a, box b) => a.is_pure() && b.is_pure(),
+            Exp::Neg(box a) => a.is_pure(),
             Exp::Evaluate(box p, _, ox) => p.is_pure() && ox.as_ref().is_none_or(|x| x.is_pure()),
             Exp::Pair(box a, box b) => a.is_pure() && b.is_pure(),
             Exp::Map(box a, _, box b) => a.is_pure() && b.is_pure(),
@@ -805,6 +823,7 @@ impl<N> Exp<N> {
             Exp::Map(box a, _, box b) => a.is_relation_pure() && b.is_relation_pure(),
             Exp::Vec(v) => v.iter().all(|e| e.is_relation_pure()),
             Exp::Bin(_, box a, box b) => a.is_relation_pure() && b.is_relation_pure(),
+            Exp::Neg(box a) => a.is_relation_pure(),
             Exp::Pair(box a, box b) => a.is_relation_pure() && b.is_relation_pure(),
             Exp::Ram(box a, box b) => a.is_relation_pure() && b.is_relation_pure(),
             Exp::Interpolate(None, box e) => e.is_relation_pure(),
@@ -987,6 +1006,7 @@ where
                 };
                 allocator.concat([lhs, op.pretty(allocator), rhs])
             }
+            Exp::Neg(a) => allocator.concat([allocator.text("-"), (*a).pretty(allocator)]),
             Exp::Map(x, id, range) => allocator.concat([
                 allocator.text("["),
                 x.pretty(allocator),

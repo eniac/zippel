@@ -117,7 +117,10 @@ impl UModule {
         for d in decls.0.iter() {
             if d.body.is_type_alias() {
                 // Store the alias: name (as Tid) → aliased type (in sig.ret)
-                type_ctx.insert(&Tid::from(d.sig.name.0.as_str()), &d.sig.ret);
+                type_ctx.insert(
+                    &Tid::from(d.sig.name.0.as_str()),
+                    d.sig.ret.as_ref().expect("type alias must have ret"),
+                );
             }
         }
 
@@ -161,7 +164,6 @@ impl UModule {
         self.0.iter().map(|(sig, body)| UDecl {
             sig: sig.clone(),
             body: body.clone(),
-            span: 0..0,
         })
     }
 
@@ -400,7 +402,7 @@ fn type_alias_record() {
     // The return type should be expanded to the record type
     let (sig, _) = umod.iter().next().unwrap();
     assert!(
-        matches!(&sig.ret, crate::typ::Typ::Record(_)),
+        matches!(&sig.ret, Some(crate::typ::Typ::Record(_))),
         "Return type should be a Record, got {:?}",
         sig.ret
     );

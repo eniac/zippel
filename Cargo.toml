@@ -1,5 +1,5 @@
 [workspace]
-members = ["lang", "runtime", "share", "graph", "backend", "analyses"]
+members = ["lang", "runtime", "share", "graph", "backend", "analyses", "fmt"]
 exclude = ["sumcheck_compare", "benchmarks"]
 default-members = [".", "lang", "runtime", "share", "graph", "backend", "analyses"]
 resolver = "2"

@@ -46,8 +46,6 @@ pub enum Body<N> {
 pub struct Decl<N> {
     pub sig: Sig<N>,
     pub body: Body<N>,
-    /// Byte span in the source text (for error reporting and tooling).
-    pub span: std::ops::Range<usize>,
 }
 
 #[derive(Error, PartialEq, Debug)]
@@ -111,21 +109,17 @@ impl<N> Decl<N> {
             name,
             typevars,
             args,
-            ret: GTyp::unit(),
+            ret: None,
         };
         let body = Body::Proto { relation, body };
-        Decl {
-            sig,
-            body,
-            span: 0..0,
-        }
+        Decl { sig, body }
     }
 
     pub fn func(
         name: Vid,
         typevars: TypeVars<N>,
         args: GArgs<N>,
-        ret: GTyp<N>,
+        ret: Option<GTyp<N>>,
         body: Exp<N>,
     ) -> Self {
         let sig = Sig {
@@ -135,11 +129,7 @@ impl<N> Decl<N> {
             ret,
         };
         let body = Body::Func { body };
-        Decl {
-            sig,
-            body,
-            span: 0..0,
-        }
+        Decl { sig, body }
     }
 
     pub fn type_alias(name: Vid, typ: GTyp<N>) -> Self {
@@ -148,12 +138,11 @@ impl<N> Decl<N> {
             name,
             typevars: TypeVars(vec![]),
             args: Args(vec![]),
-            ret: typ,
+            ret: Some(typ),
         };
         Decl {
             sig,
             body: Body::TypeAlias,
-            span: 0..0,
         }
     }
 }
@@ -184,11 +173,11 @@ impl UDecl {
     /// Parse a string into a Zippel declaration
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(input_str: &str) -> Result<Self, crate::parser::ParseError> {
-        let (mut decls, errors) = crate::parser::parse_decls(input_str);
+        let (mut spanned, errors) = crate::parser::parse_decls(input_str);
         if let Some(e) = errors.into_iter().next() {
             return Err(e);
         }
-        decls.pop().ok_or_else(|| {
+        spanned.pop().map(|s| s.node).ok_or_else(|| {
             crate::parser::ParseError::custom(
                 "empty input: expected at least one declaration".to_string(),
             )
@@ -233,7 +222,6 @@ impl UDecl {
                     Ok(r)
                 })
                 .map_err(|e| DeclError::InvalidRange(csig.clone(), e))?,
-            span: self.span.clone(),
         })
     }
 }
@@ -243,10 +231,11 @@ impl UDecls {
     /// Parse a string into a Zippel declarations list
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(input_str: &str) -> Result<Self, crate::parser::ParseError> {
-        let (decls, errors) = crate::parser::parse_decls(input_str);
+        let (spanned, errors) = crate::parser::parse_decls(input_str);
         if let Some(e) = errors.into_iter().next() {
             return Err(e);
         }
+        let decls: Vec<UDecl> = spanned.into_iter().map(|s| s.node).collect();
         Ok(Decls(decls))
     }
 
@@ -315,11 +304,12 @@ impl CBody {
                 // Same lift the binary operator arms apply via `lub_add`
                 // (`lang/src/typ/lub.rs:597-613`), now extended to the
                 // return-type check.
-                match CTyp::lub_equ(&br, &sig.ret, &kctx) {
+                let ret = sig.ret.as_ref().unwrap_or(&CTyp::Unit);
+                match CTyp::lub_equ(&br, ret, &kctx) {
                     Ok(_) => Ok(()),
                     Err(_) => Err(TypeError::decl(
                         &sig.name,
-                        TypeError::func_ret(&kctx, &vctx, body, &sig.name, &sig.ret, &br),
+                        TypeError::func_ret(&kctx, &vctx, body, &sig.name, ret, &br),
                     )),
                 }
             }
@@ -390,7 +380,6 @@ where
         Decl {
             sig: self.sig.type_inline(ctx),
             body: self.body.type_inline(ctx),
-            span: self.span,
         }
     }
 }

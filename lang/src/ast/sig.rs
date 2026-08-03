@@ -23,7 +23,7 @@ pub struct Sig<N> {
     pub name: Vid,
     pub typevars: TypeVars<N>,
     pub args: GArgs<N>,
-    pub ret: GTyp<N>,
+    pub ret: Option<GTyp<N>>,
 }
 
 /// Symbolic sized signature
@@ -89,7 +89,7 @@ impl<N: Clone> ToTraversal1<N> for Sig<N> {
             name,
             typevars: typevars.traverse1(f)?,
             args: args.traverse2(f)?,
-            ret: ret.traverse2(f)?,
+            ret: ret.map(|r| r.traverse2(f)).transpose()?,
         })
     }
 }
@@ -98,7 +98,9 @@ impl<N: Clone> TidSubst for Sig<N> {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         self.typevars.tid_subst(from, to);
         self.args.tid_subst(from, to);
-        self.ret.tid_subst(from, to);
+        if let Some(ret) = &mut self.ret {
+            ret.tid_subst(from, to);
+        }
     }
 }
 
@@ -111,7 +113,7 @@ impl<N: Clone> RangeTraversal<N> for Sig<N> {
             name: self.name,
             typevars: self.typevars.range_traverse(f)?,
             args: self.args.range_traverse(f)?,
-            ret: self.ret.range_traverse(f)?,
+            ret: self.ret.map(|r| r.range_traverse(f)).transpose()?,
         })
     }
 }
@@ -122,7 +124,7 @@ impl<N: Clone> TypeInline<N> for Sig<N> {
             name: self.name,
             typevars: self.typevars,
             args: self.args.type_inline(ctx),
-            ret: self.ret.type_inline(ctx),
+            ret: self.ret.map(|r| r.type_inline(ctx)),
         }
     }
 }
@@ -136,6 +138,10 @@ where
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
+        let ret_doc = match self.ret {
+            Some(ret) => allocator.concat([allocator.text(" -> "), ret.pretty(allocator)]),
+            None => allocator.nil(),
+        };
         allocator.concat([
             self.name.pretty(allocator),
             allocator.text("<"),
@@ -143,8 +149,8 @@ where
             allocator.text(">"),
             allocator.text("("),
             self.args.pretty(allocator),
-            allocator.text(") -> "),
-            self.ret.pretty(allocator),
+            allocator.text(")"),
+            ret_doc,
         ])
     }
 
@@ -191,7 +197,7 @@ mod tests {
         assert!(res.is_ok());
 
         let (unified_sig, _subs) = res.unwrap();
-        assert_eq!(unified_sig.ret, arg_typ);
+        assert_eq!(unified_sig.ret, Some(arg_typ.clone()));
         assert_eq!(unified_sig.args.0[0].typ, arg_typ);
     }
 
@@ -227,7 +233,7 @@ mod tests {
     fn test_sig_helpers() {
         let mut sig = make_csig("fn foo<T: Field>(instance x: T) -> T { x }");
         sig.tid_subst(&Tid::from("T"), &Tid::from("U"));
-        assert_eq!(sig.ret, CTyp::base(&Tid::from("U")));
+        assert_eq!(sig.ret, Some(CTyp::base(&Tid::from("U"))));
 
         let display_str = sig.to_string();
         assert!(display_str.contains("foo"));

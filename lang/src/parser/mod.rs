@@ -21,6 +21,7 @@ use chumsky::span::SimpleSpan;
 
 use crate::ast::arg::Args;
 use crate::ast::decl::{Decl, UDecl};
+use crate::ast::spanned::Spanned;
 use crate::ast::{BinOp, Exps, GArg, UExp};
 use crate::id::{Tid, Vid};
 use crate::typ::{Distribution, GTyp, Kind, Qualifier, Range, Size, Typ, TypeVar, TypeVars};
@@ -769,12 +770,10 @@ where
                 just(Token::Caret).ignored(),
                 |a, _, b, _| UExp::pow(a, b),
             ),
-            // Prefix: unary minus → desugar to Bin(Sub, Lit(0), x)
-            // Precedence 0 (lowest) — pest's `minus_exp = _{ unary_minus ~ exp_no_seq }`
-            // wraps the entire following exp_no_seq, so `-b0 * z` = `-(b0 * z)`.
-            pratt::prefix(0, just(Token::Minus).ignored(), |_, rhs, _| {
-                UExp::sub(UExp::Lit(Size::Lit(0)), rhs)
-            }),
+            // Prefix: unary minus → Exp::Neg(x)
+            // Precedence 3 — tighter than `*`/`/`/`%` (2), looser than `^` (4).
+            // So `-a * b` = `(-a) * b` and `-a ^ 2` = `-(a ^ 2)`.
+            pratt::prefix(3, just(Token::Minus).ignored(), |_, rhs, _| UExp::neg(rhs)),
             // Postfix: record set r.set(field, val) — must come before projection
             // so that `.set(` is not consumed as projection `.set`.
             // record_set_op = { "." ~ "set" ~ "(" ~ id ~ "," ~ exp_no_seq ~ ")" }
@@ -945,7 +944,7 @@ where
 
 /// Parse a declaration.
 /// Mirrors `decl = { proto_decl | func_decl | type_decl }`
-fn decl_parser<'src, I>() -> impl Parser<'src, I, UDecl, extra::Err<CtxError<'src>>> + Clone
+fn decl_parser<'src, I>() -> impl Parser<'src, I, Spanned<UDecl>, extra::Err<CtxError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -967,9 +966,10 @@ where
             .then_ignore(just(Token::RBrace).ignored())
             .map_with(|((((name, tvars), args), relation), body), e| {
                 let span: SimpleSpan = e.span();
-                let mut d = Decl::proto(name, tvars, Args(args), relation, body);
-                d.span = span.into_range();
-                d
+                Spanned::new(
+                    Decl::proto(name, tvars, Args(args), relation, body),
+                    span.into_range(),
+                )
             }),
         // func_decl = { "fn" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ ("->" ~ typ)? ~ "{" ~ exp ~ "}" }
         just(Token::KwFn)
@@ -992,9 +992,10 @@ where
             .then_ignore(just(Token::RBrace).ignored())
             .map_with(|((((name, tvars), args), ret), body), e| {
                 let span: SimpleSpan = e.span();
-                let mut d = Decl::func(name, tvars, Args(args), ret.unwrap_or(Typ::Unit), body);
-                d.span = span.into_range();
-                d
+                Spanned::new(
+                    Decl::func(name, tvars, Args(args), ret, body),
+                    span.into_range(),
+                )
             }),
         // type_decl = { "type" ~ id ~ "=" ~ typ ~ ";" }
         just(Token::KwType)
@@ -1005,9 +1006,7 @@ where
             .then_ignore(just(Token::Semi).ignored())
             .map_with(|(name, typ), e| {
                 let span: SimpleSpan = e.span();
-                let mut d = Decl::type_alias(Vid(name.0), typ);
-                d.span = span.into_range();
-                d
+                Spanned::new(Decl::type_alias(Vid(name.0), typ), span.into_range())
             })
             .labelled(Context::TypeAlias)
             .as_context(),
@@ -1019,25 +1018,28 @@ where
 /// Parse a module (list of declarations).
 /// Mirrors `decls = { SOI ~ decl* ~ EOI }`
 /// Validates that no two declarations share the same signature.
-fn decls_parser<'src, I>() -> impl Parser<'src, I, Vec<UDecl>, extra::Err<CtxError<'src>>> + Clone
+fn decls_parser<'src, I>(
+) -> impl Parser<'src, I, Vec<Spanned<UDecl>>, extra::Err<CtxError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
-    decl_parser()
-        .repeated()
-        .collect::<Vec<_>>()
-        .validate(|decls: Vec<UDecl>, _, emitter| {
+    decl_parser().repeated().collect::<Vec<_>>().validate(
+        |decls: Vec<Spanned<UDecl>>, _, emitter| {
             let mut seen: std::collections::HashMap<String, std::ops::Range<usize>> =
                 std::collections::HashMap::new();
             for d in &decls {
-                if d.body.is_type_alias() {
+                if d.node.body.is_type_alias() {
                     continue;
                 }
-                let key = format!("{:?}", d.sig);
+                let key = format!("{:?}", d.node.sig);
                 if let Some(orig_span) = seen.get(&key) {
                     // Build a user-friendly description of the declaration.
-                    let kind = if d.body.is_proto() { "proto" } else { "fn" };
-                    let desc = format!("{kind} {}({})", d.sig.name.0, d.sig.args);
+                    let kind = if d.node.body.is_proto() {
+                        "proto"
+                    } else {
+                        "fn"
+                    };
+                    let desc = format!("{kind} {}({})", d.node.sig.name.0, d.node.sig.args);
                     emitter.emit(CtxError(Rich::custom(
                         SimpleSpan::new((), d.span.clone()),
                         format!(
@@ -1049,14 +1051,15 @@ where
                 seen.insert(key, d.span.clone());
             }
             decls
-        })
+        },
+    )
 }
 
 // ── Entry point ────────────────────────────────────────────────────────
 
 /// Parse source text into a list of declarations.
 /// This is the chumsky equivalent of `UModule::from_str`.
-pub fn parse_decls(src: &str) -> (Vec<UDecl>, Vec<ParseError>) {
+pub fn parse_decls(src: &str) -> (Vec<Spanned<UDecl>>, Vec<ParseError>) {
     let eoi = SimpleSpan::new((), src.len()..src.len());
     let stream = Stream::from_iter(lex_iter(src).filter(|(t, _)| !t.is_trivia()));
     let input = stream.map(eoi, |(t, s)| (t, s));
@@ -1081,28 +1084,25 @@ mod tests {
 
     #[test]
     fn parse_unary_minus_precedence() {
-        // -a * a should parse as -(a * a), not (-a) * a
-        // In chumsky pratt, prefix(0) consumes all operators with precedence > 0
+        // -a * a should parse as (-a) * a, not -(a * a)
+        // Unary minus has precedence 3 (tighter than * = 2, looser than ^ = 4)
         let src = "fn f<F: Field>(instance a: F) -> F { -a * a }";
         let (decls, errors) = parse_decls(src);
         assert!(errors.is_empty(), "errors: {:?}", errors);
         use crate::ast::{BinOp, Body, Exp};
-        match &decls[0].body {
+        match &decls[0].node.body {
             Body::Func { body } => {
-                // Should be Sub(Lit(0), Mul(a, a)) = -(a*a)
-                // NOT Mul(Sub(Lit(0), a), a) = (-a)*a
+                // Should be Mul(Neg(a), a) = (-a)*a
+                // NOT Neg(Mul(a, a)) = -(a*a)
                 match body {
-                    Exp::Bin(op, _l, r) => {
-                        assert_eq!(*op, BinOp::Sub, "outer should be Sub, got {:?}", op);
-                        // right should be Mul(a, a)
-                        match r.as_ref() {
-                            Exp::Bin(op2, _, _) => {
-                                assert_eq!(*op2, BinOp::Mul, "inner should be Mul");
-                            }
-                            other => panic!("expected Bin(Mul), got {:?}", other),
+                    Exp::Bin(op, lhs, _) => {
+                        assert_eq!(*op, BinOp::Mul, "top should be Mul");
+                        match lhs.as_ref() {
+                            Exp::Neg(_) => {}
+                            other => panic!("expected Neg on lhs, got {:?}", other),
                         }
                     }
-                    other => panic!("expected Bin(Sub), got {:?}", other),
+                    other => panic!("expected Bin(Mul), got {:?}", other),
                 }
             }
             other => panic!("expected Func, got {:?}", other),
@@ -1579,4 +1579,32 @@ fn eq_weights<G: Group, F: Scalar<G>, EK: 2..21>(instance x: [F; EK]) -> [F; 2^E
         "../examples/zeromorph_kzg/zeromorph_kzg.zippel"
     );
     golden_test!(golden_zk_kzg, "../examples/zk_kzg/zk_kzg.zippel");
+
+    // ── Span correctness tests ──────────────────────────────────────────
+
+    #[test]
+    fn span_decl_covers_full_source() {
+        let src = "fn f<F: Field>(instance a: F) -> F { a }";
+        let (decls, errors) = parse_decls(src);
+        assert!(errors.is_empty(), "errors: {:?}", errors);
+        assert_eq!(decls.len(), 1);
+        let span = &decls[0].span;
+        assert_eq!(span.start, 0, "decl span should start at 0");
+        assert_eq!(span.end, src.len(), "decl span should cover full source");
+    }
+
+    #[test]
+    fn span_multiple_decls_nonzero() {
+        let src =
+            "fn f<F: Field>(instance a: F) -> F { a }\nfn g<F: Field>(instance b: F) -> F { b }";
+        let (decls, errors) = parse_decls(src);
+        assert!(errors.is_empty(), "errors: {:?}", errors);
+        assert_eq!(decls.len(), 2);
+        for d in &decls {
+            assert!(d.span.start < d.span.end, "span should be non-empty");
+        }
+        // First decl starts at 0, second starts after first
+        assert_eq!(decls[0].span.start, 0);
+        assert!(decls[1].span.start > decls[0].span.start);
+    }
 }

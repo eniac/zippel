@@ -500,7 +500,7 @@ fn test_app() {
             CArg::instance("b", CTyp::Base(Tid::from("F"))),
             CArg::instance("c", CTyp::Base(Tid::from("G"))),
         ]),
-        ret: CTyp::Base(Tid::from("G")),
+        ret: Some(CTyp::Base(Tid::from("G"))),
     });
 
     let vctx = VAR_CTX.clone();
@@ -1622,7 +1622,7 @@ fn test_proto_body_blames_body_not_relation() {
         name: name.clone(),
         typevars: TypeVars(vec![]),
         args: crate::ast::Args(vec![]),
-        ret: CTyp::Unit,
+        ret: Some(CTyp::Unit),
     };
     let fctx = Set::new();
     let body = crate::ast::CBody::Proto {

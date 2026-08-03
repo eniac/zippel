@@ -7,3 +7,4 @@ pub mod parser;
 
 pub use parser::render_error;
 pub mod typ;
+pub use ast::spanned::Spanned;
