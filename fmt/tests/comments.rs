@@ -218,3 +218,36 @@ type T = Poly<F /* base */, 1 /* m */, 2 /* n */>;";
     let out2 = fmt(&out);
     assert_eq!(out, out2, "not idempotent");
 }
+
+#[test]
+fn strips_redundant_expression_parens() {
+    let src = "fn f<F: Field>(instance a: F, instance b: F) -> F { ((a + b)) }";
+    let out = fmt(src);
+    assert!(out.contains("    a + b\n}"), "output: {}", out);
+    assert_eq!(out, fmt(&out), "not idempotent");
+}
+
+#[test]
+fn preserves_comments_near_necessary_parens() {
+    let src = "fn f<F: Field>(instance a: F, instance b: F, instance c: F) -> F { (a + b) /* after */ * c }";
+    let out = fmt(src);
+    assert!(out.contains("(a + b)"), "output: {}", out);
+    assert!(out.contains("/* after */"), "output: {}", out);
+    assert_eq!(out, fmt(&out), "not idempotent");
+}
+
+#[test]
+fn preserves_comments_inside_redundant_parens() {
+    let src = "fn f<F: Field>(instance a: F, instance b: F) -> F { ((a /* inner */ + b)) }";
+    let out = fmt(src);
+    assert!(out.contains("/* inner */"), "output: {}", out);
+    assert_eq!(out, fmt(&out), "not idempotent");
+}
+
+#[test]
+fn preserves_size_expression_precedence() {
+    let src = "fn f<M: Size, F: Field>(instance x: [F; (M - 1) / 2]) -> [F; (M - 1) / 2] { x }";
+    let out = fmt(src);
+    assert!(out.contains("[F; (M - 1) / 2]"), "output: {}", out);
+    assert_eq!(out, fmt(&out), "not idempotent");
+}

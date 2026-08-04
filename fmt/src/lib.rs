@@ -39,13 +39,15 @@ pub fn format_source(src: &str) -> Result<String, FormatError> {
         return Err(FormatError::Parse(errors));
     }
     let style = Style::default();
-    let (cst, comment_map, tokens, file_leading, file_trailing) = trivia::build_cst(src, &decls);
+    let tokens = trivia::TokenStream::new(src);
+    let comments = trivia::extract_comments(src);
+    let line_starts = trivia::compute_line_starts(src);
     Ok(doc::format_decls(
-        &cst,
-        &comment_map,
+        &decls,
         &tokens,
-        &file_leading,
-        &file_trailing,
+        &comments,
+        &line_starts,
+        src.len(),
         &style,
     ))
 }

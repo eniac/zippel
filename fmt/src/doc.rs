@@ -1,2602 +1,1172 @@
 //! Wadler doc builders for the Zippel AST.
-//!
-//! Each builder produces a `DocBuilder` for a canonical-style rendering.
-//! Uses `pretty` crate's `group`/`nest`/`line` for width-aware layout.
-//!
-//! Comment handling uses a `TokenCursor` that wraps the `TokenStream` and
-//! `CommentMap`. As format functions emit tokens left-to-right, they advance
-//! the cursor, which automatically emits comments before each token. This
-//! centralizes all comment handling in the cursor.
 
-use lang::ast::Size;
+use lang::ast::arg::Arg;
+use lang::ast::decl::{Body, Decl};
 use lang::ast::exp::{BinOp, Exp, Exps};
 use lang::ast::sig::Sig;
-use lang::typ::{Distribution, GTyp, Kind, Qualifier, Range, Typ, TypeVar, TypeVars};
-use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
+use lang::ast::{Range, Size, Spanned};
+use lang::id::Tid;
+use lang::parser::Token;
+use lang::typ::{Distribution, GTyp, Kind, Qualifier, Typ, TypeVar, TypeVars};
+use share::{BoxAllocator, DocAllocator, DocBuilder};
 
 use crate::paren::{lhs_needs_paren, rhs_needs_paren};
 use crate::style::Style;
-use crate::trivia::{
-    Comment, CommentAttachment, CommentMap, CstBody, CstDecl, CstExp, TokenCursor, TokenStream,
-};
-use lang::parser::Token;
-
-type Doc<'a> = DocBuilder<'a, BoxAllocator, ()>;
+use crate::trivia::{Comment, TokenCursor, TokenStream};
 
 const ALLOC: BoxAllocator = BoxAllocator;
+type Doc<'a> = DocBuilder<'a, BoxAllocator, ()>;
 
-/// Format a list of CST declarations into a single document.
 pub fn format_decls(
-    cst: &[CstDecl],
-    comment_map: &CommentMap,
+    decls: &[Spanned<Decl<Size>>],
     tokens: &TokenStream,
-    file_leading: &[Comment],
-    file_trailing: &[Comment],
+    comments: &[Comment],
+    line_starts: &[usize],
+    src_len: usize,
     style: &Style,
 ) -> String {
-    let mut docs = Vec::with_capacity(cst.len());
+    let mut cursor = TokenCursor::new(tokens, comments, line_starts);
+    let mut parts = Vec::new();
 
-    // File-level leading comments.
-    if !file_leading.is_empty() {
-        docs.push(format_comment_group(file_leading));
+    for (index, decl) in decls.iter().enumerate() {
+        if index > 0 {
+            parts.push(ALLOC.hardline());
+            parts.push(ALLOC.hardline());
+        }
+        parts.push(cursor.advance_to(decl.span.start));
+        parts.push(format_decl(decl, &mut cursor, style));
     }
 
-    for cstd in cst {
-        let mut cursor = TokenCursor::new(tokens, comment_map);
-        docs.push(format_cst_decl(cstd, &mut cursor, style));
+    if !decls.is_empty() {
+        parts.push(ALLOC.hardline());
     }
+    parts.push(cursor.advance_to(src_len));
 
-    // File-level trailing comments.
-    if !file_trailing.is_empty() {
-        docs.push(format_comment_group(file_trailing));
-    }
-
-    // Join declarations with exactly one blank line between them.
-    let body = ALLOC.intersperse(docs, ALLOC.concat([ALLOC.hardline(), ALLOC.hardline()]));
-
-    // Trailing newline.
     let mut output = String::new();
     ALLOC
-        .concat([body, ALLOC.hardline()])
+        .concat(parts)
         .1
         .render_fmt(style.width, &mut output)
         .expect("rendering failed");
+    output.truncate(output.trim_end_matches('\n').len());
+    output.push('\n');
     output
 }
 
-/// Format a group of comments (one per line).
-fn format_comment_group(comments: &[Comment]) -> Doc<'static> {
-    let docs: Vec<_> = comments
-        .iter()
-        .map(|c| ALLOC.text(c.text.clone()))
-        .collect();
-    ALLOC.intersperse(docs, ALLOC.hardline())
-}
-
-/// Format leading comments + hardline.
-fn format_leading(attachment: &CommentAttachment) -> Doc<'static> {
-    if attachment.leading.is_empty() {
-        ALLOC.nil()
-    } else {
-        ALLOC.concat([format_comment_group(&attachment.leading), ALLOC.hardline()])
-    }
-}
-
-/// Format trailing comment (same line, after node).
-fn format_trailing(attachment: &CommentAttachment) -> Doc<'static> {
-    match &attachment.trailing {
-        Some(c) => ALLOC.concat([ALLOC.text(" "), ALLOC.text(c.text.clone())]),
-        None => ALLOC.nil(),
-    }
-}
-
-// ── Declarations ──────────────────────────────────────────────────────
-
-/// Format a single CST declaration.
-fn format_cst_decl(cstd: &CstDecl, cursor: &mut TokenCursor, style: &Style) -> Doc<'static> {
-    let decl = &cstd.decl.node;
-    let span = &cstd.decl.span;
-    let end = span.end;
-    let indent = style.indent_width();
-
-    let decl_doc = match &cstd.body {
-        CstBody::Proto { relation, body } => {
-            // Find `where` keyword and `{ }` in the decl span.
-            let where_pos = cursor.find_at_depth0(end, |t| matches!(t, Token::KwWhere));
-            let brace = cursor.find_brackets(
-                end,
-                |t| matches!(t, Token::LBrace),
-                |t| matches!(t, Token::RBrace),
-            );
-
-            let sig = format_sig_with_cst_args(&decl.sig, &cstd.args, cursor, end, style);
-
-            // Relation span: from after `where` to `{`.
-            let rel_end = match (where_pos, brace) {
-                (Some(_), Some((_, _, bs, _))) => bs,
-                _ => end,
-            };
-
-            // Advance cursor past the `where` keyword.
-            let where_comments = if let Some(w) = where_pos {
-                let comments = cursor.advance_to(w);
-                let we = cursor.token_end(w).unwrap_or(w + 5);
-                cursor.skip_to(we);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            // Format relation with the main cursor (source order: after `where`).
-            let rel_doc = format_relation(&relation.exp, cursor, rel_end, style);
-
-            // Advance to `{` and skip past it.
-            if let Some((_, oe, _, _)) = brace {
-                cursor.skip_to(oe);
-            }
-
+fn format_decl(
+    decl: &Spanned<Decl<Size>>,
+    cursor: &mut TokenCursor,
+    style: &Style,
+) -> Doc<'static> {
+    let end = decl.span.end;
+    match &decl.node.body {
+        Body::Proto { relation, body } => {
+            let keyword = cursor.advance_to_token(end, |token| matches!(token, Token::KwProto));
+            let sig = format_sig(&decl.node.sig, cursor, end);
+            let where_comments =
+                cursor.advance_to_token(end, |token| matches!(token, Token::KwWhere));
+            let relation = format_relation(relation, cursor);
+            let open_comments =
+                cursor.advance_to_token(end, |token| matches!(token, Token::LBrace));
+            let body = format_body_exp(body, cursor);
+            let close_comments =
+                cursor.advance_to_token(end, |token| matches!(token, Token::RBrace));
             ALLOC.concat([
+                keyword,
                 ALLOC.text("proto "),
                 sig,
                 where_comments,
                 ALLOC.text(" where "),
-                rel_doc,
+                relation,
+                open_comments,
                 ALLOC.text(" {"),
                 ALLOC.hardline(),
-                format_cst_body_exp(body, cursor, style).indent(indent),
-                {
-                    // Flush any remaining comments before `}`.
-                    let close_pos = brace.map(|(_, _, _, cs)| cs).unwrap_or(end);
-                    let has_remaining = cursor.has_comments_before(close_pos);
-                    if has_remaining {
-                        ALLOC.concat([
-                            ALLOC.hardline(),
-                            cursor.flush_comments_before(close_pos).indent(indent),
-                        ])
-                    } else {
-                        ALLOC.nil()
-                    }
-                },
+                body.indent(style.indent_width()),
+                close_comments,
                 ALLOC.hardline(),
                 ALLOC.text("}"),
             ])
         }
-        CstBody::Func { body } => {
-            let sig = format_sig_with_cst_args(&decl.sig, &cstd.args, cursor, end, style);
-            // Find `->` and `{ }` in the decl span.
-            let arrow_pos = cursor.find_at_depth0(end, |t| matches!(t, Token::Arrow));
-            let brace = cursor.find_brackets(
-                end,
-                |t| matches!(t, Token::LBrace),
-                |t| matches!(t, Token::RBrace),
-            );
-
-            let sig_with_ret = match (&decl.sig.ret, arrow_pos, brace) {
-                (Some(ret), Some(a), Some((_, _, bs, _))) => {
-                    let ret_end = bs;
-                    // Advance cursor to `->`.
-                    let arrow_comments = cursor.advance_to(a);
-                    let ae = cursor.token_end(a).unwrap_or(a + 2);
-                    cursor.skip_to(ae);
-                    ALLOC.concat([
-                        sig,
-                        arrow_comments,
-                        ALLOC.text(" -> "),
-                        format_typ(ret, cursor, ret_end, style),
-                    ])
-                }
-                (Some(ret), _, _) => {
-                    // Fallback: no arrow/brace found.
-                    let ret_end = end;
-                    ALLOC.concat([
-                        sig,
-                        ALLOC.text(" -> "),
-                        format_typ(ret, cursor, ret_end, style),
-                    ])
-                }
-                (None, _, _) => sig,
-            };
-
-            // Advance cursor past the `{` (to open_end, not open_start).
-            if let Some((_, oe, _, _)) = brace {
-                cursor.skip_to(oe);
-            }
-
-            ALLOC.concat([
-                ALLOC.text("fn "),
-                sig_with_ret,
-                ALLOC.text(" {"),
-                ALLOC.hardline(),
-                format_cst_body_exp(body, cursor, style).indent(indent),
-                {
-                    // Flush any remaining comments before `}`.
-                    let close_pos = brace.map(|(_, _, _, cs)| cs).unwrap_or(end);
-                    let has_remaining = cursor.has_comments_before(close_pos);
-                    if has_remaining {
-                        ALLOC.concat([
-                            ALLOC.hardline(),
-                            cursor.flush_comments_before(close_pos).indent(indent),
-                        ])
-                    } else {
-                        ALLOC.nil()
-                    }
-                },
-                ALLOC.hardline(),
-                ALLOC.text("}"),
-            ])
-        }
-        CstBody::TypeAlias => {
-            // Find `=` and `;` in the decl span.
-            let eq_pos = cursor.find_at_depth0(end, |t| matches!(t, Token::Eq));
-            let semi_pos = cursor.find_at_depth0(end, |t| matches!(t, Token::Semi));
-            let ret = decl.sig.ret.as_ref().expect("type alias must have ret");
-
-            // Advance to the name token.
-            let name_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let name_comments = cursor.advance_to(name_pos);
-            let name_end = cursor.token_end(name_pos).unwrap_or(name_pos);
-            cursor.skip_to(name_end);
-
-            // Advance to `=`.
-            let eq_comments = if let Some(e) = eq_pos {
-                let c = cursor.advance_to(e);
-                let ee = cursor.token_end(e).unwrap_or(e + 1);
-                cursor.skip_to(ee);
-                c
+        Body::Func { body } => {
+            let keyword = cursor.advance_to_token(end, |token| matches!(token, Token::KwFn));
+            let sig = format_sig(&decl.node.sig, cursor, end);
+            let ret = if let Some(ret) = &decl.node.sig.ret {
+                let arrow = cursor.advance_to_token(end, |token| matches!(token, Token::Arrow));
+                ALLOC.concat([
+                    arrow,
+                    ALLOC.text(" -> "),
+                    format_typ(&ret.node, cursor, ret.span.end),
+                ])
             } else {
                 ALLOC.nil()
             };
-
-            let ret_end = semi_pos.unwrap_or(end);
-
+            let open_comments =
+                cursor.advance_to_token(end, |token| matches!(token, Token::LBrace));
+            let body = format_body_exp(body, cursor);
+            let close_comments =
+                cursor.advance_to_token(end, |token| matches!(token, Token::RBrace));
             ALLOC.concat([
-                name_comments,
+                keyword,
+                ALLOC.text("fn "),
+                sig,
+                ret,
+                open_comments,
+                ALLOC.text(" {"),
+                ALLOC.hardline(),
+                body.indent(style.indent_width()),
+                close_comments,
+                ALLOC.hardline(),
+                ALLOC.text("}"),
+            ])
+        }
+        Body::TypeAlias => {
+            let keyword = cursor.advance_to_token(end, |token| matches!(token, Token::KwType));
+            let name = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
+            let eq = cursor.advance_to_token(end, |token| matches!(token, Token::Eq));
+            let typ = decl
+                .node
+                .sig
+                .ret
+                .as_ref()
+                .expect("type aliases have a type");
+            let typ = format_typ(&typ.node, cursor, typ.span.end);
+            let semi = cursor.advance_to_token(end, |token| matches!(token, Token::Semi));
+            ALLOC.concat([
+                keyword,
                 ALLOC.text("type "),
-                decl.sig.name.clone().pretty(&ALLOC),
-                eq_comments,
+                name,
+                ALLOC.text(decl.node.sig.name.node.to_string()),
+                eq,
                 ALLOC.text(" = "),
-                format_typ(ret, cursor, ret_end, style),
+                typ,
+                semi,
                 ALLOC.text(";"),
             ])
         }
-    };
-
-    // Prepend leading comments, append trailing comment.
-    let with_leading = if cstd.comments.leading.is_empty() {
-        decl_doc
-    } else {
-        ALLOC.concat([format_leading(&cstd.comments), decl_doc])
-    };
-    if cstd.comments.trailing.is_some() {
-        ALLOC.concat([with_leading, format_trailing(&cstd.comments)])
-    } else {
-        with_leading
     }
 }
 
-/// Format a signature using CST args (with comment attachments).
-fn format_sig_with_cst_args(
-    sig: &Sig<Size>,
-    cst_args: &[crate::trivia::CstArg],
-    cursor: &mut TokenCursor,
-    end: usize,
-    style: &Style,
-) -> Doc<'static> {
-    // Advance to the function name.
-    let name_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-    let name_comments = cursor.advance_to(name_pos);
-    let name_end = cursor.token_end(name_pos).unwrap_or(name_pos);
-    cursor.skip_to(name_end);
+fn format_sig(sig: &Sig<Size>, cursor: &mut TokenCursor, end: usize) -> Doc<'static> {
+    let name = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
+    let typevar_open = cursor.advance_to_token(end, |token| matches!(token, Token::LAngle));
+    let typevars = format_typevars(&sig.typevars.node, cursor, end);
+    let typevar_close = cursor.advance_to_token(end, |token| matches!(token, Token::RAngle));
+    let arg_open = cursor.advance_to_token(end, |token| matches!(token, Token::LParen));
 
-    let name = ALLOC.concat([name_comments, sig.name.clone().pretty(&ALLOC)]);
-
-    // Find typevars span: `<` ... `>` after the function name.
-    let typevars = if sig.typevars.0.is_empty() {
-        ALLOC.nil()
-    } else {
-        let angle = cursor.find_brackets(
-            end,
-            |t| matches!(t, Token::LAngle),
-            |t| matches!(t, Token::RAngle),
-        );
-        let tv_end = match angle {
-            Some((_, _, cs, _)) => cs,
-            None => end,
-        };
-        // Advance to `<`.
-        let open_comments =
-            cursor.advance_to(angle.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-        let open_end = angle.map(|(_, oe, _, _)| oe).unwrap_or(cursor.pos());
-        cursor.skip_to(open_end);
-        ALLOC.concat([
-            open_comments,
-            ALLOC.text("<"),
-            format_typevars(&sig.typevars, cursor, tv_end, style),
-            ALLOC.text(">"),
-        ])
-    };
-
-    // Find `(` and `)`.
-    let parens = cursor.find_brackets(
-        end,
-        |t| matches!(t, Token::LParen),
-        |t| matches!(t, Token::RParen),
-    );
-    let (open_end, close_start) = match parens {
-        Some((_, oe, cs, _)) => (oe, cs),
-        None => (cursor.pos(), end),
-    };
-
-    // Advance to `(`.
-    let open_comments = cursor.advance_to(parens.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-    cursor.skip_to(open_end);
-
-    let args = if cst_args.is_empty() {
-        ALLOC.nil()
-    } else {
-        // If any arg has a trailing line comment, all args must go on
-        // separate lines (// comments extend to EOL and would swallow
-        // the next arg on the same line).
-        let any_line_comment = cst_args.iter().any(|a| {
-            a.comments
-                .trailing
-                .as_ref()
-                .map(|c| !c.is_block)
-                .unwrap_or(false)
-        });
-
-        // Build each arg as: leading_comments + arg_text + [comma + trailing_comment]
-        let mut docs = Vec::with_capacity(cst_args.len());
-        for (i, a) in cst_args.iter().enumerate() {
-            let arg_doc = format_cst_arg_content(a, cursor, style);
-            let is_last = i == cst_args.len() - 1;
-            let comma = if is_last {
-                ALLOC.nil()
-            } else {
-                ALLOC.text(",")
-            };
-            let trailing = match &a.comments.trailing {
-                Some(c) => ALLOC.concat([ALLOC.text(" "), ALLOC.text(c.text.clone())]),
-                None => ALLOC.nil(),
-            };
-            docs.push(ALLOC.concat([arg_doc, comma, trailing]));
+    let mut args = Vec::new();
+    for (index, arg) in sig.args.node.0.iter().enumerate() {
+        args.push(format_arg(arg, cursor));
+        if index + 1 < sig.args.node.0.len() {
+            args.push(cursor.advance_to_token(end, |token| matches!(token, Token::Comma)));
+            args.push(ALLOC.text(","));
+            args.push(ALLOC.line());
         }
-
-        let separator = if any_line_comment {
-            ALLOC.hardline()
-        } else {
-            ALLOC.line()
-        };
-        ALLOC.intersperse(docs, separator).group()
-    };
-
-    // If the last arg has a trailing comment, `)` must go on a new line
-    // (otherwise the `//` comment swallows the `)`).
-    let last_has_trailing = cst_args
-        .last()
-        .and_then(|a| a.comments.trailing.as_ref())
-        .is_some();
-    let close_paren = if last_has_trailing {
-        ALLOC.concat([ALLOC.hardline(), ALLOC.text(")")])
-    } else {
-        ALLOC.text(")")
-    };
-
-    // Advance cursor past `)`.
-    let close_comments = cursor.advance_to(close_start);
-    cursor.skip_to(close_start);
+    }
+    let args = ALLOC.concat(args).group();
+    let arg_close = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
 
     ALLOC.concat([
         name,
+        ALLOC.text(sig.name.node.to_string()),
+        typevar_open,
+        ALLOC.text("<"),
         typevars,
-        open_comments,
+        typevar_close,
+        ALLOC.text(">"),
+        arg_open,
         ALLOC.text("("),
         args,
-        close_comments,
-        close_paren,
+        arg_close,
+        ALLOC.text(")"),
     ])
 }
 
-/// Format just the content of a CST arg (no trailing comment — that's
-/// handled by the caller after the comma).
-fn format_cst_arg_content(
-    cst_arg: &crate::trivia::CstArg,
-    cursor: &mut TokenCursor,
-    style: &Style,
-) -> Doc<'static> {
-    let arg = &cst_arg.arg;
-    let ts = &cst_arg.token_spans;
-    let arg_end = cst_arg.span.end;
-
-    // Build arg components with inline/leading comments.
-    let qual_text = match arg.qualifier {
-        Qualifier::Witness => "witness",
-        Qualifier::Local => "local",
-        Qualifier::Extra => "extra",
-        Qualifier::Instance => "instance",
-    };
-    let dist_text = match arg.distribution {
-        Distribution::Uniform => "uniform",
-        Distribution::UniformNonZero => "uniform*",
-        Distribution::Nonuniform => "",
-    };
-
+fn format_arg(arg: &Spanned<Arg<Tid, Size>>, cursor: &mut TokenCursor) -> Doc<'static> {
+    let end = arg.span.end;
     let mut parts = Vec::new();
+    let mut has_prefix = false;
 
-    // Qualifier: advance to it, emit comments.
-    let qual_comments = cursor.advance_to(ts.qualifier_start);
-    let qual_end = cursor
-        .token_end(ts.qualifier_start)
-        .unwrap_or(ts.qualifier_start + qual_text.len());
-    cursor.skip_to(qual_end);
-    parts.push(qual_comments);
-    parts.push(ALLOC.text(qual_text));
-    if !dist_text.is_empty() {
-        parts.push(ALLOC.text(" "));
-        parts.push(ALLOC.text(dist_text));
+    if !matches!(arg.node.qualifier, Qualifier::Local) {
+        let qualifier = cursor.advance_to_token(end, |token| match arg.node.qualifier {
+            Qualifier::Witness => matches!(token, Token::KwWitness),
+            Qualifier::Extra => matches!(token, Token::KwExtra),
+            Qualifier::Instance => matches!(token, Token::KwInstance),
+            Qualifier::Local => false,
+        });
+        parts.push(qualifier);
+        parts.push(ALLOC.text(qualifier_text(arg.node.qualifier)));
+        has_prefix = true;
     }
 
-    // Identifier: advance to it, emit comments.
-    let id_comments = cursor.advance_to(ts.id_start);
-    let id_end = cursor.token_end(ts.id_start).unwrap_or(ts.id_start);
-    cursor.skip_to(id_end);
-    parts.push(ALLOC.text(" "));
-    parts.push(id_comments);
-    parts.push(arg.id.clone().pretty(&ALLOC));
+    if !matches!(arg.node.distribution, Distribution::Nonuniform) {
+        if has_prefix {
+            parts.push(ALLOC.text(" "));
+        }
+        parts.push(cursor.advance_to_token(end, |token| matches!(token, Token::KwUniform)));
+        parts.push(ALLOC.text("uniform"));
+        if matches!(arg.node.distribution, Distribution::UniformNonZero) {
+            parts.push(cursor.advance_to_token(end, |token| matches!(token, Token::Star)));
+            parts.push(ALLOC.text("*"));
+        }
+        has_prefix = true;
+    }
 
-    // Colon: advance to it, emit comments.
-    let colon_comments = cursor.advance_to(ts.colon_start);
-    let colon_end = cursor
-        .token_end(ts.colon_start)
-        .unwrap_or(ts.colon_start + 1);
-    cursor.skip_to(colon_end);
-    parts.push(ALLOC.text(" "));
-    parts.push(colon_comments);
-    parts.push(ALLOC.text(":"));
-
-    // Type: advance to typ_start, emit comments, then format the type.
-    let typ_comments = cursor.advance_to(ts.typ_start);
-    parts.push(ALLOC.text(" "));
-    parts.push(typ_comments);
-    parts.push(format_typ(&arg.typ, cursor, arg_end, style));
-
+    if has_prefix {
+        parts.push(ALLOC.text(" "));
+    }
+    parts.push(cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))));
+    parts.push(ALLOC.text(arg.node.id.to_string()));
+    parts.push(cursor.advance_to_token(end, |token| matches!(token, Token::Colon)));
+    parts.push(ALLOC.text(": "));
+    parts.push(format_typ(&arg.node.typ, cursor, end));
     ALLOC.concat(parts)
 }
 
-// ── Type variables ────────────────────────────────────────────────────
-
-/// Format type variables: `T: Field, U: Group`
 fn format_typevars(
-    tvars: &TypeVars<Size>,
+    typevars: &TypeVars<Size>,
     cursor: &mut TokenCursor,
     end: usize,
-    style: &Style,
 ) -> Doc<'static> {
-    if tvars.0.is_empty() {
-        return ALLOC.nil();
-    }
-
-    // Find commas at depth 0 to split typevar spans.
-    let comma_pos = cursor.find_all_at_depth0(end, |t| matches!(t, Token::Comma));
-    let mut bounds = vec![cursor.pos()];
-    for c in &comma_pos {
-        bounds.push(*c);
-    }
-    bounds.push(end);
-
     let mut parts = Vec::new();
-    for (i, tv) in tvars.0.iter().enumerate() {
-        let tv_end = bounds.get(i + 1).copied().unwrap_or(end);
-        parts.push(format_typevar(tv, cursor, tv_end, style));
-        if i < tvars.0.len() - 1 {
-            // Emit comments before the comma, then the comma.
-            let comma_pos = comma_pos.get(i).copied().unwrap_or(tv_end);
-            parts.push(cursor.advance_to(comma_pos));
-            let ce = cursor.token_end(comma_pos).unwrap_or(comma_pos + 1);
-            cursor.skip_to(ce);
+    for (index, typevar) in typevars.0.iter().enumerate() {
+        parts.push(format_typevar(typevar, cursor));
+        if index + 1 < typevars.0.len() {
+            parts.push(cursor.advance_to_token(end, |token| matches!(token, Token::Comma)));
             parts.push(ALLOC.text(", "));
         }
     }
     ALLOC.concat(parts)
 }
 
-fn format_typevar(
-    tv: &TypeVar<Size>,
-    cursor: &mut TokenCursor,
-    end: usize,
-    style: &Style,
-) -> Doc<'static> {
-    // Find `:` at depth 0.
-    let colon_pos = cursor.find_at_depth0(end, |t| matches!(t, Token::Colon));
-    let id_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-
-    let id_comments = cursor.advance_to(id_pos);
-    let id_end = cursor.token_end(id_pos).unwrap_or(id_pos);
-    cursor.skip_to(id_end);
-
-    let colon_comments = if let Some(c) = colon_pos {
-        let comments = cursor.advance_to(c);
-        let ce = cursor.token_end(c).unwrap_or(c + 1);
-        cursor.skip_to(ce);
-        comments
-    } else {
-        ALLOC.nil()
-    };
-
+fn format_typevar(typevar: &Spanned<TypeVar<Size>>, cursor: &mut TokenCursor) -> Doc<'static> {
+    let end = typevar.span.end;
+    let id = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
+    let colon = cursor.advance_to_token(end, |token| matches!(token, Token::Colon));
+    let kind = format_kind(&typevar.node.kind, cursor, end);
     ALLOC.concat([
-        id_comments,
-        tv.id.clone().pretty(&ALLOC),
-        colon_comments,
+        id,
+        ALLOC.text(typevar.node.id.to_string()),
+        colon,
         ALLOC.text(": "),
-        format_kind(&tv.kind, cursor, end, style),
+        kind,
     ])
 }
 
-// ── Types ─────────────────────────────────────────────────────────────
-
-fn format_typ(
-    typ: &GTyp<Size>,
-    cursor: &mut TokenCursor,
-    end: usize,
-    _style: &Style,
-) -> Doc<'static> {
+fn format_typ(typ: &GTyp<Size>, cursor: &mut TokenCursor, end: usize) -> Doc<'static> {
     match typ {
-        Typ::Poly(b, m, n) => {
-            let angle = cursor.find_brackets(
-                end,
-                |t| matches!(t, Token::LAngle),
-                |t| matches!(t, Token::RAngle),
-            );
-            let (open_end, close_start) = match angle {
-                Some((_, oe, cs, _)) => (oe, cs),
-                None => (cursor.pos(), end),
-            };
-
-            // Advance to `Poly` keyword.
-            let kw_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let kw_comments = cursor.advance_to(kw_pos);
-            let kw_end = cursor.token_end(kw_pos).unwrap_or(kw_pos);
-            cursor.skip_to(kw_end);
-
-            // Advance to `<`.
-            let open_comments =
-                cursor.advance_to(angle.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-            cursor.skip_to(open_end);
-
-            // Find commas inside <...>.
-            let commas = cursor.find_all_at_depth0(close_start, |t| matches!(t, Token::Comma));
-            let mut bounds = vec![cursor.pos()];
-            for c in &commas {
-                bounds.push(*c);
-            }
-            bounds.push(close_start);
-
-            // b, m, n
-            let b_doc = b.clone().pretty(&ALLOC);
-            // Advance cursor past b.
-            let b_end = bounds.get(1).copied().unwrap_or(close_start);
-            cursor.skip_to(b_end);
-
-            // Comma 1 + comments
-            let comma1_comments = if !commas.is_empty() {
-                let c = commas[0];
-                let comments = cursor.advance_to(c);
-                let ce = cursor.token_end(c).unwrap_or(c + 1);
-                cursor.skip_to(ce);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            // m
-            let m_end = bounds.get(2).copied().unwrap_or(close_start);
-            let m_doc = format_size(m, cursor, m_end);
-
-            // Comma 2 + comments
-            let comma2_comments = if commas.get(1).is_some() {
-                let c = commas[1];
-                let comments = cursor.advance_to(c);
-                let ce = cursor.token_end(c).unwrap_or(c + 1);
-                cursor.skip_to(ce);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            // n
-            let n_doc = format_size(n, cursor, close_start);
-
-            // Advance to `>`.
-            let close_comments = cursor.advance_to(close_start);
-            cursor.skip_to(close_start);
-
+        Typ::Poly(base, m, n) => {
+            let keyword = cursor.advance_to_token(end, |token| {
+                matches!(token, Token::KwPolyTy | Token::KwUni | Token::KwMleTy)
+            });
+            let open = cursor.advance_to_token(end, |token| matches!(token, Token::LAngle));
+            let base_comments = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
+            let comma_one = cursor.advance_to_token(end, |token| matches!(token, Token::Comma));
+            let m = format_size(m, cursor, end);
+            let comma_two = cursor.advance_to_token(end, |token| matches!(token, Token::Comma));
+            let n = format_size(n, cursor, end);
+            let close = cursor.advance_to_token(end, |token| matches!(token, Token::RAngle));
             ALLOC.concat([
-                kw_comments,
-                ALLOC.text("Poly<"),
-                open_comments,
-                b_doc,
-                comma1_comments,
+                keyword,
+                ALLOC.text("Poly"),
+                open,
+                ALLOC.text("<"),
+                base_comments,
+                ALLOC.text(base.to_string()),
+                comma_one,
                 ALLOC.text(", "),
-                m_doc,
-                comma2_comments,
+                m,
+                comma_two,
                 ALLOC.text(", "),
-                n_doc,
-                close_comments,
+                n,
+                close,
                 ALLOC.text(">"),
             ])
         }
-        Typ::Base(b) => {
-            let pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let comments = cursor.advance_to(pos);
-            let pe = cursor.token_end(pos).unwrap_or(pos);
-            cursor.skip_to(pe);
-            ALLOC.concat([comments, b.clone().pretty(&ALLOC)])
-        }
-        Typ::Vec(t, n) => {
-            let brackets = cursor.find_brackets(
-                end,
-                |t| matches!(t, Token::LBrack),
-                |t| matches!(t, Token::RBrack),
-            );
-            let (open_end, close_start) = match brackets {
-                Some((_, oe, cs, _)) => (oe, cs),
-                None => (cursor.pos(), end),
-            };
-
-            // Advance to `[`.
-            let open_comments =
-                cursor.advance_to(brackets.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-            cursor.skip_to(open_end);
-
-            // Find `;` inside [...].
-            let semi = cursor.find_at_depth0(close_start, |t| matches!(t, Token::Semi));
-            let (t_end, _n_start) = match semi {
-                Some(s) => {
-                    let se = cursor.token_end(s).unwrap_or(s + 1);
-                    (s, se)
-                }
-                None => (close_start, close_start),
-            };
-
-            let t_doc = format_typ(t, cursor, t_end, _style);
-
-            // Advance to `;`.
-            let semi_comments = if let Some(s) = semi {
-                let comments = cursor.advance_to(s);
-                let se = cursor.token_end(s).unwrap_or(s + 1);
-                cursor.skip_to(se);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            let n_doc = format_size(n, cursor, close_start);
-
-            // Advance to `]`.
-            let close_comments = cursor.advance_to(close_start);
-            cursor.skip_to(close_start);
-
+        Typ::Vec(typ, size) => {
+            let open = cursor.advance_to_token(end, |token| matches!(token, Token::LBrack));
+            let typ = format_typ(&typ.node, cursor, typ.span.end);
+            let semi = cursor.advance_to_token(end, |token| matches!(token, Token::Semi));
+            let size = format_size(size, cursor, end);
+            let close = cursor.advance_to_token(end, |token| matches!(token, Token::RBrack));
             ALLOC.concat([
-                open_comments,
+                open,
                 ALLOC.text("["),
-                t_doc,
-                semi_comments,
+                typ,
+                semi,
                 ALLOC.text("; "),
-                n_doc,
-                close_comments,
+                size,
+                close,
                 ALLOC.text("]"),
             ])
         }
-        Typ::Fin(r) => {
-            let angle = cursor.find_brackets(
-                end,
-                |t| matches!(t, Token::LAngle),
-                |t| matches!(t, Token::RAngle),
-            );
-            let (open_end, close_start) = match angle {
-                Some((_, oe, cs, _)) => (oe, cs),
-                None => (cursor.pos(), end),
-            };
-
-            let kw_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let kw_comments = cursor.advance_to(kw_pos);
-            let kw_end = cursor.token_end(kw_pos).unwrap_or(kw_pos);
-            cursor.skip_to(kw_end);
-
-            let open_comments =
-                cursor.advance_to(angle.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-            cursor.skip_to(open_end);
-
-            let range_doc = format_range(r, cursor, close_start);
-
-            let close_comments = cursor.advance_to(close_start);
-            cursor.skip_to(close_start);
-
+        Typ::Base(base) => {
+            let comments = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
+            ALLOC.concat([comments, ALLOC.text(base.to_string())])
+        }
+        Typ::Fin(range) => {
+            let keyword = cursor.advance_to_token(end, |token| matches!(token, Token::KwFin));
+            let open = cursor.advance_to_token(end, |token| matches!(token, Token::LAngle));
+            let range = format_range(range, cursor, end);
+            let close = cursor.advance_to_token(end, |token| matches!(token, Token::RAngle));
             ALLOC.concat([
-                kw_comments,
-                ALLOC.text("Fin<"),
-                open_comments,
-                range_doc,
-                close_comments,
+                keyword,
+                ALLOC.text("Fin"),
+                open,
+                ALLOC.text("<"),
+                range,
+                close,
                 ALLOC.text(">"),
             ])
         }
         Typ::Unit => {
-            let pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let comments = cursor.advance_to(pos);
-            let pe = cursor.token_end(pos).unwrap_or(pos);
-            cursor.skip_to(pe);
+            let comments = cursor.advance_to_token(end, |token| matches!(token, Token::KwUnit));
             ALLOC.concat([comments, ALLOC.text("Unit")])
         }
         Typ::Record(fields) => {
-            let braces = cursor.find_brackets(
-                end,
-                |t| matches!(t, Token::LBrace),
-                |t| matches!(t, Token::RBrace),
-            );
-            let (open_end, close_start) = match braces {
-                Some((_, oe, cs, _)) => (oe, cs),
-                None => (cursor.pos(), end),
-            };
-
-            let open_comments =
-                cursor.advance_to(braces.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-            cursor.skip_to(open_end);
-
-            let commas = cursor.find_all_at_depth0(close_start, |t| matches!(t, Token::Comma));
-            let mut bounds = vec![cursor.pos()];
-            for c in &commas {
-                bounds.push(*c);
+            let open = cursor.advance_to_token(end, |token| matches!(token, Token::LBrace));
+            let mut fields: Vec<_> = fields.iter().collect();
+            fields.sort_by_key(|(_, typ)| typ.span.start);
+            let mut docs = Vec::new();
+            for (index, (name, typ)) in fields.iter().enumerate() {
+                docs.push(cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))));
+                docs.push(ALLOC.text(name.to_string()));
+                docs.push(cursor.advance_to_token(end, |token| matches!(token, Token::Colon)));
+                docs.push(ALLOC.text(": "));
+                docs.push(format_typ(&typ.node, cursor, typ.span.end));
+                if index + 1 < fields.len() {
+                    docs.push(cursor.advance_to_token(end, |token| matches!(token, Token::Comma)));
+                    docs.push(ALLOC.text(", "));
+                }
             }
-            bounds.push(close_start);
-
-            let field_list: Vec<_> = fields.iter().collect();
-            let mut field_docs = Vec::new();
-            for (i, (name, t)) in field_list.iter().enumerate() {
-                let _f_start = bounds.get(i).copied().unwrap_or(open_end);
-                let f_end = bounds.get(i + 1).copied().unwrap_or(close_start);
-
-                let name_pos = cursor.first_significant(f_end).unwrap_or(cursor.pos());
-                let name_comments = cursor.advance_to(name_pos);
-                let name_end = cursor.token_end(name_pos).unwrap_or(name_pos);
-                cursor.skip_to(name_end);
-
-                let colon = cursor.find_at_depth0(f_end, |t| matches!(t, Token::Colon));
-                let colon_comments = if let Some(c) = colon {
-                    let comments = cursor.advance_to(c);
-                    let ce = cursor.token_end(c).unwrap_or(c + 1);
-                    cursor.skip_to(ce);
-                    comments
-                } else {
-                    ALLOC.nil()
-                };
-
-                field_docs.push(ALLOC.concat([
-                    name_comments,
-                    ALLOC.text(name.to_string()),
-                    colon_comments,
-                    ALLOC.text(": "),
-                    format_typ(t, cursor, f_end, _style),
-                ]));
-            }
-
-            let close_comments = cursor.advance_to(close_start);
-            cursor.skip_to(close_start);
-
+            let close = cursor.advance_to_token(end, |token| matches!(token, Token::RBrace));
             ALLOC.concat([
-                open_comments,
+                open,
                 ALLOC.text("{"),
-                ALLOC.intersperse(field_docs, ALLOC.text(", ")),
-                close_comments,
+                ALLOC.concat(docs),
+                close,
                 ALLOC.text("}"),
             ])
         }
     }
 }
 
-fn format_kind(
-    kind: &Kind<Size>,
-    cursor: &mut TokenCursor,
-    end: usize,
-    _style: &Style,
-) -> Doc<'static> {
+fn format_kind(kind: &Kind<Size>, cursor: &mut TokenCursor, end: usize) -> Doc<'static> {
     match kind {
         Kind::Field => {
-            let pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let comments = cursor.advance_to(pos);
-            let pe = cursor.token_end(pos).unwrap_or(pos);
-            cursor.skip_to(pe);
+            let comments = cursor.advance_to_token(end, |token| matches!(token, Token::KwField));
             ALLOC.concat([comments, ALLOC.text("Field")])
         }
         Kind::Group => {
-            let pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let comments = cursor.advance_to(pos);
-            let pe = cursor.token_end(pos).unwrap_or(pos);
-            cursor.skip_to(pe);
+            let comments = cursor.advance_to_token(end, |token| matches!(token, Token::KwGroup));
             ALLOC.concat([comments, ALLOC.text("Group")])
         }
-        Kind::Scalar(f) => {
-            let angle = cursor.find_brackets(
-                end,
-                |t| matches!(t, Token::LAngle),
-                |t| matches!(t, Token::RAngle),
-            );
-            let (open_end, close_start) = match angle {
-                Some((_, oe, cs, _)) => (oe, cs),
-                None => (cursor.pos(), end),
-            };
-
-            let kw_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let kw_comments = cursor.advance_to(kw_pos);
-            let kw_end = cursor.token_end(kw_pos).unwrap_or(kw_pos);
-            cursor.skip_to(kw_end);
-
-            let open_comments =
-                cursor.advance_to(angle.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-            cursor.skip_to(open_end);
-
-            let ids: Vec<_> = f.iter().map(|t| ALLOC.text(t.to_string())).collect();
-            let ids_doc = ALLOC.intersperse(ids, ALLOC.text(", "));
-
-            let close_comments = cursor.advance_to(close_start);
-            cursor.skip_to(close_start);
-
+        Kind::SizeVar => {
+            let comments = cursor.advance_to_token(end, |token| matches!(token, Token::KwSize));
+            ALLOC.concat([comments, ALLOC.text("Size")])
+        }
+        Kind::Scalar(ids) => {
+            let keyword = cursor.advance_to_token(end, |token| matches!(token, Token::KwScalar));
+            let open = cursor.advance_to_token(end, |token| matches!(token, Token::LAngle));
+            let ids: Vec<_> = ids.iter().collect();
+            let mut docs = Vec::new();
+            for (index, id) in ids.iter().enumerate() {
+                docs.push(cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))));
+                docs.push(ALLOC.text(id.to_string()));
+                if index + 1 < ids.len() {
+                    docs.push(cursor.advance_to_token(end, |token| matches!(token, Token::Comma)));
+                    docs.push(ALLOC.text(", "));
+                }
+            }
+            let close = cursor.advance_to_token(end, |token| matches!(token, Token::RAngle));
             ALLOC.concat([
-                kw_comments,
-                ALLOC.text("Scalar<"),
-                open_comments,
-                ids_doc,
-                close_comments,
+                keyword,
+                ALLOC.text("Scalar"),
+                open,
+                ALLOC.text("<"),
+                ALLOC.concat(docs),
+                close,
                 ALLOC.text(">"),
             ])
         }
         Kind::Pairing(g1, g2) => {
-            let angle = cursor.find_brackets(
-                end,
-                |t| matches!(t, Token::LAngle),
-                |t| matches!(t, Token::RAngle),
-            );
-            let (open_end, close_start) = match angle {
-                Some((_, oe, cs, _)) => (oe, cs),
-                None => (cursor.pos(), end),
-            };
-
-            let kw_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let kw_comments = cursor.advance_to(kw_pos);
-            let kw_end = cursor.token_end(kw_pos).unwrap_or(kw_pos);
-            cursor.skip_to(kw_end);
-
-            let open_comments =
-                cursor.advance_to(angle.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-            cursor.skip_to(open_end);
-
-            let comma = cursor.find_at_depth0(close_start, |t| matches!(t, Token::Comma));
-            let g1_end = comma.unwrap_or(close_start);
-
-            // Advance past g1.
-            let g1_last = cursor.last_significant_end(g1_end).unwrap_or(g1_end);
-            cursor.skip_to(g1_last);
-
-            let comma_comments = if let Some(c) = comma {
-                let comments = cursor.advance_to(c);
-                let ce = cursor.token_end(c).unwrap_or(c + 1);
-                cursor.skip_to(ce);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            // Advance past g2.
-            let g2_last = cursor
-                .last_significant_end(close_start)
-                .unwrap_or(close_start);
-            cursor.skip_to(g2_last);
-
-            let close_comments = cursor.advance_to(close_start);
-            cursor.skip_to(close_start);
-
+            let keyword = cursor.advance_to_token(end, |token| matches!(token, Token::KwPairing));
+            let open = cursor.advance_to_token(end, |token| matches!(token, Token::LAngle));
+            let first = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
+            let comma = cursor.advance_to_token(end, |token| matches!(token, Token::Comma));
+            let second = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
+            let close = cursor.advance_to_token(end, |token| matches!(token, Token::RAngle));
             ALLOC.concat([
-                kw_comments,
-                ALLOC.text("Pairing<"),
-                open_comments,
+                keyword,
+                ALLOC.text("Pairing"),
+                open,
+                ALLOC.text("<"),
+                first,
                 ALLOC.text(g1.to_string()),
-                comma_comments,
+                comma,
                 ALLOC.text(", "),
+                second,
                 ALLOC.text(g2.to_string()),
-                close_comments,
+                close,
                 ALLOC.text(">"),
             ])
         }
-        Kind::Range(r) => format_range(r, cursor, end),
-        Kind::SizeVar => {
-            let pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let comments = cursor.advance_to(pos);
-            let pe = cursor.token_end(pos).unwrap_or(pos);
-            cursor.skip_to(pe);
-            ALLOC.concat([comments, ALLOC.text("Size")])
-        }
+        Kind::Range(range) => format_range(range, cursor, end),
     }
 }
 
-// ── Size expressions ──────────────────────────────────────────────────
+fn format_size_spanned(size: &Spanned<Size>, cursor: &mut TokenCursor) -> Doc<'static> {
+    format_size(&size.node, cursor, size.span.end)
+}
 
-fn format_size(s: &Size, cursor: &mut TokenCursor, end: usize) -> Doc<'static> {
-    match s {
-        Size::Var(_) | Size::Lit(_) => {
-            let pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let comments = cursor.advance_to(pos);
-            let pe = cursor.token_end(pos).unwrap_or(pos);
-            cursor.skip_to(pe);
-            ALLOC.concat([comments, s.clone().pretty(&ALLOC)])
+fn format_size(size: &Size, cursor: &mut TokenCursor, end: usize) -> Doc<'static> {
+    match size {
+        Size::Var(id) => {
+            let comments = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
+            ALLOC.concat([comments, ALLOC.text(id.to_string())])
         }
-        Size::Add(a, b) => format_size_binop(a, b, Token::Plus, "+", cursor, end),
-        Size::Sub(a, b) => format_size_binop(a, b, Token::Minus, "-", cursor, end),
-        Size::Mul(a, b) => format_size_binop(a, b, Token::Star, "*", cursor, end),
-        Size::Div(a, b) => format_size_binop(a, b, Token::Slash, "/", cursor, end),
-        Size::Pow(a, b) => format_size_binop(a, b, Token::Caret, "^", cursor, end),
-        Size::Max(a, b) => format_size_func("max", a, b, cursor, end),
-        Size::Min(a, b) => format_size_func("min", a, b, cursor, end),
+        Size::Lit(value) => {
+            let comments =
+                cursor.advance_to_token(end, |token| matches!(token, Token::Positive(_)));
+            ALLOC.concat([comments, ALLOC.text(value.to_string())])
+        }
+        Size::Add(lhs, rhs) => format_size_binary(lhs, rhs, "+", cursor, end),
+        Size::Sub(lhs, rhs) => format_size_binary(lhs, rhs, "-", cursor, end),
+        Size::Mul(lhs, rhs) => format_size_binary(lhs, rhs, "*", cursor, end),
+        Size::Div(lhs, rhs) => format_size_binary(lhs, rhs, "/", cursor, end),
+        Size::Pow(lhs, rhs) => format_size_binary(lhs, rhs, "^", cursor, end),
+        Size::Max(lhs, rhs) => format_size_call("max", lhs, rhs, cursor, end),
+        Size::Min(lhs, rhs) => format_size_call("min", lhs, rhs, cursor, end),
     }
 }
 
-fn format_size_binop(
-    a: &Size,
-    b: &Size,
-    op_token: Token<'static>,
-    op_str: &str,
+fn format_size_binary(
+    lhs: &Spanned<Size>,
+    rhs: &Spanned<Size>,
+    op: &str,
     cursor: &mut TokenCursor,
     end: usize,
 ) -> Doc<'static> {
-    let op_pos = cursor.find_at_depth0(end, |t| {
-        std::mem::discriminant(t) == std::mem::discriminant(&op_token)
-    });
-    let (a_end, _b_start) = match op_pos {
-        Some(p) => {
-            let pe = cursor.token_end(p).unwrap_or(p + 1);
-            (p, pe)
-        }
-        None => (end, end),
+    let (precedence, right_assoc) = match op {
+        "+" | "-" => (1, false),
+        "*" | "/" => (2, false),
+        "^" => (3, true),
+        _ => unreachable!(),
     };
-
-    let a_doc = format_size(a, cursor, a_end);
-
-    let op_comments = if let Some(p) = op_pos {
-        let comments = cursor.advance_to(p);
-        let pe = cursor.token_end(p).unwrap_or(p + 1);
-        cursor.skip_to(pe);
-        comments
-    } else {
-        ALLOC.nil()
-    };
-
-    let b_doc = format_size(b, cursor, end);
-
-    ALLOC.concat([
-        a_doc,
-        op_comments,
-        ALLOC.text(format!(" {} ", op_str)),
-        b_doc,
-    ])
-}
-
-fn format_size_func(
-    name: &str,
-    a: &Size,
-    b: &Size,
-    cursor: &mut TokenCursor,
-    end: usize,
-) -> Doc<'static> {
-    let parens = cursor.find_brackets(
-        end,
-        |t| matches!(t, Token::LParen),
-        |t| matches!(t, Token::RParen),
+    let lhs = parenthesize(
+        format_size_spanned(lhs, cursor),
+        size_lhs_needs_paren(&lhs.node, precedence, right_assoc),
     );
-    let (open_end, close_start) = match parens {
-        Some((_, oe, cs, _)) => (oe, cs),
-        None => (cursor.pos(), end),
-    };
+    let op_comments = cursor.advance_to_token(end, |token| matches_size_op(op, token));
+    let rhs = parenthesize(
+        format_size_spanned(rhs, cursor),
+        size_rhs_needs_paren(&rhs.node, precedence, right_assoc),
+    );
+    ALLOC.concat([lhs, op_comments, ALLOC.text(format!(" {op} ")), rhs])
+}
 
-    let kw_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-    let kw_comments = cursor.advance_to(kw_pos);
-    let kw_end = cursor.token_end(kw_pos).unwrap_or(kw_pos);
-    cursor.skip_to(kw_end);
-
-    let open_comments = cursor.advance_to(parens.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-    cursor.skip_to(open_end);
-
-    let comma = cursor.find_at_depth0(close_start, |t| matches!(t, Token::Comma));
-    let (a_end, _b_start) = match comma {
-        Some(c) => {
-            let ce = cursor.token_end(c).unwrap_or(c + 1);
-            (c, ce)
-        }
-        None => (close_start, close_start),
-    };
-
-    let a_doc = format_size(a, cursor, a_end);
-
-    let comma_comments = if let Some(c) = comma {
-        let comments = cursor.advance_to(c);
-        let ce = cursor.token_end(c).unwrap_or(c + 1);
-        cursor.skip_to(ce);
-        comments
-    } else {
-        ALLOC.nil()
-    };
-
-    let b_doc = format_size(b, cursor, close_start);
-
-    let close_comments = cursor.advance_to(close_start);
-    cursor.skip_to(close_start);
-
+fn format_size_call(
+    name: &str,
+    lhs: &Spanned<Size>,
+    rhs: &Spanned<Size>,
+    cursor: &mut TokenCursor,
+    end: usize,
+) -> Doc<'static> {
+    let name_comments = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
+    let open = cursor.advance_to_token(end, |token| matches!(token, Token::LParen));
+    let lhs = format_size_spanned(lhs, cursor);
+    let comma = cursor.advance_to_token(end, |token| matches!(token, Token::Comma));
+    let rhs = format_size_spanned(rhs, cursor);
+    let close = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
     ALLOC.concat([
-        kw_comments,
+        name_comments,
         ALLOC.text(name.to_string()),
+        open,
         ALLOC.text("("),
-        open_comments,
-        a_doc,
-        comma_comments,
+        lhs,
+        comma,
         ALLOC.text(", "),
-        b_doc,
-        close_comments,
+        rhs,
+        close,
         ALLOC.text(")"),
     ])
 }
 
-fn format_range(r: &Range<Size>, cursor: &mut TokenCursor, end: usize) -> Doc<'static> {
-    let dotdot_pos = cursor.find_at_depth0(end, |t| matches!(t, Token::DotDot));
-    let has_step = r.step.is_some();
-
-    if has_step {
-        let comma_pos = cursor.find_at_depth0(end, |t| matches!(t, Token::Comma));
-        let (start_end, _step_start, step_end, _end_start) = match (comma_pos, dotdot_pos) {
-            (Some(c), Some(d)) => {
-                let ce = cursor.token_end(c).unwrap_or(c + 1);
-                let de = cursor.token_end(d).unwrap_or(d + 2);
-                (c, ce, d, de)
-            }
-            _ => (end, end, end, end),
-        };
-
-        let start_doc = format_size(&r.start.node, cursor, start_end);
-
-        let comma_comments = if let Some(c) = comma_pos {
-            let comments = cursor.advance_to(c);
-            let ce = cursor.token_end(c).unwrap_or(c + 1);
-            cursor.skip_to(ce);
-            comments
-        } else {
-            ALLOC.nil()
-        };
-
-        let step_doc = format_size(&r.step.as_ref().unwrap().node, cursor, step_end);
-
-        let dotdot_comments = if let Some(d) = dotdot_pos {
-            let comments = cursor.advance_to(d);
-            let de = cursor.token_end(d).unwrap_or(d + 2);
-            cursor.skip_to(de);
-            comments
-        } else {
-            ALLOC.nil()
-        };
-
-        let end_doc = format_size(&r.end.as_ref().unwrap().node, cursor, end);
-
+fn format_range(range: &Range<Size>, cursor: &mut TokenCursor, end: usize) -> Doc<'static> {
+    let start = format_range_size(&range.start, cursor, end);
+    if let Some(step) = &range.step {
+        let comma = cursor.advance_to_token(end, |token| matches!(token, Token::Comma));
+        let step = format_range_size(step, cursor, end);
+        let dots = cursor.advance_to_token(end, |token| matches!(token, Token::DotDot));
+        let last = range.end.as_ref().expect("stepped ranges have an end");
+        let last = format_range_size(last, cursor, end);
         ALLOC.concat([
-            start_doc,
-            comma_comments,
+            start,
+            comma,
             ALLOC.text(", "),
-            step_doc,
-            dotdot_comments,
+            step,
+            dots,
             ALLOC.text(".."),
-            end_doc,
+            last,
         ])
+    } else if let Some(last) = &range.end {
+        let dots = cursor.advance_to_token(end, |token| matches!(token, Token::DotDot));
+        let last = format_range_size(last, cursor, end);
+        ALLOC.concat([start, dots, ALLOC.text(".."), last])
     } else {
-        let (start_end, _end_start) = match dotdot_pos {
-            Some(d) => {
-                let de = cursor.token_end(d).unwrap_or(d + 2);
-                (d, de)
-            }
-            None => (end, end),
-        };
-
-        let start_doc = format_size(&r.start.node, cursor, start_end);
-
-        if let Some(end_spanned) = &r.end {
-            let dotdot_comments = if let Some(d) = dotdot_pos {
-                let comments = cursor.advance_to(d);
-                let de = cursor.token_end(d).unwrap_or(d + 2);
-                cursor.skip_to(de);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            let end_doc = format_size(&end_spanned.node, cursor, end);
-
-            ALLOC.concat([start_doc, dotdot_comments, ALLOC.text(".."), end_doc])
-        } else {
-            // Bare size_ty like `N` → no `..end` part.
-            start_doc
-        }
+        start
     }
 }
 
-// ── Expressions ───────────────────────────────────────────────────────
+fn format_range_size(size: &Spanned<Size>, cursor: &mut TokenCursor, end: usize) -> Doc<'static> {
+    if size.span.start == size.span.end {
+        format_size(&size.node, cursor, end)
+    } else {
+        format_size_spanned(size, cursor)
+    }
+}
 
-/// Format a where-clause relation. Unlike body expressions, `Assert` in a
-/// where clause is printed as `lhs == rhs` (no `assert(...)` wrapper).
-fn format_relation(
-    exp: &Exp<Size>,
-    cursor: &mut TokenCursor,
-    end: usize,
-    style: &Style,
-) -> Doc<'static> {
-    match exp {
+fn format_relation(exp: &Spanned<Exp<Size>>, cursor: &mut TokenCursor) -> Doc<'static> {
+    match &exp.node {
         Exp::Assert(lhs, rhs) => {
-            let eqeq = cursor.find_at_depth0(end, |t| matches!(t, Token::EqEq));
-            let (lhs_end, _rhs_start) = match eqeq {
-                Some(p) => {
-                    let pe = cursor.token_end(p).unwrap_or(p + 2);
-                    (p, pe)
-                }
-                None => (end, end),
-            };
-
-            let lhs_doc = format_exp(lhs, cursor, lhs_end, style);
-
-            let eqeq_comments = if let Some(p) = eqeq {
-                let comments = cursor.advance_to(p);
-                let pe = cursor.token_end(p).unwrap_or(p + 2);
-                cursor.skip_to(pe);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            let rhs_doc = format_exp(rhs, cursor, end, style);
-
-            ALLOC.concat([lhs_doc, eqeq_comments, ALLOC.text(" == "), rhs_doc])
+            let lhs = format_exp(lhs, cursor);
+            let eq = cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::EqEq));
+            let rhs = format_exp(rhs, cursor);
+            ALLOC.concat([lhs, eq, ALLOC.text(" == "), rhs])
         }
-        Exp::Let(Some(x), val, body) => {
-            let eq = cursor.find_at_depth0(end, |t| matches!(t, Token::Eq));
-            let semi = cursor.find_at_depth0(end, |t| matches!(t, Token::Semi));
-            let val_end = semi.unwrap_or(end);
-            let _body_start = match semi {
-                Some(s) => cursor.token_end(s).unwrap_or(s + 1),
-                None => end,
-            };
-
-            let let_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let let_comments = cursor.advance_to(let_pos);
-            let let_end = cursor.token_end(let_pos).unwrap_or(let_pos + 3);
-            cursor.skip_to(let_end);
-
-            // Advance past the variable name.
-            let name_pos = cursor
-                .first_significant(eq.unwrap_or(end))
-                .unwrap_or(cursor.pos());
-            let name_comments = cursor.advance_to(name_pos);
-            let name_end = cursor.token_end(name_pos).unwrap_or(name_pos);
-            cursor.skip_to(name_end);
-
-            let eq_comments = if let Some(e) = eq {
-                let comments = cursor.advance_to(e);
-                let ee = cursor.token_end(e).unwrap_or(e + 1);
-                cursor.skip_to(ee);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            let val_doc = format_exp(val, cursor, val_end, style);
-
-            let semi_comments = if let Some(s) = semi {
-                let comments = cursor.advance_to(s);
-                let se = cursor.token_end(s).unwrap_or(s + 1);
-                cursor.skip_to(se);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            let body_doc = match body {
-                Some(b) => ALLOC.concat([ALLOC.text("; "), format_relation(b, cursor, end, style)]),
-                None => ALLOC.text(";"),
-            };
-
+        Exp::Let(Some(var), value, body) => {
+            let keyword =
+                cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::KwLet));
+            let name = cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Id(_)));
+            let eq = cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Eq));
+            let value = format_exp(value, cursor);
+            let semi = cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Semi));
+            let body = body
+                .as_ref()
+                .map(|body| ALLOC.concat([ALLOC.text("; "), format_relation(body, cursor)]))
+                .unwrap_or_else(|| ALLOC.text(";"));
             ALLOC.concat([
-                let_comments,
+                keyword,
                 ALLOC.text("let "),
-                name_comments,
-                x.clone().pretty(&ALLOC),
-                eq_comments,
+                name,
+                ALLOC.text(var.to_string()),
+                eq,
                 ALLOC.text(" = "),
-                val_doc,
-                semi_comments,
-                body_doc,
+                value,
+                semi,
+                body,
             ])
         }
-        Exp::Let(None, val, body) => {
-            let semi = cursor.find_at_depth0(end, |t| matches!(t, Token::Semi));
-            let val_end = semi.unwrap_or(end);
-            let _body_start = match semi {
-                Some(s) => cursor.token_end(s).unwrap_or(s + 1),
-                None => end,
-            };
-
-            let val_doc = format_relation(val, cursor, val_end, style);
-
-            let semi_comments = if let Some(s) = semi {
-                let comments = cursor.advance_to(s);
-                let se = cursor.token_end(s).unwrap_or(s + 1);
-                cursor.skip_to(se);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            let body_doc = match body {
-                Some(b) => ALLOC.concat([ALLOC.text("; "), format_relation(b, cursor, end, style)]),
-                None => ALLOC.text(";"),
-            };
-
-            ALLOC.concat([val_doc, semi_comments, body_doc])
+        Exp::Let(None, value, body) => {
+            let value = format_relation(value, cursor);
+            let semi = cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Semi));
+            let body = body
+                .as_ref()
+                .map(|body| ALLOC.concat([ALLOC.text("; "), format_relation(body, cursor)]))
+                .unwrap_or_else(|| ALLOC.text(";"));
+            ALLOC.concat([value, semi, body])
         }
-        _ => format_exp(exp, cursor, end, style),
+        _ => format_exp(exp, cursor),
     }
 }
 
-/// Format a CST body expression (inside `{ }`). The CstExp carries its
-/// own comments — the cursor handles inline comments within expressions.
-fn format_cst_body_exp(cst_exp: &CstExp, cursor: &mut TokenCursor, style: &Style) -> Doc<'static> {
-    let leading_doc = format_leading(&cst_exp.comments);
-    let trailing_doc = format_trailing(&cst_exp.comments);
-    let span = &cst_exp.span;
-    let end = span.end;
-
-    match &cst_exp.exp {
-        Exp::Let(Some(x), val, _body) => {
-            // Find token positions BEFORE processing body (cursor is at span.start).
-            let eq = cursor.find_at_depth0(end, |t| matches!(t, Token::Eq));
-            let semi = cursor.find_at_depth0(end, |t| matches!(t, Token::Semi));
-            let val_end = match (eq, semi) {
-                (Some(e), Some(s)) => {
-                    let ee = cursor.token_end(e).unwrap_or(e + 1);
-                    ee..s
-                }
-                _ => span.start..end,
-            };
-
-            let let_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let let_comments = cursor.advance_to(let_pos);
-            let let_end = cursor.token_end(let_pos).unwrap_or(let_pos + 3);
-            cursor.skip_to(let_end);
-
-            // Advance past the variable name.
-            let name_pos = cursor
-                .first_significant(eq.unwrap_or(end))
-                .unwrap_or(cursor.pos());
-            let name_comments = cursor.advance_to(name_pos);
-            let name_end = cursor.token_end(name_pos).unwrap_or(name_pos);
-            cursor.skip_to(name_end);
-
-            let eq_comments = if let Some(e) = eq {
-                let comments = cursor.advance_to(e);
-                let ee = cursor.token_end(e).unwrap_or(e + 1);
-                cursor.skip_to(ee);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            let val_doc = format_exp(val, cursor, val_end.end, style);
-
-            let semi_comments = if let Some(s) = semi {
-                let comments = cursor.advance_to(s);
-                let se = cursor.token_end(s).unwrap_or(s + 1);
-                cursor.skip_to(se);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            // Process body AFTER current statement (source order).
-            let body_doc = match &cst_exp.body {
-                Some(b) => format_cst_body_exp(b, cursor, style),
-                None => ALLOC.nil(),
-            };
-
+fn format_body_exp(exp: &Spanned<Exp<Size>>, cursor: &mut TokenCursor) -> Doc<'static> {
+    match &exp.node {
+        Exp::Let(Some(var), value, body) => {
+            let keyword =
+                cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::KwLet));
+            let name = cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Id(_)));
+            let eq = cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Eq));
+            let value = format_exp(value, cursor);
+            let semi = cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Semi));
+            let body = body
+                .as_ref()
+                .map(|body| format_body_exp(body, cursor))
+                .unwrap_or_else(|| ALLOC.nil());
             ALLOC.concat([
-                leading_doc,
-                let_comments,
+                keyword,
                 ALLOC.text("let "),
-                name_comments,
-                x.clone().pretty(&ALLOC),
-                eq_comments,
+                name,
+                ALLOC.text(var.to_string()),
+                eq,
                 ALLOC.text(" = "),
-                val_doc,
-                semi_comments,
+                value,
+                semi,
                 ALLOC.text(";"),
-                trailing_doc,
                 ALLOC.hardline(),
-                body_doc,
+                body,
             ])
         }
-        Exp::Let(None, val, _body) => {
-            let semi = cursor.find_at_depth0(end, |t| matches!(t, Token::Semi));
-            let val_end = semi.unwrap_or(end);
-
-            let val_doc = format_exp(val, cursor, val_end, style);
-
-            let semi_comments = if let Some(s) = semi {
-                let comments = cursor.advance_to(s);
-                let se = cursor.token_end(s).unwrap_or(s + 1);
-                cursor.skip_to(se);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            // Process body AFTER current statement (source order).
-            let body_doc = match &cst_exp.body {
-                Some(b) => format_cst_body_exp(b, cursor, style),
-                None => ALLOC.nil(),
-            };
-
-            ALLOC.concat([
-                leading_doc,
-                val_doc,
-                semi_comments,
-                ALLOC.text(";"),
-                trailing_doc,
-                ALLOC.hardline(),
-                body_doc,
-            ])
+        Exp::Let(None, value, body) => {
+            let value = format_exp(value, cursor);
+            let semi = cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Semi));
+            let body = body
+                .as_ref()
+                .map(|body| format_body_exp(body, cursor))
+                .unwrap_or_else(|| ALLOC.nil());
+            ALLOC.concat([value, semi, ALLOC.text(";"), ALLOC.hardline(), body])
         }
-        Exp::Log(x, val, _body) => {
-            let larrow = cursor.find_at_depth0(end, |t| matches!(t, Token::LArrow));
-            let semi = cursor.find_at_depth0(end, |t| matches!(t, Token::Semi));
-            let val_end = match (larrow, semi) {
-                (Some(a), Some(s)) => {
-                    let ae = cursor.token_end(a).unwrap_or(a + 2);
-                    ae..s
-                }
-                _ => span.start..end,
-            };
-
-            let id_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let id_comments = cursor.advance_to(id_pos);
-            let id_end = cursor.token_end(id_pos).unwrap_or(id_pos);
-            cursor.skip_to(id_end);
-
-            let larrow_comments = if let Some(a) = larrow {
-                let comments = cursor.advance_to(a);
-                let ae = cursor.token_end(a).unwrap_or(a + 2);
-                cursor.skip_to(ae);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            let val_doc = format_exp(val, cursor, val_end.end, style);
-
-            let semi_comments = if let Some(s) = semi {
-                let comments = cursor.advance_to(s);
-                let se = cursor.token_end(s).unwrap_or(s + 1);
-                cursor.skip_to(se);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            // Process body AFTER current statement (source order).
-            let body_doc = match &cst_exp.body {
-                Some(b) => format_cst_body_exp(b, cursor, style),
-                None => ALLOC.nil(),
-            };
-
+        Exp::Log(var, value, body) => {
+            let name = cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Id(_)));
+            let arrow =
+                cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::LArrow));
+            let value = format_exp(value, cursor);
+            let semi = cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Semi));
+            let body = body
+                .as_ref()
+                .map(|body| format_body_exp(body, cursor))
+                .unwrap_or_else(|| ALLOC.nil());
             ALLOC.concat([
-                leading_doc,
-                id_comments,
-                x.clone().pretty(&ALLOC),
-                larrow_comments,
+                name,
+                ALLOC.text(var.to_string()),
+                arrow,
                 ALLOC.text(" <- "),
-                val_doc,
-                semi_comments,
+                value,
+                semi,
                 ALLOC.text(";"),
-                trailing_doc,
                 ALLOC.hardline(),
-                body_doc,
+                body,
             ])
         }
-        _ => ALLOC.concat([leading_doc, format_exp(&cst_exp.exp, cursor, end, style)]),
+        _ => format_exp(exp, cursor),
     }
 }
 
-/// Format a Let/Log chain in non-body position (no comments available).
-fn format_exp_let_log(
-    exp: &Exp<Size>,
-    cursor: &mut TokenCursor,
-    end: usize,
-    style: &Style,
-) -> Doc<'static> {
-    match exp {
-        Exp::Let(Some(x), val, body) => {
-            let eq = cursor.find_at_depth0(end, |t| matches!(t, Token::Eq));
-            let semi = cursor.find_at_depth0(end, |t| matches!(t, Token::Semi));
-            let val_end = match (eq, semi) {
-                (Some(e), Some(s)) => {
-                    let ee = cursor.token_end(e).unwrap_or(e + 1);
-                    ee..s
-                }
-                _ => cursor.pos()..end,
-            };
-            let _body_start = match semi {
-                Some(s) => cursor.token_end(s).unwrap_or(s + 1),
-                None => end,
-            };
-
-            let let_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let let_comments = cursor.advance_to(let_pos);
-            let let_end = cursor.token_end(let_pos).unwrap_or(let_pos + 3);
-            cursor.skip_to(let_end);
-
-            // Advance past the variable name.
-            let name_pos = cursor
-                .first_significant(eq.unwrap_or(end))
-                .unwrap_or(cursor.pos());
-            let name_comments = cursor.advance_to(name_pos);
-            let name_end = cursor.token_end(name_pos).unwrap_or(name_pos);
-            cursor.skip_to(name_end);
-
-            let eq_comments = if let Some(e) = eq {
-                let comments = cursor.advance_to(e);
-                let ee = cursor.token_end(e).unwrap_or(e + 1);
-                cursor.skip_to(ee);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            let val_doc = format_exp(val, cursor, val_end.end, style);
-
-            let semi_comments = if let Some(s) = semi {
-                let comments = cursor.advance_to(s);
-                let se = cursor.token_end(s).unwrap_or(s + 1);
-                cursor.skip_to(se);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            let body_doc = match body {
-                Some(b) => {
-                    ALLOC.concat([ALLOC.text("; "), format_exp_let_log(b, cursor, end, style)])
-                }
-                None => ALLOC.text(";"),
-            };
-
-            ALLOC.concat([
-                let_comments,
-                ALLOC.text("let "),
-                name_comments,
-                x.clone().pretty(&ALLOC),
-                eq_comments,
-                ALLOC.text(" = "),
-                val_doc,
-                semi_comments,
-                body_doc,
-            ])
-        }
-        Exp::Let(None, val, body) => {
-            let semi = cursor.find_at_depth0(end, |t| matches!(t, Token::Semi));
-            let val_end = semi.unwrap_or(end);
-
-            let val_doc = format_exp(val, cursor, val_end, style);
-
-            let semi_comments = if let Some(s) = semi {
-                let comments = cursor.advance_to(s);
-                let se = cursor.token_end(s).unwrap_or(s + 1);
-                cursor.skip_to(se);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            let body_doc = match body {
-                Some(b) => {
-                    ALLOC.concat([ALLOC.text("; "), format_exp_let_log(b, cursor, end, style)])
-                }
-                None => ALLOC.text(";"),
-            };
-
-            ALLOC.concat([val_doc, semi_comments, body_doc])
-        }
-        Exp::Log(x, val, body) => {
-            let larrow = cursor.find_at_depth0(end, |t| matches!(t, Token::LArrow));
-            let semi = cursor.find_at_depth0(end, |t| matches!(t, Token::Semi));
-            let val_end = match (larrow, semi) {
-                (Some(a), Some(s)) => {
-                    let ae = cursor.token_end(a).unwrap_or(a + 2);
-                    ae..s
-                }
-                _ => cursor.pos()..end,
-            };
-
-            let id_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let id_comments = cursor.advance_to(id_pos);
-            let id_end = cursor.token_end(id_pos).unwrap_or(id_pos);
-            cursor.skip_to(id_end);
-
-            let larrow_comments = if let Some(a) = larrow {
-                let comments = cursor.advance_to(a);
-                let ae = cursor.token_end(a).unwrap_or(a + 2);
-                cursor.skip_to(ae);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            let val_doc = format_exp(val, cursor, val_end.end, style);
-
-            let semi_comments = if let Some(s) = semi {
-                let comments = cursor.advance_to(s);
-                let se = cursor.token_end(s).unwrap_or(s + 1);
-                cursor.skip_to(se);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            let body_doc = match body {
-                Some(b) => {
-                    ALLOC.concat([ALLOC.text("; "), format_exp_let_log(b, cursor, end, style)])
-                }
-                None => ALLOC.text(";"),
-            };
-
-            ALLOC.concat([
-                id_comments,
-                x.clone().pretty(&ALLOC),
-                larrow_comments,
-                ALLOC.text(" <- "),
-                val_doc,
-                semi_comments,
-                body_doc,
-            ])
-        }
-        _ => format_exp(exp, cursor, end, style),
-    }
-}
-
-/// Format an expression in canonical style.
-pub fn format_exp(
-    exp: &Exp<Size>,
-    cursor: &mut TokenCursor,
-    end: usize,
-    style: &Style,
-) -> Doc<'static> {
-    match exp {
-        Exp::Neg(inner) => {
-            let minus_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let minus_comments = cursor.advance_to(minus_pos);
-            let minus_end = cursor.token_end(minus_pos).unwrap_or(minus_pos + 1);
-            cursor.skip_to(minus_end);
-            ALLOC.concat([
-                minus_comments,
-                ALLOC.text("-"),
-                format_exp(inner, cursor, end, style),
-            ])
-        }
-
-        Exp::Bin(op, lhs, rhs) => {
-            if matches!(op, BinOp::Dot) {
-                return format_binary_call("dot", lhs, rhs, cursor, end, style);
-            }
-            let op_pred = |t: &Token| -> bool {
-                match op {
-                    BinOp::Add => matches!(t, Token::Plus),
-                    BinOp::Sub => matches!(t, Token::Minus),
-                    BinOp::Mul => matches!(t, Token::Star),
-                    BinOp::Div => matches!(t, Token::Slash),
-                    BinOp::Pow => matches!(t, Token::Caret),
-                    BinOp::Concat => matches!(t, Token::PlusPlus),
-                    BinOp::Rem => matches!(t, Token::Percent),
-                    BinOp::Dot => false,
-                }
-            };
-            let op_pos = cursor.find_at_depth0(end, op_pred);
-            let (lhs_end, _rhs_start) = match op_pos {
-                Some(p) => {
-                    let pe = cursor.token_end(p).unwrap_or(p + 1);
-                    (p, pe)
-                }
-                None => (end, end),
-            };
-
-            let l = format_exp(lhs, cursor, lhs_end, style);
-            let l = if lhs_needs_paren(*op, lhs) {
-                ALLOC.concat([ALLOC.text("("), l, ALLOC.text(")")])
-            } else {
-                l
-            };
-
-            let op_comments = if let Some(p) = op_pos {
-                let comments = cursor.advance_to(p);
-                let pe = cursor.token_end(p).unwrap_or(p + 1);
-                cursor.skip_to(pe);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            let r = format_exp(rhs, cursor, end, style);
-            let r = if rhs_needs_paren(*op, rhs) {
-                ALLOC.concat([ALLOC.text("("), r, ALLOC.text(")")])
-            } else {
-                r
-            };
-
-            let op_str = match op {
-                BinOp::Add => " + ",
-                BinOp::Sub => " - ",
-                BinOp::Mul => " * ",
-                BinOp::Div => " / ",
-                BinOp::Pow => " ^ ",
-                BinOp::Dot => unreachable!(),
-                BinOp::Concat => " ++ ",
-                BinOp::Rem => " % ",
-            };
-            ALLOC.concat([l, op_comments, ALLOC.text(op_str), r])
-        }
-
-        Exp::Lit(n) => {
-            let pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let comments = cursor.advance_to(pos);
-            let pe = cursor.token_end(pos).unwrap_or(pos);
-            cursor.skip_to(pe);
-            ALLOC.concat([comments, n.clone().pretty(&ALLOC)])
-        }
+fn format_exp(exp: &Spanned<Exp<Size>>, cursor: &mut TokenCursor) -> Doc<'static> {
+    let end = exp.span.end;
+    match &exp.node {
+        Exp::Lit(value) => format_size(value, cursor, end),
         Exp::Unit => {
-            let parens = cursor.find_brackets(
-                end,
-                |t| matches!(t, Token::LParen),
-                |t| matches!(t, Token::RParen),
-            );
-            match parens {
-                Some((os, _, cs, _)) => {
-                    let open_comments = cursor.advance_to(os);
-                    let oe = cursor.token_end(os).unwrap_or(os + 1);
-                    cursor.skip_to(oe);
-                    let close_comments = cursor.advance_to(cs);
-                    cursor.skip_to(cs);
-                    ALLOC.concat([
-                        open_comments,
-                        ALLOC.text("("),
-                        close_comments,
-                        ALLOC.text(")"),
-                    ])
-                }
-                None => ALLOC.text("()"),
-            }
+            let open = cursor.advance_to_token(end, |token| matches!(token, Token::LParen));
+            let close = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
+            ALLOC.concat([open, ALLOC.text("("), close, ALLOC.text(")")])
         }
-        Exp::Var(x) => {
-            let pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let comments = cursor.advance_to(pos);
-            let pe = cursor.token_end(pos).unwrap_or(pos);
-            cursor.skip_to(pe);
-            ALLOC.concat([comments, x.clone().pretty(&ALLOC)])
+        Exp::Var(var) => {
+            let comments = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
+            ALLOC.concat([comments, ALLOC.text(var.to_string())])
         }
-
-        Exp::App(f, args) => {
-            // Find `(` and `)`.
-            let parens = cursor.find_brackets(
-                end,
-                |t| matches!(t, Token::LParen),
-                |t| matches!(t, Token::RParen),
-            );
-            let (open_end, close_start) = match parens {
-                Some((_, oe, cs, _)) => (oe, cs),
-                None => (cursor.pos(), end),
-            };
-
-            // Advance to function name.
-            let f_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let f_comments = cursor.advance_to(f_pos);
-            let f_end = cursor.token_end(f_pos).unwrap_or(f_pos);
-            cursor.skip_to(f_end);
-
-            // Advance to `(`.
-            let open_comments =
-                cursor.advance_to(parens.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-            cursor.skip_to(open_end);
-
-            let args_doc = format_exps(args, cursor, close_start, style);
-
-            let close_comments = cursor.advance_to(close_start);
-            cursor.skip_to(close_start);
-
+        Exp::Neg(inner) => {
+            let minus = cursor.advance_to_token(end, |token| matches!(token, Token::Minus));
+            let inner = parenthesize(format_exp(inner, cursor), neg_needs_paren(&inner.node));
+            ALLOC.concat([minus, ALLOC.text("-"), inner])
+        }
+        Exp::Bin(BinOp::Dot, lhs, rhs) => format_binary_call("dot", lhs, rhs, cursor, end),
+        Exp::Bin(op, lhs, rhs) => {
+            let lhs = parenthesize(format_exp(lhs, cursor), lhs_needs_paren(*op, &lhs.node));
+            let op_comments = cursor.advance_to_token(end, |token| matches_binop(*op, token));
+            let rhs = parenthesize(format_exp(rhs, cursor), rhs_needs_paren(*op, &rhs.node));
+            ALLOC.concat([lhs, op_comments, ALLOC.text(binop_text(*op)), rhs])
+        }
+        Exp::App(function, args) => {
+            let function_comments =
+                cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
+            let open = cursor.advance_to_token(end, |token| matches!(token, Token::LParen));
+            let args = format_exps(args, cursor, end);
+            let close = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
             ALLOC.concat([
-                f_comments,
-                f.clone().pretty(&ALLOC),
-                open_comments,
+                function_comments,
+                ALLOC.text(function.to_string()),
+                open,
                 ALLOC.text("("),
-                args_doc,
-                close_comments,
+                args,
+                close,
                 ALLOC.text(")"),
             ])
         }
-
-        Exp::Interpolate(None, evals) => {
-            format_unary_call("interpolate", evals, cursor, end, style)
-        }
+        Exp::Interpolate(None, evals) => format_unary_call(
+            "interpolate",
+            |token| matches!(token, Token::KwInterpolate),
+            evals,
+            cursor,
+            end,
+        ),
         Exp::Interpolate(Some(points), evals) => {
-            format_binary_call("interpolate", points, evals, cursor, end, style)
+            format_binary_call("interpolate", points, evals, cursor, end)
         }
-
-        Exp::Poly(p) => format_unary_call("poly", p, cursor, end, style),
-        Exp::Coef(p) => format_unary_call("coef", p, cursor, end, style),
-        Exp::Mle(p) => format_unary_call("mle", p, cursor, end, style),
-
-        Exp::Evaluate(p, None, None) => format_unary_call("eval", p, cursor, end, style),
-        Exp::Evaluate(p, None, Some(x)) => format_binary_call("eval", p, x, cursor, end, style),
-        Exp::Evaluate(p, Some(range), Some(x)) => {
-            format_eval_ranged(p, Some(range), Some(x), cursor, end, style)
+        Exp::Poly(value) => format_unary_call(
+            "poly",
+            |token| matches!(token, Token::KwPoly),
+            value,
+            cursor,
+            end,
+        ),
+        Exp::Coef(value) => format_unary_call(
+            "coef",
+            |token| matches!(token, Token::KwCoef),
+            value,
+            cursor,
+            end,
+        ),
+        Exp::Mle(value) => format_unary_call(
+            "mle",
+            |token| matches!(token, Token::KwMle),
+            value,
+            cursor,
+            end,
+        ),
+        Exp::Evaluate(poly, range, point) => {
+            format_evaluate(poly, range.as_ref(), point.as_deref(), cursor, end)
         }
-        Exp::Evaluate(p, Some(range), None) => {
-            format_eval_ranged(p, Some(range), None, cursor, end, style)
+        Exp::Vec(values) => {
+            let open = cursor.advance_to_token(end, |token| matches!(token, Token::LBrack));
+            let values = format_exps(values, cursor, end);
+            let close = cursor.advance_to_token(end, |token| matches!(token, Token::RBrack));
+            ALLOC.concat([open, ALLOC.text("["), values, close, ALLOC.text("]")])
         }
-
-        Exp::Vec(exps) => {
-            let brackets = cursor.find_brackets(
-                end,
-                |t| matches!(t, Token::LBrack),
-                |t| matches!(t, Token::RBrack),
-            );
-            let (open_end, close_start) = match brackets {
-                Some((_, oe, cs, _)) => (oe, cs),
-                None => (cursor.pos(), end),
-            };
-
-            let open_comments =
-                cursor.advance_to(brackets.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-            cursor.skip_to(open_end);
-
-            let args_doc = format_exps(exps, cursor, close_start, style);
-
-            let close_comments = cursor.advance_to(close_start);
-            cursor.skip_to(close_start);
-
-            ALLOC.concat([
-                open_comments,
-                ALLOC.text("["),
-                args_doc,
-                close_comments,
-                ALLOC.text("]"),
-            ])
-        }
-
-        Exp::Range(r) => format_range(r, cursor, end),
-
+        Exp::Range(range) => format_range(range, cursor, end),
         Exp::Map(body, var, range) => {
-            let brackets = cursor.find_brackets(
-                end,
-                |t| matches!(t, Token::LBrack),
-                |t| matches!(t, Token::RBrack),
-            );
-            let (open_end, close_start) = match brackets {
-                Some((_, oe, cs, _)) => (oe, cs),
-                None => (cursor.pos(), end),
-            };
-
-            let open_comments =
-                cursor.advance_to(brackets.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-            cursor.skip_to(open_end);
-
-            let for_pos = cursor.find_at_depth0(close_start, |t| matches!(t, Token::KwFor));
-            let in_pos = cursor.find_at_depth0(close_start, |t| matches!(t, Token::KwIn));
-            let body_end = for_pos.unwrap_or(close_start);
-
-            let body_doc = format_exp(body, cursor, body_end, style);
-
-            let for_comments = if let Some(f) = for_pos {
-                let comments = cursor.advance_to(f);
-                let fe = cursor.token_end(f).unwrap_or(f + 3);
-                cursor.skip_to(fe);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            // Advance past the variable name.
-            let var_end = in_pos.unwrap_or(close_start);
-            let var_pos = cursor.first_significant(var_end).unwrap_or(cursor.pos());
-            let var_comments = cursor.advance_to(var_pos);
-            let var_end = cursor.token_end(var_pos).unwrap_or(var_pos);
-            cursor.skip_to(var_end);
-
-            let in_comments = if let Some(i) = in_pos {
-                let comments = cursor.advance_to(i);
-                let ie = cursor.token_end(i).unwrap_or(i + 2);
-                cursor.skip_to(ie);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            let range_doc = format_exp(range, cursor, close_start, style);
-
-            let close_comments = cursor.advance_to(close_start);
-            cursor.skip_to(close_start);
-
+            let open = cursor.advance_to_token(end, |token| matches!(token, Token::LBrack));
+            let body = format_exp(body, cursor);
+            let for_comments = cursor.advance_to_token(end, |token| matches!(token, Token::KwFor));
+            let var_comments = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
+            let in_comments = cursor.advance_to_token(end, |token| matches!(token, Token::KwIn));
+            let range = format_exp(range, cursor);
+            let close = cursor.advance_to_token(end, |token| matches!(token, Token::RBrack));
             ALLOC.concat([
-                open_comments,
+                open,
                 ALLOC.text("["),
-                body_doc,
+                body,
                 for_comments,
                 ALLOC.text(" for "),
                 var_comments,
-                var.clone().pretty(&ALLOC),
+                ALLOC.text(var.to_string()),
                 in_comments,
                 ALLOC.text(" in "),
-                range_doc,
-                close_comments,
+                range,
+                close,
                 ALLOC.text("]"),
             ])
         }
-
-        Exp::Reduce(op, exp) => {
-            let parens = cursor.find_brackets(
-                end,
-                |t| matches!(t, Token::LParen),
-                |t| matches!(t, Token::RParen),
-            );
-            let (open_end, close_start) = match parens {
-                Some((_, oe, cs, _)) => (oe, cs),
-                None => (cursor.pos(), end),
-            };
-
-            let kw_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let kw_comments = cursor.advance_to(kw_pos);
-            let kw_end = cursor.token_end(kw_pos).unwrap_or(kw_pos);
-            cursor.skip_to(kw_end);
-
-            let open_comments =
-                cursor.advance_to(parens.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-            cursor.skip_to(open_end);
-
-            let comma = cursor.find_at_depth0(close_start, |t| matches!(t, Token::Comma));
-            let _exp_start = match comma {
-                Some(c) => cursor.token_end(c).unwrap_or(c + 1),
-                None => open_end,
-            };
-
-            // Advance past the binop symbol.
-            let op_end = comma.unwrap_or(close_start);
-            let op_last = cursor.last_significant_end(op_end).unwrap_or(op_end);
-            cursor.skip_to(op_last);
-
-            let comma_comments = if let Some(c) = comma {
-                let comments = cursor.advance_to(c);
-                let ce = cursor.token_end(c).unwrap_or(c + 1);
-                cursor.skip_to(ce);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            let exp_doc = format_exp(exp, cursor, close_start, style);
-
-            let close_comments = cursor.advance_to(close_start);
-            cursor.skip_to(close_start);
-
+        Exp::Reduce(op, value) => {
+            let keyword = cursor.advance_to_token(end, |token| matches!(token, Token::KwReduce));
+            let open = cursor.advance_to_token(end, |token| matches!(token, Token::LParen));
+            let op_comments = cursor.advance_to_token(end, |token| matches_binop(*op, token));
+            let comma = cursor.advance_to_token(end, |token| matches!(token, Token::Comma));
+            let value = format_exp(value, cursor);
+            let close = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
             ALLOC.concat([
-                kw_comments,
-                ALLOC.text("reduce("),
-                open_comments,
-                format_binop_symbol(op),
-                comma_comments,
+                keyword,
+                ALLOC.text("reduce"),
+                open,
+                ALLOC.text("("),
+                op_comments,
+                ALLOC.text(binop_symbol(*op)),
+                comma,
                 ALLOC.text(", "),
-                exp_doc,
-                close_comments,
+                value,
+                close,
                 ALLOC.text(")"),
             ])
         }
-
-        Exp::Ram(base, idx) => {
-            let brackets = cursor.find_brackets(
-                end,
-                |t| matches!(t, Token::LBrack),
-                |t| matches!(t, Token::RBrack),
-            );
-            let (open_end, close_start) = match brackets {
-                Some((_, oe, cs, _)) => (oe, cs),
-                None => (cursor.pos(), end),
-            };
-
-            let base_end = brackets.map(|(os, _, _, _)| os).unwrap_or(end);
-            let base_doc = format_exp(base, cursor, base_end, style);
-
-            let open_comments =
-                cursor.advance_to(brackets.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-            cursor.skip_to(open_end);
-
-            let idx_doc = format_exp(idx, cursor, close_start, style);
-
-            let close_comments = cursor.advance_to(close_start);
-            cursor.skip_to(close_start);
-
-            ALLOC.concat([
-                base_doc,
-                open_comments,
-                ALLOC.text("["),
-                idx_doc,
-                close_comments,
-                ALLOC.text("]"),
-            ])
+        Exp::Ram(base, index) => {
+            let base = format_exp(base, cursor);
+            let open = cursor.advance_to_token(end, |token| matches!(token, Token::LBrack));
+            let index = format_exp(index, cursor);
+            let close = cursor.advance_to_token(end, |token| matches!(token, Token::RBrack));
+            ALLOC.concat([base, open, ALLOC.text("["), index, close, ALLOC.text("]")])
         }
-
-        Exp::Pair(a, b) => format_binary_call("pair", a, b, cursor, end, style),
-
-        Exp::Random(t, star) => {
-            let angle = cursor.find_brackets(
-                end,
-                |t| matches!(t, Token::LAngle),
-                |t| matches!(t, Token::RAngle),
-            );
-            let (open_end, close_start) = match angle {
-                Some((_, oe, cs, _)) => (oe, cs),
-                None => (cursor.pos(), end),
-            };
-
-            let kw_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let kw_comments = cursor.advance_to(kw_pos);
-            let kw_end = cursor.token_end(kw_pos).unwrap_or(kw_pos);
-            cursor.skip_to(kw_end);
-
-            let open_comments =
-                cursor.advance_to(angle.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-            cursor.skip_to(open_end);
-
-            let star_pos = cursor.find_at_depth0(close_start, |t| matches!(t, Token::Star));
-
-            // Advance past the type identifier.
-            let tid_end = star_pos.unwrap_or(close_start);
-            let tid_last = cursor.last_significant_end(tid_end).unwrap_or(tid_end);
-            cursor.skip_to(tid_last);
-
-            let star_comments = if let Some(s) = star_pos {
-                if *star {
-                    let comments = cursor.advance_to(s);
-                    let se = cursor.token_end(s).unwrap_or(s + 1);
-                    cursor.skip_to(se);
-                    comments
-                } else {
-                    cursor.skip_to(close_start);
-                    ALLOC.nil()
-                }
-            } else {
-                ALLOC.nil()
-            };
-
-            let close_comments = cursor.advance_to(close_start);
-            cursor.skip_to(close_start);
-
-            ALLOC.concat([
-                kw_comments,
-                ALLOC.text("random<"),
-                open_comments,
-                t.clone().pretty(&ALLOC),
-                if *star {
-                    ALLOC.concat([star_comments, ALLOC.text("*")])
-                } else {
-                    ALLOC.nil()
-                },
-                close_comments,
-                ALLOC.text(">"),
-            ])
+        Exp::Pair(lhs, rhs) => format_binary_call("pair", lhs, rhs, cursor, end),
+        Exp::Random(typ, star) => {
+            format_sampling("random", Token::KwRandom, typ, *star, cursor, end)
         }
-        Exp::Challenge(t, star) => {
-            let angle = cursor.find_brackets(
-                end,
-                |t| matches!(t, Token::LAngle),
-                |t| matches!(t, Token::RAngle),
-            );
-            let (open_end, close_start) = match angle {
-                Some((_, oe, cs, _)) => (oe, cs),
-                None => (cursor.pos(), end),
-            };
-
-            let kw_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let kw_comments = cursor.advance_to(kw_pos);
-            let kw_end = cursor.token_end(kw_pos).unwrap_or(kw_pos);
-            cursor.skip_to(kw_end);
-
-            let open_comments =
-                cursor.advance_to(angle.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-            cursor.skip_to(open_end);
-
-            let star_pos = cursor.find_at_depth0(close_start, |t| matches!(t, Token::Star));
-
-            let tid_end = star_pos.unwrap_or(close_start);
-            let tid_last = cursor.last_significant_end(tid_end).unwrap_or(tid_end);
-            cursor.skip_to(tid_last);
-
-            let star_comments = if let Some(s) = star_pos {
-                if *star {
-                    let comments = cursor.advance_to(s);
-                    let se = cursor.token_end(s).unwrap_or(s + 1);
-                    cursor.skip_to(se);
-                    comments
-                } else {
-                    cursor.skip_to(close_start);
-                    ALLOC.nil()
-                }
-            } else {
-                ALLOC.nil()
-            };
-
-            let close_comments = cursor.advance_to(close_start);
-            cursor.skip_to(close_start);
-
-            ALLOC.concat([
-                kw_comments,
-                ALLOC.text("challenge<"),
-                open_comments,
-                t.clone().pretty(&ALLOC),
-                if *star {
-                    ALLOC.concat([star_comments, ALLOC.text("*")])
-                } else {
-                    ALLOC.nil()
-                },
-                close_comments,
-                ALLOC.text(">"),
-            ])
+        Exp::Challenge(typ, star) => {
+            format_sampling("challenge", Token::KwChallenge, typ, *star, cursor, end)
         }
-
-        Exp::Let(_, _, _) | Exp::Log(_, _, _) => format_exp_let_log(exp, cursor, end, style),
-
-        Exp::Assert(lhs, rhs) => {
-            let parens = cursor.find_brackets(
-                end,
-                |t| matches!(t, Token::LParen),
-                |t| matches!(t, Token::RParen),
-            );
-            let (open_end, close_start) = match parens {
-                Some((_, oe, cs, _)) => (oe, cs),
-                None => (cursor.pos(), end),
-            };
-
-            let kw_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let kw_comments = cursor.advance_to(kw_pos);
-            let kw_end = cursor.token_end(kw_pos).unwrap_or(kw_pos);
-            cursor.skip_to(kw_end);
-
-            let open_comments =
-                cursor.advance_to(parens.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-            cursor.skip_to(open_end);
-
-            let eqeq = cursor.find_at_depth0(close_start, |t| matches!(t, Token::EqEq));
-            let lhs_end = eqeq.unwrap_or(close_start);
-
-            let lhs_doc = format_exp(lhs, cursor, lhs_end, style);
-
-            let eqeq_comments = if let Some(p) = eqeq {
-                let comments = cursor.advance_to(p);
-                let pe = cursor.token_end(p).unwrap_or(p + 2);
-                cursor.skip_to(pe);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            let rhs_doc = format_exp(rhs, cursor, close_start, style);
-
-            let close_comments = cursor.advance_to(close_start);
-            cursor.skip_to(close_start);
-
-            ALLOC.concat([
-                kw_comments,
-                ALLOC.text("assert("),
-                open_comments,
-                lhs_doc,
-                eqeq_comments,
-                ALLOC.text(" == "),
-                rhs_doc,
-                close_comments,
-                ALLOC.text(")"),
-            ])
-        }
-        Exp::Verify(lhs, rhs) => {
-            let parens = cursor.find_brackets(
-                end,
-                |t| matches!(t, Token::LParen),
-                |t| matches!(t, Token::RParen),
-            );
-            let (open_end, close_start) = match parens {
-                Some((_, oe, cs, _)) => (oe, cs),
-                None => (cursor.pos(), end),
-            };
-
-            let kw_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let kw_comments = cursor.advance_to(kw_pos);
-            let kw_end = cursor.token_end(kw_pos).unwrap_or(kw_pos);
-            cursor.skip_to(kw_end);
-
-            let open_comments =
-                cursor.advance_to(parens.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-            cursor.skip_to(open_end);
-
-            let eqeq = cursor.find_at_depth0(close_start, |t| matches!(t, Token::EqEq));
-            let lhs_end = eqeq.unwrap_or(close_start);
-
-            let lhs_doc = format_exp(lhs, cursor, lhs_end, style);
-
-            let eqeq_comments = if let Some(p) = eqeq {
-                let comments = cursor.advance_to(p);
-                let pe = cursor.token_end(p).unwrap_or(p + 2);
-                cursor.skip_to(pe);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            let rhs_doc = format_exp(rhs, cursor, close_start, style);
-
-            let close_comments = cursor.advance_to(close_start);
-            cursor.skip_to(close_start);
-
-            ALLOC.concat([
-                kw_comments,
-                ALLOC.text("verify("),
-                open_comments,
-                lhs_doc,
-                eqeq_comments,
-                ALLOC.text(" == "),
-                rhs_doc,
-                close_comments,
-                ALLOC.text(")"),
-            ])
-        }
-
+        Exp::Let(_, _, _) | Exp::Log(_, _, _) => format_exp_chain(exp, cursor),
+        Exp::Assert(lhs, rhs) => format_assertion("assert", Token::KwAssert, lhs, rhs, cursor, end),
+        Exp::Verify(lhs, rhs) => format_assertion("verify", Token::KwVerify, lhs, rhs, cursor, end),
         Exp::Fun(vars, body) => {
-            let arrow = cursor.find_at_depth0(end, |t| matches!(t, Token::FatArrow));
-
-            let kw_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-            let kw_comments = cursor.advance_to(kw_pos);
-            let kw_end = cursor.token_end(kw_pos).unwrap_or(kw_pos);
-            cursor.skip_to(kw_end);
-
-            // Advance past the variable list.
-            let vars_end = arrow.unwrap_or(end);
-            let vars_last = cursor.last_significant_end(vars_end).unwrap_or(vars_end);
-            cursor.skip_to(vars_last);
-
-            let arrow_comments = if let Some(a) = arrow {
-                let comments = cursor.advance_to(a);
-                let ae = cursor.token_end(a).unwrap_or(a + 2);
-                cursor.skip_to(ae);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            let vars_str = vars
-                .iter()
-                .map(|v| v.0.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
+            let keyword = cursor.advance_to_token(end, |token| matches!(token, Token::KwFun));
+            let mut var_docs = Vec::new();
+            for (index, var) in vars.iter().enumerate() {
+                var_docs.push(cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))));
+                var_docs.push(ALLOC.text(var.to_string()));
+                if index + 1 < vars.len() {
+                    var_docs
+                        .push(cursor.advance_to_token(end, |token| matches!(token, Token::Comma)));
+                    var_docs.push(ALLOC.text(", "));
+                }
+            }
+            let arrow = cursor.advance_to_token(end, |token| matches!(token, Token::FatArrow));
+            let body = format_exp(body, cursor);
             ALLOC.concat([
-                kw_comments,
+                keyword,
                 ALLOC.text("fun "),
-                ALLOC.text(vars_str),
-                arrow_comments,
+                ALLOC.concat(var_docs),
+                arrow,
                 ALLOC.text(" => "),
-                format_exp(body, cursor, end, style),
+                body,
             ])
         }
-
         Exp::Record(fields) => {
-            let brackets = cursor.find_brackets(
-                end,
-                |t| matches!(t, Token::LBraceBar),
-                |t| matches!(t, Token::BarRBrace),
-            );
-            let (open_end, close_start) = match brackets {
-                Some((_, oe, cs, _)) => (oe, cs),
-                None => (cursor.pos(), end),
-            };
-
-            let open_comments =
-                cursor.advance_to(brackets.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-            cursor.skip_to(open_end);
-
-            let commas = cursor.find_all_at_depth0(close_start, |t| matches!(t, Token::Comma));
-            let mut bounds = vec![cursor.pos()];
-            for c in &commas {
-                bounds.push(*c);
+            let open = cursor.advance_to_token(end, |token| matches!(token, Token::LBraceBar));
+            let mut fields: Vec<_> = fields.iter().collect();
+            fields.sort_by_key(|(_, value)| value.span.start);
+            let mut docs = Vec::new();
+            for (index, (name, value)) in fields.iter().enumerate() {
+                docs.push(cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))));
+                docs.push(ALLOC.text(name.to_string()));
+                docs.push(cursor.advance_to_token(end, |token| matches!(token, Token::Colon)));
+                docs.push(ALLOC.text(": "));
+                docs.push(format_exp(value, cursor));
+                if index + 1 < fields.len() {
+                    docs.push(cursor.advance_to_token(end, |token| matches!(token, Token::Comma)));
+                    docs.push(ALLOC.text(", "));
+                }
             }
-            bounds.push(close_start);
-
-            let field_list: Vec<_> = fields.iter().collect();
-            let mut field_docs = Vec::new();
-            for (i, (name, exp)) in field_list.iter().enumerate() {
-                let _f_start = bounds.get(i).copied().unwrap_or(open_end);
-                let f_end = bounds.get(i + 1).copied().unwrap_or(close_start);
-
-                let name_pos = cursor.first_significant(f_end).unwrap_or(cursor.pos());
-                let name_comments = cursor.advance_to(name_pos);
-                let name_end = cursor.token_end(name_pos).unwrap_or(name_pos);
-                cursor.skip_to(name_end);
-
-                let colon = cursor.find_at_depth0(f_end, |t| matches!(t, Token::Colon));
-                let colon_comments = if let Some(c) = colon {
-                    let comments = cursor.advance_to(c);
-                    let ce = cursor.token_end(c).unwrap_or(c + 1);
-                    cursor.skip_to(ce);
-                    comments
-                } else {
-                    ALLOC.nil()
-                };
-
-                field_docs.push(ALLOC.concat([
-                    name_comments,
-                    ALLOC.text(name.to_string()),
-                    colon_comments,
-                    ALLOC.text(": "),
-                    format_exp(exp, cursor, f_end, style),
-                ]));
-            }
-
-            let close_comments = cursor.advance_to(close_start);
-            cursor.skip_to(close_start);
-
+            let close = cursor.advance_to_token(end, |token| matches!(token, Token::BarRBrace));
             ALLOC.concat([
-                open_comments,
+                open,
                 ALLOC.text("{|"),
-                ALLOC.intersperse(field_docs, ALLOC.text(", ")),
-                close_comments,
+                ALLOC.concat(docs),
+                close,
                 ALLOC.text("|}"),
             ])
         }
-
         Exp::Proj(base, field) => {
-            let dot = cursor.find_at_depth0(end, |t| matches!(t, Token::Dot));
-            let base_end = dot.unwrap_or(end);
-
-            let base_doc = format_exp(base, cursor, base_end, style);
-
-            let dot_comments = if let Some(d) = dot {
-                let comments = cursor.advance_to(d);
-                let de = cursor.token_end(d).unwrap_or(d + 1);
-                cursor.skip_to(de);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            // Advance past the field name.
-            let field_last = cursor.last_significant_end(end).unwrap_or(end);
-            cursor.skip_to(field_last);
-
+            let base = format_exp(base, cursor);
+            let dot = cursor.advance_to_token(end, |token| matches!(token, Token::Dot));
+            let field_comments =
+                cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
             ALLOC.concat([
-                base_doc,
-                dot_comments,
+                base,
+                dot,
                 ALLOC.text("."),
+                field_comments,
                 ALLOC.text(field.to_string()),
             ])
         }
-
         Exp::SetRecord(record, field, value) => {
-            let parens = cursor.find_brackets(
-                end,
-                |t| matches!(t, Token::LParen),
-                |t| matches!(t, Token::RParen),
-            );
-            let (open_end, close_start) = match parens {
-                Some((_, oe, cs, _)) => (oe, cs),
-                None => (cursor.pos(), end),
-            };
-
-            let dot = cursor.find_at_depth0(open_end, |t| matches!(t, Token::Dot));
-            let record_end = dot.unwrap_or(open_end);
-
-            let record_doc = format_exp(record, cursor, record_end, style);
-
-            let dot_comments = if let Some(d) = dot {
-                let comments = cursor.advance_to(d);
-                let de = cursor.token_end(d).unwrap_or(d + 1);
-                cursor.skip_to(de);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            // Advance past the field name.
-            let field_end = open_end;
-            let field_last = cursor.last_significant_end(field_end).unwrap_or(field_end);
-            cursor.skip_to(field_last);
-
-            let open_comments =
-                cursor.advance_to(parens.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-            cursor.skip_to(open_end);
-
-            let comma = cursor.find_at_depth0(close_start, |t| matches!(t, Token::Comma));
-            let comma_comments = if let Some(c) = comma {
-                let comments = cursor.advance_to(c);
-                let ce = cursor.token_end(c).unwrap_or(c + 1);
-                cursor.skip_to(ce);
-                comments
-            } else {
-                ALLOC.nil()
-            };
-
-            let value_doc = format_exp(value, cursor, close_start, style);
-
-            let close_comments = cursor.advance_to(close_start);
-            cursor.skip_to(close_start);
-
+            let record = format_exp(record, cursor);
+            let dot = cursor.advance_to_token(end, |token| matches!(token, Token::Dot));
+            let set = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
+            let open = cursor.advance_to_token(end, |token| matches!(token, Token::LParen));
+            let field_comments =
+                cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
+            let comma = cursor.advance_to_token(end, |token| matches!(token, Token::Comma));
+            let value = format_exp(value, cursor);
+            let close = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
             ALLOC.concat([
-                record_doc,
-                dot_comments,
-                ALLOC.text(".set("),
-                open_comments,
+                record,
+                dot,
+                ALLOC.text("."),
+                set,
+                ALLOC.text("set"),
+                open,
+                ALLOC.text("("),
+                field_comments,
                 ALLOC.text(field.to_string()),
-                comma_comments,
+                comma,
                 ALLOC.text(", "),
-                value_doc,
-                close_comments,
+                value,
+                close,
                 ALLOC.text(")"),
             ])
         }
     }
 }
 
-/// Format a unary function call: `name(exp)`.
+fn format_exp_chain(exp: &Spanned<Exp<Size>>, cursor: &mut TokenCursor) -> Doc<'static> {
+    match &exp.node {
+        Exp::Let(Some(var), value, body) => {
+            let keyword =
+                cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::KwLet));
+            let name = cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Id(_)));
+            let eq = cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Eq));
+            let value = format_exp(value, cursor);
+            let semi = cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Semi));
+            let body = body
+                .as_ref()
+                .map(|body| ALLOC.concat([ALLOC.text("; "), format_exp_chain(body, cursor)]))
+                .unwrap_or_else(|| ALLOC.text(";"));
+            ALLOC.concat([
+                keyword,
+                ALLOC.text("let "),
+                name,
+                ALLOC.text(var.to_string()),
+                eq,
+                ALLOC.text(" = "),
+                value,
+                semi,
+                body,
+            ])
+        }
+        Exp::Let(None, value, body) => {
+            let value = format_exp(value, cursor);
+            let semi = cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Semi));
+            let body = body
+                .as_ref()
+                .map(|body| ALLOC.concat([ALLOC.text("; "), format_exp_chain(body, cursor)]))
+                .unwrap_or_else(|| ALLOC.text(";"));
+            ALLOC.concat([value, semi, body])
+        }
+        Exp::Log(var, value, body) => {
+            let name = cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Id(_)));
+            let arrow =
+                cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::LArrow));
+            let value = format_exp(value, cursor);
+            let semi = cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Semi));
+            let body = body
+                .as_ref()
+                .map(|body| ALLOC.concat([ALLOC.text("; "), format_exp_chain(body, cursor)]))
+                .unwrap_or_else(|| ALLOC.text(";"));
+            ALLOC.concat([
+                name,
+                ALLOC.text(var.to_string()),
+                arrow,
+                ALLOC.text(" <- "),
+                value,
+                semi,
+                body,
+            ])
+        }
+        _ => format_exp(exp, cursor),
+    }
+}
+
 fn format_unary_call(
     name: &str,
-    arg: &Exp<Size>,
+    pred: impl Fn(&Token) -> bool,
+    arg: &Spanned<Exp<Size>>,
     cursor: &mut TokenCursor,
     end: usize,
-    style: &Style,
 ) -> Doc<'static> {
-    let parens = cursor.find_brackets(
-        end,
-        |t| matches!(t, Token::LParen),
-        |t| matches!(t, Token::RParen),
-    );
-    let (open_end, close_start) = match parens {
-        Some((_, oe, cs, _)) => (oe, cs),
-        None => (cursor.pos(), end),
-    };
-
-    let kw_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-    let kw_comments = cursor.advance_to(kw_pos);
-    let kw_end = cursor.token_end(kw_pos).unwrap_or(kw_pos);
-    cursor.skip_to(kw_end);
-
-    let open_comments = cursor.advance_to(parens.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-    cursor.skip_to(open_end);
-
-    let arg_doc = format_exp(arg, cursor, close_start, style);
-
-    let close_comments = cursor.advance_to(close_start);
-    cursor.skip_to(close_start);
-
+    let keyword = cursor.advance_to_token(end, pred);
+    let open = cursor.advance_to_token(end, |token| matches!(token, Token::LParen));
+    let arg = format_exp(arg, cursor);
+    let close = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
     ALLOC.concat([
-        kw_comments,
+        keyword,
         ALLOC.text(name.to_string()),
+        open,
         ALLOC.text("("),
-        open_comments,
-        arg_doc,
-        close_comments,
+        arg,
+        close,
         ALLOC.text(")"),
     ])
 }
 
-/// Format a binary function call: `name(a, b)`.
 fn format_binary_call(
     name: &str,
-    a: &Exp<Size>,
-    b: &Exp<Size>,
+    lhs: &Spanned<Exp<Size>>,
+    rhs: &Spanned<Exp<Size>>,
     cursor: &mut TokenCursor,
     end: usize,
-    style: &Style,
 ) -> Doc<'static> {
-    let parens = cursor.find_brackets(
-        end,
-        |t| matches!(t, Token::LParen),
-        |t| matches!(t, Token::RParen),
-    );
-    let (open_end, close_start) = match parens {
-        Some((_, oe, cs, _)) => (oe, cs),
-        None => (cursor.pos(), end),
-    };
-
-    let kw_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-    let kw_comments = cursor.advance_to(kw_pos);
-    let kw_end = cursor.token_end(kw_pos).unwrap_or(kw_pos);
-    cursor.skip_to(kw_end);
-
-    let open_comments = cursor.advance_to(parens.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-    cursor.skip_to(open_end);
-
-    let comma = cursor.find_at_depth0(close_start, |t| matches!(t, Token::Comma));
-    let a_end = comma.unwrap_or(close_start);
-
-    let a_doc = format_exp(a, cursor, a_end, style);
-
-    let comma_comments = if let Some(c) = comma {
-        let comments = cursor.advance_to(c);
-        let ce = cursor.token_end(c).unwrap_or(c + 1);
-        cursor.skip_to(ce);
-        comments
-    } else {
-        ALLOC.nil()
-    };
-
-    let b_doc = format_exp(b, cursor, close_start, style);
-
-    let close_comments = cursor.advance_to(close_start);
-    cursor.skip_to(close_start);
-
+    let keyword = cursor.advance_to_token(end, |token| {
+        matches!(
+            token,
+            Token::Id(_) | Token::KwInterpolate | Token::KwPair | Token::KwDot
+        )
+    });
+    let open = cursor.advance_to_token(end, |token| matches!(token, Token::LParen));
+    let lhs = format_exp(lhs, cursor);
+    let comma = cursor.advance_to_token(end, |token| matches!(token, Token::Comma));
+    let rhs = format_exp(rhs, cursor);
+    let close = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
     ALLOC.concat([
-        kw_comments,
+        keyword,
         ALLOC.text(name.to_string()),
+        open,
         ALLOC.text("("),
-        open_comments,
-        a_doc,
-        comma_comments,
+        lhs,
+        comma,
         ALLOC.text(", "),
-        b_doc,
-        close_comments,
+        rhs,
+        close,
         ALLOC.text(")"),
     ])
 }
 
-/// Format `eval<range>(p, x)` or `eval<range>(p)`.
-fn format_eval_ranged(
-    p: &Exp<Size>,
+fn format_evaluate(
+    poly: &Spanned<Exp<Size>>,
     range: Option<&Range<Size>>,
-    x: Option<&Exp<Size>>,
+    point: Option<&Spanned<Exp<Size>>>,
     cursor: &mut TokenCursor,
     end: usize,
-    style: &Style,
 ) -> Doc<'static> {
-    let angle = cursor.find_brackets(
-        end,
-        |t| matches!(t, Token::LAngle),
-        |t| matches!(t, Token::RAngle),
-    );
-    let (angle_open_end, angle_close_start) = match angle {
-        Some((_, oe, cs, _)) => (oe, cs),
-        None => (cursor.pos(), end),
-    };
-
-    let parens = cursor.find_brackets(
-        end,
-        |t| matches!(t, Token::LParen),
-        |t| matches!(t, Token::RParen),
-    );
-    let (open_end, close_start) = match parens {
-        Some((_, oe, cs, _)) => (oe, cs),
-        None => (cursor.pos(), end),
-    };
-
-    let kw_pos = cursor.first_significant(end).unwrap_or(cursor.pos());
-    let kw_comments = cursor.advance_to(kw_pos);
-    let kw_end = cursor.token_end(kw_pos).unwrap_or(kw_pos);
-    cursor.skip_to(kw_end);
-
-    // Advance to `<`.
-    let angle_open_comments =
-        cursor.advance_to(angle.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-    cursor.skip_to(angle_open_end);
-
-    let range_doc = if let Some(r) = range {
-        format_range(r, cursor, angle_close_start)
-    } else {
-        cursor.skip_to(angle_close_start);
-        ALLOC.nil()
-    };
-
-    let angle_close_comments = cursor.advance_to(angle_close_start);
-    cursor.skip_to(angle_close_start);
-
-    // Advance to `(`.
-    let open_comments = cursor.advance_to(parens.map(|(os, _, _, _)| os).unwrap_or(cursor.pos()));
-    cursor.skip_to(open_end);
-
-    let comma = cursor.find_at_depth0(close_start, |t| matches!(t, Token::Comma));
-    let p_end = comma.unwrap_or(close_start);
-
-    let p_doc = format_exp(p, cursor, p_end, style);
-
-    let comma_comments = if let Some(c) = comma {
-        let comments = cursor.advance_to(c);
-        let ce = cursor.token_end(c).unwrap_or(c + 1);
-        cursor.skip_to(ce);
-        comments
+    let keyword = cursor.advance_to_token(end, |token| matches!(token, Token::KwEval));
+    let selector = if let Some(range) = range {
+        let open = cursor.advance_to_token(end, |token| matches!(token, Token::LAngle));
+        let range = format_range(range, cursor, end);
+        let close = cursor.advance_to_token(end, |token| matches!(token, Token::RAngle));
+        ALLOC.concat([open, ALLOC.text("<"), range, close, ALLOC.text(">")])
     } else {
         ALLOC.nil()
     };
-
-    let x_doc = if let Some(x) = x {
-        format_exp(x, cursor, close_start, style)
+    let open = cursor.advance_to_token(end, |token| matches!(token, Token::LParen));
+    let poly = format_exp(poly, cursor);
+    let point = if let Some(point) = point {
+        let comma = cursor.advance_to_token(end, |token| matches!(token, Token::Comma));
+        ALLOC.concat([comma, ALLOC.text(", "), format_exp(point, cursor)])
     } else {
         ALLOC.nil()
     };
-
-    let close_comments = cursor.advance_to(close_start);
-    cursor.skip_to(close_start);
-
+    let close = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
     ALLOC.concat([
-        kw_comments,
-        ALLOC.text("eval<"),
-        angle_open_comments,
-        range_doc,
-        angle_close_comments,
-        ALLOC.text(">("),
-        open_comments,
-        p_doc,
-        comma_comments,
-        if x.is_some() {
-            ALLOC.text(", ")
-        } else {
-            ALLOC.nil()
-        },
-        x_doc,
-        close_comments,
+        keyword,
+        ALLOC.text("eval"),
+        selector,
+        open,
+        ALLOC.text("("),
+        poly,
+        point,
+        close,
         ALLOC.text(")"),
     ])
 }
 
-/// Format a comma-separated list of expressions.
-fn format_exps(
-    exps: &Exps<Size>,
+fn format_sampling(
+    name: &str,
+    keyword: Token<'static>,
+    typ: &Tid,
+    star: bool,
     cursor: &mut TokenCursor,
     end: usize,
-    style: &Style,
 ) -> Doc<'static> {
-    if exps.0.is_empty() {
-        return ALLOC.nil();
-    }
+    let keyword_comments = cursor.advance_to_token(end, |token| {
+        std::mem::discriminant(token) == std::mem::discriminant(&keyword)
+    });
+    let open = cursor.advance_to_token(end, |token| matches!(token, Token::LAngle));
+    let typ_comments = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
+    let star = if star {
+        let comments = cursor.advance_to_token(end, |token| matches!(token, Token::Star));
+        ALLOC.concat([comments, ALLOC.text("*")])
+    } else {
+        ALLOC.nil()
+    };
+    let close = cursor.advance_to_token(end, |token| matches!(token, Token::RAngle));
+    ALLOC.concat([
+        keyword_comments,
+        ALLOC.text(name.to_string()),
+        open,
+        ALLOC.text("<"),
+        typ_comments,
+        ALLOC.text(typ.to_string()),
+        star,
+        close,
+        ALLOC.text(">"),
+    ])
+}
 
-    // Find commas at depth 0.
-    let commas = cursor.find_all_at_depth0(end, |t| matches!(t, Token::Comma));
-    let last_end = cursor.last_significant_end(end).unwrap_or(end);
-    let mut bounds = vec![cursor.pos()];
-    for c in &commas {
-        bounds.push(*c);
-    }
-    bounds.push(last_end);
+fn format_assertion(
+    name: &str,
+    keyword: Token<'static>,
+    lhs: &Spanned<Exp<Size>>,
+    rhs: &Spanned<Exp<Size>>,
+    cursor: &mut TokenCursor,
+    end: usize,
+) -> Doc<'static> {
+    let keyword_comments = cursor.advance_to_token(end, |token| {
+        std::mem::discriminant(token) == std::mem::discriminant(&keyword)
+    });
+    let open = cursor.advance_to_token(end, |token| matches!(token, Token::LParen));
+    let lhs = format_exp(lhs, cursor);
+    let eq = cursor.advance_to_token(end, |token| matches!(token, Token::EqEq));
+    let rhs = format_exp(rhs, cursor);
+    let close = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
+    ALLOC.concat([
+        keyword_comments,
+        ALLOC.text(name.to_string()),
+        open,
+        ALLOC.text("("),
+        lhs,
+        eq,
+        ALLOC.text(" == "),
+        rhs,
+        close,
+        ALLOC.text(")"),
+    ])
+}
 
+fn format_exps(exps: &Exps<Size>, cursor: &mut TokenCursor, end: usize) -> Doc<'static> {
     let mut parts = Vec::new();
-    for (i, e) in exps.0.iter().enumerate() {
-        let e_end = bounds.get(i + 1).copied().unwrap_or(end);
-        parts.push(format_exp(e, cursor, e_end, style));
-        if i < exps.0.len() - 1 {
-            // Emit comments before the comma.
-            let comma_pos = commas.get(i).copied().unwrap_or(e_end);
-            parts.push(cursor.advance_to(comma_pos));
-            let ce = cursor.token_end(comma_pos).unwrap_or(comma_pos + 1);
-            cursor.skip_to(ce);
+    for (index, exp) in exps.0.iter().enumerate() {
+        parts.push(format_exp(exp, cursor));
+        if index + 1 < exps.0.len() {
+            parts.push(cursor.advance_to_token(end, |token| matches!(token, Token::Comma)));
             parts.push(ALLOC.text(", "));
         }
     }
     ALLOC.concat(parts)
 }
 
-fn format_binop_symbol(op: &BinOp) -> Doc<'static> {
-    match op {
-        BinOp::Add => ALLOC.text("+"),
-        BinOp::Sub => ALLOC.text("-"),
-        BinOp::Mul => ALLOC.text("*"),
-        BinOp::Div => ALLOC.text("/"),
-        BinOp::Pow => ALLOC.text("^"),
-        BinOp::Dot => ALLOC.text("dot"),
-        BinOp::Concat => ALLOC.text("++"),
-        BinOp::Rem => ALLOC.text("%"),
+fn parenthesize(doc: Doc<'static>, needed: bool) -> Doc<'static> {
+    if needed {
+        ALLOC.concat([ALLOC.text("("), doc, ALLOC.text(")")])
+    } else {
+        doc
     }
+}
+
+fn qualifier_text(qualifier: Qualifier) -> &'static str {
+    match qualifier {
+        Qualifier::Witness => "witness",
+        Qualifier::Local => "local",
+        Qualifier::Extra => "extra",
+        Qualifier::Instance => "instance",
+    }
+}
+
+fn matches_size_op(op: &str, token: &Token) -> bool {
+    match op {
+        "+" => matches!(token, Token::Plus),
+        "-" => matches!(token, Token::Minus),
+        "*" => matches!(token, Token::Star),
+        "/" => matches!(token, Token::Slash),
+        "^" => matches!(token, Token::Caret),
+        _ => false,
+    }
+}
+
+fn matches_binop(op: BinOp, token: &Token) -> bool {
+    match op {
+        BinOp::Add => matches!(token, Token::Plus),
+        BinOp::Sub => matches!(token, Token::Minus),
+        BinOp::Mul => matches!(token, Token::Star),
+        BinOp::Div => matches!(token, Token::Slash),
+        BinOp::Pow => matches!(token, Token::Caret),
+        BinOp::Dot => false,
+        BinOp::Concat => matches!(token, Token::PlusPlus),
+        BinOp::Rem => matches!(token, Token::Percent),
+    }
+}
+
+fn binop_text(op: BinOp) -> &'static str {
+    match op {
+        BinOp::Add => " + ",
+        BinOp::Sub => " - ",
+        BinOp::Mul => " * ",
+        BinOp::Div => " / ",
+        BinOp::Pow => " ^ ",
+        BinOp::Dot => unreachable!(),
+        BinOp::Concat => " ++ ",
+        BinOp::Rem => " % ",
+    }
+}
+
+fn binop_symbol(op: BinOp) -> &'static str {
+    match op {
+        BinOp::Add => "+",
+        BinOp::Sub => "-",
+        BinOp::Mul => "*",
+        BinOp::Div => "/",
+        BinOp::Pow => "^",
+        BinOp::Dot => "dot",
+        BinOp::Concat => "++",
+        BinOp::Rem => "%",
+    }
+}
+
+fn neg_needs_paren(exp: &Exp<Size>) -> bool {
+    matches!(exp, Exp::Bin(op, _, _) if op.parser_precedence() <= 3)
+}
+
+fn size_lhs_needs_paren(size: &Size, precedence: usize, right_assoc: bool) -> bool {
+    let child = size.precedence();
+    child < precedence || (child == precedence && right_assoc)
+}
+
+fn size_rhs_needs_paren(size: &Size, precedence: usize, right_assoc: bool) -> bool {
+    let child = size.precedence();
+    child < precedence || (child == precedence && !right_assoc)
 }
