@@ -1,5 +1,6 @@
 //! Comment cursor and token stream for the formatter.
 
+use crate::style::Style;
 use lang::parser::Token;
 use share::{BoxAllocator, DocAllocator, DocBuilder};
 use std::ops::Range;
@@ -17,25 +18,78 @@ pub struct Comment {
     pub end: usize,
 }
 
+/// One element of trivia between two semantic source anchors.
+#[derive(Debug, Clone)]
+pub enum TriviaElement {
+    /// One or more consecutive blank lines.
+    BlankLines(usize),
+    /// A single comment (line or block).
+    Comment(Comment),
+}
+
 /// Lossless trivia between two semantic source anchors.
 #[derive(Debug, Clone, Default)]
 pub struct TriviaGap {
-    comments: Vec<Comment>,
+    layout: Vec<TriviaElement>,
 }
 
 impl TriviaGap {
+    pub fn is_empty(&self) -> bool {
+        self.layout.is_empty()
+    }
+
     pub fn join(mut self, other: Self) -> Self {
-        self.comments.extend(other.comments);
+        if let (Some(TriviaElement::BlankLines(n)), Some(TriviaElement::BlankLines(m))) =
+            (self.layout.last(), other.layout.first())
+        {
+            *self.layout.last_mut().unwrap() = TriviaElement::BlankLines(n + m);
+            self.layout.extend(other.layout.into_iter().skip(1));
+        } else {
+            self.layout.extend(other.layout);
+        }
         self
     }
 
-    /// Whether the last comment in this gap forces a line break.
-    ///
-    /// Callers passing a soft separator (one that may not break, like `nil`,
-    /// `line`, or `line_`) to `format_delimiter_gap` should upgrade to a
-    /// `hardline` when this returns `true`.
+    /// Whether the last element is a Comment that forces a line break,
+    /// or a BlankLines (which always implies a break).
     pub fn needs_line_break(&self) -> bool {
-        self.comments.last().is_some_and(|c| c.forces_line_break())
+        match self.layout.last() {
+            Some(TriviaElement::Comment(c)) => c.forces_line_break(),
+            Some(TriviaElement::BlankLines(_)) => true,
+            None => false,
+        }
+    }
+
+    /// The first element of the gap, or `None` if empty.
+    pub fn first(&self) -> Option<&TriviaElement> {
+        self.layout.first()
+    }
+
+    /// Strip leading `BlankLines`, preserving inter-comment and trailing
+    /// blank lines.
+    ///
+    /// Use this when a structural hardline precedes the gap (after `{`,
+    /// after `where`, after `)`) — leading blank lines are noise, but
+    /// blank lines between comments and after the last comment are
+    /// meaningful.
+    pub fn trim_start(mut self) -> Self {
+        while matches!(self.layout.first(), Some(TriviaElement::BlankLines(_))) {
+            self.layout.remove(0);
+        }
+        self
+    }
+
+    /// Strip trailing `BlankLines`, preserving inter-comment and leading
+    /// blank lines.
+    ///
+    /// Use this when a structural hardline follows the gap (before `}`) —
+    /// trailing blank lines are noise, but blank lines between comments
+    /// and before the first comment are meaningful.
+    pub fn trim_end(mut self) -> Self {
+        while matches!(self.layout.last(), Some(TriviaElement::BlankLines(_))) {
+            self.layout.pop();
+        }
+        self
     }
 }
 
@@ -98,13 +152,67 @@ impl SourceLayout {
         line_of(offset, &self.line_starts)
     }
 
-    fn blank_lines_between(&self, from: usize, to: usize) -> Vec<usize> {
+    /// Merge comments and blank lines between two offsets into an ordered
+    /// layout, coalescing consecutive blank lines.
+    fn layout_between(&self, comments: Vec<Comment>, from: usize, to: usize) -> Vec<TriviaElement> {
+        let blank_offsets = self.blank_line_offsets(from, to);
+        let mut layout = Vec::new();
+
+        // Merge comments and blank-line offsets in source order.
+        let mut ci = 0;
+        let mut bi = 0;
+        while ci < comments.len() || bi < blank_offsets.len() {
+            let next_comment = comments.get(ci).map(|c| c.start);
+            let next_blank = blank_offsets.get(bi).copied();
+            match (next_comment, next_blank) {
+                (Some(cs), Some(bs)) => {
+                    if cs <= bs {
+                        layout.push(TriviaElement::Comment(comments[ci].clone()));
+                        ci += 1;
+                    } else {
+                        push_blank_lines(&mut layout, &mut bi, &blank_offsets, Some(cs));
+                    }
+                }
+                (Some(_), None) => {
+                    layout.push(TriviaElement::Comment(comments[ci].clone()));
+                    ci += 1;
+                }
+                (None, Some(_)) => {
+                    push_blank_lines(&mut layout, &mut bi, &blank_offsets, None);
+                }
+                (None, None) => break,
+            }
+        }
+        layout
+    }
+
+    /// Start offsets of blank lines between `from` and `to`.
+    fn blank_line_offsets(&self, from: usize, to: usize) -> Vec<usize> {
         let from_line = self.line_of(from);
         let to_line = self.line_of(to);
         (from_line + 1..to_line)
             .filter(|&line| self.blank_lines[line])
             .map(|line| self.line_starts[line])
             .collect()
+    }
+}
+
+/// Coalesce consecutive blank-line offsets into a single BlankLines element.
+/// Consumes all blank offsets from `*bi` up to (but not including) the offset
+/// at `limit`, or all remaining if `limit` is None.
+fn push_blank_lines(
+    layout: &mut Vec<TriviaElement>,
+    bi: &mut usize,
+    offsets: &[usize],
+    limit: Option<usize>,
+) {
+    let start = *bi;
+    while *bi < offsets.len() && limit.is_none_or(|lim| offsets[*bi] < lim) {
+        *bi += 1;
+    }
+    let count = *bi - start;
+    if count > 0 {
+        layout.push(TriviaElement::BlankLines(count));
     }
 }
 
@@ -131,8 +239,12 @@ impl<'a> TokenCursor<'a> {
             self.pos
         );
         let comments = self.comments.take_until(target);
+        let layout = self
+            .tokens
+            .layout
+            .layout_between(comments, self.pos, target);
         self.pos = target;
-        TriviaGap { comments }
+        TriviaGap { layout }
     }
 
     pub fn advance_to_token(&mut self, end: usize, pred: impl Fn(&Token) -> bool) -> TriviaGap {
@@ -142,8 +254,12 @@ impl<'a> TokenCursor<'a> {
             }
             if pred(token) {
                 let comments = self.comments.take_until(span.start);
+                let layout = self
+                    .tokens
+                    .layout
+                    .layout_between(comments, self.pos, span.start);
                 self.pos = span.end;
-                return TriviaGap { comments };
+                return TriviaGap { layout };
             }
         }
         TriviaGap::default()
@@ -166,72 +282,111 @@ impl<'a> TokenCursor<'a> {
     pub fn position(&self) -> usize {
         self.pos
     }
+}
 
-    pub fn blank_lines_between(&self, from: usize, to: usize) -> Vec<usize> {
-        self.tokens.layout.blank_lines_between(from, to)
+/// Render a gap's layout.
+///
+/// `open` is emitted only if the first element is a `Comment` — it positions
+/// the first comment relative to whatever came before. `end` is emitted only
+/// if the last element is a `Comment` — it positions whatever comes after
+/// relative to the last comment. If the first/last element is `BlankLines`,
+/// the blank lines carry the positioning and `open`/`end` are skipped.
+///
+/// A comment suppresses its own ending hardline when the next element is
+/// `BlankLines` — `BlankLines` owns the line break.
+fn format_gap(
+    gap: TriviaGap,
+    open: Doc<'static>,
+    end: Doc<'static>,
+    style: &Style,
+) -> Doc<'static> {
+    if gap.layout.is_empty() {
+        return end;
     }
+
+    let last_is_comment = matches!(gap.layout.last(), Some(TriviaElement::Comment(_)));
+    let last_index = gap.layout.len() - 1;
+    let mut parts = Vec::new();
+    let mut after_hardline = false;
+    let mut open = Some(open);
+
+    let mut iter = gap.layout.into_iter().peekable();
+    let mut index = 0;
+    while let Some(element) = iter.next() {
+        match element {
+            TriviaElement::Comment(comment) => {
+                if index == 0 {
+                    if let Some(open) = open.take() {
+                        parts.push(open);
+                    }
+                } else if comment.at_line_start {
+                    if !after_hardline {
+                        parts.push(ALLOC.hardline());
+                    }
+                } else if !after_hardline {
+                    parts.push(ALLOC.text(" "));
+                }
+
+                let breaks = comment.forces_line_break();
+                parts.push(ALLOC.text(comment.text));
+
+                let is_last = index == last_index;
+                let next_is_blank = matches!(iter.peek(), Some(TriviaElement::BlankLines(_)));
+                if breaks && !is_last && !next_is_blank {
+                    parts.push(ALLOC.hardline());
+                }
+                after_hardline = breaks;
+            }
+            TriviaElement::BlankLines(n) => {
+                let capped = n.min(style.max_blank_lines);
+                parts.push(hardlines(1 + capped));
+                after_hardline = true;
+            }
+        }
+        index += 1;
+    }
+
+    if last_is_comment {
+        parts.push(end);
+    }
+    ALLOC.concat(parts)
 }
 
 /// Render a gap before an ordinary grammar token.
-pub fn format_leading_gap(gap: TriviaGap) -> Doc<'static> {
-    let mut parts = Vec::new();
-    let mut after_hardline = false;
-    for comment in gap.comments {
-        if comment.is_block && !comment.at_line_start {
-            // Same-line block comment: space before (unless after hardline), no space after
-            if !after_hardline {
-                parts.push(ALLOC.text(" "));
-            }
-            parts.push(ALLOC.text(comment.text));
-            after_hardline = false;
-        } else {
-            // Line comment or different-line block: no space before, hardline after
-            parts.push(ALLOC.text(comment.text));
-            parts.push(ALLOC.hardline());
-            after_hardline = true;
-        }
-    }
-    ALLOC.concat(parts)
+pub fn format_leading_gap(gap: TriviaGap, style: &Style) -> Doc<'static> {
+    let open = match gap.first() {
+        Some(TriviaElement::Comment(c)) if c.is_block && !c.at_line_start => ALLOC.text(" "),
+        _ => ALLOC.nil(),
+    };
+    let end = if gap.needs_line_break() {
+        ALLOC.hardline()
+    } else {
+        ALLOC.nil()
+    };
+    format_gap(gap, open, end, style)
 }
 
 /// Render a gap after punctuation and own the one separator that follows it.
 ///
-/// The separator always carries the line break after the last comment — the
-/// last comment does not emit its own hardline. Callers passing a soft
-/// separator (`nil`, `line`, `line_`, `text`) should upgrade to `hardline`
-/// when `gap.needs_line_break()` returns `true`.
-pub fn format_delimiter_gap(gap: TriviaGap, separator: Doc<'static>) -> Doc<'static> {
-    if gap.comments.is_empty() {
-        return separator;
-    }
+/// The separator is emitted only if the last element is a `Comment`. If the
+/// last element is `BlankLines`, the blank lines carry the break and the
+/// separator is skipped. Callers passing a soft separator (`nil`, `line`,
+/// `line_`, `text`) should upgrade to `hardline` when `gap.needs_line_break()`
+/// returns `true`.
+pub fn format_delimiter_gap(
+    gap: TriviaGap,
+    separator: Doc<'static>,
+    style: &Style,
+) -> Doc<'static> {
+    let open = match gap.first() {
+        Some(TriviaElement::Comment(c)) if c.at_line_start => ALLOC.hardline(),
+        _ => ALLOC.text(" "),
+    };
+    format_gap(gap, open, separator, style)
+}
 
-    let last_idx = gap.comments.len() - 1;
-    let mut parts = Vec::new();
-    let mut after_hardline = false;
-    for (index, comment) in gap.comments.into_iter().enumerate() {
-        if index == 0 {
-            if comment.at_line_start {
-                parts.push(ALLOC.hardline());
-            } else {
-                parts.push(ALLOC.text(" "));
-            }
-        } else if comment.at_line_start {
-            if !after_hardline {
-                parts.push(ALLOC.hardline());
-            }
-        } else if !after_hardline {
-            parts.push(ALLOC.text(" "));
-        }
-
-        let breaks = comment.forces_line_break();
-        parts.push(ALLOC.text(comment.text));
-        if breaks && index != last_idx {
-            parts.push(ALLOC.hardline());
-        }
-        after_hardline = breaks;
-    }
-    parts.push(separator);
-    ALLOC.concat(parts)
+fn hardlines(count: usize) -> Doc<'static> {
+    ALLOC.concat((0..count).map(|_| ALLOC.hardline()))
 }
 
 fn line_of(offset: usize, line_starts: &[usize]) -> usize {
