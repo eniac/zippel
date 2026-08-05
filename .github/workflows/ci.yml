@@ -42,6 +42,25 @@ jobs:
       - name: cargo check benchmarks
         run: cargo check --manifest-path benchmarks/Cargo.toml --all-targets
 
+  zippel-fmt:
+    name: zippel-fmt --check examples
+    runs-on: ubuntu-latest
+    container: rustlang/rust:nightly
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends gcc m4 pkg-config
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: zippel-fmt --check examples
+        run: cargo run -p fmt --bin zippel-fmt -- --check examples/*/*.zippel
+
   test:
     name: Test
     runs-on: ubuntu-latest
