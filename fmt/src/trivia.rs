@@ -38,6 +38,13 @@ impl TriviaGap {
         self.layout.is_empty()
     }
 
+    /// Whether the gap contains any comments (line or block).
+    pub fn has_comments(&self) -> bool {
+        self.layout
+            .iter()
+            .any(|e| matches!(e, TriviaElement::Comment(_)))
+    }
+
     pub fn join(mut self, other: Self) -> Self {
         if let (Some(TriviaElement::BlankLines(n)), Some(TriviaElement::BlankLines(m))) =
             (self.layout.last(), other.layout.first())
@@ -277,10 +284,6 @@ impl<'a> TokenCursor<'a> {
             }
         }
         None
-    }
-
-    pub fn position(&self) -> usize {
-        self.pos
     }
 }
 

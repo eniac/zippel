@@ -225,9 +225,7 @@ proto p<G1: Group, G2: Group, GT: Pairing<G1, G2>>(
 proto p<G1: Group, G2: Group, GT: Pairing<G1, G2>>(
     instance a: G1, // first
     instance b: G2, // second
-) where
-    a == b
-{
+) where a == b {
     a
 }
 ",
@@ -736,5 +734,225 @@ proto Foo<G: Group, F: Scalar<G>>(witness a: F, instance b: F) where
     x
 }
 ",
+    );
+}
+
+#[test]
+fn short_comprehension_stays_on_one_line() {
+    assert_formatted(
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    let x = [a for i in 0..N];
+    a
+}",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    let x = [a for i in 0..N];
+    a
+}
+",
+    );
+}
+
+#[test]
+fn comprehension_in_long_assertion_stays_flat() {
+    // The == breaks, but the short comprehension stays on one line.
+    assert_formatted(
+        "\
+proto p<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F, instance e: F)
+where gate_identity(a, b, c, d, e) == [a for i in 0..N]
+{ a }",
+        "\
+proto p<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F, instance e: F) where
+    gate_identity(a, b, c, d, e) == [a for i in 0..N]
+{
+    a
+}
+",
+    );
+}
+
+#[test]
+fn long_assertion_breaks_before_eq() {
+    // The == in the relation breaks, putting RHS on a new indented line.
+    // The LHS fits on one line so stays flat; the RHS breaks with * aligned.
+    assert_formatted(
+        "\
+proto p<F: Field>(instance a: F, instance b: F)
+where reduce(*, [a[i] + y * b[i] + x for i in 0..N]) * reduce(*, [a[i] + y * b[i] + x for i in 0..N]) == reduce(*, [b[i] + y * a[i] + x for i in 0..N]) * reduce(*, [b[i] + y * a[i] + x for i in 0..N])
+{ a }",
+        "\
+proto p<F: Field>(instance a: F, instance b: F) where
+    reduce(*, [a[i] + y * b[i] + x for i in 0..N]) * reduce(*, [a[i] + y * b[i] + x for i in 0..N])
+        == reduce(*, [b[i] + y * a[i] + x for i in 0..N])
+            * reduce(*, [b[i] + y * a[i] + x for i in 0..N])
+{
+    a
+}
+",
+    );
+}
+
+#[test]
+fn short_assert_stays_on_one_line() {
+    assert_formatted(
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    assert(a == a);
+    a
+}",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    assert(a == a);
+    a
+}
+",
+    );
+}
+
+#[test]
+fn long_assert_breaks_before_eq() {
+    // The == inside assert(...) breaks, putting RHS on a new indented line.
+    assert_formatted(
+        "\
+fn f<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F, instance e: F) -> F {
+    assert(gate_identity_function(a, b, c, d, e, a, b) == gate_identity_function2(a, b, c, d, e, a, b));
+    a
+}",
+        "\
+fn f<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F, instance e: F) -> F {
+    assert(gate_identity_function(a, b, c, d, e, a, b)
+        == gate_identity_function2(a, b, c, d, e, a, b));
+    a
+}
+",
+    );
+}
+
+#[test]
+fn short_reduce_stays_on_one_line() {
+    assert_formatted(
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    let x = reduce(+, [a, a, a]);
+    a
+}",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    let x = reduce(+, [a, a, a]);
+    a
+}
+",
+    );
+}
+
+#[test]
+fn long_reduce_breaks_args() {
+    // reduce(+, [...]) breaks: each arg on its own line, comprehension
+    // brackets get their own lines.
+    assert_formatted(
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    let x = reduce(+, [eval<0>(p_poly, tail) for tail in [[i / 2 ^ j % 2 * one for j in 0..S - 1] for i in 0..2 ^ (S - 1)]]);
+    a
+}",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    let x = reduce(
+        +,
+        [
+            eval<0>(p_poly, tail)
+            for tail in [[i / 2 ^ j % 2 * one for j in 0..S - 1] for i in 0..2 ^ (S - 1)]
+        ],
+    );
+    a
+}
+",
+    );
+}
+
+#[test]
+fn long_comprehension_breaks_with_brackets_on_own_lines() {
+    // When the comprehension doesn't fit, [ and ] get their own lines,
+    // body on its own line, for-clause on its own line.
+    assert_formatted(
+        "\
+fn f<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F, instance e: F) -> F {
+    let x = [some_very_long_function_name_here_that_is_super_duper_long(a, b, c, d, e) for i in 0..N];
+    a
+}",
+        "\
+fn f<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F, instance e: F) -> F {
+    let x = [
+        some_very_long_function_name_here_that_is_super_duper_long(a, b, c, d, e)
+        for i in 0..N
+    ];
+    a
+}
+",
+    );
+}
+
+#[test]
+fn short_pairing_stays_on_one_line() {
+    assert_formatted(
+        "\
+proto p<G1: Group, G2: Group, GT: Pairing<G1, G2>>(instance a: G1) where a == a { a }",
+        "\
+proto p<G1: Group, G2: Group, GT: Pairing<G1, G2>>(instance a: G1) where a == a {
+    a
+}
+",
+    );
+}
+
+#[test]
+fn poly_uni_sugar_emitted() {
+    // Poly<F, 1, N> → Uni<F, N>
+    assert_formatted(
+        "\
+fn f<F: Field, N: Size>(instance a: Poly<F, 1, N>) -> F { a }",
+        "\
+fn f<F: Field, N: Size>(instance a: Uni<F, N>) -> F {
+    a
+}
+",
+    );
+}
+
+#[test]
+fn poly_mle_sugar_emitted() {
+    // Poly<F, N, 1> → Mle<F, N>
+    assert_formatted(
+        "\
+fn f<F: Field, N: Size>(instance a: Poly<F, N, 1>) -> F { a }",
+        "\
+fn f<F: Field, N: Size>(instance a: Mle<F, N>) -> F {
+    a
+}
+",
+    );
+}
+
+#[test]
+fn poly_general_stays_poly() {
+    // Poly<F, M, N> with M != 1 and N != 1 stays as Poly
+    assert_formatted(
+        "\
+fn f<F: Field, M: Size, N: Size>(instance a: Poly<F, M, N>) -> F { a }",
+        "\
+fn f<F: Field, M: Size, N: Size>(instance a: Poly<F, M, N>) -> F {
+    a
+}
+",
+    );
+}
+
+#[test]
+fn poly_with_comments_not_sugared() {
+    // Comments on the skipped arg → fall back to Poly to preserve them
+    assert_formatted(
+        "type T = Poly<F /* base */, 1 /* m */, 2 /* n */>;",
+        "type T = Poly<F, /* base */ 1, /* m */ 2 /* n */>;\n",
     );
 }

@@ -92,7 +92,6 @@ fn format_decl(
                 format_leading_gap(cursor.advance_to(relation.span.start).trim_start(), style);
             let relation = format_relation(relation, cursor, style);
             let open_gap = cursor.advance_to_token(end, |token| matches!(token, Token::LBrace));
-            let open_needs_break = open_gap.needs_line_break();
             let open_comments = format_leading_gap(open_gap, style);
             // Gap after `{` — strip blank lines (structural hardline follows).
             let body_leading =
@@ -107,17 +106,16 @@ fn format_decl(
                 ALLOC.text("proto "),
                 sig,
                 where_comments,
-                ALLOC.text(" where"),
-                ALLOC.hardline(),
                 ALLOC
-                    .concat([relation_leading, relation])
-                    .indent(style.indent_width()),
+                    .concat([
+                        ALLOC.text(" where"),
+                        ALLOC
+                            .concat([ALLOC.line(), relation_leading, relation])
+                            .nest(style.indent_width() as isize),
+                        ALLOC.line(),
+                    ])
+                    .group(),
                 open_comments,
-                if open_needs_break {
-                    ALLOC.nil()
-                } else {
-                    ALLOC.hardline()
-                },
                 ALLOC.text("{"),
                 ALLOC.hardline(),
                 ALLOC
@@ -417,24 +415,64 @@ fn format_typ(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                 style,
             );
+            // Consume all inner gaps and format sizes up-front so we can
+            // decide whether to use Uni/Mle sugar without losing comments.
             let comma_one = take_separator_gap(cursor, end, |token| matches!(token, Token::Comma));
-            let m = format_size(m, cursor, end, style);
+            let m_doc = format_size(m, cursor, end, style);
             let comma_two = take_separator_gap(cursor, end, |token| matches!(token, Token::Comma));
-            let n = format_size(n, cursor, end, style);
+            let n_doc = format_size(n, cursor, end, style);
             let close_comments =
                 cursor.advance_to_token(end, |token| matches!(token, Token::RAngle));
-            let items = vec![
-                comma_terminated_item(
-                    ALLOC.concat([base_comments, ALLOC.text(base.to_string())]),
-                    comma_one,
-                    style,
-                ),
-                comma_terminated_item(m, comma_two, style),
-                n,
-            ];
+
+            // Uni<F, N> is sugar for Poly<F, 1, N>; Mle<F, N> is sugar for
+            // Poly<F, N, 1>. Emit the sugar only when the AST matches AND
+            // no comments are attached to the skipped argument's gaps.
+            let is_uni =
+                matches!(m, Size::Lit(1)) && !comma_one.has_comments() && !comma_two.has_comments();
+            let is_mle = matches!(n, Size::Lit(1)) && !comma_two.has_comments();
+
+            let (name, items): (&str, Vec<Doc<'static>>) = if is_uni {
+                (
+                    "Uni",
+                    vec![
+                        comma_terminated_item(
+                            ALLOC.concat([base_comments, ALLOC.text(base.to_string())]),
+                            comma_one,
+                            style,
+                        ),
+                        n_doc,
+                    ],
+                )
+            } else if is_mle {
+                (
+                    "Mle",
+                    vec![
+                        comma_terminated_item(
+                            ALLOC.concat([base_comments, ALLOC.text(base.to_string())]),
+                            comma_one,
+                            style,
+                        ),
+                        m_doc,
+                    ],
+                )
+            } else {
+                (
+                    "Poly",
+                    vec![
+                        comma_terminated_item(
+                            ALLOC.concat([base_comments, ALLOC.text(base.to_string())]),
+                            comma_one,
+                            style,
+                        ),
+                        comma_terminated_item(m_doc, comma_two, style),
+                        n_doc,
+                    ],
+                )
+            };
+
             ALLOC.concat([
                 keyword,
-                ALLOC.text("Poly"),
+                ALLOC.text(name),
                 open,
                 ALLOC.text("<"),
                 delimited_list("", items, "", close_comments, style),
@@ -636,31 +674,18 @@ fn format_kind(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                 style,
             );
-            let close = format_leading_gap(
-                cursor.advance_to_token(end, |token| matches!(token, Token::RAngle)),
-                style,
-            );
-            ALLOC.concat([
-                keyword,
-                ALLOC.text("Pairing"),
-                open,
-                ALLOC.text("<"),
-                first,
-                ALLOC.text(g1.to_string()),
-                ALLOC.text(","),
-                {
-                    let sep = if comma.needs_line_break() {
-                        ALLOC.hardline()
-                    } else {
-                        ALLOC.text(" ")
-                    };
-                    format_delimiter_gap(comma, sep, style)
-                },
-                second,
-                ALLOC.text(g2.to_string()),
-                close,
-                ALLOC.text(">"),
-            ])
+            let close_comments =
+                cursor.advance_to_token(end, |token| matches!(token, Token::RAngle));
+            let items = vec![
+                comma_terminated_item(
+                    ALLOC.concat([first, ALLOC.text(g1.to_string())]),
+                    comma,
+                    style,
+                ),
+                ALLOC.concat([second, ALLOC.text(g2.to_string())]),
+            ];
+            let args = delimited_list("<", items, ">", close_comments, style);
+            ALLOC.concat([keyword, ALLOC.text("Pairing"), open, args])
         }
         Kind::Range(range) => format_range(range, cursor, end, style),
     }
@@ -746,27 +771,12 @@ fn format_size_call(
         style,
     );
     let lhs = format_size_spanned(lhs, cursor, style);
-    let comma = format_leading_gap(
-        cursor.advance_to_token(end, |token| matches!(token, Token::Comma)),
-        style,
-    );
+    let comma = take_separator_gap(cursor, end, |token| matches!(token, Token::Comma));
     let rhs = format_size_spanned(rhs, cursor, style);
-    let close = format_leading_gap(
-        cursor.advance_to_token(end, |token| matches!(token, Token::RParen)),
-        style,
-    );
-    ALLOC.concat([
-        name_comments,
-        ALLOC.text(name.to_string()),
-        open,
-        ALLOC.text("("),
-        lhs,
-        comma,
-        ALLOC.text(", "),
-        rhs,
-        close,
-        ALLOC.text(")"),
-    ])
+    let close_comments = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
+    let items = vec![comma_terminated_item(lhs, comma, style), rhs];
+    let args = delimited_list("(", items, ")", close_comments, style);
+    ALLOC.concat([name_comments, ALLOC.text(name.to_string()), open, args])
 }
 
 fn format_range(
@@ -835,7 +845,17 @@ fn format_relation(
                 style,
             );
             let rhs = format_exp(rhs, cursor, style);
-            ALLOC.concat([lhs, eq, ALLOC.text(" == "), rhs])
+            ALLOC
+                .concat([
+                    lhs,
+                    eq,
+                    ALLOC
+                        .concat([ALLOC.line(), ALLOC.text("== ")])
+                        .flat_alt(ALLOC.text(" == ")),
+                    rhs,
+                ])
+                .nest(style.indent_width() as isize)
+                .group()
         }
         Exp::Let(Some(var), value, body) => {
             let keyword = format_leading_gap(
@@ -1039,29 +1059,54 @@ fn format_exp(exp: &Spanned<Exp<Size>>, cursor: &mut TokenCursor, style: &Style)
         }
         Exp::Bin(BinOp::Dot, lhs, rhs) => format_binary_call("dot", lhs, rhs, cursor, end, style),
         Exp::Bin(op, lhs, rhs) => {
-            let lhs = parenthesize(
-                format_exp(lhs, cursor, style),
-                lhs_needs_paren(*op, &lhs.node),
-            );
-            let op_comments = format_leading_gap(
-                cursor.advance_to_token(end, |token| matches_binop(*op, token)),
-                style,
-            );
-            let rhs = parenthesize(
-                format_exp(rhs, cursor, style),
-                rhs_needs_paren(*op, &rhs.node),
-            );
-            ALLOC
-                .concat([
-                    lhs,
-                    op_comments,
+            // Flatten left-associative same-operator chain:
+            //   a * b * c  =  Bin(*, Bin(*, a, b), c)  →  [a, b, c]
+            // so all operators align at the same indent instead of nesting
+            // deeper for each left-recursion level.
+            let mut inner_rhs_list: Vec<&Spanned<Exp<Size>>> = Vec::new();
+            let mut current: &Spanned<Exp<Size>> = lhs;
+            while let Exp::Bin(inner_op, inner_lhs, inner_rhs) = &current.node {
+                if inner_op == op {
+                    inner_rhs_list.push(inner_rhs);
+                    current = inner_lhs;
+                } else {
+                    break;
+                }
+            }
+            inner_rhs_list.reverse();
+            let mut chain: Vec<&Spanned<Exp<Size>>> = Vec::new();
+            chain.push(current);
+            chain.extend(inner_rhs_list);
+            chain.push(rhs);
+
+            let indent = style.indent_width() as isize;
+            let mut parts = Vec::with_capacity(chain.len() * 3);
+
+            // First operand — no operator before it.
+            parts.push(parenthesize(
+                format_exp(chain[0], cursor, style),
+                lhs_needs_paren(*op, &chain[0].node),
+            ));
+
+            // Remaining operands — each preceded by `op`.
+            for operand in &chain[1..] {
+                let op_comments = format_leading_gap(
+                    cursor.advance_to_token(end, |token| matches_binop(*op, token)),
+                    style,
+                );
+                parts.push(op_comments);
+                parts.push(
                     ALLOC
                         .concat([ALLOC.line(), ALLOC.text(binop_symbol(*op)), ALLOC.text(" ")])
                         .flat_alt(ALLOC.text(binop_text(*op))),
-                    rhs,
-                ])
-                .nest(style.indent_width() as isize)
-                .group()
+                );
+                parts.push(parenthesize(
+                    format_exp(operand, cursor, style),
+                    rhs_needs_paren(*op, &operand.node),
+                ));
+            }
+
+            ALLOC.concat(parts).nest(indent).group()
         }
         Exp::App(function, args) => {
             let function_comments = format_leading_gap(
@@ -1161,15 +1206,21 @@ fn format_exp(exp: &Spanned<Exp<Size>>, cursor: &mut TokenCursor, style: &Style)
                 ALLOC.text("["),
                 ALLOC
                     .concat([
-                        body,
+                        ALLOC.line_(),
+                        body.group(),
                         for_comments,
                         ALLOC.line().flat_alt(ALLOC.text(" ")),
-                        ALLOC.text("for "),
-                        var_comments,
-                        ALLOC.text(var.to_string()),
-                        in_comments,
-                        ALLOC.text(" in "),
-                        range,
+                        ALLOC
+                            .concat([
+                                ALLOC.text("for "),
+                                var_comments,
+                                ALLOC.text(var.to_string()),
+                                in_comments,
+                                ALLOC.text(" in "),
+                                range,
+                            ])
+                            .group(),
+                        ALLOC.line_(),
                     ])
                     .nest(style.indent_width() as isize)
                     .group(),
@@ -1192,30 +1243,16 @@ fn format_exp(exp: &Spanned<Exp<Size>>, cursor: &mut TokenCursor, style: &Style)
             );
             let comma = take_separator_gap(cursor, end, |token| matches!(token, Token::Comma));
             let value = format_exp(value, cursor, style);
-            let close = format_leading_gap(
-                cursor.advance_to_token(end, |token| matches!(token, Token::RParen)),
+            let close_comments =
+                cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
+            let op_item = comma_terminated_item(
+                ALLOC.concat([op_comments, ALLOC.text(binop_symbol(*op))]),
+                comma,
                 style,
             );
-            ALLOC.concat([
-                keyword,
-                ALLOC.text("reduce"),
-                open,
-                ALLOC.text("("),
-                op_comments,
-                ALLOC.text(binop_symbol(*op)),
-                ALLOC.text(","),
-                {
-                    let sep = if comma.needs_line_break() {
-                        ALLOC.hardline()
-                    } else {
-                        ALLOC.text(" ")
-                    };
-                    format_delimiter_gap(comma, sep, style)
-                },
-                value,
-                close,
-                ALLOC.text(")"),
-            ])
+            let items = vec![op_item, value];
+            let args = delimited_list("(", items, ")", close_comments, style);
+            ALLOC.concat([keyword, ALLOC.text("reduce"), open, args])
         }
         Exp::Ram(base, index) => {
             let base = format_exp(base, cursor, style);
@@ -1588,10 +1625,17 @@ fn format_assertion(
         ALLOC.text(name.to_string()),
         open,
         ALLOC.text("("),
-        lhs,
-        eq,
-        ALLOC.text(" == "),
-        rhs,
+        ALLOC
+            .concat([
+                lhs,
+                eq,
+                ALLOC
+                    .concat([ALLOC.line(), ALLOC.text("== ")])
+                    .flat_alt(ALLOC.text(" == ")),
+                rhs,
+            ])
+            .nest(style.indent_width() as isize)
+            .group(),
         close,
         ALLOC.text(")"),
     ])
@@ -1660,9 +1704,9 @@ fn take_separator_gap(
 /// close
 /// ```
 fn delimited_list(
-    open: &str,
+    open: &'static str,
     items: Vec<Doc<'static>>,
-    close: &str,
+    close: &'static str,
     close_comments: TriviaGap,
     style: &Style,
 ) -> Doc<'static> {
@@ -1673,7 +1717,7 @@ fn delimited_list(
         ALLOC.line_()
     };
     ALLOC
-        .text(open.to_string())
+        .text(open)
         .append(
             ALLOC
                 .concat([ALLOC
@@ -1686,7 +1730,7 @@ fn delimited_list(
                     .nest(indent)])
                 .group(),
         )
-        .append(ALLOC.text(close.to_string()))
+        .append(ALLOC.text(close))
 }
 
 fn qualifier_text(qualifier: Qualifier) -> &'static str {
