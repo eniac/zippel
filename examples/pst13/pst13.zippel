@@ -28,16 +28,17 @@
 // evaluation statement:  y == dot(eq_mle(z), p) == p̃(z).
 // =============================================================================
 fn eq_mle<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
-    instance z: [F; 1]
+    instance z: [F; 1],
 ) -> [F; 2] {
-    [ 1 - z[0], z[0] ]
+    [1 - z[0], z[0]]
 }
+
 fn eq_mle<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 2..21>(
-    instance z: [F; K]
-) -> [F; 2^K] {
-    let a    = z[0];          // first variable = MSB (peeled first)
+    instance z: [F; K],
+) -> [F; 2 ^ K] {
+    let a = z[0]; // first variable = MSB (peeled first)
     let rest = z[1..K];
-    let prev = eq_mle(rest);  // [F; 2^(K-1)] over the K-1 low-bit variables
+    let prev = eq_mle(rest); // [F; 2^(K-1)] over the K-1 low-bit variables
     (prev * (1 - a)) ++ (prev * a)
 }
 
@@ -46,8 +47,8 @@ fn eq_mle<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 2..21
 //   C_p = dot(p, ck_N) = p(alpha) * G
 // =============================================================================
 fn pst13_commit<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: 1..21>(
-    witness p: [F; 2^M],
-    instance ck_N: [G1; 2^M]
+    witness p: [F; 2 ^ M],
+    instance ck_N: [G1; 2 ^ M],
 ) -> G1 {
     dot(p, ck_N)
 }
@@ -59,12 +60,12 @@ fn pst13_commit<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M:
 fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
     witness p_curr: [F; 2],
     instance ck_curr: [G1; 2],
-    instance z_curr: [F; 1]
+    instance z_curr: [F; 1],
 ) -> [G1; 1] {
     let ck_0 = ck_curr[0..1] + ck_curr[1..2];
     let p_lo = p_curr[0..1];
     let p_hi = p_curr[1..2];
-    let q    = p_hi - p_lo;
+    let q = p_hi - p_lo;
     // `pi_last` is the transcript-bound name; the verifier reads it from
     // the proof transcript instead of recomputing from the witness `q`.
     pi_last <- dot(q, ck_0);
@@ -77,23 +78,23 @@ fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2
 // Returns the full list of π's collected across rounds.
 // =============================================================================
 fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 2..21>(
-    witness p_curr: [F; 2^K],
-    instance ck_curr: [G1; 2^K],
-    instance z_curr: [F; K]
+    witness p_curr: [F; 2 ^ K],
+    instance ck_curr: [G1; 2 ^ K],
+    instance z_curr: [F; K],
 ) -> [G1; K] {
     // ck_{K-1}[i] = ck_curr[i] + ck_curr[i + 2^(K-1)] (Lagrange-basis split).
-    let ck_lo  = ck_curr[0..2^(K-1)];
-    let ck_hi  = ck_curr[2^(K-1)..2^K];
+    let ck_lo = ck_curr[0..2 ^ (K - 1)];
+    let ck_hi = ck_curr[2 ^ (K - 1)..2 ^ K];
     let ck_nxt = ck_lo + ck_hi;
 
-    let p_lo = p_curr[0..2^(K-1)];
-    let p_hi = p_curr[2^(K-1)..2^K];
-    let q    = p_hi - p_lo;
+    let p_lo = p_curr[0..2 ^ (K - 1)];
+    let p_hi = p_curr[2 ^ (K - 1)..2 ^ K];
+    let q = p_hi - p_lo;
     // `pi_curr` is transcript-bound; the verifier reads it from the proof.
     pi_curr <- dot(q, ck_nxt);
 
-    let p_red = p_lo + (q * z_curr[0]);
-    let rest  = pst13_open_rounds(p_red, ck_nxt, z_curr[1..K]);
+    let p_red = p_lo + q * z_curr[0];
+    let rest = pst13_open_rounds(p_red, ck_nxt, z_curr[1..K]);
     [pi_curr] ++ rest
 }
 
@@ -108,19 +109,19 @@ fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2
 // polynomial p is witness; (z, y) is the instance statement.
 // =============================================================================
 proto pst13<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>(
-    witness p: [F; 2^N],         // polynomial coefficients indexed by {0,1}^N
-    instance z: [F; N],            // evaluation point (z_1, ..., z_N)
-    instance y: F,                 // claimed evaluation p(z)
+    witness p: [F; 2 ^ N], // polynomial coefficients indexed by {0,1}^N
+    instance z: [F; N], // evaluation point (z_1, ..., z_N)
+    instance y: F, // claimed evaluation p(z)
     // ck_N is the prover's commitment key; the verifier doesn't reference
     // it (only α_H, g_gen, h_gen enter the pairing check). Marking it
     // `extra` keeps it out of the verifier's FS sponge — at N=16 this
     // is ~3 MB of G1 the verifier would otherwise hash for no reason.
     // The verifier's binding to ck_N flows through c_p (committed via
     // `pst13_commit(p, ck_N)`) and the recursion's structure.
-    extra ck_N: [G1; 2^N],     // [eq_N(α, i)·G  for i in {0,1}^N]
+    extra ck_N: [G1; 2 ^ N], // [eq_N(α, i)·G  for i in {0,1}^N]
     instance g_gen: G1,
     instance h_gen: G2,
-    instance alpha_H: [G2; N]     // [α_i · H  for i in 1..N]
+    instance alpha_H: [G2; N], // [α_i · H  for i in 1..N]
 ) where
     // Trusted setup: sample the trapdoor α, then derive ck_N and alpha_H
     // as their Lagrange-basis expansions.
@@ -130,15 +131,18 @@ proto pst13<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Siz
     // with bit_j(i) = (i / 2^(N-1-j)) % 2. Inlined rather than routed
     // through a recursive helper so the analyzer sees a flat product.
     let eq_alpha = [
-        reduce(*, [
-            alpha[j] * ((i / (2^(N-1-j))) % 2)
-                + (1 - alpha[j]) * (1 - ((i / (2^(N-1-j))) % 2))
-            for j in 0..N
-        ])
-        for i in 0..2^N
+        reduce(
+            *,
+            [
+                alpha[j] * (i / 2 ^ (N - 1 - j) % 2)
+                    + (1 - alpha[j]) * (1 - i / 2 ^ (N - 1 - j) % 2)
+                for j in 0..N
+            ],
+        )
+        for i in 0..2 ^ N
     ];
     y == dot(eq_mle(z), p);
-    [ck_N[i] for i in 0..2^N] == [g_gen * eq_alpha[i] for i in 0..2^N];
+    [ck_N[i] for i in 0..2 ^ N] == [g_gen * eq_alpha[i] for i in 0..2 ^ N];
     [alpha_H[j] for j in 0..N] == [h_gen * alpha[j] for j in 0..N]
 {
     // First prover move: commitment to p.
@@ -153,11 +157,11 @@ proto pst13<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Siz
     //   G2 side: [h_gen,          α_H[1] − z_1·h_gen, ..., α_H[N] − z_N·h_gen]
     // Negation via binary subtraction (zero - x). One zero is enough; the
     // backend folds zero - pis[i] into a single G1 sub each.
-    let zero_g1   = g_gen - g_gen;
-    let lhs_g1    = c_p - (g_gen * y);
-    let neg_pis   = [zero_g1 - pis[i] for i in 0..N];
-    let g1_terms  = [lhs_g1] ++ neg_pis;
-    let g2_terms  = [h_gen] ++ [alpha_H[i] - (h_gen * z[i]) for i in 0..N];
+    let zero_g1 = g_gen - g_gen;
+    let lhs_g1 = c_p - g_gen * y;
+    let neg_pis = [zero_g1 - pis[i] for i in 0..N];
+    let g1_terms = [lhs_g1] ++ neg_pis;
+    let g2_terms = [h_gen] ++ [alpha_H[i] - h_gen * z[i] for i in 0..N];
 
     // dot(VecG1, VecG2) → GT routes to backend's multi_pairing fast path
     // (one Miller loop + one final exp).

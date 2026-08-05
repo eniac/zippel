@@ -3,8 +3,8 @@
 // error: a one-variable residual would misread the vector as one multivariate
 // coordinate point instead of a batch of scalar sample points.
 fn sample_univariate<F: Field, MAX_DEGREE_CONST: Size>(
-    instance p: Poly<F, 1, MAX_DEGREE_CONST>,
-    instance points: [F; MAX_DEGREE_CONST + 1]
+    instance p: Uni<F, MAX_DEGREE_CONST>,
+    instance points: [F; MAX_DEGREE_CONST + 1],
 ) -> [F; MAX_DEGREE_CONST + 1] {
     [p(t) for t in points]
 }
@@ -26,19 +26,19 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, V: 3..NUM_VARS_CONST + 1, MAX_
     instance challenges: [F; NUM_VARS_CONST - V + 1],
     instance prev_eval: F,
     instance ch: F,
-    instance curr_round: Fin<NUM_VARS_CONST>
+    instance curr_round: Fin<0..NUM_VARS_CONST>,
 ) -> Unit {
     let residual_poly = eval(curr_poly, [ch]);
     // Round polynomial: sum the residual evaluated over the Boolean-tail
     // hypercube. This lowers to a generic materialized reduce-map (the 2^k
     // tail domain is materialized; Groebner completeness const-folds the bits).
-    let round_poly = reduce(+, [
-        eval<0>(residual_poly, tail)
-        for tail in [
-            [((i / (2^j)) % 2) for j in 0..(V - 2)]
-            for i in 0..(2^(V - 2))
-        ]
-    ]);
+    let round_poly = reduce(
+        +,
+        [
+            eval<0>(residual_poly, tail)
+            for tail in [[i / 2 ^ j % 2 for j in 0..V - 2] for i in 0..2 ^ (V - 2)]
+        ],
+    );
     let eval_points = points;
     let evs = sample_univariate(round_poly, eval_points);
 
@@ -59,7 +59,7 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
     instance challenges: [F; NUM_VARS_CONST - 1],
     instance prev_eval: F,
     instance ch: F,
-    instance curr_round: Fin<NUM_VARS_CONST>
+    instance curr_round: Fin<0..NUM_VARS_CONST>,
 ) -> Unit {
     let residual_poly = eval(curr_poly, [ch]);
     let eval_points = points;
@@ -79,25 +79,33 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
 // Round 1: first challenge r1 folds round-1 message; second challenge r2 feeds the first tail round.
 proto sumcheck<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
     instance claimed_sum: F,
-    witness p: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>
-) where let points = 0..MAX_DEGREE_CONST + 1;
-        let round_poly0 = reduce(+, [
+    witness p: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>,
+) where
+    let points = 0..MAX_DEGREE_CONST + 1;
+    let round_poly0 = reduce(
+        +,
+        [
             eval<0>(p, tail)
             for tail in [
-                [((i / (2^j)) % 2) for j in 0..(NUM_VARS_CONST - 1)]
-                for i in 0..(2^(NUM_VARS_CONST - 1))
+                [i / 2 ^ j % 2 for j in 0..NUM_VARS_CONST - 1]
+                for i in 0..2 ^ (NUM_VARS_CONST - 1)
             ]
-        ]);
-        let evs0 = sample_univariate(round_poly0, points);
-        claimed_sum == evs0[0] + evs0[1] {
+        ],
+    );
+    let evs0 = sample_univariate(round_poly0, points);
+    claimed_sum == evs0[0] + evs0[1]
+{
     let points = 0..MAX_DEGREE_CONST + 1;
-    let round_poly0 = reduce(+, [
-        eval<0>(p, tail)
-        for tail in [
-            [((i / (2^j)) % 2) for j in 0..(NUM_VARS_CONST - 1)]
-            for i in 0..(2^(NUM_VARS_CONST - 1))
-        ]
-    ]);
+    let round_poly0 = reduce(
+        +,
+        [
+            eval<0>(p, tail)
+            for tail in [
+                [i / 2 ^ j % 2 for j in 0..NUM_VARS_CONST - 1]
+                for i in 0..2 ^ (NUM_VARS_CONST - 1)
+            ]
+        ],
+    );
     let evs0 = sample_univariate(round_poly0, points);
     evs0_msg <- evs0;
     verify(claimed_sum == evs0_msg[0] + evs0_msg[1]);

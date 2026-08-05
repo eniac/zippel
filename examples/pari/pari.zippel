@@ -37,18 +37,26 @@
 // Soundness in AGM (per the paper); not zero-knowledge in this version
 // (omits the hiding/zk-masking that adds dummy random constraints).
 
-proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
-            M: Size, K: 2^M, N: Size, KMN: Size>(
+proto pari<
+    G1: Group,
+    G2: Group,
+    GT: Pairing<G1, G2>,
+    F: Scalar<G1, G2>,
+    M: Size,
+    K: 2 ^ M,
+    N: Size,
+    KMN: Size,
+>(
     // --- Witness side (prover-only) ---
-    witness z_a_evals: [F; K],                   // A · z, on K
-    witness z_b_evals: [F; K],                   // B · z, on K
-    witness w_a_evals: [F; K],                   // A · (0∥w), on K
-    witness w_b_evals: [F; K],                   // B · (0∥w), on K
-    witness w:         [F; KMN],                 // witness portion of z (size k-N)
+    witness z_a_evals: [F; K], // A · z, on K
+    witness z_b_evals: [F; K], // B · z, on K
+    witness w_a_evals: [F; K], // A · (0∥w), on K
+    witness w_b_evals: [F; K], // B · (0∥w), on K
+    witness w: [F; KMN], // witness portion of z (size k-N)
 
     // --- Instance side (verifier-known, length N) ---
-    instance  x:         [F; N],                   // instance inputs (z[0]=1, then user inputs)
-    instance  omegas:    [F; N],                   // omegas[i] = ω^{K-N+i}
+    instance x: [F; N], // instance inputs (z[0]=1, then user inputs)
+    instance omegas: [F; N], // omegas[i] = ω^{K-N+i}
 
     // --- Setup keys (from Generator G in Fig. 6) ---
     // SRS bases are marked `extra` so they only flow to the prover
@@ -61,10 +69,10 @@ proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
 
     // Witness commitment basis: Σ[i] = (α a_i(τ) + β b_i(τ))/δ_2 · G,
     //   for i = n+1, …, k.
-    extra sigma_w:       [G1; KMN],
+    extra sigma_w: [G1; KMN],
 
     // Quotient commitment basis: Σ_q[i] = τ^i / δ_2 · G, for i = 0, …, K-1.
-    extra sigma_q:       [G1; K],
+    extra sigma_q: [G1; K],
 
     // Opening proof bases (no δ_1 — matches the reference impl
     // arkworks-rs/garuda-pari, which omits δ_1 entirely; δ_1 only
@@ -72,35 +80,35 @@ proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
     //   Σ_A[i]    = α τ^i · G
     //   Σ_B[i]    = β τ^i · G
     //   Σ_q'[i]   =   τ^i · G                       for i = 0, …, K-1.
-    extra sigma_a:       [G1; K],
-    extra sigma_b:       [G1; K],
+    extra sigma_a: [G1; K],
+    extra sigma_b: [G1; K],
     extra sigma_q_prime: [G1; K],
 
     // --- Verifier keys ---
-    instance  alpha_g:  G1,
-    instance  beta_g:   G1,
-    instance  g_g1:     G1,
-    instance  delta2_h: G2,        // δ_2 · H
-    instance  tau_h:    G2,        // τ · H
-    instance  h_g2:     G2,        // H
+    instance alpha_g: G1,
+    instance beta_g: G1,
+    instance g_g1: G1,
+    instance delta2_h: G2, // δ_2 · H
+    instance tau_h: G2, // τ · H
+    instance h_g2: G2, // H
 
     // --- Constants supplied as inputs (avoids field-literal coercion) ---
     // v_K(X) = X^K - 1 coefficients (length K+1). Only the prover needs
     // it (to build v_K(X) for the quotient division); the verifier just
     // evaluates v_K(r) = r^K − 1 directly, so we keep this `extra` to
     // skip O(K) FS absorption.
-    extra v_k_poly:   Uni<F, K>,
+    extra v_k_poly: Uni<F, K>,
     // The field element 1, used to negate via subtraction and to construct
     // (X - r) as a polynomial.
-    instance  f_one:      F,
+    instance f_one: F,
     // 1/K (mod the scalar field), precomputed by the verifier once at setup.
-    instance  k_inv:      F
+    instance k_inv: F,
 ) where
     // Trusted setup: sample the trapdoors (τ, α, β, δ_2), then derive
     // the SRS elements from them (Fig. 6 Generator).
-    let tau    = random<F>;
-    let alpha  = random<F>;
-    let beta   = random<F>;
+    let tau = random<F>;
+    let alpha = random<F>;
+    let beta = random<F>;
     let delta2 = random<F>;
     // (1) SR1CS satisfaction on the constraint domain K:
     //       (A z) ⊙ (A z) == (B z), element-wise.
@@ -108,19 +116,19 @@ proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
     //     precondition; the protocol body attests to it succinctly.
     [z_a_evals[i] * z_a_evals[i] for i in 0..K] == [z_b_evals[i] for i in 0..K];
     // (2) Verifier keys expose (alpha, beta, tau, delta2) via G1/G2:
-    alpha_g   == g_g1 * alpha;
-    beta_g    == g_g1 * beta;
-    tau_h     == h_g2 * tau;
-    delta2_h  == h_g2 * delta2;
+    alpha_g == g_g1 * alpha;
+    beta_g == g_g1 * beta;
+    tau_h == h_g2 * tau;
+    delta2_h == h_g2 * delta2;
     //     Opening-proof bases: Σ_A[i] = alpha·τ^i·G, Σ_B[i] = beta·τ^i·G,
     //     Σ_{q'}[i] = τ^i·G, all indexed by i in 0..K.
-    [sigma_a[i]       for i in 0..K] == [g_g1 * (alpha * (tau ^ i)) for i in 0..K];
-    [sigma_b[i]       for i in 0..K] == [g_g1 * (beta  * (tau ^ i)) for i in 0..K];
-    [sigma_q_prime[i] for i in 0..K] == [g_g1 * (tau ^ i)           for i in 0..K];
+    [sigma_a[i] for i in 0..K] == [g_g1 * (alpha * tau ^ i) for i in 0..K];
+    [sigma_b[i] for i in 0..K] == [g_g1 * (beta * tau ^ i) for i in 0..K];
+    [sigma_q_prime[i] for i in 0..K] == [g_g1 * tau ^ i for i in 0..K];
     //     Quotient basis: Σ_q[i] = (τ^i / δ_2)·G. State multiplicatively
     //     to avoid F-division in the where clause:
     //       Σ_q[i] · δ_2 = τ^i · G.
-    [sigma_q[i] * delta2 for i in 0..K] == [g_g1 * (tau ^ i) for i in 0..K];
+    [sigma_q[i] * delta2 for i in 0..K] == [g_g1 * tau ^ i for i in 0..K];
     // (3) Field constants used by the verifier's Lagrange shortcut.
     f_one == 1;
     k_inv * K == 1;
@@ -135,7 +143,7 @@ proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
     // transitively via the pairing check.)
 {
     // === Constant scalars derived from f_one ===
-    let f_zero    = 0;
+    let f_zero = 0;
     let f_neg_one = f_zero - f_one;
 
     // === Prover: T_AB — batched commitment to ŵ_A and ŵ_B ===
@@ -151,13 +159,13 @@ proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
     // v_K(X) = X^K - 1, supplied as a polynomial.
     // (Previously: poly(v_k_coeffs) from a [F; K+1] arg.)
 
-    let z_a_sq   = z_a_poly * z_a_poly;
+    let z_a_sq = z_a_poly * z_a_poly;
     let num_poly = z_a_sq - z_b_poly;
-    let q_poly   = num_poly / v_k_poly;
+    let q_poly = num_poly / v_k_poly;
     // q has degree K-2 → K-1 coefficients. Truncate sigma_q to match
     // (KZG idiom: don't pad coeffs with zero, slice the SRS instead).
     let q_coeffs = coef(q_poly);
-    let sigma_q_trunc = sigma_q[0..K-1];
+    let sigma_q_trunc = sigma_q[0..K - 1];
 
     // T_Q := Σ_{i=0..K-2} q_i · Σ_q[i] (paper line 7 with implicit top
     // coefficient = 0 elided from the MSM).
@@ -171,14 +179,14 @@ proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
     r <- challenge<F>;
 
     // === Prover: ŵ_A, ŵ_B from precomputed w_*_evals ===
-    let w_a_poly  = interpolate(w_a_evals);
-    let w_b_poly  = interpolate(w_b_evals);
+    let w_a_poly = interpolate(w_a_evals);
+    let w_b_poly = interpolate(w_b_evals);
 
     let v_a_p = w_a_poly(r);
     let v_b_p = w_b_poly(r);
 
     // === Prover: opening proof U ===
-    let r_neg     = f_zero - r;
+    let r_neg = f_zero - r;
     let x_minus_r = poly([r_neg, f_one]);
 
     let w_a_witness = (w_a_poly - v_a_p) / x_minus_r;
@@ -193,9 +201,9 @@ proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
     let w_b_coeffs = coef(w_b_witness);
     let w_q_coeffs = coef(w_q_witness);
 
-    let sigma_a_trunc       = sigma_a[0..K-1];
-    let sigma_b_trunc       = sigma_b[0..K-1];
-    let sigma_q_prime_trunc = sigma_q_prime[0..K-2];
+    let sigma_a_trunc = sigma_a[0..K - 1];
+    let sigma_b_trunc = sigma_b[0..K - 1];
+    let sigma_q_prime_trunc = sigma_q_prime[0..K - 2];
 
     let u_a = dot(w_a_coeffs, sigma_a_trunc);
     let u_b = dot(w_b_coeffs, sigma_b_trunc);
@@ -205,22 +213,22 @@ proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
 
     va_proof <- v_a_p;
     vb_proof <- v_b_p;
-    u_proof  <- u_value;
+    u_proof <- u_value;
 
     // === Verifier: x̂_A(r) via Lagrange shortcut, x̂_B(r) = 0 ===
     // x̂_A(r) = (v_K(r) / K) · Σ_{i=0..N} omegas[i] · x[i] / (r - omegas[i])
     // (closed-form Lagrange basis on roots-of-unity, restricted to the N
     // nonzero positions [K-N, K).) O(N) field ops on the verifier instead
     // of O(K log K) IFFT.
-    let v_k_at_r     = (r ^ K) - f_one;
+    let v_k_at_r = r ^ K - f_one;
     let lagrange_sum = reduce(+, [omegas[i] * x[i] / (r - omegas[i]) for i in 0..N]);
-    let x_a_at_r     = v_k_at_r * k_inv * lagrange_sum;
-    let x_b_at_r     = f_zero;
+    let x_a_at_r = v_k_at_r * k_inv * lagrange_sum;
+    let x_b_at_r = f_zero;
 
     // === Verifier: v_q := ((v_a + x̂_A(r))^2 - (v_b + x̂_B(r))) / v_K(r) ===
     let lhs_a = va_proof + x_a_at_r;
     let lhs_b = vb_proof + x_b_at_r;
-    let v_q   = (lhs_a * lhs_a - lhs_b) / v_k_at_r;
+    let v_q = (lhs_a * lhs_a - lhs_b) / v_k_at_r;
 
     // === Verifier: pairing check ===
     // The native garuda-pari verifier folds all three pairs into a single

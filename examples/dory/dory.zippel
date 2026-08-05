@@ -7,19 +7,14 @@
 // Where <a, b> represents the inner pairing product (IPP).
 
 // Base Case (n = 1) -> maps to LOG_N=0 in power
-fn dory_reduce<
-    G1: Group,
-    G2: Group,
-    GT: Pairing<G1, G2>,
-    F: Scalar<G1, G2>
->(
+fn dory_reduce<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
     instance c1: GT,
     instance c2: GT,
     instance c3: GT,
     instance final_gamma1: G1,
     instance final_gamma2: G2,
     witness u_vec: [G1; 1],
-    witness g_vec: [G2; 1]
+    witness g_vec: [G2; 1],
 ) -> Unit {
     // Prover sends u and g
     log_u <- u_vec[0];
@@ -33,12 +28,7 @@ fn dory_reduce<
 
 // Intermediate case: LOG_N = 1 (size = 2 elements).
 // Here we recurse down to array size = 1 (LOG_N=0).
-fn dory_reduce<
-    G1: Group,
-    G2: Group,
-    GT: Pairing<G1, G2>,
-    F: Scalar<G1, G2>
->(
+fn dory_reduce<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
     instance c1: GT,
     instance c2: GT,
     instance c3: GT,
@@ -56,7 +46,7 @@ fn dory_reduce<
     witness gamma1_prime: [G1; 1],
     witness gamma2_prime: [G2; 1],
     witness u_vec: [G1; 2],
-    witness g_vec: [G2; 2]
+    witness g_vec: [G2; 2],
 ) -> Unit {
     // 1. Prover computes left/right commitments using the next level's bases
     let u_l = u_vec[0..1];
@@ -76,7 +66,6 @@ fn dory_reduce<
     let gamma_pair_ipp = gamma_pair_ipp_vec[0];
 
     // Prover verifies hash structures privately, but Verifier uses the instance hashes provided
-
 
     let d1_l = reduce(+, [pair(u_l[0], gamma2_prime[0]) for i in 0..1]);
     let d1_r = reduce(+, [pair(u_r[0], gamma2_prime[0]) for i in 0..1]);
@@ -113,19 +102,22 @@ fn dory_reduce<
     let u_prime = w1_l * alpha + w1_r * alpha_inv;
     let g_prime = w2_l * alpha_inv + w2_r * alpha;
 
-    let c1_prime = c1 + rho_inv * c2 + rho * c3 + gamma_pair_ipp + alpha_sq * log_vl + alpha_inv_sq * log_vr;
-    let c2_prime = alpha * log_d1l + alpha_inv * log_d1r + (alpha * rho) * hash1_l + (alpha_inv * rho) * hash1_r;
-    let c3_prime = alpha_inv * log_d2l + alpha * log_d2r + (alpha_inv * rho_inv) * hash2_l + (alpha * rho_inv) * hash2_r;
+    let c1_prime = c1
+        + rho_inv * c2
+        + rho * c3
+        + gamma_pair_ipp
+        + alpha_sq * log_vl
+        + alpha_inv_sq * log_vr;
+    let c2_prime = alpha * log_d1l
+        + alpha_inv * log_d1r
+        + alpha * rho * hash1_l
+        + alpha_inv * rho * hash1_r;
+    let c3_prime = alpha_inv * log_d2l
+        + alpha * log_d2r
+        + alpha_inv * rho_inv * hash2_l
+        + alpha * rho_inv * hash2_r;
 
-    dory_reduce(
-        c1_prime,
-        c2_prime,
-        c3_prime,
-        final_gamma1,
-        final_gamma2,
-        u_prime,
-        g_prime
-    )
+    dory_reduce(c1_prime, c2_prime, c3_prime, final_gamma1, final_gamma2, u_prime, g_prime)
 }
 
 // Recursive Step (LOG_N > 2)
@@ -135,7 +127,7 @@ fn dory_reduce<
     GT: Pairing<G1, G2>,
     F: Scalar<G1, G2>,
     S: Size,
-    LOG_N: 2..S+1
+    LOG_N: 2..S + 1,
 >(
     instance c1: GT,
     instance c2: GT,
@@ -150,23 +142,23 @@ fn dory_reduce<
     instance final_gamma2: G2,
 
     // Prover's witness state
-    witness gamma1: [G1; 2^LOG_N],
-    witness gamma2: [G2; 2^LOG_N],
-    witness gamma1_prime: [G1; 2^(LOG_N-1)],
-    witness gamma2_prime: [G2; 2^(LOG_N-1)],
-    witness u_vec: [G1; 2^LOG_N],
-    witness g_vec: [G2; 2^LOG_N]
+    witness gamma1: [G1; 2 ^ LOG_N],
+    witness gamma2: [G2; 2 ^ LOG_N],
+    witness gamma1_prime: [G1; 2 ^ (LOG_N - 1)],
+    witness gamma2_prime: [G2; 2 ^ (LOG_N - 1)],
+    witness u_vec: [G1; 2 ^ LOG_N],
+    witness g_vec: [G2; 2 ^ LOG_N],
 ) -> Unit {
     // 1. Prover computes left/right commitments using the next level's bases
-    let u_l = u_vec[0..2^(LOG_N-1)];
-    let u_r = u_vec[2^(LOG_N-1)..2^LOG_N];
-    let g_l = g_vec[0..2^(LOG_N-1)];
-    let g_r = g_vec[2^(LOG_N-1)..2^LOG_N];
+    let u_l = u_vec[0..2 ^ (LOG_N - 1)];
+    let u_r = u_vec[2 ^ (LOG_N - 1)..2 ^ LOG_N];
+    let g_l = g_vec[0..2 ^ (LOG_N - 1)];
+    let g_r = g_vec[2 ^ (LOG_N - 1)..2 ^ LOG_N];
 
-    let gamma1_l = gamma1[0..2^(LOG_N-1)];
-    let gamma1_r = gamma1[2^(LOG_N-1)..2^LOG_N];
-    let gamma2_l = gamma2[0..2^(LOG_N-1)];
-    let gamma2_r = gamma2[2^(LOG_N-1)..2^LOG_N];
+    let gamma1_l = gamma1[0..2 ^ (LOG_N - 1)];
+    let gamma1_r = gamma1[2 ^ (LOG_N - 1)..2 ^ LOG_N];
+    let gamma2_l = gamma2[0..2 ^ (LOG_N - 1)];
+    let gamma2_r = gamma2[2 ^ (LOG_N - 1)..2 ^ LOG_N];
 
     let hash1_l = hash1_l_vec[0];
     let hash1_r = hash1_r_vec[0];
@@ -176,11 +168,10 @@ fn dory_reduce<
 
     // Prover verifies hash structures privately, but Verifier uses the instance hashes provided
 
-
-    let d1_l = reduce(+, [pair(u_l[i], gamma2_prime[i]) for i in 0..2^(LOG_N-1)]);
-    let d1_r = reduce(+, [pair(u_r[i], gamma2_prime[i]) for i in 0..2^(LOG_N-1)]);
-    let d2_l = reduce(+, [pair(gamma1_prime[i], g_l[i]) for i in 0..2^(LOG_N-1)]);
-    let d2_r = reduce(+, [pair(gamma1_prime[i], g_r[i]) for i in 0..2^(LOG_N-1)]);
+    let d1_l = reduce(+, [pair(u_l[i], gamma2_prime[i]) for i in 0..2 ^ (LOG_N - 1)]);
+    let d1_r = reduce(+, [pair(u_r[i], gamma2_prime[i]) for i in 0..2 ^ (LOG_N - 1)]);
+    let d2_l = reduce(+, [pair(gamma1_prime[i], g_l[i]) for i in 0..2 ^ (LOG_N - 1)]);
+    let d2_r = reduce(+, [pair(gamma1_prime[i], g_r[i]) for i in 0..2 ^ (LOG_N - 1)]);
 
     // Prover sends D terms to the transcript
     log_d1l <- d1_l;
@@ -196,14 +187,14 @@ fn dory_reduce<
     let w1 = u_vec + gamma1 * rho;
     let w2 = g_vec + gamma2 * rho_inv;
 
-    let w1_l = w1[0..2^(LOG_N-1)];
-    let w1_r = w1[2^(LOG_N-1)..2^LOG_N];
-    let w2_l = w2[0..2^(LOG_N-1)];
-    let w2_r = w2[2^(LOG_N-1)..2^LOG_N];
+    let w1_l = w1[0..2 ^ (LOG_N - 1)];
+    let w1_r = w1[2 ^ (LOG_N - 1)..2 ^ LOG_N];
+    let w2_l = w2[0..2 ^ (LOG_N - 1)];
+    let w2_r = w2[2 ^ (LOG_N - 1)..2 ^ LOG_N];
 
     // 4. Prover sends v_L and v_R
-    let v_l = reduce(+, [pair(w1_l[i], w2_r[i]) for i in 0..2^(LOG_N-1)]);
-    let v_r = reduce(+, [pair(w1_r[i], w2_l[i]) for i in 0..2^(LOG_N-1)]);
+    let v_l = reduce(+, [pair(w1_l[i], w2_r[i]) for i in 0..2 ^ (LOG_N - 1)]);
+    let v_r = reduce(+, [pair(w1_r[i], w2_l[i]) for i in 0..2 ^ (LOG_N - 1)]);
 
     log_vl <- v_l;
     log_vr <- v_r;
@@ -218,12 +209,23 @@ fn dory_reduce<
     let u_prime = w1_l * alpha + w1_r * alpha_inv;
     let g_prime = w2_l * alpha_inv + w2_r * alpha;
 
-    let c1_prime = c1 + rho_inv * c2 + rho * c3 + gamma_pair_ipp + alpha_sq * log_vl + alpha_inv_sq * log_vr;
-    let c2_prime = alpha * log_d1l + alpha_inv * log_d1r + (alpha * rho) * hash1_l + (alpha_inv * rho) * hash1_r;
-    let c3_prime = alpha_inv * log_d2l + alpha * log_d2r + (alpha_inv * rho_inv) * hash2_l + (alpha * rho_inv) * hash2_r;
+    let c1_prime = c1
+        + rho_inv * c2
+        + rho * c3
+        + gamma_pair_ipp
+        + alpha_sq * log_vl
+        + alpha_inv_sq * log_vr;
+    let c2_prime = alpha * log_d1l
+        + alpha_inv * log_d1r
+        + alpha * rho * hash1_l
+        + alpha_inv * rho * hash1_r;
+    let c3_prime = alpha_inv * log_d2l
+        + alpha * log_d2r
+        + alpha_inv * rho_inv * hash2_l
+        + alpha * rho_inv * hash2_r;
 
-    let next_gamma1_prime = gamma1_prime[0..2^(LOG_N-2)];
-    let next_gamma2_prime = gamma2_prime[0..2^(LOG_N-2)];
+    let next_gamma1_prime = gamma1_prime[0..2 ^ (LOG_N - 2)];
+    let next_gamma2_prime = gamma2_prime[0..2 ^ (LOG_N - 2)];
 
     let next_hash1_l_vec = hash1_l_vec[1..LOG_N];
     let next_hash1_r_vec = hash1_r_vec[1..LOG_N];
@@ -247,19 +249,12 @@ fn dory_reduce<
         next_gamma1_prime,
         next_gamma2_prime,
         u_prime,
-        g_prime
+        g_prime,
     )
 }
 
 // Wrapper Protocol for Dory
-proto dory_eval<
-    G1: Group,
-    G2: Group,
-    GT: Pairing<G1, G2>,
-    F: Scalar<G1, G2>,
-    S: Size,
-    LOG_N: S
->(
+proto dory_eval<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, S: Size, LOG_N: S>(
     // Inputs (from the top-level LOG_N)
     instance c1: GT,
     instance c2: GT,
@@ -273,16 +268,16 @@ proto dory_eval<
     instance final_gamma2: G2,
 
     // Prover's witness secrets
-    witness gamma1: [G1; 2^LOG_N],
-    witness gamma2: [G2; 2^LOG_N],
-    witness gamma1_prime: [G1; 2^(LOG_N-1)],
-    witness gamma2_prime: [G2; 2^(LOG_N-1)],
-    witness u_vec: [G1; 2^LOG_N],
-    witness g_vec: [G2; 2^LOG_N]
+    witness gamma1: [G1; 2 ^ LOG_N],
+    witness gamma2: [G2; 2 ^ LOG_N],
+    witness gamma1_prime: [G1; 2 ^ (LOG_N - 1)],
+    witness gamma2_prime: [G2; 2 ^ (LOG_N - 1)],
+    witness u_vec: [G1; 2 ^ LOG_N],
+    witness g_vec: [G2; 2 ^ LOG_N],
 ) where
-    c1 == reduce(+, [pair(u_vec[i], g_vec[i]) for i in 0..2^LOG_N]);
-    c2 == reduce(+, [pair(u_vec[i], gamma2[i]) for i in 0..2^LOG_N]);
-    c3 == reduce(+, [pair(gamma1[i], g_vec[i]) for i in 0..2^LOG_N])
+    c1 == reduce(+, [pair(u_vec[i], g_vec[i]) for i in 0..2 ^ LOG_N]);
+    c2 == reduce(+, [pair(u_vec[i], gamma2[i]) for i in 0..2 ^ LOG_N]);
+    c3 == reduce(+, [pair(gamma1[i], g_vec[i]) for i in 0..2 ^ LOG_N])
 {
     // Start the reduction proof
     dory_reduce(
@@ -301,6 +296,6 @@ proto dory_eval<
         gamma1_prime,
         gamma2_prime,
         u_vec,
-        g_vec
+        g_vec,
     )
 }

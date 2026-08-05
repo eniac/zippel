@@ -10,11 +10,12 @@
 //   NCOLS  = 2^MH               (columns per commitment)
 
 fn eq_weights<G: Group, F: Scalar<G>>(instance x: [F; 1]) -> [F; 2] {
-    [(1 - x[0]), x[0]]
+    [1 - x[0], x[0]]
 }
-fn eq_weights<G: Group, F: Scalar<G>, EK: 2..21>(instance x: [F; EK]) -> [F; 2^EK] {
-    let x_lo = x[0..(EK-1)];
-    let a    = x[EK-1];
+
+fn eq_weights<G: Group, F: Scalar<G>, EK: 2..21>(instance x: [F; EK]) -> [F; 2 ^ EK] {
+    let x_lo = x[0..EK - 1];
+    let a = x[EK - 1];
     let prev = eq_weights(x_lo);
     (prev * (1 - a)) ++ (prev * a)
 }
@@ -23,30 +24,31 @@ fn draw_taus<G: Group, F: Scalar<G>>(instance placeholder: [F; 1]) -> [F; 1] {
     t <- challenge<F>;
     [t]
 }
+
 fn draw_taus<G: Group, F: Scalar<G>, DK: 2..21>(instance placeholder: [F; DK]) -> [F; DK] {
-    let prev = draw_taus(placeholder[0..(DK-1)]);
+    let prev = draw_taus(placeholder[0..DK - 1]);
     t <- challenge<F>;
     prev ++ [t]
 }
 
 fn sc_recurse_d3<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
-    instance curr_poly:       Poly<F, V, 3>,
-    instance points:          [F; 4],
+    instance curr_poly: Poly<F, V, 3>,
+    instance points: [F; 4],
     instance prev_challenges: [F; M - V + 1],
-    instance prev_eval:       F,
+    instance prev_eval: F,
     instance round_challenge: F,
-    instance curr_round:      Fin<M>,
-    instance g_evs_d3:        [G; 4],
-    instance h_evs:           G
-) -> { final_eval: F, challenges: [F; M] } {
+    instance curr_round: Fin<0..M>,
+    instance g_evs_d3: [G; 4],
+    instance h_evs: G,
+) -> {final_eval: F, challenges: [F; M]} {
     let residual_poly = eval(curr_poly, [round_challenge]);
-    let round_poly = reduce(+, [
-        eval<0>(residual_poly, tail)
-        for tail in [
-            [points[(i / (2^j)) % 2] for j in 0..(V - 2)]
-            for i in 0..(2^(V - 2))
-        ]
-    ]);
+    let round_poly = reduce(
+        +,
+        [
+            eval<0>(residual_poly, tail)
+            for tail in [[points[i / 2 ^ j % 2] for j in 0..V - 2] for i in 0..2 ^ (V - 2)]
+        ],
+    );
     let evs_local = [round_poly(t) for t in points];
     evs <- evs_local;
     verify(prev_eval == evs[0] + evs[1]);
@@ -71,18 +73,28 @@ fn sc_recurse_d3<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
     z_beta_sc <- c_sc * r_eval_sc + r_beta_sc;
     verify(dot(g_evs_d3, z_vec_sc) + h_evs * z_delta_sc == comm_evs * c_sc + delta_sc);
 
-    sc_recurse_d3(residual_poly, points, new_challenges, next_prev, r_next, curr_round + 1, g_evs_d3, h_evs)
+    sc_recurse_d3(
+        residual_poly,
+        points,
+        new_challenges,
+        next_prev,
+        r_next,
+        curr_round + 1,
+        g_evs_d3,
+        h_evs,
+    )
 }
+
 fn sc_recurse_d3<G: Group, F: Scalar<G>, M: Size>(
-    instance curr_poly:       Poly<F, 2, 3>,
-    instance points:          [F; 4],
+    instance curr_poly: Poly<F, 2, 3>,
+    instance points: [F; 4],
     instance prev_challenges: [F; M - 1],
-    instance prev_eval:       F,
+    instance prev_eval: F,
     instance round_challenge: F,
-    instance curr_round:      Fin<M>,
-    instance g_evs_d3:        [G; 4],
-    instance h_evs:           G
-) -> { final_eval: F, challenges: [F; M] } {
+    instance curr_round: Fin<0..M>,
+    instance g_evs_d3: [G; 4],
+    instance h_evs: G,
+) -> {final_eval: F, challenges: [F; M]} {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let evs_local = [residual_poly(t) for t in points];
     evs <- evs_local;
@@ -108,27 +120,27 @@ fn sc_recurse_d3<G: Group, F: Scalar<G>, M: Size>(
     z_beta_sc <- c_sc * r_eval_sc + r_beta_sc;
     verify(dot(g_evs_d3, z_vec_sc) + h_evs * z_delta_sc == comm_evs * c_sc + delta_sc);
 
-    {| final_eval: final_eval, challenges: prev_challenges ++ [r_final] |}
+    {|final_eval: final_eval, challenges: prev_challenges ++ [r_final]|}
 }
 
 fn sc_recurse_d2<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
-    instance curr_poly:       Poly<F, V, 2>,
-    instance points:          [F; 3],
+    instance curr_poly: Poly<F, V, 2>,
+    instance points: [F; 3],
     instance prev_challenges: [F; M - V + 1],
-    instance prev_eval:       F,
+    instance prev_eval: F,
     instance round_challenge: F,
-    instance curr_round:      Fin<M>,
-    instance g_evs_d2:        [G; 3],
-    instance h_evs:           G
-) -> { final_eval: F, challenges: [F; M] } {
+    instance curr_round: Fin<0..M>,
+    instance g_evs_d2: [G; 3],
+    instance h_evs: G,
+) -> {final_eval: F, challenges: [F; M]} {
     let residual_poly = eval(curr_poly, [round_challenge]);
-    let round_poly = reduce(+, [
-        eval<0>(residual_poly, tail)
-        for tail in [
-            [points[(i / (2^j)) % 2] for j in 0..(V - 2)]
-            for i in 0..(2^(V - 2))
-        ]
-    ]);
+    let round_poly = reduce(
+        +,
+        [
+            eval<0>(residual_poly, tail)
+            for tail in [[points[i / 2 ^ j % 2] for j in 0..V - 2] for i in 0..2 ^ (V - 2)]
+        ],
+    );
     let evs_local = [round_poly(t) for t in points];
     evs <- evs_local;
     verify(prev_eval == evs[0] + evs[1]);
@@ -153,18 +165,28 @@ fn sc_recurse_d2<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
     z_beta_sc <- c_sc * r_eval_sc + r_beta_sc;
     verify(dot(g_evs_d2, z_vec_sc) + h_evs * z_delta_sc == comm_evs * c_sc + delta_sc);
 
-    sc_recurse_d2(residual_poly, points, new_challenges, next_prev, r_next, curr_round + 1, g_evs_d2, h_evs)
+    sc_recurse_d2(
+        residual_poly,
+        points,
+        new_challenges,
+        next_prev,
+        r_next,
+        curr_round + 1,
+        g_evs_d2,
+        h_evs,
+    )
 }
+
 fn sc_recurse_d2<G: Group, F: Scalar<G>, M: Size>(
-    instance curr_poly:       Poly<F, 2, 2>,
-    instance points:          [F; 3],
+    instance curr_poly: Poly<F, 2, 2>,
+    instance points: [F; 3],
     instance prev_challenges: [F; M - 1],
-    instance prev_eval:       F,
+    instance prev_eval: F,
     instance round_challenge: F,
-    instance curr_round:      Fin<M>,
-    instance g_evs_d2:        [G; 3],
-    instance h_evs:           G
-) -> { final_eval: F, challenges: [F; M] } {
+    instance curr_round: Fin<0..M>,
+    instance g_evs_d2: [G; 3],
+    instance h_evs: G,
+) -> {final_eval: F, challenges: [F; M]} {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let evs_local = [residual_poly(t) for t in points];
     evs <- evs_local;
@@ -190,13 +212,17 @@ fn sc_recurse_d2<G: Group, F: Scalar<G>, M: Size>(
     z_beta_sc <- c_sc * r_eval_sc + r_beta_sc;
     verify(dot(g_evs_d2, z_vec_sc) + h_evs * z_delta_sc == comm_evs * c_sc + delta_sc);
 
-    {| final_eval: final_eval, challenges: prev_challenges ++ [r_final] |}
+    {|final_eval: final_eval, challenges: prev_challenges ++ [r_final]|}
 }
 
 fn compute_s_vec<G: Group, F: Scalar<G>>(instance c: [F; 1], instance c_inv: [F; 1]) -> [F; 2] {
     [c_inv[0], c[0]]
 }
-fn compute_s_vec<G: Group, F: Scalar<G>, K: 2..21>(instance c: [F; K], instance c_inv: [F; K]) -> [F; 2^K] {
+
+fn compute_s_vec<G: Group, F: Scalar<G>, K: 2..21>(
+    instance c: [F; K],
+    instance c_inv: [F; K],
+) -> [F; 2 ^ K] {
     let curr_c = c[0];
     let curr_c_inv = c_inv[0];
     let c_rest = c[1..K];
@@ -212,8 +238,16 @@ fn bullet_collect<G: Group, F: Scalar<G>>(
     witness a_folded: [F; 2],
     witness x_folded: [F; 2],
     witness y_folded: F,
-    witness r_Upsilon_folded: F
-) -> { challenges: [F; 1], challenges_inv: [F; 1], Ls: [G; 1], Rs: [G; 1], final_x: F, final_y: F, final_r: F } {
+    witness r_Upsilon_folded: F,
+) -> {
+    challenges: [F; 1],
+    challenges_inv: [F; 1],
+    Ls: [G; 1],
+    Rs: [G; 1],
+    final_x: F,
+    final_y: F,
+    final_r: F,
+} {
     let x_1 = x_folded[0..1];
     let x_2 = x_folded[1..2];
     let a_1 = a_folded[0..1];
@@ -240,25 +274,33 @@ fn bullet_collect<G: Group, F: Scalar<G>>(
         Rs: [upsilon_1],
         final_x: next_x[0],
         final_y: next_y,
-        final_r: next_r
+        final_r: next_r,
     |}
 }
 
-fn bullet_collect<G: Group, F: Scalar<G>, M: Size, N: 2..((M - 1) - (M - 1) / 2) + 1>(
+fn bullet_collect<G: Group, F: Scalar<G>, M: Size, N: 2..M - 1 - (M - 1) / 2 + 1>(
     instance g_base: G,
     instance h_base: G,
-    witness g_folded: [G; 2^N],
-    witness a_folded: [F; 2^N],
-    witness x_folded: [F; 2^N],
+    witness g_folded: [G; 2 ^ N],
+    witness a_folded: [F; 2 ^ N],
+    witness x_folded: [F; 2 ^ N],
     witness y_folded: F,
-    witness r_Upsilon_folded: F
-) -> { challenges: [F; N], challenges_inv: [F; N], Ls: [G; N], Rs: [G; N], final_x: F, final_y: F, final_r: F } {
-    let x_1 = x_folded[0..2^(N-1)];
-    let x_2 = x_folded[2^(N-1)..2^N];
-    let a_1 = a_folded[0..2^(N-1)];
-    let a_2 = a_folded[2^(N-1)..2^N];
-    let g_1 = g_folded[0..2^(N-1)];
-    let g_2 = g_folded[2^(N-1)..2^N];
+    witness r_Upsilon_folded: F,
+) -> {
+    challenges: [F; N],
+    challenges_inv: [F; N],
+    Ls: [G; N],
+    Rs: [G; N],
+    final_x: F,
+    final_y: F,
+    final_r: F,
+} {
+    let x_1 = x_folded[0..2 ^ (N - 1)];
+    let x_2 = x_folded[2 ^ (N - 1)..2 ^ N];
+    let a_1 = a_folded[0..2 ^ (N - 1)];
+    let a_2 = a_folded[2 ^ (N - 1)..2 ^ N];
+    let g_1 = g_folded[0..2 ^ (N - 1)];
+    let g_2 = g_folded[2 ^ (N - 1)..2 ^ N];
     let r_L = random<F>;
     let r_R = random<F>;
     let dot_x1_a2 = dot(x_1, a_2);
@@ -282,37 +324,39 @@ fn bullet_collect<G: Group, F: Scalar<G>, M: Size, N: 2..((M - 1) - (M - 1) / 2)
         Rs: [upsilon_1] ++ inner.Rs,
         final_x: inner.final_x,
         final_y: inner.final_y,
-        final_r: inner.final_r
+        final_r: inner.final_r,
     |}
 }
 
 proto spartan<G: Group, F: Scalar<G>, M: Size>(
-    instance mat_a_t:   Poly<F, 2*M, 1>,
-    instance mat_b_t:   Poly<F, 2*M, 1>,
-    instance mat_c_t:   Poly<F, 2*M, 1>,
-    instance io:        [F; 2^(M - 1) - 1],
-    witness w:        [F; 2^(M - 1)],
-    witness az:       [F; 2^M],
-    witness bz:       [F; 2^M],
-    witness cz:       [F; 2^M],
-    instance g_vec_w:   [G; 2^((M - 1) - (M - 1) / 2)],
-    instance g_base_w:  G,
-    instance h_base_w:  G,
-    instance g_evs_d3:  [G; 4],
-    instance g_evs_d2:  [G; 3],
-    instance h_evs:     G,
+    instance mat_a_t: Mle<F, 2 * M>,
+    instance mat_b_t: Mle<F, 2 * M>,
+    instance mat_c_t: Mle<F, 2 * M>,
+    instance io: [F; 2 ^ (M - 1) - 1],
+    witness w: [F; 2 ^ (M - 1)],
+    witness az: [F; 2 ^ M],
+    witness bz: [F; 2 ^ M],
+    witness cz: [F; 2 ^ M],
+    instance g_vec_w: [G; 2 ^ (M - 1 - (M - 1) / 2)],
+    instance g_base_w: G,
+    instance h_base_w: G,
+    instance g_evs_d3: [G; 4],
+    instance g_evs_d2: [G; 3],
+    instance h_evs: G,
     instance placeholder_tau: [F; M],
-    instance f_one:     F
-) where
-    az * bz == cz
-{
-    let one  = f_one;
+    instance f_one: F,
+) where az * bz == cz {
+    let one = f_one;
     let zero = f_one - f_one;
 
-    let r_rows = [random<F> for i in 0..2^((M - 1) / 2)];
+    let r_rows = [random<F> for i in 0..2 ^ ((M - 1) / 2)];
     c_rows <- [
-        h_base_w * r_rows[i] + dot(g_vec_w, [w[i * 2^((M - 1) - (M - 1) / 2) + j] for j in 0..2^((M - 1) - (M - 1) / 2)])
-        for i in 0..2^((M - 1) / 2)
+        h_base_w * r_rows[i]
+            + dot(
+                g_vec_w,
+                [w[i * 2 ^ (M - 1 - (M - 1) / 2) + j] for j in 0..2 ^ (M - 1 - (M - 1) / 2)],
+            )
+        for i in 0..2 ^ ((M - 1) / 2)
     ];
 
     let z = w ++ io ++ [one];
@@ -323,25 +367,25 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
 
     let tau_vec = draw_taus(placeholder_tau);
     let eq_tau_evs = eq_weights(tau_vec);
-    let eq_tau     = mle(eq_tau_evs);
+    let eq_tau = mle(eq_tau_evs);
 
     let neg_one = zero - one;
-    let g_sub   = f_a * f_b + f_c * neg_one;
-    let g_poly  = g_sub * eq_tau;
+    let g_sub = f_a * f_b + f_c * neg_one;
+    let g_poly = g_sub * eq_tau;
 
-    let pts3   = [zero, one, one + one, one + one + one];
-    let round_poly1_0 = reduce(+, [
-        eval<0>(g_poly, tail)
-        for tail in [
-            [pts3[(i / (2^j)) % 2] for j in 0..(M - 1)]
-            for i in 0..(2^(M - 1))
-        ]
-    ]);
+    let pts3 = [zero, one, one + one, one + one + one];
+    let round_poly1_0 = reduce(
+        +,
+        [
+            eval<0>(g_poly, tail)
+            for tail in [[pts3[i / 2 ^ j % 2] for j in 0..M - 1] for i in 0..2 ^ (M - 1)]
+        ],
+    );
     let evs1_0_local = [round_poly1_0(t) for t in pts3];
     evs1_0 <- evs1_0_local;
     verify(zero == evs1_0[0] + evs1_0[1]);
-    let g1_r1     = interpolate(pts3, evs1_0);
-    rx0           <- challenge<F>;
+    let g1_r1 = interpolate(pts3, evs1_0);
+    rx0 <- challenge<F>;
     let prev1 = g1_r1(rx0);
 
     let r_poly_10 = random<F>;
@@ -350,18 +394,18 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     comm_eval_10 <- g_evs_d3[0] * prev1 + h_evs * r_eval_10;
     let d_vec_10 = [random<F> for i in 0..4];
     let r_delta_10 = random<F>;
-    let r_beta_10  = random<F>;
+    let r_beta_10 = random<F>;
     delta_10 <- dot(g_evs_d3, d_vec_10) + h_evs * r_delta_10;
     let a_d_dot_10 = dot(d_vec_10, evs1_0);
-    beta_10  <- g_evs_d3[0] * a_d_dot_10 + h_evs * r_beta_10;
-    c_10     <- challenge<F>;
-    z_vec_10   <- [c_10 * evs1_0[i] + d_vec_10[i] for i in 0..4];
+    beta_10 <- g_evs_d3[0] * a_d_dot_10 + h_evs * r_beta_10;
+    c_10 <- challenge<F>;
+    z_vec_10 <- [c_10 * evs1_0[i] + d_vec_10[i] for i in 0..4];
     z_delta_10 <- c_10 * r_poly_10 + r_delta_10;
-    z_beta_10  <- c_10 * r_eval_10 + r_beta_10;
+    z_beta_10 <- c_10 * r_eval_10 + r_beta_10;
     verify(dot(g_evs_d3, z_vec_10) + h_evs * z_delta_10 == comm_evs_10 * c_10 + delta_10);
 
     let sc1 = sc_recurse_d3(g_poly, pts3, [rx0], prev1, rx0, 1, g_evs_d3, h_evs);
-    let rx  = sc1.challenges;
+    let rx = sc1.challenges;
     let e_x = sc1.final_eval;
 
     let lx = eq_weights(rx);
@@ -394,8 +438,10 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     z4_phase1 <- c_phase1 * r_vb + r_e_phase1;
     z5_phase1 <- c_phase1 * (r_prod - r_va * v_b) + r_f_phase1;
     verify(g_evs_d3[0] * z1_phase1 + h_evs * z2_phase1 == comm_va_phase1 * c_phase1 + alpha_phase1);
-    verify(g_evs_d3[0] * z3_phase1 + h_evs * z4_phase1 == comm_vb_phase1 * c_phase1 + beta_p1_phase1);
-    verify(comm_va_phase1 * z3_phase1 + h_evs * z5_phase1 == comm_prod_phase1 * c_phase1 + delta_phase1);
+    verify(g_evs_d3[0] * z3_phase1 + h_evs * z4_phase1
+        == comm_vb_phase1 * c_phase1 + beta_p1_phase1);
+    verify(comm_va_phase1 * z3_phase1 + h_evs * z5_phase1
+        == comm_prod_phase1 * c_phase1 + delta_phase1);
     let t1_pok_vc = random<F>;
     let t2_pok_vc = random<F>;
     alpha_pok_vc <- g_evs_d3[0] * t1_pok_vc + h_evs * t2_pok_vc;
@@ -422,23 +468,23 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     let partial_b = eval(mat_b_t, rx);
     let partial_c = eval(mat_c_t, rx);
 
-    let l_mle  = partial_a * ra + partial_b * rb + partial_c * rc;
-    let z_mle  = mle(z);
+    let l_mle = partial_a * ra + partial_b * rb + partial_c * rc;
+    let z_mle = mle(z);
     let m_poly = l_mle * z_mle;
 
-    let pts2   = [zero, one, one + one];
-    let round_poly2_0 = reduce(+, [
-        eval<0>(m_poly, tail)
-        for tail in [
-            [pts2[(i / (2^j)) % 2] for j in 0..(M - 1)]
-            for i in 0..(2^(M - 1))
-        ]
-    ]);
+    let pts2 = [zero, one, one + one];
+    let round_poly2_0 = reduce(
+        +,
+        [
+            eval<0>(m_poly, tail)
+            for tail in [[pts2[i / 2 ^ j % 2] for j in 0..M - 1] for i in 0..2 ^ (M - 1)]
+        ],
+    );
     let evs2_0_local = [round_poly2_0(t) for t in pts2];
     evs2_0 <- evs2_0_local;
     verify(t2 == evs2_0[0] + evs2_0[1]);
-    let g2_r1     = interpolate(pts2, evs2_0);
-    ry0           <- challenge<F>;
+    let g2_r1 = interpolate(pts2, evs2_0);
+    ry0 <- challenge<F>;
     let prev2 = g2_r1(ry0);
 
     let r_poly_20 = random<F>;
@@ -447,45 +493,53 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     comm_eval_20 <- g_evs_d2[0] * prev2 + h_evs * r_eval_20;
     let d_vec_20 = [random<F> for i in 0..3];
     let r_delta_20 = random<F>;
-    let r_beta_20  = random<F>;
+    let r_beta_20 = random<F>;
     delta_20 <- dot(g_evs_d2, d_vec_20) + h_evs * r_delta_20;
     let a_d_dot_20 = dot(d_vec_20, evs2_0);
-    beta_20  <- g_evs_d2[0] * a_d_dot_20 + h_evs * r_beta_20;
-    c_20     <- challenge<F>;
-    z_vec_20   <- [c_20 * evs2_0[i] + d_vec_20[i] for i in 0..3];
+    beta_20 <- g_evs_d2[0] * a_d_dot_20 + h_evs * r_beta_20;
+    c_20 <- challenge<F>;
+    z_vec_20 <- [c_20 * evs2_0[i] + d_vec_20[i] for i in 0..3];
     z_delta_20 <- c_20 * r_poly_20 + r_delta_20;
-    z_beta_20  <- c_20 * r_eval_20 + r_beta_20;
+    z_beta_20 <- c_20 * r_eval_20 + r_beta_20;
     verify(dot(g_evs_d2, z_vec_20) + h_evs * z_delta_20 == comm_evs_20 * c_20 + delta_20);
 
     let sc2 = sc_recurse_d2(m_poly, pts2, [ry0], prev2, ry0, 1, g_evs_d2, h_evs);
-    let ry  = sc2.challenges;
+    let ry = sc2.challenges;
     let e_y = sc2.final_eval;
 
-    let pcs_z   = ry[0..(M - 1)];
-    let ly_lo   = eq_weights(pcs_z);
-    let z_col   = pcs_z[0..((M - 1) - (M - 1) / 2)];
-    let z_row   = pcs_z[((M - 1) - (M - 1) / 2)..(M - 1)];
-    let l_vec   = eq_weights(z_row);
-    let r_vec   = eq_weights(z_col);
+    let pcs_z = ry[0..M - 1];
+    let ly_lo = eq_weights(pcs_z);
+    let z_col = pcs_z[0..M - 1 - (M - 1) / 2];
+    let z_row = pcs_z[M - 1 - (M - 1) / 2..M - 1];
+    let l_vec = eq_weights(z_row);
+    let r_vec = eq_weights(z_col);
 
-    let big_t   = dot(l_vec, c_rows);
+    let big_t = dot(l_vec, c_rows);
     let r_big_t = dot(l_vec, r_rows);
     let u_vec = [
-        dot(l_vec, [w[i * 2^((M - 1) - (M - 1) / 2) + j] for i in 0..2^((M - 1) / 2)])
-        for j in 0..2^((M - 1) - (M - 1) / 2)
+        dot(l_vec, [w[i * 2 ^ (M - 1 - (M - 1) / 2) + j] for i in 0..2 ^ ((M - 1) / 2)])
+        for j in 0..2 ^ (M - 1 - (M - 1) / 2)
     ];
 
     let v_w_val = dot(ly_lo, w);
-    sent_v_w    <- v_w_val;
+    sent_v_w <- v_w_val;
 
     let r_tau = random<F>;
     tau_pcs <- g_base_w * sent_v_w + h_base_w * r_tau;
     rho_pcs <- challenge<F>;
     let upsilon_pcs = big_t + tau_pcs * rho_pcs;
     let r_upsilon_pcs = r_big_t + r_tau * rho_pcs;
-    let a_rho_pcs = [r_vec[j] * rho_pcs for j in 0..2^((M - 1) - (M - 1) / 2)];
+    let a_rho_pcs = [r_vec[j] * rho_pcs for j in 0..2 ^ (M - 1 - (M - 1) / 2)];
     let y_rho_pcs = sent_v_w * rho_pcs;
-    let bullet = bullet_collect(g_base_w, h_base_w, g_vec_w, a_rho_pcs, u_vec, y_rho_pcs, r_upsilon_pcs);
+    let bullet = bullet_collect(
+        g_base_w,
+        h_base_w,
+        g_vec_w,
+        a_rho_pcs,
+        u_vec,
+        y_rho_pcs,
+        r_upsilon_pcs,
+    );
     let b_challenges = bullet.challenges;
     let b_challenges_inv = bullet.challenges_inv;
     let b_Ls = bullet.Ls;
@@ -495,8 +549,8 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     let s_vec = compute_s_vec(b_challenges, b_challenges_inv);
     let g_hat = dot(g_vec_w, s_vec);
     let a_hat = dot(a_rho_pcs, s_vec);
-    let c_sq_vec = [b_challenges[i] * b_challenges[i] for i in 0..((M - 1) - (M - 1) / 2)];
-    let c_inv_sq_vec = [b_challenges_inv[i] * b_challenges_inv[i] for i in 0..((M - 1) - (M - 1) / 2)];
+    let c_sq_vec = [b_challenges[i] * b_challenges[i] for i in 0..M - 1 - (M - 1) / 2];
+    let c_inv_sq_vec = [b_challenges_inv[i] * b_challenges_inv[i] for i in 0..M - 1 - (M - 1) / 2];
     let upsilon_combined = upsilon_pcs + dot(b_Ls, c_sq_vec) + dot(b_Rs, c_inv_sq_vec);
     let d_ipa = random<F>;
     let r_delta_ipa = random<F>;
@@ -510,20 +564,20 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     let rhs_ipa = (g_hat + g_base_w * a_hat) * z1_ipa + h_base_w * z2_ipa;
 
     let io_block = io ++ [one];
-    let v_io     = dot(ly_lo, io_block);
-    let ry_top   = ry[M - 1];
-    let v_z      = (one - ry_top) * sent_v_w + ry_top * v_io;
+    let v_io = dot(ly_lo, io_block);
+    let ry_top = ry[M - 1];
+    let v_z = (one - ry_top) * sent_v_w + ry_top * v_io;
 
     let v1 = eval(partial_a, ry);
     let v2 = eval(partial_b, ry);
     let v3 = eval(partial_c, ry);
 
-    let r_ey   = random<F>;
-    let d_p2   = random<F>;
+    let r_ey = random<F>;
+    let d_p2 = random<F>;
     let r_d_p2 = random<F>;
     comm_ey_p2 <- g_evs_d2[0] * e_y + h_evs * r_ey;
-    alpha_p2   <- g_evs_d2[0] * d_p2 + h_evs * r_d_p2;
-    c_p2       <- challenge<F>;
+    alpha_p2 <- g_evs_d2[0] * d_p2 + h_evs * r_d_p2;
+    c_p2 <- challenge<F>;
     z1_p2 <- c_p2 * e_y + d_p2;
     z2_p2 <- c_p2 * r_ey + r_d_p2;
     verify(g_evs_d2[0] * z1_p2 + h_evs * z2_p2 == comm_ey_p2 * c_p2 + alpha_p2);

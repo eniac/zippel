@@ -1,15 +1,24 @@
 // Helper function for Pedersen vector commitment: h*r + reduce(+, g_vec * x_vec)
-fn Com_Vec<G: Group, F: Scalar<G>, S: Size, N: S>(instance g_vec: [G; N], instance h: G, instance x_vec: [F; N], instance r: F) -> G {
-  let gx = g_vec * x_vec;
-  let term_sum = reduce(+, gx); // Assumes element-wise G*F multiplication then reduce
-  h*r + term_sum
+fn Com_Vec<G: Group, F: Scalar<G>, S: Size, N: S>(
+    instance g_vec: [G; N],
+    instance h: G,
+    instance x_vec: [F; N],
+    instance r: F,
+) -> G {
+    let gx = g_vec * x_vec;
+    let term_sum = reduce(+, gx); // Assumes element-wise G*F multiplication then reduce
+    h * r + term_sum
 }
 
 // Helper function for Pedersen scalar commitment: g*y + h*r
-fn Com_Scal<G: Group, F: Scalar<G>>(instance g: G, instance h: G, instance y: F, instance r: F) -> G {
-  g*y + h*r
+fn Com_Scal<G: Group, F: Scalar<G>>(
+    instance g: G,
+    instance h: G,
+    instance y: F,
+    instance r: F,
+) -> G {
+    g * y + h * r
 }
-
 
 // Protocol implementing the non-interactive version of proof-of-dot-prod(xi, tau, a_vec)
 // from Hyrax Figure 6.
@@ -17,67 +26,67 @@ fn Com_Scal<G: Group, F: Scalar<G>>(instance g: G, instance h: G, instance y: F,
 
 proto proof_of_dot_product<G: Group, F: Scalar<G>, S: Size, N: S>(
     // Witness known only to the prover:
-    witness x_vec: [F; N],    // Vector committed in xi
-    witness r_xi: F,         // Randomness for xi commitment
-    witness y: F,            // Scalar committed in tau (must equal <x_vec, a_vec>)
-    witness r_tau: F,        // Randomness for tau commitment
+    witness x_vec: [F; N], // Vector committed in xi
+    witness r_xi: F, // Randomness for xi commitment
+    witness y: F, // Scalar committed in tau (must equal <x_vec, a_vec>)
+    witness r_tau: F, // Randomness for tau commitment
 
     // Instance inputs known to prover and verifier:
-    instance g_vec: [G; N],    // Vector of bases for vector commitment
-    instance a_vec: [F; N],    // Instance vector for dot product
-    instance g: G,             // Base for scalar value commitment (in tau)
-    instance h: G,             // Base for randomness (in xi, tau, delta, beta)
-    instance xi: G,            // Commitment xi = Com_Vec(g_vec, h, x_vec, r_xi)
-    instance tau: G            // Commitment tau = Com_Scal(g, h, y, r_tau)
-)
-// The 'where' clause defines the exact relations the prover must satisfy.
+    instance g_vec: [G; N], // Vector of bases for vector commitment
+    instance a_vec: [F; N], // Instance vector for dot product
+    instance g: G, // Base for scalar value commitment (in tau)
+    instance h: G, // Base for randomness (in xi, tau, delta, beta)
+    instance xi: G, // Commitment xi = Com_Vec(g_vec, h, x_vec, r_xi)
+    instance tau: G, // Commitment tau = Com_Scal(g, h, y, r_tau)
+)// The 'where' clause defines the exact relations the prover must satisfy.
 // It uses the conceptual helper functions for clarity.
-where xi == Com_Vec(g_vec, h, x_vec, r_xi);
-  tau == Com_Scal(g, h, y, r_tau);
-  y == dot(x_vec, a_vec) {
+ where
+    xi == Com_Vec(g_vec, h, x_vec, r_xi);
+    tau == Com_Scal(g, h, y, r_tau);
+    y == dot(x_vec, a_vec)
+{
+    // --- Prover Phase ---
 
-      // --- Prover Phase ---
+    // 1. Sample randomness (d_vec, r_delta, r_beta)
+    //    and compute commitments (delta, beta).
+    let d_vec = [random<F> for i in 0..N]; // Generate random vector d_vec
+    let r_delta = random<F>;
+    let r_beta = random<F>;
 
-      // 1. Sample randomness (d_vec, r_delta, r_beta)
-      //    and compute commitments (delta, beta).
-      let d_vec = [random<F> for i in 0..N]; // Generate random vector d_vec
-      let r_delta = random<F>;
-      let r_beta = random<F>;
+    // Compute delta = Com(d_vec; r_delta)
+    let delta_commit = Com_Vec(g_vec, h, d_vec, r_delta);
 
-      // Compute delta = Com(d_vec; r_delta)
-      let delta_commit = Com_Vec(g_vec, h, d_vec, r_delta);
+    // Compute beta = Com(<a_vec, d_vec>; r_beta)
+    let dot_ad = dot(a_vec, d_vec);
+    let beta_commit = Com_Scal(g, h, dot_ad, r_beta);
 
-      // Compute beta = Com(<a_vec, d_vec>; r_beta)
-      let dot_ad = dot(a_vec, d_vec);
-      let beta_commit = Com_Scal(g, h, dot_ad, r_beta);
+    // Add commitments to the transcript
+    delta <- delta_commit;
+    beta <- beta_commit;
 
-      // Add commitments to the transcript
-      delta <- delta_commit;
-      beta <- beta_commit;
+    // 2. Derive the Fiat-Shamir challenge 'c'.
+    c <- challenge<F>;
 
-      // 2. Derive the Fiat-Shamir challenge 'c'.
-      c <- challenge<F>;
+    // 3. Compute the responses (z_vec, z_delta, z_beta).
+    //    Requires element-wise vector operations.
+    let resp_z_vec = c * x_vec + d_vec;
+    let resp_z_delta = c * r_xi + r_delta;
+    let resp_z_beta = c * r_tau + r_beta;
 
-      // 3. Compute the responses (z_vec, z_delta, z_beta).
-      //    Requires element-wise vector operations.
-      let resp_z_vec = c * x_vec + d_vec;
-      let resp_z_delta = c * r_xi + r_delta;
-      let resp_z_beta = c * r_tau + r_beta;
+    // Add responses to the transcript.
+    z_vec <- resp_z_vec;
+    z_delta <- resp_z_delta;
+    z_beta <- resp_z_beta;
 
-      // Add responses to the transcript.
-      z_vec <- resp_z_vec;
-      z_delta <- resp_z_delta;
-      z_beta <- resp_z_beta;
+    // --- Verification Logic (encoded using 'verify') ---
+    // Implements the two checks from the paper.
 
-      // --- Verification Logic (encoded using 'verify') ---
-      // Implements the two checks from the paper.
+    // Check 1: xi*c + delta == Com(z_vec; z_delta)
+    let check1_rhs = Com_Vec(g_vec, h, z_vec, z_delta);
+    verify(xi * c + delta == check1_rhs);
 
-      // Check 1: xi*c + delta == Com(z_vec; z_delta)
-      let check1_rhs = Com_Vec(g_vec, h, z_vec, z_delta);
-      verify(xi*c + delta == check1_rhs);
-
-      // Check 2: tau*c + beta == Com(<z_vec, a_vec>; z_beta)
-      let dot_za = dot(z_vec, a_vec); // Compute dot product <z_vec, a_vec>
-      let check2_rhs = Com_Scal(g, h, dot_za, z_beta);
-      verify(tau*c + beta == check2_rhs)
+    // Check 2: tau*c + beta == Com(<z_vec, a_vec>; z_beta)
+    let dot_za = dot(z_vec, a_vec); // Compute dot product <z_vec, a_vec>
+    let check2_rhs = Com_Scal(g, h, dot_za, z_beta);
+    verify(tau * c + beta == check2_rhs)
 }

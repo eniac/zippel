@@ -1,7 +1,7 @@
-proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
+proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g * x {
     let r = random<F>;
-    u <- g*r;
+    u <- g * r;
     c <- challenge<F*>;
-    z <- r + x*c;
-    verify(g*z == u + h*c)
+    z <- r + x * c;
+    verify(g * z == u + h * c)
 }

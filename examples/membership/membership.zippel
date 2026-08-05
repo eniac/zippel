@@ -1,56 +1,72 @@
-// Membership proofs from polynomial commitments by William Borgeaud, 2020 
+// Membership proofs from polynomial commitments by William Borgeaud, 2020
 // https://solvable.group/posts/membership-proofs-from-polynomial-commitments/
 
-proto membership<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size, M: Size, L: (N-1)*M, S: Size>
-        (witness f_coeffs: [F; N], instance s: [F; M], extra srs_g1: [G1; S],
-        instance gen_g1: G1, instance gen_g2: G2, instance srs_g2_s: G2)
-        where srs_g1[0] == gen_g1; [pair(srs_g1[i], srs_g2_s) for i in 0..S-1] == [pair(srs_g1[i+1], gen_g2) for i in 0..S-1];
-        reduce(*, [f_coeffs[0] - r for r in s]) == 0 {
+proto membership<
+    G1: Group,
+    G2: Group,
+    GT: Pairing<G1, G2>,
+    F: Scalar<G1, G2>,
+    N: Size,
+    M: Size,
+    L: (N - 1) * M,
+    S: Size,
+>(
+    witness f_coeffs: [F; N],
+    instance s: [F; M],
+    extra srs_g1: [G1; S],
+    instance gen_g1: G1,
+    instance gen_g2: G2,
+    instance srs_g2_s: G2,
+) where
+    srs_g1[0] == gen_g1;
+    [pair(srs_g1[i], srs_g2_s) for i in 0..S - 1]
+        == [pair(srs_g1[i + 1], gen_g2) for i in 0..S - 1];
+    reduce(*, [f_coeffs[0] - r for r in s]) == 0
+{
+    let poly_f = poly(f_coeffs);
 
-        let poly_f = poly(f_coeffs);
-        
-        // Com_f
-        com_f <- dot(f_coeffs, srs_g1[0..N]);
+    // Com_f
+    com_f <- dot(f_coeffs, srs_g1[0..N]);
 
-        // g(X) = \prod_{r \in S} (f(X) - r)
-        let g_poly = reduce(*, [poly_f - r for r in s]);
-        
-        // h(X) = g(X) / X
-        let poly_x = poly([0, 1]);
-        let h_poly = g_poly / poly_x;
-        
-        let h_coeffs = coef(h_poly);
-        com_h <- dot(h_coeffs, srs_g1[0..L]);
+    // g(X) = \prod_{r \in S} (f(X) - r)
+    let g_poly = reduce(*, [poly_f - r for r in s]);
 
-        // Challenge alpha
-        alpha <- challenge<F*>;
+    // h(X) = g(X) / X
+    let poly_x = poly([0, 1]);
+    let h_poly = g_poly / poly_x;
 
-        // Prover sends f(alpha) and h(alpha)
-        let f_alpha = dot(f_coeffs, [alpha ^ i for i in 0..N]);
-        let h_alpha = dot(h_coeffs, [alpha ^ i for i in 0..L]);
+    let h_coeffs = coef(h_poly);
+    com_h <- dot(h_coeffs, srs_g1[0..L]);
 
-        f_eval <- f_alpha;
-        h_eval <- h_alpha;
+    // Challenge alpha
+    alpha <- challenge<F*>;
 
-        // KZG Proof for f
-        let q_f = (poly_f - f_alpha) / poly([-alpha, 1]);
-        proof_f <- dot(coef(q_f), srs_g1[0..N-1]);
+    // Prover sends f(alpha) and h(alpha)
+    let f_alpha = dot(f_coeffs, [alpha ^ i for i in 0..N]);
+    let h_alpha = dot(h_coeffs, [alpha ^ i for i in 0..L]);
 
-        // KZG Proof for h
-        let q_h = (h_poly - h_alpha) / poly([-alpha, 1]);
-        proof_h <- dot(coef(q_h), srs_g1[0..L-1]);
+    f_eval <- f_alpha;
+    h_eval <- h_alpha;
 
-        // Verifier checks KZG proof for f
-        let pairing_lhs_f = pair(proof_f, srs_g2_s - gen_g2 * alpha);
-        let pairing_rhs_f = pair(com_f - f_eval * gen_g1, gen_g2);
-        verify(pairing_lhs_f == pairing_rhs_f);
+    // KZG Proof for f
+    let q_f = (poly_f - f_alpha) / poly([-alpha, 1]);
+    proof_f <- dot(coef(q_f), srs_g1[0..N - 1]);
 
-        // Verifier checks KZG proof for h
-        let pairing_lhs_h = pair(proof_h, srs_g2_s - gen_g2 * alpha);
-        let pairing_rhs_h = pair(com_h - h_eval * gen_g1, gen_g2);
-        verify(pairing_lhs_h == pairing_rhs_h);
+    // KZG Proof for h
+    let q_h = (h_poly - h_alpha) / poly([-alpha, 1]);
+    proof_h <- dot(coef(q_h), srs_g1[0..L - 1]);
 
-        // Verifier checks the protocol equation
-        let prod_eval = reduce(*, [f_eval - r for r in s]);
-        verify(prod_eval == h_eval * alpha)
+    // Verifier checks KZG proof for f
+    let pairing_lhs_f = pair(proof_f, srs_g2_s - gen_g2 * alpha);
+    let pairing_rhs_f = pair(com_f - f_eval * gen_g1, gen_g2);
+    verify(pairing_lhs_f == pairing_rhs_f);
+
+    // Verifier checks KZG proof for h
+    let pairing_lhs_h = pair(proof_h, srs_g2_s - gen_g2 * alpha);
+    let pairing_rhs_h = pair(com_h - h_eval * gen_g1, gen_g2);
+    verify(pairing_lhs_h == pairing_rhs_h);
+
+    // Verifier checks the protocol equation
+    let prod_eval = reduce(*, [f_eval - r for r in s]);
+    verify(prod_eval == h_eval * alpha)
 }

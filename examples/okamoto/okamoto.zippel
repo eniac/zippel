@@ -3,13 +3,13 @@ proto pedersen_schnorr<G: Group, F: Scalar<G>>(
     witness r: F,
     instance g: G,
     instance h: G,
-    instance comm: G
-) where comm == g*x + h*r {
+    instance comm: G,
+) where comm == g * x + h * r {
     let rx = random<F>;
     let rr = random<F>;
-    t <- g*rx + h*rr;
+    t <- g * rx + h * rr;
     c <- challenge<F*>;
-    sx <- rx + x*c;
-    sr <- rr + r*c;
-    verify(g*sx + h*sr == t + comm*c)
+    sx <- rx + x * c;
+    sr <- rr + r * c;
+    verify(g * sx + h * sr == t + comm * c)
 }

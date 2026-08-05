@@ -5,58 +5,60 @@
 
 proto proof_of_product<G: Group, F: Scalar<G>>(
     // Witness known only to the prover:
-    witness x: F,            // Value committed in big_x
-    witness y: F,            // Value committed in big_y
-    witness r_X: F,          // Randomness for big_x
-    witness r_Y: F,          // Randomness for big_y
-    witness r_Z: F,          // Randomness for big_z (such that big_z commits x*y)
+    witness x: F, // Value committed in big_x
+    witness y: F, // Value committed in big_y
+    witness r_X: F, // Randomness for big_x
+    witness r_Y: F, // Randomness for big_y
+    witness r_Z: F, // Randomness for big_z (such that big_z commits x*y)
 
     // Instance inputs known to prover and verifier:
-    instance g: G,           // Base G1 for Pedersen commitments
-    instance h: G,           // Base G2 for Pedersen commitments
-    instance big_x: G,           // Commitment big_x = g*x + h*r_X
-    instance big_y: G,           // Commitment big_y = g*y + h*r_Y
-    instance big_z: G            // Commitment big_z = g*(x*y) + h*r_Z
-)
-// The 'where' clause defines the exact relations the prover must satisfy.
-where big_x == g*x + h*r_X; big_y == g*y + h*r_Y; big_z == g*(x*y) + h*r_Z {
+    instance g: G, // Base G1 for Pedersen commitments
+    instance h: G, // Base G2 for Pedersen commitments
+    instance big_x: G, // Commitment big_x = g*x + h*r_X
+    instance big_y: G, // Commitment big_y = g*y + h*r_Y
+    instance big_z: G, // Commitment big_z = g*(x*y) + h*r_Z
+)// The 'where' clause defines the exact relations the prover must satisfy.
+ where
+    big_x == g * x + h * r_X;
+    big_y == g * y + h * r_Y;
+    big_z == g * (x * y) + h * r_Z
+{
+    // --- Prover Phase ---
 
-      // --- Prover Phase ---
+    // 1. Pick randomness (b1..b5) and compute commitments (alpha, beta, delta).
+    //    Corresponds to Prover Step 1.
+    let b1 = random<F>;
+    let b2 = random<F>;
+    let b3 = random<F>;
+    let b4 = random<F>;
+    let b5 = random<F>;
 
-      // 1. Pick randomness (b1..b5) and compute commitments (alpha, beta, delta).
-      //    Corresponds to Prover Step 1.
-      let b1 = random<F>;
-      let b2 = random<F>;
-      let b3 = random<F>;
-      let b4 = random<F>;
-      let b5 = random<F>;
+    // Add commitments to the transcript
+    alpha <- g * b1 + h * b2;
+    beta <- g * b3 + h * b4;
+    delta <- big_x * b3 + h * b5;
 
-      // Add commitments to the transcript
-      alpha <- g*b1 + h*b2;
-      beta <-  g*b3 + h*b4;
-      delta <- big_x*b3 + h*b5;
+    // 2. Derive the Fiat-Shamir challenge 'c'.
+    //    Corresponds to Verifier Step 2, made non-interactive.
+    c <- challenge<F>;
 
-      // 2. Derive the Fiat-Shamir challenge 'c'.
-      //    Corresponds to Verifier Step 2, made non-interactive.
-      c <- challenge<F>;
+    // 3. Compute the responses (z1..z5).
+    //    Corresponds to Prover Step 3.
 
-      // 3. Compute the responses (z1..z5).
-      //    Corresponds to Prover Step 3.
+    // Add responses to the transcript
+    z1 <- b1 + c * x;
+    z2 <- b2 + c * r_X;
+    z3 <- b3 + c * y;
+    z4 <- b4 + c * r_Y;
+    z5 <- b5 + c * (r_Z - r_X * y);
 
-      // Add responses to the transcript
-      z1 <- b1 + c*x;
-      z2 <- b2 + c*r_X;
-      z3 <- b3 + c*y;
-      z4 <- b4 + c*r_Y;
-      z5 <- b5 + c * (r_Z - r_X * y);
+    // --- Verification Logic (encoded using 'verify') ---
+    // Combines the three checks from Verifier Step 4.
 
-      // --- Verification Logic (encoded using 'verify') ---
-      // Combines the three checks from Verifier Step 4.
-
-      // Check 1: alpha + big_x*c == g*z1 + h*z2
-      // Check 2: beta + big_y*c == g*z3 + h*z4
-      // Check 3: delta + big_z*c == big_x*z3 + h*z5
-      verify(alpha + big_x*c == g*z1 + h*z2);
-      verify(beta + big_y*c == g*z3 + h*z4);
-      verify(delta + big_z*c == big_x*z3 + h*z5)
+    // Check 1: alpha + big_x*c == g*z1 + h*z2
+    // Check 2: beta + big_y*c == g*z3 + h*z4
+    // Check 3: delta + big_z*c == big_x*z3 + h*z5
+    verify(alpha + big_x * c == g * z1 + h * z2);
+    verify(beta + big_y * c == g * z3 + h * z4);
+    verify(delta + big_z * c == big_x * z3 + h * z5)
 }

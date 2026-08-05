@@ -7,64 +7,67 @@ proto cds<G: Group, F: Scalar<G>, N: 2, K: 1>(
     instance eval_points: [F; N],
 
     // Witness variables known only to the prover (real instances only)
-    witness w: [F; N],          
-    witness r: [F; N],          
-    
+    witness w: [F; N],
+    witness r: [F; N],
+
     // Witness indicator: 1 if real, 0 if simulated
-    witness b: [F; N],          
-    
+    witness b: [F; N],
+
     // Witness inputs for the simulated instances
     witness c_sim: [F; N],
     witness m2_sim: [F; N],
-    
+
     // The subset of K indices (1-based) where the witness is unknown
     witness u_points: [F; K],
-    witness u_evals: [F; K]
-) where [keys[i] for i in 0..N] == [g * w[i] for i in 0..N];
+    witness u_evals: [F; K],
+) where
+    [keys[i] for i in 0..N] == [g * w[i] for i in 0..N];
     [b[i] * (1 - b[i]) for i in 0..N] == [0 for i in 0..N];
     [(1 - b[i]) * (eval_points[i] - u_points[0]) for i in 0..N] == [0 for i in 0..N];
-    [(1 - b[i]) * (c_sim[i] - u_evals[0]) for i in 0..N] == [0 for i in 0..N] {
-
+    [(1 - b[i]) * (c_sim[i] - u_evals[0]) for i in 0..N] == [0 for i in 0..N]
+{
     // Step 1: Initial Commitments
     // For i in A: m1 = g * r[i]
     // For i in U: m1 = g * m2_sim[i] - pk[i] * c_sim[i]
-    let m1 = [ b[i] * (g * r[i]) + (1 - b[i]) * (g * m2_sim[i] + keys[i] * (-c_sim[i])) for i in 0..N ];
+    let m1 = [
+        b[i] * (g * r[i]) + (1 - b[i]) * (g * m2_sim[i] + keys[i] * (-c_sim[i]))
+        for i in 0..N
+    ];
     m1_transcript <- m1;
-    
+
     // Step 2: Verifier Challenge
     s <- challenge<F>;
     let zero_f = 0;
-    
+
     // Step 3: Prover Share Completion
     // Interpolate polynomial p using (0, s) and the K points given by u_points
     let pts = [zero_f] ++ u_points;
     let evals = [s] ++ u_evals;
     let p = interpolate(pts, evals);
-    
+
     // Evaluate p to find the true challenges for all instances (indices 1..N)
     let c_prover = [p(x) for x in eval_points];
     c_transcript <- c_prover;
-    
+
     // Step 4: Prover Responses
     // For i in A: m2 = r[i] + w[i] * c_prover[i]
     // For i in U: m2 = m2_sim[i]
-    let m2 = [ b[i] * (r[i] + w[i] * c_prover[i]) + (1 - b[i]) * m2_sim[i] for i in 0..N ];
+    let m2 = [b[i] * (r[i] + w[i] * c_prover[i]) + (1 - b[i]) * m2_sim[i] for i in 0..N];
     m2_transcript <- m2;
-    
+
     // Step 5: Verification
     // 5.a: Verify underlying Schnorr proofs: g * m2 == m1 + pk * c
     // Vector equality: [g * m2[i] for i in 0..N] == [m1[i] + pk[i] * c[i] for i in 0..N]
-    verify(
-        [g * m2_transcript[i] for i in 0..N] == [m1_transcript[i] + keys[i] * c_transcript[i] for i in 0..N]
-    );
+    verify([g * m2_transcript[i] for i in 0..N]
+        == [m1_transcript[i] + keys[i] * c_transcript[i] for i in 0..N]);
 
     // 5.b: Verify c_transcript is a valid degree K threshold sharing of s
     let verifier_pts = [0] ++ [eval_points[i] for i in 0..K];
     let verifier_evals = [s] ++ [c_transcript[i] for i in 0..K];
     let p_verif = interpolate(verifier_pts, verifier_evals);
 
-    let verifier_check_pts = [eval_points[i + K] for i in 0..N-K];
+    let verifier_check_pts = [eval_points[i + K] for i in 0..N - K];
     let verifier_check_evals = [p_verif(x) for x in verifier_check_pts];
 
-    verify([ c_transcript[i + K] for i in 0..N-K ] == verifier_check_evals)
+    verify([c_transcript[i + K] for i in 0..N - K] == verifier_check_evals)
 }

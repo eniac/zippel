@@ -12,38 +12,44 @@
 // The `where` clause specifies the trusted setup directly: sample a random
 // trapdoor tau, then derive the SRS as powers of tau times the generators.
 
-proto zk_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>
-        (witness p_val: Uni<F, N-1>, instance z: F, instance y: F, extra ss: [G1; N+1],
-        instance g: G1, instance h: G2, instance h_val: G2)
-        where let tau = random<F>;
-              ss == [tau^i * g for i in 0..N+1];
-              h_val == tau * h;
-              p_val(z) == y {
+proto zk_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>(
+    witness p_val: Uni<F, N - 1>,
+    instance z: F,
+    instance y: F,
+    extra ss: [G1; N + 1],
+    instance g: G1,
+    instance h: G2,
+    instance h_val: G2,
+) where
+    let tau = random<F>;
+    ss == [tau ^ i * g for i in 0..N + 1];
+    h_val == tau * h;
+    p_val(z) == y
+{
+    // Sample blinding factors
+    let b0 = random<F>;
+    let b1 = random<F>;
 
-        // Sample blinding factors
-        let b0 = random<F>;
-        let b1 = random<F>;
+    // Blinding polynomial: (b0 + b1*x)*(x - z) = -b0*z + (b0 - b1*z)*x + b1*x^2
+    let blind_coefs = [(-b0) * z, b0 - b1 * z, b1];
+    let blind_val = poly(blind_coefs);
 
-        // Blinding polynomial: (b0 + b1*x)*(x - z) = -b0*z + (b0 - b1*z)*x + b1*x^2
-        let blind_coefs = [-b0 * z, b0 - b1 * z, b1];
-        let blind_val = poly(blind_coefs);
+    // Blinded polynomial: p_tilde(x) = p(x) + blind(x)
+    // Note: p_tilde(z) = p(z) + 0 = y (blinding vanishes at z)
+    let p_tilde = p_val + blind_val;
+    let p_tilde_coefs = coef(p_tilde);
 
-        // Blinded polynomial: p_tilde(x) = p(x) + blind(x)
-        // Note: p_tilde(z) = p(z) + 0 = y (blinding vanishes at z)
-        let p_tilde = p_val + blind_val;
-        let p_tilde_coefs = coef(p_tilde);
+    // Commit to the blinded polynomial (needs N+1 SRS elements)
+    c <- dot(p_tilde_coefs, ss);
 
-        // Commit to the blinded polynomial (needs N+1 SRS elements)
-        c <- dot(p_tilde_coefs, ss);
+    // Quotient: q_tilde(x) = (p_tilde(x) - y) / (x - z) = q(x) + b0 + b1*x
+    let q_tilde = (p_tilde - y) / poly([-z, 1]);
+    let q_coefs = coef(q_tilde);
+    let ss_q = ss[0..N];
+    pi <- dot(q_coefs, ss_q);
 
-        // Quotient: q_tilde(x) = (p_tilde(x) - y) / (x - z) = q(x) + b0 + b1*x
-        let q_tilde = (p_tilde - y) / poly([-z, 1]);
-        let q_coefs = coef(q_tilde);
-        let ss_q = ss[0..N];
-        pi <- dot(q_coefs, ss_q);
-
-        // Verification: same pairing check as standard KZG
-        let lhs = pair(pi, (h_val) - (h * z));
-        let rhs = pair(c - y * g, h);
-        verify(lhs == rhs)
+    // Verification: same pairing check as standard KZG
+    let lhs = pair(pi, h_val - h * z);
+    let rhs = pair(c - y * g, h);
+    verify(lhs == rhs)
 }

@@ -8,48 +8,54 @@
 // (indices 0..N-1) plus xi*gen_g1 at index N. srs_g2 holds tau*gen_g2
 // and xi*gen_g2.
 
-proto zeromorph_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>
-        (witness p_poly: Uni<F, N-1>, instance u: F, instance v: F, extra srs_g1: [G1; N+1],
-        instance gen_g1: G1, instance gen_g2: G2, instance srs_g2: [G2; 2])
-        where let tau = random<F>;
-              let xi = random<F>;
-              srs_g1 == [tau^i * gen_g1 for i in 0..N] ++ [xi * gen_g1];
-              srs_g2 == [tau * gen_g2, xi * gen_g2];
-              p_poly(u) == v {
+proto zeromorph_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>(
+    witness p_poly: Uni<F, N - 1>,
+    instance u: F,
+    instance v: F,
+    extra srs_g1: [G1; N + 1],
+    instance gen_g1: G1,
+    instance gen_g2: G2,
+    instance srs_g2: [G2; 2],
+) where
+    let tau = random<F>;
+    let xi = random<F>;
+    srs_g1 == [tau ^ i * gen_g1 for i in 0..N] ++ [xi * gen_g1];
+    srs_g2 == [tau * gen_g2, xi * gen_g2];
+    p_poly(u) == v
+{
+    // Sample random blinding factor r
+    let r = random<F>;
 
-        // Sample random blinding factor r
-        let r = random<F>;
+    // C = [p(tau)]_1 + r[xi]_1
+    // srs_g1 contains [1]_1, [tau]_1, ..., [tau^{N-1}]_1, [xi]_1
+    let blinded_coeffs = coef(p_poly) ++ [r];
+    c <- dot(blinded_coeffs, srs_g1);
 
-        // C = [p(tau)]_1 + r[xi]_1
-        // srs_g1 contains [1]_1, [tau]_1, ..., [tau^{N-1}]_1, [xi]_1
-        let blinded_coeffs = coef(p_poly) ++ [r];
-        c <- dot(blinded_coeffs, srs_g1);
+    // q(X) = (p(X) - v) / (X - u)
+    let q_poly = (p_poly - v) / poly([-u, 1]);
 
-        // q(X) = (p(X) - v) / (X - u)
-        let q_poly = (p_poly - v) / poly([-u, 1]);
+    // Sample random blinding factor s
+    let s = random<F>;
 
-        // Sample random blinding factor s
-        let s = random<F>;
+    // pi = [q(tau)]_1 + s[xi]_1
+    // q has N-1 coefficients.
+    let q_coeffs = coef(q_poly);
+    let pi_coeffs = q_coeffs ++ [s];
 
-        // pi = [q(tau)]_1 + s[xi]_1
-        // q has N-1 coefficients.
-        let q_coeffs = coef(q_poly);
-        let pi_coeffs = q_coeffs ++ [s];
+    let srs_for_pi = srs_g1[0..N - 1] ++ [srs_g1[N]];
+    pi <- dot(pi_coeffs, srs_for_pi);
 
-        let srs_for_pi = srs_g1[0..N-1] ++ [srs_g1[N]];
-        pi <- dot(pi_coeffs, srs_for_pi);
+    // delta = r[1]_1 - s[tau]_1 + (s*u)[1]_1
+    let delta_g1 = r * srs_g1[0] - s * srs_g1[1] + s * u * srs_g1[0];
+    delta <- delta_g1;
 
-        // delta = r[1]_1 - s[tau]_1 + (s*u)[1]_1
-        let delta_g1 = r * srs_g1[0] - s * srs_g1[1] + (s * u) * srs_g1[0];
-        delta <- delta_g1;
+    // Verify equation:
+    // e(C - v[1]_1, [1]_2) == e(pi, [tau]_2 - u[1]_2) + e(delta, [xi]_2)
+    // srs_g2[0] = [tau]_2, srs_g2[1] = [xi]_2
 
-        // Verify equation:
-        // e(C - v[1]_1, [1]_2) == e(pi, [tau]_2 - u[1]_2) + e(delta, [xi]_2)
-        // srs_g2[0] = [tau]_2, srs_g2[1] = [xi]_2
+    let lhs = pair(c - v * gen_g1, gen_g2);
+    let rhs_part1 = pair(pi, srs_g2[0] - u * gen_g2);
+    let rhs_part2 = pair(delta, srs_g2[1]);
 
-        let lhs = pair(c - v * gen_g1, gen_g2);
-        let rhs_part1 = pair(pi, srs_g2[0] - u * gen_g2);
-        let rhs_part2 = pair(delta, srs_g2[1]);
-
-        verify(lhs == rhs_part1 + rhs_part2)
+    verify(lhs == rhs_part1 + rhs_part2)
 }

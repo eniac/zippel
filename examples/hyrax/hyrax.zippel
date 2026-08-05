@@ -1,22 +1,22 @@
 fn eq_weights<G: Group, F: Scalar<G>>(instance x: [F; 1]) -> [F; 2] {
-    [ (1 - x[0]), x[0] ]
+    [1 - x[0], x[0]]
 }
 
-fn eq_weights<G: Group, F: Scalar<G>, K: 2..21>(instance x: [F; K]) -> [F; 2^K] {
-    let x_lo = x[0..(K-1)];
-    let a    = x[K-1];
+fn eq_weights<G: Group, F: Scalar<G>, K: 2..21>(instance x: [F; K]) -> [F; 2 ^ K] {
+    let x_lo = x[0..K - 1];
+    let a = x[K - 1];
     let prev = eq_weights(x_lo);
     (prev * (1 - a)) ++ (prev * a)
 }
 
-proto hyrax<G: Group, F: Scalar<G>, L: Size, M: Size, NR: 2^L, NC: 2^M, NT: 2^(L+M)>(
-    witness p:     [F; NT],
-    instance z_row:  [F; L],
-    instance z_col:  [F; M],
-    instance y:      F,
-    instance g_vec:  [G; NC],
+proto hyrax<G: Group, F: Scalar<G>, L: Size, M: Size, NR: 2 ^ L, NC: 2 ^ M, NT: 2 ^ (L + M)>(
+    witness p: [F; NT],
+    instance z_row: [F; L],
+    instance z_col: [F; M],
+    instance y: F,
+    instance g_vec: [G; NC],
     instance g_base: G,
-    instance h_base: G
+    instance h_base: G,
 ) where
     // Hyrax proves y == p̃(z_row, z_col), where p̃ is the multilinear
     // extension of `p` indexed as a NR×NC matrix (row-major: p[i*NC + j]).
@@ -30,42 +30,36 @@ proto hyrax<G: Group, F: Scalar<G>, L: Size, M: Size, NR: 2^L, NC: 2^M, NT: 2^(L
     // Trusted setup: the Pedersen bases g_vec[i] and h_base are derived
     // from group generator g_base by hidden scalars.
     let g_traps = [random<F> for i in 0..NC];
-    let h_trap  = random<F>;
+    let h_trap = random<F>;
     [g_vec[i] for i in 0..NC] == [g_base * g_traps[i] for i in 0..NC];
     h_base == g_base * h_trap
 {
     let r_rows = [random<F> for i in 0..NR];
-    c_rows <- [
-        h_base * r_rows[i] + dot(g_vec, [p[i*NC + j] for j in 0..NC])
-        for i in 0..NR
-    ];
+    c_rows <- [h_base * r_rows[i] + dot(g_vec, [p[i * NC + j] for j in 0..NC]) for i in 0..NR];
 
     let l_vec = eq_weights(z_row);
     let r_vec = eq_weights(z_col);
 
-    let big_t   = dot(l_vec, c_rows);
+    let big_t = dot(l_vec, c_rows);
     let r_big_t = dot(l_vec, r_rows);
 
-    let u = [
-        dot(l_vec, [p[i*NC + j] for i in 0..NR])
-        for j in 0..NC
-    ];
+    let u = [dot(l_vec, [p[i * NC + j] for i in 0..NR]) for j in 0..NC];
 
-    let r_tau   = random<F>;
-    let d_vec   = [random<F> for i in 0..NC];
+    let r_tau = random<F>;
+    let d_vec = [random<F> for i in 0..NC];
     let r_delta = random<F>;
-    let r_beta  = random<F>;
+    let r_beta = random<F>;
 
-    tau   <- g_base * y + h_base * r_tau;
+    tau <- g_base * y + h_base * r_tau;
     delta <- h_base * r_delta + dot(g_vec, d_vec);
-    beta  <- g_base * dot(d_vec, r_vec) + h_base * r_beta;
+    beta <- g_base * dot(d_vec, r_vec) + h_base * r_beta;
 
     c <- challenge<F>;
 
-    z_vec   <- [c * u[i] + d_vec[i] for i in 0..NC];
+    z_vec <- [c * u[i] + d_vec[i] for i in 0..NC];
     z_delta <- c * r_big_t + r_delta;
-    z_beta  <- c * r_tau + r_beta;
+    z_beta <- c * r_tau + r_beta;
 
     verify(big_t * c + delta == h_base * z_delta + dot(g_vec, z_vec));
-    verify(tau * c + beta  == g_base * dot(z_vec, r_vec) + h_base * z_beta)
+    verify(tau * c + beta == g_base * dot(z_vec, r_vec) + h_base * z_beta)
 }

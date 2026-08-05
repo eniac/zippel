@@ -3,29 +3,32 @@
 // Prover knows secrets x, r1, r2. Verifier knows commitments C1, C2.
 // Prover wants to prove that the value committed in C1 equals the value in C2.
 proto prove_commitment_equality<G: Group, F: Scalar<G>>(
-    witness x: F,          // The secret value, same in both commitments
-    witness r1: F,         // Randomness for first commitment
-    witness r2: F,         // Randomness for second commitment
-    instance g: G,           // Base for value
-    instance h: G,           // Base for randomness
-    instance c1: G,          // Commitment C1 = g*x + h*r1
-    instance c2: G           // Commitment C2 = g*x + h*r2
-) where c1 == g*x + h*r1; c2 == g*x + h*r2 {
-      // Prove that c1 - c2 commits to 0, using randomness r1 - r2
-      // Let c_diff = c1 - c2 = g*x + h*r1 - (g*x + h*r2) = h*(r1 - r2)
-      // We prove knowledge of (r1-r2) such that c_diff = h*(r1-r2)
-      let r_diff = r1 - r2; // The secret randomness for the difference commitment c_diff
+    witness x: F, // The secret value, same in both commitments
+    witness r1: F, // Randomness for first commitment
+    witness r2: F, // Randomness for second commitment
+    instance g: G, // Base for value
+    instance h: G, // Base for randomness
+    instance c1: G, // Commitment C1 = g*x + h*r1
+    instance c2: G, // Commitment C2 = g*x + h*r2
+) where
+    c1 == g * x + h * r1;
+    c2 == g * x + h * r2
+{
+    // Prove that c1 - c2 commits to 0, using randomness r1 - r2
+    // Let c_diff = c1 - c2 = g*x + h*r1 - (g*x + h*r2) = h*(r1 - r2)
+    // We prove knowledge of (r1-r2) such that c_diff = h*(r1-r2)
+    let r_diff = r1 - r2; // The secret randomness for the difference commitment c_diff
 
-      let k = random<F>;    // Fresh randomness for the ZK proof itself
-      c_diff <- c1 - c2;    // Make the difference instance (usually computed by verifier)
-      t <- h*k;             // Commitment to the randomness k
+    let k = random<F>; // Fresh randomness for the ZK proof itself
+    c_diff <- c1 - c2; // Make the difference instance (usually computed by verifier)
+    t <- h * k; // Commitment to the randomness k
 
-      c <- challenge<F>;
-      z <- k + r_diff * c;  // Response revealing relation between k, r_diff, c
+    c <- challenge<F>;
+    z <- k + r_diff * c; // Response revealing relation between k, r_diff, c
 
-      // Verify knowledge of r_diff such that c_diff = h*r_diff
-      // Check: h*z == t + c_diff*c
-      // h*(k + r_diff*c) == h*k + (h*r_diff)*c
-      // h*k + h*r_diff*c == h*k + c_diff*c  (This holds if c_diff = h*r_diff)
-      verify(h*z == t + c_diff*c)
+    // Verify knowledge of r_diff such that c_diff = h*r_diff
+    // Check: h*z == t + c_diff*c
+    // h*(k + r_diff*c) == h*k + (h*r_diff)*c
+    // h*k + h*r_diff*c == h*k + c_diff*c  (This holds if c_diff = h*r_diff)
+    verify(h * z == t + c_diff * c)
 }

@@ -11,11 +11,12 @@
 // Build the Lagrange (eq) basis at x in F^K: returns the 2^K evaluations
 // of eq(x, ·) on the hypercube, LSB-first.
 fn eq_weights<F: Field>(instance x: [F; 1]) -> [F; 2] {
-    [(1 - x[0]), x[0]]
+    [1 - x[0], x[0]]
 }
-fn eq_weights<F: Field, K: 2..16>(instance x: [F; K]) -> [F; 2^K] {
-    let x_lo = x[0..(K-1)];
-    let a    = x[K-1];
+
+fn eq_weights<F: Field, K: 2..16>(instance x: [F; K]) -> [F; 2 ^ K] {
+    let x_lo = x[0..K - 1];
+    let a = x[K - 1];
     let prev = eq_weights(x_lo);
     (prev * (1 - a)) ++ (prev * a)
 }
@@ -23,17 +24,17 @@ fn eq_weights<F: Field, K: 2..16>(instance x: [F; K]) -> [F; 2^K] {
 // Recursive sumcheck rounds for the ZeroCheck on h = f * eq_tau.
 // Base case (V = 1, i.e. last variable): draw the final challenge and
 // invoke the verifier closing check.
-fn zc_round<F: Field, S: Size, N: 2^S>(
-    instance curr_poly:        Poly<F, 2, 3>,
-    instance points:           [F; 4],
-    instance prev_challenges:  [F; S - 1],
-    instance prev_eval:        F,
-    instance round_challenge:  F,
-    instance curr_round:       Fin<S>,
-    instance a_evs:            [F; N],
-    instance b_evs:            [F; N],
-    instance c_evs:            [F; N],
-    instance eq_tau_evs:       [F; N]
+fn zc_round<F: Field, S: Size, N: 2 ^ S>(
+    instance curr_poly: Poly<F, 2, 3>,
+    instance points: [F; 4],
+    instance prev_challenges: [F; S - 1],
+    instance prev_eval: F,
+    instance round_challenge: F,
+    instance curr_round: Fin<0..S>,
+    instance a_evs: [F; N],
+    instance b_evs: [F; N],
+    instance c_evs: [F; N],
+    instance eq_tau_evs: [F; N],
 ) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let evs_local = [residual_poly(t) for t in points];
@@ -49,36 +50,37 @@ fn zc_round<F: Field, S: Size, N: 2^S>(
 
     // Verifier closing check: evaluate each MLE at the sumcheck point via
     // the LSB-first eq basis (parametric over S).
-    let lambdas    = eq_weights(full_challenges);
-    let a_at_r     = dot(lambdas, a_evs);
-    let b_at_r     = dot(lambdas, b_evs);
-    let c_at_r     = dot(lambdas, c_evs);
-    let eq_at_r    = dot(lambdas, eq_tau_evs);
+    let lambdas = eq_weights(full_challenges);
+    let a_at_r = dot(lambdas, a_evs);
+    let b_at_r = dot(lambdas, b_evs);
+    let c_at_r = dot(lambdas, c_evs);
+    let eq_at_r = dot(lambdas, eq_tau_evs);
 
     verify(final_eval == (a_at_r * b_at_r - c_at_r) * eq_at_r)
 }
-fn zc_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
-    instance curr_poly:        Poly<F, V, 3>,
-    instance points:           [F; 4],
-    instance prev_challenges:  [F; S - V + 1],
-    instance prev_eval:        F,
-    instance round_challenge:  F,
-    instance curr_round:       Fin<S>,
-    instance a_evs:            [F; N],
-    instance b_evs:            [F; N],
-    instance c_evs:            [F; N],
-    instance eq_tau_evs:       [F; N]
+
+fn zc_round<F: Field, S: Size, V: 3..S + 1, N: 2 ^ S>(
+    instance curr_poly: Poly<F, V, 3>,
+    instance points: [F; 4],
+    instance prev_challenges: [F; S - V + 1],
+    instance prev_eval: F,
+    instance round_challenge: F,
+    instance curr_round: Fin<0..S>,
+    instance a_evs: [F; N],
+    instance b_evs: [F; N],
+    instance c_evs: [F; N],
+    instance eq_tau_evs: [F; N],
 ) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let zero = points[0] - points[0];
     let one = zero + 1;
-    let round_poly = reduce(+, [
-        eval<0>(residual_poly, tail)
-        for tail in [
-            [(((i / (2^j)) % 2) * one) for j in 0..(V - 2)]
-            for i in 0..(2^(V - 2))
-        ]
-    ]);
+    let round_poly = reduce(
+        +,
+        [
+            eval<0>(residual_poly, tail)
+            for tail in [[i / 2 ^ j % 2 * one for j in 0..V - 2] for i in 0..2 ^ (V - 2)]
+        ],
+    );
     let evs_local = [round_poly(t) for t in points];
     evs <- evs_local;
     verify(prev_eval == evs[0] + evs[1]);
@@ -89,8 +91,18 @@ fn zc_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
 
     let new_challenges = prev_challenges ++ [r_next];
 
-    zc_round(residual_poly, points, new_challenges, next_prev, r_next, curr_round + 1,
-             a_evs, b_evs, c_evs, eq_tau_evs)
+    zc_round(
+        residual_poly,
+        points,
+        new_challenges,
+        next_prev,
+        r_next,
+        curr_round + 1,
+        a_evs,
+        b_evs,
+        c_evs,
+        eq_tau_evs,
+    )
 }
 
 // Draw S taus via a recursive helper. Each call draws one challenge and
@@ -100,56 +112,54 @@ fn draw_taus<F: Field>(instance remaining: [F; 1]) -> [F; 1] {
     t <- challenge<F>;
     [t]
 }
+
 fn draw_taus<F: Field, K: 2..16>(instance remaining: [F; K]) -> [F; K] {
-    let prev = draw_taus(remaining[0..(K-1)]);
+    let prev = draw_taus(remaining[0..K - 1]);
     t <- challenge<F>;
     prev ++ [t]
 }
 
-proto hyperplonk_zerocheck<F: Field, S: Size, N: 2^S>(
+proto hyperplonk_zerocheck<F: Field, S: Size, N: 2 ^ S>(
     instance a_evs: [F; N],
     instance b_evs: [F; N],
-    instance c_evs: [F; N]
-) where
-    a_evs * b_evs == c_evs
-{
-    let one  = a_evs[0] - a_evs[0] + 1;
+    instance c_evs: [F; N],
+) where a_evs * b_evs == c_evs {
+    let one = a_evs[0] - a_evs[0] + 1;
     let zero = a_evs[0] - a_evs[0];
 
     // V draws S taus in F^S, then builds eq_tau on B_S parametrically.
     let placeholder = [zero for i in 0..S];
-    let tau         = draw_taus(placeholder);
-    let eq_tau_evs  = eq_weights(tau);
-    let eq_tau      = mle(eq_tau_evs);
+    let tau = draw_taus(placeholder);
+    let eq_tau_evs = eq_weights(tau);
+    let eq_tau = mle(eq_tau_evs);
 
     // h(x) = (a(x)·b(x) - c(x)) · eq(tau, x). Built additively to side-step
     // a direct Poly-Mle subtraction.
-    let a       = mle(a_evs);
-    let b       = mle(b_evs);
-    let c       = mle(c_evs);
+    let a = mle(a_evs);
+    let b = mle(b_evs);
+    let c = mle(c_evs);
     let neg_one = zero - one;
-    let ab      = a * b;
-    let neg_c   = c * neg_one;
-    let f_poly  = ab + neg_c;
-    let h_poly  = f_poly * eq_tau;
+    let ab = a * b;
+    let neg_c = c * neg_one;
+    let f_poly = ab + neg_c;
+    let h_poly = f_poly * eq_tau;
 
     // -------- Round 0 of sumcheck, then recurse into zc_round --------
     let points = [i * one for i in 0..4];
-    let round_poly0 = reduce(+, [
-        eval<0>(h_poly, tail)
-        for tail in [
-            [(((i / (2^j)) % 2) * one) for j in 0..(S - 1)]
-            for i in 0..(2^(S - 1))
-        ]
-    ]);
+    let round_poly0 = reduce(
+        +,
+        [
+            eval<0>(h_poly, tail)
+            for tail in [[i / 2 ^ j % 2 * one for j in 0..S - 1] for i in 0..2 ^ (S - 1)]
+        ],
+    );
     let evs0_local = [round_poly0(t) for t in points];
     evs0 <- evs0_local;
     verify(zero == evs0[0] + evs0[1]);
 
-    let g0     = interpolate(points, evs0);
+    let g0 = interpolate(points, evs0);
     r0 <- challenge<F>;
-    let prev     = g0(r0);
+    let prev = g0(r0);
 
-    zc_round(h_poly, points, [r0], prev, r0, 1,
-                    a_evs, b_evs, c_evs, eq_tau_evs)
+    zc_round(h_poly, points, [r0], prev, r0, 1, a_evs, b_evs, c_evs, eq_tau_evs)
 }

@@ -6,59 +6,61 @@
 
 proto prove_commitment_equality<G: Group, F: Scalar<G>>(
     // Witness known only to the prover:
-    witness m1: F,         // Value for first commitment
-    witness r1: F,         // Randomness for first commitment
-    witness m2: F,         // Value for second commitment (must equal m1)
-    witness r2: F,         // Randomness for second commitment
+    witness m1: F, // Value for first commitment
+    witness r1: F, // Randomness for first commitment
+    witness m2: F, // Value for second commitment (must equal m1)
+    witness r2: F, // Randomness for second commitment
 
     // Instance inputs known to prover and verifier:
-    instance g: G,           // Base for value in Pedersen commitments
-    instance h: G,           // Base for randomness in Pedersen commitments
-    instance c1: G,          // First commitment C1 = g*m1 + h*r1
-    instance c2: G           // Second commitment C2 = g*m2 + h*r2
-)
-// The 'where' clause defines the conditions the prover must satisfy:
+    instance g: G, // Base for value in Pedersen commitments
+    instance h: G, // Base for randomness in Pedersen commitments
+    instance c1: G, // First commitment C1 = g*m1 + h*r1
+    instance c2: G, // Second commitment C2 = g*m2 + h*r2
+)// The 'where' clause defines the conditions the prover must satisfy:
 // 1. c1 is a valid commitment to m1 with randomness r1.
 // 2. c2 is a valid commitment to m2 with randomness r2.
 // 3. The committed values m1 and m2 are equal.
-where c1 == g*m1 + h*r1; c2 == g*m2 + h*r2; m1 == m2 {
+ where
+    c1 == g * m1 + h * r1;
+    c2 == g * m2 + h * r2;
+    m1 == m2
+{
+    // --- Prover's Computation ---
 
-      // --- Prover's Computation ---
+    // 1. Compute the difference in randomness.
+    //    If m1 == m2, then r_diff = r1 - r2 is the discrete log of (c1 - c2) w.r.t base h.
+    let r_diff = r1 - r2;
 
-      // 1. Compute the difference in randomness.
-      //    If m1 == m2, then r_diff = r1 - r2 is the discrete log of (c1 - c2) w.r.t base h.
-      let r_diff = r1 - r2;
+    // 2. Compute the difference commitment (can also be computed by verifier).
+    let c_diff = c1 - c2; // c_diff = c1 + (-c2), assuming group subtraction exists
+    // If m1=m2, then c_diff = h * r_diff
 
-      // 2. Compute the difference commitment (can also be computed by verifier).
-      let c_diff = c1 - c2; // c_diff = c1 + (-c2), assuming group subtraction exists
-                            // If m1=m2, then c_diff = h * r_diff
+    // 3. Start Schnorr proof of knowledge for r_diff such that c_diff = h * r_diff.
+    //    a. Sample fresh randomness 'k' for the proof.
+    let k = random<F>;
 
-      // 3. Start Schnorr proof of knowledge for r_diff such that c_diff = h * r_diff.
-      //    a. Sample fresh randomness 'k' for the proof.
-      let k = random<F>;
+    //    b. Compute the Schnorr commitment 't'.
+    let schnorr_t = h * k;
 
-      //    b. Compute the Schnorr commitment 't'.
-      let schnorr_t = h * k;
+    //    c. Add 't' to the transcript. The challenge 'c' will depend on this.
+    t <- schnorr_t;
 
-      //    c. Add 't' to the transcript. The challenge 'c' will depend on this.
-      t <- schnorr_t;
+    // 4. Generate the Fiat-Shamir challenge 'c'.
+    //    The challenge function implicitly hashes the instance inputs and the transcript state (incl. 't').
+    c <- challenge<F>;
 
-      // 4. Generate the Fiat-Shamir challenge 'c'.
-      //    The challenge function implicitly hashes the instance inputs and the transcript state (incl. 't').
-      c <- challenge<F>;
+    // 5. Compute the Schnorr response 'z'.
+    let schnorr_z = k + r_diff * c;
 
-      // 5. Compute the Schnorr response 'z'.
-      let schnorr_z = k + r_diff * c;
+    //    d. Add 'z' to the transcript.
+    z <- schnorr_z;
 
-      //    d. Add 'z' to the transcript.
-      z <- schnorr_z;
-
-      // --- Verification Logic (encoded using 'verify') ---
-      // The verifier checks the Schnorr equation using instance inputs (c1, c2, h)
-      // and values from the transcript (t, c, z).
-      // Note: c_diff is re-computed here from instance c1, c2 for clarity,
-      // or could be passed/precomputed.
-      verify(h * z == t + (c1 - c2) * c)
-      // This expands to: h * (k + r_diff*c) == h*k + (h*r_diff)*c
-      // which holds if c1 - c2 == h*r_diff (i.e., if m1 == m2).
+    // --- Verification Logic (encoded using 'verify') ---
+    // The verifier checks the Schnorr equation using instance inputs (c1, c2, h)
+    // and values from the transcript (t, c, z).
+    // Note: c_diff is re-computed here from instance c1, c2 for clarity,
+    // or could be passed/precomputed.
+    verify(h * z == t + (c1 - c2) * c)
+    // This expands to: h * (k + r_diff*c) == h*k + (h*r_diff)*c
+    // which holds if c1 - c2 == h*r_diff (i.e., if m1 == m2).
 }

@@ -15,11 +15,12 @@
 
 // Build the Lagrange (eq) basis at x ∈ F^K: 2^K evaluations of eq(x, ·), LSB-first.
 fn eq_weights<F: Field>(instance x: [F; 1]) -> [F; 2] {
-    [(1 - x[0]), x[0]]
+    [1 - x[0], x[0]]
 }
-fn eq_weights<F: Field, K: 2..16>(instance x: [F; K]) -> [F; 2^K] {
-    let x_lo = x[0..(K-1)];
-    let a    = x[K-1];
+
+fn eq_weights<F: Field, K: 2..16>(instance x: [F; K]) -> [F; 2 ^ K] {
+    let x_lo = x[0..K - 1];
+    let a = x[K - 1];
     let prev = eq_weights(x_lo);
     (prev * (1 - a)) ++ (prev * a)
 }
@@ -29,25 +30,26 @@ fn draw_taus<F: Field>(instance placeholder: [F; 1]) -> [F; 1] {
     t <- challenge<F>;
     [t]
 }
+
 fn draw_taus<F: Field, K: 2..16>(instance placeholder: [F; K]) -> [F; K] {
-    let prev = draw_taus(placeholder[0..(K-1)]);
+    let prev = draw_taus(placeholder[0..K - 1]);
     t <- challenge<F>;
     prev ++ [t]
 }
 
 // Recursive sumcheck rounds for the MultiSet check.
-fn ms_round<F: Field, S: Size, N: 2^S>(
-    instance curr_poly:        Poly<F, 2, 3>,
-    instance points:           [F; 4],
-    instance prev_challenges:  [F; S - 1],
-    instance prev_eval:        F,
-    instance round_challenge:  F,
-    instance curr_round:       Fin<S>,
-    instance sent_v:           [F; 2^(S+1)],
-    instance f_shift_evs:      [F; N],
-    instance g_shift_evs:      [F; N],
-    instance eq_tau_evs:       [F; N],
-    instance alpha:            F
+fn ms_round<F: Field, S: Size, N: 2 ^ S>(
+    instance curr_poly: Poly<F, 2, 3>,
+    instance points: [F; 4],
+    instance prev_challenges: [F; S - 1],
+    instance prev_eval: F,
+    instance round_challenge: F,
+    instance curr_round: Fin<0..S>,
+    instance sent_v: [F; 2 ^ (S + 1)],
+    instance f_shift_evs: [F; N],
+    instance g_shift_evs: [F; N],
+    instance eq_tau_evs: [F; N],
+    instance alpha: F,
 ) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let evs_local = [residual_poly(t) for t in points];
@@ -60,12 +62,12 @@ fn ms_round<F: Field, S: Size, N: 2^S>(
     let final_eval = g(r_final);
 
     let full_challenges = prev_challenges ++ [r_final];
-    let lambdas         = eq_weights(full_challenges);
+    let lambdas = eq_weights(full_challenges);
 
-    let v_lead_0_evs = [sent_v[2 * k]     for k in 0..N];
+    let v_lead_0_evs = [sent_v[2 * k] for k in 0..N];
     let v_lead_1_evs = [sent_v[2 * k + 1] for k in 0..N];
     let v_tail_0_evs = sent_v[0..N];
-    let v_tail_1_evs = sent_v[N..(2^(S+1))];
+    let v_tail_1_evs = sent_v[N..2 ^ (S + 1)];
 
     let v00_at_r = dot(lambdas, v_lead_0_evs);
     let v10_at_r = dot(lambdas, v_lead_1_evs);
@@ -81,29 +83,30 @@ fn ms_round<F: Field, S: Size, N: 2^S>(
 
     verify(final_eval == (f_hat_at_r + alpha * g_hat_at_r) * eq_at_r)
 }
-fn ms_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
-    instance curr_poly:        Poly<F, V, 3>,
-    instance points:           [F; 4],
-    instance prev_challenges:  [F; S - V + 1],
-    instance prev_eval:        F,
-    instance round_challenge:  F,
-    instance curr_round:       Fin<S>,
-    instance sent_v:           [F; 2^(S+1)],
-    instance f_shift_evs:      [F; N],
-    instance g_shift_evs:      [F; N],
-    instance eq_tau_evs:       [F; N],
-    instance alpha:            F
+
+fn ms_round<F: Field, S: Size, V: 3..S + 1, N: 2 ^ S>(
+    instance curr_poly: Poly<F, V, 3>,
+    instance points: [F; 4],
+    instance prev_challenges: [F; S - V + 1],
+    instance prev_eval: F,
+    instance round_challenge: F,
+    instance curr_round: Fin<0..S>,
+    instance sent_v: [F; 2 ^ (S + 1)],
+    instance f_shift_evs: [F; N],
+    instance g_shift_evs: [F; N],
+    instance eq_tau_evs: [F; N],
+    instance alpha: F,
 ) -> Unit {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let zero = points[0] - points[0];
     let one = zero + 1;
-    let round_poly = reduce(+, [
-        eval<0>(residual_poly, tail)
-        for tail in [
-            [(((i / (2^j)) % 2) * one) for j in 0..(V - 2)]
-            for i in 0..(2^(V - 2))
-        ]
-    ]);
+    let round_poly = reduce(
+        +,
+        [
+            eval<0>(residual_poly, tail)
+            for tail in [[i / 2 ^ j % 2 * one for j in 0..V - 2] for i in 0..2 ^ (V - 2)]
+        ],
+    );
     let evs_local = [round_poly(t) for t in points];
     evs <- evs_local;
     verify(prev_eval == evs[0] + evs[1]);
@@ -114,23 +117,34 @@ fn ms_round<F: Field, S: Size, V: 3..S + 1, N: 2^S>(
 
     let new_challenges = prev_challenges ++ [r_next];
 
-    ms_round(residual_poly, points, new_challenges, next_prev, r_next, curr_round + 1,
-             sent_v, f_shift_evs, g_shift_evs, eq_tau_evs, alpha)
+    ms_round(
+        residual_poly,
+        points,
+        new_challenges,
+        next_prev,
+        r_next,
+        curr_round + 1,
+        sent_v,
+        f_shift_evs,
+        g_shift_evs,
+        eq_tau_evs,
+        alpha,
+    )
 }
 
 // ===== Relation helper (used in the where clause) =====
 // Characteristic polynomial of a vector: char_poly(f)(X) = Π_i (f[i] + X).
 // Two vectors have equal characteristic polynomials in F[X] iff they are
 // equal as multisets (uniqueness of monic-polynomial factorization).
-fn char_poly<F: Field, S: Size, N: 2^S>(instance f: [F; N]) -> Uni<F, N> {
+fn char_poly<F: Field, S: Size, N: 2 ^ S>(instance f: [F; N]) -> Uni<F, N> {
     reduce(*, [poly([f[i], 1]) for i in 0..N])
 }
 
-proto hyperplonk_multiset<F: Field, S: Size, N: 2^S>(
-    instance f_evs:   [F; N],
-    instance g_evs:   [F; N],
-    instance r:       F,
-    instance v_evs:   [F; 2^(S+1)]
+proto hyperplonk_multiset<F: Field, S: Size, N: 2 ^ S>(
+    instance f_evs: [F; N],
+    instance g_evs: [F; N],
+    instance r: F,
+    instance v_evs: [F; 2 ^ (S + 1)],
 ) where
     // Relation: the multisets {f_evs} and {g_evs} coincide. Stated as
     // an equality of characteristic polynomials in F[X]:
@@ -139,7 +153,7 @@ proto hyperplonk_multiset<F: Field, S: Size, N: 2^S>(
     // grand-product PIOP that specializes this identity at r.
     char_poly(f_evs) == char_poly(g_evs)
 {
-    let one  = f_evs[0] - f_evs[0] + 1;
+    let one = f_evs[0] - f_evs[0] + 1;
     let zero = f_evs[0] - f_evs[0];
 
     // (r + f) and (r + g) as MLE evaluations.
@@ -151,10 +165,10 @@ proto hyperplonk_multiset<F: Field, S: Size, N: 2^S>(
     sent_v <- v_evs;
 
     // ṽ sub-MLE views.
-    let v_lead_0_evs = [sent_v[2 * k]     for k in 0..N];
+    let v_lead_0_evs = [sent_v[2 * k] for k in 0..N];
     let v_lead_1_evs = [sent_v[2 * k + 1] for k in 0..N];
     let v_tail_0_evs = sent_v[0..N];
-    let v_tail_1_evs = sent_v[N..(2^(S+1))];
+    let v_tail_1_evs = sent_v[N..2 ^ (S + 1)];
 
     let v_lead_0 = mle(v_lead_0_evs);
     let v_lead_1 = mle(v_lead_1_evs);
@@ -163,41 +177,52 @@ proto hyperplonk_multiset<F: Field, S: Size, N: 2^S>(
 
     alpha <- challenge<F>;
     let placeholder = [zero for i in 0..S];
-    let tau         = draw_taus(placeholder);
-    let eq_tau_evs  = eq_weights(tau);
-    let eq_tau      = mle(eq_tau_evs);
+    let tau = draw_taus(placeholder);
+    let eq_tau_evs = eq_weights(tau);
+    let eq_tau = mle(eq_tau_evs);
 
     // f̂(X) + α·ĝ(X), additive form.
-    let neg_one     = zero - one;
-    let neg_v_prod  = (v_tail_0 * neg_one) * v_tail_1;
-    let neg_f1_mle  = f1_mle * neg_one;
-    let f_hat       = v_lead_1 + neg_v_prod;
+    let neg_one = zero - one;
+    let neg_v_prod = v_tail_0 * neg_one * v_tail_1;
+    let neg_f1_mle = f1_mle * neg_one;
+    let f_hat = v_lead_1 + neg_v_prod;
     let alpha_f2_mle = f2_mle * alpha;
     let alpha_neg_f1 = neg_f1_mle * alpha;
-    let alpha_g_hat  = alpha_f2_mle * v_lead_0 + alpha_neg_f1;
-    let h_check      = f_hat + alpha_g_hat;
+    let alpha_g_hat = alpha_f2_mle * v_lead_0 + alpha_neg_f1;
+    let h_check = f_hat + alpha_g_hat;
 
     let p_poly = h_check * eq_tau;
 
     // -------- Round 0, then recurse via ms_round --------
     let points = [i * one for i in 0..4];
-    let round_poly0 = reduce(+, [
-        eval<0>(p_poly, tail)
-        for tail in [
-            [(((i / (2^j)) % 2) * one) for j in 0..(S - 1)]
-            for i in 0..(2^(S - 1))
-        ]
-    ]);
+    let round_poly0 = reduce(
+        +,
+        [
+            eval<0>(p_poly, tail)
+            for tail in [[i / 2 ^ j % 2 * one for j in 0..S - 1] for i in 0..2 ^ (S - 1)]
+        ],
+    );
     let evs0_local = [round_poly0(t) for t in points];
     evs0 <- evs0_local;
     verify(zero == evs0[0] + evs0[1]);
 
-    let g0     = interpolate(points, evs0);
+    let g0 = interpolate(points, evs0);
     r0 <- challenge<F>;
     let prev = g0(r0);
 
-    ms_round(p_poly, points, [r0], prev, r0, 1,
-                    sent_v, f_shift_evs, g_shift_evs, eq_tau_evs, alpha);
+    ms_round(
+        p_poly,
+        points,
+        [r0],
+        prev,
+        r0,
+        1,
+        sent_v,
+        f_shift_evs,
+        g_shift_evs,
+        eq_tau_evs,
+        alpha,
+    );
 
     // Product-tree root is 1 iff the multisets coincide.
     verify(sent_v[N - 1] == one)

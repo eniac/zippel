@@ -7,7 +7,7 @@ fn bccgp_recursive<G: Group, F: Scalar<G>>(
     instance p_commitment: G,
     instance c_val: F,
     witness a_vec: [F; 1],
-    witness b_vec: [F; 1]
+    witness b_vec: [F; 1],
 ) -> Unit {
     let a_scalar = a_vec[0];
     let b_scalar = b_vec[0];
@@ -26,30 +26,30 @@ fn bccgp_recursive<G: Group, F: Scalar<G>>(
 }
 
 // Recursive step (n > 1)
-fn bccgp_recursive<G: Group, F: Scalar<G>, S: Size, N: 1..S+1>(
-    instance g_vec: [G; 2^N],
-    instance h_vec: [G; 2^N],
+fn bccgp_recursive<G: Group, F: Scalar<G>, S: Size, N: 1..S + 1>(
+    instance g_vec: [G; 2 ^ N],
+    instance h_vec: [G; 2 ^ N],
     instance p_commitment: G,
     instance c_val: F,
-    witness a_vec: [F; 2^N],
-    witness b_vec: [F; 2^N]
+    witness a_vec: [F; 2 ^ N],
+    witness b_vec: [F; 2 ^ N],
 ) -> Unit {
-    let a_l = a_vec[0..2^(N-1)];
-    let a_r = a_vec[2^(N-1)..2^N];
-    let b_l = b_vec[0..2^(N-1)];
-    let b_r = b_vec[2^(N-1)..2^N];
+    let a_l = a_vec[0..2 ^ (N - 1)];
+    let a_r = a_vec[2 ^ (N - 1)..2 ^ N];
+    let b_l = b_vec[0..2 ^ (N - 1)];
+    let b_r = b_vec[2 ^ (N - 1)..2 ^ N];
 
-    let g_l = g_vec[0..2^(N-1)];
-    let g_r = g_vec[2^(N-1)..2^N];
-    let h_l = h_vec[0..2^(N-1)];
-    let h_r = h_vec[2^(N-1)..2^N];
+    let g_l = g_vec[0..2 ^ (N - 1)];
+    let g_r = g_vec[2 ^ (N - 1)..2 ^ N];
+    let h_l = h_vec[0..2 ^ (N - 1)];
+    let h_r = h_vec[2 ^ (N - 1)..2 ^ N];
 
     let c_l = dot(a_l, b_r);
     let c_r = dot(a_r, b_l);
 
     // L = g_R^a_L * h_L^b_R (multiplicative) -> g_R*a_L + h_L*b_R (additive)
     l_transcript <- dot(g_r, a_l) + dot(h_l, b_r);
-    
+
     // R = g_L^a_R * h_R^b_L (multiplicative) -> g_L*a_R + h_R*b_L (additive)
     r_transcript <- dot(g_l, a_r) + dot(h_r, b_l);
 
@@ -71,32 +71,19 @@ fn bccgp_recursive<G: Group, F: Scalar<G>, S: Size, N: 1..S+1>(
     let a_prime = a_l * x_challenge + a_r * x_inv;
     let b_prime = b_l * x_inv + b_r * x_challenge;
 
-    bccgp_recursive(
-        g_prime,
-        h_prime,
-        p_prime,
-        c_prime,
-        a_prime,
-        b_prime
-    )
+    bccgp_recursive(g_prime, h_prime, p_prime, c_prime, a_prime, b_prime)
 }
 
-proto bccgp_ipa<G: Group, F: Scalar<G>, S: Size, N_CONST: 2^S>(
+proto bccgp_ipa<G: Group, F: Scalar<G>, S: Size, N_CONST: 2 ^ S>(
     instance g_vec: [G; N_CONST],
     instance h_vec: [G; N_CONST],
     instance p_commitment: G,
     instance c_val: F,
     witness a_vec: [F; N_CONST],
-    witness b_vec: [F; N_CONST]
+    witness b_vec: [F; N_CONST],
 ) where
-    p_commitment == dot(g_vec, a_vec) + dot(h_vec, b_vec); c_val == dot(a_vec, b_vec)
+    p_commitment == dot(g_vec, a_vec) + dot(h_vec, b_vec);
+    c_val == dot(a_vec, b_vec)
 {
-    bccgp_recursive(
-        g_vec,
-        h_vec,
-        p_commitment,
-        c_val,
-        a_vec,
-        b_vec
-    )
+    bccgp_recursive(g_vec, h_vec, p_commitment, c_val, a_vec, b_vec)
 }

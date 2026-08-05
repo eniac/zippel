@@ -2,7 +2,7 @@ proto hadamard<F: Field, S: Size, N: 1..S>(
     instance p_A: Uni<F, N>,
     instance p_B: Uni<F, N>,
     instance p_C: Uni<F, N>,
-    instance v_H: Uni<F, N>
+    instance v_H: Uni<F, N>,
 ) where poly([0]) == (p_A * p_B - p_C) % v_H {
     let p = p_A * p_B - p_C;
     let q = p / v_H;

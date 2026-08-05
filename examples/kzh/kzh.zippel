@@ -9,32 +9,39 @@
 // Generic over NX, NY (log-dimensions): 2^NX × 2^NY grid, 2^(NX+NY) evals.
 
 fn eq_weights<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
-    instance x: [F; 1]
+    instance x: [F; 1],
 ) -> [F; 2] {
-    [ (1 - x[0]), x[0] ]
+    [1 - x[0], x[0]]
 }
 
 fn eq_weights<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 2..16>(
-    instance x: [F; K]
-) -> [F; 2^K] {
-    let x_lo = x[0..(K-1)];
-    let a = x[K-1];
+    instance x: [F; K],
+) -> [F; 2 ^ K] {
+    let x_lo = x[0..K - 1];
+    let a = x[K - 1];
     let prev = eq_weights(x_lo);
     (prev * (1 - a)) ++ (prev * a)
 }
 
 proto kzh<
-    G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
-    NX: Size, NY: Size, NXV: 2^NX, NYV: 2^NY, NXY: 2^(NX+NY)
+    G1: Group,
+    G2: Group,
+    GT: Pairing<G1, G2>,
+    F: Scalar<G1, G2>,
+    NX: Size,
+    NY: Size,
+    NXV: 2 ^ NX,
+    NYV: 2 ^ NY,
+    NXY: 2 ^ (NX + NY),
 >(
     witness f_evals: [F; NXY],
-    instance h_xy:    [G1; NXY],
-    instance h_y:     [G1; NYV],
-    instance d_x:     [G1; NXV],
+    instance h_xy: [G1; NXY],
+    instance h_y: [G1; NYV],
+    instance d_x: [G1; NXV],
     instance v_prime: G2,
-    instance v_x:     [G2; NXV],
-    instance g_gen:   G1,
-    instance h_gen:   G2
+    instance v_x: [G2; NXV],
+    instance g_gen: G1,
+    instance h_gen: G2,
 ) where
     // Trusted setup: sample the trapdoors (τ_x, τ_y), then derive the
     // KZH-2 SRS tensor structure at those trapdoors.
@@ -49,19 +56,17 @@ proto kzh<
     let tau_x = [random<F> for i in 0..NX];
     let tau_y = [random<F> for i in 0..NY];
     let eq_x = [
-        reduce(*, [
-            tau_x[j] * ((k / (2^j)) % 2)
-                + (1 - tau_x[j]) * (1 - ((k / (2^j)) % 2))
-            for j in 0..NX
-        ])
+        reduce(
+            *,
+            [tau_x[j] * (k / 2 ^ j % 2) + (1 - tau_x[j]) * (1 - k / 2 ^ j % 2) for j in 0..NX],
+        )
         for k in 0..NXV
     ];
     let eq_y = [
-        reduce(*, [
-            tau_y[j] * ((k / (2^j)) % 2)
-                + (1 - tau_y[j]) * (1 - ((k / (2^j)) % 2))
-            for j in 0..NY
-        ])
+        reduce(
+            *,
+            [tau_y[j] * (k / 2 ^ j % 2) + (1 - tau_y[j]) * (1 - k / 2 ^ j % 2) for j in 0..NY],
+        )
         for k in 0..NYV
     ];
     [h_xy[k] for k in 0..NXY] == [g_gen * (eq_x[k / NYV] * eq_y[k % NYV]) for k in 0..NXY];
@@ -83,10 +88,7 @@ proto kzh<
     let eqy = eq_weights(y0);
 
     // pi_vals[y] = sum_x eq(x, x0) * f(x, y)
-    let pi_vals = [
-        reduce(+, [eqx[xi] * f_evals[xi * NYV + yi] for xi in 0..NXV])
-        for yi in 0..NYV
-    ];
+    let pi_vals = [reduce(+, [eqx[xi] * f_evals[xi * NYV + yi] for xi in 0..NXV]) for yi in 0..NYV];
     pi <- pi_vals;
 
     // Claimed value z0 = f*(y0) = sum_y eq(y, y0) * pi_vals[y]

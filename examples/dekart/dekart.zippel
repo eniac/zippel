@@ -9,11 +9,11 @@ proto dekart<
     n: Size,
     b: Size,
     l_chunk: Size,
-    h_deg: (b-1)*n
+    h_deg: (b - 1) * n,
 >(
     // Witness inputs
-    witness f_evals: [f; n+1],
-    witness chunks_evals: [[f; n+1]; l_chunk],
+    witness f_evals: [f; n + 1],
+    witness chunks_evals: [[f; n + 1]; l_chunk],
 
     // Blinding factors (witness)
     witness rho: f,
@@ -29,16 +29,29 @@ proto dekart<
     instance srs_g2_xi: g2,
     instance xi_g1: g1,
     instance s0_commit: g1,
-    extra srs_g1_n: [g1; n+1],
-    extra srs_g1_h: [g1; h_deg+1]
-) where srs_g1_n[0] == gen_g1; srs_g1_h[0] == gen_g1;
-    [pair(srs_g1_n[i], srs_g2_tau) for i in 0..n] == [pair(srs_g1_n[i+1], gen_g2) for i in 0..n];
-    [pair(srs_g1_h[i], srs_g2_tau) for i in 0..h_deg] == [pair(srs_g1_h[i+1], gen_g2) for i in 0..h_deg];
+    extra srs_g1_n: [g1; n + 1],
+    extra srs_g1_h: [g1; h_deg + 1],
+) where
+    srs_g1_n[0] == gen_g1;
+    srs_g1_h[0] == gen_g1;
+    [pair(srs_g1_n[i], srs_g2_tau) for i in 0..n] == [pair(srs_g1_n[i + 1], gen_g2) for i in 0..n];
+    [pair(srs_g1_h[i], srs_g2_tau) for i in 0..h_deg]
+        == [pair(srs_g1_h[i + 1], gen_g2) for i in 0..h_deg];
     pair(xi_g1, gen_g2) == pair(gen_g1, srs_g2_xi);
     f_evals[0] == 0;
-    [f_evals[i] for i in 1..n+1] == [reduce(+, [ (let chunk_j = chunks_evals[j]; chunk_j[i] * b_pow[j]) for j in 0..l_chunk ]) for i in 1..n+1]
+    [f_evals[i] for i in 1..n + 1]
+        == [
+            reduce(
+                +,
+                [
+                    let chunk_j = chunks_evals[j];
+                    chunk_j[i] * b_pow[j]
+                    for j in 0..l_chunk
+                ],
+            )
+            for i in 1..n + 1
+        ]
 {
-
     let f_zero = 0;
 
     // Interpolate f
@@ -50,7 +63,7 @@ proto dekart<
 
     // Prover Step 2: Mask/randomize f
     let r_blind = random<f>;
-    let f_hat_evals = [r_blind] ++ f_evals[1..n+1];
+    let f_hat_evals = [r_blind] ++ f_evals[1..n + 1];
     let f_hat = interpolate(f_hat_evals);
     // hat_c commitment to f_hat with additional blinding delta_rho
     let f_hat_coeffs = coef(f_hat);
@@ -71,23 +84,23 @@ proto dekart<
     pok_s2 <- pok_sigma2;
 
     // Step 4: commitments to chunks f_j
-    let f_j_vec = [ interpolate(chunks_evals[j]) for j in 0..l_chunk ];
-    com_chunks <- [ dot(coef(f_j_vec[j]), srs_g1_n) + xi_g1 * rho_vec[j] for j in 0..l_chunk ];
+    let f_j_vec = [interpolate(chunks_evals[j]) for j in 0..l_chunk];
+    com_chunks <- [dot(coef(f_j_vec[j]), srs_g1_n) + xi_g1 * rho_vec[j] for j in 0..l_chunk];
 
     // Step 5: Quotient polynomials
     // v_s: vanishing polynomial of the constraint domain H (excluding omega^0 = 1)
-    let v_s = poly([1 for i in 0..n+1]);
+    let v_s = poly([1 for i in 0..n + 1]);
 
     // h_j(X) = \prod_{i=0..b-1} (f_j - i) / v_s
-    let h_j_vec = [ (reduce(*, [f_j_vec[j] - d for d in 0..b])) / v_s for j in 0..l_chunk ];
+    let h_j_vec = [reduce(*, [f_j_vec[j] - d for d in 0..b]) / v_s for j in 0..l_chunk];
 
     // g(X) = (f_hat - \sum b^j f_j) / v_s
-    let g = (f_hat - reduce(+, [ f_j_vec[j] * b_pow[j] for j in 0..l_chunk ])) / v_s;
+    let g = (f_hat - reduce(+, [f_j_vec[j] * b_pow[j] for j in 0..l_chunk])) / v_s;
 
     // Step 6: Combine quotients using challenge beta
     beta <- challenge<f>;
-    let beta_pow = [ beta ^ (j+1) for j in 0..l_chunk ];
-    let h = g * beta + reduce(+, [ h_j_vec[j] * beta_pow[j] for j in 0..l_chunk ]);
+    let beta_pow = [beta ^ (j + 1) for j in 0..l_chunk];
+    let h = g * beta + reduce(+, [h_j_vec[j] * beta_pow[j] for j in 0..l_chunk]);
 
     // Step 7: Commit to h
     let h_coeffs = coef(h);
@@ -97,30 +110,36 @@ proto dekart<
     mu_seed <- challenge<f>;
     let mu_h = mu_seed;
     let mu = mu_seed * mu_seed;
-    let mu_j = [ mu_seed ^ (j+3) for j in 0..l_chunk ];
+    let mu_j = [mu_seed ^ (j + 3) for j in 0..l_chunk];
 
     // u(X) = mu * f_hat + mu_h * h + \sum mu_j * f_j
-    let u = f_hat * mu + h * mu_h + reduce(+, [ f_j_vec[j] * mu_j[j] for j in 0..l_chunk ]);
+    let u = f_hat * mu + h * mu_h + reduce(+, [f_j_vec[j] * mu_j[j] for j in 0..l_chunk]);
 
     // Step 9: challenge evaluation point gamma
     gamma <- challenge<f>;
 
     let a_hat_gamma = f_hat(gamma);
     let a_h_gamma = h(gamma);
-    let a_j_gamma = [ (let pj = f_j_vec[j]; pj(gamma)) for j in 0..l_chunk ];
+    let a_j_gamma = [
+        let pj = f_j_vec[j];
+        pj(gamma)
+        for j in 0..l_chunk
+    ];
 
     a <- a_hat_gamma;
     a_h <- a_h_gamma;
     a_j_log <- a_j_gamma;
 
     // u(gamma)
-    let a_u = a * mu + a_h * mu_h + reduce(+, [ a_j_log[j] * mu_j[j] for j in 0..l_chunk ]);
+    let a_u = a * mu + a_h * mu_h + reduce(+, [a_j_log[j] * mu_j[j] for j in 0..l_chunk]);
 
     // Step 10: Open u at gamma
     let s_blind = random<f>;
     let q_u = (u - a_u) / poly([-gamma, 1]);
 
-    let rho_u = mu * (rho + delta_rho) + mu_h * rho_h + reduce(+, [ rho_vec[j] * mu_j[j] for j in 0..l_chunk ]);
+    let rho_u = mu * (rho + delta_rho)
+        + mu_h * rho_h
+        + reduce(+, [rho_vec[j] * mu_j[j] for j in 0..l_chunk]);
 
     pi_1 <- xi_g1 * s_blind + dot(coef(q_u), srs_g1_h[0..h_deg]);
     pi_2 <- gen_g1 * rho_u - (srs_g1_h[1] - gen_g1 * gamma) * s_blind;
@@ -130,7 +149,9 @@ proto dekart<
     verify(pok_a == (hat_c - com_f) * pok_e + xi_g1 * pok_s1 + s0_commit * pok_s2);
 
     // Verifier Step 8: Reconstruct U
-    let verif_u = hat_c * mu + com_h * mu_h + reduce(+, [ com_chunks[j] * mu_j[j] for j in 0..l_chunk ]);
+    let verif_u = hat_c * mu
+        + com_h * mu_h
+        + reduce(+, [com_chunks[j] * mu_j[j] for j in 0..l_chunk]);
 
     // Verifier Step 10: Verify batch KZG opening check
     let pairing_lhs = pair(pi_1, srs_g2_tau - gen_g2 * gamma) + pair(pi_2, srs_g2_xi);
@@ -139,8 +160,8 @@ proto dekart<
 
     // Verifier Step 11: verify radix decomposition quotient check
     let v_s_at_gamma = v_s(gamma);
-    let prod_j = [ reduce(*, [a_j_log[j] - d for d in 0..b]) for j in 0..l_chunk ];
-    let sum_val = reduce(+, [ beta_pow[j] * prod_j[j] for j in 0..l_chunk ]);
-    let diff_val = a - reduce(+, [ a_j_log[j] * b_pow[j] for j in 0..l_chunk ]);
+    let prod_j = [reduce(*, [a_j_log[j] - d for d in 0..b]) for j in 0..l_chunk];
+    let sum_val = reduce(+, [beta_pow[j] * prod_j[j] for j in 0..l_chunk]);
+    let diff_val = a - reduce(+, [a_j_log[j] * b_pow[j] for j in 0..l_chunk]);
     verify(a_h * v_s_at_gamma == beta * diff_val + sum_val)
 }
