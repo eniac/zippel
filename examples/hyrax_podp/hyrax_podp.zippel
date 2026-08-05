@@ -38,9 +38,10 @@ proto proof_of_dot_product<G: Group, F: Scalar<G>, S: Size, N: S>(
     instance h: G, // Base for randomness (in xi, tau, delta, beta)
     instance xi: G, // Commitment xi = Com_Vec(g_vec, h, x_vec, r_xi)
     instance tau: G, // Commitment tau = Com_Scal(g, h, y, r_tau)
-)// The 'where' clause defines the exact relations the prover must satisfy.
+)
+// The 'where' clause defines the exact relations the prover must satisfy.
 // It uses the conceptual helper functions for clarity.
- where
+where
     xi == Com_Vec(g_vec, h, x_vec, r_xi);
     tau == Com_Scal(g, h, y, r_tau);
     y == dot(x_vec, a_vec)

@@ -17,8 +17,9 @@ proto proof_of_product<G: Group, F: Scalar<G>>(
     instance big_x: G, // Commitment big_x = g*x + h*r_X
     instance big_y: G, // Commitment big_y = g*y + h*r_Y
     instance big_z: G, // Commitment big_z = g*(x*y) + h*r_Z
-)// The 'where' clause defines the exact relations the prover must satisfy.
- where
+)
+// The 'where' clause defines the exact relations the prover must satisfy.
+where
     big_x == g * x + h * r_X;
     big_y == g * y + h * r_Y;
     big_z == g * (x * y) + h * r_Z

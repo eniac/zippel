@@ -13,8 +13,8 @@ use share::{BoxAllocator, DocAllocator, DocBuilder};
 use crate::paren::{lhs_needs_paren, rhs_needs_paren};
 use crate::style::Style;
 use crate::trivia::{
-    Comment, TokenCursor, TokenStream, TriviaElement, TriviaGap, format_delimiter_gap,
-    format_leading_gap,
+    Comment, TokenCursor, TokenStream, TriviaElement, TriviaGap, format_gap, format_gap_after,
+    format_gap_before,
 };
 
 const ALLOC: BoxAllocator = BoxAllocator;
@@ -35,14 +35,24 @@ pub fn format_decls(
         if index > 0 {
             if gap.is_empty() {
                 parts.push(hardlines(1 + style.max_blank_lines.min(1)));
-            } else if matches!(gap.first(), Some(TriviaElement::BlankLines(_))) {
-                parts.push(format_leading_gap(gap, style));
+            } else if matches!(gap.first(), Some(TriviaElement::BlankLines(_)))
+                || matches!(gap.last(), Some(TriviaElement::BlankLines(_)))
+            {
+                // Gap contains blank lines — they carry the separation.
+                parts.push(format_gap_before(gap, style));
             } else {
-                parts.push(ALLOC.hardline());
-                parts.push(format_leading_gap(gap, style));
+                // Gap is all comments, no blank lines — force one blank
+                // line after the comment. `format_gap_after` handles
+                // positioning: `space` for trailing comments, `hardline`
+                // for line-start comments.
+                parts.push(format_gap_after(
+                    gap,
+                    hardlines(1 + style.max_blank_lines.min(1)),
+                    style,
+                ));
             }
         } else {
-            parts.push(format_leading_gap(gap, style));
+            parts.push(format_gap_before(gap, style));
         }
         parts.push(format_decl(decl, &mut cursor, style));
     }
@@ -50,7 +60,7 @@ pub fn format_decls(
     if !decls.is_empty() {
         parts.push(ALLOC.hardline());
     }
-    parts.push(format_leading_gap(cursor.advance_to(src_len), style));
+    parts.push(format_gap_before(cursor.advance_to(src_len), style));
 
     let mut output = String::new();
     ALLOC
@@ -76,20 +86,37 @@ fn format_decl(
     let end = decl.span.end;
     match &decl.node.body {
         Body::Proto { relation, body } => {
-            let keyword = format_leading_gap(
+            let keyword = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::KwProto)),
                 style,
             );
             let sig = format_sig(&decl.node.sig, cursor, end, style);
-            let where_comments = format_leading_gap(
-                cursor
-                    .advance_to_token(end, |token| matches!(token, Token::KwWhere))
-                    .trim_start(),
-                style,
-            );
+            let where_gap = cursor
+                .advance_to_token(end, |token| matches!(token, Token::KwWhere))
+                .trim_start();
+            // When comments are present between `)` and `where`, use
+            // `format_gap` with `open = hardline()` so the comment starts
+            // on a new line (not glued to `)`), and `where` follows on
+            // its own line without a leading space.
+            let has_where_comments = where_gap.has_comments();
+            let where_comments = if has_where_comments {
+                let end = if where_gap.needs_line_break() {
+                    ALLOC.hardline()
+                } else {
+                    ALLOC.nil()
+                };
+                format_gap(where_gap, ALLOC.hardline(), end, style)
+            } else {
+                format_gap_before(where_gap, style)
+            };
+            let where_text = if has_where_comments {
+                ALLOC.text("where")
+            } else {
+                ALLOC.text(" where")
+            };
             // Gap after `where` — strip blank lines (structural hardline follows).
             let relation_leading =
-                format_leading_gap(cursor.advance_to(relation.span.start).trim_start(), style);
+                format_gap_before(cursor.advance_to(relation.span.start).trim_start(), style);
             let relation = format_relation(relation, cursor, style);
             let open_gap = cursor.advance_to_token(end, |token| matches!(token, Token::LBrace));
             // Comments before `{` go inside the where group's nest so they
@@ -99,10 +126,10 @@ fn format_decl(
             // blank lines double up.
             let gap_starts_with_blanks =
                 matches!(open_gap.first(), Some(TriviaElement::BlankLines(_)));
-            let open_comments = format_leading_gap(open_gap, style);
+            let open_comments = format_gap_before(open_gap, style);
             // Gap after `{` — strip blank lines (structural hardline follows).
             let body_leading =
-                format_leading_gap(cursor.advance_to(body.span.start).trim_start(), style);
+                format_gap_before(cursor.advance_to(body.span.start).trim_start(), style);
             let body = format_body_exp(body, cursor, style);
             // Gap before `}` — strip blank lines (structural hardline precedes).
             let close_comments = cursor
@@ -120,7 +147,7 @@ fn format_decl(
                 where_comments,
                 ALLOC
                     .concat([
-                        ALLOC.text(" where"),
+                        where_text,
                         ALLOC
                             .concat([ALLOC.line(), relation_leading, relation])
                             .nest(style.indent_width() as isize),
@@ -135,14 +162,14 @@ fn format_decl(
                     .concat([
                         body_leading,
                         body,
-                        format_delimiter_gap(close_comments, ALLOC.hardline(), style),
+                        format_gap_after(close_comments, ALLOC.hardline(), style),
                     ])
                     .indent(style.indent_width()),
                 ALLOC.text("}"),
             ])
         }
         Body::Func { body } => {
-            let keyword = format_leading_gap(
+            let keyword = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::KwFn)),
                 style,
             );
@@ -150,7 +177,7 @@ fn format_decl(
             let has_ret = decl.node.sig.ret.is_some();
             let ret = if let Some(ret) = &decl.node.sig.ret {
                 // Gap after `)` — strip blank lines (structural position).
-                let arrow = format_leading_gap(
+                let arrow = format_gap_before(
                     cursor
                         .advance_to_token(end, |token| matches!(token, Token::Arrow))
                         .trim_start(),
@@ -167,13 +194,13 @@ fn format_decl(
             let open_gap = cursor.advance_to_token(end, |token| matches!(token, Token::LBrace));
             // When no return type, `open_gap` is the gap after `)` — strip.
             let open_comments = if has_ret {
-                format_leading_gap(open_gap, style)
+                format_gap_before(open_gap, style)
             } else {
-                format_leading_gap(open_gap.trim_start(), style)
+                format_gap_before(open_gap.trim_start(), style)
             };
             // Gap after `{` — strip blank lines (structural hardline follows).
             let body_leading =
-                format_leading_gap(cursor.advance_to(body.span.start).trim_start(), style);
+                format_gap_before(cursor.advance_to(body.span.start).trim_start(), style);
             let body = format_body_exp(body, cursor, style);
             // Gap before `}` — strip blank lines (structural hardline precedes).
             let close_comments = cursor
@@ -191,22 +218,22 @@ fn format_decl(
                     .concat([
                         body_leading,
                         body,
-                        format_delimiter_gap(close_comments, ALLOC.hardline(), style),
+                        format_gap_after(close_comments, ALLOC.hardline(), style),
                     ])
                     .indent(style.indent_width()),
                 ALLOC.text("}"),
             ])
         }
         Body::TypeAlias => {
-            let keyword = format_leading_gap(
+            let keyword = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::KwType)),
                 style,
             );
-            let name = format_leading_gap(
+            let name = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                 style,
             );
-            let eq = format_leading_gap(
+            let eq = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Eq)),
                 style,
             );
@@ -217,7 +244,7 @@ fn format_decl(
                 .as_ref()
                 .expect("type aliases have a type");
             let typ = format_typ(&typ.node, cursor, typ.span.end, style);
-            let semi = format_leading_gap(
+            let semi = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Semi)),
                 style,
             );
@@ -242,20 +269,20 @@ fn format_sig(
     end: usize,
     style: &Style,
 ) -> Doc<'static> {
-    let name = format_leading_gap(
+    let name = format_gap_before(
         cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
         style,
     );
-    let typevar_open = format_leading_gap(
+    let typevar_open = format_gap_before(
         cursor.advance_to_token(end, |token| matches!(token, Token::LAngle)),
         style,
     );
     let typevars = format_typevars(&sig.typevars.node, cursor, end, style);
-    let typevar_close = format_leading_gap(
+    let typevar_close = format_gap_before(
         cursor.advance_to_token(end, |token| matches!(token, Token::RAngle)),
         style,
     );
-    let arg_open_comments = format_leading_gap(
+    let arg_open_comments = format_gap_before(
         cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
         style,
     );
@@ -274,7 +301,7 @@ fn format_sig(
         } else {
             // Last arg: consume trailing comma comments only if a comma exists before `)`.
             if let Some(rp_end) = &rparen_end {
-                let comma_comments = format_leading_gap(
+                let comma_comments = format_gap_before(
                     cursor.advance_to_token(rp_end.end, |token| matches!(token, Token::Comma)),
                     style,
                 );
@@ -310,7 +337,7 @@ fn format_arg(
     let mut has_prefix = false;
 
     if !matches!(arg.node.qualifier, Qualifier::Local) {
-        let qualifier = format_leading_gap(
+        let qualifier = format_gap_before(
             cursor.advance_to_token(end, |token| match arg.node.qualifier {
                 Qualifier::Witness => matches!(token, Token::KwWitness),
                 Qualifier::Extra => matches!(token, Token::KwExtra),
@@ -328,13 +355,13 @@ fn format_arg(
         if has_prefix {
             parts.push(ALLOC.text(" "));
         }
-        parts.push(format_leading_gap(
+        parts.push(format_gap_before(
             cursor.advance_to_token(end, |token| matches!(token, Token::KwUniform)),
             style,
         ));
         parts.push(ALLOC.text("uniform"));
         if matches!(arg.node.distribution, Distribution::UniformNonZero) {
-            parts.push(format_leading_gap(
+            parts.push(format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Star)),
                 style,
             ));
@@ -346,12 +373,12 @@ fn format_arg(
     if has_prefix {
         parts.push(ALLOC.text(" "));
     }
-    parts.push(format_leading_gap(
+    parts.push(format_gap_before(
         cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
         style,
     ));
     parts.push(ALLOC.text(arg.node.id.to_string()));
-    parts.push(format_leading_gap(
+    parts.push(format_gap_before(
         cursor.advance_to_token(end, |token| matches!(token, Token::Colon)),
         style,
     ));
@@ -388,11 +415,11 @@ fn format_typevar(
     style: &Style,
 ) -> Doc<'static> {
     let end = typevar.span.end;
-    let id = format_leading_gap(
+    let id = format_gap_before(
         cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
         style,
     );
-    let colon = format_leading_gap(
+    let colon = format_gap_before(
         cursor.advance_to_token(end, |token| matches!(token, Token::Colon)),
         style,
     );
@@ -414,17 +441,17 @@ fn format_typ(
 ) -> Doc<'static> {
     match typ {
         Typ::Poly(base, m, n) => {
-            let keyword = format_leading_gap(
+            let keyword = format_gap_before(
                 cursor.advance_to_token(end, |token| {
                     matches!(token, Token::KwPolyTy | Token::KwUni | Token::KwMleTy)
                 }),
                 style,
             );
-            let open = format_leading_gap(
+            let open = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::LAngle)),
                 style,
             );
-            let base_comments = format_leading_gap(
+            let base_comments = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                 style,
             );
@@ -493,17 +520,17 @@ fn format_typ(
             ])
         }
         Typ::Vec(typ, size) => {
-            let open = format_leading_gap(
+            let open = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::LBrack)),
                 style,
             );
             let typ = format_typ(&typ.node, cursor, typ.span.end, style);
-            let semi = format_leading_gap(
+            let semi = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Semi)),
                 style,
             );
             let size = format_size(size, cursor, end, style);
-            let close = format_leading_gap(
+            let close = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::RBrack)),
                 style,
             );
@@ -519,23 +546,23 @@ fn format_typ(
             ])
         }
         Typ::Base(base) => {
-            let comments = format_leading_gap(
+            let comments = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                 style,
             );
             ALLOC.concat([comments, ALLOC.text(base.to_string())])
         }
         Typ::Fin(range) => {
-            let keyword = format_leading_gap(
+            let keyword = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::KwFin)),
                 style,
             );
-            let open = format_leading_gap(
+            let open = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::LAngle)),
                 style,
             );
             let range = format_range(range, cursor, end, style);
-            let close = format_leading_gap(
+            let close = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::RAngle)),
                 style,
             );
@@ -550,14 +577,14 @@ fn format_typ(
             ])
         }
         Typ::Unit => {
-            let comments = format_leading_gap(
+            let comments = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::KwUnit)),
                 style,
             );
             ALLOC.concat([comments, ALLOC.text("Unit")])
         }
         Typ::Record(fields) => {
-            let open = format_leading_gap(
+            let open = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::LBrace)),
                 style,
             );
@@ -565,11 +592,11 @@ fn format_typ(
             fields.sort_by_key(|(_, typ)| typ.span.start);
             let mut items = Vec::new();
             for (index, (name, typ)) in fields.iter().enumerate() {
-                let name_comments = format_leading_gap(
+                let name_comments = format_gap_before(
                     cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                     style,
                 );
-                let colon = format_leading_gap(
+                let colon = format_gap_before(
                     cursor.advance_to_token(end, |token| matches!(token, Token::Colon)),
                     style,
                 );
@@ -611,39 +638,39 @@ fn format_kind(
 ) -> Doc<'static> {
     match kind {
         Kind::Field => {
-            let comments = format_leading_gap(
+            let comments = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::KwField)),
                 style,
             );
             ALLOC.concat([comments, ALLOC.text("Field")])
         }
         Kind::Group => {
-            let comments = format_leading_gap(
+            let comments = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::KwGroup)),
                 style,
             );
             ALLOC.concat([comments, ALLOC.text("Group")])
         }
         Kind::SizeVar => {
-            let comments = format_leading_gap(
+            let comments = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::KwSize)),
                 style,
             );
             ALLOC.concat([comments, ALLOC.text("Size")])
         }
         Kind::Scalar(ids) => {
-            let keyword = format_leading_gap(
+            let keyword = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::KwScalar)),
                 style,
             );
-            let open = format_leading_gap(
+            let open = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::LAngle)),
                 style,
             );
             let ids: Vec<_> = ids.iter().collect();
             let mut items = Vec::new();
             for (index, id) in ids.iter().enumerate() {
-                let id_comments = format_leading_gap(
+                let id_comments = format_gap_before(
                     cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                     style,
                 );
@@ -670,20 +697,20 @@ fn format_kind(
             ])
         }
         Kind::Pairing(g1, g2) => {
-            let keyword = format_leading_gap(
+            let keyword = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::KwPairing)),
                 style,
             );
-            let open = format_leading_gap(
+            let open = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::LAngle)),
                 style,
             );
-            let first = format_leading_gap(
+            let first = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                 style,
             );
             let comma = take_separator_gap(cursor, end, |token| matches!(token, Token::Comma));
-            let second = format_leading_gap(
+            let second = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                 style,
             );
@@ -715,14 +742,14 @@ fn format_size_spanned(
 fn format_size(size: &Size, cursor: &mut TokenCursor, end: usize, style: &Style) -> Doc<'static> {
     match size {
         Size::Var(id) => {
-            let comments = format_leading_gap(
+            let comments = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                 style,
             );
             ALLOC.concat([comments, ALLOC.text(id.to_string())])
         }
         Size::Lit(value) => {
-            let comments = format_leading_gap(
+            let comments = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Positive(_))),
                 style,
             );
@@ -756,7 +783,7 @@ fn format_size_binary(
         format_size_spanned(lhs, cursor, style),
         size_lhs_needs_paren(&lhs.node, precedence, right_assoc),
     );
-    let op_comments = format_leading_gap(
+    let op_comments = format_gap_before(
         cursor.advance_to_token(end, |token| matches_size_op(op, token)),
         style,
     );
@@ -775,11 +802,11 @@ fn format_size_call(
     end: usize,
     style: &Style,
 ) -> Doc<'static> {
-    let name_comments = format_leading_gap(
+    let name_comments = format_gap_before(
         cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
         style,
     );
-    let open = format_leading_gap(
+    let open = format_gap_before(
         cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
         style,
     );
@@ -800,12 +827,12 @@ fn format_range(
 ) -> Doc<'static> {
     let start = format_range_size(&range.start, cursor, end, style);
     if let Some(step) = &range.step {
-        let comma = format_leading_gap(
+        let comma = format_gap_before(
             cursor.advance_to_token(end, |token| matches!(token, Token::Comma)),
             style,
         );
         let step = format_range_size(step, cursor, end, style);
-        let dots = format_leading_gap(
+        let dots = format_gap_before(
             cursor.advance_to_token(end, |token| matches!(token, Token::DotDot)),
             style,
         );
@@ -821,7 +848,7 @@ fn format_range(
             last,
         ])
     } else if let Some(last) = &range.end {
-        let dots = format_leading_gap(
+        let dots = format_gap_before(
             cursor.advance_to_token(end, |token| matches!(token, Token::DotDot)),
             style,
         );
@@ -853,7 +880,7 @@ fn format_relation(
     match &exp.node {
         Exp::Assert(lhs, rhs) => {
             let lhs = format_exp(lhs, cursor, style);
-            let eq = format_leading_gap(
+            let eq = format_gap_before(
                 cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::EqEq)),
                 style,
             );
@@ -871,15 +898,15 @@ fn format_relation(
                 .group()
         }
         Exp::Let(Some(var), value, body) => {
-            let keyword = format_leading_gap(
+            let keyword = format_gap_before(
                 cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::KwLet)),
                 style,
             );
-            let name = format_leading_gap(
+            let name = format_gap_before(
                 cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Id(_))),
                 style,
             );
-            let eq = format_leading_gap(
+            let eq = format_gap_before(
                 cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Eq)),
                 style,
             );
@@ -888,7 +915,7 @@ fn format_relation(
                 let semi_gap =
                     take_separator_gap(cursor, exp.span.end, |token| matches!(token, Token::Semi));
                 ALLOC.concat([
-                    format_delimiter_gap(semi_gap, ALLOC.hardline(), style),
+                    format_gap_after(semi_gap, ALLOC.hardline(), style),
                     format_relation(body, cursor, style),
                 ])
             } else {
@@ -899,7 +926,7 @@ fn format_relation(
                 } else {
                     ALLOC.nil()
                 };
-                format_delimiter_gap(before_semi, sep, style)
+                format_gap_after(before_semi, sep, style)
             };
             ALLOC.concat([
                 keyword,
@@ -919,7 +946,7 @@ fn format_relation(
                 let semi_gap =
                     take_separator_gap(cursor, exp.span.end, |token| matches!(token, Token::Semi));
                 ALLOC.concat([
-                    format_delimiter_gap(semi_gap, ALLOC.hardline(), style),
+                    format_gap_after(semi_gap, ALLOC.hardline(), style),
                     format_relation(body, cursor, style),
                 ])
             } else {
@@ -930,7 +957,7 @@ fn format_relation(
                 } else {
                     ALLOC.nil()
                 };
-                format_delimiter_gap(before_semi, sep, style)
+                format_gap_after(before_semi, sep, style)
             };
             ALLOC.concat([value, ALLOC.text(";"), body])
         }
@@ -945,15 +972,15 @@ fn format_body_exp(
 ) -> Doc<'static> {
     match &exp.node {
         Exp::Let(Some(var), value, body) => {
-            let keyword = format_leading_gap(
+            let keyword = format_gap_before(
                 cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::KwLet)),
                 style,
             );
-            let name = format_leading_gap(
+            let name = format_gap_before(
                 cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Id(_))),
                 style,
             );
-            let eq = format_leading_gap(
+            let eq = format_gap_before(
                 cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Eq)),
                 style,
             );
@@ -983,11 +1010,11 @@ fn format_body_exp(
             ALLOC.concat([value, ALLOC.text(";"), body])
         }
         Exp::Log(var, value, body) => {
-            let name = format_leading_gap(
+            let name = format_gap_before(
                 cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Id(_))),
                 style,
             );
-            let arrow = format_leading_gap(
+            let arrow = format_gap_before(
                 cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::LArrow)),
                 style,
             );
@@ -1022,13 +1049,13 @@ fn format_body_tail(
         } else {
             ALLOC.nil()
         };
-        return format_delimiter_gap(before_semi, sep, style);
+        return format_gap_after(before_semi, sep, style);
     };
 
     let after_semi = cursor.advance_to(body.span.start);
     let gap = before_semi.join(after_semi);
     ALLOC.concat([
-        format_delimiter_gap(gap, ALLOC.hardline(), style),
+        format_gap_after(gap, ALLOC.hardline(), style),
         format_body_exp(body, cursor, style),
     ])
 }
@@ -1042,25 +1069,25 @@ fn format_exp(exp: &Spanned<Exp<Size>>, cursor: &mut TokenCursor, style: &Style)
     match &exp.node {
         Exp::Lit(value) => format_size(value, cursor, end, style),
         Exp::Unit => {
-            let open = format_leading_gap(
+            let open = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
                 style,
             );
-            let close = format_leading_gap(
+            let close = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::RParen)),
                 style,
             );
             ALLOC.concat([open, ALLOC.text("("), close, ALLOC.text(")")])
         }
         Exp::Var(var) => {
-            let comments = format_leading_gap(
+            let comments = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                 style,
             );
             ALLOC.concat([comments, ALLOC.text(var.to_string())])
         }
         Exp::Neg(inner) => {
-            let minus = format_leading_gap(
+            let minus = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Minus)),
                 style,
             );
@@ -1103,7 +1130,7 @@ fn format_exp(exp: &Spanned<Exp<Size>>, cursor: &mut TokenCursor, style: &Style)
 
             // Remaining operands — each preceded by `op`.
             for operand in &chain[1..] {
-                let op_comments = format_leading_gap(
+                let op_comments = format_gap_before(
                     cursor.advance_to_token(end, |token| matches_binop(*op, token)),
                     style,
                 );
@@ -1122,11 +1149,11 @@ fn format_exp(exp: &Spanned<Exp<Size>>, cursor: &mut TokenCursor, style: &Style)
             ALLOC.concat(parts).nest(indent).group()
         }
         Exp::App(function, args) => {
-            let function_comments = format_leading_gap(
+            let function_comments = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                 style,
             );
-            let open = format_leading_gap(
+            let open = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
                 style,
             );
@@ -1180,7 +1207,7 @@ fn format_exp(exp: &Spanned<Exp<Size>>, cursor: &mut TokenCursor, style: &Style)
             format_evaluate(poly, range.as_ref(), point.as_deref(), cursor, end, style)
         }
         Exp::Vec(values) => {
-            let open = format_leading_gap(
+            let open = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::LBrack)),
                 style,
             );
@@ -1192,25 +1219,25 @@ fn format_exp(exp: &Spanned<Exp<Size>>, cursor: &mut TokenCursor, style: &Style)
         }
         Exp::Range(range) => format_range(range, cursor, end, style),
         Exp::Map(body, var, range) => {
-            let open = format_leading_gap(
+            let open = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::LBrack)),
                 style,
             );
             let body = format_exp(body, cursor, style);
-            let for_comments = format_leading_gap(
+            let for_comments = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::KwFor)),
                 style,
             );
-            let var_comments = format_leading_gap(
+            let var_comments = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                 style,
             );
-            let in_comments = format_leading_gap(
+            let in_comments = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::KwIn)),
                 style,
             );
             let range = format_exp(range, cursor, style);
-            let close = format_leading_gap(
+            let close = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::RBrack)),
                 style,
             );
@@ -1242,15 +1269,15 @@ fn format_exp(exp: &Spanned<Exp<Size>>, cursor: &mut TokenCursor, style: &Style)
             ])
         }
         Exp::Reduce(op, value) => {
-            let keyword = format_leading_gap(
+            let keyword = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::KwReduce)),
                 style,
             );
-            let open = format_leading_gap(
+            let open = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
                 style,
             );
-            let op_comments = format_leading_gap(
+            let op_comments = format_gap_before(
                 cursor.advance_to_token(end, |token| matches_binop(*op, token)),
                 style,
             );
@@ -1269,7 +1296,7 @@ fn format_exp(exp: &Spanned<Exp<Size>>, cursor: &mut TokenCursor, style: &Style)
         }
         Exp::Ram(base, index) => {
             let base = format_exp(base, cursor, style);
-            let open = format_leading_gap(
+            let open = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::LBrack)),
                 style,
             );
@@ -1305,13 +1332,13 @@ fn format_exp(exp: &Spanned<Exp<Size>>, cursor: &mut TokenCursor, style: &Style)
             format_assertion("verify", Token::KwVerify, lhs, rhs, cursor, end, style)
         }
         Exp::Fun(vars, body) => {
-            let keyword = format_leading_gap(
+            let keyword = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::KwFun)),
                 style,
             );
             let mut items = Vec::new();
             for (index, var) in vars.iter().enumerate() {
-                let var_comments = format_leading_gap(
+                let var_comments = format_gap_before(
                     cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                     style,
                 );
@@ -1326,7 +1353,7 @@ fn format_exp(exp: &Spanned<Exp<Size>>, cursor: &mut TokenCursor, style: &Style)
                     items.push(var_doc);
                 }
             }
-            let arrow = format_leading_gap(
+            let arrow = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::FatArrow)),
                 style,
             );
@@ -1341,7 +1368,7 @@ fn format_exp(exp: &Spanned<Exp<Size>>, cursor: &mut TokenCursor, style: &Style)
             ])
         }
         Exp::Record(fields) => {
-            let open = format_leading_gap(
+            let open = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::LBraceBar)),
                 style,
             );
@@ -1349,11 +1376,11 @@ fn format_exp(exp: &Spanned<Exp<Size>>, cursor: &mut TokenCursor, style: &Style)
             fields.sort_by_key(|(_, value)| value.span.start);
             let mut items = Vec::new();
             for (index, (name, value)) in fields.iter().enumerate() {
-                let name_comments = format_leading_gap(
+                let name_comments = format_gap_before(
                     cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                     style,
                 );
-                let colon = format_leading_gap(
+                let colon = format_gap_before(
                     cursor.advance_to_token(end, |token| matches!(token, Token::Colon)),
                     style,
                 );
@@ -1386,11 +1413,11 @@ fn format_exp(exp: &Spanned<Exp<Size>>, cursor: &mut TokenCursor, style: &Style)
         }
         Exp::Proj(base, field) => {
             let base = format_exp(base, cursor, style);
-            let dot = format_leading_gap(
+            let dot = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Dot)),
                 style,
             );
-            let field_comments = format_leading_gap(
+            let field_comments = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                 style,
             );
@@ -1404,19 +1431,19 @@ fn format_exp(exp: &Spanned<Exp<Size>>, cursor: &mut TokenCursor, style: &Style)
         }
         Exp::SetRecord(record, field, value) => {
             let record = format_exp(record, cursor, style);
-            let dot = format_leading_gap(
+            let dot = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Dot)),
                 style,
             );
-            let set = format_leading_gap(
+            let set = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                 style,
             );
-            let open = format_leading_gap(
+            let open = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
                 style,
             );
-            let field_comments = format_leading_gap(
+            let field_comments = format_gap_before(
                 cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                 style,
             );
@@ -1453,8 +1480,8 @@ fn format_unary_call(
     end: usize,
     style: &Style,
 ) -> Doc<'static> {
-    let keyword = format_leading_gap(cursor.advance_to_token(end, pred), style);
-    let open = format_leading_gap(
+    let keyword = format_gap_before(cursor.advance_to_token(end, pred), style);
+    let open = format_gap_before(
         cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
         style,
     );
@@ -1477,7 +1504,7 @@ fn format_binary_call(
     end: usize,
     style: &Style,
 ) -> Doc<'static> {
-    let keyword = format_leading_gap(
+    let keyword = format_gap_before(
         cursor.advance_to_token(end, |token| {
             matches!(
                 token,
@@ -1486,7 +1513,7 @@ fn format_binary_call(
         }),
         style,
     );
-    let open = format_leading_gap(
+    let open = format_gap_before(
         cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
         style,
     );
@@ -1514,17 +1541,17 @@ fn format_evaluate(
     end: usize,
     style: &Style,
 ) -> Doc<'static> {
-    let keyword = format_leading_gap(
+    let keyword = format_gap_before(
         cursor.advance_to_token(end, |token| matches!(token, Token::KwEval)),
         style,
     );
     let selector = if let Some(range) = range {
-        let open = format_leading_gap(
+        let open = format_gap_before(
             cursor.advance_to_token(end, |token| matches!(token, Token::LAngle)),
             style,
         );
         let range = format_range(range, cursor, end, style);
-        let close = format_leading_gap(
+        let close = format_gap_before(
             cursor.advance_to_token(end, |token| matches!(token, Token::RAngle)),
             style,
         );
@@ -1532,7 +1559,7 @@ fn format_evaluate(
     } else {
         ALLOC.nil()
     };
-    let open = format_leading_gap(
+    let open = format_gap_before(
         cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
         style,
     );
@@ -1564,22 +1591,22 @@ fn format_sampling(
     end: usize,
     style: &Style,
 ) -> Doc<'static> {
-    let keyword_comments = format_leading_gap(
+    let keyword_comments = format_gap_before(
         cursor.advance_to_token(end, |token| {
             std::mem::discriminant(token) == std::mem::discriminant(&keyword)
         }),
         style,
     );
-    let open = format_leading_gap(
+    let open = format_gap_before(
         cursor.advance_to_token(end, |token| matches!(token, Token::LAngle)),
         style,
     );
-    let typ_comments = format_leading_gap(
+    let typ_comments = format_gap_before(
         cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
         style,
     );
     let star = if star {
-        let comments = format_leading_gap(
+        let comments = format_gap_before(
             cursor.advance_to_token(end, |token| matches!(token, Token::Star)),
             style,
         );
@@ -1587,7 +1614,7 @@ fn format_sampling(
     } else {
         ALLOC.nil()
     };
-    let close = format_leading_gap(
+    let close = format_gap_before(
         cursor.advance_to_token(end, |token| matches!(token, Token::RAngle)),
         style,
     );
@@ -1613,23 +1640,23 @@ fn format_assertion(
     end: usize,
     style: &Style,
 ) -> Doc<'static> {
-    let keyword_comments = format_leading_gap(
+    let keyword_comments = format_gap_before(
         cursor.advance_to_token(end, |token| {
             std::mem::discriminant(token) == std::mem::discriminant(&keyword)
         }),
         style,
     );
-    let open = format_leading_gap(
+    let open = format_gap_before(
         cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
         style,
     );
     let lhs = format_exp(lhs, cursor, style);
-    let eq = format_leading_gap(
+    let eq = format_gap_before(
         cursor.advance_to_token(end, |token| matches!(token, Token::EqEq)),
         style,
     );
     let rhs = format_exp(rhs, cursor, style);
-    let close = format_leading_gap(
+    let close = format_gap_before(
         cursor.advance_to_token(end, |token| matches!(token, Token::RParen)),
         style,
     );
@@ -1690,7 +1717,7 @@ fn comma_terminated_item(item: Doc<'static>, gap: TriviaGap, style: &Style) -> D
     } else {
         ALLOC.line()
     };
-    ALLOC.concat([item, ALLOC.text(","), format_delimiter_gap(gap, sep, style)])
+    ALLOC.concat([item, ALLOC.text(","), format_gap_after(gap, sep, style)])
 }
 
 fn take_separator_gap(
@@ -1738,7 +1765,7 @@ fn delimited_list(
                         ALLOC.line_(),
                         ALLOC.concat(items),
                         ALLOC.text(",").flat_alt(ALLOC.nil()),
-                        format_delimiter_gap(close_comments, close_sep, style),
+                        format_gap_after(close_comments, close_sep, style),
                     ])
                     .nest(indent)])
                 .group(),

@@ -16,11 +16,12 @@ proto prove_commitment_equality<G: Group, F: Scalar<G>>(
     instance h: G, // Base for randomness in Pedersen commitments
     instance c1: G, // First commitment C1 = g*m1 + h*r1
     instance c2: G, // Second commitment C2 = g*m2 + h*r2
-)// The 'where' clause defines the conditions the prover must satisfy:
+)
+// The 'where' clause defines the conditions the prover must satisfy:
 // 1. c1 is a valid commitment to m1 with randomness r1.
 // 2. c2 is a valid commitment to m2 with randomness r2.
 // 3. The committed values m1 and m2 are equal.
- where
+where
     c1 == g * m1 + h * r1;
     c2 == g * m2 + h * r2;
     m1 == m2

@@ -998,3 +998,70 @@ proto p<F: Field>(instance a: F) where
 ",
     );
 }
+
+#[test]
+fn comment_between_sig_and_where() {
+    // A comment between `)` and `where` should go on its own line, and
+    // `where` should follow on the next line without a leading space.
+    assert_formatted(
+        "\
+proto p<F: Field>(instance a: F) // comment before where
+where a == a { a }",
+        "\
+proto p<F: Field>(instance a: F)
+// comment before where
+where a == a {
+    a
+}
+",
+    );
+}
+
+#[test]
+fn inline_line_comment_before_token_gets_space() {
+    // An inline `//` comment before a token must get a space, not glue
+    // to the preceding token.
+    assert_formatted(
+        "fn f<F: Field>(instance a: F) // inline comment
+-> F { a }",
+        "\
+fn f<F: Field>(instance a: F) // inline comment
+ -> F {
+    a
+}
+",
+    );
+}
+
+#[test]
+fn inline_line_comment_between_decls_no_leading_space() {
+    // A trailing `//` comment after `}` sticks to `}`, and a blank line
+    // is guaranteed between the comment and the next decl.
+    assert_formatted(
+        "\
+fn f<F: Field>(instance a: F) -> F { a } // trailing
+fn g<F: Field>(instance a: F) -> F { a }",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    a
+} // trailing
+
+fn g<F: Field>(instance a: F) -> F {
+    a
+}
+",
+    );
+}
+
+#[test]
+fn inline_block_comment_before_token_gets_space() {
+    // An inline `/* */` comment before a token must get a space.
+    assert_formatted(
+        "fn f<F: Field>(instance a: F) /* inline block */ -> F { a }",
+        "\
+fn f<F: Field>(instance a: F) /* inline block */ -> F {
+    a
+}
+",
+    );
+}

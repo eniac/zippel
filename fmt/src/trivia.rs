@@ -72,6 +72,11 @@ impl TriviaGap {
         self.layout.first()
     }
 
+    /// The last element of the gap, or `None` if empty.
+    pub fn last(&self) -> Option<&TriviaElement> {
+        self.layout.last()
+    }
+
     /// Strip leading `BlankLines`, preserving inter-comment and trailing
     /// blank lines.
     ///
@@ -287,17 +292,24 @@ impl<'a> TokenCursor<'a> {
     }
 }
 
-/// Render a gap's layout.
+/// Render a gap's trivia layout with explicit positioning control.
 ///
 /// `open` is emitted only if the first element is a `Comment` — it positions
-/// the first comment relative to whatever came before. `end` is emitted only
-/// if the last element is a `Comment` — it positions whatever comes after
-/// relative to the last comment. If the first/last element is `BlankLines`,
-/// the blank lines carry the positioning and `open`/`end` are skipped.
+/// the first comment relative to whatever came before (e.g. a `hardline` to
+/// put it on a new line, or a `space` to keep it inline). `end` is emitted
+/// only if the last element is a `Comment` — it positions whatever comes
+/// after relative to the last comment. If the first/last element is
+/// `BlankLines`, the blank lines carry the positioning and `open`/`end` are
+/// skipped.
 ///
 /// A comment suppresses its own ending hardline when the next element is
 /// `BlankLines` — `BlankLines` owns the line break.
-fn format_gap(
+///
+/// Prefer the `format_gap_before` / `format_gap_after` wrappers for
+/// standard call sites. Use this directly only when you need custom `open`
+/// positioning that the wrappers don't provide (e.g. a `hardline` before a
+/// comment that follows a `)` on the same line).
+pub fn format_gap(
     gap: TriviaGap,
     open: Doc<'static>,
     end: Doc<'static>,
@@ -355,10 +367,20 @@ fn format_gap(
     ALLOC.concat(parts)
 }
 
-/// Render a gap before an ordinary grammar token.
-pub fn format_leading_gap(gap: TriviaGap, style: &Style) -> Doc<'static> {
+/// Render a gap before an ordinary grammar token (keyword, identifier,
+/// punctuation).
+///
+/// `open` is a `space` if the first comment is inline (not at line start),
+/// otherwise `nil` — line-start comments rely on the caller having emitted
+/// a structural hardline before this call. `end` is a `hardline` if the
+/// last comment forces a line break, otherwise `nil`.
+///
+/// Do NOT manually prepend a `hardline` before the result — if the gap
+/// starts with a comment and you need it on a new line, use `format_gap`
+/// directly with `open = hardline()` instead.
+pub fn format_gap_before(gap: TriviaGap, style: &Style) -> Doc<'static> {
     let open = match gap.first() {
-        Some(TriviaElement::Comment(c)) if c.is_block && !c.at_line_start => ALLOC.text(" "),
+        Some(TriviaElement::Comment(c)) if !c.at_line_start => ALLOC.text(" "),
         _ => ALLOC.nil(),
     };
     let end = if gap.needs_line_break() {
@@ -369,18 +391,22 @@ pub fn format_leading_gap(gap: TriviaGap, style: &Style) -> Doc<'static> {
     format_gap(gap, open, end, style)
 }
 
-/// Render a gap after punctuation and own the one separator that follows it.
+/// Render a gap after punctuation (e.g. `,`, `;`, `{`) and own the one
+/// separator that follows it.
 ///
-/// The separator is emitted only if the last element is a `Comment`. If the
-/// last element is `BlankLines`, the blank lines carry the break and the
-/// separator is skipped. Callers passing a soft separator (`nil`, `line`,
-/// `line_`, `text`) should upgrade to `hardline` when `gap.needs_line_break()`
-/// returns `true`.
-pub fn format_delimiter_gap(
-    gap: TriviaGap,
-    separator: Doc<'static>,
-    style: &Style,
-) -> Doc<'static> {
+/// `open` is a `hardline` if the first comment is at line start, otherwise
+/// a `space` — so comments after punctuation start on a new line if they
+/// were on their own line in the source, or stay inline after a space.
+/// The `separator` is emitted only if the last element is a `Comment`. If
+/// the last element is `BlankLines`, the blank lines carry the break and
+/// the separator is skipped. Callers passing a soft separator (`nil`,
+/// `line`, `line_`, `text`) should upgrade to `hardline` when
+/// `gap.needs_line_break()` returns `true`.
+///
+/// Do NOT manually prepend a `hardline` or `space` before the result —
+/// `open` already handles positioning. If you need custom `open`
+/// positioning, use `format_gap` directly.
+pub fn format_gap_after(gap: TriviaGap, separator: Doc<'static>, style: &Style) -> Doc<'static> {
     let open = match gap.first() {
         Some(TriviaElement::Comment(c)) if c.at_line_start => ALLOC.hardline(),
         _ => ALLOC.text(" "),
