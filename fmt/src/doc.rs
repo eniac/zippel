@@ -92,6 +92,13 @@ fn format_decl(
                 format_leading_gap(cursor.advance_to(relation.span.start).trim_start(), style);
             let relation = format_relation(relation, cursor, style);
             let open_gap = cursor.advance_to_token(end, |token| matches!(token, Token::LBrace));
+            // Comments before `{` go inside the where group's nest so they
+            // align with the relation body, not at column 0. Skip the
+            // leading `ALLOC.line()` when the gap already starts with
+            // `BlankLines` — otherwise the structural line break and the
+            // blank lines double up.
+            let gap_starts_with_blanks =
+                matches!(open_gap.first(), Some(TriviaElement::BlankLines(_)));
             let open_comments = format_leading_gap(open_gap, style);
             // Gap after `{` — strip blank lines (structural hardline follows).
             let body_leading =
@@ -101,6 +108,11 @@ fn format_decl(
             let close_comments = cursor
                 .advance_to_token(end, |token| matches!(token, Token::RBrace))
                 .trim_end();
+            let open_break = if gap_starts_with_blanks {
+                ALLOC.nil()
+            } else {
+                ALLOC.line()
+            };
             ALLOC.concat([
                 keyword,
                 ALLOC.text("proto "),
@@ -112,10 +124,11 @@ fn format_decl(
                         ALLOC
                             .concat([ALLOC.line(), relation_leading, relation])
                             .nest(style.indent_width() as isize),
-                        ALLOC.line(),
+                        ALLOC
+                            .concat([open_break, open_comments])
+                            .nest(style.indent_width() as isize),
                     ])
                     .group(),
-                open_comments,
                 ALLOC.text("{"),
                 ALLOC.hardline(),
                 ALLOC

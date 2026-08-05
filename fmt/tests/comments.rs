@@ -956,3 +956,45 @@ fn poly_with_comments_not_sugared() {
         "type T = Poly<F, /* base */ 1, /* m */ 2 /* n */>;\n",
     );
 }
+
+#[test]
+fn comment_before_brace_in_proto_is_indented() {
+    // Comments between the last where-relation and `{` must be indented
+    // to match the where body, not left at column 0.
+    assert_formatted(
+        "\
+proto p<F: Field>(instance a: F) where a == a
+// trailing comment
+{ a }",
+        "\
+proto p<F: Field>(instance a: F) where
+    a == a
+    // trailing comment
+{
+    a
+}
+",
+    );
+}
+
+#[test]
+fn blank_line_before_comment_before_brace_preserved() {
+    // A blank line between the last relation and a comment before `{`
+    // should be preserved.
+    assert_formatted(
+        "\
+proto p<F: Field>(instance a: F) where a == a
+
+// trailing comment
+{ a }",
+        "\
+proto p<F: Field>(instance a: F) where
+    a == a
+
+    // trailing comment
+{
+    a
+}
+",
+    );
+}
