@@ -571,6 +571,7 @@ where
                             .ignore_then(exp_no_seq.clone())
                             .or_not(),
                     )
+                    .then_ignore(just(Token::Comma).ignored().or_not())
                     .then_ignore(just(Token::RParen).ignored())
                     .labelled(Context::CallArgs)
                     .as_context(),
@@ -592,6 +593,7 @@ where
                 just(Token::LParen)
                     .ignored()
                     .ignore_then(exp_no_seq.clone())
+                    .then_ignore(just(Token::Comma).ignored().or_not())
                     .then_ignore(just(Token::RParen).ignored())
                     .labelled(Context::CallArgs)
                     .as_context(),
@@ -604,6 +606,7 @@ where
                 just(Token::LParen)
                     .ignored()
                     .ignore_then(exp_no_seq.clone())
+                    .then_ignore(just(Token::Comma).ignored().or_not())
                     .then_ignore(just(Token::RParen).ignored())
                     .labelled(Context::CallArgs)
                     .as_context(),
@@ -616,6 +619,7 @@ where
                 just(Token::LParen)
                     .ignored()
                     .ignore_then(exp_no_seq.clone())
+                    .then_ignore(just(Token::Comma).ignored().or_not())
                     .then_ignore(just(Token::RParen).ignored())
                     .labelled(Context::CallArgs)
                     .as_context(),
@@ -630,6 +634,7 @@ where
                     .ignore_then(exp_no_seq.clone())
                     .then_ignore(just(Token::Comma).ignored())
                     .then(exp_no_seq.clone())
+                    .then_ignore(just(Token::Comma).ignored().or_not())
                     .then_ignore(just(Token::RParen).ignored())
                     .labelled(Context::CallArgs)
                     .as_context(),
@@ -690,6 +695,7 @@ where
                     .ignore_then(bin_op_parser())
                     .then_ignore(just(Token::Comma).ignored())
                     .then(exp_no_seq.clone())
+                    .then_ignore(just(Token::Comma).ignored().or_not())
                     .then_ignore(just(Token::RParen).ignored())
                     .labelled(Context::CallArgs)
                     .as_context(),
@@ -723,6 +729,7 @@ where
                     .ignore_then(exp_no_seq.clone())
                     .then_ignore(just(Token::Comma).ignored())
                     .then(exp_no_seq.clone())
+                    .then_ignore(just(Token::Comma).ignored().or_not())
                     .then_ignore(just(Token::RParen).ignored())
                     .labelled(Context::CallArgs)
                     .as_context(),
@@ -880,6 +887,7 @@ where
                         .ignore_then(exp_no_seq)
                         .or_not(),
                 )
+                .then_ignore(just(Token::Comma).ignored().or_not())
                 .then_ignore(just(Token::RParen).ignored())
                 .labelled(Context::CallArgs)
                 .as_context(),

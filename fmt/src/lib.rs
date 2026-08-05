@@ -34,21 +34,23 @@ impl std::error::Error for FormatError {}
 /// Format source text, returning the formatted output.
 /// Returns Err on parse failure (no panic).
 pub fn format_source(src: &str) -> Result<String, FormatError> {
+    format_source_with_style(src, &Style::default())
+}
+
+/// Format source text using an explicit style.
+pub fn format_source_with_style(src: &str, style: &Style) -> Result<String, FormatError> {
     let (decls, errors) = parse_decls(src);
     if !errors.is_empty() {
         return Err(FormatError::Parse(errors));
     }
-    let style = Style::default();
     let tokens = trivia::TokenStream::new(src);
     let comments = trivia::extract_comments(src);
-    let line_starts = trivia::compute_line_starts(src);
     Ok(doc::format_decls(
         &decls,
         &tokens,
         &comments,
-        &line_starts,
         src.len(),
-        &style,
+        style,
     ))
 }
 
