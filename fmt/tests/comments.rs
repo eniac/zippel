@@ -235,9 +235,9 @@ proto p<G1: Group, G2: Group, GT: Pairing<G1, G2>>(
 #[test]
 fn arg_inline_block_comments() {
     assert_formatted(
-        "fn f<F: Field>(instance /*comment A*/ a /*comment B*/: /*comment C*/ F) -> F { a }",
+        "fn f<F: Field>(instance /*comment A*/ a /*comment B*/ : /*comment C*/ F) -> F { a }",
         "\
-fn f<F: Field>(instance  /*comment A*/a /*comment B*/:  /*comment C*/F) -> F {
+fn f<F: Field>(instance /*comment A*/ a /*comment B*/ : /*comment C*/ F) -> F {
     a
 }
 ",
@@ -821,8 +821,9 @@ fn f<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F, insta
 }",
         "\
 fn f<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F, instance e: F) -> F {
-    assert(gate_identity_function(a, b, c, d, e, a, b)
-        == gate_identity_function2(a, b, c, d, e, a, b));
+    assert(
+        gate_identity_function(a, b, c, d, e, a, b) == gate_identity_function2(a, b, c, d, e, a, b),
+    );
     a
 }
 ",
@@ -1026,7 +1027,7 @@ fn inline_line_comment_before_token_gets_space() {
 -> F { a }",
         "\
 fn f<F: Field>(instance a: F) // inline comment
- -> F {
+-> F {
     a
 }
 ",

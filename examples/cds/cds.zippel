@@ -58,8 +58,10 @@ proto cds<G: Group, F: Scalar<G>, N: 2, K: 1>(
     // Step 5: Verification
     // 5.a: Verify underlying Schnorr proofs: g * m2 == m1 + pk * c
     // Vector equality: [g * m2[i] for i in 0..N] == [m1[i] + pk[i] * c[i] for i in 0..N]
-    verify([g * m2_transcript[i] for i in 0..N]
-        == [m1_transcript[i] + keys[i] * c_transcript[i] for i in 0..N]);
+    verify(
+        [g * m2_transcript[i] for i in 0..N]
+            == [m1_transcript[i] + keys[i] * c_transcript[i] for i in 0..N],
+    );
 
     // 5.b: Verify c_transcript is a valid degree K threshold sharing of s
     let verifier_pts = [0] ++ [eval_points[i] for i in 0..K];

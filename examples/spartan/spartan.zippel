@@ -438,10 +438,13 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     z4_phase1 <- c_phase1 * r_vb + r_e_phase1;
     z5_phase1 <- c_phase1 * (r_prod - r_va * v_b) + r_f_phase1;
     verify(g_evs_d3[0] * z1_phase1 + h_evs * z2_phase1 == comm_va_phase1 * c_phase1 + alpha_phase1);
-    verify(g_evs_d3[0] * z3_phase1 + h_evs * z4_phase1
-        == comm_vb_phase1 * c_phase1 + beta_p1_phase1);
-    verify(comm_va_phase1 * z3_phase1 + h_evs * z5_phase1
-        == comm_prod_phase1 * c_phase1 + delta_phase1);
+    verify(
+        g_evs_d3[0] * z3_phase1 + h_evs * z4_phase1 == comm_vb_phase1 * c_phase1 + beta_p1_phase1,
+    );
+    verify(
+        comm_va_phase1 * z3_phase1 + h_evs * z5_phase1
+            == comm_prod_phase1 * c_phase1 + delta_phase1,
+    );
     let t1_pok_vc = random<F>;
     let t2_pok_vc = random<F>;
     alpha_pok_vc <- g_evs_d3[0] * t1_pok_vc + h_evs * t2_pok_vc;

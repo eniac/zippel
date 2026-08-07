@@ -747,6 +747,7 @@ where
             .ignore_then(exp_no_seq.clone())
             .then_ignore(just(Token::EqEq).ignored())
             .then(exp_no_seq.clone())
+            .then_ignore(just(Token::Comma).or_not().ignored())
             .then_ignore(just(Token::RParen).ignored())
             .map_with(|(lhs, rhs), e| {
                 Spanned::new(UExp::Assert(Box::new(lhs), Box::new(rhs)), {
@@ -761,6 +762,7 @@ where
             .ignore_then(exp_no_seq.clone())
             .then_ignore(just(Token::EqEq).ignored())
             .then(exp_no_seq.clone())
+            .then_ignore(just(Token::Comma).or_not().ignored())
             .then_ignore(just(Token::RParen).ignored())
             .map_with(|(lhs, rhs), e| {
                 Spanned::new(UExp::Verify(Box::new(lhs), Box::new(rhs)), {

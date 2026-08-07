@@ -103,6 +103,23 @@ impl TriviaGap {
         }
         self
     }
+
+    /// Strip both leading and trailing `BlankLines`.
+    ///
+    /// Use this when blank lines around a token are noise (e.g. around `=`
+    /// in `let x = expr`) but comments should still be preserved.
+    pub fn trim(self) -> Self {
+        self.trim_start().trim_end()
+    }
+}
+
+/// Trim blank lines from a gap when it has no comments.
+///
+/// Use this at call sites where blank lines are noise (intra-expression
+/// gaps around `=`, `->`, `==`, etc.) but should be preserved when
+/// comments are present.
+pub fn trim_if_clean(gap: TriviaGap) -> TriviaGap {
+    if !gap.has_comments() { gap.trim() } else { gap }
 }
 
 impl Comment {
@@ -292,38 +309,59 @@ impl<'a> TokenCursor<'a> {
     }
 }
 
-/// Render a gap's trivia layout with explicit positioning control.
+/// Render a gap's trivia layout with positioning control.
 ///
-/// `open` is emitted only if the first element is a `Comment` — it positions
-/// the first comment relative to whatever came before (e.g. a `hardline` to
-/// put it on a new line, or a `space` to keep it inline). `end` is emitted
-/// only if the last element is a `Comment` — it positions whatever comes
-/// after relative to the last comment. If the first/last element is
-/// `BlankLines`, the blank lines carry the positioning and `open`/`end` are
-/// skipped.
+/// `open` controls what goes before the first comment. `None` = auto
+/// (hardline for line-start comments, space for inline, nil for
+/// BlankLines). `end` controls what goes after the last comment. `None` =
+/// auto (hardline if the last comment forces a line break, nil otherwise,
+/// nil if the last element is BlankLines). `sep` controls what goes when
+/// the gap is empty (no comments, no blank lines). `None` = nil.
+///
+/// `open` is emitted only if the first element is a `Comment`. `end` is
+/// emitted only if the last element is a `Comment`. If the first/last
+/// element is `BlankLines`, the blank lines carry the positioning.
 ///
 /// A comment suppresses its own ending hardline when the next element is
 /// `BlankLines` — `BlankLines` owns the line break.
 ///
-/// Prefer the `format_gap_before` / `format_gap_after` wrappers for
-/// standard call sites. Use this directly only when you need custom `open`
-/// positioning that the wrappers don't provide (e.g. a `hardline` before a
-/// comment that follows a `)` on the same line).
+/// Prefer the `gap_none` / `gap_space` / `gap_hard` wrappers
+/// for standard call sites. Use this directly only when you need custom
+/// `open`/`end` positioning that the wrappers don't provide.
 pub fn format_gap(
     gap: TriviaGap,
-    open: Doc<'static>,
-    end: Doc<'static>,
+    open: Option<Doc<'static>>,
+    end: Option<Doc<'static>>,
+    sep: Option<Doc<'static>>,
     style: &Style,
 ) -> Doc<'static> {
     if gap.layout.is_empty() {
-        return end;
+        return sep.unwrap_or_else(|| ALLOC.nil());
     }
+
+    // Compute auto open if not explicitly provided. For at_line_start
+    // comments, use `hardline` — the comment starts a new line. For
+    // inline comments, use `space`.
+    let open = open.or_else(|| match gap.first() {
+        Some(TriviaElement::Comment(c)) if c.at_line_start => Some(ALLOC.hardline()),
+        Some(TriviaElement::Comment(_)) => Some(ALLOC.text(" ")),
+        _ => None,
+    });
+
+    // Compute auto end if not explicitly provided. Breaking comments
+    // get an automatic hardline. Non-breaking comments get a space.
+    // Non-comment gaps get nil unless the caller passes `end` explicitly.
+    let end = end.or_else(|| match gap.last() {
+        Some(TriviaElement::Comment(c)) if c.forces_line_break() => Some(ALLOC.hardline()),
+        Some(TriviaElement::Comment(_)) => Some(ALLOC.text(" ")),
+        _ => None,
+    });
 
     let last_is_comment = matches!(gap.layout.last(), Some(TriviaElement::Comment(_)));
     let last_index = gap.layout.len() - 1;
     let mut parts = Vec::new();
     let mut after_hardline = false;
-    let mut open = Some(open);
+    let mut open = open;
 
     let mut iter = gap.layout.into_iter().peekable();
     let mut index = 0;
@@ -361,57 +399,66 @@ pub fn format_gap(
         index += 1;
     }
 
-    if last_is_comment {
+    if last_is_comment && let Some(end) = end {
         parts.push(end);
     }
     ALLOC.concat(parts)
 }
 
-/// Render a gap before an ordinary grammar token (keyword, identifier,
-/// punctuation).
-///
-/// `open` is a `space` if the first comment is inline (not at line start),
-/// otherwise `nil` — line-start comments rely on the caller having emitted
-/// a structural hardline before this call. `end` is a `hardline` if the
-/// last comment forces a line break, otherwise `nil`.
-///
-/// Do NOT manually prepend a `hardline` before the result — if the gap
-/// starts with a comment and you need it on a new line, use `format_gap`
-/// directly with `open = hardline()` instead.
-pub fn format_gap_before(gap: TriviaGap, style: &Style) -> Doc<'static> {
-    let open = match gap.first() {
-        Some(TriviaElement::Comment(c)) if !c.at_line_start => ALLOC.text(" "),
-        _ => ALLOC.nil(),
-    };
-    let end = if gap.needs_line_break() {
+/// Empty gap → nil. Comments → auto open/end.
+pub fn gap_none(gap: TriviaGap, style: &Style) -> Doc<'static> {
+    format_gap(gap, None, None, None, style)
+}
+
+/// Empty gap → space. Comments → auto open, space after (non-breaking)
+/// or hardline after (breaking).
+pub fn gap_space(gap: TriviaGap, style: &Style) -> Doc<'static> {
+    format_gap(gap, None, None, Some(ALLOC.text(" ")), style)
+}
+
+/// Gap before a `;` with no body following. Empty gap → nil. Breaking
+/// comments → hardline after; non-breaking comments → nil after (stay
+/// inline). Used for the trailing semicolon in `let x = a;` and
+/// `let x = a; /* c */` where no body follows.
+pub fn gap_semi(gap: TriviaGap, style: &Style) -> Doc<'static> {
+    let needs_break = gap.needs_line_break();
+    let sep = if needs_break {
         ALLOC.hardline()
     } else {
         ALLOC.nil()
     };
-    format_gap(gap, open, end, style)
+    let end = if needs_break {
+        Some(ALLOC.hardline())
+    } else {
+        None
+    };
+    format_gap(gap, None, end, Some(sep), style)
 }
 
-/// Render a gap after punctuation (e.g. `,`, `;`, `{`) and own the one
-/// separator that follows it.
-///
-/// `open` is a `hardline` if the first comment is at line start, otherwise
-/// a `space` — so comments after punctuation start on a new line if they
-/// were on their own line in the source, or stay inline after a space.
-/// The `separator` is emitted only if the last element is a `Comment`. If
-/// the last element is `BlankLines`, the blank lines carry the break and
-/// the separator is skipped. Callers passing a soft separator (`nil`,
-/// `line`, `line_`, `text`) should upgrade to `hardline` when
-/// `gap.needs_line_break()` returns `true`.
-///
-/// Do NOT manually prepend a `hardline` or `space` before the result —
-/// `open` already handles positioning. If you need custom `open`
-/// positioning, use `format_gap` directly.
-pub fn format_gap_after(gap: TriviaGap, separator: Doc<'static>, style: &Style) -> Doc<'static> {
+/// Empty gap → hardline. Comments → auto open (space for inline, nil
+/// for at_line_start), hardline after. Use for structural breaks and
+/// after punctuation (after `;`, between decls) where a line break is
+/// always wanted after the gap but inline comments should stay inline.
+pub fn gap_hard(gap: TriviaGap, style: &Style) -> Doc<'static> {
+    format_gap(
+        gap,
+        None,
+        Some(ALLOC.hardline()),
+        Some(ALLOC.hardline()),
+        style,
+    )
+}
+
+/// Like `gap_none` but comments get `nil` open (no space/hardline before
+/// the comment). Use inside `delimited_list` items where `line_()` or the
+/// open delimiter already provides positioning — avoids double spaces
+/// after `<`, `(`, `[`, `{`.
+pub fn gap_list(gap: TriviaGap, style: &Style) -> Doc<'static> {
     let open = match gap.first() {
-        Some(TriviaElement::Comment(c)) if c.at_line_start => ALLOC.hardline(),
-        _ => ALLOC.text(" "),
+        Some(TriviaElement::Comment(_)) => Some(ALLOC.nil()),
+        _ => None,
     };
-    format_gap(gap, open, separator, style)
+    format_gap(gap, open, None, None, style)
 }
 
 fn hardlines(count: usize) -> Doc<'static> {
@@ -425,7 +472,7 @@ fn line_of(offset: usize, line_starts: &[usize]) -> usize {
     }
 }
 
-pub fn compute_line_starts(src: &str) -> Vec<usize> {
+fn compute_line_starts(src: &str) -> Vec<usize> {
     let mut starts = vec![0];
     for (index, byte) in src.bytes().enumerate() {
         if byte == b'\n' {
