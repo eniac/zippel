@@ -99,7 +99,7 @@ fn format_decl(
     match &decl.node.body {
         Body::Proto { relation, body } => {
             let keyword_gap = cursor.advance_to_token(end, |token| matches!(token, Token::KwProto));
-            let (sig_gap, sig) = format_sig(&decl.node.sig, cursor, end, style);
+            let (sig_gap, name_typevars, args) = format_sig(&decl.node.sig, cursor, end, style);
             let where_gap = cursor
                 .advance_to_token(end, |token| matches!(token, Token::KwWhere))
                 .trim_start();
@@ -173,7 +173,10 @@ fn format_decl(
                 gap_none(trim_if_clean(keyword_gap), style),
                 ALLOC.text("proto"),
                 gap_space(trim_if_clean(sig_gap), style),
-                sig,
+                name_typevars,
+                // Group args so they break as a unit. The `where` clause is
+                // separate and should not force args to break.
+                args.group(),
                 where_comments,
                 ALLOC
                     .concat([
@@ -193,21 +196,25 @@ fn format_decl(
         }
         Body::Func { body } => {
             let keyword_gap = cursor.advance_to_token(end, |token| matches!(token, Token::KwFn));
-            let (sig_gap, sig) = format_sig(&decl.node.sig, cursor, end, style);
-            let ret = if let Some(ret) = &decl.node.sig.ret {
+            let (sig_gap, name_typevars, args) = format_sig(&decl.node.sig, cursor, end, style);
+            let (arrow_has_comments, ret) = if let Some(ret) = &decl.node.sig.ret {
                 // Gap after `)` — strip blank lines (structural position).
                 let arrow_gap = cursor
                     .advance_to_token(end, |token| matches!(token, Token::Arrow))
                     .trim_start();
+                let has_comments = arrow_gap.has_comments();
                 let (ret_gap, ret_doc) = format_typ(&ret.node, cursor, ret.span.end, style);
-                ALLOC.concat([
-                    gap_space(trim_if_clean(arrow_gap), style),
-                    ALLOC.text("->"),
-                    gap_space(trim_if_clean(ret_gap), style),
-                    ret_doc,
-                ])
+                (
+                    has_comments,
+                    ALLOC.concat([
+                        gap_space(trim_if_clean(arrow_gap), style),
+                        ALLOC.text("->"),
+                        gap_space(trim_if_clean(ret_gap), style),
+                        ret_doc,
+                    ]),
+                )
             } else {
-                ALLOC.nil()
+                (false, ALLOC.nil())
             };
             let open_gap = cursor.advance_to_token(end, |token| matches!(token, Token::LBrace));
 
@@ -233,12 +240,25 @@ fn format_decl(
                 .advance_to_token(end, |token| matches!(token, Token::RBrace))
                 .trim_end();
 
+            // Group args + ret so they break together: when the group
+            // breaks, args go on separate lines (via line_() in the
+            // ungrouped DelimList) and ret stays on the same line as `)`.
+            // Typevars are outside this group — they break independently
+            // via their own inner group.
+            // When there are comments between `)` and `->`, don't group
+            // them — the comments force a break, and args should stay flat.
+            let args_ret = if arrow_has_comments {
+                ALLOC.concat([args.group(), ret])
+            } else {
+                ALLOC.concat([args, ret]).group()
+            };
+
             ALLOC.concat([
                 gap_none(trim_if_clean(keyword_gap), style),
                 ALLOC.text("fn"),
                 gap_space(trim_if_clean(sig_gap), style),
-                sig,
-                ret,
+                name_typevars,
+                args_ret,
                 open_comments,
                 ALLOC.text("{"),
                 ALLOC
@@ -283,7 +303,7 @@ fn format_sig(
     cursor: &mut TokenCursor,
     end: usize,
     style: &Style,
-) -> (TriviaGap, Doc<'static>) {
+) -> (TriviaGap, Doc<'static>, Doc<'static>) {
     let name_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
     let typevars = format_typevars(&sig.typevars.node, cursor, end, style);
     let arg_open_comments = gap_none(
@@ -291,44 +311,35 @@ fn format_sig(
         style,
     );
 
-    let mut list = DelimList::new(style);
-    // Find the `)` position to limit trailing comma search for the last arg.
-    let rparen_end = cursor.peek_token(end, |token| matches!(token, Token::RParen));
+    let mut list = DelimList::new(style, ",", true);
+    let args_len = sig.args.node.0.len();
     for (index, arg) in sig.args.node.0.iter().enumerate() {
         let (arg_gap, arg_doc) = format_arg(arg, cursor, style);
-        if index + 1 < sig.args.node.0.len() {
-            list.push_comma(
-                arg_gap,
-                arg_doc,
-                take_separator_gap(cursor, end, |token| matches!(token, Token::Comma)),
-            );
+        if index + 1 < args_len {
+            let (before, after) =
+                take_separator_gap_split(cursor, end, |token| matches!(token, Token::Comma));
+            list.push_sep(arg_gap, arg_doc, before, after);
         } else {
-            // Last arg: consume trailing comma comments only if a comma exists before `)`.
-            if let Some(rp_end) = &rparen_end {
-                let comma_comments = gap_none(
-                    trim_if_clean(
-                        cursor.advance_to_token(rp_end.end, |token| matches!(token, Token::Comma)),
-                    ),
-                    style,
-                );
-                list.push(arg_gap, ALLOC.concat([arg_doc, comma_comments]));
-            } else {
-                list.push(arg_gap, arg_doc);
-            }
+            list.push(arg_gap, arg_doc);
         }
     }
-    let arg_close_comments = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
-    let args = list.finish("(", ")", arg_close_comments);
 
-    (
-        name_gap,
-        ALLOC.concat([
-            ALLOC.text(sig.name.node.to_string()),
-            typevars,
-            arg_open_comments,
-            args,
-        ]),
-    )
+    // Advance to `)`. If a trailing comma exists, it's a non-trivia token
+    // that advance_to_token skips — comments around it become close_comments,
+    // rendered after finish's trailing comma. Same as all other DelimList users.
+    let close_comments = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
+    // Use finish_ungrouped so the caller can wrap (args) + ret in a single
+    // group, ensuring args and ret break together (args break first, ret
+    // stays on the same line as `)`).
+    let args = list.finish_ungrouped("(", ")", close_comments);
+
+    let name_typevars = ALLOC.concat([
+        ALLOC.text(sig.name.node.to_string()),
+        typevars,
+        arg_open_comments,
+    ]);
+
+    (name_gap, name_typevars, args)
 }
 
 fn format_arg(
@@ -395,15 +406,13 @@ fn format_typevars(
         trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LAngle))),
         style,
     );
-    let mut list = DelimList::new(style);
+    let mut list = DelimList::new(style, ",", true);
     for (index, typevar) in typevars.0.iter().enumerate() {
         let (typevar_gap, typevar_doc) = format_typevar(typevar, cursor, style);
         if index + 1 < typevars.0.len() {
-            list.push_comma(
-                typevar_gap,
-                typevar_doc,
-                take_separator_gap(cursor, end, |token| matches!(token, Token::Comma)),
-            );
+            let (before, after) =
+                take_separator_gap_split(cursor, end, |token| matches!(token, Token::Comma));
+            list.push_sep(typevar_gap, typevar_doc, before, after);
         } else {
             list.push(typevar_gap, typevar_doc);
         }
@@ -442,6 +451,14 @@ fn format_typ(
 ) -> (TriviaGap, Doc<'static>) {
     match typ {
         Typ::Poly(base, m, n) => {
+            // Detect whether the source uses sugar syntax (Uni/Mle) or full
+            // Poly form. This determines how many args are in the source.
+            let source_is_uni = cursor
+                .peek_token(end, |t| matches!(t, Token::KwUni))
+                .is_some();
+            let source_is_mle = cursor
+                .peek_token(end, |t| matches!(t, Token::KwMleTy))
+                .is_some();
             let keyword_gap = cursor.advance_to_token(end, |token| {
                 matches!(token, Token::KwPolyTy | Token::KwUni | Token::KwMleTy)
             });
@@ -450,12 +467,27 @@ fn format_typ(
                 style,
             );
             let base_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
-            // Consume all inner gaps and format sizes up-front so we can
-            // decide whether to use Uni/Mle sugar without losing comments.
-            let comma_one = take_separator_gap(cursor, end, |token| matches!(token, Token::Comma));
-            let (m_gap, m_doc) = format_size(m, cursor, end, style);
-            let comma_two = take_separator_gap(cursor, end, |token| matches!(token, Token::Comma));
-            let (n_gap, n_doc) = format_size(n, cursor, end, style);
+
+            // Consume gaps and format sizes. When the source is already in
+            // sugar form (Uni/Mle), the skipped arg is implicit — don't try
+            // to find it in the token stream.
+            let (comma_one_b, comma_one_a) =
+                take_separator_gap_split(cursor, end, |token| matches!(token, Token::Comma));
+            let (m_gap, m_doc) = if source_is_uni {
+                (TriviaGap::default(), ALLOC.nil())
+            } else {
+                format_size(m, cursor, end, style)
+            };
+            let (comma_two_b, comma_two_a) = if source_is_uni || source_is_mle {
+                (TriviaGap::default(), TriviaGap::default())
+            } else {
+                take_separator_gap_split(cursor, end, |token| matches!(token, Token::Comma))
+            };
+            let (n_gap, n_doc) = if source_is_mle {
+                (TriviaGap::default(), ALLOC.nil())
+            } else {
+                format_size(n, cursor, end, style)
+            };
             let close_comments =
                 cursor.advance_to_token(end, |token| matches!(token, Token::RAngle));
 
@@ -463,11 +495,10 @@ fn format_typ(
             // Poly<F, N, 1>. Emit the sugar only when the AST matches AND
             // no comments are attached to the skipped argument's gaps.
             let is_uni = matches!(m, Size::Lit(1))
-                && !comma_one.has_comments()
-                && !comma_two.has_comments()
-                && !close_comments.has_comments();
+                && !comma_one_a.has_comments()
+                && !comma_two_b.has_comments();
             let is_mle = matches!(n, Size::Lit(1))
-                && !comma_two.has_comments()
+                && !comma_two_a.has_comments()
                 && !close_comments.has_comments();
 
             let name = if is_uni {
@@ -478,14 +509,19 @@ fn format_typ(
                 "Poly"
             };
 
-            let mut list = DelimList::new(style);
-            list.push_comma(base_gap, ALLOC.text(base.to_string()), comma_one);
+            let mut list = DelimList::new(style, ",", true);
+            list.push_sep(
+                base_gap,
+                ALLOC.text(base.to_string()),
+                comma_one_b,
+                comma_one_a,
+            );
             if is_uni {
                 list.push(n_gap, n_doc);
             } else if is_mle {
                 list.push(m_gap, m_doc);
             } else {
-                list.push_comma(m_gap, m_doc, comma_two);
+                list.push_sep(m_gap, m_doc, comma_two_b, comma_two_a);
                 list.push(n_gap, n_doc);
             }
 
@@ -501,30 +537,17 @@ fn format_typ(
         Typ::Vec(typ, size) => {
             let open_gap = cursor.advance_to_token(end, |token| matches!(token, Token::LBrack));
             let (inner_gap, inner_doc) = format_typ(&typ.node, cursor, typ.span.end, style);
-            let semi = gap_none(
-                trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::Semi))),
-                style,
-            );
+            let (semi_gap_b, semi_gap_a) =
+                take_separator_gap_split(cursor, end, |token| matches!(token, Token::Semi));
             let (size_gap, size_doc) = format_size(size, cursor, end, style);
-            let close = gap_none(
-                trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::RBrack))),
-                style,
-            );
+            let close_comments =
+                cursor.advance_to_token(end, |token| matches!(token, Token::RBrack));
 
-            (
-                open_gap,
-                ALLOC.concat([
-                    ALLOC.text("["),
-                    gap_none(trim_if_clean(inner_gap), style),
-                    inner_doc,
-                    semi,
-                    ALLOC.text(";"),
-                    gap_space(trim_if_clean(size_gap), style),
-                    size_doc,
-                    close,
-                    ALLOC.text("]"),
-                ]),
-            )
+            let mut list = DelimList::new(style, ";", false);
+            list.push_sep(inner_gap, inner_doc, semi_gap_b, semi_gap_a);
+            list.push(size_gap, size_doc);
+
+            (open_gap, list.finish("[", "]", close_comments))
         }
         Typ::Base(base) => {
             let gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
@@ -539,7 +562,7 @@ fn format_typ(
             let (range_gap, range_doc) = format_range(range, cursor, end, style);
             let close_comments =
                 cursor.advance_to_token(end, |token| matches!(token, Token::RAngle));
-            let mut list = DelimList::new(style);
+            let mut list = DelimList::new(style, ",", true);
             list.push(range_gap, range_doc);
             (
                 keyword_gap,
@@ -558,7 +581,7 @@ fn format_typ(
             let open_gap = cursor.advance_to_token(end, |token| matches!(token, Token::LBrace));
             let mut fields: Vec<_> = fields.iter().collect();
             fields.sort_by_key(|(_, typ)| typ.span.start);
-            let mut list = DelimList::new(style);
+            let mut list = DelimList::new(style, ",", true);
             format_field_items(
                 &fields,
                 |typ, cursor, end, style| format_typ(&typ.node, cursor, end, style),
@@ -601,16 +624,15 @@ fn format_kind(
                 style,
             );
             let ids: Vec<_> = ids.iter().collect();
-            let mut list = DelimList::new(style);
+            let mut list = DelimList::new(style, ",", true);
             for (index, id) in ids.iter().enumerate() {
                 let id_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
                 let id_doc = ALLOC.text(id.to_string());
                 if index + 1 < ids.len() {
-                    list.push_comma(
-                        id_gap,
-                        id_doc,
-                        take_separator_gap(cursor, end, |token| matches!(token, Token::Comma)),
-                    );
+                    let (before, after) = take_separator_gap_split(cursor, end, |token| {
+                        matches!(token, Token::Comma)
+                    });
+                    list.push_sep(id_gap, id_doc, before, after);
                 } else {
                     list.push(id_gap, id_doc);
                 }
@@ -634,12 +656,13 @@ fn format_kind(
                 style,
             );
             let first_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
-            let comma = take_separator_gap(cursor, end, |token| matches!(token, Token::Comma));
+            let (comma_b, comma_a) =
+                take_separator_gap_split(cursor, end, |token| matches!(token, Token::Comma));
             let second_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
             let close_comments =
                 cursor.advance_to_token(end, |token| matches!(token, Token::RAngle));
-            let mut list = DelimList::new(style);
-            list.push_comma(first_gap, ALLOC.text(g1.to_string()), comma);
+            let mut list = DelimList::new(style, ",", true);
+            list.push_sep(first_gap, ALLOC.text(g1.to_string()), comma_b, comma_a);
             list.push(second_gap, ALLOC.text(g2.to_string()));
             let args = list.finish("<", ">", close_comments);
             (
@@ -649,14 +672,6 @@ fn format_kind(
         }
         Kind::Range(range) => format_range(range, cursor, end, style),
     }
-}
-
-fn format_size_spanned(
-    size: &Spanned<Size>,
-    cursor: &mut TokenCursor,
-    style: &Style,
-) -> (TriviaGap, Doc<'static>) {
-    format_size(&size.node, cursor, size.span.end, style)
 }
 
 fn format_size(
@@ -698,13 +713,13 @@ fn format_size_binary(
         "^" => (3, true),
         _ => unreachable!(),
     };
-    let (lhs_gap, lhs_doc) = format_size_spanned(lhs, cursor, style);
+    let (lhs_gap, lhs_doc) = format_size(&lhs.node, cursor, lhs.span.end, style);
     let lhs = parenthesize(
         lhs_doc,
         size_lhs_needs_paren(&lhs.node, precedence, right_assoc),
     );
     let op_gap = cursor.advance_to_token(end, |token| matches_size_op(op, token));
-    let (rhs_gap, rhs_doc) = format_size_spanned(rhs, cursor, style);
+    let (rhs_gap, rhs_doc) = format_size(&rhs.node, cursor, rhs.span.end, style);
     let rhs = parenthesize(
         rhs_doc,
         size_rhs_needs_paren(&rhs.node, precedence, right_assoc),
@@ -733,12 +748,13 @@ fn format_size_call(
         trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LParen))),
         style,
     );
-    let (lhs_gap, lhs_doc) = format_size_spanned(lhs, cursor, style);
-    let comma = take_separator_gap(cursor, end, |token| matches!(token, Token::Comma));
-    let (rhs_gap, rhs_doc) = format_size_spanned(rhs, cursor, style);
+    let (lhs_gap, lhs_doc) = format_size(&lhs.node, cursor, lhs.span.end, style);
+    let (comma_b, comma_a) =
+        take_separator_gap_split(cursor, end, |token| matches!(token, Token::Comma));
+    let (rhs_gap, rhs_doc) = format_size(&rhs.node, cursor, rhs.span.end, style);
     let close_comments = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
-    let mut list = DelimList::new(style);
-    list.push_comma(lhs_gap, lhs_doc, comma);
+    let mut list = DelimList::new(style, ",", true);
+    list.push_sep(lhs_gap, lhs_doc, comma_b, comma_a);
     list.push(rhs_gap, rhs_doc);
     let args = list.finish("(", ")", close_comments);
 
@@ -804,7 +820,7 @@ fn format_range_size(
     if size.span.start == size.span.end {
         format_size(&size.node, cursor, end, style)
     } else {
-        format_size_spanned(size, cursor, style)
+        format_size(&size.node, cursor, size.span.end, style)
     }
 }
 
@@ -1003,7 +1019,7 @@ fn format_exp(
             let gap = cursor.advance_to_token(end, |token| matches!(token, Token::LParen));
             let close_comments =
                 cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
-            let list = DelimList::new(style);
+            let list = DelimList::new(style, ",", true);
             (gap, list.finish("(", ")", close_comments))
         }
         Exp::Var(var) => {
@@ -1078,7 +1094,7 @@ fn format_exp(
                 trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LParen))),
                 style,
             );
-            let mut list = DelimList::new(style);
+            let mut list = DelimList::new(style, ",", true);
             format_exps_items(args, cursor, end, style, &mut list);
             let close_comments =
                 cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
@@ -1129,7 +1145,7 @@ fn format_exp(
         }
         Exp::Vec(values) => {
             let open_gap = cursor.advance_to_token(end, |token| matches!(token, Token::LBrack));
-            let mut list = DelimList::new(style);
+            let mut list = DelimList::new(style, ",", true);
             format_exps_items(values, cursor, end, style, &mut list);
             let close_comments =
                 cursor.advance_to_token(end, |token| matches!(token, Token::RBrack));
@@ -1188,12 +1204,13 @@ fn format_exp(
                 style,
             );
             let op_gap = cursor.advance_to_token(end, |token| matches_binop(*op, token));
-            let comma = take_separator_gap(cursor, end, |token| matches!(token, Token::Comma));
+            let (comma_b, comma_a) =
+                take_separator_gap_split(cursor, end, |token| matches!(token, Token::Comma));
             let (value_gap, value_doc) = format_exp(value, cursor, style);
             let close_comments =
                 cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
-            let mut list = DelimList::new(style);
-            list.push_comma(op_gap, ALLOC.text(binop_symbol(*op)), comma);
+            let mut list = DelimList::new(style, ",", true);
+            list.push_sep(op_gap, ALLOC.text(binop_symbol(*op)), comma_b, comma_a);
             list.push(value_gap, value_doc);
             let args = list.finish("(", ")", close_comments);
 
@@ -1211,7 +1228,7 @@ fn format_exp(
             let (index_gap, index_doc) = format_exp(index, cursor, style);
             let close_comments =
                 cursor.advance_to_token(end, |token| matches!(token, Token::RBrack));
-            let mut list = DelimList::new(style);
+            let mut list = DelimList::new(style, ",", false);
             list.push(index_gap, index_doc);
             (
                 base_gap,
@@ -1247,34 +1264,22 @@ fn format_exp(
         }
         Exp::Fun(vars, body) => {
             let keyword_gap = cursor.advance_to_token(end, |token| matches!(token, Token::KwFun));
-            let mut items = Vec::new();
-            let first_var_gap = if vars.is_empty() {
-                TriviaGap::default()
-            } else {
-                cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)))
-            };
+            let open_gap = cursor.advance_to_token(end, |token| matches!(token, Token::LParen));
+            let mut list = DelimList::new(style, ",", true);
             for (index, var) in vars.iter().enumerate() {
-                let var_comments = if index == 0 {
-                    ALLOC.nil()
-                } else {
-                    gap_none(
-                        trim_if_clean(
-                            cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
-                        ),
-                        style,
-                    )
-                };
-                let var_doc = ALLOC.concat([var_comments, ALLOC.text(var.to_string())]);
+                let var_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
+                let var_doc = ALLOC.text(var.to_string());
                 if index + 1 < vars.len() {
-                    items.push(comma_terminated_item(
-                        var_doc,
-                        take_separator_gap(cursor, end, |token| matches!(token, Token::Comma)),
-                        style,
-                    ));
+                    let (before, after) = take_separator_gap_split(cursor, end, |token| {
+                        matches!(token, Token::Comma)
+                    });
+                    list.push_sep(var_gap, var_doc, before, after);
                 } else {
-                    items.push(var_doc);
+                    list.push(var_gap, var_doc);
                 }
             }
+            let close_comments =
+                cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
             let arrow_gap = cursor.advance_to_token(end, |token| matches!(token, Token::FatArrow));
             let (body_gap, body_doc) = format_exp(body, cursor, style);
 
@@ -1282,8 +1287,8 @@ fn format_exp(
                 keyword_gap,
                 ALLOC.concat([
                     ALLOC.text("fun"),
-                    gap_space(trim_if_clean(first_var_gap), style),
-                    ALLOC.concat(items),
+                    gap_space(trim_if_clean(open_gap), style),
+                    list.finish("(", ")", close_comments),
                     gap_space(trim_if_clean(arrow_gap), style),
                     ALLOC.text("=>"),
                     gap_space(trim_if_clean(body_gap), style),
@@ -1295,7 +1300,7 @@ fn format_exp(
             let open_gap = cursor.advance_to_token(end, |token| matches!(token, Token::LBraceBar));
             let mut fields: Vec<_> = fields.iter().collect();
             fields.sort_by_key(|(_, value)| value.span.start);
-            let mut list = DelimList::new(style);
+            let mut list = DelimList::new(style, ",", true);
             format_field_items(
                 &fields,
                 |exp, cursor, _end, style| format_exp(exp, cursor, style),
@@ -1344,12 +1349,13 @@ fn format_exp(
                 style,
             );
             let field_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
-            let comma = take_separator_gap(cursor, end, |token| matches!(token, Token::Comma));
+            let (comma_b, comma_a) =
+                take_separator_gap_split(cursor, end, |token| matches!(token, Token::Comma));
             let (value_gap, value_doc) = format_exp(value, cursor, style);
             let close_comments =
                 cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
-            let mut list = DelimList::new(style);
-            list.push_comma(field_gap, ALLOC.text(field.to_string()), comma);
+            let mut list = DelimList::new(style, ",", true);
+            list.push_sep(field_gap, ALLOC.text(field.to_string()), comma_b, comma_a);
             list.push(value_gap, value_doc);
 
             (
@@ -1383,7 +1389,7 @@ fn format_unary_call(
     );
     let (arg_gap, arg_doc) = format_exp(arg, cursor, style);
     let close_comments = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
-    let mut list = DelimList::new(style);
+    let mut list = DelimList::new(style, ",", true);
     list.push(arg_gap, arg_doc);
 
     (
@@ -1415,11 +1421,12 @@ fn format_binary_call(
         style,
     );
     let (lhs_gap, lhs_doc) = format_exp(lhs, cursor, style);
-    let comma_comments = take_separator_gap(cursor, end, |token| matches!(token, Token::Comma));
+    let (comma_comments_b, comma_comments_a) =
+        take_separator_gap_split(cursor, end, |token| matches!(token, Token::Comma));
     let (rhs_gap, rhs_doc) = format_exp(rhs, cursor, style);
     let close_comments = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
-    let mut list = DelimList::new(style);
-    list.push_comma(lhs_gap, lhs_doc, comma_comments);
+    let mut list = DelimList::new(style, ",", true);
+    list.push_sep(lhs_gap, lhs_doc, comma_comments_b, comma_comments_a);
     list.push(rhs_gap, rhs_doc);
 
     (
@@ -1448,7 +1455,7 @@ fn format_evaluate(
         );
         let (range_gap, range_doc) = format_range(range, cursor, end, style);
         let close_comments = cursor.advance_to_token(end, |token| matches!(token, Token::RAngle));
-        let mut list = DelimList::new(style);
+        let mut list = DelimList::new(style, ",", true);
         list.push(range_gap, range_doc);
         ALLOC.concat([open, list.finish("<", ">", close_comments)])
     } else {
@@ -1461,10 +1468,11 @@ fn format_evaluate(
     );
     let (poly_gap, poly_doc) = format_exp(poly, cursor, style);
 
-    let mut list = DelimList::new(style);
+    let mut list = DelimList::new(style, ",", true);
     if let Some(point) = point {
-        let comma_comments = take_separator_gap(cursor, end, |token| matches!(token, Token::Comma));
-        list.push_comma(poly_gap, poly_doc, comma_comments);
+        let (comma_comments_b, comma_comments_a) =
+            take_separator_gap_split(cursor, end, |token| matches!(token, Token::Comma));
+        list.push_sep(poly_gap, poly_doc, comma_comments_b, comma_comments_a);
         let (point_gap, point_doc) = format_exp(point, cursor, style);
         list.push(point_gap, point_doc);
     } else {
@@ -1513,7 +1521,7 @@ fn format_sampling(
     let content = ALLOC.concat([ALLOC.text(typ.to_string()), star]);
     let close_comments = cursor.advance_to_token(end, |token| matches!(token, Token::RAngle));
 
-    let mut list = DelimList::new(style);
+    let mut list = DelimList::new(style, ",", true);
     list.push(typ_gap, content);
     (
         keyword_gap,
@@ -1560,7 +1568,7 @@ fn format_assertion(
         .nest(style.indent_width() as isize)
         .group();
 
-    let mut list = DelimList::new(style);
+    let mut list = DelimList::new(style, ",", true);
     list.push(lhs_gap, content);
     (
         keyword_gap,
@@ -1600,11 +1608,9 @@ fn format_field_items<N, T, F>(
             value_doc,
         ]);
         if index + 1 < fields.len() {
-            list.push_comma(
-                name_gap,
-                field,
-                take_separator_gap(cursor, end, |token| matches!(token, Token::Comma)),
-            );
+            let (before, after) =
+                take_separator_gap_split(cursor, end, |token| matches!(token, Token::Comma));
+            list.push_sep(name_gap, field, before, after);
         } else {
             list.push(name_gap, field);
         }
@@ -1621,11 +1627,9 @@ fn format_exps_items(
     for (index, exp) in exps.0.iter().enumerate() {
         let (exp_gap, exp_doc) = format_exp(exp, cursor, style);
         if index + 1 < exps.0.len() {
-            list.push_comma(
-                exp_gap,
-                exp_doc,
-                take_separator_gap(cursor, end, |token| matches!(token, Token::Comma)),
-            );
+            let (before, after) =
+                take_separator_gap_split(cursor, end, |token| matches!(token, Token::Comma));
+            list.push_sep(exp_gap, exp_doc, before, after);
         } else {
             list.push(exp_gap, exp_doc);
         }
@@ -1640,31 +1644,98 @@ fn parenthesize(doc: Doc<'static>, needed: bool) -> Doc<'static> {
     }
 }
 
-fn comma_terminated_item(item: Doc<'static>, gap: TriviaGap, style: &Style) -> Doc<'static> {
-    let needs_break = gap.needs_line_break();
-    // After comma: inline comments get `space` open (stay on same line),
-    // at_line_start comments get `hardline` open (new line). No preceding
-    // `line_()` here — the comma is between items, not at the start.
-    let open = match gap.first() {
-        Some(TriviaElement::Comment(c)) if c.at_line_start => Some(ALLOC.hardline()),
-        Some(TriviaElement::Comment(_)) => Some(ALLOC.text(" ")),
-        _ => None,
-    };
-    let sep = if needs_break {
-        ALLOC.hardline()
+fn sep_terminated_item(
+    item: Doc<'static>,
+    separator: &'static str,
+    before_sep: TriviaGap,
+    after_sep: TriviaGap,
+    style: &Style,
+) -> Doc<'static> {
+    let combined = before_sep.clone().join(after_sep.clone());
+    let is_multiline = combined.has_source_line_break();
+
+    if is_multiline {
+        // Rule 1: Multiline gap — comma first, all comments after.
+        // This is the current behavior.
+        let needs_break = combined.needs_line_break();
+        let open = match combined.first() {
+            Some(TriviaElement::Comment(c)) if c.at_line_start => Some(ALLOC.hardline()),
+            Some(TriviaElement::Comment(_)) => Some(ALLOC.text(" ")),
+            _ => None,
+        };
+        let sep = if needs_break {
+            ALLOC.hardline()
+        } else {
+            ALLOC.line()
+        };
+        let end = if needs_break {
+            Some(ALLOC.hardline())
+        } else {
+            Some(ALLOC.line())
+        };
+        ALLOC.concat([
+            item,
+            ALLOC.text(separator),
+            format_gap(combined, open, end, Some(sep), style),
+        ])
     } else {
-        ALLOC.line()
-    };
-    let end = if needs_break {
-        Some(ALLOC.hardline())
-    } else {
-        Some(ALLOC.line())
-    };
-    ALLOC.concat([
-        item,
-        ALLOC.text(","),
-        format_gap(gap, open, end, Some(sep), style),
-    ])
+        // Rule 2/3: Inline gap. Use flat_alt to switch between
+        // preserve-positions (flat) and comma-first-split (broken).
+        //
+        // Flat:   item /*A*/, /*B*/
+        // Broken: item, /*A*/
+        //         /*B*/
+        //         (next item on its own line via DelimList)
+
+        // --- Flat layout: preserve source positions ---
+        // before_sep rendered after item, then separator, then after_sep.
+        // before_flat: end=nil (no trailing space before comma)
+        // after_flat: sep=line() (space after comma for empty gap in flat mode)
+        let before_flat = format_gap(
+            before_sep.clone(),
+            Some(ALLOC.text(" ")), // space before /*A*/
+            Some(ALLOC.nil()),     // no trailing space — comma follows
+            Some(ALLOC.nil()),     // no sep — separator text follows
+            style,
+        );
+        let after_flat = format_gap(
+            after_sep.clone(),
+            Some(ALLOC.text(" ")), // space before /*B*/
+            None,                  // auto end (space for inline block)
+            Some(ALLOC.line()),    // space after comma for empty gap
+            style,
+        );
+        let flat = ALLOC.concat([item.clone(), before_flat, ALLOC.text(separator), after_flat]);
+
+        // --- Broken layout: comma first, A on same line, B on own line ---
+        // item, /*A*/
+        // /*B*/
+        let before_broken = if before_sep.is_empty() {
+            ALLOC.nil()
+        } else {
+            format_gap(
+                before_sep,
+                Some(ALLOC.text(" ")),  // space before /*A*/ after comma
+                Some(ALLOC.hardline()), // hardline after /*A*/
+                Some(ALLOC.nil()),
+                style,
+            )
+        };
+        let after_broken = if after_sep.is_empty() {
+            ALLOC.hardline()
+        } else {
+            format_gap(
+                after_sep,
+                Some(ALLOC.hardline()), // /*B*/ on its own line
+                Some(ALLOC.hardline()), // hardline after /*B*/
+                Some(ALLOC.nil()),
+                style,
+            )
+        };
+        let broken = ALLOC.concat([item, ALLOC.text(separator), before_broken, after_broken]);
+
+        broken.flat_alt(flat)
+    }
 }
 
 fn take_separator_gap(
@@ -1672,12 +1743,25 @@ fn take_separator_gap(
     end: usize,
     pred: impl Fn(&Token) -> bool,
 ) -> TriviaGap {
+    let (before, after) = take_separator_gap_split(cursor, end, pred);
+    before.join(after)
+}
+
+/// Like `take_separator_gap` but returns the before-separator and
+/// after-separator gaps separately, so callers can distinguish comments
+/// before the separator (/*A*/) from comments after it (/*B*/).
+fn take_separator_gap_split(
+    cursor: &mut TokenCursor,
+    end: usize,
+    pred: impl Fn(&Token) -> bool,
+) -> (TriviaGap, TriviaGap) {
     let before = cursor.advance_to_token(end, &pred);
     let next = cursor
         .peek_token(end, |_| true)
         .map(|r| r.start)
         .unwrap_or(end);
-    before.join(cursor.advance_to(next))
+    let after = cursor.advance_to(next);
+    (before, after)
 }
 
 /// Builder for items inside a `delimited_list`.
@@ -1694,14 +1778,23 @@ fn take_separator_gap(
 struct DelimList<'a> {
     items: Vec<Doc<'static>>,
     is_first: bool,
+    separator: &'static str,
+    trailing_sep: bool,
     style: &'a Style,
 }
 
 impl<'a> DelimList<'a> {
-    fn new(style: &'a Style) -> Self {
+    /// Create a new `DelimList`.
+    ///
+    /// - `separator`: the delimiter between items (e.g. `","`, `";"`).
+    /// - `trailing_sep`: whether to emit a trailing separator in broken mode
+    ///   (e.g. trailing comma in multi-line arg lists).
+    fn new(style: &'a Style, separator: &'static str, trailing_sep: bool) -> Self {
         Self {
             items: Vec::new(),
             is_first: true,
+            separator,
+            trailing_sep,
             style,
         }
     }
@@ -1719,17 +1812,29 @@ impl<'a> DelimList<'a> {
         self.is_first = false;
     }
 
-    /// Push an item with a leading gap, followed by a comma.
-    /// The comma gap is passed to `comma_terminated_item`.
-    fn push_comma(&mut self, gap: TriviaGap, doc: Doc<'static>, comma: TriviaGap) {
+    /// Push an item with a leading gap, followed by the separator.
+    /// `before_sep` and `after_sep` are the gaps around the separator,
+    /// passed to `sep_terminated_item`.
+    fn push_sep(
+        &mut self,
+        gap: TriviaGap,
+        doc: Doc<'static>,
+        before_sep: TriviaGap,
+        after_sep: TriviaGap,
+    ) {
         let gap = if self.is_first {
             gap_list(trim_if_clean(gap).trim_start(), self.style)
         } else {
             gap_none(trim_if_clean(gap), self.style)
         };
         let item = ALLOC.concat([gap, doc]);
-        self.items
-            .push(comma_terminated_item(item, comma, self.style));
+        self.items.push(sep_terminated_item(
+            item,
+            self.separator,
+            before_sep,
+            after_sep,
+            self.style,
+        ));
         self.is_first = false;
     }
 
@@ -1749,6 +1854,28 @@ impl<'a> DelimList<'a> {
         close: &'static str,
         close_comments: TriviaGap,
     ) -> Doc<'static> {
+        self.finish_impl(open, close, close_comments, true)
+    }
+
+    /// Like `finish` but without the inner `.group()`.
+    /// The caller is responsible for wrapping the result (plus any
+    /// sibling content that should break together) in a `.group()`.
+    fn finish_ungrouped(
+        self,
+        open: &'static str,
+        close: &'static str,
+        close_comments: TriviaGap,
+    ) -> Doc<'static> {
+        self.finish_impl(open, close, close_comments, false)
+    }
+
+    fn finish_impl(
+        self,
+        open: &'static str,
+        close: &'static str,
+        close_comments: TriviaGap,
+        grouped: bool,
+    ) -> Doc<'static> {
         let style = self.style;
         let items = self.items;
         let indent = style.indent_width() as isize;
@@ -1762,7 +1889,7 @@ impl<'a> DelimList<'a> {
         let close_end = if close_needs_break {
             Some(ALLOC.hardline())
         } else {
-            Some(ALLOC.nil())
+            Some(ALLOC.line_())
         };
         // Before close delimiter: inline comments get `space` open,
         // at_line_start comments get `hardline` open. The `line_()` before
@@ -1780,21 +1907,16 @@ impl<'a> DelimList<'a> {
             Some(close_sep),
             style,
         );
-        ALLOC
-            .text(open)
-            .append(
-                ALLOC
-                    .concat([ALLOC
-                        .concat([
-                            ALLOC.line_(),
-                            ALLOC.concat(items),
-                            ALLOC.text(",").flat_alt(ALLOC.nil()),
-                            close_gap,
-                        ])
-                        .nest(indent)])
-                    .group(),
-            )
-            .append(ALLOC.text(close))
+        let trailing = if self.trailing_sep {
+            ALLOC.text(self.separator).flat_alt(ALLOC.nil())
+        } else {
+            ALLOC.nil()
+        };
+        let inner = ALLOC.concat([ALLOC
+            .concat([ALLOC.line_(), ALLOC.concat(items), trailing, close_gap])
+            .nest(indent)]);
+        let inner = if grouped { inner.group() } else { inner };
+        ALLOC.text(open).append(inner).append(ALLOC.text(close))
     }
 }
 

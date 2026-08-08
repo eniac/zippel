@@ -1471,7 +1471,7 @@ fn pin_app_univariate_poly() {
     assert!(gs[0] == expected);
 }
 
-/// Fun expression (polynomial literal): `fun x => x`.
+/// Fun expression (polynomial literal): `fun(x) => x`.
 /// Creates Value::Poly(VirtualPolynomial) representing the identity polynomial [0, 1].
 /// Tests: CExp::Fun path (L1407-1419).
 #[test]
@@ -1483,7 +1483,7 @@ fn pin_fun_lit() {
     type F = <B as backend::ArkConfig>::F;
 
     let src = r#"
-        fn f<F: Field>() -> Uni<F, 1> { fun x => x }
+        fn f<F: Field>() -> Uni<F, 1> { fun(x) => x }
     "#;
     let gs = parse_and_build(src);
 
@@ -1491,7 +1491,7 @@ fn pin_fun_lit() {
 
     let (_inp, _) = expected_inp(&mut expected, "f", &[]);
 
-    // fun x => x → DensePolynomial [0, 1] representing the identity
+    // fun(x) => x → DensePolynomial [0, 1] representing the identity
     let poly = DensePolynomial::from_coefficients_vec(vec![F::zero(), F::one()]);
     let pv = PolyVariant::DenseUni(poly);
     let vp = VirtualPolynomial::from_poly(pv);
@@ -2289,7 +2289,7 @@ fn pin_dags_get_proto() {
 #[test]
 fn pin_error_non_polynomial_fun() {
     let src = r#"
-        fn f<F: Field>(instance a: F) -> Uni<F, 2> { fun x => x ^ 2 }
+        fn f<F: Field>(instance a: F) -> Uni<F, 2> { fun(x) => x ^ 2 }
     "#;
     let result = try_parse_and_build(src);
     match result {
@@ -2303,7 +2303,7 @@ fn pin_error_non_polynomial_fun() {
 #[test]
 fn pin_error_fun_unbound_var() {
     let src = r#"
-        fn f<F: Field>(instance a: F) -> Uni<F, 1> { fun x => y }
+        fn f<F: Field>(instance a: F) -> Uni<F, 1> { fun(x) => y }
     "#;
     // This may fail at parse/typecheck (unwrap in try_parse_and_build) or at graph building
     let result = std::panic::catch_unwind(|| try_parse_and_build(src));
@@ -2403,7 +2403,7 @@ fn pin_multi_transcript() {
     );
 }
 
-/// Multilinear Fun: `fun x, y => x + y` creates DenseMle.
+/// Multilinear Fun: `fun(x, y) => x + y` creates DenseMle.
 /// Tests: CExp::Fun with multiple variables (multilinear path).
 #[test]
 fn pin_fun_multilinear() {
@@ -2413,14 +2413,14 @@ fn pin_fun_multilinear() {
     type F = <B as backend::ArkConfig>::F;
 
     let src = r#"
-        fn f<F: Field>() -> Mle<F, 2> { fun x, y => x + y }
+        fn f<F: Field>() -> Mle<F, 2> { fun(x, y) => x + y }
     "#;
     let gs = parse_and_build(src);
 
     let mut expected = UDag::<B>::new();
     let (_inp, _) = expected_inp(&mut expected, "f", &[]);
 
-    // fun x, y => x + y
+    // fun(x, y) => x + y
     // x is variable 0, y is variable 1
     // x: evaluations [0,1,0,1], y: evaluations [0,0,1,1]
     // x + y: evaluations [0,1,1,2]

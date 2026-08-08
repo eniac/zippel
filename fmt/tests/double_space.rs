@@ -60,7 +60,7 @@ fn comment_between_typevar_colon_and_kind() {
 fn comment_between_typevars_comma() {
     assert_ok(
         "fn f<F: Field /* c */ , G: Group>(instance a: F) -> F { a }",
-        "fn f<F: Field, /* c */ G: Group>(instance a: F) -> F {\n    a\n}\n",
+        "fn f<F: Field /* c */, G: Group>(instance a: F) -> F {\n    a\n}\n",
     );
 }
 
@@ -128,7 +128,7 @@ fn comment_between_arg_colon_and_type() {
 fn comment_between_args_comma() {
     assert_ok(
         "fn f<F: Field>(instance a: F /* c */ , instance b: F) -> F { a }",
-        "fn f<F: Field>(instance a: F, /* c */ instance b: F) -> F {\n    a\n}\n",
+        "fn f<F: Field>(instance a: F /* c */, instance b: F) -> F {\n    a\n}\n",
     );
 }
 
@@ -267,7 +267,7 @@ fn comment_after_open_paren_in_app() {
 fn comment_between_args_in_app_comma() {
     assert_ok(
         "fn f<F: Field>(instance a: F, instance b: F) -> F { g(a /* c */ , b) }",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    g(a, /* c */ b)\n}\n",
+        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    g(a /* c */, b)\n}\n",
     );
 }
 
@@ -303,7 +303,7 @@ fn comment_after_open_brack_in_vec() {
 fn comment_between_vec_elems_comma() {
     assert_ok(
         "fn f<F: Field>(instance a: F, instance b: F) -> F { [a /* c */ , b] }",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    [a, /* c */ b]\n}\n",
+        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    [a /* c */, b]\n}\n",
     );
 }
 
@@ -382,24 +382,24 @@ fn comment_before_close_brack_in_comprehension() {
 #[test]
 fn comment_between_fun_var_and_arrow() {
     assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { (fun x /* c */ => x + a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    fun x /* c */ => x + a\n}\n",
+        "fn f<F: Field>(instance a: F) -> F { (fun(x /* c */) => x + a) }",
+        "fn f<F: Field>(instance a: F) -> F {\n    fun (x /* c */) => x + a\n}\n",
     );
 }
 
 #[test]
 fn comment_between_arrow_and_body_in_fun() {
     assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { (fun x => /* c */ x + a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    fun x =>  /* c */ x + a\n}\n",
+        "fn f<F: Field>(instance a: F) -> F { (fun(x) => /* c */ x + a) }",
+        "fn f<F: Field>(instance a: F) -> F {\n    fun (x) =>  /* c */ x + a\n}\n",
     );
 }
 
 #[test]
 fn comment_between_fun_vars_comma() {
     assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { (fun x /* c */ , y => x + a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    fun x, /* c */\n    y => x + a\n}\n",
+        "fn f<F: Field>(instance a: F) -> F { (fun(x /* c */ , y) => x + a) }",
+        "fn f<F: Field>(instance a: F) -> F {\n    fun (x /* c */, y) => x + a\n}\n",
     );
 }
 
@@ -523,7 +523,7 @@ fn comment_after_open_paren_in_reduce() {
 fn comment_between_op_and_comma_in_reduce() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { reduce(+ /* c */ , a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    reduce(+, /* c */ a)\n}\n",
+        "fn f<F: Field>(instance a: F) -> F {\n    reduce(+ /* c */, a)\n}\n",
     );
 }
 
@@ -607,7 +607,7 @@ fn comment_between_close_angle_and_open_paren_in_eval() {
 fn comment_after_open_brack_in_vec_type() {
     assert_ok(
         "fn f<F: Field>(instance a: [ /* c */ F; 2]) -> F { a[0] }",
-        "fn f<F: Field>(instance a: [ /* c */ F; 2]) -> F {\n    a[0]\n}\n",
+        "fn f<F: Field>(instance a: [/* c */ F; 2]) -> F {\n    a[0]\n}\n",
     );
 }
 
@@ -615,7 +615,7 @@ fn comment_after_open_brack_in_vec_type() {
 fn comment_between_inner_type_and_semi_in_vec_type() {
     assert_ok(
         "fn f<F: Field>(instance a: [F /* c */ ; 2]) -> F { a[0] }",
-        "fn f<F: Field>(instance a: [F /* c */ ; 2]) -> F {\n    a[0]\n}\n",
+        "fn f<F: Field>(instance a: [F /* c */; 2]) -> F {\n    a[0]\n}\n",
     );
 }
 
@@ -633,7 +633,7 @@ fn comment_between_semi_and_size_in_vec_type() {
 fn comment_before_close_brack_in_vec_type() {
     assert_ok(
         "fn f<F: Field>(instance a: [F; 2 /* c */ ]) -> F { a[0] }",
-        "fn f<F: Field>(instance a: [F; 2 /* c */ ]) -> F {\n    a[0]\n}\n",
+        "fn f<F: Field>(instance a: [F; 2 /* c */]) -> F {\n    a[0]\n}\n",
     );
 }
 
@@ -661,7 +661,7 @@ fn comment_after_open_angle_in_poly_type() {
 fn comment_between_base_and_comma_in_poly_type() {
     assert_ok(
         "fn f<F: Field>(instance a: Poly<F /* c */ , 1, 2>) -> F { a }",
-        "fn f<F: Field>(instance a: Poly<F, /* c */ 1, 2>) -> F {\n    a\n}\n",
+        "fn f<F: Field>(instance a: Uni<F /* c */, 2>) -> F {\n    a\n}\n",
     );
 }
 
@@ -677,7 +677,7 @@ fn comment_after_comma_in_poly_type() {
 fn comment_before_close_angle_in_poly_type() {
     assert_ok(
         "fn f<F: Field>(instance a: Poly<F, 1, 2 /* c */ >) -> F { a }",
-        "fn f<F: Field>(instance a: Poly<F, 1, 2 /* c */>) -> F {\n    a\n}\n",
+        "fn f<F: Field>(instance a: Uni<F, 2 /* c */>) -> F {\n    a\n}\n",
     );
 }
 
@@ -733,7 +733,7 @@ fn comment_after_open_angle_in_scalar_kind() {
 fn comment_between_ids_in_scalar_kind_comma() {
     assert_ok(
         "fn f<G: Scalar<G1 /* c */ , G2>>(instance a: G1) -> G1 { a }",
-        "fn f<G: Scalar<G1, /* c */ G2>>(instance a: G1) -> G1 {\n    a\n}\n",
+        "fn f<G: Scalar<G1 /* c */, G2>>(instance a: G1) -> G1 {\n    a\n}\n",
     );
 }
 
@@ -777,7 +777,7 @@ fn comment_after_open_angle_in_pairing_kind() {
 fn comment_between_ids_in_pairing_kind_comma() {
     assert_ok(
         "fn f<G: Pairing<G1 /* c */ , G2>>(instance a: G1) -> G1 { a }",
-        "fn f<G: Pairing<G1, /* c */ G2>>(instance a: G1) -> G1 {\n    a\n}\n",
+        "fn f<G: Pairing<G1 /* c */, G2>>(instance a: G1) -> G1 {\n    a\n}\n",
     );
 }
 
@@ -1049,7 +1049,7 @@ fn comment_between_interpolate_keyword_and_paren() {
 fn comment_between_args_in_interpolate_comma() {
     assert_ok(
         "fn f<F: Field>(instance a: F, instance b: F) -> F { interpolate(a /* c */ , b) }",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    interpolate(a, /* c */ b)\n}\n",
+        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    interpolate(a /* c */, b)\n}\n",
     );
 }
 
@@ -1298,10 +1298,10 @@ fn f<F: Field>(instance a: F) -> F {
 #[test]
 fn fun_keyword_inline_comment() {
     assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { (fun /* c */ x => x + a) }",
+        "fn f<F: Field>(instance a: F) -> F { (fun /* c */ (x) => x + a) }",
         "\
 fn f<F: Field>(instance a: F) -> F {
-    fun /* c */ x => x + a
+    fun /* c */ (x) => x + a
 }
 ",
     );
@@ -1723,4 +1723,92 @@ fn blank_lines_after_semi_with_body_preserved() {
         "fn f<F: Field>(instance a: F) -> F { let x = a;\n\nx }",
         "fn f<F: Field>(instance a: F) -> F {\n    let x = a;\n\n    x\n}\n",
     );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Section AU: Trailing comma with comments
+//
+// Comments around a trailing comma should not produce double spaces
+// or extra spaces before the close delimiter. In broken mode, the
+// close delimiter should go on its own line.
+// ══════════════════════════════════════════════════════════════════
+
+#[test]
+fn trailing_comma_comment_before_flat() {
+    assert_ok(
+        "fn f<F: Field>(instance a: F, instance b: F /* c */,) -> F { a }",
+        "fn f<F: Field>(instance a: F, instance b: F /* c */) -> F {\n    a\n}\n",
+    );
+}
+
+#[test]
+fn trailing_comma_comment_after_flat() {
+    assert_ok(
+        "fn f<F: Field>(instance a: F, instance b: F, /* c */) -> F { a }",
+        "fn f<F: Field>(instance a: F, instance b: F /* c */) -> F {\n    a\n}\n",
+    );
+}
+
+#[test]
+fn trailing_comma_comments_both_flat() {
+    assert_ok(
+        "fn f<F: Field>(instance a: F, instance b: F /* before */, /* after */) -> F { a }",
+        "fn f<F: Field>(instance a: F, instance b: F /* before */ /* after */) -> F {\n    a\n}\n",
+    );
+}
+
+#[test]
+fn trailing_comma_comment_before_broken() {
+    let src = "fn f<F: Field>(instance aaaaaaaaaaaaaaaaaaaaa: F, instance bbbbbbbbbbbbbbbbbbbbbbbbbbb: F /* c */,) -> F { a }";
+    let expected = "\
+fn f<F: Field>(
+    instance aaaaaaaaaaaaaaaaaaaaa: F,
+    instance bbbbbbbbbbbbbbbbbbbbbbbbbbb: F, /* c */
+) -> F {
+    a
+}
+";
+    assert_ok(src, expected);
+}
+
+#[test]
+fn trailing_comma_comment_after_broken() {
+    let src = "fn f<F: Field>(instance aaaaaaaaaaaaaaaaaaaaa: F, instance bbbbbbbbbbbbbbbbbbbbbbbbbbb: F, /* c */) -> F { a }";
+    let expected = "\
+fn f<F: Field>(
+    instance aaaaaaaaaaaaaaaaaaaaa: F,
+    instance bbbbbbbbbbbbbbbbbbbbbbbbbbb: F, /* c */
+) -> F {
+    a
+}
+";
+    assert_ok(src, expected);
+}
+
+#[test]
+fn trailing_comma_comments_both_broken() {
+    let src = "fn f<F: Field>(instance aaaaaaaaaaaaaaaaaaaaa: F, instance bbbbbbbbbbbbbbbbbbbbbbbbbbb: F /* before */, /* after */) -> F { a }";
+    let expected = "\
+fn f<F: Field>(
+    instance aaaaaaaaaaaaaaaaaaaaa: F,
+    instance bbbbbbbbbbbbbbbbbbbbbbbbbbb: F, /* before */ /* after */
+) -> F {
+    a
+}
+";
+    assert_ok(src, expected);
+}
+
+#[test]
+fn inline_comment_before_close_no_trailing_comma_broken() {
+    let src = "fn f<F: Field>(instance aaaaaaaaaaaaaaaaaaaaa: F, instance bbbbbbbbbbbbbbbbbbbbbbbbbbb: F /* c */) -> F { a }";
+    let expected = "\
+fn f<F: Field>(
+    instance aaaaaaaaaaaaaaaaaaaaa: F,
+    instance bbbbbbbbbbbbbbbbbbbbbbbbbbb: F, /* c */
+) -> F {
+    a
+}
+";
+    assert_ok(src, expected);
 }

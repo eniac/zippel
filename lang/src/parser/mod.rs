@@ -230,6 +230,7 @@ where
         .ignore_then(tid_tok())
         .then_ignore(just(Token::Comma).ignored())
         .then(tid_tok())
+        .then_ignore(just(Token::Comma).ignored().or_not())
         .then_ignore(just(Token::RAngle).ignored())
         .map(|(a, b)| Kind::Pairing(a, b))
 }
@@ -273,6 +274,7 @@ where
                 .then(size_ty_parser())
                 .then_ignore(just(Token::Comma).ignored())
                 .then(size_ty_parser())
+                .then_ignore(just(Token::Comma).ignored().or_not())
                 .then_ignore(just(Token::RAngle).ignored())
                 .map_with(|((b, m), n), e| {
                     let sp: SimpleSpan = e.span();
@@ -285,6 +287,7 @@ where
                 .ignore_then(tid_tok())
                 .then_ignore(just(Token::Comma).ignored())
                 .then(size_ty_parser())
+                .then_ignore(just(Token::Comma).ignored().or_not())
                 .then_ignore(just(Token::RAngle).ignored())
                 .map_with(|(b, n), e| {
                     let sp: SimpleSpan = e.span();
@@ -297,6 +300,7 @@ where
                 .ignore_then(tid_tok())
                 .then_ignore(just(Token::Comma).ignored())
                 .then(size_ty_parser())
+                .then_ignore(just(Token::Comma).ignored().or_not())
                 .then_ignore(just(Token::RAngle).ignored())
                 .map_with(|(b, n), e| {
                     Spanned::new(Typ::Poly(b, n.node, Size::Lit(1)), {
@@ -330,6 +334,7 @@ where
                         )
                     }),
                 )))
+                .then_ignore(just(Token::Comma).ignored().or_not())
                 .then_ignore(just(Token::RAngle).ignored()),
             // Unit
             just(Token::KwUnit).ignored().map_with(|_, e| {
@@ -344,6 +349,7 @@ where
                 .ignore_then(typ_rec.clone())
                 .then_ignore(just(Token::Semi).ignored())
                 .then(size_ty_parser())
+                .then_ignore(just(Token::Semi).ignored().or_not())
                 .then_ignore(just(Token::RBrack).ignored())
                 .map_with(|(t, n), e| {
                     Spanned::new(Typ::Vec(Box::new(t), n.node), {
@@ -541,15 +547,17 @@ where
             .ignored()
             .ignore_then(exp.clone())
             .then_ignore(just(Token::RParen).ignored()),
-        // fun x, y => exp
+        // fun(x, y) => exp
         just(Token::KwFun)
             .ignored()
+            .ignore_then(just(Token::LParen).ignored())
             .ignore_then(
                 id_tok()
                     .separated_by(just(Token::Comma).ignored())
                     .allow_trailing()
                     .collect::<Vec<_>>(),
             )
+            .then_ignore(just(Token::RParen).ignored())
             .then_ignore(just(Token::FatArrow).ignored())
             .then(exp.clone())
             .map_with(|(vars, body), e| {
@@ -1022,6 +1030,7 @@ where
                     .ignore_then(id_tok())
                     .then_ignore(just(Token::Comma).ignored())
                     .then(exp_no_seq_rec.clone().boxed())
+                    .then_ignore(just(Token::Comma).ignored().or_not())
                     .then_ignore(just(Token::RParen).ignored()),
                 |lhs, (field, val): (Vid, Spanned<UExp>), sp| {
                     let sp: SimpleSpan = sp.span();

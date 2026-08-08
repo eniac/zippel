@@ -940,9 +940,9 @@ mod tests {
 
     #[test]
     fn help_lambda_arrow_not_fatarrow() {
-        // `fun x -> x` — should use `=>` not `->`
+        // `fun(x) -> x` — should use `=>` not `->`
         assert_help(
-            "fn f<F: Field>(instance a: F) -> F { fun x -> x + 1 }",
+            "fn f<F: Field>(instance a: F) -> F { fun(x) -> x + 1 }",
             "lambda expressions use `=>` (not `->`)",
         );
     }

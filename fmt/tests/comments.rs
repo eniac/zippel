@@ -268,7 +268,7 @@ fn f<F: Field>(instance a: F, instance b: F) -> F {
 }",
         "\
 fn f<F: Field>(instance a: F, instance b: F) -> F {
-    foo(a, /* arg1 */ b /* arg2 */)
+    foo(a /* arg1 */, b /* arg2 */)
 }
 ",
     );
@@ -295,7 +295,7 @@ fn f<F: Field>(instance a: F) -> F {
 fn exp_inline_comment_typ() {
     assert_formatted(
         "type T = Poly<F /* base */, 1 /* m */, 2 /* n */>;",
-        "type T = Poly<F, /* base */ 1, /* m */ 2 /* n */>;\n",
+        "type T = Poly<F /* base */, 1 /* m */, 2 /* n */>;\n",
     );
 }
 
@@ -392,7 +392,7 @@ fn f<F: Field>(instance a: F, instance b: F) -> F {
 }",
         "\
 fn f<F: Field>(instance a: F, instance b: F) -> F {
-    foo(a, /* arg1 */ b /* arg2 */)
+    foo(a /* arg1 */, b /* arg2 */)
 }
 ",
     );
@@ -954,7 +954,7 @@ fn poly_with_comments_not_sugared() {
     // Comments on the skipped arg → fall back to Poly to preserve them
     assert_formatted(
         "type T = Poly<F /* base */, 1 /* m */, 2 /* n */>;",
-        "type T = Poly<F, /* base */ 1, /* m */ 2 /* n */>;\n",
+        "type T = Poly<F /* base */, 1 /* m */, 2 /* n */>;\n",
     );
 }
 

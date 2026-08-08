@@ -8,14 +8,30 @@ use std::ops::Range;
 const ALLOC: BoxAllocator = BoxAllocator;
 type Doc<'a> = DocBuilder<'a, BoxAllocator, ()>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommentKind {
+    /// `// comment`
+    Line,
+    /// `/* comment */` on a single source line.
+    Block,
+    /// `/* multi\nline */` spanning multiple source lines.
+    MultilineBlock,
+}
+
 #[derive(Debug, Clone)]
 pub struct Comment {
     pub text: String,
-    pub is_block: bool,
+    pub kind: CommentKind,
     pub at_line_start: bool,
     pub at_line_end: bool,
     pub start: usize,
     pub end: usize,
+}
+
+impl Comment {
+    pub fn is_multiline_block(&self) -> bool {
+        self.kind == CommentKind::MultilineBlock
+    }
 }
 
 /// One element of trivia between two semantic source anchors.
@@ -65,6 +81,16 @@ impl TriviaGap {
             Some(TriviaElement::BlankLines(_)) => true,
             None => false,
         }
+    }
+
+    /// Whether the gap spans multiple source lines — i.e. the source
+    /// had a structural line break between the two anchors. Used to
+    /// distinguish inline gaps (Case 1) from multiline gaps (Case 2).
+    pub fn has_source_line_break(&self) -> bool {
+        self.layout.iter().any(|e| match e {
+            TriviaElement::BlankLines(n) => *n >= 1,
+            TriviaElement::Comment(c) => c.at_line_start || c.at_line_end || c.is_multiline_block(),
+        })
     }
 
     /// The first element of the gap, or `None` if empty.
@@ -124,7 +150,12 @@ pub fn trim_if_clean(gap: TriviaGap) -> TriviaGap {
 
 impl Comment {
     fn forces_line_break(&self) -> bool {
-        !self.is_block || self.at_line_start || self.at_line_end
+        match self.kind {
+            CommentKind::Line => true,
+            CommentKind::Block | CommentKind::MultilineBlock => {
+                self.at_line_start || self.at_line_end
+            }
+        }
     }
 }
 
@@ -517,9 +548,24 @@ pub fn extract_comments(src: &str) -> Vec<Comment> {
                 .map(|offset| span.end + offset)
                 .unwrap_or(src.len());
             let at_line_end = src[span.end..line_end].trim().is_empty();
+            let text = src[span.start..span.end].to_string();
+            let kind = match token {
+                Token::LineComment => CommentKind::Line,
+                Token::BlockComment => {
+                    // A block comment is multiline if it contains a
+                    // newline between the opening /* and closing */.
+                    let inner = &text[2..text.len().saturating_sub(2)];
+                    if inner.contains('\n') {
+                        CommentKind::MultilineBlock
+                    } else {
+                        CommentKind::Block
+                    }
+                }
+                _ => CommentKind::Block,
+            };
             Comment {
-                text: src[span.start..span.end].to_string(),
-                is_block: matches!(token, Token::BlockComment),
+                text,
+                kind,
                 at_line_start,
                 at_line_end,
                 start: span.start,

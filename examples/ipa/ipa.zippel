@@ -113,8 +113,14 @@ proto ipa_wrapper<G: Group, F: Scalar<G>, S: Size, N_val_const: 2 ^ S>(
     instance u_aux_base: G, // Corresponds to 'u' in the paper
 
     // --- Witness Inputs ---
-    witness a_vec_witness: [F; N_val_const], // Corresponds to 'a' in the paper (vector of field elements)
-    witness b_vec_witness: [F; N_val_const], // Corresponds to 'b' in the paper (vector of field elements)
+    witness a_vec_witness: [
+        F;
+        N_val_const
+    ], // Corresponds to 'a' in the paper (vector of field elements)
+    witness b_vec_witness: [
+        F;
+        N_val_const
+    ], // Corresponds to 'b' in the paper (vector of field elements)
 ) where
     p_initial_commitment == dot(g_vec, a_vec_witness) + dot(h_vec, b_vec_witness);
     ip_val_claimed == dot(a_vec_witness, b_vec_witness)
