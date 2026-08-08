@@ -447,25 +447,6 @@ pub fn gap_space(gap: TriviaGap, style: &Style) -> Doc<'static> {
     format_gap(gap, None, None, Some(ALLOC.text(" ")), style)
 }
 
-/// Gap before a `;` with no body following. Empty gap → nil. Breaking
-/// comments → hardline after; non-breaking comments → nil after (stay
-/// inline). Used for the trailing semicolon in `let x = a;` and
-/// `let x = a; /* c */` where no body follows.
-pub fn gap_semi(gap: TriviaGap, style: &Style) -> Doc<'static> {
-    let needs_break = gap.needs_line_break();
-    let sep = if needs_break {
-        ALLOC.hardline()
-    } else {
-        ALLOC.nil()
-    };
-    let end = if needs_break {
-        Some(ALLOC.hardline())
-    } else {
-        None
-    };
-    format_gap(gap, None, end, Some(sep), style)
-}
-
 /// Empty gap → hardline. Comments → auto open (space for inline, nil
 /// for at_line_start), hardline after. Use for structural breaks and
 /// after punctuation (after `;`, between decls) where a line break is

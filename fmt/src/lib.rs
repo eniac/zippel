@@ -3,10 +3,16 @@
 //! Produces canonical-formatted output from Zippel source text.
 //! Round-trip safe: `parse(fmt(src)) == parse(src)` (AST equality).
 
-pub mod doc;
-pub mod paren;
-pub mod style;
-pub mod trivia;
+mod ctx;
+mod decl;
+mod delim_list;
+mod exp;
+mod kind;
+mod paren;
+mod size;
+mod style;
+mod trivia;
+mod typ;
 
 use lang::parser::parse_decls;
 
@@ -45,7 +51,7 @@ pub fn format_source_with_style(src: &str, style: &Style) -> Result<String, Form
     }
     let tokens = trivia::TokenStream::new(src);
     let comments = trivia::extract_comments(src);
-    Ok(doc::format_decls(
+    Ok(decl::format_decls(
         &decls,
         &tokens,
         &comments,

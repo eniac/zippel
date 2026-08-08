@@ -211,7 +211,15 @@ fn comment_between_let_eq_and_value_in_body() {
 fn comment_before_semicolon_in_let() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { let x = a /* c */ ; x }",
-        "fn f<F: Field>(instance a: F) -> F {\n    let x = a; /* c */\n    x\n}\n",
+        "fn f<F: Field>(instance a: F) -> F {\n    let x = a /* c */;\n    x\n}\n",
+    );
+}
+
+#[test]
+fn let_no_double_semicolon() {
+    assert_ok(
+        "fn f<F: Field>(instance a: F) -> F { let x = a; x }",
+        "fn f<F: Field>(instance a: F) -> F {\n    let x = a;\n    x\n}\n",
     );
 }
 

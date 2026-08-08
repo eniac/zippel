@@ -284,7 +284,7 @@ fn f<F: Field>(instance a: F) -> F {
 }",
         "\
 fn f<F: Field>(instance a: F) -> F {
-    let x /* bind */ = a; /* val */
+    let x /* bind */ = a /* val */;
     x
 }
 ",
@@ -409,7 +409,8 @@ fn f<F: Field>(instance a: F) -> F {
 }",
         "\
 fn f<F: Field>(instance a: F) -> F {
-    let x = a; // note
+    let x = a // note
+    ;
     x
 }
 ",
