@@ -1820,3 +1820,110 @@ fn f<F: Field>(
 ";
     assert_ok(src, expected);
 }
+
+#[test]
+fn empty_body() {
+    assert_ok(
+        "fn f<F: Field>(instance a: F) -> F {}",
+        "fn f<F: Field>(instance a: F) -> F {}\n",
+    );
+}
+
+#[test]
+fn empty_body_no_return_type() {
+    assert_ok(
+        "fn f<F: Field>(instance a: F) {}",
+        "fn f<F: Field>(instance a: F) {}\n",
+    );
+}
+
+#[test]
+fn empty_body_with_block_comment() {
+    assert_ok(
+        "fn f<F: Field>(instance a: F) -> F { /* c */ }",
+        "fn f<F: Field>(instance a: F) -> F { /* c */ }\n",
+    );
+}
+
+#[test]
+fn empty_body_with_line_comment() {
+    assert_ok(
+        "fn f<F: Field>(instance a: F) -> F { // c\n}",
+        "fn f<F: Field>(instance a: F) -> F {\n    // c\n}\n",
+    );
+}
+
+#[test]
+fn empty_proto_body() {
+    assert_ok(
+        "proto p<F: Field>(instance a: F) where a == a {}",
+        "proto p<F: Field>(instance a: F) where a == a {}\n",
+    );
+}
+
+#[test]
+fn empty_proto_body_with_block_comment() {
+    assert_ok(
+        "proto p<F: Field>(instance a: F) where a == a { /* c */ }",
+        "proto p<F: Field>(instance a: F) where a == a { /* c */ }\n",
+    );
+}
+
+#[test]
+fn empty_proto_body_with_line_comment() {
+    assert_ok(
+        "proto p<F: Field>(instance a: F) where a == a { // c\n}",
+        "proto p<F: Field>(instance a: F) where a == a {\n    // c\n}\n",
+    );
+}
+
+#[test]
+fn empty_body_trim_blank_lines_fn() {
+    assert_ok(
+        "fn f<F: Field>(instance a: F) -> F {\n\n    // c\n\n}",
+        "fn f<F: Field>(instance a: F) -> F {\n    // c\n}\n",
+    );
+}
+
+#[test]
+fn empty_body_trim_blank_lines_proto() {
+    assert_ok(
+        "proto p<F: Field>(instance a: F) where a == a {\n\n    // c\n\n}",
+        "proto p<F: Field>(instance a: F) where a == a {\n    // c\n}\n",
+    );
+}
+
+#[test]
+fn empty_body_trim_leading_blank_fn() {
+    assert_ok(
+        "fn f<F: Field>(instance a: F) -> F {\n\n    /* c */}",
+        "fn f<F: Field>(instance a: F) -> F {\n    /* c */\n}\n",
+    );
+}
+
+#[test]
+fn empty_body_trim_trailing_blank_fn() {
+    assert_ok(
+        "fn f<F: Field>(instance a: F) -> F { /* c */\n\n}",
+        "fn f<F: Field>(instance a: F) -> F {\n    /* c */\n}\n",
+    );
+}
+
+#[test]
+fn empty_body_trim_truly_inline_block_fn() {
+    // Block comment glued to both braces — no line breaks in source.
+    // Trim has no blank lines to remove, but verifies inline stays inline.
+    assert_ok(
+        "fn f<F: Field>(instance a: F) -> F { /* c */ }",
+        "fn f<F: Field>(instance a: F) -> F { /* c */ }\n",
+    );
+}
+
+#[test]
+fn empty_body_trim_blank_lines_block_proto() {
+    // Block comment on its own line with surrounding blank lines in proto.
+    assert_ok(
+        "proto p<F: Field>(instance a: F) where a == a {\n\n    /* c */\n\n}",
+        "proto p<F: Field>(instance a: F) where a == a {\n    /* c */\n}\n",
+    );
+}

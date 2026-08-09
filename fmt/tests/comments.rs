@@ -1027,7 +1027,9 @@ fn inline_line_comment_before_token_gets_space() {
         "fn f<F: Field>(instance a: F) // inline comment
 -> F { a }",
         "\
-fn f<F: Field>(instance a: F) // inline comment
+fn f<F: Field>(
+    instance a: F,
+) // inline comment
 -> F {
     a
 }

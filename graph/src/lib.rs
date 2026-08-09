@@ -1222,7 +1222,9 @@ impl<C: HasOpFactory> UDag<C> {
                         vars.insert(&vid, &GOp::Value(Value::Index(r.start())));
                     }
                 }
-                self.add_top_exp(body, &mut start, &kctx, fctx, &vctx, &vars)?;
+                if let Some(body) = body {
+                    self.add_top_exp(body, &mut start, &kctx, fctx, &vctx, &vars)?;
+                }
                 // Relation start: its own per-arg `Node::Arg` children so
                 // walking the relation does not pull in the protocol body
                 // through shared `Arg` nodes.
@@ -1293,7 +1295,9 @@ impl<C: HasOpFactory> UDag<C> {
                         vars.insert(&vid, &GOp::Value(Value::Index(r.start())));
                     }
                 }
-                self.add_top_exp(body, &mut start, &kctx, fctx, &vctx, &vars)?;
+                if let Some(body) = body {
+                    self.add_top_exp(body, &mut start, &kctx, fctx, &vctx, &vars)?;
+                }
             }
             CBody::TypeAlias => {
                 // Type aliases are expanded inline during module parsing,
@@ -2419,7 +2423,7 @@ impl<C: HasOpFactory> UDag<C> {
                                     vars.insert(&vid, &GOp::Value(Value::Index(r.start())));
                                 }
                             }
-                            exp = body.body();
+                            exp = body.body().unwrap_or_else(|| Spanned::dummy(CExp::Unit));
                             continue;
                         }
                     }

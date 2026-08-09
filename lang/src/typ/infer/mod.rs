@@ -922,16 +922,20 @@ impl Typeable for CBody {
                 // Infer the relation (Let/Assert chain — infers to Unit)
                 relation.infer(kctx, fctx, &vctx.clone())?;
 
-                // Then the body
-                let tbody = body.infer(kctx, fctx, &vctx.clone())?;
-
-                if tbody != CTyp::Unit {
-                    Err(TypeError::unit(kctx, vctx, body))
-                } else {
-                    Ok(CTyp::Unit)
+                // Then the body (empty body is Unit)
+                if let Some(body) = body {
+                    let tbody = body.infer(kctx, fctx, &vctx.clone())?;
+                    if tbody != CTyp::Unit {
+                        return Err(TypeError::unit(kctx, vctx, body));
+                    }
                 }
+
+                Ok(CTyp::Unit)
             }
-            CBody::Func { body } => body.infer(kctx, fctx, &vctx.clone()),
+            CBody::Func { body } => match body {
+                Some(body) => body.infer(kctx, fctx, &vctx.clone()),
+                None => Ok(CTyp::Unit),
+            },
             CBody::TypeAlias => Ok(CTyp::Unit), // Type aliases have no body to check
         }
     }

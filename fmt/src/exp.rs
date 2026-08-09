@@ -261,7 +261,7 @@ fn format_exp(
             style,
         ),
         Exp::Let(_, _, _) | Exp::Log(_, _, _) => {
-            let doc = format_body_exp(exp, cursor, style);
+            let doc = format_body_exp_inner(exp, cursor, style);
             (TriviaGap::default(), doc)
         }
         Exp::Assert(lhs, rhs) => {
@@ -698,6 +698,46 @@ pub(crate) fn format_relation(
 }
 
 pub(crate) fn format_body_exp(
+    body: Option<&Spanned<Exp<Size>>>,
+    cursor: &mut TokenCursor,
+    end: usize,
+    style: &Style,
+) -> Doc<'static> {
+    let Some(body) = body else {
+        // Empty body — comments between `{` and `}`. Empty gap → nil.
+        let inner_comments = cursor
+            .advance_to_token(end, |token| matches!(token, Token::RBrace))
+            .trim();
+        let needs_break = inner_comments.needs_line_break();
+        let (open, end_sep) = if needs_break {
+            (Some(ALLOC.hardline()), Some(ALLOC.hardline()))
+        } else {
+            (Some(ALLOC.text(" ")), Some(ALLOC.text(" ")))
+        };
+        return format_gap(inner_comments, open, end_sep, Some(ALLOC.nil()), style);
+    };
+
+    // Gap after `{` — strip blank lines. `sep = hardline` provides
+    // the structural break for empty gaps; `open = hardline` puts
+    // comments on their own line; `end = hardline` breaks after.
+    let body_leading = format_gap(
+        cursor.advance_to(body.span.start).trim_start(),
+        Some(ALLOC.hardline()),
+        Some(ALLOC.hardline()),
+        Some(ALLOC.hardline()),
+        style,
+    );
+    let body_doc = format_body_exp_inner(body, cursor, style);
+
+    // Gap before `}` — strip blank lines (structural hardline precedes).
+    let close_comments = cursor
+        .advance_to_token(end, |token| matches!(token, Token::RBrace))
+        .trim_end();
+
+    ALLOC.concat([body_leading, body_doc, gap_hard(close_comments, style)])
+}
+
+fn format_body_exp_inner(
     exp: &Spanned<Exp<Size>>,
     cursor: &mut TokenCursor,
     style: &Style,
@@ -798,7 +838,7 @@ fn format_body_tail(
         before,
         ALLOC.text(";"),
         gap_hard(after_semi, style),
-        format_body_exp(body, cursor, style),
+        format_body_exp_inner(body, cursor, style),
     ])
 }
 

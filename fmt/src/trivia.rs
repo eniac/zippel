@@ -1,5 +1,6 @@
 //! Comment cursor and token stream for the formatter.
 
+use crate::ctx::hardlines;
 use crate::style::Style;
 use lang::parser::Token;
 use share::{BoxAllocator, DocAllocator, DocBuilder};
@@ -9,7 +10,7 @@ const ALLOC: BoxAllocator = BoxAllocator;
 type Doc<'a> = DocBuilder<'a, BoxAllocator, ()>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CommentKind {
+pub(crate) enum CommentKind {
     /// `// comment`
     Line,
     /// `/* comment */` on a single source line.
@@ -19,24 +20,24 @@ pub enum CommentKind {
 }
 
 #[derive(Debug, Clone)]
-pub struct Comment {
-    pub text: String,
-    pub kind: CommentKind,
-    pub at_line_start: bool,
-    pub at_line_end: bool,
-    pub start: usize,
-    pub end: usize,
+pub(crate) struct Comment {
+    pub(crate) text: String,
+    pub(crate) kind: CommentKind,
+    pub(crate) at_line_start: bool,
+    pub(crate) at_line_end: bool,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
 impl Comment {
-    pub fn is_multiline_block(&self) -> bool {
+    fn is_multiline_block(&self) -> bool {
         self.kind == CommentKind::MultilineBlock
     }
 }
 
 /// One element of trivia between two semantic source anchors.
 #[derive(Debug, Clone)]
-pub enum TriviaElement {
+pub(crate) enum TriviaElement {
     /// One or more consecutive blank lines.
     BlankLines(usize),
     /// A single comment (line or block).
@@ -45,23 +46,23 @@ pub enum TriviaElement {
 
 /// Lossless trivia between two semantic source anchors.
 #[derive(Debug, Clone, Default)]
-pub struct TriviaGap {
+pub(crate) struct TriviaGap {
     layout: Vec<TriviaElement>,
 }
 
 impl TriviaGap {
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.layout.is_empty()
     }
 
     /// Whether the gap contains any comments (line or block).
-    pub fn has_comments(&self) -> bool {
+    pub(crate) fn has_comments(&self) -> bool {
         self.layout
             .iter()
             .any(|e| matches!(e, TriviaElement::Comment(_)))
     }
 
-    pub fn join(mut self, other: Self) -> Self {
+    pub(crate) fn join(mut self, other: Self) -> Self {
         if let (Some(TriviaElement::BlankLines(n)), Some(TriviaElement::BlankLines(m))) =
             (self.layout.last(), other.layout.first())
         {
@@ -75,7 +76,7 @@ impl TriviaGap {
 
     /// Whether the last element is a Comment that forces a line break,
     /// or a BlankLines (which always implies a break).
-    pub fn needs_line_break(&self) -> bool {
+    pub(crate) fn needs_line_break(&self) -> bool {
         match self.layout.last() {
             Some(TriviaElement::Comment(c)) => c.forces_line_break(),
             Some(TriviaElement::BlankLines(_)) => true,
@@ -86,7 +87,7 @@ impl TriviaGap {
     /// Whether the gap spans multiple source lines — i.e. the source
     /// had a structural line break between the two anchors. Used to
     /// distinguish inline gaps (Case 1) from multiline gaps (Case 2).
-    pub fn has_source_line_break(&self) -> bool {
+    pub(crate) fn has_source_line_break(&self) -> bool {
         self.layout.iter().any(|e| match e {
             TriviaElement::BlankLines(n) => *n >= 1,
             TriviaElement::Comment(c) => c.at_line_start || c.at_line_end || c.is_multiline_block(),
@@ -94,12 +95,12 @@ impl TriviaGap {
     }
 
     /// The first element of the gap, or `None` if empty.
-    pub fn first(&self) -> Option<&TriviaElement> {
+    pub(crate) fn first(&self) -> Option<&TriviaElement> {
         self.layout.first()
     }
 
     /// The last element of the gap, or `None` if empty.
-    pub fn last(&self) -> Option<&TriviaElement> {
+    pub(crate) fn last(&self) -> Option<&TriviaElement> {
         self.layout.last()
     }
 
@@ -110,7 +111,7 @@ impl TriviaGap {
     /// after `where`, after `)`) — leading blank lines are noise, but
     /// blank lines between comments and after the last comment are
     /// meaningful.
-    pub fn trim_start(mut self) -> Self {
+    pub(crate) fn trim_start(mut self) -> Self {
         while matches!(self.layout.first(), Some(TriviaElement::BlankLines(_))) {
             self.layout.remove(0);
         }
@@ -123,7 +124,7 @@ impl TriviaGap {
     /// Use this when a structural hardline follows the gap (before `}`) —
     /// trailing blank lines are noise, but blank lines between comments
     /// and before the first comment are meaningful.
-    pub fn trim_end(mut self) -> Self {
+    pub(crate) fn trim_end(mut self) -> Self {
         while matches!(self.layout.last(), Some(TriviaElement::BlankLines(_))) {
             self.layout.pop();
         }
@@ -134,7 +135,7 @@ impl TriviaGap {
     ///
     /// Use this when blank lines around a token are noise (e.g. around `=`
     /// in `let x = expr`) but comments should still be preserved.
-    pub fn trim(self) -> Self {
+    pub(crate) fn trim(self) -> Self {
         self.trim_start().trim_end()
     }
 }
@@ -144,7 +145,7 @@ impl TriviaGap {
 /// Use this at call sites where blank lines are noise (intra-expression
 /// gaps around `=`, `->`, `==`, etc.) but should be preserved when
 /// comments are present.
-pub fn trim_if_clean(gap: TriviaGap) -> TriviaGap {
+pub(crate) fn trim_if_clean(gap: TriviaGap) -> TriviaGap {
     if !gap.has_comments() { gap.trim() } else { gap }
 }
 
@@ -159,7 +160,7 @@ impl Comment {
     }
 }
 
-pub struct CommentCursor<'a> {
+struct CommentCursor<'a> {
     comments: &'a [Comment],
     printed: usize,
 }
@@ -276,14 +277,14 @@ fn push_blank_lines(
     }
 }
 
-pub struct TokenCursor<'a> {
+pub(crate) struct TokenCursor<'a> {
     tokens: &'a TokenStream,
     comments: CommentCursor<'a>,
     pos: usize,
 }
 
 impl<'a> TokenCursor<'a> {
-    pub fn new(tokens: &'a TokenStream, comments: &'a [Comment]) -> Self {
+    pub(crate) fn new(tokens: &'a TokenStream, comments: &'a [Comment]) -> Self {
         Self {
             tokens,
             comments: CommentCursor::new(comments),
@@ -291,7 +292,7 @@ impl<'a> TokenCursor<'a> {
         }
     }
 
-    pub fn advance_to(&mut self, target: usize) -> TriviaGap {
+    pub(crate) fn advance_to(&mut self, target: usize) -> TriviaGap {
         debug_assert!(
             target >= self.pos,
             "advance_to cannot move backward: {} < {}",
@@ -307,7 +308,11 @@ impl<'a> TokenCursor<'a> {
         TriviaGap { layout }
     }
 
-    pub fn advance_to_token(&mut self, end: usize, pred: impl Fn(&Token) -> bool) -> TriviaGap {
+    pub(crate) fn advance_to_token(
+        &mut self,
+        end: usize,
+        pred: impl Fn(&Token) -> bool,
+    ) -> TriviaGap {
         for (token, span) in &self.tokens.tokens {
             if span.start < self.pos || span.end > end || token.is_trivia() {
                 continue;
@@ -327,7 +332,11 @@ impl<'a> TokenCursor<'a> {
 
     /// Returns the end position of the next non-trivia token matching `pred`,
     /// without advancing the cursor. Returns None if not found within `end`.
-    pub fn peek_token(&self, end: usize, pred: impl Fn(&Token) -> bool) -> Option<Range<usize>> {
+    pub(crate) fn peek_token(
+        &self,
+        end: usize,
+        pred: impl Fn(&Token) -> bool,
+    ) -> Option<Range<usize>> {
         for (token, span) in &self.tokens.tokens {
             if span.start < self.pos || span.end > end || token.is_trivia() {
                 continue;
@@ -359,7 +368,7 @@ impl<'a> TokenCursor<'a> {
 /// Prefer the `gap_none` / `gap_space` / `gap_hard` wrappers
 /// for standard call sites. Use this directly only when you need custom
 /// `open`/`end` positioning that the wrappers don't provide.
-pub fn format_gap(
+pub(crate) fn format_gap(
     gap: TriviaGap,
     open: Option<Doc<'static>>,
     end: Option<Doc<'static>>,
@@ -437,13 +446,13 @@ pub fn format_gap(
 }
 
 /// Empty gap → nil. Comments → auto open/end.
-pub fn gap_none(gap: TriviaGap, style: &Style) -> Doc<'static> {
+pub(crate) fn gap_none(gap: TriviaGap, style: &Style) -> Doc<'static> {
     format_gap(gap, None, None, None, style)
 }
 
 /// Empty gap → space. Comments → auto open, space after (non-breaking)
 /// or hardline after (breaking).
-pub fn gap_space(gap: TriviaGap, style: &Style) -> Doc<'static> {
+pub(crate) fn gap_space(gap: TriviaGap, style: &Style) -> Doc<'static> {
     format_gap(gap, None, None, Some(ALLOC.text(" ")), style)
 }
 
@@ -451,7 +460,7 @@ pub fn gap_space(gap: TriviaGap, style: &Style) -> Doc<'static> {
 /// for at_line_start), hardline after. Use for structural breaks and
 /// after punctuation (after `;`, between decls) where a line break is
 /// always wanted after the gap but inline comments should stay inline.
-pub fn gap_hard(gap: TriviaGap, style: &Style) -> Doc<'static> {
+pub(crate) fn gap_hard(gap: TriviaGap, style: &Style) -> Doc<'static> {
     format_gap(
         gap,
         None,
@@ -465,16 +474,12 @@ pub fn gap_hard(gap: TriviaGap, style: &Style) -> Doc<'static> {
 /// the comment). Use inside `delimited_list` items where `line_()` or the
 /// open delimiter already provides positioning — avoids double spaces
 /// after `<`, `(`, `[`, `{`.
-pub fn gap_list(gap: TriviaGap, style: &Style) -> Doc<'static> {
+pub(crate) fn gap_list(gap: TriviaGap, style: &Style) -> Doc<'static> {
     let open = match gap.first() {
         Some(TriviaElement::Comment(_)) => Some(ALLOC.nil()),
         _ => None,
     };
     format_gap(gap, open, None, None, style)
-}
-
-fn hardlines(count: usize) -> Doc<'static> {
-    ALLOC.concat((0..count).map(|_| ALLOC.hardline()))
 }
 
 fn line_of(offset: usize, line_starts: &[usize]) -> usize {
@@ -494,13 +499,13 @@ fn compute_line_starts(src: &str) -> Vec<usize> {
     starts
 }
 
-pub struct TokenStream {
+pub(crate) struct TokenStream {
     tokens: Vec<(Token<'static>, Range<usize>)>,
     layout: SourceLayout,
 }
 
 impl TokenStream {
-    pub fn new(src: &str) -> Self {
+    pub(crate) fn new(src: &str) -> Self {
         let tokens: Vec<_> = lang::parser::lex_iter(src)
             .map(|(token, span)| (token.into_owned(), span.start..span.end))
             .collect();
@@ -516,7 +521,7 @@ impl TokenStream {
     }
 }
 
-pub fn extract_comments(src: &str) -> Vec<Comment> {
+pub(crate) fn extract_comments(src: &str) -> Vec<Comment> {
     let line_starts = compute_line_starts(src);
     lang::parser::lex_iter(src)
         .filter(|(token, _)| matches!(token, Token::LineComment | Token::BlockComment))

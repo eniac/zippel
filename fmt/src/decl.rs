@@ -151,22 +151,7 @@ fn format_decl(
             };
             let open_comments = format_gap(open_gap, open, None, Some(ALLOC.line()), style);
 
-            // Gap after `{` — strip blank lines. `sep = hardline` provides
-            // the structural break for empty gaps; `open = hardline` puts
-            // comments on their own line; `end = hardline` breaks after.
-            let body_leading = format_gap(
-                cursor.advance_to(body.span.start).trim_start(),
-                Some(ALLOC.hardline()),
-                Some(ALLOC.hardline()),
-                Some(ALLOC.hardline()),
-                style,
-            );
-            let body = format_body_exp(body, cursor, style);
-
-            // Gap before `}` — strip blank lines (structural hardline precedes).
-            let close_comments = cursor
-                .advance_to_token(end, |token| matches!(token, Token::RBrace))
-                .trim_end();
+            let body = format_body_exp(body.as_ref(), cursor, end, style);
 
             ALLOC.concat([
                 gap_none(trim_if_clean(keyword_gap), style),
@@ -187,70 +172,43 @@ fn format_decl(
                     ])
                     .group(),
                 ALLOC.text("{"),
-                ALLOC
-                    .concat([body_leading, body, gap_hard(close_comments, style)])
-                    .nest(style.indent_width() as isize),
+                body.nest(style.indent_width() as isize),
                 ALLOC.text("}"),
             ])
         }
         Body::Func { body } => {
             let keyword_gap = cursor.advance_to_token(end, |token| matches!(token, Token::KwFn));
             let (sig_gap, name_typevars, args) = format_sig(&decl.node.sig, cursor, end, style);
-            let (arrow_has_comments, ret) = if let Some(ret) = &decl.node.sig.ret {
+            let ret = if let Some(ret) = &decl.node.sig.ret {
                 // Gap after `)` — strip blank lines (structural position).
                 let arrow_gap = cursor
                     .advance_to_token(end, |token| matches!(token, Token::Arrow))
                     .trim_start();
-                let has_comments = arrow_gap.has_comments();
                 let (ret_gap, ret_doc) = format_typ(&ret.node, cursor, ret.span.end, style);
-                (
-                    has_comments,
-                    ALLOC.concat([
-                        gap_space(trim_if_clean(arrow_gap), style),
-                        ALLOC.text("->"),
-                        gap_space(trim_if_clean(ret_gap), style),
-                        ret_doc,
-                    ]),
-                )
+                ALLOC.concat([
+                    gap_space(trim_if_clean(arrow_gap), style),
+                    ALLOC.text("->"),
+                    gap_space(trim_if_clean(ret_gap), style),
+                    ret_doc,
+                ])
             } else {
-                (false, ALLOC.nil())
+                ALLOC.nil()
             };
             let open_gap = cursor.advance_to_token(end, |token| matches!(token, Token::LBrace));
 
-            // Gap before `{` — strip leading blank lines (rustfmt behavior:
-            // `{` stays on the same line as the signature, blank lines are
-            // noise). Comments are preserved.
-            let open_comments = gap_space(open_gap.trim_start(), style);
-
-            // Gap after `{` — strip blank lines. `sep = hardline` provides
-            // the structural break for empty gaps; `open = hardline` puts
-            // comments on their own line; `end = hardline` breaks after.
-            let body_leading = format_gap(
-                cursor.advance_to(body.span.start).trim_start(),
-                Some(ALLOC.hardline()),
-                Some(ALLOC.hardline()),
-                Some(ALLOC.hardline()),
-                style,
-            );
-            let body = format_body_exp(body, cursor, style);
-
-            // Gap before `}` — strip blank lines (structural hardline precedes).
-            let close_comments = cursor
-                .advance_to_token(end, |token| matches!(token, Token::RBrace))
-                .trim_end();
+            // Gap before `{` — strip blank lines on both ends (rustfmt
+            // behavior: `{` stays on the same line as the signature, blank
+            // lines are noise). Comments are preserved.
+            let open_comments = gap_space(open_gap.trim(), style);
 
             // Group args + ret so they break together: when the group
             // breaks, args go on separate lines (via line_() in the
             // ungrouped DelimList) and ret stays on the same line as `)`.
             // Typevars are outside this group — they break independently
             // via their own inner group.
-            // When there are comments between `)` and `->`, don't group
-            // them — the comments force a break, and args should stay flat.
-            let args_ret = if arrow_has_comments {
-                ALLOC.concat([args.group(), ret])
-            } else {
-                ALLOC.concat([args, ret]).group()
-            };
+            let args_ret = ALLOC.concat([args, ret]).group();
+
+            let body = format_body_exp(body.as_ref(), cursor, end, style);
 
             ALLOC.concat([
                 gap_none(trim_if_clean(keyword_gap), style),
@@ -260,9 +218,7 @@ fn format_decl(
                 args_ret,
                 open_comments,
                 ALLOC.text("{"),
-                ALLOC
-                    .concat([body_leading, body, gap_hard(close_comments, style)])
-                    .nest(style.indent_width() as isize),
+                body.nest(style.indent_width() as isize),
                 ALLOC.text("}"),
             ])
         }
@@ -325,8 +281,9 @@ fn format_sig(
 
     // Advance to `)`. If a trailing comma exists, it's a non-trivia token
     // that advance_to_token skips — comments around it become close_comments,
-    // rendered after finish's trailing comma. Same as all other DelimList users.
+    // rendered after finish_ungrouped's trailing comma. Same as all other DelimList users.
     let close_comments = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
+
     // Use finish_ungrouped so the caller can wrap (args) + ret in a single
     // group, ensuring args and ret break together (args break first, ret
     // stays on the same line as `)`).

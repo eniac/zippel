@@ -1227,7 +1227,7 @@ where
             .then_ignore(just(Token::KwWhere).ignored())
             .then(where_exp_parser())
             .then_ignore(just(Token::LBrace).ignored())
-            .then(exp_parser())
+            .then(exp_parser().or_not())
             .then_ignore(just(Token::RBrace).ignored())
             .map_with(|((((name, tvars), args), relation), body), e| {
                 let span: SimpleSpan = e.span();
@@ -1260,7 +1260,7 @@ where
                     .or_not(),
             )
             .then_ignore(just(Token::LBrace).ignored())
-            .then(exp_parser())
+            .then(exp_parser().or_not())
             .then_ignore(just(Token::RBrace).ignored())
             .map_with(|((((name, tvars), args), ret), body), e| {
                 let span: SimpleSpan = e.span();
@@ -1375,7 +1375,7 @@ mod tests {
         assert!(errors.is_empty(), "errors: {:?}", errors);
         use crate::ast::{BinOp, Body, Exp};
         match &decls[0].node.body {
-            Body::Func { body } => {
+            Body::Func { body: Some(body) } => {
                 // Should be Mul(Neg(a), a) = (-a)*a
                 // NOT Neg(Mul(a, a)) = -(a*a)
                 match &body.node {
@@ -1389,7 +1389,7 @@ mod tests {
                     other => panic!("expected Bin(Mul), got {:?}", other),
                 }
             }
-            other => panic!("expected Func, got {:?}", other),
+            other => panic!("expected Func with body, got {:?}", other),
         }
     }
 
@@ -1399,6 +1399,32 @@ mod tests {
         let (decls, errors) = parse_decls(src);
         assert!(errors.is_empty(), "errors: {:?}", errors);
         assert_eq!(decls.len(), 1);
+    }
+
+    #[test]
+    fn parse_empty_body() {
+        let src = "fn f<F: Field>(instance a: F) -> F {}";
+        let (decls, errors) = parse_decls(src);
+        assert!(errors.is_empty(), "errors: {:?}", errors);
+        assert_eq!(decls.len(), 1);
+        use crate::ast::Body;
+        match &decls[0].node.body {
+            Body::Func { body: None } => {}
+            other => panic!("expected Func with no body, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_empty_proto_body() {
+        let src = "proto p<F: Field>(instance a: F) where a == a {}";
+        let (decls, errors) = parse_decls(src);
+        assert!(errors.is_empty(), "errors: {:?}", errors);
+        assert_eq!(decls.len(), 1);
+        use crate::ast::Body;
+        match &decls[0].node.body {
+            Body::Proto { body: None, .. } => {}
+            other => panic!("expected Proto with no body, got {:?}", other),
+        }
     }
 
     #[test]

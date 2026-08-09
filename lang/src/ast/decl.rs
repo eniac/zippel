@@ -31,15 +31,16 @@ pub enum Body<N> {
     ///   `Let(r, val, seq(Assert(a, b), seq(Assert(c, d), Unit)))`.
     ///   Let-bindings are evaluated once and shared by all constraints.
     Proto {
-        body: Spanned<Exp<N>>,
+        body: Option<Spanned<Exp<N>>>,
         relation: Spanned<Exp<N>>,
     },
 
     /// A function body declaration
     ///
     /// # fields
-    /// - `body`: The body of the function.
-    Func { body: Spanned<Exp<N>> },
+    /// - `body`: The body of the function. `None` for an empty body `{}`,
+    ///   which is semantically equivalent to `Unit`.
+    Func { body: Option<Spanned<Exp<N>>> },
 
     /// A type alias declaration (e.g., `type Point = { x: F, y: F };`)
     /// The aliased type is stored in the Sig's return type.
@@ -76,7 +77,7 @@ impl<N> Body<N> {
         matches!(self, Body::TypeAlias)
     }
 
-    pub fn body(self) -> Spanned<Exp<N>> {
+    pub fn body(self) -> Option<Spanned<Exp<N>>> {
         match self {
             Body::Proto { body, .. } => body,
             Body::Func { body } => body,
@@ -94,8 +95,12 @@ impl<N> Body<N> {
 impl FreeVars for CBody {
     fn freevars(&self) -> Set<Vid> {
         match self {
-            Body::Proto { body, relation } => body.freevars().union(relation.freevars()),
-            Body::Func { body } => body.freevars(),
+            Body::Proto { body, relation } => body
+                .as_ref()
+                .map(|b| b.freevars())
+                .unwrap_or_default()
+                .union(relation.freevars()),
+            Body::Func { body } => body.as_ref().map(|b| b.freevars()).unwrap_or_default(),
             Body::TypeAlias => Set::new(),
         }
     }
@@ -108,7 +113,7 @@ impl<N> Decl<N> {
         typevars: Spanned<TypeVars<N>>,
         args: Spanned<GArgs<N>>,
         relation: Spanned<Exp<N>>,
-        body: Spanned<Exp<N>>,
+        body: Option<Spanned<Exp<N>>>,
     ) -> Self {
         let sig = Sig {
             name,
@@ -125,7 +130,7 @@ impl<N> Decl<N> {
         typevars: Spanned<TypeVars<N>>,
         args: Spanned<GArgs<N>>,
         ret: Option<Spanned<GTyp<N>>>,
-        body: Spanned<Exp<N>>,
+        body: Option<Spanned<Exp<N>>>,
     ) -> Self {
         let sig = Sig {
             name,
@@ -291,32 +296,62 @@ impl CBody {
                 }
                 // Relation must infer to Unit (Let/Assert chain ending in Unit)
                 relation.node.infer(&kctx, fctx, &vctx)?;
-                // Body must infer to Unit
-                let br = body.node.infer(&kctx, fctx, &vctx)?;
-                if br != CTyp::Unit {
-                    return Err(TypeError::decl(
-                        &sig.name,
-                        TypeError::unit(&kctx, &vctx, &body.node),
-                    ));
+                // Body must infer to Unit (empty body is Unit)
+                if let Some(body) = body {
+                    let br = body.node.infer(&kctx, fctx, &vctx)?;
+                    if br != CTyp::Unit {
+                        return Err(TypeError::decl(
+                            &sig.name,
+                            TypeError::unit(&kctx, &vctx, &body.node),
+                        ));
+                    }
                 }
                 Ok(())
             }
             Body::Func { body } => {
-                let br = body.node.infer(&kctx, fctx, &vctx)?;
-                // Use lub_equ rather than strict structural equality so that
-                // a body inferred as `Fin<n>` (e.g. a bare numeric literal)
-                // coerces to a `Base(F)` return type via the scalar
-                // fallback in `CTyp::lub_equ` (`lang/src/typ/lub.rs:510`).
-                // Same lift the binary operator arms apply via `lub_add`
-                // (`lang/src/typ/lub.rs:597-613`), now extended to the
-                // return-type check.
                 let ret = sig.ret.as_ref().map(|r| &r.node).unwrap_or(&CTyp::Unit);
-                match CTyp::lub_equ(&br, ret, &kctx) {
-                    Ok(_) => Ok(()),
-                    Err(_) => Err(TypeError::decl(
-                        &sig.name,
-                        TypeError::func_ret(&kctx, &vctx, &body.node, &sig.name.node, ret, &br),
-                    )),
+                match body {
+                    Some(body) => {
+                        let br = body.node.infer(&kctx, fctx, &vctx)?;
+                        // Use lub_equ rather than strict structural equality so that
+                        // a body inferred as `Fin<n>` (e.g. a bare numeric literal)
+                        // coerces to a `Base(F)` return type via the scalar
+                        // fallback in `CTyp::lub_equ` (`lang/src/typ/lub.rs:510`).
+                        // Same lift the binary operator arms apply via `lub_add`
+                        // (`lang/src/typ/lub.rs:597-613`), now extended to the
+                        // return-type check.
+                        match CTyp::lub_equ(&br, ret, &kctx) {
+                            Ok(_) => Ok(()),
+                            Err(_) => Err(TypeError::decl(
+                                &sig.name,
+                                TypeError::func_ret(
+                                    &kctx,
+                                    &vctx,
+                                    &body.node,
+                                    &sig.name.node,
+                                    ret,
+                                    &br,
+                                ),
+                            )),
+                        }
+                    }
+                    None => {
+                        // Empty body `{}` is semantically Unit.
+                        match CTyp::lub_equ(&CTyp::Unit, ret, &kctx) {
+                            Ok(_) => Ok(()),
+                            Err(_) => Err(TypeError::decl(
+                                &sig.name,
+                                TypeError::func_ret(
+                                    &kctx,
+                                    &vctx,
+                                    &Spanned::new(Exp::Unit, 0..0),
+                                    &sig.name.node,
+                                    ret,
+                                    &CTyp::Unit,
+                                ),
+                            )),
+                        }
+                    }
                 }
             }
             Body::TypeAlias => Ok(()),
@@ -331,10 +366,10 @@ impl<N: Clone> ToTraversal1<N> for Body<N> {
         match self {
             Body::Proto { relation, body } => Ok(Body::Proto {
                 relation: relation.traverse1(f)?,
-                body: body.traverse1(f)?,
+                body: body.map(|b| b.traverse1(f)).transpose()?,
             }),
             Body::Func { body } => Ok(Body::Func {
-                body: body.traverse1(f)?,
+                body: body.map(|b| b.traverse1(f)).transpose()?,
             }),
             Body::TypeAlias => Ok(Body::TypeAlias),
         }
@@ -346,9 +381,15 @@ impl TidSubst for CBody {
         match self {
             Body::Proto { relation, body } => {
                 relation.node.tid_subst(from, to);
-                body.node.tid_subst(from, to);
+                if let Some(body) = body {
+                    body.node.tid_subst(from, to);
+                }
             }
-            Body::Func { body } => body.node.tid_subst(from, to),
+            Body::Func { body } => {
+                if let Some(body) = body {
+                    body.node.tid_subst(from, to);
+                }
+            }
             Body::TypeAlias => {}
         }
     }
@@ -362,10 +403,10 @@ impl<N: Clone> RangeTraversal<N> for Body<N> {
         match self {
             Body::Proto { relation, body } => Ok(Body::Proto {
                 relation: relation.range_traverse(f)?,
-                body: body.range_traverse(f)?,
+                body: body.map(|b| b.range_traverse(f)).transpose()?,
             }),
             Body::Func { body } => Ok(Body::Func {
-                body: body.range_traverse(f)?,
+                body: body.map(|b| b.range_traverse(f)).transpose()?,
             }),
             Body::TypeAlias => Ok(Body::TypeAlias),
         }
@@ -400,22 +441,33 @@ where
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         match self {
-            Body::Proto { relation, body } => allocator.concat([
-                allocator.text(" where "),
-                relation.pretty(allocator),
-                allocator.text(" {"),
-                allocator.line(),
-                body.pretty(allocator).group().indent(2),
-                allocator.line(),
-                allocator.text("}"),
-            ]),
-            Body::Func { body } => allocator.concat([
-                allocator.text("{"),
-                allocator.line(),
-                body.pretty(allocator).group().indent(2),
-                allocator.line(),
-                allocator.text("}"),
-            ]),
+            Body::Proto { relation, body } => {
+                let body_doc = match body {
+                    Some(body) => allocator.concat([
+                        allocator.text(" {"),
+                        allocator.line(),
+                        body.pretty(allocator).group().indent(2),
+                        allocator.line(),
+                        allocator.text("}"),
+                    ]),
+                    None => allocator.text(" {}"),
+                };
+                allocator.concat([
+                    allocator.text(" where "),
+                    relation.pretty(allocator),
+                    body_doc,
+                ])
+            }
+            Body::Func { body } => match body {
+                Some(body) => allocator.concat([
+                    allocator.text("{"),
+                    allocator.line(),
+                    body.pretty(allocator).group().indent(2),
+                    allocator.line(),
+                    allocator.text("}"),
+                ]),
+                None => allocator.text("{}"),
+            },
             Body::TypeAlias => allocator.nil(),
         }
     }

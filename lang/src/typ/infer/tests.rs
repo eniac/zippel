@@ -1781,7 +1781,7 @@ fn test_proto_body_blames_body_not_relation() {
     let fctx = Set::new();
     let body = crate::ast::CBody::Proto {
         relation: Spanned::dummy(CExp::Unit), // no constraints — the body is what fails
-        body: lit(5),                         // body has type Fin (invalid, expected Unit)
+        body: Some(lit(5)),                   // body has type Fin (invalid, expected Unit)
     };
     let res = body.typecheck(sig, &fctx);
     let err = res.unwrap_err();
