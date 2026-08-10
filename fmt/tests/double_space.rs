@@ -8,76 +8,76 @@
 //! embedded spaces in literals stacking with gap auto-open spaces,
 //! and blank-line stripping/preservation around intra-expression tokens.
 
-use fmt::format_source;
+mod common;
 
-fn fmt(src: &str) -> String {
-    format_source(src).expect("parse error")
-}
-
-fn assert_ok(src: &str, expected: &str) {
-    let out = fmt(src);
-    assert_eq!(out, expected, "first format mismatch");
-    assert_eq!(fmt(&out), out, "not idempotent");
-}
+use common::assert_ok;
 
 // ══════════════════════════════════════════════════════════════════
 // Section A: Comments around type-variable bounds `<F: Field>`
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_before_typevar_open_angle() {
-    assert_ok(
-        "fn f /* c */ <F: Field>(instance a: F) -> F { a }",
-        "fn f /* c */ <F: Field>(instance a: F) -> F {\n    a\n}\n",
-    );
+fn comments_around_typevar_bounds() {
+    for (src, expected) in [
+        (
+            "fn f /* c */ <F: Field>(instance a: F) -> F { a }",
+            "\
+fn f /* c */ <F: Field>(instance a: F) -> F {
+    a
 }
-
-#[test]
-fn comment_after_typevar_open_angle() {
-    assert_ok(
-        "fn f< /* c */ F: Field>(instance a: F) -> F { a }",
-        "fn f</* c */ F: Field>(instance a: F) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f< /* c */ F: Field>(instance a: F) -> F { a }",
+            "\
+fn f</* c */ F: Field>(instance a: F) -> F {
+    a
 }
-
-#[test]
-fn comment_between_typevar_name_and_colon() {
-    assert_ok(
-        "fn f<F /* c */ : Field>(instance a: F) -> F { a }",
-        "fn f<F /* c */ : Field>(instance a: F) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F /* c */ : Field>(instance a: F) -> F { a }",
+            "\
+fn f<F /* c */ : Field>(instance a: F) -> F {
+    a
 }
-
-#[test]
-fn comment_between_typevar_colon_and_kind() {
-    assert_ok(
-        "fn f<F: /* c */ Field>(instance a: F) -> F { a }",
-        "fn f<F: /* c */ Field>(instance a: F) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: /* c */ Field>(instance a: F) -> F { a }",
+            "\
+fn f<F: /* c */ Field>(instance a: F) -> F {
+    a
 }
-
-#[test]
-fn comment_between_typevars_comma() {
-    assert_ok(
-        "fn f<F: Field /* c */ , G: Group>(instance a: F) -> F { a }",
-        "fn f<F: Field /* c */, G: Group>(instance a: F) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field /* c */ , G: Group>(instance a: F) -> F { a }",
+            "\
+fn f<F: Field /* c */, G: Group>(instance a: F) -> F {
+    a
 }
-
-#[test]
-fn comment_after_comma_between_typevars() {
-    assert_ok(
-        "fn f<F: Field, /* c */ G: Group>(instance a: F) -> F { a }",
-        "fn f<F: Field, /* c */ G: Group>(instance a: F) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field, /* c */ G: Group>(instance a: F) -> F { a }",
+            "\
+fn f<F: Field, /* c */ G: Group>(instance a: F) -> F {
+    a
 }
-
-#[test]
-fn comment_before_typevar_close_angle() {
-    assert_ok(
-        "fn f<F: Field /* c */ >(instance a: F) -> F { a }",
-        "fn f<F: Field /* c */>(instance a: F) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field /* c */ >(instance a: F) -> F { a }",
+            "\
+fn f<F: Field /* c */>(instance a: F) -> F {
+    a
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -85,67 +85,75 @@ fn comment_before_typevar_close_angle() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_before_arg_open_paren() {
-    assert_ok(
-        "fn f<F: Field> /* c */ (instance a: F) -> F { a }",
-        "fn f<F: Field> /* c */ (instance a: F) -> F {\n    a\n}\n",
-    );
+fn comments_around_args() {
+    for (src, expected) in [
+        (
+            "fn f<F: Field> /* c */ (instance a: F) -> F { a }",
+            "\
+fn f<F: Field> /* c */ (instance a: F) -> F {
+    a
 }
-
-#[test]
-fn comment_after_arg_open_paren() {
-    assert_ok(
-        "fn f<F: Field>( /* c */ instance a: F) -> F { a }",
-        "fn f<F: Field>(/* c */ instance a: F) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>( /* c */ instance a: F) -> F { a }",
+            "\
+fn f<F: Field>(/* c */ instance a: F) -> F {
+    a
 }
-
-#[test]
-fn comment_between_qualifier_and_uniform() {
-    assert_ok(
-        "fn f<F: Field>(instance /* c */ uniform a: F) -> F { a }",
-        "fn f<F: Field>(instance /* c */ uniform a: F) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance /* c */ uniform a: F) -> F { a }",
+            "\
+fn f<F: Field>(instance /* c */ uniform a: F) -> F {
+    a
 }
-
-#[test]
-fn comment_between_arg_name_and_colon() {
-    assert_ok(
-        "fn f<F: Field>(instance a /* c */ : F) -> F { a }",
-        "fn f<F: Field>(instance a /* c */ : F) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a /* c */ : F) -> F { a }",
+            "\
+fn f<F: Field>(instance a /* c */ : F) -> F {
+    a
 }
-
-#[test]
-fn comment_between_arg_colon_and_type() {
-    assert_ok(
-        "fn f<F: Field>(instance a: /* c */ F) -> F { a }",
-        "fn f<F: Field>(instance a: /* c */ F) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: /* c */ F) -> F { a }",
+            "\
+fn f<F: Field>(instance a: /* c */ F) -> F {
+    a
 }
-
-#[test]
-fn comment_between_args_comma() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F /* c */ , instance b: F) -> F { a }",
-        "fn f<F: Field>(instance a: F /* c */, instance b: F) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F /* c */ , instance b: F) -> F { a }",
+            "\
+fn f<F: Field>(instance a: F /* c */, instance b: F) -> F {
+    a
 }
-
-#[test]
-fn comment_after_comma_between_args() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F, /* c */ instance b: F) -> F { a }",
-        "fn f<F: Field>(instance a: F, /* c */ instance b: F) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F, /* c */ instance b: F) -> F { a }",
+            "\
+fn f<F: Field>(instance a: F, /* c */ instance b: F) -> F {
+    a
 }
-
-#[test]
-fn comment_before_arg_close_paren() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F /* c */ ) -> F { a }",
-        "fn f<F: Field>(instance a: F /* c */) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F /* c */ ) -> F { a }",
+            "\
+fn f<F: Field>(instance a: F /* c */) -> F {
+    a
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -156,7 +164,11 @@ fn comment_before_arg_close_paren() {
 fn comment_between_arrow_and_ret_type() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> /* c */ F { a }",
-        "fn f<F: Field>(instance a: F) -> /* c */ F {\n    a\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> /* c */ F {
+    a
+}
+",
     );
 }
 
@@ -164,7 +176,11 @@ fn comment_between_arrow_and_ret_type() {
 fn comment_after_ret_type_before_brace() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F /* c */ { a }",
-        "fn f<F: Field>(instance a: F) -> F /* c */ {\n    a\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F /* c */ {
+    a
+}
+",
     );
 }
 
@@ -173,18 +189,29 @@ fn comment_after_ret_type_before_brace() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_between_type_name_and_eq() {
-    assert_ok("type T /* c */ = F;", "type T /* c */ = F;\n");
-}
-
-#[test]
-fn comment_between_type_eq_and_body() {
-    assert_ok("type T = /* c */ F;", "type T = /* c */ F;\n");
-}
-
-#[test]
-fn comment_before_semicolon_in_type_alias() {
-    assert_ok("type T = F /* c */ ;", "type T = F /* c */ ;\n");
+fn comments_around_type_alias() {
+    for (src, expected) in [
+        (
+            "type T /* c */ = F;",
+            "\
+type T /* c */ = F;
+",
+        ),
+        (
+            "type T = /* c */ F;",
+            "\
+type T = /* c */ F;
+",
+        ),
+        (
+            "type T = F /* c */ ;",
+            "\
+type T = F /* c */ ;
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -192,42 +219,59 @@ fn comment_before_semicolon_in_type_alias() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_between_let_name_and_eq_in_body() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { let x /* c */ = a; x }",
-        "fn f<F: Field>(instance a: F) -> F {\n    let x /* c */ = a;\n    x\n}\n",
-    );
+fn comments_around_let_in_body() {
+    for (src, expected) in [
+        (
+            "fn f<F: Field>(instance a: F) -> F { let x /* c */ = a; x }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    let x /* c */ = a;
+    x
 }
-
-#[test]
-fn comment_between_let_eq_and_value_in_body() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { let x = /* c */ a; x }",
-        "fn f<F: Field>(instance a: F) -> F {\n    let x = /* c */ a;\n    x\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { let x = /* c */ a; x }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    let x = /* c */ a;
+    x
 }
-
-#[test]
-fn comment_before_semicolon_in_let() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { let x = a /* c */ ; x }",
-        "fn f<F: Field>(instance a: F) -> F {\n    let x = a /* c */;\n    x\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { let x = a /* c */ ; x }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    let x = a /* c */;
+    x
+}
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { let x = a; /* c */ x }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    let x = a; /* c */
+    x
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 #[test]
 fn let_no_double_semicolon() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { let x = a; x }",
-        "fn f<F: Field>(instance a: F) -> F {\n    let x = a;\n    x\n}\n",
-    );
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    let x = a;
+    x
 }
-
-#[test]
-fn comment_after_semicolon_in_let() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { let x = a; /* c */ x }",
-        "fn f<F: Field>(instance a: F) -> F {\n    let x = a; /* c */\n    x\n}\n",
+",
     );
 }
 
@@ -239,7 +283,12 @@ fn comment_after_semicolon_in_let() {
 fn comment_between_log_name_and_larrow() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { x /* c */ <- a; x }",
-        "fn f<F: Field>(instance a: F) -> F {\n    x /* c */ <- a;\n    x\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    x /* c */ <- a;
+    x
+}
+",
     );
 }
 
@@ -247,7 +296,12 @@ fn comment_between_log_name_and_larrow() {
 fn comment_between_larrow_and_value_in_log() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { x <- /* c */ a; x }",
-        "fn f<F: Field>(instance a: F) -> F {\n    x <- /* c */ a;\n    x\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    x <- /* c */ a;
+    x
+}
+",
     );
 }
 
@@ -256,43 +310,51 @@ fn comment_between_larrow_and_value_in_log() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_between_fn_name_and_open_paren_in_app() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F, instance b: F) -> F { g /* c */ (a, b) }",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    g /* c */ (a, b)\n}\n",
-    );
+fn comments_around_function_application() {
+    for (src, expected) in [
+        (
+            "fn f<F: Field>(instance a: F, instance b: F) -> F { g /* c */ (a, b) }",
+            "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    g /* c */ (a, b)
 }
-
-#[test]
-fn comment_after_open_paren_in_app() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F, instance b: F) -> F { g( /* c */ a, b) }",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    g(/* c */ a, b)\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F, instance b: F) -> F { g( /* c */ a, b) }",
+            "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    g(/* c */ a, b)
 }
-
-#[test]
-fn comment_between_args_in_app_comma() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F, instance b: F) -> F { g(a /* c */ , b) }",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    g(a /* c */, b)\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F, instance b: F) -> F { g(a /* c */ , b) }",
+            "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    g(a /* c */, b)
 }
-
-#[test]
-fn comment_after_comma_in_app() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F, instance b: F) -> F { g(a, /* c */ b) }",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    g(a, /* c */ b)\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F, instance b: F) -> F { g(a, /* c */ b) }",
+            "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    g(a, /* c */ b)
 }
-
-#[test]
-fn comment_before_close_paren_in_app() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F, instance b: F) -> F { g(a, b /* c */) }",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    g(a, b /* c */)\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F, instance b: F) -> F { g(a, b /* c */) }",
+            "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    g(a, b /* c */)
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -300,35 +362,43 @@ fn comment_before_close_paren_in_app() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_after_open_brack_in_vec() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F, instance b: F) -> F { [ /* c */ a, b] }",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    [/* c */ a, b]\n}\n",
-    );
+fn comments_around_vec_literal() {
+    for (src, expected) in [
+        (
+            "fn f<F: Field>(instance a: F, instance b: F) -> F { [ /* c */ a, b] }",
+            "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    [/* c */ a, b]
 }
-
-#[test]
-fn comment_between_vec_elems_comma() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F, instance b: F) -> F { [a /* c */ , b] }",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    [a /* c */, b]\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F, instance b: F) -> F { [a /* c */ , b] }",
+            "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    [a /* c */, b]
 }
-
-#[test]
-fn comment_after_comma_in_vec() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F, instance b: F) -> F { [a, /* c */ b] }",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    [a, /* c */ b]\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F, instance b: F) -> F { [a, /* c */ b] }",
+            "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    [a, /* c */ b]
 }
-
-#[test]
-fn comment_before_close_brack_in_vec() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F, instance b: F) -> F { [a, b /* c */] }",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    [a, b /* c */]\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F, instance b: F) -> F { [a, b /* c */] }",
+            "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    [a, b /* c */]
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -336,51 +406,59 @@ fn comment_before_close_brack_in_vec() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_after_open_brack_in_comprehension() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { [ /* c */ a for x in 0..1] }",
-        "fn f<F: Field>(instance a: F) -> F {\n    [/* c */ a for x in 0..1]\n}\n",
-    );
+fn comments_around_comprehension() {
+    for (src, expected) in [
+        (
+            "fn f<F: Field>(instance a: F) -> F { [ /* c */ a for x in 0..1] }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    [/* c */ a for x in 0..1]
 }
-
-#[test]
-fn comment_between_body_and_for() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { [a /* c */ for x in 0..1] }",
-        "fn f<F: Field>(instance a: F) -> F {\n    [a /* c */ for x in 0..1]\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { [a /* c */ for x in 0..1] }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    [a /* c */ for x in 0..1]
 }
-
-#[test]
-fn comment_between_for_and_var() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { [a for /* c */ x in 0..1] }",
-        "fn f<F: Field>(instance a: F) -> F {\n    [a for /* c */ x in 0..1]\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { [a for /* c */ x in 0..1] }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    [a for /* c */ x in 0..1]
 }
-
-#[test]
-fn comment_between_var_and_in() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { [a for x /* c */ in 0..1] }",
-        "fn f<F: Field>(instance a: F) -> F {\n    [a for x /* c */ in 0..1]\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { [a for x /* c */ in 0..1] }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    [a for x /* c */ in 0..1]
 }
-
-#[test]
-fn comment_between_in_and_range() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { [a for x in /* c */ 0..1] }",
-        "fn f<F: Field>(instance a: F) -> F {\n    [a for x in /* c */ 0..1]\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { [a for x in /* c */ 0..1] }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    [a for x in /* c */ 0..1]
 }
-
-#[test]
-fn comment_before_close_brack_in_comprehension() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { [a for x in 0..1 /* c */] }",
-        "fn f<F: Field>(instance a: F) -> F {\n    [a for x in 0..1 /* c */ ]\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { [a for x in 0..1 /* c */] }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    [a for x in 0..1 /* c */ ]
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -388,27 +466,35 @@ fn comment_before_close_brack_in_comprehension() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_between_fun_var_and_arrow() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { (fun(x /* c */) => x + a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    fun (x /* c */) => x + a\n}\n",
-    );
+fn comments_around_fun() {
+    for (src, expected) in [
+        (
+            "fn f<F: Field>(instance a: F) -> F { (fun(x /* c */) => x + a) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    fun (x /* c */) => x + a
 }
-
-#[test]
-fn comment_between_arrow_and_body_in_fun() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { (fun(x) => /* c */ x + a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    fun (x) => /* c */ x + a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { (fun(x) => /* c */ x + a) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    fun (x) => /* c */ x + a
 }
-
-#[test]
-fn comment_between_fun_vars_comma() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { (fun(x /* c */ , y) => x + a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    fun (x /* c */, y) => x + a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { (fun(x /* c */ , y) => x + a) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    fun (x /* c */, y) => x + a
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -419,7 +505,11 @@ fn comment_between_fun_vars_comma() {
 fn comment_before_dotdot_in_range() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { [a for x in 0 /* c */ .. 1] }",
-        "fn f<F: Field>(instance a: F) -> F {\n    [a for x in 0 /* c */ ..1]\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    [a for x in 0 /* c */ ..1]
+}
+",
     );
 }
 
@@ -427,7 +517,11 @@ fn comment_before_dotdot_in_range() {
 fn comment_after_dotdot_in_range() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { [a for x in 0.. /* c */ 1] }",
-        "fn f<F: Field>(instance a: F) -> F {\n    [a for x in 0.. /* c */ 1]\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    [a for x in 0.. /* c */ 1]
+}
+",
     );
 }
 
@@ -439,7 +533,11 @@ fn comment_after_dotdot_in_range() {
 fn comment_between_base_and_dot_in_proj() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { a /* c */ .field }",
-        "fn f<F: Field>(instance a: F) -> F {\n    a /* c */ .field\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    a /* c */ .field
+}
+",
     );
 }
 
@@ -447,7 +545,11 @@ fn comment_between_base_and_dot_in_proj() {
 fn comment_between_dot_and_field_in_proj() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { a. /* c */ field }",
-        "fn f<F: Field>(instance a: F) -> F {\n    a. /* c */ field\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    a. /* c */ field
+}
+",
     );
 }
 
@@ -456,27 +558,35 @@ fn comment_between_dot_and_field_in_proj() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_between_base_and_open_brack_in_index() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { a /* c */ [0] }",
-        "fn f<F: Field>(instance a: F) -> F {\n    a /* c */ [0]\n}\n",
-    );
+fn comments_around_indexing() {
+    for (src, expected) in [
+        (
+            "fn f<F: Field>(instance a: F) -> F { a /* c */ [0] }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    a /* c */ [0]
 }
-
-#[test]
-fn comment_after_open_brack_in_index() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { a[ /* c */ 0] }",
-        "fn f<F: Field>(instance a: F) -> F {\n    a[/* c */ 0]\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { a[ /* c */ 0] }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    a[/* c */ 0]
 }
-
-#[test]
-fn comment_before_close_brack_in_index() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { a[0 /* c */] }",
-        "fn f<F: Field>(instance a: F) -> F {\n    a[0 /* c */]\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { a[0 /* c */] }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    a[0 /* c */]
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -484,27 +594,35 @@ fn comment_before_close_brack_in_index() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_between_poly_keyword_and_paren() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { poly /* c */ (a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    poly /* c */ (a)\n}\n",
-    );
+fn comments_around_poly_unary() {
+    for (src, expected) in [
+        (
+            "fn f<F: Field>(instance a: F) -> F { poly /* c */ (a) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    poly /* c */ (a)
 }
-
-#[test]
-fn comment_after_open_paren_in_poly() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { poly( /* c */ a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    poly(/* c */ a)\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { poly( /* c */ a) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    poly(/* c */ a)
 }
-
-#[test]
-fn comment_before_close_paren_in_poly() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { poly(a /* c */) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    poly(a /* c */)\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { poly(a /* c */) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    poly(a /* c */)
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -512,35 +630,43 @@ fn comment_before_close_paren_in_poly() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_between_reduce_keyword_and_paren() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { reduce /* c */ (+, a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    reduce /* c */ (+, a)\n}\n",
-    );
+fn comments_around_reduce() {
+    for (src, expected) in [
+        (
+            "fn f<F: Field>(instance a: F) -> F { reduce /* c */ (+, a) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    reduce /* c */ (+, a)
 }
-
-#[test]
-fn comment_after_open_paren_in_reduce() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { reduce( /* c */ +, a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    reduce(/* c */ +, a)\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { reduce( /* c */ +, a) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    reduce(/* c */ +, a)
 }
-
-#[test]
-fn comment_between_op_and_comma_in_reduce() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { reduce(+ /* c */ , a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    reduce(+ /* c */, a)\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { reduce(+ /* c */ , a) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    reduce(+ /* c */, a)
 }
-
-#[test]
-fn comment_after_comma_in_reduce() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { reduce(+, /* c */ a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    reduce(+, /* c */ a)\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { reduce(+, /* c */ a) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    reduce(+, /* c */ a)
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -548,27 +674,38 @@ fn comment_after_comma_in_reduce() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_between_random_keyword_and_open_angle() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { x <- random /* c */ <F>; x }",
-        "fn f<F: Field>(instance a: F) -> F {\n    x <- random /* c */ <F>;\n    x\n}\n",
-    );
+fn comments_around_random() {
+    for (src, expected) in [
+        (
+            "fn f<F: Field>(instance a: F) -> F { x <- random /* c */ <F>; x }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    x <- random /* c */ <F>;
+    x
 }
-
-#[test]
-fn comment_after_open_angle_in_random() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { x <- random< /* c */ F>; x }",
-        "fn f<F: Field>(instance a: F) -> F {\n    x <- random</* c */ F>;\n    x\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { x <- random< /* c */ F>; x }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    x <- random</* c */ F>;
+    x
 }
-
-#[test]
-fn comment_before_close_angle_in_random() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { x <- random<F /* c */>; x }",
-        "fn f<F: Field>(instance a: F) -> F {\n    x <- random<F /* c */>;\n    x\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { x <- random<F /* c */>; x }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    x <- random<F /* c */>;
+    x
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -576,35 +713,43 @@ fn comment_before_close_angle_in_random() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_between_eval_keyword_and_open_angle() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { eval /* c */ <0..1>(a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    eval /* c */ (a)\n}\n",
-    );
+fn comments_around_eval() {
+    for (src, expected) in [
+        (
+            "fn f<F: Field>(instance a: F) -> F { eval /* c */ <0..1>(a) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    eval /* c */ (a)
 }
-
-#[test]
-fn comment_after_open_angle_in_eval() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { eval< /* c */ 0..1>(a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    eval /* c */ (a)\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { eval< /* c */ 0..1>(a) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    eval /* c */ (a)
 }
-
-#[test]
-fn comment_before_close_angle_in_eval() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { eval<0..1 /* c */>(a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    eval /* c */ (a)\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { eval<0..1 /* c */>(a) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    eval /* c */ (a)
 }
-
-#[test]
-fn comment_between_close_angle_and_open_paren_in_eval() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { eval<0..1> /* c */ (a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    eval /* c */ (a)\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { eval<0..1> /* c */ (a) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    eval /* c */ (a)
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -612,37 +757,43 @@ fn comment_between_close_angle_and_open_paren_in_eval() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_after_open_brack_in_vec_type() {
-    assert_ok(
-        "fn f<F: Field>(instance a: [ /* c */ F; 2]) -> F { a[0] }",
-        "fn f<F: Field>(instance a: [/* c */ F; 2]) -> F {\n    a[0]\n}\n",
-    );
+fn comments_around_vec_type() {
+    for (src, expected) in [
+        (
+            "fn f<F: Field>(instance a: [ /* c */ F; 2]) -> F { a[0] }",
+            "\
+fn f<F: Field>(instance a: [/* c */ F; 2]) -> F {
+    a[0]
 }
-
-#[test]
-fn comment_between_inner_type_and_semi_in_vec_type() {
-    assert_ok(
-        "fn f<F: Field>(instance a: [F /* c */ ; 2]) -> F { a[0] }",
-        "fn f<F: Field>(instance a: [F /* c */; 2]) -> F {\n    a[0]\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: [F /* c */ ; 2]) -> F { a[0] }",
+            "\
+fn f<F: Field>(instance a: [F /* c */; 2]) -> F {
+    a[0]
 }
-
-#[test]
-fn comment_between_semi_and_size_in_vec_type() {
-    // Already tested in semicolon_space_inline_comment_in_vec_type
-    // but included here for completeness
-    assert_ok(
-        "fn f<F: Field>(instance a: [F; /* c */ 2]) -> F { a[0] }",
-        "fn f<F: Field>(instance a: [F; /* c */ 2]) -> F {\n    a[0]\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: [F; /* c */ 2]) -> F { a[0] }",
+            "\
+fn f<F: Field>(instance a: [F; /* c */ 2]) -> F {
+    a[0]
 }
-
-#[test]
-fn comment_before_close_brack_in_vec_type() {
-    assert_ok(
-        "fn f<F: Field>(instance a: [F; 2 /* c */ ]) -> F { a[0] }",
-        "fn f<F: Field>(instance a: [F; 2 /* c */]) -> F {\n    a[0]\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: [F; 2 /* c */ ]) -> F { a[0] }",
+            "\
+fn f<F: Field>(instance a: [F; 2 /* c */]) -> F {
+    a[0]
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -650,62 +801,70 @@ fn comment_before_close_brack_in_vec_type() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_between_poly_keyword_and_open_angle_in_type() {
-    assert_ok(
-        "fn f<F: Field>(instance a: Poly /* c */ <F, 1, 2>) -> F { a }",
-        "fn f<F: Field>(instance a: Uni /* c */ <F, 2>) -> F {\n    a\n}\n",
-    );
+fn comments_around_poly_uni_mle_types() {
+    for (src, expected) in [
+        (
+            "fn f<F: Field>(instance a: Poly /* c */ <F, 1, 2>) -> F { a }",
+            "\
+fn f<F: Field>(instance a: Uni /* c */ <F, 2>) -> F {
+    a
 }
-
-#[test]
-fn comment_after_open_angle_in_poly_type() {
-    assert_ok(
-        "fn f<F: Field>(instance a: Poly< /* c */ F, 1, 2>) -> F { a }",
-        "fn f<F: Field>(instance a: Uni</* c */ F, 2>) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: Poly< /* c */ F, 1, 2>) -> F { a }",
+            "\
+fn f<F: Field>(instance a: Uni</* c */ F, 2>) -> F {
+    a
 }
-
-#[test]
-fn comment_between_base_and_comma_in_poly_type() {
-    assert_ok(
-        "fn f<F: Field>(instance a: Poly<F /* c */ , 1, 2>) -> F { a }",
-        "fn f<F: Field>(instance a: Uni<F /* c */, 2>) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: Poly<F /* c */ , 1, 2>) -> F { a }",
+            "\
+fn f<F: Field>(instance a: Uni<F /* c */, 2>) -> F {
+    a
 }
-
-#[test]
-fn comment_after_comma_in_poly_type() {
-    assert_ok(
-        "fn f<F: Field>(instance a: Poly<F, /* c */ 1, 2>) -> F { a }",
-        "fn f<F: Field>(instance a: Poly<F, /* c */ 1, 2>) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: Poly<F, /* c */ 1, 2>) -> F { a }",
+            "\
+fn f<F: Field>(instance a: Poly<F, /* c */ 1, 2>) -> F {
+    a
 }
-
-#[test]
-fn comment_before_close_angle_in_poly_type() {
-    assert_ok(
-        "fn f<F: Field>(instance a: Poly<F, 1, 2 /* c */ >) -> F { a }",
-        "fn f<F: Field>(instance a: Uni<F, 2 /* c */>) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: Poly<F, 1, 2 /* c */ >) -> F { a }",
+            "\
+fn f<F: Field>(instance a: Uni<F, 2 /* c */>) -> F {
+    a
 }
-
-#[test]
-fn uni_source_with_comment_preserves_uni() {
-    // Uni<F, /*A*/ N> must stay Uni, not become Poly<F, /*A*/ 1, N>.
-    // The comment belongs to N, not to the implicit M=1.
-    assert_ok(
-        "fn f<F: Field>(instance a: Uni<F, /*A*/ 2>) -> F { a }",
-        "fn f<F: Field>(instance a: Uni<F, /*A*/ 2>) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        // Uni<F, /*A*/ N> must stay Uni, not become Poly<F, /*A*/ 1, N>.
+        // The comment belongs to N, not to the implicit M=1.
+        (
+            "fn f<F: Field>(instance a: Uni<F, /*A*/ 2>) -> F { a }",
+            "\
+fn f<F: Field>(instance a: Uni<F, /*A*/ 2>) -> F {
+    a
 }
-
-#[test]
-fn mle_source_with_comment_preserves_mle() {
-    // Mle<F, /*A*/ N> must stay Mle, not become Poly<F, N, /*A*/ 1>.
-    assert_ok(
-        "fn f<F: Field>(instance a: Mle<F, /*A*/ 2>) -> F { a }",
-        "fn f<F: Field>(instance a: Mle<F, /*A*/ 2>) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        // Mle<F, /*A*/ N> must stay Mle, not become Poly<F, N, /*A*/ 1>.
+        (
+            "fn f<F: Field>(instance a: Mle<F, /*A*/ 2>) -> F { a }",
+            "\
+fn f<F: Field>(instance a: Mle<F, /*A*/ 2>) -> F {
+    a
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -713,27 +872,35 @@ fn mle_source_with_comment_preserves_mle() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_between_fin_keyword_and_open_angle() {
-    assert_ok(
-        "fn f<N: 2>(instance a: Fin /* c */ <0..N>) -> F { a }",
-        "fn f<N: 2>(instance a: Fin /* c */ <0..N>) -> F {\n    a\n}\n",
-    );
+fn comments_around_fin_type() {
+    for (src, expected) in [
+        (
+            "fn f<N: 2>(instance a: Fin /* c */ <0..N>) -> F { a }",
+            "\
+fn f<N: 2>(instance a: Fin /* c */ <0..N>) -> F {
+    a
 }
-
-#[test]
-fn comment_after_open_angle_in_fin_type() {
-    assert_ok(
-        "fn f<N: 2>(instance a: Fin< /* c */ 0..N>) -> F { a }",
-        "fn f<N: 2>(instance a: Fin</* c */ 0..N>) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<N: 2>(instance a: Fin< /* c */ 0..N>) -> F { a }",
+            "\
+fn f<N: 2>(instance a: Fin</* c */ 0..N>) -> F {
+    a
 }
-
-#[test]
-fn comment_before_close_angle_in_fin_type() {
-    assert_ok(
-        "fn f<N: 2>(instance a: Fin<0..N /* c */ >) -> F { a }",
-        "fn f<N: 2>(instance a: Fin<0..N /* c */>) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<N: 2>(instance a: Fin<0..N /* c */ >) -> F { a }",
+            "\
+fn f<N: 2>(instance a: Fin<0..N /* c */>) -> F {
+    a
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -741,43 +908,51 @@ fn comment_before_close_angle_in_fin_type() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_between_scalar_keyword_and_open_angle() {
-    assert_ok(
-        "fn f<G: Scalar /* c */ <G1, G2>>(instance a: G1) -> G1 { a }",
-        "fn f<G: Scalar /* c */ <G1, G2>>(instance a: G1) -> G1 {\n    a\n}\n",
-    );
+fn comments_around_scalar_kind() {
+    for (src, expected) in [
+        (
+            "fn f<G: Scalar /* c */ <G1, G2>>(instance a: G1) -> G1 { a }",
+            "\
+fn f<G: Scalar /* c */ <G1, G2>>(instance a: G1) -> G1 {
+    a
 }
-
-#[test]
-fn comment_after_open_angle_in_scalar_kind() {
-    assert_ok(
-        "fn f<G: Scalar< /* c */ G1, G2>>(instance a: G1) -> G1 { a }",
-        "fn f<G: Scalar</* c */ G1, G2>>(instance a: G1) -> G1 {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<G: Scalar< /* c */ G1, G2>>(instance a: G1) -> G1 { a }",
+            "\
+fn f<G: Scalar</* c */ G1, G2>>(instance a: G1) -> G1 {
+    a
 }
-
-#[test]
-fn comment_between_ids_in_scalar_kind_comma() {
-    assert_ok(
-        "fn f<G: Scalar<G1 /* c */ , G2>>(instance a: G1) -> G1 { a }",
-        "fn f<G: Scalar<G1 /* c */, G2>>(instance a: G1) -> G1 {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<G: Scalar<G1 /* c */ , G2>>(instance a: G1) -> G1 { a }",
+            "\
+fn f<G: Scalar<G1 /* c */, G2>>(instance a: G1) -> G1 {
+    a
 }
-
-#[test]
-fn comment_after_comma_in_scalar_kind() {
-    assert_ok(
-        "fn f<G: Scalar<G1, /* c */ G2>>(instance a: G1) -> G1 { a }",
-        "fn f<G: Scalar<G1, /* c */ G2>>(instance a: G1) -> G1 {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<G: Scalar<G1, /* c */ G2>>(instance a: G1) -> G1 { a }",
+            "\
+fn f<G: Scalar<G1, /* c */ G2>>(instance a: G1) -> G1 {
+    a
 }
-
-#[test]
-fn comment_before_close_angle_in_scalar_kind() {
-    assert_ok(
-        "fn f<G: Scalar<G1, G2 /* c */ >>(instance a: G1) -> G1 { a }",
-        "fn f<G: Scalar<G1, G2 /* c */>>(instance a: G1) -> G1 {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<G: Scalar<G1, G2 /* c */ >>(instance a: G1) -> G1 { a }",
+            "\
+fn f<G: Scalar<G1, G2 /* c */>>(instance a: G1) -> G1 {
+    a
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -785,35 +960,43 @@ fn comment_before_close_angle_in_scalar_kind() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_between_pairing_keyword_and_open_angle() {
-    assert_ok(
-        "fn f<G: Pairing /* c */ <G1, G2>>(instance a: G1) -> G1 { a }",
-        "fn f<G: Pairing /* c */ <G1, G2>>(instance a: G1) -> G1 {\n    a\n}\n",
-    );
+fn comments_around_pairing_kind() {
+    for (src, expected) in [
+        (
+            "fn f<G: Pairing /* c */ <G1, G2>>(instance a: G1) -> G1 { a }",
+            "\
+fn f<G: Pairing /* c */ <G1, G2>>(instance a: G1) -> G1 {
+    a
 }
-
-#[test]
-fn comment_after_open_angle_in_pairing_kind() {
-    assert_ok(
-        "fn f<G: Pairing< /* c */ G1, G2>>(instance a: G1) -> G1 { a }",
-        "fn f<G: Pairing</* c */ G1, G2>>(instance a: G1) -> G1 {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<G: Pairing< /* c */ G1, G2>>(instance a: G1) -> G1 { a }",
+            "\
+fn f<G: Pairing</* c */ G1, G2>>(instance a: G1) -> G1 {
+    a
 }
-
-#[test]
-fn comment_between_ids_in_pairing_kind_comma() {
-    assert_ok(
-        "fn f<G: Pairing<G1 /* c */ , G2>>(instance a: G1) -> G1 { a }",
-        "fn f<G: Pairing<G1 /* c */, G2>>(instance a: G1) -> G1 {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<G: Pairing<G1 /* c */ , G2>>(instance a: G1) -> G1 { a }",
+            "\
+fn f<G: Pairing<G1 /* c */, G2>>(instance a: G1) -> G1 {
+    a
 }
-
-#[test]
-fn comment_after_comma_in_pairing_kind() {
-    assert_ok(
-        "fn f<G: Pairing<G1, /* c */ G2>>(instance a: G1) -> G1 { a }",
-        "fn f<G: Pairing<G1, /* c */ G2>>(instance a: G1) -> G1 {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<G: Pairing<G1, /* c */ G2>>(instance a: G1) -> G1 { a }",
+            "\
+fn f<G: Pairing<G1, /* c */ G2>>(instance a: G1) -> G1 {
+    a
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -821,35 +1004,43 @@ fn comment_after_comma_in_pairing_kind() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_after_open_brace_in_record_type() {
-    assert_ok(
-        "fn f<F: Field>(instance a: { /* c */ x: F }) -> F { a.x }",
-        "fn f<F: Field>(instance a: {/* c */ x: F}) -> F {\n    a.x\n}\n",
-    );
+fn comments_around_record_type() {
+    for (src, expected) in [
+        (
+            "fn f<F: Field>(instance a: { /* c */ x: F }) -> F { a.x }",
+            "\
+fn f<F: Field>(instance a: {/* c */ x: F}) -> F {
+    a.x
 }
-
-#[test]
-fn comment_between_field_name_and_colon_in_record_type() {
-    assert_ok(
-        "fn f<F: Field>(instance a: { x /* c */ : F }) -> F { a.x }",
-        "fn f<F: Field>(instance a: {x /* c */ : F}) -> F {\n    a.x\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: { x /* c */ : F }) -> F { a.x }",
+            "\
+fn f<F: Field>(instance a: {x /* c */ : F}) -> F {
+    a.x
 }
-
-#[test]
-fn comment_between_colon_and_type_in_record_type() {
-    assert_ok(
-        "fn f<F: Field>(instance a: { x: /* c */ F }) -> F { a.x }",
-        "fn f<F: Field>(instance a: {x: /* c */ F}) -> F {\n    a.x\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: { x: /* c */ F }) -> F { a.x }",
+            "\
+fn f<F: Field>(instance a: {x: /* c */ F}) -> F {
+    a.x
 }
-
-#[test]
-fn comment_before_close_brace_in_record_type() {
-    assert_ok(
-        "fn f<F: Field>(instance a: { x: F /* c */ }) -> F { a.x }",
-        "fn f<F: Field>(instance a: {x: F /* c */}) -> F {\n    a.x\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: { x: F /* c */ }) -> F { a.x }",
+            "\
+fn f<F: Field>(instance a: {x: F /* c */}) -> F {
+    a.x
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -857,35 +1048,43 @@ fn comment_before_close_brace_in_record_type() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_after_open_brace_bar_in_record_lit() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { {| /* c */ x: a |} }",
-        "fn f<F: Field>(instance a: F) -> F {\n    {|/* c */ x: a|}\n}\n",
-    );
+fn comments_around_record_literal() {
+    for (src, expected) in [
+        (
+            "fn f<F: Field>(instance a: F) -> F { {| /* c */ x: a |} }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    {|/* c */ x: a|}
 }
-
-#[test]
-fn comment_between_field_name_and_colon_in_record_lit() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { {| x /* c */ : a |} }",
-        "fn f<F: Field>(instance a: F) -> F {\n    {|x /* c */ : a|}\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { {| x /* c */ : a |} }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    {|x /* c */ : a|}
 }
-
-#[test]
-fn comment_between_colon_and_value_in_record_lit() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { {| x: /* c */ a |} }",
-        "fn f<F: Field>(instance a: F) -> F {\n    {|x: /* c */ a|}\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { {| x: /* c */ a |} }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    {|x: /* c */ a|}
 }
-
-#[test]
-fn comment_before_close_bar_brace_in_record_lit() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { {| x: a /* c */ |} }",
-        "fn f<F: Field>(instance a: F) -> F {\n    {|x: a /* c */|}\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { {| x: a /* c */ |} }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    {|x: a /* c */|}
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -901,43 +1100,51 @@ fn comment_before_close_bar_brace_in_record_lit() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_between_assert_keyword_and_paren() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { assert /* c */ (a == a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    assert /* c */ (a == a)\n}\n",
-    );
+fn comments_around_assert() {
+    for (src, expected) in [
+        (
+            "fn f<F: Field>(instance a: F) -> F { assert /* c */ (a == a) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    assert /* c */ (a == a)
 }
-
-#[test]
-fn comment_after_open_paren_in_assert() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { assert( /* c */ a == a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    assert(/* c */ a == a)\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { assert( /* c */ a == a) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    assert(/* c */ a == a)
 }
-
-#[test]
-fn comment_before_eqeq_in_assert() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { assert(a /* c */ == a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    assert(a /* c */ == a)\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { assert(a /* c */ == a) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    assert(a /* c */ == a)
 }
-
-#[test]
-fn comment_after_eqeq_in_assert() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { assert(a == /* c */ a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    assert(a == /* c */ a)\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { assert(a == /* c */ a) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    assert(a == /* c */ a)
 }
-
-#[test]
-fn comment_before_close_paren_in_assert() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { assert(a == a /* c */) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    assert(a == a /* c */)\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { assert(a == a /* c */) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    assert(a == a /* c */)
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -945,28 +1152,38 @@ fn comment_before_close_paren_in_assert() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_between_sig_and_where() {
-    assert_ok(
-        "proto p<F: Field>(instance a: F) /* c */ where a == a { a }",
-        "proto p<F: Field>(instance a: F)\n/* c */\nwhere a == a {\n    a\n}\n",
-    );
+fn comments_around_where_clause() {
+    for (src, expected) in [
+        (
+            "proto p<F: Field>(instance a: F) /* c */ where a == a { a }",
+            "\
+proto p<F: Field>(instance a: F)
+/* c */
+where a == a {
+    a
 }
-
-#[test]
-fn comment_between_where_and_relation_lhs() {
-    // Already tested in where_clause_inline_comment_before_relation
-    assert_ok(
-        "proto p<F: Field>(instance a: F) where /* c */ a == a { a }",
-        "proto p<F: Field>(instance a: F) where /* c */ a == a {\n    a\n}\n",
-    );
+",
+        ),
+        // Already tested in where_clause_inline_comment_before_relation
+        (
+            "proto p<F: Field>(instance a: F) where /* c */ a == a { a }",
+            "\
+proto p<F: Field>(instance a: F) where /* c */ a == a {
+    a
 }
-
-#[test]
-fn comment_between_relation_and_open_brace_in_proto() {
-    assert_ok(
-        "proto p<F: Field>(instance a: F) where a == a /* c */ { a }",
-        "proto p<F: Field>(instance a: F) where a == a /* c */ {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "proto p<F: Field>(instance a: F) where a == a /* c */ { a }",
+            "\
+proto p<F: Field>(instance a: F) where a == a /* c */ {
+    a
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -974,35 +1191,45 @@ fn comment_between_relation_and_open_brace_in_proto() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_after_open_brace_in_fn_body() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { /* c */ a }",
-        "fn f<F: Field>(instance a: F) -> F {\n    /* c */\n    a\n}\n",
-    );
+fn comments_around_body_braces() {
+    for (src, expected) in [
+        (
+            "fn f<F: Field>(instance a: F) -> F { /* c */ a }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    /* c */
+    a
 }
-
-#[test]
-fn comment_before_close_brace_in_fn_body() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { a /* c */ }",
-        "fn f<F: Field>(instance a: F) -> F {\n    a /* c */\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F) -> F { a /* c */ }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    a /* c */
 }
-
-#[test]
-fn comment_after_open_brace_in_proto_body() {
-    assert_ok(
-        "proto p<F: Field>(instance a: F) where a == a { /* c */ a }",
-        "proto p<F: Field>(instance a: F) where a == a {\n    /* c */\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "proto p<F: Field>(instance a: F) where a == a { /* c */ a }",
+            "\
+proto p<F: Field>(instance a: F) where a == a {
+    /* c */
+    a
 }
-
-#[test]
-fn comment_before_close_brace_in_proto_body() {
-    assert_ok(
-        "proto p<F: Field>(instance a: F) where a == a { a /* c */ }",
-        "proto p<F: Field>(instance a: F) where a == a {\n    a /* c */\n}\n",
-    );
+",
+        ),
+        (
+            "proto p<F: Field>(instance a: F) where a == a { a /* c */ }",
+            "\
+proto p<F: Field>(instance a: F) where a == a {
+    a /* c */
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1013,7 +1240,11 @@ fn comment_before_close_brace_in_proto_body() {
 fn comment_between_minus_and_operand() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { - /* c */ a }",
-        "fn f<F: Field>(instance a: F) -> F {\n    - /* c */ a\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    - /* c */ a
+}
+",
     );
 }
 
@@ -1022,35 +1253,43 @@ fn comment_between_minus_and_operand() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comment_before_plus_in_size() {
-    assert_ok(
-        "fn f<M: 2>(instance a: [F; M /* c */ + 1]) -> F { a[0] }",
-        "fn f<M: 2>(instance a: [F; M /* c */ + 1]) -> F {\n    a[0]\n}\n",
-    );
+fn comments_around_size_binops() {
+    for (src, expected) in [
+        (
+            "fn f<M: 2>(instance a: [F; M /* c */ + 1]) -> F { a[0] }",
+            "\
+fn f<M: 2>(instance a: [F; M /* c */ + 1]) -> F {
+    a[0]
 }
-
-#[test]
-fn comment_after_plus_in_size() {
-    assert_ok(
-        "fn f<M: 2>(instance a: [F; M + /* c */ 1]) -> F { a[0] }",
-        "fn f<M: 2>(instance a: [F; M + /* c */ 1]) -> F {\n    a[0]\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<M: 2>(instance a: [F; M + /* c */ 1]) -> F { a[0] }",
+            "\
+fn f<M: 2>(instance a: [F; M + /* c */ 1]) -> F {
+    a[0]
 }
-
-#[test]
-fn comment_before_caret_in_size() {
-    assert_ok(
-        "fn f<M: 2>(instance a: [F; 2 /* c */ ^ M]) -> F { a[0] }",
-        "fn f<M: 2>(instance a: [F; 2 /* c */ ^ M]) -> F {\n    a[0]\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<M: 2>(instance a: [F; 2 /* c */ ^ M]) -> F { a[0] }",
+            "\
+fn f<M: 2>(instance a: [F; 2 /* c */ ^ M]) -> F {
+    a[0]
 }
-
-#[test]
-fn comment_after_caret_in_size() {
-    assert_ok(
-        "fn f<M: 2>(instance a: [F; 2 ^ /* c */ M]) -> F { a[0] }",
-        "fn f<M: 2>(instance a: [F; 2 ^ /* c */ M]) -> F {\n    a[0]\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<M: 2>(instance a: [F; 2 ^ /* c */ M]) -> F { a[0] }",
+            "\
+fn f<M: 2>(instance a: [F; 2 ^ /* c */ M]) -> F {
+    a[0]
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1068,7 +1307,11 @@ fn comment_after_caret_in_size() {
 fn comment_between_interpolate_keyword_and_paren() {
     assert_ok(
         "fn f<F: Field>(instance a: F, instance b: F) -> F { interpolate /* c */ (a, b) }",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    interpolate /* c */ (a, b)\n}\n",
+        "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    interpolate /* c */ (a, b)
+}
+",
     );
 }
 
@@ -1076,7 +1319,11 @@ fn comment_between_interpolate_keyword_and_paren() {
 fn comment_between_args_in_interpolate_comma() {
     assert_ok(
         "fn f<F: Field>(instance a: F, instance b: F) -> F { interpolate(a /* c */ , b) }",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    interpolate(a /* c */, b)\n}\n",
+        "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    interpolate(a /* c */, b)
+}
+",
     );
 }
 
@@ -1088,7 +1335,11 @@ fn comment_between_args_in_interpolate_comma() {
 fn comment_between_pair_keyword_and_paren() {
     assert_ok(
         "fn f<F: Field>(instance a: F, instance b: F) -> F { pair /* c */ (a, b) }",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    pair /* c */ (a, b)\n}\n",
+        "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    pair /* c */ (a, b)
+}
+",
     );
 }
 
@@ -1100,7 +1351,11 @@ fn comment_between_pair_keyword_and_paren() {
 fn comment_between_dot_keyword_and_paren() {
     assert_ok(
         "fn f<F: Field>(instance a: F, instance b: F) -> F { dot /* c */ (a, b) }",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    dot /* c */ (a, b)\n}\n",
+        "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    dot /* c */ (a, b)
+}
+",
     );
 }
 
@@ -1112,7 +1367,15 @@ fn comment_between_dot_keyword_and_paren() {
 fn comment_between_two_fns() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { a } /* c */ fn g<F: Field>(instance a: F) -> F { a }",
-        "fn f<F: Field>(instance a: F) -> F {\n    a\n} /* c */\n\nfn g<F: Field>(instance a: F) -> F {\n    a\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    a
+} /* c */
+
+fn g<F: Field>(instance a: F) -> F {
+    a
+}
+",
     );
 }
 
@@ -1120,7 +1383,13 @@ fn comment_between_two_fns() {
 fn comment_between_fn_and_type() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { a } /* c */ type T = F;",
-        "fn f<F: Field>(instance a: F) -> F {\n    a\n} /* c */\n\ntype T = F;\n",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    a
+} /* c */
+
+type T = F;
+",
     );
 }
 
@@ -1132,7 +1401,11 @@ fn comment_between_fn_and_type() {
 fn comment_before_unit_type_keyword() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> /* c */ Unit { a }",
-        "fn f<F: Field>(instance a: F) -> /* c */ Unit {\n    a\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> /* c */ Unit {
+    a
+}
+",
     );
 }
 
@@ -1140,7 +1413,11 @@ fn comment_before_unit_type_keyword() {
 fn comment_between_parens_in_unit_literal() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> Unit { ( /* c */ ) }",
-        "fn f<F: Field>(instance a: F) -> Unit {\n    ( /* c */)\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> Unit {
+    ( /* c */)
+}
+",
     );
 }
 
@@ -1152,15 +1429,25 @@ fn comment_between_parens_in_unit_literal() {
 fn two_block_comments_in_same_gap() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { a /* c1 */ /* c2 */ }",
-        "fn f<F: Field>(instance a: F) -> F {\n    a /* c1 */ /* c2 */\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    a /* c1 */ /* c2 */
+}
+",
     );
 }
 
 #[test]
 fn block_comment_then_inline_comment_in_same_gap() {
     assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { a /* c */ // d\n }",
-        "fn f<F: Field>(instance a: F) -> F {\n    a /* c */ // d\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F { a /* c */ // d
+ }",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    a /* c */ // d
+}
+",
     );
 }
 
@@ -1172,7 +1459,12 @@ fn block_comment_then_inline_comment_in_same_gap() {
 fn comment_between_challenge_keyword_and_open_angle() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { x <- challenge /* c */ <F>; x }",
-        "fn f<F: Field>(instance a: F) -> F {\n    x <- challenge /* c */ <F>;\n    x\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    x <- challenge /* c */ <F>;
+    x
+}
+",
     );
 }
 
@@ -1180,7 +1472,12 @@ fn comment_between_challenge_keyword_and_open_angle() {
 fn comment_after_open_angle_in_challenge() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { x <- challenge< /* c */ F>; x }",
-        "fn f<F: Field>(instance a: F) -> F {\n    x <- challenge</* c */ F>;\n    x\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    x <- challenge</* c */ F>;
+    x
+}
+",
     );
 }
 
@@ -1192,7 +1489,11 @@ fn comment_after_open_angle_in_challenge() {
 fn comment_between_coef_keyword_and_paren() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { coef /* c */ (a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    coef /* c */ (a)\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    coef /* c */ (a)
+}
+",
     );
 }
 
@@ -1200,7 +1501,11 @@ fn comment_between_coef_keyword_and_paren() {
 fn comment_between_mle_keyword_and_paren() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { mle /* c */ (a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    mle /* c */ (a)\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    mle /* c */ (a)
+}
+",
     );
 }
 
@@ -1212,7 +1517,11 @@ fn comment_between_mle_keyword_and_paren() {
 fn comment_before_concat_op() {
     assert_ok(
         "fn f<F: Field>(instance a: F, instance b: F) -> F { a /* c */ ++ b }",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    a /* c */ ++ b\n}\n",
+        "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    a /* c */ ++ b
+}
+",
     );
 }
 
@@ -1220,7 +1529,11 @@ fn comment_before_concat_op() {
 fn comment_after_concat_op() {
     assert_ok(
         "fn f<F: Field>(instance a: F, instance b: F) -> F { a ++ /* c */ b }",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    a ++ /* c */ b\n}\n",
+        "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    a ++ /* c */ b
+}
+",
     );
 }
 
@@ -1232,7 +1545,11 @@ fn comment_after_concat_op() {
 fn comment_before_mod_op() {
     assert_ok(
         "fn f<F: Field>(instance a: F, instance b: F) -> F { a /* c */ % b }",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    a /* c */ % b\n}\n",
+        "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    a /* c */ % b
+}
+",
     );
 }
 
@@ -1240,7 +1557,11 @@ fn comment_before_mod_op() {
 fn comment_after_mod_op() {
     assert_ok(
         "fn f<F: Field>(instance a: F, instance b: F) -> F { a % /* c */ b }",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    a % /* c */ b\n}\n",
+        "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    a % /* c */ b
+}
+",
     );
 }
 
@@ -1252,7 +1573,11 @@ fn comment_after_mod_op() {
 fn comment_between_uniform_and_star() {
     assert_ok(
         "fn f<F: Field>(uniform /* c */ * a: F) -> F { a }",
-        "fn f<F: Field>(uniform /* c */ * a: F) -> F {\n    a\n}\n",
+        "\
+fn f<F: Field>(uniform /* c */ * a: F) -> F {
+    a
+}
+",
     );
 }
 
@@ -1260,7 +1585,11 @@ fn comment_between_uniform_and_star() {
 fn comment_between_star_and_name_in_uniform_star() {
     assert_ok(
         "fn f<F: Field>(uniform * /* c */ a: F) -> F { a }",
-        "fn f<F: Field>(uniform * /* c */ a: F) -> F {\n    a\n}\n",
+        "\
+fn f<F: Field>(uniform * /* c */ a: F) -> F {
+    a
+}
+",
     );
 }
 
@@ -1294,7 +1623,12 @@ fn /* c */ f<F: Field>(instance a: F) -> F {
 
 #[test]
 fn type_keyword_inline_comment() {
-    assert_ok("type /* c */ Foo = Unit;", "type /* c */ Foo = Unit;\n");
+    assert_ok(
+        "type /* c */ Foo = Unit;",
+        "\
+type /* c */ Foo = Unit;
+",
+    );
 }
 
 #[test]
@@ -1511,7 +1845,10 @@ fn f<F: Field>(instance a: F) -> F {
 #[test]
 fn blank_lines_around_eq_in_let() {
     assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { let x\n\n= a; x }",
+        "\
+fn f<F: Field>(instance a: F) -> F { let x
+
+= a; x }",
         "\
 fn f<F: Field>(instance a: F) -> F {
     let x = a;
@@ -1523,13 +1860,24 @@ fn f<F: Field>(instance a: F) -> F {
 
 #[test]
 fn blank_lines_around_eq_in_type_decl() {
-    assert_ok("type T\n\n= F;", "type T = F;\n");
+    assert_ok(
+        "\
+type T
+
+= F;",
+        "\
+type T = F;
+",
+    );
 }
 
 #[test]
 fn blank_lines_around_arrow_in_fn() {
     assert_ok(
-        "fn f<F: Field>(instance a: F)\n\n-> F { a }",
+        "\
+fn f<F: Field>(instance a: F)
+
+-> F { a }",
         "\
 fn f<F: Field>(instance a: F) -> F {
     a
@@ -1541,7 +1889,10 @@ fn f<F: Field>(instance a: F) -> F {
 #[test]
 fn blank_lines_around_eqeq_in_assert() {
     assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { assert(a\n\n== a) }",
+        "\
+fn f<F: Field>(instance a: F) -> F { assert(a
+
+== a) }",
         "\
 fn f<F: Field>(instance a: F) -> F {
     assert(a == a)
@@ -1553,7 +1904,10 @@ fn f<F: Field>(instance a: F) -> F {
 #[test]
 fn blank_lines_around_arrow_in_log() {
     assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { x\n\n<- a; x }",
+        "\
+fn f<F: Field>(instance a: F) -> F { x
+
+<- a; x }",
         "\
 fn f<F: Field>(instance a: F) -> F {
     x <- a;
@@ -1566,7 +1920,11 @@ fn f<F: Field>(instance a: F) -> F {
 #[test]
 fn blank_lines_preserved_with_comment() {
     assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { let x\n\n/* c */\n= a; x }",
+        "\
+fn f<F: Field>(instance a: F) -> F { let x
+
+/* c */
+= a; x }",
         "\
 fn f<F: Field>(instance a: F) -> F {
     let x
@@ -1582,7 +1940,11 @@ fn f<F: Field>(instance a: F) -> F {
 #[test]
 fn blank_lines_preserved_between_decls() {
     assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { a }\n\n\nfn g<F: Field>(instance b: F) -> F { b }",
+        "\
+fn f<F: Field>(instance a: F) -> F { a }
+
+
+fn g<F: Field>(instance b: F) -> F { b }",
         "\
 fn f<F: Field>(instance a: F) -> F {
     a
@@ -1598,7 +1960,10 @@ fn g<F: Field>(instance b: F) -> F {
 #[test]
 fn blank_lines_no_space_before_brace() {
     assert_ok(
-        "fn f<F: Field>(instance a: F) -> F\n\n{ a }",
+        "\
+fn f<F: Field>(instance a: F) -> F
+
+{ a }",
         "\
 fn f<F: Field>(instance a: F) -> F {
     a
@@ -1616,91 +1981,143 @@ fn f<F: Field>(instance a: F) -> F {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn blank_lines_after_open_angle_in_typevars() {
-    assert_ok(
-        "fn f<\n\nF: Field>(instance a: F) -> F { a }",
-        "fn f<F: Field>(instance a: F) -> F {\n    a\n}\n",
-    );
-}
+fn blank_line_stripping_in_delimited_lists() {
+    for (src, expected) in [
+        (
+            "\
+fn f<
 
-#[test]
-fn blank_lines_before_close_angle_in_typevars() {
-    assert_ok(
-        "fn f<F: Field\n\n>(instance a: F) -> F { a }",
-        "fn f<F: Field>(instance a: F) -> F {\n    a\n}\n",
-    );
+F: Field>(instance a: F) -> F { a }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    a
 }
+",
+        ),
+        (
+            "\
+fn f<F: Field
 
-#[test]
-fn blank_lines_after_open_paren_in_args() {
-    assert_ok(
-        "fn f<F: Field>(\n\ninstance a: F) -> F { a }",
-        "fn f<F: Field>(instance a: F) -> F {\n    a\n}\n",
-    );
+>(instance a: F) -> F { a }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    a
 }
+",
+        ),
+        (
+            "\
+fn f<F: Field>(
 
-#[test]
-fn blank_lines_before_close_paren_in_args() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F\n\n) -> F { a }",
-        "fn f<F: Field>(instance a: F) -> F {\n    a\n}\n",
-    );
+instance a: F) -> F { a }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    a
 }
+",
+        ),
+        (
+            "\
+fn f<F: Field>(instance a: F
 
-#[test]
-fn blank_lines_after_open_paren_in_call() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { g(\n\na) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    g(a)\n}\n",
-    );
+) -> F { a }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    a
 }
+",
+        ),
+        (
+            "\
+fn f<F: Field>(instance a: F) -> F { g(
 
-#[test]
-fn blank_lines_before_close_paren_in_call() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { g(a\n\n) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    g(a)\n}\n",
-    );
+a) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    g(a)
 }
+",
+        ),
+        (
+            "\
+fn f<F: Field>(instance a: F) -> F { g(a
 
-#[test]
-fn blank_lines_after_open_brack_in_vec() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { [\n\na, b] }",
-        "fn f<F: Field>(instance a: F) -> F {\n    [a, b]\n}\n",
-    );
+) }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    g(a)
 }
+",
+        ),
+        (
+            "\
+fn f<F: Field>(instance a: F) -> F { [
 
-#[test]
-fn blank_lines_before_close_brack_in_vec() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { [a, b\n\n] }",
-        "fn f<F: Field>(instance a: F) -> F {\n    [a, b]\n}\n",
-    );
+a, b] }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    [a, b]
 }
+",
+        ),
+        (
+            "\
+fn f<F: Field>(instance a: F) -> F { [a, b
 
-#[test]
-fn blank_lines_both_ends_in_typevars() {
-    assert_ok(
-        "fn f<\n\nF: Field, G: Group\n\n>(instance a: F) -> F { a }",
-        "fn f<F: Field, G: Group>(instance a: F) -> F {\n    a\n}\n",
-    );
+] }",
+            "\
+fn f<F: Field>(instance a: F) -> F {
+    [a, b]
 }
+",
+        ),
+        (
+            "\
+fn f<
 
-#[test]
-fn blank_lines_stripped_with_comment_after_open() {
-    assert_ok(
-        "fn f<\n\n/* c */\nF: Field>(instance a: F) -> F { a }",
-        "fn f<\n    /* c */\n    F: Field,\n>(instance a: F) -> F {\n    a\n}\n",
-    );
+F: Field, G: Group
+
+>(instance a: F) -> F { a }",
+            "\
+fn f<F: Field, G: Group>(instance a: F) -> F {
+    a
 }
+",
+        ),
+        (
+            "\
+fn f<
 
-#[test]
-fn blank_lines_stripped_with_comment_before_close() {
-    assert_ok(
-        "fn f<F: Field\n\n/* c */\n>(instance a: F) -> F { a }",
-        "fn f<\n    F: Field,\n\n    /* c */\n>(instance a: F) -> F {\n    a\n}\n",
-    );
+/* c */
+F: Field>(instance a: F) -> F { a }",
+            "\
+fn f<
+    /* c */
+    F: Field,
+>(instance a: F) -> F {
+    a
+}
+",
+        ),
+        (
+            "\
+fn f<F: Field
+
+/* c */
+>(instance a: F) -> F { a }",
+            "\
+fn f<
+    F: Field,
+
+    /* c */
+>(instance a: F) -> F {
+    a
+}
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1715,40 +2132,80 @@ fn blank_lines_stripped_with_comment_before_close() {
 #[test]
 fn blank_lines_around_arrow_in_fn_stripped() {
     assert_ok(
-        "fn f<F: Field>(instance a: F)\n\n-> F { a }",
-        "fn f<F: Field>(instance a: F) -> F {\n    a\n}\n",
+        "\
+fn f<F: Field>(instance a: F)
+
+-> F { a }",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    a
+}
+",
     );
 }
 
 #[test]
 fn blank_lines_after_arrow_before_ret_stripped() {
     assert_ok(
-        "fn f<F: Field>(instance a: F) ->\n\nF { a }",
-        "fn f<F: Field>(instance a: F) -> F {\n    a\n}\n",
+        "\
+fn f<F: Field>(instance a: F) ->
+
+F { a }",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    a
+}
+",
     );
 }
 
 #[test]
 fn blank_lines_before_trailing_semi_stripped() {
     assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { let x = a\n\n; }",
-        "fn f<F: Field>(instance a: F) -> F {\n    let x = a;\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F { let x = a
+
+; }",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    let x = a;
+}
+",
     );
 }
 
 #[test]
 fn blank_lines_around_eq_in_let_stripped() {
     assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { let x\n\n=\n\na; x }",
-        "fn f<F: Field>(instance a: F) -> F {\n    let x = a;\n    x\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F { let x
+
+=
+
+a; x }",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    let x = a;
+    x
+}
+",
     );
 }
 
 #[test]
 fn blank_lines_after_semi_with_body_preserved() {
     assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { let x = a;\n\nx }",
-        "fn f<F: Field>(instance a: F) -> F {\n    let x = a;\n\n    x\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F { let x = a;
+
+x }",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    let x = a;
+
+    x
+}
+",
     );
 }
 
@@ -1761,90 +2218,88 @@ fn blank_lines_after_semi_with_body_preserved() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn trailing_comma_comment_before_flat() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F, instance b: F /* c */,) -> F { a }",
-        "fn f<F: Field>(instance a: F, instance b: F /* c */) -> F {\n    a\n}\n",
-    );
+fn trailing_comma_with_comments() {
+    for (src, expected) in [
+        (
+            "fn f<F: Field>(instance a: F, instance b: F /* c */,) -> F { a }",
+            "\
+fn f<F: Field>(instance a: F, instance b: F /* c */) -> F {
+    a
 }
-
-#[test]
-fn trailing_comma_comment_after_flat() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F, instance b: F, /* c */) -> F { a }",
-        "fn f<F: Field>(instance a: F, instance b: F /* c */) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F, instance b: F, /* c */) -> F { a }",
+            "\
+fn f<F: Field>(instance a: F, instance b: F /* c */) -> F {
+    a
 }
-
-#[test]
-fn trailing_comma_comments_both_flat() {
-    assert_ok(
-        "fn f<F: Field>(instance a: F, instance b: F /* before */, /* after */) -> F { a }",
-        "fn f<F: Field>(instance a: F, instance b: F /* before */ /* after */) -> F {\n    a\n}\n",
-    );
+",
+        ),
+        (
+            "fn f<F: Field>(instance a: F, instance b: F /* before */, /* after */) -> F { a }",
+            "\
+fn f<F: Field>(instance a: F, instance b: F /* before */ /* after */) -> F {
+    a
 }
-
-#[test]
-fn trailing_comma_comment_before_broken() {
-    let src = "fn f<F: Field>(instance aaaaaaaaaaaaaaaaaaaaa: F, instance bbbbbbbbbbbbbbbbbbbbbbbbbbb: F /* c */,) -> F { a }";
-    let expected = "\
+",
+        ),
+        (
+            "fn f<F: Field>(instance aaaaaaaaaaaaaaaaaaaaa: F, instance bbbbbbbbbbbbbbbbbbbbbbbbbbb: F /* c */,) -> F { a }",
+            "\
 fn f<F: Field>(
     instance aaaaaaaaaaaaaaaaaaaaa: F,
     instance bbbbbbbbbbbbbbbbbbbbbbbbbbb: F, /* c */
 ) -> F {
     a
 }
-";
-    assert_ok(src, expected);
-}
-
-#[test]
-fn trailing_comma_comment_after_broken() {
-    let src = "fn f<F: Field>(instance aaaaaaaaaaaaaaaaaaaaa: F, instance bbbbbbbbbbbbbbbbbbbbbbbbbbb: F, /* c */) -> F { a }";
-    let expected = "\
+",
+        ),
+        (
+            "fn f<F: Field>(instance aaaaaaaaaaaaaaaaaaaaa: F, instance bbbbbbbbbbbbbbbbbbbbbbbbbbb: F, /* c */) -> F { a }",
+            "\
 fn f<F: Field>(
     instance aaaaaaaaaaaaaaaaaaaaa: F,
     instance bbbbbbbbbbbbbbbbbbbbbbbbbbb: F, /* c */
 ) -> F {
     a
 }
-";
-    assert_ok(src, expected);
-}
-
-#[test]
-fn trailing_comma_comments_both_broken() {
-    let src = "fn f<F: Field>(instance aaaaaaaaaaaaaaaaaaaaa: F, instance bbbbbbbbbbbbbbbbbbbbbbbbbbb: F /* before */, /* after */) -> F { a }";
-    let expected = "\
+",
+        ),
+        (
+            "fn f<F: Field>(instance aaaaaaaaaaaaaaaaaaaaa: F, instance bbbbbbbbbbbbbbbbbbbbbbbbbbb: F /* before */, /* after */) -> F { a }",
+            "\
 fn f<F: Field>(
     instance aaaaaaaaaaaaaaaaaaaaa: F,
     instance bbbbbbbbbbbbbbbbbbbbbbbbbbb: F, /* before */ /* after */
 ) -> F {
     a
 }
-";
-    assert_ok(src, expected);
-}
-
-#[test]
-fn inline_comment_before_close_no_trailing_comma_broken() {
-    let src = "fn f<F: Field>(instance aaaaaaaaaaaaaaaaaaaaa: F, instance bbbbbbbbbbbbbbbbbbbbbbbbbbb: F /* c */) -> F { a }";
-    let expected = "\
+",
+        ),
+        (
+            "fn f<F: Field>(instance aaaaaaaaaaaaaaaaaaaaa: F, instance bbbbbbbbbbbbbbbbbbbbbbbbbbb: F /* c */) -> F { a }",
+            "\
 fn f<F: Field>(
     instance aaaaaaaaaaaaaaaaaaaaa: F,
     instance bbbbbbbbbbbbbbbbbbbbbbbbbbb: F, /* c */
 ) -> F {
     a
 }
-";
-    assert_ok(src, expected);
+",
+        ),
+    ] {
+        assert_ok(src, expected);
+    }
 }
 
 #[test]
 fn empty_body() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F {}",
-        "fn f<F: Field>(instance a: F) -> F {}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F {}
+",
     );
 }
 
@@ -1852,7 +2307,9 @@ fn empty_body() {
 fn empty_body_no_return_type() {
     assert_ok(
         "fn f<F: Field>(instance a: F) {}",
-        "fn f<F: Field>(instance a: F) {}\n",
+        "\
+fn f<F: Field>(instance a: F) {}
+",
     );
 }
 
@@ -1860,15 +2317,23 @@ fn empty_body_no_return_type() {
 fn empty_body_with_block_comment() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { /* c */ }",
-        "fn f<F: Field>(instance a: F) -> F { /* c */ }\n",
+        "\
+fn f<F: Field>(instance a: F) -> F { /* c */ }
+",
     );
 }
 
 #[test]
 fn empty_body_with_line_comment() {
     assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { // c\n}",
-        "fn f<F: Field>(instance a: F) -> F {\n    // c\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F { // c
+}",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    // c
+}
+",
     );
 }
 
@@ -1876,7 +2341,9 @@ fn empty_body_with_line_comment() {
 fn empty_proto_body() {
     assert_ok(
         "proto p<F: Field>(instance a: F) where a == a {}",
-        "proto p<F: Field>(instance a: F) where a == a {}\n",
+        "\
+proto p<F: Field>(instance a: F) where a == a {}
+",
     );
 }
 
@@ -1884,47 +2351,85 @@ fn empty_proto_body() {
 fn empty_proto_body_with_block_comment() {
     assert_ok(
         "proto p<F: Field>(instance a: F) where a == a { /* c */ }",
-        "proto p<F: Field>(instance a: F) where a == a { /* c */ }\n",
+        "\
+proto p<F: Field>(instance a: F) where a == a { /* c */ }
+",
     );
 }
 
 #[test]
 fn empty_proto_body_with_line_comment() {
     assert_ok(
-        "proto p<F: Field>(instance a: F) where a == a { // c\n}",
-        "proto p<F: Field>(instance a: F) where a == a {\n    // c\n}\n",
+        "\
+proto p<F: Field>(instance a: F) where a == a { // c
+}",
+        "\
+proto p<F: Field>(instance a: F) where a == a {
+    // c
+}
+",
     );
 }
 
 #[test]
 fn empty_body_trim_blank_lines_fn() {
     assert_ok(
-        "fn f<F: Field>(instance a: F) -> F {\n\n    // c\n\n}",
-        "fn f<F: Field>(instance a: F) -> F {\n    // c\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+
+    // c
+
+}",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    // c
+}
+",
     );
 }
 
 #[test]
 fn empty_body_trim_blank_lines_proto() {
     assert_ok(
-        "proto p<F: Field>(instance a: F) where a == a {\n\n    // c\n\n}",
-        "proto p<F: Field>(instance a: F) where a == a {\n    // c\n}\n",
+        "\
+proto p<F: Field>(instance a: F) where a == a {
+
+    // c
+
+}",
+        "\
+proto p<F: Field>(instance a: F) where a == a {
+    // c
+}
+",
     );
 }
 
 #[test]
 fn empty_body_trim_leading_blank_fn() {
     assert_ok(
-        "fn f<F: Field>(instance a: F) -> F {\n\n    /* c */}",
-        "fn f<F: Field>(instance a: F) -> F { /* c */ }\n",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+
+    /* c */}",
+        "\
+fn f<F: Field>(instance a: F) -> F { /* c */ }
+",
     );
 }
 
 #[test]
 fn empty_body_trim_trailing_blank_fn() {
     assert_ok(
-        "fn f<F: Field>(instance a: F) -> F { /* c */\n\n}",
-        "fn f<F: Field>(instance a: F) -> F {\n    /* c */\n}\n",
+        "\
+fn f<F: Field>(instance a: F) -> F { /* c */
+
+}",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    /* c */
+}
+",
     );
 }
 
@@ -1934,7 +2439,9 @@ fn empty_body_trim_truly_inline_block_fn() {
     // Trim has no blank lines to remove, but verifies inline stays inline.
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { /* c */ }",
-        "fn f<F: Field>(instance a: F) -> F { /* c */ }\n",
+        "\
+fn f<F: Field>(instance a: F) -> F { /* c */ }
+",
     );
 }
 
@@ -1942,24 +2449,61 @@ fn empty_body_trim_truly_inline_block_fn() {
 fn empty_body_trim_blank_lines_block_proto() {
     // Block comment on its own line with surrounding blank lines in proto.
     assert_ok(
-        "proto p<F: Field>(instance a: F) where a == a {\n\n    /* c */\n\n}",
-        "proto p<F: Field>(instance a: F) where a == a {\n    /* c */\n}\n",
+        "\
+proto p<F: Field>(instance a: F) where a == a {
+
+    /* c */
+
+}",
+        "\
+proto p<F: Field>(instance a: F) where a == a {
+    /* c */
+}
+",
     );
 }
 
 #[test]
 fn trim_blank_lines_around_separator_no_comments() {
     assert_ok(
-        "fn f<F: Field>(\n\n    instance a: F,\n\n    instance b: F,\n\n) -> F {\n    a\n}",
-        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    a\n}\n",
+        "\
+fn f<F: Field>(
+
+    instance a: F,
+
+    instance b: F,
+
+) -> F {
+    a
+}",
+        "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    a
+}
+",
     );
 }
 
 #[test]
 fn trim_blank_lines_around_separator_with_comments() {
     assert_ok(
-        "fn f<F: Field>(instance a: F,\n\n    // before b\n    instance b: F) -> F {\n    a\n}",
-        "fn f<F: Field>(\n    instance a: F,\n\n    // before b\n    instance b: F,\n) -> F {\n    a\n}\n",
+        "\
+fn f<F: Field>(instance a: F,
+
+    // before b
+    instance b: F) -> F {
+    a
+}",
+        "\
+fn f<F: Field>(
+    instance a: F,
+
+    // before b
+    instance b: F,
+) -> F {
+    a
+}
+",
     );
 }
 
@@ -1969,16 +2513,44 @@ fn trim_blank_lines_before_separator_with_comment() {
     // formatter preserves the break. trim_if_clean only trims when
     // there are no comments.
     assert_ok(
-        "fn f<F: Field>(instance a: F\n\n    /* c */, instance b: F) -> F {\n    a\n}",
-        "fn f<F: Field>(\n    instance a: F,\n\n    /* c */\n    instance b: F,\n) -> F {\n    a\n}\n",
+        "\
+fn f<F: Field>(instance a: F
+
+    /* c */, instance b: F) -> F {
+    a
+}",
+        "\
+fn f<F: Field>(
+    instance a: F,
+
+    /* c */
+    instance b: F,
+) -> F {
+    a
+}
+",
     )
 }
 
 #[test]
 fn trim_blank_lines_after_separator_with_comment() {
     assert_ok(
-        "fn f<F: Field>(instance a: F,\n\n    /* c */ instance b: F) -> F {\n    a\n}",
-        "fn f<F: Field>(\n    instance a: F,\n\n    /* c */\n    instance b: F,\n) -> F {\n    a\n}\n",
+        "\
+fn f<F: Field>(instance a: F,
+
+    /* c */ instance b: F) -> F {
+    a
+}",
+        "\
+fn f<F: Field>(
+    instance a: F,
+
+    /* c */
+    instance b: F,
+) -> F {
+    a
+}
+",
     )
 }
 
@@ -1986,8 +2558,15 @@ fn trim_blank_lines_after_separator_with_comment() {
 fn trim_blank_lines_around_separator_inline_block_no_blank() {
     // Inline block comment with no blank lines stays inline.
     assert_ok(
-        "fn f<F: Field>(instance a: F /* c */, instance b: F) -> F {\n    a\n}",
-        "fn f<F: Field>(instance a: F /* c */, instance b: F) -> F {\n    a\n}\n",
+        "\
+fn f<F: Field>(instance a: F /* c */, instance b: F) -> F {
+    a
+}",
+        "\
+fn f<F: Field>(instance a: F /* c */, instance b: F) -> F {
+    a
+}
+",
     )
 }
 
@@ -1997,7 +2576,15 @@ fn broken_sep_both_comments() {
     // Long enough to force broken mode.
     assert_ok(
         "fn f<F: Field>(instance aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: F /*A*/, /*B*/ instance b: F) -> F { a }",
-        "fn f<F: Field>(\n    instance aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: F, /*A*/\n    /*B*/\n    instance b: F,\n) -> F {\n    a\n}\n",
+        "\
+fn f<F: Field>(
+    instance aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: F, /*A*/
+    /*B*/
+    instance b: F,
+) -> F {
+    a
+}
+",
     );
 }
 
@@ -2006,7 +2593,14 @@ fn broken_sep_before_comment_only() {
     // Case 3: before_sep has comment, after_sep is empty.
     assert_ok(
         "fn f<F: Field>(instance aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: F /*A*/, instance b: F) -> F { a }",
-        "fn f<F: Field>(\n    instance aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: F, /*A*/\n    instance b: F,\n) -> F {\n    a\n}\n",
+        "\
+fn f<F: Field>(
+    instance aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: F, /*A*/
+    instance b: F,
+) -> F {
+    a
+}
+",
     );
 }
 
@@ -2015,6 +2609,14 @@ fn broken_sep_after_comment_only() {
     // Case 4: before_sep is empty, after_sep has comment.
     assert_ok(
         "fn f<F: Field>(instance aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: F, /*B*/ instance b: F) -> F { a }",
-        "fn f<F: Field>(\n    instance aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: F,\n    /*B*/\n    instance b: F,\n) -> F {\n    a\n}\n",
+        "\
+fn f<F: Field>(
+    instance aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: F,
+    /*B*/
+    instance b: F,
+) -> F {
+    a
+}
+",
     );
 }

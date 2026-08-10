@@ -3,17 +3,9 @@
 //! Tests for expression layout: parenthesization, line breaking,
 //! comprehensions, asserts, reduces, records, and ranges.
 
-use fmt::format_source;
+mod common;
 
-fn fmt(src: &str) -> String {
-    format_source(src).expect("parse error")
-}
-
-fn assert_ok(src: &str, expected: &str) {
-    let out = fmt(src);
-    assert_eq!(out, expected, "first format mismatch");
-    assert_eq!(fmt(&out), out, "not idempotent");
-}
+use common::assert_ok;
 
 // ══════════════════════════════════════════════════════════════════
 // Section: Parenthesization

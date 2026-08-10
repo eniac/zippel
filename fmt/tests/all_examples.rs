@@ -1,16 +1,12 @@
-use fmt::format_source;
+mod common;
+
+use common::fmt;
 use std::path::Path;
 
 /// Parse source, format it, parse the output, format again, check idempotency.
 fn round_trip_check(name: &str, src: &str) {
-    let out1 = match format_source(src) {
-        Ok(s) => s,
-        Err(e) => panic!("{}: first format failed: {:?}", name, e),
-    };
-    let out2 = match format_source(&out1) {
-        Ok(s) => s,
-        Err(e) => panic!("{}: second format (idempotency) failed: {:?}", name, e),
-    };
+    let out1 = fmt(src);
+    let out2 = fmt(&out1);
     assert_eq!(out1, out2, "{}: not idempotent", name);
 }
 
