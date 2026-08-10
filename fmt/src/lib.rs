@@ -60,15 +60,7 @@ pub fn format_source_with_style(src: &str, style: &Style) -> Result<String, Form
     if !errors.is_empty() {
         return Err(FormatError::Parse(errors));
     }
-    let tokens = trivia::TokenStream::new(src);
-    let comments = trivia::extract_comments(src);
-    Ok(decl::format_decls(
-        &decls,
-        &tokens,
-        &comments,
-        src.len(),
-        style,
-    ))
+    Ok(decl::format_decls(&decls, src, style))
 }
 
 /// Check if source is already formatted.

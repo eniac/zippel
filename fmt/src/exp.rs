@@ -20,9 +20,7 @@ use crate::ctx::{ALLOC, Doc, parenthesize};
 use crate::delim_list::{DelimList, take_separator_gap_split};
 use crate::size::format_range;
 use crate::style::Style;
-use crate::trivia::{
-    TokenCursor, TriviaElement, TriviaGap, format_gap, gap_hard, gap_none, gap_space,
-};
+use crate::trivia::{TokenCursor, TriviaGap, format_gap, gap_hard, gap_none, gap_space};
 
 fn format_exp(
     exp: &Spanned<Exp<Size>>,
@@ -652,8 +650,7 @@ pub(crate) fn format_relation(
     // `line()` as sep for empty gaps (separates `where` from relation).
     let leading_gap = cursor.advance_to(exp.span.start).trim_start();
     let leading_open = match leading_gap.first() {
-        Some(TriviaElement::Comment(c)) if c.at_line_start => None,
-        Some(TriviaElement::Comment(_)) => Some(ALLOC.line()),
+        Some(e) if !e.needs_start_newline() => Some(ALLOC.line()),
         _ => None,
     };
     let leading = format_gap(leading_gap, leading_open, None, Some(ALLOC.line()), style);

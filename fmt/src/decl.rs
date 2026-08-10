@@ -14,19 +14,13 @@ use crate::delim_list::{DelimList, take_separator_gap_split};
 use crate::exp::{format_body, format_relation};
 use crate::style::Style;
 use crate::trivia::{
-    Comment, TokenCursor, TokenStream, TriviaElement, TriviaGap, format_gap, gap_hard, gap_none,
-    gap_space,
+    TokenCursor, TriviaElement, TriviaGap, format_gap, gap_hard, gap_none, gap_space,
 };
 use crate::typ::{format_typ, format_typevars};
 
-pub fn format_decls(
-    decls: &[Spanned<Decl<Size>>],
-    tokens: &TokenStream,
-    comments: &[Comment],
-    src_len: usize,
-    style: &Style,
-) -> String {
-    let mut cursor = TokenCursor::new(tokens, comments);
+pub fn format_decls(decls: &[Spanned<Decl<Size>>], src: &str, style: &Style) -> String {
+    let src_len = src.len();
+    let mut cursor = TokenCursor::new(src);
     let mut parts = Vec::new();
 
     for (index, decl) in decls.iter().enumerate() {
@@ -84,14 +78,27 @@ pub fn format_decls(
         .1
         .render_fmt(style.width, &mut output)
         .expect("rendering failed");
-    let mut canonical = output
-        .lines()
-        .map(str::trim_end)
-        .collect::<Vec<_>>()
-        .join("\n");
-    canonical.truncate(canonical.trim_end_matches('\n').len());
-    canonical.push('\n');
-    canonical
+
+    // Trim trailing whitespace from each line, strip trailing blank
+    // lines, and ensure exactly one trailing newline.
+    trim_lines(&mut output);
+    output
+}
+
+/// Trim trailing whitespace from each line, strip trailing blank
+/// lines, and ensure exactly one trailing newline.
+fn trim_lines(s: &mut String) {
+    // Trim trailing whitespace from each line.
+    let mut result = String::with_capacity(s.len());
+    for line in s.lines() {
+        result.push_str(line.trim_end());
+        result.push('\n');
+    }
+    // Strip trailing blank lines, leaving exactly one trailing newline.
+    while result.ends_with("\n\n") {
+        result.pop();
+    }
+    *s = result;
 }
 
 fn format_decl(
@@ -133,8 +140,7 @@ fn format_decl(
             // align with the relation body, not at column 0. Same pattern
             // as relation_leading above.
             let open = match open_gap.first() {
-                Some(TriviaElement::Comment(c)) if c.at_line_start => None,
-                Some(TriviaElement::Comment(_)) => Some(ALLOC.line()),
+                Some(e) if !e.needs_start_newline() => Some(ALLOC.line()),
                 _ => None,
             };
             let open_comments = format_gap(open_gap, open, None, Some(ALLOC.line()), style);

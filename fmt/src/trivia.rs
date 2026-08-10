@@ -74,12 +74,12 @@ pub(crate) enum CommentKind {
 
 #[derive(Debug, Clone)]
 pub(crate) struct Comment {
-    pub(crate) text: String,
-    pub(crate) kind: CommentKind,
-    pub(crate) at_line_start: bool,
-    pub(crate) at_line_end: bool,
-    pub(crate) start: usize,
-    pub(crate) end: usize,
+    text: String,
+    kind: CommentKind,
+    at_line_start: bool,
+    at_line_end: bool,
+    start: usize,
+    end: usize,
 }
 
 impl Comment {
@@ -101,7 +101,7 @@ impl TriviaElement {
     /// Whether this element needs to begin on a new line.
     ///
     /// Used to decide the separator *before* this element.
-    fn needs_start_newline(&self) -> bool {
+    pub(crate) fn needs_start_newline(&self) -> bool {
         match self {
             TriviaElement::BlankLines(_) => true,
             TriviaElement::Comment(c) => c.at_line_start,
@@ -238,13 +238,16 @@ impl TriviaGap {
     }
 }
 
-struct CommentCursor<'a> {
-    comments: &'a [Comment],
+struct CommentCursor {
+    comments: Vec<Comment>,
+    /// Index of the first unconsumed comment. Comments before this
+    /// index have been returned by `take_until`. Using an index
+    /// instead of `drain` avoids O(N) shifting of remaining elements.
     printed: usize,
 }
 
-impl<'a> CommentCursor<'a> {
-    fn new(comments: &'a [Comment]) -> Self {
+impl CommentCursor {
+    fn new(comments: Vec<Comment>) -> Self {
         Self {
             comments,
             printed: 0,
@@ -252,12 +255,11 @@ impl<'a> CommentCursor<'a> {
     }
 
     fn take_until(&mut self, pos: usize) -> Vec<Comment> {
-        let mut result = Vec::new();
+        let start = self.printed;
         while self.printed < self.comments.len() && self.comments[self.printed].end <= pos {
-            result.push(self.comments[self.printed].clone());
             self.printed += 1;
         }
-        result
+        self.comments[start..self.printed].to_vec()
     }
 }
 
@@ -267,8 +269,7 @@ struct SourceLayout {
 }
 
 impl SourceLayout {
-    fn new(src: &str, comment_spans: &[Range<usize>]) -> Self {
-        let line_starts = compute_line_starts(src);
+    fn new(src: &str, line_starts: &[usize], comment_spans: &[Range<usize>]) -> Self {
         let mut blank_lines = Vec::with_capacity(line_starts.len());
         for (line, &start) in line_starts.iter().enumerate() {
             let end = line_starts
@@ -282,7 +283,7 @@ impl SourceLayout {
             blank_lines.push(!overlaps_comment && src[start..end].trim().is_empty());
         }
         Self {
-            line_starts,
+            line_starts: line_starts.to_vec(),
             blank_lines,
         }
     }
@@ -294,7 +295,27 @@ impl SourceLayout {
     /// Merge comments and blank lines between two offsets into an ordered
     /// layout, coalescing consecutive blank lines.
     fn layout_between(&self, comments: Vec<Comment>, from: usize, to: usize) -> Vec<TriviaElement> {
-        let blank_offsets = self.blank_line_offsets(from, to);
+        // Fast path: no comments → only blank lines matter. Skip the
+        // merge entirely and just count blank lines in the range.
+        if comments.is_empty() {
+            let from_line = self.line_of(from);
+            let to_line = self.line_of(to);
+            let count = (from_line + 1..to_line)
+                .filter(|&line| self.blank_lines[line])
+                .count();
+            if count == 0 {
+                return Vec::new();
+            }
+            return vec![TriviaElement::BlankLines(count)];
+        }
+
+        let from_line = self.line_of(from);
+        let to_line = self.line_of(to);
+        let blank_offsets: Vec<usize> = (from_line + 1..to_line)
+            .filter(|&line| self.blank_lines[line])
+            .map(|line| self.line_starts[line])
+            .collect();
+
         let mut layout = Vec::new();
 
         // Merge comments and blank-line offsets in source order.
@@ -324,16 +345,6 @@ impl SourceLayout {
         }
         layout
     }
-
-    /// Start offsets of blank lines between `from` and `to`.
-    fn blank_line_offsets(&self, from: usize, to: usize) -> Vec<usize> {
-        let from_line = self.line_of(from);
-        let to_line = self.line_of(to);
-        (from_line + 1..to_line)
-            .filter(|&line| self.blank_lines[line])
-            .map(|line| self.line_starts[line])
-            .collect()
-    }
 }
 
 /// Coalesce consecutive blank-line offsets into a single BlankLines element.
@@ -355,18 +366,41 @@ fn push_blank_lines(
     }
 }
 
-pub(crate) struct TokenCursor<'a> {
-    tokens: &'a TokenStream,
-    comments: CommentCursor<'a>,
+pub(crate) struct TokenCursor {
+    tokens: TokenStream,
+    comments: CommentCursor,
     pos: usize,
+    /// Index into `tokens.tokens` — all tokens before this index have
+    /// been consumed or skipped. Avoids rescanning from 0 on every
+    /// `advance_to_token` / `peek_token` call.
+    token_idx: usize,
 }
 
-impl<'a> TokenCursor<'a> {
-    pub(crate) fn new(tokens: &'a TokenStream, comments: &'a [Comment]) -> Self {
+impl TokenCursor {
+    /// Build a cursor from source text: lexes, extracts comments, and
+    /// computes source layout in a single pass.
+    pub(crate) fn new(src: &str) -> Self {
+        let line_starts = compute_line_starts(src);
+
+        let mut tokens = Vec::new();
+        let mut comment_spans = Vec::new();
+        let mut comments = Vec::new();
+
+        for (token, span) in lang::parser::lex_iter(src) {
+            let span = span.start..span.end;
+            if matches!(token, Token::LineComment | Token::BlockComment) {
+                comment_spans.push(span.clone());
+                comments.push(build_comment(&token, &span, src, &line_starts));
+            }
+            tokens.push((token.into_owned(), span));
+        }
+
+        let layout = SourceLayout::new(src, &line_starts, &comment_spans);
         Self {
-            tokens,
+            tokens: TokenStream { layout, tokens },
             comments: CommentCursor::new(comments),
             pos: 0,
+            token_idx: 0,
         }
     }
 
@@ -423,7 +457,8 @@ impl<'a> TokenCursor<'a> {
         end: usize,
         pred: impl Fn(&Token) -> bool,
     ) -> TriviaGap {
-        for (token, span) in &self.tokens.tokens {
+        let tokens = &self.tokens.tokens;
+        for (i, (token, span)) in tokens.iter().enumerate().skip(self.token_idx) {
             if span.start < self.pos || span.end > end || token.is_trivia() {
                 continue;
             }
@@ -434,6 +469,7 @@ impl<'a> TokenCursor<'a> {
                     .layout
                     .layout_between(comments, self.pos, span.start);
                 self.pos = span.end;
+                self.token_idx = i + 1;
                 return TriviaGap { layout }.trim_if_clean();
             }
         }
@@ -447,7 +483,8 @@ impl<'a> TokenCursor<'a> {
         end: usize,
         pred: impl Fn(&Token) -> bool,
     ) -> Option<Range<usize>> {
-        for (token, span) in &self.tokens.tokens {
+        let tokens = &self.tokens.tokens;
+        for (_i, (token, span)) in tokens.iter().enumerate().skip(self.token_idx) {
             if span.start < self.pos || span.end > end || token.is_trivia() {
                 continue;
             }
@@ -521,7 +558,7 @@ pub fn format_gap(
     let mut parts = Vec::new();
     let mut open = open;
 
-    let layout = gap.layout;
+    let mut layout = gap.layout;
     let n = layout.len();
     for index in 0..n {
         let element = &layout[index];
@@ -543,21 +580,22 @@ pub fn format_gap(
             parts.push(open);
         }
 
-        match element {
+        match &mut layout[index] {
             TriviaElement::Comment(comment) => {
                 if comment.is_multiline_block() {
                     // Split multiline block comments into lines so the
                     // doc builder applies indentation to each line via
                     // hardlines. Strip source whitespace from inner
                     // lines — the doc builder's nesting handles indent.
-                    let lines: Vec<&str> = comment.text.split('\n').collect();
-                    parts.push(ALLOC.text(lines[0].to_string()));
-                    for line in &lines[1..] {
+                    let text = std::mem::take(&mut comment.text);
+                    let mut lines = text.split('\n');
+                    parts.push(ALLOC.text(lines.next().unwrap().to_string()));
+                    for line in lines {
                         parts.push(ALLOC.hardline());
                         parts.push(ALLOC.text(line.trim_start().to_string()));
                     }
                 } else {
-                    parts.push(ALLOC.text(comment.text.clone()));
+                    parts.push(ALLOC.text(std::mem::take(&mut comment.text)));
                 }
             }
             TriviaElement::BlankLines(blanks) => {
@@ -615,64 +653,41 @@ fn compute_line_starts(src: &str) -> Vec<usize> {
     starts
 }
 
-pub(crate) struct TokenStream {
+struct TokenStream {
     tokens: Vec<(Token<'static>, Range<usize>)>,
     layout: SourceLayout,
 }
 
-impl TokenStream {
-    pub(crate) fn new(src: &str) -> Self {
-        let tokens: Vec<_> = lang::parser::lex_iter(src)
-            .map(|(token, span)| (token.into_owned(), span.start..span.end))
-            .collect();
-        let comment_spans = tokens
-            .iter()
-            .filter(|(token, _)| matches!(token, Token::LineComment | Token::BlockComment))
-            .map(|(_, span)| span.clone())
-            .collect::<Vec<_>>();
-        Self {
-            layout: SourceLayout::new(src, &comment_spans),
-            tokens,
-        }
-    }
-}
-
-pub(crate) fn extract_comments(src: &str) -> Vec<Comment> {
-    let line_starts = compute_line_starts(src);
-    lang::parser::lex_iter(src)
-        .filter(|(token, _)| matches!(token, Token::LineComment | Token::BlockComment))
-        .map(|(token, span)| {
-            let line_idx = line_of(span.start, &line_starts);
-            let line_start = line_starts[line_idx];
-            let at_line_start = src[line_start..span.start].trim().is_empty();
-            let line_end = src[span.end..]
-                .find('\n')
-                .map(|offset| span.end + offset)
-                .unwrap_or(src.len());
-            let at_line_end = src[span.end..line_end].trim().is_empty();
-            let text = src[span.start..span.end].to_string();
-            let kind = match token {
-                Token::LineComment => CommentKind::Line,
-                Token::BlockComment => {
-                    // A block comment is multiline if it contains a
-                    // newline between the opening /* and closing */.
-                    let inner = &text[2..text.len().saturating_sub(2)];
-                    if inner.contains('\n') {
-                        CommentKind::MultilineBlock
-                    } else {
-                        CommentKind::Block
-                    }
-                }
-                _ => CommentKind::Block,
-            };
-            Comment {
-                text,
-                kind,
-                at_line_start,
-                at_line_end,
-                start: span.start,
-                end: span.end,
+fn build_comment(token: &Token, span: &Range<usize>, src: &str, line_starts: &[usize]) -> Comment {
+    let line_idx = line_of(span.start, line_starts);
+    let line_start = line_starts[line_idx];
+    let at_line_start = src[line_start..span.start].trim().is_empty();
+    let line_end = src[span.end..]
+        .find('\n')
+        .map(|offset| span.end + offset)
+        .unwrap_or(src.len());
+    let at_line_end = src[span.end..line_end].trim().is_empty();
+    let text = src[span.start..span.end].to_string();
+    let kind = match token {
+        Token::LineComment => CommentKind::Line,
+        Token::BlockComment => {
+            // A block comment is multiline if it contains a
+            // newline between the opening /* and closing */.
+            let inner = &text[2..text.len().saturating_sub(2)];
+            if inner.contains('\n') {
+                CommentKind::MultilineBlock
+            } else {
+                CommentKind::Block
             }
-        })
-        .collect()
+        }
+        _ => CommentKind::Block,
+    };
+    Comment {
+        text,
+        kind,
+        at_line_start,
+        at_line_end,
+        start: span.start,
+        end: span.end,
+    }
 }
