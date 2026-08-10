@@ -5,7 +5,6 @@ use lang::parser::Token;
 use share::DocAllocator;
 
 use crate::ctx::{ALLOC, Doc, parenthesize};
-use crate::delim_list::{DelimList, take_separator_gap_split};
 use crate::style::Style;
 use crate::trivia::{TokenCursor, TriviaGap, gap_none, gap_space, trim_if_clean};
 
@@ -24,41 +23,39 @@ pub(crate) fn format_size(
             let gap = cursor.advance_to_token(end, |token| matches!(token, Token::Positive(_)));
             (gap, ALLOC.text(value.to_string()))
         }
-        Size::Add(lhs, rhs) => format_size_binary(lhs, rhs, "+", cursor, end, style),
-        Size::Sub(lhs, rhs) => format_size_binary(lhs, rhs, "-", cursor, end, style),
-        Size::Mul(lhs, rhs) => format_size_binary(lhs, rhs, "*", cursor, end, style),
-        Size::Div(lhs, rhs) => format_size_binary(lhs, rhs, "/", cursor, end, style),
-        Size::Pow(lhs, rhs) => format_size_binary(lhs, rhs, "^", cursor, end, style),
-        Size::Max(lhs, rhs) => format_size_call("max", lhs, rhs, cursor, end, style),
-        Size::Min(lhs, rhs) => format_size_call("min", lhs, rhs, cursor, end, style),
+        Size::Add(lhs, rhs) => format_size_binary(lhs, rhs, size, cursor, end, style),
+        Size::Sub(lhs, rhs) => format_size_binary(lhs, rhs, size, cursor, end, style),
+        Size::Mul(lhs, rhs) => format_size_binary(lhs, rhs, size, cursor, end, style),
+        Size::Div(lhs, rhs) => format_size_binary(lhs, rhs, size, cursor, end, style),
+        Size::Pow(lhs, rhs) => format_size_binary(lhs, rhs, size, cursor, end, style),
+    }
+}
+
+fn size_op_str(size: &Size) -> &'static str {
+    match size {
+        Size::Add(_, _) => "+",
+        Size::Sub(_, _) => "-",
+        Size::Mul(_, _) => "*",
+        Size::Div(_, _) => "/",
+        Size::Pow(_, _) => "^",
+        _ => unreachable!(),
     }
 }
 
 fn format_size_binary(
     lhs: &Spanned<Size>,
     rhs: &Spanned<Size>,
-    op: &'static str,
+    parent: &Size,
     cursor: &mut TokenCursor,
     end: usize,
     style: &Style,
 ) -> (TriviaGap, Doc<'static>) {
-    let (precedence, right_assoc) = match op {
-        "+" | "-" => (1, false),
-        "*" | "/" => (2, false),
-        "^" => (3, true),
-        _ => unreachable!(),
-    };
+    let op = size_op_str(parent);
     let (lhs_gap, lhs_doc) = format_size(&lhs.node, cursor, lhs.span.end, style);
-    let lhs = parenthesize(
-        lhs_doc,
-        size_lhs_needs_paren(&lhs.node, precedence, right_assoc),
-    );
+    let lhs = parenthesize(lhs_doc, size_lhs_needs_paren(parent, &lhs.node));
     let op_gap = cursor.advance_to_token(end, |token| matches_size_op(op, token));
     let (rhs_gap, rhs_doc) = format_size(&rhs.node, cursor, rhs.span.end, style);
-    let rhs = parenthesize(
-        rhs_doc,
-        size_rhs_needs_paren(&rhs.node, precedence, right_assoc),
-    );
+    let rhs = parenthesize(rhs_doc, size_rhs_needs_paren(parent, &rhs.node));
 
     let doc = ALLOC.concat([
         lhs,
@@ -68,32 +65,6 @@ fn format_size_binary(
         rhs,
     ]);
     (lhs_gap, doc)
-}
-
-fn format_size_call(
-    name: &'static str,
-    lhs: &Spanned<Size>,
-    rhs: &Spanned<Size>,
-    cursor: &mut TokenCursor,
-    end: usize,
-    style: &Style,
-) -> (TriviaGap, Doc<'static>) {
-    let name_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
-    let open = gap_none(
-        trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LParen))),
-        style,
-    );
-    let (lhs_gap, lhs_doc) = format_size(&lhs.node, cursor, lhs.span.end, style);
-    let (comma_b, comma_a) =
-        take_separator_gap_split(cursor, end, |token| matches!(token, Token::Comma));
-    let (rhs_gap, rhs_doc) = format_size(&rhs.node, cursor, rhs.span.end, style);
-    let close_comments = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
-    let mut list = DelimList::new(style, ",", true);
-    list.push_sep(lhs_gap, lhs_doc, comma_b, comma_a);
-    list.push(rhs_gap, rhs_doc);
-    let args = list.finish("(", ")", close_comments);
-
-    (name_gap, ALLOC.concat([ALLOC.text(name), open, args]))
 }
 
 pub(crate) fn format_range(
@@ -170,12 +141,16 @@ fn matches_size_op(op: &str, token: &Token) -> bool {
     }
 }
 
-fn size_lhs_needs_paren(size: &Size, precedence: usize, right_assoc: bool) -> bool {
-    let child = size.precedence();
-    child < precedence || (child == precedence && right_assoc)
+fn size_lhs_needs_paren(parent: &Size, lhs: &Size) -> bool {
+    let parent_prec = parent.precedence();
+    let right_assoc = parent.is_right_assoc();
+    let child = lhs.precedence();
+    child < parent_prec || (child == parent_prec && right_assoc)
 }
 
-fn size_rhs_needs_paren(size: &Size, precedence: usize, right_assoc: bool) -> bool {
-    let child = size.precedence();
-    child < precedence || (child == precedence && !right_assoc)
+fn size_rhs_needs_paren(parent: &Size, rhs: &Size) -> bool {
+    let parent_prec = parent.precedence();
+    let right_assoc = parent.is_right_assoc();
+    let child = rhs.precedence();
+    child < parent_prec || (child == parent_prec && !right_assoc)
 }

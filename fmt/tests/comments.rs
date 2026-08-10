@@ -139,6 +139,29 @@ fn f<F: Field>(instance a: F) -> F {
 }
 
 #[test]
+fn multiline_block_comment_preserves_indent() {
+    // Multiline block comment inline between two statements.
+    // Inner lines should be indented to match the surrounding context.
+    // `gap_hard` (statement boundary) always emits a hardline after
+    // the gap, so `let y` goes on a new line even though source had
+    // `*/ let y` on the same line.
+    assert_formatted(
+        "fn f<F: Field>(instance a: F) -> F { let x = a; /*
+    hello world
+*/ let y = a; y }",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    let x = a; /*
+    hello world
+    */
+    let y = a;
+    y
+}
+",
+    );
+}
+
+#[test]
 fn comment_at_start_of_body() {
     assert_formatted(
         "\
@@ -300,18 +323,6 @@ fn exp_inline_comment_typ() {
 }
 
 #[test]
-fn strips_redundant_expression_parens() {
-    assert_formatted(
-        "fn f<F: Field>(instance a: F, instance b: F) -> F { ((a + b)) }",
-        "\
-fn f<F: Field>(instance a: F, instance b: F) -> F {
-    a + b
-}
-",
-    );
-}
-
-#[test]
 fn preserves_comments_near_necessary_parens() {
     assert_formatted(
         "fn f<F: Field>(instance a: F, instance b: F, instance c: F) -> F { (a + b) /* after */ * c }",
@@ -330,18 +341,6 @@ fn preserves_comments_inside_redundant_parens() {
         "\
 fn f<F: Field>(instance a: F, instance b: F) -> F {
     a /* inner */ + b
-}
-",
-    );
-}
-
-#[test]
-fn preserves_size_expression_precedence() {
-    assert_formatted(
-        "fn f<M: Size, F: Field>(instance x: [F; (M - 1) / 2]) -> [F; (M - 1) / 2] { x }",
-        "\
-fn f<M: Size, F: Field>(instance x: [F; (M - 1) / 2]) -> [F; (M - 1) / 2] {
-    x
 }
 ",
     );
@@ -733,163 +732,6 @@ proto Foo<G: Group, F: Scalar<G>>(witness a: F, instance b: F) where
     let x = a;
 
     x
-}
-",
-    );
-}
-
-#[test]
-fn short_comprehension_stays_on_one_line() {
-    assert_formatted(
-        "\
-fn f<F: Field>(instance a: F) -> F {
-    let x = [a for i in 0..N];
-    a
-}",
-        "\
-fn f<F: Field>(instance a: F) -> F {
-    let x = [a for i in 0..N];
-    a
-}
-",
-    );
-}
-
-#[test]
-fn comprehension_in_long_assertion_stays_flat() {
-    // The == breaks, but the short comprehension stays on one line.
-    assert_formatted(
-        "\
-proto p<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F, instance e: F)
-where gate_identity(a, b, c, d, e) == [a for i in 0..N]
-{ a }",
-        "\
-proto p<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F, instance e: F) where
-    gate_identity(a, b, c, d, e) == [a for i in 0..N]
-{
-    a
-}
-",
-    );
-}
-
-#[test]
-fn long_assertion_breaks_before_eq() {
-    // The == in the relation breaks, putting RHS on a new indented line.
-    // The LHS fits on one line so stays flat; the RHS breaks with * aligned.
-    assert_formatted(
-        "\
-proto p<F: Field>(instance a: F, instance b: F)
-where reduce(*, [a[i] + y * b[i] + x for i in 0..N]) * reduce(*, [a[i] + y * b[i] + x for i in 0..N]) == reduce(*, [b[i] + y * a[i] + x for i in 0..N]) * reduce(*, [b[i] + y * a[i] + x for i in 0..N])
-{ a }",
-        "\
-proto p<F: Field>(instance a: F, instance b: F) where
-    reduce(*, [a[i] + y * b[i] + x for i in 0..N]) * reduce(*, [a[i] + y * b[i] + x for i in 0..N])
-        == reduce(*, [b[i] + y * a[i] + x for i in 0..N])
-            * reduce(*, [b[i] + y * a[i] + x for i in 0..N])
-{
-    a
-}
-",
-    );
-}
-
-#[test]
-fn short_assert_stays_on_one_line() {
-    assert_formatted(
-        "\
-fn f<F: Field>(instance a: F) -> F {
-    assert(a == a);
-    a
-}",
-        "\
-fn f<F: Field>(instance a: F) -> F {
-    assert(a == a);
-    a
-}
-",
-    );
-}
-
-#[test]
-fn long_assert_breaks_before_eq() {
-    // The == inside assert(...) breaks, putting RHS on a new indented line.
-    assert_formatted(
-        "\
-fn f<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F, instance e: F) -> F {
-    assert(gate_identity_function(a, b, c, d, e, a, b) == gate_identity_function2(a, b, c, d, e, a, b));
-    a
-}",
-        "\
-fn f<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F, instance e: F) -> F {
-    assert(
-        gate_identity_function(a, b, c, d, e, a, b) == gate_identity_function2(a, b, c, d, e, a, b),
-    );
-    a
-}
-",
-    );
-}
-
-#[test]
-fn short_reduce_stays_on_one_line() {
-    assert_formatted(
-        "\
-fn f<F: Field>(instance a: F) -> F {
-    let x = reduce(+, [a, a, a]);
-    a
-}",
-        "\
-fn f<F: Field>(instance a: F) -> F {
-    let x = reduce(+, [a, a, a]);
-    a
-}
-",
-    );
-}
-
-#[test]
-fn long_reduce_breaks_args() {
-    // reduce(+, [...]) breaks: each arg on its own line, comprehension
-    // brackets get their own lines.
-    assert_formatted(
-        "\
-fn f<F: Field>(instance a: F) -> F {
-    let x = reduce(+, [eval<0>(p_poly, tail) for tail in [[i / 2 ^ j % 2 * one for j in 0..S - 1] for i in 0..2 ^ (S - 1)]]);
-    a
-}",
-        "\
-fn f<F: Field>(instance a: F) -> F {
-    let x = reduce(
-        +,
-        [
-            eval<0>(p_poly, tail)
-            for tail in [[i / 2 ^ j % 2 * one for j in 0..S - 1] for i in 0..2 ^ (S - 1)]
-        ],
-    );
-    a
-}
-",
-    );
-}
-
-#[test]
-fn long_comprehension_breaks_with_brackets_on_own_lines() {
-    // When the comprehension doesn't fit, [ and ] get their own lines,
-    // body on its own line, for-clause on its own line.
-    assert_formatted(
-        "\
-fn f<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F, instance e: F) -> F {
-    let x = [some_very_long_function_name_here_that_is_super_duper_long(a, b, c, d, e) for i in 0..N];
-    a
-}",
-        "\
-fn f<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F, instance e: F) -> F {
-    let x = [
-        some_very_long_function_name_here_that_is_super_duper_long(a, b, c, d, e)
-        for i in 0..N
-    ];
-    a
 }
 ",
     );

@@ -1,6 +1,7 @@
 //! Type formatting.
 
 use lang::ast::{Size, Spanned};
+use lang::id::Tid;
 use lang::parser::Token;
 use lang::typ::{GTyp, Typ, TypeVar, TypeVars};
 use share::DocAllocator;
@@ -66,90 +67,7 @@ pub(crate) fn format_typ(
     style: &Style,
 ) -> (TriviaGap, Doc<'static>) {
     match typ {
-        Typ::Poly(base, m, n) => {
-            // Detect whether the source uses sugar syntax (Uni/Mle) or full
-            // Poly form. This determines how many args are in the source.
-            let source_is_uni = cursor
-                .peek_token(end, |t| matches!(t, Token::KwUni))
-                .is_some();
-            let source_is_mle = cursor
-                .peek_token(end, |t| matches!(t, Token::KwMleTy))
-                .is_some();
-            let keyword_gap = cursor.advance_to_token(end, |token| {
-                matches!(token, Token::KwPolyTy | Token::KwUni | Token::KwMleTy)
-            });
-            let open = gap_none(
-                trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LAngle))),
-                style,
-            );
-            let base_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
-
-            // Consume gaps and format sizes. When the source is already in
-            // sugar form (Uni/Mle), the skipped arg is implicit — don't try
-            // to find it in the token stream.
-            let (comma_one_b, comma_one_a) =
-                take_separator_gap_split(cursor, end, |token| matches!(token, Token::Comma));
-            let (m_gap, m_doc) = if source_is_uni {
-                (TriviaGap::default(), ALLOC.nil())
-            } else {
-                format_size(m, cursor, end, style)
-            };
-            let (comma_two_b, comma_two_a) = if source_is_uni || source_is_mle {
-                (TriviaGap::default(), TriviaGap::default())
-            } else {
-                take_separator_gap_split(cursor, end, |token| matches!(token, Token::Comma))
-            };
-            let (n_gap, n_doc) = if source_is_mle {
-                (TriviaGap::default(), ALLOC.nil())
-            } else {
-                format_size(n, cursor, end, style)
-            };
-            let close_comments =
-                cursor.advance_to_token(end, |token| matches!(token, Token::RAngle));
-
-            // Uni<F, N> is sugar for Poly<F, 1, N>; Mle<F, N> is sugar for
-            // Poly<F, N, 1>. Emit the sugar only when the AST matches AND
-            // no comments are attached to the skipped argument's gaps.
-            let is_uni = matches!(m, Size::Lit(1))
-                && !comma_one_a.has_comments()
-                && !comma_two_b.has_comments();
-            let is_mle = matches!(n, Size::Lit(1))
-                && !comma_two_a.has_comments()
-                && !close_comments.has_comments();
-
-            let name = if is_uni {
-                "Uni"
-            } else if is_mle {
-                "Mle"
-            } else {
-                "Poly"
-            };
-
-            let mut list = DelimList::new(style, ",", true);
-            list.push_sep(
-                base_gap,
-                ALLOC.text(base.to_string()),
-                comma_one_b,
-                comma_one_a,
-            );
-            if is_uni {
-                list.push(n_gap, n_doc);
-            } else if is_mle {
-                list.push(m_gap, m_doc);
-            } else {
-                list.push_sep(m_gap, m_doc, comma_two_b, comma_two_a);
-                list.push(n_gap, n_doc);
-            }
-
-            (
-                keyword_gap,
-                ALLOC.concat([
-                    ALLOC.text(name),
-                    open,
-                    list.finish("<", ">", close_comments),
-                ]),
-            )
-        }
+        Typ::Poly(base, m, n) => format_poly(base, m, n, cursor, end, style),
         Typ::Vec(typ, size) => {
             let open_gap = cursor.advance_to_token(end, |token| matches!(token, Token::LBrack));
             let (inner_gap, inner_doc) = format_typ(&typ.node, cursor, typ.span.end, style);
@@ -211,6 +129,147 @@ pub(crate) fn format_typ(
             (open_gap, list.finish("{", "}", close_comments))
         }
     }
+}
+
+/// Which sugar form the source uses — determines cursor traversal.
+enum SourceForm {
+    Poly, // Poly<F, M, N> — 3 args in source
+    Uni,  // Uni<F, N>    — 2 args, M=1 implicit
+    Mle,  // Mle<F, N>    — 2 args, N=1 implicit
+}
+
+/// Format `Poly<F, M, N>`, emitting `Uni`/`Mle` sugar when the AST
+/// matches and no comments are attached to the skipped argument.
+///
+/// Two independent concerns:
+/// - **Source form** (Uni/Mle/Poly): how many tokens to consume from the
+///   cursor. Detected by peeking at the keyword token.
+/// - **Output form** (Uni/Mle/Poly): whether to emit sugar. Decided by
+///   checking if the AST values match the sugar pattern AND no comments
+///   are attached to the gaps that would be dropped.
+fn format_poly(
+    base: &Tid,
+    m: &Size,
+    n: &Size,
+    cursor: &mut TokenCursor,
+    end: usize,
+    style: &Style,
+) -> (TriviaGap, Doc<'static>) {
+    // ── Phase 1: Detect source form ──
+    let source = if cursor
+        .peek_token(end, |t| matches!(t, Token::KwUni))
+        .is_some()
+    {
+        SourceForm::Uni
+    } else if cursor
+        .peek_token(end, |t| matches!(t, Token::KwMleTy))
+        .is_some()
+    {
+        SourceForm::Mle
+    } else {
+        SourceForm::Poly
+    };
+
+    // ── Phase 2: Consume tokens from cursor ──
+    // All three forms share: keyword, `<`, base, `,`.
+    let keyword_gap = cursor.advance_to_token(end, |t| {
+        matches!(t, Token::KwPolyTy | Token::KwUni | Token::KwMleTy)
+    });
+    let open = gap_none(
+        trim_if_clean(cursor.advance_to_token(end, |t| matches!(t, Token::LAngle))),
+        style,
+    );
+    let base_gap = cursor.advance_to_token(end, |t| matches!(t, Token::Id(_)));
+    let (comma1_b, comma1_a) = take_separator_gap_split(cursor, end, |t| matches!(t, Token::Comma));
+
+    // After the first comma, the forms diverge:
+    //   Poly: M, `,`, N    — both sizes present
+    //   Uni:  N            — M=1 is implicit, skip it
+    //   Mle:  M            — N=1 is implicit, skip it
+    let (m_gap, m_doc, comma2_b, comma2_a, n_gap, n_doc) = match source {
+        SourceForm::Poly => {
+            let (m_gap, m_doc) = format_size(m, cursor, end, style);
+            let (comma2_b, comma2_a) =
+                take_separator_gap_split(cursor, end, |t| matches!(t, Token::Comma));
+            let (n_gap, n_doc) = format_size(n, cursor, end, style);
+            (m_gap, m_doc, comma2_b, comma2_a, n_gap, n_doc)
+        }
+        SourceForm::Uni => {
+            // M is implicit — only N is in the source
+            let (n_gap, n_doc) = format_size(n, cursor, end, style);
+            (
+                TriviaGap::default(),
+                ALLOC.nil(),
+                TriviaGap::default(),
+                TriviaGap::default(),
+                n_gap,
+                n_doc,
+            )
+        }
+        SourceForm::Mle => {
+            // N is implicit — only M is in the source
+            let (m_gap, m_doc) = format_size(m, cursor, end, style);
+            (
+                m_gap,
+                m_doc,
+                TriviaGap::default(),
+                TriviaGap::default(),
+                TriviaGap::default(),
+                ALLOC.nil(),
+            )
+        }
+    };
+    let close_comments = cursor.advance_to_token(end, |t| matches!(t, Token::RAngle));
+
+    // ── Phase 3: Decide output form ──
+    // If the source is already in sugar form, preserve it — comments are
+    // already in the right places. Only apply comment-loss checks when
+    // converting from Poly to sugar (where skipping an arg would drop
+    // its attached comments).
+    let (is_uni, is_mle) = match source {
+        SourceForm::Uni if matches!(m, Size::Lit(1)) => (true, false),
+        SourceForm::Mle if matches!(n, Size::Lit(1)) => (false, true),
+        _ => {
+            // Poly→sugar: only if no comments on the skipped arg's gaps.
+            // Uni<F, N> skips M, so check gaps around M (comma1_a, comma2_b).
+            // Mle<F, N> skips N, so check gaps around N (comma2_a, close).
+            let is_uni =
+                matches!(m, Size::Lit(1)) && !comma1_a.has_comments() && !comma2_b.has_comments();
+            let is_mle = matches!(n, Size::Lit(1))
+                && !comma2_a.has_comments()
+                && !close_comments.has_comments();
+            (is_uni, is_mle)
+        }
+    };
+
+    // ── Phase 4: Build doc ──
+    let name = if is_uni {
+        "Uni"
+    } else if is_mle {
+        "Mle"
+    } else {
+        "Poly"
+    };
+
+    let mut list = DelimList::new(style, ",", true);
+    list.push_sep(base_gap, ALLOC.text(base.to_string()), comma1_b, comma1_a);
+    if is_uni {
+        list.push(n_gap, n_doc);
+    } else if is_mle {
+        list.push(m_gap, m_doc);
+    } else {
+        list.push_sep(m_gap, m_doc, comma2_b, comma2_a);
+        list.push(n_gap, n_doc);
+    }
+
+    (
+        keyword_gap,
+        ALLOC.concat([
+            ALLOC.text(name),
+            open,
+            list.finish("<", ">", close_comments),
+        ]),
+    )
 }
 
 /// Format a list of `name: value` fields as comma-terminated items.

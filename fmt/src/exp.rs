@@ -8,11 +8,10 @@ use share::DocAllocator;
 
 use crate::ctx::{ALLOC, Doc, parenthesize};
 use crate::delim_list::{DelimList, take_separator_gap_split};
-use crate::paren::{lhs_needs_paren, rhs_needs_paren};
 use crate::size::format_range;
 use crate::style::Style;
 use crate::trivia::{
-    TokenCursor, TriviaGap, format_gap, gap_hard, gap_none, gap_space, trim_if_clean,
+    TokenCursor, TriviaGap, format_gap, gap_hard, gap_list, gap_none, gap_space, trim_if_clean,
 };
 
 fn format_exp(
@@ -47,7 +46,15 @@ fn format_exp(
                 ]),
             )
         }
-        Exp::Bin(BinOp::Dot, lhs, rhs) => format_binary_call("dot", lhs, rhs, cursor, end, style),
+        Exp::Bin(BinOp::Dot, lhs, rhs) => format_binary_call(
+            "dot",
+            |token| matches!(token, Token::KwDot),
+            lhs,
+            rhs,
+            cursor,
+            end,
+            style,
+        ),
         Exp::Bin(op, lhs, rhs) => {
             // Flatten left-associative same-operator chain:
             //   a * b * c  =  Bin(*, Bin(*, a, b), c)  →  [a, b, c]
@@ -64,6 +71,7 @@ fn format_exp(
                 }
             }
             inner_rhs_list.reverse();
+
             let mut chain: Vec<&Spanned<Exp<Size>>> = Vec::new();
             chain.push(current);
             chain.extend(inner_rhs_list);
@@ -73,28 +81,29 @@ fn format_exp(
             let mut parts = Vec::with_capacity(chain.len() * 3);
 
             // First operand — no operator before it.
+            // Return its gap to the caller so the caller can apply
+            // appropriate gap formatting (e.g. gap_list after `[`).
             let (first_gap, first_doc) = format_exp(chain[0], cursor, style);
             let first = parenthesize(first_doc, lhs_needs_paren(*op, &chain[0].node));
-            parts.push(ALLOC.concat([gap_none(trim_if_clean(first_gap), style), first]));
+            parts.push(first);
 
             // Remaining operands — each preceded by `op`.
             for operand in &chain[1..] {
                 let op_gap = cursor.advance_to_token(end, |token| matches_binop(*op, token));
                 let (operand_gap, operand_doc) = format_exp(operand, cursor, style);
                 let operand = parenthesize(operand_doc, rhs_needs_paren(*op, &operand.node));
-                parts.push(gap_space(trim_if_clean(op_gap), style));
-                parts.push(
-                    ALLOC
-                        .concat([ALLOC.line(), ALLOC.text(binop_symbol(*op))])
-                        .flat_alt(ALLOC.text(binop_text(*op))),
-                );
+                parts.push(format_gap(
+                    trim_if_clean(op_gap),
+                    None,
+                    Some(ALLOC.nil()),
+                    None,
+                    style,
+                ));
+                parts.push(ALLOC.concat([ALLOC.line(), ALLOC.text(binop_symbol(*op))]));
                 parts.push(ALLOC.concat([gap_space(trim_if_clean(operand_gap), style), operand]));
             }
 
-            (
-                TriviaGap::default(),
-                ALLOC.concat(parts).nest(indent).group(),
-            )
+            (first_gap, ALLOC.concat(parts).nest(indent).group())
         }
         Exp::App(function, args) => {
             let function_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
@@ -121,9 +130,15 @@ fn format_exp(
             end,
             style,
         ),
-        Exp::Interpolate(Some(points), evals) => {
-            format_binary_call("interpolate", points, evals, cursor, end, style)
-        }
+        Exp::Interpolate(Some(points), evals) => format_binary_call(
+            "interpolate",
+            |token| matches!(token, Token::KwInterpolate),
+            points,
+            evals,
+            cursor,
+            end,
+            style,
+        ),
         Exp::Poly(value) => format_unary_call(
             "poly",
             |token| matches!(token, Token::KwPoly),
@@ -180,10 +195,10 @@ fn format_exp(
                         .concat([
                             ALLOC.line_(),
                             ALLOC
-                                .concat([gap_none(trim_if_clean(body_gap), style), body_doc])
+                                .concat([gap_list(trim_if_clean(body_gap), style), body_doc])
                                 .group(),
                             gap_space(trim_if_clean(for_gap), style),
-                            ALLOC.line().flat_alt(ALLOC.nil()),
+                            ALLOC.line_(),
                             ALLOC
                                 .concat([
                                     ALLOC.text("for"),
@@ -247,13 +262,27 @@ fn format_exp(
                 ]),
             )
         }
-        Exp::Pair(lhs, rhs) => format_binary_call("pair", lhs, rhs, cursor, end, style),
-        Exp::Random(typ, star) => {
-            format_sampling("random", Token::KwRandom, typ, *star, cursor, end, style)
-        }
+        Exp::Pair(lhs, rhs) => format_binary_call(
+            "pair",
+            |token| matches!(token, Token::KwPair),
+            lhs,
+            rhs,
+            cursor,
+            end,
+            style,
+        ),
+        Exp::Random(typ, star) => format_sampling(
+            "random",
+            |t| matches!(t, Token::KwRandom),
+            typ,
+            *star,
+            cursor,
+            end,
+            style,
+        ),
         Exp::Challenge(typ, star) => format_sampling(
             "challenge",
-            Token::KwChallenge,
+            |t| matches!(t, Token::KwChallenge),
             typ,
             *star,
             cursor,
@@ -261,15 +290,27 @@ fn format_exp(
             style,
         ),
         Exp::Let(_, _, _) | Exp::Log(_, _, _) => {
-            let doc = format_body_exp_inner(exp, cursor, style);
+            let doc = format_body_inner(exp, cursor, style);
             (TriviaGap::default(), doc)
         }
-        Exp::Assert(lhs, rhs) => {
-            format_assertion("assert", Token::KwAssert, lhs, rhs, cursor, end, style)
-        }
-        Exp::Verify(lhs, rhs) => {
-            format_assertion("verify", Token::KwVerify, lhs, rhs, cursor, end, style)
-        }
+        Exp::Assert(lhs, rhs) => format_assertion(
+            "assert",
+            |t| matches!(t, Token::KwAssert),
+            lhs,
+            rhs,
+            cursor,
+            end,
+            style,
+        ),
+        Exp::Verify(lhs, rhs) => format_assertion(
+            "verify",
+            |t| matches!(t, Token::KwVerify),
+            lhs,
+            rhs,
+            cursor,
+            end,
+            style,
+        ),
         Exp::Fun(vars, body) => {
             let keyword_gap = cursor.advance_to_token(end, |token| matches!(token, Token::KwFun));
             let open_gap = cursor.advance_to_token(end, |token| matches!(token, Token::LParen));
@@ -412,18 +453,14 @@ fn format_unary_call(
 
 fn format_binary_call(
     name: &'static str,
+    pred: impl Fn(&Token) -> bool,
     lhs: &Spanned<Exp<Size>>,
     rhs: &Spanned<Exp<Size>>,
     cursor: &mut TokenCursor,
     end: usize,
     style: &Style,
 ) -> (TriviaGap, Doc<'static>) {
-    let keyword_gap = cursor.advance_to_token(end, |token| {
-        matches!(
-            token,
-            Token::Id(_) | Token::KwInterpolate | Token::KwPair | Token::KwDot
-        )
-    });
+    let keyword_gap = cursor.advance_to_token(end, pred);
     let open = gap_none(
         trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LParen))),
         style,
@@ -502,16 +539,14 @@ fn format_evaluate(
 #[allow(clippy::too_many_arguments)]
 fn format_sampling(
     name: &'static str,
-    keyword: Token<'static>,
+    pred: impl Fn(&Token) -> bool,
     typ: &Tid,
     star: bool,
     cursor: &mut TokenCursor,
     end: usize,
     style: &Style,
 ) -> (TriviaGap, Doc<'static>) {
-    let keyword_gap = cursor.advance_to_token(end, |token| {
-        std::mem::discriminant(token) == std::mem::discriminant(&keyword)
-    });
+    let keyword_gap = cursor.advance_to_token(end, pred);
     let open = gap_none(
         trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LAngle))),
         style,
@@ -544,16 +579,14 @@ fn format_sampling(
 #[allow(clippy::too_many_arguments)]
 fn format_assertion(
     name: &'static str,
-    keyword: Token<'static>,
+    pred: impl Fn(&Token) -> bool,
     lhs: &Spanned<Exp<Size>>,
     rhs: &Spanned<Exp<Size>>,
     cursor: &mut TokenCursor,
     end: usize,
     style: &Style,
 ) -> (TriviaGap, Doc<'static>) {
-    let keyword_gap = cursor.advance_to_token(end, |token| {
-        std::mem::discriminant(token) == std::mem::discriminant(&keyword)
-    });
+    let keyword_gap = cursor.advance_to_token(end, pred);
     let open = gap_none(
         trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LParen))),
         style,
@@ -566,10 +599,8 @@ fn format_assertion(
     let content = ALLOC
         .concat([
             lhs_doc,
-            gap_space(trim_if_clean(eq_gap), style),
-            ALLOC
-                .concat([ALLOC.line(), ALLOC.text("==")])
-                .flat_alt(ALLOC.text("==")),
+            format_gap(trim_if_clean(eq_gap), None, Some(ALLOC.nil()), None, style),
+            ALLOC.concat([ALLOC.line(), ALLOC.text("==")]),
             gap_space(trim_if_clean(rhs_gap), style),
             rhs_doc,
         ])
@@ -620,11 +651,9 @@ pub(crate) fn format_relation(
             let (rhs_gap, rhs_doc) = format_exp(rhs, cursor, style);
             ALLOC
                 .concat([
-                    ALLOC.concat([gap_none(trim_if_clean(lhs_gap), style), lhs_doc]),
-                    gap_space(trim_if_clean(eq_gap), style),
-                    ALLOC
-                        .concat([ALLOC.line(), ALLOC.text("==")])
-                        .flat_alt(ALLOC.text("==")),
+                    ALLOC.concat([gap_list(trim_if_clean(lhs_gap), style), lhs_doc]),
+                    format_gap(trim_if_clean(eq_gap), None, Some(ALLOC.nil()), None, style),
+                    ALLOC.concat([ALLOC.line(), ALLOC.text("==")]),
                     gap_space(trim_if_clean(rhs_gap), style),
                     rhs_doc,
                 ])
@@ -692,12 +721,12 @@ pub(crate) fn format_relation(
         }
         _ => {
             let (gap, doc) = format_exp(exp, cursor, style);
-            ALLOC.concat([gap_none(trim_if_clean(gap), style), doc])
+            ALLOC.concat([gap_list(trim_if_clean(gap), style), doc])
         }
     }
 }
 
-pub(crate) fn format_body_exp(
+pub(crate) fn format_body(
     body: Option<&Spanned<Exp<Size>>>,
     cursor: &mut TokenCursor,
     end: usize,
@@ -705,16 +734,18 @@ pub(crate) fn format_body_exp(
 ) -> Doc<'static> {
     let Some(body) = body else {
         // Empty body — comments between `{` and `}`. Empty gap → nil.
+        // Line comments always go on their own line (even if inline in
+        // source after `{`), so `open = hardline` when the gap forces a
+        // break. `end` is auto (hardline for breaking, space for inline).
         let inner_comments = cursor
             .advance_to_token(end, |token| matches!(token, Token::RBrace))
             .trim();
-        let needs_break = inner_comments.needs_line_break();
-        let (open, end_sep) = if needs_break {
-            (Some(ALLOC.hardline()), Some(ALLOC.hardline()))
+        let open = if inner_comments.needs_end_newline() {
+            Some(ALLOC.hardline())
         } else {
-            (Some(ALLOC.text(" ")), Some(ALLOC.text(" ")))
+            Some(ALLOC.text(" "))
         };
-        return format_gap(inner_comments, open, end_sep, Some(ALLOC.nil()), style);
+        return format_gap(inner_comments, open, None, Some(ALLOC.nil()), style);
     };
 
     // Gap after `{` — strip blank lines. `sep = hardline` provides
@@ -727,7 +758,7 @@ pub(crate) fn format_body_exp(
         Some(ALLOC.hardline()),
         style,
     );
-    let body_doc = format_body_exp_inner(body, cursor, style);
+    let body_doc = format_body_inner(body, cursor, style);
 
     // Gap before `}` — strip blank lines (structural hardline precedes).
     let close_comments = cursor
@@ -737,7 +768,7 @@ pub(crate) fn format_body_exp(
     ALLOC.concat([body_leading, body_doc, gap_hard(close_comments, style)])
 }
 
-fn format_body_exp_inner(
+fn format_body_inner(
     exp: &Spanned<Exp<Size>>,
     cursor: &mut TokenCursor,
     style: &Style,
@@ -804,7 +835,20 @@ fn format_body_exp_inner(
         }
         _ => {
             let (gap, doc) = format_exp(exp, cursor, style);
-            ALLOC.concat([gap_none(trim_if_clean(gap), style), doc])
+            // Body context: comments go on their own line. `open = nil`
+            // because body_leading already provides the initial line break;
+            // `end = hardline` breaks after the comment; `sep = nil` for
+            // empty gaps (body_leading handles the break).
+            ALLOC.concat([
+                format_gap(
+                    trim_if_clean(gap),
+                    Some(ALLOC.nil()),
+                    Some(ALLOC.hardline()),
+                    Some(ALLOC.nil()),
+                    style,
+                ),
+                doc,
+            ])
         }
     }
 }
@@ -813,7 +857,7 @@ fn format_body_exp_inner(
 /// (`;` follows immediately); line comments get a hardline after
 /// (`;` goes on the next line).
 fn gap_before_semi(gap: TriviaGap, style: &Style) -> Doc<'static> {
-    let needs_break = gap.needs_line_break();
+    let needs_break = gap.needs_end_newline();
     let end = if needs_break {
         Some(ALLOC.hardline())
     } else {
@@ -838,7 +882,7 @@ fn format_body_tail(
         before,
         ALLOC.text(";"),
         gap_hard(after_semi, style),
-        format_body_exp_inner(body, cursor, style),
+        format_body_inner(body, cursor, style),
     ])
 }
 
@@ -852,19 +896,6 @@ fn matches_binop(op: BinOp, token: &Token) -> bool {
         BinOp::Dot => false,
         BinOp::Concat => matches!(token, Token::PlusPlus),
         BinOp::Rem => matches!(token, Token::Percent),
-    }
-}
-
-fn binop_text(op: BinOp) -> &'static str {
-    match op {
-        BinOp::Add => "+",
-        BinOp::Sub => "-",
-        BinOp::Mul => "*",
-        BinOp::Div => "/",
-        BinOp::Pow => "^",
-        BinOp::Dot => unreachable!(),
-        BinOp::Concat => "++",
-        BinOp::Rem => "%",
     }
 }
 
@@ -882,5 +913,43 @@ fn binop_symbol(op: BinOp) -> &'static str {
 }
 
 fn neg_needs_paren(exp: &Exp<Size>) -> bool {
-    matches!(exp, Exp::Bin(op, _, _) if op.parser_precedence() <= 3)
+    matches!(exp, Exp::Bin(op, _, _) if op.precedence() <= 3)
+}
+
+/// Does the lhs of a binary op need parentheses?
+fn lhs_needs_paren(op: BinOp, lhs: &Exp<Size>) -> bool {
+    // Neg has prefix precedence 0 (lowest), so it always needs parens
+    // when it's a child of a Bin — otherwise `-x * y` would re-parse as
+    // `-(x * y)` instead of `(-x) * y`.
+    if matches!(lhs, Exp::Neg(_)) {
+        return true;
+    }
+    // Range as a Bin child needs parens — without them `0..n + 1`
+    // re-parses as `0..(n + 1)` because the range parser greedily
+    // consumes the end bound.
+    if matches!(lhs, Exp::Range(_)) {
+        return true;
+    }
+    let parent_prec = op.precedence();
+    let right_assoc = op.is_right_assoc();
+    matches!(lhs, Exp::Bin(child_op, _, _)
+        if child_op.precedence() < parent_prec
+            || (child_op.precedence() == parent_prec && right_assoc))
+}
+
+/// Does the rhs of a binary op need parentheses?
+fn rhs_needs_paren(op: BinOp, rhs: &Exp<Size>) -> bool {
+    // Same as lhs: Neg at precedence 0 needs parens inside any Bin.
+    if matches!(rhs, Exp::Neg(_)) {
+        return true;
+    }
+    // Range as a Bin child needs parens — same reason as lhs.
+    if matches!(rhs, Exp::Range(_)) {
+        return true;
+    }
+    let parent_prec = op.precedence();
+    let right_assoc = op.is_right_assoc();
+    matches!(rhs, Exp::Bin(child_op, _, _)
+        if child_op.precedence() < parent_prec
+            || (child_op.precedence() == parent_prec && !right_assoc))
 }

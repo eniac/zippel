@@ -756,22 +756,10 @@ impl<N> Exp<N> {
 }
 
 impl BinOp {
+    /// Precedence matching the parser's Pratt table.
+    /// Lower binds looser. Used by the formatter to produce text that
+    /// re-parses to the same AST.
     pub fn precedence(&self) -> usize {
-        match self {
-            BinOp::Add | BinOp::Sub => 2,
-            BinOp::Mul | BinOp::Div => 3,
-            BinOp::Pow => 4,
-            BinOp::Dot => 5,
-            BinOp::Concat => 6,
-            BinOp::Rem => 7,
-        }
-    }
-
-    /// Precedence matching `AEXP_PARSER` (the parser's Pratt table, exp.rs:1219-1233).
-    /// Lower binds looser. This is what the pretty printer must use to produce
-    /// text that re-parses to the same AST — `precedence()` above gives a
-    /// DIFFERENT ordering (Rem=7, Concat=6) that does not match the parser.
-    pub fn parser_precedence(&self) -> usize {
         match self {
             BinOp::Add | BinOp::Sub => 1,
             BinOp::Mul | BinOp::Div | BinOp::Rem => 2,
@@ -902,14 +890,14 @@ where
                 allocator.text("]"),
             ]),
             Exp::Bin(op, a, b) => {
-                let parent_prec = op.parser_precedence();
+                let parent_prec = op.precedence();
                 let right_assoc = op.is_right_assoc();
                 let lhs_needs_paren = matches!(&a.node,
-                    Exp::Bin(child_op, _, _) if child_op.parser_precedence() < parent_prec
-                        || (child_op.parser_precedence() == parent_prec && right_assoc));
+                    Exp::Bin(child_op, _, _) if child_op.precedence() < parent_prec
+                        || (child_op.precedence() == parent_prec && right_assoc));
                 let rhs_needs_paren = matches!(&b.node,
-                    Exp::Bin(child_op, _, _) if child_op.parser_precedence() < parent_prec
-                        || (child_op.parser_precedence() == parent_prec && !right_assoc));
+                    Exp::Bin(child_op, _, _) if child_op.precedence() < parent_prec
+                        || (child_op.precedence() == parent_prec && !right_assoc));
                 let lhs = a.pretty(allocator);
                 let lhs = if lhs_needs_paren {
                     allocator.concat([allocator.text("("), lhs, allocator.text(")")])

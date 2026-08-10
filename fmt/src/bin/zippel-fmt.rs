@@ -1,7 +1,7 @@
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
-use fmt::format_source;
+use fmt::{check, format_source};
 
 fn usage() {
     eprintln!("Usage: zippel-fmt [--check] [--write] [FILE...]");
@@ -67,28 +67,30 @@ fn main() {
                 std::process::exit(1);
             }
         };
-        match format_source(&src) {
-            Ok(out) => match mode {
-                Mode::Check => {
-                    if out != src {
-                        has_diff = true;
-                        eprintln!("{}: not formatted", path.display());
-                    }
-                }
-                Mode::Write => {
-                    if out != src {
-                        std::fs::write(path, &out).unwrap();
-                        eprintln!("{}: formatted", path.display());
-                    }
-                }
-                Mode::Stdout => {
-                    std::io::stdout().write_all(out.as_bytes()).unwrap();
+        match mode {
+            Mode::Check => match check(&src) {
+                Ok(()) => {}
+                Err(_) => {
+                    has_diff = true;
+                    eprintln!("{}: not formatted", path.display());
                 }
             },
-            Err(e) => {
-                eprintln!("Error formatting {}: {}", path.display(), e);
-                std::process::exit(1);
-            }
+            Mode::Write | Mode::Stdout => match format_source(&src) {
+                Ok(out) => {
+                    if matches!(mode, Mode::Write) {
+                        if out != src {
+                            std::fs::write(path, &out).unwrap();
+                            eprintln!("{}: formatted", path.display());
+                        }
+                    } else {
+                        std::io::stdout().write_all(out.as_bytes()).unwrap();
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error formatting {}: {}", path.display(), e);
+                    std::process::exit(1);
+                }
+            },
         }
     }
 

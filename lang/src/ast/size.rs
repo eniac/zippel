@@ -15,8 +15,6 @@ pub enum Size {
     Mul(Box<Spanned<Size>>, Box<Spanned<Size>>), // A * B
     Div(Box<Spanned<Size>>, Box<Spanned<Size>>), // A / B
     Pow(Box<Spanned<Size>>, Box<Spanned<Size>>), // A ^ B
-    Max(Box<Spanned<Size>>, Box<Spanned<Size>>), // max(A, B)
-    Min(Box<Spanned<Size>>, Box<Spanned<Size>>), // min(A, B)
 }
 
 #[derive(Error, Debug)]
@@ -32,13 +30,21 @@ pub enum EvalError {
 }
 
 impl Size {
+    /// Precedence for parenthesization.
+    /// Non-binary variants (Var, Lit) return 4 — higher than any
+    /// binary op, so they never need parentheses.
     pub fn precedence(&self) -> usize {
         match self {
             Size::Add(_, _) | Size::Sub(_, _) => 1,
             Size::Mul(_, _) | Size::Div(_, _) => 2,
             Size::Pow(_, _) => 3,
-            _ => 99,
+            Size::Var(_) | Size::Lit(_) => 4,
         }
+    }
+
+    /// Right-associative? (Only Pow; all other size binops are left-assoc.)
+    pub fn is_right_assoc(&self) -> bool {
+        matches!(self, Size::Pow(_, _))
     }
 
     pub fn free_vars(&self) -> Set<Tid> {
@@ -50,8 +56,6 @@ impl Size {
             Size::Mul(a, b) => a.node.free_vars().union(b.node.free_vars()),
             Size::Div(a, b) => a.node.free_vars().union(b.node.free_vars()),
             Size::Pow(a, b) => a.node.free_vars().union(b.node.free_vars()),
-            Size::Max(a, b) => a.node.free_vars().union(b.node.free_vars()),
-            Size::Min(a, b) => a.node.free_vars().union(b.node.free_vars()),
         }
     }
 
@@ -93,16 +97,6 @@ impl Size {
                 let x = a.node.eval(ctx)?;
                 let y = b.node.eval(ctx)?;
                 Ok(x.pow(y as u32))
-            }
-            Size::Max(box a, box b) => {
-                let x = a.node.eval(ctx)?;
-                let y = b.node.eval(ctx)?;
-                Ok(x.max(y))
-            }
-            Size::Min(box a, box b) => {
-                let x = a.node.eval(ctx)?;
-                let y = b.node.eval(ctx)?;
-                Ok(x.min(y))
             }
         }
     }
@@ -171,18 +165,6 @@ where
             Size::Pow(box a, box b) => pretty_child(a.node.clone(), 3, false, allocator)
                 .append(allocator.text(" ^ "))
                 .append(pretty_child(b.node.clone(), 3, true, allocator)),
-            Size::Max(box a, box b) => allocator
-                .text("max(")
-                .append(a.pretty(allocator))
-                .append(allocator.text(", "))
-                .append(b.pretty(allocator))
-                .append(allocator.text(")")),
-            Size::Min(box a, box b) => allocator
-                .text("min(")
-                .append(a.pretty(allocator))
-                .append(allocator.text(", "))
-                .append(b.pretty(allocator))
-                .append(allocator.text(")")),
         }
     }
 
@@ -212,18 +194,10 @@ mod tests {
         Size::Var(Tid::from(v))
     }
 
-    fn max(a: Size, b: Size) -> Size {
-        Size::Max(Box::new(Spanned::dummy(a)), Box::new(Spanned::dummy(b)))
-    }
-
-    fn min(a: Size, b: Size) -> Size {
-        Size::Min(Box::new(Spanned::dummy(a)), Box::new(Spanned::dummy(b)))
-    }
-
     impl<'a> Arbitrary<'a> for Size {
         fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
             fn arb(u: &mut Unstructured, depth: usize) -> arbitrary::Result<Size> {
-                let max_variant = if depth > 3 { 1 } else { 8 };
+                let max_variant = if depth > 3 { 1 } else { 6 };
                 let variant = u.int_in_range(0..=max_variant)?;
                 Ok(match variant {
                     0 => Size::Var(u.arbitrary()?),
@@ -245,14 +219,6 @@ mod tests {
                         Box::new(Spanned::dummy(arb(u, depth + 1)?)),
                     ),
                     6 => Size::Pow(
-                        Box::new(Spanned::dummy(arb(u, depth + 1)?)),
-                        Box::new(Spanned::dummy(arb(u, depth + 1)?)),
-                    ),
-                    7 => Size::Max(
-                        Box::new(Spanned::dummy(arb(u, depth + 1)?)),
-                        Box::new(Spanned::dummy(arb(u, depth + 1)?)),
-                    ),
-                    8 => Size::Min(
                         Box::new(Spanned::dummy(arb(u, depth + 1)?)),
                         Box::new(Spanned::dummy(arb(u, depth + 1)?)),
                     ),
@@ -407,20 +373,6 @@ mod tests {
         );
         let ctx = Ctx::new();
         assert_eq!(size.eval(&ctx).unwrap(), 32);
-    }
-
-    #[test]
-    fn test_eval_max() {
-        let size = max(Size::Lit(5), Size::Lit(10));
-        let ctx = Ctx::new();
-        assert_eq!(size.eval(&ctx).unwrap(), 10);
-    }
-
-    #[test]
-    fn test_eval_min() {
-        let size = min(Size::Lit(5), Size::Lit(10));
-        let ctx = Ctx::new();
-        assert_eq!(size.eval(&ctx).unwrap(), 5);
     }
 
     #[test]

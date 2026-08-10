@@ -8,7 +8,6 @@ mod decl;
 mod delim_list;
 mod exp;
 mod kind;
-mod paren;
 mod size;
 mod style;
 mod trivia;

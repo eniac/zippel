@@ -11,7 +11,7 @@ use share::DocAllocator;
 
 use crate::ctx::{ALLOC, Doc, hardlines};
 use crate::delim_list::{DelimList, take_separator_gap_split};
-use crate::exp::{format_body_exp, format_relation};
+use crate::exp::{format_body, format_relation};
 use crate::style::Style;
 use crate::trivia::{
     Comment, TokenCursor, TokenStream, TriviaElement, TriviaGap, format_gap, gap_hard, gap_list,
@@ -57,14 +57,9 @@ pub fn format_decls(
         // Trailing gap after last decl — `sep = hardline` provides the
         // structural break; auto open/end handle comments.
         let trailing = cursor.advance_to(src_len);
-        let open = match trailing.first() {
-            Some(TriviaElement::Comment(c)) if c.at_line_start => Some(ALLOC.hardline()),
-            Some(TriviaElement::Comment(_)) => Some(ALLOC.text(" ")),
-            _ => None,
-        };
         parts.push(format_gap(
             trailing,
-            open,
+            None,
             None,
             Some(ALLOC.hardline()),
             style,
@@ -151,7 +146,7 @@ fn format_decl(
             };
             let open_comments = format_gap(open_gap, open, None, Some(ALLOC.line()), style);
 
-            let body = format_body_exp(body.as_ref(), cursor, end, style);
+            let body = format_body(body.as_ref(), cursor, end, style);
 
             ALLOC.concat([
                 gap_none(trim_if_clean(keyword_gap), style),
@@ -208,7 +203,7 @@ fn format_decl(
             // via their own inner group.
             let args_ret = ALLOC.concat([args, ret]).group();
 
-            let body = format_body_exp(body.as_ref(), cursor, end, style);
+            let body = format_body(body.as_ref(), cursor, end, style);
 
             ALLOC.concat([
                 gap_none(trim_if_clean(keyword_gap), style),

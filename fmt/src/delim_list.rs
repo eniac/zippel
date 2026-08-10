@@ -4,9 +4,7 @@ use share::DocAllocator;
 
 use crate::ctx::{ALLOC, Doc};
 use crate::style::Style;
-use crate::trivia::{
-    TokenCursor, TriviaElement, TriviaGap, format_gap, gap_list, gap_none, trim_if_clean,
-};
+use crate::trivia::{TokenCursor, TriviaGap, format_gap, gap_list, gap_none, trim_if_clean};
 
 /// Builder for items inside a delimited list.
 ///
@@ -19,6 +17,11 @@ use crate::trivia::{
 ///
 /// The close-delimiter trailing (no space after comment before `>`/`)`) is
 /// handled by `close_end = nil`.
+///
+/// All gaps passed to `push` and `push_sep` (leading gap, `before_sep`,
+/// `after_sep`) are trimmed internally via `trim_if_clean` — blank lines
+/// around separators and delimiters are treated as noise when no comments
+/// are present. Callers do not need to trim gaps before passing them in.
 pub(crate) struct DelimList<'a> {
     items: Vec<Doc<'static>>,
     is_first: bool,
@@ -75,8 +78,8 @@ impl<'a> DelimList<'a> {
         self.items.push(sep_terminated_item(
             item,
             self.separator,
-            before_sep,
-            after_sep,
+            trim_if_clean(before_sep),
+            trim_if_clean(after_sep),
             self.style,
         ));
         self.is_first = false;
@@ -123,8 +126,9 @@ impl<'a> DelimList<'a> {
         let style = self.style;
         let items = self.items;
         let indent = style.indent_width() as isize;
+
         let close_comments = close_comments.trim_end();
-        let close_needs_break = close_comments.needs_line_break();
+        let close_needs_break = close_comments.needs_end_newline();
         let close_sep = if close_needs_break {
             ALLOC.hardline()
         } else {
@@ -135,27 +139,18 @@ impl<'a> DelimList<'a> {
         } else {
             Some(ALLOC.line_())
         };
-        // Before close delimiter: inline comments get `space` open,
-        // at_line_start comments get `hardline` open. The `line_()` before
-        // the close delimiter is inside the group and may not break in flat
-        // mode, so we need explicit `hardline` for at_line_start comments.
-        let close_open = match close_comments.first() {
-            Some(TriviaElement::Comment(c)) if c.at_line_start => Some(ALLOC.hardline()),
-            Some(TriviaElement::Comment(_)) => Some(ALLOC.text(" ")),
-            _ => None,
-        };
-        let close_gap = format_gap(
-            close_comments,
-            close_open,
-            close_end,
-            Some(close_sep),
-            style,
-        );
+        // Before close delimiter: auto open (hardline for at_line_start,
+        // space for inline). The `line_()` sep is inside the group and may
+        // not break in flat mode, but auto open provides explicit `hardline`
+        // for at_line_start comments regardless.
+        let close_gap = format_gap(close_comments, None, close_end, Some(close_sep), style);
+
         let trailing = if self.trailing_sep {
             ALLOC.text(self.separator).flat_alt(ALLOC.nil())
         } else {
             ALLOC.nil()
         };
+
         let inner = ALLOC.concat([ALLOC
             .concat([ALLOC.line_(), ALLOC.concat(items), trailing, close_gap])
             .nest(indent)]);
@@ -183,12 +178,7 @@ fn sep_terminated_item(
 
     if is_multiline {
         // Rule 1: Multiline gap — comma first, all comments after.
-        let needs_break = combined.needs_line_break();
-        let open = match combined.first() {
-            Some(TriviaElement::Comment(c)) if c.at_line_start => Some(ALLOC.hardline()),
-            Some(TriviaElement::Comment(_)) => Some(ALLOC.text(" ")),
-            _ => None,
-        };
+        let needs_break = combined.needs_end_newline();
         let sep = if needs_break {
             ALLOC.hardline()
         } else {
@@ -202,7 +192,7 @@ fn sep_terminated_item(
         ALLOC.concat([
             item,
             ALLOC.text(separator),
-            format_gap(combined, open, end, Some(sep), style),
+            format_gap(combined, None, end, Some(sep), style),
         ])
     } else {
         // Rule 2/3: Inline gap. Use flat_alt to switch between
@@ -231,13 +221,28 @@ fn sep_terminated_item(
         let flat = ALLOC.concat([item.clone(), before_flat, ALLOC.text(separator), after_flat]);
 
         // --- Broken layout: comma first, A on same line, B on own line ---
+        //
+        // Four cases depending on which gaps have comments:
+        // 1. Both empty:   `item,\n` — after_broken provides the hardline.
+        // 2. Both used:    `item, /*A*/\n/*B*/\n` — after_broken's open
+        //    hardline separates A from B; its end hardline separates B
+        //    from the next item.
+        // 3. Before only:  `item, /*A*/\n` — after_broken (empty) provides
+        //    the hardline to the next item.
+        // 4. After only:   `item,\n/*B*/\n` — after_broken's open hardline
+        //    puts B on its own line.
+        //
+        // Key: before_broken uses `end = nil` (not hardline) to avoid a
+        // double hardline with after_broken's open. after_broken always
+        // provides the break — either via its open hardline (when comments
+        // are present) or as a bare hardline (when empty).
         let before_broken = if before_sep.is_empty() {
             ALLOC.nil()
         } else {
             format_gap(
                 before_sep,
-                Some(ALLOC.text(" ")),  // space before /*A*/ after comma
-                Some(ALLOC.hardline()), // hardline after /*A*/
+                Some(ALLOC.text(" ")), // space before /*A*/ after comma
+                Some(ALLOC.nil()),     // no trailing break — after_broken provides it
                 Some(ALLOC.nil()),
                 style,
             )

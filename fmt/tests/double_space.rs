@@ -339,7 +339,7 @@ fn comment_before_close_brack_in_vec() {
 fn comment_after_open_brack_in_comprehension() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { [ /* c */ a for x in 0..1] }",
-        "fn f<F: Field>(instance a: F) -> F {\n    [ /* c */ a for x in 0..1]\n}\n",
+        "fn f<F: Field>(instance a: F) -> F {\n    [/* c */ a for x in 0..1]\n}\n",
     );
 }
 
@@ -399,7 +399,7 @@ fn comment_between_fun_var_and_arrow() {
 fn comment_between_arrow_and_body_in_fun() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { (fun(x) => /* c */ x + a) }",
-        "fn f<F: Field>(instance a: F) -> F {\n    fun (x) =>  /* c */ x + a\n}\n",
+        "fn f<F: Field>(instance a: F) -> F {\n    fun (x) => /* c */ x + a\n}\n",
     );
 }
 
@@ -686,6 +686,25 @@ fn comment_before_close_angle_in_poly_type() {
     assert_ok(
         "fn f<F: Field>(instance a: Poly<F, 1, 2 /* c */ >) -> F { a }",
         "fn f<F: Field>(instance a: Uni<F, 2 /* c */>) -> F {\n    a\n}\n",
+    );
+}
+
+#[test]
+fn uni_source_with_comment_preserves_uni() {
+    // Uni<F, /*A*/ N> must stay Uni, not become Poly<F, /*A*/ 1, N>.
+    // The comment belongs to N, not to the implicit M=1.
+    assert_ok(
+        "fn f<F: Field>(instance a: Uni<F, /*A*/ 2>) -> F { a }",
+        "fn f<F: Field>(instance a: Uni<F, /*A*/ 2>) -> F {\n    a\n}\n",
+    );
+}
+
+#[test]
+fn mle_source_with_comment_preserves_mle() {
+    // Mle<F, /*A*/ N> must stay Mle, not become Poly<F, N, /*A*/ 1>.
+    assert_ok(
+        "fn f<F: Field>(instance a: Mle<F, /*A*/ 2>) -> F { a }",
+        "fn f<F: Field>(instance a: Mle<F, /*A*/ 2>) -> F {\n    a\n}\n",
     );
 }
 
@@ -1897,7 +1916,7 @@ fn empty_body_trim_blank_lines_proto() {
 fn empty_body_trim_leading_blank_fn() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F {\n\n    /* c */}",
-        "fn f<F: Field>(instance a: F) -> F {\n    /* c */\n}\n",
+        "fn f<F: Field>(instance a: F) -> F { /* c */ }\n",
     );
 }
 
@@ -1925,5 +1944,77 @@ fn empty_body_trim_blank_lines_block_proto() {
     assert_ok(
         "proto p<F: Field>(instance a: F) where a == a {\n\n    /* c */\n\n}",
         "proto p<F: Field>(instance a: F) where a == a {\n    /* c */\n}\n",
+    );
+}
+
+#[test]
+fn trim_blank_lines_around_separator_no_comments() {
+    assert_ok(
+        "fn f<F: Field>(\n\n    instance a: F,\n\n    instance b: F,\n\n) -> F {\n    a\n}",
+        "fn f<F: Field>(instance a: F, instance b: F) -> F {\n    a\n}\n",
+    );
+}
+
+#[test]
+fn trim_blank_lines_around_separator_with_comments() {
+    assert_ok(
+        "fn f<F: Field>(instance a: F,\n\n    // before b\n    instance b: F) -> F {\n    a\n}",
+        "fn f<F: Field>(\n    instance a: F,\n\n    // before b\n    instance b: F,\n) -> F {\n    a\n}\n",
+    );
+}
+
+#[test]
+fn trim_blank_lines_before_separator_with_comment() {
+    // Blank lines around a block comment make it multiline — the
+    // formatter preserves the break. trim_if_clean only trims when
+    // there are no comments.
+    assert_ok(
+        "fn f<F: Field>(instance a: F\n\n    /* c */, instance b: F) -> F {\n    a\n}",
+        "fn f<F: Field>(\n    instance a: F,\n\n    /* c */\n    instance b: F,\n) -> F {\n    a\n}\n",
+    )
+}
+
+#[test]
+fn trim_blank_lines_after_separator_with_comment() {
+    assert_ok(
+        "fn f<F: Field>(instance a: F,\n\n    /* c */ instance b: F) -> F {\n    a\n}",
+        "fn f<F: Field>(\n    instance a: F,\n\n    /* c */\n    instance b: F,\n) -> F {\n    a\n}\n",
+    )
+}
+
+#[test]
+fn trim_blank_lines_around_separator_inline_block_no_blank() {
+    // Inline block comment with no blank lines stays inline.
+    assert_ok(
+        "fn f<F: Field>(instance a: F /* c */, instance b: F) -> F {\n    a\n}",
+        "fn f<F: Field>(instance a: F /* c */, instance b: F) -> F {\n    a\n}\n",
+    )
+}
+
+#[test]
+fn broken_sep_both_comments() {
+    // Case 2: both before_sep and after_sep have comments.
+    // Long enough to force broken mode.
+    assert_ok(
+        "fn f<F: Field>(instance aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: F /*A*/, /*B*/ instance b: F) -> F { a }",
+        "fn f<F: Field>(\n    instance aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: F, /*A*/\n    /*B*/\n    instance b: F,\n) -> F {\n    a\n}\n",
+    );
+}
+
+#[test]
+fn broken_sep_before_comment_only() {
+    // Case 3: before_sep has comment, after_sep is empty.
+    assert_ok(
+        "fn f<F: Field>(instance aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: F /*A*/, instance b: F) -> F { a }",
+        "fn f<F: Field>(\n    instance aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: F, /*A*/\n    instance b: F,\n) -> F {\n    a\n}\n",
+    );
+}
+
+#[test]
+fn broken_sep_after_comment_only() {
+    // Case 4: before_sep is empty, after_sep has comment.
+    assert_ok(
+        "fn f<F: Field>(instance aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: F, /*B*/ instance b: F) -> F { a }",
+        "fn f<F: Field>(\n    instance aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: F,\n    /*B*/\n    instance b: F,\n) -> F {\n    a\n}\n",
     );
 }

@@ -44,6 +44,33 @@ pub(crate) enum TriviaElement {
     Comment(Comment),
 }
 
+impl TriviaElement {
+    /// Whether this element needs to begin on a new line.
+    ///
+    /// Used to decide the separator *before* this element.
+    fn needs_start_newline(&self) -> bool {
+        match self {
+            TriviaElement::BlankLines(_) => true,
+            TriviaElement::Comment(c) => c.at_line_start,
+        }
+    }
+
+    /// Whether a newline must follow this element.
+    ///
+    /// Used to decide the separator *after* this element (i.e. before
+    /// the next element, or the `end` doc). Uses `at_line_end` (stable
+    /// across formats), never `at_line_start` (unstable).
+    fn needs_end_newline(&self) -> bool {
+        match self {
+            TriviaElement::BlankLines(_) => false,
+            TriviaElement::Comment(c) => match c.kind {
+                CommentKind::Line => true,
+                CommentKind::Block | CommentKind::MultilineBlock => c.at_line_end,
+            },
+        }
+    }
+}
+
 /// Lossless trivia between two semantic source anchors.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TriviaGap {
@@ -74,12 +101,10 @@ impl TriviaGap {
         self
     }
 
-    /// Whether the last element is a Comment that forces a line break,
-    /// or a BlankLines (which always implies a break).
-    pub(crate) fn needs_line_break(&self) -> bool {
+    /// Whether the last element needs a newline after it.
+    pub(crate) fn needs_end_newline(&self) -> bool {
         match self.layout.last() {
-            Some(TriviaElement::Comment(c)) => c.forces_line_break(),
-            Some(TriviaElement::BlankLines(_)) => true,
+            Some(e) => e.needs_end_newline(),
             None => false,
         }
     }
@@ -147,17 +172,6 @@ impl TriviaGap {
 /// comments are present.
 pub(crate) fn trim_if_clean(gap: TriviaGap) -> TriviaGap {
     if !gap.has_comments() { gap.trim() } else { gap }
-}
-
-impl Comment {
-    fn forces_line_break(&self) -> bool {
-        match self.kind {
-            CommentKind::Line => true,
-            CommentKind::Block | CommentKind::MultilineBlock => {
-                self.at_line_start || self.at_line_end
-            }
-        }
-    }
 }
 
 struct CommentCursor<'a> {
@@ -379,64 +393,78 @@ pub(crate) fn format_gap(
         return sep.unwrap_or_else(|| ALLOC.nil());
     }
 
-    // Compute auto open if not explicitly provided. For at_line_start
-    // comments, use `hardline` — the comment starts a new line. For
-    // inline comments, use `space`.
+    // Compute auto open if not explicitly provided. Only applies when
+    // the first element is a Comment (BlankLines provides its own break).
     let open = open.or_else(|| match gap.first() {
-        Some(TriviaElement::Comment(c)) if c.at_line_start => Some(ALLOC.hardline()),
-        Some(TriviaElement::Comment(_)) => Some(ALLOC.text(" ")),
+        Some(e @ TriviaElement::Comment(_)) => {
+            if e.needs_start_newline() {
+                Some(ALLOC.hardline())
+            } else {
+                Some(ALLOC.text(" "))
+            }
+        }
         _ => None,
     });
 
-    // Compute auto end if not explicitly provided. Breaking comments
-    // get an automatic hardline. Non-breaking comments get a space.
-    // Non-comment gaps get nil unless the caller passes `end` explicitly.
+    // Compute auto end if not explicitly provided. Only applies when
+    // the last element is a Comment (BlankLines provides its own break).
     let end = end.or_else(|| match gap.last() {
-        Some(TriviaElement::Comment(c)) if c.forces_line_break() => Some(ALLOC.hardline()),
-        Some(TriviaElement::Comment(_)) => Some(ALLOC.text(" ")),
+        Some(e @ TriviaElement::Comment(_)) => {
+            if e.needs_end_newline() {
+                Some(ALLOC.hardline())
+            } else {
+                Some(ALLOC.text(" "))
+            }
+        }
         _ => None,
     });
 
     let last_is_comment = matches!(gap.layout.last(), Some(TriviaElement::Comment(_)));
-    let last_index = gap.layout.len() - 1;
     let mut parts = Vec::new();
-    let mut after_hardline = false;
     let mut open = open;
 
-    let mut iter = gap.layout.into_iter().peekable();
-    let mut index = 0;
-    while let Some(element) = iter.next() {
-        match element {
-            TriviaElement::Comment(comment) => {
-                if index == 0 {
-                    if let Some(open) = open.take() {
-                        parts.push(open);
-                    }
-                } else if comment.at_line_start {
-                    if !after_hardline {
-                        parts.push(ALLOC.hardline());
-                    }
-                } else if !after_hardline {
+    let layout = gap.layout;
+    let n = layout.len();
+    for index in 0..n {
+        let element = &layout[index];
+        // Separator before this element (not for the first).
+        if index > 0 {
+            let prev = &layout[index - 1];
+            let is_blank = matches!(element, TriviaElement::BlankLines(_));
+            let prev_is_blank = matches!(prev, TriviaElement::BlankLines(_));
+            if !is_blank && !prev_is_blank {
+                if prev.needs_end_newline() || element.needs_start_newline() {
+                    parts.push(ALLOC.hardline());
+                } else {
                     parts.push(ALLOC.text(" "));
                 }
-
-                let breaks = comment.forces_line_break();
-                parts.push(ALLOC.text(comment.text));
-
-                let is_last = index == last_index;
-                let next_is_blank = matches!(iter.peek(), Some(TriviaElement::BlankLines(_)));
-                if breaks && !is_last && !next_is_blank {
-                    parts.push(ALLOC.hardline());
-                }
-                after_hardline = breaks;
             }
-            TriviaElement::BlankLines(n) => {
-                let capped = n.min(style.max_blank_lines);
+        } else if let Some(open) = open.take() {
+            parts.push(open);
+        }
+
+        match element {
+            TriviaElement::Comment(comment) => {
+                if comment.is_multiline_block() {
+                    // Split multiline block comments into lines so the
+                    // doc builder applies indentation to each line via
+                    // hardlines. Strip source whitespace from inner
+                    // lines — the doc builder's nesting handles indent.
+                    let lines: Vec<&str> = comment.text.split('\n').collect();
+                    parts.push(ALLOC.text(lines[0].to_string()));
+                    for line in &lines[1..] {
+                        parts.push(ALLOC.hardline());
+                        parts.push(ALLOC.text(line.trim_start().to_string()));
+                    }
+                } else {
+                    parts.push(ALLOC.text(comment.text.clone()));
+                }
+            }
+            TriviaElement::BlankLines(blanks) => {
+                let capped = (*blanks).min(style.max_blank_lines);
                 parts.push(hardlines(1 + capped));
-                after_hardline = true;
             }
         }
-        index += 1;
     }
 
     if last_is_comment && let Some(end) = end {
