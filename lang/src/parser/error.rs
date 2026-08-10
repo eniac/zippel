@@ -3,9 +3,17 @@
 //! `ParseError` is a pure data struct. `render_error` produces an ariadne
 //! diagnostic report. `rich_to_parse_error` converts chumsky's `Rich` error
 //! into `ParseError`.
+//!
+//! ## Error message style
+//!
+//! Messages are descriptive statements, never questions. The compiler states
+//! what it found and what it suggests — it does not ask the user to confirm.
+//! Follows rustc's diagnostics style guide: avoid "did you mean ...?", use
+//! "there is a keyword with a similar name: `for`" instead.
 
 use chumsky::error::{RichPattern, RichReason};
 
+use super::edit_distance::find_best_match;
 use super::label::{Context, CtxError, Terminal};
 use super::lexer::Token;
 
@@ -269,6 +277,15 @@ fn detect_help(
     expected: &[Expected],
     contexts: &[(Context, std::ops::Range<usize>)],
 ) -> Option<String> {
+    detect_pattern_help(found, expected, contexts)
+}
+
+/// Pattern-based help detection — checks for common error patterns.
+fn detect_pattern_help(
+    found: &Option<Token<'static>>,
+    expected: &[Expected],
+    contexts: &[(Context, std::ops::Range<usize>)],
+) -> Option<String> {
     let in_expr = contexts.iter().any(|(c, _)| *c == Context::Expression);
     let in_decl = contexts.iter().any(|(c, _)| *c == Context::Declaration);
     let in_type = contexts.iter().any(|(c, _)| *c == Context::Type);
@@ -502,9 +519,7 @@ fn detect_help(
     // Where clause missing `==`: found `;`, expected `==`, in where clause.
     // e.g. `where random<F>;` should be `where random<F> == something;`
     if matches!(found, Some(Token::Semi)) && expects(&Token::EqEq) && in_where_clause {
-        return Some(
-            "where clause constraints use `==` — did you mean `expr == value;`?".to_string(),
-        );
+        return Some("where clause constraints use `==` (e.g., `expr == value;`)".to_string());
     }
 
     // Using `=` instead of `==`: found `=`, expected `==`, in expression.
@@ -544,6 +559,112 @@ fn detect_help(
     None
 }
 
+/// Check if the found token is a misspelled keyword and suggest the correct one.
+///
+/// Only suggests when the expected list is long (≥4 items) — in that case,
+/// `summarize_expected` produces a generic grouped message like "an operator
+/// or ']'" that doesn't clearly show individual expected tokens. A "did you
+/// mean" suggestion adds value there.
+///
+/// When the expected list is short (≤3), the error already lists specific
+/// tokens (e.g. "expected 'where'"), so a suggestion would be redundant.
+fn detect_keyword_suggestion(
+    found: &Option<Token<'static>>,
+    expected: &[Expected],
+    contexts: &[(Context, std::ops::Range<usize>)],
+) -> Option<String> {
+    // Only suggest when the expected list is long enough that
+    // summarize_expected will produce a generic grouped message.
+    if expected.len() < 4 {
+        return None;
+    }
+
+    let found_text = found.as_ref().and_then(|t| match t {
+        Token::Id(s) => Some(&**s),
+        _ => None,
+    })?;
+
+    let in_decl = contexts.iter().any(|(c, _)| *c == Context::Declaration);
+    let in_expr = contexts.iter().any(|(c, _)| *c == Context::Expression);
+    let in_type = contexts.iter().any(|(c, _)| *c == Context::Type);
+    let in_arg = contexts.iter().any(|(c, _)| *c == Context::Argument);
+    let in_where_clause = contexts.iter().any(|(c, _)| *c == Context::WhereClause);
+
+    let candidates = context_keywords(in_decl, in_expr, in_type, in_arg, in_where_clause);
+    find_best_match(&candidates, found_text).map(|s| s.to_string())
+}
+
+/// Return keyword candidates appropriate for the current parser context.
+///
+/// Used by the edit-distance fallback in `detect_help` to avoid suggesting
+/// keywords that make no sense in the current position (e.g. suggesting `let`
+/// in a type context).
+fn context_keywords(
+    in_decl: bool,
+    in_expr: bool,
+    in_type: bool,
+    in_arg: bool,
+    in_where_clause: bool,
+) -> Vec<&'static str> {
+    // Type keywords are always available in type contexts.
+    let type_kws = &[
+        "Field", "Group", "Pairing", "Scalar", "Size", "Unit", "Fin", "Poly", "Uni", "Mle",
+    ];
+
+    // Expression keywords.
+    let expr_kws = &[
+        "fun",
+        "for",
+        "in",
+        "interpolate",
+        "poly",
+        "eval",
+        "coef",
+        "mle",
+        "dot",
+        "reduce",
+        "random",
+        "challenge",
+        "assert",
+        "verify",
+        "pair",
+    ];
+
+    // Declaration keywords.
+    let decl_kws = &["let", "fn", "proto", "type", "where"];
+
+    // Argument qualifier keywords.
+    let qual_kws = &["instance", "witness", "extra", "uniform"];
+
+    let mut kws = Vec::new();
+
+    if in_type {
+        kws.extend_from_slice(type_kws);
+    }
+    if in_expr {
+        kws.extend_from_slice(expr_kws);
+    }
+    if in_decl {
+        kws.extend_from_slice(decl_kws);
+    }
+    if in_arg {
+        kws.extend_from_slice(qual_kws);
+    }
+    if in_where_clause {
+        kws.push("where");
+    }
+
+    // If no context matched, provide all keywords as a safe fallback.
+    if kws.is_empty() {
+        kws.extend_from_slice(type_kws);
+        kws.extend_from_slice(expr_kws);
+        kws.extend_from_slice(decl_kws);
+        kws.extend_from_slice(qual_kws);
+    }
+
+    kws
+}
+
 // ── error_summary / error_label_msg ────────────────────────────────────
 
 /// Build a user-friendly top-level summary message for the error.
@@ -561,7 +682,7 @@ fn error_summary(error: &ParseError) -> String {
 
     // If we have context labels, mention what we were parsing.
     if let Some((label, _)) = error.contexts.first() {
-        format!("{found} while parsing {label}")
+        format!("{found} while parsing this {label}")
     } else if error.expected.is_empty() {
         found
     } else {
@@ -578,13 +699,24 @@ fn error_label_msg(error: &ParseError) -> String {
         return msg.clone();
     }
 
+    // Check if the found token is a misspelled keyword not already in expected.
+    let suggestion = detect_keyword_suggestion(&error.found, &error.expected, &error.contexts);
+
     let found = error
         .found
         .as_ref()
-        .map(|t| format!("found '{t}'"))
+        .map(|t| {
+            if let Some(sug) = &suggestion {
+                format!("found '{t}', there is a keyword with a similar name: `{sug}`")
+            } else {
+                format!("found '{t}'")
+            }
+        })
         .unwrap_or_else(|| "found end of input".to_string());
 
-    if error.expected.is_empty() {
+    // When we have a suggestion, skip the generic "expected ..." — it's
+    // noise next to a specific keyword recommendation.
+    if suggestion.is_some() || error.expected.is_empty() {
         found
     } else {
         format!(
@@ -620,9 +752,10 @@ pub fn render_error(error: &ParseError, filename: &str, src: &str) -> String {
             .with_color(ariadne::Color::Red),
     );
 
-    // Add context labels (e.g. "while parsing this expression") as
-    // secondary yellow labels, like rustc does.
-    for (label, span) in &error.contexts {
+    // Add the innermost context label (e.g. "while parsing this expression")
+    // as a secondary yellow label, like rustc does. Only show the innermost
+    // context — the full parser call stack is noise.
+    if let Some((label, span)) = error.contexts.first() {
         builder = builder.with_label(
             Label::new((filename.to_string(), span.clone()))
                 .with_message(format!("while parsing this {label}"))
@@ -1243,6 +1376,82 @@ mod tests {
         );
     }
 
+    // ── Did-you-mean keyword suggestion tests ──────────────────────────
+    // Suggestions appear in the error label (not the help tip) and only
+    // when the suggested keyword is NOT already in the expected list.
+
+    /// Helper: parse and return the label message from the first error.
+    fn label_of(src: &str) -> String {
+        let (_, errors) = parse_decls(src);
+        assert!(!errors.is_empty(), "expected parse error for: {src}");
+        error_label_msg(&errors[0])
+    }
+
+    #[test]
+    fn did_you_mean_for() {
+        // `fro` is close to `for`. The expected list is long (operators + `]` + `for`),
+        // so summarize_expected produces a generic "an operator or ']'" message.
+        // The suggestion replaces the generic "expected" with a specific keyword.
+        let label = label_of("fn f<F: Field>(instance a: F) -> F { [a fro x in 0..N] }");
+        assert!(
+            label.contains("similar name: `for`"),
+            "expected suggestion in label: {label}"
+        );
+        assert!(
+            !label.contains("expected"),
+            "should not include generic 'expected' when suggestion is present: {label}"
+        );
+    }
+
+    #[test]
+    fn context_label_shows_innermost_only() {
+        // Error inside expression inside declaration should show only
+        // "while parsing this expression", not the full call stack.
+        let src = "fn f<F: Field>(instance a: F) -> F { [a fro x in 0..N] }";
+        let (_, errors) = parse_decls(src);
+        assert!(!errors.is_empty());
+        let rendered = render_error(&errors[0], "test.zp", src);
+        assert!(
+            rendered.contains("while parsing this expression"),
+            "should show innermost context: {rendered}"
+        );
+        assert!(
+            !rendered.contains("while parsing this declaration"),
+            "should not show outer context: {rendered}"
+        );
+    }
+
+    #[test]
+    fn did_you_mean_no_duplicate_when_keyword_expected() {
+        // `wher` is close to `where`, and `where` IS in the expected list.
+        // The error already says "expected 'where'", so no suggestion.
+        let label = label_of("proto p<F: Field>(instance a: F) wher a == a { () }");
+        assert!(
+            !label.contains("similar name"),
+            "should not suggest when keyword already expected: {label}"
+        );
+        // But the pattern-based help should still fire.
+        let (_, errors) = parse_decls("proto p<F: Field>(instance a: F) wher a == a { () }");
+        assert!(
+            errors.iter().any(|e| e
+                .help
+                .as_deref()
+                .unwrap_or("")
+                .contains("missing `where` keyword")),
+            "pattern help should still fire"
+        );
+    }
+
+    #[test]
+    fn did_you_mean_no_suggestion_for_unrelated() {
+        // `qqqq` is not close to any keyword — no suggestion in label.
+        let label = label_of("proto p<F: Field>(instance a: F) qqqq a == a { () }");
+        assert!(
+            !label.contains("similar name"),
+            "should not suggest for unrelated identifier: {label}"
+        );
+    }
+
     // ── summarize_expected tests ──────────────────────────────────────
 
     /// Helper: parse a source and return the summary string from the first error.
@@ -1333,3 +1542,4 @@ mod tests {
         assert!(!s.is_empty(), "got: {s}");
     }
 }
+// temp debug

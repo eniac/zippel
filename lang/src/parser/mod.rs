@@ -4,6 +4,7 @@
 //! - The precedence table is in `chumsky::pratt`, queryable — no duplication.
 //! - Error recovery is built-in via chumsky.
 
+mod edit_distance;
 pub mod error;
 mod label;
 mod lexer;

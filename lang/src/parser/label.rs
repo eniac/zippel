@@ -74,19 +74,7 @@ impl Context {
 
 impl std::fmt::Display for Context {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        f.write_str(match self {
-            Context::Declaration => "a declaration",
-            Context::Expression => "an expression",
-            Context::Type => "a type",
-            Context::Kind => "a kind annotation",
-            Context::Argument => "an argument",
-            Context::WhereClause => "a where clause",
-            Context::GenericParams => "generic parameters",
-            Context::ArgumentList => "an argument list",
-            Context::TypeAlias => "a type alias",
-            Context::RangeBound => "a range bound",
-            Context::CallArgs => "call arguments",
-        })
+        f.write_str(self.as_str())
     }
 }
 
