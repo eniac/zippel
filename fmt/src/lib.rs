@@ -2,6 +2,18 @@
 //!
 //! Produces canonical-formatted output from Zippel source text.
 //! Round-trip safe: `parse(fmt(src)) == parse(src)` (AST equality).
+//!
+//! # Gap ownership convention
+//!
+//! Functions that return `Doc<'static>` (not `(TriviaGap, Doc<'static>)`)
+//! own their leading gap — they consume it from the cursor and format
+//! it internally. Callers must NOT advance the cursor past the
+//! expression's start before calling these functions.
+//!
+//! Functions that return `(TriviaGap, Doc<'static>)` (e.g.
+//! `format_exp`) do NOT own their leading gap — they return it to the
+//! caller, who is responsible for formatting it with the appropriate
+//! `gap_*` function or `format_gap` call.
 
 mod ctx;
 mod decl;

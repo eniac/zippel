@@ -11,7 +11,7 @@ use crate::delim_list::{DelimList, take_separator_gap_split};
 use crate::kind::format_kind;
 use crate::size::{format_range, format_size};
 use crate::style::Style;
-use crate::trivia::{TokenCursor, TriviaGap, gap_none, gap_space, trim_if_clean};
+use crate::trivia::{TokenCursor, TriviaGap, gap_none, gap_space};
 
 pub(crate) fn format_typevars(
     typevars: &TypeVars<Size>,
@@ -20,7 +20,7 @@ pub(crate) fn format_typevars(
     style: &Style,
 ) -> Doc<'static> {
     let open_comments = gap_none(
-        trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LAngle))),
+        cursor.advance_to_token(end, |token| matches!(token, Token::LAngle)),
         style,
     );
     let mut list = DelimList::new(style, ",", true);
@@ -46,7 +46,7 @@ fn format_typevar(
     let end = typevar.span.end;
     let id_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
     let colon = gap_none(
-        trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::Colon))),
+        cursor.advance_to_token(end, |token| matches!(token, Token::Colon)),
         style,
     );
     let (kind_gap, kind_doc) = format_kind(&typevar.node.kind, cursor, end, style);
@@ -54,7 +54,7 @@ fn format_typevar(
         ALLOC.text(typevar.node.id.to_string()),
         colon,
         ALLOC.text(":"),
-        gap_space(trim_if_clean(kind_gap), style),
+        gap_space(kind_gap, style),
         kind_doc,
     ]);
     (id_gap, doc)
@@ -90,7 +90,7 @@ pub(crate) fn format_typ(
         Typ::Fin(range) => {
             let keyword_gap = cursor.advance_to_token(end, |token| matches!(token, Token::KwFin));
             let open = gap_none(
-                trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LAngle))),
+                cursor.advance_to_token(end, |token| matches!(token, Token::LAngle)),
                 style,
             );
             let (range_gap, range_doc) = format_range(range, cursor, end, style);
@@ -176,7 +176,7 @@ fn format_poly(
         matches!(t, Token::KwPolyTy | Token::KwUni | Token::KwMleTy)
     });
     let open = gap_none(
-        trim_if_clean(cursor.advance_to_token(end, |t| matches!(t, Token::LAngle))),
+        cursor.advance_to_token(end, |t| matches!(t, Token::LAngle)),
         style,
     );
     let base_gap = cursor.advance_to_token(end, |t| matches!(t, Token::Id(_)));
@@ -288,7 +288,7 @@ pub(crate) fn format_field_items<N, T, F>(
     for (index, (name, value)) in fields.iter().enumerate() {
         let name_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
         let colon = gap_none(
-            trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::Colon))),
+            cursor.advance_to_token(end, |token| matches!(token, Token::Colon)),
             style,
         );
         let (value_gap, value_doc) = format_value(value, cursor, value.span.end, style);
@@ -296,7 +296,7 @@ pub(crate) fn format_field_items<N, T, F>(
             ALLOC.text(name.to_string()),
             colon,
             ALLOC.text(":"),
-            gap_space(trim_if_clean(value_gap), style),
+            gap_space(value_gap, style),
             value_doc,
         ]);
         if index + 1 < fields.len() {

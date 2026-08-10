@@ -1,4 +1,57 @@
 //! Comment cursor and token stream for the formatter.
+//!
+//! # Idempotency
+//!
+//! Formatting is idempotent: `format(format(src)) == format(src)`. This
+//! is not trivial because the formatter moves comments (dropping
+//! redundant parens, applying sugar, merging gaps from skipped tokens),
+//! which can change `at_line_start` / `at_line_end` — properties
+//! computed from source positions that the formatter relies on.
+//!
+//! ## Why it works: self-stabilizing decisions
+//!
+//! Every layout decision in `format_gap` is one of:
+//!
+//! 1. **Inter-comment separator** (between elements A and B):
+//!    `prev.needs_end_newline() || B.needs_start_newline()` → hardline,
+//!    else space.
+//! 2. **Auto `open`** (before first element, when caller passes
+//!    `open=None`): `first.needs_start_newline()` → hardline, else
+//!    space.
+//! 3. **Auto `end`** (after last element, when caller passes
+//!    `end=None`): `last.needs_end_newline()` → hardline, else space.
+//!
+//! Each decision produces output that *reinforces the conditions that
+//! justified it*:
+//!
+//! - **Hardline emitted** → the preceding element ends a line
+//!   (`at_line_end→true`), the following element starts a line
+//!   (`at_line_start→true`). On re-parse, the same conditions hold →
+//!   same decision.
+//! - **Space emitted** → the preceding element is inline
+//!   (`at_line_end→false`), the following element is inline
+//!   (`at_line_start→false`). On re-parse, the same conditions hold →
+//!   same decision.
+//!
+//! ## Explicit `open` / `end`
+//!
+//! When callers pass explicit `open`/`end` (e.g. `gap_hard` passes
+//! `end=hardline`), the same value is used on both passes because the
+//! code path and AST structure are the same after the first pass
+//! (parens already dropped, sugar already applied). The comment's
+//! `at_line_start`/`at_line_end` may change, but it doesn't matter —
+//! the explicit value overrides the auto decision.
+//!
+//! ## External use of `needs_end_newline`
+//!
+//! Callers outside this module use `TriviaGap::needs_end_newline()` to
+//! choose between a hardline and a softer separator (`nil`, `space`,
+//! `line_`, `line`). The hardline case is self-stabilizing (hardline →
+//! comment at line end → `needs_end_newline` true → hardline). The
+//! softer case is self-stabilizing when no break is emitted (comment
+//! stays inline → `at_line_end` false → `needs_end_newline` false →
+//! same choice). Callers using `line_()` / `line()` (conditional
+//! breaks) should verify idempotency for their specific case.
 
 use crate::ctx::hardlines;
 use crate::style::Style;
@@ -102,7 +155,12 @@ impl TriviaGap {
     }
 
     /// Whether the last element needs a newline after it.
-    pub(crate) fn needs_end_newline(&self) -> bool {
+    ///
+    /// Callers can use this to make layout decisions (e.g. whether to
+    /// break a delimited list). See the module-level documentation for
+    /// idempotency requirements — callers must ensure their decisions
+    /// are self-stabilizing.
+    pub fn needs_end_newline(&self) -> bool {
         match self.layout.last() {
             Some(e) => e.needs_end_newline(),
             None => false,
@@ -163,15 +221,21 @@ impl TriviaGap {
     pub(crate) fn trim(self) -> Self {
         self.trim_start().trim_end()
     }
-}
 
-/// Trim blank lines from a gap when it has no comments.
-///
-/// Use this at call sites where blank lines are noise (intra-expression
-/// gaps around `=`, `->`, `==`, etc.) but should be preserved when
-/// comments are present.
-pub(crate) fn trim_if_clean(gap: TriviaGap) -> TriviaGap {
-    if !gap.has_comments() { gap.trim() } else { gap }
+    /// Trim blank lines when the gap has no comments.
+    ///
+    /// Used internally by `advance_to_token`. Also used by
+    /// `take_separator_gap_split` for the after-separator gap (sourced
+    /// from `advance_to` because it must not consume the next token).
+    /// Callers of `advance_to` trim explicitly via `.trim_start()` /
+    /// `.trim_end()` / `.trim()` or `.trim_if_clean()`.
+    pub(crate) fn trim_if_clean(self) -> Self {
+        if !self.has_comments() {
+            self.trim()
+        } else {
+            self
+        }
+    }
 }
 
 struct CommentCursor<'a> {
@@ -306,6 +370,21 @@ impl<'a> TokenCursor<'a> {
         }
     }
 
+    /// Advance the cursor to a byte position, returning the gap
+    /// (comments and blank lines) between the current position and
+    /// `target`.
+    ///
+    /// **Does not consume a token** — the cursor lands at `target`,
+    /// which is typically the *start* of the next AST node's span.
+    /// The caller is responsible for consuming tokens within that node
+    /// (usually via `advance_to_token`).
+    ///
+    /// **Does not trim** — the returned gap is raw. Use this for
+    /// inter-node gaps (between decls, after `;` in statement
+    /// sequences, trailing file gap) where blank lines may be
+    /// meaningful. Trim explicitly with `.trim_start()`,
+    /// `.trim_end()`, `.trim()`, or `.trim_if_clean()` when blank
+    /// lines are noise in that position.
     pub(crate) fn advance_to(&mut self, target: usize) -> TriviaGap {
         debug_assert!(
             target >= self.pos,
@@ -322,6 +401,23 @@ impl<'a> TokenCursor<'a> {
         TriviaGap { layout }
     }
 
+    /// Advance the cursor to the next token matching `pred`, consuming
+    /// it and returning the gap (comments and blank lines) between the
+    /// current position and the token's start.
+    ///
+    /// **Consumes the token** — the cursor lands at the token's *end*,
+    /// so the next call starts after this token. The token itself is
+    /// not included in the returned gap.
+    ///
+    /// **Trims blank lines** — the returned gap has blank lines
+    /// removed when no comments are present (via `trim_if_clean`).
+    /// This is correct for all intra-expression gaps (between tokens
+    /// like `=`, `->`, operators, keywords) where blank lines are
+    /// noise. Callers never need to wrap the result with
+    /// `trim_if_clean`.
+    ///
+    /// Returns an empty gap if no matching token is found within
+    /// `end`.
     pub(crate) fn advance_to_token(
         &mut self,
         end: usize,
@@ -338,7 +434,7 @@ impl<'a> TokenCursor<'a> {
                     .layout
                     .layout_between(comments, self.pos, span.start);
                 self.pos = span.end;
-                return TriviaGap { layout };
+                return TriviaGap { layout }.trim_if_clean();
             }
         }
         TriviaGap::default()
@@ -379,10 +475,12 @@ impl<'a> TokenCursor<'a> {
 /// A comment suppresses its own ending hardline when the next element is
 /// `BlankLines` — `BlankLines` owns the line break.
 ///
-/// Prefer the `gap_none` / `gap_space` / `gap_hard` wrappers
-/// for standard call sites. Use this directly only when you need custom
-/// `open`/`end` positioning that the wrappers don't provide.
-pub(crate) fn format_gap(
+/// Prefer the `gap_none` / `gap_space` / `gap_hard` / `gap_list`
+/// wrappers for standard call sites. Use this directly only when you
+/// need custom `open`/`end` positioning that the wrappers don't
+/// provide. See the module-level documentation for idempotency
+/// guarantees.
+pub fn format_gap(
     gap: TriviaGap,
     open: Option<Doc<'static>>,
     end: Option<Doc<'static>>,
@@ -439,7 +537,9 @@ pub(crate) fn format_gap(
                     parts.push(ALLOC.text(" "));
                 }
             }
-        } else if let Some(open) = open.take() {
+        } else if let Some(open) = open.take()
+            && matches!(element, TriviaElement::Comment(_))
+        {
             parts.push(open);
         }
 
@@ -496,18 +596,6 @@ pub(crate) fn gap_hard(gap: TriviaGap, style: &Style) -> Doc<'static> {
         Some(ALLOC.hardline()),
         style,
     )
-}
-
-/// Like `gap_none` but comments get `nil` open (no space/hardline before
-/// the comment). Use inside `delimited_list` items where `line_()` or the
-/// open delimiter already provides positioning — avoids double spaces
-/// after `<`, `(`, `[`, `{`.
-pub(crate) fn gap_list(gap: TriviaGap, style: &Style) -> Doc<'static> {
-    let open = match gap.first() {
-        Some(TriviaElement::Comment(_)) => Some(ALLOC.nil()),
-        _ => None,
-    };
-    format_gap(gap, open, None, None, style)
 }
 
 fn line_of(offset: usize, line_starts: &[usize]) -> usize {

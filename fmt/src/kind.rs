@@ -8,7 +8,7 @@ use crate::ctx::{ALLOC, Doc};
 use crate::delim_list::{DelimList, take_separator_gap_split};
 use crate::size::format_range;
 use crate::style::Style;
-use crate::trivia::{TokenCursor, TriviaGap, gap_none, trim_if_clean};
+use crate::trivia::{TokenCursor, TriviaGap, gap_none};
 
 pub(crate) fn format_kind(
     kind: &Kind<lang::ast::Size>,
@@ -33,7 +33,7 @@ pub(crate) fn format_kind(
             let keyword_gap =
                 cursor.advance_to_token(end, |token| matches!(token, Token::KwScalar));
             let open = gap_none(
-                trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LAngle))),
+                cursor.advance_to_token(end, |token| matches!(token, Token::LAngle)),
                 style,
             );
             let ids: Vec<_> = ids.iter().collect();
@@ -65,7 +65,7 @@ pub(crate) fn format_kind(
             let keyword_gap =
                 cursor.advance_to_token(end, |token| matches!(token, Token::KwPairing));
             let open = gap_none(
-                trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LAngle))),
+                cursor.advance_to_token(end, |token| matches!(token, Token::LAngle)),
                 style,
             );
             let first_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));

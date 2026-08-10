@@ -1,4 +1,14 @@
 //! Expression formatting.
+//!
+//! See crate-level docs for the gap ownership convention. Notable
+//! cases in this module:
+//!
+//! - `format_body` — owns the gap after `{` (or between `{` and `}`).
+//! - `format_relation` — owns the gap after `where`.
+//! - `format_relation_inner` — does NOT own a leading gap; called by
+//!   `format_relation` after the leading gap is consumed, and
+//!   recursively for `;`-separated relations (where `gap_hard` after
+//!   `;` provides the break).
 
 use lang::ast::exp::{BinOp, Exp, Exps};
 use lang::ast::{Size, Spanned};
@@ -11,7 +21,7 @@ use crate::delim_list::{DelimList, take_separator_gap_split};
 use crate::size::format_range;
 use crate::style::Style;
 use crate::trivia::{
-    TokenCursor, TriviaGap, format_gap, gap_hard, gap_list, gap_none, gap_space, trim_if_clean,
+    TokenCursor, TriviaElement, TriviaGap, format_gap, gap_hard, gap_none, gap_space,
 };
 
 fn format_exp(
@@ -39,11 +49,7 @@ fn format_exp(
             let inner = parenthesize(inner_doc, neg_needs_paren(&inner.node));
             (
                 minus_gap,
-                ALLOC.concat([
-                    ALLOC.text("-"),
-                    gap_none(trim_if_clean(inner_gap), style),
-                    inner.group(),
-                ]),
+                ALLOC.concat([ALLOC.text("-"), gap_none(inner_gap, style), inner.group()]),
             )
         }
         Exp::Bin(BinOp::Dot, lhs, rhs) => format_binary_call(
@@ -82,7 +88,7 @@ fn format_exp(
 
             // First operand — no operator before it.
             // Return its gap to the caller so the caller can apply
-            // appropriate gap formatting (e.g. gap_list after `[`).
+            // appropriate gap formatting (e.g. gap_none after `[`).
             let (first_gap, first_doc) = format_exp(chain[0], cursor, style);
             let first = parenthesize(first_doc, lhs_needs_paren(*op, &chain[0].node));
             parts.push(first);
@@ -92,15 +98,9 @@ fn format_exp(
                 let op_gap = cursor.advance_to_token(end, |token| matches_binop(*op, token));
                 let (operand_gap, operand_doc) = format_exp(operand, cursor, style);
                 let operand = parenthesize(operand_doc, rhs_needs_paren(*op, &operand.node));
-                parts.push(format_gap(
-                    trim_if_clean(op_gap),
-                    None,
-                    Some(ALLOC.nil()),
-                    None,
-                    style,
-                ));
+                parts.push(format_gap(op_gap, None, Some(ALLOC.nil()), None, style));
                 parts.push(ALLOC.concat([ALLOC.line(), ALLOC.text(binop_symbol(*op))]));
-                parts.push(ALLOC.concat([gap_space(trim_if_clean(operand_gap), style), operand]));
+                parts.push(ALLOC.concat([gap_space(operand_gap, style), operand]));
             }
 
             (first_gap, ALLOC.concat(parts).nest(indent).group())
@@ -108,7 +108,7 @@ fn format_exp(
         Exp::App(function, args) => {
             let function_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
             let open = gap_none(
-                trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LParen))),
+                cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
                 style,
             );
             let mut list = DelimList::new(style, ",", true);
@@ -183,7 +183,7 @@ fn format_exp(
             let in_gap = cursor.advance_to_token(end, |token| matches!(token, Token::KwIn));
             let (range_gap, range_doc) = format_exp(range, cursor, style);
             let close = gap_none(
-                trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::RBrack))),
+                cursor.advance_to_token(end, |token| matches!(token, Token::RBrack)),
                 style,
             );
 
@@ -195,18 +195,21 @@ fn format_exp(
                         .concat([
                             ALLOC.line_(),
                             ALLOC
-                                .concat([gap_list(trim_if_clean(body_gap), style), body_doc])
+                                .concat([
+                                    format_gap(body_gap, Some(ALLOC.nil()), None, None, style),
+                                    body_doc,
+                                ])
                                 .group(),
-                            gap_space(trim_if_clean(for_gap), style),
+                            gap_space(for_gap, style),
                             ALLOC.line_(),
                             ALLOC
                                 .concat([
                                     ALLOC.text("for"),
-                                    gap_space(trim_if_clean(var_gap), style),
+                                    gap_space(var_gap, style),
                                     ALLOC.text(var.to_string()),
-                                    gap_space(trim_if_clean(in_gap), style),
+                                    gap_space(in_gap, style),
                                     ALLOC.text("in"),
-                                    gap_space(trim_if_clean(range_gap), style),
+                                    gap_space(range_gap, style),
                                     range_doc,
                                 ])
                                 .group(),
@@ -223,7 +226,7 @@ fn format_exp(
             let keyword_gap =
                 cursor.advance_to_token(end, |token| matches!(token, Token::KwReduce));
             let open = gap_none(
-                trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LParen))),
+                cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
                 style,
             );
             let op_gap = cursor.advance_to_token(end, |token| matches_binop(*op, token));
@@ -245,7 +248,7 @@ fn format_exp(
         Exp::Ram(base, index) => {
             let (base_gap, base_doc) = format_exp(base, cursor, style);
             let open = gap_none(
-                trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LBrack))),
+                cursor.advance_to_token(end, |token| matches!(token, Token::LBrack)),
                 style,
             );
             let (index_gap, index_doc) = format_exp(index, cursor, style);
@@ -336,11 +339,11 @@ fn format_exp(
                 keyword_gap,
                 ALLOC.concat([
                     ALLOC.text("fun"),
-                    gap_space(trim_if_clean(open_gap), style),
+                    gap_space(open_gap, style),
                     list.finish("(", ")", close_comments),
-                    gap_space(trim_if_clean(arrow_gap), style),
+                    gap_space(arrow_gap, style),
                     ALLOC.text("=>"),
-                    gap_space(trim_if_clean(body_gap), style),
+                    gap_space(body_gap, style),
                     body_doc.group(),
                 ]),
             )
@@ -365,11 +368,11 @@ fn format_exp(
         Exp::Proj(base, field) => {
             let (base_gap, base_doc) = format_exp(base, cursor, style);
             let dot = gap_none(
-                trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::Dot))),
+                cursor.advance_to_token(end, |token| matches!(token, Token::Dot)),
                 style,
             );
             let field_comments = gap_none(
-                trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)))),
+                cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                 style,
             );
             (
@@ -386,15 +389,15 @@ fn format_exp(
         Exp::SetRecord(record, field, value) => {
             let (record_gap, record_doc) = format_exp(record, cursor, style);
             let dot = gap_none(
-                trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::Dot))),
+                cursor.advance_to_token(end, |token| matches!(token, Token::Dot)),
                 style,
             );
             let set = gap_none(
-                trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)))),
+                cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                 style,
             );
             let open = gap_none(
-                trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LParen))),
+                cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
                 style,
             );
             let field_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
@@ -433,7 +436,7 @@ fn format_unary_call(
 ) -> (TriviaGap, Doc<'static>) {
     let keyword_gap = cursor.advance_to_token(end, pred);
     let open = gap_none(
-        trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LParen))),
+        cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
         style,
     );
     let (arg_gap, arg_doc) = format_exp(arg, cursor, style);
@@ -462,7 +465,7 @@ fn format_binary_call(
 ) -> (TriviaGap, Doc<'static>) {
     let keyword_gap = cursor.advance_to_token(end, pred);
     let open = gap_none(
-        trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LParen))),
+        cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
         style,
     );
     let (lhs_gap, lhs_doc) = format_exp(lhs, cursor, style);
@@ -495,7 +498,7 @@ fn format_evaluate(
     let keyword_gap = cursor.advance_to_token(end, |token| matches!(token, Token::KwEval));
     let selector = if let Some(range) = range {
         let open = gap_none(
-            trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LAngle))),
+            cursor.advance_to_token(end, |token| matches!(token, Token::LAngle)),
             style,
         );
         let (range_gap, range_doc) = format_range(range, cursor, end, style);
@@ -508,7 +511,7 @@ fn format_evaluate(
     };
 
     let open = gap_none(
-        trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LParen))),
+        cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
         style,
     );
     let (poly_gap, poly_doc) = format_exp(poly, cursor, style);
@@ -548,13 +551,13 @@ fn format_sampling(
 ) -> (TriviaGap, Doc<'static>) {
     let keyword_gap = cursor.advance_to_token(end, pred);
     let open = gap_none(
-        trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LAngle))),
+        cursor.advance_to_token(end, |token| matches!(token, Token::LAngle)),
         style,
     );
     let typ_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
     let star = if star {
         let comments = gap_none(
-            trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::Star))),
+            cursor.advance_to_token(end, |token| matches!(token, Token::Star)),
             style,
         );
         ALLOC.concat([comments, ALLOC.text("*")])
@@ -588,7 +591,7 @@ fn format_assertion(
 ) -> (TriviaGap, Doc<'static>) {
     let keyword_gap = cursor.advance_to_token(end, pred);
     let open = gap_none(
-        trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::LParen))),
+        cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
         style,
     );
     let (lhs_gap, lhs_doc) = format_exp(lhs, cursor, style);
@@ -599,9 +602,9 @@ fn format_assertion(
     let content = ALLOC
         .concat([
             lhs_doc,
-            format_gap(trim_if_clean(eq_gap), None, Some(ALLOC.nil()), None, style),
+            format_gap(eq_gap, None, Some(ALLOC.nil()), None, style),
             ALLOC.concat([ALLOC.line(), ALLOC.text("==")]),
-            gap_space(trim_if_clean(rhs_gap), style),
+            gap_space(rhs_gap, style),
             rhs_doc,
         ])
         .nest(style.indent_width() as isize)
@@ -643,6 +646,27 @@ pub(crate) fn format_relation(
     cursor: &mut TokenCursor,
     style: &Style,
 ) -> Doc<'static> {
+    // Leading gap — between `where` and the first relation.
+    // `line()` as open for inline comments (space in flat, newline in
+    // broken); at_line_start comments get auto `hardline` open.
+    // `line()` as sep for empty gaps (separates `where` from relation).
+    let leading_gap = cursor.advance_to(exp.span.start).trim_start();
+    let leading_open = match leading_gap.first() {
+        Some(TriviaElement::Comment(c)) if c.at_line_start => None,
+        Some(TriviaElement::Comment(_)) => Some(ALLOC.line()),
+        _ => None,
+    };
+    let leading = format_gap(leading_gap, leading_open, None, Some(ALLOC.line()), style);
+
+    let content = format_relation_inner(exp, cursor, style);
+    ALLOC.concat([leading, content])
+}
+
+fn format_relation_inner(
+    exp: &Spanned<Exp<Size>>,
+    cursor: &mut TokenCursor,
+    style: &Style,
+) -> Doc<'static> {
     match &exp.node {
         Exp::Assert(lhs, rhs) => {
             let (lhs_gap, lhs_doc) = format_exp(lhs, cursor, style);
@@ -651,10 +675,13 @@ pub(crate) fn format_relation(
             let (rhs_gap, rhs_doc) = format_exp(rhs, cursor, style);
             ALLOC
                 .concat([
-                    ALLOC.concat([gap_list(trim_if_clean(lhs_gap), style), lhs_doc]),
-                    format_gap(trim_if_clean(eq_gap), None, Some(ALLOC.nil()), None, style),
+                    ALLOC.concat([
+                        format_gap(lhs_gap, Some(ALLOC.nil()), None, None, style),
+                        lhs_doc,
+                    ]),
+                    format_gap(eq_gap, None, Some(ALLOC.nil()), None, style),
                     ALLOC.concat([ALLOC.line(), ALLOC.text("==")]),
-                    gap_space(trim_if_clean(rhs_gap), style),
+                    gap_space(rhs_gap, style),
                     rhs_doc,
                 ])
                 .nest(style.indent_width() as isize)
@@ -662,9 +689,7 @@ pub(crate) fn format_relation(
         }
         Exp::Let(Some(var), value, body) => {
             let keyword = gap_none(
-                trim_if_clean(
-                    cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::KwLet)),
-                ),
+                cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::KwLet)),
                 style,
             );
             let name_gap =
@@ -679,7 +704,7 @@ pub(crate) fn format_relation(
                     gap_before_semi(before_semi, style),
                     ALLOC.text(";"),
                     gap_hard(after_semi, style),
-                    format_relation(body, cursor, style),
+                    format_relation_inner(body, cursor, style),
                 ])
             } else {
                 let before_semi =
@@ -690,17 +715,17 @@ pub(crate) fn format_relation(
             ALLOC.concat([
                 keyword,
                 ALLOC.text("let"),
-                gap_space(trim_if_clean(name_gap), style),
+                gap_space(name_gap, style),
                 ALLOC.text(var.to_string()),
-                gap_space(trim_if_clean(eq_gap), style),
+                gap_space(eq_gap, style),
                 ALLOC.text("="),
-                gap_space(trim_if_clean(value_gap), style),
+                gap_space(value_gap, style),
                 value_doc,
                 body,
             ])
         }
         Exp::Let(None, value, body) => {
-            let value = format_relation(value, cursor, style);
+            let value = format_relation_inner(value, cursor, style);
             let body = if let Some(body) = body.as_ref() {
                 let before_semi =
                     cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Semi));
@@ -709,7 +734,7 @@ pub(crate) fn format_relation(
                     gap_before_semi(before_semi, style),
                     ALLOC.text(";"),
                     gap_hard(after_semi, style),
-                    format_relation(body, cursor, style),
+                    format_relation_inner(body, cursor, style),
                 ])
             } else {
                 let before_semi =
@@ -721,7 +746,7 @@ pub(crate) fn format_relation(
         }
         _ => {
             let (gap, doc) = format_exp(exp, cursor, style);
-            ALLOC.concat([gap_list(trim_if_clean(gap), style), doc])
+            ALLOC.concat([format_gap(gap, Some(ALLOC.nil()), None, None, style), doc])
         }
     }
 }
@@ -776,9 +801,7 @@ fn format_body_inner(
     match &exp.node {
         Exp::Let(Some(var), value, body) => {
             let keyword = gap_none(
-                trim_if_clean(
-                    cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::KwLet)),
-                ),
+                cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::KwLet)),
                 style,
             );
             let name_gap =
@@ -792,11 +815,11 @@ fn format_body_inner(
             ALLOC.concat([
                 keyword,
                 ALLOC.text("let"),
-                gap_space(trim_if_clean(name_gap), style),
+                gap_space(name_gap, style),
                 ALLOC.text(var.to_string()),
-                gap_space(trim_if_clean(eq_gap), style),
+                gap_space(eq_gap, style),
                 ALLOC.text("="),
-                gap_space(trim_if_clean(value_gap), style),
+                gap_space(value_gap, style),
                 value_doc,
                 body,
             ])
@@ -807,13 +830,11 @@ fn format_body_inner(
                 cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Semi));
             let body = format_body_tail(before_semi, body.as_deref(), cursor, style);
 
-            ALLOC.concat([gap_none(trim_if_clean(value_gap), style), value_doc, body])
+            ALLOC.concat([gap_none(value_gap, style), value_doc, body])
         }
         Exp::Log(var, value, body) => {
             let name = gap_none(
-                trim_if_clean(
-                    cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Id(_))),
-                ),
+                cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Id(_))),
                 style,
             );
             let arrow_gap =
@@ -826,9 +847,9 @@ fn format_body_inner(
             ALLOC.concat([
                 name,
                 ALLOC.text(var.to_string()),
-                gap_space(trim_if_clean(arrow_gap), style),
+                gap_space(arrow_gap, style),
                 ALLOC.text("<-"),
-                gap_space(trim_if_clean(value_gap), style),
+                gap_space(value_gap, style),
                 value_doc,
                 body,
             ])
@@ -841,7 +862,7 @@ fn format_body_inner(
             // empty gaps (body_leading handles the break).
             ALLOC.concat([
                 format_gap(
-                    trim_if_clean(gap),
+                    gap,
                     Some(ALLOC.nil()),
                     Some(ALLOC.hardline()),
                     Some(ALLOC.nil()),
@@ -863,7 +884,7 @@ fn gap_before_semi(gap: TriviaGap, style: &Style) -> Doc<'static> {
     } else {
         Some(ALLOC.nil())
     };
-    format_gap(trim_if_clean(gap), None, end, None, style)
+    format_gap(gap, None, end, None, style)
 }
 
 fn format_body_tail(

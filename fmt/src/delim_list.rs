@@ -4,7 +4,8 @@ use share::DocAllocator;
 
 use crate::ctx::{ALLOC, Doc};
 use crate::style::Style;
-use crate::trivia::{TokenCursor, TriviaGap, format_gap, gap_list, gap_none, trim_if_clean};
+use crate::trivia::TriviaElement;
+use crate::trivia::{TokenCursor, TriviaGap, format_gap, gap_none};
 
 /// Builder for items inside a delimited list.
 ///
@@ -19,9 +20,10 @@ use crate::trivia::{TokenCursor, TriviaGap, format_gap, gap_list, gap_none, trim
 /// handled by `close_end = nil`.
 ///
 /// All gaps passed to `push` and `push_sep` (leading gap, `before_sep`,
-/// `after_sep`) are trimmed internally via `trim_if_clean` — blank lines
-/// around separators and delimiters are treated as noise when no comments
-/// are present. Callers do not need to trim gaps before passing them in.
+/// `after_sep`) are already trimmed at the source (`advance_to_token`
+/// trims internally; `take_separator_gap_split` trims the after-sep
+/// gap). Blank lines around separators and delimiters are treated as
+/// noise when no comments are present.
 pub(crate) struct DelimList<'a> {
     items: Vec<Doc<'static>>,
     is_first: bool,
@@ -51,9 +53,9 @@ impl<'a> DelimList<'a> {
     /// lines after the open delimiter), `gap_none` for subsequent items.
     pub(crate) fn push(&mut self, gap: TriviaGap, doc: Doc<'static>) {
         let gap = if self.is_first {
-            gap_list(trim_if_clean(gap).trim_start(), self.style)
+            gap_list(gap.trim_start(), self.style)
         } else {
-            gap_none(trim_if_clean(gap), self.style)
+            gap_none(gap, self.style)
         };
         self.items.push(ALLOC.concat([gap, doc]));
         self.is_first = false;
@@ -70,16 +72,16 @@ impl<'a> DelimList<'a> {
         after_sep: TriviaGap,
     ) {
         let gap = if self.is_first {
-            gap_list(trim_if_clean(gap).trim_start(), self.style)
+            gap_list(gap.trim_start(), self.style)
         } else {
-            gap_none(trim_if_clean(gap), self.style)
+            gap_none(gap, self.style)
         };
         let item = ALLOC.concat([gap, doc]);
         self.items.push(sep_terminated_item(
             item,
             self.separator,
-            trim_if_clean(before_sep),
-            trim_if_clean(after_sep),
+            before_sep,
+            after_sep,
             self.style,
         ));
         self.is_first = false;
@@ -273,10 +275,25 @@ pub(crate) fn take_separator_gap_split(
     pred: impl Fn(&lang::parser::Token) -> bool,
 ) -> (TriviaGap, TriviaGap) {
     let before = cursor.advance_to_token(end, &pred);
-    let next = cursor
+    // `after` is the gap between the separator and the next item —
+    // advance to the start of the next token (without consuming it)
+    // and trim blank lines (intra-expression position).
+    let next_start = cursor
         .peek_token(end, |_| true)
         .map(|r| r.start)
         .unwrap_or(end);
-    let after = cursor.advance_to(next);
+    let after = cursor.advance_to(next_start).trim_if_clean();
     (before, after)
+}
+
+/// Like `gap_none` but comments get `nil` open (no space/hardline before
+/// the comment). Safe to use inside `DelimList` where the list's break
+/// mode always provides a hardline when needed — a line comment forces
+/// `has_source_line_break()` which forces the list to break.
+fn gap_list(gap: TriviaGap, style: &Style) -> Doc<'static> {
+    let open = match gap.first() {
+        Some(TriviaElement::Comment(_)) => Some(ALLOC.nil()),
+        _ => None,
+    };
+    format_gap(gap, open, None, None, style)
 }

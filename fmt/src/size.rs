@@ -6,7 +6,7 @@ use share::DocAllocator;
 
 use crate::ctx::{ALLOC, Doc, parenthesize};
 use crate::style::Style;
-use crate::trivia::{TokenCursor, TriviaGap, gap_none, gap_space, trim_if_clean};
+use crate::trivia::{TokenCursor, TriviaGap, gap_none, gap_space};
 
 pub(crate) fn format_size(
     size: &Size,
@@ -59,9 +59,9 @@ fn format_size_binary(
 
     let doc = ALLOC.concat([
         lhs,
-        gap_space(trim_if_clean(op_gap), style),
+        gap_space(op_gap, style),
         ALLOC.text(op),
-        gap_space(trim_if_clean(rhs_gap), style),
+        gap_space(rhs_gap, style),
         rhs,
     ]);
     (lhs_gap, doc)
@@ -76,12 +76,12 @@ pub(crate) fn format_range(
     let (start_gap, start_doc) = format_range_size(&range.start, cursor, end, style);
     if let Some(step) = &range.step {
         let comma = gap_none(
-            trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::Comma))),
+            cursor.advance_to_token(end, |token| matches!(token, Token::Comma)),
             style,
         );
         let (step_gap, step_doc) = format_range_size(step, cursor, end, style);
         let dots = gap_none(
-            trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::DotDot))),
+            cursor.advance_to_token(end, |token| matches!(token, Token::DotDot)),
             style,
         );
         let last = range.end.as_ref().expect("stepped ranges have an end");
@@ -90,17 +90,17 @@ pub(crate) fn format_range(
             start_doc,
             comma,
             ALLOC.text(","),
-            gap_space(trim_if_clean(step_gap), style),
+            gap_space(step_gap, style),
             step_doc,
             dots,
             ALLOC.text(".."),
-            gap_none(trim_if_clean(last_gap), style),
+            gap_none(last_gap, style),
             last_doc,
         ]);
         (start_gap, doc)
     } else if let Some(last) = &range.end {
         let dots = gap_none(
-            trim_if_clean(cursor.advance_to_token(end, |token| matches!(token, Token::DotDot))),
+            cursor.advance_to_token(end, |token| matches!(token, Token::DotDot)),
             style,
         );
         let (last_gap, last_doc) = format_range_size(last, cursor, end, style);
@@ -108,7 +108,7 @@ pub(crate) fn format_range(
             start_doc,
             dots,
             ALLOC.text(".."),
-            gap_none(trim_if_clean(last_gap), style),
+            gap_none(last_gap, style),
             last_doc,
         ]);
         (start_gap, doc)
