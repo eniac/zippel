@@ -96,12 +96,34 @@ fn format_exp(
                 let op_gap = cursor.advance_to_token(end, |token| matches_binop(*op, token));
                 let (operand_gap, operand_doc) = format_exp(operand, cursor, style);
                 let operand = parenthesize(operand_doc, rhs_needs_paren(*op, &operand.node));
-                parts.push(format_gap(op_gap, None, Some(ALLOC.nil()), None, style));
-                parts.push(ALLOC.concat([ALLOC.line(), ALLOC.text(binop_symbol(*op))]));
-                parts.push(ALLOC.concat([gap_space(operand_gap, style), operand]));
+                // Line comments need a hardline after (forces break);
+                // inline block comments need nil (line() before op
+                // provides the space). When hardline is used, suppress
+                // line() to avoid double newline.
+                let needs_break = op_gap.needs_end_newline();
+                let op_end = if needs_break {
+                    Some(ALLOC.hardline())
+                } else {
+                    Some(ALLOC.nil())
+                };
+                let op_line = if needs_break {
+                    ALLOC.nil()
+                } else {
+                    ALLOC.line()
+                };
+                parts.push(
+                    ALLOC
+                        .concat([
+                            format_gap(op_gap, None, op_end, None, style),
+                            ALLOC.concat([op_line, ALLOC.text(binop_symbol(*op))]),
+                            gap_space(operand_gap, style),
+                            operand,
+                        ])
+                        .nest(indent),
+                );
             }
 
-            (first_gap, ALLOC.concat(parts).nest(indent).group())
+            (first_gap, ALLOC.concat(parts).group())
         }
         Exp::App(function, args) => {
             let function_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
@@ -597,15 +619,30 @@ fn format_assertion(
     let (rhs_gap, rhs_doc) = format_exp(rhs, cursor, style);
     let close_comments = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
 
+    let eq_needs_break = eq_gap.needs_end_newline();
+    let eq_end = if eq_needs_break {
+        Some(ALLOC.hardline())
+    } else {
+        Some(ALLOC.nil())
+    };
+    let eq_line = if eq_needs_break {
+        ALLOC.nil()
+    } else {
+        ALLOC.line()
+    };
     let content = ALLOC
         .concat([
             lhs_doc,
-            format_gap(eq_gap, None, Some(ALLOC.nil()), None, style),
-            ALLOC.concat([ALLOC.line(), ALLOC.text("==")]),
-            gap_space(rhs_gap, style),
-            rhs_doc,
+            ALLOC
+                .concat([
+                    format_gap(eq_gap, None, eq_end, None, style),
+                    ALLOC.concat([eq_line, ALLOC.text("==")]),
+                    gap_space(rhs_gap, style),
+                    rhs_doc,
+                ])
+                .nest(style.indent_width() as isize)
+                .group(),
         ])
-        .nest(style.indent_width() as isize)
         .group();
 
     let mut list = DelimList::new(style, ",", true);
@@ -670,18 +707,33 @@ fn format_relation_inner(
             let eq_gap =
                 cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::EqEq));
             let (rhs_gap, rhs_doc) = format_exp(rhs, cursor, style);
+            let eq_needs_break = eq_gap.needs_end_newline();
+            let eq_end = if eq_needs_break {
+                Some(ALLOC.hardline())
+            } else {
+                Some(ALLOC.nil())
+            };
+            let eq_line = if eq_needs_break {
+                ALLOC.nil()
+            } else {
+                ALLOC.line()
+            };
             ALLOC
                 .concat([
                     ALLOC.concat([
                         format_gap(lhs_gap, Some(ALLOC.nil()), None, None, style),
                         lhs_doc,
                     ]),
-                    format_gap(eq_gap, None, Some(ALLOC.nil()), None, style),
-                    ALLOC.concat([ALLOC.line(), ALLOC.text("==")]),
-                    gap_space(rhs_gap, style),
-                    rhs_doc,
+                    ALLOC
+                        .concat([
+                            format_gap(eq_gap, None, eq_end, None, style),
+                            ALLOC.concat([eq_line, ALLOC.text("==")]),
+                            gap_space(rhs_gap, style),
+                            rhs_doc,
+                        ])
+                        .nest(style.indent_width() as isize)
+                        .group(),
                 ])
-                .nest(style.indent_width() as isize)
                 .group()
         }
         Exp::Let(Some(var), value, body) => {

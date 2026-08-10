@@ -911,3 +911,92 @@ fn f<F: Field>(instance a: F) /* inline block */ -> F {
 ",
     );
 }
+
+#[test]
+fn line_comment_before_binop_forces_break() {
+    // A line comment before a binary operator must force a line break
+    // — the operator goes on the next line, not glued to the comment.
+    assert_formatted(
+        "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    a // comment
+    + b
+}",
+        "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    a // comment
+        + b
+}
+",
+    );
+}
+
+#[test]
+fn inline_block_comment_before_binop_stays_flat() {
+    // An inline block comment before a binary operator stays flat
+    // — `line()` provides the space, no forced break.
+    assert_formatted(
+        "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    a /* c */ + b
+}",
+        "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    a /* c */ + b
+}
+",
+    );
+}
+
+#[test]
+fn line_comment_before_eqeq_in_assert_forces_break() {
+    // A line comment before `==` in an assertion must force a break.
+    assert_formatted(
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    verify(a // comment
+    == a)
+}",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    verify(
+        a // comment
+            == a,
+    )
+}
+",
+    );
+}
+
+#[test]
+fn inline_block_comment_before_eqeq_in_assert_stays_flat() {
+    // An inline block comment before `==` stays flat.
+    assert_formatted(
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    verify(a /* c */ == a)
+}",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    verify(a /* c */ == a)
+}
+",
+    );
+}
+
+#[test]
+fn line_comment_before_eqeq_in_where_forces_break() {
+    // A line comment before `==` in a where clause must force a break.
+    assert_formatted(
+        "proto p<F: Field>(instance a: F) where a // comment
+== a { a }",
+        "\
+proto p<F: Field>(instance a: F) where
+    a // comment
+        == a
+{
+    a
+}
+",
+    );
+}

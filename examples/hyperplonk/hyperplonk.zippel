@@ -367,8 +367,8 @@ proto hyperplonk<F: Field, S: Size, N: 2 ^ S>(
     let y = random<F>;
     let x = random<F>;
     reduce(*, [s_id_a_evs[i] + y * a_evs[i] + x for i in 0..N])
-            * reduce(*, [s_id_b_evs[i] + y * b_evs[i] + x for i in 0..N])
-            * reduce(*, [s_id_c_evs[i] + y * c_evs[i] + x for i in 0..N])
+        * reduce(*, [s_id_b_evs[i] + y * b_evs[i] + x for i in 0..N])
+        * reduce(*, [s_id_c_evs[i] + y * c_evs[i] + x for i in 0..N])
         == reduce(*, [s_sigma_a_evs[i] + y * a_evs[i] + x for i in 0..N])
             * reduce(*, [s_sigma_b_evs[i] + y * b_evs[i] + x for i in 0..N])
             * reduce(*, [s_sigma_c_evs[i] + y * c_evs[i] + x for i in 0..N])
