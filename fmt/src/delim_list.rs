@@ -175,11 +175,15 @@ fn sep_terminated_item(
     after_sep: TriviaGap,
     style: &Style,
 ) -> Doc<'static> {
-    let combined = before_sep.clone().join(after_sep.clone());
-    let is_multiline = combined.has_source_line_break();
+    // Check multiline without cloning — has_source_line_break on the
+    // joined gap is equivalent to checking each gap separately (join
+    // only coalesces adjacent BlankLines at the boundary, which doesn't
+    // affect the any() check).
+    let is_multiline = before_sep.has_source_line_break() || after_sep.has_source_line_break();
 
     if is_multiline {
         // Rule 1: Multiline gap — comma first, all comments after.
+        let combined = before_sep.join(after_sep);
         let needs_break = combined.needs_end_newline();
         let sep = if needs_break {
             ALLOC.hardline()

@@ -233,7 +233,7 @@ fn format_decl(
                 gap_none(keyword_gap, style),
                 ALLOC.text("type"),
                 gap_space(name_gap, style),
-                ALLOC.text(decl.node.sig.name.node.to_string()),
+                ALLOC.as_string(&decl.node.sig.name.node),
                 gap_space(eq_gap, style),
                 ALLOC.text("="),
                 gap_space(typ_gap, style),
@@ -281,11 +281,8 @@ fn format_sig(
     // stays on the same line as `)`).
     let args = list.finish_ungrouped("(", ")", close_comments);
 
-    let name_typevars = ALLOC.concat([
-        ALLOC.text(sig.name.node.to_string()),
-        typevars,
-        arg_open_comments,
-    ]);
+    let name_typevars =
+        ALLOC.concat([ALLOC.as_string(&sig.name.node), typevars, arg_open_comments]);
 
     (name_gap, name_typevars, args)
 }
@@ -334,7 +331,7 @@ fn format_arg(
     } else {
         leading_gap = name_gap;
     }
-    parts.push(ALLOC.text(arg.node.id.to_string()));
+    parts.push(ALLOC.as_string(&arg.node.id));
     let colon_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Colon));
     parts.push(gap_none(colon_gap, style));
     parts.push(ALLOC.text(":"));

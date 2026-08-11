@@ -31,7 +31,7 @@ proto zk_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Si
     let b1 = random<F>;
 
     // Blinding polynomial: (b0 + b1*x)*(x - z) = -b0*z + (b0 - b1*z)*x + b1*x^2
-    let blind_coefs = [(-b0) * z, b0 - b1 * z, b1];
+    let blind_coefs = [-b0 * z, b0 - b1 * z, b1];
     let blind_val = poly(blind_coefs);
 
     // Blinded polynomial: p_tilde(x) = p(x) + blind(x)

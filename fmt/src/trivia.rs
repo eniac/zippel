@@ -195,8 +195,16 @@ impl TriviaGap {
     /// blank lines between comments and after the last comment are
     /// meaningful.
     pub(crate) fn trim_start(mut self) -> Self {
-        while matches!(self.layout.first(), Some(TriviaElement::BlankLines(_))) {
-            self.layout.remove(0);
+        let first_non_blank = self
+            .layout
+            .iter()
+            .position(|e| !matches!(e, TriviaElement::BlankLines(_)));
+        match first_non_blank {
+            Some(0) => {}
+            Some(idx) => {
+                self.layout.drain(0..idx);
+            }
+            None => self.layout.clear(),
         }
         self
     }
@@ -555,7 +563,10 @@ pub fn format_gap(
     });
 
     let last_is_comment = matches!(gap.layout.last(), Some(TriviaElement::Comment(_)));
-    let mut parts = Vec::new();
+    // Each layout element pushes 1-3 parts (text + optional hardline +
+    // optional separator). Pre-allocate to avoid reallocation for gaps
+    // with multiple comments.
+    let mut parts = Vec::with_capacity(gap.layout.len() * 2 + 1);
     let mut open = open;
 
     let mut layout = gap.layout;
@@ -589,10 +600,10 @@ pub fn format_gap(
                     // lines — the doc builder's nesting handles indent.
                     let text = std::mem::take(&mut comment.text);
                     let mut lines = text.split('\n');
-                    parts.push(ALLOC.text(lines.next().unwrap().to_string()));
+                    parts.push(ALLOC.as_string(lines.next().unwrap()));
                     for line in lines {
                         parts.push(ALLOC.hardline());
-                        parts.push(ALLOC.text(line.trim_start().to_string()));
+                        parts.push(ALLOC.as_string(line.trim_start()));
                     }
                 } else {
                     parts.push(ALLOC.text(std::mem::take(&mut comment.text)));

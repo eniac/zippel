@@ -29,10 +29,7 @@ proto cds<G: Group, F: Scalar<G>, N: 2, K: 1>(
     // Step 1: Initial Commitments
     // For i in A: m1 = g * r[i]
     // For i in U: m1 = g * m2_sim[i] - pk[i] * c_sim[i]
-    let m1 = [
-        b[i] * (g * r[i]) + (1 - b[i]) * (g * m2_sim[i] + keys[i] * (-c_sim[i]))
-        for i in 0..N
-    ];
+    let m1 = [b[i] * (g * r[i]) + (1 - b[i]) * (g * m2_sim[i] + keys[i] * -c_sim[i]) for i in 0..N];
     m1_transcript <- m1;
 
     // Step 2: Verifier Challenge

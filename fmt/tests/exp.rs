@@ -35,18 +35,33 @@ fn f<M: Size, F: Field>(instance x: [F; (M - 1) / 2]) -> [F; (M - 1) / 2] {
     );
 }
 
+#[test]
+fn pow_chain_right_assoc_no_paren() {
+    // a ^ b ^ c parses as Pow(a, Pow(b, c)) (right-associative).
+    // No parentheses needed — the text re-parses to the same AST.
+    assert_ok(
+        "fn f<F: Field>(instance a: F, instance b: F, instance c: F) -> F { a ^ b ^ c }",
+        "\
+fn f<F: Field>(instance a: F, instance b: F, instance c: F) -> F {
+    a ^ b ^ c
+}
+",
+    );
+}
+
 // ══════════════════════════════════════════════════════════════════
 // Section: Range
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn range_concat_needs_paren() {
-    // (0..3) ++ (0..2) must keep parens or it re-parses as 0..(3 ++ (0..2))
+fn range_concat_no_paren() {
+    // 0..3 ++ 0..2 — Concat is not a size_ty operator, so the range
+    // parser stops at ++ and the Bin applies correctly. No parens needed.
     assert_ok(
         "fn f<F: Field>(instance a: [F; 4]) -> F { (0..3) ++ (0..2) }",
         "\
 fn f<F: Field>(instance a: [F; 4]) -> F {
-    (0..3) ++ (0..2)
+    0..3 ++ 0..2
 }
 ",
     );

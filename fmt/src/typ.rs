@@ -51,7 +51,7 @@ fn format_typevar(
     );
     let (kind_gap, kind_doc) = format_kind(&typevar.node.kind, cursor, end, style);
     let doc = ALLOC.concat([
-        ALLOC.text(typevar.node.id.to_string()),
+        ALLOC.as_string(&typevar.node.id),
         colon,
         ALLOC.text(":"),
         gap_space(kind_gap, style),
@@ -85,7 +85,7 @@ pub(crate) fn format_typ(
         }
         Typ::Base(base) => {
             let gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
-            (gap, ALLOC.text(base.to_string()))
+            (gap, ALLOC.as_string(base))
         }
         Typ::Fin(range) => {
             let keyword_gap = cursor.advance_to_token(end, |token| matches!(token, Token::KwFin));
@@ -252,7 +252,7 @@ fn format_poly(
     };
 
     let mut list = DelimList::new(style, ",", true);
-    list.push_sep(base_gap, ALLOC.text(base.to_string()), comma1_b, comma1_a);
+    list.push_sep(base_gap, ALLOC.as_string(base), comma1_b, comma1_a);
     if is_uni {
         list.push(n_gap, n_doc);
     } else if is_mle {
@@ -293,7 +293,7 @@ pub(crate) fn format_field_items<N, T, F>(
         );
         let (value_gap, value_doc) = format_value(value, cursor, value.span.end, style);
         let field = ALLOC.concat([
-            ALLOC.text(name.to_string()),
+            ALLOC.as_string(name),
             colon,
             ALLOC.text(":"),
             gap_space(value_gap, style),

@@ -36,12 +36,12 @@ pub(crate) fn format_kind(
                 cursor.advance_to_token(end, |token| matches!(token, Token::LAngle)),
                 style,
             );
-            let ids: Vec<_> = ids.iter().collect();
+            let ids_len = ids.len();
             let mut list = DelimList::new(style, ",", true);
             for (index, id) in ids.iter().enumerate() {
                 let id_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
-                let id_doc = ALLOC.text(id.to_string());
-                if index + 1 < ids.len() {
+                let id_doc = ALLOC.as_string(id);
+                if index + 1 < ids_len {
                     let (before, after) = take_separator_gap_split(cursor, end, |token| {
                         matches!(token, Token::Comma)
                     });
@@ -75,8 +75,8 @@ pub(crate) fn format_kind(
             let close_comments =
                 cursor.advance_to_token(end, |token| matches!(token, Token::RAngle));
             let mut list = DelimList::new(style, ",", true);
-            list.push_sep(first_gap, ALLOC.text(g1.to_string()), comma_b, comma_a);
-            list.push(second_gap, ALLOC.text(g2.to_string()));
+            list.push_sep(first_gap, ALLOC.as_string(g1), comma_b, comma_a);
+            list.push(second_gap, ALLOC.as_string(g2));
             let args = list.finish("<", ">", close_comments);
             (
                 keyword_gap,

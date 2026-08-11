@@ -39,7 +39,7 @@ fn format_exp(
         }
         Exp::Var(var) => {
             let gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
-            (gap, ALLOC.text(var.to_string()))
+            (gap, ALLOC.as_string(var))
         }
         Exp::Neg(inner) => {
             let minus_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Minus));
@@ -64,10 +64,13 @@ fn format_exp(
             //   a * b * c  =  Bin(*, Bin(*, a, b), c)  →  [a, b, c]
             // so all operators align at the same indent instead of nesting
             // deeper for each left-recursion level.
+            // Right-associative operators (Pow) must not be flattened:
+            //   a ^ b ^ c  =  Bin(^, a, Bin(^, b, c))  (no left-recursion)
+            // Flattening would change the AST on re-parse.
             let mut inner_rhs_list: Vec<&Spanned<Exp<Size>>> = Vec::new();
             let mut current: &Spanned<Exp<Size>> = lhs;
             while let Exp::Bin(inner_op, inner_lhs, inner_rhs) = &current.node {
-                if inner_op == op {
+                if inner_op == op && !op.is_right_assoc() {
                     inner_rhs_list.push(inner_rhs);
                     current = inner_lhs;
                 } else {
@@ -139,7 +142,7 @@ fn format_exp(
 
             (
                 function_gap,
-                ALLOC.concat([ALLOC.text(function.to_string()), open, args]),
+                ALLOC.concat([ALLOC.as_string(function), open, args]),
             )
         }
         Exp::Interpolate(None, evals) => format_unary_call(
@@ -226,7 +229,7 @@ fn format_exp(
                                 .concat([
                                     ALLOC.text("for"),
                                     gap_space(var_gap, style),
-                                    ALLOC.text(var.to_string()),
+                                    ALLOC.as_string(var),
                                     gap_space(in_gap, style),
                                     ALLOC.text("in"),
                                     gap_space(range_gap, style),
@@ -340,7 +343,7 @@ fn format_exp(
             let mut list = DelimList::new(style, ",", true);
             for (index, var) in vars.iter().enumerate() {
                 let var_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
-                let var_doc = ALLOC.text(var.to_string());
+                let var_doc = ALLOC.as_string(var);
                 if index + 1 < vars.len() {
                     let (before, after) = take_separator_gap_split(cursor, end, |token| {
                         matches!(token, Token::Comma)
@@ -402,7 +405,7 @@ fn format_exp(
                     dot,
                     ALLOC.text("."),
                     field_comments,
-                    ALLOC.text(field.to_string()),
+                    ALLOC.as_string(field),
                 ]),
             )
         }
@@ -427,7 +430,7 @@ fn format_exp(
             let close_comments =
                 cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
             let mut list = DelimList::new(style, ",", true);
-            list.push_sep(field_gap, ALLOC.text(field.to_string()), comma_b, comma_a);
+            list.push_sep(field_gap, ALLOC.as_string(field), comma_b, comma_a);
             list.push(value_gap, value_doc);
 
             (
@@ -584,7 +587,7 @@ fn format_sampling(
     } else {
         ALLOC.nil()
     };
-    let content = ALLOC.concat([ALLOC.text(typ.to_string()), star]);
+    let content = ALLOC.concat([ALLOC.as_string(typ), star]);
     let close_comments = cursor.advance_to_token(end, |token| matches!(token, Token::RAngle));
 
     let mut list = DelimList::new(style, ",", true);
@@ -765,7 +768,7 @@ fn format_relation_inner(
                 keyword,
                 ALLOC.text("let"),
                 gap_space(name_gap, style),
-                ALLOC.text(var.to_string()),
+                ALLOC.as_string(var),
                 gap_space(eq_gap, style),
                 ALLOC.text("="),
                 gap_space(value_gap, style),
@@ -865,7 +868,7 @@ fn format_body_inner(
                 keyword,
                 ALLOC.text("let"),
                 gap_space(name_gap, style),
-                ALLOC.text(var.to_string()),
+                ALLOC.as_string(var),
                 gap_space(eq_gap, style),
                 ALLOC.text("="),
                 gap_space(value_gap, style),
@@ -895,7 +898,7 @@ fn format_body_inner(
 
             ALLOC.concat([
                 name,
-                ALLOC.text(var.to_string()),
+                ALLOC.as_string(var),
                 gap_space(arrow_gap, style),
                 ALLOC.text("<-"),
                 gap_space(value_gap, style),
@@ -983,22 +986,28 @@ fn binop_symbol(op: BinOp) -> &'static str {
 }
 
 fn neg_needs_paren(exp: &Exp<Size>) -> bool {
-    matches!(exp, Exp::Bin(op, _, _) if op.precedence() <= 3)
+    // Neg has prefix precedence 3. A child Bin with precedence < 3
+    // (Add/Sub/Mul/Div/Rem) binds looser than Neg, so `-a + b` re-parses
+    // as `(-a) + b` — parens needed to preserve `Neg(Add(a, b))`.
+    // A child Bin with precedence >= 3 (Concat/Pow) binds at least as
+    // tight, so `-a ++ b` re-parses as `-(a ++ b)` — no parens needed.
+    matches!(exp, Exp::Bin(op, _, _) if op.precedence() < 3)
 }
 
 /// Does the lhs of a binary op need parentheses?
 fn lhs_needs_paren(op: BinOp, lhs: &Exp<Size>) -> bool {
-    // Neg has prefix precedence 0 (lowest), so it always needs parens
-    // when it's a child of a Bin — otherwise `-x * y` would re-parse as
-    // `-(x * y)` instead of `(-x) * y`.
+    // Neg has prefix precedence 3. As a Bin lhs, `-x op y` re-parses as
+    // `(-x) op y` when op.precedence() < 3 (Neg binds tighter), but as
+    // `-(x op y)` when op.precedence() >= 3 (op binds at least as tight).
     if matches!(lhs, Exp::Neg(_)) {
-        return true;
+        return op.precedence() >= 3;
     }
-    // Range as a Bin child needs parens — without them `0..n + 1`
-    // re-parses as `0..(n + 1)` because the range parser greedily
-    // consumes the end bound.
+    // Range as a Bin child needs parens when the operator is also a
+    // size_ty operator (Add/Sub/Mul/Div/Pow) — the range parser
+    // greedily consumes size_ty operators into the bounds. Rem and
+    // Concat are not size_ty operators, so no parens needed.
     if matches!(lhs, Exp::Range(_)) {
-        return true;
+        return range_needs_paren_in_bin(op);
     }
     let parent_prec = op.precedence();
     let right_assoc = op.is_right_assoc();
@@ -1009,17 +1018,33 @@ fn lhs_needs_paren(op: BinOp, lhs: &Exp<Size>) -> bool {
 
 /// Does the rhs of a binary op need parentheses?
 fn rhs_needs_paren(op: BinOp, rhs: &Exp<Size>) -> bool {
-    // Same as lhs: Neg at precedence 0 needs parens inside any Bin.
+    // Neg as a Bin rhs never needs parens — `x op -y` always re-parses
+    // as `op(x, Neg(y))` because the pratt parser allows prefix minus
+    // in operand positions regardless of binding precedence.
     if matches!(rhs, Exp::Neg(_)) {
-        return true;
+        return false;
     }
-    // Range as a Bin child needs parens — same reason as lhs.
+    // Range as a Bin rhs — same rule as lhs: only size_ty operators
+    // cause the range parser to greedily consume into bounds.
     if matches!(rhs, Exp::Range(_)) {
-        return true;
+        return range_needs_paren_in_bin(op);
     }
     let parent_prec = op.precedence();
     let right_assoc = op.is_right_assoc();
     matches!(rhs, Exp::Bin(child_op, _, _)
         if child_op.precedence() < parent_prec
             || (child_op.precedence() == parent_prec && !right_assoc))
+}
+
+/// Whether a Range child of a BinOp needs parens.
+///
+/// The range parser uses `size_ty_parser` for its bounds, which handles
+/// Add/Sub/Mul/Div/Pow. For those operators, `0..n op m` re-parses with
+/// `op` consumed into the bound. Rem and Concat are not size_ty
+/// operators, so the range parser stops and the Bin applies correctly.
+fn range_needs_paren_in_bin(op: BinOp) -> bool {
+    matches!(
+        op,
+        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow
+    )
 }

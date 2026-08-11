@@ -17,11 +17,11 @@ pub(crate) fn format_size(
     match size {
         Size::Var(id) => {
             let gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
-            (gap, ALLOC.text(id.to_string()))
+            (gap, ALLOC.as_string(id))
         }
         Size::Lit(value) => {
             let gap = cursor.advance_to_token(end, |token| matches!(token, Token::Positive(_)));
-            (gap, ALLOC.text(value.to_string()))
+            (gap, ALLOC.as_string(value))
         }
         Size::Add(lhs, rhs) => format_size_binary(lhs, rhs, size, cursor, end, style),
         Size::Sub(lhs, rhs) => format_size_binary(lhs, rhs, size, cursor, end, style),
