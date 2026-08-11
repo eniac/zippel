@@ -49,6 +49,21 @@ fn f<F: Field>(instance a: F, instance b: F, instance c: F) -> F {
     );
 }
 
+#[test]
+fn pow_left_grouped_keeps_parens() {
+    // (a ^ b) ^ c parses as Pow(Pow(a, b), c) (left-grouped via parens).
+    // Parentheses must be preserved — without them, `a ^ b ^ c` would
+    // re-parse as Pow(a, Pow(b, c)) (right-associative).
+    assert_ok(
+        "fn f<F: Field>(instance a: F, instance b: F, instance c: F) -> F { (a ^ b) ^ c }",
+        "\
+fn f<F: Field>(instance a: F, instance b: F, instance c: F) -> F {
+    (a ^ b) ^ c
+}
+",
+    );
+}
+
 // ══════════════════════════════════════════════════════════════════
 // Section: Range
 // ══════════════════════════════════════════════════════════════════

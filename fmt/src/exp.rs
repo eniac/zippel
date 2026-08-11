@@ -64,9 +64,9 @@ fn format_exp(
             //   a * b * c  =  Bin(*, Bin(*, a, b), c)  →  [a, b, c]
             // so all operators align at the same indent instead of nesting
             // deeper for each left-recursion level.
-            // Right-associative operators (Pow) must not be flattened:
-            //   a ^ b ^ c  =  Bin(^, a, Bin(^, b, c))  (no left-recursion)
-            // Flattening would change the AST on re-parse.
+            // Right-associative operators (Pow) are excluded: flattening
+            //   (a ^ b) ^ c  =  Bin(^, Bin(^, a, b), c)  →  [a, b, c]
+            // would output `a ^ b ^ c`, which re-parses as `a ^ (b ^ c)`.
             let mut inner_rhs_list: Vec<&Spanned<Exp<Size>>> = Vec::new();
             let mut current: &Spanned<Exp<Size>> = lhs;
             while let Exp::Bin(inner_op, inner_lhs, inner_rhs) = &current.node {
