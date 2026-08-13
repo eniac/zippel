@@ -16,23 +16,23 @@ warning: no proto declaration found
 ───╯
 
 ---
-error: unexpected ':' while parsing this generic parameters
+error: unexpected ':' while parsing these generic parameters
    ╭─[ test.zippel:1:6 ]
    │
  1 │ fn f<: Field>(instance a: F) -> F { a }
    │      ┬  
    │      ╰── found ':', expected '>'
    │      │  
-   │      ╰── while parsing this generic parameters
+   │      ╰── while parsing these generic parameters
 ───╯
 
 ---
-error: unexpected ':' while parsing this generic parameters
+error: unexpected ':' while parsing these generic parameters
    ╭─[ test.zippel:3:6 ]
    │
  3 │ fn h<: Field>(instance a: F) -> F { a }
    │      ┬  
    │      ╰── found ':', expected '>'
    │      │  
-   │      ╰── while parsing this generic parameters
+   │      ╰── while parsing these generic parameters
 ───╯

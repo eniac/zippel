@@ -7,4 +7,6 @@ error: unbound size variable `N`
  1 │ proto p<F: Field>(instance a: [F; N]) where a == a { }
    │                   ─────────┬────────  
    │                            ╰────────── `N` is not declared as a type variable
+   │                            │          
+   │                            ╰────────── help: add `N: Size` to the type variable list
 ───╯

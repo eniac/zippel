@@ -123,8 +123,8 @@ fn semantic_pairing_refs_non_group() {
     let src = "proto p<F: Field, P: Pairing<F, F>>(instance a: F) where a == a { }";
     let rendered = render_all(src);
     assert!(
-        rendered.contains("invalid kind for type variable"),
-        "expected invalid typevar kind error, got: {rendered}"
+        rendered.contains("`F` is not a Group"),
+        "expected invalid group ref error, got: {rendered}"
     );
     assert_snap!("pairing_refs_non_group", rendered);
 }
@@ -163,6 +163,18 @@ fn semantic_impure_verify_in_where() {
         "expected impure relation error for verify in where clause, got: {rendered}"
     );
     assert_snap!("impure_verify_in_where", rendered);
+}
+
+#[test]
+fn semantic_circular_typevar_ref() {
+    // V: Pairing<G> and G: Pairing<V> — circular kind reference.
+    let src = "proto p<V: Pairing<G, G>, G: Pairing<V, V>>(instance a: V) where a == a { }";
+    let rendered = render_all(src);
+    assert!(
+        rendered.contains("circular type variable reference"),
+        "expected circular typevar ref error, got: {rendered}"
+    );
+    assert_snap!("circular_typevar_ref", rendered);
 }
 
 // ── Semantic errors (assertion only) ───────────────────────────────────

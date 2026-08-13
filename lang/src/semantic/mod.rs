@@ -48,11 +48,16 @@ pub enum SemanticError {
     },
     /// Use of a size variable not declared in the typevar list.
     UnboundSizeVar { name: Tid, use_span: Range<usize> },
-    /// A typevar's kind is invalid (e.g. Pairing referencing a non-Group).
-    InvalidTypevarKind {
-        name: Tid,
-        span: Range<usize>,
-        reason: KindError,
+    /// A group reference in a kind resolves to a declared typevar but the
+    /// kind doesn't match (e.g. `Pairing<F, F>` where `F: Field`).
+    /// `ref_name` is the referenced typevar, `ref_span` is its use site,
+    /// `tv_name` is the typevar whose kind contains the bad reference,
+    /// `actual_kind` is a description of what `ref_name` actually is.
+    InvalidGroupRef {
+        ref_name: Tid,
+        ref_span: Range<usize>,
+        tv_name: Tid,
+        actual_kind: String,
     },
     /// Two typevars share the same name in one declaration.
     DuplicateTypevar {
@@ -61,19 +66,18 @@ pub enum SemanticError {
         second_span: Range<usize>,
     },
     /// A range typevar has start > end.
-    InvalidRangeBounds { name: Tid, span: Range<usize> },
-    /// A group reference in a kind doesn't resolve to a declared typevar
-    /// of the required kind.
-    UnresolvedGroupRef {
+    InvalidRangeBounds {
         name: Tid,
-        ref_span: Range<usize>,
-        reason: KindError,
+        span: Range<usize>,
+        start: String,
+        end: String,
     },
+    /// A group reference in a kind doesn't resolve to any declared typevar.
+    UnresolvedGroupRef { name: Tid, ref_span: Range<usize> },
     /// Circular reference among typevar kinds (e.g. V: Pairing<G>, G: Pairing<V>).
-    CircularTypevarRef {
-        cycle: Vec<Tid>,
-        first_span: Range<usize>,
-    },
+    /// `cycle` is a list of (typevar name, span of the kind reference) for
+    /// each typevar in the cycle, in dependency order.
+    CircularTypevarRef { cycle: Vec<(Tid, Range<usize>)> },
     /// Two declarations share the same signature.
     DuplicateDeclaration {
         name: String,
@@ -96,17 +100,4 @@ pub enum SemanticError {
         span: Range<usize>,
         construct: String,
     },
-}
-
-/// Sub-category of kind errors for typevar validation.
-#[derive(Debug, Clone)]
-pub enum KindError {
-    /// Expected a Group kind, found something else.
-    NotAGroup,
-    /// Expected a Scalar kind, found something else.
-    NotAScalar,
-    /// Expected a Range or SizeVar kind, found something else.
-    NotARangeOrSize,
-    /// The referenced typevar is not declared at all.
-    GroupNotDeclared,
 }

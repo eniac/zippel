@@ -145,7 +145,11 @@ pub(crate) fn error_summary(error: &ParseError) -> String {
 
     // If we have context labels, mention what we were parsing.
     if let Some((label, _)) = error.contexts.first() {
-        format!("{found} while parsing this {label}")
+        let determiner = match label {
+            Context::GenericParams | Context::CallArgs => "these",
+            _ => "this",
+        };
+        format!("{found} while parsing {determiner} {label}")
     } else if error.expected.is_empty() {
         found
     } else {

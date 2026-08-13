@@ -1,8 +1,8 @@
 //! Convert `SemanticError` into `Diagnostic` for rendering.
 
-use crate::diagnostic::{Applicability, Diagnostic, Phase, Severity, Suggestion};
+use crate::diagnostic::{Diagnostic, Phase, SecondaryLabel, Severity, Suggestion};
 
-use super::{KindError, SemanticError};
+use super::SemanticError;
 
 impl From<SemanticError> for Diagnostic {
     fn from(err: SemanticError) -> Self {
@@ -20,7 +20,7 @@ impl From<SemanticError> for Diagnostic {
                         message: format!("did you mean {}?", names.join(", ")),
                         span: use_span.clone(),
                         replacement: similar[0].0 .0.clone(),
-                        applicability: Applicability::MaybeIncorrect,
+                        applicability: crate::diagnostic::Applicability::MaybeIncorrect,
                     });
                 }
                 Diagnostic {
@@ -31,7 +31,7 @@ impl From<SemanticError> for Diagnostic {
                     primary_label: format!("`{name}` is not defined in this scope"),
                     secondary_labels: similar
                         .into_iter()
-                        .map(|(n, span)| crate::diagnostic::SecondaryLabel {
+                        .map(|(n, span)| SecondaryLabel {
                             span,
                             message: format!("`{n}` defined here"),
                         })
@@ -44,33 +44,37 @@ impl From<SemanticError> for Diagnostic {
             SemanticError::UnboundSizeVar { name, use_span } => Diagnostic {
                 severity: Severity::Error,
                 phase: Phase::Semantic,
-                span: use_span,
+                span: use_span.clone(),
                 summary: format!("unbound size variable `{name}`"),
                 primary_label: format!("`{name}` is not declared as a type variable"),
+                secondary_labels: vec![],
+                notes: vec![],
+                suggestions: vec![Suggestion {
+                    message: format!("add `{name}: Size` to the type variable list"),
+                    span: use_span,
+                    replacement: String::new(),
+                    applicability: crate::diagnostic::Applicability::MaybeIncorrect,
+                }],
+                code: None,
+            },
+            SemanticError::InvalidGroupRef {
+                ref_name,
+                ref_span,
+                tv_name,
+                actual_kind,
+            } => Diagnostic {
+                severity: Severity::Error,
+                phase: Phase::Semantic,
+                span: ref_span.clone(),
+                summary: format!("`{ref_name}` is not a Group"),
+                primary_label: format!(
+                    "`{ref_name}` is {actual_kind}, but `{tv_name}` requires a Group"
+                ),
                 secondary_labels: vec![],
                 notes: vec![],
                 suggestions: vec![],
                 code: None,
             },
-            SemanticError::InvalidTypevarKind { name, span, reason } => {
-                let reason_msg = match reason {
-                    KindError::NotAGroup => "expected a Group kind",
-                    KindError::NotAScalar => "expected a Scalar or Field kind",
-                    KindError::NotARangeOrSize => "expected a Range or Size kind",
-                    KindError::GroupNotDeclared => "not declared as a type variable",
-                };
-                Diagnostic {
-                    severity: Severity::Error,
-                    phase: Phase::Semantic,
-                    span: span.clone(),
-                    summary: format!("invalid kind for type variable `{name}`"),
-                    primary_label: reason_msg.to_string(),
-                    secondary_labels: vec![],
-                    notes: vec![],
-                    suggestions: vec![],
-                    code: None,
-                }
-            }
             SemanticError::DuplicateTypevar {
                 name,
                 first_span,
@@ -81,7 +85,7 @@ impl From<SemanticError> for Diagnostic {
                 span: second_span.clone(),
                 summary: format!("duplicate type variable `{name}`"),
                 primary_label: format!("`{name}` declared a second time here"),
-                secondary_labels: vec![crate::diagnostic::SecondaryLabel {
+                secondary_labels: vec![SecondaryLabel {
                     span: first_span,
                     message: format!("`{name}` first declared here"),
                 }],
@@ -89,49 +93,66 @@ impl From<SemanticError> for Diagnostic {
                 suggestions: vec![],
                 code: None,
             },
-            SemanticError::InvalidRangeBounds { name, span } => Diagnostic {
+            SemanticError::InvalidRangeBounds {
+                name,
+                span,
+                start,
+                end,
+            } => Diagnostic {
                 severity: Severity::Error,
                 phase: Phase::Semantic,
                 span: span.clone(),
                 summary: format!("invalid range bounds for `{name}`"),
-                primary_label: "range start must be less than or equal to range end".to_string(),
+                primary_label: format!(
+                    "range `{start}..{end}` is invalid: start ({start}) must be ≤ end ({end})"
+                ),
                 secondary_labels: vec![],
                 notes: vec![],
                 suggestions: vec![],
                 code: None,
             },
-            SemanticError::UnresolvedGroupRef {
-                name,
-                ref_span,
-                reason,
-            } => {
-                let reason_msg = match reason {
-                    KindError::NotAGroup => "expected a Group kind",
-                    KindError::NotAScalar => "expected a Scalar, Field, or Pairing kind",
-                    KindError::NotARangeOrSize => "expected a Range or Size kind",
-                    KindError::GroupNotDeclared => "not declared as a type variable",
-                };
-                Diagnostic {
-                    severity: Severity::Error,
-                    phase: Phase::Semantic,
-                    span: ref_span.clone(),
-                    summary: format!("unresolved group reference `{name}`"),
-                    primary_label: reason_msg.to_string(),
-                    secondary_labels: vec![],
-                    notes: vec![],
-                    suggestions: vec![],
-                    code: None,
+            SemanticError::UnresolvedGroupRef { name, ref_span } => Diagnostic {
+                severity: Severity::Error,
+                phase: Phase::Semantic,
+                span: ref_span.clone(),
+                summary: format!("unresolved group reference `{name}`"),
+                primary_label: format!("`{name}` is not declared as a type variable"),
+                secondary_labels: vec![],
+                notes: vec![],
+                suggestions: vec![Suggestion {
+                    message: format!("declare `{name}` as a type variable with `Group` kind"),
+                    span: ref_span,
+                    replacement: String::new(),
+                    applicability: crate::diagnostic::Applicability::MaybeIncorrect,
+                }],
+                code: None,
+            },
+            SemanticError::CircularTypevarRef { cycle } => {
+                // Close the cycle: V → G → V
+                let names: Vec<String> = cycle.iter().map(|(t, _)| t.0.to_string()).collect();
+                let mut cycle_str = names.join(" → ");
+                if let Some(first) = names.first() {
+                    cycle_str.push_str(" → ");
+                    cycle_str.push_str(first);
                 }
-            }
-            SemanticError::CircularTypevarRef { cycle, first_span } => {
-                let cycle_str: Vec<String> = cycle.iter().map(|t| t.0.to_string()).collect();
+
+                let primary_span = cycle.first().map(|(_, s)| s.clone()).unwrap_or(0..0);
+                let secondary_labels: Vec<SecondaryLabel> = cycle
+                    .iter()
+                    .skip(1)
+                    .map(|(t, s)| SecondaryLabel {
+                        span: s.clone(),
+                        message: format!("`{t}` references the next type variable in the cycle"),
+                    })
+                    .collect();
+
                 Diagnostic {
                     severity: Severity::Error,
                     phase: Phase::Semantic,
-                    span: first_span.clone(),
+                    span: primary_span,
                     summary: "circular type variable reference".to_string(),
-                    primary_label: format!("cycle: {}", cycle_str.join(" → ")),
-                    secondary_labels: vec![],
+                    primary_label: format!("cycle: {cycle_str}"),
+                    secondary_labels,
                     notes: vec![],
                     suggestions: vec![],
                     code: None,
@@ -147,7 +168,7 @@ impl From<SemanticError> for Diagnostic {
                 span: second_span.clone(),
                 summary: format!("duplicate declaration: {name}"),
                 primary_label: format!("{name} declared a second time here"),
-                secondary_labels: vec![crate::diagnostic::SecondaryLabel {
+                secondary_labels: vec![SecondaryLabel {
                     span: first_span,
                     message: format!("{name} first defined here"),
                 }],
@@ -164,13 +185,11 @@ impl From<SemanticError> for Diagnostic {
                     cycle_str.push_str(first);
                 }
 
-                // Primary label at the first alias's type reference.
-                // Secondary labels at each subsequent alias, showing the chain.
                 let primary_span = cycle.first().map(|(_, s)| s.clone()).unwrap_or(0..0);
-                let secondary_labels: Vec<crate::diagnostic::SecondaryLabel> = cycle
+                let secondary_labels: Vec<SecondaryLabel> = cycle
                     .iter()
                     .skip(1)
-                    .map(|(t, s)| crate::diagnostic::SecondaryLabel {
+                    .map(|(t, s)| SecondaryLabel {
                         span: s.clone(),
                         message: format!("`{t}` aliases the next type in the cycle"),
                     })
@@ -201,7 +220,7 @@ impl From<SemanticError> for Diagnostic {
                     message: "add a `proto` declaration to this file".to_string(),
                     span: 0..0,
                     replacement: String::new(),
-                    applicability: Applicability::MachineApplicable,
+                    applicability: crate::diagnostic::Applicability::MachineApplicable,
                 }],
                 code: None,
             },
@@ -214,7 +233,7 @@ impl From<SemanticError> for Diagnostic {
                 span: second_span.clone(),
                 summary: "multiple proto declarations".to_string(),
                 primary_label: "a file should contain at most one proto declaration".to_string(),
-                secondary_labels: vec![crate::diagnostic::SecondaryLabel {
+                secondary_labels: vec![SecondaryLabel {
                     span: first_span,
                     message: "first proto declared here".to_string(),
                 }],

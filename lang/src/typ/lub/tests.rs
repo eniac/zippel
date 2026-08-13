@@ -1,5 +1,6 @@
 use super::*;
 use crate::ast::range::CRange;
+use crate::ast::spanned::Spanned;
 #[test]
 fn lub_range() {
     let a = CRange::from_raw(0, 1, 10);
@@ -93,9 +94,18 @@ fn lub_tid() {
         (f.clone(), Kind::Field),
         (g1.clone(), Kind::Group),
         (g2.clone(), Kind::Group),
-        (p.clone(), Kind::Pairing(g1.clone(), g2.clone())),
-        (s1.clone(), Kind::Scalar(Set::from([g1.clone()]))),
-        (s2.clone(), Kind::Scalar(Set::from([g2.clone()]))),
+        (
+            p.clone(),
+            Kind::Pairing(Spanned::dummy(g1.clone()), Spanned::dummy(g2.clone())),
+        ),
+        (
+            s1.clone(),
+            Kind::Scalar(Set::from([Spanned::dummy(g1.clone())])),
+        ),
+        (
+            s2.clone(),
+            Kind::Scalar(Set::from([Spanned::dummy(g2.clone())])),
+        ),
     ]);
 
     assert_eq!(Tid::lub_equ(&f, &f, &ctx), Ok(f.clone()));
@@ -149,9 +159,18 @@ fn lub_typ() {
         (f.clone(), Kind::Field),
         (g1.clone(), Kind::Group),
         (g2.clone(), Kind::Group),
-        (p.clone(), Kind::Pairing(g1.clone(), g2.clone())),
-        (s1.clone(), Kind::Scalar(Set::from([g1.clone()]))),
-        (s2.clone(), Kind::Scalar(Set::from([g2.clone()]))),
+        (
+            p.clone(),
+            Kind::Pairing(Spanned::dummy(g1.clone()), Spanned::dummy(g2.clone())),
+        ),
+        (
+            s1.clone(),
+            Kind::Scalar(Set::from([Spanned::dummy(g1.clone())])),
+        ),
+        (
+            s2.clone(),
+            Kind::Scalar(Set::from([Spanned::dummy(g2.clone())])),
+        ),
     ]);
 
     let tf = CTyp::base(&f);
@@ -746,7 +765,10 @@ mod ctyp_lub_poly_tests {
         let mut kctx = Ctx::new();
         kctx.insert(&Tid::from("F"), &Kind::Field);
         kctx.insert(&Tid::from("G"), &Kind::Group);
-        kctx.insert(&Tid::from("S"), &Kind::Scalar(Set::from([Tid::from("G")])));
+        kctx.insert(
+            &Tid::from("S"),
+            &Kind::Scalar(Set::from([Spanned::dummy(Tid::from("G"))])),
+        );
         kctx
     }
 
@@ -1344,7 +1366,10 @@ mod ctyp_lub_overflow_tests {
         let mut kctx = Ctx::new();
         kctx.insert(&Tid::from("F"), &Kind::Field);
         kctx.insert(&Tid::from("G"), &Kind::Group);
-        kctx.insert(&Tid::from("S"), &Kind::Scalar(Set::from([Tid::from("G")])));
+        kctx.insert(
+            &Tid::from("S"),
+            &Kind::Scalar(Set::from([Spanned::dummy(Tid::from("G"))])),
+        );
         kctx
     }
 
@@ -1422,7 +1447,10 @@ mod ctyp_lub_fin_scalar_coercion_tests {
         let mut kctx = Ctx::new();
         kctx.insert(&Tid::from("F"), &Kind::Field);
         kctx.insert(&Tid::from("G"), &Kind::Group);
-        kctx.insert(&Tid::from("S"), &Kind::Scalar(Set::from([Tid::from("G")])));
+        kctx.insert(
+            &Tid::from("S"),
+            &Kind::Scalar(Set::from([Spanned::dummy(Tid::from("G"))])),
+        );
         kctx
     }
 

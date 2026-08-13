@@ -6,5 +6,5 @@ error: invalid range bounds for `N`
    │
  1 │ proto p<N: 10..5>(instance a: [F; N]) where a == a { }
    │         ────┬───  
-   │             ╰───── range start must be less than or equal to range end
+   │             ╰───── range `10..5` is invalid: start (10) must be ≤ end (5)
 ───╯

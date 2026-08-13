@@ -1,12 +1,12 @@
 ---
 source: lang/tests/diagnostics.rs
 ---
-error: unexpected ':' while parsing this generic parameters
+error: unexpected ':' while parsing these generic parameters
    ╭─[ test.zippel:1:6 ]
    │
  1 │ fn f<: Field>(instance a: F) -> F { a }
    │      ┬  
    │      ╰── found ':', expected '>'
    │      │  
-   │      ╰── while parsing this generic parameters
+   │      ╰── while parsing these generic parameters
 ───╯

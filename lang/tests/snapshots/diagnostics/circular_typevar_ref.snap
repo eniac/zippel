@@ -1,0 +1,12 @@
+---
+source: lang/tests/diagnostics.rs
+---
+error: circular type variable reference
+   ╭─[ test.zippel:1:20 ]
+   │
+ 1 │ proto p<V: Pairing<G, G>, G: Pairing<V, V>>(instance a: V) where a == a { }
+   │                    ┬                 ┬  
+   │                    ╰──────────────────── cycle: V → G → V
+   │                                      │  
+   │                                      ╰── `G` references the next type variable in the cycle
+───╯

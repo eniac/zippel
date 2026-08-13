@@ -238,9 +238,9 @@ where
     just(Token::KwPairing)
         .ignored()
         .ignore_then(just(Token::LAngle).ignored())
-        .ignore_then(tid_tok())
+        .ignore_then(tid_tok_spanned())
         .then_ignore(just(Token::Comma).ignored())
-        .then(tid_tok())
+        .then(tid_tok_spanned())
         .then_ignore(just(Token::Comma).ignored().or_not())
         .then_ignore(just(Token::RAngle).ignored())
         .map(|(a, b)| Kind::Pairing(a, b))
@@ -255,13 +255,13 @@ where
         .ignored()
         .ignore_then(just(Token::LAngle).ignored())
         .ignore_then(
-            tid_tok()
+            tid_tok_spanned()
                 .separated_by(just(Token::Comma).ignored())
                 .allow_trailing()
                 .collect::<Vec<_>>(),
         )
         .then_ignore(just(Token::RAngle).ignored())
-        .map(|ids: Vec<Tid>| Kind::Scalar(ids.into_iter().collect()))
+        .map(|ids: Vec<Spanned<Tid>>| Kind::Scalar(ids.into_iter().collect()))
 }
 
 // ── Type parser ────────────────────────────────────────────────────────

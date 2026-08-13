@@ -70,13 +70,13 @@ impl Unify for Tid {
             (Kind::Group, Kind::Group) => Ok(subs.add_equ(a, b)),
             (Kind::Scalar(x), Kind::Scalar(y)) if x.len() == y.len() => {
                 x.iter().zip(y.iter()).for_each(|(x, y)| {
-                    subs.add_equ(x, y);
+                    subs.add_equ(&x.node, &y.node);
                 });
                 Ok(subs.add_equ(a, b))
             }
             (Kind::Pairing(k1, k2), Kind::Pairing(k3, k4)) => {
-                subs.add_equ(k1, k3);
-                subs.add_equ(k2, k4);
+                subs.add_equ(&k1.node, &k3.node);
+                subs.add_equ(&k2.node, &k4.node);
                 Ok(subs.add_equ(a, b))
             }
             // Ranges and SizeVars should be concretized already, if not its a bug
@@ -242,9 +242,18 @@ mod tests {
             (f2.clone(), Kind::Field),
             (g1.clone(), Kind::Group),
             (g2.clone(), Kind::Group),
-            (s1.clone(), Kind::Scalar(Set::singleton(f1.clone()))),
-            (p.clone(), Kind::Pairing(g1.clone(), g2.clone())),
-            (pp.clone(), Kind::Pairing(g1.clone(), g1.clone())),
+            (
+                s1.clone(),
+                Kind::Scalar(Set::singleton(Spanned::dummy(f1.clone()))),
+            ),
+            (
+                p.clone(),
+                Kind::Pairing(Spanned::dummy(g1.clone()), Spanned::dummy(g2.clone())),
+            ),
+            (
+                pp.clone(),
+                Kind::Pairing(Spanned::dummy(g1.clone()), Spanned::dummy(g1.clone())),
+            ),
         ]);
 
         let mut subs = AliasSubsts::new();

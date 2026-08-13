@@ -105,9 +105,14 @@ impl From<ParseError> for crate::diagnostic::Diagnostic {
             .contexts
             .first()
             .map(|(ctx, span)| {
+                // Plural contexts use "these" instead of "this".
+                let determiner = match ctx {
+                    Context::GenericParams | Context::CallArgs => "these",
+                    _ => "this",
+                };
                 vec![SecondaryLabel {
                     span: span.clone(),
-                    message: format!("while parsing this {ctx}"),
+                    message: format!("while parsing {determiner} {ctx}"),
                 }]
             })
             .unwrap_or_default();

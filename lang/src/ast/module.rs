@@ -138,11 +138,9 @@ impl UModule {
                 .into_iter()
                 .map(Diagnostic::from),
         );
-        diags.extend(
-            crate::semantic::check_type_alias_cycles(&decls)
-                .into_iter()
-                .map(Diagnostic::from),
-        );
+        let alias_cycle_errors = crate::semantic::check_type_alias_cycles(&decls);
+        let has_alias_cycle = !alias_cycle_errors.is_empty();
+        diags.extend(alias_cycle_errors.into_iter().map(Diagnostic::from));
 
         // Phase 3: Per-declaration semantic checks
         use crate::ast::Body;
@@ -167,9 +165,6 @@ impl UModule {
         // Phase 4: Build module (type alias inlining)
         // Skip inlining if there are type alias cycle errors — inlining
         // cyclic aliases would cause infinite recursion.
-        let has_alias_cycle = diags
-            .iter()
-            .any(|d| d.summary.contains("circular type alias"));
         let module = if has_alias_cycle {
             // Build without type alias inlining to avoid infinite recursion.
             // The module will be incomplete but diagnostics have the error.

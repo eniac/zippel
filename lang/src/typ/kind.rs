@@ -15,9 +15,9 @@ pub enum Kind<N> {
     /// Unconstrained group type variable
     Group,
     /// Scalar of groups
-    Scalar(Set<Tid>),
+    Scalar(Set<Spanned<Tid>>),
     /// Pairing-friendly groups
-    Pairing(Tid, Tid),
+    Pairing(Spanned<Tid>, Spanned<Tid>),
     /// Range of numbers
     Range(Range<N>),
     /// Externally-provided size parameter (value provided during concretize)
@@ -31,22 +31,6 @@ pub type UKind = Kind<Size>;
 pub type CKind = Kind<usize>;
 
 impl<N> Kind<N> {
-    pub fn scalar1(a: &str) -> Self {
-        Kind::Scalar(Set::singleton(Tid::new(a)))
-    }
-    pub fn scalar2<'a>(a: &'a str, b: &'a str) -> Self {
-        Kind::Scalar(Set::from([Tid::new(a), Tid::new(b)]))
-    }
-    pub fn pairing<'a>(a: &'a str, b: &'a str) -> Self {
-        Kind::Pairing(Tid::new(a), Tid::new(b))
-    }
-    pub fn range(start: N, step: N, end: N) -> Self {
-        Kind::Range(Range {
-            start: Spanned::dummy(start),
-            step: Some(Spanned::dummy(step)),
-            end: Some(Spanned::dummy(end)),
-        })
-    }
     pub fn is_scalar(&self) -> bool {
         matches!(self, Kind::Field | Kind::Scalar(_))
     }
@@ -55,7 +39,7 @@ impl<N> Kind<N> {
     }
     pub fn is_pairing(&self, a: &Tid, b: &Tid) -> bool {
         match self {
-            Kind::Pairing(x, y) => (x == a && y == b) || (y == a && x == b),
+            Kind::Pairing(x, y) => (&x.node == a && &y.node == b) || (&y.node == a && &x.node == b),
             _ => false,
         }
     }
@@ -63,8 +47,8 @@ impl<N> Kind<N> {
     pub fn get_pairing_of(&self, a: &Tid) -> Option<(Tid, Tid)> {
         match self {
             Kind::Pairing(x, y) => {
-                if x == a || y == a {
-                    Some((x.clone(), y.clone()))
+                if &x.node == a || &y.node == a {
+                    Some((x.node.clone(), y.node.clone()))
                 } else {
                     None
                 }
@@ -115,10 +99,13 @@ where
             Kind::Group => allocator.text("Group".to_string()),
             Kind::Scalar(f) => allocator.concat([
                 allocator.text("Scalar<"),
-                allocator.intersperse(f.iter().map(|t| allocator.text(format!("{}", t))), ", "),
+                allocator.intersperse(
+                    f.iter().map(|t| allocator.text(format!("{}", t.node))),
+                    ", ",
+                ),
                 allocator.text(">"),
             ]),
-            Kind::Pairing(g1, g2) => allocator.text(format!("Pairing<{}, {}>", g1, g2)),
+            Kind::Pairing(g1, g2) => allocator.text(format!("Pairing<{}, {}>", g1.node, g2.node)),
             Kind::Range(r) => r.pretty(allocator),
             Kind::SizeVar => allocator.text("Size"),
         }
@@ -141,14 +128,31 @@ impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone + 'a> fmt::Display for Kind<N> 
 mod tests {
     use super::*;
 
+    fn scalar2(a: &str, b: &str) -> Kind<usize> {
+        Kind::Scalar(Set::from([
+            Spanned::dummy(Tid::new(a)),
+            Spanned::dummy(Tid::new(b)),
+        ]))
+    }
+    fn pairing(a: &str, b: &str) -> Kind<usize> {
+        Kind::Pairing(Spanned::dummy(Tid::new(a)), Spanned::dummy(Tid::new(b)))
+    }
+    fn range(start: usize, step: usize, end: usize) -> Kind<usize> {
+        Kind::Range(Range {
+            start: Spanned::dummy(start),
+            step: Some(Spanned::dummy(step)),
+            end: Some(Spanned::dummy(end)),
+        })
+    }
+
     #[test]
     fn test_kind_relations() {
         let f = Kind::<usize>::Field;
         let g = Kind::<usize>::Group;
-        let s = Kind::<usize>::scalar2("A", "B");
-        let p = Kind::<usize>::pairing("G1", "G2");
+        let s = scalar2("A", "B");
+        let p = pairing("G1", "G2");
         let sv = Kind::<usize>::SizeVar;
-        let r = Kind::<usize>::range(1, 1, 5);
+        let r = range(1, 1, 5);
 
         assert!(f.is_scalar());
         assert!(!f.is_group());

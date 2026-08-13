@@ -157,7 +157,7 @@ lazy_static! {
         // Add group type "G"
         kctx.insert(&Tid::from("G"), &Kind::Group);
         // Add scalar type "S"
-        kctx.insert(&Tid::from("S"), &Kind::scalar1("G"));
+        kctx.insert(&Tid::from("S"), &Kind::Scalar(Set::singleton(Spanned::dummy(Tid::from("G")))));
         kctx
     };
 
@@ -648,8 +648,8 @@ fn test_app() {
     let fctx = Set::singleton(Sig {
         name: Spanned::dummy(Vid::from("fun")),
         typevars: Spanned::dummy(TypeVars::from([
-            Spanned::dummy(TypeVar::new_str("F", Kind::Field)),
-            Spanned::dummy(TypeVar::new_str("G", Kind::Group)),
+            Spanned::dummy(TypeVar::new(&Tid::from("F"), &Kind::Field)),
+            Spanned::dummy(TypeVar::new(&Tid::from("G"), &Kind::Group)),
         ])),
         args: Spanned::dummy(Args::from([
             Spanned::dummy(CArg::instance("a", CTyp::Base(Tid::from("F")))),

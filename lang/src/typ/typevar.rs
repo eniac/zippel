@@ -31,12 +31,6 @@ impl<N> TypeVar<N> {
             kind: kind.clone(),
         }
     }
-    pub fn new_str(id: &str, kind: Kind<N>) -> Self {
-        TypeVar {
-            id: Spanned::dummy(Tid::new(id)),
-            kind,
-        }
-    }
 }
 
 /// A collection of type variables, parameterized by size type N
