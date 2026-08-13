@@ -86,20 +86,20 @@ impl SizeSubsts {
                 let concrete_range = r
                     .clone()
                     .traverse1(&mut |s| s.eval(&eval_ctx))
-                    .map_err(|e| SubstError::Eval(tv.id.clone(), e))?;
+                    .map_err(|e| SubstError::Eval(tv.id.node.clone(), e))?;
 
-                if let Some(&pinned) = sizes.get(&tv.id) {
+                if let Some(&pinned) = sizes.get(&tv.id.node) {
                     if concrete_range.contains(pinned) {
                         let mut pinned_partial = partial;
-                        pinned_partial.insert(&tv.id, &pinned);
+                        pinned_partial.insert(&tv.id.node, &pinned);
                         next.push(pinned_partial);
                     } else {
-                        return Err(SubstError::OutOfRange(tv.id.clone(), pinned));
+                        return Err(SubstError::OutOfRange(tv.id.node.clone(), pinned));
                     }
                 } else {
                     for value in concrete_range {
                         let mut expanded = partial.clone();
-                        expanded.insert(&tv.id, &value);
+                        expanded.insert(&tv.id.node, &value);
                         next.push(expanded);
                     }
                 }
@@ -203,10 +203,18 @@ impl<T: Clone> From<Vec<(Tid, T)>> for Substs<T> {
 }
 
 #[cfg(test)]
-use crate::ast::decl::Decl;
+use crate::parser::parse_decls;
+
+#[cfg(test)]
+fn parse_decl(src: &str) -> crate::ast::decl::UDecl {
+    let (mut decls, errors) = parse_decls(src);
+    assert!(errors.is_empty(), "parse errors: {:?}", errors);
+    decls.pop().map(|s| s.node).unwrap()
+}
+
 #[test]
 fn size_substs_from_typevars() {
-    let decl = Decl::from_str("fn test<N: 0..4, M: 1..3>(instance a: N) -> N { 1 }").unwrap();
+    let decl = parse_decl("fn test<N: 0..4, M: 1..3>(instance a: N) -> N { 1 }");
     assert_eq!(
         SizeSubsts::from_typevars(&decl.sig.typevars, &Ctx::new()).unwrap(),
         Set::from(vec![
@@ -225,7 +233,7 @@ fn size_substs_from_typevars() {
 #[test]
 fn size_substs_pinning() {
     // Pin N=2 within range 0..4 — should produce only N=2 combinations
-    let decl = Decl::from_str("fn test<N: 0..4, M: 1..3>(instance a: N) -> N { 1 }").unwrap();
+    let decl = parse_decl("fn test<N: 0..4, M: 1..3>(instance a: N) -> N { 1 }");
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::from("N"), &2);
     assert_eq!(
@@ -239,10 +247,9 @@ fn size_substs_pinning() {
 
 #[test]
 fn size_substs_dependent_range_from_singleton_typevar() {
-    let decl = Decl::from_str(
+    let decl = parse_decl(
         "fn test<F: Field, NUM_VARS_CONST: 10, V: 2..NUM_VARS_CONST>(instance a: [F; V]) -> F { a[0] }",
-    )
-    .unwrap();
+    );
 
     let substs = SizeSubsts::from_typevars(&decl.sig.typevars, &Ctx::new()).unwrap();
     let v_values: Set<usize> = substs
@@ -259,7 +266,7 @@ fn size_substs_dependent_range_from_singleton_typevar() {
 #[test]
 fn size_substs_pinning_out_of_range() {
     // Pin N=10 outside range 0..4 — should error
-    let decl = Decl::from_str("fn test<N: 0..4>(instance a: N) -> N { 1 }").unwrap();
+    let decl = parse_decl("fn test<N: 0..4>(instance a: N) -> N { 1 }");
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::from("N"), &10);
     assert!(matches!(

@@ -32,11 +32,15 @@ const SCHNORR_PROTO: &str = r#"
     }
 "#;
 
+#[track_caller]
 fn compile_schnorr() -> AnalysisDag {
-    let m = UModule::from_str(SCHNORR_PROTO)
-        .unwrap()
-        .concretize(&Ctx::new())
-        .unwrap();
+    let (m, diags) = UModule::parse(SCHNORR_PROTO);
+    assert!(
+        diags.is_empty(),
+        "unexpected diagnostics: {:?}",
+        diags.iter().map(|d| &d.summary).collect::<Vec<_>>()
+    );
+    let m = m.unwrap().concretize(&Ctx::new()).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let proto = gs.protocols().into_iter().next().unwrap();
     QualifierPropagation::from_dag(proto)
@@ -53,6 +57,7 @@ fn schnorr_x_one(dag: &AnalysisDag) -> Ctx<graph::Ref, Value<ArkBls12_381>> {
 
 /// Remove all outgoing edges from the relation node (simulates a protocol
 /// with a stripped/incorrect relation).
+#[track_caller]
 fn strip_relation(dag: &mut AnalysisDag) {
     let rel_node = dag.relation_node().unwrap();
     let edge_ids: Vec<_> = dag

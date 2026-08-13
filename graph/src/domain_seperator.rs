@@ -9,9 +9,9 @@ use std::marker::PhantomData;
 #[cfg(test)]
 use crate::UDags;
 #[cfg(test)]
-use backend::ArkBls12_381;
+use crate::tests::test_helpers::parse_and_concretize;
 #[cfg(test)]
-use lang::ast::UModule;
+use backend::ArkBls12_381;
 #[cfg(test)]
 use share::Ctx;
 #[cfg(test)]
@@ -97,10 +97,7 @@ fn test_domain_separator() {
         verify(g*z == u + h*c)
     }
 "#;
-    let m = UModule::from_str(ex)
-        .unwrap()
-        .concretize(&Ctx::new())
-        .unwrap();
+    let m = parse_and_concretize(ex, &Ctx::new());
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let domain_seperator = ZippelDomainSeparator::new("test_domain_separator", &gs[0]);
     let _prover = domain_seperator.std_prover();

@@ -13,29 +13,30 @@ use backend::op::mk;
 
 use graph::{Op, Ref, UDags};
 
-use lang::ast::{BinOp, UModule};
+use lang::ast::BinOp;
 
 use share::Ctx;
 use share::unwrap;
 
 use super::{Ideal, IdealBuilder};
 
+use crate::tests::parse_and_concretize;
+
+#[track_caller]
 pub fn trans_clos_from_src(src: &str) -> TransClos<ArkBls12_381> {
-    let m = UModule::from_str(src)
-        .unwrap()
-        .concretize(&Ctx::new())
-        .unwrap();
+    let m = parse_and_concretize(src, &Ctx::new());
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let g = QualifierPropagation::from_dag(&gs[0]);
 
     TransClos::verifier(&g)
 }
 
+#[track_caller]
 pub fn trans_clos_from_src_sized(
     src: &str,
     sizes: &share::Ctx<lang::id::Tid, usize>,
 ) -> TransClos<ArkBls12_381> {
-    let m = UModule::from_str(src).unwrap().concretize(sizes).unwrap();
+    let m = parse_and_concretize(src, sizes);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let g = QualifierPropagation::from_dag(&gs[0]);
 
@@ -80,6 +81,7 @@ pub fn scalar_poly_binop_ideal(
     (var_s, var_p, var_r, ideal)
 }
 
+#[track_caller]
 pub fn assert_ideal_slot(
     ideal: &Ideal<ArkBls12_381>,
     var_r: &Var,

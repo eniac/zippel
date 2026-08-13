@@ -8,8 +8,8 @@ use graph::{ArgKind, Node, UDag, UDags};
 use lang::ast::Size;
 use lang::ast::range::Range;
 use lang::ast::{CModule, UModule};
+use lang::diagnostic::render_diagnostic;
 use lang::id::{Tid, Vid};
-use lang::render_error;
 use lang::typ::{Kind, Qualifier};
 use log::{debug, error, info};
 use runtime::RuntimeError;
@@ -197,10 +197,19 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             process::exit(1);
         });
         let filename = self.args.file_path.display().to_string();
-        self.sized_module = Some(UModule::from_str(&zfile).unwrap_or_else(|err| {
-            eprint!("{}", render_error(&err, &filename, &zfile));
+        let (module, diags) = UModule::parse(&zfile);
+        let has_errors = diags
+            .iter()
+            .any(|d| d.severity == lang::diagnostic::Severity::Error);
+        if !diags.is_empty() {
+            for diag in &diags {
+                eprint!("{}", render_diagnostic(diag, &filename, &zfile));
+            }
+        }
+        if has_errors {
             process::exit(1);
-        }));
+        }
+        self.sized_module = module;
     }
 
     /// Will output a PDF if a path is provided, noop otherwise
@@ -487,8 +496,8 @@ pub fn find_minimal_sizes(module: &UModule) -> Ctx<Tid, usize> {
     let mut size_vars: Vec<Tid> = Vec::new();
     for (sig, _body) in module.iter() {
         for tv in &sig.typevars.0 {
-            if matches!(&tv.kind, Kind::SizeVar) && !size_vars.contains(&tv.id) {
-                size_vars.push(tv.id.clone());
+            if matches!(&tv.kind, Kind::SizeVar) && !size_vars.contains(&tv.id.node) {
+                size_vars.push(tv.id.node.clone());
             }
         }
     }
@@ -604,7 +613,7 @@ mod tests {
                 verify(x == x)
             }
         ";
-        let module = UModule::from_str(src).unwrap();
+        let module = UModule::parse(src).0.unwrap();
         let sizes = find_minimal_sizes(&module);
         // S should be found and have a value ≥ 2 (so N: 1..S and M: 2..S+1 are non-empty)
         assert!(

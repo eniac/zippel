@@ -5,13 +5,29 @@ mod runtime_tests {
     use backend::Value;
     use backend::config::ArkBls12_381;
     use graph::UDags;
-    use lang::ast::UModule;
+    use lang::ast::{CModule, UModule};
+    use lang::id::Tid;
     use share::Ctx;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
 
     type TestConfig = ArkBls12_381;
+
+    #[track_caller]
+    fn parse_and_concretize(src: &str, sizes: &Ctx<Tid, usize>) -> CModule {
+        let (module, diags) = UModule::parse(src);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == lang::diagnostic::Severity::Error)
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "unexpected errors: {:?}",
+            errors.iter().map(|d| &d.summary).collect::<Vec<_>>()
+        );
+        module.unwrap().concretize(sizes).unwrap()
+    }
 
     #[test]
     fn test_runtime_information_creation() {
@@ -30,10 +46,7 @@ mod runtime_tests {
                 verify(t == c * (x + y))
             }
         "#;
-        let m = UModule::from_str(src)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(src, &Ctx::new());
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = gs.protocols()[0].clone().rename_inner_nodes();
 
@@ -141,10 +154,7 @@ mod runtime_tests {
                 verify(x4 == x4)
             }
         "#;
-        let m = UModule::from_str(src)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(src, &Ctx::new());
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = gs.protocols()[0].clone().rename_inner_nodes();
         let (prover, _) = dag.get_prover();

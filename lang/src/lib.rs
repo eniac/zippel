@@ -2,9 +2,10 @@
 #![allow(clippy::result_large_err)]
 
 pub mod ast;
+pub mod diagnostic;
 pub mod id;
 pub mod parser;
+pub mod semantic;
 
-pub use parser::render_error;
 pub mod typ;
 pub use ast::spanned::Spanned;

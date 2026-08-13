@@ -230,7 +230,6 @@ mod mle_differential_tests {
     use crate::tests::test_helpers::*;
     use ark_poly::DenseMultilinearExtension;
     use backend::{ATyp, Value, poly_variant::PolyVariant, virtual_polynomial::VirtualPolynomial};
-    use lang::ast::UModule;
     use lang::id::Vid;
     use share::Ctx;
 
@@ -244,10 +243,7 @@ mod mle_differential_tests {
                 p(x)
             }
         "#;
-        let m = UModule::from_str(src)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(src, &Ctx::new());
         let dags = crate::UDags::<C>::from_module(m).unwrap();
         let dag = &dags[0];
 

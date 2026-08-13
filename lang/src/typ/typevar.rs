@@ -7,10 +7,12 @@ use share::traversal::ToTraversal1;
 use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 use std::fmt;
 
-/// A type variable with an associated kind, parameterized by size type N
+/// A type variable with an associated kind, parameterized by size type N.
+/// The `id` carries its own source span so error reports can point at the
+/// typevar name without needing a separate span parameter.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct TypeVar<N> {
-    pub id: Tid,
+    pub id: Spanned<Tid>,
     pub kind: Kind<N>,
 }
 
@@ -25,13 +27,13 @@ impl<N> TypeVar<N> {
         N: Clone,
     {
         TypeVar {
-            id: id.clone(),
+            id: Spanned::dummy(id.clone()),
             kind: kind.clone(),
         }
     }
     pub fn new_str(id: &str, kind: Kind<N>) -> Self {
         TypeVar {
-            id: Tid::new(id),
+            id: Spanned::dummy(Tid::new(id)),
             kind,
         }
     }
@@ -48,7 +50,7 @@ pub type CTypeVars = TypeVars<usize>;
 
 impl<N> TypeVars<N> {
     pub fn remove(&mut self, id: &Tid) {
-        self.0.retain(|tvar| &tvar.node.id != id);
+        self.0.retain(|tvar| &tvar.node.id.node != id);
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &TypeVar<N>> {
@@ -56,11 +58,14 @@ impl<N> TypeVars<N> {
     }
 
     pub fn ids(&self) -> Vec<Tid> {
-        self.0.iter().map(|tvar| tvar.node.id.clone()).collect()
+        self.0
+            .iter()
+            .map(|tvar| tvar.node.id.node.clone())
+            .collect()
     }
 
     pub fn contains(&self, id: &Tid) -> bool {
-        self.0.iter().any(|tvar| &tvar.node.id == id)
+        self.0.iter().any(|tvar| &tvar.node.id.node == id)
     }
     pub fn to_ctx(&self) -> Ctx<Tid, Kind<N>>
     where
@@ -68,7 +73,7 @@ impl<N> TypeVars<N> {
     {
         self.0
             .iter()
-            .map(|tvar| (tvar.node.id.clone(), tvar.node.kind.clone()))
+            .map(|tvar| (tvar.node.id.node.clone(), tvar.node.kind.clone()))
             .collect()
     }
 }
@@ -96,8 +101,8 @@ impl<N, const L: usize> From<[Spanned<TypeVar<N>>; L]> for TypeVars<N> {
 
 impl<N> TidSubst for TypeVar<N> {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
-        if &self.id == from {
-            self.id = to.clone();
+        if &self.id.node == from {
+            self.id.node = to.clone();
         }
     }
 }
@@ -181,7 +186,7 @@ where
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         allocator.concat([
-            self.id.pretty(allocator),
+            self.id.node.pretty(allocator),
             allocator.text(": "),
             self.kind.pretty(allocator),
         ])

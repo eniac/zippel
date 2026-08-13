@@ -2793,9 +2793,9 @@ impl<C: ArkConfig, A> Index<usize> for Dags<C, A> {
 }
 
 #[cfg(test)]
-use backend::ArkBls12_381;
+use crate::tests::test_helpers::parse_and_concretize;
 #[cfg(test)]
-use lang::ast::UModule;
+use backend::ArkBls12_381;
 #[cfg(test)]
 use share::unwrap;
 #[test]
@@ -2808,10 +2808,7 @@ fn graph_sum() {
         fn sum<F: Field>(instance a: [F; 1]) -> F {
            a[0]
         }"#;
-    let m = UModule::from_str(ex)
-        .unwrap()
-        .concretize(&Ctx::new())
-        .unwrap();
+    let m = parse_and_concretize(ex, &Ctx::new());
     assert_eq!(m.len(), 4);
     debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
@@ -2834,10 +2831,7 @@ fn graph_foo() {
             x <- v[1..5];
             verify(a * s == b * x[3])
         }"#;
-    let m = UModule::from_str(ex)
-        .unwrap()
-        .concretize(&Ctx::new())
-        .unwrap();
+    let m = parse_and_concretize(ex, &Ctx::new());
     debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     // Output graph
@@ -2857,10 +2851,7 @@ fn graph_poly() {
             let p = a * b;
             verify(p(r) == (a(r) * b(r)))
         }"#;
-    let m = UModule::from_str(ex)
-        .unwrap()
-        .concretize(&Ctx::new())
-        .unwrap();
+    let m = parse_and_concretize(ex, &Ctx::new());
     debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     gs.write_pdf("graph_poly").unwrap_or_else(|e| {
@@ -2877,10 +2868,7 @@ fn graph_reduce() {
         fn reduction_foo<F: Field>(instance a: [F; 10]) -> F {
             reduce(+, a)
         }"#;
-    let m = UModule::from_str(ex)
-        .unwrap()
-        .concretize(&Ctx::new())
-        .unwrap();
+    let m = parse_and_concretize(ex, &Ctx::new());
     debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     gs.write_pdf("graph_reduce").unwrap_or_else(|e| {
@@ -2900,10 +2888,7 @@ fn graph_fn_call_in_where() {
         where double(a) == a + a {
             verify(a == a)
         }"#;
-    let m = UModule::from_str(ex)
-        .unwrap()
-        .concretize(&Ctx::new())
-        .unwrap();
+    let m = parse_and_concretize(ex, &Ctx::new());
     debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     gs.write_pdf("graph_fn_in_where").unwrap_or_else(|e| {

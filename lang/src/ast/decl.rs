@@ -1,4 +1,3 @@
-use bumpalo::Bump;
 use std::fmt;
 use thiserror::Error;
 
@@ -180,20 +179,6 @@ pub type UDecls = Decls<Size>;
 pub type CDecls = Decls<usize>;
 
 impl UDecl {
-    /// Parse a string into a Zippel declaration
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(input_str: &str) -> Result<Self, crate::parser::ParseError> {
-        let (mut spanned, errors) = crate::parser::parse_decls(input_str);
-        if let Some(e) = errors.into_iter().next() {
-            return Err(e);
-        }
-        spanned.pop().map(|s| s.node).ok_or_else(|| {
-            crate::parser::ParseError::custom(
-                "empty input: expected at least one declaration".to_string(),
-            )
-        })
-    }
-
     /// Each declaration has typevariables that can be concretized to different sizes.
     /// This method returns all possible size substitutions for the declaration.
     /// If `sizes` pins a Range typevar, only that value is generated.
@@ -214,7 +199,7 @@ impl UDecl {
             .typevars
             .node
             .into_iter()
-            .filter(|tv| !substs.contains(&tv.id))
+            .filter(|tv| !substs.contains(&tv.id.node))
             .collect();
 
         // Check the ranges
@@ -234,26 +219,6 @@ impl UDecl {
                 })
                 .map_err(|e| DeclError::InvalidRange(csig.clone(), e))?,
         })
-    }
-}
-
-/// .zippel files get parsed to [UDecls].
-impl UDecls {
-    /// Parse a string into a Zippel declarations list
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(input_str: &str) -> Result<Self, crate::parser::ParseError> {
-        let (spanned, errors) = crate::parser::parse_decls(input_str);
-        if let Some(e) = errors.into_iter().next() {
-            return Err(e);
-        }
-        let decls: Vec<UDecl> = spanned.into_iter().map(|s| s.node).collect();
-        Ok(Decls(decls))
-    }
-
-    /// Parse a file into a Zippel declarations list
-    pub fn from_file(file: &str, _allocator: &Bump) -> Result<Self, crate::parser::ParseError> {
-        let input_str = std::fs::read_to_string(file).unwrap();
-        Decls::from_str(&input_str)
     }
 }
 

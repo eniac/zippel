@@ -45,6 +45,7 @@ pub fn mk_vars(prefix: &str, count: usize) -> Vec<Var> {
 // Cyclic-n — translation of Singular polylib.lib `proc cyclic(int n)`
 // ---------------------------------------------------------------------------
 
+#[track_caller]
 pub fn cyclic_polys(vars: &[Var]) -> Vec<Polynomial<Fr>> {
     let n = vars.len();
     assert!(n >= 1, "Cyclic-n requires n >= 1");
@@ -74,6 +75,7 @@ pub fn cyclic_polys(vars: &[Var]) -> Vec<Polynomial<Fr>> {
 // Katsura-n — translation of Singular polylib.lib `proc katsura` + `kat_var`
 // ---------------------------------------------------------------------------
 
+#[track_caller]
 pub fn katsura_polys(vars: &[Var]) -> Vec<Polynomial<Fr>> {
     let n_arg = vars.len();
     assert!(n_arg >= 1, "Katsura-n requires at least one variable");

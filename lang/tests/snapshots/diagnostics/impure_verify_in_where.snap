@@ -1,0 +1,12 @@
+---
+source: lang/tests/diagnostics.rs
+---
+error: impure construct `verify` in proto relation
+   ╭─[ test.zippel:1:60 ]
+   │
+ 1 │ proto p<F: Field>(instance a: F, instance b: F) where a == verify(b == b) { }
+   │                                                            ───────┬──────  
+   │                                                                   ╰──────── `verify` is not allowed in a proto relation
+   │                                                                   │        
+   │                                                                   ╰──────── note: proto relations must be relation-pure (no challenge, log, or verify)
+───╯

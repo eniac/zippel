@@ -413,11 +413,24 @@ fn pick_backend() -> GbBackendKind {
 
 /// Parse + concretize + build the analysis DAG (inlines `ZippelHandler::compile`
 /// + `build_analyze_graph` without the PDF/caching/instance-inputs machinery).
+#[track_caller]
 fn compile_to_dag(path: &PathBuf, sizes: &[(&str, usize)]) -> AnalysisDag {
     let source = std::fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
-    let module = UModule::from_str(&source)
-        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()));
+    let (module, diags) = UModule::parse(&source);
+    if !diags.is_empty() {
+        panic!(
+            "failed to parse {}: {}",
+            path.display(),
+            diags
+                .iter()
+                .map(|d| d.summary.clone())
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+    let module =
+        module.unwrap_or_else(|| panic!("parse returned no module for {}", path.display()));
     let ctx = build_sizes_ctx(sizes);
     let concrete = module
         .concretize(&ctx)

@@ -1,8 +1,9 @@
-use crate::ast::decl::{DeclError, UDecl, UDecls};
+use crate::ast::decl::{DeclError, UDecl};
+use crate::ast::spanned::Spanned;
 use crate::ast::{Body, CSig, Sig};
+use crate::diagnostic::Diagnostic;
 use crate::id::Tid;
 
-use bumpalo::Bump;
 use std::fmt;
 use thiserror::Error;
 
@@ -103,62 +104,134 @@ impl<N: Ord> Module<N> {
 
 /// Polymorphic module with symbolic sizes
 impl UModule {
-    /// Entry point to the zippel compiler.
-    /// Parse a Zippel declarations list into a polymorphic,
-    /// untyped module, with symbolic sizes.
+    /// Parse source text into a polymorphic, untyped module with symbolic
+    /// sizes, running all semantic checks (scope, typevar, size binding,
+    /// duplicate declarations, proto requirement, type alias cycles).
+    ///
+    /// Returns `(Some(module), diagnostics)` if parsing produced any
+    /// declarations, `(None, diagnostics)` if parsing failed completely.
+    /// Diagnostics are sorted by (span.start, severity, phase) for
+    /// deterministic output.
+    ///
     /// Type aliases (`type X = T;`) are expanded inline before returning.
-    /// Duplicate signature detection is performed by the parser (via
-    /// `.validate()` on `decls_parser`).
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(input_str: &str) -> Result<Self, crate::parser::ParseError> {
-        let decls = UDecls::from_str(input_str)?;
+    pub fn parse(src: &str) -> (Option<Self>, Vec<Diagnostic>) {
+        let mut diags = Vec::new();
 
-        // Collect type aliases from type_decl declarations
-        let mut type_ctx: Ctx<Tid, UTyp> = Ctx::new();
-        for d in decls.0.iter() {
-            if d.body.is_type_alias() {
-                // Store the alias: name (as Tid) → aliased type (in sig.ret)
-                type_ctx.insert(
-                    &Tid::from(d.sig.name.0.as_str()),
-                    d.sig.ret.as_ref().expect("type alias must have ret"),
-                );
+        // Phase 1: Parse (with recovery)
+        let (decls, parse_errors) = crate::parser::parse_decls(src);
+        diags.extend(parse_errors.into_iter().map(Diagnostic::from));
+
+        // Skip semantic checks only if we got NO declarations
+        if decls.is_empty() && !diags.is_empty() {
+            return (None, diags);
+        }
+
+        // Phase 2: Module-level semantic checks
+        let file_span = 0..src.len();
+        diags.extend(
+            crate::semantic::check_duplicate_declarations(&decls)
+                .into_iter()
+                .map(Diagnostic::from),
+        );
+        diags.extend(
+            crate::semantic::check_proto_requirement(&decls, file_span)
+                .into_iter()
+                .map(Diagnostic::from),
+        );
+        diags.extend(
+            crate::semantic::check_type_alias_cycles(&decls)
+                .into_iter()
+                .map(Diagnostic::from),
+        );
+
+        // Phase 3: Per-declaration semantic checks
+        use crate::ast::Body;
+        use crate::semantic::{check_purity, check_scope, check_size_binding, check_typevars};
+        for decl in &decls {
+            diags.extend(
+                check_typevars(&decl.node.sig)
+                    .into_iter()
+                    .map(Diagnostic::from),
+            );
+            diags.extend(
+                check_size_binding(&decl.node.sig)
+                    .into_iter()
+                    .map(Diagnostic::from),
+            );
+            diags.extend(check_scope(&decl.node).into_iter().map(Diagnostic::from));
+            if let Body::Proto { relation, .. } = &decl.node.body {
+                diags.extend(check_purity(relation).into_iter().map(Diagnostic::from));
             }
         }
 
-        // Validate type aliases do not have cycles
-        detect_alias_cycles(&type_ctx)
-            .map_err(|e| crate::parser::ParseError::custom(e.to_string()))?;
+        // Phase 4: Build module (type alias inlining)
+        // Skip inlining if there are type alias cycle errors — inlining
+        // cyclic aliases would cause infinite recursion.
+        let has_alias_cycle = diags
+            .iter()
+            .any(|d| d.summary.contains("circular type alias"));
+        let module = if has_alias_cycle {
+            // Build without type alias inlining to avoid infinite recursion.
+            // The module will be incomplete but diagnostics have the error.
+            Self::from_decls_no_inline(decls)
+        } else {
+            Self::from_decls(decls)
+        };
+
+        // Phase 5: Type checking (deferred — TypeError stays as-is)
+
+        // Deterministic ordering: span.start → severity → phase
+        diags.sort_by(|a, b| {
+            a.span
+                .start
+                .cmp(&b.span.start)
+                .then_with(|| a.severity.cmp(&b.severity))
+                .then_with(|| a.phase.cmp(&b.phase))
+        });
+
+        (Some(module), diags)
+    }
+
+    /// Build a module from pre-parsed declarations (with spans).
+    /// Type aliases are expanded inline. Does NOT run semantic checks —
+    /// those are handled by `parse()`.
+    pub fn from_decls(decls: Vec<Spanned<UDecl>>) -> Self {
+        // Collect type aliases from type_decl declarations
+        let mut type_ctx: Ctx<Tid, UTyp> = Ctx::new();
+        for d in decls.iter() {
+            if d.node.body.is_type_alias() {
+                if let Some(ret) = &d.node.sig.ret {
+                    type_ctx.insert(&Tid::from(d.node.sig.name.node.0.as_str()), ret);
+                }
+            }
+        }
 
         let mut m = Ctx::new();
-        for d in decls.0.into_iter() {
-            if d.body.is_type_alias() {
-                // Already stored and validated, type aliases do not go to Module execution decls
+        for d in decls.into_iter() {
+            if d.node.body.is_type_alias() {
                 continue;
             }
-            // Inline type aliases in the declaration
             let d = if type_ctx.is_empty() {
-                d
+                d.node
             } else {
-                d.type_inline(&type_ctx)
+                d.node.type_inline(&type_ctx)
             };
             m.insert(&d.sig, &d.body);
         }
-        Ok(Module(m))
+        Module(m)
     }
 
-    /// Parse a file into a Zippel declarations list.
-    /// Validates that the file contains at least one `proto` declaration.
-    pub fn from_file(file: &str, _allocator: &Bump) -> Result<Self, crate::parser::ParseError> {
-        let input_str = std::fs::read_to_string(file).unwrap();
-        let module = Self::from_str(&input_str)?;
-        // Validate: every file must contain at least one proto declaration
-        if !module.0.iter().any(|(_, body)| body.is_proto()) {
-            return Err(crate::parser::ParseError::custom(
-                "no proto declaration found: every file must contain at least one proto"
-                    .to_string(),
-            ));
+    /// Build a module without type alias inlining.
+    /// Used when type alias cycles are detected to avoid infinite recursion.
+    fn from_decls_no_inline(decls: Vec<Spanned<UDecl>>) -> Self {
+        let mut m = Ctx::new();
+        for d in decls.into_iter() {
+            if d.node.body.is_type_alias() {
+                continue;
+            }
+            m.insert(&d.node.sig, &d.node.body);
         }
-        Ok(module)
+        Module(m)
     }
 
     pub fn iter_decls(&self) -> impl Iterator<Item = UDecl> + '_ {
@@ -192,71 +265,6 @@ impl UModule {
         // Return the concretized module
         Ok(Module(ctx))
     }
-}
-
-// Helper to extract type alias dependencies from UTyp
-fn type_dependencies(typ: &UTyp) -> share::Set<Tid> {
-    use crate::typ::Typ;
-    let mut deps = share::Set::new();
-    fn recurse(typ: &UTyp, deps: &mut share::Set<Tid>) {
-        match typ {
-            Typ::Base(t) => {
-                deps.insert(t.clone());
-            }
-            Typ::Poly(t, _, _) => {
-                deps.insert(t.clone());
-            }
-            Typ::Vec(box_typ, _) => {
-                recurse(box_typ, deps);
-            }
-            Typ::Record(ctx) => {
-                for (_, t) in ctx.iter() {
-                    recurse(t, deps);
-                }
-            }
-            Typ::Fin(_) | Typ::Unit => {}
-        }
-    }
-    recurse(typ, &mut deps);
-    deps
-}
-
-// DFS cycle checker
-fn check_cycle(
-    node: &Tid,
-    type_ctx: &Ctx<Tid, UTyp>,
-    visiting: &mut share::Set<Tid>,
-    visited: &mut share::Set<Tid>,
-) -> Result<(), String> {
-    if visiting.contains(node) {
-        return Err(format!("cyclic type alias: {}", node));
-    }
-    if visited.contains(node) {
-        return Ok(());
-    }
-    visiting.insert(node.clone());
-    if let Some(typ) = type_ctx.get(node) {
-        for dep in type_dependencies(typ).into_iter() {
-            if type_ctx.contains(&dep) {
-                check_cycle(&dep, type_ctx, visiting, visited)?;
-            }
-        }
-    }
-    visiting.retain(|k| k != node);
-    visited.insert(node.clone());
-    Ok(())
-}
-
-fn detect_alias_cycles(type_ctx: &Ctx<Tid, UTyp>) -> Result<(), String> {
-    let mut visiting = share::Set::new();
-    let mut visited = share::Set::new();
-
-    for name in type_ctx.keys() {
-        if !visited.contains(&name) {
-            check_cycle(&name, type_ctx, &mut visiting, &mut visited)?;
-        }
-    }
-    Ok(())
 }
 
 impl<N: Ord + Clone> IntoIterator for Module<N>
@@ -335,7 +343,7 @@ fn from_decl_subst1() {
         "   a[0]\n",
         "}"
     );
-    let umod = UModule::from_str(ex).unwrap();
+    let umod = UModule::parse(ex).0.unwrap();
     assert_eq!(umod.len(), 2);
     let cmod = umod.concretize(&Ctx::new()).unwrap();
     assert_eq!(cmod.len(), 4);
@@ -351,7 +359,8 @@ fn from_decl_duplicate() {
         "   a[0]\n",
         "}"
     );
-    assert!(UModule::from_str(ex)
+    assert!(UModule::parse(ex)
+        .0
         .unwrap()
         .concretize(&Ctx::new())
         .is_err());
@@ -364,7 +373,8 @@ fn from_decl_underflow() {
         "    sum(a[0..2^(N-1)]) + sum(a[2^(N-1)..2^N])\n",
         "}"
     );
-    assert!(UModule::from_str(ex)
+    assert!(UModule::parse(ex)
+        .0
         .unwrap()
         .concretize(&Ctx::new())
         .is_err());
@@ -383,7 +393,7 @@ fn from_decl_subst2() {
         "   sum(a) * sum(b)\n",
         "}\n"
     );
-    let umod = UModule::from_str(ex).unwrap();
+    let umod = UModule::parse(ex).0.unwrap();
     assert_eq!(umod.len(), 3);
     let cmod = umod.concretize(&Ctx::new()).unwrap();
     assert_eq!(cmod.len(), 16);
@@ -397,7 +407,7 @@ fn type_alias_record() {
         "    {| x: zero, y: zero |}\n",
         "}\n"
     );
-    let umod = UModule::from_str(ex).unwrap();
+    let umod = UModule::parse(ex).0.unwrap();
     // type alias is inlined, only the fn remains
     assert_eq!(umod.len(), 1);
     // The return type should be expanded to the record type
@@ -419,7 +429,7 @@ fn type_alias_in_args() {
         "    reduce(+, a * b)\n",
         "}\n"
     );
-    let umod = UModule::from_str(ex).unwrap();
+    let umod = UModule::parse(ex).0.unwrap();
     assert_eq!(umod.len(), 1);
     let (sig, _) = umod.iter().next().unwrap();
     // First arg should be Vec(Base(F), 3), not Base(Vec3)
@@ -438,7 +448,7 @@ fn typed_let_binding() {
         "    c\n",
         "}\n"
     );
-    let umod = UModule::from_str(ex).unwrap();
+    let umod = UModule::parse(ex).0.unwrap();
     assert_eq!(umod.len(), 1);
     let cmod = umod.concretize(&Ctx::new()).unwrap();
     assert_eq!(cmod.len(), 1);
@@ -447,7 +457,7 @@ fn typed_let_binding() {
 #[test]
 fn test_concretize_size_var() {
     let ex = "fn foo<S: Size, F: Field>(instance a: [F; S]) -> F { a[0] }";
-    let umod = UModule::from_str(ex).unwrap();
+    let umod = UModule::parse(ex).0.unwrap();
     assert_eq!(umod.len(), 1);
 
     let mut sizes = Ctx::new();
@@ -474,9 +484,9 @@ fn test_module_round_trip() {
         "    a\n",
         "}\n"
     );
-    let umod1 = UModule::from_str(ex).unwrap();
+    let umod1 = UModule::parse(ex).0.unwrap();
     let formatted = umod1.to_string();
-    let umod2 = UModule::from_str(&formatted).unwrap();
+    let umod2 = UModule::parse(&formatted).0.unwrap();
     assert_eq!(umod1, umod2);
 }
 
@@ -490,7 +500,7 @@ fn test_module_overlap_error_message() {
         "    a[0]\n",
         "}\n"
     );
-    let umod = UModule::from_str(ex).unwrap();
+    let umod = UModule::parse(ex).0.unwrap();
     let res = umod.concretize(&Ctx::new());
     assert!(res.is_err());
     let err_msg = res.unwrap_err().to_string();
@@ -523,7 +533,7 @@ fn test_issue_173_overload_resolution_with_size_var() {
         "    verify(placeholder_tau[0] == placeholder_tau[0])\n",
         "}\n"
     );
-    let umod = UModule::from_str(ex).unwrap();
+    let umod = UModule::parse(ex).0.unwrap();
 
     // Without size pinning, M stays abstract — concretize cannot resolve
     // the overload since it doesn't know if M=1 (base case) or M∈2..20.

@@ -1840,8 +1840,8 @@ fn test_type_alias_cycle_returns_error_instead_of_overflow() {
         "    a\n",
         "}\n"
     );
-    // Under correct behavior, this should return an Err containing a cycle/malformed conversion error,
+    // Under correct behavior, this should return diagnostics containing a cycle/malformed conversion error,
     // rather than stack-overflowing and crashing.
-    let res = crate::ast::UModule::from_str(ex);
-    assert!(res.is_err());
+    let (_, diags) = crate::ast::UModule::parse(ex);
+    assert!(!diags.is_empty());
 }

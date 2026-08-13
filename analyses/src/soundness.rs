@@ -654,9 +654,9 @@ mod tests {
     use crate::QualifierPropagation;
     use crate::Var;
     use crate::error::{AnalysisError, ExtractorRejection};
+    use crate::tests::parse_and_concretize;
     use backend::ArkBls12_381;
     use graph::UDags;
-    use lang::ast::UModule;
     use share::Set;
     use share::{Ctx, unwrap};
 
@@ -664,10 +664,7 @@ mod tests {
         proto: &str,
         l_vec: Vec<usize>,
     ) -> Result<(), AnalysisError<ArkBls12_381>> {
-        let m = UModule::from_str(proto)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(proto, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
@@ -686,10 +683,7 @@ mod tests {
 
     #[test]
     fn schnorr_special_soundness_l2() {
-        let m = UModule::from_str(SCHNORR_PROTO)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(SCHNORR_PROTO, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
@@ -751,10 +745,7 @@ mod tests {
 
     #[test]
     fn schnorr_namespace_l2() {
-        let m = UModule::from_str(SCHNORR_PROTO)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(SCHNORR_PROTO, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
@@ -964,10 +955,7 @@ mod tests {
 
     #[test]
     fn schnorr_vec_witness_slot_expansion() {
-        let m = UModule::from_str(SCHNORR_PROTO)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(SCHNORR_PROTO, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
@@ -1005,10 +993,7 @@ mod tests {
                 verify(g*z0 == u0 + h1*c); verify(g*z1 == u1 + h2*c)
             }
         "#;
-        let m = UModule::from_str(proto)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(proto, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;

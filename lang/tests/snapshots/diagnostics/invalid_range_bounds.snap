@@ -1,0 +1,10 @@
+---
+source: lang/tests/diagnostics.rs
+---
+error: invalid range bounds for `N`
+   ╭─[ test.zippel:1:9 ]
+   │
+ 1 │ proto p<N: 10..5>(instance a: [F; N]) where a == a { }
+   │         ────┬───  
+   │             ╰───── range start must be less than or equal to range end
+───╯

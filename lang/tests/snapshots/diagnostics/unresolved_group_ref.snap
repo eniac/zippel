@@ -1,0 +1,19 @@
+---
+source: lang/tests/diagnostics.rs
+---
+error: unresolved group reference `G`
+   ╭─[ test.zippel:1:9 ]
+   │
+ 1 │ proto p<P: Pairing<G, H>>(instance a: F) where a == a { }
+   │         ┬  
+   │         ╰── not declared as a type variable
+───╯
+
+---
+error: unresolved group reference `H`
+   ╭─[ test.zippel:1:9 ]
+   │
+ 1 │ proto p<P: Pairing<G, H>>(instance a: F) where a == a { }
+   │         ┬  
+   │         ╰── not declared as a type variable
+───╯

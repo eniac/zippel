@@ -1,0 +1,31 @@
+---
+source: lang/tests/diagnostics.rs
+---
+warning: no proto declaration found
+   ╭─[ test.zippel:1:1 ]
+   │
+ 1 │ ╭───▶ type A = B;
+   │ │     ▲             
+   │ │ ╭───╯             
+   ┆ ┆ ┆   
+ 3 │ ├─│ ▶ type C = A;
+   │ │ │             ▲  
+   │ ╰────────────────── every file should contain at least one proto declaration
+   │   │             │  
+   │   ╰─────────────┴── help: add a `proto` declaration to this file
+───╯
+
+---
+error: circular type alias
+   ╭─[ test.zippel:1:10 ]
+   │
+ 1 │ type A = B;
+   │          ┬  
+   │          ╰── cycle: A → B → C → A
+ 2 │ type B = C;
+   │          ┬  
+   │          ╰── `B` aliases the next type in the cycle
+ 3 │ type C = A;
+   │          ┬  
+   │          ╰── `C` aliases the next type in the cycle
+───╯

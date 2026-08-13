@@ -4,10 +4,11 @@
 //! then builds an expected graph manually and asserts structural equality
 //! via the `PartialEq` (graph isomorphism) implementation.
 
+use super::test_helpers::parse_and_concretize;
 use crate::node::ArgKind;
 use crate::{Dep, DepType, GOp, GraphError, HOp, Node, Nothing, Ref, UDag, UDags, mk};
 use backend::{ATyp, ArkBls12_381};
-use lang::ast::{BinOp, UModule};
+use lang::ast::BinOp;
 use lang::id::Vid;
 use lang::typ::{Distribution, Qualifier};
 use petgraph::Direction;
@@ -19,19 +20,13 @@ type B = ArkBls12_381;
 
 /// Parse a `.zippel` source string and build graphs via from_module.
 fn parse_and_build(src: &str) -> UDags<B> {
-    let m = UModule::from_str(src)
-        .unwrap()
-        .concretize(&Ctx::new())
-        .unwrap();
+    let m = parse_and_concretize(src, &Ctx::new());
     UDags::<B>::from_module(m).unwrap()
 }
 
 /// Parse and build, returning Result to allow testing error paths.
 fn try_parse_and_build(src: &str) -> Result<UDags<B>, GraphError> {
-    let m = UModule::from_str(src)
-        .unwrap()
-        .concretize(&Ctx::new())
-        .unwrap();
+    let m = parse_and_concretize(src, &Ctx::new());
     UDags::<B>::from_module(m)
 }
 

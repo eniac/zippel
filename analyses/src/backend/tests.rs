@@ -133,6 +133,7 @@ mod singular_tests {
 
     /// Assert that every generator in `ideal` reduces to zero under `basis`
     /// (via `backend`), i.e. the basis spans the same ideal.
+    #[track_caller]
     fn assert_generators_reduce_to_zero<B: GbBackend<Fr>>(
         backend: &B,
         ideal: &[Polynomial<Fr>],

@@ -8,7 +8,8 @@ use crate::node::ArgKind;
 use crate::{GOp, Node, Op, Ref, UDag, mk};
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkBls12_381, ArkConfig, ArkScalarOps, Value};
-use lang::id::Vid;
+use lang::ast::{CModule, UModule};
+use lang::id::{Tid, Vid};
 use lang::typ::{Distribution, Nothing, Qualifier};
 use petgraph::graph::NodeIndex;
 use rand::rngs::ThreadRng;
@@ -18,6 +19,30 @@ use std::sync::Arc;
 
 /// Type alias for test configuration (BLS12-381 curve)
 pub type TestConfig = ArkBls12_381;
+
+/// Parse source text and concretize with the given sizes.
+/// Panics on parse or concretize errors (test-only).
+#[track_caller]
+pub fn parse_and_concretize(src: &str, sizes: &Ctx<Tid, usize>) -> CModule {
+    let (module, diags) = UModule::parse(src);
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.severity == lang::diagnostic::Severity::Error)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "unexpected errors parsing test source:\n{}",
+        errors
+            .iter()
+            .map(|d| d.summary.clone())
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    module
+        .expect("parse returned no module but no errors")
+        .concretize(sizes)
+        .expect("concretize failed")
+}
 
 /// Helper to create a simple DAG for testing operations
 pub struct GraphBuilder<C: ArkConfig> {
@@ -69,6 +94,7 @@ impl<C: HasOpFactory> GraphBuilder<C> {
 /// Walks the DAG topologically and routes each Op/Transcr node through
 /// the canonical `graph::eval::eval_op` — the same dispatcher the runtime
 /// uses for per-node value computation.
+#[track_caller]
 pub fn execute_graph<C: ArkConfig>(dag: &UDag<C>, inputs: Ctx<Vid, Value<C>>) -> Option<Value<C>> {
     let (_computed, last) = execute_graph_inner(dag, inputs);
     last
@@ -76,6 +102,7 @@ pub fn execute_graph<C: ArkConfig>(dag: &UDag<C>, inputs: Ctx<Vid, Value<C>>) ->
 
 /// Execute a graph with given inputs and return all computed node values.
 /// Useful for inspecting individual node results (e.g. multiple Check nodes).
+#[track_caller]
 pub fn execute_graph_all<C: ArkConfig>(
     dag: &UDag<C>,
     inputs: Ctx<Vid, Value<C>>,
@@ -92,6 +119,7 @@ pub fn execute_graph_all<C: ArkConfig>(
 /// keyed by `Ref(node_idx)`. Returns both the populated NodeIndex→Value
 /// map (used by `execute_graph_all`) and the last computed value (used by
 /// `execute_graph`).
+#[track_caller]
 fn execute_graph_inner<C: ArkConfig>(
     dag: &UDag<C>,
     inputs: Ctx<Vid, Value<C>>,
@@ -253,7 +281,6 @@ mod tests {
     #[test]
     fn test_execute_multiple_checks() {
         use crate::UDags;
-        use lang::ast::UModule;
         use share::Ctx;
 
         // Protocol with two separate verify statements → two Check nodes
@@ -263,10 +290,7 @@ mod tests {
                 verify(y == y)
             }
         "#;
-        let m = UModule::from_str(src)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(src, &Ctx::new());
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = &gs[0];
 
@@ -295,7 +319,6 @@ mod tests {
     #[test]
     fn test_execute_scattered_checks() {
         use crate::UDags;
-        use lang::ast::UModule;
         use share::Ctx;
 
         // Protocol with scattered verify statements throughout the body
@@ -307,10 +330,7 @@ mod tests {
                 verify(b == b)
             }
         "#;
-        let m = UModule::from_str(src)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(src, &Ctx::new());
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = &gs[0];
 
@@ -339,7 +359,6 @@ mod tests {
     #[test]
     fn test_execute_checks_negative_second_fails() {
         use crate::UDags;
-        use lang::ast::UModule;
         use share::Ctx;
 
         // Second verify has a false condition (x != y)
@@ -349,10 +368,7 @@ mod tests {
                 verify(x == y)
             }
         "#;
-        let m = UModule::from_str(src)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(src, &Ctx::new());
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = &gs[0];
 
@@ -375,7 +391,6 @@ mod tests {
     #[test]
     fn test_execute_checks_negative_first_fails() {
         use crate::UDags;
-        use lang::ast::UModule;
         use share::Ctx;
 
         // First verify has a false condition (x != y)
@@ -385,10 +400,7 @@ mod tests {
                 verify(y == y)
             }
         "#;
-        let m = UModule::from_str(src)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(src, &Ctx::new());
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = &gs[0];
 
@@ -413,7 +425,6 @@ mod tests {
     #[test]
     fn test_execute_cross_fn_verify_positive() {
         use crate::UDags;
-        use lang::ast::UModule;
         use share::Ctx;
 
         let src = r#"
@@ -426,10 +437,7 @@ mod tests {
                 verify(a == v)
             }
         "#;
-        let m = UModule::from_str(src)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(src, &Ctx::new());
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
 
         let proto = gs.protocols()[0];
@@ -458,7 +466,6 @@ mod tests {
     #[test]
     fn test_execute_cross_fn_verify_negative() {
         use crate::UDags;
-        use lang::ast::UModule;
         use share::Ctx;
 
         let src = r#"
@@ -471,10 +478,7 @@ mod tests {
                 verify(r == a)
             }
         "#;
-        let m = UModule::from_str(src)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(src, &Ctx::new());
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
 
         let proto = gs.protocols()[0];
@@ -507,7 +511,6 @@ mod tests {
     #[test]
     fn test_execute_verify_unit_eq_unit() {
         use crate::UDags;
-        use lang::ast::UModule;
         use share::Ctx;
 
         let src = r#"
@@ -515,10 +518,7 @@ mod tests {
                 verify(() == ())
             }
         "#;
-        let m = UModule::from_str(src)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(src, &Ctx::new());
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = &gs[0];
 
@@ -542,7 +542,6 @@ mod tests {
     #[test]
     fn test_execute_verify_let_check_then_unit_eq() {
         use crate::UDags;
-        use lang::ast::UModule;
         use share::Ctx;
 
         let src = r#"
@@ -554,10 +553,7 @@ mod tests {
                 verify(a == ())
             }
         "#;
-        let m = UModule::from_str(src)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(src, &Ctx::new());
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = &gs[0];
 

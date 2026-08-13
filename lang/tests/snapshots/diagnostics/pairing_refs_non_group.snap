@@ -1,0 +1,19 @@
+---
+source: lang/tests/diagnostics.rs
+---
+error: invalid kind for type variable `P`
+   ╭─[ test.zippel:1:19 ]
+   │
+ 1 │ proto p<F: Field, P: Pairing<F, F>>(instance a: F) where a == a { }
+   │                   ┬  
+   │                   ╰── expected a Group kind
+───╯
+
+---
+error: invalid kind for type variable `P`
+   ╭─[ test.zippel:1:19 ]
+   │
+ 1 │ proto p<F: Field, P: Pairing<F, F>>(instance a: F) where a == a { }
+   │                   ┬  
+   │                   ╰── expected a Group kind
+───╯

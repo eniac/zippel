@@ -371,9 +371,9 @@ impl fmt::Display for UniformityPropagation {
 mod tests {
     use super::*;
     use crate::QualifierPropagation;
+    use crate::tests::parse_and_concretize;
     use backend::ArkBls12_381;
     use graph::UDags;
-    use lang::ast::UModule;
     use petgraph::graph::NodeIndex;
     use share::unwrap;
 
@@ -386,10 +386,7 @@ mod tests {
                 b <- r * x;
                 verify(a == b)
             }"#;
-        let m = UModule::from_str(ex)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(ex, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
         let g = QualifierPropagation::from_dag(&gs[0]);
@@ -405,10 +402,7 @@ mod tests {
             proto simple<F: Field>(witness x: F) where 1 == 1 {
                 verify(x == x)
             }"#;
-        let m = UModule::from_str(ex)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(ex, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let result = UniformityPropagation::from_dag(&g);
@@ -426,10 +420,7 @@ mod tests {
                 verify(a == a);
                 verify(b == b)
             }"#;
-        let m = UModule::from_str(ex)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(ex, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let checks = g.find_verify();

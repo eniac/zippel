@@ -11,11 +11,13 @@
 use fmt::{Style, format_source, format_source_with_style};
 
 /// Format source with the default style, panicking on parse error.
+#[track_caller]
 pub fn fmt(src: &str) -> String {
     format_source(src).expect("parse error")
 }
 
 /// Assert that `src` formats to `expected` and that the output is idempotent.
+#[track_caller]
 pub fn assert_ok(src: &str, expected: &str) {
     let out = fmt(src);
     assert_eq!(out, expected, "first format mismatch");
@@ -23,11 +25,13 @@ pub fn assert_ok(src: &str, expected: &str) {
 }
 
 /// Format source with a custom style, panicking on parse error.
+#[track_caller]
 fn fmt_with_style(src: &str, style: &Style) -> String {
     format_source_with_style(src, style).expect("parse error")
 }
 
 /// Assert that `src` formats to `expected` under `style` and is idempotent.
+#[track_caller]
 pub fn assert_ok_with_style(src: &str, expected: &str, style: &Style) {
     let out = fmt_with_style(src, style);
     assert_eq!(out, expected, "first format mismatch");

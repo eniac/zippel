@@ -210,10 +210,10 @@ impl<C: HasOpFactory> KnowledgeAnalysis<C> {
 mod tests {
     use super::KnowledgeAnalysis;
     use crate::QualifierPropagation;
+    use crate::tests::parse_and_concretize;
     use backend::ArkBls12_381;
     use graph::UDags;
     use graph::WritePdf;
-    use lang::ast::UModule;
     use log::debug;
     use share::{Ctx, unwrap};
 
@@ -229,10 +229,7 @@ mod tests {
         }"#;
 
         debug!("Parsing example: {}", ex);
-        let m = UModule::from_str(ex)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(ex, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
         gs.write_pdf("groebner_foo").unwrap_or_else(|e| {
@@ -263,10 +260,7 @@ mod tests {
         }"#;
 
         debug!("Parsing example: {}", ex);
-        let m = UModule::from_str(ex)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(ex, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
         gs.write_pdf("groebner_bar").unwrap_or_else(|e| {
@@ -297,10 +291,7 @@ mod tests {
             verify(a == b)
         }"#;
 
-        let m = UModule::from_str(ex)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(ex, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
         gs.write_pdf("groebner_baz").unwrap_or_else(|e| {
@@ -339,10 +330,7 @@ mod tests {
             d <- g * b;
             verify(c == d)
         }"#;
-        let m = UModule::from_str(ex)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(ex, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
         gs.write_pdf("groebner_ex3").unwrap_or_else(|e| {
@@ -393,10 +381,7 @@ mod tests {
             z <- r + x*c;
             verify(g*z == u + h*c)
         }"#;
-        let m = UModule::from_str(ex)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(ex, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
@@ -418,10 +403,7 @@ mod tests {
             z <- r + x*c;
             verify(g*z == u + h*c)
         }"#;
-        let m = UModule::from_str(ex)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(ex, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
@@ -445,10 +427,7 @@ mod tests {
             d <- x + y;
             verify(d == d)
         }"#;
-        let m = UModule::from_str(ex)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(ex, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
@@ -469,10 +448,7 @@ mod tests {
             z <- x * c;
             verify(g*z == h*c)
         }"#;
-        let m = UModule::from_str(ex)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(ex, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
@@ -493,10 +469,7 @@ mod tests {
             b <- t + y;
             verify(a == b)
         }"#;
-        let m = UModule::from_str(ex)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(ex, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
@@ -522,10 +495,7 @@ mod tests {
             z <- r + x*c;
             verify(g*z == u + h*c)
         }"#;
-        let m = UModule::from_str(ex)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(ex, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
@@ -550,10 +520,7 @@ mod tests {
             verify(a == a);
             verify(b == b)
         }"#;
-        let m = UModule::from_str(ex)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(ex, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
@@ -579,10 +546,7 @@ mod tests {
             verify(x == y);
             verify(u == v)
         }"#;
-        let m = UModule::from_str(ex)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(ex, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
@@ -614,7 +578,7 @@ mod tests {
 
         let mut sizes = Ctx::new();
         sizes.insert(&Tid::new("N"), &2);
-        let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
+        let m = parse_and_concretize(ex, &sizes);
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
@@ -637,10 +601,7 @@ mod tests {
             let z = p / d;
             verify(z == q)
         }"#;
-        let m = UModule::from_str(ex)
-            .unwrap()
-            .concretize(&Ctx::new())
-            .unwrap();
+        let m = parse_and_concretize(ex, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 

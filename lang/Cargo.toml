@@ -23,5 +23,9 @@ num-traits = "0.2"
 chumsky = { version = "0.13", features = ["pratt"] }
 ariadne = "0.5"
 
+[dev-dependencies]
+insta = { version = "1.48", features = ["yaml"] }
+yansi = "1.0"
+
 [lib]
 doctest = false

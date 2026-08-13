@@ -172,12 +172,15 @@ impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone + 'a> fmt::Display for Sig<N> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::decl::Decl;
+
+    use crate::parser::parse_decls;
     use crate::typ::{CKind, CTyp, Typs};
     use share::Ctx;
 
     fn make_csig(decl_str: &str) -> CSig {
-        let udecl = Decl::from_str(decl_str).unwrap();
+        let (mut decls, errors) = parse_decls(decl_str);
+        assert!(errors.is_empty(), "parse errors: {:?}", errors);
+        let udecl = decls.pop().map(|s| s.node).unwrap();
         let cdecl = udecl
             .concretize(&crate::typ::subst::SizeSubsts::new())
             .unwrap();

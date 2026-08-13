@@ -9,7 +9,7 @@ pub mod error;
 mod label;
 mod lexer;
 
-pub use error::{render_error, ParseError};
+pub use error::ParseError;
 pub use label::{Context, CtxError, Terminal};
 pub use lexer::{lex_iter, Token};
 
@@ -22,7 +22,6 @@ use chumsky::span::SimpleSpan;
 
 use crate::ast::arg::Args;
 use crate::ast::decl::{Decl, UDecl};
-use crate::ast::sig::Sig;
 use crate::ast::spanned::Spanned;
 use crate::ast::Size;
 use crate::ast::{BinOp, Exps, GArg, UExp};
@@ -47,6 +46,17 @@ fn tid_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>(
     select! { Token::Id(s) => s }
         .labelled(Terminal::Identifier)
         .map(|s| Tid::from(s.into_owned()))
+}
+
+/// Match an identifier, returning its name as a `Spanned<Tid>` (with source span).
+fn tid_tok_spanned<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>(
+) -> impl Parser<'src, I, Spanned<Tid>, extra::Err<CtxError<'src>>> + Clone {
+    select! { Token::Id(s) => s }
+        .labelled(Terminal::Identifier)
+        .map_with(|s, e| {
+            let sp: SimpleSpan = e.span();
+            Spanned::new(Tid::from(s.into_owned()), sp.into_range())
+        })
 }
 
 /// Match a positive integer literal, returning its value.
@@ -402,7 +412,7 @@ fn tvar_parser<'src, I>(
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
-    tid_tok()
+    tid_tok_spanned()
         .then_ignore(just(Token::Colon).ignored())
         .then(kind_parser())
         .map_with(|(id, kind), e| {
@@ -1299,59 +1309,57 @@ where
     .as_context()
 }
 
-/// Parse a module (list of declarations).
-/// Mirrors `decls = { SOI ~ decl* ~ EOI }`
-/// Validates that no two declarations share the same signature.
-fn decls_parser<'src, I>(
-) -> impl Parser<'src, I, Vec<Spanned<UDecl>>, extra::Err<CtxError<'src>>> + Clone
-where
-    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
-{
-    decl_parser().repeated().collect::<Vec<_>>().validate(
-        |decls: Vec<Spanned<UDecl>>, _, emitter| {
-            let mut seen: Vec<(Sig<Size>, std::ops::Range<usize>)> = Vec::new();
-            for d in &decls {
-                if d.node.body.is_type_alias() {
-                    continue;
-                }
-                if let Some((_, orig_span)) = seen.iter().find(|(s, _)| *s == d.node.sig) {
-                    // Build a user-friendly description of the declaration.
-                    let kind = if d.node.body.is_proto() {
-                        "proto"
-                    } else {
-                        "fn"
-                    };
-                    let desc = format!(
-                        "{kind} {}({})",
-                        d.node.sig.name.node.0, d.node.sig.args.node
-                    );
-                    emitter.emit(CtxError(Rich::custom(
-                        SimpleSpan::new((), d.span.clone()),
-                        format!(
-                            "duplicate declaration: {desc}\n  first defined at byte offset {}",
-                            orig_span.start
-                        ),
-                    )));
-                }
-                seen.push((d.node.sig.clone(), d.span.clone()));
-            }
-            decls
-        },
-    )
-}
-
 // ── Entry point ────────────────────────────────────────────────────────
 
+/// Check if a token is a declaration-starting keyword (`fn`, `proto`, `type`).
+fn is_decl_start(tok: &Token<'_>) -> bool {
+    matches!(tok, Token::KwFn | Token::KwProto | Token::KwType)
+}
+
 /// Parse source text into a list of declarations.
-/// This is the chumsky equivalent of `UModule::from_str`.
+///
+/// This is the chumsky equivalent of `UModule::parse` (parse phase only).
+///
+/// **Error recovery**: If parsing a declaration fails, the error is
+/// recorded and one token is skipped before retrying. This allows collecting
+/// multiple errors in a single pass. Malformed declarations are absent from
+/// the output.
 pub fn parse_decls(src: &str) -> (Vec<Spanned<UDecl>>, Vec<ParseError>) {
     let eoi = SimpleSpan::new((), src.len()..src.len());
     let stream = Stream::from_iter(lex_iter(src).filter(|(t, _)| !t.is_trivia()));
     let input = stream.map(eoi, |(t, s)| (t, s));
-    let result = decls_parser().parse(input);
+
+    // Parse declarations with recovery: try decl_parser, on failure emit the
+    // error and skip all non-declaration tokens (returning None). This produces
+    // one error per malformed declaration, not one per skipped token.
+    // via_parser emits the original error before trying the fallback.
+    use chumsky::recovery::via_parser;
+
+    // Skip one token (the malformed decl's starting keyword), then skip all
+    // non-declaration tokens until we reach the next declaration keyword.
+    // This ensures we make progress even when the current token is a decl keyword.
+    let skip_to_decl = any()
+        .ignored()
+        .then(
+            any()
+                .filter(|t: &Token<'_>| !is_decl_start(t))
+                .ignored()
+                .repeated(),
+        )
+        .to(None::<Spanned<UDecl>>);
+
+    let recovery_parser = decl_parser()
+        .map(Some)
+        .recover_with(via_parser(skip_to_decl))
+        .repeated()
+        .collect::<Vec<Option<Spanned<UDecl>>>>();
+
+    let result = recovery_parser.parse(input);
     let (output, errs) = result.into_output_errors();
-    let decls = output.unwrap_or_default();
     let errors: Vec<ParseError> = errs.iter().map(|e| rich_to_parse_error(e)).collect();
+
+    let decls: Vec<Spanned<UDecl>> = output.unwrap_or_default().into_iter().flatten().collect();
+
     (decls, errors)
 }
 
@@ -1365,6 +1373,36 @@ mod tests {
         let (decls, errors) = parse_decls(src);
         assert!(errors.is_empty(), "errors: {:?}", errors);
         assert_eq!(decls.len(), 1);
+    }
+
+    // ── Error recovery tests ────────────────────────────────────────────
+
+    #[test]
+    fn recovery_skips_malformed_decl() {
+        // Two valid decls with a malformed one in between.
+        // The malformed decl `fn f<: Field>(` has a broken generic param.
+        let src = "fn f<F: Field>(instance a: F) -> F { a }\n\
+                   fn f<: Field>(instance a: F) -> F { a }\n\
+                   fn g<F: Field>(instance a: F) -> F { a }";
+        let (decls, errors) = parse_decls(src);
+        assert_eq!(
+            decls.len(),
+            2,
+            "expected 2 valid decls, got {}",
+            decls.len()
+        );
+        assert_eq!(errors.len(), 1, "expected 1 error, got {}", errors.len());
+    }
+
+    #[test]
+    fn recovery_multiple_errors() {
+        // Two malformed decls with valid ones in between
+        let src = "fn f<: Field>(instance a: F) -> F { a }\n\
+                   fn g<F: Field>(instance a: F) -> F { a }\n\
+                   fn h<: Field>(instance a: F) -> F { a }";
+        let (decls, errors) = parse_decls(src);
+        assert_eq!(decls.len(), 1, "expected 1 valid decl, got {}", decls.len());
+        assert_eq!(errors.len(), 2, "expected 2 errors, got {}", errors.len());
     }
 
     #[test]

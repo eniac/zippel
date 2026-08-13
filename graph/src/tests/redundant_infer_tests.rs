@@ -17,18 +17,15 @@
 //! calls cannot silently regress diagnostics: any ill-typed Pair/Bin must still
 //! surface as a `GraphError::Type(_)` from `UDags::from_module`.
 
+use super::test_helpers::parse_and_concretize;
 use crate::{GraphError, UDags};
 use backend::ArkBls12_381;
-use lang::ast::UModule;
 use share::Ctx;
 
 type B = ArkBls12_381;
 
 fn try_parse_and_build(src: &str) -> Result<UDags<B>, GraphError> {
-    let m = UModule::from_str(src)
-        .unwrap()
-        .concretize(&Ctx::new())
-        .unwrap();
+    let m = parse_and_concretize(src, &Ctx::new());
     UDags::<B>::from_module(m)
 }
 

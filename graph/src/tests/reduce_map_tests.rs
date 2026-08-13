@@ -2,11 +2,11 @@
 //! / `Op::LoopParam` and the streaming reduce-map evaluator.
 
 use crate::eval::eval_op;
-use crate::tests::test_helpers::scalar;
+use crate::tests::test_helpers::{parse_and_concretize, scalar};
 use crate::{GOp, Op, Ref, UDags, mk};
 use ark_ff::{One, Zero};
 use backend::{ATyp, ArkBls12_381, Value};
-use lang::ast::{BinOp, UModule};
+use lang::ast::BinOp;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use serial_test::serial;
@@ -17,10 +17,7 @@ use std::sync::Arc;
 type B = ArkBls12_381;
 
 fn parse_and_build(src: &str) -> UDags<B> {
-    let module = UModule::from_str(src)
-        .unwrap()
-        .concretize(&Ctx::new())
-        .unwrap();
+    let module = parse_and_concretize(src, &Ctx::new());
     UDags::<B>::from_module(module).unwrap()
 }
 

@@ -51,7 +51,7 @@ fn format_typevar(
     );
     let (kind_gap, kind_doc) = format_kind(&typevar.node.kind, cursor, end, style);
     let doc = ALLOC.concat([
-        ALLOC.as_string(&typevar.node.id),
+        ALLOC.as_string(&typevar.node.id.node),
         colon,
         ALLOC.text(":"),
         gap_space(kind_gap, style),
