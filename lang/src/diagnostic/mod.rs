@@ -7,7 +7,7 @@
 
 mod suggestion;
 
-pub use suggestion::{hint, insert_before, replace, Applicability, Suggestion};
+pub use suggestion::{insert_before, replace, Applicability, Suggestion};
 
 use std::ops::Range;
 
@@ -36,7 +36,8 @@ pub struct Diagnostic {
     pub notes: Vec<Note>,
     /// Code suggestions with replacement text and confidence.
     pub suggestions: Vec<Suggestion>,
-    /// Reserved for future error codes (E0001, etc.).
+    /// Stable error code (e.g. "E0001") for tooling and test filtering.
+    /// `None` for diagnostics that don't warrant a code (e.g. generic parse errors).
     pub code: Option<String>,
 }
 
@@ -64,13 +65,111 @@ pub struct Note {
     pub message: String,
 }
 
+// ── Builder API ────────────────────────────────────────────────────────
+
+impl Diagnostic {
+    /// Start building an error diagnostic.
+    pub fn error(phase: Phase, span: Range<usize>, summary: &str) -> Self {
+        Diagnostic {
+            severity: Severity::Error,
+            phase,
+            span,
+            summary: summary.to_string(),
+            primary_label: String::new(),
+            secondary_labels: vec![],
+            notes: vec![],
+            suggestions: vec![],
+            code: None,
+        }
+    }
+
+    /// Start building a warning diagnostic.
+    pub fn warning(phase: Phase, span: Range<usize>, summary: &str) -> Self {
+        Diagnostic {
+            severity: Severity::Warning,
+            phase,
+            span,
+            summary: summary.to_string(),
+            primary_label: String::new(),
+            secondary_labels: vec![],
+            notes: vec![],
+            suggestions: vec![],
+            code: None,
+        }
+    }
+
+    /// Set the error code (e.g. "E0001").
+    pub fn code(mut self, code: &str) -> Self {
+        self.code = Some(code.to_string());
+        self
+    }
+
+    /// Set the primary label message (rendered with `^^^` under the span).
+    pub fn primary_label(mut self, label: &str) -> Self {
+        self.primary_label = label.to_string();
+        self
+    }
+
+    /// Add a secondary label at the given span.
+    pub fn secondary_label(mut self, span: Range<usize>, message: &str) -> Self {
+        self.secondary_labels.push(SecondaryLabel {
+            span,
+            message: message.to_string(),
+        });
+        self
+    }
+
+    /// Set all secondary labels at once.
+    pub fn secondary_labels(mut self, labels: Vec<SecondaryLabel>) -> Self {
+        self.secondary_labels = labels;
+        self
+    }
+
+    /// Add a note (spanless context, rendered as "note: ...").
+    pub fn note(mut self, message: &str) -> Self {
+        self.notes.push(Note {
+            message: message.to_string(),
+        });
+        self
+    }
+
+    /// Set all notes at once.
+    pub fn notes(mut self, notes: Vec<Note>) -> Self {
+        self.notes = notes;
+        self
+    }
+
+    /// Add a code suggestion.
+    pub fn suggestion(
+        mut self,
+        message: &str,
+        span: Range<usize>,
+        replacement: &str,
+        applicability: Applicability,
+    ) -> Self {
+        self.suggestions.push(Suggestion {
+            message: message.to_string(),
+            span,
+            replacement: replacement.to_string(),
+            applicability,
+        });
+        self
+    }
+
+    /// Set all suggestions at once.
+    pub fn suggestions(mut self, suggestions: Vec<Suggestion>) -> Self {
+        self.suggestions = suggestions;
+        self
+    }
+}
+
 // ── Rendering ──────────────────────────────────────────────────────────
 
 /// Render a single diagnostic as an ariadne report string.
 ///
 /// `phase` is used for sorting in `analyze()`, not for rendering.
-/// `code` is `None` for now; when populated, it would be prepended to
-/// the summary (e.g. "error[E0001]: ...").
+/// `code` is `None` for diagnostics without a code; when present, it could be
+/// prepended to the summary (e.g. "error[E0001]: ...").
 pub fn render_diagnostic(diag: &Diagnostic, filename: &str, src: &str) -> String {
     let mut buf = Vec::new();
     let config = Config::new().with_index_type(IndexType::Byte);

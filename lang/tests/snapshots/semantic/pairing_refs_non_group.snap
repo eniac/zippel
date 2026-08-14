@@ -1,0 +1,12 @@
+---
+source: lang/tests/semantic.rs
+---
+error: `F` is not a Group
+   ╭─[ test.zippel:1:30 ]
+   │
+ 1 │ proto p<F: Field, P: Pairing<F, F>>(instance a: F) where a == a { }
+   │                              ┬  ┬  
+   │                              ╰───── `F` is a Field, but `P` requires a Group
+   │                                 │  
+   │                                 ╰── `F` also referenced here
+───╯

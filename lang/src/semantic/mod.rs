@@ -11,7 +11,6 @@
 //! - Relation purity
 
 mod alias_cycle;
-mod convert;
 mod duplicate;
 mod edit_distance;
 mod proto;
@@ -22,7 +21,8 @@ mod typevar;
 
 use std::ops::Range;
 
-use crate::id::{Tid, Vid};
+use crate::diagnostic::SecondaryLabel;
+use crate::id::Tid;
 
 pub use alias_cycle::check_type_alias_cycles;
 pub use duplicate::check_duplicate_declarations;
@@ -34,70 +34,28 @@ pub use typevar::check_typevars;
 
 pub(crate) use edit_distance::levenshtein;
 
-// ── SemanticError ──────────────────────────────────────────────────────
+/// Render a cycle as (cycle_str, primary_span, secondary_labels).
+/// Shared by `CircularTypevarRef` and `TypeAliasCycle` — only the verb differs.
+pub(crate) fn render_cycle(
+    cycle: &[(Tid, Range<usize>)],
+    verb: &str,
+) -> (String, Range<usize>, Vec<SecondaryLabel>) {
+    let names: Vec<String> = cycle.iter().map(|(t, _)| t.0.to_string()).collect();
+    let mut cycle_str = names.join(" → ");
+    if let Some(first) = names.first() {
+        cycle_str.push_str(" → ");
+        cycle_str.push_str(first);
+    }
 
-/// A semantic error found during semantic analysis (after parsing, before
-/// type checking).
-#[derive(Debug, Clone)]
-pub enum SemanticError {
-    /// Use of a variable before its definition (or undefined variable).
-    UndefinedVariable {
-        name: Vid,
-        use_span: Range<usize>,
-        similar: Vec<(Vid, Range<usize>)>,
-    },
-    /// Use of a size variable not declared in the typevar list.
-    UnboundSizeVar { name: Tid, use_span: Range<usize> },
-    /// A group reference in a kind resolves to a declared typevar but the
-    /// kind doesn't match (e.g. `Pairing<F, F>` where `F: Field`).
-    /// `ref_name` is the referenced typevar, `ref_span` is its use site,
-    /// `tv_name` is the typevar whose kind contains the bad reference,
-    /// `actual_kind` is a description of what `ref_name` actually is.
-    InvalidGroupRef {
-        ref_name: Tid,
-        ref_span: Range<usize>,
-        tv_name: Tid,
-        actual_kind: String,
-    },
-    /// Two typevars share the same name in one declaration.
-    DuplicateTypevar {
-        name: Tid,
-        first_span: Range<usize>,
-        second_span: Range<usize>,
-    },
-    /// A range typevar has start > end.
-    InvalidRangeBounds {
-        name: Tid,
-        span: Range<usize>,
-        start: String,
-        end: String,
-    },
-    /// A group reference in a kind doesn't resolve to any declared typevar.
-    UnresolvedGroupRef { name: Tid, ref_span: Range<usize> },
-    /// Circular reference among typevar kinds (e.g. V: Pairing<G>, G: Pairing<V>).
-    /// `cycle` is a list of (typevar name, span of the kind reference) for
-    /// each typevar in the cycle, in dependency order.
-    CircularTypevarRef { cycle: Vec<(Tid, Range<usize>)> },
-    /// Two declarations share the same signature.
-    DuplicateDeclaration {
-        name: String,
-        first_span: Range<usize>,
-        second_span: Range<usize>,
-    },
-    /// A type alias cycle (e.g. `type A = B; type B = A;`).
-    /// `cycle` is a list of (alias name, span of the aliased type reference)
-    /// for each alias in the cycle, in dependency order.
-    TypeAliasCycle { cycle: Vec<(Tid, Range<usize>)> },
-    /// No proto declaration in the file.
-    NoProtoDeclaration { file_span: Range<usize> },
-    /// Multiple proto declarations in the file.
-    MultipleProtoDeclarations {
-        first_span: Range<usize>,
-        second_span: Range<usize>,
-    },
-    /// A proto relation contains impure constructs (Challenge/Log/Verify).
-    ImpureRelation {
-        span: Range<usize>,
-        construct: String,
-    },
+    let primary_span = cycle.first().map(|(_, s)| s.clone()).unwrap_or(0..0);
+    let secondary_labels: Vec<SecondaryLabel> = cycle
+        .iter()
+        .skip(1)
+        .map(|(t, s)| SecondaryLabel {
+            span: s.clone(),
+            message: format!("`{t}` {verb}"),
+        })
+        .collect();
+
+    (cycle_str, primary_span, secondary_labels)
 }

@@ -6,34 +6,172 @@
 //! - Range bounds are valid (start <= end)
 //! - No circular references among typevar kinds
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::ops::Range;
 
 use crate::ast::size::Size;
 use crate::ast::spanned::Spanned;
 use crate::ast::Sig;
+use crate::diagnostic::{Applicability, Diagnostic, Phase};
 use crate::id::Tid;
 use crate::typ::{Kind, TypeVar};
+use lang_derive::Diagnostic as DiagnosticDerive;
 use share::Ctx;
 
-use super::SemanticError;
+// ── Simple diagnostics (derive) ────────────────────────────────────────
+
+/// E0006: Two or more typevars share the same name in one declaration.
+/// Uses the builder API because `spans` produces a variable number of
+/// secondary labels when a name appears 3+ times.
+/// The first occurrence is the primary span so labels render left-to-right.
+fn duplicate_typevar(name: &Tid, spans: &[Range<usize>]) -> Diagnostic {
+    let primary_span = spans.first().cloned().unwrap_or(0..0);
+    let mut d = Diagnostic::error(
+        Phase::Semantic,
+        primary_span,
+        &format!("duplicate type variable `{name}`"),
+    )
+    .code("E0006")
+    .primary_label(&format!("`{name}` first declared here"));
+
+    // Subsequent declarations
+    for s in spans.iter().skip(1) {
+        d = d.secondary_label(s.clone(), &format!("`{name}` also declared here"));
+    }
+
+    d
+}
+
+/// E0007: A range typevar has start > end.
+#[derive(DiagnosticDerive)]
+#[diag("invalid range bounds for `{$name}`", code = "E0007", error, Semantic)]
+struct InvalidRangeBounds {
+    #[span(label = "range `{$start}..{$end}` is invalid: start ({$start}) must be ≤ end ({$end})")]
+    span: Range<usize>,
+    name: Tid,
+    start: String,
+    end: String,
+}
+
+// ── Complex diagnostics (builder) ──────────────────────────────────────
+
+/// E0004: A group reference in a kind resolves to a declared typevar but the
+/// kind doesn't match (e.g. `Pairing<F, F>` where `F: Field`).
+/// Uses the builder API because `ref_spans` produces a variable number of
+/// secondary labels.
+fn invalid_group_ref(
+    ref_name: &Tid,
+    ref_spans: &[Range<usize>],
+    tv_name: &Tid,
+    actual_kind: &str,
+) -> Diagnostic {
+    let primary_span = ref_spans.first().cloned().unwrap_or(0..0);
+    let mut d = Diagnostic::error(
+        Phase::Semantic,
+        primary_span,
+        &format!("`{ref_name}` is not a Group"),
+    )
+    .code("E0004")
+    .primary_label(&format!(
+        "`{ref_name}` is {actual_kind}, but `{tv_name}` requires a Group"
+    ));
+
+    for s in ref_spans.iter().skip(1) {
+        d = d.secondary_label(s.clone(), &format!("`{ref_name}` also referenced here"));
+    }
+
+    d
+}
+
+/// E0005: A group reference in a kind doesn't resolve to any declared typevar.
+/// Uses the builder API because `ref_spans` produces a variable number of
+/// secondary labels, and the replacement is conditional on `is_empty`.
+fn unresolved_group_ref(
+    name: &Tid,
+    ref_spans: &[Range<usize>],
+    typevar_span: &Range<usize>,
+    is_empty: bool,
+) -> Diagnostic {
+    let primary_span = ref_spans.first().cloned().unwrap_or(0..0);
+    let mut d = Diagnostic::error(
+        Phase::Semantic,
+        primary_span,
+        &format!("unresolved group reference `{name}`"),
+    )
+    .code("E0005")
+    .primary_label(&format!("`{name}` is not declared as a type variable"));
+
+    for s in ref_spans.iter().skip(1) {
+        d = d.secondary_label(s.clone(), &format!("`{name}` also referenced here"));
+    }
+
+    // Insert at beginning of typevar list (Rev F):
+    // empty list: "N: Group", non-empty: "N: Group, "
+    let replacement = if is_empty {
+        format!("{name}: Group")
+    } else {
+        format!("{name}: Group, ")
+    };
+    let sugg_span = typevar_span.start..typevar_span.start;
+    d = d.suggestion(
+        &format!("declare `{name}` as a type variable with `Group` kind"),
+        sugg_span,
+        &replacement,
+        Applicability::MachineApplicable,
+    );
+
+    d
+}
+
+/// E0008: Circular reference among typevar kinds.
+/// Uses the builder API because the cycle produces a variable number of
+/// secondary labels and a computed kind note.
+fn circular_typevar_ref(cycle: Vec<(Tid, Range<usize>)>, kinds: Vec<(Tid, String)>) -> Diagnostic {
+    let (cycle_str, primary_span, secondary_labels) =
+        super::render_cycle(&cycle, "references the next type variable in the cycle");
+    let kind_note = kinds
+        .iter()
+        .map(|(t, k)| format!("`{t}` has kind `{k}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    Diagnostic::error(
+        Phase::Semantic,
+        primary_span,
+        "circular type variable reference",
+    )
+    .code("E0008")
+    .primary_label(&format!("cycle: {cycle_str}"))
+    .secondary_labels(secondary_labels)
+    .note(&kind_note)
+}
+
+// ── Check function ─────────────────────────────────────────────────────
 
 /// Check type variable declarations in a signature.
-pub fn check_typevars(sig: &Sig<Size>) -> Vec<SemanticError> {
+pub fn check_typevars(sig: &Sig<Size>) -> Vec<Diagnostic> {
     let mut errors = Vec::new();
     let typevars = &sig.typevars.node.0;
+    let typevar_span = sig.typevars.span.clone();
+    let is_empty = typevars.is_empty();
 
     // 1. Check for duplicate typevar names
-    let mut seen: Ctx<Tid, Range<usize>> = Ctx::new();
+    // Collect all declaration spans per name, then emit one diagnostic per
+    // duplicated name (first = "first declared here", second = primary,
+    // 3+ = "also declared here").
+    let mut spans_by_name: Ctx<Tid, Vec<Range<usize>>> = Ctx::new();
     for tv in typevars {
-        if let Some(first_span) = seen.get(&tv.node.id.node) {
-            errors.push(SemanticError::DuplicateTypevar {
-                name: tv.node.id.node.clone(),
-                first_span: first_span.clone(),
-                second_span: tv.node.id.span.clone(),
-            });
+        let name = &tv.node.id.node;
+        let span = tv.node.id.span.clone();
+        if let Some(spans) = spans_by_name.get_mut(name) {
+            spans.push(span);
         } else {
-            seen.insert(&tv.node.id.node, &tv.node.id.span.clone());
+            spans_by_name.insert(name, &vec![span]);
+        }
+    }
+    for (name, spans) in spans_by_name.iter() {
+        if spans.len() > 1 {
+            errors.push(duplicate_typevar(name, spans));
         }
     }
 
@@ -44,7 +182,7 @@ pub fn check_typevars(sig: &Sig<Size>) -> Vec<SemanticError> {
         .collect();
 
     for tv in typevars {
-        check_kind_refs(&tv.node, &declared, &mut errors);
+        check_kind_refs(&tv.node, &declared, &typevar_span, is_empty, &mut errors);
     }
 
     // 3. Check for circular references among typevar kinds
@@ -53,16 +191,21 @@ pub fn check_typevars(sig: &Sig<Size>) -> Vec<SemanticError> {
     // 4. Check range bounds for Range kinds
     for tv in typevars {
         if let Kind::Range(r) = &tv.node.kind {
-            // For symbolic sizes, we can only check literal bounds
+            // Only check literal bounds here. Symbolic sizes (e.g. `N: 0..M`
+            // where M is another typevar) cannot be compared until size
+            // resolution, which happens later during concretization.
             let end_node = r.end.as_ref().map(|e| &e.node).unwrap_or(&r.start.node);
             if let (Size::Lit(start), Size::Lit(end)) = (&r.start.node, end_node) {
                 if start > end {
-                    errors.push(SemanticError::InvalidRangeBounds {
-                        name: tv.node.id.node.clone(),
-                        span: tv.span.clone(),
-                        start: start.to_string(),
-                        end: end.to_string(),
-                    });
+                    errors.push(
+                        InvalidRangeBounds {
+                            span: tv.span.clone(),
+                            name: tv.node.id.node.clone(),
+                            start: start.to_string(),
+                            end: end.to_string(),
+                        }
+                        .build(),
+                    );
                 }
             }
         }
@@ -72,61 +215,52 @@ pub fn check_typevars(sig: &Sig<Size>) -> Vec<SemanticError> {
 }
 
 /// Check that group references in a kind resolve to declared typevars
-/// of the correct kind.
+/// of the correct kind. Groups refs by name so that `Pairing<F, F>` emits
+/// one error (with multiple spans) instead of two identical errors.
 fn check_kind_refs(
     tv: &TypeVar<Size>,
     declared: &Ctx<Tid, &Kind<Size>>,
-    errors: &mut Vec<SemanticError>,
+    typevar_span: &Range<usize>,
+    is_empty: bool,
+    errors: &mut Vec<Diagnostic>,
 ) {
-    match &tv.kind {
-        Kind::Scalar(groups) => {
-            for g in groups.iter() {
-                check_group_ref(g, &tv.id.node, declared, errors);
+    // Collect all group refs from the kind, grouped by name.
+    let mut refs_by_name: Ctx<Tid, Vec<Range<usize>>> = Ctx::new();
+    for g in kind_group_refs_spanned(&tv.kind) {
+        if let Some(spans) = refs_by_name.get_mut(&g.node) {
+            spans.push(g.span.clone());
+        } else {
+            refs_by_name.insert(&g.node, &vec![g.span.clone()]);
+        }
+    }
+
+    for (ref_name, ref_spans) in refs_by_name.iter() {
+        if let Some(kind) = declared.get(ref_name) {
+            if !kind.is_group() {
+                errors.push(invalid_group_ref(
+                    ref_name,
+                    ref_spans,
+                    &tv.id.node,
+                    &format!("a {kind}"),
+                ));
             }
+        } else {
+            errors.push(unresolved_group_ref(
+                ref_name,
+                ref_spans,
+                typevar_span,
+                is_empty,
+            ));
         }
-        Kind::Pairing(a, b) => {
-            check_group_ref(a, &tv.id.node, declared, errors);
-            check_group_ref(b, &tv.id.node, declared, errors);
-        }
-        Kind::Field | Kind::Group | Kind::Range(_) | Kind::SizeVar => {}
     }
 }
 
-/// Check a single group reference resolves to a declared Group typevar.
-/// `group_ref` is the group reference (e.g. the `F` in `Pairing<F, G>`),
-/// `tv_name` is the typevar whose kind contains the reference.
-fn check_group_ref(
-    group_ref: &Spanned<Tid>,
-    tv_name: &Tid,
-    declared: &Ctx<Tid, &Kind<Size>>,
-    errors: &mut Vec<SemanticError>,
-) {
-    if let Some(kind) = declared.get(&group_ref.node) {
-        if !kind.is_group() {
-            errors.push(SemanticError::InvalidGroupRef {
-                ref_name: group_ref.node.clone(),
-                ref_span: group_ref.span.clone(),
-                tv_name: tv_name.clone(),
-                actual_kind: kind_description(kind),
-            });
-        }
-    } else {
-        errors.push(SemanticError::UnresolvedGroupRef {
-            name: group_ref.node.clone(),
-            ref_span: group_ref.span.clone(),
-        });
-    }
-}
-
-/// Human-readable description of a kind for error messages.
-fn kind_description(kind: &Kind<Size>) -> String {
+/// Get all group references (as Spanned<Tid>) from a kind.
+fn kind_group_refs_spanned(kind: &Kind<Size>) -> Vec<&Spanned<Tid>> {
     match kind {
-        Kind::Field => "a Field".to_string(),
-        Kind::Group => "a Group".to_string(),
-        Kind::Scalar(_) => "a Scalar".to_string(),
-        Kind::Pairing(_, _) => "a Pairing".to_string(),
-        Kind::Range(_) => "a Range".to_string(),
-        Kind::SizeVar => "a Size".to_string(),
+        Kind::Scalar(groups) => groups.iter().collect(),
+        Kind::Pairing(a, b) => vec![a, b],
+        _ => vec![],
     }
 }
 
@@ -138,28 +272,29 @@ fn kind_description(kind: &Kind<Size>) -> String {
 /// `V: Pairing<G>` and `G: Pairing<V>`. We build a dependency graph where
 /// each typevar depends on the group references in its kind, then run DFS
 /// to find cycles.
-fn check_kind_cycles(typevars: &[Spanned<TypeVar<Size>>], errors: &mut Vec<SemanticError>) {
+fn check_kind_cycles(typevars: &[Spanned<TypeVar<Size>>], errors: &mut Vec<Diagnostic>) {
     // Build dependency graph: typevar name → list of (referenced name, ref span)
-    #[allow(clippy::type_complexity)]
-    let mut deps: Vec<(Tid, Vec<(Tid, Range<usize>)>)> = Vec::new();
-
+    let mut deps: Ctx<Tid, Vec<(Tid, Range<usize>)>> = Ctx::new();
+    let mut kind_strs: Ctx<Tid, String> = Ctx::new();
     for tv in typevars {
         let name = tv.node.id.node.clone();
         let refs = kind_group_refs(&tv.node.kind);
-        deps.push((name, refs));
+        deps.insert(&name, &refs);
+        kind_strs.insert(&name, &tv.node.kind.to_string());
     }
 
     // DFS cycle detection
     let mut visited: HashSet<Tid> = HashSet::new();
     let mut visiting: Vec<Tid> = Vec::new();
     // Track reported cycles (by sorted member set) to avoid duplicates.
-    let mut reported: HashSet<Vec<Tid>> = HashSet::new();
+    let mut reported: HashSet<BTreeSet<Tid>> = HashSet::new();
 
-    for (name, _) in &deps {
-        if !visited.contains(name) {
+    for name in deps.keys() {
+        if !visited.contains(&name) {
             dfs_cycle(
-                name,
+                &name,
                 &deps,
+                &kind_strs,
                 &mut visiting,
                 &mut visited,
                 &mut reported,
@@ -188,14 +323,14 @@ fn kind_group_refs(kind: &Kind<Size>) -> Vec<(Tid, Range<usize>)> {
 /// `visiting` is the current path stack; `visited` is the global visited set.
 /// `reported` tracks sorted member sets of already-reported cycles to avoid
 /// duplicate errors when a typevar has multiple edges into the same cycle.
-#[allow(clippy::type_complexity)]
 fn dfs_cycle(
     name: &Tid,
-    deps: &[(Tid, Vec<(Tid, Range<usize>)>)],
+    deps: &Ctx<Tid, Vec<(Tid, Range<usize>)>>,
+    kind_strs: &Ctx<Tid, String>,
     visiting: &mut Vec<Tid>,
     visited: &mut HashSet<Tid>,
-    reported: &mut HashSet<Vec<Tid>>,
-    errors: &mut Vec<SemanticError>,
+    reported: &mut HashSet<BTreeSet<Tid>>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     if visited.contains(name) {
         return;
@@ -204,7 +339,7 @@ fn dfs_cycle(
     visiting.push(name.clone());
 
     // Visit dependencies
-    if let Some((_, refs)) = deps.iter().find(|(n, _)| n == name) {
+    if let Some(refs) = deps.get(name) {
         for (dep, _) in refs {
             if visited.contains(dep) {
                 continue;
@@ -213,8 +348,7 @@ fn dfs_cycle(
                 // Found a cycle: the path from `pos` to the end.
                 let cycle_tids: Vec<Tid> = visiting[pos..].to_vec();
                 // Deduplicate by sorted member set.
-                let mut key = cycle_tids.clone();
-                key.sort();
+                let key: BTreeSet<Tid> = cycle_tids.iter().cloned().collect();
                 if reported.contains(&key) {
                     continue;
                 }
@@ -225,17 +359,20 @@ fn dfs_cycle(
                     .map(|(i, tid)| {
                         let next = &cycle_tids[(i + 1) % cycle_tids.len()];
                         let span = deps
-                            .iter()
-                            .find(|(n, _)| n == tid)
-                            .and_then(|(_, refs)| refs.iter().find(|(r, _)| r == next))
+                            .get(tid)
+                            .and_then(|refs| refs.iter().find(|(r, _)| r == next))
                             .map(|(_, s)| s.clone())
-                            .unwrap_or(0..0);
+                            .expect("cycle member must reference the next member");
                         (tid.clone(), span)
                     })
                     .collect();
-                errors.push(SemanticError::CircularTypevarRef { cycle });
+                let kinds: Vec<(Tid, String)> = cycle_tids
+                    .iter()
+                    .filter_map(|tid| kind_strs.get(tid).map(|k| (tid.clone(), k.clone())))
+                    .collect();
+                errors.push(circular_typevar_ref(cycle, kinds));
             } else {
-                dfs_cycle(dep, deps, visiting, visited, reported, errors);
+                dfs_cycle(dep, deps, kind_strs, visiting, visited, reported, errors);
             }
         }
     }

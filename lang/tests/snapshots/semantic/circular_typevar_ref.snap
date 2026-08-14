@@ -1,0 +1,14 @@
+---
+source: lang/tests/semantic.rs
+---
+error: circular type variable reference
+   ╭─[ test.zippel:1:38 ]
+   │
+ 1 │ proto p<V: Pairing<G, G>, G: Pairing<V, V>>(instance a: V) where a == a { }
+   │                    ┬                 ┬  
+   │                    │                 ╰── cycle: G → V → G
+   │                    │                 │  
+   │                    ╰──────────────────── `V` references the next type variable in the cycle
+   │                                      │  
+   │                                      ╰── note: `G` has kind `Pairing<V, V>`, `V` has kind `Pairing<G, G>`
+───╯

@@ -1,0 +1,12 @@
+---
+source: lang/tests/parser.rs
+---
+error: expected ';', found end of input
+   ╭─[ test.zippel:1:17 ]
+   │
+ 1 │ type MyAlias = F
+   │ ────────┬───────│ 
+   │         │       ╰─ expected ';'
+   │         │         
+   │         ╰───────── while parsing this type alias
+───╯

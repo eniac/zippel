@@ -5,8 +5,24 @@ use std::ops::Range;
 
 use crate::ast::spanned::Spanned;
 use crate::ast::Exp;
+use crate::diagnostic::Diagnostic;
+use lang_derive::Diagnostic as DiagnosticDerive;
 
-use super::SemanticError;
+/// E0012: A proto relation contains impure constructs (Challenge/Log/Verify).
+#[derive(DiagnosticDerive)]
+#[diag(
+    "impure construct `{$construct}` in proto relation",
+    code = "E0012",
+    error,
+    Semantic
+)]
+struct ImpureRelation {
+    #[span(label = "`{$construct}` is not allowed in a proto relation")]
+    span: Range<usize>,
+    construct: String,
+    #[note("proto relations must be relation-pure (no challenge, log, or verify)")]
+    _note: (),
+}
 
 /// Find all impure constructs (Challenge/Log/Verify) in an expression.
 /// Returns (span, construct_name) for each occurrence.
@@ -90,9 +106,16 @@ fn collect_impure_constructs(
 
 /// Check that a proto relation contains no impure constructs.
 /// Returns one error per impure construct found.
-pub fn check_purity(relation: &Spanned<Exp<crate::ast::Size>>) -> Vec<SemanticError> {
+pub fn check_purity(relation: &Spanned<Exp<crate::ast::Size>>) -> Vec<Diagnostic> {
     find_impure_constructs(relation)
         .into_iter()
-        .map(|(span, construct)| SemanticError::ImpureRelation { span, construct })
+        .map(|(span, construct)| {
+            ImpureRelation {
+                span,
+                construct,
+                _note: (),
+            }
+            .build()
+        })
         .collect()
 }

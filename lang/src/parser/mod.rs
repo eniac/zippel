@@ -4,17 +4,16 @@
 //! - The precedence table is in `chumsky::pratt`, queryable — no duplication.
 //! - Error recovery is built-in via chumsky.
 
-mod edit_distance;
 pub mod error;
 mod label;
 mod lexer;
 
-pub use error::ParseError;
-pub use label::{Context, CtxError, Terminal};
+pub use label::{Context, Terminal};
 pub use lexer::{lex_iter, Token};
 
 use std::borrow::Cow;
 
+use chumsky::error::Rich;
 use chumsky::input::{Stream, ValueInput};
 use chumsky::pratt::{self, Associativity};
 use chumsky::prelude::*;
@@ -25,16 +24,20 @@ use crate::ast::decl::{Decl, UDecl};
 use crate::ast::spanned::Spanned;
 use crate::ast::Size;
 use crate::ast::{BinOp, Exps, GArg, UExp};
+use crate::diagnostic::Diagnostic;
 use crate::id::{Tid, Vid};
 use crate::typ::{Distribution, GTyp, Kind, Qualifier, Range, Typ, TypeVar, TypeVars};
 
-use error::rich_to_parse_error;
+use error::rich_to_diagnostic;
+
+/// Native chumsky error type alias — no wrapper.
+type RichError<'src> = Rich<'src, Token<'src>, SimpleSpan>;
 
 // ── Token matching helpers ─────────────────────────────────────────────
 
 /// Match an identifier, returning its name as a `Vid`.
 fn id_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>(
-) -> impl Parser<'src, I, Vid, extra::Err<CtxError<'src>>> + Clone {
+) -> impl Parser<'src, I, Vid, extra::Err<RichError<'src>>> + Clone {
     select! { Token::Id(s) => s }
         .labelled(Terminal::Identifier)
         .map(|s| Vid(s.into_owned()))
@@ -42,7 +45,7 @@ fn id_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>(
 
 /// Match an identifier, returning its name as a `Tid`.
 fn tid_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>(
-) -> impl Parser<'src, I, Tid, extra::Err<CtxError<'src>>> + Clone {
+) -> impl Parser<'src, I, Tid, extra::Err<RichError<'src>>> + Clone {
     select! { Token::Id(s) => s }
         .labelled(Terminal::Identifier)
         .map(|s| Tid::from(s.into_owned()))
@@ -50,7 +53,7 @@ fn tid_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>(
 
 /// Match an identifier, returning its name as a `Spanned<Tid>` (with source span).
 fn tid_tok_spanned<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>(
-) -> impl Parser<'src, I, Spanned<Tid>, extra::Err<CtxError<'src>>> + Clone {
+) -> impl Parser<'src, I, Spanned<Tid>, extra::Err<RichError<'src>>> + Clone {
     select! { Token::Id(s) => s }
         .labelled(Terminal::Identifier)
         .map_with(|s, e| {
@@ -61,7 +64,7 @@ fn tid_tok_spanned<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleS
 
 /// Match a positive integer literal, returning its value.
 fn positive_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>(
-) -> impl Parser<'src, I, u32, extra::Err<CtxError<'src>>> + Clone {
+) -> impl Parser<'src, I, u32, extra::Err<RichError<'src>>> + Clone {
     select! { Token::Positive(s) => s }
         .labelled(Terminal::PositiveInteger)
         .map(|s| s.parse::<u32>().unwrap_or(0))
@@ -74,7 +77,7 @@ fn positive_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan
 ///   size_ty = { size_ty_term ~ (size_bin_op ~ size_ty_term)* }
 ///   size_ty_term = _{ "(" ~ size_ty ~ ")" | positive | size_var }
 fn size_ty_parser<'src, I>(
-) -> impl Parser<'src, I, Spanned<Size>, extra::Err<CtxError<'src>>> + Clone
+) -> impl Parser<'src, I, Spanned<Size>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -97,7 +100,7 @@ where
         atom.pratt((
             pratt::infix(
                 Associativity::Left(1),
-                just(Token::Plus).ignored(),
+                just(Token::Plus).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
                     Spanned::new(Size::Add(Box::new(a), Box::new(b)), sp.into_range())
@@ -105,7 +108,7 @@ where
             ),
             pratt::infix(
                 Associativity::Left(1),
-                just(Token::Minus).ignored(),
+                just(Token::Minus).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
                     Spanned::new(Size::Sub(Box::new(a), Box::new(b)), sp.into_range())
@@ -113,7 +116,7 @@ where
             ),
             pratt::infix(
                 Associativity::Left(2),
-                just(Token::Star).ignored(),
+                just(Token::Star).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
                     Spanned::new(Size::Mul(Box::new(a), Box::new(b)), sp.into_range())
@@ -121,7 +124,7 @@ where
             ),
             pratt::infix(
                 Associativity::Left(2),
-                just(Token::Slash).ignored(),
+                just(Token::Slash).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
                     Spanned::new(Size::Div(Box::new(a), Box::new(b)), sp.into_range())
@@ -129,7 +132,7 @@ where
             ),
             pratt::infix(
                 Associativity::Right(3),
-                just(Token::Caret).ignored(),
+                just(Token::Caret).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
                     Spanned::new(Size::Pow(Box::new(a), Box::new(b)), sp.into_range())
@@ -146,7 +149,7 @@ where
 ///   range = { step_r | unit_r }
 ///   step_r = { size_ty ~ "," ~ size_ty ~ ".." ~ size_ty }
 ///   unit_r = { size_ty ~ ".." ~ size_ty }
-fn range_parser<'src, I>() -> impl Parser<'src, I, Range<Size>, extra::Err<CtxError<'src>>> + Clone
+fn range_parser<'src, I>() -> impl Parser<'src, I, Range<Size>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -179,7 +182,7 @@ where
 /// Parse a kind (type variable kind annotation).
 /// Mirrors `kind_ty` in the pest grammar:
 ///   kind_ty = { field_ty | group_ty | range_ty | pairing_ty | scalar_ty | size_var_ty | size_ref_ty | positive }
-fn kind_parser<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<CtxError<'src>>> + Clone
+fn kind_parser<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -212,26 +215,26 @@ where
     .as_context()
 }
 
-fn kw_field<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<CtxError<'src>>> + Clone
+fn kw_field<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     just(Token::KwField).ignored().to(Kind::Field)
 }
-fn kw_group<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<CtxError<'src>>> + Clone
+fn kw_group<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     just(Token::KwGroup).ignored().to(Kind::Group)
 }
-fn kw_size<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<CtxError<'src>>> + Clone
+fn kw_size<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     just(Token::KwSize).ignored().to(Kind::SizeVar)
 }
 
-fn pairing_kind<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<CtxError<'src>>> + Clone
+fn pairing_kind<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -247,7 +250,7 @@ where
 }
 
 /// Scalar<ids> — takes a comma-separated list of group type variables.
-fn scalar_kind<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<CtxError<'src>>> + Clone
+fn scalar_kind<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -270,7 +273,7 @@ where
 /// Mirrors `typ` in the pest grammar:
 ///   typ = _{ poly_ty | uni_ty | mle_ty | vec_ty | fin_ty | unit_ty | base_ty | record_ty }
 fn typ_parser<'src, I>(
-) -> impl Parser<'src, I, Spanned<GTyp<Size>>, extra::Err<CtxError<'src>>> + Clone
+) -> impl Parser<'src, I, Spanned<GTyp<Size>>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -408,7 +411,7 @@ where
 /// Parse a type variable declaration.
 /// Mirrors `tvar = { id ~ ":" ~ kind_ty }`
 fn tvar_parser<'src, I>(
-) -> impl Parser<'src, I, Spanned<TypeVar<Size>>, extra::Err<CtxError<'src>>> + Clone
+) -> impl Parser<'src, I, Spanned<TypeVar<Size>>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -424,7 +427,7 @@ where
 /// Parse a list of type variables.
 /// Mirrors `tvars = { tvar ~ ("," ~ tvar)* }`
 fn tvars_parser<'src, I>(
-) -> impl Parser<'src, I, Spanned<TypeVars<Size>>, extra::Err<CtxError<'src>>> + Clone
+) -> impl Parser<'src, I, Spanned<TypeVars<Size>>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -444,7 +447,8 @@ where
 
 /// Parse a qualifier.
 /// Mirrors `qualifier = { instance | witness | extra }`
-fn qualifier_parser<'src, I>() -> impl Parser<'src, I, Qualifier, extra::Err<CtxError<'src>>> + Clone
+fn qualifier_parser<'src, I>(
+) -> impl Parser<'src, I, Qualifier, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -458,7 +462,7 @@ where
 /// Parse a distribution.
 /// Mirrors `distribution = { "uniform" ~ star? }`
 fn distribution_parser<'src, I>(
-) -> impl Parser<'src, I, Distribution, extra::Err<CtxError<'src>>> + Clone
+) -> impl Parser<'src, I, Distribution, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -477,7 +481,7 @@ where
 /// Parse an argument.
 /// Mirrors `arg = { qualifier? ~ distribution? ~ id ~ ":" ~ typ }`
 fn arg_parser<'src, I>(
-) -> impl Parser<'src, I, Spanned<GArg<Size>>, extra::Err<CtxError<'src>>> + Clone
+) -> impl Parser<'src, I, Spanned<GArg<Size>>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -507,7 +511,7 @@ where
 
 /// Parse a binary operator token.
 /// Mirrors `bin_op = _{ concat_op | add_op | sub_op | mul_op | div_op | pow_op | rem_op }`
-fn bin_op_parser<'src, I>() -> impl Parser<'src, I, BinOp, extra::Err<CtxError<'src>>> + Clone
+fn bin_op_parser<'src, I>() -> impl Parser<'src, I, BinOp, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -526,7 +530,7 @@ where
 
 /// Type alias for a boxed expression parser — needed to break the mutual
 /// recursion cycle between exp_atom, exp_no_seq, and exp.
-type ExpParser<'src, I> = Boxed<'src, 'src, I, Spanned<UExp>, extra::Err<CtxError<'src>>>;
+type ExpParser<'src, I> = Boxed<'src, 'src, I, Spanned<UExp>, extra::Err<RichError<'src>>>;
 
 /// Parse an expression atom (the primary/operand for pratt parsing).
 /// Takes boxed recursive references to break the mutual recursion cycle.
@@ -534,7 +538,7 @@ type ExpParser<'src, I> = Boxed<'src, 'src, I, Spanned<UExp>, extra::Err<CtxErro
 fn exp_atom<'src, I>(
     exp_no_seq: ExpParser<'src, I>,
     exp: ExpParser<'src, I>,
-) -> impl Parser<'src, I, Spanned<UExp>, extra::Err<CtxError<'src>>> + Clone
+) -> impl Parser<'src, I, Spanned<UExp>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -874,7 +878,7 @@ where
 /// Mirrors `eval_exp = { "eval" ~ eval_selector? ~ "(" ~ exp_no_seq ~ ("," ~ exp_no_seq)? ~ ")" }`
 fn eval_exp_parser<'src, I>(
     exp_no_seq: ExpParser<'src, I>,
-) -> impl Parser<'src, I, Spanned<UExp>, extra::Err<CtxError<'src>>> + Clone
+) -> impl Parser<'src, I, Spanned<UExp>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -930,7 +934,7 @@ where
 /// Parse an expression without `;` sequencing, using pratt parsing.
 /// Mirrors `exp_no_seq = { exp_term ~ (record_set_op | proj_op | bin_op ~ exp_term)* }`
 fn exp_no_seq_parser<'src, I>(
-) -> impl Parser<'src, I, Spanned<UExp>, extra::Err<CtxError<'src>>> + Clone
+) -> impl Parser<'src, I, Spanned<UExp>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -943,7 +947,7 @@ where
             // Lowest precedence first (matches AEXP_PARSER order)
             pratt::infix(
                 Associativity::Left(1),
-                just(Token::Plus).ignored(),
+                just(Token::Plus).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
                     Spanned::new(
@@ -954,7 +958,7 @@ where
             ),
             pratt::infix(
                 Associativity::Left(1),
-                just(Token::Minus).ignored(),
+                just(Token::Minus).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
                     Spanned::new(
@@ -965,7 +969,7 @@ where
             ),
             pratt::infix(
                 Associativity::Left(2),
-                just(Token::Star).ignored(),
+                just(Token::Star).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
                     Spanned::new(
@@ -976,7 +980,7 @@ where
             ),
             pratt::infix(
                 Associativity::Left(2),
-                just(Token::Slash).ignored(),
+                just(Token::Slash).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
                     Spanned::new(
@@ -987,7 +991,7 @@ where
             ),
             pratt::infix(
                 Associativity::Left(2),
-                just(Token::Percent).ignored(),
+                just(Token::Percent).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
                     Spanned::new(
@@ -998,7 +1002,7 @@ where
             ),
             pratt::infix(
                 Associativity::Left(3),
-                just(Token::PlusPlus).ignored(),
+                just(Token::PlusPlus).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
                     Spanned::new(
@@ -1009,7 +1013,7 @@ where
             ),
             pratt::infix(
                 Associativity::Right(4),
-                just(Token::Caret).ignored(),
+                just(Token::Caret).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
                     Spanned::new(
@@ -1021,10 +1025,14 @@ where
             // Prefix: unary minus → Exp::Neg(x)
             // Precedence 3 — tighter than `*`/`/`/`%` (2), looser than `^` (4).
             // So `-a * b` = `(-a) * b` and `-a ^ 2` = `-(a ^ 2)`.
-            pratt::prefix(3, just(Token::Minus).ignored(), |_, rhs, sp| {
-                let sp: SimpleSpan = sp.span();
-                Spanned::new(UExp::Neg(Box::new(rhs)), sp.into_range())
-            }),
+            pratt::prefix(
+                3,
+                just(Token::Minus).ignored().labelled(Terminal::Operator),
+                |_, rhs, sp| {
+                    let sp: SimpleSpan = sp.span();
+                    Spanned::new(UExp::Neg(Box::new(rhs)), sp.into_range())
+                },
+            ),
             // Postfix: record set r.set(field, val) — must come before projection
             // so that `.set(` is not consumed as projection `.set`.
             // record_set_op = { "." ~ "set" ~ "(" ~ id ~ "," ~ exp_no_seq ~ ")" }
@@ -1032,6 +1040,7 @@ where
                 6,
                 just(Token::Dot)
                     .ignored()
+                    .labelled(Terminal::Operator)
                     .ignore_then(
                         select! { Token::Id(s) => s }
                             .labelled(Terminal::Set)
@@ -1054,7 +1063,10 @@ where
             // Postfix: projection r.field
             pratt::postfix(
                 6,
-                just(Token::Dot).ignored().ignore_then(id_tok()),
+                just(Token::Dot)
+                    .ignored()
+                    .labelled(Terminal::Operator)
+                    .ignore_then(id_tok()),
                 |lhs, field: Vid, sp| {
                     let sp: SimpleSpan = sp.span();
                     Spanned::new(UExp::Proj(Box::new(lhs), field.0), sp.into_range())
@@ -1070,7 +1082,7 @@ where
 /// Mirrors `exp = { let_exp | log_exp | seq_exp | exp_no_seq }`
 fn exp_parser_inner<'src, I>(
     exp_no_seq: ExpParser<'src, I>,
-) -> impl Parser<'src, I, Spanned<UExp>, extra::Err<CtxError<'src>>> + Clone
+) -> impl Parser<'src, I, Spanned<UExp>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -1130,7 +1142,7 @@ where
 
 /// Parse a top-level expression (allows `;` sequencing).
 /// Public entry point — builds the full exp parser from exp_no_seq.
-fn exp_parser<'src, I>() -> impl Parser<'src, I, Spanned<UExp>, extra::Err<CtxError<'src>>> + Clone
+fn exp_parser<'src, I>() -> impl Parser<'src, I, Spanned<UExp>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -1140,7 +1152,7 @@ where
 /// Parse a where clause expression.
 /// Mirrors `where_exp = { where_let | where_eq | exp_no_seq }`
 fn where_exp_parser<'src, I>(
-) -> impl Parser<'src, I, Spanned<UExp>, extra::Err<CtxError<'src>>> + Clone
+) -> impl Parser<'src, I, Spanned<UExp>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -1206,7 +1218,7 @@ where
 /// Labelled with `Context::ArgumentList` so error reporting can distinguish
 /// errors inside the argument list from errors in generic params or body.
 fn arg_list_parser<'src, I>(
-) -> impl Parser<'src, I, Vec<Spanned<GArg<Size>>>, extra::Err<CtxError<'src>>> + Clone
+) -> impl Parser<'src, I, Vec<Spanned<GArg<Size>>>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -1220,7 +1232,8 @@ where
 
 /// Parse a declaration.
 /// Mirrors `decl = { proto_decl | func_decl | type_decl }`
-fn decl_parser<'src, I>() -> impl Parser<'src, I, Spanned<UDecl>, extra::Err<CtxError<'src>>> + Clone
+fn decl_parser<'src, I>(
+) -> impl Parser<'src, I, Spanned<UDecl>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -1324,7 +1337,7 @@ fn is_decl_start(tok: &Token<'_>) -> bool {
 /// recorded and one token is skipped before retrying. This allows collecting
 /// multiple errors in a single pass. Malformed declarations are absent from
 /// the output.
-pub fn parse_decls(src: &str) -> (Vec<Spanned<UDecl>>, Vec<ParseError>) {
+pub fn parse_decls(src: &str) -> (Vec<Spanned<UDecl>>, Vec<Diagnostic>) {
     let eoi = SimpleSpan::new((), src.len()..src.len());
     let stream = Stream::from_iter(lex_iter(src).filter(|(t, _)| !t.is_trivia()));
     let input = stream.map(eoi, |(t, s)| (t, s));
@@ -1356,7 +1369,7 @@ pub fn parse_decls(src: &str) -> (Vec<Spanned<UDecl>>, Vec<ParseError>) {
 
     let result = recovery_parser.parse(input);
     let (output, errs) = result.into_output_errors();
-    let errors: Vec<ParseError> = errs.iter().map(|e| rich_to_parse_error(e)).collect();
+    let errors: Vec<Diagnostic> = errs.iter().map(rich_to_diagnostic).collect();
 
     let decls: Vec<Spanned<UDecl>> = output.unwrap_or_default().into_iter().flatten().collect();
 

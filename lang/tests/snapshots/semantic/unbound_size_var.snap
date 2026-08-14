@@ -1,5 +1,5 @@
 ---
-source: lang/tests/diagnostics.rs
+source: lang/tests/semantic.rs
 ---
 error: unbound size variable `N`
    ╭─[ test.zippel:1:19 ]

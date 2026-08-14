@@ -1,0 +1,12 @@
+---
+source: lang/tests/parser.rs
+---
+error: expected '<', found 'F'
+   ╭─[ test.zippel:1:6 ]
+   │
+ 1 │ fn f F: Field>(instance a: F) -> F { a }
+   │ ──┬─ ┬  
+   │   │  ╰── expected '<'
+   │   │     
+   │   ╰───── while parsing this declaration
+───╯

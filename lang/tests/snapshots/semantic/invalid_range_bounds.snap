@@ -1,5 +1,5 @@
 ---
-source: lang/tests/diagnostics.rs
+source: lang/tests/semantic.rs
 ---
 error: invalid range bounds for `N`
    ╭─[ test.zippel:1:9 ]

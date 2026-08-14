@@ -1,0 +1,12 @@
+---
+source: lang/tests/parser.rs
+---
+error: expected '=', found 'F'
+   ╭─[ test.zippel:1:14 ]
+   │
+ 1 │ type MyAlias F;
+   │ ──────┬───── ┬  
+   │       │      ╰── expected '='
+   │       │         
+   │       ╰───────── while parsing this type alias
+───╯

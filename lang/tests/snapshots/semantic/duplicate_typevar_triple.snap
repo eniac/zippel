@@ -1,0 +1,14 @@
+---
+source: lang/tests/semantic.rs
+---
+error: duplicate type variable `F`
+   ╭─[ test.zippel:1:9 ]
+   │
+ 1 │ proto p<F: Field, F: Group, F: Field>(instance a: F) where a == a { }
+   │         ┬         ┬         ┬  
+   │         ╰────────────────────── `F` first declared here
+   │                   │         │  
+   │                   ╰──────────── `F` also declared here
+   │                             │  
+   │                             ╰── `F` also declared here
+───╯

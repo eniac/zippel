@@ -1,0 +1,12 @@
+---
+source: lang/tests/parser.rs
+---
+error: expected type, found ')'
+   ╭─[ test.zippel:1:28 ]
+   │
+ 1 │ fn f<F: Field>(instance a: ) -> F { a }
+   │                ─────┬───── ┬  
+   │                     │      ╰── expected type
+   │                     │         
+   │                     ╰───────── while parsing this argument
+───╯

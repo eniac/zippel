@@ -41,7 +41,7 @@ fn block_comment_end(lex: &mut Lexer<RawToken>) -> Result<(), LexingError> {
 
 /// A token produced by the lexer. Data-carrying variants hold the source text
 /// (`Id`, `Positive`) as `Cow<'src, str>` — borrowed from the source during
-/// parsing, owned when stored in `ParseError` (via `into_owned`). All other
+/// parsing, owned when stored in diagnostics (via `into_owned`). All other
 /// variants are unit. Span is separated — see `lex_iter()` which yields
 /// `(Token<'src>, SimpleSpan)` pairs.
 ///
@@ -137,7 +137,7 @@ impl<'src> Token<'src> {
     }
 
     /// Convert a borrowed token into an owned one (detaches from source).
-    /// Used when storing tokens in `ParseError`, which must outlive the source.
+    /// Used when storing tokens in diagnostics, which must outlive the source.
     pub fn into_owned(self) -> Token<'static> {
         match self {
             Token::Id(s) => Token::Id(Cow::Owned(s.into_owned())),

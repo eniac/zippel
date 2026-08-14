@@ -1,7 +1,7 @@
 ---
-source: lang/tests/diagnostics.rs
+source: lang/tests/semantic.rs
 ---
-warning: no proto declaration found
+error: no proto declaration found
    ╭─[ test.zippel:1:1 ]
    │
  1 │ ╭───▶ type A = B;
@@ -10,9 +10,9 @@ warning: no proto declaration found
    ┆ ┆ ┆   
  3 │ ├─│ ▶ type C = A;
    │ │ │             ▲  
-   │ ╰────────────────── every file should contain at least one proto declaration
+   │ ╰────────────────── every file must contain exactly one proto declaration
    │   │             │  
-   │   ╰─────────────┴── help: add a `proto` declaration to this file
+   │   ╰─────────────┴── note: add a `proto` declaration to this file
 ───╯
 
 ---

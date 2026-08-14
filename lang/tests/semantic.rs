@@ -1,70 +1,18 @@
-//! Integration tests for the diagnostic system.
+//! Semantic error snapshot and assertion tests.
 //!
-//! Tests are split into two categories:
-//!
-//! - **Snapshot tests**: Render the full diagnostic output (source context,
-//!   labels, suggestions) and compare against insta snapshots. These catch
-//!   visual regressions in diagnostic formatting. Use `assert_snap!`.
-//! - **Assertion tests**: Verify the presence/absence of a specific error
-//!   condition without snapshotting the rendered output. These are smoke
-//!   tests for error detection logic, not formatting.
-//!
-//! Snapshot files are stored in `lang/tests/snapshots/diagnostics/` with
-//! descriptive names (e.g. `undefined_variable.snap`), following the same
-//! convention as `analyses/tests/snapshots/gb_snapshots/`.
+//! Snapshot tests render the full diagnostic output and compare against
+//! insta snapshots in `snapshots/semantic/`. Assertion tests verify the
+//! presence/absence of a specific error condition without snapshotting.
 
+mod common;
+
+use common::{assert_snap, render_all};
 use lang::ast::module::UModule;
-use lang::diagnostic::render_diagnostic;
+use lang::diagnostic::{Phase, Severity};
 
-/// Snapshot directory (relative to the test file's location in `lang/tests/`).
-const SNAP_DIR: &str = "snapshots/diagnostics";
+const SNAP_DIR: &str = "snapshots/semantic";
 
-/// Render all diagnostics for a source string, sorted by span.
-/// Disables ANSI colors for clean snapshot text.
-fn render_all(src: &str) -> String {
-    yansi::disable();
-    let (_, diags) = UModule::parse(src);
-    diags
-        .iter()
-        .map(|d| render_diagnostic(d, "test.zippel", src))
-        .collect::<Vec<_>>()
-        .join("\n---\n")
-}
-
-/// Assert a named snapshot in `SNAP_DIR` without the `expression:` header.
-/// Follows the gb_snapshots convention: descriptive file names, no
-/// test-file prefix.
-macro_rules! assert_snap {
-    ($name:expr, $value:expr) => {{
-        let mut settings = insta::Settings::clone_current();
-        settings.set_snapshot_path(SNAP_DIR);
-        settings.set_prepend_module_to_snapshot(false);
-        settings.set_omit_expression(true);
-        settings.bind(|| insta::assert_snapshot!($name, $value));
-    }};
-}
-
-// ── Parse errors (snapshot) ────────────────────────────────────────────
-
-#[test]
-fn parse_error_missing_typevar_name() {
-    let rendered = render_all("fn f<: Field>(instance a: F) -> F { a }");
-    assert!(!rendered.is_empty(), "expected parse error");
-    assert_snap!("parse_error_missing_typevar_name", rendered);
-}
-
-#[test]
-fn parse_error_recovery_multiple() {
-    let src = "fn f<: Field>(instance a: F) -> F { a }\n\
-               fn g<F: Field>(instance a: F) -> F { a }\n\
-               fn h<: Field>(instance a: F) -> F { a }";
-    let rendered = render_all(src);
-    let (module, _) = UModule::parse(src);
-    assert!(module.is_some(), "expected module to be built");
-    assert_snap!("parse_error_recovery_multiple", rendered);
-}
-
-// ── Semantic errors (snapshot) ─────────────────────────────────────────
+// ── Semantic errors (snapshot) ──────────────────────────────────────────
 
 #[test]
 fn semantic_undefined_variable() {
@@ -73,7 +21,7 @@ fn semantic_undefined_variable() {
         rendered.contains("undefined variable"),
         "expected semantic error for undefined variable `b`"
     );
-    assert_snap!("undefined_variable", rendered);
+    assert_snap!(SNAP_DIR, "undefined_variable", rendered);
 }
 
 #[test]
@@ -83,7 +31,7 @@ fn semantic_type_alias_cycle() {
         rendered.contains("circular type alias"),
         "expected circular type alias error"
     );
-    assert_snap!("type_alias_cycle", rendered);
+    assert_snap!(SNAP_DIR, "type_alias_cycle", rendered);
 }
 
 #[test]
@@ -93,7 +41,7 @@ fn semantic_type_alias_cycle_three() {
         rendered.contains("circular type alias"),
         "expected circular type alias error"
     );
-    assert_snap!("type_alias_cycle_three", rendered);
+    assert_snap!(SNAP_DIR, "type_alias_cycle_three", rendered);
 }
 
 #[test]
@@ -103,7 +51,7 @@ fn semantic_type_alias_self_ref() {
         rendered.contains("circular type alias"),
         "expected circular type alias error for self-referential alias"
     );
-    assert_snap!("type_alias_self_ref", rendered);
+    assert_snap!(SNAP_DIR, "type_alias_self_ref", rendered);
 }
 
 #[test]
@@ -114,7 +62,7 @@ fn semantic_unbound_size_var() {
         rendered.contains("unbound size variable"),
         "expected unbound size variable error"
     );
-    assert_snap!("unbound_size_var", rendered);
+    assert_snap!(SNAP_DIR, "unbound_size_var", rendered);
 }
 
 #[test]
@@ -126,7 +74,7 @@ fn semantic_pairing_refs_non_group() {
         rendered.contains("`F` is not a Group"),
         "expected invalid group ref error, got: {rendered}"
     );
-    assert_snap!("pairing_refs_non_group", rendered);
+    assert_snap!(SNAP_DIR, "pairing_refs_non_group", rendered);
 }
 
 #[test]
@@ -138,7 +86,7 @@ fn semantic_unresolved_group_ref() {
         rendered.contains("unresolved group reference"),
         "expected unresolved group reference error, got: {rendered}"
     );
-    assert_snap!("unresolved_group_ref", rendered);
+    assert_snap!(SNAP_DIR, "unresolved_group_ref", rendered);
 }
 
 #[test]
@@ -149,7 +97,7 @@ fn semantic_invalid_range_bounds() {
         rendered.contains("invalid range bounds"),
         "expected invalid range bounds error"
     );
-    assert_snap!("invalid_range_bounds", rendered);
+    assert_snap!(SNAP_DIR, "invalid_range_bounds", rendered);
 }
 
 #[test]
@@ -162,7 +110,7 @@ fn semantic_impure_verify_in_where() {
         rendered.contains("impure"),
         "expected impure relation error for verify in where clause, got: {rendered}"
     );
-    assert_snap!("impure_verify_in_where", rendered);
+    assert_snap!(SNAP_DIR, "impure_verify_in_where", rendered);
 }
 
 #[test]
@@ -174,10 +122,74 @@ fn semantic_circular_typevar_ref() {
         rendered.contains("circular type variable reference"),
         "expected circular typevar ref error, got: {rendered}"
     );
-    assert_snap!("circular_typevar_ref", rendered);
+    assert_snap!(SNAP_DIR, "circular_typevar_ref", rendered);
 }
 
-// ── Semantic errors (assertion only) ───────────────────────────────────
+#[test]
+fn semantic_undefined_variable_repeated() {
+    // `b` used twice — should merge into one error with "also used here".
+    let rendered = render_all("proto p<F: Field>(instance a: F) where b == b { }");
+    assert!(
+        rendered.contains("undefined variable `b`"),
+        "expected undefined variable error, got: {rendered}"
+    );
+    assert!(
+        rendered.contains("also used here"),
+        "expected 'also used here' label, got: {rendered}"
+    );
+    assert_snap!(SNAP_DIR, "undefined_variable_repeated", rendered);
+}
+
+#[test]
+fn semantic_unbound_size_var_repeated() {
+    // `N` used in two places — should merge into one error with "also used here".
+    let rendered =
+        render_all("proto p<F: Field>(instance a: [F; N], instance b: [F; N]) where a == a { }");
+    assert!(
+        rendered.contains("unbound size variable `N`"),
+        "expected unbound size variable error, got: {rendered}"
+    );
+    assert!(
+        rendered.contains("also used here"),
+        "expected 'also used here' label, got: {rendered}"
+    );
+    assert_snap!(SNAP_DIR, "unbound_size_var_repeated", rendered);
+}
+
+#[test]
+fn semantic_duplicate_typevar_triple() {
+    // `F` declared three times — should merge into one error with "also declared here".
+    let rendered =
+        render_all("proto p<F: Field, F: Group, F: Field>(instance a: F) where a == a { }");
+    assert!(
+        rendered.contains("duplicate type variable `F`"),
+        "expected duplicate typevar error, got: {rendered}"
+    );
+    assert!(
+        rendered.contains("also declared here"),
+        "expected 'also declared here' label, got: {rendered}"
+    );
+    assert_snap!(SNAP_DIR, "duplicate_typevar_triple", rendered);
+}
+
+#[test]
+fn semantic_undefined_variable_did_you_mean_let() {
+    // `x` is let-bound, `y` is undefined but similar to `x`.
+    // The suggestion should find `x` even though it's not a function argument.
+    let src = "proto p<F: Field>(instance a: F) where let x = a; y == a { }";
+    let (_, diags) = UModule::parse(src);
+    let has_suggestion = diags.iter().any(|d| {
+        d.summary.contains("undefined variable `y`")
+            && d.suggestions.iter().any(|s| s.message.contains("`x`"))
+    });
+    assert!(
+        has_suggestion,
+        "expected '`x`' in suggestion for `y`, got: {:?}",
+        diags.iter().map(|d| &d.summary).collect::<Vec<_>>()
+    );
+}
+
+// ── Semantic errors (assertion only) ────────────────────────────────────
 
 #[test]
 fn semantic_defined_variable_ok() {
@@ -185,7 +197,7 @@ fn semantic_defined_variable_ok() {
     let (_, diags) = UModule::parse(src);
     let sem_diags: Vec<_> = diags
         .iter()
-        .filter(|d| d.phase == lang::diagnostic::Phase::Semantic)
+        .filter(|d| d.phase == Phase::Semantic)
         .collect();
     assert!(
         sem_diags.is_empty(),
@@ -200,7 +212,7 @@ fn semantic_let_binding_in_scope() {
     let (_, diags) = UModule::parse(src);
     let sem_diags: Vec<_> = diags
         .iter()
-        .filter(|d| d.phase == lang::diagnostic::Phase::Semantic)
+        .filter(|d| d.phase == Phase::Semantic)
         .collect();
     assert!(
         sem_diags.is_empty(),
@@ -215,7 +227,7 @@ fn semantic_let_binding_undefined_after() {
     let (_, diags) = UModule::parse(src);
     let sem_diags: Vec<_> = diags
         .iter()
-        .filter(|d| d.phase == lang::diagnostic::Phase::Semantic)
+        .filter(|d| d.phase == Phase::Semantic)
         .collect();
     assert!(
         !sem_diags.is_empty(),
@@ -228,13 +240,18 @@ fn semantic_let_binding_undefined_after() {
 fn semantic_no_proto_declaration() {
     let src = "fn f<F: Field>(instance a: F) -> F { a }";
     let (_, diags) = UModule::parse(src);
-    let has_no_proto = diags
+    let no_proto = diags
         .iter()
-        .any(|d| d.summary.contains("no proto declaration"));
+        .find(|d| d.summary.contains("no proto declaration"));
     assert!(
-        has_no_proto,
+        no_proto.is_some(),
         "expected 'no proto declaration' error, got: {:?}",
         diags.iter().map(|d| &d.summary).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        no_proto.unwrap().severity,
+        Severity::Error,
+        "NoProtoDeclaration should be an error"
     );
 }
 
@@ -280,7 +297,7 @@ fn semantic_duplicate_typevar() {
     );
 }
 
-// ── Valid programs (assertion only) ────────────────────────────────────
+// ── Valid programs (assertion only) ─────────────────────────────────────
 
 #[test]
 fn valid_program_no_errors() {

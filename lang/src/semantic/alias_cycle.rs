@@ -4,14 +4,28 @@ use std::collections::HashSet;
 
 use crate::ast::decl::UDecl;
 use crate::ast::spanned::Spanned;
+use crate::diagnostic::{Diagnostic, Phase};
 use crate::id::Tid;
 use crate::typ::{Typ, UTyp};
 use share::Ctx;
 
-use super::SemanticError;
+/// E0011: A type alias cycle (e.g. `type A = B; type B = A;`).
+/// Uses the builder API because the cycle produces a variable number of
+/// secondary labels. The redundant `aliases` note from the old design has
+/// been removed (Rev G) — the secondary labels already show each alias's
+/// role in the cycle.
+fn type_alias_cycle(cycle: Vec<(Tid, std::ops::Range<usize>)>) -> Diagnostic {
+    let (cycle_str, primary_span, secondary_labels) =
+        super::render_cycle(&cycle, "aliases the next type in the cycle");
+
+    Diagnostic::error(Phase::Semantic, primary_span, "circular type alias")
+        .code("E0011")
+        .primary_label(&format!("cycle: {cycle_str}"))
+        .secondary_labels(secondary_labels)
+}
 
 /// Check for type alias cycles.
-pub fn check_type_alias_cycles(decls: &[Spanned<UDecl>]) -> Vec<SemanticError> {
+pub fn check_type_alias_cycles(decls: &[Spanned<UDecl>]) -> Vec<Diagnostic> {
     // Collect type aliases: name → (aliased type, span)
     let mut type_ctx: Ctx<Tid, (UTyp, std::ops::Range<usize>)> = Ctx::new();
     for d in decls {
@@ -39,13 +53,14 @@ pub fn check_type_alias_cycles(decls: &[Spanned<UDecl>]) -> Vec<SemanticError> {
             let cycle_with_spans: Vec<(Tid, std::ops::Range<usize>)> = cycle
                 .iter()
                 .map(|t| {
-                    let span = type_ctx.get(t).map(|(_, s)| s.clone()).unwrap_or(0..0);
+                    let span = type_ctx
+                        .get(t)
+                        .map(|(_, s)| s.clone())
+                        .expect("cycle member must have an aliased type");
                     (t.clone(), span)
                 })
                 .collect();
-            errors.push(SemanticError::TypeAliasCycle {
-                cycle: cycle_with_spans,
-            });
+            errors.push(type_alias_cycle(cycle_with_spans));
         }
     }
 

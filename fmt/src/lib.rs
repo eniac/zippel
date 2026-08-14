@@ -33,7 +33,7 @@ pub use style::{Indent, Style};
 #[derive(Debug)]
 pub enum FormatError {
     /// Source has parse errors.
-    Parse(Vec<lang::parser::ParseError>),
+    Parse(Vec<lang::diagnostic::Diagnostic>),
 }
 
 impl std::fmt::Display for FormatError {

@@ -1,0 +1,12 @@
+---
+source: lang/tests/parser.rs
+---
+error: expected one of 'let', identifier, expression, '}', found ';'
+   ╭─[ test.zippel:1:38 ]
+   │
+ 1 │ fn f<F: Field>(instance a: F) -> F { ; }
+   │ ──────────────────┬───────────────── ┬  
+   │                   │                  ╰── expected one of 'let', identifier, expression, '}'
+   │                   │                     
+   │                   ╰───────────────────── while parsing this declaration
+───╯

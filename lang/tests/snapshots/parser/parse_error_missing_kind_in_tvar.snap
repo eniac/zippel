@@ -1,0 +1,12 @@
+---
+source: lang/tests/parser.rs
+---
+error: expected kind, found '>'
+   ╭─[ test.zippel:1:12 ]
+   │
+ 1 │ proto p<N: >(instance a: F) where a == a { a }
+   │         ─┬ ┬  
+   │          │ ╰── expected kind
+   │          │    
+   │          ╰──── while parsing these generic parameters
+───╯

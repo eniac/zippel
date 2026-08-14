@@ -27,7 +27,11 @@ pub fn parse_and_concretize(src: &str, sizes: &Ctx<Tid, usize>) -> CModule {
     let (module, diags) = UModule::parse(src);
     let errors: Vec<_> = diags
         .iter()
-        .filter(|d| d.severity == lang::diagnostic::Severity::Error)
+        // E0001 (NoProtoDeclaration) is a file-structure rule, not relevant
+        // to unit tests using fn-only sources. Suppress by error code.
+        .filter(|d| {
+            d.severity == lang::diagnostic::Severity::Error && d.code.as_deref() != Some("E0001")
+        })
         .collect();
     assert!(
         errors.is_empty(),

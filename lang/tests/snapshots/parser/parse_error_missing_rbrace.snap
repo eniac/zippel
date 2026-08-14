@@ -1,0 +1,12 @@
+---
+source: lang/tests/parser.rs
+---
+error: expected one of operator, ',', '..', call arguments, '[', ..., found end of input
+   ╭─[ test.zippel:1:39 ]
+   │
+ 1 │ fn f<F: Field>(instance a: F) -> F { a
+   │ ───────────────────┬──────────────────│ 
+   │                    │                  ╰─ expected one of operator, ',', '..', call arguments, '[', ...
+   │                    │                    
+   │                    ╰──────────────────── while parsing this declaration
+───╯

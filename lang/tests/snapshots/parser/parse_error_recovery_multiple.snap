@@ -1,0 +1,38 @@
+---
+source: lang/tests/parser.rs
+---
+error: no proto declaration found
+   ╭─[ test.zippel:1:1 ]
+   │
+ 1 │ ╭───▶ fn f<: Field>(instance a: F) -> F { a }
+   │ │     ▲                                         
+   │ │ ╭───╯                                         
+   ┆ ┆ ┆   
+ 3 │ ├─│ ▶ fn h<: Field>(instance a: F) -> F { a }
+   │ │ │                                         ▲  
+   │ ╰────────────────────────────────────────────── every file must contain exactly one proto declaration
+   │   │                                         │  
+   │   ╰─────────────────────────────────────────┴── note: add a `proto` declaration to this file
+───╯
+
+---
+error: expected generic parameters or '>', found ':'
+   ╭─[ test.zippel:1:6 ]
+   │
+ 1 │ fn f<: Field>(instance a: F) -> F { a }
+   │ ──┬──┬  
+   │   │  ╰── expected generic parameters or '>'
+   │   │     
+   │   ╰───── while parsing this declaration
+───╯
+
+---
+error: expected generic parameters or '>', found ':'
+   ╭─[ test.zippel:3:6 ]
+   │
+ 3 │ fn h<: Field>(instance a: F) -> F { a }
+   │ ──┬──┬  
+   │   │  ╰── expected generic parameters or '>'
+   │   │     
+   │   ╰───── while parsing this declaration
+───╯

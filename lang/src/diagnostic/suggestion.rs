@@ -2,13 +2,15 @@
 //!
 //! `Suggestion` carries structured data (span, replacement text, applicability)
 //! so that future `--fix` tooling can apply fixes mechanically. The constructor
-//! helpers (`replace`, `insert_before`, `hint`) are generic — they don't know
+//! helpers (`replace`, `insert_before`) are generic — they don't know
 //! about tokens, contexts, or any phase-specific logic. Any compiler phase can
 //! use them to build suggestions.
+//!
+//! For message-only hints with no code change, use `Note` instead of `Suggestion`.
 
 use std::ops::Range;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Suggestion {
     pub message: String,
     /// Span to replace.
@@ -19,7 +21,7 @@ pub struct Suggestion {
     pub applicability: Applicability,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub enum Applicability {
     /// The fix is definitely correct (e.g. missing `)`).
     MachineApplicable,
@@ -48,16 +50,5 @@ pub fn insert_before(span: &Range<usize>, msg: &str, text: &str) -> Suggestion {
         span: span.start..span.start,
         replacement: text.to_string(),
         applicability: Applicability::MachineApplicable,
-    }
-}
-
-/// Hint without a mechanical fix — the user must provide missing content.
-/// Use when the error is clear but can't be auto-fixed (e.g. missing type).
-pub fn hint(span: &Range<usize>, msg: &str) -> Suggestion {
-    Suggestion {
-        message: msg.to_string(),
-        span: span.clone(),
-        replacement: String::new(),
-        applicability: Applicability::MaybeIncorrect,
     }
 }

@@ -3,6 +3,10 @@ use crate::ast::spanned::Spanned;
 use crate::ast::{Body, CSig, Sig};
 use crate::diagnostic::Diagnostic;
 use crate::id::Tid;
+use crate::semantic::{
+    check_duplicate_declarations, check_proto_requirement, check_purity, check_scope,
+    check_size_binding, check_type_alias_cycles, check_typevars,
+};
 
 use std::fmt;
 use thiserror::Error;
@@ -119,7 +123,7 @@ impl UModule {
 
         // Phase 1: Parse (with recovery)
         let (decls, parse_errors) = crate::parser::parse_decls(src);
-        diags.extend(parse_errors.into_iter().map(Diagnostic::from));
+        diags.extend(parse_errors);
 
         // Skip semantic checks only if we got NO declarations
         if decls.is_empty() && !diags.is_empty() {
@@ -128,37 +132,19 @@ impl UModule {
 
         // Phase 2: Module-level semantic checks
         let file_span = 0..src.len();
-        diags.extend(
-            crate::semantic::check_duplicate_declarations(&decls)
-                .into_iter()
-                .map(Diagnostic::from),
-        );
-        diags.extend(
-            crate::semantic::check_proto_requirement(&decls, file_span)
-                .into_iter()
-                .map(Diagnostic::from),
-        );
-        let alias_cycle_errors = crate::semantic::check_type_alias_cycles(&decls);
+        diags.extend(check_duplicate_declarations(&decls));
+        diags.extend(check_proto_requirement(&decls, file_span));
+        let alias_cycle_errors = check_type_alias_cycles(&decls);
         let has_alias_cycle = !alias_cycle_errors.is_empty();
-        diags.extend(alias_cycle_errors.into_iter().map(Diagnostic::from));
+        diags.extend(alias_cycle_errors);
 
         // Phase 3: Per-declaration semantic checks
-        use crate::ast::Body;
-        use crate::semantic::{check_purity, check_scope, check_size_binding, check_typevars};
         for decl in &decls {
-            diags.extend(
-                check_typevars(&decl.node.sig)
-                    .into_iter()
-                    .map(Diagnostic::from),
-            );
-            diags.extend(
-                check_size_binding(&decl.node.sig)
-                    .into_iter()
-                    .map(Diagnostic::from),
-            );
-            diags.extend(check_scope(&decl.node).into_iter().map(Diagnostic::from));
+            diags.extend(check_typevars(&decl.node.sig));
+            diags.extend(check_size_binding(&decl.node.sig));
+            diags.extend(check_scope(&decl.node));
             if let Body::Proto { relation, .. } = &decl.node.body {
-                diags.extend(check_purity(relation).into_iter().map(Diagnostic::from));
+                diags.extend(check_purity(relation));
             }
         }
 

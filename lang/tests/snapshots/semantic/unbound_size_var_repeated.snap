@@ -1,0 +1,14 @@
+---
+source: lang/tests/semantic.rs
+---
+error: unbound size variable `N`
+   ╭─[ test.zippel:1:19 ]
+   │
+ 1 │ proto p<F: Field>(instance a: [F; N], instance b: [F; N]) where a == a { }
+   │                   ─────────┬────────  ─────────┬────────  
+   │                            ╰────────────────────────────── `N` is not declared as a type variable
+   │                            │                   │          
+   │                            │                   ╰────────── `N` also used here
+   │                            │                              
+   │                            ╰────────────────────────────── help: add `N: Size` to the type variable list
+───╯

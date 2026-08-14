@@ -1,0 +1,12 @@
+---
+source: lang/tests/parser.rs
+---
+error: expected one of '(', positive integer, identifier, operator, 'fun', ..., found '}'
+   ╭─[ test.zippel:1:42 ]
+   │
+ 1 │ fn f<F: Field>(instance a: F) -> F { a + }
+   │                                      ─┬─ ┬  
+   │                                       │  ╰── expected one of '(', positive integer, identifier, operator, 'fun', ...
+   │                                       │     
+   │                                       ╰───── while parsing this expression
+───╯

@@ -1,5 +1,5 @@
 ---
-source: lang/tests/diagnostics.rs
+source: lang/tests/semantic.rs
 ---
 error: impure construct `verify` in proto relation
    ╭─[ test.zippel:1:60 ]
