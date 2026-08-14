@@ -219,10 +219,11 @@ pub fn render_diagnostic(diag: &Diagnostic, filename: &str, src: &str) -> String
 
     // Suggestions — rendered as labels with "help:" prefix since ariadne
     // hardcodes "Help:" with a capital H. Order 3 so they appear after notes.
-    // Applicability is metadata for tooling (like cargo fix), not displayed.
+    // The label points at the suggestion's own span (where the fix goes),
+    // not the primary error span.
     for sugg in &diag.suggestions {
         builder = builder.with_label(
-            Label::new((filename.to_string(), diag.span.clone()))
+            Label::new((filename.to_string(), sugg.span.clone()))
                 .with_message(format!("help: {}", sugg.message))
                 .with_color(ariadne::Color::Fixed(115))
                 .with_order(3),

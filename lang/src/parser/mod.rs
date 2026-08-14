@@ -1259,7 +1259,7 @@ where
                 Spanned::new(
                     Decl::proto(
                         Spanned::new(name, range.clone()),
-                        Spanned::new(tvars.node, range.clone()),
+                        tvars,
                         Spanned::new(Args(args), range.clone()),
                         relation,
                         body,
@@ -1292,7 +1292,7 @@ where
                 Spanned::new(
                     Decl::func(
                         Spanned::new(name, range.clone()),
-                        Spanned::new(tvars.node, range.clone()),
+                        tvars,
                         Spanned::new(Args(args), range.clone()),
                         ret,
                         body,
