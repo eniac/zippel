@@ -399,7 +399,7 @@ impl TypeError {
         vctx: &Ctx<Vid, CTyp>,
         e: &CExp,
         field: &str,
-        _fields: &Ctx<String, Spanned<CTyp>>,
+        _fields: &Ctx<Spanned<String>, Spanned<CTyp>>,
     ) -> Self {
         TypeError::FieldNotFound(kctx.clone(), vctx.clone(), e.clone(), field.to_string())
     }

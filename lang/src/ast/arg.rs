@@ -18,10 +18,10 @@ use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 ///     the principal.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Arg<T, N> {
-    pub qualifier: Qualifier,
-    pub distribution: Distribution,
-    pub id: Vid,
-    pub typ: Typ<T, N>,
+    pub qualifier: Spanned<Qualifier>,
+    pub distribution: Spanned<Distribution>,
+    pub id: Spanned<Vid>,
+    pub typ: Spanned<Typ<T, N>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -42,100 +42,19 @@ pub type CArgs = Args<Tid, usize>;
 impl<T, N> Arg<T, N> {
     pub fn new(qualifier: Qualifier, distribution: Distribution, id: &str, typ: Typ<T, N>) -> Self {
         Arg {
-            qualifier,
-            distribution,
-            id: Vid::new(id),
-            typ,
+            qualifier: Spanned::dummy(qualifier),
+            distribution: Spanned::dummy(distribution),
+            id: Spanned::dummy(Vid::new(id)),
+            typ: Spanned::dummy(typ),
         }
     }
     pub fn instance(id: &str, typ: Typ<T, N>) -> Self {
         Arg {
-            qualifier: Qualifier::Instance,
-            distribution: Distribution::Nonuniform,
-            id: Vid::new(id),
-            typ,
+            qualifier: Spanned::dummy(Qualifier::Instance),
+            distribution: Spanned::dummy(Distribution::Nonuniform),
+            id: Spanned::dummy(Vid::new(id)),
+            typ: Spanned::dummy(typ),
         }
-    }
-    pub fn witness(id: &str, typ: Typ<T, N>) -> Self {
-        Arg {
-            qualifier: Qualifier::Witness,
-            distribution: Distribution::Nonuniform,
-            id: Vid::new(id),
-            typ,
-        }
-    }
-    pub fn extra(id: &str, typ: Typ<T, N>) -> Self {
-        Arg {
-            qualifier: Qualifier::Extra,
-            distribution: Distribution::Nonuniform,
-            id: Vid::new(id),
-            typ,
-        }
-    }
-    pub fn uniform(qualifier: Qualifier, id: &str, typ: Typ<T, N>) -> Self {
-        Arg {
-            qualifier,
-            distribution: Distribution::Uniform,
-            id: Vid::new(id),
-            typ,
-        }
-    }
-    pub fn instance_uniform(id: &str, typ: Typ<T, N>) -> Self {
-        Arg {
-            qualifier: Qualifier::Instance,
-            distribution: Distribution::Uniform,
-            id: Vid::new(id),
-            typ,
-        }
-    }
-    pub fn witness_uniform(id: &str, typ: Typ<T, N>) -> Self {
-        Arg {
-            qualifier: Qualifier::Witness,
-            distribution: Distribution::Uniform,
-            id: Vid::new(id),
-            typ,
-        }
-    }
-    pub fn extra_uniform(id: &str, typ: Typ<T, N>) -> Self {
-        Arg {
-            qualifier: Qualifier::Extra,
-            distribution: Distribution::Uniform,
-            id: Vid::new(id),
-            typ,
-        }
-    }
-    pub fn instance_uniform_nz(id: &str, typ: Typ<T, N>) -> Self {
-        Arg {
-            qualifier: Qualifier::Instance,
-            distribution: Distribution::UniformNonZero,
-            id: Vid::new(id),
-            typ,
-        }
-    }
-    pub fn witness_uniform_nz(id: &str, typ: Typ<T, N>) -> Self {
-        Arg {
-            qualifier: Qualifier::Witness,
-            distribution: Distribution::UniformNonZero,
-            id: Vid::new(id),
-            typ,
-        }
-    }
-    pub fn extra_uniform_nz(id: &str, typ: Typ<T, N>) -> Self {
-        Arg {
-            qualifier: Qualifier::Extra,
-            distribution: Distribution::UniformNonZero,
-            id: Vid::new(id),
-            typ,
-        }
-    }
-    pub fn is_witness(&self) -> bool {
-        self.qualifier.is_witness()
-    }
-    pub fn is_instance(&self) -> bool {
-        self.qualifier.is_instance()
-    }
-    pub fn is_extra(&self) -> bool {
-        self.qualifier.is_extra()
     }
 }
 
@@ -156,7 +75,7 @@ impl<T, N> Args<T, N> {
     {
         self.0
             .iter()
-            .map(|arg| (arg.node.id.clone(), arg.node.typ.clone()))
+            .map(|arg| (arg.node.id.node.clone(), arg.node.typ.node.clone()))
             .collect()
     }
 }
@@ -177,7 +96,7 @@ impl<T, N> FromIterator<Spanned<Arg<T, N>>> for Args<T, N> {
 
 impl<N: Clone> TidSubst for GArg<N> {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
-        self.typ.tid_subst(from, to)
+        self.typ.node.tid_subst(from, to)
     }
 }
 
@@ -280,7 +199,7 @@ impl<T: Clone, N: Clone> RangeTraversal<N> for Arg<T, N> {
             qualifier: self.qualifier,
             distribution: self.distribution,
             id: self.id,
-            typ: self.typ.range_traverse(f)?,
+            typ: Spanned::new(self.typ.node.range_traverse(f)?, self.typ.span),
         })
     }
 }
@@ -305,7 +224,7 @@ impl<T: Clone, N: Clone> RangeTraversal<N> for Args<T, N> {
 impl<N: Clone> TypeInline<N> for GArg<N> {
     fn type_inline(self, ctx: &Ctx<Tid, GTyp<N>>) -> Self {
         Arg {
-            typ: self.typ.type_inline(ctx),
+            typ: Spanned::new(self.typ.node.type_inline(ctx), self.typ.span),
             ..self
         }
     }
@@ -436,5 +355,8 @@ fn arg_traversal() {
     assert_eq!(result.qualifier, expected.qualifier);
     assert_eq!(result.distribution, expected.distribution);
     assert_eq!(result.id, expected.id);
-    assert_eq!(format!("{}", result.typ), format!("{}", expected.typ));
+    assert_eq!(
+        format!("{}", result.typ.node),
+        format!("{}", expected.typ.node)
+    );
 }

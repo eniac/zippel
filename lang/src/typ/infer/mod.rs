@@ -55,7 +55,7 @@ impl Typeable for CExp {
                                 .ok_or(TypeError::interpolate_unary(kctx, vctx, self))?;
                             if !n.is_power_of_two() {
                                 return Err(TypeError::interpolate_unary_not_pow2(
-                                    kctx, vctx, self, n,
+                                    kctx, vctx, self, n.node,
                                 ));
                             }
                             // n evaluations on the n-th roots of unity uniquely
@@ -65,7 +65,7 @@ impl Typeable for CExp {
                             let deg = n
                                 .checked_sub(1)
                                 .ok_or_else(|| TypeError::interpolate_unary(kctx, vctx, self))?;
-                            Ok(CTyp::Poly(i, 1, deg))
+                            Ok(CTyp::Poly(i, Spanned::dummy(1), Spanned::dummy(deg)))
                         }
                         _ => Err(TypeError::interpolate_unary(kctx, vctx, self)),
                     },
@@ -76,7 +76,7 @@ impl Typeable for CExp {
 
                         match (points_typ, evals_typ) {
                             (CTyp::Vec(box bp, np), CTyp::Vec(box be, ne)) if np == ne => {
-                                if ne == 0 {
+                                if ne.node == 0 {
                                     return Err(TypeError::interpolate(kctx, vctx, self));
                                 }
                                 let ip = bp
@@ -96,7 +96,7 @@ impl Typeable for CExp {
                                 let deg = ne
                                     .checked_sub(1)
                                     .ok_or_else(|| TypeError::interpolate(kctx, vctx, self))?;
-                                Ok(CTyp::Poly(ie, 1, deg))
+                                Ok(CTyp::Poly(ie, Spanned::dummy(1), Spanned::dummy(deg)))
                             }
                             _ => Err(TypeError::interpolate(kctx, vctx, self)),
                         }
@@ -113,14 +113,14 @@ impl Typeable for CExp {
 
                 match typ {
                     CTyp::Vec(box b, k) => {
-                        if k == 0 {
+                        if k.node == 0 {
                             return Err(TypeError::poly(kctx, vctx, self));
                         }
                         let i = b.to_scalar(kctx).ok_or(TypeError::poly(kctx, vctx, self))?;
                         let deg = k
                             .checked_sub(1)
                             .ok_or_else(|| TypeError::poly(kctx, vctx, self))?;
-                        Ok(CTyp::Poly(i, 1, deg))
+                        Ok(CTyp::Poly(i, Spanned::dummy(1), Spanned::dummy(deg)))
                     }
                     _ => Err(TypeError::poly(kctx, vctx, self)),
                 }
@@ -134,7 +134,7 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match typ {
-                    CTyp::Poly(tid, 1, m) => {
+                    CTyp::Poly(tid, m_vars, m) if m_vars.node == 1 => {
                         let k = kctx.get(&tid).ok_or(TypeError::lub(
                             TypeError::exp(kctx, vctx, self),
                             LubError::kind_not_found(&tid),
@@ -149,13 +149,13 @@ impl Typeable for CExp {
                             Err(TypeError::coef(kctx, vctx, self))
                         }
                     }
-                    CTyp::Poly(tid, n, 1) if n > 1 => {
+                    CTyp::Poly(tid, n, d) if n.node > 1 && d.node == 1 => {
                         let k = kctx.get(&tid).ok_or(TypeError::lub(
                             TypeError::exp(kctx, vctx, self),
                             LubError::kind_not_found(&tid),
                         ))?;
                         if k.is_scalar() {
-                            if let Some(len) = 1_usize.checked_shl(n as u32) {
+                            if let Some(len) = 1_usize.checked_shl(n.node as u32) {
                                 Ok(CTyp::vec(&CTyp::Base(tid), len))
                             } else {
                                 Err(TypeError::coef(kctx, vctx, self))
@@ -178,7 +178,7 @@ impl Typeable for CExp {
                     (None, None) => {
                         let t = p_typ;
                         match t.clone() {
-                            CTyp::Poly(tid, 1, n) => {
+                            CTyp::Poly(tid, m_vars, n) if m_vars.node == 1 => {
                                 let k = kctx.get(&tid).ok_or(TypeError::lub(
                                     TypeError::exp(kctx, vctx, self),
                                     LubError::kind_not_found(&tid),
@@ -196,7 +196,7 @@ impl Typeable for CExp {
                                     .ok_or_else(|| TypeError::evaluate_grid(kctx, vctx, p, &t))?;
                                 if !coef_count.is_power_of_two() {
                                     return Err(TypeError::evaluate_grid_not_pow2(
-                                        kctx, vctx, p, n, &t,
+                                        kctx, vctx, p, n.node, &t,
                                     ));
                                 }
                                 Ok(CTyp::vec(&CTyp::Base(tid), coef_count))
@@ -218,7 +218,7 @@ impl Typeable for CExp {
                             // `lub_dot(Poly, Vec)` — that arm has been
                             // removed, and the App desugaring now produces
                             // `evaluate(p, x)` directly.)
-                            (CTyp::Poly(i, 1, _n), CTyp::Base(b)) if i == b => {
+                            (CTyp::Poly(i, m, _n), CTyp::Base(b)) if m.node == 1 && i == b => {
                                 let k =
                                     kctx.get(&i).ok_or(TypeError::evaluate(kctx, vctx, p, x))?;
                                 if !k.is_scalar() {
@@ -229,11 +229,11 @@ impl Typeable for CExp {
                             // Univariate polynomial evaluated at a vector of points is a
                             // hard type error: evaluate at a single scalar via `p(x)`, or
                             // write `[p(x) for x in points]` to evaluate at many points.
-                            (CTyp::Poly(_i, 1, _n), CTyp::Vec(_b, _len)) => {
+                            (CTyp::Poly(_i, m, _n), CTyp::Vec(_b, _len)) if m.node == 1 => {
                                 Err(TypeError::evaluate_univariate_vector(kctx, vctx, p, x))
                             }
                             // Multivariate polynomial (MLE, virtual, etc.): n > 1.
-                            (CTyp::Poly(i_poly, n, d), CTyp::Vec(b, len_vec)) if n > 1 => {
+                            (CTyp::Poly(i_poly, n, d), CTyp::Vec(b, len_vec)) if n.node > 1 => {
                                 // Scalar-castable points evaluate the MLE generically.
                                 if b.to_scalar(kctx).as_ref() != Some(&i_poly) {
                                     return Err(TypeError::evaluate(kctx, vctx, p, x));
@@ -243,9 +243,9 @@ impl Typeable for CExp {
                                 }
                                 if len_vec < n {
                                     let rem = n
-                                        .checked_sub(len_vec)
+                                        .checked_sub(len_vec.node)
                                         .ok_or_else(|| TypeError::evaluate(kctx, vctx, p, x))?;
-                                    return Ok(CTyp::Poly(i_poly.clone(), rem, d));
+                                    return Ok(CTyp::Poly(i_poly.clone(), Spanned::dummy(rem), d));
                                 }
                                 Err(TypeError::evaluate_mle_too_many_arguments(kctx, vctx, p, x))
                             }
@@ -269,12 +269,13 @@ impl Typeable for CExp {
                                 let fixed_tid = fixed_elem.to_scalar(kctx).ok_or_else(fail)?;
                                 let range_len = range.len();
                                 if fixed_tid != poly_tid
-                                    || range.end() > n
-                                    || fixed_len != n.checked_sub(range_len).ok_or_else(fail)?
+                                    || range.end() > n.node
+                                    || fixed_len.node
+                                        != n.node.checked_sub(range_len).ok_or_else(fail)?
                                 {
                                     return Err(fail());
                                 }
-                                Ok(CTyp::Poly(poly_tid, range_len, d))
+                                Ok(CTyp::Poly(poly_tid, Spanned::dummy(range_len), d))
                             }
                             _ => Err(fail()),
                         }
@@ -300,12 +301,12 @@ impl Typeable for CExp {
 
                 match typ {
                     CTyp::Vec(box b, n) => {
-                        if n == 0 || !n.is_power_of_two() {
+                        if n.node == 0 || !n.is_power_of_two() {
                             return Err(TypeError::mle(kctx, vctx, self));
                         }
                         let n_pow = n.ilog2() as usize;
                         let i = b.to_scalar(kctx).ok_or(TypeError::mle(kctx, vctx, self))?;
-                        Ok(CTyp::Poly(i, n_pow, 1))
+                        Ok(CTyp::Poly(i, Spanned::dummy(n_pow), Spanned::dummy(1)))
                     }
                     _ => Err(TypeError::mle(kctx, vctx, self)),
                 }
@@ -477,19 +478,19 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match tr {
-                    CTyp::Vec(box inner, n) if n > 0 => {
+                    CTyp::Vec(box inner, n) if n.node > 0 => {
                         // Clone the context
                         let mut innerctx = vctx.clone();
 
                         // Add variable [id] to the context with type [inner]
-                        innerctx.insert(id, &inner);
+                        innerctx.insert(&id.node, &inner);
 
                         // Type infer the expression [x] with the new context
                         let tx = x
                             .infer(kctx, fctx, &innerctx)
                             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
-                        Ok(CTyp::vec(&tx, n))
+                        Ok(CTyp::vec(&tx, n.node))
                     }
                     _ => Err(TypeError::exp(kctx, vctx, self)),
                 }
@@ -501,7 +502,7 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match tv {
-                    CTyp::Vec(box elem, n) if n > 0 => {
+                    CTyp::Vec(box elem, n) if n.node > 0 => {
                         // Multiplying a vector of polynomials multiplies all factors, so
                         // the resulting degree is the element degree times vector length.
                         if *op == BinOp::Mul {
@@ -511,13 +512,13 @@ impl Typeable for CExp {
                                     TypeError::lub(TypeError::exp(kctx, vctx, self), e)
                                 })?;
                                 if let CTyp::Poly(res_a, num_vars, _) = res_t {
-                                    let degree = d.checked_mul(n).ok_or_else(|| {
+                                    let degree = d.checked_mul(n.node).ok_or_else(|| {
                                         TypeError::lub(
                                             TypeError::exp(kctx, vctx, self),
-                                            LubError::DegreeOverflow(*d, n),
+                                            LubError::DegreeOverflow(d.node, n.node),
                                         )
                                     })?;
-                                    return Ok(CTyp::Poly(res_a, num_vars, degree));
+                                    return Ok(CTyp::Poly(res_a, num_vars, Spanned::dummy(degree)));
                                 }
                             }
                         }
@@ -548,23 +549,23 @@ impl Typeable for CExp {
             }
             // Variable context lookup
             CExp::Var(id) => vctx
-                .get(id)
+                .get(&id.node)
                 .cloned()
-                .ok_or(TypeError::var_not_found(id, vctx)),
+                .ok_or(TypeError::var_not_found(&id.node, vctx)),
 
             // Random oracle challenge
             CExp::Challenge(t, _) | CExp::Random(t, _) => {
                 // What kind of [t]?
-                let k = kctx.get(t).ok_or(TypeError::lub(
+                let k = kctx.get(&t.node).ok_or(TypeError::lub(
                     TypeError::exp(kctx, vctx, self),
-                    LubError::kind_not_found(t),
+                    LubError::kind_not_found(&t.node),
                 ))?;
 
                 if !k.is_scalar() {
-                    return Err(TypeError::challenge(kctx, vctx, t, k));
+                    return Err(TypeError::challenge(kctx, vctx, &t.node, k));
                 }
 
-                Ok(CTyp::base(t))
+                Ok(CTyp::base(&t.node))
             }
 
             // Random access into vectors
@@ -583,7 +584,7 @@ impl Typeable for CExp {
                 // because the GB analysis cannot resolve dynamic RAM reads.
                 match (ta.clone(), tb.clone()) {
                     (CTyp::Vec(box typ, n), CTyp::Fin(r)) => {
-                        if r.end() <= n {
+                        if r.end() <= n.node {
                             Ok(typ.node)
                         } else {
                             Err(TypeError::ram(kctx, vctx, a, ta, b, tb))
@@ -591,8 +592,8 @@ impl Typeable for CExp {
                     }
                     (CTyp::Vec(box typ, n), CTyp::Vec(box inner, m)) => {
                         if let CTyp::Fin(r) = &inner.node {
-                            if r.end() <= n {
-                                Ok(CTyp::vec(&typ.node, m))
+                            if r.end() <= n.node {
+                                Ok(CTyp::vec(&typ.node, m.node))
                             } else {
                                 Err(TypeError::ram(kctx, vctx, a, ta, b, tb))
                             }
@@ -615,8 +616,8 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 // Is it a polynomial, MLE, or a function?
-                match vctx.get(id) {
-                    Some(CTyp::Poly(tbase, 1, _)) => {
+                match vctx.get(&id.node) {
+                    Some(CTyp::Poly(tbase, m, _)) if m.node == 1 => {
                         // It is a univariate polynomial
                         let k = kctx.get(tbase).ok_or(TypeError::lub(
                             TypeError::exp(kctx, vctx, self),
@@ -625,7 +626,7 @@ impl Typeable for CExp {
 
                         // Only field elements can be evaluated and only 1 argument can be given
                         if !k.is_scalar() || param_types.len() != 1 {
-                            return Err(TypeError::uni(kctx, vctx, id, params, &param_types));
+                            return Err(TypeError::uni(kctx, vctx, &id.node, params, &param_types));
                         }
 
                         // The argument must be a field and the same as the polynomial
@@ -634,13 +635,13 @@ impl Typeable for CExp {
                                 // The polynomial is a field
                                 Ok(CTyp::base(tbase))
                             } else {
-                                Err(TypeError::uni(kctx, vctx, id, params, &param_types))
+                                Err(TypeError::uni(kctx, vctx, &id.node, params, &param_types))
                             }
                         } else {
-                            Err(TypeError::uni(kctx, vctx, id, params, &param_types))
+                            Err(TypeError::uni(kctx, vctx, &id.node, params, &param_types))
                         }
                     }
-                    Some(CTyp::Poly(tbase, n, 1)) => {
+                    Some(CTyp::Poly(tbase, n, d)) if d.node == 1 => {
                         // It is a multilinear extension
                         let k = kctx.get(tbase).ok_or(TypeError::lub(
                             TypeError::exp(kctx, vctx, self),
@@ -648,20 +649,26 @@ impl Typeable for CExp {
                         ))?;
                         // Only field elements can be evaluated and only 1 argument can be given
                         if !k.is_scalar() || param_types.len() != 1 {
-                            return Err(TypeError::mle_app(kctx, vctx, id, params, &param_types));
+                            return Err(TypeError::mle_app(
+                                kctx,
+                                vctx,
+                                &id.node,
+                                params,
+                                &param_types,
+                            ));
                         }
 
                         // The argument must be a field and the same as the MLE
                         match param_types.0[0].node.clone() {
-                            CTyp::Fin(_r) if *n > 0 => {
+                            CTyp::Fin(_r) if n.node > 0 => {
                                 let rem = n.checked_sub(1).ok_or_else(|| {
-                                    TypeError::mle_app(kctx, vctx, id, params, &param_types)
+                                    TypeError::mle_app(kctx, vctx, &id.node, params, &param_types)
                                 })?;
                                 Ok(CTyp::mle(tbase, rem))
                             }
-                            CTyp::Base(tb) if &tb == tbase && *n > 0 => {
+                            CTyp::Base(tb) if &tb == tbase && n.node > 0 => {
                                 let rem = n.checked_sub(1).ok_or_else(|| {
-                                    TypeError::mle_app(kctx, vctx, id, params, &param_types)
+                                    TypeError::mle_app(kctx, vctx, &id.node, params, &param_types)
                                 })?;
                                 Ok(CTyp::mle(tbase, rem))
                             }
@@ -671,21 +678,21 @@ impl Typeable for CExp {
                                     ..
                                 },
                                 m,
-                            ) if &tb == tbase && *n == m => Ok(CTyp::base(tbase)),
+                            ) if &tb == tbase && n.node == m.node => Ok(CTyp::base(tbase)),
                             CTyp::Vec(
                                 box Spanned {
                                     node: CTyp::Fin(_), ..
                                 },
                                 m,
-                            ) if *n == m => Ok(CTyp::base(tbase)),
+                            ) if n.node == m.node => Ok(CTyp::base(tbase)),
                             CTyp::Vec(
                                 box Spanned {
                                     node: CTyp::Fin(_), ..
                                 },
                                 m,
-                            ) if *n > m => {
-                                let rem = n.checked_sub(m).ok_or_else(|| {
-                                    TypeError::mle_app(kctx, vctx, id, params, &param_types)
+                            ) if n.node > m.node => {
+                                let rem = n.checked_sub(m.node).ok_or_else(|| {
+                                    TypeError::mle_app(kctx, vctx, &id.node, params, &param_types)
                                 })?;
                                 Ok(CTyp::mle(tbase, rem))
                             }
@@ -695,13 +702,19 @@ impl Typeable for CExp {
                                     ..
                                 },
                                 m,
-                            ) if &tb == tbase && *n > m => {
-                                let rem = n.checked_sub(m).ok_or_else(|| {
-                                    TypeError::mle_app(kctx, vctx, id, params, &param_types)
+                            ) if &tb == tbase && n.node > m.node => {
+                                let rem = n.checked_sub(m.node).ok_or_else(|| {
+                                    TypeError::mle_app(kctx, vctx, &id.node, params, &param_types)
                                 })?;
                                 Ok(CTyp::mle(tbase, rem))
                             }
-                            _ => Err(TypeError::mle_app(kctx, vctx, id, params, &param_types)),
+                            _ => Err(TypeError::mle_app(
+                                kctx,
+                                vctx,
+                                &id.node,
+                                params,
+                                &param_types,
+                            )),
                         }
                     }
                     _ => {
@@ -710,7 +723,7 @@ impl Typeable for CExp {
                         let mut matching_sigs: Vec<_> = fctx
                             .iter()
                             .filter_map(|sig| {
-                                if &sig.name.node != id {
+                                if sig.name.node != id.node {
                                     return None;
                                 }
                                 let (vs, _) = sig.clone().unify(&param_types, kctx).ok()?;
@@ -725,7 +738,7 @@ impl Typeable for CExp {
                                 vs.args
                                     .iter()
                                     .zip(param_types.0.iter())
-                                    .all(|(a, t)| a.typ == t.node)
+                                    .all(|(a, t)| a.typ.node == t.node)
                             });
                         }
 
@@ -766,7 +779,7 @@ impl Typeable for CExp {
             CExp::Let(Some(var), box left, right) | CExp::Log(var, box left, right) => {
                 let tleft = left.infer(kctx, fctx, vctx)?;
                 let mut vctx = vctx.clone();
-                vctx.insert(var, &tleft);
+                vctx.insert(&var.node, &tleft);
                 match right {
                     Some(box right) => {
                         let tright = right.infer(kctx, fctx, &vctx)?;
@@ -798,7 +811,10 @@ impl Typeable for CExp {
                     // Univariate polynomial - type the variable as Poly(F, 1, 1) (degree-1 polynomial)
                     // Then type inference will compute the actual degree through lub operations
                     for var in vars {
-                        new_vctx.insert(var, &CTyp::Poly(field_tid.clone(), 1, 1));
+                        new_vctx.insert(
+                            &var.node,
+                            &CTyp::Poly(field_tid.clone(), Spanned::dummy(1), Spanned::dummy(1)),
+                        );
                     }
 
                     // Infer the type of the body - should get Poly(F, 1, N) where N is the degree
@@ -806,14 +822,16 @@ impl Typeable for CExp {
 
                     // Extract the degree from the inferred type
                     match body_type {
-                        CTyp::Poly(tid, 1, degree) => Ok(CTyp::Poly(tid, 1, degree)),
-                        CTyp::Base(tid) => Ok(CTyp::Poly(tid, 1, 0)), // Constant polynomial
+                        CTyp::Poly(tid, m, degree) if m.node == 1 => Ok(CTyp::Poly(tid, m, degree)),
+                        CTyp::Base(tid) => {
+                            Ok(CTyp::Poly(tid, Spanned::dummy(1), Spanned::dummy(0)))
+                        } // Constant polynomial
                         _ => Err(TypeError::exp(kctx, vctx, self)),
                     }
                 } else {
                     // Multilinear polynomial - type variables as scalars and validate structure
                     for var in vars {
-                        new_vctx.insert(var, &CTyp::Base(field_tid.clone()));
+                        new_vctx.insert(&var.node, &CTyp::Base(field_tid.clone()));
                     }
 
                     let body_type = body.infer(kctx, fctx, &new_vctx)?;
@@ -861,7 +879,11 @@ impl Typeable for CExp {
                                 TypeError::next(
                                     TypeError::exp(kctx, vctx, self),
                                     TypeError::field_not_found(
-                                        kctx, vctx, record_exp, field_name, &fields,
+                                        kctx,
+                                        vctx,
+                                        record_exp,
+                                        &field_name.node,
+                                        &fields,
                                     ),
                                 )
                             })
@@ -888,7 +910,13 @@ impl Typeable for CExp {
                 let field_typ = fields.get(field_name).ok_or_else(|| {
                     TypeError::next(
                         TypeError::exp(kctx, vctx, self),
-                        TypeError::field_not_found(kctx, vctx, record_exp, field_name, fields),
+                        TypeError::field_not_found(
+                            kctx,
+                            vctx,
+                            record_exp,
+                            &field_name.node,
+                            fields,
+                        ),
                     )
                 })?;
                 let value_typ = value_exp

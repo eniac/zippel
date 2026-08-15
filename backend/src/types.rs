@@ -227,23 +227,23 @@ impl ATyp {
                     CKind::Range(_) | CKind::SizeVar => unreachable!(),
                 }
             }
-            CTyp::Vec(box t, n) => Some(ATyp::Vec(Box::new(ATyp::from_ctyp(t, kctx)?), *n)),
+            CTyp::Vec(box t, n) => Some(ATyp::Vec(Box::new(ATyp::from_ctyp(t, kctx)?), n.node)),
             // CTyp::Poly(F, num_vars, max_degree) maps by convention:
             //   (1, m)  → Uni(m)   — univariate, m = max degree
             //   (n, 1)  → Mle(n)   — multilinear, n = num variables (n≥2)
             //   (m, n)  → VPoly(m, m*n) — general, total degree bound m*n
             // Order matters: Poly(F,1,1) hits the Uni arm (degree-1 univariate
             // = linear), not the Mle arm (which requires n≥2).
-            CTyp::Poly(_, 1, m) => Some(ATyp::Uni(*m)),
-            CTyp::Poly(_, n, 1) if *n >= 2 => Some(ATyp::Mle(*n)),
-            CTyp::Poly(_, m, n) => Some(ATyp::VPoly(*m, m.checked_mul(*n)?)),
+            CTyp::Poly(_, m_vars, m) if m_vars.node == 1 => Some(ATyp::Uni(m.node)),
+            CTyp::Poly(_, n, d) if d.node == 1 && n.node >= 2 => Some(ATyp::Mle(n.node)),
+            CTyp::Poly(_, m, n) => Some(ATyp::VPoly(m.node, m.node.checked_mul(n.node)?)),
             CTyp::Fin(r) => Some(ATyp::fin(r.clone())),
             CTyp::Unit => Some(ATyp::unit()),
             CTyp::Record(fields) => {
                 let mut atyp_fields = Ctx::new();
                 for (name, field_typ) in fields.iter() {
                     let atyp = ATyp::from_ctyp(field_typ, kctx)?;
-                    atyp_fields.insert(name, &atyp);
+                    atyp_fields.insert(&name.node, &atyp);
                 }
                 Some(ATyp::Record(atyp_fields))
             }
@@ -804,6 +804,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lang::ast::spanned::Spanned;
     use lang::typ::Nothing;
     use lang::typ::lub::Lub;
 
@@ -857,7 +858,7 @@ mod tests {
         let mut kctx = Ctx::new();
         kctx.insert(&Tid::from("F"), &CKind::Field);
 
-        let ctyp = CTyp::Poly(Tid::from("F"), 3, 5);
+        let ctyp = CTyp::Poly(Tid::from("F"), Spanned::dummy(3), Spanned::dummy(5));
         let atyp = ATyp::from_ctyp(&ctyp, &kctx).unwrap();
         assert_eq!(atyp, ATyp::VPoly(3, 15));
     }
@@ -882,8 +883,8 @@ mod tests {
             let m2: usize = u.int_in_range(1..=6)?;
             let n2: usize = u.int_in_range(1..=6)?;
 
-            let c1 = CTyp::Poly(f.clone(), m1, n1);
-            let c2 = CTyp::Poly(f.clone(), m2, n2);
+            let c1 = CTyp::Poly(f.clone(), Spanned::dummy(m1), Spanned::dummy(n1));
+            let c2 = CTyp::Poly(f.clone(), Spanned::dummy(m2), Spanned::dummy(n2));
             let c_mul = CTyp::lub_mul(&c1, &c2, &kctx).unwrap();
             let c_mul_lowered = ATyp::from_ctyp(&c_mul, &kctx).unwrap();
 
@@ -1619,7 +1620,7 @@ mod tests {
         let f = Tid::from("F");
         let kctx: Ctx<Tid, CKind> = Ctx::from([(f.clone(), CKind::Field)]);
         // Poly(F, m, n) where m * n overflows
-        let ctyp = CTyp::Poly(f, usize::MAX, 2);
+        let ctyp = CTyp::Poly(f, Spanned::dummy(usize::MAX), Spanned::dummy(2));
         assert_eq!(ATyp::from_ctyp(&ctyp, &kctx), None);
     }
 

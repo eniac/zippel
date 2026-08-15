@@ -245,82 +245,82 @@ fn lub_typ() {
     // Mle<F, n> * Mle<F, n> = Poly<F, n, 2> (product of two multilinears is degree 2)
     assert_eq!(
         CTyp::lub_mul(&CTyp::mle(&f, 3), &CTyp::mle(&f, 3), &ctx),
-        Ok(CTyp::Poly(f.clone(), 3, 2))
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(3), Spanned::dummy(2)))
     );
     // Mle<F, 2> * Mle<F, 3> = Poly<F, 3, 2> (max vars, degree 2)
     assert_eq!(
         CTyp::lub_mul(&CTyp::mle(&f, 2), &CTyp::mle(&f, 3), &ctx),
-        Ok(CTyp::Poly(f.clone(), 3, 2))
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(3), Spanned::dummy(2)))
     );
     // Uni<F, 5> * Mle<F, 3> via general Poly*Poly: Poly(F,1,5) * Poly(F,3,1) = Poly(F, 3, 6)
     assert_eq!(
         CTyp::lub_mul(&CTyp::uni(&f, 5), &CTyp::mle(&f, 3), &ctx),
-        Ok(CTyp::Poly(f.clone(), 3, 6))
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(3), Spanned::dummy(6)))
     );
     // Poly<F, 2, 3> * Poly<F, 2, 4> = Poly<F, 2, 7>
     assert_eq!(
         CTyp::lub_mul(
-            &CTyp::Poly(f.clone(), 2, 3),
-            &CTyp::Poly(f.clone(), 2, 4),
+            &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(3)),
+            &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(4)),
             &ctx
         ),
-        Ok(CTyp::Poly(f.clone(), 2, 7))
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(7)))
     );
     // Poly<F, 2, 3> * Poly<F, 4, 2> = Poly<F, 4, 5> (max vars, sum degrees)
     assert_eq!(
         CTyp::lub_mul(
-            &CTyp::Poly(f.clone(), 2, 3),
-            &CTyp::Poly(f.clone(), 4, 2),
+            &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(3)),
+            &CTyp::Poly(f.clone(), Spanned::dummy(4), Spanned::dummy(2)),
             &ctx
         ),
-        Ok(CTyp::Poly(f.clone(), 4, 5))
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(4), Spanned::dummy(5)))
     );
 
     // Regression (phase 7): Poly == Poly falls through to the general arm when
     // the shapes don't match Uni==Uni or Mle==Mle specifically.
     assert_eq!(
         CTyp::lub_equ(
-            &CTyp::Poly(f.clone(), 2, 2),
-            &CTyp::Poly(f.clone(), 2, 2),
+            &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(2)),
+            &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(2)),
             &ctx
         ),
-        Ok(CTyp::Poly(f.clone(), 2, 2))
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(2)))
     );
     assert_eq!(
         CTyp::lub_equ(
-            &CTyp::Poly(f.clone(), 2, 3),
-            &CTyp::Poly(f.clone(), 3, 2),
+            &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(3)),
+            &CTyp::Poly(f.clone(), Spanned::dummy(3), Spanned::dummy(2)),
             &ctx
         ),
-        Ok(CTyp::Poly(f.clone(), 3, 3))
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(3), Spanned::dummy(3)))
     );
 
     // Regression (phase 7): lub_div degree math. Poly<F,1,5> / Poly<F,1,5> = Poly<F,1,0>
     assert_eq!(
         CTyp::lub_div(&CTyp::uni(&f, 5), &CTyp::uni(&f, 5), &ctx),
-        Ok(CTyp::Poly(f.clone(), 1, 0))
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(0)))
     );
     assert_eq!(
         CTyp::lub_div(&CTyp::uni(&f, 7), &CTyp::uni(&f, 3), &ctx),
-        Ok(CTyp::Poly(f.clone(), 1, 4))
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(4)))
     );
 
     // Phase 14.C: poly-encoding unification (m = max degree).
     // lub_rem Poly×Poly: Poly<F,1,5> % Poly<F,1,3> = Poly<F,1,2> (deg = 3 - 1).
     assert_eq!(
         CTyp::lub_rem(&CTyp::uni(&f, 5), &CTyp::uni(&f, 3), &ctx),
-        Ok(CTyp::Poly(f.clone(), 1, 2))
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(2)))
     );
     // lub_rem requires m2 >= 1; Poly<F,1,n> % Poly<F,1,0> is an error.
     assert!(CTyp::lub_rem(&CTyp::uni(&f, 5), &CTyp::uni(&f, 0), &ctx).is_err());
     // General Poly×Poly rem: Poly<F,2,5> % Poly<F,3,2> = Poly<F,3,1> (max vars, m2 - 1).
     assert_eq!(
         CTyp::lub_rem(
-            &CTyp::Poly(f.clone(), 2, 5),
-            &CTyp::Poly(f.clone(), 3, 2),
+            &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(5)),
+            &CTyp::Poly(f.clone(), Spanned::dummy(3), Spanned::dummy(2)),
             &ctx
         ),
-        Ok(CTyp::Poly(f.clone(), 3, 1))
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(3), Spanned::dummy(1)))
     );
 
     // Phase B: lub_add(Poly, Vec) / lub_sub(Poly, Vec) is now a type error.
@@ -382,14 +382,14 @@ fn test_ctyp_poly_degree_offbyone() {
     // Positive boundary: equal degrees yield Poly<F,_,0>.
     assert_eq!(
         CTyp::lub_div(&CTyp::uni(&f, 3), &CTyp::uni(&f, 3), &ctx),
-        Ok(CTyp::Poly(f.clone(), 1, 0))
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(0)))
     );
     // Off-by-one: divisor degree one greater than dividend is rejected.
     assert!(CTyp::lub_div(&CTyp::uni(&f, 2), &CTyp::uni(&f, 3), &ctx).is_err());
     // General Poly/Poly: same off-by-one in multivariate.
     assert!(CTyp::lub_div(
-        &CTyp::Poly(f.clone(), 2, 3),
-        &CTyp::Poly(f.clone(), 2, 4),
+        &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(3)),
+        &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(4)),
         &ctx
     )
     .is_err());
@@ -404,12 +404,12 @@ fn test_ctyp_poly_degree_offbyone() {
     // m1 < m2 is still allowed: remainder degree = m2 - 1 (full dividend fits).
     assert_eq!(
         CTyp::lub_rem(&CTyp::uni(&f, 3), &CTyp::uni(&f, 4), &ctx),
-        Ok(CTyp::Poly(f.clone(), 1, 3))
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(3)))
     );
     // Boundary m2 = 1: remainder has degree 0.
     assert_eq!(
         CTyp::lub_rem(&CTyp::uni(&f, 5), &CTyp::uni(&f, 1), &ctx),
-        Ok(CTyp::Poly(f.clone(), 1, 0))
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(0)))
     );
 
     // ---- lub_dot: Vec · Poly is a type error (Phase B) ----
@@ -801,7 +801,11 @@ mod ctyp_lub_poly_tests {
     /// `n ∈ 1..=4`, `m ∈ 0..=4`. Covers Uni (n=1), Mle (m=1), and general
     /// VPoly.
     fn arb_poly(u: &mut Unstructured) -> arbitrary::Result<CTyp> {
-        Ok(CTyp::Poly(f(), arb_n(u)?, arb_m(u)?))
+        Ok(CTyp::Poly(
+            f(),
+            Spanned::dummy(arb_n(u)?),
+            Spanned::dummy(arb_m(u)?),
+        ))
     }
 
     /// Arbitrary `Vec(F, k)` for `k ∈ 1..=4`.
@@ -832,9 +836,9 @@ mod ctyp_lub_poly_tests {
             let m1 = arb_m(u)?;
             let n2 = arb_n(u)?;
             let m2 = arb_m(u)?;
-            let a = CTyp::Poly(f(), n1, m1);
-            let b = CTyp::Poly(f(), n2, m2);
-            let expected = CTyp::Poly(f(), n1.max(n2), m1.max(m2));
+            let a = CTyp::Poly(f(), Spanned::dummy(n1), Spanned::dummy(m1));
+            let b = CTyp::Poly(f(), Spanned::dummy(n2), Spanned::dummy(m2));
+            let expected = CTyp::Poly(f(), Spanned::dummy(n1.max(n2)), Spanned::dummy(m1.max(m2)));
             assert_eq!(
                 CTyp::lub_add(&a, &b, &kind_ctx()),
                 Ok(expected),
@@ -857,9 +861,9 @@ mod ctyp_lub_poly_tests {
             let m1 = arb_m(u)?;
             let n2 = arb_n(u)?;
             let m2 = arb_m(u)?;
-            let a = CTyp::Poly(f(), n1, m1);
-            let b = CTyp::Poly(f(), n2, m2);
-            let expected = CTyp::Poly(f(), n1.max(n2), m1.max(m2));
+            let a = CTyp::Poly(f(), Spanned::dummy(n1), Spanned::dummy(m1));
+            let b = CTyp::Poly(f(), Spanned::dummy(n2), Spanned::dummy(m2));
+            let expected = CTyp::Poly(f(), Spanned::dummy(n1.max(n2)), Spanned::dummy(m1.max(m2)));
             assert_eq!(
                 CTyp::lub_sub(&a, &b, &kind_ctx()),
                 Ok(expected),
@@ -883,9 +887,9 @@ mod ctyp_lub_poly_tests {
             let m1 = arb_m(u)?;
             let n2 = arb_n(u)?;
             let m2 = arb_m(u)?;
-            let a = CTyp::Poly(f(), n1, m1);
-            let b = CTyp::Poly(f(), n2, m2);
-            let expected = CTyp::Poly(f(), n1.max(n2), m1 + m2);
+            let a = CTyp::Poly(f(), Spanned::dummy(n1), Spanned::dummy(m1));
+            let b = CTyp::Poly(f(), Spanned::dummy(n2), Spanned::dummy(m2));
+            let expected = CTyp::Poly(f(), Spanned::dummy(n1.max(n2)), Spanned::dummy(m1 + m2));
             assert_eq!(
                 CTyp::lub_mul(&a, &b, &kind_ctx()),
                 Ok(expected),
@@ -965,7 +969,7 @@ mod ctyp_lub_poly_tests {
     fn lub_concat_mle1_vec_errors() {
         let ctx = kind_ctx();
         for m in [1usize, 2, 3] {
-            let mle1 = CTyp::Poly(f(), 1, 1);
+            let mle1 = CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(1));
             let vec_t = CTyp::vec(&tf(), m);
             assert!(
                 CTyp::lub_concat(&mle1, &vec_t, &ctx).is_err(),
@@ -1249,7 +1253,10 @@ mod ctyp_lub_poly_tests {
         let mut fields = share::Ctx::new();
         let names = ["x", "y", "z", "w"];
         for name in names.iter().take(num_fields) {
-            fields.insert(&name.to_string(), &Spanned::dummy(arb_ctyp(u)?));
+            fields.insert(
+                &Spanned::dummy(name.to_string()),
+                &Spanned::dummy(arb_ctyp(u)?),
+            );
         }
         Ok(CTyp::Record(fields))
     }
@@ -1258,18 +1265,21 @@ mod ctyp_lub_poly_tests {
     fn test_record_lub_width_intersection() {
         let ctx = kind_ctx();
         let mut fields_a = share::Ctx::new();
-        fields_a.insert(&"x".to_string(), &Spanned::dummy(tf()));
+        fields_a.insert(&Spanned::dummy("x".to_string()), &Spanned::dummy(tf()));
 
         let mut fields_b = share::Ctx::new();
-        fields_b.insert(&"x".to_string(), &Spanned::dummy(tf()));
-        fields_b.insert(&"y".to_string(), &Spanned::dummy(CTyp::Poly(f(), 1, 3)));
+        fields_b.insert(&Spanned::dummy("x".to_string()), &Spanned::dummy(tf()));
+        fields_b.insert(
+            &Spanned::dummy("y".to_string()),
+            &Spanned::dummy(CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(3))),
+        );
 
         let a = CTyp::Record(fields_a);
         let b = CTyp::Record(fields_b);
 
         // Width-subtyping: LUB drops the non-common field `y`, keeping `{x}`.
         let mut expected_fields = share::Ctx::new();
-        expected_fields.insert(&"x".to_string(), &Spanned::dummy(tf()));
+        expected_fields.insert(&Spanned::dummy("x".to_string()), &Spanned::dummy(tf()));
         let expected = CTyp::Record(expected_fields);
 
         assert_eq!(CTyp::lub_equ(&a, &b, &ctx), Ok(expected.clone()));
@@ -1281,13 +1291,13 @@ mod ctyp_lub_poly_tests {
         let ctx = kind_ctx();
         let mut fields_a = share::Ctx::new();
         fields_a.insert(
-            &"x".to_string(),
+            &Spanned::dummy("x".to_string()),
             &Spanned::dummy(CTyp::Fin(Range::singleton(1))),
         );
 
         let mut fields_b = share::Ctx::new();
         fields_b.insert(
-            &"x".to_string(),
+            &Spanned::dummy("x".to_string()),
             &Spanned::dummy(CTyp::Fin(Range::singleton(2))),
         );
 
@@ -1302,12 +1312,18 @@ mod ctyp_lub_poly_tests {
     fn test_record_lub_permutations() {
         let ctx = kind_ctx();
         let mut fields_a = share::Ctx::new();
-        fields_a.insert(&"x".to_string(), &Spanned::dummy(tf()));
-        fields_a.insert(&"y".to_string(), &Spanned::dummy(CTyp::Poly(f(), 1, 3)));
+        fields_a.insert(&Spanned::dummy("x".to_string()), &Spanned::dummy(tf()));
+        fields_a.insert(
+            &Spanned::dummy("y".to_string()),
+            &Spanned::dummy(CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(3))),
+        );
 
         let mut fields_b = share::Ctx::new();
-        fields_b.insert(&"y".to_string(), &Spanned::dummy(CTyp::Poly(f(), 1, 3)));
-        fields_b.insert(&"x".to_string(), &Spanned::dummy(tf()));
+        fields_b.insert(
+            &Spanned::dummy("y".to_string()),
+            &Spanned::dummy(CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(3))),
+        );
+        fields_b.insert(&Spanned::dummy("x".to_string()), &Spanned::dummy(tf()));
 
         let a = CTyp::Record(fields_a);
         let b = CTyp::Record(fields_b);
@@ -1380,8 +1396,8 @@ mod ctyp_lub_overflow_tests {
     #[test]
     fn lub_mul_poly_degree_overflow() {
         let ctx = kind_ctx();
-        let a = CTyp::Poly(f(), 1, usize::MAX);
-        let b = CTyp::Poly(f(), 1, 1);
+        let a = CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(usize::MAX));
+        let b = CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(1));
         // degree = MAX + 1 overflows
         assert!(CTyp::lub_mul(&a, &b, &ctx).is_err());
     }
@@ -1420,19 +1436,25 @@ mod ctyp_lub_overflow_tests {
         // Guarded by ma >= mb, so checked_sub should always succeed.
         // This test confirms the checked path doesn't spuriously error.
         let ctx = kind_ctx();
-        let a = CTyp::Poly(f(), 1, 5);
-        let b = CTyp::Poly(f(), 1, 3);
-        assert_eq!(CTyp::lub_div(&a, &b, &ctx), Ok(CTyp::Poly(f(), 1, 2)));
+        let a = CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(5));
+        let b = CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(3));
+        assert_eq!(
+            CTyp::lub_div(&a, &b, &ctx),
+            Ok(CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(2)))
+        );
     }
 
     #[test]
     fn lub_rem_poly_degree_safe() {
         // Guarded by mb >= 1, so checked_sub(1) should always succeed.
         let ctx = kind_ctx();
-        let a = CTyp::Poly(f(), 1, 5);
-        let b = CTyp::Poly(f(), 1, 3);
+        let a = CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(5));
+        let b = CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(3));
         // remainder degree = mb - 1 = 2
-        assert_eq!(CTyp::lub_rem(&a, &b, &ctx), Ok(CTyp::Poly(f(), 1, 2)));
+        assert_eq!(
+            CTyp::lub_rem(&a, &b, &ctx),
+            Ok(CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(2)))
+        );
     }
 }
 

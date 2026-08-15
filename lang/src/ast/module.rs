@@ -415,7 +415,7 @@ fn type_alias_in_args() {
     let (sig, _) = umod.iter().next().unwrap();
     // First arg should be Vec(Base(F), 3), not Base(Vec3)
     assert!(
-        matches!(&sig.args.0[0].typ, crate::typ::Typ::Vec(_, _)),
+        matches!(&*sig.args.0[0].typ, crate::typ::Typ::Vec(_, _)),
         "Arg type should be Vec, got {:?}",
         sig.args.0[0].typ
     );
@@ -451,7 +451,10 @@ fn test_concretize_size_var() {
     let arg_typ = &sig.args.0[0].typ;
     assert_eq!(
         arg_typ.clone(),
-        crate::typ::Typ::vec(&crate::typ::Typ::base(&Tid::from("F")), 5)
+        Spanned::dummy(crate::typ::Typ::vec(
+            &crate::typ::Typ::base(&Tid::from("F")),
+            5
+        ))
     );
 }
 

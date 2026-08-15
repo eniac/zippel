@@ -5,10 +5,8 @@ error: undefined variable `b`
    ╭─[ test.zippel:1:45 ]
    │
  1 │ proto p<F: Field>(instance a: F) where a == b { }
-   │                   ──────┬──────             ┬  
-   │                         │                   ╰── `b` is not defined in this scope
-   │                         │                   │  
-   │                         ╰────────────────────── `a` defined here
+   │                                             ┬  
+   │                                             ╰── `b` is not defined in this scope
    │                                             │  
    │                                             ╰── help: did you mean `a`?
 ───╯

@@ -1158,7 +1158,7 @@ impl<C: HasOpFactory> UDag<C> {
         let arg_meta: HashMap<&Vid, (Qualifier, Distribution)> = sig
             .args
             .iter()
-            .map(|arg| (&arg.id, (arg.qualifier, arg.distribution)))
+            .map(|arg| (&arg.id.node, (arg.qualifier.node, arg.distribution.node)))
             .collect();
 
         // Add arguments to type and fft contexts
@@ -1175,7 +1175,7 @@ impl<C: HasOpFactory> UDag<C> {
                     ),
                 )
             })?;
-            atyps.insert(&arg.id, &at);
+            atyps.insert(&arg.id.node, &at);
             vctx.insert(&arg.id, &arg.typ);
         }
         // Expose singleton range typevars (e.g. N: 4) as term-level constants.
@@ -1332,7 +1332,7 @@ impl<C: HasOpFactory> UDag<C> {
             }
             CExp::Var(vid) => {
                 // Check if this is a bound variable
-                if let Some(&var_idx) = var_map.get(vid) {
+                if let Some(&var_idx) = var_map.get(&vid.node) {
                     // Create a polynomial with variable
                     if vars.len() == 1 {
                         // Univariate: create polynomial [0, 1] representing x
@@ -1418,7 +1418,7 @@ impl<C: HasOpFactory> UDag<C> {
             CExp::Unit => Ok(Some(GOp::Value(Value::Unit))),
             CExp::Range(r) => Ok(Some(GOp::range(r.clone()))),
             CExp::Var(id) => {
-                if let Some(level) = binders.iter().rposition(|(v, _)| v == id) {
+                if let Some(level) = binders.iter().rposition(|(v, _)| *v == **id) {
                     Ok(Some(GOp::loop_param(level, binders[level].1.clone())))
                 } else {
                     Ok(Some(Self::op_from_var(id, vars)?))
@@ -1536,7 +1536,7 @@ impl<C: HasOpFactory> UDag<C> {
                 let Some(atyp) = ATyp::from_ctyp(&ctyp, kctx) else {
                     return Ok(None);
                 };
-                Ok(Some(Op::Proj(mk::<C>(lr), field.clone(), atyp)))
+                Ok(Some(Op::Proj(mk::<C>(lr), field.node.clone(), atyp)))
             }
             CExp::Record(fields) => {
                 let mut out: Ctx<String, HOp<C>> = Ctx::new();
@@ -1565,7 +1565,7 @@ impl<C: HasOpFactory> UDag<C> {
                     return Ok(None);
                 };
                 let mut inner_binders = binders.to_vec();
-                inner_binders.push((binder.clone(), binder_atyp));
+                inner_binders.push((binder.node.clone(), binder_atyp));
                 let mut inner_vctx = vctx.clone();
                 inner_vctx.insert(binder, &elem_ctyp);
                 let Some(lb) = self.lower_loop_body_template(
@@ -1586,7 +1586,7 @@ impl<C: HasOpFactory> UDag<C> {
                     self.try_build_reduce_map(
                         *rop,
                         body.as_ref().node.clone(),
-                        binder.clone(),
+                        binder.node.clone(),
                         domain.as_ref().node.clone(),
                         binders,
                         kctx,
@@ -1609,7 +1609,7 @@ impl<C: HasOpFactory> UDag<C> {
     fn substitute_var(exp: CExp, target: &Vid, replacement: &CExp) -> Option<CExp> {
         Some(match exp {
             CExp::Var(id) => {
-                if &id == target {
+                if *id == *target {
                     replacement.clone()
                 } else {
                     CExp::Var(id)
@@ -1749,7 +1749,7 @@ impl<C: HasOpFactory> UDag<C> {
                 break;
             };
             body = b2;
-            binder = y;
+            binder = y.node;
             domain = d2.node;
         }
         (body, binder, domain)
@@ -1799,7 +1799,7 @@ impl<C: HasOpFactory> UDag<C> {
 
     fn exp_mentions_free_var(exp: &CExp, target: &Vid) -> bool {
         match exp {
-            CExp::Var(id) => id == target,
+            CExp::Var(id) => **id == *target,
             CExp::Lit(_) | CExp::Unit | CExp::Range(_) => false,
             CExp::Interpolate(points, evals) => {
                 points
@@ -1837,17 +1837,17 @@ impl<C: HasOpFactory> UDag<C> {
             }
             CExp::Map(body, binder, domain) => {
                 Self::exp_mentions_free_var(domain, target)
-                    || (binder != target && Self::exp_mentions_free_var(body, target))
+                    || (**binder != *target && Self::exp_mentions_free_var(body, target))
             }
             CExp::Let(Some(id), left, right) | CExp::Log(id, left, right) => {
                 Self::exp_mentions_free_var(left, target)
-                    || (id != target
+                    || (**id != *target
                         && right
                             .as_ref()
                             .is_some_and(|r| Self::exp_mentions_free_var(r, target)))
             }
             CExp::Fun(vars, body) => {
-                !vars.iter().any(|v| v == target) && Self::exp_mentions_free_var(body, target)
+                !vars.iter().any(|v| **v == *target) && Self::exp_mentions_free_var(body, target)
             }
             CExp::Record(fields) => fields
                 .iter()
@@ -2172,8 +2172,8 @@ impl<C: HasOpFactory> UDag<C> {
                         )
                     })?;
 
-                    let mut res = Vec::with_capacity(n);
-                    for i in 0..n {
+                    let mut res = Vec::with_capacity(n.node);
+                    for i in 0..n.node {
                         // Add oe[i] to local vars and vctx; the map binder
                         // shadows any same-named let binding in the body.
                         let mut local_vars = vars.clone();
@@ -2204,7 +2204,7 @@ impl<C: HasOpFactory> UDag<C> {
                         self.try_build_reduce_map(
                             op,
                             body.node,
-                            binder,
+                            binder.node,
                             domain.node,
                             &[],
                             kctx,
@@ -2280,7 +2280,7 @@ impl<C: HasOpFactory> UDag<C> {
 
                     // Is it a polynomial, MLE, or a function?
                     match &vctx.get(&fid) {
-                        Some(CTyp::Poly(tbase, 1, _n)) => {
+                        Some(CTyp::Poly(tbase, m, _n)) if m.node == 1 => {
                             // It is a univariate polynomial
                             let k = kctx.get(tbase).unwrap();
 
@@ -2304,7 +2304,7 @@ impl<C: HasOpFactory> UDag<C> {
                             exp = eval_exp;
                             continue;
                         }
-                        Some(CTyp::Poly(tbase, n, 1)) => {
+                        Some(CTyp::Poly(tbase, n, d)) if d.node == 1 => {
                             // It is a multilinear extension
                             let k = kctx.get(tbase).unwrap();
 
@@ -2315,25 +2315,30 @@ impl<C: HasOpFactory> UDag<C> {
                             // https://github.com/microsoft/Nova/blob/ad4d77ac89d6bbe9ef943056806e65ceb4ba3b3e/src/spartan/polys/multilinear.rs#L58
                             let mid = 1_usize
                                 .checked_shl(
-                                    (*n).checked_sub(1)
+                                    n.node
+                                        .checked_sub(1)
                                         .expect("mle_app: n - 1 underflow (n < 1)")
                                         .try_into()
                                         .expect("mle_app: n - 1 exceeds u32"),
                                 )
                                 .expect("mle_app: 1 << (n-1) overflow");
                             let end = 1_usize
-                                .checked_shl((*n).try_into().expect("mle_app: n exceeds u32"))
+                                .checked_shl(n.node.try_into().expect("mle_app: n exceeds u32"))
                                 .expect("mle_app: 1 << n overflow");
                             let mut bound_vars = vctx.keys();
                             let coef_var = Vid::fresh(&format!("__coef_{}", fid), &mut bound_vars);
 
                             let mle_l = Spanned::dummy(Exp::Ram(
-                                Box::new(Spanned::dummy(Exp::Var(coef_var.clone()))),
+                                Box::new(Spanned::dummy(Exp::Var(Spanned::dummy(
+                                    coef_var.clone(),
+                                )))),
                                 Box::new(Spanned::dummy(Exp::Range(CRange::from_raw(0, 1, mid)))),
                             ));
 
                             let mle_r = Spanned::dummy(Exp::Ram(
-                                Box::new(Spanned::dummy(Exp::Var(coef_var.clone()))),
+                                Box::new(Spanned::dummy(Exp::Var(Spanned::dummy(
+                                    coef_var.clone(),
+                                )))),
                                 Box::new(Spanned::dummy(Exp::Range(CRange::from_raw(mid, 1, end)))),
                             ));
 
@@ -2353,7 +2358,7 @@ impl<C: HasOpFactory> UDag<C> {
                             ));
 
                             let bound_exp = Spanned::dummy(Exp::Let(
-                                Some(coef_var),
+                                Some(Spanned::dummy(coef_var)),
                                 Box::new(Spanned::dummy(Exp::Coef(Box::new(Spanned::dummy(
                                     Exp::Var(fid.clone()),
                                 ))))),
@@ -2368,7 +2373,7 @@ impl<C: HasOpFactory> UDag<C> {
                             let mut matching_sigs: Vec<_> = fctx
                                 .iter()
                                 .filter_map(|(sig, body)| {
-                                    if sig.name.node != fid {
+                                    if sig.name.node != *fid {
                                         return None;
                                     }
                                     let (sig, subs) = sig.clone().unify(&param_types, kctx).ok()?;
@@ -2381,7 +2386,7 @@ impl<C: HasOpFactory> UDag<C> {
                                     sig.args
                                         .iter()
                                         .zip(param_types.0.iter())
-                                        .all(|(a, t)| a.typ == t.node)
+                                        .all(|(a, t)| a.typ.node == t.node)
                                 });
                             }
 
@@ -2471,7 +2476,11 @@ impl<C: HasOpFactory> UDag<C> {
                     let transcr_op = match &ol {
                         GOp::Ref(r, _)
                             if self[r.node()].is_transcript()
-                                && !self.vctx.get(&r.node()).map(|v| v != &id).unwrap_or(false) =>
+                                && !self
+                                    .vctx
+                                    .get(&r.node())
+                                    .map(|v| *v != id.node)
+                                    .unwrap_or(false) =>
                         {
                             let n = r.node();
                             // Node is already a transcript node and either has no name
@@ -2542,13 +2551,14 @@ impl<C: HasOpFactory> UDag<C> {
                 }
                 CExp::Fun(fun_vars, box body) => {
                     // Convert the Fun expression body to a PolyVariant
-                    let var_map: HashMap<Vid, usize> = fun_vars
+                    let fun_vars_vids: Vec<Vid> = fun_vars.iter().map(|v| v.node.clone()).collect();
+                    let var_map: HashMap<Vid, usize> = fun_vars_vids
                         .iter()
                         .enumerate()
                         .map(|(i, v)| (v.clone(), i))
                         .collect();
 
-                    let poly = Self::exp_to_poly_variant(&body, &fun_vars, &var_map)?;
+                    let poly = Self::exp_to_poly_variant(&body, &fun_vars_vids, &var_map)?;
 
                     // Create a Value::Poly from the PolyVariant wrapped in VirtualPolynomial
                     let poly_value = Value::Poly(VirtualPolynomial::from_poly(poly));

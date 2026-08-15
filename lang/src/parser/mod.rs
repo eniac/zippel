@@ -35,24 +35,19 @@ type RichError<'src> = Rich<'src, Token<'src>, SimpleSpan>;
 
 // ── Token matching helpers ─────────────────────────────────────────────
 
-/// Match an identifier, returning its name as a `Vid`.
+/// Match an identifier, returning its name as a `Spanned<Vid>`.
 fn id_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>(
-) -> impl Parser<'src, I, Vid, extra::Err<RichError<'src>>> + Clone {
+) -> impl Parser<'src, I, Spanned<Vid>, extra::Err<RichError<'src>>> + Clone {
     select! { Token::Id(s) => s }
         .labelled(Terminal::Identifier)
-        .map(|s| Vid(s.into_owned()))
+        .map_with(|s, e| {
+            let sp: SimpleSpan = e.span();
+            Spanned::new(Vid(s.into_owned()), sp.into_range())
+        })
 }
 
-/// Match an identifier, returning its name as a `Tid`.
+/// Match an identifier, returning its name as a `Spanned<Tid>`.
 fn tid_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>(
-) -> impl Parser<'src, I, Tid, extra::Err<RichError<'src>>> + Clone {
-    select! { Token::Id(s) => s }
-        .labelled(Terminal::Identifier)
-        .map(|s| Tid::from(s.into_owned()))
-}
-
-/// Match an identifier, returning its name as a `Spanned<Tid>` (with source span).
-fn tid_tok_spanned<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>(
 ) -> impl Parser<'src, I, Spanned<Tid>, extra::Err<RichError<'src>>> + Clone {
     select! { Token::Id(s) => s }
         .labelled(Terminal::Identifier)
@@ -93,7 +88,7 @@ where
             }),
             tid_tok().map_with(|t, e| {
                 let sp: SimpleSpan = e.span();
-                Spanned::new(Size::Var(t), sp.into_range())
+                Spanned::new(Size::Var(t.node), sp.into_range())
             }),
         ));
 
@@ -194,18 +189,19 @@ where
         scalar_kind(),
         range_parser().map(Kind::Range),
         // size_ref_ty: a bare size_ty → singleton range
-        size_ty_parser().map(|s| {
-            let s = s.node;
+        size_ty_parser().map_with(|s, e| {
+            let sp: SimpleSpan = e.span();
             Kind::Range(Range {
-                start: Spanned::dummy(s),
+                start: Spanned::new(s.node, sp.into_range()),
                 step: None,
                 end: None,
             })
         }),
         // positive: a bare positive literal → singleton range
-        positive_tok().map(|n| {
+        positive_tok().map_with(|n, e| {
+            let sp: SimpleSpan = e.span();
             Kind::Range(Range {
-                start: Spanned::dummy(Size::Lit(n)),
+                start: Spanned::new(Size::Lit(n), sp.into_range()),
                 step: None,
                 end: None,
             })
@@ -241,9 +237,9 @@ where
     just(Token::KwPairing)
         .ignored()
         .ignore_then(just(Token::LAngle).ignored())
-        .ignore_then(tid_tok_spanned())
+        .ignore_then(tid_tok())
         .then_ignore(just(Token::Comma).ignored())
-        .then(tid_tok_spanned())
+        .then(tid_tok())
         .then_ignore(just(Token::Comma).ignored().or_not())
         .then_ignore(just(Token::RAngle).ignored())
         .map(|(a, b)| Kind::Pairing(a, b))
@@ -258,7 +254,7 @@ where
         .ignored()
         .ignore_then(just(Token::LAngle).ignored())
         .ignore_then(
-            tid_tok_spanned()
+            tid_tok()
                 .separated_by(just(Token::Comma).ignored())
                 .allow_trailing()
                 .collect::<Vec<_>>(),
@@ -292,7 +288,7 @@ where
                 .then_ignore(just(Token::RAngle).ignored())
                 .map_with(|((b, m), n), e| {
                     let sp: SimpleSpan = e.span();
-                    Spanned::new(Typ::Poly(b, m.node, n.node), sp.into_range())
+                    Spanned::new(Typ::Poly(b.node, m, n), sp.into_range())
                 }),
             // Uni<F, N>
             just(Token::KwUni)
@@ -305,7 +301,10 @@ where
                 .then_ignore(just(Token::RAngle).ignored())
                 .map_with(|(b, n), e| {
                     let sp: SimpleSpan = e.span();
-                    Spanned::new(Typ::Poly(b, Size::Lit(1), n.node), sp.into_range())
+                    Spanned::new(
+                        Typ::Poly(b.node, Spanned::dummy(Size::Lit(1)), n),
+                        sp.into_range(),
+                    )
                 }),
             // Mle<F, N>
             just(Token::KwMleTy)
@@ -317,7 +316,7 @@ where
                 .then_ignore(just(Token::Comma).ignored().or_not())
                 .then_ignore(just(Token::RAngle).ignored())
                 .map_with(|(b, n), e| {
-                    Spanned::new(Typ::Poly(b, n.node, Size::Lit(1)), {
+                    Spanned::new(Typ::Poly(b.node, n, Spanned::dummy(Size::Lit(1))), {
                         let sp: SimpleSpan = e.span();
                         sp.into_range()
                     })
@@ -366,7 +365,7 @@ where
                 .then_ignore(just(Token::Semi).ignored().or_not())
                 .then_ignore(just(Token::RBrack).ignored())
                 .map_with(|(t, n), e| {
-                    Spanned::new(Typ::Vec(Box::new(t), n.node), {
+                    Spanned::new(Typ::Vec(Box::new(t), n), {
                         let sp: SimpleSpan = e.span();
                         sp.into_range()
                     })
@@ -383,10 +382,11 @@ where
                         .collect::<Vec<_>>(),
                 )
                 .then_ignore(just(Token::RBrace).ignored())
-                .map_with(|fields: Vec<(Tid, Spanned<GTyp<Size>>)>, e| {
+                .map_with(|fields: Vec<(Spanned<Tid>, Spanned<GTyp<Size>>)>, e| {
                     let mut ctx = share::Ctx::new();
                     for (name, typ) in fields {
-                        ctx.insert(&name.0, &typ);
+                        let field_name = Spanned::new(name.node.0.clone(), name.span.clone());
+                        ctx.insert(&field_name, &typ);
                     }
                     Spanned::new(Typ::Record(ctx), {
                         let sp: SimpleSpan = e.span();
@@ -395,7 +395,7 @@ where
                 }),
             // Base type variable
             tid_tok().map_with(|t, e| {
-                Spanned::new(Typ::Base(t), {
+                Spanned::new(Typ::Base(t.node), {
                     let sp: SimpleSpan = e.span();
                     sp.into_range()
                 })
@@ -415,7 +415,7 @@ fn tvar_parser<'src, I>(
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
-    tid_tok_spanned()
+    tid_tok()
         .then_ignore(just(Token::Colon).ignored())
         .then(kind_parser())
         .map_with(|(id, kind), e| {
@@ -448,7 +448,7 @@ where
 /// Parse a qualifier.
 /// Mirrors `qualifier = { instance | witness | extra }`
 fn qualifier_parser<'src, I>(
-) -> impl Parser<'src, I, Qualifier, extra::Err<RichError<'src>>> + Clone
+) -> impl Parser<'src, I, Spanned<Qualifier>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -457,24 +457,30 @@ where
         just(Token::KwWitness).ignored().to(Qualifier::Witness),
         just(Token::KwExtra).ignored().to(Qualifier::Extra),
     ))
+    .map_with(|q, e| {
+        let sp: SimpleSpan = e.span();
+        Spanned::new(q, sp.into_range())
+    })
 }
 
 /// Parse a distribution.
 /// Mirrors `distribution = { "uniform" ~ star? }`
 fn distribution_parser<'src, I>(
-) -> impl Parser<'src, I, Distribution, extra::Err<RichError<'src>>> + Clone
+) -> impl Parser<'src, I, Spanned<Distribution>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     just(Token::KwUniform)
         .ignored()
         .then(just(Token::Star).ignored().or_not())
-        .map(|(_, star)| {
-            if star.is_some() {
+        .map_with(|(_, star), e| {
+            let dist = if star.is_some() {
                 Distribution::UniformNonZero
             } else {
                 Distribution::Uniform
-            }
+            };
+            let sp: SimpleSpan = e.span();
+            Spanned::new(dist, sp.into_range())
         })
 }
 
@@ -495,10 +501,10 @@ where
             let sp: SimpleSpan = e.span();
             Spanned::new(
                 GArg {
-                    qualifier: qual.unwrap_or(Qualifier::Local),
-                    distribution: dist.unwrap_or(Distribution::Nonuniform),
+                    qualifier: qual.unwrap_or(Spanned::dummy(Qualifier::Local)),
+                    distribution: dist.unwrap_or(Spanned::dummy(Distribution::Nonuniform)),
                     id,
-                    typ: typ.node,
+                    typ,
                 },
                 sp.into_range(),
             )
@@ -807,10 +813,11 @@ where
                     .collect::<Vec<_>>(),
             )
             .then_ignore(just(Token::BarRBrace).ignored())
-            .map_with(|fields: Vec<(Vid, Spanned<UExp>)>, e| {
+            .map_with(|fields: Vec<(Spanned<Vid>, Spanned<UExp>)>, e| {
                 let mut ctx = share::Ctx::new();
                 for (name, val) in fields {
-                    ctx.insert(&name.0, &val);
+                    let field_name = Spanned::new(name.node.0.clone(), name.span.clone());
+                    ctx.insert(&field_name, &val);
                 }
                 Spanned::new(UExp::Record(ctx), {
                     let sp: SimpleSpan = e.span();
@@ -861,8 +868,8 @@ where
             }),
         // Bare identifier: uppercase → Size::Var, lowercase → Exp::Var
         id_tok().map_with(|id, e| {
-            let node = if id.0.starts_with(|c: char| c.is_uppercase()) {
-                UExp::Lit(Size::Var(Tid::from(id.0)))
+            let node = if id.node.0.starts_with(|c: char| c.is_uppercase()) {
+                UExp::Lit(Size::Var(Tid::from(id.node.0.as_str())))
             } else {
                 UExp::Var(id)
             };
@@ -887,10 +894,10 @@ where
         .ignored()
         .ignore_then(choice((
             range_parser(),
-            size_ty_parser().map(|s| {
-                let s = s.node;
+            size_ty_parser().map_with(|s, e| {
+                let sp: SimpleSpan = e.span();
                 Range {
-                    start: Spanned::dummy(s),
+                    start: Spanned::new(s.node, sp.into_range()),
                     step: None,
                     end: None,
                 }
@@ -1052,10 +1059,11 @@ where
                     .then(exp_no_seq_rec.clone().boxed())
                     .then_ignore(just(Token::Comma).ignored().or_not())
                     .then_ignore(just(Token::RParen).ignored()),
-                |lhs, (field, val): (Vid, Spanned<UExp>), sp| {
+                |lhs, (field, val): (Spanned<Vid>, Spanned<UExp>), sp| {
                     let sp: SimpleSpan = sp.span();
+                    let field_name = Spanned::new(field.node.0.clone(), field.span.clone());
                     Spanned::new(
-                        UExp::SetRecord(Box::new(lhs), field.0, Box::new(val)),
+                        UExp::SetRecord(Box::new(lhs), field_name, Box::new(val)),
                         sp.into_range(),
                     )
                 },
@@ -1067,9 +1075,10 @@ where
                     .ignored()
                     .labelled(Terminal::Operator)
                     .ignore_then(id_tok()),
-                |lhs, field: Vid, sp| {
+                |lhs, field: Spanned<Vid>, sp| {
                     let sp: SimpleSpan = sp.span();
-                    Spanned::new(UExp::Proj(Box::new(lhs), field.0), sp.into_range())
+                    let field_name = Spanned::new(field.node.0.clone(), field.span.clone());
+                    Spanned::new(UExp::Proj(Box::new(lhs), field_name), sp.into_range())
                 },
             ),
         ))
@@ -1258,7 +1267,7 @@ where
                 let range = span.into_range();
                 Spanned::new(
                     Decl::proto(
-                        Spanned::new(name, range.clone()),
+                        name,
                         tvars,
                         Spanned::new(Args(args), range.clone()),
                         relation,
@@ -1291,7 +1300,7 @@ where
                 let range = span.into_range();
                 Spanned::new(
                     Decl::func(
-                        Spanned::new(name, range.clone()),
+                        name,
                         tvars,
                         Spanned::new(Args(args), range.clone()),
                         ret,
@@ -1311,7 +1320,10 @@ where
                 let span: SimpleSpan = e.span();
                 let range = span.into_range();
                 Spanned::new(
-                    Decl::type_alias(Spanned::new(Vid(name.0), range.clone()), typ),
+                    Decl::type_alias(
+                        Spanned::new(Vid(name.node.0.clone()), name.span.clone()),
+                        typ,
+                    ),
                     range,
                 )
             })

@@ -104,26 +104,32 @@ impl Unify for CTyp {
                 Range::lub_equ(a, b, &Nothing).map_err(UnifyError::Lub)?,
             )),
             // Uni<A> == Uni<B>
-            (CTyp::Poly(a, 1, n), CTyp::Poly(b, 1, m)) => Ok(CTyp::Poly(
-                Tid::unify(a, b, ctx, subs).map_err(|e| UnifyError::typ(x, y, e))?,
-                1,
-                *n.max(m),
-            )),
+            (CTyp::Poly(a, na, n), CTyp::Poly(b, nb, m)) if na.node == 1 && nb.node == 1 => {
+                Ok(CTyp::Poly(
+                    Tid::unify(a, b, ctx, subs).map_err(|e| UnifyError::typ(x, y, e))?,
+                    Spanned::dummy(1),
+                    n.max(m).clone(),
+                ))
+            }
             // Mle<A> == Mle<B>
-            (CTyp::Poly(a, n, 1), CTyp::Poly(b, m, 1)) => Ok(CTyp::Poly(
-                Tid::unify(a, b, ctx, subs).map_err(|e| UnifyError::typ(x, y, e))?,
-                *n.max(m),
-                1,
-            )),
+            (CTyp::Poly(a, n, d), CTyp::Poly(b, m, e)) if d.node == 1 && e.node == 1 => {
+                Ok(CTyp::Poly(
+                    Tid::unify(a, b, ctx, subs).map_err(|e| UnifyError::typ(x, y, e))?,
+                    n.max(m).clone(),
+                    Spanned::dummy(1),
+                ))
+            }
             // Virtual / multivariate polynomials with tracked degree (>1): sizes must agree.
-            (CTyp::Poly(a, n, d), CTyp::Poly(b, m, e)) if *n > 1 && *d > 1 && *m > 1 && *e > 1 => {
+            (CTyp::Poly(a, n, d), CTyp::Poly(b, m, e))
+                if n.node > 1 && d.node > 1 && m.node > 1 && e.node > 1 =>
+            {
                 if n != m || d != e {
                     Err(UnifyError::typ_mismatch(x, y))
                 } else {
                     Ok(CTyp::Poly(
                         Tid::unify(a, b, ctx, subs).map_err(|e| UnifyError::typ(x, y, e))?,
-                        *n,
-                        *d,
+                        n.clone(),
+                        d.clone(),
                     ))
                 }
             }
@@ -133,7 +139,7 @@ impl Unify for CTyp {
                     Ok(CTyp::vec(
                         &CTyp::unify(&a.node, &b.node, ctx, subs)
                             .map_err(|e| UnifyError::typ(x, y, e))?,
-                        *n,
+                        n.node,
                     ))
                 } else {
                     Err(UnifyError::typ_mismatch(x, y))
@@ -154,7 +160,7 @@ impl Unify for CTyp {
                 Ok(CTyp::Record(unified_fields))
             }
             // Finite fields can act like 0 degree polynomals
-            (CTyp::Poly(a, 1, n), b) | (b, CTyp::Poly(a, 1, n)) => {
+            (CTyp::Poly(a, d, n), b) | (b, CTyp::Poly(a, d, n)) if d.node == 1 => {
                 let t = match b {
                     CTyp::Fin(_) => {
                         let ka = ctx.get(a).ok_or(UnifyError::typ_mismatch(x, y))?;
@@ -168,12 +174,12 @@ impl Unify for CTyp {
                 };
                 Ok(CTyp::Poly(
                     Tid::unify(a, &t, ctx, subs).map_err(|e| UnifyError::typ(x, y, e))?,
-                    1,
-                    *n,
+                    Spanned::dummy(1),
+                    n.clone(),
                 ))
             }
             // Finite fields can act like 0 variable MLEs
-            (CTyp::Poly(a, n, 1), b) | (b, CTyp::Poly(a, n, 1)) => {
+            (CTyp::Poly(a, n, d), b) | (b, CTyp::Poly(a, n, d)) if d.node == 1 => {
                 let t = match b {
                     CTyp::Fin(_) => {
                         let ka = ctx.get(a).ok_or(UnifyError::typ_mismatch(x, y))?;
@@ -187,8 +193,8 @@ impl Unify for CTyp {
                 };
                 Ok(CTyp::Poly(
                     Tid::unify(a, &t, ctx, subs).map_err(|e| UnifyError::typ(x, y, e))?,
-                    *n,
-                    1,
+                    n.clone(),
+                    Spanned::dummy(1),
                 ))
             }
             // Target-driven unification for Base and Fin
@@ -223,7 +229,7 @@ mod tests {
         let f = Tid::from("F");
         let ctx = Ctx::from([(f.clone(), Kind::Field)]);
         let mut subs = AliasSubsts::new();
-        let t = CTyp::Poly(f.clone(), 2, 2);
+        let t = CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(2));
         assert_eq!(CTyp::unify(&t, &t, &ctx, &mut subs), Ok(t));
     }
 

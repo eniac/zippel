@@ -34,9 +34,9 @@ pub enum Typ<T, N> {
     /// Polynomial with M variables and degree N over base type T
     /// Poly(F, 1, N) represents univariate polynomials of degree N
     /// Poly(F, M, 1) represents multilinear polynomials of M variables
-    Poly(T, N, N),
+    Poly(T, Spanned<N>, Spanned<N>),
     /// Vector of size [N] and base type [Typ]
-    Vec(Box<Spanned<Typ<T, N>>>, N),
+    Vec(Box<Spanned<Typ<T, N>>>, Spanned<N>),
     /// Tid type [Tid]
     Base(T),
     /// Fin within range
@@ -44,7 +44,7 @@ pub enum Typ<T, N> {
     /// Unit type (assert/verify/protocol return)
     Unit,
     /// Record type with named fields
-    Record(Ctx<String, Spanned<Typ<T, N>>>),
+    Record(Ctx<Spanned<String>, Spanned<Typ<T, N>>>),
 }
 
 /// Many types
@@ -111,7 +111,7 @@ impl<T, N> Typ<T, N> {
         T: Clone,
         N: Clone,
     {
-        Typ::Vec(Box::new(Spanned::dummy(b.clone())), n)
+        Typ::Vec(Box::new(Spanned::dummy(b.clone())), Spanned::dummy(n))
     }
     pub fn fin(range: Range<N>) -> Self {
         Typ::Fin(range)
@@ -119,10 +119,7 @@ impl<T, N> Typ<T, N> {
     pub fn unit() -> Self {
         Typ::Unit
     }
-    pub fn record(fields: Ctx<String, Spanned<Typ<T, N>>>) -> Self {
-        Typ::Record(fields)
-    }
-    pub fn into_vec(self) -> (Spanned<Self>, N) {
+    pub fn into_vec(self) -> (Spanned<Self>, Spanned<N>) {
         match self {
             Typ::Vec(box t, n) => (t, n),
             _ => unreachable!(),
@@ -131,23 +128,17 @@ impl<T, N> Typ<T, N> {
 }
 
 impl<N> GTyp<N> {
-    pub fn varstr(b: &str) -> Self {
-        Typ::Base(Tid::new(b))
-    }
-    pub fn var(b: &Tid) -> Self {
-        Typ::Base(b.clone())
-    }
     pub fn uni(b: &Tid, n: N) -> Self
     where
         N: From<usize>,
     {
-        Typ::Poly(b.clone(), N::from(1), n)
+        Typ::Poly(b.clone(), Spanned::dummy(N::from(1)), Spanned::dummy(n))
     }
     pub fn mle(b: &Tid, m: N) -> Self
     where
         N: From<usize>,
     {
-        Typ::Poly(b.clone(), m, N::from(1))
+        Typ::Poly(b.clone(), Spanned::dummy(m), Spanned::dummy(N::from(1)))
     }
 
     pub fn to_scalar<M>(&self, ctx: &Ctx<Tid, Kind<M>>) -> Option<Tid> {
@@ -186,37 +177,6 @@ impl<N> GTyp<N> {
             _ => None,
         }
     }
-
-    pub fn to_scalar_vec<M>(&self, ctx: &Ctx<Tid, Kind<M>>) -> Option<(Tid, N)>
-    where
-        N: Clone,
-    {
-        match self {
-            Typ::Vec(box t, n) => {
-                let s = t.node.to_scalar(ctx)?;
-                Some((s, n.clone()))
-            }
-            _ => None,
-        }
-    }
-}
-
-impl CTyp {
-    /// Helper to check if this is a univariate polynomial and extract (base_type, degree)
-    pub fn as_uni(&self) -> Option<(&Tid, usize)> {
-        match self {
-            Typ::Poly(tid, 1, n) => Some((tid, *n)),
-            _ => None,
-        }
-    }
-
-    /// Helper to check if this is a multilinear extension and extract (base_type, num_vars)
-    pub fn as_mle(&self) -> Option<(&Tid, usize)> {
-        match self {
-            Typ::Poly(tid, m, 1) => Some((tid, *m)),
-            _ => None,
-        }
-    }
 }
 
 impl<T, N> Typs<T, N> {
@@ -228,9 +188,6 @@ impl<T, N> Typs<T, N> {
     }
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
-    }
-    pub fn last(&self) -> Option<&Spanned<Typ<T, N>>> {
-        self.0.last()
     }
 }
 
@@ -264,9 +221,16 @@ impl<T: Clone, N: Clone> ToTraversal2<N> for Typ<T, N> {
         f: &mut dyn FnMut(N) -> Result<Z, E>,
     ) -> Result<Self::Output<Z>, E> {
         match self {
-            Typ::Poly(b, m, n) => Ok(Typ::Poly(b, f(m)?, f(n)?)),
+            Typ::Poly(b, m, n) => Ok(Typ::Poly(
+                b,
+                Spanned::new(f(m.node)?, m.span),
+                Spanned::new(f(n.node)?, n.span),
+            )),
             Typ::Base(b) => Ok(Typ::Base(b)),
-            Typ::Vec(box b, n) => Ok(Typ::Vec(Box::new(b.traverse2(f)?), f(n)?)),
+            Typ::Vec(box b, n) => Ok(Typ::Vec(
+                Box::new(b.traverse2(f)?),
+                Spanned::new(f(n.node)?, n.span),
+            )),
             Typ::Fin(r) => Ok(Typ::Fin(r.traverse1(f)?)),
             Typ::Unit => Ok(Typ::Unit),
             Typ::Record(fields) => {
@@ -392,9 +356,9 @@ where
                 allocator.text("Poly<"),
                 b.pretty(allocator),
                 allocator.text(", "),
-                m.pretty(allocator),
+                m.node.pretty(allocator),
                 allocator.text(", "),
-                n.pretty(allocator),
+                n.node.pretty(allocator),
                 allocator.text(">"),
             ]),
             Typ::Base(base) => base.pretty(allocator),
@@ -402,7 +366,7 @@ where
                 allocator.text("["),
                 t.pretty(allocator),
                 allocator.text("; "),
-                n.pretty(allocator),
+                n.node.pretty(allocator),
                 allocator.text("]"),
             ]),
             Typ::Fin(r) => allocator.concat([
@@ -418,7 +382,7 @@ where
                     .into_iter()
                     .map(|(name, typ)| {
                         allocator.concat([
-                            allocator.text(name),
+                            allocator.text(name.node),
                             allocator.text(": "),
                             typ.pretty(allocator),
                         ])

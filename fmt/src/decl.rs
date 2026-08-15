@@ -297,19 +297,19 @@ fn format_arg(
     let mut has_prefix = false;
     let mut leading_gap = TriviaGap::default();
 
-    if !matches!(arg.node.qualifier, Qualifier::Local) {
-        let qualifier_gap = cursor.advance_to_token(end, |token| match arg.node.qualifier {
+    if !matches!(arg.node.qualifier.node, Qualifier::Local) {
+        let qualifier_gap = cursor.advance_to_token(end, |token| match arg.node.qualifier.node {
             Qualifier::Witness => matches!(token, Token::KwWitness),
             Qualifier::Extra => matches!(token, Token::KwExtra),
             Qualifier::Instance => matches!(token, Token::KwInstance),
             Qualifier::Local => false,
         });
         leading_gap = qualifier_gap;
-        parts.push(ALLOC.text(qualifier_text(arg.node.qualifier)));
+        parts.push(ALLOC.text(qualifier_text(arg.node.qualifier.node)));
         has_prefix = true;
     }
 
-    if !matches!(arg.node.distribution, Distribution::Nonuniform) {
+    if !matches!(arg.node.distribution.node, Distribution::Nonuniform) {
         let uniform_gap = cursor.advance_to_token(end, |token| matches!(token, Token::KwUniform));
         if has_prefix {
             parts.push(gap_space(uniform_gap, style));
@@ -317,7 +317,7 @@ fn format_arg(
             leading_gap = uniform_gap;
         }
         parts.push(ALLOC.text("uniform"));
-        if matches!(arg.node.distribution, Distribution::UniformNonZero) {
+        if matches!(arg.node.distribution.node, Distribution::UniformNonZero) {
             let star_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Star));
             parts.push(gap_space(star_gap, style));
             parts.push(ALLOC.text("*"));

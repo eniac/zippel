@@ -1,6 +1,6 @@
 use crate::ast::spanned::Spanned;
+use crate::ast::GArgs;
 use crate::ast::Size;
-use crate::ast::{GArg, GArgs};
 use crate::id::{Fresh, Tid, TidSubst, Vid};
 use crate::typ::subst::AliasSubsts;
 use crate::typ::unify::{Unify, UnifyError};
@@ -58,16 +58,9 @@ impl CSig {
         let kind_ctx = shifted.typevars.node.to_ctx().union(kctx);
 
         // Unification of arguments and parameters
-        let mut args = Vec::new();
         for (l, r) in shifted.args.node.iter().zip(typs.iter()) {
-            let typ = CTyp::unify(&l.typ, r, &kind_ctx, &mut subs)
+            CTyp::unify(&l.typ.node, r, &kind_ctx, &mut subs)
                 .map_err(|e| SigError::Unify(shifted.clone(), typs.clone(), e))?;
-            args.push(GArg {
-                qualifier: l.qualifier,
-                distribution: l.distribution,
-                id: l.id.clone(),
-                typ,
-            });
         }
 
         // Substitute alias in the return type and typevars
@@ -206,7 +199,7 @@ mod tests {
             unified_sig.ret.as_ref().map(|r| &r.node),
             Some(&arg_typ.clone())
         );
-        assert_eq!(unified_sig.args.node.0[0].typ, arg_typ);
+        assert_eq!(unified_sig.args.node.0[0].typ.node, arg_typ);
     }
 
     #[test]

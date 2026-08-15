@@ -69,12 +69,12 @@ pub fn check_size_binding(sig: &Sig<Size>) -> Vec<Diagnostic> {
 
     // Check size vars in argument types
     for arg in &sig.args.node.0 {
-        collect_size_vars_in_typ(&arg.node.typ, &arg.span, &declared, &mut unbound);
+        collect_size_vars_in_typ(&arg.node.typ.node, &declared, &mut unbound);
     }
 
     // Check size vars in return type
     if let Some(ret) = &sig.ret {
-        collect_size_vars_in_typ(&ret.node, &ret.span, &declared, &mut unbound);
+        collect_size_vars_in_typ(&ret.node, &declared, &mut unbound);
     }
 
     // Check size vars in typevar kinds (e.g. Range bounds)
@@ -110,21 +110,18 @@ pub fn check_size_binding(sig: &Sig<Size>) -> Vec<Diagnostic> {
 }
 
 /// Collect all `Size::Var` names used in a type and check they're declared.
-/// `span` is the span of the enclosing type expression — `Size` values inside
-/// types don't carry their own spans.
 fn collect_size_vars_in_typ(
     typ: &GTyp<Size>,
-    span: &Range<usize>,
     declared: &[Tid],
     unbound: &mut Vec<(Tid, Range<usize>)>,
 ) {
     match typ {
         Typ::Poly(_, _, n) => {
-            collect_size_vars_in_size(&Spanned::new(n.clone(), span.clone()), declared, unbound);
+            collect_size_vars_in_size(n, declared, unbound);
         }
         Typ::Vec(inner, n) => {
-            collect_size_vars_in_size(&Spanned::new(n.clone(), span.clone()), declared, unbound);
-            collect_size_vars_in_typ(&inner.node, &inner.span, declared, unbound);
+            collect_size_vars_in_size(n, declared, unbound);
+            collect_size_vars_in_typ(&inner.node, declared, unbound);
         }
         Typ::Base(_) | Typ::Unit => {}
         Typ::Fin(r) => {
@@ -138,7 +135,7 @@ fn collect_size_vars_in_typ(
         }
         Typ::Record(fields) => {
             for (_, t) in fields.iter() {
-                collect_size_vars_in_typ(&t.node, &t.span, declared, unbound);
+                collect_size_vars_in_typ(&t.node, declared, unbound);
             }
         }
     }

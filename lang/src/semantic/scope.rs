@@ -50,12 +50,10 @@ fn undefined_variable(
         d = d.secondary_label(s.clone(), &format!("`{name}` also used here"));
     }
 
-    // Add secondary labels for similar names
-    for (n, span) in similar {
-        d = d.secondary_label(span.clone(), &format!("`{n}` defined here"));
-    }
-
-    // Add "did you mean?" suggestion if there are similar names
+    // Add "did you mean?" suggestion if there are similar names.
+    // The suggestion points at the error site (primary_span) with the
+    // replacement text, so no separate "defined here" label is needed —
+    // the suggestion already tells the user which variable to use.
     if !similar.is_empty() {
         let names: Vec<String> = similar.iter().map(|(n, _)| format!("`{n}`")).collect();
         d = d.suggestion(
@@ -82,7 +80,7 @@ pub fn check_scope(decl: &UDecl) -> Vec<Diagnostic> {
         .node
         .0
         .iter()
-        .map(|a| (a.node.id.clone(), a.span.clone()))
+        .map(|a| (a.node.id.node.clone(), a.node.id.span.clone()))
         .collect();
 
     // Collect all undefined variable occurrences, preserving first-seen order.
@@ -144,10 +142,10 @@ fn check_exp_scope(
 ) {
     match &exp.node {
         Exp::Var(name) => {
-            if !scope.iter().any(|(n, _)| n == name) {
+            if !scope.iter().any(|(n, _)| n == &name.node) {
                 undefined.push(UndefinedOccurrence {
-                    name: name.clone(),
-                    use_span: exp.span.clone(),
+                    name: name.node.clone(),
+                    use_span: name.span.clone(),
                     scope: scope.to_vec(),
                 });
             }
@@ -191,7 +189,7 @@ fn check_exp_scope(
             check_exp_scope(iter, scope, undefined);
             // The body is evaluated with `var` in scope
             let mut inner_scope = scope.to_vec();
-            inner_scope.push((var.clone(), exp.span.clone()));
+            inner_scope.push((var.node.clone(), var.span.clone()));
             check_exp_scope(body, &inner_scope, undefined);
         }
 
@@ -212,7 +210,7 @@ fn check_exp_scope(
             if let Some(cont) = cont {
                 if let Some(name) = name {
                     let mut inner_scope = scope.to_vec();
-                    inner_scope.push((name.clone(), exp.span.clone()));
+                    inner_scope.push((name.node.clone(), name.span.clone()));
                     check_exp_scope(cont, &inner_scope, undefined);
                 } else {
                     check_exp_scope(cont, scope, undefined);
@@ -226,7 +224,7 @@ fn check_exp_scope(
             // The continuation is evaluated with `name` in scope
             if let Some(cont) = cont {
                 let mut inner_scope = scope.to_vec();
-                inner_scope.push((name.clone(), exp.span.clone()));
+                inner_scope.push((name.node.clone(), name.span.clone()));
                 check_exp_scope(cont, &inner_scope, undefined);
             }
         }
@@ -240,7 +238,7 @@ fn check_exp_scope(
             // Function parameters are in scope in the body
             let mut inner_scope = scope.to_vec();
             for p in params {
-                inner_scope.push((p.clone(), exp.span.clone()));
+                inner_scope.push((p.node.clone(), p.span.clone()));
             }
             check_exp_scope(body, &inner_scope, undefined);
         }

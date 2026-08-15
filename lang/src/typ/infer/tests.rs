@@ -11,16 +11,16 @@ fn lit<N>(v: N) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Lit(v))
 }
 fn varstr<N>(x: &str) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Var(Vid::from(x)))
+    Spanned::dummy(Exp::Var(Spanned::dummy(Vid::from(x))))
 }
 fn range<N>(r: Range<N>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Range(r))
 }
 fn challenge<N>(t: Tid) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Challenge(t, false))
+    Spanned::dummy(Exp::Challenge(Spanned::dummy(t), false))
 }
 fn random<N>(t: Tid) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Random(t, false))
+    Spanned::dummy(Exp::Random(Spanned::dummy(t), false))
 }
 fn bin<N>(op: BinOp, l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Bin(op, Box::new(l), Box::new(r)))
@@ -62,7 +62,7 @@ fn vec<N>(v: Vec<Spanned<Exp<N>>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Vec(Exps(v)))
 }
 fn map<N>(l: Spanned<Exp<N>>, x: Vid, range: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Map(Box::new(l), x, Box::new(range)))
+    Spanned::dummy(Exp::Map(Box::new(l), Spanned::dummy(x), Box::new(range)))
 }
 fn reduce<N>(op: BinOp, a: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Reduce(op, Box::new(a)))
@@ -100,29 +100,37 @@ fn verify_eq<N>(lhs: Spanned<Exp<N>>, rhs: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Verify(Box::new(lhs), Box::new(rhs)))
 }
 fn letx<N>(a: Vid, d: Spanned<Exp<N>>, e: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Let(Some(a), Box::new(d), Some(Box::new(e))))
+    Spanned::dummy(Exp::Let(
+        Some(Spanned::dummy(a)),
+        Box::new(d),
+        Some(Box::new(e)),
+    ))
 }
 fn logx<N>(a: Vid, d: Spanned<Exp<N>>, e: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Log(a, Box::new(d), Some(Box::new(e))))
+    Spanned::dummy(Exp::Log(Spanned::dummy(a), Box::new(d), Some(Box::new(e))))
 }
 fn seq<N>(a: Spanned<Exp<N>>, b: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Let(None, Box::new(a), Some(Box::new(b))))
 }
 fn app<N>(id: Vid, args: Exps<N>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::App(id, args))
+    Spanned::dummy(Exp::App(Spanned::dummy(id), args))
 }
-fn record<N>(fields: Ctx<String, Spanned<Exp<N>>>) -> Spanned<Exp<N>> {
+fn record<N>(fields: Ctx<Spanned<String>, Spanned<Exp<N>>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Record(fields))
 }
 fn proj<N>(exp: Spanned<Exp<N>>, field: String) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Proj(Box::new(exp), field))
+    Spanned::dummy(Exp::Proj(Box::new(exp), Spanned::dummy(field)))
 }
 fn set_record<N>(
     record: Spanned<Exp<N>>,
     field: String,
     value: Spanned<Exp<N>>,
 ) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::SetRecord(Box::new(record), field, Box::new(value)))
+    Spanned::dummy(Exp::SetRecord(
+        Box::new(record),
+        Spanned::dummy(field),
+        Box::new(value),
+    ))
 }
 
 /// Extension trait so `Spanned<CExp>` can call `.infer()` directly, delegating
@@ -168,9 +176,9 @@ lazy_static! {
         // Add variable "y" of type "F"
         vctx.insert(&Vid::from("f2"), &CTyp::Base(Tid::from("F")));
         // Add vector variable "v1" with element type "F" and length 5
-        vctx.insert(&Vid::from("v1"), &CTyp::Vec(Box::new(Spanned::dummy(CTyp::Base(Tid::from("F")))), 5));
+        vctx.insert(&Vid::from("v1"), &CTyp::Vec(Box::new(Spanned::dummy(CTyp::Base(Tid::from("F")))), Spanned::dummy(5)));
         // Add vector variable "v2" with element type "F" and length 4
-        vctx.insert(&Vid::from("v2"), &CTyp::Vec(Box::new(Spanned::dummy(CTyp::Base(Tid::from("F")))), 4));
+        vctx.insert(&Vid::from("v2"), &CTyp::Vec(Box::new(Spanned::dummy(CTyp::Base(Tid::from("F")))), Spanned::dummy(4)));
         // Add variable "g" of type "G"
         vctx.insert(&Vid::from("g1"), &CTyp::Base(Tid::from("G")));
         // Add variable "g2" of type "G"
@@ -180,9 +188,9 @@ lazy_static! {
         // Add variable "s2" of type "S"
         vctx.insert(&Vid::from("s2"), &CTyp::Base(Tid::from("S")));
         // Add variable "p" of type "Uni<F, 5>"
-        vctx.insert(&Vid::from("p"), &CTyp::Poly(Tid::from("F"), 1, 5));
+        vctx.insert(&Vid::from("p"), &CTyp::Poly(Tid::from("F"), Spanned::dummy(1), Spanned::dummy(5)));
         // Add variable "m" of type "Mle<F, 8>"
-        vctx.insert(&Vid::from("m"), &CTyp::Poly(Tid::from("F"), 8, 1));
+        vctx.insert(&Vid::from("m"), &CTyp::Poly(Tid::from("F"), Spanned::dummy(8), Spanned::dummy(1)));
         vctx
     };
 }
@@ -237,7 +245,7 @@ fn test_binary_add_inference() {
         vec_add1.infer(&KIND_CTX, &fctx, &vctx),
         Ok(CTyp::Vec(
             Box::new(Spanned::dummy(CTyp::Base(Tid::from("F")))),
-            5
+            Spanned::dummy(5)
         ))
     );
 
@@ -280,7 +288,7 @@ fn test_binary_sub_inference() {
         vec_sub1.infer(&KIND_CTX, &fctx, &vctx),
         Ok(CTyp::Vec(
             Box::new(Spanned::dummy(CTyp::Base(Tid::from("F")))),
-            5
+            Spanned::dummy(5)
         ))
     );
 
@@ -320,7 +328,7 @@ fn test_binary_mul_inference() {
         vec_mul1.infer(&KIND_CTX, &fctx, &vctx),
         Ok(CTyp::Vec(
             Box::new(Spanned::dummy(CTyp::Base(Tid::from("F")))),
-            5
+            Spanned::dummy(5)
         ))
     );
 
@@ -334,7 +342,10 @@ fn test_binary_mul_inference() {
 fn test_binary_div_inference() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
-    vctx.insert(&Vid::from("pc"), &CTyp::Poly(Tid::from("F"), 1, 0));
+    vctx.insert(
+        &Vid::from("pc"),
+        &CTyp::Poly(Tid::from("F"), Spanned::dummy(1), Spanned::dummy(0)),
+    );
 
     // Create expression x / y
     let field_div = div(varstr("f1"), varstr("f2"));
@@ -361,7 +372,7 @@ fn test_binary_div_inference() {
         vec_div1.infer(&KIND_CTX, &fctx, &vctx),
         Ok(CTyp::Vec(
             Box::new(Spanned::dummy(CTyp::Base(Tid::from("F")))),
-            5
+            Spanned::dummy(5)
         ))
     );
 
@@ -391,14 +402,22 @@ fn test_binary_div_inference() {
     let poly_div_scalar = div(varstr("p"), varstr("f1"));
     assert_eq!(
         poly_div_scalar.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Poly(Tid::from("F"), 1, 5))
+        Ok(CTyp::Poly(
+            Tid::from("F"),
+            Spanned::dummy(1),
+            Spanned::dummy(5)
+        ))
     );
 
     // Create expression p / p; Poly / Poly remains accepted.
     let uni_div = div(varstr("p"), varstr("p"));
     assert_eq!(
         uni_div.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Poly(Tid::from("F"), 1, 0))
+        Ok(CTyp::Poly(
+            Tid::from("F"),
+            Spanned::dummy(1),
+            Spanned::dummy(0)
+        ))
     );
 }
 
@@ -426,7 +445,11 @@ fn test_binary_rem_inference() {
     let uni_rem = rem(varstr("p"), varstr("p"));
     assert_eq!(
         uni_rem.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Poly(Tid::from("F"), 1, 4))
+        Ok(CTyp::Poly(
+            Tid::from("F"),
+            Spanned::dummy(1),
+            Spanned::dummy(4)
+        ))
     );
 }
 
@@ -463,7 +486,7 @@ fn test_binary_pow_inference() {
     let vec_pow1 = pow(varstr("v1"), vec(vec![lit(1); 5]));
     assert_eq!(
         vec_pow1.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::vec(&CTyp::varstr("F"), 5))
+        Ok(CTyp::vec(&CTyp::base(&Tid::from("F")), 5))
     );
 
     // Create expression v1 ^ v2
@@ -513,7 +536,7 @@ fn test_binary_concat_inference() {
 
     assert_eq!(
         vec_concat.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::vec(&CTyp::varstr("F"), 9))
+        Ok(CTyp::vec(&CTyp::base(&Tid::from("F")), 9))
     );
 
     // Create expression v1 ++ f1
@@ -521,14 +544,14 @@ fn test_binary_concat_inference() {
 
     assert_eq!(
         fv1_concat.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::vec(&CTyp::varstr("F"), 6))
+        Ok(CTyp::vec(&CTyp::base(&Tid::from("F")), 6))
     );
 
     // Create expression f2 ++ v1
     let fv2_concat = concat(varstr("f2"), varstr("v2"));
     assert_eq!(
         fv2_concat.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::vec(&CTyp::varstr("F"), 5))
+        Ok(CTyp::vec(&CTyp::base(&Tid::from("F")), 5))
     );
 }
 
@@ -549,7 +572,7 @@ fn test_vector_inference() {
     let lit_vec2 = vec(vec![lit(1), varstr("f1"), lit(3)]);
     assert_eq!(
         lit_vec2.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::vec(&CTyp::varstr("F"), 3))
+        Ok(CTyp::vec(&CTyp::base(&Tid::from("F")), 3))
     );
 
     // Create a vector expression [1, f1, g1]
@@ -691,13 +714,21 @@ fn test_app() {
     let mle_app = app("m".into(), Exps::from([lit(1)]));
     assert_eq!(
         mle_app.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Poly(Tid::from("F"), 7, 1))
+        Ok(CTyp::Poly(
+            Tid::from("F"),
+            Spanned::dummy(7),
+            Spanned::dummy(1)
+        ))
     );
 
     let mle_app_vec = app("m".into(), Exps::from([varstr("v1")]));
     assert_eq!(
         mle_app_vec.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Poly(Tid::from("F"), 3, 1))
+        Ok(CTyp::Poly(
+            Tid::from("F"),
+            Spanned::dummy(3),
+            Spanned::dummy(1)
+        ))
     );
 }
 
@@ -743,7 +774,11 @@ fn test_phase14_poly_shape_sweep() {
         let e = poly(v);
         assert_eq!(
             e.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Poly(Tid::from("F"), 1, k - 1)),
+            Ok(CTyp::Poly(
+                Tid::from("F"),
+                Spanned::dummy(1),
+                Spanned::dummy(k - 1)
+            )),
             "poly([F; {k}]) should yield Poly<F, 1, {}>",
             k - 1,
         );
@@ -761,7 +796,7 @@ fn test_phase14_coef_shape_sweep() {
         let pname = format!("p_{m}");
         vctx.insert(
             &Vid::from(pname.as_str()),
-            &CTyp::Poly(Tid::from("F"), 1, m),
+            &CTyp::Poly(Tid::from("F"), Spanned::dummy(1), Spanned::dummy(m)),
         );
         let e = coef(varstr(pname.as_str()));
         assert_eq!(
@@ -792,7 +827,11 @@ fn test_phase14_mle_pow2_sweep() {
         let e = mle(varstr(vname.as_str()));
         assert_eq!(
             e.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Poly(Tid::from("F"), n, 1)),
+            Ok(CTyp::Poly(
+                Tid::from("F"),
+                Spanned::dummy(n),
+                Spanned::dummy(1)
+            )),
             "mle([F; {len}]) should yield Mle<F, {n}>",
         );
     }
@@ -833,7 +872,7 @@ fn test_phase14_evaluate_grid_accept_sweep() {
         let pname = format!("p_{m}");
         vctx.insert(
             &Vid::from(pname.as_str()),
-            &CTyp::Poly(Tid::from("F"), 1, m),
+            &CTyp::Poly(Tid::from("F"), Spanned::dummy(1), Spanned::dummy(m)),
         );
         let e = evaluate_grid(varstr(pname.as_str()));
         assert_eq!(
@@ -857,7 +896,7 @@ fn test_phase14_evaluate_grid_reject_sweep() {
         let pname = format!("p_{m}");
         vctx.insert(
             &Vid::from(pname.as_str()),
-            &CTyp::Poly(Tid::from("F"), 1, m),
+            &CTyp::Poly(Tid::from("F"), Spanned::dummy(1), Spanned::dummy(m)),
         );
         let e = evaluate_grid(varstr(pname.as_str()));
         let result = e.infer(&KIND_CTX, &fctx, &vctx);
@@ -882,7 +921,11 @@ fn test_phase14_interpolate_unary_accept_sweep() {
         let e = interpolate_grid(v);
         assert_eq!(
             e.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Poly(Tid::from("F"), 1, n - 1)),
+            Ok(CTyp::Poly(
+                Tid::from("F"),
+                Spanned::dummy(1),
+                Spanned::dummy(n - 1)
+            )),
             "interpolate([F; {n}]) should yield Poly<F, 1, {}>",
             n - 1,
         );
@@ -921,7 +964,11 @@ fn test_phase14_interpolate_binary_shape_sweep() {
         let e = interpolate_at(pts, evs);
         assert_eq!(
             e.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Poly(Tid::from("F"), 1, n - 1)),
+            Ok(CTyp::Poly(
+                Tid::from("F"),
+                Spanned::dummy(1),
+                Spanned::dummy(n - 1)
+            )),
             "interpolate(pts: [F; {n}], evs: [F; {n}]) should yield \
                  Poly<F, 1, {}>",
             n - 1,
@@ -939,7 +986,10 @@ fn test_phase14_ram_uni_scalar_index_boundary() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
     // p3 : Poly<F, 1, 3>  --  max degree 3, 4 coefficients (indices 0..4).
-    vctx.insert(&Vid::from("p3"), &CTyp::Poly(Tid::from("F"), 1, 3));
+    vctx.insert(
+        &Vid::from("p3"),
+        &CTyp::Poly(Tid::from("F"), Spanned::dummy(1), Spanned::dummy(3)),
+    );
 
     // Indexing at 0, 1, 2 was already accepted under the old bound.
     for i in 0usize..=2 {
@@ -979,7 +1029,10 @@ fn test_phase14_ram_uni_scalar_index_boundary() {
 fn test_phase14_ram_uni_vector_index_boundary() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
-    vctx.insert(&Vid::from("p3"), &CTyp::Poly(Tid::from("F"), 1, 3));
+    vctx.insert(
+        &Vid::from("p3"),
+        &CTyp::Poly(Tid::from("F"), Spanned::dummy(1), Spanned::dummy(3)),
+    );
 
     // Slicing all 4 coefficient indices (range 0..4) must typecheck under
     // the m+1 convention (r.end = 4 <= n + 1 = 4). Was rejected before.
@@ -1015,7 +1068,7 @@ fn test_phase14_map_over_poly_vector() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
     // pv : [Poly<F, 1, 3>; 4]
-    let poly_t = CTyp::Poly(Tid::from("F"), 1, 3);
+    let poly_t = CTyp::Poly(Tid::from("F"), Spanned::dummy(1), Spanned::dummy(3));
     vctx.insert(&Vid::from("pv"), &CTyp::vec(&poly_t, 4));
 
     // map x in pv => x       -- the result element type matches the
@@ -1044,7 +1097,7 @@ fn test_phase14_map_over_poly_vector() {
 fn test_phase14_reduce_add_over_poly_vector() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
-    let poly_t = CTyp::Poly(Tid::from("F"), 1, 3);
+    let poly_t = CTyp::Poly(Tid::from("F"), Spanned::dummy(1), Spanned::dummy(3));
     vctx.insert(&Vid::from("pv"), &CTyp::vec(&poly_t, 4));
 
     let e = reduce(BinOp::Add, varstr("pv"));
@@ -1078,7 +1131,7 @@ fn test_reduce_mul_poly_invalid_coeff_kind() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
     // Poly with group coefficients G
-    let poly_t = CTyp::Poly(Tid::from("G"), 1, 3);
+    let poly_t = CTyp::Poly(Tid::from("G"), Spanned::dummy(1), Spanned::dummy(3));
     vctx.insert(&Vid::from("pv_g"), &CTyp::vec(&poly_t, 4));
 
     let e = reduce(BinOp::Mul, varstr("pv_g"));
@@ -1091,7 +1144,11 @@ fn test_reduce_mul_poly_overflow() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
     // Poly with field coefficients F but extremely large degree to trigger overflow
-    let poly_t = CTyp::Poly(Tid::from("F"), 1, usize::MAX / 2);
+    let poly_t = CTyp::Poly(
+        Tid::from("F"),
+        Spanned::dummy(1),
+        Spanned::dummy(usize::MAX / 2),
+    );
     vctx.insert(&Vid::from("pv_overflow"), &CTyp::vec(&poly_t, 4));
 
     let e = reduce(BinOp::Mul, varstr("pv_overflow"));
@@ -1111,7 +1168,11 @@ fn test_reduce_mul_poly_pbt() {
         let degree = u.int_in_range(0..=4)?;
         let vector_len = u.int_in_range(1..=4)?;
 
-        let poly_t = CTyp::Poly(Tid::from("F"), num_vars, degree);
+        let poly_t = CTyp::Poly(
+            Tid::from("F"),
+            Spanned::dummy(num_vars),
+            Spanned::dummy(degree),
+        );
         let vec_poly_t = CTyp::vec(&poly_t, vector_len);
 
         let mut vctx = Ctx::new();
@@ -1119,7 +1180,11 @@ fn test_reduce_mul_poly_pbt() {
 
         let e = reduce(BinOp::Mul, varstr("pv"));
         let expected_deg = degree * vector_len;
-        let expected_t = CTyp::Poly(Tid::from("F"), num_vars, expected_deg);
+        let expected_t = CTyp::Poly(
+            Tid::from("F"),
+            Spanned::dummy(num_vars),
+            Spanned::dummy(expected_deg),
+        );
 
         assert_eq!(
             e.infer(&KIND_CTX, &fctx, &vctx),
@@ -1141,17 +1206,17 @@ fn test_record_inference() {
     let vctx = VAR_CTX.clone();
 
     let mut fields = Ctx::new();
-    fields.insert(&"x".to_string(), &lit(1));
-    fields.insert(&"y".to_string(), &varstr("f1"));
+    fields.insert(&Spanned::dummy("x".to_string()), &lit(1));
+    fields.insert(&Spanned::dummy("y".to_string()), &varstr("f1"));
     let record_exp = record(fields);
 
     let mut expected_fields = Ctx::new();
     expected_fields.insert(
-        &"x".to_string(),
+        &Spanned::dummy("x".to_string()),
         &Spanned::dummy(CTyp::Fin(Range::singleton(1))),
     );
     expected_fields.insert(
-        &"y".to_string(),
+        &Spanned::dummy("y".to_string()),
         &Spanned::dummy(CTyp::Base(Tid::from("F"))),
     );
     let expected_typ = CTyp::Record(expected_fields);
@@ -1166,7 +1231,7 @@ fn test_proj_inference() {
 
     let mut fields = Ctx::new();
     fields.insert(
-        &"x".to_string(),
+        &Spanned::dummy("x".to_string()),
         &Spanned::dummy(CTyp::Base(Tid::from("F"))),
     );
     vctx.insert(&Vid::from("r"), &CTyp::Record(fields));
@@ -1188,7 +1253,7 @@ fn test_set_record_inference() {
 
     let mut fields = Ctx::new();
     fields.insert(
-        &"x".to_string(),
+        &Spanned::dummy("x".to_string()),
         &Spanned::dummy(CTyp::Base(Tid::from("F"))),
     );
     vctx.insert(&Vid::from("r"), &CTyp::Record(fields));
@@ -1197,7 +1262,7 @@ fn test_set_record_inference() {
 
     let mut expected_fields = Ctx::new();
     expected_fields.insert(
-        &"x".to_string(),
+        &Spanned::dummy("x".to_string()),
         &Spanned::dummy(CTyp::Base(Tid::from("F"))),
     );
     let expected_typ = CTyp::Record(expected_fields);
@@ -1282,27 +1347,27 @@ fn test_record_nested_inference() {
 
     // {| a: {| b: 1 |}, c: f1 |}
     let mut inner_fields = Ctx::new();
-    inner_fields.insert(&"b".to_string(), &lit(1));
+    inner_fields.insert(&Spanned::dummy("b".to_string()), &lit(1));
 
     let mut fields = Ctx::new();
-    fields.insert(&"a".to_string(), &record(inner_fields));
-    fields.insert(&"c".to_string(), &varstr("f1"));
+    fields.insert(&Spanned::dummy("a".to_string()), &record(inner_fields));
+    fields.insert(&Spanned::dummy("c".to_string()), &varstr("f1"));
 
     let record_exp = record(fields);
 
     let mut expected_inner = Ctx::new();
     expected_inner.insert(
-        &"b".to_string(),
+        &Spanned::dummy("b".to_string()),
         &Spanned::dummy(CTyp::Fin(Range::singleton(1))),
     );
 
     let mut expected_fields = Ctx::new();
     expected_fields.insert(
-        &"a".to_string(),
+        &Spanned::dummy("a".to_string()),
         &Spanned::dummy(CTyp::Record(expected_inner)),
     );
     expected_fields.insert(
-        &"c".to_string(),
+        &Spanned::dummy("c".to_string()),
         &Spanned::dummy(CTyp::Base(Tid::from("F"))),
     );
     let expected_typ = CTyp::Record(expected_fields);
@@ -1317,7 +1382,7 @@ fn test_record_set_type_mismatch() {
 
     let mut fields = Ctx::new();
     fields.insert(
-        &"x".to_string(),
+        &Spanned::dummy("x".to_string()),
         &Spanned::dummy(CTyp::Base(Tid::from("F"))),
     );
     vctx.insert(&Vid::from("r"), &CTyp::Record(fields));
@@ -1357,23 +1422,36 @@ fn test_mle_eval_inference() {
     let mut vctx = VAR_CTX.clone();
 
     // Add variable "m3" of type Mle<F, 3> -> Poly(F, 3, 1)
-    vctx.insert(&Vid::from("m3"), &CTyp::Poly(Tid::from("F"), 3, 1));
+    vctx.insert(
+        &Vid::from("m3"),
+        &CTyp::Poly(Tid::from("F"), Spanned::dummy(3), Spanned::dummy(1)),
+    );
     // Add variable "v3" of type [F; 3]
     vctx.insert(
         &Vid::from("v3"),
-        &CTyp::Vec(Box::new(Spanned::dummy(CTyp::Base(Tid::from("F")))), 3),
+        &CTyp::Vec(
+            Box::new(Spanned::dummy(CTyp::Base(Tid::from("F")))),
+            Spanned::dummy(3),
+        ),
     );
     // Add variable "v2" of type [F; 2]
     vctx.insert(
         &Vid::from("v2"),
-        &CTyp::Vec(Box::new(Spanned::dummy(CTyp::Base(Tid::from("F")))), 2),
+        &CTyp::Vec(
+            Box::new(Spanned::dummy(CTyp::Base(Tid::from("F")))),
+            Spanned::dummy(2),
+        ),
     );
 
     // eval(m3, v2) -> Mle<F, 1> -> Poly(F, 1, 1)
     let eval_v2 = evaluate_at(varstr("m3"), varstr("v2"));
     assert_eq!(
         eval_v2.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Poly(Tid::from("F"), 1, 1))
+        Ok(CTyp::Poly(
+            Tid::from("F"),
+            Spanned::dummy(1),
+            Spanned::dummy(1)
+        ))
     );
 
     // eval(m3, v3) -> F -> Base(F)
@@ -1389,7 +1467,10 @@ fn test_mle_eval_out_of_bounds() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
 
-    vctx.insert(&Vid::from("m3"), &CTyp::Poly(Tid::from("F"), 3, 1));
+    vctx.insert(
+        &Vid::from("m3"),
+        &CTyp::Poly(Tid::from("F"), Spanned::dummy(3), Spanned::dummy(1)),
+    );
     // v1 has length 5, which is > 3
     let eval_bad = evaluate_at(varstr("m3"), varstr("v1"));
     assert!(eval_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
@@ -1425,33 +1506,54 @@ fn test_eval_univariate_vector_rejected() {
 fn test_selected_eval_inference() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
-    vctx.insert(&Vid::from("m3"), &CTyp::Poly(Tid::from("F"), 3, 4));
+    vctx.insert(
+        &Vid::from("m3"),
+        &CTyp::Poly(Tid::from("F"), Spanned::dummy(3), Spanned::dummy(4)),
+    );
     vctx.insert(
         &Vid::from("fixed1"),
-        &CTyp::Vec(Box::new(Spanned::dummy(CTyp::Base(Tid::from("F")))), 1),
+        &CTyp::Vec(
+            Box::new(Spanned::dummy(CTyp::Base(Tid::from("F")))),
+            Spanned::dummy(1),
+        ),
     );
     vctx.insert(
         &Vid::from("fixed2"),
-        &CTyp::Vec(Box::new(Spanned::dummy(CTyp::Base(Tid::from("F")))), 2),
+        &CTyp::Vec(
+            Box::new(Spanned::dummy(CTyp::Base(Tid::from("F")))),
+            Spanned::dummy(2),
+        ),
     );
 
     let unit = evaluate_selected(Range::singleton(1), varstr("m3"), varstr("fixed2"));
     assert_eq!(
         unit.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Poly(Tid::from("F"), 1, 4))
+        Ok(CTyp::Poly(
+            Tid::from("F"),
+            Spanned::dummy(1),
+            Spanned::dummy(4)
+        ))
     );
 
     let normalized_unit =
         evaluate_selected(CRange::from_raw(1, 1, 2), varstr("m3"), varstr("fixed2"));
     assert_eq!(
         normalized_unit.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Poly(Tid::from("F"), 1, 4))
+        Ok(CTyp::Poly(
+            Tid::from("F"),
+            Spanned::dummy(1),
+            Spanned::dummy(4)
+        ))
     );
 
     let wide_range = evaluate_selected(CRange::from_raw(1, 1, 3), varstr("m3"), varstr("fixed1"));
     assert_eq!(
         wide_range.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Poly(Tid::from("F"), 2, 4))
+        Ok(CTyp::Poly(
+            Tid::from("F"),
+            Spanned::dummy(2),
+            Spanned::dummy(4)
+        ))
     );
 }
 
@@ -1459,10 +1561,16 @@ fn test_selected_eval_inference() {
 fn test_selected_eval_rejects_invalid_ranges_and_arity() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
-    vctx.insert(&Vid::from("m3"), &CTyp::Poly(Tid::from("F"), 3, 4));
+    vctx.insert(
+        &Vid::from("m3"),
+        &CTyp::Poly(Tid::from("F"), Spanned::dummy(3), Spanned::dummy(4)),
+    );
     vctx.insert(
         &Vid::from("fixed2"),
-        &CTyp::Vec(Box::new(Spanned::dummy(CTyp::Base(Tid::from("F")))), 2),
+        &CTyp::Vec(
+            Box::new(Spanned::dummy(CTyp::Base(Tid::from("F")))),
+            Spanned::dummy(2),
+        ),
     );
 
     let empty = evaluate_selected(CRange::from_raw(1, 1, 1), varstr("m3"), varstr("fixed2"));
@@ -1505,10 +1613,10 @@ fn test_mle_eval_pbt() {
         let num_vars = u.int_in_range(2..=10)?;
         let eval_len = u.int_in_range(1..=num_vars)?;
 
-        let mle_t = CTyp::Poly(Tid::from("F"), num_vars, 1);
+        let mle_t = CTyp::Poly(Tid::from("F"), Spanned::dummy(num_vars), Spanned::dummy(1));
         let vec_t = CTyp::Vec(
             Box::new(Spanned::dummy(CTyp::Base(Tid::from("F")))),
-            eval_len,
+            Spanned::dummy(eval_len),
         );
 
         let mut vctx = VAR_CTX.clone();
@@ -1527,7 +1635,11 @@ fn test_mle_eval_pbt() {
         } else {
             assert_eq!(
                 res,
-                Ok(CTyp::Poly(Tid::from("F"), num_vars - eval_len, 1)),
+                Ok(CTyp::Poly(
+                    Tid::from("F"),
+                    Spanned::dummy(num_vars - eval_len),
+                    Spanned::dummy(1)
+                )),
                 "evaluating MLE with M variables should yield MLE with N-M variables"
             );
         }
@@ -1587,7 +1699,10 @@ fn test_coef_rejection() {
     assert!(coef_bad1.infer(&KIND_CTX, &fctx, &vctx).is_err());
 
     // coef on multivariate polynomial (MLE) with too many variables to shift (e.g. 128) should fail typecheck (not panic)
-    vctx.insert(&Vid::from("m_large"), &CTyp::Poly(Tid::from("F"), 128, 1));
+    vctx.insert(
+        &Vid::from("m_large"),
+        &CTyp::Poly(Tid::from("F"), Spanned::dummy(128), Spanned::dummy(1)),
+    );
     let coef_overflow = coef(varstr("m_large"));
     assert!(coef_overflow.infer(&KIND_CTX, &fctx, &vctx).is_err());
 }
@@ -1632,13 +1747,13 @@ fn test_record_lub_vector_subtyping() {
 
     // r1 = {| x: 1 |}
     let mut r1_fields = Ctx::new();
-    r1_fields.insert(&"x".to_string(), &lit(1));
+    r1_fields.insert(&Spanned::dummy("x".to_string()), &lit(1));
     let r1 = record(r1_fields);
 
     // r2 = {| x: 1, y: 2 |}
     let mut r2_fields = Ctx::new();
-    r2_fields.insert(&"x".to_string(), &lit(1));
-    r2_fields.insert(&"y".to_string(), &lit(2));
+    r2_fields.insert(&Spanned::dummy("x".to_string()), &lit(1));
+    r2_fields.insert(&Spanned::dummy("y".to_string()), &lit(2));
     let r2 = record(r2_fields);
 
     // v = [r1, r2]
@@ -1665,7 +1780,7 @@ fn gen_arbitrary_cexp(u: &mut arbitrary::Unstructured, depth: usize) -> arbitrar
             1 => {
                 let vars = ["f1", "f2", "v1", "v2", "g1", "g2", "s1", "s2", "p", "m"];
                 let var = u.choose(&vars)?;
-                Ok(CExp::Var(Vid::from(*var)))
+                Ok(CExp::Var(Spanned::dummy(Vid::from(*var))))
             }
             _ => unreachable!(),
         }
@@ -1723,12 +1838,18 @@ fn gen_arbitrary_cexp(u: &mut arbitrary::Unstructured, depth: usize) -> arbitrar
             9 => {
                 let tids = ["F", "G", "S", "X"];
                 let tid = u.choose(&tids)?;
-                Ok(CExp::Challenge(Tid::from(*tid), u.arbitrary()?))
+                Ok(CExp::Challenge(
+                    Spanned::dummy(Tid::from(*tid)),
+                    u.arbitrary()?,
+                ))
             }
             10 => {
                 let tids = ["F", "G", "S", "X"];
                 let tid = u.choose(&tids)?;
-                Ok(CExp::Random(Tid::from(*tid), u.arbitrary()?))
+                Ok(CExp::Random(
+                    Spanned::dummy(Tid::from(*tid)),
+                    u.arbitrary()?,
+                ))
             }
             11 => {
                 let inner = gen_arbitrary_cexp(u, depth - 1)?;
@@ -1822,13 +1943,16 @@ fn test_lub_concat_appends_vector_element() {
     let mut ctx = Ctx::new();
     ctx.insert(&Tid::from("F"), &Kind::<usize>::Field);
     let inner_t = CTyp::Base(Tid::from("F"));
-    let tb = CTyp::Vec(Box::new(Spanned::dummy(inner_t.clone())), 3); // Vec<F, 3>
-    let ta = CTyp::Vec(Box::new(Spanned::dummy(tb.clone())), 2); // Vec<Vec<F, 3>, 2>
+    let tb = CTyp::Vec(Box::new(Spanned::dummy(inner_t.clone())), Spanned::dummy(3)); // Vec<F, 3>
+    let ta = CTyp::Vec(Box::new(Spanned::dummy(tb.clone())), Spanned::dummy(2)); // Vec<Vec<F, 3>, 2>
 
     let res = CTyp::lub_concat(&ta, &tb, &ctx);
     // Under correct behavior, appending a vector elements (tb) to a vector of vectors (ta)
     // should succeed and return Vec<Vec<F, 3>, 3>.
-    assert_eq!(res, Ok(CTyp::Vec(Box::new(Spanned::dummy(tb)), 3)));
+    assert_eq!(
+        res,
+        Ok(CTyp::Vec(Box::new(Spanned::dummy(tb)), Spanned::dummy(3)))
+    );
 }
 
 #[test]

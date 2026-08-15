@@ -82,14 +82,14 @@ pub enum Exp<N> {
     ///     ```zippel
     ///     let b = a;
     ///     ```
-    Var(Vid),
+    Var(Spanned<Vid>),
 
     ///     Function application
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let result1 = f(x + 2, x)
     ///     ```
-    App(Vid, Exps<N>),
+    App(Spanned<Vid>, Exps<N>),
 
     /// Interpolate to a univariate polynomial: unary `interpolate(v)` uses the FFT
     /// evaluation grid (inverse FFT); binary `interpolate(xs, ys)` uses explicit points.
@@ -173,7 +173,7 @@ pub enum Exp<N> {
     ///     ```zippel
     ///     let squares = [x^2 for x in 0,2..10];
     ///     ```
-    Map(Box<Spanned<Exp<N>>>, Vid, Box<Spanned<Exp<N>>>),
+    Map(Box<Spanned<Exp<N>>>, Spanned<Vid>, Box<Spanned<Exp<N>>>),
 
     ///     Reduce a vector with a binary operation
     ///     **Zippel Code:**
@@ -201,14 +201,14 @@ pub enum Exp<N> {
     ///     ```zippel
     ///     let r := random<F*>();
     ///     ```
-    Random(Tid, bool),
+    Random(Spanned<Tid>, bool),
 
     ///     Random oracle challenge.
     ///     **Zippel Code:**
     ///     ```zippel
     ///     r <- challenge<F>();
     ///     ```
-    Challenge(Tid, bool),
+    Challenge(Spanned<Tid>, bool),
 
     ///     Represents a let-expression, which binds a value to an identifier.
     ///
@@ -218,7 +218,7 @@ pub enum Exp<N> {
     ///     assert(5 == 3);
     ///     ```
     Let(
-        Option<Vid>,
+        Option<Spanned<Vid>>,
         Box<Spanned<Exp<N>>>,
         Option<Box<Spanned<Exp<N>>>>,
     ),
@@ -229,7 +229,11 @@ pub enum Exp<N> {
     ///     ```zippel
     ///     p <- interpolate(v, [0,1,2])
     ///     ```
-    Log(Vid, Box<Spanned<Exp<N>>>, Option<Box<Spanned<Exp<N>>>>),
+    Log(
+        Spanned<Vid>,
+        Box<Spanned<Exp<N>>>,
+        Option<Box<Spanned<Exp<N>>>>,
+    ),
 
     ///     Prover assertion: asserts `lhs == rhs`.
     ///     **Zippel Code:**
@@ -250,21 +254,21 @@ pub enum Exp<N> {
     ///     ```zippel
     ///     let p = fun x, y => x^2 + 2*x*y + 3*y^2;
     ///     ```
-    Fun(Vec<Vid>, Box<Spanned<Exp<N>>>),
+    Fun(Vec<Spanned<Vid>>, Box<Spanned<Exp<N>>>),
 
     ///     Record construction
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let a = {| name: "Sydnie", balance: 100 |};
     ///     ```
-    Record(Ctx<String, Spanned<Exp<N>>>),
+    Record(Ctx<Spanned<String>, Spanned<Exp<N>>>),
 
     ///     Field projection
     ///     **Zippel Code:**
     ///     ```zippel
     ///     a.name
     ///     ```
-    Proj(Box<Spanned<Exp<N>>>, String),
+    Proj(Box<Spanned<Exp<N>>>, Spanned<String>),
 
     ///     Record update: create a new record identical to the given record
     ///     except with the specified field set to the given value.
@@ -272,7 +276,7 @@ pub enum Exp<N> {
     ///     ```zippel
     ///     let new_record = old_record.set(name, 3);
     ///     ```
-    SetRecord(Box<Spanned<Exp<N>>>, String, Box<Spanned<Exp<N>>>),
+    SetRecord(Box<Spanned<Exp<N>>>, Spanned<String>, Box<Spanned<Exp<N>>>),
 }
 
 /// Free variables
@@ -402,8 +406,8 @@ impl<N: Clone> ToTraversal1<N> for Exps<N> {
 impl TidSubst for CExp {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         match self {
-            Exp::Challenge(t, _) if t == from => *t = to.clone(),
-            Exp::Random(t, _) if t == from => *t = to.clone(),
+            Exp::Challenge(t, _) if &t.node == from => t.node = to.clone(),
+            Exp::Random(t, _) if &t.node == from => t.node = to.clone(),
             Exp::Interpolate(None, box e) => e.tid_subst(from, to),
             Exp::Interpolate(Some(box p), box e) => {
                 p.tid_subst(from, to);
@@ -473,7 +477,7 @@ impl TidSubst for CExps {
 impl FreeVars for CExp {
     fn freevars(&self) -> Set<Vid> {
         match self {
-            Exp::Var(id) => Set::singleton(id.clone()),
+            Exp::Var(id) => Set::singleton(id.node.clone()),
             Exp::Unit | Exp::Challenge(_, _) | Exp::Random(_, _) | Exp::Lit(_) | Exp::Range(_) => {
                 Set::new()
             }
@@ -513,7 +517,7 @@ impl FreeVars for CExp {
                 fv
             }
             Exp::Fun(vars, box body) => {
-                let bound_vars: Set<Vid> = vars.iter().cloned().collect();
+                let bound_vars: Set<Vid> = vars.iter().map(|v| v.node.clone()).collect();
                 body.freevars()
                     .into_iter()
                     .filter(|v| !bound_vars.iter().any(|bv| bv == v))
@@ -1020,7 +1024,7 @@ where
             Exp::Fun(vars, body) => {
                 let vars_str = vars
                     .iter()
-                    .map(|v| v.0.as_str())
+                    .map(|v| v.node.0.as_str())
                     .collect::<Vec<_>>()
                     .join(", ");
                 allocator.concat([
@@ -1037,7 +1041,7 @@ where
                     .into_iter()
                     .map(|(name, exp)| {
                         allocator.concat([
-                            allocator.text(name),
+                            allocator.text(name.node),
                             allocator.text(": "),
                             exp.pretty(allocator),
                         ])
@@ -1050,12 +1054,12 @@ where
             Exp::Proj(box exp, field) => allocator.concat([
                 exp.pretty(allocator),
                 allocator.text("."),
-                allocator.text(field),
+                allocator.text(field.node),
             ]),
             Exp::SetRecord(box record, field, box value) => allocator.concat([
                 record.pretty(allocator),
                 allocator.text(".set("),
-                allocator.text(field),
+                allocator.text(field.node),
                 allocator.text(", "),
                 value.pretty(allocator),
                 allocator.text(")"),
@@ -1122,7 +1126,7 @@ mod test {
     use crate::id::Vid;
 
     fn varstr(x: &str) -> Spanned<Exp<Size>> {
-        Spanned::dummy(Exp::Var(Vid::from(x)))
+        Spanned::dummy(Exp::Var(Spanned::dummy(Vid::from(x))))
     }
     fn bin(op: BinOp, l: Spanned<Exp<Size>>, r: Spanned<Exp<Size>>) -> Spanned<Exp<Size>> {
         Spanned::dummy(Exp::Bin(op, Box::new(l), Box::new(r)))
