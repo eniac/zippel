@@ -1,6 +1,5 @@
 use crate::ast::range::{Range, RangeError};
 use crate::ast::sig::CSig;
-use crate::ast::spanned::Spanned;
 use crate::ast::{BinOp, CExp, CExps};
 use crate::id::{Tid, Vid};
 use crate::typ::lub::LubError;
@@ -399,7 +398,6 @@ impl TypeError {
         vctx: &Ctx<Vid, CTyp>,
         e: &CExp,
         field: &str,
-        _fields: &Ctx<Spanned<String>, Spanned<CTyp>>,
     ) -> Self {
         TypeError::FieldNotFound(kctx.clone(), vctx.clone(), e.clone(), field.to_string())
     }

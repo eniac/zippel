@@ -65,7 +65,7 @@ impl Typeable for CExp {
                             let deg = n
                                 .checked_sub(1)
                                 .ok_or_else(|| TypeError::interpolate_unary(kctx, vctx, self))?;
-                            Ok(CTyp::Poly(i, Spanned::dummy(1), Spanned::dummy(deg)))
+                            Ok(CTyp::uni(&i, deg))
                         }
                         _ => Err(TypeError::interpolate_unary(kctx, vctx, self)),
                     },
@@ -96,7 +96,7 @@ impl Typeable for CExp {
                                 let deg = ne
                                     .checked_sub(1)
                                     .ok_or_else(|| TypeError::interpolate(kctx, vctx, self))?;
-                                Ok(CTyp::Poly(ie, Spanned::dummy(1), Spanned::dummy(deg)))
+                                Ok(CTyp::uni(&ie, deg))
                             }
                             _ => Err(TypeError::interpolate(kctx, vctx, self)),
                         }
@@ -120,7 +120,7 @@ impl Typeable for CExp {
                         let deg = k
                             .checked_sub(1)
                             .ok_or_else(|| TypeError::poly(kctx, vctx, self))?;
-                        Ok(CTyp::Poly(i, Spanned::dummy(1), Spanned::dummy(deg)))
+                        Ok(CTyp::uni(&i, deg))
                     }
                     _ => Err(TypeError::poly(kctx, vctx, self)),
                 }
@@ -306,7 +306,7 @@ impl Typeable for CExp {
                         }
                         let n_pow = n.ilog2() as usize;
                         let i = b.to_scalar(kctx).ok_or(TypeError::mle(kctx, vctx, self))?;
-                        Ok(CTyp::Poly(i, Spanned::dummy(n_pow), Spanned::dummy(1)))
+                        Ok(CTyp::mle(&i, n_pow))
                     }
                     _ => Err(TypeError::mle(kctx, vctx, self)),
                 }
@@ -811,10 +811,7 @@ impl Typeable for CExp {
                     // Univariate polynomial - type the variable as Poly(F, 1, 1) (degree-1 polynomial)
                     // Then type inference will compute the actual degree through lub operations
                     for var in vars {
-                        new_vctx.insert(
-                            &var.node,
-                            &CTyp::Poly(field_tid.clone(), Spanned::dummy(1), Spanned::dummy(1)),
-                        );
+                        new_vctx.insert(&var.node, &CTyp::uni(&field_tid, 1));
                     }
 
                     // Infer the type of the body - should get Poly(F, 1, N) where N is the degree
@@ -823,9 +820,7 @@ impl Typeable for CExp {
                     // Extract the degree from the inferred type
                     match body_type {
                         CTyp::Poly(tid, m, degree) if m.node == 1 => Ok(CTyp::Poly(tid, m, degree)),
-                        CTyp::Base(tid) => {
-                            Ok(CTyp::Poly(tid, Spanned::dummy(1), Spanned::dummy(0)))
-                        } // Constant polynomial
+                        CTyp::Base(tid) => Ok(CTyp::uni(&tid, 0)), // Constant polynomial
                         _ => Err(TypeError::exp(kctx, vctx, self)),
                     }
                 } else {
@@ -883,7 +878,6 @@ impl Typeable for CExp {
                                         vctx,
                                         record_exp,
                                         &field_name.node,
-                                        &fields,
                                     ),
                                 )
                             })
@@ -910,13 +904,7 @@ impl Typeable for CExp {
                 let field_typ = fields.get(field_name).ok_or_else(|| {
                     TypeError::next(
                         TypeError::exp(kctx, vctx, self),
-                        TypeError::field_not_found(
-                            kctx,
-                            vctx,
-                            record_exp,
-                            &field_name.node,
-                            fields,
-                        ),
+                        TypeError::field_not_found(kctx, vctx, record_exp, &field_name.node),
                     )
                 })?;
                 let value_typ = value_exp

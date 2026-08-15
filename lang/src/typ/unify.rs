@@ -105,25 +105,19 @@ impl Unify for CTyp {
             )),
             // Uni<A> == Uni<B>
             (CTyp::Poly(a, na, n), CTyp::Poly(b, nb, m)) if na.node == 1 && nb.node == 1 => {
-                Ok(CTyp::Poly(
-                    Tid::unify(a, b, ctx, subs).map_err(|e| UnifyError::typ(x, y, e))?,
-                    Spanned::dummy(1),
-                    n.max(m).clone(),
-                ))
+                let t = Tid::unify(a, b, ctx, subs).map_err(|e| UnifyError::typ(x, y, e))?;
+                Ok(CTyp::uni(&t, n.max(m).node))
             }
             // Mle<A> == Mle<B>
-            (CTyp::Poly(a, n, d), CTyp::Poly(b, m, e)) if d.node == 1 && e.node == 1 => {
-                Ok(CTyp::Poly(
-                    Tid::unify(a, b, ctx, subs).map_err(|e| UnifyError::typ(x, y, e))?,
-                    n.max(m).clone(),
-                    Spanned::dummy(1),
-                ))
+            (CTyp::Poly(a, n, d), CTyp::Poly(b, m, de)) if d.node == 1 && de.node == 1 => {
+                let t = Tid::unify(a, b, ctx, subs).map_err(|err| UnifyError::typ(x, y, err))?;
+                Ok(CTyp::mle(&t, n.max(m).node))
             }
             // Virtual / multivariate polynomials with tracked degree (>1): sizes must agree.
-            (CTyp::Poly(a, n, d), CTyp::Poly(b, m, e))
-                if n.node > 1 && d.node > 1 && m.node > 1 && e.node > 1 =>
+            (CTyp::Poly(a, n, d), CTyp::Poly(b, m, de))
+                if n.node > 1 && d.node > 1 && m.node > 1 && de.node > 1 =>
             {
-                if n != m || d != e {
+                if n != m || d != de {
                     Err(UnifyError::typ_mismatch(x, y))
                 } else {
                     Ok(CTyp::Poly(
@@ -172,11 +166,8 @@ impl Unify for CTyp {
                     }
                     _ => b.to_scalar(ctx).ok_or(UnifyError::typ_mismatch(x, y))?,
                 };
-                Ok(CTyp::Poly(
-                    Tid::unify(a, &t, ctx, subs).map_err(|e| UnifyError::typ(x, y, e))?,
-                    Spanned::dummy(1),
-                    n.clone(),
-                ))
+                let t2 = Tid::unify(a, &t, ctx, subs).map_err(|e| UnifyError::typ(x, y, e))?;
+                Ok(CTyp::uni(&t2, n.node))
             }
             // Finite fields can act like 0 variable MLEs
             (CTyp::Poly(a, n, d), b) | (b, CTyp::Poly(a, n, d)) if d.node == 1 => {
@@ -191,11 +182,8 @@ impl Unify for CTyp {
                     }
                     _ => b.to_scalar(ctx).ok_or(UnifyError::typ_mismatch(x, y))?,
                 };
-                Ok(CTyp::Poly(
-                    Tid::unify(a, &t, ctx, subs).map_err(|e| UnifyError::typ(x, y, e))?,
-                    n.clone(),
-                    Spanned::dummy(1),
-                ))
+                let t2 = Tid::unify(a, &t, ctx, subs).map_err(|e| UnifyError::typ(x, y, e))?;
+                Ok(CTyp::mle(&t2, n.node))
             }
             // Target-driven unification for Base and Fin
             (CTyp::Base(b), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(b)) => {

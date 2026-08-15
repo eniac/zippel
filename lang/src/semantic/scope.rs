@@ -31,11 +31,7 @@ struct UndefinedOccurrence {
 /// E0009: Use of a variable before its definition (or undefined variable).
 /// Uses the builder API because `similar` and `extra_uses` produce a variable
 /// number of secondary labels.
-fn undefined_variable(
-    name: &Vid,
-    use_spans: &[Range<usize>],
-    similar: &[(Vid, Range<usize>)],
-) -> Diagnostic {
+fn undefined_variable(name: &Vid, use_spans: &[Range<usize>], similar: &[Vid]) -> Diagnostic {
     let primary_span = use_spans.first().cloned().unwrap_or(0..0);
     let mut d = Diagnostic::error(
         Phase::Semantic,
@@ -55,11 +51,11 @@ fn undefined_variable(
     // replacement text, so no separate "defined here" label is needed —
     // the suggestion already tells the user which variable to use.
     if !similar.is_empty() {
-        let names: Vec<String> = similar.iter().map(|(n, _)| format!("`{n}`")).collect();
+        let names: Vec<String> = similar.iter().map(|n| format!("`{n}`")).collect();
         d = d.suggestion(
             &format!("did you mean {}?", names.join(", ")),
             primary_span,
-            &similar[0].0 .0,
+            &similar[0].0,
             Applicability::MaybeIncorrect,
         );
     }
@@ -116,14 +112,14 @@ pub fn check_scope(decl: &UDecl) -> Vec<Diagnostic> {
             .map(|o| o.use_span.clone())
             .collect();
         // Find similar names in scope at the first occurrence for "did you mean?"
-        let similar: Vec<(Vid, Range<usize>)> = occ
+        let similar: Vec<Vid> = occ
             .scope
             .iter()
             .filter(|(n, _)| {
                 let dist = levenshtein(&occ.name.0, &n.0);
                 dist > 0 && dist <= 2
             })
-            .map(|(n, s)| (n.clone(), s.clone()))
+            .map(|(n, _)| n.clone())
             .collect();
         errors.push(undefined_variable(&occ.name, &use_spans, &similar));
     }

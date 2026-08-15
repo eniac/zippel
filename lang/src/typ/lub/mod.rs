@@ -425,21 +425,15 @@ impl Lub for CTyp {
             )),
             // Uni<A> + Uni<B> = Uni<max(A, B)>
             (CTyp::Poly(a, na, n), CTyp::Poly(b, nb, m)) if na.node == 1 && nb.node == 1 => {
-                Ok(CTyp::Poly(
-                    Tid::lub_add(a, b, ctx)
-                        .map_err(|e| LubError::next(LubError::add(&x, &y), e))?,
-                    Spanned::dummy(1),
-                    n.max(m).clone(),
-                ))
+                let t = Tid::lub_add(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
+                Ok(CTyp::uni(&t, n.max(m).node))
             }
             // Mle<A> + Mle<B> = Mle<max(A, B)>
-            (CTyp::Poly(a, n, d), CTyp::Poly(b, m, e)) if d.node == 1 && e.node == 1 => {
-                Ok(CTyp::Poly(
-                    Tid::lub_add(a, b, ctx)
-                        .map_err(|e| LubError::next(LubError::add(&x, &y), e))?,
-                    n.max(m).clone(),
-                    Spanned::dummy(1),
-                ))
+            (CTyp::Poly(a, n, d), CTyp::Poly(b, m, de)) if d.node == 1 && de.node == 1 => {
+                let t = Tid::lub_add(a, b, ctx)
+                    .map_err(|err| LubError::next(LubError::add(&x, &y), err))?;
+                Ok(CTyp::mle(&t, n.max(m).node))
             }
             // General Poly + Poly: vars and degree both take max.
             (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, mb)) => Ok(CTyp::Poly(
@@ -482,7 +476,7 @@ impl Lub for CTyp {
             {
                 let t = Tid::lub_add(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
-                Ok(CTyp::Poly(t, Spanned::dummy(1), n.clone()))
+                Ok(CTyp::uni(&t, n.node))
             }
             // Indices can act like univariate polynomials
             (CTyp::Fin(_), CTyp::Poly(b, d, n)) | (CTyp::Poly(b, d, n), CTyp::Fin(_))
@@ -495,12 +489,12 @@ impl Lub for CTyp {
             {
                 let t = Tid::lub_add(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
-                Ok(CTyp::Poly(t, n.clone(), Spanned::dummy(1)))
+                Ok(CTyp::mle(&t, n.node))
             }
             (CTyp::Poly(a, n, d), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Poly(a, n, d))
                 if d.node == 1 =>
             {
-                Ok(CTyp::Poly(a.clone(), n.clone(), Spanned::dummy(1)))
+                Ok(CTyp::mle(a, n.node))
             }
             (_, _) => Err(LubError::add(&x, &y)),
         }
@@ -517,21 +511,15 @@ impl Lub for CTyp {
             )),
             // Uni<A> - Uni<B> = Uni<max(A, B)>
             (CTyp::Poly(a, na, n), CTyp::Poly(b, nb, m)) if na.node == 1 && nb.node == 1 => {
-                Ok(CTyp::Poly(
-                    Tid::lub_sub(a, b, ctx)
-                        .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?,
-                    Spanned::dummy(1),
-                    n.max(m).clone(),
-                ))
+                let t = Tid::lub_sub(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;
+                Ok(CTyp::uni(&t, n.max(m).node))
             }
             // Mle<A> - Mle<B> = Mle<max(A, B)>
-            (CTyp::Poly(a, n, d), CTyp::Poly(b, m, e)) if d.node == 1 && e.node == 1 => {
-                Ok(CTyp::Poly(
-                    Tid::lub_sub(a, b, ctx)
-                        .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?,
-                    n.max(m).clone(),
-                    Spanned::dummy(1),
-                ))
+            (CTyp::Poly(a, n, d), CTyp::Poly(b, m, de)) if d.node == 1 && de.node == 1 => {
+                let t = Tid::lub_sub(a, b, ctx)
+                    .map_err(|err| LubError::next(LubError::sub(&x, &y), err))?;
+                Ok(CTyp::mle(&t, n.max(m).node))
             }
             // General Poly - Poly: vars and degree both take max.
             (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, mb)) => Ok(CTyp::Poly(
@@ -570,7 +558,7 @@ impl Lub for CTyp {
             {
                 let t = Tid::lub_sub(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;
-                Ok(CTyp::Poly(t, Spanned::dummy(1), n.clone()))
+                Ok(CTyp::uni(&t, n.node))
             }
             // Indices can act like univariate polynomials
             (CTyp::Fin(_), CTyp::Poly(b, d, n)) | (CTyp::Poly(b, d, n), CTyp::Fin(_))
@@ -583,12 +571,12 @@ impl Lub for CTyp {
             {
                 let t = Tid::lub_sub(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;
-                Ok(CTyp::Poly(t, n.clone(), Spanned::dummy(1)))
+                Ok(CTyp::mle(&t, n.node))
             }
             (CTyp::Poly(a, n, d), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Poly(a, n, d))
                 if d.node == 1 =>
             {
-                Ok(CTyp::Poly(a.clone(), n.clone(), Spanned::dummy(1)))
+                Ok(CTyp::mle(a, n.node))
             }
             (_, _) => Err(LubError::sub(&x, &y)),
         }
@@ -639,7 +627,7 @@ impl Lub for CTyp {
                 let t = CTyp::lub_mul(a, &CTyp::base(b), ctx)
                     .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?;
                 if let CTyp::Base(c) = t {
-                    Ok(CTyp::Poly(c, Spanned::dummy(1), n.clone()))
+                    Ok(CTyp::uni(&c, n.node))
                 } else {
                     Err(LubError::mul(&x, &y))
                 }
@@ -649,7 +637,7 @@ impl Lub for CTyp {
                 let t = CTyp::lub_mul(a, &CTyp::base(b), ctx)
                     .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?;
                 if let CTyp::Base(c) = t {
-                    Ok(CTyp::Poly(c, n.clone(), Spanned::dummy(1)))
+                    Ok(CTyp::mle(&c, n.node))
                 } else {
                     Err(LubError::mul(&x, &y))
                 }

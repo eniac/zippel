@@ -1176,7 +1176,7 @@ impl<C: HasOpFactory> UDag<C> {
                 )
             })?;
             atyps.insert(&arg.id.node, &at);
-            vctx.insert(&arg.id, &arg.typ);
+            vctx.insert(&arg.id.node, &arg.typ.node);
         }
         // Expose singleton range typevars (e.g. N: 4) as term-level constants.
         for (tid, kind) in kctx.iter() {
@@ -1418,7 +1418,7 @@ impl<C: HasOpFactory> UDag<C> {
             CExp::Unit => Ok(Some(GOp::Value(Value::Unit))),
             CExp::Range(r) => Ok(Some(GOp::range(r.clone()))),
             CExp::Var(id) => {
-                if let Some(level) = binders.iter().rposition(|(v, _)| *v == **id) {
+                if let Some(level) = binders.iter().rposition(|(v, _)| *v == id.node) {
                     Ok(Some(GOp::loop_param(level, binders[level].1.clone())))
                 } else {
                     Ok(Some(Self::op_from_var(id, vars)?))
@@ -1567,7 +1567,7 @@ impl<C: HasOpFactory> UDag<C> {
                 let mut inner_binders = binders.to_vec();
                 inner_binders.push((binder.node.clone(), binder_atyp));
                 let mut inner_vctx = vctx.clone();
-                inner_vctx.insert(binder, &elem_ctyp);
+                inner_vctx.insert(&binder.node, &elem_ctyp);
                 let Some(lb) = self.lower_loop_body_template(
                     body,
                     &inner_binders,
@@ -1609,7 +1609,7 @@ impl<C: HasOpFactory> UDag<C> {
     fn substitute_var(exp: CExp, target: &Vid, replacement: &CExp) -> Option<CExp> {
         Some(match exp {
             CExp::Var(id) => {
-                if *id == *target {
+                if id.node == *target {
                     replacement.clone()
                 } else {
                     CExp::Var(id)
@@ -1799,7 +1799,7 @@ impl<C: HasOpFactory> UDag<C> {
 
     fn exp_mentions_free_var(exp: &CExp, target: &Vid) -> bool {
         match exp {
-            CExp::Var(id) => **id == *target,
+            CExp::Var(id) => id.node == *target,
             CExp::Lit(_) | CExp::Unit | CExp::Range(_) => false,
             CExp::Interpolate(points, evals) => {
                 points
@@ -1837,17 +1837,17 @@ impl<C: HasOpFactory> UDag<C> {
             }
             CExp::Map(body, binder, domain) => {
                 Self::exp_mentions_free_var(domain, target)
-                    || (**binder != *target && Self::exp_mentions_free_var(body, target))
+                    || (binder.node != *target && Self::exp_mentions_free_var(body, target))
             }
             CExp::Let(Some(id), left, right) | CExp::Log(id, left, right) => {
                 Self::exp_mentions_free_var(left, target)
-                    || (**id != *target
+                    || (id.node != *target
                         && right
                             .as_ref()
                             .is_some_and(|r| Self::exp_mentions_free_var(r, target)))
             }
             CExp::Fun(vars, body) => {
-                !vars.iter().any(|v| **v == *target) && Self::exp_mentions_free_var(body, target)
+                !vars.iter().any(|v| v.node == *target) && Self::exp_mentions_free_var(body, target)
             }
             CExp::Record(fields) => fields
                 .iter()
@@ -2181,8 +2181,8 @@ impl<C: HasOpFactory> UDag<C> {
                         let ram_op = GOp::ram(oe.clone(), GOp::index(i));
                         let ram_ref =
                             self.materialize(ram_op, edge_type, input_element_typ.clone());
-                        local_vars.insert(&x, &ram_ref);
-                        local_vctx.insert(&x, &ie);
+                        local_vars.insert(&x.node, &ram_ref);
+                        local_vctx.insert(&x.node, &ie);
                         // Add subexpression
                         let ol = self.add_exp(
                             l.clone(),
@@ -2279,7 +2279,7 @@ impl<C: HasOpFactory> UDag<C> {
                         .collect::<Result<_, _>>()?;
 
                     // Is it a polynomial, MLE, or a function?
-                    match &vctx.get(&fid) {
+                    match &vctx.get(&fid.node) {
                         Some(CTyp::Poly(tbase, m, _n)) if m.node == 1 => {
                             // It is a univariate polynomial
                             let k = kctx.get(tbase).unwrap();
@@ -2373,7 +2373,7 @@ impl<C: HasOpFactory> UDag<C> {
                             let mut matching_sigs: Vec<_> = fctx
                                 .iter()
                                 .filter_map(|(sig, body)| {
-                                    if sig.name.node != *fid {
+                                    if sig.name.node != fid.node {
                                         return None;
                                     }
                                     let (sig, subs) = sig.clone().unify(&param_types, kctx).ok()?;
@@ -2414,7 +2414,7 @@ impl<C: HasOpFactory> UDag<C> {
                             vctx = next_vctx;
                             let mut next_vars = vars.clone();
                             for (arg, op) in sig.args.iter().zip(oparams.iter()) {
-                                next_vars.insert(&arg.id, op);
+                                next_vars.insert(&arg.id.node, op);
                             }
                             vars = next_vars;
                             let fn_kctx = sig.typevars.to_ctx();
@@ -2441,12 +2441,12 @@ impl<C: HasOpFactory> UDag<C> {
                     // Register the node name so find_var() returns the correct name
                     // instead of falling back to __zippel::node::N
                     if let GOp::Ref(r, _) = &nl {
-                        self.vctx.insert(&r.node(), &id);
+                        self.vctx.insert(&r.node(), &id.node);
                         self.transcript_vars.insert(&r.node(), &false);
                     }
                     // Add [id] to the variable context (clone-on-write)
-                    vctx.insert(&id, &tl);
-                    vars.insert(&id, &nl);
+                    vctx.insert(&id.node, &tl);
+                    vars.insert(&id.node, &nl);
                     // Trampoline: continue loop with r
                     match r {
                         Some(box r) => {
@@ -2485,7 +2485,7 @@ impl<C: HasOpFactory> UDag<C> {
                             let n = r.node();
                             // Node is already a transcript node and either has no name
                             // or the same name — register directly.
-                            self.vctx.insert(&n, &id);
+                            self.vctx.insert(&n, &id.node);
                             self.transcript_vars.insert(&n, &true);
                             GOp::Ref(Ref(n), ol.typ())
                         }
@@ -2496,7 +2496,7 @@ impl<C: HasOpFactory> UDag<C> {
                             self.add_edges(DepType::Data, nl, ol.clone());
                             self.add_edge(*transcr, nl, Dep::transcript());
                             self.graph.node_weight_mut(nl).unwrap().set_transcript();
-                            self.vctx.insert(&nl, &id);
+                            self.vctx.insert(&nl, &id.node);
                             self.transcript_vars.insert(&nl, &true);
                             *transcr = nl;
                             GOp::Ref(Ref(nl), ol.typ())
@@ -2507,15 +2507,15 @@ impl<C: HasOpFactory> UDag<C> {
                             self.add_edges(DepType::Data, nl, ol.clone());
                             self.add_edge(*transcr, nl, Dep::transcript());
                             self.graph.node_weight_mut(nl).unwrap().set_transcript();
-                            self.vctx.insert(&nl, &id);
+                            self.vctx.insert(&nl, &id.node);
                             self.transcript_vars.insert(&nl, &true);
                             *transcr = nl;
                             GOp::Ref(Ref(nl), ol.typ())
                         }
                     };
                     // Add [id] to the variable context (clone-on-write)
-                    vctx.insert(&id, &tl);
-                    vars.insert(&id, &transcr_op);
+                    vctx.insert(&id.node, &tl);
+                    vars.insert(&id.node, &transcr_op);
                     // Trampoline: continue loop with r
                     match r {
                         Some(box r) => {
@@ -2596,18 +2596,11 @@ impl<C: HasOpFactory> UDag<C> {
                     return match &record_exp.node {
                         CExp::Record(fields) => {
                             let field_exp = fields.get(&field_name).ok_or_else(|| {
-                                let mut field_types = Ctx::new();
-                                for (name, exp) in fields.iter() {
-                                    if let Ok(typ) = exp.infer(kctx, &fctx.keys(), &vctx) {
-                                        field_types.insert(name, &Spanned::dummy(typ));
-                                    }
-                                }
                                 GraphError::from(TypeError::field_not_found(
                                     kctx,
                                     &vctx,
                                     &CExp::Record(fields.clone()),
                                     field_name.as_str(),
-                                    &field_types,
                                 ))
                             })?;
 
@@ -2646,7 +2639,6 @@ impl<C: HasOpFactory> UDag<C> {
                                                 &vctx,
                                                 &CExp::Var(id_clone.clone()),
                                                 field_name.as_str(),
-                                                fields,
                                             ))
                                         })?;
 
@@ -2662,7 +2654,6 @@ impl<C: HasOpFactory> UDag<C> {
                                                         &vctx,
                                                         &CExp::Var(id_clone.clone()),
                                                         field_name.as_str(),
-                                                        fields,
                                                     ))
                                                 })
                                                 .map(|op| (**op).clone())
@@ -2731,7 +2722,6 @@ impl<C: HasOpFactory> UDag<C> {
                                             &vctx,
                                             &record_exp,
                                             field_name.as_str(),
-                                            &fields,
                                         ))
                                     })?;
 
