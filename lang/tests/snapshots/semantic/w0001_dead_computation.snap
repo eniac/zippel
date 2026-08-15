@@ -1,0 +1,12 @@
+---
+source: lang/tests/semantic.rs
+---
+warning: unused computation
+   ╭─[ test.zippel:1:53 ]
+   │
+ 1 │ fn f<F: Field>(instance a: F, instance b: F) -> F { a + b; a }
+   │                                                     ──┬──  
+   │                                                       ╰──── this expression is computed but its result is discarded
+   │                                                       │    
+   │                                                       ╰──── note: the expression has no side effects; remove it or bind the result
+───╯

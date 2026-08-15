@@ -4,8 +4,8 @@ use crate::ast::{Body, CSig, Sig};
 use crate::diagnostic::Diagnostic;
 use crate::id::Tid;
 use crate::semantic::{
-    check_duplicate_declarations, check_proto_requirement, check_purity, check_scope,
-    check_size_binding, check_type_alias_cycles, check_typevars,
+    check_dead_variables, check_duplicate_declarations, check_proto_requirement, check_purity,
+    check_scope, check_size_binding, check_type_alias_cycles, check_typevars,
 };
 
 use std::fmt;
@@ -143,6 +143,7 @@ impl UModule {
             diags.extend(check_typevars(&decl.node.sig));
             diags.extend(check_size_binding(&decl.node.sig));
             diags.extend(check_scope(&decl.node));
+            diags.extend(check_dead_variables(&decl.node));
             if let Body::Proto { relation, .. } = &decl.node.body {
                 diags.extend(check_purity(relation));
             }
@@ -160,6 +161,11 @@ impl UModule {
         };
 
         // Phase 5: Type checking (deferred — TypeError stays as-is)
+        // TODO: Integrate type inference here, then enable:
+        //   - check_relation_assertion (proto relation has assert, direct or transitive)
+        //   - check_proto_verify (proto body has verify, direct or transitive)
+        //   - check_dead_code (uncalled function)
+        // All need a typed call graph (CSig::unify) for correct overload resolution.
 
         // Deterministic ordering: span.start → severity → phase
         diags.sort_by(|a, b| {

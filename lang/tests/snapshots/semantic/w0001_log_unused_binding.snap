@@ -1,0 +1,12 @@
+---
+source: lang/tests/semantic.rs
+---
+warning: unused variable `x`
+   ╭─[ test.zippel:1:38 ]
+   │
+ 1 │ fn f<F: Field>(instance a: F) -> F { x <- a; a }
+   │                                      ┬  
+   │                                      ╰── `x` is bound but never used
+   │                                      │  
+   │                                      ╰── help: if this is intentional, prefix it with an underscore
+───╯

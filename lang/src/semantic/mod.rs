@@ -11,6 +11,7 @@
 //! - Relation purity
 
 mod alias_cycle;
+mod dead_var;
 mod duplicate;
 mod edit_distance;
 mod proto;
@@ -25,6 +26,7 @@ use crate::diagnostic::SecondaryLabel;
 use crate::id::Tid;
 
 pub use alias_cycle::check_type_alias_cycles;
+pub use dead_var::check_dead_variables;
 pub use duplicate::check_duplicate_declarations;
 pub use proto::check_proto_requirement;
 pub use purity::check_purity;

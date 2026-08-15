@@ -1,0 +1,23 @@
+---
+source: lang/tests/semantic.rs
+---
+warning: unused variable `a`
+   ╭─[ test.zippel:1:25 ]
+   │
+ 1 │ fn f<F: Field>(instance a: F) -> [F; 3] { [0 for x in 0..3] }
+   │                         ┬  
+   │                         ╰── `a` is bound but never used
+   │                         │  
+   │                         ╰── help: if this is intentional, prefix it with an underscore
+───╯
+
+---
+warning: unused variable `x`
+   ╭─[ test.zippel:1:50 ]
+   │
+ 1 │ fn f<F: Field>(instance a: F) -> [F; 3] { [0 for x in 0..3] }
+   │                                                  ┬  
+   │                                                  ╰── `x` is bound but never used
+   │                                                  │  
+   │                                                  ╰── help: if this is intentional, prefix it with an underscore
+───╯

@@ -38,6 +38,7 @@ use std::sync::{LazyLock, OnceLock};
 
 use graph::UDags;
 use lang::ast::UModule;
+use lang::diagnostic::Severity;
 
 type AnalysisDag = graph::Dag<ArkBls12_381, Qualifier>;
 type F = <ArkBls12_381 as ArkConfig>::F;
@@ -460,11 +461,15 @@ fn compile_to_dag(path: &PathBuf, sizes: &[(&str, usize)]) -> AnalysisDag {
     let source = std::fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
     let (module, diags) = UModule::parse(&source);
-    if !diags.is_empty() {
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    if !errors.is_empty() {
         panic!(
             "failed to parse {}: {}",
             path.display(),
-            diags
+            errors
                 .iter()
                 .map(|d| d.summary.clone())
                 .collect::<Vec<_>>()

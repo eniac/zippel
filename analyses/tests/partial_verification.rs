@@ -12,6 +12,7 @@ use ark_ff::One;
 use backend::{ArkBls12_381, Value};
 use graph::UDags;
 use lang::ast::UModule;
+use lang::diagnostic::Severity;
 use lang::id::Vid;
 use share::{Ctx, unwrap};
 
@@ -35,10 +36,14 @@ const SCHNORR_PROTO: &str = r#"
 #[track_caller]
 fn compile_schnorr() -> AnalysisDag {
     let (m, diags) = UModule::parse(SCHNORR_PROTO);
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
     assert!(
-        diags.is_empty(),
-        "unexpected diagnostics: {:?}",
-        diags.iter().map(|d| &d.summary).collect::<Vec<_>>()
+        errors.is_empty(),
+        "unexpected errors: {:?}",
+        errors.iter().map(|d| &d.summary).collect::<Vec<_>>()
     );
     let m = m.unwrap().concretize(&Ctx::new()).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));

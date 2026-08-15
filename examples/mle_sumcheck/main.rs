@@ -58,6 +58,6 @@ fn prover_create_inputs(num_vars: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("claimed_sum".to_string()), Value::Scalar(claimed_sum)),
-        (Vid("poly".to_string()), poly),
+        (Vid("p".to_string()), poly),
     ])
 }

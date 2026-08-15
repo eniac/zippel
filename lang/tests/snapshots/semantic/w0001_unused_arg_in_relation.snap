@@ -1,0 +1,12 @@
+---
+source: lang/tests/semantic.rs
+---
+warning: unused variable `b`
+   ╭─[ test.zippel:1:43 ]
+   │
+ 1 │ proto p<F: Field>(instance a: F, instance b: F) where a == a { }
+   │                                           ┬  
+   │                                           ╰── `b` is bound but never used
+   │                                           │  
+   │                                           ╰── help: if this is intentional, prefix it with an underscore
+───╯

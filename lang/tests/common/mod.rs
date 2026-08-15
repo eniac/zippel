@@ -1,15 +1,46 @@
 //! Shared helpers for integration test files.
+//!
+//! Each test target (parser, semantic) compiles this module separately,
+//! so not every function is used in every target. `#[allow(dead_code)]`
+//! suppresses the resulting warnings.
 
 use lang::ast::module::UModule;
-use lang::diagnostic::render_diagnostic;
+use lang::diagnostic::{render_diagnostic, Severity};
 
 /// Render all diagnostics for a source string, sorted by span.
 /// Disables ANSI colors for clean snapshot text.
+#[allow(dead_code)]
 pub fn render_all(src: &str) -> String {
     yansi::disable();
     let (_, diags) = UModule::parse(src);
     diags
         .iter()
+        .map(|d| render_diagnostic(d, "test.zippel", src))
+        .collect::<Vec<_>>()
+        .join("\n---\n")
+}
+
+/// Render only error diagnostics (filter out warnings).
+#[allow(dead_code)]
+pub fn render_errors(src: &str) -> String {
+    yansi::disable();
+    let (_, diags) = UModule::parse(src);
+    diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .map(|d| render_diagnostic(d, "test.zippel", src))
+        .collect::<Vec<_>>()
+        .join("\n---\n")
+}
+
+/// Render only warning diagnostics (filter out errors).
+#[allow(dead_code)]
+pub fn render_warnings(src: &str) -> String {
+    yansi::disable();
+    let (_, diags) = UModule::parse(src);
+    diags
+        .iter()
+        .filter(|d| d.severity == Severity::Warning)
         .map(|d| render_diagnostic(d, "test.zippel", src))
         .collect::<Vec<_>>()
         .join("\n---\n")
