@@ -33,7 +33,7 @@ where
     let r_diff = r1 - r2;
 
     // 2. Compute the difference commitment (can also be computed by verifier).
-    let c_diff = c1 - c2; // c_diff = c1 + (-c2), assuming group subtraction exists
+    let _c_diff = c1 - c2; // c_diff = c1 + (-c2), assuming group subtraction exists
     // If m1=m2, then c_diff = h * r_diff
 
     // 3. Start Schnorr proof of knowledge for r_diff such that c_diff = h * r_diff.

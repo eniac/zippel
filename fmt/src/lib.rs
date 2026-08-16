@@ -25,51 +25,30 @@ mod style;
 mod trivia;
 mod typ;
 
+use lang::diagnostic::Diagnostic;
 use lang::parser::parse_decls;
 
 pub use style::{Indent, Style};
 
-/// Formatter error.
-#[derive(Debug)]
-pub enum FormatError {
-    /// Source has parse errors.
-    Parse(Vec<lang::diagnostic::Diagnostic>),
-}
-
-impl std::fmt::Display for FormatError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FormatError::Parse(errs) => {
-                write!(f, "parse errors: {}", errs.len())
-            }
-        }
-    }
-}
-
-impl std::error::Error for FormatError {}
-
 /// Format source text, returning the formatted output.
-/// Returns Err on parse failure (no panic).
-pub fn format_source(src: &str) -> Result<String, FormatError> {
+/// Returns Err with parse diagnostics on parse failure (no panic).
+pub fn format_source(src: &str) -> Result<String, Vec<Diagnostic>> {
     format_source_with_style(src, &Style::default())
 }
 
 /// Format source text using an explicit style.
-pub fn format_source_with_style(src: &str, style: &Style) -> Result<String, FormatError> {
+/// Returns Err with parse diagnostics on parse failure.
+pub fn format_source_with_style(src: &str, style: &Style) -> Result<String, Vec<Diagnostic>> {
     let (decls, errors) = parse_decls(src);
     if !errors.is_empty() {
-        return Err(FormatError::Parse(errors));
+        return Err(errors);
     }
     Ok(decl::format_decls(&decls, src, style))
 }
 
 /// Check if source is already formatted.
-/// Returns Ok(()) if canonical, Err(diff) if not.
-pub fn check(src: &str) -> Result<(), String> {
-    let formatted = format_source(src).map_err(|e| e.to_string())?;
-    if formatted == src {
-        Ok(())
-    } else {
-        Err(formatted)
-    }
+/// Returns `Ok(true)` if canonical, `Ok(false)` if not, `Err(diagnostics)` on parse error.
+pub fn check(src: &str) -> Result<bool, Vec<Diagnostic>> {
+    let formatted = format_source(src)?;
+    Ok(formatted == src)
 }

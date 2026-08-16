@@ -108,7 +108,7 @@ fn zc_round<F: Field, S: Size, V: 3..S + 1, N: 2 ^ S>(
 // Draw S taus via a recursive helper. Each call draws one challenge and
 // appends it to the accumulator; recursion is dispatched on the shrinking
 // "remaining" array's size.
-fn draw_taus<F: Field>(instance remaining: [F; 1]) -> [F; 1] {
+fn draw_taus<F: Field>(instance _remaining: [F; 1]) -> [F; 1] {
     t <- challenge<F>;
     [t]
 }
@@ -128,7 +128,7 @@ proto hyperplonk_zerocheck<F: Field, S: Size, N: 2 ^ S>(
     let zero = a_evs[0] - a_evs[0];
 
     // V draws S taus in F^S, then builds eq_tau on B_S parametrically.
-    let placeholder = [zero for i in 0..S];
+    let placeholder = [zero for _ in 0..S];
     let tau = draw_taus(placeholder);
     let eq_tau_evs = eq_weights(tau);
     let eq_tau = mle(eq_tau_evs);

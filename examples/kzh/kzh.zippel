@@ -53,8 +53,8 @@ proto kzh<
     // C is well-formed. eq_weights inlined LSB-first (bit_j(k) =
     // (k / 2^j) % 2) because the analyzer can't dispatch recursive
     // function calls inside `where`.
-    let tau_x = [random<F> for i in 0..NX];
-    let tau_y = [random<F> for i in 0..NY];
+    let tau_x = [random<F> for _ in 0..NX];
+    let tau_y = [random<F> for _ in 0..NY];
     let eq_x = [
         reduce(
             *,

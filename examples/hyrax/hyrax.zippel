@@ -29,12 +29,12 @@ proto hyrax<G: Group, F: Scalar<G>, L: Size, M: Size, NR: 2 ^ L, NC: 2 ^ M, NT: 
     y == dot(eq_full, p);
     // Trusted setup: the Pedersen bases g_vec[i] and h_base are derived
     // from group generator g_base by hidden scalars.
-    let g_traps = [random<F> for i in 0..NC];
+    let g_traps = [random<F> for _ in 0..NC];
     let h_trap = random<F>;
     [g_vec[i] for i in 0..NC] == [g_base * g_traps[i] for i in 0..NC];
     h_base == g_base * h_trap
 {
-    let r_rows = [random<F> for i in 0..NR];
+    let r_rows = [random<F> for _ in 0..NR];
     c_rows <- [h_base * r_rows[i] + dot(g_vec, [p[i * NC + j] for j in 0..NC]) for i in 0..NR];
 
     let l_vec = eq_weights(z_row);
@@ -46,7 +46,7 @@ proto hyrax<G: Group, F: Scalar<G>, L: Size, M: Size, NR: 2 ^ L, NC: 2 ^ M, NT: 
     let u = [dot(l_vec, [p[i * NC + j] for i in 0..NR]) for j in 0..NC];
 
     let r_tau = random<F>;
-    let d_vec = [random<F> for i in 0..NC];
+    let d_vec = [random<F> for _ in 0..NC];
     let r_delta = random<F>;
     let r_beta = random<F>;
 

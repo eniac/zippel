@@ -54,10 +54,10 @@ fn dory_reduce<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
     let g_l = g_vec[0..1];
     let g_r = g_vec[1..2];
 
-    let gamma1_l = gamma1[0..1];
-    let gamma1_r = gamma1[1..2];
-    let gamma2_l = gamma2[0..1];
-    let gamma2_r = gamma2[1..2];
+    let _gamma1_l = gamma1[0..1];
+    let _gamma1_r = gamma1[1..2];
+    let _gamma2_l = gamma2[0..1];
+    let _gamma2_r = gamma2[1..2];
 
     let hash1_l = hash1_l_vec[0];
     let hash1_r = hash1_r_vec[0];
@@ -67,10 +67,10 @@ fn dory_reduce<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
 
     // Prover verifies hash structures privately, but Verifier uses the instance hashes provided
 
-    let d1_l = reduce(+, [pair(u_l[0], gamma2_prime[0]) for i in 0..1]);
-    let d1_r = reduce(+, [pair(u_r[0], gamma2_prime[0]) for i in 0..1]);
-    let d2_l = reduce(+, [pair(gamma1_prime[0], g_l[0]) for i in 0..1]);
-    let d2_r = reduce(+, [pair(gamma1_prime[0], g_r[0]) for i in 0..1]);
+    let d1_l = reduce(+, [pair(u_l[0], gamma2_prime[0]) for _ in 0..1]);
+    let d1_r = reduce(+, [pair(u_r[0], gamma2_prime[0]) for _ in 0..1]);
+    let d2_l = reduce(+, [pair(gamma1_prime[0], g_l[0]) for _ in 0..1]);
+    let d2_r = reduce(+, [pair(gamma1_prime[0], g_r[0]) for _ in 0..1]);
 
     log_d1l <- d1_l;
     log_d1r <- d1_r;
@@ -88,8 +88,8 @@ fn dory_reduce<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
     let w2_l = w2[0..1];
     let w2_r = w2[1..2];
 
-    let v_l = reduce(+, [pair(w1_l[0], w2_r[0]) for i in 0..1]);
-    let v_r = reduce(+, [pair(w1_r[0], w2_l[0]) for i in 0..1]);
+    let v_l = reduce(+, [pair(w1_l[0], w2_r[0]) for _ in 0..1]);
+    let v_r = reduce(+, [pair(w1_r[0], w2_l[0]) for _ in 0..1]);
 
     log_vl <- v_l;
     log_vr <- v_r;
@@ -155,10 +155,10 @@ fn dory_reduce<
     let g_l = g_vec[0..2 ^ (LOG_N - 1)];
     let g_r = g_vec[2 ^ (LOG_N - 1)..2 ^ LOG_N];
 
-    let gamma1_l = gamma1[0..2 ^ (LOG_N - 1)];
-    let gamma1_r = gamma1[2 ^ (LOG_N - 1)..2 ^ LOG_N];
-    let gamma2_l = gamma2[0..2 ^ (LOG_N - 1)];
-    let gamma2_r = gamma2[2 ^ (LOG_N - 1)..2 ^ LOG_N];
+    let _gamma1_l = gamma1[0..2 ^ (LOG_N - 1)];
+    let _gamma1_r = gamma1[2 ^ (LOG_N - 1)..2 ^ LOG_N];
+    let _gamma2_l = gamma2[0..2 ^ (LOG_N - 1)];
+    let _gamma2_r = gamma2[2 ^ (LOG_N - 1)..2 ^ LOG_N];
 
     let hash1_l = hash1_l_vec[0];
     let hash1_r = hash1_r_vec[0];

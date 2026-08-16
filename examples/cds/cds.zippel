@@ -22,9 +22,9 @@ proto cds<G: Group, F: Scalar<G>, N: 2, K: 1>(
     witness u_evals: [F; K],
 ) where
     [keys[i] for i in 0..N] == [g * w[i] for i in 0..N];
-    [b[i] * (1 - b[i]) for i in 0..N] == [0 for i in 0..N];
-    [(1 - b[i]) * (eval_points[i] - u_points[0]) for i in 0..N] == [0 for i in 0..N];
-    [(1 - b[i]) * (c_sim[i] - u_evals[0]) for i in 0..N] == [0 for i in 0..N]
+    [b[i] * (1 - b[i]) for i in 0..N] == [0 for _ in 0..N];
+    [(1 - b[i]) * (eval_points[i] - u_points[0]) for i in 0..N] == [0 for _ in 0..N];
+    [(1 - b[i]) * (c_sim[i] - u_evals[0]) for i in 0..N] == [0 for _ in 0..N]
 {
     // Step 1: Initial Commitments
     // For i in A: m1 = g * r[i]

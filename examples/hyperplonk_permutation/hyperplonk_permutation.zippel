@@ -26,7 +26,7 @@ fn eq_weights<F: Field, K: 2..16>(instance x: [F; K]) -> [F; 2 ^ K] {
 }
 
 // Draw S taus.
-fn draw_taus<F: Field>(instance placeholder: [F; 1]) -> [F; 1] {
+fn draw_taus<F: Field>(instance _placeholder: [F; 1]) -> [F; 1] {
     t <- challenge<F>;
     [t]
 }
@@ -190,7 +190,7 @@ proto hyperplonk_permutation<F: Field, S: Size, N: 2 ^ S>(
     let v_tail_1 = mle(v_tail_1_evs);
 
     alpha <- challenge<F>;
-    let placeholder = [zero for i in 0..S];
+    let placeholder = [zero for _ in 0..S];
     let tau = draw_taus(placeholder);
     let eq_tau_evs = eq_weights(tau);
     let eq_tau = mle(eq_tau_evs);

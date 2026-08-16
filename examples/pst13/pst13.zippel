@@ -60,7 +60,7 @@ fn pst13_commit<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M:
 fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
     witness p_curr: [F; 2],
     instance ck_curr: [G1; 2],
-    instance z_curr: [F; 1],
+    instance _z_curr: [F; 1],
 ) -> [G1; 1] {
     let ck_0 = ck_curr[0..1] + ck_curr[1..2];
     let p_lo = p_curr[0..1];
@@ -125,7 +125,7 @@ proto pst13<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Siz
 ) where
     // Trusted setup: sample the trapdoor α, then derive ck_N and alpha_H
     // as their Lagrange-basis expansions.
-    let alpha = [random<F> for i in 0..N];
+    let alpha = [random<F> for _ in 0..N];
     // eq_mle at α, inlined MSB-first (α[0] is the high bit peeled first):
     //   eq_alpha[i] = Π_j (bit_j(i) ? α[j] : 1 - α[j])
     // with bit_j(i) = (i / 2^(N-1-j)) % 2. Inlined rather than routed

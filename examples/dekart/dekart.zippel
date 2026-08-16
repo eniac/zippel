@@ -52,7 +52,7 @@ proto dekart<
             for i in 1..n + 1
         ]
 {
-    let f_zero = 0;
+    let _f_zero = 0;
 
     // Interpolate f
     let f_poly = interpolate(f_evals);
@@ -89,7 +89,7 @@ proto dekart<
 
     // Step 5: Quotient polynomials
     // v_s: vanishing polynomial of the constraint domain H (excluding omega^0 = 1)
-    let v_s = poly([1 for i in 0..n + 1]);
+    let v_s = poly([1 for _ in 0..n + 1]);
 
     // h_j(X) = \prod_{i=0..b-1} (f_j - i) / v_s
     let h_j_vec = [reduce(*, [f_j_vec[j] - d for d in 0..b]) / v_s for j in 0..l_chunk];

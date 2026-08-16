@@ -8,6 +8,7 @@ lang = { path = "../lang" }
 share = { path = "../share" }
 pretty = "0.12.3"
 anyhow = "1.0"
+similar = "2.7"
 
 [dev-dependencies]
 criterion = "0.5"

@@ -1,7 +1,9 @@
-use std::io::{Read, Write};
+use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
 
 use fmt::{check, format_source};
+use lang::diagnostic::render_diagnostic;
+use similar::{ChangeTag, TextDiff};
 
 fn usage() {
     eprintln!("Usage: zippel-fmt [--check] [--write] [FILE...]");
@@ -17,6 +19,36 @@ enum Mode {
     Check,
     Write,
     Stdout,
+}
+
+/// Render parse diagnostics to stderr.
+fn render_diagnostics(diagnostics: &[lang::diagnostic::Diagnostic], filename: &str, src: &str) {
+    for diag in diagnostics {
+        eprint!("{}", render_diagnostic(diag, filename, src));
+    }
+}
+
+/// Print a unified diff between `old` and `new` to stderr.
+/// Only shows changed lines (no context). Uses ANSI colors when
+/// stderr is a terminal.
+fn print_diff(old: &str, new: &str, filename: &str) {
+    let use_color = std::io::stderr().is_terminal();
+    let diff = TextDiff::from_lines(old, new);
+    eprintln!("--- {}", filename);
+    eprintln!("+++ {}", filename);
+    for change in diff.iter_all_changes() {
+        // Skip context lines — only show changes.
+        if change.tag() == ChangeTag::Equal {
+            continue;
+        }
+        let (prefix, color) = match change.tag() {
+            ChangeTag::Delete => ("-", if use_color { "\x1b[31m" } else { "" }),
+            ChangeTag::Insert => ("+", if use_color { "\x1b[32m" } else { "" }),
+            ChangeTag::Equal => (" ", ""),
+        };
+        let reset = if use_color { "\x1b[0m" } else { "" };
+        eprint!("{}{}{}{}", color, prefix, change.value(), reset);
+    }
 }
 
 fn main() {
@@ -50,8 +82,8 @@ fn main() {
             Ok(out) => {
                 std::io::stdout().write_all(out.as_bytes()).unwrap();
             }
-            Err(e) => {
-                eprintln!("Error: {}", e);
+            Err(diagnostics) => {
+                render_diagnostics(&diagnostics, "stdin", &src);
                 std::process::exit(1);
             }
         }
@@ -67,12 +99,23 @@ fn main() {
                 std::process::exit(1);
             }
         };
+        let filename = path.display().to_string();
         match mode {
             Mode::Check => match check(&src) {
-                Ok(()) => {}
-                Err(_) => {
+                Ok(true) => {}
+                Ok(false) => {
+                    if has_diff {
+                        eprintln!();
+                    }
                     has_diff = true;
                     eprintln!("{}: not formatted", path.display());
+                    if let Ok(formatted) = format_source(&src) {
+                        print_diff(&src, &formatted, &path.display().to_string());
+                    }
+                }
+                Err(diagnostics) => {
+                    render_diagnostics(&diagnostics, &filename, &src);
+                    std::process::exit(1);
                 }
             },
             Mode::Write | Mode::Stdout => match format_source(&src) {
@@ -86,8 +129,8 @@ fn main() {
                         std::io::stdout().write_all(out.as_bytes()).unwrap();
                     }
                 }
-                Err(e) => {
-                    eprintln!("Error formatting {}: {}", path.display(), e);
+                Err(diagnostics) => {
+                    render_diagnostics(&diagnostics, &filename, &src);
                     std::process::exit(1);
                 }
             },

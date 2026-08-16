@@ -45,9 +45,9 @@ proto groth16<
     let beta = random<F>;
     let gamma = random<F>;
     let delta = random<F>;
-    let a_evs = [random<F> for i in 0..M + L];
-    let b_evs = [random<F> for i in 0..M + L];
-    let c_evs = [random<F> for i in 0..M + L];
+    let a_evs = [random<F> for _ in 0..M + L];
+    let b_evs = [random<F> for _ in 0..M + L];
+    let c_evs = [random<F> for _ in 0..M + L];
     let t_at_tau = random<F>;
     alpha_g1 == alpha * gen_g1;
     beta_g1 == beta * gen_g1;

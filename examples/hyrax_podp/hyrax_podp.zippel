@@ -50,7 +50,7 @@ where
 
     // 1. Sample randomness (d_vec, r_delta, r_beta)
     //    and compute commitments (delta, beta).
-    let d_vec = [random<F> for i in 0..N]; // Generate random vector d_vec
+    let d_vec = [random<F> for _ in 0..N]; // Generate random vector d_vec
     let r_delta = random<F>;
     let r_beta = random<F>;
 

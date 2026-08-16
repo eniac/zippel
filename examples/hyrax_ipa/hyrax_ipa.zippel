@@ -8,7 +8,7 @@ fn bullet_reduce<G: Group, F: Scalar<G>>(
     instance g_hat: [G; 1],
     instance g_base: G,
     instance h_base: G,
-    witness x_hat: [F; 1],
+    witness _x_hat: [F; 1],
     witness y_hat: F,
     witness r_Upsilon_hat: F,
 ) -> Unit {

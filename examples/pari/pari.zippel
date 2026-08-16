@@ -133,7 +133,7 @@ proto pari<
     f_one == 1;
     k_inv * K == 1;
     //     omegas[i] are K-th roots of unity (ω^{K-N+i}).
-    [omegas[i] ^ K for i in 0..N] == [f_one for i in 0..N]
+    [omegas[i] ^ K for i in 0..N] == [f_one for _ in 0..N]
     // (Structural identity for sigma_w — which pins the witness-side
     // basis Σ_w[i] = (α a_i(τ) + β b_i(τ))/δ_2 · G to the A/B Lagrange
     // polynomials — is intentionally omitted: it would require

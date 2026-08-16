@@ -27,7 +27,7 @@ fn eq_weights<F: Field, K: 2..16>(instance x: [F; K]) -> [F; 2 ^ K] {
 }
 
 // Draw S taus, recursive dispatch on placeholder size.
-fn draw_taus<F: Field>(instance placeholder: [F; 1]) -> [F; 1] {
+fn draw_taus<F: Field>(instance _placeholder: [F; 1]) -> [F; 1] {
     t <- challenge<F>;
     [t]
 }
@@ -266,7 +266,7 @@ fn perm_piop_column<F: Field, S: Size, N: 2 ^ S>(
     let v_tail_1 = mle(v_tail_1_evs);
 
     alpha <- challenge<F>;
-    let placeholder_sau = [zero for i in 0..S];
+    let placeholder_sau = [zero for _ in 0..S];
     let sau = draw_taus(placeholder_sau);
     let eq_sau_evs = eq_weights(sau);
     let eq_sau = mle(eq_sau_evs);
@@ -363,7 +363,7 @@ proto hyperplonk<F: Field, S: Size, N: 2 ^ S>(
     //         x collapses the multiset equality to a scalar via SZ over F[X].
     let zero_f = a_evs[0] - a_evs[0];
     gate_identity(a_evs, b_evs, c_evs, q_l_evs, q_r_evs, q_o_evs, q_m_evs, q_c_evs)
-        == [zero_f for i in 0..N];
+        == [zero_f for _ in 0..N];
     let y = random<F>;
     let x = random<F>;
     reduce(*, [s_id_a_evs[i] + y * a_evs[i] + x for i in 0..N])
@@ -388,7 +388,7 @@ proto hyperplonk<F: Field, S: Size, N: 2 ^ S>(
     let qm = mle(q_m_evs);
     let qc = mle(q_c_evs);
 
-    let placeholder_tau = [zero for i in 0..S];
+    let placeholder_tau = [zero for _ in 0..S];
     let tau = draw_taus(placeholder_tau);
     let eq_tau_evs = eq_weights(tau);
     let eq_tau = mle(eq_tau_evs);
