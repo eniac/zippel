@@ -1,5 +1,5 @@
 //! Relation purity check — proto relations must not contain
-//! Challenge/Log/Verify constructs.
+//! Challenge/Log/Verify/Assert constructs.
 
 use std::ops::Range;
 
@@ -8,7 +8,7 @@ use crate::ast::Exp;
 use crate::diagnostic::Diagnostic;
 use lang_derive::Diagnostic as DiagnosticDerive;
 
-/// E0012: A proto relation contains impure constructs (Challenge/Log/Verify).
+/// E0012: A proto relation contains impure constructs (Challenge/Log/Verify/Assert).
 #[derive(DiagnosticDerive)]
 #[diag(
     "impure construct `{$construct}` in proto relation",
@@ -20,11 +20,11 @@ struct ImpureRelation {
     #[span(label = "`{$construct}` is not allowed in a proto relation")]
     span: Range<usize>,
     construct: String,
-    #[note("proto relations must be relation-pure (no challenge, log, or verify)")]
+    #[note("proto relations must be relation-pure (no challenge, log, verify, or assert)")]
     _note: (),
 }
 
-/// Find all impure constructs (Challenge/Log/Verify) in an expression.
+/// Find all impure constructs (Challenge/Log/Verify/Assert) in an expression.
 /// Returns (span, construct_name) for each occurrence.
 fn find_impure_constructs(exp: &Spanned<Exp<crate::ast::Size>>) -> Vec<(Range<usize>, String)> {
     let mut results = Vec::new();
@@ -39,12 +39,8 @@ fn collect_impure_constructs(
     match &exp.node {
         Exp::Challenge(_, _) => out.push((exp.span.clone(), "challenge".to_string())),
         Exp::Log(_, _, _) => out.push((exp.span.clone(), "log".to_string())),
-        Exp::Verify(_, _) => out.push((exp.span.clone(), "verify".to_string())),
-        // Recurse into sub-expressions
-        Exp::Assert(box a, box b) => {
-            collect_impure_constructs(a, out);
-            collect_impure_constructs(b, out);
-        }
+        Exp::Verify(_) => out.push((exp.span.clone(), "verify".to_string())),
+        Exp::Assert(_) => out.push((exp.span.clone(), "assert".to_string())),
         Exp::Let(_, box val, cont) => {
             collect_impure_constructs(val, out);
             if let Some(c) = cont {

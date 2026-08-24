@@ -86,6 +86,21 @@ expression: value
 - u2*c3::1::0::1*z1::1*__zippel::soundness::d::0::1::0 + c2::1::1*u3*z1::1*__zippel::soundness::d::0::1::0 + u2*c3::1::0::1*z1::0*__zippel::soundness::d::0::1::0 - c2::1::1*u3*z1::0*__zippel::soundness::d::0::1::0 - u2*z3::1::0::1 + u3*z2::1::1
 - u2*c3::1::1::0*z1::1*__zippel::soundness::d::0::1::0 + c2::1::1*u3*z1::1*__zippel::soundness::d::0::1::0 + u2*c3::1::1::0*z1::0*__zippel::soundness::d::0::1::0 - c2::1::1*u3*z1::0*__zippel::soundness::d::0::1::0 - u2*z3::1::1::0 + u3*z2::1::1
 - u2*c3::1::1::1*z1::1*__zippel::soundness::d::0::1::0 + c2::1::1*u3*z1::1*__zippel::soundness::d::0::1::0 + u2*c3::1::1::1*z1::0*__zippel::soundness::d::0::1::0 - c2::1::1*u3*z1::0*__zippel::soundness::d::0::1::0 - u2*z3::1::1::1 + u3*z2::1::1
+__zippel::node::28::0 - 1
+__zippel::node::28::1 - 1
+__zippel::node::33::0::0 - 1
+__zippel::node::33::0::1 - 1
+__zippel::node::33::1::0 - 1
+__zippel::node::33::1::1 - 1
+__zippel::node::38::0::0::0 - 1
+__zippel::node::38::0::0::1 - 1
+__zippel::node::38::0::1::0 - 1
+__zippel::node::38::0::1::1 - 1
+__zippel::node::38::1::0::0 - 1
+__zippel::node::38::1::0::1 - 1
+__zippel::node::38::1::1::0 - 1
+__zippel::node::38::1::1::1 - 1
+__zippel::node::46 - 1
 c1::1*u2*z2::1::1 - c1::0*u2*z2::1::1 - c1::1*u2*z2::0::0 + c1::0*u2*z2::0::0 - u2*c2::1::1*z1::1 + u2*c2::0::0*z1::1 + u2*c2::1::1*z1::0 - u2*c2::0::0*z1::0
 c1::1*u2*z2::1::1 - c1::0*u2*z2::1::1 - c1::1*u2*z2::0::1 + c1::0*u2*z2::0::1 - u2*c2::1::1*z1::1 + u2*c2::0::1*z1::1 + u2*c2::1::1*z1::0 - u2*c2::0::1*z1::0
 c1::1*u2*z2::1::1 - c1::0*u2*z2::1::1 - c1::1*u2*z2::1::0 + c1::0*u2*z2::1::0 - u2*c2::1::1*z1::1 + u2*c2::1::0*z1::1 + u2*c2::1::1*z1::0 - u2*c2::1::0*z1::0

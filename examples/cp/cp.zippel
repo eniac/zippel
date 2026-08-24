@@ -7,10 +7,7 @@ proto chaum_pedersen<G: Group, F: Scalar<G>>(
     instance u: G, // Second generator
     instance v: G, // First public key: y1 = g1^x
     instance w: G, // Second instance key: y2 = g2^x
-) where
-    v == g * beta;
-    w == u * beta
-{
+) where v == g * beta && w == u * beta {
     let beta_r = random<F>;
     v_r <- g * beta_r;
     w_r <- u * beta_r;

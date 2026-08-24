@@ -6,10 +6,7 @@ proto okamoto_elgamal<G: Group, F: Scalar<G>>(
     instance h: G,
     instance c1: G,
     instance c2: G,
-) where
-    c1 == g * r;
-    c2 == h * r + g * x
-{
+) where c1 == g * r && c2 == h * r + g * x {
     let rx = random<F>;
     let rr = random<F>;
     t1 <- g * rr;

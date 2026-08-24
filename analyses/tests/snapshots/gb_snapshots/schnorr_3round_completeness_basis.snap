@@ -28,4 +28,8 @@ expression: value
 - z1 + x*c1 + r1
 - z2 + x*c2 + r2
 - z3 + x*c3 + r3
+__zippel::node::28 - 1
+__zippel::node::33 - 1
+__zippel::node::38 - 1
+__zippel::node::46 - 1
 g*x - h

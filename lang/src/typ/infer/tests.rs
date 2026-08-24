@@ -94,10 +94,12 @@ fn evaluate_selected<N>(
     ))
 }
 fn assert_eq<N>(lhs: Spanned<Exp<N>>, rhs: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Assert(Box::new(lhs), Box::new(rhs)))
+    let equ = Spanned::dummy(Exp::Bin(BinOp::Equ, Box::new(lhs), Box::new(rhs)));
+    Spanned::dummy(Exp::Assert(Box::new(equ)))
 }
 fn verify_eq<N>(lhs: Spanned<Exp<N>>, rhs: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Verify(Box::new(lhs), Box::new(rhs)))
+    let equ = Spanned::dummy(Exp::Bin(BinOp::Equ, Box::new(lhs), Box::new(rhs)));
+    Spanned::dummy(Exp::Verify(Box::new(equ)))
 }
 fn letx<N>(a: Vid, d: Spanned<Exp<N>>, e: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Let(
@@ -1901,8 +1903,9 @@ fn test_proto_body_blames_body_not_relation() {
     };
     let fctx = Set::new();
     let body = crate::ast::CBody::Proto {
-        relation: Spanned::dummy(CExp::Unit), // no constraints — the body is what fails
-        body: Some(lit(5)),                   // body has type Fin (invalid, expected Unit)
+        // relation is a valid Bool (0 == 0) — the body is what fails
+        relation: Spanned::dummy(CExp::Bin(BinOp::Equ, Box::new(lit(0)), Box::new(lit(0)))),
+        body: Some(lit(5)), // body has type Fin (invalid, expected Unit)
     };
     let res = body.typecheck(sig, &fctx);
     let err = res.unwrap_err();

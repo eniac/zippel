@@ -456,6 +456,39 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
             }
 
+            // Handle ==
+            CExp::Bin(BinOp::Equ, box a, box b) => {
+                let ta = a
+                    .infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                let tb = b
+                    .infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+
+                // Check lub_equ compatibility
+                let _lub = CTyp::lub_equ(&ta, &tb, kctx)
+                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+
+                // Return Bool for scalar/poly/record operands, Vec<Bool, N> for vec operands
+                match &ta {
+                    CTyp::Vec(_, n) => Ok(CTyp::vec(&CTyp::Bool, n.node)),
+                    _ => Ok(CTyp::Bool),
+                }
+            }
+
+            // Handle && (logical AND): both operands must be Bool, result is Bool
+            CExp::Bin(BinOp::And, box a, box b) => {
+                let ta = a
+                    .infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                let tb = b
+                    .infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+
+                CTyp::lub_and(&ta, &tb, kctx)
+                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
+            }
+
             // Handle unary negation: same type as operand
             CExp::Neg(box a) => a
                 .infer(kctx, fctx, vctx)
@@ -760,17 +793,16 @@ impl Typeable for CExp {
                 }
             }
 
-            CExp::Assert(box lhs, box rhs) | CExp::Verify(box lhs, box rhs) => {
-                let ta = lhs
-                    .infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let tb = rhs
+            CExp::Assert(box exp) | CExp::Verify(box exp) => {
+                let t = exp
                     .infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
-                // Constraint operands must have compatible types
-                CTyp::lub_equ(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+                // The operand must be Bool (not Vec<Bool>)
+                match &t {
+                    CTyp::Bool => {}
+                    _ => return Err(TypeError::exp(kctx, vctx, self)),
+                }
 
                 // Assert/Verify return Unit
                 Ok(CTyp::Unit)

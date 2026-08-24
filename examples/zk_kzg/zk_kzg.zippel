@@ -22,9 +22,7 @@ proto zk_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Si
     instance h_val: G2,
 ) where
     let tau = random<F>;
-    ss == [tau ^ i * g for i in 0..N + 1];
-    h_val == tau * h;
-    p_val(z) == y
+    reduce(&&, ss == [tau ^ i * g for i in 0..N + 1]) && h_val == tau * h && p_val(z) == y
 {
     // Sample blinding factors
     let b0 = random<F>;

@@ -252,7 +252,7 @@ pub(crate) fn map_op<C: ArkConfig + HasOpFactory>(
 }
 
 /// `Op::ReduceMap`: explode the domain, map the body per element, and fold
-/// the ideals with `reduce_polysource`.
+/// the ideals with `reduce_op_inner`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn reduce_map_op<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
@@ -294,5 +294,5 @@ pub(crate) fn reduce_map_op<C: ArkConfig + HasOpFactory>(
             .collect(),
         ATyp::vec(&elem_t, n),
     );
-    super::reduce::reduce_polysource(&mut *ctx, var, rop, combined, elem_t, n);
+    super::reduce::reduce_op_inner(&mut *ctx, var, rop, combined, elem_t, n);
 }

@@ -27,6 +27,7 @@ where
     fn lub_pair(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
     fn lub_rem(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
     fn lub_concat(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
+    fn lub_and(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
 
     fn lub_op(op: BinOp, a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
         match op {
@@ -38,6 +39,8 @@ where
             BinOp::Rem => Self::lub_rem(a, b, ctx),
             BinOp::Dot => Self::lub_dot(a, b, ctx),
             BinOp::Concat => Self::lub_concat(a, b, ctx),
+            BinOp::Equ => Self::lub_equ(a, b, ctx),
+            BinOp::And => Self::lub_and(a, b, ctx),
         }
     }
 }
@@ -162,9 +165,11 @@ impl Lub for Range<usize> {
     fn lub_pair(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
         Err(LubError::pair(&a, &b))
     }
-}
 
-/// Least-upper bound of type variables
+    fn lub_and(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
+        Err(LubError::and(&a, &b))
+    }
+}
 impl Lub for Tid {
     type Context = Ctx<Tid, CKind>;
     /// Can the two kinds be unified into one kind that describes both?
@@ -353,6 +358,13 @@ impl Lub for Tid {
             &CTypeVar::new(b, kb),
         ))
     }
+
+    /// Least-upper-bound for logical AND is always an error (kinds don't support &&)
+    fn lub_and(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
+        let ka = ctx.get(a).ok_or(LubError::kind_not_found(a))?;
+        let kb = ctx.get(b).ok_or(LubError::kind_not_found(b))?;
+        Err(LubError::and(&CTypeVar::new(a, ka), &CTypeVar::new(b, kb)))
+    }
 }
 
 impl Lub for CTyp {
@@ -360,6 +372,7 @@ impl Lub for CTyp {
     fn lub_equ(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
             (CTyp::Unit, CTyp::Unit) => Ok(CTyp::Unit),
+            (CTyp::Bool, CTyp::Bool) => Ok(CTyp::Bool),
             (CTyp::Base(a), CTyp::Base(b)) => Ok(CTyp::Base(
                 Tid::lub_equ(a, b, ctx).map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
             )),
@@ -898,6 +911,13 @@ impl Lub for CTyp {
             }
 
             (ta, tb) => Err(LubError::concat(&ta, &tb)),
+        }
+    }
+
+    fn lub_and(x: &Self, y: &Self, _ctx: &Self::Context) -> Result<Self, LubError> {
+        match (x, y) {
+            (CTyp::Bool, CTyp::Bool) => Ok(CTyp::Bool),
+            (_, _) => Err(LubError::and(&x, &y)),
         }
     }
 }

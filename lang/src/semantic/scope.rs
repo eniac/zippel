@@ -225,9 +225,8 @@ fn check_exp_scope(
             }
         }
 
-        Exp::Assert(a, b) | Exp::Verify(a, b) => {
+        Exp::Assert(a) | Exp::Verify(a) => {
             check_exp_scope(a, scope, undefined);
-            check_exp_scope(b, scope, undefined);
         }
 
         Exp::Fun(params, body) => {

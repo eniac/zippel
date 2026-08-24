@@ -111,6 +111,7 @@ pub(crate) fn format_typ(
             let gap = cursor.advance_to_token(end, |token| matches!(token, Token::KwUnit));
             (gap, ALLOC.text("Unit"))
         }
+        Typ::Bool => (TriviaGap::default(), ALLOC.text("Bool")),
         Typ::Record(fields) => {
             let open_gap = cursor.advance_to_token(end, |token| matches!(token, Token::LBrace));
             let mut fields: Vec<_> = fields.iter().collect();

@@ -14,3 +14,7 @@ expression: value
 - v_r + g*beta_r
 - w + beta*u
 - w_r + u*beta_r
+__zippel::node::18 - 1
+__zippel::node::23 - 1
+__zippel::node::33 - 1
+__zippel::node::35 - 1

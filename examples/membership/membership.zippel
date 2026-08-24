@@ -18,10 +18,13 @@ proto membership<
     instance gen_g2: G2,
     instance srs_g2_s: G2,
 ) where
-    srs_g1[0] == gen_g1;
-    [pair(srs_g1[i], srs_g2_s) for i in 0..S - 1]
-        == [pair(srs_g1[i + 1], gen_g2) for i in 0..S - 1];
-    reduce(*, [f_coeffs[0] - r for r in s]) == 0
+    srs_g1[0] == gen_g1
+        && reduce(
+            &&,
+            [pair(srs_g1[i], srs_g2_s) for i in 0..S - 1]
+                == [pair(srs_g1[i + 1], gen_g2) for i in 0..S - 1],
+        )
+        && reduce(*, [f_coeffs[0] - r for r in s]) == 0
 {
     let poly_f = poly(f_coeffs);
 

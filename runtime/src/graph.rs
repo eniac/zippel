@@ -483,10 +483,10 @@ impl<C: ArkConfig> MutexGraph<C> {
                     // verifier. Collect terminal Verify nodes for verifier
                     // only (prover graph has no Verify nodes).
                     match &g.mutex_graph[node_idx] {
-                        Node::Op(op, _) if matches!(**op, Op::Assert(_, _)) => {
+                        Node::Op(op, _) if matches!(**op, Op::Assert(_)) => {
                             assert_indices.push(node_idx);
                         }
-                        Node::Op(op, _) if matches!(**op, Op::Verify(_, _)) => {
+                        Node::Op(op, _) if matches!(**op, Op::Verify(_)) => {
                             if matches!(result_kind, ResultKind::Verifier) {
                                 result_indices.push(node_idx);
                             }

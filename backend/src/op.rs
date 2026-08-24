@@ -95,11 +95,11 @@ pub enum Op<C: ArkConfig, R> {
     /// Explicit-domain reduce-map: `reduce(op, [body for x in domain])`.
     ReduceMap(BinOp, HOp<C>, HOp<C>),
 
-    /// Prover-side assertion: asserts that lhs == rhs at proving time.
+    /// Prover-side assertion: asserts that the operand is true at proving time.
     /// If the assertion fails, the prover aborts with `AssertionFailed`.
-    Assert(HOp<C>, HOp<C>),
-    /// Verifier-side check: verifies that lhs == rhs at verification time.
-    Verify(HOp<C>, HOp<C>),
+    Assert(HOp<C>),
+    /// Verifier-side check: verifies that the operand is true at verification time.
+    Verify(HOp<C>),
 
     /// Reduce a vector with a binary operation
     Reduce(BinOp, HOp<C>),
@@ -192,6 +192,8 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Bin(BinOp::Dot, _, _, _) => 8,
             Op::Bin(BinOp::Concat, _, _, _) => 9,
             Op::Bin(BinOp::Pow, _, _, _) => 12,
+            Op::Bin(BinOp::Equ, _, _, _) => 33,
+            Op::Bin(BinOp::And, _, _, _) => 34,
             Op::Pair(_, _, _) => 13,
             Op::Ram(_, _) => 14,
             Op::Vec(_) => 15,
@@ -200,8 +202,8 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Challenge(_, _) => 18,
             Op::Interpolate(_, _) => 19,
             Op::Fft(_) => 20,
-            Op::Assert(_, _) => 21,
-            Op::Verify(_, _) => 24,
+            Op::Assert(_) => 21,
+            Op::Verify(_) => 24,
             Op::Poly(_) => 22,
             Op::Evaluate(_, _, _) => 23,
             Op::Map(_, _) => 30,
@@ -266,18 +268,17 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Ifft(op) => poly_typ_from_vec(op.typ()),
             // Op::Fft(p): p : Uni(m) → Vec<F, m + 1>.
             Op::Fft(op) => coef_typ_from_poly(op.typ()),
-            Op::Assert(lhs, rhs) | Op::Verify(lhs, rhs) => {
+            Op::Assert(op) | Op::Verify(op) => {
                 // Assert/Verify are side-effects; their type is Unit.
-                // Operands must have compatible types (validated here via
-                // lub_equ, mirroring the type checker's ConstraintMismatch
-                // check).
-                ATyp::lub_equ(&lhs.typ(), &rhs.typ(), &Nothing).unwrap_or_else(|_| {
-                    panic!(
-                        "UncaughtError: Assert/Verify operands have incompatible types: {} vs {}",
-                        lhs.typ(),
-                        rhs.typ()
-                    )
-                });
+                // The operand must be Bool (not Vec<Bool>).
+                let t = op.typ();
+                match &t {
+                    ATyp::Base(ABase::Bool) => {}
+                    _ => panic!(
+                        "UncaughtError: Assert/Verify operand must be Bool, found {}",
+                        t
+                    ),
+                }
                 ATyp::unit()
             }
             // Op::Poly(v): v : Vec<F, k> → Uni(k - 1) under the degree
@@ -449,6 +450,8 @@ impl<C: HasOpFactory> GOp<C> {
             BinOp::Pow => Self::pow(a, b, typ),
             BinOp::Dot => Self::dot(a, b, typ),
             BinOp::Concat => Self::concat(a, b, typ),
+            BinOp::Equ => Op::Bin(BinOp::Equ, mk::<C>(a), mk::<C>(b), typ),
+            BinOp::And => Op::Bin(BinOp::And, mk::<C>(a), mk::<C>(b), typ),
         }
     }
 
@@ -876,11 +879,11 @@ impl<C: HasOpFactory> GOp<C> {
         Op::Vec(vs.into_iter().map(mk::<C>).collect())
     }
 
-    pub fn assert(lhs: GOp<C>, rhs: GOp<C>) -> GOp<C> {
-        Op::Assert(mk::<C>(lhs), mk::<C>(rhs))
+    pub fn assert(op: GOp<C>) -> GOp<C> {
+        Op::Assert(mk::<C>(op))
     }
-    pub fn verify(lhs: GOp<C>, rhs: GOp<C>) -> GOp<C> {
-        Op::Verify(mk::<C>(lhs), mk::<C>(rhs))
+    pub fn verify(op: GOp<C>) -> GOp<C> {
+        Op::Verify(mk::<C>(op))
     }
 }
 
@@ -930,11 +933,7 @@ impl<C: ArkConfig> GOp<C> {
                 .into_iter()
                 .chain(v.references())
                 .collect(),
-            Op::Assert(lhs, rhs) | Op::Verify(lhs, rhs) => lhs
-                .references()
-                .into_iter()
-                .chain(rhs.references())
-                .collect(),
+            Op::Assert(op) | Op::Verify(op) => op.references(),
             Op::Poly(v)
             | Op::Mle(v)
             | Op::Coef(v)
@@ -990,14 +989,8 @@ impl<C: HasOpFactory> GOp<C> {
             ),
             Op::Poly(op) => Op::Poly(mk::<C>(op.map_node_indices(f))),
             Op::Coef(op) => Op::Coef(mk::<C>(op.map_node_indices(f))),
-            Op::Assert(lhs, rhs) => Op::Assert(
-                mk::<C>(lhs.map_node_indices(f)),
-                mk::<C>(rhs.map_node_indices(f)),
-            ),
-            Op::Verify(lhs, rhs) => Op::Verify(
-                mk::<C>(lhs.map_node_indices(f)),
-                mk::<C>(rhs.map_node_indices(f)),
-            ),
+            Op::Assert(op) => Op::Assert(mk::<C>(op.map_node_indices(f))),
+            Op::Verify(op) => Op::Verify(mk::<C>(op.map_node_indices(f))),
             Op::Interpolate(points, evals) => Op::Interpolate(
                 mk::<C>(points.map_node_indices(f)),
                 mk::<C>(evals.map_node_indices(f)),
@@ -1033,8 +1026,8 @@ impl<C: HasOpFactory> GOp<C> {
             Op::Pair(a, b, typ) => {
                 Op::Pair(mk::<C>(a.map_refs(f)), mk::<C>(b.map_refs(f)), typ.clone())
             }
-            Op::Assert(lhs, rhs) => Op::Assert(mk::<C>(lhs.map_refs(f)), mk::<C>(rhs.map_refs(f))),
-            Op::Verify(lhs, rhs) => Op::Verify(mk::<C>(lhs.map_refs(f)), mk::<C>(rhs.map_refs(f))),
+            Op::Assert(op) => Op::Assert(mk::<C>(op.map_refs(f))),
+            Op::Verify(op) => Op::Verify(mk::<C>(op.map_refs(f))),
             Op::Interpolate(points, evals) => {
                 Op::Interpolate(mk::<C>(points.map_refs(f)), mk::<C>(evals.map_refs(f)))
             }
@@ -1100,14 +1093,8 @@ impl<C: HasOpFactory> GOp<C> {
                     .map(|(k, v)| (k.clone(), mk::<C>(v.inline(vars, except))))
                     .collect(),
             ),
-            Op::Assert(lhs, rhs) => Op::Assert(
-                mk::<C>(lhs.inline(vars, except)),
-                mk::<C>(rhs.inline(vars, except)),
-            ),
-            Op::Verify(lhs, rhs) => Op::Verify(
-                mk::<C>(lhs.inline(vars, except)),
-                mk::<C>(rhs.inline(vars, except)),
-            ),
+            Op::Assert(op) => Op::Assert(mk::<C>(op.inline(vars, except))),
+            Op::Verify(op) => Op::Verify(mk::<C>(op.inline(vars, except))),
             Op::Interpolate(points, evals) => Op::Interpolate(
                 mk::<C>(points.inline(vars, except)),
                 mk::<C>(evals.inline(vars, except)),
@@ -1390,18 +1377,14 @@ where
                 evals.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
-            Op::Assert(lhs, rhs) => allocator.concat([
+            Op::Assert(op) => allocator.concat([
                 allocator.text("(assert "),
-                lhs.get().clone().pretty(allocator),
-                allocator.text(" == "),
-                rhs.get().clone().pretty(allocator),
+                op.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
-            Op::Verify(lhs, rhs) => allocator.concat([
+            Op::Verify(op) => allocator.concat([
                 allocator.text("(verify "),
-                lhs.get().clone().pretty(allocator),
-                allocator.text(" == "),
-                rhs.get().clone().pretty(allocator),
+                op.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
             Op::Challenge(t, true) => allocator.text(format!("challenge<{}*>", t)),

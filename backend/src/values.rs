@@ -56,6 +56,8 @@ pub enum Value<C: ArkConfig> {
     Poly(VirtualPolynomial<C::F>),
     /// Unit value (the only inhabitant of type Unit)
     Unit,
+    /// Boolean value (0 or 1)
+    Bool(bool),
 }
 
 impl<C: ArkConfig> PartialEq for Value<C> {
@@ -91,6 +93,7 @@ impl<C: ArkConfig> PartialEq for Value<C> {
             (Value::Record(a), Value::Record(b)) => a == b,
             (Value::Poly(a), Value::Poly(b)) => a == b,
             (Value::Unit, Value::Unit) => true,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
             // Different variants are not equal
             _ => false,
         }
@@ -134,6 +137,7 @@ impl<C: ArkConfig> std::hash::Hash for Value<C> {
                 bytes.hash(state);
             }
             Value::Unit => {}
+            Value::Bool(b) => b.hash(state),
         }
     }
 }
@@ -226,6 +230,7 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
             Ok(())
         }
         Value::Unit => Ok(()),
+        Value::Bool(b) => (*b as u8).serialize_compressed(writer),
     }
 }
 
@@ -265,6 +270,7 @@ impl<C: ArkConfig> Value<C> {
             Value::Vec(_) => 0,
             Value::Record(_) => 0,
             Value::Unit => 20,
+            Value::Bool(_) => 21,
         }
     }
 
@@ -278,6 +284,7 @@ impl<C: ArkConfig> Value<C> {
         match typ {
             ATyp::Base(ABase::Fin(r)) if r.contains(0) => Value::Index(0),
             ATyp::Base(ABase::Scalar) => Value::Scalar(C::F::zero()),
+            ATyp::Base(ABase::Bool) => Value::Bool(false),
             ATyp::Base(ABase::G1) => Value::G1(C::G1::zero()),
             ATyp::Base(ABase::G2) => Value::G2(C::G2::zero()),
             ATyp::Base(ABase::GT) => Value::GT(PairingOutput::<C::P>::zero()),
@@ -317,6 +324,7 @@ impl<C: ArkConfig> Value<C> {
         match typ {
             ATyp::Base(ABase::Fin(r)) if r.contains(1) => Value::Index(1),
             ATyp::Base(ABase::Scalar) => Value::Scalar(C::FOps::one()),
+            ATyp::Base(ABase::Bool) => Value::Bool(true),
             ATyp::Vec(box ATyp::Base(ABase::Scalar), n) => {
                 Value::VecScalar(vec![C::FOps::one(); *n])
             }
@@ -433,6 +441,7 @@ impl<C: ArkConfig> Value<C> {
                 panic!("Cannot add records")
             }
             Value::Unit => panic!("Cannot add Unit"),
+            Value::Bool(_) => panic!("Cannot add Bool"),
         }
     }
 
@@ -531,6 +540,7 @@ impl<C: ArkConfig> Value<C> {
                 panic!("Cannot subtract records")
             }
             Value::Unit => panic!("Cannot subtract Unit"),
+            Value::Bool(_) => panic!("Cannot subtract Bool"),
         }
     }
 
@@ -670,6 +680,7 @@ impl<C: ArkConfig> Value<C> {
                     panic!("Cannot multiply Index and Record")
                 }
                 Value::Unit => panic!("Cannot multiply Index and Unit"),
+                Value::Bool(_) => panic!("Cannot multiply Index and Bool"),
             },
             Value::Record(_) => {
                 panic!("Cannot multiply records")
@@ -724,6 +735,7 @@ impl<C: ArkConfig> Value<C> {
                     panic!("Cannot multiply Scalar and Record")
                 }
                 Value::Unit => panic!("Cannot multiply Scalar and Unit"),
+                Value::Bool(_) => panic!("Cannot multiply Scalar and Bool"),
             },
             Value::G1(a) => match &other {
                 // G1 * scalar multiplication
@@ -886,6 +898,7 @@ impl<C: ArkConfig> Value<C> {
                     panic!("Cannot multiply Vec<Index> and Record")
                 }
                 Value::Unit => panic!("Cannot multiply Vec<Index> and Unit"),
+                Value::Bool(_) => panic!("Cannot multiply Vec<Index> and Bool"),
             },
             Value::VecScalar(v) => match &other {
                 // Vec<Scalar> * Index
@@ -1069,6 +1082,11 @@ impl<C: ArkConfig> Value<C> {
                 .zip(other.into_vec_mut().par_iter_mut())
                 .for_each(|(a, b)| a.value_mul(b)),
             Value::Unit => panic!("Cannot multiply Unit"),
+            // && is multiplication in the GB encoding (Bool values are 0/1)
+            Value::Bool(a) => match &other {
+                Value::Bool(b) => *other = Value::Bool(*a && *b),
+                _ => panic!("Cannot multiply Bool and {}", other),
+            },
         }
     }
 
@@ -1417,6 +1435,7 @@ impl<C: ArkConfig> Value<C> {
                 panic!("Cannot divide records")
             }
             Value::Unit => panic!("Cannot divide Unit"),
+            Value::Bool(_) => panic!("Cannot divide Bool"),
         }
     }
 
@@ -1825,6 +1844,7 @@ impl<C: ArkConfig> Value<C> {
             Value::VecIndex(a) => a.iter().all(|a| *a == 1),
             Value::Scalar(a) => a == &C::FOps::one(),
             Value::VecScalar(a) => a.iter().all(|a| a == &C::FOps::one()),
+            Value::Bool(b) => *b,
             _ => false,
         }
     }
@@ -1921,6 +1941,7 @@ impl<C: ArkConfig> Value<C> {
             }
             (Value::Record(a), Value::Record(b)) => a == b,
             (Value::Unit, Value::Unit) => true,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
             (a, b) => panic!("Cannot compare {} == {}", a, b),
         }
     }
@@ -1951,6 +1972,7 @@ impl<C: ArkConfig> Value<C> {
             Value::VecG1Affine(items) => state.public_message(to_bytes!(items).unwrap().as_slice()),
             Value::VecG2Affine(items) => state.public_message(to_bytes!(items).unwrap().as_slice()),
             Value::Vec(values) => values.iter().for_each(|v| v.hash(state)),
+            Value::Bool(b) => state.public_message(to_bytes!(&(*b as u8)).unwrap().as_slice()),
             _ => panic!("Cannot hash {}", self),
         }
     }
@@ -2257,6 +2279,7 @@ impl<C: ArkConfig> Value<C> {
         match typ {
             ATyp::Base(ABase::Fin(r)) => Value::Index(r.random(rng) % 10),
             ATyp::Base(ABase::Unit) => Value::Unit,
+            ATyp::Base(ABase::Bool) => Value::Bool(rng.r#gen()),
             ATyp::Base(ABase::Scalar) => Value::Scalar(C::FOps::rand(rng)),
             ATyp::Base(ABase::G1) => Value::G1(C::G1Ops::rand(rng)),
             ATyp::Base(ABase::G2) => Value::G2(C::G2Ops::rand(rng)),
@@ -2370,6 +2393,7 @@ impl<C: ArkConfig> Value<C> {
                 }
             }
             Value::Unit => ATyp::unit(),
+            Value::Bool(_) => ATyp::bool(),
         }
     }
 
@@ -2648,6 +2672,7 @@ impl<C: ArkConfig> Value<C> {
             Value::Record(fields) => fields.iter().all(|(_, v)| v.is_zero()),
             Value::Poly(poly) => poly.is_zero(),
             Value::Unit => true,
+            Value::Bool(b) => !b,
         }
     }
 
@@ -2680,6 +2705,7 @@ impl<C: ArkConfig> Value<C> {
                 vec_value
             }
             ATyp::Base(ABase::Unit)
+            | ATyp::Base(ABase::Bool)
             | ATyp::Uni(_)
             | ATyp::Mle(_)
             | ATyp::VPoly(_, _)
@@ -2846,6 +2872,13 @@ impl<C: ArkConfig> Value<C> {
                     .reduce(|| Value::<C>::zero(&elem_typ), |a, b| a + b)
             }
             BinOp::Mul => {
+                let elem_typ = elements[0].typ();
+                elements
+                    .into_par_iter()
+                    .reduce(|| Value::<C>::one(&elem_typ), |a, b| a * b)
+            }
+            // && is multiplication in the GB encoding (Bool values are 0/1)
+            BinOp::And => {
                 let elem_typ = elements[0].typ();
                 elements
                     .into_par_iter()
@@ -3601,6 +3634,7 @@ impl<C: ArkConfig> fmt::Display for Value<C> {
             }
             Value::Poly(poly) => write!(f, "{}", poly),
             Value::Unit => write!(f, "()"),
+            Value::Bool(b) => write!(f, "{}", b),
         }
     }
 }
@@ -3679,6 +3713,7 @@ impl<C: ArkConfig> Ord for Value<C> {
                         .find(|o| o != &Ordering::Equal)
                         .unwrap_or(Ordering::Equal),
                     (Value::Poly(a), Value::Poly(b)) => a.cmp(b),
+                    (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
                     // This case should be unreachable because we've covered all variants
                     // and already established that the discriminants are equal.
                     (_, _) => {

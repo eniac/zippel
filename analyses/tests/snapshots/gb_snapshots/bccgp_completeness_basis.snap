@@ -4,6 +4,10 @@ expression: value
 ---
 - a_scalar_transcript + a_vec[0]
 - b_scalar_transcript + b_vec[0]
+__zippel::node::17 - 1
+__zippel::node::19 - 1
+__zippel::node::32 - 1
+__zippel::node::34 - 1
 a_scalar_transcript*b_scalar_transcript - c_val
 h_vec[0]*b_scalar_transcript + g_vec[0]*a_scalar_transcript - p_commitment
 h_vec[0]*b_scalar_transcript^2 - p_commitment*b_scalar_transcript + c_val*g_vec[0]

@@ -83,9 +83,7 @@ pub fn op_has_loop_param<C: ArkConfig>(op: &GOp<C>, target_level: usize) -> bool
             op_has_loop_param(domain.get(), target_level)
                 || op_has_loop_param(body.get(), target_level)
         }
-        Op::Assert(a, b) | Op::Verify(a, b) => {
-            op_has_loop_param(a.get(), target_level) || op_has_loop_param(b.get(), target_level)
-        }
+        Op::Assert(a) | Op::Verify(a) => op_has_loop_param(a.get(), target_level),
         Op::Reduce(_, a) => op_has_loop_param(a.get(), target_level),
         Op::Value(_) | Op::Ref(_, _) | Op::Random(_, _) | Op::Challenge(_, _) => false,
     }
@@ -570,6 +568,29 @@ where
                     let bv_owned = Arc::unwrap_or_clone(bv);
                     av_owned.value_concat(bv_owned)
                 }
+                BinOp::Equ => {
+                    if is_vector_value(av_ref) && is_vector_value(&bv) {
+                        let a_elems = av_ref.clone().into_elements();
+                        let b_elems = bv.as_ref().clone().into_elements();
+                        Value::value_vec(
+                            a_elems
+                                .into_iter()
+                                .zip(b_elems)
+                                .map(|(a, b)| Value::Bool(Value::equ(&a, &b)))
+                                .collect::<Vec<_>>(),
+                        )
+                    } else {
+                        Value::Bool(Value::equ(av_ref, &bv))
+                    }
+                }
+                // && is multiplication in the GB encoding (Bool values are 0/1).
+                // Op::bin() routes And to Mul, so this arm is only reached if
+                // an And op was constructed directly.
+                BinOp::And => {
+                    let mut bv_owned = Arc::unwrap_or_clone(bv);
+                    av_ref.value_mul(&mut bv_owned);
+                    bv_owned
+                }
             }))
         }
         Op::Vec(ops) => {
@@ -598,11 +619,13 @@ where
             let idx_val = eval_op_with_loop_params(idx, env, rng, loop_params, check_sink)?;
             Ok(Arc::new(v_val.ram_ref(&*idx_val)))
         }
-        Op::Assert(lhs, rhs) | Op::Verify(lhs, rhs) => {
-            let lhs_val = eval_op_with_loop_params(lhs, env, rng, loop_params, check_sink)?;
-            let rhs_val = eval_op_with_loop_params(rhs, env, rng, loop_params, check_sink)?;
-            let equal = Value::equ(&lhs_val, &rhs_val);
-            check_sink.push(equal);
+        Op::Assert(op) | Op::Verify(op) => {
+            let val = eval_op_with_loop_params(op, env, rng, loop_params, check_sink)?;
+            let pass = match &*val {
+                Value::Bool(b) => *b,
+                _ => panic!("Assert/Verify operand must be Bool, found {val}"),
+            };
+            check_sink.push(pass);
             Ok(Arc::new(Value::Unit))
         }
         Op::Pair(a, b, _) => {
@@ -839,9 +862,8 @@ fn collect_refs_into<C: ArkConfig>(op: &GOp<C>, acc: &mut Vec<Ref>) {
                 collect_refs_into(child, acc);
             }
         }
-        Op::Assert(a, b) | Op::Verify(a, b) => {
+        Op::Assert(a) | Op::Verify(a) => {
             collect_refs_into(a, acc);
-            collect_refs_into(b, acc);
         }
         Op::Coef(a)
         | Op::Poly(a)

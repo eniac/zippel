@@ -26,6 +26,13 @@ expression: value
 - v*arg_lead_inv + p_poly[0]*arg_lead_inv + u
 __zippel::gb::div_q::0[0]*arg_lead_inv - 1
 __zippel::gb::div_r::0[0]
+__zippel::node::49 - 1
+__zippel::node::66[0] - 1
+__zippel::node::66[1] - 1
+__zippel::node::66[2] - 1
+__zippel::node::71[0] - 1
+__zippel::node::71[1] - 1
+__zippel::node::75 - 1
 delta*__zippel::gb::div_q::0[0]^2 + s*delta*xi*__zippel::gb::div_q::0[0] + s*pi*tau*__zippel::gb::div_q::0[0] - r*pi*__zippel::gb::div_q::0[0] - v*s*pi + p_poly[0]*s*pi
 delta*tau*__zippel::gb::div_q::0[0]^2 + r*delta*xi*__zippel::gb::div_q::0[0] + c*s*tau*__zippel::gb::div_q::0[0] + p_poly[0]*delta*__zippel::gb::div_q::0[0] - r*c*__zippel::gb::div_q::0[0] - v*c*s + p_poly[0]*c*s
 delta*tau*xi*__zippel::gb::div_q::0[0] + pi*tau^2*__zippel::gb::div_q::0[0] - c*tau*__zippel::gb::div_q::0[0] + srs_g1[1]*v*__zippel::gb::div_q::0[0] - v*pi*tau + p_poly[0]*pi*tau

@@ -8,7 +8,7 @@ mod op_construction_tests {
     use crate::tests::test_helpers::*;
     use crate::{GOp, Op};
     use backend::{ATyp, Value};
-    use lang::ast::CRange;
+    use lang::ast::{BinOp, CRange};
 
     type C = TestConfig;
 
@@ -226,10 +226,11 @@ mod op_construction_tests {
     fn test_assert_construction() {
         let lhs = GOp::<C>::value(&scalar::<C>(1));
         let rhs = GOp::<C>::value(&scalar::<C>(1));
-        let check = Op::assert(lhs, rhs);
+        let equ = GOp::<C>::bin(BinOp::Equ, lhs, rhs, ATyp::bool());
+        let check = Op::assert(equ);
 
         match check {
-            Op::Assert(_, _) => (),
+            Op::Assert(_) => (),
             _ => panic!("Expected Assert"),
         }
     }

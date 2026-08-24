@@ -7,6 +7,9 @@ expression: value
 - h*z + c_diff*c + t
 - t + h*k
 - z - r2*c + r1*c + k
+__zippel::node::21 - 1
+__zippel::node::35 - 1
+__zippel::node::39 - 1
 g*x + h*r2 - c2
 r2*c_diff - g*r2*x + g*r1*x + c2*r2 - c2*r1
 r2*t + g*x*k - c2*k

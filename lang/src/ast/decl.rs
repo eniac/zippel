@@ -26,9 +26,9 @@ pub enum Body<N> {
     /// # fields
     /// - `body`: The body of the protocol.
     /// - `relation`: The relation describing the protocol — a single
-    ///   expression from the `where` clause, structured as
-    ///   `Let(r, val, seq(Assert(a, b), seq(Assert(c, d), Unit)))`.
-    ///   Let-bindings are evaluated once and shared by all constraints.
+    ///   `Bool` expression from the `where` clause, combined with `&&`
+    ///   and let bindings. The graph wraps it in `Assert` (the relation
+    ///   IS the assertion).
     Proto {
         body: Option<Spanned<Exp<N>>>,
         relation: Spanned<Exp<N>>,
@@ -252,15 +252,21 @@ impl CBody {
         }
         match self {
             Body::Proto { body, relation } => {
-                // Relation must be relation-pure (no Challenge/Log/Verify)
+                // Relation must be relation-pure (no Challenge/Log/Verify/Assert)
                 if !relation.node.is_relation_pure() {
                     return Err(TypeError::decl(
                         &sig.name,
                         TypeError::not_pure_rel(&relation.node),
                     ));
                 }
-                // Relation must infer to Unit (Let/Assert chain ending in Unit)
-                relation.node.infer(&kctx, fctx, &vctx)?;
+                // Relation must infer to Bool (the relation IS the assertion)
+                let rel_typ = relation.node.infer(&kctx, fctx, &vctx)?;
+                if !matches!(rel_typ, CTyp::Bool) {
+                    return Err(TypeError::decl(
+                        &sig.name,
+                        TypeError::relation_not_bool(&rel_typ, &relation.node),
+                    ));
+                }
                 // Body must infer to Unit (empty body is Unit)
                 if let Some(body) = body {
                     let br = body.node.infer(&kctx, fctx, &vctx)?;

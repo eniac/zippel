@@ -8,6 +8,8 @@ expression: value
 - sr + r*c + rr
 - sx + x*c + rx
 - t + h*rr + g*rx
+__zippel::node::24 - 1
+__zippel::node::36 - 1
 g*x + h*r - comm
 h*x*sr + g*x*sx - comm*sx - x*t + comm*rx
 x*sr - r*sx - x*rr + r*rx

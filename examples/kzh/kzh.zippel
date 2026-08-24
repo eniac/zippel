@@ -45,7 +45,7 @@ proto kzh<
 ) where
     // Trusted setup: sample the trapdoors (τ_x, τ_y), then derive the
     // KZH-2 SRS tensor structure at those trapdoors.
-    //   H^{i,j} = g · eq(τ_x, i_bits) · eq(τ_y, j_bits)
+    //   H^ {i,j} = g · eq(τ_x, i_bits) · eq(τ_y, j_bits)
     //   D^i    = g · eq(τ_x, i_bits)
     //   H^j    = g · eq(τ_y, j_bits)
     //   V^i    = h · eq(τ_x, i_bits),   V' = h.

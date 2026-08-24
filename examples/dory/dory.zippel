@@ -275,9 +275,9 @@ proto dory_eval<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, S:
     witness u_vec: [G1; 2 ^ LOG_N],
     witness g_vec: [G2; 2 ^ LOG_N],
 ) where
-    c1 == reduce(+, [pair(u_vec[i], g_vec[i]) for i in 0..2 ^ LOG_N]);
-    c2 == reduce(+, [pair(u_vec[i], gamma2[i]) for i in 0..2 ^ LOG_N]);
-    c3 == reduce(+, [pair(gamma1[i], g_vec[i]) for i in 0..2 ^ LOG_N])
+    c1 == reduce(+, [pair(u_vec[i], g_vec[i]) for i in 0..2 ^ LOG_N])
+        && c2 == reduce(+, [pair(u_vec[i], gamma2[i]) for i in 0..2 ^ LOG_N])
+        && c3 == reduce(+, [pair(gamma1[i], g_vec[i]) for i in 0..2 ^ LOG_N])
 {
     // Start the reduction proof
     dory_reduce(

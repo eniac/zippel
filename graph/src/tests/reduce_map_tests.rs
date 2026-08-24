@@ -45,9 +45,7 @@ fn op_has_loop_param(op: &GOp<B>, level: usize) -> bool {
         Op::Map(d, b) | Op::ReduceMap(_, d, b) => {
             op_has_loop_param(d.get(), level) || op_has_loop_param(b.get(), level)
         }
-        Op::Assert(a, b) | Op::Verify(a, b) => {
-            op_has_loop_param(a.get(), level) || op_has_loop_param(b.get(), level)
-        }
+        Op::Assert(a) | Op::Verify(a) => op_has_loop_param(a.get(), level),
         Op::Poly(a)
         | Op::Coef(a)
         | Op::Mle(a)

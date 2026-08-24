@@ -60,7 +60,7 @@ pub(crate) fn valid_extractor<C: ArkConfig>(witness_typ: &ATyp, poly: &Polynomia
 ///
 /// ## Replacing Verify nodes
 ///
-/// `Op::Verify(lhs, rhs)` entries represent verifier checks (lhs == rhs),
+/// `Op::Verify(exp)` entries represent verifier checks,
 /// not definitions. They are neutralised to `Op::Ref(var)` — an identity
 /// operation that defines the result Var without emitting any assertion
 /// polynomial. `Op::Assert` nodes are left untouched — they are prover-side
@@ -95,7 +95,7 @@ fn strip_verify<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> TransClos<C> 
 
 fn strip_verify_op<C: ArkConfig + HasOpFactory>(op: GOp<C>, result: &Var) -> GOp<C> {
     match op {
-        Op::Verify(_, _) => Op::Ref(
+        Op::Verify(_) => Op::Ref(
             backend::op::Ref(result.reference.node()),
             result.typ.clone(),
         ),

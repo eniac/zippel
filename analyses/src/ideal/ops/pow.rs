@@ -11,6 +11,7 @@ use lang::typ::lub::Lub;
 use crate::Var;
 use crate::frontend::Polynomial;
 
+use super::super::poly_source::has_poly_type;
 use super::PolySource;
 use super::mul::mul_op_inner;
 use super::{EncodeCtx, link_to_polys};
@@ -40,19 +41,6 @@ fn resolve_const_exp<C: ArkConfig>(src: &PolySource<C>) -> Option<usize> {
         result |= (byte as usize) << (8 * i);
     }
     Some(result)
-}
-
-/// Recursively check whether `typ` contains any polynomial type
-/// (`Uni`/`Mle`/`VPoly`) at any nesting depth. When it does not, the
-/// base is a purely scalar/vec-of-scalar shape and `pow_const` can
-/// raise each slot polynomial directly, avoiding intermediate sentinel
-/// `pow_acc` vars.
-fn has_poly_type(typ: &ATyp) -> bool {
-    match typ {
-        ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => true,
-        ATyp::Vec(inner, _) => has_poly_type(inner),
-        _ => false,
-    }
 }
 
 pub fn pow_const<C: ArkConfig + HasOpFactory>(

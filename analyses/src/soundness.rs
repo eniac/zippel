@@ -774,7 +774,7 @@ mod tests {
             witness x: F,
             instance g: G, instance g2: G,
             instance h1: G, instance h2: G
-        ) where h1 == g*x; h2 == g2*x {
+        ) where h1 == g*x && h2 == g2*x {
             let r = random<F>;
             u <- g*r;
             w <- g2*r;
@@ -787,7 +787,7 @@ mod tests {
     #[test]
     fn schnorr_g_identity_no_extractor() {
         let proto = r#"
-            proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where g == g - g; h == g*x {
+            proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where g == g - g && h == g*x {
                 let r = random<F>;
                 u <- g*r;
                 c <- challenge<F*>;
@@ -982,7 +982,7 @@ mod tests {
     #[test]
     fn vec_witness_multi_slot_soundness() {
         let proto = r#"
-            proto vec_wit<G: Group, F: Scalar<G>>(witness x: [F; 2], instance g: G, instance h1: G, instance h2: G) where h1 == g*x[0]; h2 == g*x[1] {
+            proto vec_wit<G: Group, F: Scalar<G>>(witness x: [F; 2], instance g: G, instance h1: G, instance h2: G) where h1 == g*x[0] && h2 == g*x[1] {
                 let r0 = random<F>;
                 let r1 = random<F>;
                 u0 <- g*r0;
@@ -1008,7 +1008,7 @@ mod tests {
     #[test]
     fn consecutive_vec_challenge_two_witnesses_not_sound() {
         let proto = r#"
-            proto vec_two_wit<G: Group, F: Scalar<G>>(witness x1: F, witness x2: F, instance g: G, instance h1: G, instance h2: G) where h1 == g*x1; h2 == g*x2 {
+            proto vec_two_wit<G: Group, F: Scalar<G>>(witness x1: F, witness x2: F, instance g: G, instance h1: G, instance h2: G) where h1 == g*x1 && h2 == g*x2 {
                 let r = random<F>;
                 u <- g*r;
                 c1 <- challenge<F*>;

@@ -1,4 +1,4 @@
-//! Evaluation op encoders: `evaluate_op`, `eval_to_poly`, `eval_to_poly_as`.
+//! Evaluation op encoders: `eval_op`, `eval_to_poly`, `eval_to_poly_as`.
 
 use std::collections::HashMap;
 
@@ -13,7 +13,7 @@ use crate::frontend::Polynomial;
 
 use super::EncodeCtx;
 use super::PolySource;
-use super::fft::encode_fft;
+use super::fft::fft_op;
 use super::link_to_polys;
 use super::{hypercube, multi_indices};
 
@@ -258,7 +258,7 @@ pub fn selected_eval_to_poly<C: ArkConfig>(
 /// 3. `(p, None, None)` — full-grid DFT.
 ///
 /// `(p, Some(_), None)` is unsupported and panics.
-pub fn evaluate_op<C: ArkConfig + HasOpFactory>(
+pub fn eval_op<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     p: &GOp<C>,
@@ -281,7 +281,7 @@ pub fn evaluate_op<C: ArkConfig + HasOpFactory>(
             }
         }
         (None, None) => {
-            encode_fft(ctx, var, p);
+            fft_op(ctx, var, p);
         }
         (Some(_), None) => {
             super::uncovered_op("selected-evaluate-missing-points", var);

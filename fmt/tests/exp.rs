@@ -354,8 +354,9 @@ fn f<F: Field>(instance a: F) -> F {
 #[test]
 fn assertion_with_wide_function_call_no_double_nest() {
     // When both verify() and gate_identity() break, the args
-    // should NOT be double-nested. `) == 1 + 2` stays on one line
-    // because the `==` group independently fits.
+    // should NOT be double-nested. The `==` operator goes on a
+    // continuation line (generic binop nesting), matching how a
+    // bare `gate_identity(...) + 1 + 2` would break.
     assert_ok(
         "\
 fn f<F: Field>(instance a: F) -> F {
@@ -371,7 +372,8 @@ fn f<F: Field>(instance a: F) -> F {
             dddddddddddd,
             eeeeeeeeeeee,
             fffffffffffff,
-        ) == 1 + 2,
+        )
+            == 1 + 2,
     )
 }
 ",

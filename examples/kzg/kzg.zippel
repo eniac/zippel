@@ -19,9 +19,9 @@ proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>
     instance srs_g2_s: G2,
 ) where
     let tau = random<F>;
-    srs_g1 == [tau ^ i * gen_g1 for i in 0..N];
-    srs_g2_s == tau * gen_g2;
-    poly_x(eval_point) == eval_result
+    reduce(&&, srs_g1 == [tau ^ i * gen_g1 for i in 0..N])
+        && srs_g2_s == tau * gen_g2
+        && poly_x(eval_point) == eval_result
 {
     commitment <- dot(coef(poly_x), srs_g1);
 

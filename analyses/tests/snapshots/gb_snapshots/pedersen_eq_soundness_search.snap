@@ -9,6 +9,11 @@ expression: value
 - h*z::1 - c2*c::1 + c1*c::1 + t
 - h*z::1*__zippel::soundness::d::0::1::0 + h*z::0*__zippel::soundness::d::0::1::0 + c2 - c1
 - m2 + m1
+__zippel::node::22::0 - 1
+__zippel::node::22::1 - 1
+__zippel::node::37 - 1
+__zippel::node::41 - 1
+__zippel::node::43 - 1
 h*c::0*z::1 - h*c::1*z::0 + t*c::1 - t*c::0
 h*r2 + g*m2 - c2
 t*z::1*__zippel::soundness::d::0::1::0 - t*z::0*__zippel::soundness::d::0::1::0 - r2*t + r1*t

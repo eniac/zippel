@@ -15,6 +15,10 @@ expression: value
 - t1 + g*rr
 - t2 + h*rr + g*rx
 - x*t1*sr + r*t1*sx - r*rr*t2 + c2*rr^2
+__zippel::node::25 - 1
+__zippel::node::32 - 1
+__zippel::node::43 - 1
+__zippel::node::47 - 1
 c1*h*sr - c2*g*sr + c1*g*sx - c1*t2 + c2*t1
 g*r - c1
 g*x + h*r - c2

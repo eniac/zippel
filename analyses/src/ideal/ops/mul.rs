@@ -94,31 +94,57 @@ fn mul_leaf<C: ArkConfig + HasOpFactory>(
     b: &PolySource<C>,
     r_typ: &ATyp,
 ) {
-    if matches!(b.typ(), ATyp::Base(ABase::Scalar)) && a.is_poly() {
-        let prods: Vec<Polynomial<C::F>> = a.polys().iter().map(|ap| ap * &b.polys()[0]).collect();
-        link_to_polys(ctx.ideal, target, prods);
-    } else if matches!(a.typ(), ATyp::Base(ABase::Scalar)) && b.is_poly() {
-        let prods: Vec<Polynomial<C::F>> = b.polys().iter().map(|bp| &a.polys()[0] * bp).collect();
-        link_to_polys(ctx.ideal, target, prods);
-    } else if matches!(a.typ(), ATyp::Mle(_)) && matches!(b.typ(), ATyp::Mle(_)) {
-        mul_mle_mle(ctx, target, a, b, r_typ);
-    } else if matches!(a.typ(), ATyp::Mle(_)) && matches!(b.typ(), ATyp::VPoly(_, _))
-        || matches!(a.typ(), ATyp::VPoly(_, _)) && matches!(b.typ(), ATyp::Mle(_))
-    {
-        mul_mle_vpoly(ctx, target, a, b, r_typ);
-    } else if a.is_poly() && b.is_poly() {
-        mul_vpoly_vpoly(ctx, target, a, b, r_typ);
-    } else if !a.is_poly() && !b.is_poly() {
-        let prods: Vec<Polynomial<C::F>> = a
-            .polys()
-            .iter()
-            .zip(b.polys())
-            .map(|(ap, bp)| ap * bp)
-            .collect();
-        link_to_polys(ctx.ideal, target, prods);
-    } else {
-        super::uncovered_op("mul-mixed-poly-nonpoly", target);
+    match a.typ() {
+        ATyp::Base(ABase::Scalar) => match b.typ() {
+            ATyp::Base(_) => slot_wise_mul(ctx, target, a, b),
+            ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => {
+                let prods: Vec<Polynomial<C::F>> =
+                    b.polys().iter().map(|bp| &a.polys()[0] * bp).collect();
+                link_to_polys(ctx.ideal, target, prods);
+            }
+            _ => super::uncovered_op("mul-scalar-nonpoly", target),
+        },
+        ATyp::Base(_) => match b.typ() {
+            ATyp::Base(_) => slot_wise_mul(ctx, target, a, b),
+            _ => super::uncovered_op("mul-base-nonbase", target),
+        },
+        ATyp::Mle(_) => match b.typ() {
+            ATyp::Base(ABase::Scalar) => {
+                let prods: Vec<Polynomial<C::F>> =
+                    a.polys().iter().map(|ap| ap * &b.polys()[0]).collect();
+                link_to_polys(ctx.ideal, target, prods);
+            }
+            ATyp::Mle(_) => mul_mle_mle(ctx, target, a, b, r_typ),
+            ATyp::Uni(_) | ATyp::VPoly(_, _) => mul_mle_vpoly(ctx, target, a, b, r_typ),
+            _ => super::uncovered_op("mul-mle-nonpoly", target),
+        },
+        ATyp::Uni(_) | ATyp::VPoly(_, _) => match b.typ() {
+            ATyp::Base(ABase::Scalar) => {
+                let prods: Vec<Polynomial<C::F>> =
+                    a.polys().iter().map(|ap| ap * &b.polys()[0]).collect();
+                link_to_polys(ctx.ideal, target, prods);
+            }
+            ATyp::Mle(_) => mul_mle_vpoly(ctx, target, a, b, r_typ),
+            ATyp::Uni(_) | ATyp::VPoly(_, _) => mul_vpoly_vpoly(ctx, target, a, b, r_typ),
+            _ => super::uncovered_op("mul-vpoly-nonpoly", target),
+        },
+        _ => super::uncovered_op("mul-unsupported-type", target),
     }
+}
+
+fn slot_wise_mul<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    target: &Var,
+    a: &PolySource<C>,
+    b: &PolySource<C>,
+) {
+    let prods: Vec<Polynomial<C::F>> = a
+        .polys()
+        .iter()
+        .zip(b.polys())
+        .map(|(ap, bp)| ap * bp)
+        .collect();
+    link_to_polys(ctx.ideal, target, prods);
 }
 
 /// `Mle(n) × Mle(n) → VPoly(n, 2n)`: basis-change convolution.

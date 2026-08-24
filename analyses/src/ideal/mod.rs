@@ -1,9 +1,10 @@
 use crate::TransClos;
 use crate::Var;
 use crate::frontend::Polynomial;
-use graph::{GOp, Op, Ref};
+use graph::{GOp, HOp, Op, Ref};
 use lang::ast::BinOp;
 use share::Ctx;
+use std::collections::HashMap;
 
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig, ArkScalarOps, Value};
@@ -29,6 +30,9 @@ use ops::{EncodeCtx, link_to_polys};
 #[derive(Clone)]
 pub struct IdealBuilder<C: ArkConfig> {
     pub ns: IdealNamespace<C>,
+    /// Map from Ref to the GOp that produced it, for tracing `&&` chains
+    /// in assert/verify operands back to their leaf bools.
+    node_ops: HashMap<Ref, GOp<C>>,
 }
 
 impl<C: ArkConfig + HasOpFactory> Default for IdealBuilder<C> {
@@ -41,6 +45,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     pub fn new() -> Self {
         Self {
             ns: IdealNamespace::new(),
+            node_ops: HashMap::new(),
         }
     }
 
@@ -137,6 +142,11 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             );
         }
 
+        // Build Ref → GOp map for tracing && chains in assert/verify.
+        for (var, op) in tc.clos.iter() {
+            self.node_ops.insert(var.reference, op.clone());
+        }
+
         for (var, op) in tc.clos.into_iter() {
             self.add_op(var.clone(), op, &mut ideal);
             ideal.var_order.push(var);
@@ -173,6 +183,46 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         ideal.var_order.push(var.clone());
         var
     }
+
+    /// Collect leaf bool expressions from an `&&` chain by tracing `Ref`
+    /// nodes through the `node_ops` map. When the operand is a `Ref` to a
+    /// `BinOp::And` node, recursively traces both sides. Non-`And` operands
+    /// are collected as leaves.
+    ///
+    /// TODO(egg): This is a manual, ad-hoc peeling of `&&` chains to avoid
+    /// high-degree product polynomials in the GB generating set. Once the
+    /// planned `egg`-based optimization layer is in place (see upstream PR),
+    /// this should be replaced by a proper e-graph rewrite that flattens
+    /// `assert(a && b && ...)` into `assert(a); assert(b); ...` as a
+    /// canonicalization rule, rather than special-casing it here.
+    pub(crate) fn collect_and_leaves(&self, exp: &HOp<C>) -> Vec<HOp<C>> {
+        fn collect<C: ArkConfig + HasOpFactory>(
+            builder: &IdealBuilder<C>,
+            exp: &HOp<C>,
+            out: &mut Vec<HOp<C>>,
+        ) {
+            match exp.get() {
+                Op::Bin(BinOp::And, a, b, _) => {
+                    collect(builder, a, out);
+                    collect(builder, b, out);
+                }
+                Op::Ref(r, _) => {
+                    if let Some(op) = builder.node_ops.get(r)
+                        && matches!(op, Op::Bin(BinOp::And, ..))
+                    {
+                        let hop = backend::op::mk::<C>(op.clone());
+                        collect(builder, &hop, out);
+                        return;
+                    }
+                    out.push(exp.clone());
+                }
+                _ => out.push(exp.clone()),
+            }
+        }
+        let mut out = Vec::new();
+        collect(self, exp, &mut out);
+        out
+    }
 }
 
 impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
@@ -201,6 +251,10 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             Op::Bin(BinOp::Mul, ref a, ref b, _) => {
                 ops::mul::mul_op(&mut ctx, &var, a, b, &var.typ);
             }
+            // && is multiplication in the GB encoding (Bool values are 0/1)
+            Op::Bin(BinOp::And, ref a, ref b, _) => {
+                ops::mul::mul_op(&mut ctx, &var, a, b, &var.typ);
+            }
             Op::Bin(BinOp::Dot, ref a, ref b, _) => {
                 ops::dot::dot_op(&mut ctx, &var, a, b);
             }
@@ -210,8 +264,9 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             Op::Bin(BinOp::Rem, ref a, ref b, _) => {
                 ops::div::div_rem_op(&mut ctx, &var, a, b, true, true);
             }
-            Op::Assert(ref a, ref b) => ops::check::assert_op(&mut ctx, &var, a, b),
-            Op::Verify(ref a, ref b) => ops::check::verify_op(&mut ctx, &var, a, b),
+            Op::Assert(ref a) => ops::check::assert_op(&mut ctx, &var, a),
+            Op::Verify(ref a) => ops::check::verify_op(&mut ctx, &var, a),
+            Op::Bin(BinOp::Equ, ref a, ref b, _) => ops::bool::equ_op(&mut ctx, &var, a, b),
             Op::Challenge(_, _) | Op::Random(_, _) => {}
             Op::Interpolate(ref points, ref evals) => {
                 ops::interpolate::interpolate_op(&mut ctx, var, points, evals);
@@ -222,13 +277,13 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             // where ω is a primitive N-th root of unity. The type checker
             // guarantees N is a 2-adic divisor of |F|-1, so ω always exists.
             Op::Ifft(ref a) => {
-                ops::fft::encode_ifft(&mut ctx, &var, a);
+                ops::fft::ifft_op(&mut ctx, &var, a);
             }
             // Op::Fft(p): v = fft(p) — forward DFT. Each evaluation is:
             //   v[i] = Σ_j ω^{i·j} · p[j]
             // The type checker guarantees N is a 2-adic divisor of |F|-1.
             Op::Fft(ref a) => {
-                ops::fft::encode_fft(&mut ctx, &var, a);
+                ops::fft::fft_op(&mut ctx, &var, a);
             }
             // Op::Poly / Op::Mle / Op::Coef: bind the i-th Var slot of `var`
             // to the i-th scalar poly read from `inner` by `ref_vars`. These
@@ -254,10 +309,10 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 }
             }
             // Op::Evaluate(p, xs): evaluate a polynomial `p` at points `xs`.
-            // See `ops::eval::evaluate_op` for the three-shape dispatch
+            // See `ops::eval::eval_op` for the three-shape dispatch
             // (batched, selected, full-grid DFT).
             Op::Evaluate(ref p, range, ref pts) => {
-                ops::eval::evaluate_op(&mut ctx, &var, p, range, pts.as_deref());
+                ops::eval::eval_op(&mut ctx, &var, p, range, pts.as_deref());
             }
             Op::Map(ref domain, ref body) => {
                 ops::map::map_op(&mut ctx, var, domain, body, &[], &[]);
@@ -269,7 +324,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             // Phase 10: `Op::Reduce(op, v)` — left-fold of vector elements.
             // See `reduce_op` for per-operator handling.
             Op::Reduce(rop, ref v) => {
-                ops::reduce::reduce_op(&mut ctx, var, rop, v);
+                ops::reduce::reduce_op(&mut ctx, &var, rop, v);
             }
             // Phase 10: `Op::Value(lit)` — pattern-match on the `Value`
             // variant via `to_poly_value`, then bind each slot of `var` to

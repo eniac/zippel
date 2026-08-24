@@ -362,16 +362,21 @@ proto hyperplonk<F: Field, S: Size, N: 2 ^ S>(
     //         y collapses each (slot, value) pair to a scalar,
     //         x collapses the multiset equality to a scalar via SZ over F[X].
     let zero_f = a_evs[0] - a_evs[0];
-    gate_identity(a_evs, b_evs, c_evs, q_l_evs, q_r_evs, q_o_evs, q_m_evs, q_c_evs)
+    // (1) Gate identity: ql*a + qr*b + qo*c + qm*a*b + qc == 0 on every gate.
+    let gate_check = gate_identity(a_evs, b_evs, c_evs, q_l_evs, q_r_evs, q_o_evs, q_m_evs, q_c_evs)
         == [zero_f for _ in 0..N];
     let y = random<F>;
     let x = random<F>;
-    reduce(*, [s_id_a_evs[i] + y * a_evs[i] + x for i in 0..N])
+    // (2) Copy constraint: the multisets of (slot, value) pairs coincide
+    //     between identity and σ-permuted wirings, collapsed to a scalar
+    //     identity via Schwartz-Zippel over (y, x).
+    let perm_check = reduce(*, [s_id_a_evs[i] + y * a_evs[i] + x for i in 0..N])
         * reduce(*, [s_id_b_evs[i] + y * b_evs[i] + x for i in 0..N])
         * reduce(*, [s_id_c_evs[i] + y * c_evs[i] + x for i in 0..N])
         == reduce(*, [s_sigma_a_evs[i] + y * a_evs[i] + x for i in 0..N])
             * reduce(*, [s_sigma_b_evs[i] + y * b_evs[i] + x for i in 0..N])
-            * reduce(*, [s_sigma_c_evs[i] + y * c_evs[i] + x for i in 0..N])
+            * reduce(*, [s_sigma_c_evs[i] + y * c_evs[i] + x for i in 0..N]);
+    gate_check && perm_check
 {
     let one = a_evs[0] - a_evs[0] + 1;
     let zero = a_evs[0] - a_evs[0];

@@ -7,6 +7,12 @@ expression: value
 - v*c::1*beta_z::1*__zippel::soundness::d::0::1::0 - v_r*beta_z::1*__zippel::soundness::d::0::1::0 + v*c::1*beta_z::0*__zippel::soundness::d::0::1::0 + v_r*beta_z::0*__zippel::soundness::d::0::1::0 - v*beta_z::1
 - w + beta*u
 - w*c::1*beta_z::1*__zippel::soundness::d::0::1::0 - w_r*beta_z::1*__zippel::soundness::d::0::1::0 + w*c::1*beta_z::0*__zippel::soundness::d::0::1::0 + w_r*beta_z::0*__zippel::soundness::d::0::1::0 - w*beta_z::1
+__zippel::node::18::0 - 1
+__zippel::node::18::1 - 1
+__zippel::node::23::0 - 1
+__zippel::node::23::1 - 1
+__zippel::node::33 - 1
+__zippel::node::35 - 1
 g*beta_z::0 - v*c::0 - v_r
 g*beta_z::1 - v*c::1 - v_r
 g*w - u*v

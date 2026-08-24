@@ -1,6 +1,5 @@
 ---
 source: analyses/tests/gb_snapshots.rs
-assertion_line: 214
 expression: value
 ---
 - __zippel::gb::div_q::0[0] + 52435875175126190479447740508185965837690552500527637822603658699938581184511*f_eval*__zippel::gb::div_q::2[0] + s[1]*__zippel::gb::div_q::2[0] + s[0]*__zippel::gb::div_q::2[0] + 2*h_eval
@@ -42,6 +41,12 @@ expression: value
 __zippel::gb::div_r::0[0]
 __zippel::gb::div_r::1[0]
 __zippel::gb::div_r::2[0]
+__zippel::node::50 - 1
+__zippel::node::58 - 1
+__zippel::node::62 - 1
+__zippel::node::73 - 1
+__zippel::node::80[0] - 1
+__zippel::node::84 - 1
 alpha*__zippel::gb::div_q::0[0] + 52435875175126190479447740508185965837690552500527637822603658699938581184511*alpha*h_eval + 2*f_eval^2 - s[1]*f_eval - s[0]*f_eval + 52435875175126190479447740508185965837690552500527637822603658699938581184511*f_coeffs[0]*f_eval + f_coeffs[0]*s[1] + f_coeffs[0]*s[0]
 alpha*__zippel::gb::div_q::0[0] - alpha*h_eval + f_eval^2 + 52435875175126190479447740508185965837690552500527637822603658699938581184511*f_coeffs[0]*f_eval + f_coeffs[0]^2
 alpha*__zippel::gb::div_q::0[1] + __zippel::gb::div_q::0[0] - h_eval

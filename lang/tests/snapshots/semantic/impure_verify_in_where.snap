@@ -1,5 +1,6 @@
 ---
 source: lang/tests/semantic.rs
+assertion_line: 113
 ---
 error: impure construct `verify` in proto relation
    ╭─[ test.zippel:1:60 ]
@@ -8,5 +9,5 @@ error: impure construct `verify` in proto relation
    │                                                            ───────┬──────  
    │                                                                   ╰──────── `verify` is not allowed in a proto relation
    │                                                                   │        
-   │                                                                   ╰──────── note: proto relations must be relation-pure (no challenge, log, or verify)
+   │                                                                   ╰──────── note: proto relations must be relation-pure (no challenge, log, verify, or assert)
 ───╯

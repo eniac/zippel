@@ -105,8 +105,8 @@ fn topo_sort_nodes<C: ArkConfig>(dag: &QDag<C>, nodes: &HashSet<NodeIndex>) -> V
 ///
 /// Flattens a `QDag` into a linear list of `(Var, GOp)` pairs.
 /// For each node, `trans_clos_op` recursively normalizes the stored op:
-/// - `Op::Assert(lhs, rhs)` / `Op::Verify(lhs, rhs)` is unwrapped to its
-///   operands (the assertion/check is processed, with both lhs and rhs
+/// - `Op::Assert(exp)` / `Op::Verify(exp)` is unwrapped to its
+///   operand (the assertion/check is processed, with the operand
 ///   traversed).
 /// - `Op::Ref` children are resolved so that their targets are added to
 ///   `clos`. After resolution, compound ops are reconstructed via `mk()`
@@ -341,15 +341,13 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
                     .map(|v| mk::<C>(self.trans_clos_op(dag, v.get().clone(), seen)))
                     .collect::<Vec<_>>(),
             ),
-            Op::Assert(a, b) => {
+            Op::Assert(a) => {
                 let oa = self.trans_clos_op(dag, a.get().clone(), seen);
-                let ob = self.trans_clos_op(dag, b.get().clone(), seen);
-                Op::Assert(mk::<C>(oa), mk::<C>(ob))
+                Op::Assert(mk::<C>(oa))
             }
-            Op::Verify(a, b) => {
+            Op::Verify(a) => {
                 let oa = self.trans_clos_op(dag, a.get().clone(), seen);
-                let ob = self.trans_clos_op(dag, b.get().clone(), seen);
-                Op::Verify(mk::<C>(oa), mk::<C>(ob))
+                Op::Verify(mk::<C>(oa))
             }
             Op::Interpolate(points, evals) => Op::Interpolate(
                 mk::<C>(self.trans_clos_op(dag, points.get().clone(), seen)),
@@ -490,7 +488,7 @@ mod tests {
     fn trans_clos_prover_not_empty() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field>(witness s: [F; 10], witness s': F, instance i: Fin<5>) where s == s {
+            proto foo<F: Field>(witness s: [F; 10], witness s': F, instance i: Fin<5>) where reduce(&&, s == s) {
                 let r = random<F>;
                 a <- r * s[i + 2];
                 b <- r * s';
@@ -527,7 +525,7 @@ mod tests {
     fn trans_clos_relation_uses_input_namespace() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field>(witness s: [F; 10], witness s': F, instance i: Fin<5>) where s == s {
+            proto foo<F: Field>(witness s: [F; 10], witness s': F, instance i: Fin<5>) where reduce(&&, s == s) {
                 let r = random<F>;
                 a <- r * s[i + 2];
                 b <- r * s';
@@ -571,7 +569,7 @@ mod tests {
     fn trans_clos_parametric() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field, N: 2..4>(witness s: [F; N], witness s': F, instance i: Fin<2>) where s == s {
+            proto foo<F: Field, N: 2..4>(witness s: [F; N], witness s': F, instance i: Fin<2>) where reduce(&&, s == s) {
                 let r = random<F>;
                 a <- r * s[i];
                 b <- r * s';
@@ -747,7 +745,7 @@ mod tests {
 
         for (_, op) in tc.clos.iter() {
             assert!(
-                !matches!(op, Op::Verify(_, _)),
+                !matches!(op, Op::Verify(_)),
                 "Op::Verify should not appear in prover transitive closure, found: {:?}",
                 op
             );
@@ -783,7 +781,7 @@ mod tests {
     fn trans_clos_prover_topological_order() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field>(witness s: [F; 10], witness s': F, instance i: Fin<5>) where s == s {
+            proto foo<F: Field>(witness s: [F; 10], witness s': F, instance i: Fin<5>) where reduce(&&, s == s) {
                 let r = random<F>;
                 a <- r * s[i + 2];
                 b <- r * s';
@@ -814,7 +812,7 @@ mod tests {
     fn trans_clos_relation_topological_order() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field>(witness s: [F; 10], witness s': F, instance i: Fin<5>) where s == s {
+            proto foo<F: Field>(witness s: [F; 10], witness s': F, instance i: Fin<5>) where reduce(&&, s == s) {
                 let r = random<F>;
                 a <- r * s[i + 2];
                 b <- r * s';

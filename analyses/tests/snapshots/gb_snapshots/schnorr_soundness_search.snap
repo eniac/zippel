@@ -4,6 +4,9 @@ expression: value
 ---
 - c::1*__zippel::soundness::d::0::1::0 + c::0*__zippel::soundness::d::0::1::0 - 1
 - h*c::1*z::1*__zippel::soundness::d::0::1::0 - u*z::1*__zippel::soundness::d::0::1::0 + h*c::1*z::0*__zippel::soundness::d::0::1::0 + u*z::0*__zippel::soundness::d::0::1::0 - h*z::1
+__zippel::node::14::0 - 1
+__zippel::node::14::1 - 1
+__zippel::node::22 - 1
 g*x - h
 g*z::0 - h*c::0 - u
 g*z::1 - h*c::1 - u

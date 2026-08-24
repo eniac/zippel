@@ -425,7 +425,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
         self.node_indices()
             .filter(|&n| match &self[n] {
                 Node::Op(op, _) | Node::Transcr(op, _) => {
-                    matches!(&**op, Op::Verify(_, _)) && self.nodes_from(n).count() == 0
+                    matches!(&**op, Op::Verify(_)) && self.nodes_from(n).count() == 0
                 }
                 _ => false,
             })
@@ -439,7 +439,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
         self.node_indices()
             .filter(|&n| match &self[n] {
                 Node::Op(op, _) | Node::Transcr(op, _) => {
-                    matches!(&**op, Op::Assert(_, _)) && self.nodes_from(n).count() == 0
+                    matches!(&**op, Op::Assert(_)) && self.nodes_from(n).count() == 0
                 }
                 _ => false,
             })
@@ -1254,11 +1254,11 @@ impl<C: HasOpFactory> UDag<C> {
                         vars.insert(&vid, &GOp::Value(Value::Index(r.start())));
                     }
                 }
-                // Lower the relation as a single Exp. The relation is a
-                // Let/Assert chain; add_exp handles Let (binds vars) and
-                // Assert (creates Check nodes). Assert nodes do not get
-                // transcript edges (see add_exp Assert case).
-                self.add_exp(
+                // Lower the relation as a single Bool expression and wrap it
+                // in an Assert node. The `where` clause infers to Bool; the
+                // graph auto-wraps it so users write `where x == y && z == w`
+                // without explicit `assert(...)`.
+                let rel_op = self.add_exp(
                     relation,
                     &mut start,
                     DepType::Data,
@@ -1267,6 +1267,8 @@ impl<C: HasOpFactory> UDag<C> {
                     &vctx,
                     &vars,
                 )?;
+                let nassert = self.add_node(Node::assert(&rel_op));
+                self.add_edges(DepType::Data, nassert, rel_op);
             }
             CBody::Func { body } => {
                 let mut start = self.add_node(Node::inp(sig.name.node.clone()));
@@ -1819,9 +1821,7 @@ impl<C: HasOpFactory> UDag<C> {
             | CExp::Reduce(_, p)
             | CExp::Proj(p, _)
             | CExp::Neg(p) => Self::exp_mentions_free_var(p, target),
-            CExp::Assert(lhs, rhs) | CExp::Verify(lhs, rhs) => {
-                Self::exp_mentions_free_var(lhs, target) || Self::exp_mentions_free_var(rhs, target)
-            }
+            CExp::Assert(exp) | CExp::Verify(exp) => Self::exp_mentions_free_var(exp, target),
             CExp::Vec(xs) | CExp::App(_, xs) => {
                 xs.0.iter().any(|x| Self::exp_mentions_free_var(x, target))
             }
@@ -2525,25 +2525,21 @@ impl<C: HasOpFactory> UDag<C> {
                         None => return Ok(GOp::Value(backend::Value::Unit)),
                     }
                 }
-                CExp::Assert(box lhs, box rhs) => {
-                    let oa = self.add_exp(lhs, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
-                    let ob = self.add_exp(rhs, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                CExp::Assert(box exp) => {
+                    let oa = self.add_exp(exp, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Add new node
-                    let nassert = self.add_node(Node::assert(&oa, &ob));
+                    let nassert = self.add_node(Node::assert(&oa));
                     // Add edges
                     self.add_edges(edge_type, nassert, oa);
-                    self.add_edges(edge_type, nassert, ob);
                     // Assert is prover-side — no transcript edge.
                     // Returns Unit value; sequencing via Let(None, ...) discards it.
                     return Ok(GOp::Value(backend::Value::Unit));
                 }
-                CExp::Verify(box lhs, box rhs) => {
-                    let oa = self.add_exp(lhs, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
-                    let ob = self.add_exp(rhs, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                CExp::Verify(box exp) => {
+                    let oa = self.add_exp(exp, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Add new node
-                    let nverify = self.add_node(Node::verify(&oa, &ob));
+                    let nverify = self.add_node(Node::verify(&oa));
                     self.add_edges(edge_type, nverify, oa);
-                    self.add_edges(edge_type, nverify, ob);
                     // No transcript edge — the Op::Verify variant itself
                     // distinguishes verifier checks from prover assertions.
                     // Returns Unit value; sequencing via Let(None, ...) discards it.

@@ -124,9 +124,9 @@ proto proof_log_of_dot_prod<G: Group, F: Scalar<G>, S: Size, N_CONST: 2 ^ S>(
     witness r_xi: F,
     witness r_tau: F,
 ) where
-    xi == h_base * r_xi + dot(g_vec, x_vec);
-    tau == g_base * y + h_base * r_tau;
-    y == dot(x_vec, a_vec)
+    xi == h_base * r_xi + dot(g_vec, x_vec)
+        && tau == g_base * y + h_base * r_tau
+        && y == dot(x_vec, a_vec)
 {
     // Verifier Step 1
     rho <- challenge<F>;

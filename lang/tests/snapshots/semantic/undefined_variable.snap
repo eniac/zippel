@@ -1,5 +1,6 @@
 ---
 source: lang/tests/semantic.rs
+assertion_line: 24
 ---
 error: undefined variable `b`
    ╭─[ test.zippel:1:45 ]

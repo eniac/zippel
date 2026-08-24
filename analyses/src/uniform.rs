@@ -31,8 +31,7 @@ fn op_ancestors_of_loops<C: ArkConfig>(
         Op::Ref(r, _) => ancestors.get(&r.node()).cloned().unwrap_or_default(),
         Op::Ram(a, _) => op_ancestors_of_loops(a, ancestors, loops),
         Op::Value(_) => Set::new(),
-        Op::Assert(a, b) | Op::Verify(a, b) => op_ancestors_of_loops(a, ancestors, loops)
-            .union(op_ancestors_of_loops(b, ancestors, loops)),
+        Op::Assert(a) | Op::Verify(a) => op_ancestors_of_loops(a, ancestors, loops),
         Op::Poly(op) => op_ancestors_of_loops(op, ancestors, loops),
         Op::Coef(op) => op_ancestors_of_loops(op, ancestors, loops),
         Op::Reduce(_, v) => op_ancestors_of_loops(v, ancestors, loops),
@@ -111,7 +110,7 @@ fn compute_distribution_loops<C: ArkConfig>(
 ) -> Option<Distribution> {
     match op {
         Op::Value(_) => Some(Distribution::Nonuniform),
-        Op::Assert(_, _) | Op::Verify(_, _) => Some(Distribution::Nonuniform),
+        Op::Assert(_) | Op::Verify(_) => Some(Distribution::Nonuniform),
         Op::Ref(r, _) => distributions.get(r).cloned(),
         Op::Ram(a, _) => {
             compute_distribution_loops(a, ancestors, distributions, dist_loops, anc_loops)
@@ -205,7 +204,10 @@ fn compute_distribution_loops<C: ArkConfig>(
                 Some(Distribution::Nonuniform)
             }
         }
-        Op::Bin(BinOp::Mul, a, b, _) | Op::Bin(BinOp::Dot, a, b, _) | Op::Pair(a, b, _) => {
+        Op::Bin(BinOp::Mul, a, b, _)
+        | Op::Bin(BinOp::And, a, b, _)
+        | Op::Bin(BinOp::Dot, a, b, _)
+        | Op::Pair(a, b, _) => {
             let dist_a =
                 compute_distribution_loops(a, ancestors, distributions, dist_loops, anc_loops)?;
             let dist_b =
@@ -227,9 +229,9 @@ fn compute_distribution_loops<C: ArkConfig>(
                 Some(Distribution::Nonuniform)
             }
         }
-        Op::Bin(BinOp::Rem, _, _, _) | Op::Bin(BinOp::Pow, _, _, _) => {
-            Some(Distribution::Nonuniform)
-        }
+        Op::Bin(BinOp::Rem, _, _, _)
+        | Op::Bin(BinOp::Pow, _, _, _)
+        | Op::Bin(BinOp::Equ, _, _, _) => Some(Distribution::Nonuniform),
         Op::Vec(vs) => {
             let mut distr = compute_distribution_loops(
                 vs.first().unwrap(),
@@ -273,7 +275,7 @@ fn compute_distribution_loops<C: ArkConfig>(
                 compute_distribution_loops(v, ancestors, distributions, dist_loops, anc_loops)?;
             match op {
                 BinOp::Add | BinOp::Sub | BinOp::Concat => Some(dist_v),
-                BinOp::Mul | BinOp::Dot => Some(dist_v),
+                BinOp::Mul | BinOp::And | BinOp::Dot => Some(dist_v),
                 _ => Some(Distribution::Nonuniform),
             }
         }
@@ -545,7 +547,7 @@ mod tests {
         use graph::mk;
         let inner =
             GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
-        let op = Op::Verify(mk::<ArkBls12_381>(inner.clone()), mk::<ArkBls12_381>(inner));
+        let op = Op::Verify(mk::<ArkBls12_381>(inner));
         let dist = compute_distribution(&op, &Ctx::new(), &Ctx::new());
         assert_eq!(dist, Some(Distribution::Nonuniform));
     }

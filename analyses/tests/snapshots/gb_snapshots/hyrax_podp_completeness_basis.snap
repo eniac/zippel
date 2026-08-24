@@ -29,6 +29,11 @@ expression: value
 2*x_vec[0]*xi*z_beta - g_vec[0]*x_vec[0]^2*z_beta + g*x_vec[0]*y*z_delta + 52435875175126190479447740508185965837690552500527637822603658699938581184511*tau*x_vec[0]*z_delta - r_tau*xi*z_vec[0] + r_xi*tau*z_vec[0] - r_xi*x_vec[0]*beta + r_tau*x_vec[0]*delta - x_vec[0]*xi*r_beta + tau*x_vec[0]*r_delta
 2*xi*y*z_beta - g_vec[0]*x_vec[0]*y*z_beta + g*y^2*z_delta + 52435875175126190479447740508185965837690552500527637822603658699938581184511*tau*y*z_delta - a_vec[0]*r_tau*xi*z_vec[0] + a_vec[0]*r_xi*tau*z_vec[0] - r_xi*y*beta + r_tau*y*delta - xi*y*r_beta + tau*y*r_delta
 52435875175126190479447740508185965837690552500527637822603658699938581184511*g_vec[0]*xi*y*z_beta + g_vec[0]^2*x_vec[0]*y*z_beta + a_vec[0]*xi^2*z_beta - g*g_vec[0]*y^2*z_delta + a_vec[0]*g*xi*y*z_delta + g_vec[0]*tau*y*z_delta - a_vec[0]*tau*xi*z_delta + g_vec[0]*r_xi*y*beta - g_vec[0]*r_tau*y*delta + a_vec[0]*r_tau*xi*delta - a_vec[0]*r_xi*tau*delta + g_vec[0]*xi*y*r_beta - a_vec[0]*xi^2*r_beta - g_vec[0]*tau*y*r_delta + a_vec[0]*tau*xi*r_delta
+__zippel::node::41 - 1
+__zippel::node::49 - 1
+__zippel::node::67 - 1
+__zippel::node::71 - 1
+__zippel::node::74 - 1
 a_vec[0]*g*r_xi*y - g_vec[0]*r_tau*y + a_vec[0]*r_tau*xi - a_vec[0]*r_xi*tau
 a_vec[0]*g_vec[0]*r_xi*y*delta*z_beta - a_vec[0]^2*r_xi*xi*delta*z_beta + g_vec[0]^2*y^2*r_delta*z_beta + 52435875175126190479447740508185965837690552500527637822603658699938581184511*a_vec[0]*g_vec[0]*xi*y*r_delta*z_beta + a_vec[0]^2*xi^2*r_delta*z_beta - a_vec[0]*g_vec[0]*r_xi*y*beta*z_delta + a_vec[0]^2*r_xi*tau*delta*z_delta - g_vec[0]^2*y^2*r_beta*z_delta + a_vec[0]*g_vec[0]*xi*y*r_beta*z_delta + a_vec[0]*g_vec[0]*tau*y*r_delta*z_delta - a_vec[0]^2*tau*xi*r_delta*z_delta + a_vec[0]*g_vec[0]*r_xi*y*r_delta*beta - a_vec[0]*g_vec[0]*r_xi*y*r_beta*delta + a_vec[0]^2*r_xi*xi*r_beta*delta - a_vec[0]^2*r_xi*tau*r_delta*delta + a_vec[0]*g_vec[0]*xi*y*r_delta*r_beta - a_vec[0]^2*xi^2*r_delta*r_beta - a_vec[0]*g_vec[0]*tau*y*r_delta^2 + a_vec[0]^2*tau*xi*r_delta^2
 a_vec[0]*g_vec[0]*z_vec[0] - g_vec[0]*y*c - a_vec[0]*delta + a_vec[0]*h*r_delta

@@ -1,6 +1,5 @@
 ---
 source: analyses/tests/gb_snapshots.rs
-assertion_line: 214
 expression: value
 ---
 - __zippel::gb::div_q::0[0]^2*arg_lead_inv*arg_lead_inv^2*arg_lead_inv^2 - __zippel::gb::div_q::0[0]*arg_lead_inv*arg_lead_inv^2*arg_lead_inv^2 + p_A[0]*__zippel::gb::div_q::0[0]*arg_lead_inv*arg_lead_inv*arg_lead_inv*arg_lead_inv^2 + p_B[0]*__zippel::gb::div_q::0[0]*arg_lead_inv*arg_lead_inv*arg_lead_inv^2*arg_lead_inv - right_hand*arg_lead_inv^2*arg_lead_inv*arg_lead_inv*arg_lead_inv - r*arg_lead_inv^2*arg_lead_inv*arg_lead_inv + p_A[0]*r*arg_lead_inv^2*arg_lead_inv*arg_lead_inv + p_B[0]*r*arg_lead_inv^2*arg_lead_inv*arg_lead_inv + r^2*arg_lead_inv^2*arg_lead_inv
@@ -25,6 +24,8 @@ expression: value
 __zippel::gb::div_q::0[0]*arg_lead_inv*arg_lead_inv*arg_lead_inv + arg_lead_inv*arg_lead_inv*arg_lead_inv - p_A[0]*arg_lead_inv*arg_lead_inv*arg_lead_inv - p_B[0]*arg_lead_inv*arg_lead_inv*arg_lead_inv + v_H[0]*arg_lead_inv^2*arg_lead_inv
 __zippel::gb::div_q::0[1]*arg_lead_inv*arg_lead_inv - arg_lead_inv
 __zippel::gb::div_r::0[0]
+__zippel::node::19 - 1
+__zippel::node::32 - 1
 p_A[0]*r*__zippel::gb::div_q::0[1]*arg_lead_inv + p_B[0]*r*__zippel::gb::div_q::0[1]*arg_lead_inv + v_H[0]*__zippel::gb::div_q::0[0]*arg_lead_inv - right_hand*arg_lead_inv - p_C[1]*r*arg_lead_inv + r^2*__zippel::gb::div_q::0[1]
 p_A[0]*r*__zippel::gb::div_q::0[1]*arg_lead_inv^2 + v_H[0]*__zippel::gb::div_q::0[0]*arg_lead_inv*arg_lead_inv - right_hand*arg_lead_inv*arg_lead_inv - p_C[1]*r*arg_lead_inv*arg_lead_inv + r^2*__zippel::gb::div_q::0[1]*arg_lead_inv + p_B[0]*r*arg_lead_inv
 p_A[0]*right_hand*__zippel::gb::div_q::0[1]^2*arg_lead_inv + p_A[0]*p_C[1]*r*__zippel::gb::div_q::0[1]^2*arg_lead_inv - p_A[1]*p_C[0]*r*__zippel::gb::div_q::0[1]^2*arg_lead_inv - p_A[1]*right_hand*__zippel::gb::div_q::0[0]*__zippel::gb::div_q::0[1]*arg_lead_inv + p_A[0]*p_C[1]*__zippel::gb::div_q::0[0]*__zippel::gb::div_q::0[1]*arg_lead_inv - p_A[1]*p_C[0]*__zippel::gb::div_q::0[0]*__zippel::gb::div_q::0[1]*arg_lead_inv - p_A[0]*p_A[1]*r^2*__zippel::gb::div_q::0[1]^2 - p_A[0]^2*r*__zippel::gb::div_q::0[1]^2 + p_A[1]^2*r^2*__zippel::gb::div_q::0[0]*__zippel::gb::div_q::0[1] - p_A[0]^2*__zippel::gb::div_q::0[0]*__zippel::gb::div_q::0[1] + p_A[1]^2*r*__zippel::gb::div_q::0[0]^2 + p_A[0]*p_A[1]*__zippel::gb::div_q::0[0]^2

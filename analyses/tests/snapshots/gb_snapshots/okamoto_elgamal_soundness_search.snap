@@ -17,6 +17,12 @@ expression: value
 - h*t2*c::1*sx::1*sr::1^2*__zippel::soundness::d::0::1::0 + h*t2*c::1*sx::0*sr::1^2*__zippel::soundness::d::0::1::0 + h*t2*c::1*sx::1*sr::0*sr::1*__zippel::soundness::d::0::1::0 - h*t2*c::1*sx::0*sr::0*sr::1*__zippel::soundness::d::0::1::0 + h*t1*c::1*sx::0*sx::1*sr::1*__zippel::soundness::d::0::1::0 - h*t1*c::1*sx::0^2*sr::1*__zippel::soundness::d::0::1::0 - h*t1*c::1*sx::1^2*sr::0*__zippel::soundness::d::0::1::0 + h*t1*c::1*sx::0*sx::1*sr::0*__zippel::soundness::d::0::1::0 - h*t2*sx::1*sr::1^2 + h*t2*sx::0*sr::1^2 - h*x*t2*c::0*sr::1^2 + h*x*t2*c::1*sr::0*sr::1 + t2^2*sx::1*sr::1 + h*x*t1*c::1*sx::0*sr::1 - t2^2*sx::0*sr::1 - x*t2^2*c::1*sr::1 + x*t2^2*c::0*sr::1 - h*x*t1*c::1*sx::1*sr::0 - t1*t2*sx::1^2 + t1*t2*sx::0*sx::1 + x*t1*t2*c::1*sx::1 - x*t1*t2*c::0*sx::1
 - h*t2*sr::1*__zippel::soundness::d::0::1::0 + h*t2*sr::0*__zippel::soundness::d::0::1::0 - h*t1*sx::1*__zippel::soundness::d::0::1::0 + h*t1*sx::0*__zippel::soundness::d::0::1::0 + g*x*t2 - c2*t2 - h*x*t1
 - h*t2*sx::1*sr::1*__zippel::soundness::d::0::1::0^2 + h*t2*sx::0*sr::1*__zippel::soundness::d::0::1::0^2 + h*t2*sx::1*sr::0*__zippel::soundness::d::0::1::0^2 - h*t2*sx::0*sr::0*__zippel::soundness::d::0::1::0^2 - h*t1*sx::1^2*__zippel::soundness::d::0::1::0^2 + 2*h*t1*sx::0*sx::1*__zippel::soundness::d::0::1::0^2 - h*t1*sx::0^2*__zippel::soundness::d::0::1::0^2 - h*x*t2*sr::1*__zippel::soundness::d::0::1::0 + h*x*t2*sr::0*__zippel::soundness::d::0::1::0 - c2*t2*sx::1*__zippel::soundness::d::0::1::0 - h*x*t1*sx::1*__zippel::soundness::d::0::1::0 + c2*t2*sx::0*__zippel::soundness::d::0::1::0 + h*x*t1*sx::0*__zippel::soundness::d::0::1::0 - c2*x*t2
+__zippel::node::25::0 - 1
+__zippel::node::25::1 - 1
+__zippel::node::32::0 - 1
+__zippel::node::32::1 - 1
+__zippel::node::43 - 1
+__zippel::node::47 - 1
 c1*h*sr::0 - c2*g*sr::0 + c1*g*sx::0 - c1*t2 + c2*t1
 c1*h*sr::1 - c2*g*sr::1 + c1*g*sx::1 - c1*t2 + c2*t1
 c1*h*sx::0*sr::1 - c2*g*sx::0*sr::1 - c1*h*sx::1*sr::0 + c2*g*sx::1*sr::0 + c1*t2*sx::1 - c2*t1*sx::1 - c1*t2*sx::0 + c2*t1*sx::0

@@ -7,6 +7,10 @@ expression: value
 - g*r2*x + g*r1*x + c1*r2 - c2*r1
 - g*x*z::1*__zippel::soundness::d::0::1::0 + c1*z::1*__zippel::soundness::d::0::1::0 + g*x*z::0*__zippel::soundness::d::0::1::0 - c1*z::0*__zippel::soundness::d::0::1::0 + r1*c_diff
 - g*x*z::1*__zippel::soundness::d::0::1::0 + c2*z::1*__zippel::soundness::d::0::1::0 + g*x*z::0*__zippel::soundness::d::0::1::0 - c2*z::0*__zippel::soundness::d::0::1::0 + r2*c_diff
+__zippel::node::21::0 - 1
+__zippel::node::21::1 - 1
+__zippel::node::35 - 1
+__zippel::node::39 - 1
 c_diff*c::0*z::1 + t*z::1 - c_diff*c::1*z::0 - t*z::0
 g*x + h*r1 - c1
 g*x + h*r2 - c2

@@ -123,7 +123,7 @@ fn collect_size_vars_in_typ(
             collect_size_vars_in_size(n, declared, unbound);
             collect_size_vars_in_typ(&inner.node, declared, unbound);
         }
-        Typ::Base(_) | Typ::Unit => {}
+        Typ::Base(_) | Typ::Unit | Typ::Bool => {}
         Typ::Fin(r) => {
             collect_size_vars_in_size(&r.start, declared, unbound);
             if let Some(step) = &r.step {

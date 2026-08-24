@@ -75,7 +75,7 @@ jobs:
       - name: Install build dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends gcc m4 pkg-config
+          apt-get install -y --no-install-recommends gcc m4 pkg-config singular
           rm -rf /var/lib/apt/lists/*
 
       - name: Cache cargo registry and target

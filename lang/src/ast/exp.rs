@@ -61,6 +61,22 @@ pub enum BinOp {
     ///     let inner: F = 5 % 2;
     ///     ```
     Rem,
+
+    ///     Equality comparison: returns `Bool` (scalar) or `Vec<Bool, N>` (vec).
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     let b = x == y;
+    ///     ```
+    Equ,
+
+    ///     Logical AND: both operands must be `Bool`, result is `Bool`.
+    ///     In the GB encoding, `&&` is multiplication (`a * b`), since `Bool`
+    ///     values are 0/1 field elements.
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     let b = x == y && z == w;
+    ///     ```
+    And,
 }
 
 /// Represents arithmetic expressions in the Zippel language.
@@ -235,19 +251,21 @@ pub enum Exp<N> {
         Option<Box<Spanned<Exp<N>>>>,
     ),
 
-    ///     Prover assertion: asserts `lhs == rhs`.
+    ///     Prover assertion: asserts that the expression is true.
+    ///     The expression must be `Bool` or `Vec<Bool, N>`.
     ///     **Zippel Code:**
     ///     ```zippel
     ///     assert(1 == 1)
     ///     ```
-    Assert(Box<Spanned<Exp<N>>>, Box<Spanned<Exp<N>>>),
+    Assert(Box<Spanned<Exp<N>>>),
 
-    ///     Verifier check: verifies `lhs == rhs`.
+    ///     Verifier check: verifies that the expression is true.
+    ///     The expression must be `Bool` or `Vec<Bool, N>`.
     ///     **Zippel Code:**
     ///     ```zippel
     ///     verify(a == a)
     ///     ```
-    Verify(Box<Spanned<Exp<N>>>, Box<Spanned<Exp<N>>>),
+    Verify(Box<Spanned<Exp<N>>>),
 
     ///     Polynomial function definition
     ///     **Zippel Code:**
@@ -363,14 +381,8 @@ impl<N: Clone> ToTraversal1<N> for Exp<N> {
                 };
                 Ok(Exp::Log(x, Box::new(a.traverse1(f)?), b))
             }
-            Exp::Assert(box lhs, box rhs) => Ok(Exp::Assert(
-                Box::new(lhs.traverse1(f)?),
-                Box::new(rhs.traverse1(f)?),
-            )),
-            Exp::Verify(box lhs, box rhs) => Ok(Exp::Verify(
-                Box::new(lhs.traverse1(f)?),
-                Box::new(rhs.traverse1(f)?),
-            )),
+            Exp::Assert(box exp) => Ok(Exp::Assert(Box::new(exp.traverse1(f)?))),
+            Exp::Verify(box exp) => Ok(Exp::Verify(Box::new(exp.traverse1(f)?))),
             Exp::Fun(vars, box body) => Ok(Exp::Fun(vars, Box::new(body.traverse1(f)?))),
             Exp::Record(fields) => {
                 let pairs: Vec<_> = fields
@@ -423,9 +435,8 @@ impl TidSubst for CExp {
             | Exp::Reduce(_, box p)
             | Exp::Coef(box p)
             | Exp::Neg(box p) => p.tid_subst(from, to),
-            Exp::Assert(box lhs, box rhs) | Exp::Verify(box lhs, box rhs) => {
-                lhs.tid_subst(from, to);
-                rhs.tid_subst(from, to);
+            Exp::Assert(box exp) | Exp::Verify(box exp) => {
+                exp.tid_subst(from, to);
             }
             Exp::Vec(v) | Exp::App(_, v) => v.tid_subst(from, to),
             Exp::Bin(_, box a, box b)
@@ -494,9 +505,7 @@ impl FreeVars for CExp {
             | Exp::Reduce(_, box p)
             | Exp::Coef(box p)
             | Exp::Neg(box p) => p.freevars(),
-            Exp::Assert(box lhs, box rhs) | Exp::Verify(box lhs, box rhs) => {
-                lhs.freevars().union(rhs.freevars())
-            }
+            Exp::Assert(box exp) | Exp::Verify(box exp) => exp.freevars(),
             Exp::Vec(v) | Exp::App(_, v) => v.freevars(),
             Exp::Bin(_, box a, box b)
             | Exp::Pair(box a, box b)
@@ -605,14 +614,8 @@ impl<N: Clone> RangeTraversal<N> for Exp<N> {
                 Box::new(t.range_traverse(f)?),
                 Box::new(e.range_traverse(f)?),
             )),
-            Exp::Assert(box lhs, box rhs) => Ok(Exp::Assert(
-                Box::new(lhs.range_traverse(f)?),
-                Box::new(rhs.range_traverse(f)?),
-            )),
-            Exp::Verify(box lhs, box rhs) => Ok(Exp::Verify(
-                Box::new(lhs.range_traverse(f)?),
-                Box::new(rhs.range_traverse(f)?),
-            )),
+            Exp::Assert(box exp) => Ok(Exp::Assert(Box::new(exp.range_traverse(f)?))),
+            Exp::Verify(box exp) => Ok(Exp::Verify(Box::new(exp.range_traverse(f)?))),
             Exp::App(x, ts) => Ok(Exp::App(x, ts.range_traverse(f)?)),
             Exp::Fun(vars, box body) => Ok(Exp::Fun(vars, Box::new(body.range_traverse(f)?))),
             Exp::Record(fields) => {
@@ -707,7 +710,7 @@ impl<N> Exp<N> {
             Exp::Log(_, box _, _) => false,
             Exp::Challenge(_, _) | Exp::Random(_, _) => false,
             Exp::App(_, args) => args.iter().all(|e| e.node.is_pure()),
-            Exp::Assert(_, _) | Exp::Verify(_, _) => false,
+            Exp::Assert(_) | Exp::Verify(_) => false,
             Exp::Fun(_, box body) => body.is_pure(),
             Exp::Record(fields) => fields.iter().all(|(_, e)| e.node.is_pure()),
             Exp::Proj(box exp, _) => exp.is_pure(),
@@ -717,17 +720,16 @@ impl<N> Exp<N> {
 
     /// Check if an expression is valid in a relation (where clause).
     ///
-    /// Allows: `Let`, `Assert`, `Random`, and all pure expressions.
+    /// Allows: `Let`, `Random`, and all pure expressions.
     /// Rejects: `Challenge` (verifier oracle), `Log` (transcript),
-    /// `Verify` (verifier-side check).
+    /// `Verify` (verifier-side check), `Assert` (returns `Unit`, not
+    /// `Bool` — the relation IS the assertion, auto-wrapped by the graph).
     pub fn is_relation_pure(&self) -> bool {
         match self {
-            // Reject: verifier-only constructs
-            Exp::Challenge(_, _) | Exp::Log(_, _, _) | Exp::Verify(_, _) => false,
+            // Reject: verifier-only constructs and Assert (returns Unit)
+            Exp::Challenge(_, _) | Exp::Log(_, _, _) | Exp::Verify(_) | Exp::Assert(_) => false,
             // Allow: Random (trusted-setup trapdoors, etc.)
             Exp::Random(_, _) => true,
-            // Recurse into all sub-expressions with is_relation_pure
-            Exp::Assert(box lhs, box rhs) => lhs.is_relation_pure() && rhs.is_relation_pure(),
             Exp::Let(_, box val, cont) => {
                 val.is_relation_pure() && cont.as_ref().is_none_or(|c| c.is_relation_pure())
             }
@@ -765,11 +767,13 @@ impl BinOp {
     /// re-parses to the same AST.
     pub fn precedence(&self) -> usize {
         match self {
-            BinOp::Add | BinOp::Sub => 1,
-            BinOp::Mul | BinOp::Div | BinOp::Rem => 2,
-            BinOp::Concat => 3,
-            BinOp::Pow => 4,
-            BinOp::Dot => 5, // not infix in grammar; programmatic-only
+            BinOp::And => 0, // lowest precedence
+            BinOp::Equ => 1,
+            BinOp::Add | BinOp::Sub => 2,
+            BinOp::Mul | BinOp::Div | BinOp::Rem => 3,
+            BinOp::Concat => 4,
+            BinOp::Pow => 5,
+            BinOp::Dot => 6, // not infix in grammar; programmatic-only
         }
     }
 
@@ -796,6 +800,8 @@ where
             BinOp::Dot => allocator.text(" . "),
             BinOp::Concat => allocator.text(" ++ "),
             BinOp::Rem => allocator.text(" % "),
+            BinOp::Equ => allocator.text(" == "),
+            BinOp::And => allocator.text(" && "),
         }
     }
 
@@ -1007,18 +1013,14 @@ where
                 }
                 allocator.concat(docs)
             }
-            Exp::Assert(box lhs, box rhs) => allocator.concat([
+            Exp::Assert(box exp) => allocator.concat([
                 allocator.text("assert("),
-                lhs.pretty(allocator),
-                allocator.text(" == "),
-                rhs.pretty(allocator),
+                exp.pretty(allocator),
                 allocator.text(")"),
             ]),
-            Exp::Verify(box lhs, box rhs) => allocator.concat([
+            Exp::Verify(box exp) => allocator.concat([
                 allocator.text("verify("),
-                lhs.pretty(allocator),
-                allocator.text(" == "),
-                rhs.pretty(allocator),
+                exp.pretty(allocator),
                 allocator.text(")"),
             ]),
             Exp::Fun(vars, body) => {

@@ -19,9 +19,9 @@ proto zeromorph_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>
 ) where
     let tau = random<F>;
     let xi = random<F>;
-    srs_g1 == [tau ^ i * gen_g1 for i in 0..N] ++ [xi * gen_g1];
-    srs_g2 == [tau * gen_g2, xi * gen_g2];
-    p_poly(u) == v
+    reduce(&&, srs_g1 == [tau ^ i * gen_g1 for i in 0..N] ++ [xi * gen_g1])
+        && reduce(&&, srs_g2 == [tau * gen_g2, xi * gen_g2])
+        && p_poly(u) == v
 {
     // Sample random blinding factor r
     let r = random<F>;

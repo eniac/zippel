@@ -529,6 +529,7 @@ where
         just(Token::Slash).ignored().to(BinOp::Div),
         just(Token::Caret).ignored().to(BinOp::Pow),
         just(Token::Percent).ignored().to(BinOp::Rem),
+        just(Token::AmpAmp).ignored().to(BinOp::And),
     ))
 }
 
@@ -769,32 +770,28 @@ where
                     sp.into_range()
                 })
             }),
-        // assert(constraint) — uses == not , between args, so no CallArgs context
+        // assert(exp) — single bool expression
         just(Token::KwAssert)
             .ignored()
             .ignore_then(just(Token::LParen).ignored())
             .ignore_then(exp_no_seq.clone())
-            .then_ignore(just(Token::EqEq).ignored())
-            .then(exp_no_seq.clone())
             .then_ignore(just(Token::Comma).or_not().ignored())
             .then_ignore(just(Token::RParen).ignored())
-            .map_with(|(lhs, rhs), e| {
-                Spanned::new(UExp::Assert(Box::new(lhs), Box::new(rhs)), {
+            .map_with(|exp, e| {
+                Spanned::new(UExp::Assert(Box::new(exp)), {
                     let sp: SimpleSpan = e.span();
                     sp.into_range()
                 })
             }),
-        // verify(constraint) — uses == not , between args, so no CallArgs context
+        // verify(exp) — single bool expression
         just(Token::KwVerify)
             .ignored()
             .ignore_then(just(Token::LParen).ignored())
             .ignore_then(exp_no_seq.clone())
-            .then_ignore(just(Token::EqEq).ignored())
-            .then(exp_no_seq.clone())
             .then_ignore(just(Token::Comma).or_not().ignored())
             .then_ignore(just(Token::RParen).ignored())
-            .map_with(|(lhs, rhs), e| {
-                Spanned::new(UExp::Verify(Box::new(lhs), Box::new(rhs)), {
+            .map_with(|exp, e| {
+                Spanned::new(UExp::Verify(Box::new(exp)), {
                     let sp: SimpleSpan = e.span();
                     sp.into_range()
                 })
@@ -952,8 +949,32 @@ where
 
         atom.pratt((
             // Lowest precedence first (matches AEXP_PARSER order)
+            // && (logical AND) — precedence 0, left-associative
+            pratt::infix(
+                Associativity::Left(0),
+                just(Token::AmpAmp).ignored().labelled(Terminal::Operator),
+                |a, _, b, sp| {
+                    let sp: SimpleSpan = sp.span();
+                    Spanned::new(
+                        UExp::Bin(BinOp::And, Box::new(a), Box::new(b)),
+                        sp.into_range(),
+                    )
+                },
+            ),
+            // == (equality) — precedence 1, left-associative
             pratt::infix(
                 Associativity::Left(1),
+                just(Token::EqEq).ignored().labelled(Terminal::Operator),
+                |a, _, b, sp| {
+                    let sp: SimpleSpan = sp.span();
+                    Spanned::new(
+                        UExp::Bin(BinOp::Equ, Box::new(a), Box::new(b)),
+                        sp.into_range(),
+                    )
+                },
+            ),
+            pratt::infix(
+                Associativity::Left(2),
                 just(Token::Plus).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
@@ -964,7 +985,7 @@ where
                 },
             ),
             pratt::infix(
-                Associativity::Left(1),
+                Associativity::Left(2),
                 just(Token::Minus).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
@@ -975,7 +996,7 @@ where
                 },
             ),
             pratt::infix(
-                Associativity::Left(2),
+                Associativity::Left(3),
                 just(Token::Star).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
@@ -986,7 +1007,7 @@ where
                 },
             ),
             pratt::infix(
-                Associativity::Left(2),
+                Associativity::Left(3),
                 just(Token::Slash).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
@@ -997,7 +1018,7 @@ where
                 },
             ),
             pratt::infix(
-                Associativity::Left(2),
+                Associativity::Left(3),
                 just(Token::Percent).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
@@ -1008,7 +1029,7 @@ where
                 },
             ),
             pratt::infix(
-                Associativity::Left(3),
+                Associativity::Left(4),
                 just(Token::PlusPlus).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
@@ -1019,7 +1040,7 @@ where
                 },
             ),
             pratt::infix(
-                Associativity::Right(4),
+                Associativity::Right(5),
                 just(Token::Caret).ignored().labelled(Terminal::Operator),
                 |a, _, b, sp| {
                     let sp: SimpleSpan = sp.span();
@@ -1030,10 +1051,10 @@ where
                 },
             ),
             // Prefix: unary minus → Exp::Neg(x)
-            // Precedence 3 — tighter than `*`/`/`/`%` (2), looser than `^` (4).
+            // Precedence 4 — tighter than `*`/`/`/`%` (3), looser than `^` (5).
             // So `-a * b` = `(-a) * b` and `-a ^ 2` = `-(a ^ 2)`.
             pratt::prefix(
-                3,
+                4,
                 just(Token::Minus).ignored().labelled(Terminal::Operator),
                 |_, rhs, sp| {
                     let sp: SimpleSpan = sp.span();
@@ -1158,69 +1179,6 @@ where
     exp_parser_inner(exp_no_seq_parser().boxed())
 }
 
-/// Parse a where clause expression.
-/// Mirrors `where_exp = { where_let | where_eq | exp_no_seq }`
-fn where_exp_parser<'src, I>(
-) -> impl Parser<'src, I, Spanned<UExp>, extra::Err<RichError<'src>>> + Clone
-where
-    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
-{
-    recursive(|where_rec| {
-        let exp_no_seq = exp_no_seq_parser().boxed();
-        choice((
-            // where_let: let x = exp_no_seq; where_exp?
-            just(Token::KwLet)
-                .ignored()
-                .ignore_then(id_tok())
-                .then(
-                    just(Token::Colon)
-                        .ignored()
-                        .ignore_then(typ_parser())
-                        .or_not(),
-                )
-                .then_ignore(just(Token::Eq).ignored())
-                .then(exp_no_seq.clone())
-                .then_ignore(just(Token::Semi).ignored())
-                .then(where_rec.clone().or_not())
-                .map_with(|(((var, _typ), val), body), e| {
-                    let sp: SimpleSpan = e.span();
-                    Spanned::new(
-                        UExp::Let(Some(var), Box::new(val), body.map(Box::new)),
-                        sp.into_range(),
-                    )
-                }),
-            // where_eq: exp_no_seq == exp_no_seq (; where_exp?)?
-            // Only wraps in seq when there's a `;` continuation.
-            exp_no_seq
-                .clone()
-                .then_ignore(just(Token::EqEq).ignored())
-                .then(exp_no_seq.clone())
-                .then(
-                    just(Token::Semi)
-                        .ignored()
-                        .ignore_then(where_rec.clone().or_not())
-                        .or_not(),
-                )
-                .map_with(|((lhs, rhs), body), e| {
-                    let sp: SimpleSpan = e.span();
-                    let span = sp.into_range();
-                    let assert =
-                        Spanned::new(UExp::Assert(Box::new(lhs), Box::new(rhs)), span.clone());
-                    match body {
-                        Some(Some(cont)) => Spanned::new(
-                            UExp::Let(None, Box::new(assert), Some(Box::new(cont))),
-                            span,
-                        ),
-                        Some(None) => Spanned::new(UExp::Let(None, Box::new(assert), None), span),
-                        None => assert,
-                    }
-                }),
-        ))
-    })
-    .labelled(Context::WhereClause)
-    .as_context()
-}
-
 // ── Declaration parser ─────────────────────────────────────────────────
 
 /// Parse a comma-separated argument list inside `(...)`.
@@ -1258,7 +1216,7 @@ where
             .then(arg_list_parser())
             .then_ignore(just(Token::RParen).ignored())
             .then_ignore(just(Token::KwWhere).ignored())
-            .then(where_exp_parser())
+            .then(exp_parser())
             .then_ignore(just(Token::LBrace).ignored())
             .then(exp_parser().or_not())
             .then_ignore(just(Token::RBrace).ignored())
@@ -1636,11 +1594,13 @@ mod tests {
 
     #[test]
     fn parse_proto_no_where() {
-        // Bare expressions in where clauses are not valid —
-        // where clauses require `let` bindings or `==` constraints.
+        // With the new design, the where clause uses the same parser as
+        // the body, so bare expressions are syntactically valid.
+        // Type checking (not parsing) determines if the relation is valid.
         let src = "proto p<F: Field>(instance a: F) where a { () }";
-        let (_, errors) = parse_decls(src);
-        assert!(!errors.is_empty(), "expected error for bare expr in where");
+        let (decls, errors) = parse_decls(src);
+        assert!(errors.is_empty(), "errors: {:?}", errors);
+        assert_eq!(decls.len(), 1);
     }
 
     #[test]

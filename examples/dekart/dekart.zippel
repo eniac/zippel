@@ -32,25 +32,26 @@ proto dekart<
     extra srs_g1_n: [g1; n + 1],
     extra srs_g1_h: [g1; h_deg + 1],
 ) where
-    srs_g1_n[0] == gen_g1;
-    srs_g1_h[0] == gen_g1;
-    [pair(srs_g1_n[i], srs_g2_tau) for i in 0..n] == [pair(srs_g1_n[i + 1], gen_g2) for i in 0..n];
-    [pair(srs_g1_h[i], srs_g2_tau) for i in 0..h_deg]
-        == [pair(srs_g1_h[i + 1], gen_g2) for i in 0..h_deg];
-    pair(xi_g1, gen_g2) == pair(gen_g1, srs_g2_xi);
-    f_evals[0] == 0;
-    [f_evals[i] for i in 1..n + 1]
-        == [
-            reduce(
-                +,
-                [
-                    let chunk_j = chunks_evals[j];
-                    chunk_j[i] * b_pow[j]
-                    for j in 0..l_chunk
-                ],
-            )
-            for i in 1..n + 1
-        ]
+    srs_g1_n[0] == gen_g1
+        && srs_g1_h[0] == gen_g1
+        && [pair(srs_g1_n[i], srs_g2_tau) for i in 0..n]
+            == [pair(srs_g1_n[i + 1], gen_g2) for i in 0..n]
+        && [pair(srs_g1_h[i], srs_g2_tau) for i in 0..h_deg]
+            == [pair(srs_g1_h[i + 1], gen_g2) for i in 0..h_deg]
+        && pair(xi_g1, gen_g2) == pair(gen_g1, srs_g2_xi)
+        && f_evals[0] == 0
+        && [f_evals[i] for i in 1..n + 1]
+            == [
+                reduce(
+                    +,
+                    [
+                        let chunk_j = chunks_evals[j];
+                        chunk_j[i] * b_pow[j]
+                        for j in 0..l_chunk
+                    ],
+                )
+                for i in 1..n + 1
+            ]
 {
     let _f_zero = 0;
 

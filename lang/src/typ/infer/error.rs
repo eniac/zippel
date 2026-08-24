@@ -21,6 +21,9 @@ pub enum TypeError {
     )]
     NotPureRel(CExp),
 
+    #[error("TypeError: where clause must infer to Bool, got {0}:\n\t{1}")]
+    RelationNotBool(CTyp, CExp),
+
     #[error("TypeError: Cannot find an Arkworks type for {0}, {1} |- {2} : {3}")]
     Ark(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp),
 
@@ -156,6 +159,9 @@ impl TypeError {
     }
     pub fn not_pure_rel(e: &CExp) -> Self {
         TypeError::NotPureRel(e.clone())
+    }
+    pub fn relation_not_bool(t: &CTyp, e: &CExp) -> Self {
+        TypeError::RelationNotBool(t.clone(), e.clone())
     }
     pub fn lub(a: Self, l: LubError) -> Self {
         TypeError::next(a, TypeError::from(l))

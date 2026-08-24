@@ -20,7 +20,7 @@ impl QualifierPropagation {
     fn from_op_loops<C: ArkConfig>(&self, op: &GOp<C>, loops: &[Qualifier]) -> Option<Qualifier> {
         match op {
             Op::Value(_) => Some(Qualifier::Instance),
-            Op::Assert(_, _) | Op::Verify(_, _) => Some(Qualifier::Instance),
+            Op::Assert(_) | Op::Verify(_) => Some(Qualifier::Instance),
             Op::Ref(r, _) => self.quals.get(&r.node()).cloned(),
             Op::Ram(a, _) => self.from_op_loops(a, loops),
             Op::Poly(a) => self.from_op_loops(a, loops),
@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn qualifier_prop() {
         let ex = r#"
-            proto foo<F: Field, N: 2..4>(witness s: [F; N], witness s': F, instance i: Fin<2>) where s == s {
+            proto foo<F: Field, N: 2..4>(witness s: [F; N], witness s': F, instance i: Fin<2>) where reduce(&&, s == s) {
                 let r = random<F>;
                 a <- r * s[i];
                 b <- r * s';
@@ -232,7 +232,7 @@ mod tests {
         let qp = QualifierPropagation { quals: Ctx::new() };
         let inner =
             GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
-        let op = Op::Verify(mk::<ArkBls12_381>(inner.clone()), mk::<ArkBls12_381>(inner));
+        let op = Op::Verify(mk::<ArkBls12_381>(inner));
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Instance));
     }

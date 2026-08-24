@@ -81,9 +81,6 @@ proto bccgp_ipa<G: Group, F: Scalar<G>, S: Size, N_CONST: 2 ^ S>(
     instance c_val: F,
     witness a_vec: [F; N_CONST],
     witness b_vec: [F; N_CONST],
-) where
-    p_commitment == dot(g_vec, a_vec) + dot(h_vec, b_vec);
-    c_val == dot(a_vec, b_vec)
-{
+) where p_commitment == dot(g_vec, a_vec) + dot(h_vec, b_vec) && c_val == dot(a_vec, b_vec) {
     bccgp_recursive(g_vec, h_vec, p_commitment, c_val, a_vec, b_vec)
 }

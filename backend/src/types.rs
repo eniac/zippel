@@ -35,6 +35,7 @@ pub enum ABase {
     GT,
     Scalar,
     Unit,
+    Bool,
     Fin(CRange),
 }
 
@@ -74,6 +75,9 @@ impl ATyp {
     }
     pub fn unit() -> Self {
         ATyp::Base(ABase::Unit)
+    }
+    pub fn bool() -> Self {
+        ATyp::Base(ABase::Bool)
     }
     pub fn fin(r: CRange) -> Self {
         ATyp::Base(ABase::Fin(r))
@@ -146,6 +150,10 @@ impl ATyp {
 
     pub fn is_unit(&self) -> bool {
         matches!(self, ATyp::Base(ABase::Unit))
+    }
+
+    pub fn is_bool(&self) -> bool {
+        matches!(self, ATyp::Base(ABase::Bool))
     }
 
     pub fn is_group(&self) -> bool {
@@ -239,6 +247,7 @@ impl ATyp {
             CTyp::Poly(_, m, n) => Some(ATyp::VPoly(m.node, m.node.checked_mul(n.node)?)),
             CTyp::Fin(r) => Some(ATyp::fin(r.clone())),
             CTyp::Unit => Some(ATyp::unit()),
+            CTyp::Bool => Some(ATyp::bool()),
             CTyp::Record(fields) => {
                 let mut atyp_fields = Ctx::new();
                 for (name, field_typ) in fields.iter() {
@@ -265,6 +274,7 @@ impl Lub for ABase {
             (ABase::GT, ABase::GT) => Ok(ABase::GT),
             (ABase::Scalar, ABase::Scalar) => Ok(ABase::Scalar),
             (ABase::Unit, ABase::Unit) => Ok(ABase::Unit),
+            (ABase::Bool, ABase::Bool) => Ok(ABase::Bool),
             (a, b) => Err(LubError::equ(&a, &b)),
         }
     }
@@ -378,6 +388,10 @@ impl Lub for ABase {
 
     fn lub_concat(a: &Self, b: &Self, _: &Self::Context) -> Result<Self, LubError> {
         Err(LubError::concat(&a, &b))
+    }
+
+    fn lub_and(a: &Self, b: &Self, _: &Self::Context) -> Result<Self, LubError> {
+        Err(LubError::and(&a, &b))
     }
 }
 
@@ -750,12 +764,20 @@ impl Lub for ATyp {
             (a, b) => Err(LubError::concat(&a, &b)),
         }
     }
+
+    fn lub_and(x: &Self, y: &Self, _: &Self::Context) -> Result<Self, LubError> {
+        match (x, y) {
+            (ATyp::Base(ABase::Bool), ATyp::Base(ABase::Bool)) => Ok(ATyp::Base(ABase::Bool)),
+            (_, _) => Err(LubError::and(&x, &y)),
+        }
+    }
 }
 
 impl fmt::Display for ABase {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ABase::Unit => write!(f, "Unit"),
+            ABase::Bool => write!(f, "Bool"),
             ABase::Fin(r) => write!(f, "Fin<{}>", r),
             ABase::Scalar => write!(f, "Scalar"),
             ABase::G1 => write!(f, "G1"),

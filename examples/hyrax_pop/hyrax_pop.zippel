@@ -19,11 +19,7 @@ proto proof_of_product<G: Group, F: Scalar<G>>(
     instance big_z: G, // Commitment big_z = g*(x*y) + h*r_Z
 )
 // The 'where' clause defines the exact relations the prover must satisfy.
-where
-    big_x == g * x + h * r_X;
-    big_y == g * y + h * r_Y;
-    big_z == g * (x * y) + h * r_Z
-{
+where big_x == g * x + h * r_X && big_y == g * y + h * r_Y && big_z == g * (x * y) + h * r_Z {
     // --- Prover Phase ---
 
     // 1. Pick randomness (b1..b5) and compute commitments (alpha, beta, delta).

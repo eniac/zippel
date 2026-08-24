@@ -3,7 +3,7 @@
 //! (`alloc_div_witness_pair`, `div_witness_key`, `canonical_*` helpers).
 
 use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig};
+use backend::{ABase, ATyp, ArkConfig};
 use graph::HOp;
 
 use crate::Var;
@@ -208,45 +208,61 @@ fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
     is_rem: bool,
     cache_witness: bool,
 ) {
-    if a.is_poly() && PolySource::<C>::is_scalar_like(b.typ()) {
+    let label = |s: &str| {
         if is_rem {
-            panic!(
-                "Rem: polynomial-like remainder by scalar is undefined for {} % {} — type checker should prevent this",
-                a.typ(),
-                b.typ(),
-            );
+            format!("rem-{s}")
+        } else {
+            format!("div-{s}")
         }
-        let b_broadcast = b.broadcast_scalar_to(a.typ());
-        slot_wise_div(ctx.ideal, target, a.polys(), b_broadcast.polys());
-    } else if matches!(a.typ(), ATyp::Mle(_)) || matches!(b.typ(), ATyp::Mle(_)) {
-        super::uncovered_op(
-            if is_rem {
-                "rem-mle-unsupported"
-            } else {
-                "div-mle-unsupported"
-            },
-            target,
-        );
-    } else if a.is_poly() && b.is_poly() {
-        div_rem_poly(ctx, target, a, b, is_rem, cache_witness);
-    } else if !a.is_poly() && !b.is_poly() {
-        if is_rem {
-            panic!(
-                "Rem: non-polynomial remainder is undefined for {} % {} — type checker should prevent this",
-                a.typ(),
-                b.typ(),
-            );
-        }
-        slot_wise_div(ctx.ideal, target, a.polys(), b.polys());
-    } else {
-        super::uncovered_op(
-            if is_rem {
-                "rem-mixed-poly-nonpoly"
-            } else {
-                "div-mixed-poly-nonpoly"
-            },
-            target,
-        );
+    };
+    match a.typ() {
+        ATyp::Mle(_) => match b.typ() {
+            ATyp::Base(ABase::Scalar | ABase::Fin(_)) => {
+                if is_rem {
+                    panic!(
+                        "Rem: polynomial remainder by scalar is undefined for {} % {} — type checker should prevent this",
+                        a.typ(),
+                        b.typ(),
+                    );
+                }
+                let b_broadcast = b.broadcast_scalar_to(a.typ());
+                slot_wise_div(ctx.ideal, target, a.polys(), b_broadcast.polys());
+            }
+            _ => super::uncovered_op(&label("mle-unsupported"), target),
+        },
+        ATyp::Uni(_) | ATyp::VPoly(_, _) => match b.typ() {
+            ATyp::Mle(_) => super::uncovered_op(&label("mle-unsupported"), target),
+            ATyp::Base(ABase::Scalar | ABase::Fin(_)) => {
+                if is_rem {
+                    panic!(
+                        "Rem: polynomial remainder by scalar is undefined for {} % {} — type checker should prevent this",
+                        a.typ(),
+                        b.typ(),
+                    );
+                }
+                let b_broadcast = b.broadcast_scalar_to(a.typ());
+                slot_wise_div(ctx.ideal, target, a.polys(), b_broadcast.polys());
+            }
+            ATyp::Uni(_) | ATyp::VPoly(_, _) => {
+                div_rem_poly(ctx, target, a, b, is_rem, cache_witness);
+            }
+            _ => super::uncovered_op(&label("mixed-poly-nonpoly"), target),
+        },
+        ATyp::Base(_) => match b.typ() {
+            ATyp::Mle(_) => super::uncovered_op(&label("mle-unsupported"), target),
+            ATyp::Base(_) => {
+                if is_rem {
+                    panic!(
+                        "Rem: non-polynomial remainder is undefined for {} % {} — type checker should prevent this",
+                        a.typ(),
+                        b.typ(),
+                    );
+                }
+                slot_wise_div(ctx.ideal, target, a.polys(), b.polys());
+            }
+            _ => super::uncovered_op(&label("mixed-poly-nonpoly"), target),
+        },
+        _ => super::uncovered_op(&label("unsupported-type"), target),
     }
 }
 

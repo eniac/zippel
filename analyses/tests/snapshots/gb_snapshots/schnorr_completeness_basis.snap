@@ -6,4 +6,6 @@ expression: value
 - u + g*r
 - x*u + h*r
 - z + x*c + r
+__zippel::node::14 - 1
+__zippel::node::22 - 1
 g*x - h

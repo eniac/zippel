@@ -146,7 +146,7 @@ proto hyperplonk_multiset<F: Field, S: Size, N: 2 ^ S>(
     instance r: F,
     instance v_evs: [F; 2 ^ (S + 1)],
 ) where
-    // Relation: the multisets {f_evs} and {g_evs} coincide. Stated as
+    // Relation: the multisets  {f_evs} and {g_evs} coincide. Stated as
     // an equality of characteristic polynomials in F[X]:
     //   Π_i (f_evs[i] + X) == Π_i (g_evs[i] + X).
     // Independent of the FS challenge r; the proto body attests via a

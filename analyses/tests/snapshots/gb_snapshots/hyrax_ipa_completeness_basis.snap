@@ -40,6 +40,10 @@ expression: value
 - y + a_vec[0]*x_vec[0]
 - z1 + y*rho*c + d
 - z2 + a_vec[0]*r_tau*rho^2*c + a_vec[0]*r_xi*rho*c + a_vec[0]*rho*r_beta + r_delta
+__zippel::node::52 - 1
+__zippel::node::69 - 1
+__zippel::node::73 - 1
+__zippel::node::76 - 1
 a_vec[0]*g_base*r_xi*y - g_vec[0]*r_tau*y + a_vec[0]*r_tau*xi - a_vec[0]*r_xi*tau
 a_vec[0]*g_vec[0]*r_xi*beta - a_vec[0]*g_base*r_xi*delta + g_vec[0]^2*y*r_beta - a_vec[0]*g_vec[0]*xi*r_beta - g_base*g_vec[0]*y*r_delta + a_vec[0]*g_base*xi*r_delta
 a_vec[0]*r_tau*xi*y*c*z2 - a_vec[0]*r_xi*tau*y*c*z2 + a_vec[0]^2*g_base*r_tau*r_xi*z1^2 - a_vec[0]*g_vec[0]*r_tau^2*z1^2 - a_vec[0]^2*r_tau*r_xi*xi*c*z1 + a_vec[0]^2*r_xi^2*tau*c*z1 + 52435875175126190479447740508185965837690552500527637822603658699938581184511*a_vec[0]^2*r_tau*r_xi*beta*z1 + 2*a_vec[0]*r_tau^2*delta*z1 + 52435875175126190479447740508185965837690552500527637822603658699938581184511*a_vec[0]*g_vec[0]*r_tau*y*r_beta*z1 + a_vec[0]^2*r_tau*xi*r_beta*z1 + a_vec[0]^2*r_xi*tau*r_beta*z1 + 2*a_vec[0]*g_base*r_tau*y*r_delta*z1 + 52435875175126190479447740508185965837690552500527637822603658699938581184511*a_vec[0]*r_tau*tau*r_delta*z1 - a_vec[0]^2*r_xi^2*y*beta*c + a_vec[0]*r_tau*r_xi*y*delta*c - a_vec[0]*g_vec[0]*r_xi*y^2*r_beta*c + a_vec[0]^2*r_xi*xi*y*r_beta*c + g_vec[0]*r_tau*y^2*r_delta*c + 52435875175126190479447740508185965837690552500527637822603658699938581184511*a_vec[0]*r_tau*xi*y*r_delta*c + a_vec[0]*r_xi*tau*y*r_delta*c - a_vec[0]^2*r_xi*y*r_beta*beta - a_vec[0]*r_tau*y*r_delta*beta + a_vec[0]^2*r_tau*r_xi*d*beta + 2*a_vec[0]*r_tau*y*r_beta*delta - a_vec[0]*r_tau^2*d*delta - a_vec[0]*g_vec[0]*y^2*r_beta^2 + a_vec[0]^2*xi*y*r_beta^2 + a_vec[0]*g_base*y^2*r_delta*r_beta - a_vec[0]*tau*y*r_delta*r_beta - a_vec[0]^2*r_tau*xi*d*r_beta + a_vec[0]*r_tau*tau*d*r_delta

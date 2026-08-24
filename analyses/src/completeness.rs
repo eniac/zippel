@@ -131,7 +131,11 @@ mod tests {
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok());
+        let result = ca.run();
+        if let Err(ref e) = result {
+            eprintln!("completeness_test error: {:?}", e);
+        }
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -458,7 +462,7 @@ mod tests {
     #[test]
     fn materialized_partial_mle_eval_keeps_inferred_uni_shape() {
         let ex = r#"
-            proto materialized_partial<F: Field>(instance vals: [F; 4]) where vals == vals {
+            proto materialized_partial<F: Field>(instance vals: [F; 4]) where reduce(&&, vals == vals) {
                 x <- challenge<F>;
                 let q = eval(mle(vals), [x]);
                 let z = q + poly([0, 0]);
@@ -480,7 +484,7 @@ mod tests {
     #[test]
     fn trans_clos_partial_mle_eval_boundary_is_mle() {
         let ex = r#"
-            proto trans_clos_eval_shape<F: Field>(instance vals: [F; 4]) where vals == vals {
+            proto trans_clos_eval_shape<F: Field>(instance vals: [F; 4]) where reduce(&&, vals == vals) {
                 x <- challenge<F>;
                 let q = eval(mle(vals), [x]);
                 let z = q + poly([0, 0]);
@@ -613,10 +617,10 @@ mod tests {
     #[test]
     fn ifft_roundtrip_completeness() {
         let ex = r#"
-            proto ifft_roundtrip<F: Field>(instance v: [F; 2]) where v == v {
+            proto ifft_roundtrip<F: Field>(instance v: [F; 2]) where reduce(&&, v == v) {
                 let p = interpolate(v);
                 let u = eval(p);
-                verify(u == v)
+                verify(reduce(&&, u == v))
             }"#;
         let m = parse_and_concretize(ex, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
@@ -640,7 +644,7 @@ mod tests {
                 let va = eval(a);
                 let vb = eval(b);
                 let vc = eval(c);
-                verify(vc == va + vb)
+                verify(reduce(&&, vc == va + vb))
             }"#;
         let m = parse_and_concretize(ex, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
@@ -659,7 +663,7 @@ mod tests {
             proto ifft_linearity<F: Field>(
                 instance u: [F; 2],
                 instance v: [F; 2]
-            ) where u == u {
+            ) where reduce(&&, u == u) {
                 let w = u + v;
                 let pu = interpolate(u);
                 let pv = interpolate(v);

@@ -27,6 +27,12 @@ expression: value
 - y*arg_lead_inv + p_val[0]*arg_lead_inv + z
 - z*__zippel::gb::div_q::0[0] + z*b0 + y - p_val[0]
 __zippel::gb::div_r::0[0]
+__zippel::node::35 - 1
+__zippel::node::48[0] - 1
+__zippel::node::48[1] - 1
+__zippel::node::48[2] - 1
+__zippel::node::51 - 1
+__zippel::node::54 - 1
 h*h_val*ss[2]*__zippel::gb::div_q::0[1] + h^2*ss[2]*__zippel::gb::div_q::0[0] - h_val^2*pi
 h*ss[2]*__zippel::gb::div_q::0[1] + h*ss[1]*__zippel::gb::div_q::0[0] - h_val*pi
 h*tau - h_val

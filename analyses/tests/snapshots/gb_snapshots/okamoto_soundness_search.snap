@@ -6,5 +6,8 @@ expression: value
 - h*sr::0 - g*sx::0 + comm*c::0 + t
 - h*sr::1 - g*sx::1 + comm*c::1 + t
 - h*sr::1*__zippel::soundness::d::0::1::0 + h*sr::0*__zippel::soundness::d::0::1::0 - g*sx::1*__zippel::soundness::d::0::1::0 + g*sx::0*__zippel::soundness::d::0::1::0 - comm
+__zippel::node::24::0 - 1
+__zippel::node::24::1 - 1
+__zippel::node::36 - 1
 g*x + h*r - comm
 h*c::0*sr::1 - h*c::1*sr::0 + g*c::0*sx::1 - g*c::1*sx::0 + t*c::1 - t*c::0

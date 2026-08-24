@@ -4,6 +4,9 @@ expression: value
 ---
 - final_a_scalar + a_vec_witness[0]
 - final_b_scalar + b_vec_witness[0]
+__zippel::node::29 - 1
+__zippel::node::47 - 1
+__zippel::node::49 - 1
 final_a_scalar*final_b_scalar - ip_val_claimed
 h_factors[0]*h_vec[0]*final_b_scalar + g_factors[0]*g_vec[0]*final_a_scalar - p_initial_commitment
 h_factors[0]*h_vec[0]*final_b_scalar^2 - p_initial_commitment*final_b_scalar + g_factors[0]*g_vec[0]*ip_val_claimed

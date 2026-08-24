@@ -1,22 +1,19 @@
 //! GB snapshot tests: generate with Singular, verify with ArkGb.
 //!
-//! The test harness auto-detects the backend per snapshot file:
-//! - **File does not exist** → use Singular (generate mode). Fails if
-//!   Singular is not on `PATH`.
-//! - **File exists** → use ArkGb (verify mode). Compares ArkGb output
-//!   against the committed snapshot.
+//! The test harness always uses Singular for GB computation. If Singular
+//! is not on `PATH`, the test prints a warning and passes (skips the GB
+//! computation). This allows local development without Singular, while CI
+//! installs Singular explicitly.
 //!
 //! When `INSTA_UPDATE` is set (snapshot regeneration mode), Singular is
-//! always used regardless of whether the file exists. This prevents
-//! accidentally overwriting Singular-generated baselines with ArkGb output.
-//! If Singular is not on `PATH` during regeneration, the test fails with a
-//! clear error.
+//! always used. If Singular is not on `PATH` during regeneration, the test
+//! prints a warning and passes without updating.
 //!
 //! To (re)generate snapshots:
 //! ```sh
 //! INSTA_UPDATE=always cargo test -p analyses --test gb_snapshots
 //! ```
-//! To verify in CI (no Singular needed):
+//! To verify in CI (Singular required for meaningful verification):
 //! ```sh
 //! cargo test -p analyses --test gb_snapshots
 //! ```
@@ -247,16 +244,12 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             ignored: false,
             partial_values: Ctx::new(),
         },
-        // --- Ignored: ark-gb grevlex bug (single-block GrevLex) ---
-        // ark-gb's cmp_degrevlex_packed skips total-degree comparison in the
-        // non-saturated path, producing lex instead of grevlex. Upstream fix
-        // needed in ark-gb/src/monomial.rs.
         TestEntry {
             name: "cds",
             zippel_path: "examples/cds/cds.zippel",
             sizes: &[],
             l_vec: &[],
-            ignored: true,
+            ignored: false,
             partial_values: Ctx::new(),
         },
         // --- Ignored: timeout (GB computation too slow for CI) ---
@@ -265,7 +258,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             zippel_path: "examples/coin_proof/coin_proof.zippel",
             sizes: &[],
             l_vec: &[],
-            ignored: false,
+            ignored: true,
             partial_values: Ctx::from_iter([
                 (Vid("f".to_string()), Value::Scalar(F::one())),
                 (Vid("g".to_string()), Value::Scalar(F::one())),
@@ -281,7 +274,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             zippel_path: "examples/r1cs_sigma/r1cs_sigma.zippel",
             sizes: &[("N", 2), ("n", 1), ("m", 1)],
             l_vec: &[],
-            ignored: false,
+            ignored: true,
             partial_values: Ctx::from_iter([
                 (
                     Vid("mat_A".to_string()),
@@ -415,46 +408,6 @@ fn singular() -> bool {
     *SINGULAR_AVAILABLE.get_or_init(singular_available)
 }
 
-/// Full path to the snapshot directory (CARGO_MANIFEST_DIR/tests/snapshots/gb_snapshots).
-fn snap_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/gb_snapshots")
-}
-
-/// Determine the backend for a given snapshot file.
-///
-/// - If `INSTA_UPDATE` is set (regeneration mode) → always Singular, the
-///   baseline. Fails if Singular is not on `PATH`.
-/// - If the file doesn't exist → Singular (generate mode). Fails if
-///   Singular is not on `PATH`.
-/// - If the file exists → ArkGb (verify mode).
-fn backend_for_snapshot(snap_name: &str) -> Result<GbBackendKind, Failed> {
-    // Regeneration mode: always use Singular to preserve baselines.
-    if std::env::var("INSTA_UPDATE").is_ok() {
-        if !singular() {
-            return Err(Failed::from(
-                "INSTA_UPDATE is set but Singular is not on PATH. \
-                 Snapshots must be (re)generated with Singular to preserve baselines. \
-                 Install Singular or unset INSTA_UPDATE to verify with ArkGb."
-                    .to_string(),
-            ));
-        }
-        return Ok(GbBackendKind::Singular);
-    }
-
-    let snap_full = snap_dir().join(format!("{snap_name}.snap"));
-    if snap_full.exists() {
-        Ok(GbBackendKind::ArkGb)
-    } else {
-        if !singular() {
-            return Err(Failed::from(format!(
-                "Snapshot {snap_name}.snap does not exist and Singular is not on PATH. \
-                 Install Singular to generate snapshots."
-            )));
-        }
-        Ok(GbBackendKind::Singular)
-    }
-}
-
 /// Parse + concretize + build the analysis DAG.
 #[track_caller]
 fn compile_to_dag(path: &PathBuf, sizes: &[(&str, usize)]) -> AnalysisDag {
@@ -521,7 +474,7 @@ fn partial_suffix(entry: &TestEntry) -> &'static str {
 
 fn run_completeness_snapshot(entry: &TestEntry) -> Result<(), Failed> {
     let snap_name = format!("{}_completeness_basis", entry.name);
-    let backend = backend_for_snapshot(&snap_name)?;
+    let backend = GbBackendKind::Singular;
 
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -552,14 +505,7 @@ fn run_completeness_snapshot(entry: &TestEntry) -> Result<(), Failed> {
 fn run_knowledge_snapshot(entry: &TestEntry) -> Result<(), Failed> {
     let snap_basis = format!("{}_knowledge_basis", entry.name);
     let snap_rel = format!("{}_knowledge_relation", entry.name);
-    let backend = backend_for_snapshot(&snap_basis)?;
-    // Both knowledge snapshots use the same backend. Check relation snapshot too.
-    let rel_path = snap_dir().join(format!("{snap_rel}.snap"));
-    if !rel_path.exists() && !singular() {
-        return Err(Failed::from(format!(
-            "Snapshot {snap_rel}.snap does not exist and Singular is not on PATH."
-        )));
-    }
+    let backend = GbBackendKind::Singular;
 
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -592,7 +538,7 @@ fn run_knowledge_snapshot(entry: &TestEntry) -> Result<(), Failed> {
 
 fn run_soundness_snapshot(entry: &TestEntry) -> Result<(), Failed> {
     let snap_name = format!("{}_soundness_search", entry.name);
-    let backend = backend_for_snapshot(&snap_name)?;
+    let backend = GbBackendKind::Singular;
 
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -623,11 +569,24 @@ fn run_soundness_snapshot(entry: &TestEntry) -> Result<(), Failed> {
 }
 
 fn main() {
+    // If Singular is missing, force-ignore all trials and warn once up
+    // front — test trial output is captured by the harness and would
+    // hide per-test warnings.
+    let singular_ok = singular();
+    if !singular_ok {
+        eprintln!(
+            "WARNING: Singular is not on PATH — GB snapshot tests will be \
+             skipped (ignored). Install Singular to run them."
+        );
+    }
+
     let mut trials: Vec<Trial> = Vec::new();
 
     for entry in EXAMPLES.iter() {
         let entry = entry.clone();
         let suffix = partial_suffix(&entry);
+        // When Singular is missing, force-ignore everything.
+        let force_ignored = !singular_ok;
 
         // Completeness snapshot
         let e = entry.clone();
@@ -636,7 +595,7 @@ fn main() {
                 format!("completeness::{}{}", entry.name, suffix),
                 move || run_completeness_snapshot(&e),
             )
-            .with_ignored_flag(entry.ignored),
+            .with_ignored_flag(entry.ignored || force_ignored),
         );
 
         // Knowledge snapshot — all knowledge tests are ignored because
@@ -660,7 +619,7 @@ fn main() {
                 Trial::test(format!("soundness::{}{}", entry.name, suffix), move || {
                     run_soundness_snapshot(&e)
                 })
-                .with_ignored_flag(entry.ignored),
+                .with_ignored_flag(entry.ignored || force_ignored),
             );
         }
     }

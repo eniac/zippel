@@ -16,6 +16,18 @@ use crate::frontend::Polynomial;
 
 use super::combinatorics::{hypercube, multi_indices};
 
+/// Recursively check whether `typ` contains any polynomial type
+/// (`Uni`/`Mle`/`VPoly`) at any nesting depth. When it does not, the
+/// type is a purely scalar/vec-of-scalar shape and binary ops can
+/// accumulate slot-wise without sentinel vars.
+pub fn has_poly_type(typ: &ATyp) -> bool {
+    match typ {
+        ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => true,
+        ATyp::Vec(inner, _) => has_poly_type(inner),
+        _ => false,
+    }
+}
+
 /// An owned slice of polynomial variables paired with their `ATyp`.
 ///
 /// Provides element-wise access for `Vec` types (via `at_index`),
@@ -313,7 +325,7 @@ impl<C: ArkConfig> PolySource<C> {
 
     pub fn inject_constant_to(&self, poly_typ: &ATyp) -> PolySource<C> {
         assert!(
-            Self::is_scalar_like(&self.typ),
+            matches!(self.typ, ATyp::Base(ABase::Scalar | ABase::Fin(_))),
             "inject_constant_to requires a scalar-like source, got {}",
             self.typ
         );
@@ -352,14 +364,6 @@ impl<C: ArkConfig> PolySource<C> {
             polys,
             typ: poly_typ.clone(),
         }
-    }
-
-    pub fn is_poly(&self) -> bool {
-        Self::poly_shape_static(&self.typ).is_some() || matches!(self.typ, ATyp::Mle(_))
-    }
-
-    pub fn is_scalar_like(t: &ATyp) -> bool {
-        matches!(t, ATyp::Base(ABase::Scalar | ABase::Fin(_)))
     }
 
     pub fn poly_shape_static(t: &ATyp) -> Option<(usize, usize)> {

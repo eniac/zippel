@@ -24,7 +24,7 @@ proto r1cs_sigma<G: Group, F: Scalar<G>, N: Size, n: 1..N, m: Size>(
 
     // Witness inputs
     witness w: [F; N - n], // Witness portion of z
-) where matvec(mat_A, x ++ w) * matvec(mat_B, x ++ w) == matvec(mat_C, x ++ w) {
+) where reduce(&&, matvec(mat_A, x ++ w) * matvec(mat_B, x ++ w) == matvec(mat_C, x ++ w)) {
     // ======== Prover Phase 1: Compute and commit ========
 
     // Build full vector z = (x, w)

@@ -3,7 +3,7 @@
 //! `add_sub_op_inner`, `add_sub_leaf`.
 
 use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig};
+use backend::{ABase, ATyp, ArkConfig};
 use graph::HOp;
 use lang::ast::BinOp;
 
@@ -88,7 +88,7 @@ pub fn sub_op<C: ArkConfig + HasOpFactory>(
     add_sub_op(ctx, var, a, b, r_typ, BinOp::Sub);
 }
 
-fn add_sub_op_inner<C: ArkConfig + HasOpFactory>(
+pub fn add_sub_op_inner<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a: &PolySource<C>,
@@ -155,12 +155,12 @@ fn add_sub_op_inner<C: ArkConfig + HasOpFactory>(
     }
 }
 
-/// Leaf-level add/sub for non-Vec operands. Dispatches based on whether
-/// the operands are polynomial-like (`Uni`/`VPoly`/`Mle`) or scalar-like:
+/// Leaf-level add/sub for non-Vec operands. Dispatches based on
+/// operand types:
 ///
+/// - `poly ± poly` → lift both to result type, slot-wise
 /// - `poly ± scalar` → lift poly, inject scalar as constant, slot-wise
 /// - `scalar ± poly` → inject scalar as constant, lift poly, slot-wise
-/// - `poly ± poly` → lift both to result type, slot-wise
 /// - `non-poly ± non-poly` (e.g. `Base×Base`) → raw slot-wise
 /// - otherwise → `uncovered_op` (mixed poly/non-poly without scalar)
 fn add_sub_leaf<C: ArkConfig + HasOpFactory>(
@@ -171,43 +171,59 @@ fn add_sub_leaf<C: ArkConfig + HasOpFactory>(
     r_typ: &ATyp,
     op: BinOp,
 ) {
-    if PolySource::<C>::is_scalar_like(b.typ()) && a.is_poly() {
-        let a_lifted = a.lift_to(r_typ);
-        let b_lifted = b.inject_constant_to(r_typ);
-        emit_slotwise_binop(
-            ctx,
-            var,
-            a_lifted.polys(),
-            b_lifted.polys(),
-            op,
-            "Poly×Scalar",
-        );
-    } else if PolySource::<C>::is_scalar_like(a.typ()) && b.is_poly() {
-        let a_lifted = a.inject_constant_to(r_typ);
-        let b_lifted = b.lift_to(r_typ);
-        emit_slotwise_binop(
-            ctx,
-            var,
-            a_lifted.polys(),
-            b_lifted.polys(),
-            op,
-            "Scalar×Poly",
-        );
-    } else if a.is_poly() && b.is_poly() {
-        let a_lifted = a.lift_to(r_typ);
-        let b_lifted = b.lift_to(r_typ);
-        emit_slotwise_binop(
-            ctx,
-            var,
-            a_lifted.polys(),
-            b_lifted.polys(),
-            op,
-            "poly/lifted",
-        );
-    } else if !a.is_poly() && !b.is_poly() {
-        emit_slotwise_binop(ctx, var, a.polys(), b.polys(), op, "slotwise");
-    } else {
-        super::uncovered_op("add-sub-mixed-poly-nonpoly", var);
+    match a.typ() {
+        ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => match b.typ() {
+            ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => {
+                let a_lifted = a.lift_to(r_typ);
+                let b_lifted = b.lift_to(r_typ);
+                emit_slotwise_binop(
+                    ctx,
+                    var,
+                    a_lifted.polys(),
+                    b_lifted.polys(),
+                    op,
+                    "poly/lifted",
+                );
+            }
+            ATyp::Base(ABase::Scalar | ABase::Fin(_)) => {
+                let a_lifted = a.lift_to(r_typ);
+                let b_lifted = b.inject_constant_to(r_typ);
+                emit_slotwise_binop(
+                    ctx,
+                    var,
+                    a_lifted.polys(),
+                    b_lifted.polys(),
+                    op,
+                    "Poly×Scalar",
+                );
+            }
+            _ => super::uncovered_op("add-sub-poly-nonpoly", var),
+        },
+        ATyp::Base(ABase::Scalar | ABase::Fin(_)) => match b.typ() {
+            ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => {
+                let a_lifted = a.inject_constant_to(r_typ);
+                let b_lifted = b.lift_to(r_typ);
+                emit_slotwise_binop(
+                    ctx,
+                    var,
+                    a_lifted.polys(),
+                    b_lifted.polys(),
+                    op,
+                    "Scalar×Poly",
+                );
+            }
+            ATyp::Base(_) => {
+                emit_slotwise_binop(ctx, var, a.polys(), b.polys(), op, "slotwise");
+            }
+            _ => super::uncovered_op("add-sub-scalar-nonbase", var),
+        },
+        ATyp::Base(_) => match b.typ() {
+            ATyp::Base(_) => {
+                emit_slotwise_binop(ctx, var, a.polys(), b.polys(), op, "slotwise");
+            }
+            _ => super::uncovered_op("add-sub-base-nonbase", var),
+        },
+        _ => super::uncovered_op("add-sub-unsupported-type", var),
     }
 }
 

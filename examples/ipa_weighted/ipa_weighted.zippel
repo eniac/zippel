@@ -124,12 +124,9 @@ proto ipa_wrapper<G: Group, F: Scalar<G>, S: Size, N_val_const: 2 ^ S>(
         N_val_const
     ], // Corresponds to 'b' in the paper (vector of field elements)
 ) where
-    // p_initial_commitment is a Pedersen-style commitment using weighted bases:
-    //   G'_i = G_i * G_factors_i,  H'_i = H_i * H_factors_i
-    // so that P = <G', a> + <H', b>.
     p_initial_commitment
-        == dot(g_vec * g_factors, a_vec_witness) + dot(h_vec * h_factors, b_vec_witness);
-    ip_val_claimed == dot(a_vec_witness, b_vec_witness)
+        == dot(g_vec * g_factors, a_vec_witness) + dot(h_vec * h_factors, b_vec_witness)
+        && ip_val_claimed == dot(a_vec_witness, b_vec_witness)
 {
     // 1. "Verifier generates x <-$ Z*_p and sends it to Prover."
     //    In our non-interactive DSL, this is a Fiat-Shamir challenge.

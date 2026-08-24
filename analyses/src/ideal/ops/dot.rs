@@ -9,19 +9,10 @@ use lang::typ::lub::Lub;
 use crate::Var;
 use crate::frontend::Polynomial;
 
+use super::super::poly_source::has_poly_type;
 use super::PolySource;
 use super::mul::mul_op_inner;
 use super::{EncodeCtx, link_to_polys};
-
-/// Recursively check whether `typ` contains any polynomial type
-/// (`Uni`/`Mle`/`VPoly`) at any nesting depth.
-fn has_poly_type(typ: &ATyp) -> bool {
-    match typ {
-        ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => true,
-        ATyp::Vec(inner, _) => has_poly_type(inner),
-        _ => false,
-    }
-}
 
 /// Element-wise slot-wise mul for non-polynomial types. Returns one
 /// polynomial per physical slot of the result. Handles broadcasting

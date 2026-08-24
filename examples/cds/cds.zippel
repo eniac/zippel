@@ -21,10 +21,13 @@ proto cds<G: Group, F: Scalar<G>, N: 2, K: 1>(
     witness u_points: [F; K],
     witness u_evals: [F; K],
 ) where
-    [keys[i] for i in 0..N] == [g * w[i] for i in 0..N];
-    [b[i] * (1 - b[i]) for i in 0..N] == [0 for _ in 0..N];
-    [(1 - b[i]) * (eval_points[i] - u_points[0]) for i in 0..N] == [0 for _ in 0..N];
-    [(1 - b[i]) * (c_sim[i] - u_evals[0]) for i in 0..N] == [0 for _ in 0..N]
+    reduce(&&, [keys[i] for i in 0..N] == [g * w[i] for i in 0..N])
+        && reduce(&&, [b[i] * (1 - b[i]) for i in 0..N] == [0 for _ in 0..N])
+        && reduce(
+            &&,
+            [(1 - b[i]) * (eval_points[i] - u_points[0]) for i in 0..N] == [0 for _ in 0..N],
+        )
+        && reduce(&&, [(1 - b[i]) * (c_sim[i] - u_evals[0]) for i in 0..N] == [0 for _ in 0..N])
 {
     // Step 1: Initial Commitments
     // For i in A: m1 = g * r[i]
@@ -56,8 +59,11 @@ proto cds<G: Group, F: Scalar<G>, N: 2, K: 1>(
     // 5.a: Verify underlying Schnorr proofs: g * m2 == m1 + pk * c
     // Vector equality: [g * m2[i] for i in 0..N] == [m1[i] + pk[i] * c[i] for i in 0..N]
     verify(
-        [g * m2_transcript[i] for i in 0..N]
-            == [m1_transcript[i] + keys[i] * c_transcript[i] for i in 0..N],
+        reduce(
+            &&,
+            [g * m2_transcript[i] for i in 0..N]
+                == [m1_transcript[i] + keys[i] * c_transcript[i] for i in 0..N],
+        ),
     );
 
     // 5.b: Verify c_transcript is a valid degree K threshold sharing of s
@@ -68,5 +74,5 @@ proto cds<G: Group, F: Scalar<G>, N: 2, K: 1>(
     let verifier_check_pts = [eval_points[i + K] for i in 0..N - K];
     let verifier_check_evals = [p_verif(x) for x in verifier_check_pts];
 
-    verify([c_transcript[i + K] for i in 0..N - K] == verifier_check_evals)
+    verify(reduce(&&, [c_transcript[i + K] for i in 0..N - K] == verifier_check_evals))
 }

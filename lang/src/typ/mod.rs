@@ -43,6 +43,8 @@ pub enum Typ<T, N> {
     Fin(Range<N>),
     /// Unit type (assert/verify/protocol return)
     Unit,
+    /// Boolean type (result of `==`)
+    Bool,
     /// Record type with named fields
     Record(Ctx<Spanned<String>, Spanned<Typ<T, N>>>),
 }
@@ -73,7 +75,7 @@ impl<N: Clone> TidSubst for GTyp<N> {
                     field_typ.node.tid_subst(from, to);
                 });
             }
-            Typ::Fin(_) | Typ::Unit | Typ::Base(_) | Typ::Poly(_, _, _) => {}
+            Typ::Fin(_) | Typ::Unit | Typ::Bool | Typ::Base(_) | Typ::Poly(_, _, _) => {}
         }
     }
 }
@@ -118,6 +120,9 @@ impl<T, N> Typ<T, N> {
     }
     pub fn unit() -> Self {
         Typ::Unit
+    }
+    pub fn bool() -> Self {
+        Typ::Bool
     }
     pub fn into_vec(self) -> (Spanned<Self>, Spanned<N>) {
         match self {
@@ -203,6 +208,7 @@ impl<T: Clone, N: Clone> ToTraversal1<T> for Typ<T, N> {
             Typ::Vec(box b, n) => Ok(Typ::Vec(Box::new(b.traverse1(f)?), n)),
             Typ::Fin(r) => Ok(Typ::Fin(r)),
             Typ::Unit => Ok(Typ::Unit),
+            Typ::Bool => Ok(Typ::Bool),
             Typ::Record(fields) => {
                 let pairs: Vec<_> = fields
                     .into_iter()
@@ -233,6 +239,7 @@ impl<T: Clone, N: Clone> ToTraversal2<N> for Typ<T, N> {
             )),
             Typ::Fin(r) => Ok(Typ::Fin(r.traverse1(f)?)),
             Typ::Unit => Ok(Typ::Unit),
+            Typ::Bool => Ok(Typ::Bool),
             Typ::Record(fields) => {
                 let pairs: Vec<_> = fields
                     .into_iter()
@@ -328,6 +335,7 @@ impl<N: Clone> TypeInline<N> for GTyp<N> {
             Typ::Poly(b, m, n) => Typ::Poly(b, m, n),
             Typ::Fin(r) => Typ::Fin(r),
             Typ::Unit => Typ::Unit,
+            Typ::Bool => Typ::Bool,
             Typ::Record(fields) => Typ::Record(Ctx::from_iter(
                 fields.into_iter().map(|(k, v)| (k, v.type_inline(ctx))),
             )),
@@ -375,6 +383,7 @@ where
                 allocator.text(">"),
             ]),
             Typ::Unit => allocator.text("Unit"),
+            Typ::Bool => allocator.text("Bool"),
             Typ::Record(fields) => {
                 let mut docs = Vec::new();
                 docs.push(allocator.text("{"));

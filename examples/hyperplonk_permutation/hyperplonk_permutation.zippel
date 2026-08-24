@@ -155,7 +155,7 @@ proto hyperplonk_permutation<F: Field, S: Size, N: 2 ^ S>(
     instance r: F, // universal-hash randomness  (FS on driver)
     instance v_evs: [F; 2 ^ (S + 1)],
 ) where
-    // Relation: the multisets {(s_id[i], f[i])} and {(s_sigma[i], g[i])}
+    // Relation: the multisets  {(s_id[i], f[i])} and {(s_sigma[i], g[i])}
     // coincide — i.e. g is the permutation of f encoded by (s_id, s_sigma).
     // Stated as a bivariate polynomial identity, collapsed to a univariate
     // via a fresh random y drawn at analysis time:

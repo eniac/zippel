@@ -79,6 +79,7 @@ pub enum Token<'src> {
     Caret,
     Percent,
     PlusPlus,
+    AmpAmp,
     // Literals — carry source text (borrowed during parsing)
     Positive(Cow<'src, str>),
     // Identifiers — carry source text (borrowed during parsing)
@@ -169,6 +170,7 @@ impl<'src> Token<'src> {
             Token::Caret => Token::Caret,
             Token::Percent => Token::Percent,
             Token::PlusPlus => Token::PlusPlus,
+            Token::AmpAmp => Token::AmpAmp,
             Token::KwLet => Token::KwLet,
             Token::KwFn => Token::KwFn,
             Token::KwProto => Token::KwProto,
@@ -244,6 +246,7 @@ impl<'src> std::fmt::Display for Token<'src> {
             Token::Caret => write!(f, "^"),
             Token::Percent => write!(f, "%"),
             Token::PlusPlus => write!(f, "++"),
+            Token::AmpAmp => write!(f, "&&"),
             // Keywords
             Token::KwLet => write!(f, "let"),
             Token::KwFn => write!(f, "fn"),
@@ -314,6 +317,9 @@ enum RawToken {
     // Multi-char punctuation (declared before single-char to ensure longest match)
     #[token("++")]
     PlusPlus,
+
+    #[token("&&")]
+    AmpAmp,
 
     #[token("==")]
     EqEq,
@@ -462,6 +468,7 @@ fn raw_to_token<'src>(raw: &RawToken, text: &'src str) -> Token<'src> {
         RawToken::LineComment => Token::LineComment,
         RawToken::BlockComment => Token::BlockComment,
         RawToken::PlusPlus => Token::PlusPlus,
+        RawToken::AmpAmp => Token::AmpAmp,
         RawToken::EqEq => Token::EqEq,
         RawToken::FatArrow => Token::FatArrow,
         RawToken::Arrow => Token::Arrow,

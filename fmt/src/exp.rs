@@ -319,20 +319,18 @@ fn format_exp(
             let doc = format_body_inner(exp, cursor, style);
             (TriviaGap::default(), doc)
         }
-        Exp::Assert(lhs, rhs) => format_assertion(
+        Exp::Assert(exp) => format_assertion(
             "assert",
             |t| matches!(t, Token::KwAssert),
-            lhs,
-            rhs,
+            exp,
             cursor,
             end,
             style,
         ),
-        Exp::Verify(lhs, rhs) => format_assertion(
+        Exp::Verify(exp) => format_assertion(
             "verify",
             |t| matches!(t, Token::KwVerify),
-            lhs,
-            rhs,
+            exp,
             cursor,
             end,
             style,
@@ -602,12 +600,10 @@ fn format_sampling(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn format_assertion(
     name: &'static str,
     pred: impl Fn(&Token) -> bool,
-    lhs: &Spanned<Exp<Size>>,
-    rhs: &Spanned<Exp<Size>>,
+    exp: &Spanned<Exp<Size>>,
     cursor: &mut TokenCursor,
     end: usize,
     style: &Style,
@@ -617,39 +613,10 @@ fn format_assertion(
         cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
         style,
     );
-    let (lhs_gap, lhs_doc) = format_exp(lhs, cursor, style);
-    let eq_gap = cursor.advance_to_token(end, |token| matches!(token, Token::EqEq));
-    let (rhs_gap, rhs_doc) = format_exp(rhs, cursor, style);
+    let (exp_gap, exp_doc) = format_exp(exp, cursor, style);
     let close_comments = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
-
-    let eq_needs_break = eq_gap.needs_end_newline();
-    let eq_end = if eq_needs_break {
-        Some(ALLOC.hardline())
-    } else {
-        Some(ALLOC.nil())
-    };
-    let eq_line = if eq_needs_break {
-        ALLOC.nil()
-    } else {
-        ALLOC.line()
-    };
-    let content = ALLOC
-        .concat([
-            lhs_doc,
-            ALLOC
-                .concat([
-                    format_gap(eq_gap, None, eq_end, None, style),
-                    ALLOC.concat([eq_line, ALLOC.text("==")]),
-                    gap_space(rhs_gap, style),
-                    rhs_doc,
-                ])
-                .nest(style.indent_width() as isize)
-                .group(),
-        ])
-        .group();
-
     let mut list = DelimList::new(style, ",", true);
-    list.push(lhs_gap, content);
+    list.push(exp_gap, exp_doc);
     (
         keyword_gap,
         ALLOC.concat([
@@ -705,40 +672,6 @@ fn format_relation_inner(
     style: &Style,
 ) -> Doc<'static> {
     match &exp.node {
-        Exp::Assert(lhs, rhs) => {
-            let (lhs_gap, lhs_doc) = format_exp(lhs, cursor, style);
-            let eq_gap =
-                cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::EqEq));
-            let (rhs_gap, rhs_doc) = format_exp(rhs, cursor, style);
-            let eq_needs_break = eq_gap.needs_end_newline();
-            let eq_end = if eq_needs_break {
-                Some(ALLOC.hardline())
-            } else {
-                Some(ALLOC.nil())
-            };
-            let eq_line = if eq_needs_break {
-                ALLOC.nil()
-            } else {
-                ALLOC.line()
-            };
-            ALLOC
-                .concat([
-                    ALLOC.concat([
-                        format_gap(lhs_gap, Some(ALLOC.nil()), None, None, style),
-                        lhs_doc,
-                    ]),
-                    ALLOC
-                        .concat([
-                            format_gap(eq_gap, None, eq_end, None, style),
-                            ALLOC.concat([eq_line, ALLOC.text("==")]),
-                            gap_space(rhs_gap, style),
-                            rhs_doc,
-                        ])
-                        .nest(style.indent_width() as isize)
-                        .group(),
-                ])
-                .group()
-        }
         Exp::Let(Some(var), value, body) => {
             let keyword = gap_none(
                 cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::KwLet)),
@@ -969,6 +902,8 @@ fn matches_binop(op: BinOp, token: &Token) -> bool {
         BinOp::Dot => false,
         BinOp::Concat => matches!(token, Token::PlusPlus),
         BinOp::Rem => matches!(token, Token::Percent),
+        BinOp::Equ => matches!(token, Token::EqEq),
+        BinOp::And => matches!(token, Token::AmpAmp),
     }
 }
 
@@ -982,25 +917,27 @@ fn binop_symbol(op: BinOp) -> &'static str {
         BinOp::Dot => "dot",
         BinOp::Concat => "++",
         BinOp::Rem => "%",
+        BinOp::Equ => "==",
+        BinOp::And => "&&",
     }
 }
 
 fn neg_needs_paren(exp: &Exp<Size>) -> bool {
-    // Neg has prefix precedence 3. A child Bin with precedence < 3
-    // (Add/Sub/Mul/Div/Rem) binds looser than Neg, so `-a + b` re-parses
-    // as `(-a) + b` — parens needed to preserve `Neg(Add(a, b))`.
-    // A child Bin with precedence >= 3 (Concat/Pow) binds at least as
+    // Neg has prefix precedence 4. A child Bin with precedence < 4
+    // (And/Equ/Add/Sub/Mul/Div/Rem) binds looser than Neg, so `-a + b`
+    // re-parses as `(-a) + b` — parens needed to preserve `Neg(Add(a, b))`.
+    // A child Bin with precedence >= 4 (Concat/Pow) binds at least as
     // tight, so `-a ++ b` re-parses as `-(a ++ b)` — no parens needed.
-    matches!(exp, Exp::Bin(op, _, _) if op.precedence() < 3)
+    matches!(exp, Exp::Bin(op, _, _) if op.precedence() < 4)
 }
 
 /// Does the lhs of a binary op need parentheses?
 fn lhs_needs_paren(op: BinOp, lhs: &Exp<Size>) -> bool {
-    // Neg has prefix precedence 3. As a Bin lhs, `-x op y` re-parses as
-    // `(-x) op y` when op.precedence() < 3 (Neg binds tighter), but as
-    // `-(x op y)` when op.precedence() >= 3 (op binds at least as tight).
+    // Neg has prefix precedence 4. As a Bin lhs, `-x op y` re-parses as
+    // `(-x) op y` when op.precedence() < 4 (Neg binds tighter), but as
+    // `-(x op y)` when op.precedence() >= 4 (op binds at least as tight).
     if matches!(lhs, Exp::Neg(_)) {
-        return op.precedence() >= 3;
+        return op.precedence() >= 4;
     }
     // Range as a Bin child needs parens when the operator is also a
     // size_ty operator (Add/Sub/Mul/Div/Pow) — the range parser

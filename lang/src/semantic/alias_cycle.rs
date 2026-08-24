@@ -121,6 +121,6 @@ fn collect_deps(typ: &UTyp, deps: &mut share::Set<Tid>) {
                 collect_deps(t, deps);
             }
         }
-        Typ::Fin(_) | Typ::Unit => {}
+        Typ::Fin(_) | Typ::Unit | Typ::Bool => {}
     }
 }

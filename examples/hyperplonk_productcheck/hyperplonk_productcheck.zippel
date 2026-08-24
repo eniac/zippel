@@ -137,7 +137,7 @@ proto hyperplonk_productcheck<F: Field, S: Size, N: 2 ^ S>(
 ) where
     // ProductCheck proves that the product of f over the boolean
     // hypercube equals `claimed`:
-    //   Prod_{i in 0..N} f_evs[i] == claimed.
+    //   Prod_ {i in 0..N} f_evs[i] == claimed.
     // The proto attests to this via the rational grand-product tree
     // encoded in v_evs; this clause states the underlying relation.
     product(f_evs) == claimed

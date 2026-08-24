@@ -49,26 +49,41 @@ proto groth16<
     let b_evs = [random<F> for _ in 0..M + L];
     let c_evs = [random<F> for _ in 0..M + L];
     let t_at_tau = random<F>;
-    alpha_g1 == alpha * gen_g1;
-    beta_g1 == beta * gen_g1;
-    beta_g2 == beta * gen_g2;
-    gamma_g2 == gamma * gen_g2;
-    delta_g1 == delta * gen_g1;
-    delta_g2 == delta * gen_g2;
+    // SRS derivation: each SRS element is the trapdoor times a generator.
+    let srs_check = alpha_g1 == alpha * gen_g1
+        && beta_g1 == beta * gen_g1
+        && beta_g2 == beta * gen_g2
+        && gamma_g2 == gamma * gen_g2
+        && delta_g1 == delta * gen_g1
+        && delta_g2 == delta * gen_g2;
     let full_assign = instance_assignment ++ witness_assignment;
     let a_at_tau = dot(a_evs, full_assign);
     let b_at_tau = dot(b_evs, full_assign);
     let c_at_tau = dot(c_evs, full_assign);
     let h_at_tau = dot(h_coeffs, [tau ^ j for j in 0..H]);
-    a_at_tau * b_at_tau - c_at_tau == h_at_tau * t_at_tau;
-    [a_query[i] for i in 0..M + L] == [gen_g1 * a_evs[i] for i in 0..M + L];
-    [b_g1_query[i] for i in 0..M + L] == [gen_g1 * b_evs[i] for i in 0..M + L];
-    [b_g2_query[i] for i in 0..M + L] == [gen_g2 * b_evs[i] for i in 0..M + L];
-    [h_query[j] * delta for j in 0..H] == [gen_g1 * t_at_tau * tau ^ j for j in 0..H];
-    [l_query[i] * delta for i in 0..L]
-        == [gen_g1 * (beta * a_evs[M + i] + alpha * b_evs[M + i] + c_evs[M + i]) for i in 0..L];
-    [gamma_abc_g1[i] * gamma for i in 0..M]
-        == [gen_g1 * (beta * a_evs[i] + alpha * b_evs[i] + c_evs[i]) for i in 0..M]
+    // QAP identity at tau and query derivation from evaluation points.
+    let qap_check = a_at_tau * b_at_tau - c_at_tau == h_at_tau * t_at_tau
+        && reduce(&&, [a_query[i] for i in 0..M + L] == [gen_g1 * a_evs[i] for i in 0..M + L])
+        && reduce(&&, [b_g1_query[i] for i in 0..M + L] == [gen_g1 * b_evs[i] for i in 0..M + L])
+        && reduce(&&, [b_g2_query[i] for i in 0..M + L] == [gen_g2 * b_evs[i] for i in 0..M + L])
+        && reduce(
+            &&,
+            [h_query[j] * delta for j in 0..H] == [gen_g1 * t_at_tau * tau ^ j for j in 0..H],
+        )
+        && reduce(
+            &&,
+            [l_query[i] * delta for i in 0..L]
+                == [
+                    gen_g1 * (beta * a_evs[M + i] + alpha * b_evs[M + i] + c_evs[M + i])
+                    for i in 0..L
+                ],
+        )
+        && reduce(
+            &&,
+            [gamma_abc_g1[i] * gamma for i in 0..M]
+                == [gen_g1 * (beta * a_evs[i] + alpha * b_evs[i] + c_evs[i]) for i in 0..M],
+        );
+    srs_check && qap_check
 {
     let r = random<F>;
     let s = random<F>;
