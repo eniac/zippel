@@ -345,7 +345,7 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     instance h_evs: G,
     instance placeholder_tau: [F; M],
     instance f_one: F,
-) where az * bz == cz {
+) where reduce(&&, az * bz == cz) {
     let one = f_one;
     let zero = f_one - f_one;
 

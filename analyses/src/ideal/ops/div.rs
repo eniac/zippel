@@ -196,7 +196,8 @@ pub(crate) fn div_rem_op_inner<C: ArkConfig + HasOpFactory>(
 /// the operands are polynomial-like (`Uni`/`VPoly`) or scalar-like:
 ///
 /// - `poly / scalar` → slot-wise field division (rem panics)
-/// - `Mle` involved → unsupported
+/// - `Mle / scalar` → slot-wise field division (rem panics)
+/// - `Mle` with non-scalar divisor → unsupported
 /// - `poly / poly` → polynomial long division with witness caching
 /// - `non-poly / non-poly` → slot-wise field division (rem panics)
 /// - mixed poly/non-poly → unsupported

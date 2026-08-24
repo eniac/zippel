@@ -376,7 +376,7 @@ proto hyperplonk<F: Field, S: Size, N: 2 ^ S>(
         == reduce(*, [s_sigma_a_evs[i] + y * a_evs[i] + x for i in 0..N])
             * reduce(*, [s_sigma_b_evs[i] + y * b_evs[i] + x for i in 0..N])
             * reduce(*, [s_sigma_c_evs[i] + y * c_evs[i] + x for i in 0..N]);
-    gate_check && perm_check
+    reduce(&&, gate_check) && perm_check
 {
     let one = a_evs[0] - a_evs[0] + 1;
     let zero = a_evs[0] - a_evs[0];

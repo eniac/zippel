@@ -123,7 +123,7 @@ proto hyperplonk_zerocheck<F: Field, S: Size, N: 2 ^ S>(
     instance a_evs: [F; N],
     instance b_evs: [F; N],
     instance c_evs: [F; N],
-) where a_evs * b_evs == c_evs {
+) where reduce(&&, a_evs * b_evs == c_evs) {
     let one = a_evs[0] - a_evs[0] + 1;
     let zero = a_evs[0] - a_evs[0];
 
