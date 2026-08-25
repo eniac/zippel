@@ -1596,6 +1596,7 @@ dependencies = [
  "chumsky",
  "dashmap",
  "itertools 0.12.1",
+ "lang-derive",
  "lazy_static",
  "log",
  "logos",
@@ -1606,6 +1607,15 @@ dependencies = [
  "rayon",
  "share",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "lang-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]

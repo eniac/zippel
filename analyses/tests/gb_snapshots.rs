@@ -23,9 +23,8 @@ use analyses::{
     CompletenessAnalysis, GbBackendKind, KnowledgeAnalysis, QualifierPropagation,
     SpecialSoundnessAnalysis,
 };
-use ark_ff::{One, Zero};
-use backend::{ArkBls12_381, ArkConfig, Value};
-use lang::id::{Tid, Vid};
+use backend::{ArkBls12_381, ArkConfig};
+use lang::id::Tid;
 use lang::typ::Qualifier;
 use libtest_mimic::{Failed, Trial};
 use share::{Ctx, unwrap};
@@ -60,9 +59,9 @@ struct TestEntry {
     ///                   grevlex grading (upstream limitation: tiered path
     ///                   requires first block to be Lex, not GrevLex).
     ignored: bool,
-    /// Name-based partial values map. An empty map means no partial
-    /// verification.
-    partial_values: Ctx<Vid, Value<ArkBls12_381>>,
+    /// `true` = skip `pl` table inlining before GB computation.
+    /// Used for protocols where inlining causes timeouts.
+    no_inline: bool,
 }
 
 static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
@@ -74,7 +73,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("NUM_VARS_CONST", 3), ("MAX_DEGREE_CONST", 1)],
             l_vec: &[],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "mle_sumcheck",
@@ -82,7 +81,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("NUM_VARS", 3), ("MAX_DEGREE_CONST", 1)],
             l_vec: &[],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "kzg",
@@ -90,7 +89,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("N", 2)],
             l_vec: &[],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "membership",
@@ -98,7 +97,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("N", 2), ("M", 2), ("S", 2)],
             l_vec: &[],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "schnorr",
@@ -106,7 +105,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[],
             l_vec: &[2],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "schnorr_3round",
@@ -114,7 +113,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[],
             l_vec: &[2, 2, 2],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "cp",
@@ -122,7 +121,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[],
             l_vec: &[2],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "okamoto",
@@ -130,7 +129,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[],
             l_vec: &[2],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "okamoto_elgamal",
@@ -138,7 +137,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[],
             l_vec: &[2],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "commitment_equality",
@@ -146,7 +145,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[],
             l_vec: &[2],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "pedersen_eq",
@@ -154,7 +153,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[],
             l_vec: &[2],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "hyrax_pop",
@@ -162,7 +161,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[],
             l_vec: &[],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "bccgp",
@@ -170,7 +169,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("S", 0)],
             l_vec: &[],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "ipa",
@@ -178,7 +177,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("S", 0)],
             l_vec: &[],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "ipa_weighted",
@@ -186,7 +185,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("S", 0)],
             l_vec: &[],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "hyrax_ipa",
@@ -194,7 +193,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("S", 0)],
             l_vec: &[],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "hyrax_podp",
@@ -202,7 +201,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("S", 1)],
             l_vec: &[],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "zerocheck",
@@ -210,7 +209,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("S", 1)],
             l_vec: &[],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "hadamard",
@@ -218,7 +217,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("S", 2)],
             l_vec: &[],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "pst13",
@@ -226,7 +225,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("N", 2)],
             l_vec: &[],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "zeromorph_kzg",
@@ -234,7 +233,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("N", 2)],
             l_vec: &[],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "zk_kzg",
@@ -242,7 +241,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("N", 2)],
             l_vec: &[],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "cds",
@@ -250,7 +249,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[],
             l_vec: &[],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         // --- Ignored: timeout (GB computation too slow for CI) ---
         TestEntry {
@@ -259,36 +258,16 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[],
             l_vec: &[],
             ignored: true,
-            partial_values: Ctx::from_iter([
-                (Vid("f".to_string()), Value::Scalar(F::one())),
-                (Vid("g".to_string()), Value::Scalar(F::one())),
-                (Vid("h".to_string()), Value::Scalar(F::one())),
-                (Vid("h1".to_string()), Value::Scalar(F::one())),
-                (Vid("h2".to_string()), Value::Scalar(F::one())),
-            ]),
+            no_inline: true,
         },
-        // r1cs_sigma: partial verification with fixed R1CS matrices (mat_A, mat_B, mat_C).
-        // The circuit is A=[1,0], B=[1,0], C=[1,0] → relation x^2 == x.
+        // r1cs_sigma: no inlining (inlining causes timeout).
         TestEntry {
             name: "r1cs_sigma",
             zippel_path: "examples/r1cs_sigma/r1cs_sigma.zippel",
             sizes: &[("N", 2), ("n", 1), ("m", 1)],
             l_vec: &[],
             ignored: true,
-            partial_values: Ctx::from_iter([
-                (
-                    Vid("mat_A".to_string()),
-                    Value::VecScalar(vec![F::one(), F::zero()]),
-                ),
-                (
-                    Vid("mat_B".to_string()),
-                    Value::VecScalar(vec![F::one(), F::zero()]),
-                ),
-                (
-                    Vid("mat_C".to_string()),
-                    Value::VecScalar(vec![F::one(), F::zero()]),
-                ),
-            ]),
+            no_inline: true,
         },
         TestEntry {
             name: "hyperplonk_zerocheck",
@@ -296,7 +275,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("S", 2)],
             l_vec: &[],
             ignored: true,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "hyperplonk_productcheck",
@@ -304,7 +283,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("S", 2)],
             l_vec: &[],
             ignored: true,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "hyperplonk_multiset",
@@ -312,7 +291,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("S", 2)],
             l_vec: &[],
             ignored: true,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "hyperplonk_permutation",
@@ -320,7 +299,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("S", 2)],
             l_vec: &[],
             ignored: true,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "dekart",
@@ -328,7 +307,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("n", 2), ("b", 2), ("l_chunk", 1), ("h_deg", 1)],
             l_vec: &[],
             ignored: true,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "dory",
@@ -336,7 +315,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("S", 2)],
             l_vec: &[],
             ignored: true,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "groth16",
@@ -344,7 +323,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("M", 1), ("L", 1), ("H", 1)],
             l_vec: &[],
             ignored: false,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "hyperplonk",
@@ -352,7 +331,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("S", 2)],
             l_vec: &[],
             ignored: true,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "hyrax",
@@ -360,7 +339,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("L", 2), ("M", 2)],
             l_vec: &[],
             ignored: true,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "kzh",
@@ -368,7 +347,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("NX", 2), ("NY", 2)],
             l_vec: &[],
             ignored: true,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
         TestEntry {
             name: "pari",
@@ -376,7 +355,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[("M", 2), ("N", 1), ("KMN", 3)],
             l_vec: &[],
             ignored: true,
-            partial_values: Ctx::new(),
+            no_inline: false,
         },
     ]
 });
@@ -462,14 +441,10 @@ fn assert_named_snapshot(snap_name: &str, value: &str) {
     });
 }
 
-/// Suffix for the test display name: " (partial)" if the entry uses
-/// partial verification, empty otherwise.
+/// Suffix for the test display name: " (no-inline)" if the entry skips
+/// inlining, empty otherwise.
 fn partial_suffix(entry: &TestEntry) -> &'static str {
-    if entry.partial_values.is_empty() {
-        ""
-    } else {
-        " (partial)"
-    }
+    if entry.no_inline { " (no-inline)" } else { "" }
 }
 
 fn run_completeness_snapshot(entry: &TestEntry) -> Result<(), Failed> {
@@ -480,18 +455,13 @@ fn run_completeness_snapshot(entry: &TestEntry) -> Result<(), Failed> {
         .join("..")
         .join(entry.zippel_path);
     let sizes = entry.sizes.to_vec();
-    let partial_values = entry.partial_values.clone();
+    let no_inline = entry.no_inline;
 
     let normalized = std::thread::Builder::new()
         .stack_size(ANALYSIS_STACK_SIZE)
         .spawn(move || {
             let dag = compile_to_dag(&path, &sizes);
-            let ca = if partial_values.is_empty() {
-                CompletenessAnalysis::from_input_with_backend(&dag, backend)
-            } else {
-                let pv = dag.resolve_partial_values(&partial_values);
-                CompletenessAnalysis::from_input_with_partial(&dag, backend, &pv)
-            };
+            let ca = CompletenessAnalysis::from_input_with_options(&dag, backend, !no_inline);
             normalize_basis(&ca.basis.polys)
         })
         .expect("failed to spawn thread")
@@ -545,19 +515,15 @@ fn run_soundness_snapshot(entry: &TestEntry) -> Result<(), Failed> {
         .join(entry.zippel_path);
     let sizes = entry.sizes.to_vec();
     let l_vec = entry.l_vec.to_vec();
-    let partial_values = entry.partial_values.clone();
+    let no_inline = entry.no_inline;
 
     let normalized = std::thread::Builder::new()
         .stack_size(ANALYSIS_STACK_SIZE)
         .spawn(move || {
             let dag = compile_to_dag(&path, &sizes);
-            let sa = if partial_values.is_empty() {
-                SpecialSoundnessAnalysis::from_input_with_backend(&dag, l_vec, backend)
-            } else {
-                let pv = dag.resolve_partial_values(&partial_values);
-                SpecialSoundnessAnalysis::from_input_with_partial(&dag, l_vec, backend, &pv)
-            }
-            .map_err(|e| Failed::from(e.to_string()))?;
+            let sa =
+                SpecialSoundnessAnalysis::from_input_with_options(&dag, l_vec, backend, !no_inline)
+                    .map_err(|e| Failed::from(e.to_string()))?;
             Ok::<String, Failed>(normalize_basis(&sa.search_gb.polys))
         })
         .expect("failed to spawn thread")

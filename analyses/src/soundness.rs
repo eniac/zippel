@@ -9,14 +9,14 @@ use crate::frontend::{MonoOrder, Polynomial};
 use crate::ideal::{Ideal, IdealBuilder};
 use ark_ff::One;
 use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig, Value};
+use backend::{ATyp, ArkConfig};
 use graph::{QDag, Ref};
 use lang::typ::Qualifier;
 use log::{info, warn};
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
-use share::{Ctx, Set};
+use share::Set;
 
 pub struct SpecialSoundnessAnalysis<C: ArkConfig> {
     /// Gröbner basis of the search ideal (verifier TC copies + d-equations +
@@ -39,6 +39,8 @@ pub struct SpecialSoundnessAnalysis<C: ArkConfig> {
     lex_order: MonoOrder,
     /// Backend for the validity GB computation in `run()`.
     backend: GbBackendKind,
+    /// Whether to inline the `pl` table before GB computation.
+    inline: bool,
 }
 
 fn format_suffix(prefix: &[usize], copy_idx: usize) -> String {
@@ -141,16 +143,16 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         l_vec: Vec<usize>,
         backend: GbBackendKind,
     ) -> Result<Self, AnalysisError<C>> {
-        Self::from_input_with_partial(dag, l_vec, backend, &Ctx::new())
+        Self::from_input_with_options(dag, l_vec, backend, true)
     }
 
-    /// Like [`from_input_with_backend`](Self::from_input_with_backend) but
-    /// concretizes args whose `Ref` appears in `partial_values`.
-    pub fn from_input_with_partial(
+    /// Full-control constructor: user selects the GB backend and whether
+    /// to inline the `pl` table before computing the Gröbner basis.
+    pub fn from_input_with_options(
         dag: &QDag<C>,
         l_vec: Vec<usize>,
         backend: GbBackendKind,
-        partial_values: &Ctx<Ref, Value<C>>,
+        inline: bool,
     ) -> Result<Self, AnalysisError<C>> {
         if l_vec.is_empty() || l_vec.iter().any(|l| *l < 2) {
             return Err(AnalysisError::InvalidSoundnessParameter);
@@ -161,7 +163,6 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         let witness_slots: Vec<Var> = crate::var::dag_args(dag)
             .into_iter()
             .filter(|a| a.is_witness())
-            .filter(|a| !partial_values.contains(&a.reference))
             .flat_map(|a| a.slots())
             .collect();
 
@@ -310,7 +311,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                     non_witness_vars.push(var.clone());
                 }
             }
-            let copy_result = grev_builder.build_with_partial(tc, partial_values);
+            let copy_result = grev_builder.build(tc);
             grev_search.merge(&copy_result);
             grev_validity.merge(&copy_result);
         }
@@ -324,9 +325,11 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             }
         }
         let mut rel_locals = extract_locals(&grev_builder, &rel_tc);
-        let mut grev_rel_result = grev_builder.build_with_partial(rel_tc.clone(), partial_values);
-        rel_locals.inline(&Set::new());
-        grev_rel_result.inline(&Set::new());
+        let mut grev_rel_result = grev_builder.build(rel_tc.clone());
+        if inline {
+            rel_locals.inline(&Set::new());
+            grev_rel_result.inline(&Set::new());
+        }
 
         grev_search.merge(&grev_rel_result);
 
@@ -383,7 +386,9 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         let lex_order = MonoOrder::lex(lex_var_order);
 
         // Phase 3: Inline & compute the search GB via the backend.
-        grev_search.inline(&Set::new());
+        if inline {
+            grev_search.inline(&Set::new());
+        }
 
         let gb = backend.build::<C::F>();
         let search_gb = gb
@@ -405,6 +410,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             rel_locals,
             lex_order,
             backend,
+            inline,
         })
     }
 
@@ -493,7 +499,9 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         }
 
         self.grev_validity.merge(&self.rel_locals);
-        self.grev_validity.inline(&Set::new());
+        if self.inline {
+            self.grev_validity.inline(&Set::new());
+        }
 
         let backend = self.backend.build::<C::F>();
         let validity_gb = backend

@@ -308,3 +308,15 @@ name = "okamoto_elgamal"
 path = "examples/okamoto_elgamal/main.rs"
 test = false
 harness = false
+
+[[bench]]
+name = "inline"
+path = "benches/inline/main.rs"
+test = false
+harness = false
+
+[[bench]]
+name = "inline_all"
+path = "benches/inline/all.rs"
+test = false
+harness = false

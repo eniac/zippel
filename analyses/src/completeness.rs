@@ -1,7 +1,6 @@
 use backend::ArkConfig;
-use backend::Value;
 use backend::op::HasOpFactory;
-use share::{Ctx, Set};
+use share::Set;
 
 use crate::TransClos;
 use crate::backend::{GbBackendKind, GbBasis};
@@ -17,7 +16,7 @@ use graph::Ref;
 /// One shared namespace is used for prover, relation, and verifier.
 pub struct CompletenessAnalysis<C: ArkConfig> {
     /// Gröbner basis of (prover ∪ relation ∪ verifier-locals) under grevlex.
-    /// Computed in `from_input_with_backend`.
+    /// Computed in `from_input_with_options`.
     pub basis: GbBasis<C::F>,
     /// Verifier polynomials to reduce against `basis` in `run()`.
     pub verifier: Vec<Polynomial<C::F>>,
@@ -31,35 +30,42 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
     /// Like [`from_input`](Self::from_input) but with a user-selected GB
     /// backend.
     pub fn from_input_with_backend(dag: &QDag<C>, backend: GbBackendKind) -> Self {
-        Self::from_input_with_partial(dag, backend, &Ctx::new())
+        Self::from_input_with_options(dag, backend, true)
     }
 
-    /// Like [`from_input_with_backend`](Self::from_input_with_backend) but
-    /// concretizes args whose `Ref` appears in `partial_values` to constant
-    /// polynomials. Use [`QDag::resolve_partial_values`] to build the
-    /// `Ref`-keyed map from a name-based `Ctx<Vid, Value<C>>`.
-    pub fn from_input_with_partial(
-        dag: &QDag<C>,
-        backend: GbBackendKind,
-        partial_values: &Ctx<Ref, Value<C>>,
-    ) -> Self {
+    /// Full-control constructor: user selects the GB backend and whether
+    /// to inline the `pl` table into the generating set before computing
+    /// the Gröbner basis.
+    ///
+    /// Inlining substitutes variable definitions (`pl` entries) into the
+    /// basis polynomials, reducing the number of free variables. Skipping
+    /// inlining (`inline = false`) leaves the `pl` table intact, which
+    /// increases the basis size but can be useful for benchmarking the
+    /// impact of inlining on GB computation time.
+    pub fn from_input_with_options(dag: &QDag<C>, backend: GbBackendKind, inline: bool) -> Self {
         let mut builder = IdealBuilder::new();
 
         let prover_tc = TransClos::prover(dag);
-        let mut prover_result = builder.build_with_partial(prover_tc, partial_values);
+        let mut prover_result = builder.build(prover_tc);
 
-        let rel_result = builder.build_with_partial(TransClos::relation(dag), partial_values);
+        let rel_result = builder.build(TransClos::relation(dag));
         prover_result.merge(&rel_result);
 
         let transcript_refs: Set<Ref> = dag.transcript_nodes().into_iter().map(Ref::new).collect();
-        prover_result.inline(&transcript_refs);
+        if inline {
+            prover_result.inline(&transcript_refs);
+        }
 
         let verifier_tc = TransClos::verifier(dag);
         let mut verifier_locals = extract_locals(&builder, &verifier_tc);
-        verifier_locals.inline(&Set::new());
+        if inline {
+            verifier_locals.inline(&Set::new());
+        }
 
-        let mut verifier_result = builder.build_with_partial(verifier_tc, partial_values);
-        verifier_result.inline(&Set::new());
+        let mut verifier_result = builder.build(verifier_tc);
+        if inline {
+            verifier_result.inline(&Set::new());
+        }
 
         // Merge verifier_locals into prover, then compute the GB.
         for p in verifier_locals.generating_set.iter() {

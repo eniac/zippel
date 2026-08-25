@@ -32,7 +32,7 @@ proto hyrax<G: Group, F: Scalar<G>, L: Size, M: Size, NR: 2 ^ L, NC: 2 ^ M, NT: 
     // from group generator g_base by hidden scalars.
     let g_traps = [random<F> for _ in 0..NC];
     let h_trap = random<F>;
-    let setup_check = [g_vec[i] for i in 0..NC] == [g_base * g_traps[i] for i in 0..NC]
+    let setup_check = reduce(&&, [g_vec[i] for i in 0..NC] == [g_base * g_traps[i] for i in 0..NC])
         && h_base == g_base * h_trap;
     eval_check && setup_check
 {
