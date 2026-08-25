@@ -235,6 +235,15 @@ fn run_bench(protocol: &ProtocolConfig, no_inline: bool, backend: GbBackendKind)
     let from_input_ms = from_input_start.elapsed().as_secs_f64() * 1000.0;
 
     let basis_size = ca.basis.polys.len();
+    let max_degree = ca
+        .basis
+        .polys
+        .iter()
+        .map(analyses::frontend::Polynomial::degree)
+        .max()
+        .unwrap_or(0);
+    let num_vars = ca.basis.vars().len();
+    let graph_size = dag.node_count();
 
     let run_start = Instant::now();
     let result = ca.run();
@@ -246,13 +255,16 @@ fn run_bench(protocol: &ProtocolConfig, no_inline: bool, backend: GbBackendKind)
     };
 
     format!(
-        r#"{{"protocol":"{}","inline":{},"status":"{}","from_input_ms":{:.3},"run_ms":{:.3},"basis_size":{},"error":"{}"}}"#,
+        r#"{{"protocol":"{}","inline":{},"status":"{}","from_input_ms":{:.3},"run_ms":{:.3},"basis_size":{},"max_degree":{},"num_vars":{},"graph_size":{},"error":"{}"}}"#,
         protocol.name,
         i32::from(inline),
         status,
         from_input_ms,
         run_ms,
         basis_size,
+        max_degree,
+        num_vars,
+        graph_size,
         error.replace('"', "'")
     )
 }

@@ -65,6 +65,9 @@ struct Result {
     from_input_ms: String,
     run_ms: String,
     basis_size: String,
+    max_degree: String,
+    num_vars: String,
+    graph_size: String,
     error: String,
 }
 
@@ -90,6 +93,9 @@ impl Result {
             from_input_ms: get("from_input_ms"),
             run_ms: get("run_ms"),
             basis_size: get("basis_size"),
+            max_degree: get("max_degree"),
+            num_vars: get("num_vars"),
+            graph_size: get("graph_size"),
             error: get("error"),
         }
     }
@@ -103,6 +109,9 @@ impl Result {
             from_input_ms: String::new(),
             run_ms: String::new(),
             basis_size: String::new(),
+            max_degree: String::new(),
+            num_vars: String::new(),
+            graph_size: String::new(),
             error: format!("exceeded {timeout}s timeout"),
         }
     }
@@ -116,6 +125,9 @@ impl Result {
             from_input_ms: String::new(),
             run_ms: String::new(),
             basis_size: String::new(),
+            max_degree: String::new(),
+            num_vars: String::new(),
+            graph_size: String::new(),
             error: "process killed (likely OOM)".to_string(),
         }
     }
@@ -129,6 +141,9 @@ impl Result {
             from_input_ms: String::new(),
             run_ms: String::new(),
             basis_size: String::new(),
+            max_degree: String::new(),
+            num_vars: String::new(),
+            graph_size: String::new(),
             error: msg.to_string(),
         }
     }
@@ -136,7 +151,7 @@ impl Result {
     /// Serialize to a JSON object string (for the results file).
     fn to_json(&self) -> String {
         format!(
-            r#"{{"protocol":"{}","inline":{},"status":"{}","wall_s":{:.3},"from_input_ms":"{}","run_ms":"{}","basis_size":"{}","error":"{}"}}"#,
+            r#"{{"protocol":"{}","inline":{},"status":"{}","wall_s":{:.3},"from_input_ms":"{}","run_ms":"{}","basis_size":"{}","max_degree":"{}","num_vars":"{}","graph_size":"{}","error":"{}"}}"#,
             self.protocol,
             self.inline,
             self.status,
@@ -144,6 +159,9 @@ impl Result {
             self.from_input_ms,
             self.run_ms,
             self.basis_size,
+            self.max_degree,
+            self.num_vars,
+            self.graph_size,
             self.error.replace('"', "'"),
         )
     }
@@ -423,8 +441,12 @@ fn main() {
                 format!("{:.1}ms", result.run_ms.parse::<f64>().unwrap_or(0.0))
             };
             let basis = &result.basis_size;
-            let line =
-                format!("{prefix}{status:>12}  from_input={from_ms}  run={run_ms}  basis={basis}");
+            let max_degree = &result.max_degree;
+            let num_vars = &result.num_vars;
+            let graph_size = &result.graph_size;
+            let line = format!(
+                "{prefix}{status:>12}  from_input={from_ms}  run={run_ms}  basis={basis}  max_deg={max_degree}  vars={num_vars}  nodes={graph_size}"
+            );
             tee(&mut log, &line);
 
             results.push(result);
