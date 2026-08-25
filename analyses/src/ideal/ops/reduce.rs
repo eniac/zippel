@@ -138,7 +138,7 @@ pub fn reduce_op_inner<C: ArkConfig + HasOpFactory>(
                     "reduce_div_acc"
                 },
                 |ctx, target, acc, elem, _step_typ| {
-                    div::div_rem_op_inner(ctx, target, acc, elem, is_rem, false);
+                    div::div_rem_op_inner(ctx, target, acc, elem, is_rem);
                 },
                 |acc_typ, elem_typ| {
                     ATyp::lub_op(rop, acc_typ, elem_typ, &Nothing)

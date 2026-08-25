@@ -9,7 +9,6 @@ expression: value
 - delta*tau*__zippel::gb::div_q::0[0] + r*pi*tau - c*s*tau + srs_g1[1]*v*s
 - delta*tau*__zippel::gb::div_q::0[0] - r*delta*xi - c*s*tau - p_poly[0]*delta + u*c*s + r*c
 - delta*tau*xi - pi*tau^2 + u*pi*tau + c*tau - srs_g1[1]*v
-- delta*xi*arg_lead_inv - pi*tau*arg_lead_inv + u*pi*arg_lead_inv + srs_g1[2]*r*arg_lead_inv - srs_g1[0]*u + srs_g1[1]
 - delta*xi^2 - pi*tau*xi + u*pi*xi + c*xi - srs_g1[2]*v
 - pi*tau*__zippel::gb::div_q::0[0] + c*__zippel::gb::div_q::0[0] - r*pi*xi + c*s*xi - p_poly[0]*pi
 - srs_g1[0] + gen_g1
@@ -18,13 +17,8 @@ expression: value
 - srs_g1[1]*srs_g2[1] + srs_g1[2]*srs_g2[0]
 - srs_g1[1]*xi + srs_g1[2]*tau
 - srs_g2[0]*delta*xi*__zippel::gb::div_q::0[0] - srs_g2[0]*pi*tau*__zippel::gb::div_q::0[0] + srs_g2[0]*c*__zippel::gb::div_q::0[0] - srs_g2[1]*r*delta*xi - srs_g2[0]*r*pi*xi - p_poly[0]*srs_g2[1]*delta + srs_g2[1]*u*r*pi + srs_g2[0]*v*pi + gen_g2*p_poly[0]*u*pi + 52435875175126190479447740508185965837690552500527637822603658699938581184511*p_poly[0]*srs_g2[0]*pi + srs_g2[1]*r*c - gen_g2*v*c + gen_g2*p_poly[0]*c
-- srs_g2[0]*delta*xi*arg_lead_inv - srs_g2[0]*pi*tau*arg_lead_inv + srs_g2[0]*u*pi*arg_lead_inv + srs_g1[1]*srs_g2[1]*r*arg_lead_inv - srs_g1[0]*srs_g2[0]*u + srs_g1[1]*srs_g2[0]
 - srs_g2[0]*pi*__zippel::gb::div_q::0[0] + gen_g2*c*__zippel::gb::div_q::0[0] - srs_g2[1]*r*pi - gen_g2*p_poly[0]*pi + srs_g2[1]*c*s
 - srs_g2[0]*xi + srs_g2[1]*tau
-- srs_g2[1]*delta*arg_lead_inv + gen_g2*u*pi*arg_lead_inv - srs_g2[0]*pi*arg_lead_inv + srs_g1[0]*srs_g2[1]*r*arg_lead_inv - gen_g2*srs_g1[0]*u + srs_g1[0]*srs_g2[0]
-- srs_g2[1]*r*delta*xi*arg_lead_inv - srs_g2[0]*r*pi*xi*arg_lead_inv - srs_g2[1]*v*delta*arg_lead_inv + srs_g2[1]*u*r*pi*arg_lead_inv + gen_g2*u*v*pi*arg_lead_inv - srs_g2[0]*v*pi*arg_lead_inv + srs_g2[1]*r*c*arg_lead_inv - srs_g2[0]*delta*xi - srs_g2[0]*pi*tau + srs_g2[1]*u*delta - gen_g2*u^2*pi + 2*srs_g2[0]*u*pi - gen_g2*u*c + srs_g2[0]*c
-- v*arg_lead_inv + p_poly[0]*arg_lead_inv + u
-__zippel::gb::div_q::0[0]*arg_lead_inv - 1
 __zippel::gb::div_r::0[0]
 __zippel::node::49 - 1
 __zippel::node::66[0] - 1

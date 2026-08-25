@@ -591,7 +591,7 @@ mod tests {
     }
 
     #[test]
-    fn knowledge_relation_basis_div_wit_cache_is_clean() {
+    fn knowledge_relation_basis_div_witnesses_rebuild_clean() {
         let ex = r#"
         proto clean_rel<F: Field>(
             witness p: Poly<F, 1, 2>,
@@ -618,7 +618,7 @@ mod tests {
         let result = kz.run();
         assert!(
             result.is_ok(),
-            "relation-only basis must rebuild polynomial div_wit identities with a clean cache when filtering relation-derived polynomials, got {result:?}"
+            "relation-only basis must rebuild polynomial div identities when filtering relation-derived polynomials, got {result:?}"
         );
     }
 }

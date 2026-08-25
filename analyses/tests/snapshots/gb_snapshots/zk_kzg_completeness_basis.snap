@@ -3,7 +3,6 @@ source: analyses/tests/gb_snapshots.rs
 expression: value
 ---
 - __zippel::gb::div_q::0[0] + b0 + p_val[1]
-- __zippel::gb::div_q::0[0]*arg_lead_inv + b0*arg_lead_inv + 1
 - __zippel::gb::div_q::0[1] + b1
 - h*ss[1] + h_val*ss[0]
 - h*ss[2] + h_val*ss[1]
@@ -24,7 +23,6 @@ expression: value
 - ss[2]*tau^2*__zippel::gb::div_q::0[1] + ss[2]*z*tau*__zippel::gb::div_q::0[1] - ss[2]*tau*__zippel::gb::div_q::0[0] + ss[2]*z*__zippel::gb::div_q::0[0] + c*tau^2 - ss[2]*y
 - ss[2]^2*__zippel::gb::div_q::0[0]*__zippel::gb::div_q::0[1]^2 + ss[2]^2*b0*__zippel::gb::div_q::0[1]^2 - ss[1]*ss[2]*__zippel::gb::div_q::0[0]^2*__zippel::gb::div_q::0[1] + ss[2]*c*__zippel::gb::div_q::0[0]*__zippel::gb::div_q::0[1] + ss[1]*ss[2]*b0*__zippel::gb::div_q::0[0]*__zippel::gb::div_q::0[1] + ss[2]*y*pi*__zippel::gb::div_q::0[1] - p_val[0]*ss[2]*pi*__zippel::gb::div_q::0[1] - ss[2]*b0*c*__zippel::gb::div_q::0[1] - ss[2]*pi*__zippel::gb::div_q::0[0]^2 + ss[1]*c*__zippel::gb::div_q::0[0]^2 + ss[2]*b0*pi*__zippel::gb::div_q::0[0] - p_val[0]*ss[1]*pi*__zippel::gb::div_q::0[0] - ss[1]*b0*c*__zippel::gb::div_q::0[0] + ss[1]*y*b0*pi
 - ss[2]^2*y*__zippel::gb::div_q::0[0]*__zippel::gb::div_q::0[1]^3 + ss[2]^2*y*b0*__zippel::gb::div_q::0[1]^3 + ss[2]*y*c*__zippel::gb::div_q::0[0]*__zippel::gb::div_q::0[1]^2 + ss[2]*y^2*pi*__zippel::gb::div_q::0[1]^2 - p_val[0]*ss[2]*y*pi*__zippel::gb::div_q::0[1]^2 - ss[2]*y*b0*c*__zippel::gb::div_q::0[1]^2 + ss[2]*c*__zippel::gb::div_q::0[0]^3*__zippel::gb::div_q::0[1] + 52435875175126190479447740508185965837690552500527637822603658699938581184510*ss[2]*y*pi*__zippel::gb::div_q::0[0]^2*__zippel::gb::div_q::0[1] - ss[2]*b0*c*__zippel::gb::div_q::0[0]^2*__zippel::gb::div_q::0[1] + 3*ss[2]*y*b0*pi*__zippel::gb::div_q::0[0]*__zippel::gb::div_q::0[1] + ss[1]*y^2*pi*__zippel::gb::div_q::0[0]*__zippel::gb::div_q::0[1] - p_val[0]*ss[1]*y*pi*__zippel::gb::div_q::0[0]*__zippel::gb::div_q::0[1] + ss[2]*pi*__zippel::gb::div_q::0[0]^4 - ss[2]*b0*pi*__zippel::gb::div_q::0[0]^3 - ss[1]*y*pi*__zippel::gb::div_q::0[0]^3 + p_val[0]*ss[1]*pi*__zippel::gb::div_q::0[0]^3 - c^2*__zippel::gb::div_q::0[0]^3 + y*c*pi*__zippel::gb::div_q::0[0]^2 + p_val[0]*c*pi*__zippel::gb::div_q::0[0]^2 + b0*c^2*__zippel::gb::div_q::0[0]^2 - p_val[0]*y*pi^2*__zippel::gb::div_q::0[0] + 52435875175126190479447740508185965837690552500527637822603658699938581184511*y*b0*c*pi*__zippel::gb::div_q::0[0] + y^2*b0*pi^2
-- y*arg_lead_inv + p_val[0]*arg_lead_inv + z
 - z*__zippel::gb::div_q::0[0] + z*b0 + y - p_val[0]
 __zippel::gb::div_r::0[0]
 __zippel::node::35 - 1

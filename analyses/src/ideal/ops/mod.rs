@@ -17,11 +17,10 @@ pub(crate) use super::Ideal;
 pub(crate) use super::IdealBuilder;
 pub(crate) use super::PolySource;
 pub(crate) use super::combinatorics::{dft_row, hypercube, lagrange_basis, multi_indices};
-pub(crate) use super::namespace::{CanonPolyTyp, DivWitnessKey};
 
 /// Context passed to every op encoder. Provides access to the
-/// `IdealBuilder` (for sentinel allocation, div-witness cache, and
-/// recursive `add_op` dispatch) and the ideal being built.
+/// `IdealBuilder` (for sentinel allocation and recursive `add_op`
+/// dispatch) and the ideal being built.
 pub struct EncodeCtx<'a, C: ArkConfig> {
     pub builder: &'a mut IdealBuilder<C>,
     pub ideal: &'a mut Ideal<C>,

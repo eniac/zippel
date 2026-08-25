@@ -837,6 +837,12 @@ mod tests {
 
     #[test]
     fn poly_div_exact_completeness() {
+        // `(p*d)/d == p` is NOT provably complete when `d` is a free
+        // instance variable: if `d = 0` the division is undefined, so
+        // the quotient `q` is unconstrained and the verifier equation
+        // `q == p` cannot be derived. The old `arg_lead_inv` hack
+        // forced `d[1] ≠ 0` to mask this; the degree-chain encoding
+        // correctly exposes it.
         let ex = r#"
             proto poly_div_exact<F: Field>(
                 instance p: Poly<F, 1, 1>,
@@ -852,8 +858,8 @@ mod tests {
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run().is_ok(),
-            "(p*d)/d == p should be complete via D·Q + R = P"
+            ca.run().is_err(),
+            "(p*d)/d == p should be incomplete when d is a free variable (may be zero)"
         );
     }
 
@@ -876,6 +882,77 @@ mod tests {
         assert!(
             ca.run().is_ok(),
             "verify(p == d*q + r) should collapse directly to the shared identity row"
+        );
+    }
+
+    #[test]
+    fn poly_div_degree_chain_forces_zero_remainder() {
+        // Divisor has type Uni(2) but actual degree 0 (d[1] = d[2] = 0).
+        // The degree chain forces s_2 = 0 (d[2] = 0 → c_2 = 0 → s_2 = 0),
+        // which tightens r[1] = 0. Then s_1 = 0 (s_2 OR c_1 = 0 OR 0 = 0),
+        // which tightens r[0] = 0. So r = 0 entirely.
+        // Without the chain, r[0] and r[1] are unconstrained — you can pick
+        // any r and adjust q to compensate.
+        let ex = r#"
+            proto poly_div_zero_lead<F: Field>(
+                instance p: Poly<F, 1, 3>,
+                instance d0: F
+            ) where p == p {
+                let d = poly([d0, 0, 0]);
+                let r = p % d;
+                verify(r == poly([0, 0]))
+            }"#;
+        let m = parse_and_concretize(ex, &Ctx::new());
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(
+            ca.run().is_ok(),
+            "degree chain should force r = 0 when d[1] = d[2] = 0"
+        );
+    }
+
+    #[test]
+    fn poly_div_degree_chain_no_over_tightening() {
+        // Divisor d = poly([b0, 0, b2]) has type Uni(2) with b[1] = 0
+        // (known constant) but b[0] and b[2] free. The chain is emitted
+        // since b[2] is not a known constant.
+        //
+        // With the correct cumulative s_d encoding:
+        //   s_2 = c_2 (free, since b2 is free)
+        //   s_1 = s_2 OR c_1 = s_2 OR 0 = s_2
+        //   (1 - s_1) · r[0] = (1 - s_2) · r[0] = 0
+        //   → r[0] = 0 only if b2 = 0. Since b2 is free, r[0] is NOT
+        //   forced to 0. So verify(r[0] == 0) is INCOMPLETE.
+        //
+        // With the buggy independent c_d encoding:
+        //   c_1 = 0 (b[1] = 0 is known)
+        //   (1 - c_1) · r[0] = r[0] = 0 (always, regardless of b2)
+        //   → r[0] = 0 is in the ideal. verify(r[0] == 0) is COMPLETE.
+        //
+        // The test asserts incompleteness, which holds only with the
+        // correct cumulative encoding.
+        let ex = r#"
+            proto poly_div_mid_zero<F: Field>(
+                instance p: Poly<F, 1, 3>,
+                instance b0: F,
+                instance b2: F
+            ) where p == p {
+                let d = poly([b0, 0, b2]);
+                let r = p % d;
+                let rc = coef(r);
+                verify(rc[0] == b0 - b0)
+            }"#;
+        let m = parse_and_concretize(ex, &Ctx::new());
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(
+            ca.run().is_err(),
+            "r[0] should NOT be forced to 0 when b2 is free (even though \
+             b[1] = 0). The cumulative s_d must be used, not independent c_d."
         );
     }
 

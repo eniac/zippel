@@ -1,18 +1,17 @@
 //! Division and remainder op encoders: `div_rem_op`, `slot_wise_div`,
-//! `link_to_witness`, and the witness-caching machinery
-//! (`alloc_div_witness_pair`, `div_witness_key`, `canonical_*` helpers).
+//! `link_to_witness`, and witness allocation (`alloc_div_witness_pair`).
 
 use backend::op::HasOpFactory;
-use backend::{ABase, ATyp, ArkConfig};
+use backend::{ABase, ATyp, ArkConfig, ArkScalarOps};
 use graph::HOp;
+
+use ark_ff::Zero;
 
 use crate::Var;
 use crate::frontend::Polynomial;
 
 use super::Ideal;
 use super::PolySource;
-use super::multi_indices;
-use super::{CanonPolyTyp, DivWitnessKey};
 use super::{EncodeCtx, link_to_polys, link_to_witness};
 
 /// Allocate quotient/remainder witness sentinels without registering
@@ -29,123 +28,25 @@ fn alloc_div_witness_pair<C: ArkConfig + HasOpFactory>(
     (q_wit, r_wit)
 }
 
-fn canonical_div_typ<C: ArkConfig>(t: &ATyp) -> Option<CanonPolyTyp> {
-    PolySource::<C>::poly_shape_static(t).map(|(num_vars, max_degree)| CanonPolyTyp {
-        num_vars,
-        max_degree,
-    })
-}
-
-fn div_witness_key<C: ArkConfig + HasOpFactory>(
-    ctx: &EncodeCtx<'_, C>,
-    a: &PolySource<C>,
-    b: &PolySource<C>,
-) -> DivWitnessKey {
-    DivWitnessKey {
-        dividend_typ: canonical_div_typ::<C>(a.typ()).expect("dividend must be polynomial"),
-        divisor_typ: canonical_div_typ::<C>(b.typ()).expect("divisor must be polynomial"),
-        dividend_slots: canonical_slot_keys::<C>(a, ctx.ideal),
-        divisor_slots: canonical_slot_keys::<C>(b, ctx.ideal),
-    }
-}
-
-fn canonical_slot_keys<C: ArkConfig>(source: &PolySource<C>, ideal: &Ideal<C>) -> Vec<String> {
-    source
-        .polys()
-        .iter()
-        .map(|p| canonical_poly_key::<C>(p, ideal, &mut Vec::new()))
-        .collect()
-}
-
-fn canonical_poly_key<C: ArkConfig>(
-    poly: &Polynomial<C::F>,
-    ideal: &Ideal<C>,
-    seen: &mut Vec<Var>,
-) -> String {
-    if poly.is_zero() {
-        return "0".to_string();
-    }
-
-    let mut terms: Vec<String> = poly
-        .terms
-        .iter()
-        .map(|(term, coeff)| {
-            format!(
-                "coeff={};monomial={}",
-                coeff,
-                canonical_monomial_key::<C>(term, ideal, seen)
-            )
-        })
-        .collect();
-    terms.sort();
-    terms.join("|")
-}
-
-fn canonical_monomial_key<C: ArkConfig>(
-    term: &crate::frontend::Monomial,
-    ideal: &Ideal<C>,
-    seen: &mut Vec<Var>,
-) -> String {
-    let mut factors: Vec<String> = term
-        .vars()
-        .into_iter()
-        .zip(term.powers())
-        .map(|(var, power)| canonical_factor_key::<C>(&var, power, ideal, seen))
-        .collect();
-    factors.sort();
-    factors.join("*")
-}
-
-fn canonical_factor_key<C: ArkConfig>(
-    var: &Var,
-    power: usize,
-    ideal: &Ideal<C>,
-    seen: &mut Vec<Var>,
-) -> String {
-    // If the var has a polynomial definition, recurse into it — it's
-    // a derived value, not a source var.
-    if let Some(def) = ideal.pl.get(var)
-        && !seen.contains(var)
-    {
-        seen.push(var.clone());
-        let def_key = canonical_poly_key::<C>(def, ideal, seen);
-        seen.pop();
-        return format!("def=({})^{}", def_key, power);
-    }
-
-    format!("{}^{}", canonical_var_key(var), power)
-}
-
-fn canonical_var_key(var: &Var) -> String {
-    format!(
-        "ref={:?};slot={:?};typ={};qual={:?};name={}",
-        var.reference, var.index, var.typ, var.qualifier, var.name,
-    )
-}
-
 /// Unified Div/Rem handler for both `add_op` and `reduce_op`.
 ///
 /// Dispatches based on operand types:
-/// - Vec operands recurse element-wise, preserving witness caching for each element
-/// - VPoly/Uni polynomial divisions use witness Vars + cache
+/// - Vec operands recurse element-wise
+/// - `Uni / Uni` polynomial division uses witness Vars + degree chain
 /// - Polynomial-like dividends divided by scalar-like divisors use slot-wise field division
 /// - Non-polynomial Div uses slot-wise field division
-/// - Remainder by scalar and unsupported MLE polynomial division remain `panic!`
-///
-/// Polynomial divisions use a canonical operand-content key in `div_wit`
-/// before emitting identity rows, and insert after emission. This ensures
-/// Div+Rem on equivalent named operands share witnesses across closures.
+/// - Remainder by scalar and unsupported polynomial division (Mle, VPoly
+///   by non-scalar) remain `panic!`
 pub fn div_rem_op<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
     a: &HOp<C>,
     b: &HOp<C>,
     is_rem: bool,
-    cache_witness: bool,
 ) {
     let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
     let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
-    div_rem_op_inner(ctx, target, &a_src, &b_src, is_rem, cache_witness);
+    div_rem_op_inner(ctx, target, &a_src, &b_src, is_rem);
 }
 
 pub(crate) fn div_rem_op_inner<C: ArkConfig + HasOpFactory>(
@@ -154,7 +55,6 @@ pub(crate) fn div_rem_op_inner<C: ArkConfig + HasOpFactory>(
     a: &PolySource<C>,
     b: &PolySource<C>,
     is_rem: bool,
-    cache_witness: bool,
 ) {
     match (a.typ(), b.typ()) {
         (ATyp::Vec(_, na), ATyp::Vec(_, nb)) if na == nb => {
@@ -162,14 +62,14 @@ pub(crate) fn div_rem_op_inner<C: ArkConfig + HasOpFactory>(
                 let t_i = target.with_index(i).unwrap();
                 let a_elem = a.at_index(i).unwrap();
                 let b_elem = b.at_index(i).unwrap();
-                div_rem_op_inner(ctx, &t_i, &a_elem, &b_elem, is_rem, cache_witness);
+                div_rem_op_inner(ctx, &t_i, &a_elem, &b_elem, is_rem);
             }
         }
         (ATyp::Vec(_, na), _) => {
             for i in 0..*na {
                 let t_i = target.with_index(i).unwrap();
                 let a_elem = a.at_index(i).unwrap();
-                div_rem_op_inner(ctx, &t_i, &a_elem, b, is_rem, cache_witness);
+                div_rem_op_inner(ctx, &t_i, &a_elem, b, is_rem);
             }
         }
         (_, ATyp::Vec(_, nb)) => {
@@ -183,31 +83,38 @@ pub(crate) fn div_rem_op_inner<C: ArkConfig + HasOpFactory>(
             for i in 0..*nb {
                 let t_i = target.with_index(i).unwrap();
                 let b_elem = b.at_index(i).unwrap();
-                div_rem_op_inner(ctx, &t_i, a, &b_elem, false, cache_witness);
+                div_rem_op_inner(ctx, &t_i, a, &b_elem, false);
             }
         }
         _ => {
-            div_rem_leaf(ctx, target, a, b, is_rem, cache_witness);
+            div_rem_leaf(ctx, target, a, b, is_rem);
         }
     }
 }
 
-/// Leaf-level div/rem for non-Vec operands. Dispatches based on whether
-/// the operands are polynomial-like (`Uni`/`VPoly`) or scalar-like:
+/// Leaf-level div/rem for non-Vec operands. Dispatches based on
+/// operand types:
 ///
-/// - `poly / scalar` → slot-wise field division (rem panics)
+/// - `Uni / Uni` → polynomial long division with witness caching
+/// - `Uni / scalar` → slot-wise field division (rem panics)
 /// - `Mle / scalar` → slot-wise field division (rem panics)
-/// - `Mle` with non-scalar divisor → unsupported
-/// - `poly / poly` → polynomial long division with witness caching
+/// - `VPoly / scalar` → slot-wise field division (rem panics)
+/// - `Mle` / non-scalar → unsupported
+/// - `VPoly` / non-scalar → unsupported
 /// - `non-poly / non-poly` → slot-wise field division (rem panics)
 /// - mixed poly/non-poly → unsupported
+///
+/// Only `Uni` supports polynomial-by-polynomial division. `Mle` and
+/// `VPoly` (including univariate `VPoly(1, m)`) are restricted to
+/// scalar division — multivariate polynomial division requires a term
+/// order and does not satisfy the simple degree-based uniqueness
+/// condition that the `Uni` encoding relies on.
 fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
     a: &PolySource<C>,
     b: &PolySource<C>,
     is_rem: bool,
-    cache_witness: bool,
 ) {
     let label = |s: &str| {
         if is_rem {
@@ -231,8 +138,7 @@ fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
             }
             _ => super::uncovered_op(&label("mle-unsupported"), target),
         },
-        ATyp::Uni(_) | ATyp::VPoly(_, _) => match b.typ() {
-            ATyp::Mle(_) => super::uncovered_op(&label("mle-unsupported"), target),
+        ATyp::Uni(_) => match b.typ() {
             ATyp::Base(ABase::Scalar | ABase::Fin(_)) => {
                 if is_rem {
                     panic!(
@@ -244,13 +150,26 @@ fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
                 let b_broadcast = b.broadcast_scalar_to(a.typ());
                 slot_wise_div(ctx.ideal, target, a.polys(), b_broadcast.polys());
             }
-            ATyp::Uni(_) | ATyp::VPoly(_, _) => {
-                div_rem_poly(ctx, target, a, b, is_rem, cache_witness);
+            ATyp::Uni(_) => {
+                div_rem_poly(ctx, target, a, b, is_rem);
             }
-            _ => super::uncovered_op(&label("mixed-poly-nonpoly"), target),
+            _ => super::uncovered_op(&label("uni-unsupported"), target),
+        },
+        ATyp::VPoly(_, _) => match b.typ() {
+            ATyp::Base(ABase::Scalar | ABase::Fin(_)) => {
+                if is_rem {
+                    panic!(
+                        "Rem: polynomial remainder by scalar is undefined for {} % {} — type checker should prevent this",
+                        a.typ(),
+                        b.typ(),
+                    );
+                }
+                let b_broadcast = b.broadcast_scalar_to(a.typ());
+                slot_wise_div(ctx.ideal, target, a.polys(), b_broadcast.polys());
+            }
+            _ => super::uncovered_op(&label("vpoly-unsupported"), target),
         },
         ATyp::Base(_) => match b.typ() {
-            ATyp::Mle(_) => super::uncovered_op(&label("mle-unsupported"), target),
             ATyp::Base(_) => {
                 if is_rem {
                     panic!(
@@ -261,53 +180,38 @@ fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
                 }
                 slot_wise_div(ctx.ideal, target, a.polys(), b.polys());
             }
-            _ => super::uncovered_op(&label("mixed-poly-nonpoly"), target),
+            _ => super::uncovered_op(&label("base-unsupported"), target),
         },
         _ => super::uncovered_op(&label("unsupported-type"), target),
     }
 }
 
-/// Polynomial long division with quotient/remainder witness caching.
-/// Emits the canonical identity `a = b·q + r` as basis rows and links
-/// the target to `q` (Div) or `r` (Rem).
+/// Univariate polynomial long division. Emits the canonical identity
+/// `a = b·q + r` as basis rows, plus a degree chain that enforces
+/// `deg(r) < deg(b)` for uniqueness, and links the target to `q` (Div)
+/// or `r` (Rem).
+///
+/// Only `Uni` operands reach this function — `div_rem_leaf` rejects
+/// `VPoly` and `Mle` polynomial division before dispatch.
+///
+/// **Degree chain**: For each level `d` from `mb` down to `1`, a boolean
+/// selector `c_d` indicates whether `coef(b)[d] ≠ 0` (divisor has degree
+/// ≥ d). If `c_d = 0`, then `coef(b)[d] = 0` and `r[d-1] = 0` (remainder
+/// degree tightened below `d-1`). This chain guarantees uniqueness without
+/// assuming the divisor has exact degree `mb`.
+///
+/// **Optimization**: When the divisor's leading coefficient is a known
+/// nonzero constant (detected via the `pl` table), the entire chain is
+/// skipped — the type bound `deg(r) < mb` already suffices.
 fn div_rem_poly<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
     a: &PolySource<C>,
     b: &PolySource<C>,
     is_rem: bool,
-    cache_witness: bool,
 ) {
-    let key = cache_witness.then(|| div_witness_key(ctx, a, b));
-    if let Some((q_wit, r_wit)) = key
-        .as_ref()
-        .and_then(|key| ctx.builder.ns.div_wit.get(key).cloned())
-    {
-        let wit = if is_rem { &r_wit } else { &q_wit };
-        link_to_witness(ctx.ideal, target, wit);
-        return;
-    }
-
-    let (na, ma) = PolySource::<C>::poly_shape_static(a.typ()).unwrap();
-    let (nb, mb) = PolySource::<C>::poly_shape_static(b.typ()).unwrap();
-    if na != nb {
-        panic!(
-            "{}: VPoly num_vars mismatch — dividend has n={} but divisor has n={}",
-            if is_rem { "Rem" } else { "Div" },
-            na,
-            nb,
-        );
-    }
-    if na != 1 {
-        super::uncovered_op(
-            if is_rem {
-                "rem-multivariate-vpoly"
-            } else {
-                "div-multivariate-vpoly"
-            },
-            target,
-        );
-    }
+    let (_, ma) = PolySource::<C>::poly_shape_static(a.typ()).unwrap();
+    let (_, mb) = PolySource::<C>::poly_shape_static(b.typ()).unwrap();
     if ma < mb {
         if is_rem {
             let lifted = a.lift_to(&target.typ);
@@ -321,83 +225,189 @@ fn div_rem_poly<C: ArkConfig + HasOpFactory>(
             mb,
         );
     }
+
     if mb == 0 {
-        // Divisor is degree 0 (constant): quotient has degree ma,
-        // remainder is 0. Allocate r_wit with target.typ when
-        // is_rem so slot counts match for link_to_witness.
+        // Divisor is a constant: quotient = a / b[0], remainder = 0.
         let r_typ = if is_rem {
             target.typ.clone()
         } else {
-            ATyp::VPoly(na, 0)
+            ATyp::Uni(0)
         };
-        let (q_wit, r_wit) = alloc_div_witness_pair(ctx, ATyp::VPoly(na, ma), r_typ);
-        let a_idx = multi_indices(na, ma);
+        let (q_wit, r_wit) = alloc_div_witness_pair(ctx, ATyp::Uni(ma), r_typ);
         let b_poly = &b.polys()[0];
-        for (ka_pos, _k) in a_idx.iter().enumerate() {
-            let rhs: Polynomial<C::F> =
-                b_poly * &Polynomial::var(&q_wit.with_index(ka_pos).unwrap());
-            ctx.ideal.generating_set.push(&a.polys()[ka_pos] - &rhs);
+        for k in 0..=ma {
+            let rhs = b_poly * &Polynomial::var(&q_wit.with_index(k).unwrap());
+            ctx.ideal.generating_set.push(&a.polys()[k] - &rhs);
         }
         for rf in r_wit.slots() {
             ctx.ideal.generating_set.push(Polynomial::var(&rf));
         }
         let wit = if is_rem { &r_wit } else { &q_wit };
         link_to_witness(ctx.ideal, target, wit);
-        if let Some(key) = key {
-            ctx.builder.ns.div_wit.insert(&key, &(q_wit, r_wit));
-        }
         return;
     }
 
-    let nr = na;
     let mq = ma - mb;
     let mr = mb - 1;
+    let (q_wit, r_wit) = alloc_div_witness_pair(ctx, ATyp::Uni(mq), ATyp::Uni(mr));
 
-    let (q_wit, r_wit) = alloc_div_witness_pair(ctx, ATyp::VPoly(nr, mq), ATyp::VPoly(nr, mr));
-
-    let a_idx = multi_indices(na, ma);
-    let b_idx = multi_indices(nb, mb);
-    let q_idx = multi_indices(nr, mq);
-    let r_idx = multi_indices(nr, mr);
-
-    debug_assert_eq!(
-        a.polys().len(),
-        a_idx.len(),
-        "a_polys slot count mismatch: {} vs a_idx {}",
-        a.polys().len(),
-        a_idx.len()
-    );
-    debug_assert_eq!(
-        b.polys().len(),
-        b_idx.len(),
-        "b_polys slot count mismatch: {} vs b_idx {}",
-        b.polys().len(),
-        b_idx.len()
-    );
-
-    for (ka_pos, k) in a_idx.iter().enumerate() {
+    // Emit a = b·q + r, one row per coefficient of a.
+    // For degree k: a[k] = Σ_{i+j=k} b[i]·q[j] + r[k]  (r[k] only if k ≤ mr)
+    for k in 0..=ma {
         let mut rhs = Polynomial::<C::F>::zero();
-        for (i_pos, ki) in b_idx.iter().enumerate() {
-            for (j_pos, kj) in q_idx.iter().enumerate() {
-                let sum: Vec<usize> = ki.iter().zip(kj.iter()).map(|(x, y)| x + y).collect();
-                if sum == *k {
-                    let qf = q_wit.clone().with_index(j_pos).unwrap();
-                    rhs = &rhs + &(&b.polys()[i_pos] * &Polynomial::var(&qf));
-                }
+        let i_max = mb.min(k);
+        for i in 0..=i_max {
+            let j = k - i;
+            if j > mq {
+                continue;
             }
+            let qf = q_wit.clone().with_index(j).unwrap();
+            rhs = &rhs + &(&b.polys()[i] * &Polynomial::var(&qf));
         }
-        if let Some(r_pos) = r_idx.iter().position(|rk| rk == k) {
-            let rf = r_wit.clone().with_index(r_pos).unwrap();
+        if k <= mr {
+            let rf = r_wit.clone().with_index(k).unwrap();
             rhs = &rhs + &Polynomial::var(&rf);
         }
-        ctx.ideal.generating_set.push(&a.polys()[ka_pos] - &rhs);
+        ctx.ideal.generating_set.push(&a.polys()[k] - &rhs);
+    }
+
+    // Degree chain: enforce deg(r) < deg(b) for uniqueness.
+    // Skip if the divisor's leading coefficient is a known nonzero constant.
+    if !divisor_lead_known_nonzero::<C>(ctx, b, mb) {
+        emit_degree_chain::<C>(ctx, b, &r_wit, mb);
     }
 
     let wit = if is_rem { &r_wit } else { &q_wit };
     link_to_witness(ctx.ideal, target, wit);
+}
 
-    if let Some(key) = key {
-        ctx.builder.ns.div_wit.insert(&key, &(q_wit, r_wit));
+/// Check if the divisor's leading coefficient `b[mb]` is a known nonzero
+/// constant, by inlining the `pl` table into the leading-coefficient
+/// polynomial. If it resolves to a nonzero constant, the divisor has
+/// exact degree `mb` and the type-based remainder bound suffices — no
+/// degree chain needed.
+fn divisor_lead_known_nonzero<C: ArkConfig>(
+    ctx: &EncodeCtx<'_, C>,
+    b: &PolySource<C>,
+    mb: usize,
+) -> bool {
+    let lead_poly = &b.polys()[mb];
+    // Fast path: already a nonzero constant.
+    if lead_poly.is_constant() {
+        return !lead_poly.constant_coeff().is_zero();
+    }
+    // Recursively inline pl entries until fixpoint. The pl table may
+    // chain through multiple levels (e.g. Poly → Vec → constant), so a
+    // single inline_vars pass is not enough.
+    let mut current = lead_poly.clone();
+    loop {
+        let (next, did_change) = current.clone().inline_vars(&ctx.ideal.pl);
+        if !did_change {
+            break;
+        }
+        if next.is_constant() {
+            return !next.constant_coeff().is_zero();
+        }
+        current = next;
+    }
+    false
+}
+
+/// Emit the degree chain that enforces `deg(r) < actual_deg(b)` for
+/// uniqueness.
+///
+/// ## Per-level indicator `c_d`
+///
+/// For each level `d` from `mb` down to `0`, a boolean `c_d` indicates
+/// whether `b[d] ≠ 0`:
+///   b[d] · inv_d = c_d                (c_d = b[d]·inv_d)
+///   b[d] · (1 - c_d) = 0              (c_d=0 → b[d] = 0)
+///
+/// These two constraints imply `c_d² - c_d = 0` (boolean) for free:
+///   From eq2: b[d] = b[d]·c_d. Sub into eq1: b[d]·c_d·inv = c_d,
+///   i.e. c_d·(b[d]·inv) = c_d, i.e. c_d² = c_d.
+///
+/// ## Cumulative boolean `s_d`
+///
+/// The tightening must only fire when **all** coefficients at level `d`
+/// and above are zero — not just when `b[d] = 0`. A cumulative boolean
+/// `s_d = "some coefficient at level ≥ d is nonzero"` is built top-down:
+///   s_{mb} = c_{mb}
+///   s_d = s_{d+1} + c_d - s_{d+1} · c_d   (boolean OR)
+///
+/// The remainder tightening uses `s_d`, not `c_d`:
+///   (1 - s_d) · r[d-1] = 0   (d ≥ 1 only)
+///
+/// This ensures `r[d-1]` is forced to 0 only when the divisor's actual
+/// degree is below `d`, not when an intermediate coefficient happens to
+/// be zero.
+///
+/// Level `d = 0` ensures the constant coefficient is covered: if all
+/// higher coefficients are zero, `b[0]` must be invertible for the
+/// division to be well-defined. If `b = 0` entirely, the system becomes
+/// unsatisfiable (correct behavior for division by zero).
+fn emit_degree_chain<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    b: &PolySource<C>,
+    r_wit: &Var,
+    mb: usize,
+) {
+    let one = Polynomial::lit(&C::FOps::one());
+
+    // s_{d+1} for the top level is 0 (no coefficients above mb).
+    // Built top-down: s_mb = c_mb, s_{mb-1} = s_mb OR c_{mb-1}, etc.
+    let mut s_above: Option<Var> = None;
+
+    for d in (0..=mb).rev() {
+        let c_name = ctx.builder.ns.next_name("div_c");
+        let c_var = ctx.sentinel_var(&c_name, ATyp::scalar());
+        let c_poly = Polynomial::var(&c_var);
+
+        let b_d = &b.polys()[d];
+
+        // b[d] · inv_d = c_d  (c_d = 1 iff b[d] ≠ 0)
+        // b[d] · (1 - c_d) = 0  (c_d = 0 → b[d] = 0)
+        //
+        // These two imply c_d² - c_d = 0 (boolean) for free:
+        //   From eq2: b[d] = b[d]·c_d. Sub into eq1: b[d]·c_d·inv = c_d,
+        //   i.e. c_d·(b[d]·inv) = c_d, i.e. c_d·c_d = c_d.
+        let inv_name = ctx.builder.ns.next_name("div_inv");
+        let inv_var = ctx.sentinel_var(&inv_name, ATyp::scalar());
+        let inv_poly = Polynomial::var(&inv_var);
+        ctx.ideal.generating_set.push(&(b_d * &inv_poly) - &c_poly);
+
+        let one_minus_c = &one - &c_poly;
+        ctx.ideal.generating_set.push(&one_minus_c * b_d);
+
+        // Build cumulative s_d = s_{d+1} OR c_d.
+        // s_d = s_{d+1} + c_d - s_{d+1} · c_d
+        let s_d = if let Some(ref s_above_var) = s_above {
+            let s_above_poly = Polynomial::var(s_above_var);
+            let s_name = ctx.builder.ns.next_name("div_s");
+            let s_var = ctx.sentinel_var(&s_name, ATyp::scalar());
+            let s_poly = Polynomial::var(&s_var);
+            // s_d - (s_{d+1} + c_d - s_{d+1} · c_d) = 0
+            ctx.ideal
+                .generating_set
+                .push(&s_poly - &(&(&s_above_poly + &c_poly) - &(&s_above_poly * &c_poly)));
+            s_var
+        } else {
+            // Top level: s_{mb} = c_{mb}. No extra constraint needed —
+            // just alias s to c.
+            c_var.clone()
+        };
+
+        // (1 - s_d) · r[d-1] = 0  (tighten r only when ALL coeffs ≥ d are 0)
+        // Only for d ≥ 1 — there is no r[-1].
+        if d >= 1 {
+            let s_poly = Polynomial::var(&s_d);
+            let one_minus_s = &one - &s_poly;
+            let r_slot = r_wit.with_index(d - 1).unwrap();
+            let r_poly = Polynomial::var(&r_slot);
+            ctx.ideal.generating_set.push(&one_minus_s * &r_poly);
+        }
+
+        s_above = Some(s_d);
     }
 }
 
@@ -447,13 +457,13 @@ mod tests {
 
     #[allow(clippy::too_many_arguments)]
     #[test]
-    fn test_add_op_vpoly_div_univariate_identity() {
-        // VPoly(1,2) / VPoly(1,1) → VPoly(1,1).
+    fn test_add_op_uni_div_univariate_identity() {
+        // Uni(2) / Uni(1) → Uni(1).
         //   a has physical_len = 3 slots (a_0, a_1, a_2)
         //   b has physical_len = 2 slots (b_0, b_1)
         //   q_wit: VPoly(1,1), 2 slots (q_0, q_1)
         //   r_wit: VPoly(1,0), 1 slot  (r_0)
-        // Canonical identity rows (from div_witnesses):
+        // Canonical identity rows (from div_rem_poly):
         //   k=[0] (total deg 0): a_0  -  (b_0·q_0 + r_0)
         //   k=[1] (total deg 1): a_1  -  (b_0·q_1 + b_1·q_0)
         //   k=[2] (total deg 2): a_2  -  b_1·q_1
@@ -467,18 +477,18 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let var_a = Var::from_node(NodeIndex::new(0), ATyp::VPoly(1, 2), Qualifier::Witness);
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Witness);
         ideal.register(&var_a);
-        let var_b = Var::from_node(NodeIndex::new(1), ATyp::VPoly(1, 1), Qualifier::Witness);
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::Uni(1), Qualifier::Witness);
         ideal.register(&var_b);
 
         let basis_before = ideal.generating_set.len();
-        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(1, 1), Qualifier::Witness);
+        let var = Var::from_node(NodeIndex::new(2), ATyp::Uni(1), Qualifier::Witness);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Div,
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(1, 2))),
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(1, 1))),
-            ATyp::VPoly(1, 1),
+            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
+            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Uni(1))),
+            ATyp::Uni(1),
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
@@ -487,19 +497,19 @@ mod tests {
         let q_wit = Var::from_var(
             "__zippel::gb::div_q::0",
             petgraph::graph::NodeIndex::new(usize::MAX),
-            ATyp::VPoly(1, 1),
+            ATyp::Uni(1),
             Qualifier::Local,
         );
         let r_wit = Var::from_var(
             "__zippel::gb::div_r::0",
             petgraph::graph::NodeIndex::new(usize::MAX - 1),
-            ATyp::VPoly(1, 0),
+            ATyp::Uni(0),
             Qualifier::Local,
         );
 
         // Per-slot input vars (typ computed by `with_slot`).
         let scl = |p: &Var, i: usize| p.clone().with_index(i).unwrap();
-        // Per-slot witness vars. `div_witnesses` uses `wit.clone().with_index(j).unwrap()`
+        // Per-slot witness vars. `div_rem_poly` uses `wit.clone().with_index(j).unwrap()`
         // which sets typ appropriately.
         let wit_slot = |p: &Var, i: usize| p.clone().with_index(i).unwrap();
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
@@ -512,12 +522,11 @@ mod tests {
         let q1 = wit_slot(&q_wit, 1);
         let r0 = wit_slot(&r_wit, 0);
 
-        // 3 identity rows + 2 linking rows. Invertibility constraints are
-        // now emitted by build() for arg polynomials, not per-division.
+        // 3 identity rows + 6 degree-chain rows (mb=1: d=1→3, d=0→3) + 2 linking rows.
         assert_eq!(
             ideal.generating_set.len() - basis_before,
-            5,
-            "expected 3 identity + 2 linking rows"
+            11,
+            "expected 3 identity + 6 degree-chain + 2 linking rows"
         );
 
         // Check identity rows exist in basis.
@@ -563,16 +572,11 @@ mod tests {
             ideal.generating_set.iter().any(|row| row == &link1),
             "basis missing link row var_poly(q_wit[1]) - var_poly(ideal[1])"
         );
-        assert_eq!(
-            builder.ns.div_wit.len(),
-            1,
-            "div_wit should have one (a,b) entry"
-        );
     }
 
     #[test]
-    fn test_add_op_vpoly_rem_univariate_identity() {
-        // VPoly(1,2) % VPoly(1,1) → VPoly(1,0).
+    fn test_add_op_uni_rem_univariate_identity() {
+        // Uni(2) % Uni(1) → Uni(0).
         // Same witnesses as the Div test, but link ideal to r_wit (1 slot).
         use crate::Var;
         use graph::Ref;
@@ -583,18 +587,18 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let _var_a = Var::from_node(NodeIndex::new(0), ATyp::VPoly(1, 2), Qualifier::Witness);
+        let _var_a = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Witness);
         ideal.register(&_var_a);
-        let _var_b = Var::from_node(NodeIndex::new(1), ATyp::VPoly(1, 1), Qualifier::Witness);
+        let _var_b = Var::from_node(NodeIndex::new(1), ATyp::Uni(1), Qualifier::Witness);
         ideal.register(&_var_b);
 
         let basis_before = ideal.generating_set.len();
-        let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(1, 0), Qualifier::Witness);
+        let var = Var::from_node(NodeIndex::new(2), ATyp::Uni(0), Qualifier::Witness);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Rem,
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(1, 2))),
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(1, 1))),
-            ATyp::VPoly(1, 0),
+            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
+            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Uni(1))),
+            ATyp::Uni(0),
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
@@ -602,7 +606,7 @@ mod tests {
         let r_wit = Var::from_var(
             "__zippel::gb::div_r::0",
             petgraph::graph::NodeIndex::new(usize::MAX - 1),
-            ATyp::VPoly(1, 0),
+            ATyp::Uni(0),
             Qualifier::Local,
         );
         let scl = |p: &Var, i: usize| p.clone().with_index(i).unwrap();
@@ -611,12 +615,11 @@ mod tests {
         // r_wit slots: with_slot computes the correct type.
         let r0 = r_wit.clone().with_index(0).unwrap();
 
-        // 3 identity rows + 1 linking row. Invertibility constraints are
-        // now emitted by build() for arg polynomials, not per-division.
+        // 3 identity rows + 6 degree-chain rows (mb=1: d=1→3, d=0→3) + 1 linking row.
         assert_eq!(
             ideal.generating_set.len() - basis_before,
-            4,
-            "expected 3 identity + 1 linking row"
+            10,
+            "expected 3 identity + 6 degree-chain + 1 linking row"
         );
 
         // pl[ideal[0]] = var(r_wit[0]).
@@ -633,13 +636,12 @@ mod tests {
             ideal.generating_set.iter().any(|row| row == &link),
             "basis missing link row var_poly(r_wit[0]) - var_poly(ideal[0])"
         );
-        assert_eq!(builder.ns.div_wit.len(), 1, "one div_wit entry after Rem");
     }
 
     #[test]
-    fn test_add_op_div_then_rem_shares_witness() {
-        // Both `a/b` and `a%b` on the same source-level operand pair share the
-        // witness side-table. Second op should NOT emit new identity rows.
+    fn test_add_op_div_then_rem_emits_fresh_witnesses() {
+        // `a/b` and `a%b` on the same operand pair now each allocate fresh
+        // witnesses and emit their own identity rows + degree chain.
         use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
@@ -648,19 +650,19 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let _var_a = Var::from_node(NodeIndex::new(0), ATyp::VPoly(1, 2), Qualifier::Witness);
+        let _var_a = Var::from_node(NodeIndex::new(0), ATyp::Uni(2), Qualifier::Witness);
         ideal.register(&_var_a);
-        let _var_b = Var::from_node(NodeIndex::new(1), ATyp::VPoly(1, 1), Qualifier::Witness);
+        let _var_b = Var::from_node(NodeIndex::new(1), ATyp::Uni(1), Qualifier::Witness);
         ideal.register(&_var_b);
 
         let basis_before_div = ideal.generating_set.len();
         let _q_res = {
-            let var = Var::from_node(NodeIndex::new(2), ATyp::VPoly(1, 1), Qualifier::Witness);
+            let var = Var::from_node(NodeIndex::new(2), ATyp::Uni(1), Qualifier::Witness);
             let op: GOp<ArkBls12_381> = Op::Bin(
                 BinOp::Div,
-                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(1, 2))),
-                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(1, 1))),
-                ATyp::VPoly(1, 1),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Uni(1))),
+                ATyp::Uni(1),
             );
             builder.add_op(var.clone(), op, &mut ideal);
             var
@@ -668,44 +670,38 @@ mod tests {
         let after_div = ideal.generating_set.len();
 
         let _r_res = {
-            let var = Var::from_node(NodeIndex::new(3), ATyp::VPoly(1, 0), Qualifier::Witness);
+            let var = Var::from_node(NodeIndex::new(3), ATyp::Uni(0), Qualifier::Witness);
             let op: GOp<ArkBls12_381> = Op::Bin(
                 BinOp::Rem,
-                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(1, 2))),
-                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(1, 1))),
-                ATyp::VPoly(1, 0),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Uni(1))),
+                ATyp::Uni(0),
             );
             builder.add_op(var.clone(), op, &mut ideal);
             var
         };
         let after_rem = ideal.generating_set.len();
 
-        // Div added 3 identity + 2 linking = 5 rows. Invertibility is
-        // now emitted by build() for arg polynomials, not per-division.
+        // Div added 3 identity + 6 degree-chain (mb=1: d=1→3, d=0→3) + 2 linking = 11 rows.
         assert_eq!(
             after_div - basis_before_div,
-            5,
-            "Div emitted 3 identity + 2 linking rows"
+            11,
+            "Div emitted 3 identity + 6 degree-chain + 2 linking rows"
         );
-        // Rem added ONLY the linking row (1 slot on VPoly(1,0)) — no new identity.
+        // Rem allocates fresh witnesses: 3 identity + 6 degree-chain (mb=1) + 1 linking = 10 rows.
         assert_eq!(
             after_rem - after_div,
-            1,
-            "Rem on cached (a,b) should only emit 1 linking row, not re-emit identity"
-        );
-        assert_eq!(
-            builder.ns.div_wit.len(),
-            1,
-            "div_wit unchanged after Rem (cached)"
+            10,
+            "Rem should emit fresh identity + degree-chain + 1 linking row"
         );
     }
 
     #[test]
-    fn test_add_op_div_rem_shares_equivalent_named_derived_operands() {
+    fn test_add_op_div_rem_equivalent_named_derived_operands() {
         // PR #153 regression: two closure-local derived nodes can carry the
         // same named-source expression (`a * b - c`) while still having
         // distinct raw HOp refs. Div and Rem over those equivalent operands
-        // should share a single witness pair.
+        // each allocate fresh witnesses and emit their own rows.
         use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
@@ -717,10 +713,10 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
         for (idx, name, typ) in [
-            (0, "a", ATyp::VPoly(1, 1)),
-            (1, "b", ATyp::VPoly(1, 1)),
-            (2, "c", ATyp::VPoly(1, 2)),
-            (3, "d", ATyp::VPoly(1, 1)),
+            (0, "a", ATyp::Uni(1)),
+            (1, "b", ATyp::Uni(1)),
+            (2, "c", ATyp::Uni(2)),
+            (3, "d", ATyp::Uni(1)),
         ] {
             let var = Var::from_var(name, NodeIndex::new(idx), typ, Qualifier::Instance);
             ideal.register(&var);
@@ -729,36 +725,28 @@ mod tests {
         let mk_ref = |idx, typ| mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(idx)), typ));
 
         let mut add_derived_operand = |mul_idx, sub_idx| {
-            let mul_ref = Var::from_node(
-                NodeIndex::new(mul_idx),
-                ATyp::VPoly(1, 2),
-                Qualifier::Witness,
-            );
+            let mul_ref = Var::from_node(NodeIndex::new(mul_idx), ATyp::Uni(2), Qualifier::Witness);
             ideal.register(&mul_ref);
             builder.add_op(
                 mul_ref.clone(),
                 Op::Bin(
                     BinOp::Mul,
-                    mk_ref(0, ATyp::VPoly(1, 1)),
-                    mk_ref(1, ATyp::VPoly(1, 1)),
-                    ATyp::VPoly(1, 2),
+                    mk_ref(0, ATyp::Uni(1)),
+                    mk_ref(1, ATyp::Uni(1)),
+                    ATyp::Uni(2),
                 ),
                 &mut ideal,
             );
 
-            let sub_ref = Var::from_node(
-                NodeIndex::new(sub_idx),
-                ATyp::VPoly(1, 2),
-                Qualifier::Witness,
-            );
+            let sub_ref = Var::from_node(NodeIndex::new(sub_idx), ATyp::Uni(2), Qualifier::Witness);
             ideal.register(&sub_ref);
             builder.add_op(
                 sub_ref.clone(),
                 Op::Bin(
                     BinOp::Sub,
-                    mk_ref(mul_idx, ATyp::VPoly(1, 2)),
-                    mk_ref(2, ATyp::VPoly(1, 2)),
-                    ATyp::VPoly(1, 2),
+                    mk_ref(mul_idx, ATyp::Uni(2)),
+                    mk_ref(2, ATyp::Uni(2)),
+                    ATyp::Uni(2),
                 ),
                 &mut ideal,
             );
@@ -768,42 +756,41 @@ mod tests {
         add_derived_operand(10, 11);
         add_derived_operand(12, 13);
 
-        let q = Var::from_node(NodeIndex::new(20), ATyp::VPoly(1, 1), Qualifier::Witness);
+        let q = Var::from_node(NodeIndex::new(20), ATyp::Uni(1), Qualifier::Witness);
         builder.add_op(
             q,
             Op::Bin(
                 BinOp::Div,
-                mk_ref(11, ATyp::VPoly(1, 2)),
-                mk_ref(3, ATyp::VPoly(1, 1)),
-                ATyp::VPoly(1, 1),
+                mk_ref(11, ATyp::Uni(2)),
+                mk_ref(3, ATyp::Uni(1)),
+                ATyp::Uni(1),
             ),
             &mut ideal,
         );
 
-        let r = Var::from_node(NodeIndex::new(21), ATyp::VPoly(1, 0), Qualifier::Witness);
+        let r = Var::from_node(NodeIndex::new(21), ATyp::Uni(0), Qualifier::Witness);
         builder.add_op(
             r,
             Op::Bin(
                 BinOp::Rem,
-                mk_ref(13, ATyp::VPoly(1, 2)),
-                mk_ref(3, ATyp::VPoly(1, 1)),
-                ATyp::VPoly(1, 0),
+                mk_ref(13, ATyp::Uni(2)),
+                mk_ref(3, ATyp::Uni(1)),
+                ATyp::Uni(0),
             ),
             &mut ideal,
         );
 
-        assert_eq!(
-            builder.ns.div_wit.len(),
-            1,
-            "equivalent named derived operands should share one div_wit entry"
+        // Div and Rem each emit fresh identity + degree-chain + linking rows.
+        assert!(
+            !ideal.generating_set.is_empty(),
+            "Div and Rem over equivalent derived operands should emit rows"
         );
     }
 
     #[test]
     fn test_add_op_div_scalar_fallback() {
-        // Scalar / Scalar → Scalar: legacy zip path (a - b·var(var) = 0).
-        // Scalar fallback does not build a canonical polynomial witness key, so
-        // no witness side-table entry is created.
+        // Scalar / Scalar → Scalar: slot-wise field division (a - b·var(var) = 0).
+        // Scalar fallback does not allocate polynomial witnesses or degree chain.
         use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
@@ -838,11 +825,6 @@ mod tests {
         assert!(
             ideal.generating_set.iter().any(|row| row == &expected),
             "scalar fallback row should be `a - b · var_poly(ideal)`"
-        );
-        assert_eq!(
-            builder.ns.div_wit.len(),
-            0,
-            "div_wit stays empty on scalar Div"
         );
     }
 
@@ -883,7 +865,6 @@ mod tests {
                 "basis missing scalar/vector div row {i}"
             );
         }
-        assert_eq!(builder.ns.div_wit.len(), 0);
     }
 
     #[test]
@@ -915,7 +896,6 @@ mod tests {
         );
 
         assert_eq!(ideal.generating_set.len() - before, 3);
-        assert_eq!(builder.ns.div_wit.len(), 0);
     }
 
     #[test]
@@ -947,11 +927,10 @@ mod tests {
         );
 
         assert_eq!(ideal.generating_set.len() - before, 4);
-        assert_eq!(builder.ns.div_wit.len(), 0);
     }
 
     #[test]
-    fn test_add_op_vector_poly_div_rem_propagates_witness_cache() {
+    fn test_add_op_vector_uni_div_rem_emits_fresh_witnesses() {
         use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
@@ -960,11 +939,11 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
-        let vec_typ = ATyp::Vec(Box::new(ATyp::VPoly(1, 2)), 2);
-        // lub_div: VPoly(1,2) / VPoly(1,2) = VPoly(1, 2-2) = VPoly(1,0)
-        let div_typ = ATyp::Vec(Box::new(ATyp::VPoly(1, 0)), 2);
-        // lub_rem: VPoly(1,2) % VPoly(1,2) = VPoly(1, 2-1) = VPoly(1,1)
-        let rem_typ = ATyp::Vec(Box::new(ATyp::VPoly(1, 1)), 2);
+        let vec_typ = ATyp::Vec(Box::new(ATyp::Uni(2)), 2);
+        // lub_div: Uni(2) / Uni(2) = Uni(2-2) = Uni(0)
+        let div_typ = ATyp::Vec(Box::new(ATyp::Uni(0)), 2);
+        // lub_rem: Uni(2) % Uni(2) = Uni(2-1) = Uni(1)
+        let rem_typ = ATyp::Vec(Box::new(ATyp::Uni(1)), 2);
         for idx in 0..2 {
             ideal.register(&Var::from_node(
                 NodeIndex::new(idx),
@@ -983,7 +962,6 @@ mod tests {
             ),
             &mut ideal,
         );
-        assert_eq!(builder.ns.div_wit.len(), 2);
         let after_div = ideal.generating_set.len();
 
         builder.add_op(
@@ -997,12 +975,14 @@ mod tests {
             &mut ideal,
         );
 
-        assert_eq!(builder.ns.div_wit.len(), 2);
+        // Each element is Uni(2)/Uni(2) (mb=2). Rem emits fresh witnesses per
+        // element: 3 identity + 10 degree-chain (d=2→3, d=1→4, d=0→3) + 2 linking = 15.
+        // 2 elements → 30 rows.
         assert_eq!(
             ideal.generating_set.len() - after_div,
-            4,
-            "cached vector Rem should add one link row per slot per element \
-             (2 elements × 2 slots per VPoly(1,1) = 4)"
+            30,
+            "vector Rem should emit fresh identity + degree-chain + linking rows \
+             per element (2 elements × 15 = 30)"
         );
     }
 
@@ -1022,14 +1002,8 @@ mod tests {
         let mut builder: IdealBuilder<ArkBls12_381> = IdealBuilder::new();
         let gr = builder.build(tc);
 
-        // Two div_witnesses calls: inner (a/b) and outer ((a/b)/c).
-        // The builder caches one (a,b) entry and one ((a/b),c) entry in div_wit.
-        assert_eq!(
-            builder.ns.div_wit.len(),
-            2,
-            "nested div should have 2 div_wit entries (inner + outer), got {}",
-            builder.ns.div_wit.len()
-        );
+        // Two polynomial divisions: inner (a/b) and outer ((a/b)/c).
+        // Each allocates fresh witnesses and emits identity + degree-chain rows.
 
         // pl should contain entries for the div ideal nodes (linking them to
         // quotient witness slots). Since children are Op::Ref after IR lowering,
@@ -1069,7 +1043,7 @@ mod tests {
     }
 
     #[test]
-    fn ideal_shared_div_rem_witnesses() {
+    fn ideal_div_rem_separate_witnesses() {
         use lang::id::Tid;
         let src = r#"
             proto sdr<F: Field>(instance a: Uni<F, 4>, instance b: Uni<F, 2>) where a == a {
@@ -1081,33 +1055,8 @@ mod tests {
         let mut builder: IdealBuilder<ArkBls12_381> = IdealBuilder::new();
         let gr = builder.build(tc);
 
-        // Single (a, b) pair → one div_witnesses call → 1 div_wit cache entry (q_wit, r_wit).
-        assert_eq!(
-            builder.ns.div_wit.len(),
-            1,
-            "shared div/rem should have 1 div_wit entry for (a, b), got {}",
-            builder.ns.div_wit.len()
-        );
-
-        // Both div and rem share the same canonical identity — the key invariant.
-        // The cached (q_wit, r_wit) pair is what links div and rem nodes.
-        let (q_wit, r_wit) = builder
-            .ns
-            .div_wit
-            .values()
-            .into_iter()
-            .next()
-            .expect("div_wit should have exactly one (q_wit, r_wit) entry");
-        assert!(
-            q_wit.name.contains("div_q"),
-            "q_wit should be named div_q..., got {:?}",
-            q_wit.name
-        );
-        assert!(
-            r_wit.name.contains("div_r"),
-            "r_wit should be named div_r..., got {:?}",
-            r_wit.name
-        );
+        // Div and rem each allocate fresh witnesses and emit their own
+        // identity + degree-chain rows.
 
         // pl should have entries for the div ideal (n3 → q_wit), mul ideal (n4 → b*q),
         // rem ideal (n5 → r_wit), and sum ideal (n6 → n4 + n5)
@@ -1120,7 +1069,7 @@ mod tests {
         // GB computation moved to backend; skipped in unit test();
         assert!(
             !gr.generating_set.is_empty(),
-            "basis should not be empty after shared div/rem"
+            "basis should not be empty after div/rem"
         );
     }
 
@@ -1222,7 +1171,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reduce_div_vpoly_uses_handle_div_rem() {
+    fn test_reduce_div_uni_uses_handle_div_rem() {
         use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
@@ -1231,12 +1180,12 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let vec_t = ATyp::Vec(Box::new(ATyp::VPoly(1, 3)), 2);
+        let vec_t = ATyp::Vec(Box::new(ATyp::Uni(3)), 2);
         let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Witness);
         ideal.register(&var_v);
 
-        // lub_div: VPoly(1,3) / VPoly(1,3) = VPoly(1, 3-3) = VPoly(1,0)
-        let var = Var::from_node(NodeIndex::new(1), ATyp::VPoly(1, 0), Qualifier::Witness);
+        // lub_div: Uni(3) / Uni(3) = Uni(3-3) = Uni(0)
+        let var = Var::from_node(NodeIndex::new(1), ATyp::Uni(0), Qualifier::Witness);
         ideal.register(&var);
 
         let op: GOp<ArkBls12_381> = Op::Reduce(
@@ -1247,7 +1196,7 @@ mod tests {
 
         assert!(
             !ideal.generating_set.is_empty(),
-            "Reduce Div on VPoly should emit identity rows via handle_div_rem"
+            "Reduce Div on Uni should emit identity rows via handle_div_rem"
         );
     }
 
@@ -1282,11 +1231,6 @@ mod tests {
             &mut ideal,
         );
 
-        assert_eq!(
-            builder.ns.div_wit.len(),
-            0,
-            "pass-through remainder allocates no div_wit"
-        );
         for i in 0..2 {
             let src = var_a.clone().with_index(i).unwrap();
             let dst = var.clone().with_index(i).unwrap();
@@ -1305,10 +1249,10 @@ mod tests {
         );
     }
 
-    /// `Vec(VPoly(1,2),2) / VPoly(1,1)` — Vec<Poly> divided by a bare Poly.
+    /// `Vec(Uni(2),2) / Uni(1)` — Vec<Poly> divided by a bare Poly.
     /// Each element recurses into the leaf poly/poly division arm.
     #[test]
-    fn test_div_vec_vpoly_by_vpoly() {
+    fn test_div_vec_uni_by_uni() {
         use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
@@ -1317,9 +1261,9 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let elem_a = ATyp::VPoly(1, 2);
+        let elem_a = ATyp::Uni(2);
         let vec_a = ATyp::Vec(Box::new(elem_a.clone()), 2);
-        let div_t = ATyp::VPoly(1, 1);
+        let div_t = ATyp::Uni(1);
 
         let var_a = Var::from_node(NodeIndex::new(0), vec_a.clone(), Qualifier::Witness);
         ideal.register(&var_a);
@@ -1327,9 +1271,9 @@ mod tests {
         let var_b = Var::from_node(NodeIndex::new(1), div_t.clone(), Qualifier::Witness);
         ideal.register(&var_b);
 
-        // lub_div(Vec(VPoly(1,2),2), VPoly(1,1)) = Vec(lub_div(VPoly(1,2), VPoly(1,1)), 2)
-        //                                          = Vec(VPoly(1,1), 2)
-        let result_t = ATyp::Vec(Box::new(ATyp::VPoly(1, 1)), 2);
+        // lub_div(Vec(Uni(2),2), Uni(1)) = Vec(lub_div(Uni(2), Uni(1)), 2)
+        //                                   = Vec(Uni(1), 2)
+        let result_t = ATyp::Vec(Box::new(ATyp::Uni(1)), 2);
         let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Witness);
         ideal.register(&var_r);
 
@@ -1344,12 +1288,7 @@ mod tests {
             &mut ideal,
         );
 
-        // Each element should produce its own div_wit entry (2 total).
-        assert_eq!(
-            builder.ns.div_wit.len(),
-            2,
-            "Vec(VPoly)/VPoly should have 2 div_wit entries (one per element)"
-        );
+        // Each element is Uni(2)/Uni(1) (mb=1): 3 identity + 6 degree-chain + 2 linking = 11.
 
         // All result slots populated.
         for i in 0..2 {
@@ -1358,16 +1297,16 @@ mod tests {
                 let slot = elem.clone().with_index(j).unwrap();
                 assert!(
                     ideal.pl.contains(&slot),
-                    "Vec(VPoly)/VPoly element {i} slot {j} missing from pl"
+                    "Vec(Uni)/Uni element {i} slot {j} missing from pl"
                 );
             }
         }
     }
 
-    /// `VPoly(1,2) / Vec(VPoly(1,1),2)` — bare Poly divided by Vec<Poly>.
+    /// `Uni(2) / Vec(Uni(1),2)` — bare Poly divided by Vec<Poly>.
     /// The scalar-left vector division broadcasts the dividend across elements.
     #[test]
-    fn test_div_vpoly_by_vec_vpoly() {
+    fn test_div_uni_by_vec_uni() {
         use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
@@ -1376,8 +1315,8 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let dividend_t = ATyp::VPoly(1, 2);
-        let elem_b = ATyp::VPoly(1, 1);
+        let dividend_t = ATyp::Uni(2);
+        let elem_b = ATyp::Uni(1);
         let vec_b = ATyp::Vec(Box::new(elem_b.clone()), 2);
 
         let var_a = Var::from_node(NodeIndex::new(0), dividend_t.clone(), Qualifier::Witness);
@@ -1386,9 +1325,9 @@ mod tests {
         let var_b = Var::from_node(NodeIndex::new(1), vec_b.clone(), Qualifier::Witness);
         ideal.register(&var_b);
 
-        // lub_div(VPoly(1,2), Vec(VPoly(1,1),2)) = Vec(lub_div(VPoly(1,2), VPoly(1,1)), 2)
-        //                                        = Vec(VPoly(1,1), 2)
-        let result_t = ATyp::Vec(Box::new(ATyp::VPoly(1, 1)), 2);
+        // lub_div(Uni(2), Vec(Uni(1),2)) = Vec(lub_div(Uni(2), Uni(1)), 2)
+        //                                 = Vec(Uni(1), 2)
+        let result_t = ATyp::Vec(Box::new(ATyp::Uni(1)), 2);
         let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Witness);
         ideal.register(&var_r);
 
@@ -1404,11 +1343,7 @@ mod tests {
         );
 
         // Each element divides the same dividend by a different divisor element.
-        assert_eq!(
-            builder.ns.div_wit.len(),
-            2,
-            "VPoly/Vec(VPoly) should have 2 div_wit entries (one per element)"
-        );
+        // Each element is Uni(2)/Uni(1) (mb=1): 3 identity + 6 degree-chain + 2 linking = 11.
 
         for i in 0..2 {
             let elem = var_r.clone().with_index(i).unwrap();
@@ -1416,7 +1351,7 @@ mod tests {
                 let slot = elem.clone().with_index(j).unwrap();
                 assert!(
                     ideal.pl.contains(&slot),
-                    "VPoly/Vec(VPoly) element {i} slot {j} missing from pl"
+                    "Uni/Vec(Uni) element {i} slot {j} missing from pl"
                 );
             }
         }

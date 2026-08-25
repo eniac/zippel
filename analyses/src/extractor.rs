@@ -71,10 +71,10 @@ pub(crate) fn valid_extractor<C: ArkConfig>(witness_typ: &ATyp, poly: &Polynomia
 /// The `builder` is cloned before use so that its witness/sentinel allocation
 /// counters remain unchanged. **The caller must immediately use the original
 /// (un-cloned) builder to build the same `TransClos` (or a superset) whose
-/// locals were extracted.** This ensures that `div_wit` and other sentinel
-/// variables allocated by `extract_locals`'s internal clone receive the same
-/// `Var` identities as those allocated by the caller's subsequent build,
-/// keeping division-witness references aligned across the two results.
+/// locals were extracted.** This ensures that sentinel variables allocated
+/// by `extract_locals`'s internal clone receive the same `Var` identities
+/// as those allocated by the caller's subsequent build, keeping references
+/// aligned across the two results.
 pub fn extract_locals<C: ArkConfig + HasOpFactory>(
     builder: &IdealBuilder<C>,
     tc: &TransClos<C>,
