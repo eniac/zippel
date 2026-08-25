@@ -16,13 +16,13 @@ pub mod soundness;
 pub mod uniform;
 pub mod var;
 
-pub use completeness::CompletenessAnalysis;
+pub use completeness::{CompletenessAnalysis, CompletenessInputs};
 pub use error::AnalysisError;
 pub use frontend::TransClos;
 pub use ideal::{Ideal, IdealBuilder, IdealNamespace};
 pub use knowledge::KnowledgeAnalysis;
 pub use qualifier::QualifierPropagation;
-pub use soundness::SpecialSoundnessAnalysis;
+pub use soundness::{SoundnessInputs, SpecialSoundnessAnalysis};
 pub use uniform::UniformityPropagation;
 pub use var::Var;
 

@@ -461,7 +461,8 @@ fn run_completeness_snapshot(entry: &TestEntry) -> Result<(), Failed> {
         .stack_size(ANALYSIS_STACK_SIZE)
         .spawn(move || {
             let dag = compile_to_dag(&path, &sizes);
-            let ca = CompletenessAnalysis::from_input_with_options(&dag, backend, !no_inline);
+            let inputs = CompletenessAnalysis::<ArkBls12_381>::build_inputs(&dag, !no_inline);
+            let ca = CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, backend);
             normalize_basis(&ca.basis.polys)
         })
         .expect("failed to spawn thread")
@@ -521,9 +522,10 @@ fn run_soundness_snapshot(entry: &TestEntry) -> Result<(), Failed> {
         .stack_size(ANALYSIS_STACK_SIZE)
         .spawn(move || {
             let dag = compile_to_dag(&path, &sizes);
-            let sa =
-                SpecialSoundnessAnalysis::from_input_with_options(&dag, l_vec, backend, !no_inline)
-                    .map_err(|e| Failed::from(e.to_string()))?;
+            let inputs = SpecialSoundnessAnalysis::build_inputs(&dag, l_vec, !no_inline)
+                .map_err(|e| Failed::from(e.to_string()))?;
+            let sa = SpecialSoundnessAnalysis::from_inputs(inputs, backend, !no_inline)
+                .map_err(|e| Failed::from(e.to_string()))?;
             Ok::<String, Failed>(normalize_basis(&sa.search_gb.polys))
         })
         .expect("failed to spawn thread")

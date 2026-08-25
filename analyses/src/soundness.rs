@@ -18,9 +18,38 @@ use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use share::Set;
 
+/// Inputs to the soundness search Gröbner basis computation: the
+/// generating set (d-equations + copy TCs + relation, after optional
+/// inlining), the lex ordering, and all state needed by `run()`.
+///
+/// Produced by [`SpecialSoundnessAnalysis::build_inputs`]; consumed by
+/// [`SpecialSoundnessAnalysis::from_inputs`]. Splitting construction
+/// from GB computation lets callers inspect pre-GB metrics before the
+/// expensive step.
+pub struct SoundnessInputs<C: ArkConfig> {
+    /// The generating set for the search GB (d-equations + copy TCs +
+    /// relation, inlined if requested).
+    pub generating_set: Vec<Polynomial<C::F>>,
+    /// Lex elimination ordering for the search GB.
+    pub lex_order: MonoOrder,
+    /// Witness slots (witness args) for extractor search in `run()`.
+    pub witness_slots: Vec<Var>,
+    /// Variables visible to the verifier (used for extractor validation).
+    pub verifier_visible: Set<Var>,
+    /// Validity ideal: d-equations + copy TCs. Extractors are added in
+    /// `run()` before computing the validity GB.
+    pub grev_validity: Ideal<C>,
+    /// Relation ideal (inlined). Relation polys are reduced against the
+    /// validity GB in `run()`.
+    pub grev_rel_result: Ideal<C>,
+    /// Relation locals (merged into validity ideal in `run()`).
+    pub rel_locals: Ideal<C>,
+}
+
+/// Perform a special soundness analysis using Groebner bases.
 pub struct SpecialSoundnessAnalysis<C: ArkConfig> {
     /// Gröbner basis of the search ideal (verifier TC copies + d-equations +
-    /// relation) under lex order. Computed in `from_input_with_backend`.
+    /// relation) under lex order. Computed in `from_inputs`.
     /// Snapshotable.
     pub search_gb: GbBasis<C::F>,
     /// Witness slots (witness args) for extractor search in `run()`.
@@ -122,38 +151,22 @@ fn validate_2n_plus_1<C: ArkConfig>(
 }
 
 impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
-    /// Build the analysis from the DAG, computing the search Gröbner basis.
+    /// Build the inputs to the search Gröbner basis computation:
+    /// construct all d-equations, copy TCs, and relation polys, build the
+    /// lex elimination ordering, and inline the `pl` table if requested.
     ///
-    /// Convenience wrapper using the default GB backend.
-    pub fn from_input(dag: &QDag<C>, l_vec: Vec<usize>) -> Result<Self, AnalysisError<C>> {
-        Self::from_input_with_backend(dag, l_vec, GbBackendKind::default())
-    }
-
-    /// Build the analysis from the DAG, computing the search Gröbner basis.
+    /// This is the cheap phase — no GB computation. Call
+    /// [`from_inputs`](Self::from_inputs) to compute the basis, or inspect
+    /// the generating set for pre-GB metrics.
     ///
-    /// # Phases
-    ///
-    /// 1. **Construct**: build all GB inputs — d-equations, copy TCs,
-    ///    relation polys (order-free).
-    /// 2. **Build lex ordering**: compute the lex-elimination var_order from
-    ///    `var_order` as `MonoOrder::lex(var_order)` — runtime data, no TLS.
-    /// 3. **Inline & compute** the search GB via the backend under lex.
-    pub fn from_input_with_backend(
+    /// # Errors
+    /// Returns `AnalysisError` if `l_vec` is invalid or the protocol is
+    /// not a valid 2n+1-move protocol.
+    pub fn build_inputs(
         dag: &QDag<C>,
         l_vec: Vec<usize>,
-        backend: GbBackendKind,
-    ) -> Result<Self, AnalysisError<C>> {
-        Self::from_input_with_options(dag, l_vec, backend, true)
-    }
-
-    /// Full-control constructor: user selects the GB backend and whether
-    /// to inline the `pl` table before computing the Gröbner basis.
-    pub fn from_input_with_options(
-        dag: &QDag<C>,
-        l_vec: Vec<usize>,
-        backend: GbBackendKind,
         inline: bool,
-    ) -> Result<Self, AnalysisError<C>> {
+    ) -> Result<SoundnessInputs<C>, AnalysisError<C>> {
         if l_vec.is_empty() || l_vec.iter().any(|l| *l < 2) {
             return Err(AnalysisError::InvalidSoundnessParameter);
         }
@@ -385,14 +398,39 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         };
         let lex_order = MonoOrder::lex(lex_var_order);
 
-        // Phase 3: Inline & compute the search GB via the backend.
+        // Phase 3a: Inline the search ideal.
         if inline {
             grev_search.inline(&Set::new());
         }
 
+        Ok(SoundnessInputs {
+            generating_set: std::mem::take(&mut grev_search.generating_set),
+            lex_order,
+            witness_slots,
+            verifier_visible,
+            grev_validity,
+            grev_rel_result,
+            rel_locals,
+        })
+    }
+
+    /// Compute the search Gröbner basis from pre-built inputs.
+    ///
+    /// This is the expensive phase — `compute_gb` may hang or take a long
+    /// time. Call [`build_inputs`](Self::build_inputs) first if you need
+    /// pre-GB metrics.
+    ///
+    /// # Errors
+    /// Returns `AnalysisError::UnitIdeal` if the search ideal is the unit
+    /// ideal (trivially solvable — no soundness guarantee).
+    pub fn from_inputs(
+        inputs: SoundnessInputs<C>,
+        backend: GbBackendKind,
+        inline: bool,
+    ) -> Result<Self, AnalysisError<C>> {
         let gb = backend.build::<C::F>();
         let search_gb = gb
-            .compute_gb(std::mem::take(&mut grev_search.generating_set), &lex_order)
+            .compute_gb(inputs.generating_set, &inputs.lex_order)
             .expect("GB backend should support lex order");
 
         if search_gb.is_unit() {
@@ -403,12 +441,12 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
         Ok(Self {
             search_gb,
-            witness_slots,
-            verifier_visible,
-            grev_validity,
-            grev_rel_result,
-            rel_locals,
-            lex_order,
+            witness_slots: inputs.witness_slots,
+            verifier_visible: inputs.verifier_visible,
+            grev_validity: inputs.grev_validity,
+            grev_rel_result: inputs.grev_rel_result,
+            rel_locals: inputs.rel_locals,
+            lex_order: inputs.lex_order,
             backend,
             inline,
         })
@@ -661,12 +699,23 @@ mod tests {
     use super::SpecialSoundnessAnalysis;
     use crate::QualifierPropagation;
     use crate::Var;
+    use crate::backend::GbBackendKind;
     use crate::error::{AnalysisError, ExtractorRejection};
     use crate::tests::parse_and_concretize;
     use backend::ArkBls12_381;
     use graph::UDags;
     use share::Set;
     use share::{Ctx, unwrap};
+
+    /// Test helper: build + compute in one call with default backend and
+    /// inlining enabled (the common case in tests).
+    fn from_input(
+        dag: &graph::QDag<ArkBls12_381>,
+        l_vec: Vec<usize>,
+    ) -> Result<SpecialSoundnessAnalysis<ArkBls12_381>, AnalysisError<ArkBls12_381>> {
+        let inputs = SpecialSoundnessAnalysis::build_inputs(dag, l_vec, true)?;
+        SpecialSoundnessAnalysis::from_inputs(inputs, GbBackendKind::default(), true)
+    }
 
     fn analyze_soundness(
         proto: &str,
@@ -676,7 +725,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
-        SpecialSoundnessAnalysis::from_input(&g, l_vec)?.run()
+        from_input(&g, l_vec)?.run()
     }
 
     const SCHNORR_PROTO: &str = r#"
@@ -695,7 +744,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
-        let result = SpecialSoundnessAnalysis::from_input(&g, vec![2]).and_then(|mut sa| sa.run());
+        let result = from_input(&g, vec![2]).and_then(|mut sa| sa.run());
         match &result {
             Ok(()) => {}
             Err(e) => panic!("analyze() failed: {:?}", e),
@@ -757,10 +806,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
-        SpecialSoundnessAnalysis::from_input(&g, vec![2])
-            .unwrap()
-            .run()
-            .unwrap();
+        from_input(&g, vec![2]).unwrap().run().unwrap();
 
         let witness_names: Set<String> = crate::var::dag_args(&g)
             .into_iter()
@@ -967,10 +1013,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
-        SpecialSoundnessAnalysis::from_input(&g, vec![2])
-            .unwrap()
-            .run()
-            .unwrap();
+        from_input(&g, vec![2]).unwrap().run().unwrap();
 
         let witness_slots: Vec<Var> = crate::var::dag_args(&g)
             .into_iter()
@@ -1005,7 +1048,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
-        let result = SpecialSoundnessAnalysis::from_input(&g, vec![2]).and_then(|mut sa| sa.run());
+        let result = from_input(&g, vec![2]).and_then(|mut sa| sa.run());
         assert!(result.is_ok());
     }
 

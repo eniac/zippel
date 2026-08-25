@@ -125,6 +125,7 @@ mod singular_tests {
             .arg("-q")
             .arg("-c")
             .arg("ring r = (integer, 7), (x(1)), dp;")
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()

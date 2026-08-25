@@ -451,7 +451,10 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     pub fn analyze_completeness(&mut self) -> Result<(), analyses::AnalysisError<C>> {
         let g = self.analyze_graph();
         let name = g.name();
-        let mut completeness = CompletenessAnalysis::from_input(&*g);
+        let mut completeness = CompletenessAnalysis::from_inputs(
+            CompletenessAnalysis::build_inputs(&*g, true),
+            analyses::GbBackendKind::default(),
+        );
         let result = completeness.run();
         match &result {
             Ok(()) => info!("Complete protocol: {}", name),
@@ -484,7 +487,9 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     ) -> Result<(), analyses::AnalysisError<C>> {
         use analyses::SpecialSoundnessAnalysis;
         let g = self.analyze_graph();
-        SpecialSoundnessAnalysis::from_input(&*g, l_vec)?.run()
+        let inputs = SpecialSoundnessAnalysis::build_inputs(&*g, l_vec, true)?;
+        SpecialSoundnessAnalysis::from_inputs(inputs, analyses::GbBackendKind::default(), true)?
+            .run()
     }
 }
 

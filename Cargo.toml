@@ -54,6 +54,8 @@ ark-ec = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-groth16 = { git = "https://github.com/arkworks-rs/groth16.git", branch = "release/0.6.0" }
 ark-relations = { git = "https://github.com/arkworks-rs/snark.git", branch = "release/0.6.0" }
 petgraph = "0.7.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [patch.crates-io]
 ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }

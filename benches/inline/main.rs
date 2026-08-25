@@ -16,12 +16,52 @@ use backend::ArkBls12_381;
 use lang::ast::UModule;
 use lang::diagnostic::Severity;
 use lang::id::Tid;
+use serde::Serialize;
 use share::Ctx;
 use share::unwrap;
 
 use graph::UDags;
 
 const STACK_SIZE: usize = 256 * 1024 * 1024;
+
+/// JSON output emitted by the `inline` bench. Partial lines (status
+/// `"running"`) omit fields that aren't available yet. The final line
+/// has the definitive status and all metrics.
+#[derive(Serialize)]
+struct BenchOutput {
+    protocol: String,
+    inline: i32,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    build_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gb_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    run_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    basis_size: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_degree: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    num_vars: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    graph_size: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gen_set_size: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gen_set_max_degree: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gen_set_num_vars: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+use std::io::Write as _;
+
+fn emit(output: &BenchOutput) {
+    println!("{}", serde_json::to_string(output).unwrap());
+    let _ = std::io::stdout().flush();
+}
 
 struct ProtocolConfig {
     name: &'static str,
@@ -200,9 +240,7 @@ fn run_bench(protocol: &ProtocolConfig, no_inline: bool, backend: GbBackendKind)
 
     let source = match std::fs::read_to_string(&path) {
         Ok(s) => s,
-        Err(e) => {
-            return json_error(protocol.name, no_inline, &format!("read failed: {e}"));
-        }
+        Err(e) => return json_error(protocol.name, no_inline, &format!("read failed: {e}")),
     };
 
     let (module, diags) = UModule::parse(&source);
@@ -229,10 +267,66 @@ fn run_bench(protocol: &ProtocolConfig, no_inline: bool, backend: GbBackendKind)
     let dag = QualifierPropagation::from_dag(proto);
 
     let inline = !no_inline;
+    let graph_size = dag.node_count();
 
-    let from_input_start = Instant::now();
-    let mut ca = CompletenessAnalysis::from_input_with_options(&dag, backend, inline);
-    let from_input_ms = from_input_start.elapsed().as_secs_f64() * 1000.0;
+    // Stage 1: Emit graph_size — available before any analysis.
+    emit(&BenchOutput {
+        protocol: protocol.name.to_string(),
+        inline: i32::from(inline),
+        status: "running".to_string(),
+        graph_size: Some(graph_size),
+        build_ms: None,
+        gb_ms: None,
+        run_ms: None,
+        basis_size: None,
+        max_degree: None,
+        num_vars: None,
+        gen_set_size: None,
+        gen_set_max_degree: None,
+        gen_set_num_vars: None,
+        error: None,
+    });
+
+    // Stage 2: Build inputs (cheap), compute pre-GB metrics, emit.
+    let build_start = Instant::now();
+    let inputs = CompletenessAnalysis::<ArkBls12_381>::build_inputs(&dag, inline);
+    let build_ms = build_start.elapsed().as_secs_f64() * 1000.0;
+
+    let gen_set_size = inputs.generating_set.len();
+    let gen_set_max_degree = inputs
+        .generating_set
+        .iter()
+        .map(analyses::frontend::Polynomial::degree)
+        .max()
+        .unwrap_or(0);
+    let gen_set_num_vars = inputs
+        .generating_set
+        .iter()
+        .flat_map(|p| p.vars().into_iter())
+        .collect::<share::Set<analyses::Var>>()
+        .len();
+
+    emit(&BenchOutput {
+        protocol: protocol.name.to_string(),
+        inline: i32::from(inline),
+        status: "running".to_string(),
+        build_ms: Some(build_ms),
+        gb_ms: None,
+        run_ms: None,
+        basis_size: None,
+        max_degree: None,
+        num_vars: None,
+        graph_size: Some(graph_size),
+        gen_set_size: Some(gen_set_size),
+        gen_set_max_degree: Some(gen_set_max_degree),
+        gen_set_num_vars: Some(gen_set_num_vars),
+        error: None,
+    });
+
+    // Stage 3: Compute GB (expensive — may hang).
+    let gb_start = Instant::now();
+    let mut ca = CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, backend);
+    let gb_ms = gb_start.elapsed().as_secs_f64() * 1000.0;
 
     let basis_size = ca.basis.polys.len();
     let max_degree = ca
@@ -243,39 +337,71 @@ fn run_bench(protocol: &ProtocolConfig, no_inline: bool, backend: GbBackendKind)
         .max()
         .unwrap_or(0);
     let num_vars = ca.basis.vars().len();
-    let graph_size = dag.node_count();
+
+    // Emit post-GB metrics before run() — survives if run() hangs or is killed.
+    emit(&BenchOutput {
+        protocol: protocol.name.to_string(),
+        inline: i32::from(inline),
+        status: "running".to_string(),
+        build_ms: Some(build_ms),
+        gb_ms: Some(gb_ms),
+        run_ms: None,
+        basis_size: Some(basis_size),
+        max_degree: Some(max_degree),
+        num_vars: Some(num_vars),
+        graph_size: Some(graph_size),
+        gen_set_size: Some(gen_set_size),
+        gen_set_max_degree: Some(gen_set_max_degree),
+        gen_set_num_vars: Some(gen_set_num_vars),
+        error: None,
+    });
 
     let run_start = Instant::now();
     let result = ca.run();
     let run_ms = run_start.elapsed().as_secs_f64() * 1000.0;
 
     let (status, error) = match result {
-        Ok(()) => ("ok", String::new()),
-        Err(e) => ("incomplete", format!("{e}")),
+        Ok(()) => ("ok", None),
+        Err(e) => ("incomplete", Some(format!("{e}"))),
     };
 
-    format!(
-        r#"{{"protocol":"{}","inline":{},"status":"{}","from_input_ms":{:.3},"run_ms":{:.3},"basis_size":{},"max_degree":{},"num_vars":{},"graph_size":{},"error":"{}"}}"#,
-        protocol.name,
-        i32::from(inline),
-        status,
-        from_input_ms,
-        run_ms,
-        basis_size,
-        max_degree,
-        num_vars,
-        graph_size,
-        error.replace('"', "'")
-    )
+    serde_json::to_string(&BenchOutput {
+        protocol: protocol.name.to_string(),
+        inline: i32::from(inline),
+        status: status.to_string(),
+        build_ms: Some(build_ms),
+        gb_ms: Some(gb_ms),
+        run_ms: Some(run_ms),
+        basis_size: Some(basis_size),
+        max_degree: Some(max_degree),
+        num_vars: Some(num_vars),
+        graph_size: Some(graph_size),
+        gen_set_size: Some(gen_set_size),
+        gen_set_max_degree: Some(gen_set_max_degree),
+        gen_set_num_vars: Some(gen_set_num_vars),
+        error,
+    })
+    .unwrap()
 }
 
 fn json_error(name: &str, no_inline: bool, error: &str) -> String {
-    format!(
-        r#"{{"protocol":"{}","inline":{},"status":"error","error":"{}"}}"#,
-        name,
-        i32::from(!no_inline),
-        error.replace('"', "'")
-    )
+    serde_json::to_string(&BenchOutput {
+        protocol: name.to_string(),
+        inline: i32::from(!no_inline),
+        status: "error".to_string(),
+        build_ms: None,
+        gb_ms: None,
+        run_ms: None,
+        basis_size: None,
+        max_degree: None,
+        num_vars: None,
+        graph_size: None,
+        gen_set_size: None,
+        gen_set_max_degree: None,
+        gen_set_num_vars: None,
+        error: Some(error.to_string()),
+    })
+    .unwrap()
 }
 
 fn main() {
@@ -341,11 +467,23 @@ fn main() {
         .expect("failed to spawn thread")
         .join()
         .unwrap_or_else(|_| {
-            format!(
-                r#"{{"protocol":"{}","inline":{},"status":"panic","error":"thread panicked"}}"#,
-                protocol_clone,
-                i32::from(!no_inline)
-            )
+            serde_json::to_string(&BenchOutput {
+                protocol: protocol_clone.to_string(),
+                inline: i32::from(!no_inline),
+                status: "panic".to_string(),
+                build_ms: None,
+                gb_ms: None,
+                run_ms: None,
+                basis_size: None,
+                max_degree: None,
+                num_vars: None,
+                graph_size: None,
+                gen_set_size: None,
+                gen_set_max_degree: None,
+                gen_set_num_vars: None,
+                error: Some("thread panicked".to_string()),
+            })
+            .unwrap()
         });
 
     println!("{result}");

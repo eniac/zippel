@@ -11,38 +11,42 @@ use crate::ideal::IdealBuilder;
 use graph::QDag;
 use graph::Ref;
 
+/// Inputs to the Gröbner basis computation: the generating set (prover ∪
+/// relation ∪ verifier-locals, after optional inlining) and the verifier
+/// polynomials to reduce in `run()`.
+///
+/// Produced by [`CompletenessAnalysis::build_inputs`]; consumed by
+/// [`CompletenessAnalysis::from_inputs`]. Splitting construction from GB
+/// computation lets callers inspect pre-GB metrics before the expensive
+/// step.
+pub struct CompletenessInputs<F: ark_ff::PrimeField> {
+    /// The generating set for the Gröbner basis (prover ∪ relation ∪
+    /// verifier-locals, inlined if requested).
+    pub generating_set: Vec<Polynomial<F>>,
+    /// Verifier polynomials to reduce against the basis in `run()`.
+    pub verifier: Vec<Polynomial<F>>,
+}
+
 /// Perform a completeness analysis using Groebner bases.
 /// This analysis checks if the relation is included in the implementation.
 /// One shared namespace is used for prover, relation, and verifier.
 pub struct CompletenessAnalysis<C: ArkConfig> {
     /// Gröbner basis of (prover ∪ relation ∪ verifier-locals) under grevlex.
-    /// Computed in `from_input_with_options`.
+    /// Computed in `from_inputs`.
     pub basis: GbBasis<C::F>,
     /// Verifier polynomials to reduce against `basis` in `run()`.
     pub verifier: Vec<Polynomial<C::F>>,
 }
 
 impl<C: HasOpFactory> CompletenessAnalysis<C> {
-    pub fn from_input(dag: &QDag<C>) -> Self {
-        Self::from_input_with_backend(dag, GbBackendKind::default())
-    }
-
-    /// Like [`from_input`](Self::from_input) but with a user-selected GB
-    /// backend.
-    pub fn from_input_with_backend(dag: &QDag<C>, backend: GbBackendKind) -> Self {
-        Self::from_input_with_options(dag, backend, true)
-    }
-
-    /// Full-control constructor: user selects the GB backend and whether
-    /// to inline the `pl` table into the generating set before computing
-    /// the Gröbner basis.
+    /// Build the inputs to the Gröbner basis computation: construct the
+    /// prover, relation, and verifier ideals, optionally inline the `pl`
+    /// table, and merge them into a single generating set.
     ///
-    /// Inlining substitutes variable definitions (`pl` entries) into the
-    /// basis polynomials, reducing the number of free variables. Skipping
-    /// inlining (`inline = false`) leaves the `pl` table intact, which
-    /// increases the basis size but can be useful for benchmarking the
-    /// impact of inlining on GB computation time.
-    pub fn from_input_with_options(dag: &QDag<C>, backend: GbBackendKind, inline: bool) -> Self {
+    /// This is the cheap phase — no GB computation. Call
+    /// [`from_inputs`](Self::from_inputs) to compute the basis, or inspect
+    /// the generating set for pre-GB metrics.
+    pub fn build_inputs(dag: &QDag<C>, inline: bool) -> CompletenessInputs<C::F> {
         let mut builder = IdealBuilder::new();
 
         let prover_tc = TransClos::prover(dag);
@@ -67,19 +71,31 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
             verifier_result.inline(&Set::new());
         }
 
-        // Merge verifier_locals into prover, then compute the GB.
+        // Merge verifier_locals into prover generating set.
         for p in verifier_locals.generating_set.iter() {
             prover_result.generating_set.push(p.clone());
         }
 
+        CompletenessInputs {
+            generating_set: prover_result.generating_set,
+            verifier: verifier_result.generating_set,
+        }
+    }
+
+    /// Compute the Gröbner basis from pre-built inputs.
+    ///
+    /// This is the expensive phase — `compute_gb` may hang or take a long
+    /// time. Call [`build_inputs`](Self::build_inputs) first if you need
+    /// pre-GB metrics.
+    pub fn from_inputs(inputs: CompletenessInputs<C::F>, backend: GbBackendKind) -> Self {
         let gb = backend.build::<C::F>();
         let basis = gb
-            .compute_gb(prover_result.generating_set, &MonoOrder::grevlex())
+            .compute_gb(inputs.generating_set, &MonoOrder::grevlex())
             .expect("GB backend should support grevlex");
 
         Self {
             basis,
-            verifier: verifier_result.generating_set,
+            verifier: inputs.verifier,
         }
     }
 
@@ -111,6 +127,7 @@ mod tests {
     use crate::QualifierPropagation;
     use crate::Var;
     use crate::backend::GbBackend;
+    use crate::backend::GbBackendKind;
     use crate::error::AnalysisError;
     use crate::frontend::Polynomial;
     use crate::tests::parse_and_concretize;
@@ -119,6 +136,13 @@ mod tests {
 
     use share::Ctx;
     use share::unwrap;
+
+    /// Test helper: build + compute in one call with default backend and
+    /// inlining enabled (the common case in tests).
+    fn from_input(dag: &graph::QDag<ArkBls12_381>) -> CompletenessAnalysis<ArkBls12_381> {
+        let inputs = CompletenessAnalysis::build_inputs(dag, true);
+        CompletenessAnalysis::from_inputs(inputs, GbBackendKind::default())
+    }
 
     #[test]
     fn completeness_test() {
@@ -136,7 +160,7 @@ mod tests {
 
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         let result = ca.run();
         if let Err(ref e) = result {
             eprintln!("completeness_test error: {:?}", e);
@@ -159,7 +183,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(ca.run().is_ok(), "Schnorr protocol should be complete");
     }
 
@@ -177,7 +201,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "eq_proof should be complete (relation namespace must match)"
@@ -199,7 +223,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "eq_proof with two verify statements should be complete"
@@ -224,7 +248,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "eq_proof with two independent verify statements should be complete"
@@ -246,7 +270,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_err(),
             "verify(x == 0) is not implied by a == b, so protocol should be incomplete"
@@ -280,7 +304,7 @@ mod tests {
 
         let g = QualifierPropagation::from_dag(caller);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "Both verifies are complete: inlined verify(x==x) is trivial, verify(z==y) follows from a==b"
@@ -343,7 +367,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_err(),
             "Protocol with verify(r == 0) should be incomplete when relation is a == b"
@@ -364,7 +388,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_err(),
             "Protocol with unused instance input c == 0 should be incomplete"
@@ -391,7 +415,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "Mle × Mle equality under relation a==b should be complete"
@@ -412,7 +436,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "named-let scalar product should be complete"
@@ -437,7 +461,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(ca.run().is_ok(), "named-let single-eval should be complete");
     }
 
@@ -458,7 +482,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "named-let partial-eval should be complete"
@@ -480,7 +504,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "materialized partial MLE eval consumed as Uni(1) should be complete"
@@ -537,7 +561,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "named-let univariate-eval should be complete"
@@ -566,7 +590,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "eval-based Mle product identity should be complete"
@@ -632,7 +656,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "fft(ifft(v)) == v should be complete via DFT basis equations"
@@ -656,7 +680,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "fft(a + b) == fft(a) + fft(b) should be complete"
@@ -680,7 +704,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "ifft(u + v) == ifft(u) + ifft(v) should be complete"
@@ -699,7 +723,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "reduce(+, [a,b,c]) == a+b+c should be complete"
@@ -718,7 +742,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "reduce(*, [a,b,c]) == a*b*c should be complete"
@@ -737,7 +761,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "reduce(-, [a,b,c]) == a-b-c should be complete"
@@ -755,7 +779,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "literal scalar binding should fold through Gröbner basis"
@@ -775,7 +799,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "pair(a*P, Q) == pair(P, a*Q) should be complete via bilinearity"
@@ -795,7 +819,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "pair(P1+P2, Q) == pair(P1,Q) + pair(P2,Q) should be complete"
@@ -814,7 +838,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "pair(P, Q) == pair(P, Q) (reflexive) should be complete"
@@ -834,7 +858,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "pair((a*b)*P, Q) == pair(a*P, b*Q) should be complete via bilinearity"
@@ -859,7 +883,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "(p*d)/d == p should be complete over defined traces where d != 0"
@@ -881,7 +905,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "div/rem uniqueness should derive p == d*q + r from their separate identities"
@@ -909,7 +933,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "degree chain should force r = 0 when d[1] = d[2] = 0"
@@ -951,7 +975,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_err(),
             "r[0] should NOT be forced to 0 when b2 is free (even though \
@@ -972,7 +996,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_err(),
             "verifier equation must be reduced or rejected, not silently skipped"
@@ -991,7 +1015,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
             "c = a*b, verify c == a*b should be complete"
@@ -1009,7 +1033,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut ca = CompletenessAnalysis::from_input(&g);
+        let mut ca = from_input(&g);
         let result = ca.run();
         // A self-contradictory relation (x == x+1) drives the prover ideal
         // to the unit ideal (contains -1, a nonzero constant). run() returns

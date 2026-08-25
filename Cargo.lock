@@ -3140,6 +3140,8 @@ dependencies = [
  "petgraph",
  "rand 0.8.6",
  "runtime",
+ "serde",
+ "serde_json",
  "share",
  "spongefish",
  "tempfile",

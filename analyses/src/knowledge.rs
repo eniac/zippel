@@ -45,7 +45,6 @@ fn knowledge_order(result: &Ideal<impl ArkConfig>, dist_map: &Ctx<Ref, Distribut
 }
 
 /// Perform a knowledge analysis using Groebner bases.
-#[allow(unnameable_types)]
 pub struct KnowledgeAnalysis<C: ArkConfig> {
     /// Gröbner basis of (prover ∪ relation) under the knowledge block order.
     /// Computed in `from_input_with_backend`.
