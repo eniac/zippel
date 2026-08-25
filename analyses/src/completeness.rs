@@ -837,12 +837,9 @@ mod tests {
 
     #[test]
     fn poly_div_exact_completeness() {
-        // `(p*d)/d == p` is NOT provably complete when `d` is a free
-        // instance variable: if `d = 0` the division is undefined, so
-        // the quotient `q` is unconstrained and the verifier equation
-        // `q == p` cannot be derived. The old `arg_lead_inv` hack
-        // forced `d[1] ≠ 0` to mask this; the degree-chain encoding
-        // correctly exposes it.
+        // Division constraints model defined program traces, so the degree
+        // chain requires `d != 0`. The canonical identity and remainder bound
+        // then uniquely determine the quotient as `p`.
         let ex = r#"
             proto poly_div_exact<F: Field>(
                 instance p: Poly<F, 1, 1>,
@@ -858,8 +855,8 @@ mod tests {
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run().is_err(),
-            "(p*d)/d == p should be incomplete when d is a free variable (may be zero)"
+            ca.run().is_ok(),
+            "(p*d)/d == p should be complete over defined traces where d != 0"
         );
     }
 
@@ -881,7 +878,7 @@ mod tests {
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
             ca.run().is_ok(),
-            "verify(p == d*q + r) should collapse directly to the shared identity row"
+            "div/rem uniqueness should derive p == d*q + r from their separate identities"
         );
     }
 

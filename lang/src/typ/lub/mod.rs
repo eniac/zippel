@@ -707,9 +707,11 @@ impl Lub for CTyp {
                 Range::lub_div(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::div(&x, &y), e))?,
             )),
-            // General rule: Poly(F, n, m) / Poly(F, n', m') = Poly(F, max(n,n'), m-m') if m >= m'
-            // (N is the max total degree; polynomial quotient degree is m - m'.)
-            (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, mb)) if ma >= mb => {
+            // Polynomial-by-polynomial division is supported only for
+            // univariate operands. Multivariate division requires a term order.
+            (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, mb))
+                if na.node == 1 && nb.node == 1 && ma >= mb =>
+            {
                 let num_vars = na.max(nb).clone();
                 let degree = ma
                     .checked_sub(mb.node)
@@ -764,9 +766,11 @@ impl Lub for CTyp {
                 Range::lub_rem(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::rem(&x, &y), e))?,
             )),
-            // General Poly<F,n1,m1> % Poly<F,n2,m2> = Poly<F, max(n1,n2), m2 - 1> if m2 >= 1.
-            // (Per poly-encoding spec: remainder has degree strictly less than divisor.)
-            (CTyp::Poly(a, na, _ma), CTyp::Poly(b, nb, mb)) if mb.node >= 1 => {
+            // Polynomial remainder is supported only for univariate operands.
+            // The result bound is one below the divisor's degree bound.
+            (CTyp::Poly(a, na, _ma), CTyp::Poly(b, nb, mb))
+                if na.node == 1 && nb.node == 1 && mb.node >= 1 =>
+            {
                 let num_vars = na.max(nb).clone();
                 Ok(CTyp::Poly(
                     Tid::lub_equ(a, b, ctx)

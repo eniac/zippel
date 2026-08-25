@@ -313,15 +313,13 @@ fn lub_typ() {
     );
     // lub_rem requires m2 >= 1; Poly<F,1,n> % Poly<F,1,0> is an error.
     assert!(CTyp::lub_rem(&CTyp::uni(&f, 5), &CTyp::uni(&f, 0), &ctx).is_err());
-    // General Poly×Poly rem: Poly<F,2,5> % Poly<F,3,2> = Poly<F,3,1> (max vars, m2 - 1).
-    assert_eq!(
-        CTyp::lub_rem(
-            &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(5)),
-            &CTyp::Poly(f.clone(), Spanned::dummy(3), Spanned::dummy(2)),
-            &ctx
-        ),
-        Ok(CTyp::Poly(f.clone(), Spanned::dummy(3), Spanned::dummy(1)))
-    );
+    // Multivariate polynomial remainder is rejected because it requires a term order.
+    assert!(CTyp::lub_rem(
+        &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(5)),
+        &CTyp::Poly(f.clone(), Spanned::dummy(3), Spanned::dummy(2)),
+        &ctx
+    )
+    .is_err());
 
     // Phase B: lub_add(Poly, Vec) / lub_sub(Poly, Vec) is now a type error.
     // Vec is no longer implicitly reinterpreted as a coefficient list.
@@ -1051,6 +1049,32 @@ mod ctyp_lub_poly_tests {
             );
             Ok(())
         });
+    }
+
+    #[test]
+    fn lub_div_poly_poly_rejects_multivariate() {
+        let ctx = kind_ctx();
+        for (na, nb) in [(2, 2), (1, 2), (2, 1)] {
+            let a = CTyp::Poly(f(), Spanned::dummy(na), Spanned::dummy(3));
+            let b = CTyp::Poly(f(), Spanned::dummy(nb), Spanned::dummy(1));
+            assert!(
+                CTyp::lub_div(&a, &b, &ctx).is_err(),
+                "lub_div should reject Poly arities ({na}, {nb})"
+            );
+        }
+    }
+
+    #[test]
+    fn lub_rem_poly_poly_rejects_multivariate() {
+        let ctx = kind_ctx();
+        for (na, nb) in [(2, 2), (1, 2), (2, 1)] {
+            let a = CTyp::Poly(f(), Spanned::dummy(na), Spanned::dummy(3));
+            let b = CTyp::Poly(f(), Spanned::dummy(nb), Spanned::dummy(1));
+            assert!(
+                CTyp::lub_rem(&a, &b, &ctx).is_err(),
+                "lub_rem should reject Poly arities ({na}, {nb})"
+            );
+        }
     }
 
     /// Sanity round-trip: `lub_mul(q, p) = Uni(F, (ma - mb) + mb) = Uni(F, ma)`.

@@ -95,7 +95,8 @@ pub(crate) fn div_rem_op_inner<C: ArkConfig + HasOpFactory>(
 /// Leaf-level div/rem for non-Vec operands. Dispatches based on
 /// operand types:
 ///
-/// - `Uni / Uni` → polynomial long division with witness caching
+/// - `Uni / Uni` → polynomial long division with fresh witnesses and a
+///   degree chain
 /// - `Uni / scalar` → slot-wise field division (rem panics)
 /// - `Mle / scalar` → slot-wise field division (rem panics)
 /// - `VPoly / scalar` → slot-wise field division (rem panics)
@@ -133,6 +134,7 @@ fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
                         b.typ(),
                     );
                 }
+                enforce_nonzero(ctx, &b.polys()[0]);
                 let b_broadcast = b.broadcast_scalar_to(a.typ());
                 slot_wise_div(ctx.ideal, target, a.polys(), b_broadcast.polys());
             }
@@ -147,6 +149,7 @@ fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
                         b.typ(),
                     );
                 }
+                enforce_nonzero(ctx, &b.polys()[0]);
                 let b_broadcast = b.broadcast_scalar_to(a.typ());
                 slot_wise_div(ctx.ideal, target, a.polys(), b_broadcast.polys());
             }
@@ -164,6 +167,7 @@ fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
                         b.typ(),
                     );
                 }
+                enforce_nonzero(ctx, &b.polys()[0]);
                 let b_broadcast = b.broadcast_scalar_to(a.typ());
                 slot_wise_div(ctx.ideal, target, a.polys(), b_broadcast.polys());
             }
@@ -178,6 +182,7 @@ fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
                         b.typ(),
                     );
                 }
+                enforce_nonzero(ctx, &b.polys()[0]);
                 slot_wise_div(ctx.ideal, target, a.polys(), b.polys());
             }
             _ => super::uncovered_op(&label("base-unsupported"), target),
@@ -235,6 +240,7 @@ fn div_rem_poly<C: ArkConfig + HasOpFactory>(
         };
         let (q_wit, r_wit) = alloc_div_witness_pair(ctx, ATyp::Uni(ma), r_typ);
         let b_poly = &b.polys()[0];
+        enforce_nonzero(ctx, b_poly);
         for k in 0..=ma {
             let rhs = b_poly * &Polynomial::var(&q_wit.with_index(k).unwrap());
             ctx.ideal.generating_set.push(&a.polys()[k] - &rhs);
@@ -281,36 +287,60 @@ fn div_rem_poly<C: ArkConfig + HasOpFactory>(
     link_to_witness(ctx.ideal, target, wit);
 }
 
-/// Check if the divisor's leading coefficient `b[mb]` is a known nonzero
-/// constant, by inlining the `pl` table into the leading-coefficient
-/// polynomial. If it resolves to a nonzero constant, the divisor has
-/// exact degree `mb` and the type-based remainder bound suffices — no
-/// degree chain needed.
+fn resolved_constant<C: ArkConfig>(
+    ctx: &EncodeCtx<'_, C>,
+    poly: &Polynomial<C::F>,
+) -> Option<C::F> {
+    if poly.is_constant() {
+        return Some(poly.constant_coeff());
+    }
+    let mut current = poly.clone();
+    loop {
+        let (next, did_change) = current.inline_vars(&ctx.ideal.pl);
+        if !did_change {
+            return None;
+        }
+        if next.is_constant() {
+            return Some(next.constant_coeff());
+        }
+        current = next;
+    }
+}
+
+/// Restrict division constraints to defined program traces by requiring the
+/// denominator to be nonzero. A known zero denominator makes the ideal unit;
+/// a dynamic denominator gets a fresh inverse witness satisfying `d·inv = 1`.
+fn enforce_nonzero<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    denominator: &Polynomial<C::F>,
+) {
+    if let Some(constant) = resolved_constant(ctx, denominator) {
+        if constant.is_zero() {
+            ctx.ideal
+                .generating_set
+                .push(Polynomial::lit(&C::FOps::one()));
+        }
+        return;
+    }
+
+    let name = ctx.builder.ns.next_name("div_inv");
+    let inverse = ctx.sentinel_var(&name, ATyp::scalar());
+    let inverse_poly = Polynomial::var(&inverse);
+    let one = Polynomial::lit(&C::FOps::one());
+    ctx.ideal
+        .generating_set
+        .push(&(denominator * &inverse_poly) - &one);
+}
+
+/// Check if the divisor's leading coefficient `b[mb]` resolves through the
+/// `pl` table to a nonzero constant. In that case the divisor has exact degree
+/// `mb`, so the type-based remainder bound suffices without a degree chain.
 fn divisor_lead_known_nonzero<C: ArkConfig>(
     ctx: &EncodeCtx<'_, C>,
     b: &PolySource<C>,
     mb: usize,
 ) -> bool {
-    let lead_poly = &b.polys()[mb];
-    // Fast path: already a nonzero constant.
-    if lead_poly.is_constant() {
-        return !lead_poly.constant_coeff().is_zero();
-    }
-    // Recursively inline pl entries until fixpoint. The pl table may
-    // chain through multiple levels (e.g. Poly → Vec → constant), so a
-    // single inline_vars pass is not enough.
-    let mut current = lead_poly.clone();
-    loop {
-        let (next, did_change) = current.clone().inline_vars(&ctx.ideal.pl);
-        if !did_change {
-            break;
-        }
-        if next.is_constant() {
-            return !next.constant_coeff().is_zero();
-        }
-        current = next;
-    }
-    false
+    resolved_constant(ctx, &b.polys()[mb]).is_some_and(|constant| !constant.is_zero())
 }
 
 /// Emit the degree chain that enforces `deg(r) < actual_deg(b)` for
@@ -340,12 +370,8 @@ fn divisor_lead_known_nonzero<C: ArkConfig>(
 ///
 /// This ensures `r[d-1]` is forced to 0 only when the divisor's actual
 /// degree is below `d`, not when an intermediate coefficient happens to
-/// be zero.
-///
-/// Level `d = 0` ensures the constant coefficient is covered: if all
-/// higher coefficients are zero, `b[0]` must be invertible for the
-/// division to be well-defined. If `b = 0` entirely, the system becomes
-/// unsatisfiable (correct behavior for division by zero).
+/// be zero. Finally, `s_0 = 1` requires at least one divisor coefficient
+/// to be nonzero, excluding malformed division-by-zero traces.
 fn emit_degree_chain<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     b: &PolySource<C>,
@@ -409,9 +435,15 @@ fn emit_degree_chain<C: ArkConfig + HasOpFactory>(
 
         s_above = Some(s_d);
     }
+
+    let s_zero = s_above.expect("degree chain always includes level zero");
+    ctx.ideal
+        .generating_set
+        .push(&Polynomial::var(&s_zero) - &one);
 }
 
 /// Slot-wise field division: emit `a[j] - b[j] * var[j] = 0` for each slot.
+/// The caller must first enforce that each logical denominator is nonzero.
 pub fn slot_wise_div<C: ArkConfig>(
     ideal: &mut Ideal<C>,
     target: &Var,
@@ -522,11 +554,11 @@ mod tests {
         let q1 = wit_slot(&q_wit, 1);
         let r0 = wit_slot(&r_wit, 0);
 
-        // 3 identity rows + 6 degree-chain rows (mb=1: d=1→3, d=0→3) + 2 linking rows.
+        // 3 identity rows + 7 degree-chain rows (mb=1: d=1→3, d=0→3, s_0=1) + 2 linking rows.
         assert_eq!(
             ideal.generating_set.len() - basis_before,
-            11,
-            "expected 3 identity + 6 degree-chain + 2 linking rows"
+            12,
+            "expected 3 identity + 7 degree-chain + 2 linking rows"
         );
 
         // Check identity rows exist in basis.
@@ -615,11 +647,11 @@ mod tests {
         // r_wit slots: with_slot computes the correct type.
         let r0 = r_wit.clone().with_index(0).unwrap();
 
-        // 3 identity rows + 6 degree-chain rows (mb=1: d=1→3, d=0→3) + 1 linking row.
+        // 3 identity rows + 7 degree-chain rows (mb=1: d=1→3, d=0→3, s_0=1) + 1 linking row.
         assert_eq!(
             ideal.generating_set.len() - basis_before,
-            10,
-            "expected 3 identity + 6 degree-chain + 1 linking row"
+            11,
+            "expected 3 identity + 7 degree-chain + 1 linking row"
         );
 
         // pl[ideal[0]] = var(r_wit[0]).
@@ -635,6 +667,52 @@ mod tests {
         assert!(
             ideal.generating_set.iter().any(|row| row == &link),
             "basis missing link row var_poly(r_wit[0]) - var_poly(ideal[0])"
+        );
+    }
+
+    #[test]
+    fn test_add_op_uni_div_constant_enforces_nonzero_divisor() {
+        use crate::Var;
+        use graph::Ref;
+        use lang::ast::BinOp;
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::Uni(1), Qualifier::Witness);
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::Uni(0), Qualifier::Witness);
+        ideal.register(&var_a);
+        ideal.register(&var_b);
+
+        let before = ideal.generating_set.len();
+        let target = Var::from_node(NodeIndex::new(2), ATyp::Uni(1), Qualifier::Witness);
+        builder.add_op(
+            target,
+            Op::Bin(
+                BinOp::Div,
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(1))),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Uni(0))),
+                ATyp::Uni(1),
+            ),
+            &mut ideal,
+        );
+
+        assert_eq!(
+            ideal.generating_set.len() - before,
+            6,
+            "constant polynomial division should emit identity, zero remainder, links, and a nonzero-divisor row"
+        );
+        let b0 = var_b.with_index(0).unwrap();
+        assert!(
+            ideal.generating_set.iter().any(|row| {
+                row.contains(&b0)
+                    && row
+                        .vars()
+                        .iter()
+                        .any(|var| var.name.starts_with("__zippel::gb::div_inv"))
+            }),
+            "constant polynomial division should enforce `b[0] * inv - 1 = 0`"
         );
     }
 
@@ -682,16 +760,16 @@ mod tests {
         };
         let after_rem = ideal.generating_set.len();
 
-        // Div added 3 identity + 6 degree-chain (mb=1: d=1→3, d=0→3) + 2 linking = 11 rows.
+        // Div added 3 identity + 7 degree-chain (mb=1: d=1→3, d=0→3, s_0=1) + 2 linking = 12 rows.
         assert_eq!(
             after_div - basis_before_div,
-            11,
-            "Div emitted 3 identity + 6 degree-chain + 2 linking rows"
+            12,
+            "Div emitted 3 identity + 7 degree-chain + 2 linking rows"
         );
-        // Rem allocates fresh witnesses: 3 identity + 6 degree-chain (mb=1) + 1 linking = 10 rows.
+        // Rem allocates fresh witnesses: 3 identity + 7 degree-chain (mb=1) + 1 linking = 11 rows.
         assert_eq!(
             after_rem - after_div,
-            10,
+            11,
             "Rem should emit fresh identity + degree-chain + 1 linking row"
         );
     }
@@ -814,17 +892,32 @@ mod tests {
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
-        // Legacy zip emits exactly one row: a - b · var(ideal).
+        // Scalar division emits one nonzero-divisor row and one quotient row.
         assert_eq!(
             ideal.generating_set.len() - basis_before,
-            1,
-            "scalar fallback emits 1 row"
+            2,
+            "scalar fallback emits a nonzero-divisor row and a quotient row"
         );
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         let expected = &var_poly(&var_a) - &(&var_poly(&var_b) * &var_poly(&var));
         assert!(
             ideal.generating_set.iter().any(|row| row == &expected),
             "scalar fallback row should be `a - b · var_poly(ideal)`"
+        );
+        let inv = Var::from_var(
+            "__zippel::gb::div_inv::0",
+            NodeIndex::new(usize::MAX),
+            ATyp::scalar(),
+            Qualifier::Local,
+        );
+        let expected_nonzero = &(&var_poly(&var_b) * &var_poly(&inv))
+            - &Polynomial::lit(&ark_bls12_381::Fr::from(1u64));
+        assert!(
+            ideal
+                .generating_set
+                .iter()
+                .any(|row| row == &expected_nonzero),
+            "scalar fallback should enforce `b * inv - 1 = 0`"
         );
     }
 
@@ -854,7 +947,7 @@ mod tests {
         let before = ideal.generating_set.len();
         builder.add_op(var.clone(), op, &mut ideal);
 
-        assert_eq!(ideal.generating_set.len() - before, 2);
+        assert_eq!(ideal.generating_set.len() - before, 4);
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         for i in 0..2 {
             let b_i = var_b.clone().with_index(i).unwrap();
@@ -895,7 +988,7 @@ mod tests {
             &mut ideal,
         );
 
-        assert_eq!(ideal.generating_set.len() - before, 3);
+        assert_eq!(ideal.generating_set.len() - before, 4);
     }
 
     #[test]
@@ -926,7 +1019,7 @@ mod tests {
             &mut ideal,
         );
 
-        assert_eq!(ideal.generating_set.len() - before, 4);
+        assert_eq!(ideal.generating_set.len() - before, 5);
     }
 
     #[test]
@@ -976,13 +1069,13 @@ mod tests {
         );
 
         // Each element is Uni(2)/Uni(2) (mb=2). Rem emits fresh witnesses per
-        // element: 3 identity + 10 degree-chain (d=2→3, d=1→4, d=0→3) + 2 linking = 15.
-        // 2 elements → 30 rows.
+        // element: 3 identity + 11 degree-chain (d=2→3, d=1→4, d=0→3, s_0=1) + 2 linking = 16.
+        // 2 elements → 32 rows.
         assert_eq!(
             ideal.generating_set.len() - after_div,
-            30,
+            32,
             "vector Rem should emit fresh identity + degree-chain + linking rows \
-             per element (2 elements × 15 = 30)"
+             per element (2 elements × 16 = 32)"
         );
     }
 

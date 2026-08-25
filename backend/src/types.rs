@@ -608,21 +608,6 @@ impl Lub for ATyp {
             (ATyp::Uni(n1), ATyp::Uni(n2)) if *n1 >= *n2 => Ok(ATyp::uni(
                 n1.checked_sub(*n2).ok_or_else(|| LubError::div(&x, &y))?,
             )),
-            (ATyp::VPoly(m1, n1), ATyp::VPoly(m2, n2)) if m1 == m2 && *n1 >= *n2 => {
-                Ok(ATyp::vpoly(
-                    *m1,
-                    n1.checked_sub(*n2).ok_or_else(|| LubError::div(&x, &y))?,
-                ))
-            }
-            (ATyp::VPoly(1, n), ATyp::Uni(d)) if *n >= *d => Ok(ATyp::vpoly(
-                1,
-                n.checked_sub(*d).ok_or_else(|| LubError::div(&x, &y))?,
-            )),
-            (ATyp::Uni(d), ATyp::VPoly(1, n)) if *d >= *n => Ok(ATyp::vpoly(
-                1,
-                d.checked_sub(*n).ok_or_else(|| LubError::div(&x, &y))?,
-            )),
-
             (ATyp::Uni(n1), ATyp::Base(ABase::Scalar | ABase::Fin(_))) => Ok(ATyp::uni(*n1)),
             (ATyp::Mle(n1), ATyp::Base(ABase::Scalar | ABase::Fin(_))) => Ok(ATyp::mle(*n1)),
             (ATyp::VPoly(m, n), ATyp::Base(ABase::Scalar | ABase::Fin(_))) => {
@@ -663,22 +648,6 @@ impl Lub for ATyp {
             // Uni<A> % Uni<B> = Uni<B-1> (requires B > 0)
             (ATyp::Uni(_), ATyp::Uni(n2)) if *n2 > 0 => Ok(ATyp::uni(
                 n2.checked_sub(1).ok_or_else(|| LubError::rem(&x, &y))?,
-            )),
-            // VPoly(m,n1) % VPoly(m,n2) = VPoly(m, n2-1); cross-arity
-            // polynomial remainder is rejected before Groebner lowering.
-            (ATyp::VPoly(m1, _), ATyp::VPoly(m2, n2)) if m1 == m2 && *n2 >= 1 => Ok(ATyp::vpoly(
-                *m1,
-                n2.checked_sub(1).ok_or_else(|| LubError::rem(&x, &y))?,
-            )),
-            // Mixed Uni/VPoly quotient-remainder witnesses are currently
-            // lowerable only for arity-1 VPoly.
-            (ATyp::VPoly(1, _), ATyp::Uni(d)) if *d >= 1 => Ok(ATyp::vpoly(
-                1,
-                d.checked_sub(1).ok_or_else(|| LubError::rem(&x, &y))?,
-            )),
-            (ATyp::Uni(_), ATyp::VPoly(1, n)) if *n >= 1 => Ok(ATyp::vpoly(
-                1,
-                n.checked_sub(1).ok_or_else(|| LubError::rem(&x, &y))?,
             )),
             // Vec<A> % C = Vec<lub_rem(A, C)>; scalar-left vector remainder
             // is not Groebner-lowerable and falls through to an error.
@@ -1507,18 +1476,9 @@ mod tests {
             ATyp::lub_div(&ATyp::uni(3), &ATyp::uni(1), &Nothing),
             Ok(ATyp::uni(2))
         );
-        assert_eq!(
-            ATyp::lub_div(&ATyp::vpoly(2, 3), &ATyp::vpoly(2, 1), &Nothing),
-            Ok(ATyp::vpoly(2, 2))
-        );
-        assert_eq!(
-            ATyp::lub_div(&ATyp::vpoly(1, 3), &ATyp::uni(1), &Nothing),
-            Ok(ATyp::vpoly(1, 2))
-        );
-        assert_eq!(
-            ATyp::lub_div(&ATyp::uni(3), &ATyp::vpoly(1, 1), &Nothing),
-            Ok(ATyp::vpoly(1, 2))
-        );
+        assert!(ATyp::lub_div(&ATyp::vpoly(2, 3), &ATyp::vpoly(2, 1), &Nothing).is_err());
+        assert!(ATyp::lub_div(&ATyp::vpoly(1, 3), &ATyp::uni(1), &Nothing).is_err());
+        assert!(ATyp::lub_div(&ATyp::uni(3), &ATyp::vpoly(1, 1), &Nothing).is_err());
 
         assert!(ATyp::lub_div(&ATyp::vpoly(2, 3), &ATyp::vpoly(3, 1), &Nothing).is_err());
         assert!(ATyp::lub_div(&ATyp::vpoly(2, 3), &ATyp::uni(1), &Nothing).is_err());
@@ -1536,18 +1496,9 @@ mod tests {
             ATyp::lub_rem(&ATyp::uni(3), &ATyp::uni(1), &Nothing),
             Ok(ATyp::uni(0))
         );
-        assert_eq!(
-            ATyp::lub_rem(&ATyp::vpoly(2, 3), &ATyp::vpoly(2, 1), &Nothing),
-            Ok(ATyp::vpoly(2, 0))
-        );
-        assert_eq!(
-            ATyp::lub_rem(&ATyp::vpoly(1, 3), &ATyp::uni(1), &Nothing),
-            Ok(ATyp::vpoly(1, 0))
-        );
-        assert_eq!(
-            ATyp::lub_rem(&ATyp::uni(3), &ATyp::vpoly(1, 1), &Nothing),
-            Ok(ATyp::vpoly(1, 0))
-        );
+        assert!(ATyp::lub_rem(&ATyp::vpoly(2, 3), &ATyp::vpoly(2, 1), &Nothing).is_err());
+        assert!(ATyp::lub_rem(&ATyp::vpoly(1, 3), &ATyp::uni(1), &Nothing).is_err());
+        assert!(ATyp::lub_rem(&ATyp::uni(3), &ATyp::vpoly(1, 1), &Nothing).is_err());
 
         assert!(ATyp::lub_rem(&ATyp::vpoly(2, 3), &ATyp::vpoly(3, 1), &Nothing).is_err());
         assert!(ATyp::lub_rem(&ATyp::vpoly(2, 3), &ATyp::uni(1), &Nothing).is_err());

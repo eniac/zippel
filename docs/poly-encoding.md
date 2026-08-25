@@ -93,18 +93,22 @@ Let `p₁ : Poly<F, n₁, m₁>`, `p₂ : Poly<F, n₂, m₂>`.
 | `p₁ + p₂` | `Poly<F, max(n₁,n₂), max(m₁, m₂)>` |
 | `p₁ − p₂` | `Poly<F, max(n₁,n₂), max(m₁, m₂)>` |
 | `p₁ × p₂` | `Poly<F, max(n₁,n₂), m₁ + m₂>` |
-| `p₁ / p₂` (req. `n₁ = n₂`, `m₁ ≥ m₂`) | `Poly<F, n₁, m₁ − m₂>` |
-| `p₁ % p₂` (req. `n₁ = n₂`, `m₂ ≥ 1`) | `Poly<F, n₁, m₂ − 1>` |
+| `p₁ / p₂` (req. `n₁ = n₂ = 1`, `m₁ ≥ m₂`) | `Poly<F, 1, m₁ − m₂>` |
+| `p₁ % p₂` (req. `n₁ = n₂ = 1`, `m₂ ≥ 1`) | `Poly<F, 1, m₂ − 1>` |
 | `p : Poly<…> ± c : F` | input Poly type |
 | `p : Poly<…> × c : F` | input Poly type |
 | `p : Poly<…> / c : F` | input Poly type (scalar division) |
 
 The identity `P = D·Q + R` with `deg(R) < deg(D)` is used by the Gröbner
-phase-13 layer for same-arity quotient/remainder operations: witnesses
-`q : Poly<F, n₁, m₁ − m₂>` and `r : Poly<F, n₁, m₂ − 1>`. Backend lowering
-also permits mixed `Uni`/`VPoly` quotient-remainder only when the `VPoly`
-arity is `1`; non-scalar `Mle` quotient/remainder and cross-arity `VPoly`
-quotient/remainder are rejected before Gröbner lowering.
+layer for `Uni / Uni` and `Uni % Uni`: witnesses
+`q : Uni<F, m₁ − m₂>` and `r : Uni<F, m₂ − 1>`. Polynomial-by-polynomial
+operations on `Mle` and `VPoly` are rejected by the type system because
+multivariate division requires a term order.
+
+Division constraints model defined program traces only. Scalar division and
+`Uni(0)` division enforce `D ≠ 0` with an inverse witness `D·D⁻¹ - 1 = 0`.
+Higher-degree `Uni` division enforces that at least one divisor coefficient is
+nonzero through the degree chain's final `s₀ = 1` constraint.
 
 ## Vec ↔ Poly length relations
 
