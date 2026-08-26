@@ -250,6 +250,15 @@ fn run_one(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    // Put the bench binary in its own process group so we can kill the
+    // entire tree (bench binary → Singular) on timeout. child.kill()
+    // only kills the bench binary, leaving Singular as an orphan.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
     if no_inline {
         cmd.arg("--no-inline");
     }
@@ -294,7 +303,24 @@ fn run_one(
             }
             Ok(None) => {
                 if Instant::now() >= deadline {
-                    let _ = child.kill();
+                    // Kill the entire process group: bench binary + Singular.
+                    // process_group(0) made the bench binary a group leader,
+                    // so its PID == PGID. kill(-pid) signals the whole group.
+                    #[cfg(unix)]
+                    {
+                        let pgid: libc::pid_t = child.id().try_into().unwrap_or(-1);
+                        unsafe {
+                            libc::kill(-pgid, libc::SIGKILL);
+                        }
+                    }
+                    // Windows: child.kill() only kills the bench binary, not
+                    // Singular. The correct fix is Job Objects, but this
+                    // project requires Singular (Unix-only), so this branch
+                    // is a compile stub that is never exercised in practice.
+                    #[cfg(not(unix))]
+                    {
+                        let _ = child.kill();
+                    }
                     let _ = child.wait();
                     let wall = start.elapsed().as_secs_f64();
                     let stdout = read_stdout(&mut child);
