@@ -321,15 +321,15 @@ impl<N: Clone> ToTraversal1<N> for Exp<N> {
             Exp::Lit(x) => Ok(Exp::Lit(f(x)?)),
             Exp::Unit => Ok(Exp::Unit),
             Exp::Var(v) => Ok(Exp::Var(v)),
-            Exp::Interpolate(po, box evals) => Ok(Exp::Interpolate(
+            Exp::Interpolate(po, deref!(evals)) => Ok(Exp::Interpolate(
                 match po {
                     None => None,
-                    Some(box p) => Some(Box::new(p.traverse1(f)?)),
+                    Some(deref!(p)) => Some(Box::new(p.traverse1(f)?)),
                 },
                 Box::new(evals.traverse1(f)?),
             )),
-            Exp::Poly(box p) => Ok(Exp::Poly(Box::new(p.traverse1(f)?))),
-            Exp::Evaluate(box p, selector, ox) => Ok(Exp::Evaluate(
+            Exp::Poly(deref!(p)) => Ok(Exp::Poly(Box::new(p.traverse1(f)?))),
+            Exp::Evaluate(deref!(p), selector, ox) => Ok(Exp::Evaluate(
                 Box::new(p.traverse1(f)?),
                 match selector {
                     None => None,
@@ -337,53 +337,53 @@ impl<N: Clone> ToTraversal1<N> for Exp<N> {
                 },
                 match ox {
                     None => None,
-                    Some(box x) => Some(Box::new(x.traverse1(f)?)),
+                    Some(deref!(x)) => Some(Box::new(x.traverse1(f)?)),
                 },
             )),
-            Exp::Coef(box p) => Ok(Exp::Coef(Box::new(p.traverse1(f)?))),
-            Exp::Mle(box p) => Ok(Exp::Mle(Box::new(p.traverse1(f)?))),
-            Exp::Pair(box x, box y) => Ok(Exp::Pair(
+            Exp::Coef(deref!(p)) => Ok(Exp::Coef(Box::new(p.traverse1(f)?))),
+            Exp::Mle(deref!(p)) => Ok(Exp::Mle(Box::new(p.traverse1(f)?))),
+            Exp::Pair(deref!(x), deref!(y)) => Ok(Exp::Pair(
                 Box::new(x.traverse1(f)?),
                 Box::new(y.traverse1(f)?),
             )),
             Exp::Vec(v) => Ok(Exp::Vec(v.traverse1(f)?)),
             Exp::App(x, ts) => Ok(Exp::App(x, ts.traverse1(f)?)),
-            Exp::Bin(op, box x, box y) => Ok(Exp::Bin(
+            Exp::Bin(op, deref!(x), deref!(y)) => Ok(Exp::Bin(
                 op,
                 Box::new(x.traverse1(f)?),
                 Box::new(y.traverse1(f)?),
             )),
-            Exp::Neg(box x) => Ok(Exp::Neg(Box::new(x.traverse1(f)?))),
-            Exp::Map(box x, id, box r) => Ok(Exp::Map(
+            Exp::Neg(deref!(x)) => Ok(Exp::Neg(Box::new(x.traverse1(f)?))),
+            Exp::Map(deref!(x), id, deref!(r)) => Ok(Exp::Map(
                 Box::new(x.traverse1(f)?),
                 id,
                 Box::new(r.traverse1(f)?),
             )),
-            Exp::Reduce(op, box x) => Ok(Exp::Reduce(op, Box::new(x.traverse1(f)?))),
+            Exp::Reduce(op, deref!(x)) => Ok(Exp::Reduce(op, Box::new(x.traverse1(f)?))),
             Exp::Challenge(t, b) => Ok(Exp::Challenge(t, b)),
             Exp::Random(t, b) => Ok(Exp::Random(t, b)),
             Exp::Range(r) => Ok(Exp::Range(r.traverse1(f)?)),
-            Exp::Ram(box x, box i) => Ok(Exp::Ram(
+            Exp::Ram(deref!(x), deref!(i)) => Ok(Exp::Ram(
                 Box::new(x.traverse1(f)?),
                 Box::new(i.traverse1(f)?),
             )),
-            Exp::Let(x, box a, b) => {
+            Exp::Let(x, deref!(a), b) => {
                 let b = match b {
                     Some(b) => Some(Box::new((*b).traverse1(f)?)),
                     None => None,
                 };
                 Ok(Exp::Let(x, Box::new(a.traverse1(f)?), b))
             }
-            Exp::Log(x, box a, b) => {
+            Exp::Log(x, deref!(a), b) => {
                 let b = match b {
                     Some(b) => Some(Box::new((*b).traverse1(f)?)),
                     None => None,
                 };
                 Ok(Exp::Log(x, Box::new(a.traverse1(f)?), b))
             }
-            Exp::Assert(box exp) => Ok(Exp::Assert(Box::new(exp.traverse1(f)?))),
-            Exp::Verify(box exp) => Ok(Exp::Verify(Box::new(exp.traverse1(f)?))),
-            Exp::Fun(vars, box body) => Ok(Exp::Fun(vars, Box::new(body.traverse1(f)?))),
+            Exp::Assert(deref!(exp)) => Ok(Exp::Assert(Box::new(exp.traverse1(f)?))),
+            Exp::Verify(deref!(exp)) => Ok(Exp::Verify(Box::new(exp.traverse1(f)?))),
+            Exp::Fun(vars, deref!(body)) => Ok(Exp::Fun(vars, Box::new(body.traverse1(f)?))),
             Exp::Record(fields) => {
                 let pairs: Vec<_> = fields
                     .into_iter()
@@ -391,8 +391,8 @@ impl<N: Clone> ToTraversal1<N> for Exp<N> {
                     .collect::<Result<_, _>>()?;
                 Ok(Exp::Record(Ctx::from_iter(pairs)))
             }
-            Exp::Proj(box exp, field) => Ok(Exp::Proj(Box::new(exp.traverse1(f)?), field)),
-            Exp::SetRecord(box record, field, box value) => Ok(Exp::SetRecord(
+            Exp::Proj(deref!(exp), field) => Ok(Exp::Proj(Box::new(exp.traverse1(f)?), field)),
+            Exp::SetRecord(deref!(record), field, deref!(value)) => Ok(Exp::SetRecord(
                 Box::new(record.traverse1(f)?),
                 field,
                 Box::new(value.traverse1(f)?),
@@ -420,52 +420,47 @@ impl TidSubst for CExp {
         match self {
             Exp::Challenge(t, _) if &t.node == from => t.node = to.clone(),
             Exp::Random(t, _) if &t.node == from => t.node = to.clone(),
-            Exp::Interpolate(None, box e) => e.tid_subst(from, to),
-            Exp::Interpolate(Some(box p), box e) => {
+            Exp::Interpolate(None, e) => e.tid_subst(from, to),
+            Exp::Interpolate(Some(p), e) => {
                 p.tid_subst(from, to);
                 e.tid_subst(from, to);
             }
-            Exp::Evaluate(box p, _, None) => p.tid_subst(from, to),
-            Exp::Evaluate(box p, _, Some(box x)) => {
+            Exp::Evaluate(p, _, None) => p.tid_subst(from, to),
+            Exp::Evaluate(p, _, Some(x)) => {
                 p.tid_subst(from, to);
                 x.tid_subst(from, to);
             }
-            Exp::Mle(box p)
-            | Exp::Poly(box p)
-            | Exp::Reduce(_, box p)
-            | Exp::Coef(box p)
-            | Exp::Neg(box p) => p.tid_subst(from, to),
-            Exp::Assert(box exp) | Exp::Verify(box exp) => {
+            Exp::Mle(p) | Exp::Poly(p) | Exp::Reduce(_, p) | Exp::Coef(p) | Exp::Neg(p) => {
+                p.tid_subst(from, to)
+            }
+            Exp::Assert(exp) | Exp::Verify(exp) => {
                 exp.tid_subst(from, to);
             }
             Exp::Vec(v) | Exp::App(_, v) => v.tid_subst(from, to),
-            Exp::Bin(_, box a, box b)
-            | Exp::Map(box a, _, box b)
-            | Exp::Ram(box a, box b)
-            | Exp::Pair(box a, box b) => {
+            Exp::Bin(_, a, b) | Exp::Map(a, _, b) | Exp::Ram(a, b) | Exp::Pair(a, b) => {
                 a.tid_subst(from, to);
                 b.tid_subst(from, to);
             }
-            Exp::Let(_, box a, b) => {
+            Exp::Let(_, a, b) => {
                 a.tid_subst(from, to);
-                if let Some(box b) = b {
+                if let Some(b) = b {
                     b.tid_subst(from, to);
                 }
             }
-            Exp::Log(_, box a, b) => {
+            Exp::Log(_, a, b) => {
                 a.tid_subst(from, to);
-                if let Some(box b) = b {
+                if let Some(b) = b {
                     b.tid_subst(from, to);
                 }
             }
-            Exp::Fun(_, box body) => body.tid_subst(from, to),
+            Exp::Fun(_, body) => body.tid_subst(from, to),
             Exp::Record(fields) => {
                 fields.modify(|_, field_exp| {
                     field_exp.tid_subst(from, to);
                 });
             }
-            Exp::Proj(box exp, _) => exp.tid_subst(from, to),
-            Exp::SetRecord(box record, _, box value) => {
+            Exp::Proj(exp, _) => exp.tid_subst(from, to),
+            Exp::SetRecord(record, _, value) => {
                 record.tid_subst(from, to);
                 value.tid_subst(from, to);
             }
@@ -500,32 +495,29 @@ impl FreeVars for CExp {
                 None => p.freevars(),
                 Some(x) => p.freevars().union(x.freevars()),
             },
-            Exp::Mle(box p)
-            | Exp::Poly(box p)
-            | Exp::Reduce(_, box p)
-            | Exp::Coef(box p)
-            | Exp::Neg(box p) => p.freevars(),
-            Exp::Assert(box exp) | Exp::Verify(box exp) => exp.freevars(),
+            Exp::Mle(p) | Exp::Poly(p) | Exp::Reduce(_, p) | Exp::Coef(p) | Exp::Neg(p) => {
+                p.freevars()
+            }
+            Exp::Assert(exp) | Exp::Verify(exp) => exp.freevars(),
             Exp::Vec(v) | Exp::App(_, v) => v.freevars(),
-            Exp::Bin(_, box a, box b)
-            | Exp::Pair(box a, box b)
-            | Exp::Ram(box a, box b)
-            | Exp::Map(box a, _, box b) => a.freevars().union(b.freevars()),
-            Exp::Let(_, box a, b) => {
+            Exp::Bin(_, a, b) | Exp::Pair(a, b) | Exp::Ram(a, b) | Exp::Map(a, _, b) => {
+                a.freevars().union(b.freevars())
+            }
+            Exp::Let(_, a, b) => {
                 let mut fv = a.freevars();
-                if let Some(box b) = b {
+                if let Some(b) = b {
                     fv = fv.union(b.freevars());
                 }
                 fv
             }
-            Exp::Log(_, box a, b) => {
+            Exp::Log(_, a, b) => {
                 let mut fv = a.freevars();
-                if let Some(box b) = b {
+                if let Some(b) = b {
                     fv = fv.union(b.freevars());
                 }
                 fv
             }
-            Exp::Fun(vars, box body) => {
+            Exp::Fun(vars, body) => {
                 let bound_vars: Set<Vid> = vars.iter().map(|v| v.node.clone()).collect();
                 body.freevars()
                     .into_iter()
@@ -536,8 +528,8 @@ impl FreeVars for CExp {
                 .iter()
                 .map(|(_, exp)| exp.freevars())
                 .fold(Set::new(), |acc, x| acc.union(x)),
-            Exp::Proj(box exp, _) => exp.freevars(),
-            Exp::SetRecord(box record, _, box value) => record.freevars().union(value.freevars()),
+            Exp::Proj(exp, _) => exp.freevars(),
+            Exp::SetRecord(record, _, value) => record.freevars().union(value.freevars()),
         }
     }
 }
@@ -559,17 +551,17 @@ impl<N: Clone> RangeTraversal<N> for Exp<N> {
     ) -> Result<Self, E> {
         match self {
             Exp::Range(r) => Ok(Exp::Range(f(r)?)),
-            Exp::Interpolate(po, box evals) => Ok(Exp::Interpolate(
+            Exp::Interpolate(po, evals) => Ok(Exp::Interpolate(
                 match po {
                     None => None,
-                    Some(box p) => Some(Box::new(p.range_traverse(f)?)),
+                    Some(p) => Some(Box::new(p.range_traverse(f)?)),
                 },
                 Box::new(evals.range_traverse(f)?),
             )),
-            Exp::Poly(box p) => Ok(Exp::Poly(Box::new(p.range_traverse(f)?))),
-            Exp::Mle(box p) => Ok(Exp::Mle(Box::new(p.range_traverse(f)?))),
+            Exp::Poly(p) => Ok(Exp::Poly(Box::new(p.range_traverse(f)?))),
+            Exp::Mle(p) => Ok(Exp::Mle(Box::new(p.range_traverse(f)?))),
             Exp::Vec(v) => Ok(Exp::Vec(v.range_traverse(f)?)),
-            Exp::Evaluate(box p, selector, ox) => Ok(Exp::Evaluate(
+            Exp::Evaluate(p, selector, ox) => Ok(Exp::Evaluate(
                 Box::new(p.range_traverse(f)?),
                 match selector {
                     None => None,
@@ -577,47 +569,47 @@ impl<N: Clone> RangeTraversal<N> for Exp<N> {
                 },
                 match ox {
                     None => None,
-                    Some(box x) => Some(Box::new(x.range_traverse(f)?)),
+                    Some(x) => Some(Box::new(x.range_traverse(f)?)),
                 },
             )),
-            Exp::Bin(op, box x, box y) => Ok(Exp::Bin(
+            Exp::Bin(op, x, y) => Ok(Exp::Bin(
                 op,
                 Box::new(x.range_traverse(f)?),
                 Box::new(y.range_traverse(f)?),
             )),
-            Exp::Neg(box x) => Ok(Exp::Neg(Box::new(x.range_traverse(f)?))),
-            Exp::Map(box x, id, box r) => Ok(Exp::Map(
+            Exp::Neg(x) => Ok(Exp::Neg(Box::new(x.range_traverse(f)?))),
+            Exp::Map(x, id, r) => Ok(Exp::Map(
                 Box::new(x.range_traverse(f)?),
                 id,
                 Box::new(r.range_traverse(f)?),
             )),
-            Exp::Ram(box x, box i) => Ok(Exp::Ram(
+            Exp::Ram(x, i) => Ok(Exp::Ram(
                 Box::new(x.range_traverse(f)?),
                 Box::new(i.range_traverse(f)?),
             )),
-            Exp::Coef(box x) => Ok(Exp::Coef(Box::new(x.range_traverse(f)?))),
-            Exp::Let(x, box t, e) => {
+            Exp::Coef(x) => Ok(Exp::Coef(Box::new(x.range_traverse(f)?))),
+            Exp::Let(x, t, e) => {
                 let e = match e {
                     Some(e) => Some(Box::new((*e).range_traverse(f)?)),
                     None => None,
                 };
                 Ok(Exp::Let(x, Box::new(t.range_traverse(f)?), e))
             }
-            Exp::Log(x, box t, e) => {
+            Exp::Log(x, t, e) => {
                 let e = match e {
                     Some(e) => Some(Box::new((*e).range_traverse(f)?)),
                     None => None,
                 };
                 Ok(Exp::Log(x, Box::new(t.range_traverse(f)?), e))
             }
-            Exp::Pair(box t, box e) => Ok(Exp::Pair(
+            Exp::Pair(t, e) => Ok(Exp::Pair(
                 Box::new(t.range_traverse(f)?),
                 Box::new(e.range_traverse(f)?),
             )),
-            Exp::Assert(box exp) => Ok(Exp::Assert(Box::new(exp.range_traverse(f)?))),
-            Exp::Verify(box exp) => Ok(Exp::Verify(Box::new(exp.range_traverse(f)?))),
+            Exp::Assert(exp) => Ok(Exp::Assert(Box::new(exp.range_traverse(f)?))),
+            Exp::Verify(exp) => Ok(Exp::Verify(Box::new(exp.range_traverse(f)?))),
             Exp::App(x, ts) => Ok(Exp::App(x, ts.range_traverse(f)?)),
-            Exp::Fun(vars, box body) => Ok(Exp::Fun(vars, Box::new(body.range_traverse(f)?))),
+            Exp::Fun(vars, body) => Ok(Exp::Fun(vars, Box::new(body.range_traverse(f)?))),
             Exp::Record(fields) => {
                 let pairs: Vec<_> = fields
                     .into_iter()
@@ -625,8 +617,8 @@ impl<N: Clone> RangeTraversal<N> for Exp<N> {
                     .collect::<Result<_, _>>()?;
                 Ok(Exp::Record(Ctx::from_iter(pairs)))
             }
-            Exp::Proj(box exp, field) => Ok(Exp::Proj(Box::new(exp.range_traverse(f)?), field)),
-            Exp::SetRecord(box record, field, box value) => Ok(Exp::SetRecord(
+            Exp::Proj(exp, field) => Ok(Exp::Proj(Box::new(exp.range_traverse(f)?), field)),
+            Exp::SetRecord(record, field, value) => Ok(Exp::SetRecord(
                 Box::new(record.range_traverse(f)?),
                 field,
                 Box::new(value.range_traverse(f)?),
@@ -693,28 +685,28 @@ impl<N> Exp<N> {
     pub fn is_pure(&self) -> bool {
         match self {
             Exp::Lit(_) | Exp::Unit | Exp::Var(_) | Exp::Range(_) => true,
-            Exp::Interpolate(None, box e) => e.is_pure(),
-            Exp::Interpolate(Some(box p), box e) => p.is_pure() && e.is_pure(),
-            Exp::Coef(box p) => p.is_pure(),
-            Exp::Poly(box p) => p.is_pure(),
-            Exp::Mle(box p) => p.is_pure(),
-            Exp::Reduce(_, box p) => p.is_pure(),
+            Exp::Interpolate(None, e) => e.is_pure(),
+            Exp::Interpolate(Some(p), e) => p.is_pure() && e.is_pure(),
+            Exp::Coef(p) => p.is_pure(),
+            Exp::Poly(p) => p.is_pure(),
+            Exp::Mle(p) => p.is_pure(),
+            Exp::Reduce(_, p) => p.is_pure(),
             Exp::Vec(v) => v.iter().all(|e| e.node.is_pure()),
-            Exp::Bin(_, box a, box b) => a.is_pure() && b.is_pure(),
-            Exp::Neg(box a) => a.is_pure(),
-            Exp::Evaluate(box p, _, ox) => p.is_pure() && ox.as_ref().is_none_or(|x| x.is_pure()),
-            Exp::Pair(box a, box b) => a.is_pure() && b.is_pure(),
-            Exp::Map(box a, _, box b) => a.is_pure() && b.is_pure(),
-            Exp::Ram(box a, box b) => a.is_pure() && b.is_pure(),
-            Exp::Let(_, box a, b) => a.is_pure() && b.as_ref().is_none_or(|b| b.is_pure()),
-            Exp::Log(_, box _, _) => false,
+            Exp::Bin(_, a, b) => a.is_pure() && b.is_pure(),
+            Exp::Neg(a) => a.is_pure(),
+            Exp::Evaluate(p, _, ox) => p.is_pure() && ox.as_ref().is_none_or(|x| x.is_pure()),
+            Exp::Pair(a, b) => a.is_pure() && b.is_pure(),
+            Exp::Map(a, _, b) => a.is_pure() && b.is_pure(),
+            Exp::Ram(a, b) => a.is_pure() && b.is_pure(),
+            Exp::Let(_, a, b) => a.is_pure() && b.as_ref().is_none_or(|b| b.is_pure()),
+            Exp::Log(_, _, _) => false,
             Exp::Challenge(_, _) | Exp::Random(_, _) => false,
             Exp::App(_, args) => args.iter().all(|e| e.node.is_pure()),
             Exp::Assert(_) | Exp::Verify(_) => false,
-            Exp::Fun(_, box body) => body.is_pure(),
+            Exp::Fun(_, body) => body.is_pure(),
             Exp::Record(fields) => fields.iter().all(|(_, e)| e.node.is_pure()),
-            Exp::Proj(box exp, _) => exp.is_pure(),
-            Exp::SetRecord(box record, _, box value) => record.is_pure() && value.is_pure(),
+            Exp::Proj(exp, _) => exp.is_pure(),
+            Exp::SetRecord(record, _, value) => record.is_pure() && value.is_pure(),
         }
     }
 
@@ -730,29 +722,29 @@ impl<N> Exp<N> {
             Exp::Challenge(_, _) | Exp::Log(_, _, _) | Exp::Verify(_) | Exp::Assert(_) => false,
             // Allow: Random (trusted-setup trapdoors, etc.)
             Exp::Random(_, _) => true,
-            Exp::Let(_, box val, cont) => {
+            Exp::Let(_, val, cont) => {
                 val.is_relation_pure() && cont.as_ref().is_none_or(|c| c.is_relation_pure())
             }
-            Exp::Map(box a, _, box b) => a.is_relation_pure() && b.is_relation_pure(),
+            Exp::Map(a, _, b) => a.is_relation_pure() && b.is_relation_pure(),
             Exp::Vec(v) => v.iter().all(|e| e.node.is_relation_pure()),
-            Exp::Bin(_, box a, box b) => a.is_relation_pure() && b.is_relation_pure(),
-            Exp::Neg(box a) => a.is_relation_pure(),
-            Exp::Pair(box a, box b) => a.is_relation_pure() && b.is_relation_pure(),
-            Exp::Ram(box a, box b) => a.is_relation_pure() && b.is_relation_pure(),
-            Exp::Interpolate(None, box e) => e.is_relation_pure(),
-            Exp::Interpolate(Some(box p), box e) => p.is_relation_pure() && e.is_relation_pure(),
-            Exp::Coef(box p) => p.is_relation_pure(),
-            Exp::Poly(box p) => p.is_relation_pure(),
-            Exp::Mle(box p) => p.is_relation_pure(),
-            Exp::Reduce(_, box p) => p.is_relation_pure(),
-            Exp::Evaluate(box p, _, ox) => {
+            Exp::Bin(_, a, b) => a.is_relation_pure() && b.is_relation_pure(),
+            Exp::Neg(a) => a.is_relation_pure(),
+            Exp::Pair(a, b) => a.is_relation_pure() && b.is_relation_pure(),
+            Exp::Ram(a, b) => a.is_relation_pure() && b.is_relation_pure(),
+            Exp::Interpolate(None, e) => e.is_relation_pure(),
+            Exp::Interpolate(Some(p), e) => p.is_relation_pure() && e.is_relation_pure(),
+            Exp::Coef(p) => p.is_relation_pure(),
+            Exp::Poly(p) => p.is_relation_pure(),
+            Exp::Mle(p) => p.is_relation_pure(),
+            Exp::Reduce(_, p) => p.is_relation_pure(),
+            Exp::Evaluate(p, _, ox) => {
                 p.is_relation_pure() && ox.as_ref().is_none_or(|x| x.is_relation_pure())
             }
             Exp::App(_, args) => args.iter().all(|e| e.node.is_relation_pure()),
-            Exp::Fun(_, box body) => body.is_relation_pure(),
+            Exp::Fun(_, body) => body.is_relation_pure(),
             Exp::Record(fields) => fields.iter().all(|(_, e)| e.node.is_relation_pure()),
-            Exp::Proj(box exp, _) => exp.is_relation_pure(),
-            Exp::SetRecord(box record, _, box value) => {
+            Exp::Proj(exp, _) => exp.is_relation_pure(),
+            Exp::SetRecord(record, _, value) => {
                 record.is_relation_pure() && value.is_relation_pure()
             }
             // Leaves: always valid
@@ -958,7 +950,7 @@ where
                 },
                 allocator.text(">"),
             ]),
-            Exp::Pair(box t, box e) => allocator.concat([
+            Exp::Pair(t, e) => allocator.concat([
                 allocator.text("pair("),
                 t.pretty(allocator),
                 allocator.text(", "),
@@ -1013,12 +1005,12 @@ where
                 }
                 allocator.concat(docs)
             }
-            Exp::Assert(box exp) => allocator.concat([
+            Exp::Assert(exp) => allocator.concat([
                 allocator.text("assert("),
                 exp.pretty(allocator),
                 allocator.text(")"),
             ]),
-            Exp::Verify(box exp) => allocator.concat([
+            Exp::Verify(exp) => allocator.concat([
                 allocator.text("verify("),
                 exp.pretty(allocator),
                 allocator.text(")"),
@@ -1053,12 +1045,12 @@ where
                 docs.push(allocator.text("|}"));
                 allocator.concat(docs)
             }
-            Exp::Proj(box exp, field) => allocator.concat([
+            Exp::Proj(exp, field) => allocator.concat([
                 exp.pretty(allocator),
                 allocator.text("."),
                 allocator.text(field.node),
             ]),
-            Exp::SetRecord(box record, field, box value) => allocator.concat([
+            Exp::SetRecord(record, field, value) => allocator.concat([
                 record.pretty(allocator),
                 allocator.text(".set("),
                 allocator.text(field.node),

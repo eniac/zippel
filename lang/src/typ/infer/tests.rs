@@ -1912,7 +1912,7 @@ fn test_proto_body_blames_body_not_relation() {
     // Under correct behavior, this should wrap the offending body expression CExp::Lit(5)
     assert!(matches!(
         err,
-        TypeError::Decl(_, box TypeError::Unit(_, _, CExp::Lit(5)))
+        TypeError::Decl(_, TypeError::Unit(_, _, CExp::Lit(5)))
     ));
 }
 

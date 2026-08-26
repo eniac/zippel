@@ -1,4 +1,4 @@
-#![feature(box_patterns)]
+#![feature(deref_patterns)]
 #![allow(clippy::result_large_err)]
 
 #[cfg(test)]

@@ -12,6 +12,7 @@ mod combinatorics;
 mod namespace;
 pub use namespace::{GB_GENERATED_NAME_PREFIX, IdealNamespace};
 
+#[allow(clippy::module_inception)]
 mod ideal;
 pub use ideal::Ideal;
 

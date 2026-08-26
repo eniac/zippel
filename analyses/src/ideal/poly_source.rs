@@ -430,6 +430,7 @@ impl<C: ArkConfig> PolySource<C> {
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_range_loop)]
 mod tests {
     use super::super::Ideal;
     use super::super::IdealBuilder;

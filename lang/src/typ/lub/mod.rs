@@ -388,7 +388,7 @@ impl Lub for CTyp {
                 ma.max(mb).clone(),
             )),
             // [A; N] == [B; M]
-            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m => Ok(CTyp::vec(
+            (CTyp::Vec(a, n), CTyp::Vec(b, m)) if n == m => Ok(CTyp::vec(
                 &CTyp::lub_equ(&a.node, &b.node, ctx)
                     .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
                 n.node,
@@ -455,7 +455,7 @@ impl Lub for CTyp {
                 ma.max(mb).clone(),
             )),
             // Vec<A> + Vec<B> = Vec<C> where C = A = B
-            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
+            (CTyp::Vec(a, n), CTyp::Vec(b, m)) => {
                 if n == m {
                     Ok(CTyp::vec(
                         &CTyp::lub_add(a, b, ctx)
@@ -541,7 +541,7 @@ impl Lub for CTyp {
                 ma.max(mb).clone(),
             )),
             // Vec<A> - Vec<B> = Vec<C> where C = A = B
-            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
+            (CTyp::Vec(a, n), CTyp::Vec(b, m)) => {
                 if n == m {
                     Ok(CTyp::vec(
                         &CTyp::lub_sub(a, b, ctx)
@@ -619,7 +619,7 @@ impl Lub for CTyp {
                 ))
             }
             // Vec<A> * Vec<B> = Vec<C> where C = A = B
-            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
+            (CTyp::Vec(a, n), CTyp::Vec(b, m)) => {
                 if n == m {
                     Ok(CTyp::vec(
                         &CTyp::lub_mul(a, b, ctx)
@@ -631,7 +631,7 @@ impl Lub for CTyp {
                 }
             }
             // Vec<A> * c = Vec<A>
-            (a, CTyp::Vec(box b, n)) | (CTyp::Vec(box b, n), a) => Ok(CTyp::vec(
+            (a, CTyp::Vec(b, n)) | (CTyp::Vec(b, n), a) => Ok(CTyp::vec(
                 &CTyp::lub_mul(a, b, ctx).map_err(|e| LubError::next(LubError::mul(&x, &y), e))?,
                 n.node,
             )),
@@ -677,7 +677,7 @@ impl Lub for CTyp {
                 Tid::lub_pair(a, b, ctx).map_err(|e| LubError::next(LubError::pair(&x, &y), e))?,
             )),
             // Vec<A> * Vec<B> = Vec<C> where C = A = B
-            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
+            (CTyp::Vec(a, n), CTyp::Vec(b, m)) => {
                 if n == m {
                     Ok(CTyp::vec(
                         &CTyp::lub_pair(a, b, ctx)
@@ -689,7 +689,7 @@ impl Lub for CTyp {
                 }
             }
             // Vec<A> * c = Vec<A>
-            (a, CTyp::Vec(box b, n)) | (CTyp::Vec(box b, n), a) => Ok(CTyp::vec(
+            (a, CTyp::Vec(b, n)) | (CTyp::Vec(b, n), a) => Ok(CTyp::vec(
                 &CTyp::lub_pair(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::pair(&x, &y), e))?,
                 n.node,
@@ -724,7 +724,7 @@ impl Lub for CTyp {
                 ))
             }
             // Vec<A> / Vec<B> = Vec<C> where C = A = B
-            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
+            (CTyp::Vec(a, n), CTyp::Vec(b, m)) => {
                 if n == m {
                     Ok(CTyp::vec(
                         &CTyp::lub_div(a, b, ctx)
@@ -736,7 +736,7 @@ impl Lub for CTyp {
                 }
             }
             // Vec<A> / c or c / Vec<A> = Vec<lub_div(A, c)>
-            (CTyp::Vec(box a, n), b) | (b, CTyp::Vec(box a, n)) => Ok(CTyp::vec(
+            (CTyp::Vec(a, n), b) | (b, CTyp::Vec(a, n)) => Ok(CTyp::vec(
                 &CTyp::lub_div(a, b, ctx).map_err(|e| LubError::next(LubError::div(&x, &y), e))?,
                 n.node,
             )),
@@ -780,7 +780,7 @@ impl Lub for CTyp {
                 ))
             }
             // Vec<A> % Vec<B> = Vec<C> where C = A = B
-            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
+            (CTyp::Vec(a, n), CTyp::Vec(b, m)) => {
                 if n == m {
                     Ok(CTyp::vec(
                         &CTyp::lub_rem(a, b, ctx)
@@ -792,7 +792,7 @@ impl Lub for CTyp {
                 }
             }
             // Vec<B> % A or A % Vec<B> = Vec<lub_rem(A, B)>
-            (CTyp::Vec(box b, n), a) | (a, CTyp::Vec(box b, n)) => Ok(CTyp::vec(
+            (CTyp::Vec(b, n), a) | (a, CTyp::Vec(b, n)) => Ok(CTyp::vec(
                 &CTyp::lub_rem(a, b, ctx).map_err(|e| LubError::next(LubError::rem(&x, &y), e))?,
                 n.node,
             )),
@@ -819,7 +819,7 @@ impl Lub for CTyp {
                 }
             }
             // Vec<A> ^ Vec<B> = Vec<C>
-            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
+            (CTyp::Vec(a, n), CTyp::Vec(b, m)) => {
                 if n == m {
                     Ok(CTyp::vec(
                         &CTyp::lub_pow(a, b, ctx)
@@ -831,7 +831,7 @@ impl Lub for CTyp {
                 }
             }
             // Vec<B> ^ A or A ^ Vec<B> = Vec<lub_pow(B, A)>
-            (CTyp::Vec(box a, n), b) | (b, CTyp::Vec(box a, n)) => Ok(CTyp::vec(
+            (CTyp::Vec(a, n), b) | (b, CTyp::Vec(a, n)) => Ok(CTyp::vec(
                 &CTyp::lub_pow(a, b, ctx).map_err(|e| LubError::next(LubError::pow(&x, &y), e))?,
                 n.node,
             )),
@@ -855,7 +855,7 @@ impl Lub for CTyp {
             // dot(VecG1, VecG2) -> GT works because lub_mul(G1, G2)
             // resolves the pairing kind rule, and dot(VecG1, VecScalar) -> G1
             // works because lub_mul(G1, Scalar) = G1 (scalar multiplication).
-            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
+            (CTyp::Vec(a, n), CTyp::Vec(b, m)) => {
                 if n == m {
                     Ok(CTyp::lub_mul(a, b, ctx)
                         .map_err(|e| LubError::next(LubError::dot(&x, &y), e))?)
@@ -873,7 +873,7 @@ impl Lub for CTyp {
     fn lub_concat(ta: &Self, tb: &Self, kctx: &Self::Context) -> Result<Self, LubError> {
         match (ta, tb) {
             // Vec<A> ++ Vec<B> = Vec<C> if A = B = C
-            (CTyp::Vec(box a, x), CTyp::Vec(box b, y)) => {
+            (CTyp::Vec(a, x), CTyp::Vec(b, y)) => {
                 // Try to concatenate them first
                 if let Ok(t) = CTyp::lub_equ(a, b, kctx) {
                     Ok(CTyp::vec(
@@ -901,7 +901,7 @@ impl Lub for CTyp {
             // `coef(poly)` to extract a coefficient vector first, then
             // concatenate as Vec ++ Vec.
             // Vec<A, n> ++ B = Vec<C, n+1> if A = B = C
-            (CTyp::Vec(box a, n), b) | (b, CTyp::Vec(box a, n)) => {
+            (CTyp::Vec(a, n), b) | (b, CTyp::Vec(a, n)) => {
                 // Type [a] and [b] should be the same ([t])
                 let t = CTyp::lub_equ(a, b, kctx)
                     .map_err(|e| LubError::next(LubError::concat(ta, tb), e))?;

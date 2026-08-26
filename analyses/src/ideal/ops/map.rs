@@ -193,7 +193,7 @@ fn explode_domain<C: ArkConfig + HasOpFactory>(
     loop_vals: &[Option<Value<C>>],
 ) -> Option<Vec<(Var, Option<Value<C>>)>> {
     let (elem_t, n) = match domain.typ() {
-        ATyp::Vec(box e, n) => (e, n),
+        ATyp::Vec(deref!(e), n) => (e, n),
         _ => return None,
     };
     let elem_values: Vec<Option<Value<C>>> = match domain.get() {

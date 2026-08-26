@@ -115,7 +115,7 @@ impl ATyp {
     /// rule in `docs/poly-encoding.md`.
     pub fn into_vec(self) -> (ATyp, usize) {
         match self {
-            ATyp::Vec(box b, n) => (b, n),
+            ATyp::Vec(deref!(b), n) => (b, n),
             ATyp::Uni(m) => (
                 ATyp::scalar(),
                 m.checked_add(1).expect("into_vec: m + 1 overflow"),
@@ -174,7 +174,7 @@ impl ATyp {
 
     pub fn into_inner(&self) -> ATyp {
         match self {
-            ATyp::Vec(box t, _) => t.into_inner(),
+            ATyp::Vec(deref!(t), _) => t.into_inner(),
             ATyp::Uni(_) => ATyp::scalar(),
             base => base.clone(),
         }
@@ -235,7 +235,7 @@ impl ATyp {
                     CKind::Range(_) | CKind::SizeVar => unreachable!(),
                 }
             }
-            CTyp::Vec(box t, n) => Some(ATyp::Vec(Box::new(ATyp::from_ctyp(t, kctx)?), n.node)),
+            CTyp::Vec(deref!(t), n) => Some(ATyp::Vec(Box::new(ATyp::from_ctyp(t, kctx)?), n.node)),
             // CTyp::Poly(F, num_vars, max_degree) maps by convention:
             //   (1, m)  → Uni(m)   — univariate, m = max degree
             //   (n, 1)  → Mle(n)   — multilinear, n = num variables (n≥2)
@@ -403,7 +403,7 @@ impl Lub for ATyp {
             (ATyp::Base(a), ATyp::Base(b)) => ABase::lub_equ(a, b, &Nothing)
                 .map(ATyp::Base)
                 .map_err(|e| LubError::next(LubError::equ(&a, &b), e)),
-            (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) if n1 == n2 => {
+            (ATyp::Vec(deref!(t1), n1), ATyp::Vec(deref!(t2), n2)) if n1 == n2 => {
                 let t = ATyp::lub_equ(t1, t2, &Nothing)
                     .map_err(|e| LubError::next(LubError::equ(&a, &b), e))?;
                 Ok(ATyp::vec(&t, *n1))
@@ -432,13 +432,13 @@ impl Lub for ATyp {
                 .map(ATyp::Base)
                 .map_err(|e| LubError::next(LubError::add(&a, &b), e)),
 
-            (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) if n1 == n2 => {
+            (ATyp::Vec(deref!(t1), n1), ATyp::Vec(deref!(t2), n2)) if n1 == n2 => {
                 let t = ATyp::lub_add(t1, t2, ctx)
                     .map_err(|e| LubError::next(LubError::add(&a, &b), e))?;
                 Ok(ATyp::vec(&t, *n1))
             }
             // Vec<A> + c = Vec<lub_add(A, c)> — scalar/poly broadcast.
-            (ATyp::Vec(box t1, n), b) | (b, ATyp::Vec(box t1, n))
+            (ATyp::Vec(deref!(t1), n), b) | (b, ATyp::Vec(deref!(t1), n))
                 if !matches!(b, ATyp::Vec(_, _)) =>
             {
                 let t = ATyp::lub_add(t1, b, ctx)
@@ -478,19 +478,19 @@ impl Lub for ATyp {
             (ATyp::Base(a), ATyp::Base(b)) => ABase::lub_sub(a, b, ctx)
                 .map(ATyp::Base)
                 .map_err(|e| LubError::next(LubError::sub(&a, &b), e)),
-            (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) if n1 == n2 => {
+            (ATyp::Vec(deref!(t1), n1), ATyp::Vec(deref!(t2), n2)) if n1 == n2 => {
                 let t = ATyp::lub_sub(t1, t2, ctx)
                     .map_err(|e| LubError::next(LubError::sub(&a, &b), e))?;
                 Ok(ATyp::vec(&t, *n1))
             }
             // Vec<A> - c = Vec<lub_sub(A, c)> — broadcast.
-            (ATyp::Vec(box t1, n), b) if !matches!(b, ATyp::Vec(_, _)) => {
+            (ATyp::Vec(deref!(t1), n), b) if !matches!(b, ATyp::Vec(_, _)) => {
                 let t = ATyp::lub_sub(t1, b, ctx)
                     .map_err(|e| LubError::next(LubError::sub(&a, &b), e))?;
                 Ok(ATyp::vec(&t, *n))
             }
             // c - Vec<A> = Vec<lub_sub(c, A)> — broadcast.
-            (a, ATyp::Vec(box t2, n)) if !matches!(a, ATyp::Vec(_, _)) => {
+            (a, ATyp::Vec(deref!(t2), n)) if !matches!(a, ATyp::Vec(_, _)) => {
                 let t = ATyp::lub_sub(a, t2, ctx)
                     .map_err(|e| LubError::next(LubError::sub(&a, &b), e))?;
                 Ok(ATyp::vec(&t, *n))
@@ -561,12 +561,12 @@ impl Lub for ATyp {
             | (ATyp::Base(ABase::Scalar), ATyp::Mle(n1)) => Ok(ATyp::mle(*n1)),
             (ATyp::VPoly(m, n), ATyp::Base(ABase::Scalar))
             | (ATyp::Base(ABase::Scalar), ATyp::VPoly(m, n)) => Ok(ATyp::vpoly(*m, *n)),
-            (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) if n1 == n2 => {
+            (ATyp::Vec(deref!(t1), n1), ATyp::Vec(deref!(t2), n2)) if n1 == n2 => {
                 let t = ATyp::lub_mul(t1, t2, ctx)
                     .map_err(|e| LubError::next(LubError::mul(&a, &a), e))?;
                 Ok(ATyp::vec(&t, *n1))
             }
-            (ATyp::Vec(box t1, n1), b) | (b, ATyp::Vec(box t1, n1)) => {
+            (ATyp::Vec(deref!(t1), n1), b) | (b, ATyp::Vec(deref!(t1), n1)) => {
                 let t = ATyp::lub_mul(t1, b, ctx)
                     .map_err(|e| LubError::next(LubError::mul(&a, &b), e))?;
                 Ok(ATyp::vec(&t, *n1))
@@ -582,14 +582,14 @@ impl Lub for ATyp {
                 .map(ATyp::Base)
                 .map_err(|e| LubError::next(LubError::pair(&a, &b), e)),
             // e(Vec<G1>, Vec<G2>) * e(Vec<G2>, Vec<G1>) = Vec<GT>
-            (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) if n1 == n2 => {
+            (ATyp::Vec(deref!(t1), n1), ATyp::Vec(deref!(t2), n2)) if n1 == n2 => {
                 let t = ATyp::lub_pair(t1, t2, ctx)
                     .map_err(|e| LubError::next(LubError::pair(&a, &b), e))?;
                 Ok(ATyp::vec(&t, *n1))
             }
             // Vec<A> * c = Vec<lub_pair(A, c)> — scalar broadcast, matching
             // CTyp::lub_pair.
-            (ATyp::Vec(box t1, n), b) | (b, ATyp::Vec(box t1, n))
+            (ATyp::Vec(deref!(t1), n), b) | (b, ATyp::Vec(deref!(t1), n))
                 if !matches!(b, ATyp::Vec(_, _)) =>
             {
                 let t = ATyp::lub_pair(t1, b, ctx)
@@ -613,20 +613,20 @@ impl Lub for ATyp {
             (ATyp::VPoly(m, n), ATyp::Base(ABase::Scalar | ABase::Fin(_))) => {
                 Ok(ATyp::vpoly(*m, *n))
             }
-            (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) if n1 == n2 => {
+            (ATyp::Vec(deref!(t1), n1), ATyp::Vec(deref!(t2), n2)) if n1 == n2 => {
                 let t = ATyp::lub_div(t1, t2, ctx)
                     .map_err(|e| LubError::next(LubError::div(&x, &y), e))?;
                 Ok(ATyp::vec(&t, *n1))
             }
-            (ATyp::Vec(box t1, n1), b) => {
+            (ATyp::Vec(deref!(t1), n1), b) => {
                 let t = ATyp::lub_div(t1, b, ctx)
                     .map_err(|e| LubError::next(LubError::div(&x, &y), e))?;
                 Ok(ATyp::vec(&t, *n1))
             }
-            (ATyp::Base(ABase::Fin(_)), ATyp::Vec(box ATyp::Base(ABase::Fin(_)), _)) => {
+            (ATyp::Base(ABase::Fin(_)), ATyp::Vec(ATyp::Base(ABase::Fin(_)), _)) => {
                 Err(LubError::div(&x, &y))
             }
-            (a, ATyp::Vec(box t2, n2)) => {
+            (a, ATyp::Vec(deref!(t2), n2)) => {
                 let t = ATyp::lub_div(a, t2, ctx)
                     .map_err(|e| LubError::next(LubError::div(&x, &y), e))?;
                 Ok(ATyp::vec(&t, *n2))
@@ -641,7 +641,7 @@ impl Lub for ATyp {
                 .map(ATyp::Base)
                 .map_err(|e| LubError::next(LubError::rem(&x, &y), e)),
             // Vec<A> % Vec<B> = Vec<C> where C = A = B
-            (ATyp::Vec(box a, n), ATyp::Vec(box b, m)) if n == m => Ok(ATyp::vec(
+            (ATyp::Vec(deref!(a), n), ATyp::Vec(deref!(b), m)) if n == m => Ok(ATyp::vec(
                 &ATyp::lub_rem(a, b, ctx).map_err(|e| LubError::next(LubError::rem(&x, &y), e))?,
                 *n,
             )),
@@ -651,7 +651,7 @@ impl Lub for ATyp {
             )),
             // Vec<A> % C = Vec<lub_rem(A, C)>; scalar-left vector remainder
             // is not Groebner-lowerable and falls through to an error.
-            (ATyp::Vec(box t1, n1), b) => {
+            (ATyp::Vec(deref!(t1), n1), b) => {
                 let t = ATyp::lub_rem(t1, b, ctx)
                     .map_err(|e| LubError::next(LubError::rem(&x, &y), e))?;
                 Ok(ATyp::vec(&t, *n1))
@@ -672,7 +672,7 @@ impl Lub for ATyp {
             )),
             // Vec<C> ^ C. Vector exponents and scalar-left vector
             // exponentiation are not runtime-supported.
-            (ATyp::Vec(box t1, n1), b) => {
+            (ATyp::Vec(deref!(t1), n1), b) => {
                 let t = ATyp::lub_pow(t1, b, ctx)
                     .map_err(|e| LubError::next(LubError::pow(&x, &y), e))?;
                 Ok(ATyp::vec(&t, *n1))
@@ -686,15 +686,13 @@ impl Lub for ATyp {
             (ATyp::Base(a), ATyp::Base(b)) => ABase::lub_dot(a, b, ctx)
                 .map(ATyp::Base)
                 .map_err(|e| LubError::next(LubError::dot(&x, &y), e)),
-            (
-                ATyp::Vec(box ATyp::Base(ABase::G1), n1),
-                ATyp::Vec(box ATyp::Base(ABase::G2), n2),
-            )
-            | (
-                ATyp::Vec(box ATyp::Base(ABase::G2), n1),
-                ATyp::Vec(box ATyp::Base(ABase::G1), n2),
-            ) if n1 == n2 => Ok(ATyp::gt()),
-            (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) if n1 == n2 => {
+            (ATyp::Vec(ATyp::Base(ABase::G1), n1), ATyp::Vec(ATyp::Base(ABase::G2), n2))
+            | (ATyp::Vec(ATyp::Base(ABase::G2), n1), ATyp::Vec(ATyp::Base(ABase::G1), n2))
+                if n1 == n2 =>
+            {
+                Ok(ATyp::gt())
+            }
+            (ATyp::Vec(deref!(t1), n1), ATyp::Vec(deref!(t2), n2)) if n1 == n2 => {
                 let t = ATyp::lub_mul(t1, t2, ctx)
                     .map_err(|e| LubError::next(LubError::dot(&x, &y), e))?;
                 Ok(t)
@@ -705,7 +703,7 @@ impl Lub for ATyp {
 
     fn lub_concat(x: &Self, y: &Self, _: &Self::Context) -> Result<Self, LubError> {
         match (x, y) {
-            (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) => {
+            (ATyp::Vec(deref!(t1), n1), ATyp::Vec(deref!(t2), n2)) => {
                 let t = ATyp::lub_equ(t1, t2, &Nothing)
                     .map_err(|e| LubError::next(LubError::concat(&x, &y), e))?;
                 Ok(ATyp::vec(
@@ -714,7 +712,7 @@ impl Lub for ATyp {
                         .ok_or_else(|| LubError::concat(&x, &y))?,
                 ))
             }
-            (ATyp::Vec(box t1, n1), b) => {
+            (ATyp::Vec(deref!(t1), n1), b) => {
                 let t = ATyp::lub_equ(t1, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::concat(&x, &y), e))?;
                 Ok(ATyp::vec(
@@ -722,7 +720,7 @@ impl Lub for ATyp {
                     n1.checked_add(1).ok_or_else(|| LubError::concat(&x, &y))?,
                 ))
             }
-            (a, ATyp::Vec(box t2, n2)) => {
+            (a, ATyp::Vec(deref!(t2), n2)) => {
                 let t = ATyp::lub_equ(a, t2, &Nothing)
                     .map_err(|e| LubError::next(LubError::concat(&x, &y), e))?;
                 Ok(ATyp::vec(

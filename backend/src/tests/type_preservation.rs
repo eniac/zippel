@@ -57,16 +57,16 @@ pub fn has_atyp<C: ArkConfig>(v: &Value<C>, t: &ATyp) -> bool {
         (Value::Bool(_), ATyp::Base(ABase::Bool)) => true,
 
         // --- vectors (specialized variants) ---
-        (Value::VecScalar(xs), ATyp::Vec(box ATyp::Base(ABase::Scalar), n)) => xs.len() == *n,
-        (Value::VecG1(xs), ATyp::Vec(box ATyp::Base(ABase::G1), n)) => xs.len() == *n,
-        (Value::VecG1Affine(xs), ATyp::Vec(box ATyp::Base(ABase::G1), n)) => xs.len() == *n,
-        (Value::VecG2(xs), ATyp::Vec(box ATyp::Base(ABase::G2), n)) => xs.len() == *n,
-        (Value::VecG2Affine(xs), ATyp::Vec(box ATyp::Base(ABase::G2), n)) => xs.len() == *n,
-        (Value::VecGT(xs), ATyp::Vec(box ATyp::Base(ABase::GT), n)) => xs.len() == *n,
-        (Value::VecIndex(xs), ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n)) => {
+        (Value::VecScalar(xs), ATyp::Vec(ATyp::Base(ABase::Scalar), n)) => xs.len() == *n,
+        (Value::VecG1(xs), ATyp::Vec(ATyp::Base(ABase::G1), n)) => xs.len() == *n,
+        (Value::VecG1Affine(xs), ATyp::Vec(ATyp::Base(ABase::G1), n)) => xs.len() == *n,
+        (Value::VecG2(xs), ATyp::Vec(ATyp::Base(ABase::G2), n)) => xs.len() == *n,
+        (Value::VecG2Affine(xs), ATyp::Vec(ATyp::Base(ABase::G2), n)) => xs.len() == *n,
+        (Value::VecGT(xs), ATyp::Vec(ATyp::Base(ABase::GT), n)) => xs.len() == *n,
+        (Value::VecIndex(xs), ATyp::Vec(ATyp::Base(ABase::Fin(r)), n)) => {
             xs.len() == *n && xs.iter().all(|i| r.contains(*i))
         }
-        (Value::Vec(xs), ATyp::Vec(box inner, n)) => {
+        (Value::Vec(xs), ATyp::Vec(deref!(inner), n)) => {
             xs.len() == *n && xs.iter().all(|x| has_atyp(x, inner))
         }
 

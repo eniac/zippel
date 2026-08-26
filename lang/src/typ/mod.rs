@@ -126,7 +126,7 @@ impl<T, N> Typ<T, N> {
     }
     pub fn into_vec(self) -> (Spanned<Self>, Spanned<N>) {
         match self {
-            Typ::Vec(box t, n) => (t, n),
+            Typ::Vec(deref!(t), n) => (t, n),
             _ => unreachable!(),
         }
     }
@@ -205,7 +205,7 @@ impl<T: Clone, N: Clone> ToTraversal1<T> for Typ<T, N> {
         match self {
             Typ::Poly(b, m, n) => Ok(Typ::Poly(f(b)?, m, n)),
             Typ::Base(b) => Ok(Typ::Base(f(b)?)),
-            Typ::Vec(box b, n) => Ok(Typ::Vec(Box::new(b.traverse1(f)?), n)),
+            Typ::Vec(deref!(b), n) => Ok(Typ::Vec(Box::new(b.traverse1(f)?), n)),
             Typ::Fin(r) => Ok(Typ::Fin(r)),
             Typ::Unit => Ok(Typ::Unit),
             Typ::Bool => Ok(Typ::Bool),
@@ -233,7 +233,7 @@ impl<T: Clone, N: Clone> ToTraversal2<N> for Typ<T, N> {
                 Spanned::new(f(n.node)?, n.span),
             )),
             Typ::Base(b) => Ok(Typ::Base(b)),
-            Typ::Vec(box b, n) => Ok(Typ::Vec(
+            Typ::Vec(b, n) => Ok(Typ::Vec(
                 Box::new(b.traverse2(f)?),
                 Spanned::new(f(n.node)?, n.span),
             )),
@@ -258,7 +258,7 @@ impl<T: Clone, N: Clone> RangeTraversal<N> for Typ<T, N> {
     ) -> Result<Self, E> {
         match self {
             Typ::Fin(r) => Ok(Typ::Fin(f(r)?)),
-            Typ::Vec(box t, n) => Ok(Typ::Vec(Box::new(t.range_traverse(f)?), n)),
+            Typ::Vec(t, n) => Ok(Typ::Vec(Box::new(t.range_traverse(f)?), n)),
             Typ::Record(fields) => {
                 let pairs: Vec<_> = fields
                     .into_iter()
@@ -331,7 +331,7 @@ impl<N: Clone> TypeInline<N> for GTyp<N> {
                     self
                 }
             }
-            Typ::Vec(box t, n) => Typ::Vec(Box::new(t.type_inline(ctx)), n),
+            Typ::Vec(t, n) => Typ::Vec(Box::new(t.type_inline(ctx)), n),
             Typ::Poly(b, m, n) => Typ::Poly(b, m, n),
             Typ::Fin(r) => Typ::Fin(r),
             Typ::Unit => Typ::Unit,
@@ -370,7 +370,7 @@ where
                 allocator.text(">"),
             ]),
             Typ::Base(base) => base.pretty(allocator),
-            Typ::Vec(box t, n) => allocator.concat([
+            Typ::Vec(t, n) => allocator.concat([
                 allocator.text("["),
                 t.pretty(allocator),
                 allocator.text("; "),

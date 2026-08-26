@@ -1,4 +1,4 @@
-#![feature(box_patterns)]
+#![feature(deref_patterns)]
 #![allow(clippy::result_large_err)]
 
 // In #[cfg(test)] builds, alias the crate as `graph` so that test-only
@@ -1344,25 +1344,25 @@ impl<C: HasOpFactory> UDag<C> {
                     )))
                 }
             }
-            CExp::Bin(BinOp::Add, box a, box b) => {
+            CExp::Bin(BinOp::Add, deref!(a), deref!(b)) => {
                 let pa = Self::exp_to_poly_variant(a, vars, var_map)?;
                 let pb = Self::exp_to_poly_variant(b, vars, var_map)?;
                 pa.poly_add(&pb)
                     .map_err(|e| GraphError::NonPolynomialFun(format!("Add failed: {}", e)))
             }
-            CExp::Bin(BinOp::Sub, box a, box b) => {
+            CExp::Bin(BinOp::Sub, deref!(a), deref!(b)) => {
                 let pa = Self::exp_to_poly_variant(a, vars, var_map)?;
                 let pb = Self::exp_to_poly_variant(b, vars, var_map)?;
                 pa.poly_sub(&pb)
                     .map_err(|e| GraphError::NonPolynomialFun(format!("Sub failed: {}", e)))
             }
-            CExp::Bin(BinOp::Mul, box a, box b) => {
+            CExp::Bin(BinOp::Mul, deref!(a), deref!(b)) => {
                 let pa = Self::exp_to_poly_variant(a, vars, var_map)?;
                 let pb = Self::exp_to_poly_variant(b, vars, var_map)?;
                 pa.poly_mul(&pb)
                     .map_err(|e| GraphError::NonPolynomialFun(format!("Mul failed: {}", e)))
             }
-            CExp::Neg(box a) => {
+            CExp::Neg(deref!(a)) => {
                 let p = Self::exp_to_poly_variant(a, vars, var_map)?;
                 PolyVariant::from_scalar(C::F::zero())
                     .poly_sub(&p)
@@ -1538,7 +1538,7 @@ impl<C: HasOpFactory> UDag<C> {
             CExp::Map(body, binder, domain) => {
                 let domain_typ = domain.infer(kctx, &fctx.keys(), vctx)?;
                 let (elem_ctyp, _) = match domain_typ {
-                    CTyp::Vec(box e, n) => (e, n),
+                    CTyp::Vec(deref!(e), n) => (e, n),
                     _ => return Ok(None),
                 };
                 let Some(binder_atyp) = ATyp::from_ctyp(&elem_ctyp, kctx) else {
@@ -1759,7 +1759,7 @@ impl<C: HasOpFactory> UDag<C> {
         let (body, binder, domain) = Self::compose_nested_map_domain(body, binder, domain);
         let domain_typ = domain.infer(kctx, &fctx.keys(), vctx)?;
         let (elem_ctyp, _) = match domain_typ {
-            CTyp::Vec(box e, n) => (e, n),
+            CTyp::Vec(deref!(e), n) => (e, n),
             _ => return Ok(None),
         };
         let Some(binder_atyp) = ATyp::from_ctyp(&elem_ctyp, kctx) else {
@@ -1844,7 +1844,6 @@ impl<C: HasOpFactory> UDag<C> {
     }
 
     /// Add an expression [exp] to the graph.
-    #[allow(clippy::too_many_arguments)]
     /// Convert a `CExp` to a `GOp` while creating the graph.
     ///
     /// # Invariant
@@ -1889,7 +1888,7 @@ impl<C: HasOpFactory> UDag<C> {
                 // Variables are edges, no new nodes are added
                 CExp::Var(id) => return Self::op_from_var(&id, &vars),
 
-                CExp::Evaluate(box p, selector, opt_points) => {
+                CExp::Evaluate(deref!(p), selector, opt_points) => {
                     let vp =
                         self.add_exp(p.clone(), transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     match (selector, opt_points) {
@@ -1910,7 +1909,7 @@ impl<C: HasOpFactory> UDag<C> {
                             ));
                         }
                         // Binary form: eval(p, points) -> Op::Evaluate(p, None, Some(points)).
-                        (None, Some(box x)) => {
+                        (None, Some(deref!(x))) => {
                             let vx =
                                 self.add_exp(x, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                             let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
@@ -1922,7 +1921,7 @@ impl<C: HasOpFactory> UDag<C> {
                             return Ok(self.materialize(GOp::evaluate(vp, vx), edge_type, atyp));
                         }
                         // Selected form: eval<range>(p, fixed).
-                        (Some(range), Some(box fixed)) => {
+                        (Some(range), Some(deref!(fixed))) => {
                             let vfixed =
                                 self.add_exp(fixed, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                             let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
@@ -1947,7 +1946,7 @@ impl<C: HasOpFactory> UDag<C> {
                     }
                 }
 
-                CExp::Poly(box v) => {
+                CExp::Poly(deref!(v)) => {
                     let child = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
                     let npoly = self.add_node(Node::poly(&child));
@@ -1965,7 +1964,7 @@ impl<C: HasOpFactory> UDag<C> {
                     ));
                 }
 
-                CExp::Coef(box v) => {
+                CExp::Coef(deref!(v)) => {
                     let child = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
                     let npoly = self.add_node(Node::coef(&child));
@@ -1985,7 +1984,7 @@ impl<C: HasOpFactory> UDag<C> {
 
                 // Lower CExp::Interpolate(opt_points, evals) into either Op::Ifft (unary)
                 // or Op::Interpolate (binary) — monomorphic per variant.
-                CExp::Interpolate(points_opt, box evals) => {
+                CExp::Interpolate(points_opt, deref!(evals)) => {
                     let evals_op =
                         self.add_exp(evals, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     match points_opt {
@@ -2005,7 +2004,7 @@ impl<C: HasOpFactory> UDag<C> {
                             ));
                         }
                         // Binary: interpolate(pts, evs) → Op::Interpolate(pts, evs)
-                        Some(box p) => {
+                        Some(deref!(p)) => {
                             let points_op =
                                 self.add_exp(p, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                             let ninterp = self.add_node(Node::interpolate(&points_op, &evals_op));
@@ -2039,8 +2038,8 @@ impl<C: HasOpFactory> UDag<C> {
                 }
 
                 // MLE is a noop?
-                // CExp::Mle(box inner) => self.add_exp(inner, transcr, edge_type, kctx, fctx, &vctx, &vars),
-                CExp::Mle(box v) => {
+                // CExp::Mle(deref!(inner)) => self.add_exp(inner, transcr, edge_type, kctx, fctx, &vctx, &vars),
+                CExp::Mle(deref!(v)) => {
                     let child = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
                     let nmle = self.add_node(Node::mle(&child));
@@ -2059,7 +2058,7 @@ impl<C: HasOpFactory> UDag<C> {
                 }
 
                 // Billinear pairing
-                CExp::Pair(box a, box b) => {
+                CExp::Pair(deref!(a), deref!(b)) => {
                     let va = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     let vb = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
@@ -2074,7 +2073,7 @@ impl<C: HasOpFactory> UDag<C> {
                 }
                 // Create a new [bin] node
                 // Unary negation: lower as 0 - x
-                CExp::Neg(box a) => {
+                CExp::Neg(deref!(a)) => {
                     exp = Spanned::dummy(Exp::Bin(
                         BinOp::Sub,
                         Box::new(Spanned::dummy(Exp::Lit(0))),
@@ -2082,7 +2081,7 @@ impl<C: HasOpFactory> UDag<C> {
                     ));
                     continue;
                 }
-                CExp::Bin(op, box a, box b) => {
+                CExp::Bin(op, deref!(a), deref!(b)) => {
                     // Add children first
                     let vl = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     let vr = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
@@ -2114,7 +2113,7 @@ impl<C: HasOpFactory> UDag<C> {
                 // Create a [range] value, no new nodes added
                 CExp::Range(r) => return Ok(GOp::range(r)),
 
-                CExp::Map(box l, x, box e) => {
+                CExp::Map(deref!(l), x, deref!(e)) => {
                     let map_atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                         TypeError::next(
                             TypeError::exp(kctx, &vctx, &exp),
@@ -2181,23 +2180,23 @@ impl<C: HasOpFactory> UDag<C> {
                     return Ok(self.materialize(GOp::vec(res), edge_type, atyp));
                 }
 
-                CExp::Reduce(op, box v) => {
-                    let reduce_map = if let CExp::Map(box body, binder, box domain) = v.node.clone()
-                    {
-                        self.try_build_reduce_map(
-                            op,
-                            body.node,
-                            binder.node,
-                            domain.node,
-                            &[],
-                            kctx,
-                            fctx,
-                            &vctx,
-                            &vars,
-                        )?
-                    } else {
-                        None
-                    };
+                CExp::Reduce(op, deref!(v)) => {
+                    let reduce_map =
+                        if let CExp::Map(deref!(body), binder, deref!(domain)) = v.node.clone() {
+                            self.try_build_reduce_map(
+                                op,
+                                body.node,
+                                binder.node,
+                                domain.node,
+                                &[],
+                                kctx,
+                                fctx,
+                                &vctx,
+                                &vars,
+                            )?
+                        } else {
+                            None
+                        };
                     if let Some(rm) = reduce_map {
                         let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                             TypeError::next(
@@ -2216,7 +2215,7 @@ impl<C: HasOpFactory> UDag<C> {
                     })?;
                     return Ok(self.materialize(GOp::reduce(op, ov), edge_type, atyp));
                 }
-                CExp::Ram(box a, box b) => {
+                CExp::Ram(deref!(a), deref!(b)) => {
                     // Add children
                     let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     let ob = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
@@ -2416,7 +2415,7 @@ impl<C: HasOpFactory> UDag<C> {
                         }
                     }
                 }
-                CExp::Let(Some(id), box l, r) => {
+                CExp::Let(Some(id), deref!(l), r) => {
                     // Infer the type of [l]
                     let tl = l.infer(kctx, &fctx.keys(), &vctx)?;
                     // Add left-hand side as node
@@ -2432,25 +2431,25 @@ impl<C: HasOpFactory> UDag<C> {
                     vars.insert(&id.node, &nl);
                     // Trampoline: continue loop with r
                     match r {
-                        Some(box r) => {
+                        Some(deref!(r)) => {
                             exp = r;
                             continue;
                         }
                         None => return Ok(GOp::Value(backend::Value::Unit)),
                     }
                 }
-                CExp::Let(None, box l, r) => {
+                CExp::Let(None, deref!(l), r) => {
                     self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Trampoline: continue loop with r
                     match r {
-                        Some(box r) => {
+                        Some(deref!(r)) => {
                             exp = r;
                             continue;
                         }
                         None => return Ok(GOp::Value(backend::Value::Unit)),
                     }
                 }
-                CExp::Log(id, box l, r) => {
+                CExp::Log(id, deref!(l), r) => {
                     // Infer the type of [l]
                     let tl = l.infer(kctx, &fctx.keys(), &vctx)?;
                     // Add left-hand side as node
@@ -2501,14 +2500,14 @@ impl<C: HasOpFactory> UDag<C> {
                     vars.insert(&id.node, &transcr_op);
                     // Trampoline: continue loop with r
                     match r {
-                        Some(box r) => {
+                        Some(deref!(r)) => {
                             exp = r;
                             continue;
                         }
                         None => return Ok(GOp::Value(backend::Value::Unit)),
                     }
                 }
-                CExp::Assert(box exp) => {
+                CExp::Assert(deref!(exp)) => {
                     let oa = self.add_exp(exp, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Add new node
                     let nassert = self.add_node(Node::assert(&oa));
@@ -2518,7 +2517,7 @@ impl<C: HasOpFactory> UDag<C> {
                     // Returns Unit value; sequencing via Let(None, ...) discards it.
                     return Ok(GOp::Value(backend::Value::Unit));
                 }
-                CExp::Verify(box exp) => {
+                CExp::Verify(deref!(exp)) => {
                     let oa = self.add_exp(exp, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Add new node
                     let nverify = self.add_node(Node::verify(&oa));
@@ -2528,7 +2527,7 @@ impl<C: HasOpFactory> UDag<C> {
                     // Returns Unit value; sequencing via Let(None, ...) discards it.
                     return Ok(GOp::Value(backend::Value::Unit));
                 }
-                CExp::Fun(fun_vars, box body) => {
+                CExp::Fun(fun_vars, deref!(body)) => {
                     // Convert the Fun expression body to a PolyVariant
                     let fun_vars_vids: Vec<Vid> = fun_vars.iter().map(|v| v.node.clone()).collect();
                     let var_map: HashMap<Vid, usize> = fun_vars_vids
@@ -2569,7 +2568,7 @@ impl<C: HasOpFactory> UDag<C> {
                     })?;
                     return Ok(self.materialize(GOp::Record(field_ops), edge_type, atyp));
                 }
-                CExp::Proj(box record_exp, field_name) => {
+                CExp::Proj(deref!(record_exp), field_name) => {
                     // For projection, we need to extract the field from the record
                     // Check if the record expression is a Record literal
                     return match &record_exp.node {
@@ -2721,7 +2720,7 @@ impl<C: HasOpFactory> UDag<C> {
                         }
                     };
                 }
-                CExp::SetRecord(box record_exp, field_name, box value_exp) => {
+                CExp::SetRecord(deref!(record_exp), field_name, deref!(value_exp)) => {
                     // Build new record as expression: all fields from record_exp, with field_name replaced by value_exp
                     let record_typ = record_exp.infer(kctx, &fctx.keys(), &vctx)?;
                     let CTyp::Record(typ_fields) = &record_typ else {

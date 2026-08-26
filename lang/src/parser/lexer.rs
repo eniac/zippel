@@ -413,8 +413,7 @@ enum RawToken {
     // This prevents logos from returning Err for unknown characters,
     // letting logos handle the byte advancement internally.
     // Mapped to Token::Error in raw_to_token.
-    #[regex(r".", priority = 0)]
-    #[regex(r"\n", priority = 0)]
+    #[regex(r".|\n", priority = 0)]
     Unknown,
 }
 

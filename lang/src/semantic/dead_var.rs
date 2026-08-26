@@ -164,7 +164,7 @@ fn visit<'a>(
         Exp::Let(var, val, cont) => match var {
             Some(x) => {
                 // Execution order: val → push scope → body → pop scope.
-                if let Some(box body) = cont {
+                if let Some(body) = cont {
                     stack.push(Work::PopScope);
                     stack.push(Work::Expr(body));
                     stack.push(Work::PushScope(vec![(x.node.clone(), x.span.clone())]));
@@ -174,7 +174,7 @@ fn visit<'a>(
             None => {
                 // Sequencing: `val; body` — val is discarded in favor of body.
                 // `val` alone (no continuation) is the return value, not dead.
-                if let Some(box body) = cont {
+                if let Some(body) = cont {
                     if is_pure_no_app(val) {
                         out.push(
                             DeadComputation {
@@ -196,7 +196,7 @@ fn visit<'a>(
         // a dead computation. But x might be unused in body.
         Exp::Log(x, val, cont) => {
             // Execution order: val → push scope → body → pop scope.
-            if let Some(box body) = cont {
+            if let Some(body) = cont {
                 stack.push(Work::PopScope);
                 stack.push(Work::Expr(body));
                 stack.push(Work::PushScope(vec![(x.node.clone(), x.span.clone())]));
@@ -206,7 +206,7 @@ fn visit<'a>(
 
         // ── Map: comprehension variable scope ───────────────────────────
         // `[body for x in iter]` — x is in scope for body, not iter.
-        Exp::Map(box body, var, box iter) => {
+        Exp::Map(body, var, iter) => {
             // Execution order: iter → push scope → body → pop scope.
             stack.push(Work::PopScope);
             stack.push(Work::Expr(body));
@@ -216,7 +216,7 @@ fn visit<'a>(
 
         // ── Fun: lambda parameter scope ─────────────────────────────────
         // `fun(x, y) body` — x, y in scope for body.
-        Exp::Fun(vars, box body) => {
+        Exp::Fun(vars, body) => {
             // Execution order: push scope → body → pop scope.
             stack.push(Work::PopScope);
             stack.push(Work::Expr(body));
@@ -228,41 +228,41 @@ fn visit<'a>(
         }
 
         // ── Binary sub-expressions ──────────────────────────────────────
-        Exp::Assert(box a) | Exp::Verify(box a) => {
+        Exp::Assert(a) | Exp::Verify(a) => {
             stack.push(Work::Expr(a));
         }
-        Exp::Bin(_, box a, box b) => {
+        Exp::Bin(_, a, b) => {
             stack.push(Work::Expr(b));
             stack.push(Work::Expr(a));
         }
-        Exp::Pair(box a, box b) => {
+        Exp::Pair(a, b) => {
             stack.push(Work::Expr(b));
             stack.push(Work::Expr(a));
         }
-        Exp::Ram(box a, box b) => {
+        Exp::Ram(a, b) => {
             stack.push(Work::Expr(b));
             stack.push(Work::Expr(a));
         }
-        Exp::SetRecord(box r, _, box v) => {
+        Exp::SetRecord(r, _, v) => {
             stack.push(Work::Expr(v));
             stack.push(Work::Expr(r));
         }
 
         // ── Unary sub-expressions ───────────────────────────────────────
-        Exp::Neg(box a) | Exp::Coef(box a) | Exp::Poly(box a) | Exp::Mle(box a) => {
+        Exp::Neg(a) | Exp::Coef(a) | Exp::Poly(a) | Exp::Mle(a) => {
             stack.push(Work::Expr(a));
         }
-        Exp::Reduce(_, box a) => stack.push(Work::Expr(a)),
-        Exp::Proj(box a, _) => stack.push(Work::Expr(a)),
+        Exp::Reduce(_, a) => stack.push(Work::Expr(a)),
+        Exp::Proj(a, _) => stack.push(Work::Expr(a)),
 
         // ── Optional second sub-expression ──────────────────────────────
-        Exp::Interpolate(None, box e) => stack.push(Work::Expr(e)),
-        Exp::Interpolate(Some(box p), box e) => {
+        Exp::Interpolate(None, e) => stack.push(Work::Expr(e)),
+        Exp::Interpolate(Some(p), e) => {
             stack.push(Work::Expr(e));
             stack.push(Work::Expr(p));
         }
-        Exp::Evaluate(box p, _, None) => stack.push(Work::Expr(p)),
-        Exp::Evaluate(box p, _, Some(box x)) => {
+        Exp::Evaluate(p, _, None) => stack.push(Work::Expr(p)),
+        Exp::Evaluate(p, _, Some(x)) => {
             stack.push(Work::Expr(x));
             stack.push(Work::Expr(p));
         }
@@ -313,45 +313,42 @@ fn is_pure_no_app(exp: &Spanned<UExp>) -> bool {
             // Pure leaves
             Exp::Lit(_) | Exp::Unit | Exp::Var(_) | Exp::Range(_) => {}
             // Unary
-            Exp::Neg(box a)
-            | Exp::Coef(box a)
-            | Exp::Poly(box a)
-            | Exp::Mle(box a)
-            | Exp::Reduce(_, box a)
-            | Exp::Proj(box a, _) => stack.push(a),
+            Exp::Neg(a)
+            | Exp::Coef(a)
+            | Exp::Poly(a)
+            | Exp::Mle(a)
+            | Exp::Reduce(_, a)
+            | Exp::Proj(a, _) => stack.push(a),
             // Interpolate
-            Exp::Interpolate(None, box e) => stack.push(e),
-            Exp::Interpolate(Some(box p), box e) => {
+            Exp::Interpolate(None, e) => stack.push(e),
+            Exp::Interpolate(Some(p), e) => {
                 stack.push(e);
                 stack.push(p);
             }
             // Evaluate
-            Exp::Evaluate(box p, _, None) => stack.push(p),
-            Exp::Evaluate(box p, _, Some(box x)) => {
+            Exp::Evaluate(p, _, None) => stack.push(p),
+            Exp::Evaluate(p, _, Some(x)) => {
                 stack.push(x);
                 stack.push(p);
             }
             // Binary
-            Exp::Bin(_, box a, box b)
-            | Exp::Pair(box a, box b)
-            | Exp::Ram(box a, box b)
-            | Exp::SetRecord(box a, _, box b) => {
+            Exp::Bin(_, a, b) | Exp::Pair(a, b) | Exp::Ram(a, b) | Exp::SetRecord(a, _, b) => {
                 stack.push(b);
                 stack.push(a);
             }
             // Let: val is pure if both val and cont are pure
-            Exp::Let(_, box a, None) => stack.push(a),
-            Exp::Let(_, box a, Some(box b)) => {
+            Exp::Let(_, a, None) => stack.push(a),
+            Exp::Let(_, a, Some(b)) => {
                 stack.push(b);
                 stack.push(a);
             }
             // Map: both body and iter must be pure
-            Exp::Map(box a, _, box b) => {
+            Exp::Map(a, _, b) => {
                 stack.push(b);
                 stack.push(a);
             }
             // Fun: body must be pure
-            Exp::Fun(_, box body) => stack.push(body),
+            Exp::Fun(_, body) => stack.push(body),
             // Vec / record: all children pure
             Exp::Vec(v) => stack.extend(v.0.iter()),
             Exp::Record(fields) => stack.extend(fields.iter().map(|(_, e)| e)),

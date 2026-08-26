@@ -291,16 +291,16 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Uni(_m) => Value::Poly(VirtualPolynomial::zero_with_num_vars(1)),
             ATyp::Mle(n) => Value::Poly(VirtualPolynomial::zero_with_num_vars(*n)),
             ATyp::VPoly(n, _) => Value::Poly(VirtualPolynomial::zero_with_num_vars(*n)),
-            ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(0) => {
+            ATyp::Vec(ATyp::Base(ABase::Fin(r)), n) if r.contains(0) => {
                 Value::VecIndex(vec![0; *n])
             }
-            ATyp::Vec(box ATyp::Base(ABase::Scalar), n) => Value::VecScalar(vec![C::F::zero(); *n]),
-            ATyp::Vec(box ATyp::Base(ABase::G1), n) => Value::VecG1(vec![C::G1::zero(); *n]),
-            ATyp::Vec(box ATyp::Base(ABase::G2), n) => Value::VecG2(vec![C::G2::zero(); *n]),
-            ATyp::Vec(box ATyp::Base(ABase::GT), n) => {
+            ATyp::Vec(ATyp::Base(ABase::Scalar), n) => Value::VecScalar(vec![C::F::zero(); *n]),
+            ATyp::Vec(ATyp::Base(ABase::G1), n) => Value::VecG1(vec![C::G1::zero(); *n]),
+            ATyp::Vec(ATyp::Base(ABase::G2), n) => Value::VecG2(vec![C::G2::zero(); *n]),
+            ATyp::Vec(ATyp::Base(ABase::GT), n) => {
                 Value::VecGT(vec![PairingOutput::<C::P>::zero(); *n])
             }
-            ATyp::Vec(box vt, n) => {
+            ATyp::Vec(deref!(vt), n) => {
                 let mut v = Vec::<Value<C>>::with_capacity(*n);
                 for _ in 0..*n {
                     v.push(Value::<C>::zero(vt));
@@ -325,10 +325,8 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Base(ABase::Fin(r)) if r.contains(1) => Value::Index(1),
             ATyp::Base(ABase::Scalar) => Value::Scalar(C::FOps::one()),
             ATyp::Base(ABase::Bool) => Value::Bool(true),
-            ATyp::Vec(box ATyp::Base(ABase::Scalar), n) => {
-                Value::VecScalar(vec![C::FOps::one(); *n])
-            }
-            ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(1) => {
+            ATyp::Vec(ATyp::Base(ABase::Scalar), n) => Value::VecScalar(vec![C::FOps::one(); *n]),
+            ATyp::Vec(ATyp::Base(ABase::Fin(r)), n) if r.contains(1) => {
                 Value::VecIndex(vec![1; *n])
             }
             ATyp::Uni(_) => {
@@ -337,7 +335,7 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Mle(n) | ATyp::VPoly(n, _) => Value::Poly(
                 VirtualPolynomial::constant_with_num_vars(C::FOps::one(), *n),
             ),
-            ATyp::Vec(box vt, n) => {
+            ATyp::Vec(deref!(vt), n) => {
                 let mut v = Vec::<Value<C>>::with_capacity(*n);
                 for _ in 0..*n {
                     v.push(Value::<C>::one(vt));
@@ -2284,16 +2282,14 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Base(ABase::G1) => Value::G1(C::G1Ops::rand(rng)),
             ATyp::Base(ABase::G2) => Value::G2(C::G2Ops::rand(rng)),
             ATyp::Base(ABase::GT) => Value::GT(C::POps::rand(rng)),
-            ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) => {
+            ATyp::Vec(ATyp::Base(ABase::Fin(r)), n) => {
                 Value::VecIndex((0..*n).map(|_| r.random(rng)).collect())
             }
-            ATyp::Vec(box ATyp::Base(ABase::Scalar), n) => {
-                Value::VecScalar(C::FOps::vec_rand(rng, *n))
-            }
-            ATyp::Vec(box ATyp::Base(ABase::G1), n) => Value::VecG1(C::G1Ops::vec_rand(rng, *n)),
-            ATyp::Vec(box ATyp::Base(ABase::G2), n) => Value::VecG2(C::G2Ops::vec_rand(rng, *n)),
-            ATyp::Vec(box ATyp::Base(ABase::GT), n) => Value::VecGT(C::POps::vec_rand(rng, *n)),
-            ATyp::Vec(box t, n) => Value::Vec((0..*n).map(|_| Self::random(rng, t)).collect()),
+            ATyp::Vec(ATyp::Base(ABase::Scalar), n) => Value::VecScalar(C::FOps::vec_rand(rng, *n)),
+            ATyp::Vec(ATyp::Base(ABase::G1), n) => Value::VecG1(C::G1Ops::vec_rand(rng, *n)),
+            ATyp::Vec(ATyp::Base(ABase::G2), n) => Value::VecG2(C::G2Ops::vec_rand(rng, *n)),
+            ATyp::Vec(ATyp::Base(ABase::GT), n) => Value::VecGT(C::POps::vec_rand(rng, *n)),
+            ATyp::Vec(deref!(t), n) => Value::Vec((0..*n).map(|_| Self::random(rng, t)).collect()),
             // Univariate poly: m = max_degree, so m+1 coefficients.
             ATyp::Uni(m) => {
                 let mut coeffs = C::FOps::vec_rand(rng, *m + 1);

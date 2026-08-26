@@ -41,13 +41,13 @@ fn collect_impure_constructs(
         Exp::Log(_, _, _) => out.push((exp.span.clone(), "log".to_string())),
         Exp::Verify(_) => out.push((exp.span.clone(), "verify".to_string())),
         Exp::Assert(_) => out.push((exp.span.clone(), "assert".to_string())),
-        Exp::Let(_, box val, cont) => {
+        Exp::Let(_, val, cont) => {
             collect_impure_constructs(val, out);
             if let Some(c) = cont {
                 collect_impure_constructs(c, out);
             }
         }
-        Exp::Map(box a, _, box b) => {
+        Exp::Map(a, _, b) => {
             collect_impure_constructs(a, out);
             collect_impure_constructs(b, out);
         }
@@ -56,29 +56,29 @@ fn collect_impure_constructs(
                 collect_impure_constructs(e, out);
             }
         }
-        Exp::Bin(_, box a, box b) => {
+        Exp::Bin(_, a, b) => {
             collect_impure_constructs(a, out);
             collect_impure_constructs(b, out);
         }
-        Exp::Neg(box a) => collect_impure_constructs(a, out),
-        Exp::Pair(box a, box b) => {
+        Exp::Neg(a) => collect_impure_constructs(a, out),
+        Exp::Pair(a, b) => {
             collect_impure_constructs(a, out);
             collect_impure_constructs(b, out);
         }
-        Exp::Ram(box a, box b) => {
+        Exp::Ram(a, b) => {
             collect_impure_constructs(a, out);
             collect_impure_constructs(b, out);
         }
-        Exp::Interpolate(None, box e) => collect_impure_constructs(e, out),
-        Exp::Interpolate(Some(box p), box e) => {
+        Exp::Interpolate(None, e) => collect_impure_constructs(e, out),
+        Exp::Interpolate(Some(p), e) => {
             collect_impure_constructs(p, out);
             collect_impure_constructs(e, out);
         }
-        Exp::Coef(box p) => collect_impure_constructs(p, out),
-        Exp::Poly(box p) => collect_impure_constructs(p, out),
-        Exp::Mle(box p) => collect_impure_constructs(p, out),
-        Exp::Reduce(_, box p) => collect_impure_constructs(p, out),
-        Exp::Evaluate(box p, _, ox) => {
+        Exp::Coef(p) => collect_impure_constructs(p, out),
+        Exp::Poly(p) => collect_impure_constructs(p, out),
+        Exp::Mle(p) => collect_impure_constructs(p, out),
+        Exp::Reduce(_, p) => collect_impure_constructs(p, out),
+        Exp::Evaluate(p, _, ox) => {
             collect_impure_constructs(p, out);
             if let Some(x) = ox {
                 collect_impure_constructs(x, out);
@@ -89,13 +89,13 @@ fn collect_impure_constructs(
                 collect_impure_constructs(a, out);
             }
         }
-        Exp::Fun(_, box body) => collect_impure_constructs(body, out),
+        Exp::Fun(_, body) => collect_impure_constructs(body, out),
         Exp::Record(fields) => {
             for (_, e) in fields.iter() {
                 collect_impure_constructs(e, out);
             }
         }
-        Exp::Proj(box e, _) => collect_impure_constructs(e, out),
+        Exp::Proj(e, _) => collect_impure_constructs(e, out),
         _ => {}
     }
 }

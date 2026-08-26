@@ -128,7 +128,7 @@ impl Unify for CTyp {
                 }
             }
             // [A; N] == [B; M]
-            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
+            (CTyp::Vec(a, n), CTyp::Vec(b, m)) => {
                 if n == m {
                     Ok(CTyp::vec(
                         &CTyp::unify(&a.node, &b.node, ctx, subs)

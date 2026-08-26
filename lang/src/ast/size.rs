@@ -65,12 +65,12 @@ impl Size {
                 .get(id)
                 .map_or(Err(EvalError::VariableNotFound(id.clone())), |x| Ok(*x)),
             Size::Lit(i) => Ok(*i as usize),
-            Size::Add(box a, box b) => {
+            Size::Add(a, b) => {
                 let x = a.node.eval(ctx)?;
                 let y = b.node.eval(ctx)?;
                 Ok(x + y)
             }
-            Size::Sub(box a, box b) => {
+            Size::Sub(a, b) => {
                 let x = a.node.eval(ctx)?;
                 let y = b.node.eval(ctx)?;
                 if x < y {
@@ -82,18 +82,18 @@ impl Size {
                     Ok(x - y)
                 }
             }
-            Size::Mul(box a, box b) => {
+            Size::Mul(a, b) => {
                 let x = a.node.eval(ctx)?;
                 let y = b.node.eval(ctx)?;
                 Ok(x * y)
             }
-            Size::Div(box a, box b) => {
+            Size::Div(a, b) => {
                 let x = a.node.eval(ctx)?;
                 let y = b.node.eval(ctx)?;
                 x.checked_div(y)
                     .ok_or_else(|| EvalError::DivisionByZero(a.node.clone(), b.node.clone()))
             }
-            Size::Pow(box a, box b) => {
+            Size::Pow(a, b) => {
                 let x = a.node.eval(ctx)?;
                 let y = b.node.eval(ctx)?;
                 Ok(x.pow(y as u32))
@@ -150,19 +150,19 @@ where
         match self {
             Size::Var(id) => id.pretty(allocator),
             Size::Lit(n) => allocator.text(n.to_string()),
-            Size::Add(box a, box b) => pretty_child(a.node.clone(), 1, false, allocator)
+            Size::Add(a, b) => pretty_child(a.node.clone(), 1, false, allocator)
                 .append(allocator.text(" + "))
                 .append(pretty_child(b.node.clone(), 1, true, allocator)),
-            Size::Sub(box a, box b) => pretty_child(a.node.clone(), 1, false, allocator)
+            Size::Sub(a, b) => pretty_child(a.node.clone(), 1, false, allocator)
                 .append(allocator.text(" - "))
                 .append(pretty_child(b.node.clone(), 1, true, allocator)),
-            Size::Mul(box a, box b) => pretty_child(a.node.clone(), 2, false, allocator)
+            Size::Mul(a, b) => pretty_child(a.node.clone(), 2, false, allocator)
                 .append(allocator.text(" * "))
                 .append(pretty_child(b.node.clone(), 2, true, allocator)),
-            Size::Div(box a, box b) => pretty_child(a.node.clone(), 2, false, allocator)
+            Size::Div(a, b) => pretty_child(a.node.clone(), 2, false, allocator)
                 .append(allocator.text(" / "))
                 .append(pretty_child(b.node.clone(), 2, true, allocator)),
-            Size::Pow(box a, box b) => pretty_child(a.node.clone(), 3, false, allocator)
+            Size::Pow(a, b) => pretty_child(a.node.clone(), 3, false, allocator)
                 .append(allocator.text(" ^ "))
                 .append(pretty_child(b.node.clone(), 3, true, allocator)),
         }

@@ -31,7 +31,7 @@ pub fn reduce_op<C: ArkConfig + HasOpFactory>(
 ) {
     let v_typ = v.typ();
     let (elem_t, n) = match &v_typ {
-        ATyp::Vec(box e, n) => (e.clone(), *n),
+        ATyp::Vec(deref!(e), n) => (e.clone(), *n),
         _ => panic!("Reduce operand must be Vec; type checker guarantees this"),
     };
 

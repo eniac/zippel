@@ -163,8 +163,8 @@ fn coef_typ_from_poly(t: ATyp) -> ATyp {
         ATyp::Uni(m) => ATyp::vec(&ATyp::scalar(), m + 1),
         ATyp::Mle(n) => ATyp::vec(&ATyp::scalar(), 1usize << n),
         v @ ATyp::VPoly(_, _) => ATyp::vec(&ATyp::scalar(), v.physical_len()),
-        ATyp::Vec(box elem, n) => ATyp::vec(&elem, n), // already a vec; identity
-        other => other,                                // defensive
+        ATyp::Vec(deref!(elem), n) => ATyp::vec(&elem, n), // already a vec; identity
+        other => other,                                    // defensive
     }
 }
 
@@ -225,8 +225,8 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Pair(_, _, typ) => typ.clone(),
             Op::Ref(_, t) => t.clone(),
             Op::Ram(l, r) => match (l.typ(), r.typ()) {
-                (ATyp::Vec(box typ, _), ATyp::Base(_)) => typ,
-                (ATyp::Vec(box typ, _), ATyp::Vec(_, m)) => ATyp::vec(&typ, m),
+                (ATyp::Vec(deref!(typ), _), ATyp::Base(_)) => typ,
+                (ATyp::Vec(deref!(typ), _), ATyp::Vec(_, m)) => ATyp::vec(&typ, m),
                 (ATyp::Record(_), _) => {
                     panic!(
                         "Records do not support indexed access. Use direct field access (record.field) instead."
@@ -374,20 +374,20 @@ impl<C: ArkConfig, R> Op<C, R> {
             }
             Op::Interpolate(points, evals) => match (points.typ(), evals.typ()) {
                 (
-                    ATyp::Vec(box ATyp::Base(ABase::Scalar), m),
-                    ATyp::Vec(box ATyp::Base(ABase::Scalar), n),
+                    ATyp::Vec(ATyp::Base(ABase::Scalar), m),
+                    ATyp::Vec(ATyp::Base(ABase::Scalar), n),
                 )
                 | (
-                    ATyp::Vec(box ATyp::Base(ABase::Fin(_)), m),
-                    ATyp::Vec(box ATyp::Base(ABase::Scalar), n),
+                    ATyp::Vec(ATyp::Base(ABase::Fin(_)), m),
+                    ATyp::Vec(ATyp::Base(ABase::Scalar), n),
                 )
                 | (
-                    ATyp::Vec(box ATyp::Base(ABase::Scalar), m),
-                    ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n),
+                    ATyp::Vec(ATyp::Base(ABase::Scalar), m),
+                    ATyp::Vec(ATyp::Base(ABase::Fin(_)), n),
                 )
                 | (
-                    ATyp::Vec(box ATyp::Base(ABase::Fin(_)), m),
-                    ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n),
+                    ATyp::Vec(ATyp::Base(ABase::Fin(_)), m),
+                    ATyp::Vec(ATyp::Base(ABase::Fin(_)), n),
                 ) => {
                     if m != n {
                         panic!(
@@ -780,13 +780,13 @@ impl<C: HasOpFactory> GOp<C> {
         match typ {
             ATyp::Base(ABase::Fin(r)) if r.contains(1) => Op::Value(Value::Index(1)),
             ATyp::Base(ABase::Scalar) => Op::Value(Value::Scalar(C::FOps::one())),
-            ATyp::Vec(box ATyp::Base(ABase::Scalar), n) => {
+            ATyp::Vec(ATyp::Base(ABase::Scalar), n) => {
                 Op::Value(Value::VecScalar(vec![C::FOps::one(); *n]))
             }
-            ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(1) => {
+            ATyp::Vec(ATyp::Base(ABase::Fin(r)), n) if r.contains(1) => {
                 Op::Value(Value::VecIndex(vec![1; *n]))
             }
-            ATyp::Vec(box typ, n) => {
+            ATyp::Vec(deref!(typ), n) => {
                 let mut vs = vec![];
                 for _ in 0..*n {
                     vs.push(Op::one(typ));

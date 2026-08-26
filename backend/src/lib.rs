@@ -1,4 +1,4 @@
-#![feature(box_patterns)]
+#![feature(deref_patterns)]
 #![feature(associated_type_defaults)]
 pub mod config;
 pub mod nothing;
