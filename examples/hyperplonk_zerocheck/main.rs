@@ -14,7 +14,7 @@ use zippel::*;
 // ZeroCheck dimension. The proto is parametric over s = log2(num_points);
 // here we instantiate s = 2 by passing S = 2 into the compile context, and
 // num_points = 2^S = 4 follows. Bump S to scale up the example.
-const S: usize = 2;
+const S: usize = 3;
 const NUM_POINTS: usize = 1 << S; // |B_s| = 2^S
 
 fn main() {

@@ -69,11 +69,14 @@ proto kzh<
         )
         for k in 0..NYV
     ];
-    [h_xy[k] for k in 0..NXY] == [g_gen * (eq_x[k / NYV] * eq_y[k % NYV]) for k in 0..NXY];
-    [d_x[i] for i in 0..NXV] == [g_gen * eq_x[i] for i in 0..NXV];
-    [h_y[j] for j in 0..NYV] == [g_gen * eq_y[j] for j in 0..NYV];
-    v_prime == h_gen;
-    [v_x[i] for i in 0..NXV] == [h_gen * eq_x[i] for i in 0..NXV]
+    reduce(
+        &&,
+        [h_xy[k] for k in 0..NXY] == [g_gen * (eq_x[k / NYV] * eq_y[k % NYV]) for k in 0..NXY],
+    )
+        && reduce(&&, [d_x[i] for i in 0..NXV] == [g_gen * eq_x[i] for i in 0..NXV])
+        && reduce(&&, [h_y[j] for j in 0..NYV] == [g_gen * eq_y[j] for j in 0..NYV])
+        && v_prime == h_gen
+        && reduce(&&, [v_x[i] for i in 0..NXV] == [h_gen * eq_x[i] for i in 0..NXV])
 {
     // -------- Phase 1: commit --------
     let c = dot(f_evals, h_xy);

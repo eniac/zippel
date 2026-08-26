@@ -27,7 +27,6 @@ fn main() {
     sizes.insert(&Tid::new("n"), &n_size);
     sizes.insert(&Tid::new("b"), &b_size);
     sizes.insert(&Tid::new("l_chunk"), &l_chunk);
-    sizes.insert(&Tid::new("h_deg"), &h_deg);
     handler.compile(&sizes);
 
     let inputs = build_inputs(n_size, b_size, l_chunk, h_deg);
@@ -69,7 +68,6 @@ fn main() {
         analysis_sizes.insert(&Tid::new("n"), &n_size);
         analysis_sizes.insert(&Tid::new("b"), &b_size);
         analysis_sizes.insert(&Tid::new("l_chunk"), &l_chunk);
-        analysis_sizes.insert(&Tid::new("h_deg"), &h_deg);
         analysis_handler.compile(&analysis_sizes);
 
         let completeness_start = Instant::now();

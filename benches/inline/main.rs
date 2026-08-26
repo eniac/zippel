@@ -128,7 +128,7 @@ static PROTOCOLS: &[ProtocolConfig] = &[
     ProtocolConfig {
         name: "bccgp",
         path: "examples/bccgp/bccgp.zippel",
-        sizes: &[("S", 0)],
+        sizes: &[("S", 1)],
     },
     ProtocolConfig {
         name: "groth16",
@@ -138,7 +138,7 @@ static PROTOCOLS: &[ProtocolConfig] = &[
     ProtocolConfig {
         name: "ipa",
         path: "examples/ipa/ipa.zippel",
-        sizes: &[("S", 0)],
+        sizes: &[("S", 1)],
     },
     ProtocolConfig {
         name: "hyrax_podp",
@@ -178,27 +178,27 @@ static PROTOCOLS: &[ProtocolConfig] = &[
     ProtocolConfig {
         name: "hyperplonk_multiset",
         path: "examples/hyperplonk_multiset/hyperplonk_multiset.zippel",
-        sizes: &[("S", 2)],
+        sizes: &[("S", 3)],
     },
     ProtocolConfig {
         name: "hyperplonk_permutation",
         path: "examples/hyperplonk_permutation/hyperplonk_permutation.zippel",
-        sizes: &[("S", 2)],
+        sizes: &[("S", 3)],
     },
     ProtocolConfig {
         name: "hyperplonk_zerocheck",
         path: "examples/hyperplonk_zerocheck/hyperplonk_zerocheck.zippel",
-        sizes: &[("S", 2)],
+        sizes: &[("S", 3)],
     },
     ProtocolConfig {
         name: "hyperplonk_productcheck",
         path: "examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel",
-        sizes: &[("S", 2)],
+        sizes: &[("S", 3)],
     },
     ProtocolConfig {
         name: "hyperplonk",
         path: "examples/hyperplonk/hyperplonk.zippel",
-        sizes: &[("S", 2)],
+        sizes: &[("S", 3)],
     },
     ProtocolConfig {
         name: "zk_kzg",
@@ -208,12 +208,12 @@ static PROTOCOLS: &[ProtocolConfig] = &[
     ProtocolConfig {
         name: "kzh",
         path: "examples/kzh/kzh.zippel",
-        sizes: &[("NX", 2), ("NY", 2)],
+        sizes: &[("NX", 1), ("NY", 1)],
     },
     ProtocolConfig {
         name: "dekart",
         path: "examples/dekart/dekart.zippel",
-        sizes: &[("n", 3), ("b", 2), ("l_chunk", 1), ("h_deg", 3)],
+        sizes: &[("n", 3), ("b", 2), ("l_chunk", 1)],
     },
     ProtocolConfig {
         name: "pari",
@@ -373,7 +373,7 @@ fn json_error(name: &str, no_inline: bool, error: &str) -> String {
     serde_json::to_string(&BenchOutput {
         protocol: name.to_string(),
         inline: i32::from(!no_inline),
-        status: "error".to_string(),
+        status: "failed".to_string(),
         error: Some(error.to_string()),
         ..Default::default()
     })
@@ -446,7 +446,7 @@ fn main() {
             serde_json::to_string(&BenchOutput {
                 protocol: protocol_clone.to_string(),
                 inline: i32::from(!no_inline),
-                status: "panic".to_string(),
+                status: "failed".to_string(),
                 error: Some("thread panicked".to_string()),
                 ..Default::default()
             })

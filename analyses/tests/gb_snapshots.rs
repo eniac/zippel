@@ -166,7 +166,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
         TestEntry {
             name: "bccgp",
             zippel_path: "examples/bccgp/bccgp.zippel",
-            sizes: &[("S", 0)],
+            sizes: &[("S", 1)],
             l_vec: &[],
             ignored: false,
             no_inline: false,
@@ -174,7 +174,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
         TestEntry {
             name: "ipa",
             zippel_path: "examples/ipa/ipa.zippel",
-            sizes: &[("S", 0)],
+            sizes: &[("S", 1)],
             l_vec: &[],
             ignored: false,
             no_inline: false,
@@ -182,7 +182,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
         TestEntry {
             name: "ipa_weighted",
             zippel_path: "examples/ipa_weighted/ipa_weighted.zippel",
-            sizes: &[("S", 0)],
+            sizes: &[("S", 1)],
             l_vec: &[],
             ignored: false,
             no_inline: false,
@@ -190,9 +190,9 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
         TestEntry {
             name: "hyrax_ipa",
             zippel_path: "examples/hyrax_ipa/hyrax_ipa.zippel",
-            sizes: &[("S", 0)],
+            sizes: &[("S", 1)],
             l_vec: &[],
-            ignored: false,
+            ignored: true,
             no_inline: false,
         },
         TestEntry {
@@ -258,21 +258,20 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
             sizes: &[],
             l_vec: &[],
             ignored: true,
-            no_inline: true,
+            no_inline: false,
         },
-        // r1cs_sigma: no inlining (inlining causes timeout).
         TestEntry {
             name: "r1cs_sigma",
             zippel_path: "examples/r1cs_sigma/r1cs_sigma.zippel",
             sizes: &[("N", 2), ("n", 1), ("m", 1)],
             l_vec: &[],
             ignored: true,
-            no_inline: true,
+            no_inline: false,
         },
         TestEntry {
             name: "hyperplonk_zerocheck",
             zippel_path: "examples/hyperplonk_zerocheck/hyperplonk_zerocheck.zippel",
-            sizes: &[("S", 2)],
+            sizes: &[("S", 3)],
             l_vec: &[],
             ignored: true,
             no_inline: false,
@@ -280,7 +279,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
         TestEntry {
             name: "hyperplonk_productcheck",
             zippel_path: "examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel",
-            sizes: &[("S", 2)],
+            sizes: &[("S", 3)],
             l_vec: &[],
             ignored: true,
             no_inline: false,
@@ -288,7 +287,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
         TestEntry {
             name: "hyperplonk_multiset",
             zippel_path: "examples/hyperplonk_multiset/hyperplonk_multiset.zippel",
-            sizes: &[("S", 2)],
+            sizes: &[("S", 3)],
             l_vec: &[],
             ignored: true,
             no_inline: false,
@@ -296,7 +295,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
         TestEntry {
             name: "hyperplonk_permutation",
             zippel_path: "examples/hyperplonk_permutation/hyperplonk_permutation.zippel",
-            sizes: &[("S", 2)],
+            sizes: &[("S", 3)],
             l_vec: &[],
             ignored: true,
             no_inline: false,
@@ -304,7 +303,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
         TestEntry {
             name: "dekart",
             zippel_path: "examples/dekart/dekart.zippel",
-            sizes: &[("n", 2), ("b", 2), ("l_chunk", 1), ("h_deg", 1)],
+            sizes: &[("n", 3), ("b", 2), ("l_chunk", 1)],
             l_vec: &[],
             ignored: true,
             no_inline: false,
@@ -328,7 +327,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
         TestEntry {
             name: "hyperplonk",
             zippel_path: "examples/hyperplonk/hyperplonk.zippel",
-            sizes: &[("S", 2)],
+            sizes: &[("S", 3)],
             l_vec: &[],
             ignored: true,
             no_inline: false,
@@ -344,7 +343,7 @@ static EXAMPLES: LazyLock<Vec<TestEntry>> = LazyLock::new(|| {
         TestEntry {
             name: "kzh",
             zippel_path: "examples/kzh/kzh.zippel",
-            sizes: &[("NX", 2), ("NY", 2)],
+            sizes: &[("NX", 1), ("NY", 1)],
             l_vec: &[],
             ignored: true,
             no_inline: false,

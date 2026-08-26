@@ -9,8 +9,8 @@ use zippel::*;
 #[path = "../common/analysis.rs"]
 mod common;
 
-const NX: usize = 2;
-const NY: usize = 2;
+const NX: usize = 1;
+const NY: usize = 1;
 
 fn build_sizes_ctx() -> Ctx<Tid, usize> {
     let mut ctx = Ctx::new();

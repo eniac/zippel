@@ -113,21 +113,26 @@ proto pari<
     // (1) SR1CS satisfaction on the constraint domain K:
     //       (A z) ⊙ (A z) == (B z), element-wise.
     //     With Az and Bz supplied as inputs this is the prover
-    //     precondition; assert(the protocol body attests to it succinctly. [z_a_evals[i] * z_a_evals[i] for i in 0..K] == [z_b_evals[i] for i in 0..K]);assert(alpha_g == g_g1 * alpha);assert(beta_g == g_g1 * beta);assert(tau_h == h_g2 * tau);assert(delta2_h == h_g2 * delta2);
-    //     Opening-proof bases: Σ_A[i] = alpha·τ^i·G, Σ_B[i] = beta·τ^i·G,
-    //     Σ_ {q'}[i] = τ^i·G, all indexed by i in 0..K.
-    [sigma_a[i] for i in 0..K] == [g_g1 * (alpha * tau ^ i) for i in 0..K];
-    [sigma_b[i] for i in 0..K] == [g_g1 * (beta * tau ^ i) for i in 0..K];
-    [sigma_q_prime[i] for i in 0..K] == [g_g1 * tau ^ i for i in 0..K];
-    //     Quotient basis: Σ_q[i] = (τ^i / δ_2)·G. State multiplicatively
-    //     to avoid F-division in the where clause:
-    //       Σ_q[i] · δ_2 = τ^i · G.
-    [sigma_q[i] * delta2 for i in 0..K] == [g_g1 * tau ^ i for i in 0..K];
-    // (3) Field constants used by the verifier's Lagrange shortcut.
-    f_one == 1;
-    k_inv * K == 1;
-    //     omegas[i] are K-th roots of unity (ω^{K-N+i}).
-    [omegas[i] ^ K for i in 0..N] == [f_one for _ in 0..N]
+    //     precondition; the protocol body attests to it succinctly.
+    // (2) Verifier keys derived from trapdoors:
+    alpha_g == g_g1 * alpha
+        && beta_g == g_g1 * beta
+        && tau_h == h_g2 * tau
+        && delta2_h == h_g2 * delta2
+        //     Opening-proof bases: Σ_A[i] = alpha·τ^i·G, Σ_B[i] = beta·τ^i·G,
+        //     Σ_ {q'}[i] = τ^i·G, all indexed by i in 0..K.
+        && reduce(&&, [sigma_a[i] for i in 0..K] == [g_g1 * (alpha * tau ^ i) for i in 0..K])
+        && reduce(&&, [sigma_b[i] for i in 0..K] == [g_g1 * (beta * tau ^ i) for i in 0..K])
+        && reduce(&&, [sigma_q_prime[i] for i in 0..K] == [g_g1 * tau ^ i for i in 0..K])
+        //     Quotient basis: Σ_q[i] = (τ^i / δ_2)·G. State multiplicatively
+        //     to avoid F-division in the where clause:
+        //       Σ_q[i] · δ_2 = τ^i · G.
+        && reduce(&&, [sigma_q[i] * delta2 for i in 0..K] == [g_g1 * tau ^ i for i in 0..K])
+        // (3) Field constants used by the verifier's Lagrange shortcut.
+        && f_one == 1
+        && k_inv * K == 1
+        //     omegas[i] are K-th roots of unity (ω^{K-N+i}).
+        && reduce(&&, [omegas[i] ^ K for i in 0..N] == [f_one for _ in 0..N])
     // (Structural identity for sigma_w — which pins the witness-side
     // basis Σ_w[i] = (α a_i(τ) + β b_i(τ))/δ_2 · G to the A/B Lagrange
     // polynomials — is intentionally omitted: it would require

@@ -21,6 +21,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use process_wrap::std::*;
+
 use serde::{Deserialize, Serialize};
 
 const PROTOCOLS: &[&str] = &[
@@ -244,23 +246,25 @@ fn run_one(
     no_inline: bool,
     timeout_secs: u64,
 ) -> BenchResult {
-    let mut cmd = Command::new(bin);
-    cmd.args([protocol, "--backend", "singular"])
-        .current_dir(cwd)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    let mut cmd = CommandWrap::with_new(bin, |cmd| {
+        cmd.args([protocol, "--backend", "singular"])
+            .current_dir(cwd)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if no_inline {
+            cmd.arg("--no-inline");
+        }
+    });
 
-    // Put the bench binary in its own process group so we can kill the
-    // entire tree (bench binary → Singular) on timeout. child.kill()
-    // only kills the bench binary, leaving Singular as an orphan.
+    // ProcessGroup on Unix, JobObject on Windows — either way,
+    // child.kill() kills the entire process tree (bench binary + Singular).
     #[cfg(unix)]
     {
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
+        cmd.wrap(ProcessGroup::leader());
     }
-
-    if no_inline {
-        cmd.arg("--no-inline");
+    #[cfg(windows)]
+    {
+        cmd.wrap(JobObject);
     }
 
     let inline_flag = i32::from(!no_inline);
@@ -272,7 +276,7 @@ fn run_one(
                 protocol,
                 inline_flag,
                 0.0,
-                "error",
+                "failed",
                 &format!("spawn failed: {e}"),
             );
         }
@@ -288,7 +292,21 @@ fn run_one(
                 let wall = start.elapsed().as_secs_f64();
                 let stdout = read_stdout(&mut child);
                 if !stdout.is_empty() {
-                    return BenchResult::from_stdout(&stdout, wall);
+                    let mut result = BenchResult::from_stdout(&stdout, wall);
+                    // If the process was killed by a signal (e.g. OOM,
+                    // SIGSEGV) it died before emitting the final status
+                    // line, leaving only "running" stages in stdout.
+                    // Override to "failed" so "running" doesn't leak.
+                    if !status.success() && result.status == "running" {
+                        let stderr = read_stderr(&mut child);
+                        result.status = "failed".to_string();
+                        result.error = Some(format!(
+                            "exit code {:?}, stderr: {}",
+                            status.code(),
+                            truncate(&stderr, 500),
+                        ));
+                    }
+                    return result;
                 }
                 // No stdout — process crashed/panicked before emitting.
                 let stderr = read_stderr(&mut child);
@@ -297,36 +315,22 @@ fn run_one(
                     protocol,
                     inline_flag,
                     wall,
-                    "error",
+                    "failed",
                     &format!("exit code {code}, stderr: {}", truncate(&stderr, 500)),
                 );
             }
             Ok(None) => {
                 if Instant::now() >= deadline {
-                    // Kill the entire process group: bench binary + Singular.
-                    // process_group(0) made the bench binary a group leader,
-                    // so its PID == PGID. kill(-pid) signals the whole group.
-                    #[cfg(unix)]
-                    {
-                        let pgid: libc::pid_t = child.id().try_into().unwrap_or(-1);
-                        unsafe {
-                            libc::kill(-pgid, libc::SIGKILL);
-                        }
-                    }
-                    // Windows: child.kill() only kills the bench binary, not
-                    // Singular. The correct fix is Job Objects, but this
-                    // project requires Singular (Unix-only), so this branch
-                    // is a compile stub that is never exercised in practice.
-                    #[cfg(not(unix))]
-                    {
-                        let _ = child.kill();
-                    }
+                    // kill() sends SIGKILL to the process group (Unix) or
+                    // terminates the job object (Windows), killing the
+                    // bench binary and Singular together.
+                    let _ = child.kill();
                     let _ = child.wait();
                     let wall = start.elapsed().as_secs_f64();
                     let stdout = read_stdout(&mut child);
                     if !stdout.is_empty() {
                         let mut result = BenchResult::from_stdout(&stdout, wall);
-                        result.status = "timeout".to_string();
+                        result.status = "failed".to_string();
                         result.error = Some(format!("exceeded {timeout_secs}s timeout"));
                         return result;
                     }
@@ -334,7 +338,7 @@ fn run_one(
                         protocol,
                         inline_flag,
                         wall,
-                        "timeout",
+                        "failed",
                         &format!("exceeded {timeout_secs}s timeout"),
                     );
                 }
@@ -345,7 +349,7 @@ fn run_one(
                     protocol,
                     inline_flag,
                     0.0,
-                    "error",
+                    "failed",
                     &format!("wait failed: {e}"),
                 );
             }
@@ -353,17 +357,17 @@ fn run_one(
     }
 }
 
-fn read_stdout(child: &mut std::process::Child) -> String {
+fn read_stdout(child: &mut Box<dyn ChildWrapper>) -> String {
     let mut s = String::new();
-    if let Some(mut out) = child.stdout.take() {
+    if let Some(out) = child.stdout() {
         let _ = out.read_to_string(&mut s);
     }
     s.trim().to_string()
 }
 
-fn read_stderr(child: &mut std::process::Child) -> String {
+fn read_stderr(child: &mut Box<dyn ChildWrapper>) -> String {
     let mut s = String::new();
-    if let Some(mut err) = child.stderr.take() {
+    if let Some(err) = child.stderr() {
         let _ = err.read_to_string(&mut s);
     }
     s

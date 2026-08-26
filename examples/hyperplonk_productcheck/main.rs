@@ -13,7 +13,7 @@ use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
 // ProductCheck dimension. Edit S to scale; num_leaves = 2^S follows.
-const S: usize = 2;
+const S: usize = 3;
 const NUM_LEAVES: usize = 1 << S; // = 2^S
 
 fn main() {

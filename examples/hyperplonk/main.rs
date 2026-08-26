@@ -10,7 +10,7 @@ use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
 // Edit S to scale; num_gates = 2^S follows.
-const S: usize = 2;
+const S: usize = 3;
 const NUM_GATES: usize = 1 << S;
 
 fn main() {

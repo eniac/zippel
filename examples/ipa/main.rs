@@ -22,7 +22,7 @@ fn main() {
     let analysis_args = ZippelArgs::new(PathBuf::from("examples/ipa/ipa.zippel"));
     let mut analysis_handler: ZippelHandler<ArkSecp256k1> = ZippelHandler::new(analysis_args);
     let mut analysis_sizes = Ctx::new();
-    analysis_sizes.insert(&Tid::new("S"), &0usize);
+    analysis_sizes.insert(&Tid::new("S"), &1usize);
     analysis_handler.compile(&analysis_sizes);
 
     common::time_analysis!("Completeness", analysis_handler.analyze_completeness());
