@@ -27,7 +27,7 @@ const STACK_SIZE: usize = 256 * 1024 * 1024;
 /// JSON output emitted by the `inline` bench. Partial lines (status
 /// `"running"`) omit fields that aren't available yet. The final line
 /// has the definitive status and all metrics.
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 struct BenchOutput {
     protocol: String,
     inline: i32,
@@ -275,16 +275,7 @@ fn run_bench(protocol: &ProtocolConfig, no_inline: bool, backend: GbBackendKind)
         inline: i32::from(inline),
         status: "running".to_string(),
         graph_size: Some(graph_size),
-        build_ms: None,
-        gb_ms: None,
-        run_ms: None,
-        basis_size: None,
-        max_degree: None,
-        num_vars: None,
-        gen_set_size: None,
-        gen_set_max_degree: None,
-        gen_set_num_vars: None,
-        error: None,
+        ..Default::default()
     });
 
     // Stage 2: Build inputs (cheap), compute pre-GB metrics, emit.
@@ -311,16 +302,11 @@ fn run_bench(protocol: &ProtocolConfig, no_inline: bool, backend: GbBackendKind)
         inline: i32::from(inline),
         status: "running".to_string(),
         build_ms: Some(build_ms),
-        gb_ms: None,
-        run_ms: None,
-        basis_size: None,
-        max_degree: None,
-        num_vars: None,
         graph_size: Some(graph_size),
         gen_set_size: Some(gen_set_size),
         gen_set_max_degree: Some(gen_set_max_degree),
         gen_set_num_vars: Some(gen_set_num_vars),
-        error: None,
+        ..Default::default()
     });
 
     // Stage 3: Compute GB (expensive — may hang).
@@ -345,7 +331,6 @@ fn run_bench(protocol: &ProtocolConfig, no_inline: bool, backend: GbBackendKind)
         status: "running".to_string(),
         build_ms: Some(build_ms),
         gb_ms: Some(gb_ms),
-        run_ms: None,
         basis_size: Some(basis_size),
         max_degree: Some(max_degree),
         num_vars: Some(num_vars),
@@ -353,7 +338,7 @@ fn run_bench(protocol: &ProtocolConfig, no_inline: bool, backend: GbBackendKind)
         gen_set_size: Some(gen_set_size),
         gen_set_max_degree: Some(gen_set_max_degree),
         gen_set_num_vars: Some(gen_set_num_vars),
-        error: None,
+        ..Default::default()
     });
 
     let run_start = Instant::now();
@@ -389,17 +374,8 @@ fn json_error(name: &str, no_inline: bool, error: &str) -> String {
         protocol: name.to_string(),
         inline: i32::from(!no_inline),
         status: "error".to_string(),
-        build_ms: None,
-        gb_ms: None,
-        run_ms: None,
-        basis_size: None,
-        max_degree: None,
-        num_vars: None,
-        graph_size: None,
-        gen_set_size: None,
-        gen_set_max_degree: None,
-        gen_set_num_vars: None,
         error: Some(error.to_string()),
+        ..Default::default()
     })
     .unwrap()
 }
@@ -471,17 +447,8 @@ fn main() {
                 protocol: protocol_clone.to_string(),
                 inline: i32::from(!no_inline),
                 status: "panic".to_string(),
-                build_ms: None,
-                gb_ms: None,
-                run_ms: None,
-                basis_size: None,
-                max_degree: None,
-                num_vars: None,
-                graph_size: None,
-                gen_set_size: None,
-                gen_set_max_degree: None,
-                gen_set_num_vars: None,
                 error: Some("thread panicked".to_string()),
+                ..Default::default()
             })
             .unwrap()
         });
