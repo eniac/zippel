@@ -6,9 +6,7 @@ use benchmarks::pst13::{DEFAULT_N, native_side, shared, zippel_side};
 use clap::Parser;
 
 #[derive(Parser, Debug)]
-#[command(
-    about = "Side-by-side PST13 timing: zippel vs. hyperplonk MultilinearKzgPCS (BLS12-381)"
-)]
+#[command(about = "Side-by-side PST13 timing: zippel vs. hyperplonk MultilinearKzgPCS (BLS12-381)")]
 struct Args {
     /// Number of variables N (polynomial has 2^N coefficients).
     #[arg(long, default_value_t = DEFAULT_N)]

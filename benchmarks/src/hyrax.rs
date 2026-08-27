@@ -174,16 +174,14 @@ pub mod native_side {
     use super::Timing;
     use ark_bls12_381::{Fr, G1Affine};
     use ark_crypto_primitives::sponge::{
-        poseidon::{PoseidonConfig, PoseidonSponge},
         CryptographicSponge,
+        poseidon::{PoseidonConfig, PoseidonSponge},
     };
     use ark_ff::{PrimeField, UniformRand};
     use ark_poly::{DenseMultilinearExtension, MultilinearExtension, Polynomial};
     use std::time::Instant;
 
-    use crate::hyrax_upstream::{
-        self, CommitterKey, VerifierKey,
-    };
+    use crate::hyrax_upstream::{self, CommitterKey, VerifierKey};
 
     pub struct Setup {
         _num_vars: usize,
@@ -279,8 +277,7 @@ pub mod native_side {
             }
             v.push(res);
         }
-        let config =
-            PoseidonConfig::new(full_rounds, partial_rounds, alpha, mds, v, 2, 1);
+        let config = PoseidonConfig::new(full_rounds, partial_rounds, alpha, mds, v, 2, 1);
         PoseidonSponge::new(&config)
     }
 }

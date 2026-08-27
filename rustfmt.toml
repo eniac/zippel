@@ -1,0 +1,6 @@
+ignore = [
+    "benchmarks/src/pari_upstream",
+    "benchmarks/src/sumcheck_upstream",
+    "benchmarks/src/pst13_upstream",
+    "benchmarks/src/hyrax_upstream",
+]
