@@ -14,7 +14,7 @@ share = { path = "../share" }
 lang = { path = "../lang" }
 backend = { path = "../backend" }
 log = "0.4.27"
-spongefish =  { git = "https://github.com/arkworks-rs/spongefish.git", branch = "main", features = ["ark-ff", "ark-ec"] }
+spongefish =  { version = "0.7", features = ["ark-ff", "ark-ec"] }
 blake3 = "1"
 
 [dev-dependencies]

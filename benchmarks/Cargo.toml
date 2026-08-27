@@ -27,13 +27,13 @@ lang = { path = "../lang" }
 # `src/sumcheck_upstream/` (so the `arithmetic`/`subroutines`/
 # `transcript` git deps that the native sumcheck/pst13 baselines used to
 # pull are gone).
-ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-ec = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-curve25519 = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-std = { version = "0.5", features = ["parallel"] }
+ark-ff = "0.6"
+ark-poly = "0.6"
+ark-ec = "0.6"
+ark-serialize = "0.6"
+ark-bls12-381 = "0.6"
+ark-curve25519 = "0.6"
+ark-std = "0.6"
 
 # blake2 is used by the schnorr native (Schnorr<G, Blake2s256> from
 # ark-crypto-primitives).
@@ -69,7 +69,7 @@ serde = { version = "1", features = ["derive"] }
 # witness assignment). Without `parallel`, our own `ark-ff/parallel`
 # only buys MSM-level concurrency — the higher-level loops in the
 # native baselines run single-threaded and the comparison is unfair.
-ark-relations = { git = "https://github.com/arkworks-rs/snark.git", branch = "release/0.6.0", default-features = false, features = ["parallel"] }
+ark-relations = { version = "0.6", default-features = false, features = ["parallel"] }
 displaydoc = { version = "0.2", default-features = false }
 num-bigint = "0.4"
 
@@ -163,11 +163,5 @@ harness = false
 # between algebra.git (0.6) and the np-* aliases (0.5) means the np-* set
 # correctly falls through to crates.io and is NOT collapsed.
 [patch.crates-io]
-ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-ec = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-std = { git = "https://github.com/arkworks-rs/std.git", branch = "release/0.6.0" }
-ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-secp256k1 = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-relations = { git = "https://github.com/arkworks-rs/snark.git", branch = "release/0.6.0" }
