@@ -104,14 +104,10 @@ pub mod zippel_side {
                 let mut file = NamedTempFile::with_suffix(".zippel").expect("tempfile");
                 file.write_all(render_zippel_source_no_srs_check().as_bytes())
                     .expect("write tempfile");
-                (
-                    ZippelArgs::new(file.path().to_path_buf()),
-                    Some(file),
-                )
+                (ZippelArgs::new(file.path().to_path_buf()), Some(file))
             } else {
                 (
-                    ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel"))
-                        ,
+                    ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel")),
                     None,
                 )
             };
@@ -293,14 +289,11 @@ pub mod native_side {
             // the cached params, so we re-derive them per call rather
             // than caching the derived (Powers, VK) too.
             let log_size = n.trailing_zeros() as usize;
-            let pp = crate::cache::load_or_build_canonical(
-                "kzg_universal_params",
-                log_size,
-                || {
+            let pp =
+                crate::cache::load_or_build_canonical("kzg_universal_params", log_size, || {
                     let mut rng = ark_std::test_rng();
                     Kzg::setup(degree, false, &mut rng).expect("kzg setup")
-                },
-            );
+                });
             let powers = build_powers(&pp, degree);
             let vk = build_vk(&pp);
             Setup { powers, vk, n }
@@ -332,8 +325,8 @@ pub mod native_side {
             for _ in 0..*crate::PROVER_SAMPLES {
                 let t = Instant::now();
                 let (comm_out, proof_out) = {
-                    use std::sync::Mutex;
                     use ark_poly_commit::PCCommitmentState;
+                    use std::sync::Mutex;
                     let comm_out: Mutex<Option<_>> = Mutex::new(None);
                     let proof_out: Mutex<Option<_>> = Mutex::new(None);
                     let rand =
@@ -345,8 +338,7 @@ pub mod native_side {
                             *comm_out.lock().unwrap() = Some(comm);
                         });
                         sc.spawn(|_| {
-                            let proof =
-                                Kzg::open(&powers, &poly, point, &rand).expect("kzg open");
+                            let proof = Kzg::open(&powers, &poly, point, &rand).expect("kzg open");
                             *proof_out.lock().unwrap() = Some(proof);
                         });
                     });
@@ -367,8 +359,8 @@ pub mod native_side {
             let mut last_ok = false;
             for _ in 0..crate::VERIFY_SAMPLES {
                 let t = Instant::now();
-                let ok = Kzg::check(&self.vk, &comm_out, point, value, &proof_out)
-                    .expect("kzg check");
+                let ok =
+                    Kzg::check(&self.vk, &comm_out, point, value, &proof_out).expect("kzg check");
                 verify_sum += t.elapsed();
                 last_ok = ok;
             }

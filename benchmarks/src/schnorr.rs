@@ -108,9 +108,9 @@ pub mod zippel_side {
 
 pub mod native_side {
     use super::*;
-    use blake2::Blake2s256;
     use ark_bls12_381::G1Projective;
     use ark_crypto_primitives::signature::{SignatureScheme, schnorr::Schnorr};
+    use blake2::Blake2s256;
     use std::time::Instant;
 
     type SchnorrSig = Schnorr<G1Projective, Blake2s256>;

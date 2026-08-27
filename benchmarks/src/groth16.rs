@@ -49,9 +49,8 @@ pub mod shared {
     use ark_ff::UniformRand;
     use ark_groth16::{Groth16, ProvingKey, VerifyingKey};
     use ark_relations::gr1cs::{
-        predicate::polynomial_constraint::R1CS_PREDICATE_LABEL, ConstraintSynthesizer,
-        ConstraintSystem, ConstraintSystemRef, LinearCombination, Matrix, SynthesisError,
-        SynthesisMode,
+        ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, LinearCombination, Matrix,
+        SynthesisError, SynthesisMode, predicate::polynomial_constraint::R1CS_PREDICATE_LABEL,
     };
 
     pub type E = Bls12_381;
@@ -213,21 +212,31 @@ pub mod shared {
 
 pub mod bridge {
     use super::shared::Shared;
-    use ark_bls12_381::{Bls12_381, Fr as GitFr, G1Projective as GitG1Proj, G2Projective as GitG2Proj};
-    use ark_ec::{pairing::Pairing, AffineRepr as GitAffineRepr};
+    use ark_bls12_381::{
+        Bls12_381, Fr as GitFr, G1Projective as GitG1Proj, G2Projective as GitG2Proj,
+    };
+    use ark_ec::{AffineRepr as GitAffineRepr, pairing::Pairing};
     use ark_ff::{FftField, Field, Zero};
     use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 
     type NpG1Affine = <Bls12_381 as Pairing>::G1Affine;
     type NpG2Affine = <Bls12_381 as Pairing>::G2Affine;
 
-    pub fn fr_to_git(x: &GitFr) -> GitFr { *x }
+    pub fn fr_to_git(x: &GitFr) -> GitFr {
+        *x
+    }
 
-    pub fn fr_vec_to_git(xs: &[GitFr]) -> Vec<GitFr> { xs.to_vec() }
+    pub fn fr_vec_to_git(xs: &[GitFr]) -> Vec<GitFr> {
+        xs.to_vec()
+    }
 
-    pub fn g1_to_git_proj(p: &NpG1Affine) -> GitG1Proj { p.into_group() }
+    pub fn g1_to_git_proj(p: &NpG1Affine) -> GitG1Proj {
+        p.into_group()
+    }
 
-    pub fn g2_to_git_proj(p: &NpG2Affine) -> GitG2Proj { p.into_group() }
+    pub fn g2_to_git_proj(p: &NpG2Affine) -> GitG2Proj {
+        p.into_group()
+    }
 
     pub fn g1_vec_to_git(ps: &[NpG1Affine]) -> Vec<GitG1Proj> {
         ps.iter().map(g1_to_git_proj).collect()
@@ -467,10 +476,7 @@ pub mod zippel_side {
                 ),
                 (Vid("beta_g1".to_string()), Value::G1(keys.beta_g1)),
                 (Vid("delta_g1".to_string()), Value::G1(keys.delta_g1)),
-                (
-                    Vid("a_query".to_string()),
-                    Value::VecG1Affine(a_query_aff),
-                ),
+                (Vid("a_query".to_string()), Value::VecG1Affine(a_query_aff)),
                 (
                     Vid("b_g1_query".to_string()),
                     Value::VecG1Affine(b_g1_query_aff),
@@ -479,14 +485,8 @@ pub mod zippel_side {
                     Vid("b_g2_query".to_string()),
                     Value::VecG2Affine(b_g2_query_aff),
                 ),
-                (
-                    Vid("h_query".to_string()),
-                    Value::VecG1Affine(h_query_aff),
-                ),
-                (
-                    Vid("l_query".to_string()),
-                    Value::VecG1Affine(l_query_aff),
-                ),
+                (Vid("h_query".to_string()), Value::VecG1Affine(h_query_aff)),
+                (Vid("l_query".to_string()), Value::VecG1Affine(l_query_aff)),
                 (
                     Vid("instance_assignment".to_string()),
                     Value::VecScalar(translated.instance_assignment.clone()),
@@ -506,8 +506,7 @@ pub mod zippel_side {
             // would dominate verify time at large M+L.
 
             let compile_start = Instant::now();
-            let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"))
-                ;
+            let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"));
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("M"), &translated.m);
@@ -736,10 +735,14 @@ pub mod native_side {
         // Parallel into_bigint matches what `VariableBaseMSM::msm` does
         // internally via `cfg_into_iter!`; we pre-convert because the
         // same `full_bi` feeds three of the five MSMs (a, b_g1, b_g2).
-        let full_bi: Vec<<GitFr as PrimeField>::BigInt> =
-            full_assignment.par_iter().map(|x| x.into_bigint()).collect();
-        let wit_bi: Vec<<GitFr as PrimeField>::BigInt> =
-            witness_assignment.par_iter().map(|x| x.into_bigint()).collect();
+        let full_bi: Vec<<GitFr as PrimeField>::BigInt> = full_assignment
+            .par_iter()
+            .map(|x| x.into_bigint())
+            .collect();
+        let wit_bi: Vec<<GitFr as PrimeField>::BigInt> = witness_assignment
+            .par_iter()
+            .map(|x| x.into_bigint())
+            .collect();
         let h_bi: Vec<<GitFr as PrimeField>::BigInt> =
             h_coeffs.par_iter().map(|x| x.into_bigint()).collect();
 
@@ -871,8 +874,8 @@ pub fn build_translated(num_constraints: usize) -> bridge::Translated {
 #[cfg(test)]
 mod cross_tests {
     use super::bridge::{Translated, witness_map};
-    use super::native_side::{AffineKeys, Proof, prove, verify};
     use super::build_translated;
+    use super::native_side::{AffineKeys, Proof, prove, verify};
     use ark_bls12_381::Fr as GitFr;
     use ark_ec::PrimeGroup;
     use ark_ff::{UniformRand, Zero};
@@ -912,12 +915,7 @@ mod cross_tests {
         // h_coeffs is the QAP witness-map output, computed in Rust on the
         // zippel side too (since zippel can't express the QAP reduction
         // inside the proto). Match the zippel bench's behavior.
-        let mut h_coeffs = witness_map(
-            &t.mat,
-            t.num_inputs,
-            t.num_constraints,
-            &t.full_assignment,
-        );
+        let mut h_coeffs = witness_map(&t.mat, t.num_inputs, t.num_constraints, &t.full_assignment);
         h_coeffs.resize(t.h_size, GitFr::zero());
 
         Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
@@ -939,7 +937,10 @@ mod cross_tests {
             ),
             (Vid("beta_g1".to_string()), Value::G1(t.keys.beta_g1)),
             (Vid("delta_g1".to_string()), Value::G1(t.keys.delta_g1)),
-            (Vid("a_query".to_string()), Value::VecG1(t.keys.a_query.clone())),
+            (
+                Vid("a_query".to_string()),
+                Value::VecG1(t.keys.a_query.clone()),
+            ),
             (
                 Vid("b_g1_query".to_string()),
                 Value::VecG1(t.keys.b_g1_query.clone()),
@@ -948,8 +949,14 @@ mod cross_tests {
                 Vid("b_g2_query".to_string()),
                 Value::VecG2(t.keys.b_g2_query.clone()),
             ),
-            (Vid("h_query".to_string()), Value::VecG1(t.keys.h_query.clone())),
-            (Vid("l_query".to_string()), Value::VecG1(t.keys.l_query.clone())),
+            (
+                Vid("h_query".to_string()),
+                Value::VecG1(t.keys.h_query.clone()),
+            ),
+            (
+                Vid("l_query".to_string()),
+                Value::VecG1(t.keys.l_query.clone()),
+            ),
             (
                 Vid("instance_assignment".to_string()),
                 Value::VecScalar(t.instance_assignment.clone()),
@@ -1041,9 +1048,8 @@ mod cross_tests {
         // ---- Zippel: run_prover and extract (a, b, c) from the transcript -
         let mut handler = zippel_handler(&t);
         let zip_inputs = zip_inputs_from_translated(&t);
-        let zip_proof: Vec<Value<ArkBls12_381>> = handler
-            .run_prover(&zip_inputs)
-            .expect("zippel run_prover");
+        let zip_proof: Vec<Value<ArkBls12_381>> =
+            handler.run_prover(&zip_inputs).expect("zippel run_prover");
 
         assert_eq!(
             zip_proof.len(),

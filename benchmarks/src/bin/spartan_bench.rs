@@ -21,8 +21,8 @@
 //! mirroring how the harness times zippel's prove end-to-end.
 
 use clap::Parser;
-use merlin::Transcript;
 use libspartan::{Instance, NIZK, NIZKGens, SNARK, SNARKGens};
+use merlin::Transcript;
 use std::{
     fs::OpenOptions,
     io::Write,
@@ -31,7 +31,10 @@ use std::{
 };
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "spartan", about = "Native microsoft/Spartan NIZK + SNARK sweep")]
+#[command(
+    name = "spartan",
+    about = "Native microsoft/Spartan NIZK + SNARK sweep"
+)]
 struct Args {
     /// Inclusive lower bound on M (log2 num_constraints). Default 2.
     #[arg(long, default_value_t = 2)]
@@ -93,8 +96,7 @@ fn main() {
         let nnz = num_cons; // matches their produce_synthetic_r1cs shape
 
         // Build the R1CS instance once per M (reused for both variants).
-        let (inst, vars, inputs) =
-            Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
+        let (inst, vars, inputs) = Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
         let is_sat = inst.is_sat(&vars, &inputs).expect("is_sat failed");
         assert!(is_sat, "synthetic R1CS not satisfying at M={m}");
 
@@ -113,7 +115,16 @@ fn main() {
             );
         }
         if do_snark {
-            let r = run_snark(m, num_cons, num_vars, num_inputs, nnz, &inst, vars.clone(), &inputs);
+            let r = run_snark(
+                m,
+                num_cons,
+                num_vars,
+                num_inputs,
+                nnz,
+                &inst,
+                vars.clone(),
+                &inputs,
+            );
             rows.push(r.clone());
             println!(
                 "[SNARK] M={m:>2} cons={c:>9} vars={v:>9} nnz={n:>9} setup={s:>9.2?} prover={p:>10.2?} verifier={vt:>10.2?} proof={b:>8}B verdict={vd}",

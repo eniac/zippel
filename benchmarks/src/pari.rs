@@ -344,8 +344,7 @@ pub mod zippel_side {
             let num_vars = inst.num_vars;
             let kmn = num_vars - n_pub;
             let compile_start = Instant::now();
-            let args = ZippelArgs::new(PathBuf::from("examples/pari/pari.zippel"))
-                ;
+            let args = ZippelArgs::new(PathBuf::from("examples/pari/pari.zippel"));
             let mut handler: ZippelHandler<C> = ZippelHandler::new(args);
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("M"), &m_log);
@@ -538,20 +537,16 @@ pub mod native_side {
             let (pk, vk) = crate::cache::load_or_build_canonical::<(
                 crate::pari_upstream::data_structures::ProvingKey<E>,
                 crate::pari_upstream::data_structures::VerifyingKey<E>,
-            )>(
-                "pari_keys",
-                log_size,
-                || {
-                    let mut rng = StdRng::seed_from_u64(0xBEEF_u64);
-                    Pari::<E>::keygen_from_sr1cs(
-                        &inst.a_mat,
-                        &inst.b_mat,
-                        inst.instance_len,
-                        inst.num_vars,
-                        &mut rng,
-                    )
-                },
-            );
+            )>("pari_keys", log_size, || {
+                let mut rng = StdRng::seed_from_u64(0xBEEF_u64);
+                Pari::<E>::keygen_from_sr1cs(
+                    &inst.a_mat,
+                    &inst.b_mat,
+                    inst.instance_len,
+                    inst.num_vars,
+                    &mut rng,
+                )
+            });
             Setup {
                 instance_assignment,
                 witness_assignment,

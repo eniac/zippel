@@ -171,8 +171,16 @@ where
         let b_vals: Vec<F> = (0..b_cols.len()).map(|_| F::rand(rng)).collect();
         let mut c_vals: Vec<F> = (0..c_cols.len()).map(|_| F::rand(rng)).collect();
 
-        let az_i: F = a_cols.iter().zip(a_vals.iter()).map(|(c, v)| z[*c] * *v).sum();
-        let bz_i: F = b_cols.iter().zip(b_vals.iter()).map(|(c, v)| z[*c] * *v).sum();
+        let az_i: F = a_cols
+            .iter()
+            .zip(a_vals.iter())
+            .map(|(c, v)| z[*c] * *v)
+            .sum();
+        let bz_i: F = b_cols
+            .iter()
+            .zip(b_vals.iter())
+            .map(|(c, v)| z[*c] * *v)
+            .sum();
         let target = az_i * bz_i;
 
         let const_col_pos_in_c = c_cols
@@ -243,7 +251,11 @@ fn prover_create_inputs(m: usize) -> Ctx<Vid, Value<ArkCurve25519>> {
         cz[i] += v * z[c];
     }
     for i in 0..num_cons {
-        assert_eq!(az[i] * bz[i], cz[i], "row {i} of synthetic R1CS is unsatisfied");
+        assert_eq!(
+            az[i] * bz[i],
+            cz[i],
+            "row {i} of synthetic R1CS is unsatisfied"
+        );
     }
 
     let triples_to_mle_evals = |triples: &[(usize, usize, Fr)]| -> Vec<(usize, Fr)> {
@@ -289,10 +301,19 @@ fn prover_create_inputs(m: usize) -> Ctx<Vid, Value<ArkCurve25519>> {
         (Vid("g_vec_w".to_string()), Value::VecG1Affine(g_vec_aff)),
         (Vid("g_base_w".to_string()), Value::G1(g_base_w)),
         (Vid("h_base_w".to_string()), Value::G1(h_base_w)),
-        (Vid("g_evs_d3".to_string()), Value::VecG1Affine(g_evs_d3_aff)),
-        (Vid("g_evs_d2".to_string()), Value::VecG1Affine(g_evs_d2_aff)),
+        (
+            Vid("g_evs_d3".to_string()),
+            Value::VecG1Affine(g_evs_d3_aff),
+        ),
+        (
+            Vid("g_evs_d2".to_string()),
+            Value::VecG1Affine(g_evs_d2_aff),
+        ),
         (Vid("h_evs".to_string()), Value::G1(h_evs)),
-        (Vid("placeholder_tau".to_string()), Value::VecScalar(placeholder_tau)),
+        (
+            Vid("placeholder_tau".to_string()),
+            Value::VecScalar(placeholder_tau),
+        ),
         (Vid("f_one".to_string()), Value::Scalar(one)),
     ])
 }

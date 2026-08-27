@@ -63,13 +63,10 @@ pub mod zippel_side {
             let b_vec: Vec<SecpFr> = (0..n).map(|_| SecpFr::rand(&mut rng)).collect();
             let sum_vec: Vec<SecpFr> = (0..n).map(|_| SecpFr::rand(&mut rng)).collect();
 
-            let ip_val_claimed: SecpFr =
-                a_vec.iter().zip(b_vec.iter()).map(|(a, b)| *a * *b).sum();
+            let ip_val_claimed: SecpFr = a_vec.iter().zip(b_vec.iter()).map(|(a, b)| *a * *b).sum();
 
-            let g_affine: Vec<SecpAffine> =
-                SecpProjective::normalize_batch(&g_vec);
-            let h_affine: Vec<SecpAffine> =
-                SecpProjective::normalize_batch(&h_vec);
+            let g_affine: Vec<SecpAffine> = SecpProjective::normalize_batch(&g_vec);
+            let h_affine: Vec<SecpAffine> = SecpProjective::normalize_batch(&h_vec);
             let p_initial = SecpProjective::msm(&g_affine, &a_vec).expect("msm g·a")
                 + SecpProjective::msm(&h_affine, &b_vec).expect("msm h·b");
 
@@ -107,11 +104,10 @@ pub mod zippel_side {
             handler.compile(&sizes);
             let compile_time = compile_start.elapsed();
 
-            let inputs = crate::cache::load_or_build_canonical(
-                "ipa_zippel_inputs",
-                s_const,
-                || IpaInputs::build(n),
-            );
+            let inputs =
+                crate::cache::load_or_build_canonical("ipa_zippel_inputs", s_const, || {
+                    IpaInputs::build(n)
+                });
 
             Setup {
                 handler,
@@ -192,9 +188,9 @@ pub mod zippel_side {
 pub mod native_side {
     use super::*;
     use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
+    use ark_ff::{Field, PrimeField};
     use ark_secp256k1::{Affine as SecpAffine, Fr, Projective};
     use ark_serialize::CanonicalSerialize;
-    use ark_ff::{Field, PrimeField};
     use ark_std::UniformRand;
     use merlin::Transcript;
     use rayon::prelude::*;
@@ -219,10 +215,8 @@ pub mod native_side {
                 Projective,
             )>("ipa_srs", s_const, || {
                 let mut rng = ark_std::test_rng();
-                let g_proj: Vec<Projective> =
-                    (0..n).map(|_| Projective::rand(&mut rng)).collect();
-                let h_proj: Vec<Projective> =
-                    (0..n).map(|_| Projective::rand(&mut rng)).collect();
+                let g_proj: Vec<Projective> = (0..n).map(|_| Projective::rand(&mut rng)).collect();
+                let h_proj: Vec<Projective> = (0..n).map(|_| Projective::rand(&mut rng)).collect();
                 let g_vec = Projective::normalize_batch(&g_proj);
                 let h_vec = Projective::normalize_batch(&h_proj);
                 let q = Projective::rand(&mut rng);

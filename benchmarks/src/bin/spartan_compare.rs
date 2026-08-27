@@ -5,7 +5,10 @@ use merlin::Transcript;
 use std::time::{Duration, Instant};
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "spartan_compare", about = "zippel-Spartan-Hyrax vs MS Spartan NIZK")]
+#[command(
+    name = "spartan_compare",
+    about = "zippel-Spartan-Hyrax vs MS Spartan NIZK"
+)]
 struct Args {
     #[arg(long, default_value_t = DEFAULT_M)]
     m: usize,
@@ -25,8 +28,12 @@ fn main() {
     };
 
     println!("=== Spartan-NIZK: zippel-Hyrax vs Microsoft `libspartan` — both on Curve25519 ===");
-    println!("zippel side    = `examples/spartan/main.rs` proto on `ArkCurve25519` (arkworks Edwards-form)");
-    println!("native side    = `libspartan::NIZK` on Curve25519 via `curve25519-dalek` (Ristretto255)");
+    println!(
+        "zippel side    = `examples/spartan/main.rs` proto on `ArkCurve25519` (arkworks Edwards-form)"
+    );
+    println!(
+        "native side    = `libspartan::NIZK` on Curve25519 via `curve25519-dalek` (Ristretto255)"
+    );
     println!("prove timer    = NIZK::prove (commit + sum-checks + PCS open) + matrix+io FS-bind");
     println!("verify timer   = NIZK::verify + matrix+io FS-bind");
     println!(
@@ -65,8 +72,7 @@ fn main() {
         let num_cons = 1usize << m;
         let num_vars = 1usize << (m - 1);
         let num_inputs = num_vars - 1;
-        let (inst, vars, inputs) =
-            Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
+        let (inst, vars, inputs) = Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
 
         let n_matvec = {
             let mut best = Duration::MAX;

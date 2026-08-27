@@ -120,7 +120,8 @@ pub mod shared {
         let g_table = BatchMulPreprocessing::new(g_gen, n);
         let ck_affine: Vec<G1Affine> = g_table.batch_mul(&ck_scalars);
 
-        let alpha_h: Vec<G2Projective> = h_gen.batch_mul(&alpha)
+        let alpha_h: Vec<G2Projective> = h_gen
+            .batch_mul(&alpha)
             .iter()
             .map(|aff| aff.into_group())
             .collect();
@@ -198,8 +199,8 @@ pub mod native_side {
     use ark_std::rand::SeedableRng;
     use std::time::Instant;
 
-    use crate::pst13_upstream::data_structures::{CommitterKey, VerifierKey};
     use crate::pst13_upstream::MultilinearPC;
+    use crate::pst13_upstream::data_structures::{CommitterKey, VerifierKey};
 
     type Pcs = MultilinearPC<Bls12_381>;
 
@@ -468,14 +469,8 @@ pub mod zippel_side {
             // Pre-affinize ck — same fix as the Groth16 bench (avoids per-prove
             // `normalize_batch`). ck_affine is already computed in `Shared`.
             let inputs_base = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-                (
-                    Vid("p".to_string()),
-                    Value::VecScalar(shared.p.clone()),
-                ),
-                (
-                    Vid("z".to_string()),
-                    Value::VecScalar(shared.z.clone()),
-                ),
+                (Vid("p".to_string()), Value::VecScalar(shared.p.clone())),
+                (Vid("z".to_string()), Value::VecScalar(shared.z.clone())),
                 (Vid("y".to_string()), Value::Scalar(shared.y)),
                 (
                     Vid("ck_N".to_string()),
@@ -490,8 +485,7 @@ pub mod zippel_side {
             ]);
 
             let compile_start = Instant::now();
-            let args = ZippelArgs::new(PathBuf::from("examples/pst13/pst13.zippel"))
-                ;
+            let args = ZippelArgs::new(PathBuf::from("examples/pst13/pst13.zippel"));
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("N"), &shared.n);
@@ -553,8 +547,8 @@ pub mod zippel_side {
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod cross_tests {
-    use super::textbook_native_side::{Proof, prove, verify};
     use super::shared::{Shared, build};
+    use super::textbook_native_side::{Proof, prove, verify};
     use ark_bls12_381::G1Projective;
     use backend::{ArkBls12_381, Value};
     use lang::id::{Tid, Vid};

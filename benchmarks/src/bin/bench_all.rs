@@ -110,8 +110,7 @@ const NATIVE_PARI_PROVER_RS: &str = include_str!("../../src/pari_upstream/prover
 const NATIVE_PARI_VERIFIER_RS: &str = include_str!("../../src/pari_upstream/verifier.rs");
 const NATIVE_PARI_DS_RS: &str = include_str!("../../src/pari_upstream/data_structures.rs");
 const NATIVE_PARI_UTILS_RS: &str = include_str!("../../src/pari_upstream/utils.rs");
-const NATIVE_PARI_TRANSCRIPT_RS: &str =
-    include_str!("../../src/pari_upstream/transcript/mod.rs");
+const NATIVE_PARI_TRANSCRIPT_RS: &str = include_str!("../../src/pari_upstream/transcript/mod.rs");
 const NATIVE_PARI_TRANSCRIPT_ERR_RS: &str =
     include_str!("../../src/pari_upstream/transcript/errors.rs");
 
@@ -130,11 +129,11 @@ const NATIVE_HYRAX_MOD_RS: &str = include_str!("../../src/hyrax_upstream/mod.rs"
 // For systems delegating to external crates, native = prover + verifier code
 // in the underlying crate (counted once locally with `cloc`-style NCLOC, pinned
 // to the version in benchmarks/Cargo.lock at the time these were measured).
-const SCHNORR_EXT_NCLOC: usize = 186;   // ark-crypto-primitives-0.6.0 src/signature/schnorr/mod.rs
+const SCHNORR_EXT_NCLOC: usize = 186; // ark-crypto-primitives-0.6.0 src/signature/schnorr/mod.rs
 const SUMCHECK_EXT_NCLOC: usize = 1544; // vendored from hyperplonk: src/sumcheck_upstream/{arithmetic,poly_iop,transcript}/*.rs (ported to ark 0.6)
-const KZG_EXT_NCLOC: usize = 527;       // ark-poly-commit-0.6.0 src/kzg10/mod.rs
-const GROTH16_EXT_NCLOC: usize = 458;   // ark-groth16-0.6.0 src/{prover,verifier,r1cs_to_qap}.rs
-const SPARTAN_EXT_NCLOC: usize = 1867;  // spartan-0.9.0 src/{r1csproof,sumcheck}.rs + src/nizk/{mod,bullet}.rs
+const KZG_EXT_NCLOC: usize = 527; // ark-poly-commit-0.6.0 src/kzg10/mod.rs
+const GROTH16_EXT_NCLOC: usize = 458; // ark-groth16-0.6.0 src/{prover,verifier,r1cs_to_qap}.rs
+const SPARTAN_EXT_NCLOC: usize = 1867; // spartan-0.9.0 src/{r1csproof,sumcheck}.rs + src/nizk/{mod,bullet}.rs
 // PST13, Hyrax, PARI, and IPA native NCLOC are computed dynamically from their
 // respective source files above.
 
@@ -199,9 +198,6 @@ fn extract_braced_block<'a>(src: &'a str, header: &str) -> &'a str {
     body
 }
 
-
-
-
 fn zippel_ncloc(sys: &str) -> usize {
     match sys {
         "schnorr" => count_ncloc_line_comments(ZIPPEL_SCHNORR),
@@ -223,9 +219,7 @@ fn native_ncloc(sys: &str) -> usize {
         "sumcheck" => SUMCHECK_EXT_NCLOC,
         "kzg" => KZG_EXT_NCLOC,
         "groth16" => GROTH16_EXT_NCLOC,
-        "pst13" => {
-            count_ncloc_rust(NATIVE_PST13_MOD_RS) + count_ncloc_rust(NATIVE_PST13_DS_RS)
-        }
+        "pst13" => count_ncloc_rust(NATIVE_PST13_MOD_RS) + count_ncloc_rust(NATIVE_PST13_DS_RS),
         "spartan" => SPARTAN_EXT_NCLOC,
         "ipa" => count_ncloc_rust(extract_braced_block(NATIVE_IPA_RS, "pub mod native_side")),
         "hyrax" => count_ncloc_rust(NATIVE_HYRAX_MOD_RS),
@@ -445,11 +439,9 @@ fn run_groth16(threads: usize, log_sizes: &[usize]) -> Vec<Row> {
             // tuple. `translated` outlives both setups for the duration
             // of `time_protocol`, which is what the borrow requires.
             let translated = setup_pool().install(|| {
-                benchmarks::cache::load_or_build_canonical(
-                    "groth16_translated",
-                    log_size,
-                    || groth16::build_translated(num_constraints),
-                )
+                benchmarks::cache::load_or_build_canonical("groth16_translated", log_size, || {
+                    groth16::build_translated(num_constraints)
+                })
             });
             let (mut z, n) = setup_pool().install(|| {
                 (
@@ -544,8 +536,8 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
             // `produce_synthetic_r1cs` + `NIZKGens::new` are pure setup
             // (libspartan with the multicore feature uses rayon, so the
             // install routes them onto every core).
-            let (inst, vars, inputs, gens, inst_bytes, inputs_bytes, n_matvec) =
-                setup_pool().install(|| {
+            let (inst, vars, inputs, gens, inst_bytes, inputs_bytes, n_matvec) = setup_pool()
+                .install(|| {
                     let (inst, vars, inputs) =
                         Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
                     let n_matvec = {
@@ -563,8 +555,7 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                     };
                     let gens = NIZKGens::new(num_cons, num_vars, num_inputs);
                     let inst_bytes = vec![0u8; 3 * num_cons * 40];
-                    let inputs_bytes =
-                        bincode::serialize(&inputs).expect("serialize inputs");
+                    let inputs_bytes = bincode::serialize(&inputs).expect("serialize inputs");
                     (inst, vars, inputs, gens, inst_bytes, inputs_bytes, n_matvec)
                 });
 
@@ -601,7 +592,9 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                     bind.append_message(b"inst", &inst_bytes);
                     bind.append_message(b"io", &inputs_bytes);
                 }
-                proof.verify(&inst, &inputs, &mut vt, &gens).expect("verify");
+                proof
+                    .verify(&inst, &inputs, &mut vt, &gens)
+                    .expect("verify");
                 verify_sum += t.elapsed();
             }
             let native_verify = verify_sum / benchmarks::VERIFY_SAMPLES;
@@ -732,14 +725,14 @@ fn main() {
             // historical default size. Use `--sizes a,b,c` for an explicit
             // sweep, or `--quick` for the small grid.
             (
-                vec![18usize],            // pari        (M=18  → K=2^18 constraints)
-                vec![18usize],            // sumcheck    (num_vars=18)
-                vec![18usize],            // ipa         (S=18  → N=2^18)
-                vec![1usize << 18],       // kzg         (n_coeffs=2^18, log_size=18)
-                vec![18usize],            // groth16     (log_constraints=18)
-                vec![18usize],            // pst13       (n=18)
-                vec![18usize],            // hyrax       (n=18, must be even per `n % 2 == 0` assert)
-                vec![18usize],            // spartan     (m=18)
+                vec![18usize],      // pari        (M=18  → K=2^18 constraints)
+                vec![18usize],      // sumcheck    (num_vars=18)
+                vec![18usize],      // ipa         (S=18  → N=2^18)
+                vec![1usize << 18], // kzg         (n_coeffs=2^18, log_size=18)
+                vec![18usize],      // groth16     (log_constraints=18)
+                vec![18usize],      // pst13       (n=18)
+                vec![18usize],      // hyrax       (n=18, must be even per `n % 2 == 0` assert)
+                vec![18usize],      // spartan     (m=18)
             )
         };
     // Sumcheck max_degree=3 matches the default the existing sumcheck bench uses;
@@ -755,7 +748,12 @@ fn main() {
     eprintln!();
     eprintln!("source NCLOC (zippel proto vs native_side Rust module):");
     for sys in ALL_SYSTEMS {
-        eprintln!("  {:<8} zippel={:>4}  native={:>4}", sys, zippel_ncloc(sys), native_ncloc(sys));
+        eprintln!(
+            "  {:<8} zippel={:>4}  native={:>4}",
+            sys,
+            zippel_ncloc(sys),
+            native_ncloc(sys)
+        );
     }
     eprintln!();
 
