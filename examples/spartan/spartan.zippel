@@ -46,7 +46,7 @@ fn sc_recurse_d3<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
         +,
         [
             eval<0>(residual_poly, tail)
-            for tail in [[points[i / 2 ^ j % 2] for j in 0..V - 2] for i in 0..2 ^ (V - 2)]
+            for tail in [[i / 2 ^ j % 2 for j in 0..V - 2] for i in 0..2 ^ (V - 2)]
         ],
     );
     let evs_local = [round_poly(t) for t in points];
@@ -138,7 +138,7 @@ fn sc_recurse_d2<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
         +,
         [
             eval<0>(residual_poly, tail)
-            for tail in [[points[i / 2 ^ j % 2] for j in 0..V - 2] for i in 0..2 ^ (V - 2)]
+            for tail in [[i / 2 ^ j % 2 for j in 0..V - 2] for i in 0..2 ^ (V - 2)]
         ],
     );
     let evs_local = [round_poly(t) for t in points];
@@ -378,7 +378,7 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
         +,
         [
             eval<0>(g_poly, tail)
-            for tail in [[pts3[i / 2 ^ j % 2] for j in 0..M - 1] for i in 0..2 ^ (M - 1)]
+            for tail in [[i / 2 ^ j % 2 for j in 0..M - 1] for i in 0..2 ^ (M - 1)]
         ],
     );
     let evs1_0_local = [round_poly1_0(t) for t in pts3];
@@ -480,7 +480,7 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
         +,
         [
             eval<0>(m_poly, tail)
-            for tail in [[pts2[i / 2 ^ j % 2] for j in 0..M - 1] for i in 0..2 ^ (M - 1)]
+            for tail in [[i / 2 ^ j % 2 for j in 0..M - 1] for i in 0..2 ^ (M - 1)]
         ],
     );
     let evs2_0_local = [round_poly2_0(t) for t in pts2];
