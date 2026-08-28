@@ -416,9 +416,8 @@ impl<C: ArkConfig, A> Dag<C, A> {
     }
 
     /// Get all prover assertions: `Assert` nodes with no outgoing edges.
-    /// These are terminal prover-side nodes that must be included in the
-    /// prover graph and checked at proving time.
-    pub fn find_assert(&self) -> Vec<NodeIndex> {
+    /// `Verify` nodes are verifier-side and excluded.
+    fn find_assert(&self) -> Vec<NodeIndex> {
         self.node_indices()
             .filter(|&n| match &self[n] {
                 Node::Op(op, _) | Node::Transcr(op, _) => {
@@ -427,6 +426,55 @@ impl<C: ArkConfig, A> Dag<C, A> {
                 _ => false,
             })
             .collect()
+    }
+
+    /// Every node belonging to the specification relation: the `Node::Rel`
+    /// markers and everything forward-reachable from them.
+    ///
+    /// The `where` clause is lowered with its own `ArgKind::Relation`
+    /// argument nodes (see the `CBody::Proto` arm of `add_top_exp`) precisely
+    /// so that walking it never crosses into the protocol body — which is
+    /// what makes this set disjoint from the body's nodes.
+    fn relation_nodes(&self) -> HashSet<NodeIndex> {
+        let mut seen: HashSet<NodeIndex> = HashSet::new();
+        let mut worklist: Vec<NodeIndex> = self
+            .node_indices()
+            .filter(|&n| self[n].is_relation())
+            .collect();
+        while let Some(n) = worklist.pop() {
+            if seen.insert(n) {
+                worklist.extend(self.nodes_from(n));
+            }
+        }
+        seen
+    }
+
+    /// Seeds for the prover projection — the nodes whose values the prover
+    /// is actually obliged to produce:
+    ///
+    /// - transcript nodes, which carry the proof values, and
+    /// - terminal `Assert` nodes written in the protocol *body*, which are
+    ///   prover-side runtime checks.
+    ///
+    /// The `where` clause is deliberately not a seed. It is the protocol's
+    /// *specification*: it is auto-wrapped in an `Assert` (see the
+    /// `CBody::Proto` arm of `add_top_exp`) but quantifies over trusted-setup
+    /// trapdoors the prover does not hold (`random<F>`), so it is neither
+    /// checkable nor meaningful at proving time. Seeding from it pulled the
+    /// entire relation into every `run_prover` call — pst13's `2^N`-wide
+    /// `eq_alpha` product, groth16's `2^M` SRS scalar mults — for a result
+    /// nothing reads. The static analyses run on the full protocol DAG
+    /// (`ZippelHandler::analyze_graph`), not on this projection, so they
+    /// still see the relation.
+    fn prover_roots(&self) -> Vec<NodeIndex> {
+        let relation = self.relation_nodes();
+        let mut roots = self.transcript_nodes();
+        roots.extend(
+            self.find_assert()
+                .into_iter()
+                .filter(|n| !relation.contains(n)),
+        );
+        roots
     }
 
     pub fn nodes_from(&self, n: NodeIndex) -> Neighbors<'_, Dep, u32> {
@@ -567,11 +615,9 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         A: Clone,
     {
         let mut prover = Dag::new();
-        // Add all nodes to the prover graph. Seed the worklist with
-        // transcript nodes (for proof transcript values) and assert nodes
-        // (prover-side assertions that must be evaluated at proving time).
-        let mut worklist: Vec<NodeIndex> = self.transcript_nodes();
-        worklist.extend(self.find_assert());
+        // Add all nodes to the prover graph: everything backwards-reachable
+        // from the prover's obligations (see `prover_roots`).
+        let mut worklist: Vec<NodeIndex> = self.prover_roots();
         // Map old node indices to new references
         let mut node_map: HashMap<NodeIndex, Ref> = HashMap::new();
 
