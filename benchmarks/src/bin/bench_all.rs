@@ -83,6 +83,15 @@ struct Row {
     /// builds this binary once), excludes runtime scheduling
     /// (graph→TDag), and excludes prove/verify execution.
     compile: std::time::Duration,
+    /// Optional second native baseline for the same system. Populated
+    /// today only for spartan: `native` holds Microsoft's `libspartan`
+    /// (curve25519-dalek stack), `ark_native` holds the vendored
+    /// ark-spartan on ark-curve25519 0.6 — the same curve zippel runs
+    /// on. Two natives so the reader can attribute the gap to (a)
+    /// implementation quality (libspartan vs zippel-generated code)
+    /// vs (b) library-stack cost (dalek vs arkworks 0.6). `None` for
+    /// every other system.
+    ark_native: Option<Timing>,
 }
 
 fn ms(t: std::time::Duration) -> f64 {
@@ -250,9 +259,12 @@ fn init_csv(path: &PathBuf, header: bool, append: bool) -> std::io::Result<()> {
     let f = OpenOptions::new().create(true).append(true).open(path)?;
     let mut w = BufWriter::new(f);
     if header {
+        // ark_native_prover_time_ms / ark_native_verifier_time_ms are
+        // populated only for the spartan row (the ark-spartan baseline
+        // on ark-curve25519 v0.6). Blank for every other system.
         writeln!(
             w,
-            "system,threads,log_size,prover_time_ms,verifier_time_ms,native_prover_time_ms,native_verifier_time_ms,zippel_ncloc,native_ncloc,compiler"
+            "system,threads,log_size,prover_time_ms,verifier_time_ms,native_prover_time_ms,native_verifier_time_ms,zippel_ncloc,native_ncloc,compiler,ark_native_prover_time_ms,ark_native_verifier_time_ms"
         )?;
         w.flush()?;
     }
@@ -264,9 +276,14 @@ fn init_csv(path: &PathBuf, header: bool, append: bool) -> std::io::Result<()> {
 fn write_row(r: &Row) {
     let Some(m) = CSV_WRITER.get() else { return };
     let mut w = m.lock().unwrap();
+    // ark_native columns: 6-decimal ms if present, empty string otherwise.
+    let (ark_prove, ark_verify) = match r.ark_native {
+        Some(t) => (format!("{:.3}", ms(t.prove)), format!("{:.3}", ms(t.verify))),
+        None => (String::new(), String::new()),
+    };
     writeln!(
         w,
-        "{},{},{},{:.3},{:.3},{:.3},{:.3},{},{},{:.3}",
+        "{},{},{},{:.3},{:.3},{:.3},{:.3},{},{},{:.3},{},{}",
         r.system,
         r.threads,
         r.log_size,
@@ -277,6 +294,8 @@ fn write_row(r: &Row) {
         zippel_ncloc(r.system),
         native_ncloc(r.system),
         ms(r.compile),
+        ark_prove,
+        ark_verify,
     )
     .expect("write csv row");
     w.flush().expect("flush csv row");
@@ -294,6 +313,16 @@ fn print_row(r: &Row) {
         ms(r.native.verify),
         ms(r.compile),
     );
+    if let Some(t) = r.ark_native {
+        eprintln!(
+            "  {:<8} threads={} log_size={:>2}  ark_native prove={:>8.2}ms   verify={:>7.2}ms   (ark-spartan on ark-curve25519 0.6)",
+            r.system,
+            r.threads,
+            r.log_size,
+            ms(t.prove),
+            ms(t.verify),
+        );
+    }
     write_row(r);
 }
 
@@ -315,6 +344,7 @@ fn run_schnorr(threads: usize) -> Vec<Row> {
         zippel,
         native,
         compile,
+        ark_native: None,
     }]
 }
 
@@ -340,6 +370,7 @@ fn run_sumcheck(threads: usize, sizes: &[usize], max_degree: usize) -> Vec<Row> 
                 zippel,
                 native,
                 compile,
+                ark_native: None,
             };
             print_row(&r);
             r
@@ -366,6 +397,7 @@ fn run_ipa(threads: usize, ss: &[usize]) -> Vec<Row> {
                 zippel,
                 native,
                 compile,
+                ark_native: None,
             };
             print_row(&r);
             r
@@ -394,6 +426,7 @@ fn run_kzg(threads: usize, ns: &[usize]) -> Vec<Row> {
                 zippel,
                 native,
                 compile,
+                ark_native: None,
             };
             print_row(&r);
             r
@@ -422,6 +455,7 @@ fn run_pari(threads: usize, ms: &[usize], n_pub: usize, k_vars: usize) -> Vec<Ro
                 zippel,
                 native,
                 compile,
+                ark_native: None,
             };
             print_row(&r);
             r
@@ -459,6 +493,7 @@ fn run_groth16(threads: usize, log_sizes: &[usize]) -> Vec<Row> {
                 zippel,
                 native,
                 compile,
+                ark_native: None,
             };
             print_row(&r);
             r
@@ -486,6 +521,7 @@ fn run_pst13(threads: usize, ns: &[usize]) -> Vec<Row> {
                 zippel,
                 native,
                 compile,
+                ark_native: None,
             };
             print_row(&r);
             r
@@ -512,6 +548,7 @@ fn run_hyrax(threads: usize, ns: &[usize]) -> Vec<Row> {
                 zippel,
                 native,
                 compile,
+                ark_native: None,
             };
             print_row(&r);
             r
@@ -603,6 +640,54 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                 prove: native_prove,
                 verify: native_verify,
             };
+
+            // Second native baseline: ark-spartan on ark-curve25519 v0.6
+            // (same curve as the zippel side; different arkworks stack
+            // than libspartan, which lives on curve25519-dalek). Setup
+            // (R1CS synthesis + gens) runs off the bench pool, then the
+            // prover/verifier are timed in the global pool the same way
+            // as libspartan above.
+            let ark_native = {
+                use ark_curve25519::EdwardsProjective as C25519;
+                use benchmarks::ark_spartan_upstream::{
+                    Instance as ArkInstance, NIZK as ArkNIZK, NIZKGens as ArkNIZKGens,
+                };
+
+                let (ark_inst, ark_vars, ark_inputs, ark_gens) = setup_pool().install(|| {
+                    let (ark_inst, ark_vars, ark_inputs) =
+                        ArkInstance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
+                    let ark_gens =
+                        ArkNIZKGens::<C25519>::new(num_cons, num_vars, num_inputs);
+                    (ark_inst, ark_vars, ark_inputs, ark_gens)
+                });
+
+                let mut prove_sum = Duration::ZERO;
+                let mut last_ark_proof = None;
+                for _ in 0..*benchmarks::PROVER_SAMPLES {
+                    let mut pt = Transcript::new(b"bench_all_spartan_ark");
+                    let t = Instant::now();
+                    let proof =
+                        ArkNIZK::<C25519>::prove(&ark_inst, ark_vars.clone(), &ark_inputs, &ark_gens, &mut pt);
+                    prove_sum += t.elapsed();
+                    last_ark_proof = Some(proof);
+                }
+                let ark_prove = prove_sum / *benchmarks::PROVER_SAMPLES;
+                let proof = last_ark_proof.expect("PROVER_SAMPLES > 0");
+
+                let mut verify_sum = Duration::ZERO;
+                for _ in 0..benchmarks::VERIFY_SAMPLES {
+                    let mut vt = Transcript::new(b"bench_all_spartan_ark");
+                    let t = Instant::now();
+                    proof
+                        .verify(&ark_inst, &ark_inputs, &mut vt, &ark_gens)
+                        .expect("ark-spartan verify");
+                    verify_sum += t.elapsed();
+                }
+                let ark_verify = verify_sum / benchmarks::VERIFY_SAMPLES;
+
+                Some(Timing { prove: ark_prove, verify: ark_verify })
+            };
+
             let r = Row {
                 system: "spartan",
                 threads,
@@ -610,6 +695,7 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                 zippel,
                 native,
                 compile,
+                ark_native,
             };
             print_row(&r);
             r
