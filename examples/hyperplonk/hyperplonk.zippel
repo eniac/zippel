@@ -2,7 +2,7 @@
 // Sizes: parametric over S (and N = 2^S, the number of gates).
 //
 // How to run:
-//   cargo run --example hyperplonk --release
+//   cargo run --release --example zippel -- hyperplonk
 //
 // To change the dimensions: edit NUM_GATES (= 2^S) in main.rs. The proto
 // below picks up the new size via its <S: Size, N: 2^S> parameters; no

@@ -16,7 +16,7 @@ use zippel::*;
 const S: usize = 3;
 const NUM_LEAVES: usize = 1 << S; // = 2^S
 
-fn main() {
+pub fn run(_args: &[String]) {
     let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel");
 

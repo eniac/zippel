@@ -5,13 +5,12 @@ use share::Ctx;
 use std::path::PathBuf;
 use zippel::*;
 
-#[path = "../common/analysis.rs"]
-mod common;
+use crate::common;
 
 const N: usize = 2;
 const K: usize = 1;
 
-fn main() {
+pub fn run(_args: &[String]) {
     println!("=== CDS Protocol for Proofs of Partial Knowledge (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/cds/cds.zippel"));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);

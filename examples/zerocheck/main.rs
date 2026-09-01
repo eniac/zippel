@@ -5,10 +5,9 @@ use share::Ctx;
 use std::path::PathBuf;
 use zippel::*;
 
-#[path = "../common/analysis.rs"]
-mod common;
+use crate::common;
 
-fn main() {
+pub fn run(_args: &[String]) {
     println!("=== Zerocheck (ArkSecp256k1) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/zerocheck/zerocheck.zippel"));
     let mut handler: zippel::ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);

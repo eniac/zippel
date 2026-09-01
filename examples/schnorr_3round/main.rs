@@ -5,10 +5,9 @@ use share::Ctx;
 use std::path::PathBuf;
 use zippel::*;
 
-#[path = "../common/analysis.rs"]
-mod common;
+use crate::common;
 
-fn main() {
+pub fn run(_args: &[String]) {
     println!("=== Schnorr 3-Round (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from(
         "examples/schnorr_3round/schnorr_3round.zippel",

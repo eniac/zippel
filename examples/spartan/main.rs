@@ -20,8 +20,8 @@ struct RunOpts {
     manual_zippel: Option<String>,
 }
 
-fn parse_args() -> RunOpts {
-    let mut args = std::env::args().skip(1);
+fn parse_args(argv: &[String]) -> RunOpts {
+    let mut args = argv.iter().cloned();
     let mut sweep: Vec<usize> = Vec::new();
     let mut invalid = false;
     let mut csv_path: Option<String> = None;
@@ -87,8 +87,8 @@ struct RunResult {
     passed: bool,
 }
 
-fn main() {
-    let opts = parse_args();
+pub fn run(args: &[String]) {
+    let opts = parse_args(args);
 
     println!("=== Spartan-NIZK (PIOP + Hyrax PCS, ArkCurve25519) ===");
     println!(

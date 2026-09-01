@@ -4,7 +4,7 @@ use share::Ctx;
 use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
-fn main() {
+pub fn run(_args: &[String]) {
     const LOG_N: usize = 8;
     env_logger::init();
     println!("=== Dory Evaluation Proof (ArkBls12_381) ===");

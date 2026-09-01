@@ -13,11 +13,11 @@ cargo test -p graph                      # test a single crate
 cargo test -p graph op_unit_tests        # run a specific test module
 cargo test -p graph -- --test scalar     # run tests matching "scalar"
 cargo test -- --nocapture                # show stdout/stderr (also: cargo test-verbose)
-cargo run --example ipa                  # run an example (from repo root)
+cargo run --example zippel -- ipa       # run an example (from repo root)
 cargo bench --bench graph_execution      # Criterion benchmark
 ```
 
-Aliases live in `.cargo/config.toml`: `test-all`, `test-verbose`, `test-coverage` (the latter requires `cargo-tarpaulin`).
+Aliases live in `.cargo/config.toml`: `test-all`, `test-verbose`, `test-coverage` (the latter requires `cargo-tarpaulin`), plus `ex` / `exr` for running one example (`cargo ex ipa`, `cargo exr hyperplonk`).
 
 CI runs on GitHub Actions (`.github/workflows/ci.yml`) inside the `rustlang/rust:nightly` container. The exact CI commands are:
 
@@ -55,7 +55,7 @@ The entry point is `ZippelHandler<C: ArkConfig>` in `src/lib.rs`. It is paramete
 - **`runtime`** — Execution engine. `MutexGraph<C>` wraps a scheduled DAG with per-node `Arc<Mutex<...>>` for thread-safe parallel execution.
 - Top-level `src/lib.rs` defines `ZippelHandler<C>` / `ZippelArgs` — the high-level driver wired up in every example (`compile`, `default_schedule_prover`, `run_prover`, `default_schedule_verifier`, `run_verifier`).
 
-Examples live in `examples/` and are registered as `[[example]]` targets in the root `Cargo.toml`. Each example has a `main.rs` and reads a `.zippel` file from `examples/`. **Adding a new example requires registering its `[[example]]` entry in the root `Cargo.toml`** — there's no glob discovery.
+Examples live in `examples/<name>/main.rs`, each exposing `pub fn run(args: &[String])` and reading a `.zippel` file from `examples/`. All of them are linked into the single `zippel` example target via the `#[path] mod` declarations and the `EXAMPLES` table in `examples/main.rs`, and are invoked as `cargo run --example zippel -- <name>`. **Adding a new example means editing `examples/main.rs`, not `Cargo.toml`** — `autoexamples = false` disables glob discovery, and one example target keeps `target/` to one link product for all protocols.
 
 Integration tests at the repo root (`tests/groebner_correctness.rs`, `tests/groebner_sage.rs`) and Criterion benchmarks under `benches/` (`graph_execution`, `groebner`) are part of the workspace.
 

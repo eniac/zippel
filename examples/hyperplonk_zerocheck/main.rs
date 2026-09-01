@@ -17,7 +17,7 @@ use zippel::*;
 const S: usize = 3;
 const NUM_POINTS: usize = 1 << S; // |B_s| = 2^S
 
-fn main() {
+pub fn run(_args: &[String]) {
     let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples/hyperplonk_zerocheck/hyperplonk_zerocheck.zippel");
 

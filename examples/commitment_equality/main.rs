@@ -6,10 +6,9 @@ use std::ops::Mul;
 use std::path::PathBuf;
 use zippel::*;
 
-#[path = "../common/analysis.rs"]
-mod common;
+use crate::common;
 
-fn main() {
+pub fn run(_args: &[String]) {
     println!("=== Prove Commitment Equality (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from(
         "examples/commitment_equality/commitment_equality.zippel",

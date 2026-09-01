@@ -80,7 +80,6 @@ benchmarks/
 │       └── spartan_compare.rs     spartan zippel vs native side-by-side
 │
 ├── benches/               criterion benches for a couple of systems (rarely used now)
-├── target/                cargo build output
 ├── artifacts/             auto-created at runtime — on-disk SRS cache (see cache.rs)
 └── *.csv                  sample / saved bench outputs
 ```
@@ -117,7 +116,7 @@ records the mean.
 
 ## Driver internals: `bench_all` binary
 
-`run_all.sh` builds and invokes `target/release/bench_all`. Its flags map
+`run_all.sh` builds and invokes `<workspace root>/target/release/bench_all`. Its flags map
 mostly to the script's env vars but can be used directly for one-off runs:
 
 ```sh

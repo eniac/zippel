@@ -4,10 +4,9 @@ use share::Ctx;
 use std::path::PathBuf;
 use zippel::*;
 
-#[path = "../common/analysis.rs"]
-mod common;
+use crate::common;
 
-fn main() {
+pub fn run(_args: &[String]) {
     println!("=== IPA Weighted (ArkSecp256k1) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/ipa_weighted/ipa_weighted.zippel"));
     let mut handler: zippel::ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);

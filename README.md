@@ -16,16 +16,25 @@ cargo build
 
 ## Usage
 
+All protocol examples are compiled into one binary, dispatched by name:
+
 ```bash
-cargo run --example ipa          # run the IPA example
-cargo run --example schnorr      # run Schnorr protocol
-cargo run --example kzg          # run KZG commitment
-cargo test                       # run all tests
+cargo run --example zippel -- ipa       # run the IPA example
+cargo run --example zippel -- schnorr   # run Schnorr protocol
+cargo run --example zippel -- kzg       # run KZG commitment
+cargo ex ipa                            # shorthand alias (dev)
+cargo exr hyperplonk                    # shorthand alias (release)
+cargo run --example zippel              # list every available example
+cargo test                              # run all tests
 ```
 
-Available examples: `ipa`, `ipa_weighted`, `ipa_field`, `schnorr`, `cp`, `kzg`, `sumcheck`, `zerocheck`, `hadamard`, `mle`.
+A single example target keeps `target/` small: one link product and one
+debug-info file for all protocols instead of one per protocol.
 
-To add a new example, create a `.zippel` file in `examples/` and a corresponding `examples/<name>/main.rs` entry with a `[[example]]` target in the root `Cargo.toml`.
+To add an example, create `examples/<name>/<name>.zippel` and
+`examples/<name>/main.rs` exposing `pub fn run(_args: &[String])`, then add a
+`#[path] mod` line and an `EXAMPLES` row in `examples/main.rs`. No
+`Cargo.toml` change is needed.
 
 ## License
 

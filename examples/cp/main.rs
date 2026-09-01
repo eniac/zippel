@@ -4,10 +4,9 @@ use share::Ctx;
 use std::path::PathBuf;
 use zippel::*;
 
-#[path = "../common/analysis.rs"]
-mod common;
+use crate::common;
 
-fn main() {
+pub fn run(_args: &[String]) {
     println!("=== Chaum-Pedersen (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/cp/cp.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);

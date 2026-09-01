@@ -6,7 +6,7 @@ use share::Ctx;
 use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
-fn main() {
+pub fn run(_args: &[String]) {
     println!("=== Membership ===");
     let n_size = 2;
     let m_size = 2;

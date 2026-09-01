@@ -5,10 +5,9 @@ use share::Ctx;
 use std::path::PathBuf;
 use zippel::*;
 
-#[path = "../common/analysis.rs"]
-mod common;
+use crate::common;
 
-fn main() {
+pub fn run(_args: &[String]) {
     println!("=== Hyrax PoP (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/hyrax_pop/hyrax_pop.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);

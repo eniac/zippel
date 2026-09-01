@@ -5,8 +5,7 @@ use share::Ctx;
 use std::path::PathBuf;
 use zippel::*;
 
-#[path = "../common/analysis.rs"]
-mod common;
+use crate::common;
 
 fn build_sizes_ctx() -> Ctx<Tid, usize> {
     let mut ctx = Ctx::new();
@@ -16,7 +15,7 @@ fn build_sizes_ctx() -> Ctx<Tid, usize> {
     ctx
 }
 
-fn main() {
+pub fn run(_args: &[String]) {
     println!("=== R1CS Sigma (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/r1cs_sigma/r1cs_sigma.zippel"));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);

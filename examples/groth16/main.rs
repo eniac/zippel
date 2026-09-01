@@ -241,7 +241,7 @@ fn run_groth16(
     );
 }
 
-fn main() {
+pub fn run(_args: &[String]) {
     type D<FF> = GeneralEvaluationDomain<FF>;
     println!("=== Groth16 (ArkBls12_381) — constraints: {CONSTRAINT_SIZE} ===");
 

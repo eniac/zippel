@@ -34,11 +34,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-BIN="${SCRIPT_DIR}/target/release/bench_all"
+BIN="${WORKSPACE_ROOT}/target/release/bench_all"
 
 if [[ $BUILD -eq 1 ]]; then
-    echo "[build] cargo build --release --bin bench_all"
-    (cd "$SCRIPT_DIR" && cargo build --release --bin bench_all) || exit 1
+    echo "[build] cargo build --release -p benchmarks --bin bench_all"
+    (cd "$WORKSPACE_ROOT" && cargo build --release -p benchmarks --bin bench_all) || exit 1
 fi
 
 [[ -x "$BIN" ]] || { echo "missing $BIN" >&2; exit 1; }

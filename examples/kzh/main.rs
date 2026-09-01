@@ -6,8 +6,7 @@ use share::Ctx;
 use std::path::PathBuf;
 use zippel::*;
 
-#[path = "../common/analysis.rs"]
-mod common;
+use crate::common;
 
 const NX: usize = 1;
 const NY: usize = 1;
@@ -19,7 +18,7 @@ fn build_sizes_ctx() -> Ctx<Tid, usize> {
     ctx
 }
 
-fn main() {
+pub fn run(_args: &[String]) {
     println!("=== KZH (ArkBls12_381, NX={}, NY={}) ===", NX, NY);
     let args = ZippelArgs::new(PathBuf::from("examples/kzh/kzh.zippel"));
     let sizes = build_sizes_ctx();

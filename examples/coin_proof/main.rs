@@ -7,10 +7,9 @@ use std::ops::Mul;
 use std::path::PathBuf;
 use zippel::*;
 
-#[path = "../common/analysis.rs"]
-mod common;
+use crate::common;
 
-fn main() {
+pub fn run(_args: &[String]) {
     println!("=== Coin Proof (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/coin_proof/coin_proof.zippel"));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);

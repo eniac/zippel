@@ -15,7 +15,7 @@ const NUM_CONS: usize = 1 << M;
 const W_LEN: usize = 1 << (M - 1);
 const IO_LEN: usize = W_LEN - 1;
 
-fn main() {
+pub fn run(_args: &[String]) {
     type F = <ArkBls12_381 as ArkConfig>::F;
     type G1 = <ArkBls12_381 as ArkConfig>::G1;
     type G2 = <ArkBls12_381 as ArkConfig>::G2;

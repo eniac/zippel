@@ -6,14 +6,13 @@ use share::Ctx;
 use std::path::PathBuf;
 use zippel::*;
 
-#[path = "../common/analysis.rs"]
-mod common;
+use crate::common;
 
 const DEFAULT_N: usize = 2;
 
-fn main() {
-    let n: usize = std::env::args()
-        .nth(1)
+pub fn run(args: &[String]) {
+    let n: usize = args
+        .first()
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_N);
     assert!(

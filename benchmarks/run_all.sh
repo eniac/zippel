@@ -27,11 +27,9 @@ ROOT="$(dirname "${SCRIPT_DIR}")"
 cd "${ROOT}"
 
 echo ">>> building bench_all (release)" >&2
-# `benchmarks` is excluded from the workspace (Cargo.toml note explains why),
-# so `-p benchmarks` from the root fails. Build from the crate's own manifest.
-cargo build --release --manifest-path "${SCRIPT_DIR}/Cargo.toml" --bin bench_all >&2
+cargo build --release -p benchmarks --bin bench_all >&2
 
-BIN="${SCRIPT_DIR}/target/release/bench_all"
+BIN="${ROOT}/target/release/bench_all"
 
 CHILD_ARGS=()
 [[ "${QUICK}" == "1" ]] && CHILD_ARGS+=(--quick)

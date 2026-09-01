@@ -109,7 +109,7 @@ Before creating PR:
 - Run `cargo tarpaulin --out Html --output-dir coverage` - calculate new coverage
 - **Coverage gate**: Only proceed if coverage increased by ≥2%
 - Run `cargo clippy` - no new warnings
-- Run example tests: `cargo run --example <name>` for all examples
+- Run example tests: `cargo run --example zippel -- <name>` for all examples
 
 ### 6. PR Creation
 
@@ -162,8 +162,8 @@ Create PR with structured description:
 cargo test
 cargo tarpaulin --out Html --output-dir coverage
 cargo clippy
-cargo run --example simple_poly
-cargo run --example multilinear_eval
+cargo run --example zippel -- kzg
+cargo run --example zippel -- mle_sumcheck
 ```
 ```
 

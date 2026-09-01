@@ -9,13 +9,12 @@ use share::Ctx;
 use std::path::PathBuf;
 use zippel::*;
 
-#[path = "../common/analysis.rs"]
-mod common;
+use crate::common;
 
 const NUM_VARS: usize = 10;
 const MAX_DEGREE: usize = 10;
 
-fn main() {
+pub fn run(_args: &[String]) {
     let zippel_file =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/sumcheck/sumcheck.zippel");
     let num_vars = NUM_VARS;

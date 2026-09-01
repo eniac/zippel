@@ -23,3 +23,9 @@ test-verbose = "test --workspace -- --nocapture"
 # Run tests with coverage
 test-coverage = "tarpaulin --workspace --out Html --output-dir coverage"
 
+# Run one protocol out of the single `zippel` example binary.
+#   cargo ex ipa            (dev)
+#   cargo exr hyperplonk    (release)
+ex = "run --example zippel --"
+exr = "run --release --example zippel --"
+

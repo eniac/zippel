@@ -2,7 +2,7 @@
 // Sizes: parametric over S (and N = 2^S, the leaf count).
 //
 // How to run:
-//   cargo run --example hyperplonk_productcheck --release
+//   cargo run --release --example zippel -- hyperplonk_productcheck
 //
 // To change the dimensions: edit NUM_LEAVES (= 2^S) in main.rs. The proto
 // below picks up the new size via its <S: Size, N: 2^S> parameters; no

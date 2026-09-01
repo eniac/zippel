@@ -32,7 +32,7 @@ const M_WIT: usize = 1; // "real" witness variables
 const K_VARS: usize = 2 * N_PUB + M_WIT;
 const KMN: usize = K_VARS - N_PUB; // length of `w` passed to zippel
 
-fn main() {
+pub fn run(_args: &[String]) {
     println!("=== PARI (Square R1CS, K={K}, N={N_PUB}, K_VARS={K_VARS}, KMN={KMN}) ===");
 
     let args = ZippelArgs::new(PathBuf::from("examples/pari/pari.zippel"));
