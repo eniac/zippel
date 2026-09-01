@@ -67,14 +67,7 @@ fn sc_recurse_d3<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
     // ZK for round polys, do a full port of `prove_quad` — do NOT
     // resurrect this half-form.
 
-    sc_recurse_d3(
-        residual_poly,
-        points,
-        new_challenges,
-        next_prev,
-        r_next,
-        curr_round + 1,
-    )
+    sc_recurse_d3(residual_poly, points, new_challenges, next_prev, r_next, curr_round + 1)
 }
 
 fn sc_recurse_d3<G: Group, F: Scalar<G>, M: Size>(
@@ -129,14 +122,7 @@ fn sc_recurse_d2<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
     // commit + Schnorr PoK block (see sc_recurse_d3 V-generic for
     // the full rationale).
 
-    sc_recurse_d2(
-        residual_poly,
-        points,
-        new_challenges,
-        next_prev,
-        r_next,
-        curr_round + 1,
-    )
+    sc_recurse_d2(residual_poly, points, new_challenges, next_prev, r_next, curr_round + 1)
 }
 
 fn sc_recurse_d2<G: Group, F: Scalar<G>, M: Size>(

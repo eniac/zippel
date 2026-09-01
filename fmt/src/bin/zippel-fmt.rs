@@ -1,7 +1,7 @@
 use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
 
-use fmt::{check, format_source};
+use fmt::{check, format_source, normalize_newlines};
 use lang::diagnostic::render_diagnostic;
 use similar::{ChangeTag, TextDiff};
 
@@ -76,8 +76,9 @@ fn main() {
 
     if files.is_empty() {
         // stdin -> stdout
-        let mut src = String::new();
-        std::io::stdin().read_to_string(&mut src).unwrap();
+        let mut raw = String::new();
+        std::io::stdin().read_to_string(&mut raw).unwrap();
+        let src = normalize_newlines(&raw);
         match format_source(&src) {
             Ok(out) => {
                 std::io::stdout().write_all(out.as_bytes()).unwrap();
@@ -92,13 +93,18 @@ fn main() {
 
     let mut has_diff = false;
     for path in &files {
-        let src = match std::fs::read_to_string(path) {
+        let raw = match std::fs::read_to_string(path) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("Error reading {}: {}", path.display(), e);
                 std::process::exit(1);
             }
         };
+        // Canonical output is LF. Normalize first so a CRLF working tree
+        // (Windows `core.autocrlf=true`) is not reported as unformatted;
+        // `--write` restores the file's original line-ending style.
+        let crlf = raw.contains("\r\n");
+        let src = normalize_newlines(&raw);
         let filename = path.display().to_string();
         match mode {
             Mode::Check => match check(&src) {
@@ -108,9 +114,9 @@ fn main() {
                         eprintln!();
                     }
                     has_diff = true;
-                    eprintln!("{}: not formatted", path.display());
+                    eprintln!("{}: not formatted", filename);
                     if let Ok(formatted) = format_source(&src) {
-                        print_diff(&src, &formatted, &path.display().to_string());
+                        print_diff(&src, &formatted, &filename);
                     }
                 }
                 Err(diagnostics) => {
@@ -121,9 +127,10 @@ fn main() {
             Mode::Write | Mode::Stdout => match format_source(&src) {
                 Ok(out) => {
                     if matches!(mode, Mode::Write) {
-                        if out != src {
-                            std::fs::write(path, &out).unwrap();
-                            eprintln!("{}: formatted", path.display());
+                        let styled = if crlf { out.replace('\n', "\r\n") } else { out };
+                        if styled != raw {
+                            std::fs::write(path, &styled).unwrap();
+                            eprintln!("{}: formatted", filename);
                         }
                     } else {
                         std::io::stdout().write_all(out.as_bytes()).unwrap();

@@ -278,7 +278,10 @@ fn write_row(r: &Row) {
     let mut w = m.lock().unwrap();
     // ark_native columns: 6-decimal ms if present, empty string otherwise.
     let (ark_prove, ark_verify) = match r.ark_native {
-        Some(t) => (format!("{:.3}", ms(t.prove)), format!("{:.3}", ms(t.verify))),
+        Some(t) => (
+            format!("{:.3}", ms(t.prove)),
+            format!("{:.3}", ms(t.verify)),
+        ),
         None => (String::new(), String::new()),
     };
     writeln!(
@@ -656,8 +659,7 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                 let (ark_inst, ark_vars, ark_inputs, ark_gens) = setup_pool().install(|| {
                     let (ark_inst, ark_vars, ark_inputs) =
                         ArkInstance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
-                    let ark_gens =
-                        ArkNIZKGens::<C25519>::new(num_cons, num_vars, num_inputs);
+                    let ark_gens = ArkNIZKGens::<C25519>::new(num_cons, num_vars, num_inputs);
                     (ark_inst, ark_vars, ark_inputs, ark_gens)
                 });
 
@@ -666,8 +668,13 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                 for _ in 0..*benchmarks::PROVER_SAMPLES {
                     let mut pt = Transcript::new(b"bench_all_spartan_ark");
                     let t = Instant::now();
-                    let proof =
-                        ArkNIZK::<C25519>::prove(&ark_inst, ark_vars.clone(), &ark_inputs, &ark_gens, &mut pt);
+                    let proof = ArkNIZK::<C25519>::prove(
+                        &ark_inst,
+                        ark_vars.clone(),
+                        &ark_inputs,
+                        &ark_gens,
+                        &mut pt,
+                    );
                     prove_sum += t.elapsed();
                     last_ark_proof = Some(proof);
                 }
@@ -685,7 +692,10 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                 }
                 let ark_verify = verify_sum / benchmarks::VERIFY_SAMPLES;
 
-                Some(Timing { prove: ark_prove, verify: ark_verify })
+                Some(Timing {
+                    prove: ark_prove,
+                    verify: ark_verify,
+                })
             };
 
             let r = Row {

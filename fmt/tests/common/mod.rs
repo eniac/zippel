@@ -37,3 +37,22 @@ pub fn assert_ok_with_style(src: &str, expected: &str, style: &Style) {
     assert_eq!(out, expected, "first format mismatch");
     assert_eq!(fmt_with_style(&out, style), out, "not idempotent");
 }
+
+/// Every `.zippel` file under `../examples`, sorted for deterministic order.
+pub fn zippel_examples() -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir("../examples").unwrap() {
+        let dir = entry.unwrap().path();
+        if !dir.is_dir() {
+            continue;
+        }
+        for file in std::fs::read_dir(&dir).unwrap() {
+            let path = file.unwrap().path();
+            if path.extension().is_some_and(|e| e == "zippel") {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    out
+}

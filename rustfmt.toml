@@ -3,4 +3,5 @@ ignore = [
     "benchmarks/src/sumcheck_upstream",
     "benchmarks/src/pst13_upstream",
     "benchmarks/src/hyrax_upstream",
+    "benchmarks/src/ark_spartan_upstream",
 ]

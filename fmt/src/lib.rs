@@ -25,6 +25,8 @@ mod style;
 mod trivia;
 mod typ;
 
+use std::borrow::Cow;
+
 use lang::diagnostic::Diagnostic;
 use lang::parser::parse_decls;
 
@@ -46,9 +48,23 @@ pub fn format_source_with_style(src: &str, style: &Style) -> Result<String, Vec<
     Ok(decl::format_decls(&decls, src, style))
 }
 
-/// Check if source is already formatted.
+/// Normalize CRLF and lone-CR line endings to LF.
+///
+/// Formatter output is always LF. Windows checkouts materialize the corpus
+/// with CRLF (`core.autocrlf=true`), so callers must compare against
+/// normalized input or every file reads as unformatted. Borrows when the
+/// input is already LF-only.
+pub fn normalize_newlines(src: &str) -> Cow<'_, str> {
+    if src.contains('\r') {
+        Cow::Owned(src.replace("\r\n", "\n").replace('\r', "\n"))
+    } else {
+        Cow::Borrowed(src)
+    }
+}
+
+/// Check if source is already formatted, ignoring line-ending style.
 /// Returns `Ok(true)` if canonical, `Ok(false)` if not, `Err(diagnostics)` on parse error.
 pub fn check(src: &str) -> Result<bool, Vec<Diagnostic>> {
     let formatted = format_source(src)?;
-    Ok(formatted == src)
+    Ok(formatted.as_str() == normalize_newlines(src).as_ref())
 }
