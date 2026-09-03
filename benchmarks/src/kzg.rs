@@ -174,8 +174,12 @@ pub mod zippel_side {
                 Value::Vec((0..n).map(|i| z.clone() ^ Value::Index(i)).collect());
             let y = p.clone().dot(z_val);
 
+            // kzg.zippel takes the polynomial as `witness poly_x:
+            // Uni<F, N-1>` (a univariate in coefficient form), not the
+            // old `poly_coeffs: [F; N]` vector this harness predates —
+            // promote the sampled coefficient vector to a Uni value.
             let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-                (Vid("poly_coeffs".to_string()), p),
+                (Vid("poly_x".to_string()), p.value_poly()),
                 (Vid("gen_g1".to_string()), g),
                 (Vid("gen_g2".to_string()), h),
                 (Vid("eval_point".to_string()), z),

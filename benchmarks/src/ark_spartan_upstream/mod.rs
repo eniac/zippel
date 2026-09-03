@@ -12,14 +12,18 @@
 // Parallel is now unconditional (workspace-wide `parallel` feature).
 
 mod commitments;
-mod dense_mlpoly;
+// `pub` so `bin/commit_head_to_head.rs` can time ark-spartan's actual
+// `DensePolynomial::commit` in isolation against zippel's raw
+// per-row-MSM pattern (Phase-0 gap re-attribution experiment).
+pub mod dense_mlpoly;
 mod errors;
 mod math;
 mod nizk;
 mod product_tree;
 mod r1csinstance;
 mod r1csproof;
-mod random;
+// `pub` for the same head-to-head bin (blinds tape for `commit`).
+pub mod random;
 mod sparse_mlpoly;
 mod sumcheck;
 mod timer;

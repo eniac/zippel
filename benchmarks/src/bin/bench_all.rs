@@ -338,7 +338,7 @@ fn run_schnorr(threads: usize) -> Vec<Row> {
     });
     let compile = z.compile_time();
     let zippel = z.time_protocol();
-    let native = n.time_protocol();
+    let native = timed_pool().install(|| n.time_protocol());
     // Schnorr has no size knob — log_size = 0 marks "single fixed point".
     vec![Row {
         system: "schnorr",
@@ -363,7 +363,7 @@ fn run_sumcheck(threads: usize, sizes: &[usize], max_degree: usize) -> Vec<Row> 
             });
             let compile = z.compile_time();
             let zippel = z.time_protocol();
-            let native = n.time_protocol();
+            let native = timed_pool().install(|| n.time_protocol());
             // Sumcheck size knob is `num_vars` itself — the hypercube has 2^nv
             // points, so num_vars is already log_2 of the domain size.
             let r = Row {
@@ -392,7 +392,7 @@ fn run_ipa(threads: usize, ss: &[usize]) -> Vec<Row> {
             });
             let compile = z.compile_time();
             let zippel = z.time_protocol();
-            let native = n.time_protocol();
+            let native = timed_pool().install(|| n.time_protocol());
             let r = Row {
                 system: "ipa",
                 threads,
@@ -419,7 +419,7 @@ fn run_kzg(threads: usize, ns: &[usize]) -> Vec<Row> {
             });
             let compile = z.compile_time();
             let zippel = z.time_protocol();
-            let native = n.time_protocol();
+            let native = timed_pool().install(|| n.time_protocol());
             // KZG's grid is restricted to powers of two so log_2 is exact;
             // `trailing_zeros` is the cheap path for that.
             let r = Row {
@@ -450,7 +450,7 @@ fn run_pari(threads: usize, ms: &[usize], n_pub: usize, k_vars: usize) -> Vec<Ro
             });
             let compile = z.compile_time();
             let zippel = z.time_protocol(&inst);
-            let native = n.time_protocol(&inst);
+            let native = timed_pool().install(|| n.time_protocol(&inst));
             let r = Row {
                 system: "pari",
                 threads,
@@ -488,7 +488,7 @@ fn run_groth16(threads: usize, log_sizes: &[usize]) -> Vec<Row> {
             });
             let compile = z.compile_time();
             let zippel = z.time_protocol();
-            let native = n.time_protocol();
+            let native = timed_pool().install(|| n.time_protocol());
             let r = Row {
                 system: "groth16",
                 threads,
@@ -516,7 +516,7 @@ fn run_pst13(threads: usize, ns: &[usize]) -> Vec<Row> {
             });
             let compile = z.compile_time();
             let zippel = z.time_protocol();
-            let native = np.time_protocol();
+            let native = timed_pool().install(|| np.time_protocol());
             let r = Row {
                 system: "pst13",
                 threads,
@@ -543,7 +543,7 @@ fn run_hyrax(threads: usize, ns: &[usize]) -> Vec<Row> {
             });
             let compile = z.compile_time();
             let zippel = z.time_protocol();
-            let native = np.time_protocol();
+            let native = timed_pool().install(|| np.time_protocol());
             let r = Row {
                 system: "hyrax",
                 threads,
@@ -611,7 +611,8 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                     bind.append_message(b"inst", &inst_bytes);
                     bind.append_message(b"io", &inputs_bytes);
                 }
-                let proof = NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt);
+                let proof =
+                    timed_pool().install(|| NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt));
                 prove_sum += t.elapsed().saturating_sub(n_matvec);
                 last_proof = Some(proof);
             }
@@ -632,8 +633,8 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                     bind.append_message(b"inst", &inst_bytes);
                     bind.append_message(b"io", &inputs_bytes);
                 }
-                proof
-                    .verify(&inst, &inputs, &mut vt, &gens)
+                timed_pool()
+                    .install(|| proof.verify(&inst, &inputs, &mut vt, &gens))
                     .expect("verify");
                 verify_sum += t.elapsed();
             }
@@ -668,13 +669,15 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                 for _ in 0..*benchmarks::PROVER_SAMPLES {
                     let mut pt = Transcript::new(b"bench_all_spartan_ark");
                     let t = Instant::now();
-                    let proof = ArkNIZK::<C25519>::prove(
-                        &ark_inst,
-                        ark_vars.clone(),
-                        &ark_inputs,
-                        &ark_gens,
-                        &mut pt,
-                    );
+                    let proof = timed_pool().install(|| {
+                        ArkNIZK::<C25519>::prove(
+                            &ark_inst,
+                            ark_vars.clone(),
+                            &ark_inputs,
+                            &ark_gens,
+                            &mut pt,
+                        )
+                    });
                     prove_sum += t.elapsed();
                     last_ark_proof = Some(proof);
                 }
@@ -685,8 +688,8 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                 for _ in 0..benchmarks::VERIFY_SAMPLES {
                     let mut vt = Transcript::new(b"bench_all_spartan_ark");
                     let t = Instant::now();
-                    proof
-                        .verify(&ark_inst, &ark_inputs, &mut vt, &ark_gens)
+                    timed_pool()
+                        .install(|| proof.verify(&ark_inst, &ark_inputs, &mut vt, &ark_gens))
                         .expect("ark-spartan verify");
                     verify_sum += t.elapsed();
                 }
@@ -725,6 +728,31 @@ fn setup_pool() -> &'static rayon::ThreadPool {
     SETUP_POOL.get().expect("SETUP_POOL not initialized")
 }
 
+// Pool with EXACTLY the benchmark thread count, used to confine the
+// timed regions of native baselines whose provers compute on the
+// calling thread (libspartan's `NIZK::prove`, ark-spartan's
+// `R1CSProof`). Rationale: a rayon `par_iter` issued from a thread
+// OUTSIDE the pool recruits extra effective compute beyond the
+// RAYON_NUM_THREADS=1 worker (measured ~1.5x on the M=18 Hyrax
+// row-commit block — see `bin/commit_head_to_head.rs`), so at
+// "threads=1" an unconfined native prover runs on ~1.5 cores while
+// the zippel runtime — whose compute is `rayon::spawn`ed onto the
+// global pool with the main thread only coordinating — runs on 1.
+// Running the native timed calls inside `timed_pool().install(..)`
+// restores what RAYON_NUM_THREADS=1 is meant to simulate: T compute
+// cores for everyone. (All deps share one rayon 1.x instance — see
+// Cargo.lock — so this confines libspartan/ark-spartan internals too.)
+//
+// Applied to every native baseline's timed region (each system's
+// `n.time_protocol()` and spartan's inline libspartan/ark-spartan
+// loops). The zippel side is intentionally NOT wrapped: its runtime
+// already routes all compute through the global pool via
+// `rayon::spawn`, so it is confined by construction.
+static TIMED_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+fn timed_pool() -> &'static rayon::ThreadPool {
+    TIMED_POOL.get().expect("TIMED_POOL not initialized")
+}
+
 fn main() {
     // Init the rayon global pool with a 64 MB worker stack before any
     // rayon call — the default per-worker stack is the OS default
@@ -761,6 +789,22 @@ fn main() {
         .set(pool)
         .map_err(|_| ())
         .expect("SETUP_POOL already initialized");
+
+    // TIMED_POOL: exactly the benchmark thread count (see its doc above).
+    let timed_threads = if num_threads == 0 {
+        setup_threads
+    } else {
+        num_threads
+    };
+    let timed = rayon::ThreadPoolBuilder::new()
+        .num_threads(timed_threads)
+        .stack_size(64 * 1024 * 1024)
+        .build()
+        .expect("init rayon timed pool");
+    TIMED_POOL
+        .set(timed)
+        .map_err(|_| ())
+        .expect("TIMED_POOL already initialized");
 
     let args = Args::parse();
     let selected: Vec<&'static str> = match &args.systems {

@@ -154,6 +154,20 @@ path = "src/bin/spartan_bench.rs"
 name = "spartan_compare"
 path = "src/bin/spartan_compare.rs"
 
+[[bin]]
+# Phase-0 ceiling test for a dot_batch primitive: does a shared-setup
+# batched Pippenger beat K independent arkworks msm calls at the
+# Spartan row-commit shapes? See the bin's doc comment for the
+# decision rule.
+name = "msm_batch_ceiling"
+path = "src/bin/msm_batch_ceiling.rs"
+
+[[bin]]
+# Same-binary head-to-head of zippel's c_rows loop vs ark-spartan's
+# DensePolynomial::commit — re-attribution of the M=17->18 "MSM cliff".
+name = "commit_head_to_head"
+path = "src/bin/commit_head_to_head.rs"
+
 [[bench]]
 name = "sumcheck"
 harness = false
