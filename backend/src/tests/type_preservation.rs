@@ -708,7 +708,9 @@ mod cross_layer {
     // `value_coef`
     // -------------------------------------------------------------------------
 
-    /// `value_coef` on `Uni(m)` for arbitrary `m ∈ 0..=7`.
+    /// `value_coef_typed` on `Uni(m)` for arbitrary `m ∈ 0..=7`: the declared
+    /// type is what fixes the coefficient count, so `has_atyp`'s exact-length
+    /// `VecScalar` arm must accept the result for every `m`.
     #[test]
     fn pbt_coef_uni() {
         arbtest::arbtest(|u| {
@@ -718,14 +720,42 @@ mod cross_layer {
             let v: V = Value::random(&mut rng, &ATyp::uni(m));
             let op = coef_op(&v);
             let expected = op.typ();
-            let actual = v.value_coef();
+            let actual = v.value_coef_typed(&ATyp::uni(m));
             assert!(
                 has_atyp(&actual, &expected),
-                "value_coef(Uni({m})) -> {} fails has_atyp(_, {expected})",
+                "value_coef_typed(Uni({m})) -> {} fails has_atyp(_, {expected})",
                 vty(&actual)
             );
             Ok(())
         });
+    }
+
+    /// A canonical Arkworks constant carries a single coefficient, but its
+    /// declared type promises `m + 1` slots. Typed extraction zero-pads to
+    /// exactly the declared width.
+    #[test]
+    fn value_coef_typed_pads_declared_univariate() {
+        use ark_bls12_381::Fr;
+        use ark_ff::Zero;
+
+        let c = Fr::from(7u64);
+        let constant: V = Value::VecScalar(vec![c]).value_poly();
+        assert_eq!(
+            constant.value_coef_typed(&ATyp::uni(4)),
+            Value::VecScalar(vec![c, Fr::zero(), Fr::zero(), Fr::zero(), Fr::zero()]),
+            "coef at declared Uni(4) must produce exactly five slots"
+        );
+    }
+
+    /// Typed extraction never truncates: a payload wider than the declared
+    /// bound is a bound violation and must fail loudly.
+    #[test]
+    #[should_panic(expected = "exceeds declared Uni(1) bound of 2")]
+    fn value_coef_typed_rejects_out_of_bound_univariate() {
+        use ark_bls12_381::Fr;
+
+        let wide: V = Value::VecScalar(vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]);
+        let _ = wide.value_coef_typed(&ATyp::uni(1));
     }
 
     /// `value_coef` on `Mle(n)` for `n ∈ 1..=4`.

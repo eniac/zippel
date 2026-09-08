@@ -605,9 +605,12 @@ impl Lub for ATyp {
             (ATyp::Base(a), ATyp::Base(b)) => ABase::lub_div(a, b, ctx)
                 .map(ATyp::Base)
                 .map_err(|e| LubError::next(LubError::div(&x, &y), e)),
-            (ATyp::Uni(n1), ATyp::Uni(n2)) if *n1 >= *n2 => Ok(ATyp::uni(
-                n1.checked_sub(*n2).ok_or_else(|| LubError::div(&x, &y))?,
-            )),
+            // Both `Uni` indices are degree *upper bounds*, not exact degrees.
+            // A degree-≤ n1 dividend divided by any nonzero divisor still has
+            // degree ≤ n1, so the quotient keeps the dividend's bound; the old
+            // `n1 - n2` rule was unsound whenever the divisor's actual degree
+            // fell below its declared bound.
+            (ATyp::Uni(n1), ATyp::Uni(_)) => Ok(ATyp::uni(*n1)),
             (ATyp::Uni(n1), ATyp::Base(ABase::Scalar | ABase::Fin(_))) => Ok(ATyp::uni(*n1)),
             (ATyp::Mle(n1), ATyp::Base(ABase::Scalar | ABase::Fin(_))) => Ok(ATyp::mle(*n1)),
             (ATyp::VPoly(m, n), ATyp::Base(ABase::Scalar | ABase::Fin(_))) => {
@@ -1470,9 +1473,19 @@ mod tests {
 
     #[test]
     fn lub_div_poly_groebner_supported_shapes() {
+        // Both indices are upper bounds: the quotient keeps the dividend's
+        // bound for every relative ordering of the two declared bounds.
         assert_eq!(
             ATyp::lub_div(&ATyp::uni(3), &ATyp::uni(1), &Nothing),
-            Ok(ATyp::uni(2))
+            Ok(ATyp::uni(3))
+        );
+        assert_eq!(
+            ATyp::lub_div(&ATyp::uni(3), &ATyp::uni(3), &Nothing),
+            Ok(ATyp::uni(3))
+        );
+        assert_eq!(
+            ATyp::lub_div(&ATyp::uni(1), &ATyp::uni(3), &Nothing),
+            Ok(ATyp::uni(1))
         );
         assert!(ATyp::lub_div(&ATyp::vpoly(2, 3), &ATyp::vpoly(2, 1), &Nothing).is_err());
         assert!(ATyp::lub_div(&ATyp::vpoly(1, 3), &ATyp::uni(1), &Nothing).is_err());

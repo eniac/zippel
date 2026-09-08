@@ -42,9 +42,12 @@ proto zk_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Si
 
     // Quotient: q_tilde(x) = (p_tilde(x) - y) / (x - z) = q(x) + b0 + b1*x
     let q_tilde = (p_tilde - y) / poly([-z, 1]);
+    // The quotient keeps p_tilde's declared bound; the monic linear divisor
+    // X - z leaves N meaningful coefficients for the proof MSM.
     let q_coefs = coef(q_tilde);
+    let q_coefs_truncated = q_coefs[0..N];
     let ss_q = ss[0..N];
-    pi <- dot(q_coefs, ss_q);
+    pi <- dot(q_coefs_truncated, ss_q);
 
     // Verification: same pairing check as standard KZG
     let lhs = pair(pi, h_val - h * z);

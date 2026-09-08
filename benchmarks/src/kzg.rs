@@ -38,8 +38,9 @@ fn render_zippel_source_no_srs_check() -> &'static str {
         let quotient_poly = (poly_x - eval_result) / poly([-eval_point, 1]);
 
         let quotient_coeffs = coef(quotient_poly);
+        let quotient_coeffs_truncated = quotient_coeffs[0..N-1];
         let srs_g1_truncated = srs_g1[0..N-1];
-        proof <- dot(quotient_coeffs, srs_g1_truncated);
+        proof <- dot(quotient_coeffs_truncated, srs_g1_truncated);
 
         let pairing_lhs = pair(proof, (srs_g2_s) - (gen_g2 * eval_point));
         let pairing_rhs = pair(commitment - eval_result * gen_g1, gen_g2);

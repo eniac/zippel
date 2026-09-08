@@ -295,14 +295,16 @@ fn lub_typ() {
         Ok(CTyp::Poly(f.clone(), Spanned::dummy(3), Spanned::dummy(3)))
     );
 
-    // Regression (phase 7): lub_div degree math. Poly<F,1,5> / Poly<F,1,5> = Poly<F,1,0>
+    // Regression: `lub_div` preserves the dividend's degree *upper bound*.
+    // Both indices bound degree from above, so `Poly<F,1,5>` divided by any
+    // nonzero divisor is still bounded by degree 5.
     assert_eq!(
         CTyp::lub_div(&CTyp::uni(&f, 5), &CTyp::uni(&f, 5), &ctx),
-        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(0)))
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(5)))
     );
     assert_eq!(
         CTyp::lub_div(&CTyp::uni(&f, 7), &CTyp::uni(&f, 3), &ctx),
-        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(4)))
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(7)))
     );
 
     // Phase 14.C: poly-encoding unification (m = max degree).
@@ -376,23 +378,30 @@ fn test_ctyp_poly_degree_offbyone() {
     // Element type mismatch rejected (field vs group base types).
     assert!(CTyp::lub_mul(&CTyp::vec(&tf, 4), &CTyp::vec(&tg1, 4), &ctx).is_err());
 
-    // ---- lub_div: Poly<F,n1,m1> / Poly<F,n2,m2> requires m1 ≥ m2 ----
-    // Positive boundary: equal degrees yield Poly<F,_,0>.
+    // ---- lub_div: Poly<F,1,m1> / Poly<F,1,m2> keeps m1 for every m2 ----
+    // Equal bounds: the quotient keeps the dividend's bound, not zero.
     assert_eq!(
         CTyp::lub_div(&CTyp::uni(&f, 3), &CTyp::uni(&f, 3), &ctx),
-        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(0)))
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(3)))
     );
-    // Off-by-one: divisor degree one greater than dividend is rejected.
-    assert!(CTyp::lub_div(&CTyp::uni(&f, 2), &CTyp::uni(&f, 3), &ctx).is_err());
-    // General Poly/Poly: same off-by-one in multivariate.
+    // Divisor bound one greater than the dividend's is accepted: declared
+    // bounds do not compare actual degrees.
+    assert_eq!(
+        CTyp::lub_div(&CTyp::uni(&f, 2), &CTyp::uni(&f, 3), &ctx),
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(2)))
+    );
+    // General Poly/Poly: multivariate division is still rejected outright.
     assert!(CTyp::lub_div(
         &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(3)),
         &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(4)),
         &ctx
     )
     .is_err());
-    // Far off: any m2 > m1 rejected.
-    assert!(CTyp::lub_div(&CTyp::uni(&f, 0), &CTyp::uni(&f, 5), &ctx).is_err());
+    // Far off: a much larger divisor bound still yields the dividend's bound.
+    assert_eq!(
+        CTyp::lub_div(&CTyp::uni(&f, 0), &CTyp::uni(&f, 5), &ctx),
+        Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(0)))
+    );
 
     // ---- lub_rem: Poly<F,n1,m1> % Poly<F,n2,m2> requires m2 ≥ 1 ----
     // Divisor of degree 0 rejected (no remainder well-defined).
@@ -1007,20 +1016,18 @@ mod ctyp_lub_poly_tests {
         });
     }
 
-    /// `Uni(F, ma) / Uni(F, mb) = Uni(F, ma - mb)` for `ma >= mb`.
-    /// In Phase-14 the `m` field is max polynomial degree, so the quotient
-    /// has degree `ma - mb` (one fewer than coefficient count).
+    /// `Uni(F, ma) / Uni(F, mb) = Uni(F, ma)` for every `mb`: both indices are
+    /// degree upper bounds, so the quotient inherits the dividend's bound.
     #[test]
     fn lub_div_uni_uni_quotient_shape() {
         arbtest::arbtest(|u| {
             let ma = arb_m(u)?;
-            let mb = u.int_in_range(0..=ma)?; // guarantee ma >= mb
+            let mb = arb_m(u)?;
             let a = CTyp::uni(&f(), ma);
             let b = CTyp::uni(&f(), mb);
-            let expected = CTyp::uni(&f(), ma - mb);
             assert_eq!(
                 CTyp::lub_div(&a, &b, &kind_ctx()),
-                Ok(expected),
+                Ok(CTyp::uni(&f(), ma)),
                 "lub_div(Uni(F,{}), Uni(F,{}))",
                 ma,
                 mb
@@ -1029,23 +1036,22 @@ mod ctyp_lub_poly_tests {
         });
     }
 
-    /// `Uni(F, ma) / Uni(F, mb)` when `ma < mb` — the `Poly`/`Poly` div arm
-    /// has an `ma >= mb` guard, so this falls through to an error (no fallback
-    /// arm rescues it). Pin that contract.
+    /// `Uni(F, ma) / Uni(F, mb)` with `ma < mb` is well-typed. A declared
+    /// divisor bound above the dividend's says nothing about actual degrees,
+    /// so the quotient is still bounded by `ma`.
     #[test]
-    fn lub_div_uni_uni_underflow_errors() {
+    fn lub_div_uni_uni_accepts_larger_divisor_bound() {
         arbtest::arbtest(|u| {
             let mb = u.int_in_range(1..=4usize)?;
             let ma = u.int_in_range(0..=mb - 1)?; // ma < mb
             let a = CTyp::uni(&f(), ma);
             let b = CTyp::uni(&f(), mb);
-            let result = CTyp::lub_div(&a, &b, &kind_ctx());
-            assert!(
-                result.is_err(),
-                "lub_div(Uni(F,{}), Uni(F,{})) should error when ma < mb, got {:?}",
+            assert_eq!(
+                CTyp::lub_div(&a, &b, &kind_ctx()),
+                Ok(CTyp::uni(&f(), ma)),
+                "lub_div(Uni(F,{}), Uni(F,{})) should keep the dividend bound",
                 ma,
-                mb,
-                result
+                mb
             );
             Ok(())
         });
@@ -1075,34 +1081,6 @@ mod ctyp_lub_poly_tests {
                 "lub_rem should reject Poly arities ({na}, {nb})"
             );
         }
-    }
-
-    /// Sanity round-trip: `lub_mul(q, p) = Uni(F, (ma - mb) + mb) = Uni(F, ma)`.
-    /// I.e., multiplying the quotient back by the divisor yields a poly with
-    /// the same degree as the dividend (degree relation only, not value).
-    #[test]
-    fn lub_mul_round_trip_after_div() {
-        arbtest::arbtest(|u| {
-            let ma = u.int_in_range(1..=4usize)?;
-            let mb = u.int_in_range(0..=ma)?;
-            let ctx = kind_ctx();
-            let dividend = CTyp::uni(&f(), ma);
-            let divisor = CTyp::uni(&f(), mb);
-            let quotient = CTyp::lub_div(&dividend, &divisor, &ctx).expect("div should succeed");
-            let reconstructed = CTyp::lub_mul(&quotient, &divisor, &ctx)
-                .expect("mul of quotient * divisor should succeed");
-            // Phase-14 degree algebra: (ma - mb) + mb = ma.
-            assert_eq!(
-                reconstructed,
-                CTyp::uni(&f(), ma),
-                "round-trip mul(div({}, {}), {}) should preserve degree {}",
-                ma,
-                mb,
-                mb,
-                ma
-            );
-            Ok(())
-        });
     }
 
     // ----- Algebraic property PBTs (survive Phase B intact) -----
@@ -1457,14 +1435,14 @@ mod ctyp_lub_overflow_tests {
 
     #[test]
     fn lub_div_poly_degree_safe() {
-        // Guarded by ma >= mb, so checked_sub should always succeed.
-        // This test confirms the checked path doesn't spuriously error.
+        // No degree subtraction happens any more: the quotient keeps the
+        // dividend's declared bound whatever the divisor's bound is.
         let ctx = kind_ctx();
         let a = CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(5));
         let b = CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(3));
         assert_eq!(
             CTyp::lub_div(&a, &b, &ctx),
-            Ok(CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(2)))
+            Ok(CTyp::Poly(f(), Spanned::dummy(1), Spanned::dummy(5)))
         );
     }
 

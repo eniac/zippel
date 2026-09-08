@@ -8,12 +8,13 @@ expression: value
 - srs_g1[0] + gen_g1
 - srs_g1[0]*srs_g2_s + gen_g2*srs_g1[1]
 - srs_g1[1]*__zippel::gb::div_q::0[0] + proof*tau
+__zippel::gb::div_q::0[1]
 __zippel::gb::div_r::0[0]
-__zippel::node::26 - 1
-__zippel::node::39[0] - 1
-__zippel::node::39[1] - 1
-__zippel::node::42 - 1
-__zippel::node::45 - 1
+__zippel::node::27 - 1
+__zippel::node::40[0] - 1
+__zippel::node::40[1] - 1
+__zippel::node::43 - 1
+__zippel::node::46 - 1
 eval_point*__zippel::gb::div_q::0[0] + poly_x[0] - eval_result
 gen_g2*tau - srs_g2_s
 srs_g1[0]*__zippel::gb::div_q::0[0] - proof

@@ -7,7 +7,7 @@
 //!
 //!   * VPoly<N, M> → C(N+M, M) slots, one per multi-index k with |k| ≤ M.
 //!   * Mle<N>      → 2^N slots, one per hypercube point b ∈ {0,1}^N.
-//!   * Uni(n)      → n slots (coefficient vector).
+//!   * Uni(n)      → n + 1 slots (coefficient vector for degree bound n).
 //!   * Vec(_, n)   → n slots.
 
 use ark_ff::{Field, One};

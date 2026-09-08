@@ -329,3 +329,70 @@ fn test_subtraction_as_addition_of_negation() {
         "Subtraction should equal addition of negation"
     );
 }
+
+/// `coef` of a polynomial quotient yields exactly the slots its declared
+/// `Uni` bound promises. The declared bound of the *divisor* is irrelevant:
+/// only the result type fixes the coefficient count, and the canonical
+/// Arkworks quotient is zero-padded up to it — never truncated.
+#[test]
+fn polynomial_division_coef_preserves_declared_bound() {
+    let env = HashMap::new();
+    let mut rng = rand::rngs::ThreadRng::default();
+
+    // X^4 / 1 with the divisor declared `Uni(2)`: the quotient is X^4 itself
+    // and needs all five declared slots. The old `ma - mb` typing rule
+    // declared `Uni(2)` here and dropped the leading coefficient.
+    let dividend = make_uni_poly(vec![0, 0, 0, 0, 1]);
+    let one = make_uni_poly(vec![1]);
+    let div = Op::Bin(
+        lang::ast::BinOp::Div,
+        mk::<ArkBn254>(Op::Value(dividend.clone())),
+        mk::<ArkBn254>(Op::Value(one)),
+        ATyp::Uni(4),
+    );
+    let result = eval_op(
+        &mk::<ArkBn254>(Op::Coef(mk::<ArkBn254>(div))),
+        &env,
+        &mut rng,
+        &mut Vec::new(),
+    )
+    .unwrap();
+    assert_eq!(
+        *result,
+        TestValue::VecScalar(vec![
+            Fr::from(0u64),
+            Fr::from(0u64),
+            Fr::from(0u64),
+            Fr::from(0u64),
+            Fr::from(1u64),
+        ]),
+        "coef(X^4 / 1 : Uni(4)) must keep all five declared coefficient slots"
+    );
+
+    // X^4 / X^4 = 1: the canonical quotient carries a single coefficient and
+    // is zero-padded up to the declared bound rather than left short.
+    let div_self = Op::Bin(
+        lang::ast::BinOp::Div,
+        mk::<ArkBn254>(Op::Value(dividend.clone())),
+        mk::<ArkBn254>(Op::Value(dividend)),
+        ATyp::Uni(4),
+    );
+    let result_self = eval_op(
+        &mk::<ArkBn254>(Op::Coef(mk::<ArkBn254>(div_self))),
+        &env,
+        &mut rng,
+        &mut Vec::new(),
+    )
+    .unwrap();
+    assert_eq!(
+        *result_self,
+        TestValue::VecScalar(vec![
+            Fr::from(1u64),
+            Fr::from(0u64),
+            Fr::from(0u64),
+            Fr::from(0u64),
+            Fr::from(0u64),
+        ]),
+        "coef(X^4 / X^4 : Uni(4)) must be padded to five slots"
+    );
+}

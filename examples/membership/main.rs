@@ -10,7 +10,9 @@ pub fn run(_args: &[String]) {
     println!("=== Membership ===");
     let n_size = 2;
     let m_size = 2;
-    assert!(n_size >= 1, "n_size must be at least 1");
+    // `L - 1` indexes the h-opening MSM, so `L = (N - 1) * M` must be at
+    // least one: N must be at least two.
+    assert!(n_size >= 2, "n_size must be at least 2");
     assert!(m_size >= 1, "m_size must be at least 1");
     let l_size = (n_size - 1) * m_size;
     let s_size = usize::max(n_size, l_size);
@@ -76,7 +78,7 @@ pub fn run(_args: &[String]) {
 }
 
 fn prover_create_inputs(n_size: usize, m_size: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
-    assert!(n_size >= 1, "n_size must be at least 1");
+    assert!(n_size >= 2, "n_size must be at least 2");
     assert!(m_size >= 1, "m_size must be at least 1");
     let mut rng = rand::rngs::OsRng;
     let l_size = (n_size - 1) * m_size;

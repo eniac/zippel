@@ -12,7 +12,7 @@ use crate::frontend::Polynomial;
 
 use super::Ideal;
 use super::PolySource;
-use super::{EncodeCtx, link_to_polys, link_to_witness};
+use super::{EncodeCtx, link_to_witness};
 
 /// Allocate quotient/remainder witness sentinels without registering
 /// opaque operations.
@@ -199,6 +199,14 @@ fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
 /// Only `Uni` operands reach this function — `div_rem_leaf` rejects
 /// `VPoly` and `Mle` polynomial division before dispatch.
 ///
+/// **Bounds**: `ma` and `mb` are declared degree *upper bounds*, not exact
+/// degrees, so they say nothing about the actual quotient degree beyond
+/// `deg(q) ≤ deg(a) ≤ ma`. The quotient witness therefore has the dividend's
+/// bound `Uni(ma)`, matching `lub_div`, and the identity is emitted for every
+/// `k ∈ 0..=ma+mb` — the rows above `ma` read a zero dividend coefficient and
+/// force the unused high coefficients of `b·q` to vanish. For the same reason
+/// `ma < mb` is not a special case: it uses the general encoding.
+///
 /// **Degree chain**: For each level `d` from `mb` down to `1`, a boolean
 /// selector `c_d` indicates whether `coef(b)[d] ≠ 0` (divisor has degree
 /// ≥ d). If `c_d = 0`, then `coef(b)[d] = 0` and `r[d-1] = 0` (remainder
@@ -217,22 +225,9 @@ fn div_rem_poly<C: ArkConfig + HasOpFactory>(
 ) {
     let (_, ma) = PolySource::<C>::poly_shape_static(a.typ()).unwrap();
     let (_, mb) = PolySource::<C>::poly_shape_static(b.typ()).unwrap();
-    if ma < mb {
-        if is_rem {
-            let lifted = a.lift_to(&target.typ);
-            link_to_polys(ctx.ideal, target, lifted.polys);
-            return;
-        }
-        panic!(
-            "{}: dividend degree < divisor degree ({} < {})",
-            if is_rem { "Rem" } else { "Div" },
-            ma,
-            mb,
-        );
-    }
 
     if mb == 0 {
-        // Divisor is a constant: quotient = a / b[0], remainder = 0.
+        // Divisor is a declared constant: quotient = a / b[0], remainder = 0.
         let r_typ = if is_rem {
             target.typ.clone()
         } else {
@@ -253,18 +248,22 @@ fn div_rem_poly<C: ArkConfig + HasOpFactory>(
         return;
     }
 
-    let mq = ma - mb;
     let mr = mb - 1;
-    let (q_wit, r_wit) = alloc_div_witness_pair(ctx, ATyp::Uni(mq), ATyp::Uni(mr));
+    let (q_wit, r_wit) = alloc_div_witness_pair(ctx, ATyp::Uni(ma), ATyp::Uni(mr));
 
-    // Emit a = b·q + r, one row per coefficient of a.
-    // For degree k: a[k] = Σ_{i+j=k} b[i]·q[j] + r[k]  (r[k] only if k ≤ mr)
-    for k in 0..=ma {
+    // Emit a = b·q + r, one row per coefficient of the product bound.
+    // For degree k: a[k] = Σ_{i+j=k} b[i]·q[j] + r[k]  (r[k] only if k ≤ mr),
+    // where a[k] = 0 for k > ma. Rows above `ma` are what force the high
+    // coefficients of b·q to cancel; without them a quotient of full width
+    // would be unconstrained above the dividend's bound.
+    let identity_bound = ma.checked_add(mb).expect("div_rem_poly: ma + mb overflow");
+    let zero = Polynomial::<C::F>::zero();
+    for k in 0..=identity_bound {
         let mut rhs = Polynomial::<C::F>::zero();
         let i_max = mb.min(k);
         for i in 0..=i_max {
             let j = k - i;
-            if j > mq {
+            if j > ma {
                 continue;
             }
             let qf = q_wit.clone().with_index(j).unwrap();
@@ -274,7 +273,8 @@ fn div_rem_poly<C: ArkConfig + HasOpFactory>(
             let rf = r_wit.clone().with_index(k).unwrap();
             rhs = &rhs + &Polynomial::var(&rf);
         }
-        ctx.ideal.generating_set.push(&a.polys()[k] - &rhs);
+        let lhs = a.polys().get(k).unwrap_or(&zero);
+        ctx.ideal.generating_set.push(lhs - &rhs);
     }
 
     // Degree chain: enforce deg(r) < deg(b) for uniqueness.
@@ -490,16 +490,18 @@ mod tests {
     #[allow(clippy::too_many_arguments)]
     #[test]
     fn test_add_op_uni_div_univariate_identity() {
-        // Uni(2) / Uni(1) → Uni(1).
+        // Uni(2) / Uni(1) → Uni(2): both indices are degree upper bounds, so
+        // the quotient keeps the dividend's bound.
         //   a has physical_len = 3 slots (a_0, a_1, a_2)
         //   b has physical_len = 2 slots (b_0, b_1)
-        //   q_wit: VPoly(1,1), 2 slots (q_0, q_1)
-        //   r_wit: VPoly(1,0), 1 slot  (r_0)
-        // Canonical identity rows (from div_rem_poly):
-        //   k=[0] (total deg 0): a_0  -  (b_0·q_0 + r_0)
-        //   k=[1] (total deg 1): a_1  -  (b_0·q_1 + b_1·q_0)
-        //   k=[2] (total deg 2): a_2  -  b_1·q_1
-        // link_to_witness emits 2 more rows: var(q_wit[j]) - var(ideal[j]), j=0,1.
+        //   q_wit: Uni(2), 3 slots (q_0, q_1, q_2)
+        //   r_wit: Uni(0), 1 slot  (r_0)
+        // Canonical identity rows (from div_rem_poly), k = 0..=ma+mb = 3:
+        //   k=0: a_0  -  (b_0·q_0 + r_0)
+        //   k=1: a_1  -  (b_0·q_1 + b_1·q_0)
+        //   k=2: a_2  -  (b_0·q_2 + b_1·q_1)
+        //   k=3:  0   -  b_1·q_2          (dividend coefficient above ma is 0)
+        // link_to_witness emits 3 more rows: var(q_wit[j]) - var(ideal[j]), j=0,1,2.
         use crate::Var;
         use graph::Ref;
         use lang::ast::BinOp;
@@ -515,12 +517,12 @@ mod tests {
         ideal.register(&var_b);
 
         let basis_before = ideal.generating_set.len();
-        let var = Var::from_node(NodeIndex::new(2), ATyp::Uni(1), Qualifier::Witness);
+        let var = Var::from_node(NodeIndex::new(2), ATyp::Uni(2), Qualifier::Witness);
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Div,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Uni(1))),
-            ATyp::Uni(1),
+            ATyp::Uni(2),
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
@@ -529,7 +531,7 @@ mod tests {
         let q_wit = Var::from_var(
             "__zippel::gb::div_q::0",
             petgraph::graph::NodeIndex::new(usize::MAX),
-            ATyp::Uni(1),
+            ATyp::Uni(2),
             Qualifier::Local,
         );
         let r_wit = Var::from_var(
@@ -552,24 +554,29 @@ mod tests {
         let b1 = scl(&var_b, 1);
         let q0 = wit_slot(&q_wit, 0);
         let q1 = wit_slot(&q_wit, 1);
+        let q2 = wit_slot(&q_wit, 2);
         let r0 = wit_slot(&r_wit, 0);
 
-        // 3 identity rows + 7 degree-chain rows (mb=1: d=1→3, d=0→3, s_0=1) + 2 linking rows.
+        // 4 identity rows + 7 degree-chain rows (mb=1: d=1→3, d=0→3, s_0=1) + 3 linking rows.
         assert_eq!(
             ideal.generating_set.len() - basis_before,
-            12,
-            "expected 3 identity + 7 degree-chain + 2 linking rows"
+            14,
+            "expected 4 identity + 7 degree-chain + 3 linking rows"
         );
 
         // Check identity rows exist in basis.
+        let zero = Polynomial::<ark_bls12_381::Fr>::zero();
         let expected_k0 = &var_poly(&a0) - &(&(&var_poly(&b0) * &var_poly(&q0)) + &var_poly(&r0));
         let expected_k1 = &var_poly(&a1)
             - &(&(&var_poly(&b0) * &var_poly(&q1)) + &(&var_poly(&b1) * &var_poly(&q0)));
-        let expected_k2 = &var_poly(&a2) - &(&var_poly(&b1) * &var_poly(&q1));
+        let expected_k2 = &var_poly(&a2)
+            - &(&(&var_poly(&b0) * &var_poly(&q2)) + &(&var_poly(&b1) * &var_poly(&q1)));
+        let expected_k3 = &zero - &(&var_poly(&b1) * &var_poly(&q2));
         for (lbl, expected) in [
             ("k0", &expected_k0),
             ("k1", &expected_k1),
             ("k2", &expected_k2),
+            ("k3", &expected_k3),
         ] {
             assert!(
                 ideal.generating_set.iter().any(|row| row == expected),
@@ -578,32 +585,159 @@ mod tests {
             );
         }
 
-        // link_to_witness: pl[ideal[j]] = var(q_wit[j]) for j=0,1.
-        assert_eq!(
-            ideal.pl.get(&var.clone().with_index(0).unwrap()).cloned(),
-            Some(var_poly(&q0)),
-            "pl[ideal[0]] should alias q_wit[0]"
-        );
-        assert_eq!(
-            ideal.pl.get(&var.clone().with_index(1).unwrap()).cloned(),
-            Some(var_poly(&q1)),
-            "pl[ideal[1]] should alias q_wit[1]"
-        );
+        // link_to_witness: pl[ideal[j]] = var(q_wit[j]) for j=0,1,2.
+        for (j, q_slot) in [(0, &q0), (1, &q1), (2, &q2)] {
+            assert_eq!(
+                ideal.pl.get(&var.clone().with_index(j).unwrap()).cloned(),
+                Some(var_poly(q_slot)),
+                "pl[ideal[{j}]] should alias q_wit[{j}]"
+            );
+        }
 
         // Linking rows: var(q_wit[j]) - var(ideal[j]).
         // link_to_witness uses `ideal.clone().with_index(j).unwrap()` (typ computed by with_slot).
-        let r0_slot = var.clone().with_index(0).unwrap();
-        let r1_slot = var.clone().with_index(1).unwrap();
-        let link0 = &var_poly(&q0) - &var_poly(&r0_slot);
-        let link1 = &var_poly(&q1) - &var_poly(&r1_slot);
-        assert!(
-            ideal.generating_set.iter().any(|row| row == &link0),
-            "basis missing link row var_poly(q_wit[0]) - var_poly(ideal[0])"
+        for (j, q_slot) in [(0, &q0), (1, &q1), (2, &q2)] {
+            let target_slot = var.clone().with_index(j).unwrap();
+            let link = &var_poly(q_slot) - &var_poly(&target_slot);
+            assert!(
+                ideal.generating_set.iter().any(|row| row == &link),
+                "basis missing link row var_poly(q_wit[{j}]) - var_poly(ideal[{j}])"
+            );
+        }
+    }
+
+    /// The honest execution of `X^4 / 1` must satisfy *every* emitted
+    /// equation when the divisor is only declared `Uni(2)`.
+    ///
+    /// This is the end-to-end statement the old `ma - mb` quotient bound
+    /// broke: the quotient `X^4` needs all five declared slots, the identity
+    /// must run through `k = ma + mb = 6`, and the dynamic degree chain must
+    /// accept a divisor whose top two declared coefficients vanish.
+    #[test]
+    fn polynomial_division_declared_constant_bound_assignment() {
+        use crate::Var;
+        use ark_bls12_381::Fr;
+        use graph::Ref;
+        use lang::ast::BinOp;
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+        use share::Set;
+
+        let mut builder = IdealBuilder::<ArkBls12_381>::new();
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+        let var_a = Var::from_node(NodeIndex::new(0), ATyp::Uni(4), Qualifier::Witness);
+        let var_b = Var::from_node(NodeIndex::new(1), ATyp::Uni(2), Qualifier::Witness);
+        ideal.register(&var_a);
+        ideal.register(&var_b);
+
+        // lub_div(Uni(4), Uni(2)) = Uni(4).
+        let target = Var::from_node(NodeIndex::new(2), ATyp::Uni(4), Qualifier::Witness);
+        ideal.register(&target);
+
+        let before = ideal.generating_set.len();
+        builder.add_op(
+            target.clone(),
+            Op::Bin(
+                BinOp::Div,
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(4))),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Uni(2))),
+                ATyp::Uni(4),
+            ),
+            &mut ideal,
         );
-        assert!(
-            ideal.generating_set.iter().any(|row| row == &link1),
-            "basis missing link row var_poly(q_wit[1]) - var_poly(ideal[1])"
+
+        // 7 identity rows (k = 0..=6) + 11 degree-chain rows (4·mb + 3)
+        // + 5 quotient-link rows.
+        assert_eq!(
+            ideal.generating_set.len() - before,
+            23,
+            "expected 7 identity + 11 degree-chain + 5 linking rows"
         );
+
+        let basis_vars = ideal
+            .generating_set
+            .iter()
+            .flat_map(|p| p.vars())
+            .collect::<Set<Var>>();
+        let slot_indices = |prefix: &str| {
+            basis_vars
+                .iter()
+                .filter(|v| v.name.starts_with(prefix))
+                .map(|v| *v.index.last().expect("witness slots are indexed"))
+                .collect::<Set<usize>>()
+        };
+        assert_eq!(
+            slot_indices("__zippel::gb::div_q").len(),
+            5,
+            "the quotient witness must expose all five declared slots"
+        );
+        assert_eq!(
+            slot_indices("__zippel::gb::div_r").len(),
+            2,
+            "the remainder witness is Uni(mb - 1) = Uni(1)"
+        );
+
+        // Honest assignment for a = X^4, b = 1 (declared Uni(2)):
+        //   q = X^4, r = 0.
+        // Degree-chain auxiliaries are minted top-down, d = mb..0, so the
+        // `div_c`/`div_inv` counters run d=2, d=1, d=0 and the `div_s`
+        // counters (emitted only below the top level) run d=1, d=0:
+        //   c = inv = [0, 0, 1]  (only b[0] is nonzero)
+        //   s = [0, 1]           (s_1 = 0, s_0 = 1: the divisor is nonzero)
+        let zero = Fr::from(0u64);
+        let one = Fr::from(1u64);
+        let a_coeffs = [zero, zero, zero, zero, one];
+        let b_coeffs = [one, zero, zero];
+        let q_coeffs = [zero, zero, zero, zero, one];
+        let r_coeffs = [zero, zero];
+        let c_by_counter = [zero, zero, one];
+        let inv_by_counter = [zero, zero, one];
+        let s_by_counter = [zero, one];
+
+        let counter = |name: &str| {
+            name.rsplit("::")
+                .next()
+                .and_then(|c| c.parse::<usize>().ok())
+                .expect("sentinel names end in a mint counter")
+        };
+        let slot = |v: &Var| *v.index.last().expect("value slots are indexed");
+
+        let mut subs: Ctx<Var, Polynomial<Fr>> = Ctx::new();
+        for v in basis_vars.iter() {
+            let value = if v.name.starts_with("__zippel::gb::div_q") {
+                q_coeffs[slot(v)]
+            } else if v.name.starts_with("__zippel::gb::div_r") {
+                r_coeffs[slot(v)]
+            } else if v.name.starts_with("__zippel::gb::div_c") {
+                c_by_counter[counter(&v.name)]
+            } else if v.name.starts_with("__zippel::gb::div_inv") {
+                inv_by_counter[counter(&v.name)]
+            } else if v.name.starts_with("__zippel::gb::div_s") {
+                s_by_counter[counter(&v.name)]
+            } else if v.reference == var_a.reference {
+                a_coeffs[slot(v)]
+            } else if v.reference == var_b.reference {
+                b_coeffs[slot(v)]
+            } else if v.reference == target.reference {
+                q_coeffs[slot(v)]
+            } else {
+                panic!("unexpected variable {} in the division basis", v.verbose());
+            };
+            subs.insert(v, &Polynomial::lit(&value));
+        }
+
+        for row in ideal.generating_set.iter() {
+            let (evaluated, _) = row.clone().inline_vars(&subs);
+            assert!(
+                evaluated.is_constant(),
+                "row {row} left free variables under the complete assignment"
+            );
+            assert_eq!(
+                evaluated.constant_coeff(),
+                zero,
+                "honest X^4 / 1 assignment must satisfy row {row}"
+            );
+        }
     }
 
     #[test]
@@ -647,11 +781,11 @@ mod tests {
         // r_wit slots: with_slot computes the correct type.
         let r0 = r_wit.clone().with_index(0).unwrap();
 
-        // 3 identity rows + 7 degree-chain rows (mb=1: d=1→3, d=0→3, s_0=1) + 1 linking row.
+        // 4 identity rows + 7 degree-chain rows (mb=1: d=1→3, d=0→3, s_0=1) + 1 linking row.
         assert_eq!(
             ideal.generating_set.len() - basis_before,
-            11,
-            "expected 3 identity + 7 degree-chain + 1 linking row"
+            12,
+            "expected 4 identity + 7 degree-chain + 1 linking row"
         );
 
         // pl[ideal[0]] = var(r_wit[0]).
@@ -735,12 +869,12 @@ mod tests {
 
         let basis_before_div = ideal.generating_set.len();
         let _q_res = {
-            let var = Var::from_node(NodeIndex::new(2), ATyp::Uni(1), Qualifier::Witness);
+            let var = Var::from_node(NodeIndex::new(2), ATyp::Uni(2), Qualifier::Witness);
             let op: GOp<ArkBls12_381> = Op::Bin(
                 BinOp::Div,
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
                 mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Uni(1))),
-                ATyp::Uni(1),
+                ATyp::Uni(2),
             );
             builder.add_op(var.clone(), op, &mut ideal);
             var
@@ -760,16 +894,16 @@ mod tests {
         };
         let after_rem = ideal.generating_set.len();
 
-        // Div added 3 identity + 7 degree-chain (mb=1: d=1→3, d=0→3, s_0=1) + 2 linking = 12 rows.
+        // Div added 4 identity + 7 degree-chain (mb=1: d=1→3, d=0→3, s_0=1) + 3 linking = 14 rows.
         assert_eq!(
             after_div - basis_before_div,
-            12,
-            "Div emitted 3 identity + 7 degree-chain + 2 linking rows"
+            14,
+            "Div emitted 4 identity + 7 degree-chain + 3 linking rows"
         );
-        // Rem allocates fresh witnesses: 3 identity + 7 degree-chain (mb=1) + 1 linking = 11 rows.
+        // Rem allocates fresh witnesses: 4 identity + 7 degree-chain (mb=1) + 1 linking = 12 rows.
         assert_eq!(
             after_rem - after_div,
-            11,
+            12,
             "Rem should emit fresh identity + degree-chain + 1 linking row"
         );
     }
@@ -834,14 +968,15 @@ mod tests {
         add_derived_operand(10, 11);
         add_derived_operand(12, 13);
 
-        let q = Var::from_node(NodeIndex::new(20), ATyp::Uni(1), Qualifier::Witness);
+        // Uni(2) / Uni(1) keeps the dividend's bound: the quotient is Uni(2).
+        let q = Var::from_node(NodeIndex::new(20), ATyp::Uni(2), Qualifier::Witness);
         builder.add_op(
             q,
             Op::Bin(
                 BinOp::Div,
                 mk_ref(11, ATyp::Uni(2)),
                 mk_ref(3, ATyp::Uni(1)),
-                ATyp::Uni(1),
+                ATyp::Uni(2),
             ),
             &mut ideal,
         );
@@ -1033,8 +1168,8 @@ mod tests {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let vec_typ = ATyp::Vec(Box::new(ATyp::Uni(2)), 2);
-        // lub_div: Uni(2) / Uni(2) = Uni(2-2) = Uni(0)
-        let div_typ = ATyp::Vec(Box::new(ATyp::Uni(0)), 2);
+        // lub_div: Uni(2) / Uni(2) = Uni(2) (the quotient keeps the dividend bound)
+        let div_typ = ATyp::Vec(Box::new(ATyp::Uni(2)), 2);
         // lub_rem: Uni(2) % Uni(2) = Uni(2-1) = Uni(1)
         let rem_typ = ATyp::Vec(Box::new(ATyp::Uni(1)), 2);
         for idx in 0..2 {
@@ -1068,14 +1203,14 @@ mod tests {
             &mut ideal,
         );
 
-        // Each element is Uni(2)/Uni(2) (mb=2). Rem emits fresh witnesses per
-        // element: 3 identity + 11 degree-chain (d=2→3, d=1→4, d=0→3, s_0=1) + 2 linking = 16.
-        // 2 elements → 32 rows.
+        // Each element is Uni(2)/Uni(2) (ma=mb=2). Rem emits fresh witnesses per
+        // element: 5 identity (k=0..=4) + 11 degree-chain (d=2→3, d=1→4, d=0→3,
+        // s_0=1) + 2 linking = 18. 2 elements → 36 rows.
         assert_eq!(
             ideal.generating_set.len() - after_div,
-            32,
+            36,
             "vector Rem should emit fresh identity + degree-chain + linking rows \
-             per element (2 elements × 16 = 32)"
+             per element (2 elements × 18 = 36)"
         );
     }
 
@@ -1277,8 +1412,8 @@ mod tests {
         let var_v = Var::from_node(NodeIndex::new(0), vec_t.clone(), Qualifier::Witness);
         ideal.register(&var_v);
 
-        // lub_div: Uni(3) / Uni(3) = Uni(3-3) = Uni(0)
-        let var = Var::from_node(NodeIndex::new(1), ATyp::Uni(0), Qualifier::Witness);
+        // lub_div: Uni(3) / Uni(3) = Uni(3) (the quotient keeps the dividend bound)
+        let var = Var::from_node(NodeIndex::new(1), ATyp::Uni(3), Qualifier::Witness);
         ideal.register(&var);
 
         let op: GOp<ArkBls12_381> = Op::Reduce(
@@ -1293,8 +1428,12 @@ mod tests {
         );
     }
 
+    /// A declared divisor bound above the dividend's says nothing about the
+    /// operands' actual degrees, so `ma < mb` must use the same general
+    /// Euclidean encoding as every other positive-bound division — not a
+    /// pass-through of the dividend.
     #[test]
-    fn poly_rem_smaller_dividend_passes_through() {
+    fn poly_rem_smaller_dividend_uses_general_encoding() {
         use crate::Var;
         use lang::ast::BinOp;
         use lang::typ::Qualifier;
@@ -1313,6 +1452,7 @@ mod tests {
         let var = Var::from_node(NodeIndex::new(2), ATyp::Uni(2), Qualifier::Witness);
         ideal.register(&var);
 
+        let before = ideal.generating_set.len();
         builder.add_op(
             var.clone(),
             Op::Bin(
@@ -1324,21 +1464,67 @@ mod tests {
             &mut ideal,
         );
 
-        for i in 0..2 {
-            let src = var_a.clone().with_index(i).unwrap();
-            let dst = var.clone().with_index(i).unwrap();
-            assert!(
-                ideal
-                    .generating_set
-                    .iter()
-                    .any(|row| row.contains(&src) && row.contains(&dst)),
-                "pass-through remainder should bind source slot {i} to the ideal"
+        // ma=1, mb=3: 5 identity rows (k = 0..=ma+mb) + 15 degree-chain rows
+        // (4·mb + 3) + 3 remainder-link rows.
+        assert_eq!(
+            ideal.generating_set.len() - before,
+            23,
+            "smaller declared dividend bound must still use the general encoding"
+        );
+
+        // The target aliases the remainder witness rather than the dividend.
+        let q_wit = Var::from_var(
+            "__zippel::gb::div_q::0",
+            NodeIndex::new(usize::MAX),
+            ATyp::Uni(1),
+            Qualifier::Local,
+        );
+        let r_wit = Var::from_var(
+            "__zippel::gb::div_r::0",
+            NodeIndex::new(usize::MAX - 1),
+            ATyp::Uni(2),
+            Qualifier::Local,
+        );
+        let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
+        for i in 0..3 {
+            let target_slot = var.clone().with_index(i).unwrap();
+            let r_slot = r_wit.clone().with_index(i).unwrap();
+            assert_eq!(
+                ideal.pl.get(&target_slot).cloned(),
+                Some(var_poly(&r_slot)),
+                "remainder slot {i} should alias div_r, not pass the dividend through"
             );
         }
-        let padded = var.with_index(2).unwrap();
+
+        // The divisor's leading coefficient is dynamic, so the degree chain
+        // must supply indicator, inverse, and cumulative witnesses.
+        let basis_vars = ideal
+            .generating_set
+            .iter()
+            .flat_map(|p| p.vars())
+            .collect::<share::Set<_>>();
+        for prefix in [
+            "__zippel::gb::div_q",
+            "__zippel::gb::div_r",
+            "__zippel::gb::div_c",
+            "__zippel::gb::div_inv",
+            "__zippel::gb::div_s",
+        ] {
+            assert!(
+                basis_vars.iter().any(|v| v.name.starts_with(prefix)),
+                "general encoding should emit {prefix} witnesses"
+            );
+        }
+
+        // The top identity row forces b[3]·q[1] to vanish: the dividend has no
+        // coefficient at degree 4.
+        let zero = Polynomial::<ark_bls12_381::Fr>::zero();
+        let b3 = var_b.clone().with_index(3).unwrap();
+        let q1 = q_wit.with_index(1).unwrap();
+        let expected_top = &zero - &(&var_poly(&b3) * &var_poly(&q1));
         assert!(
-            ideal.generating_set.iter().any(|row| row.contains(&padded)),
-            "lifted pass-through remainder should constrain the padded high slot"
+            ideal.generating_set.iter().any(|row| row == &expected_top),
+            "basis missing the k = ma + mb identity row"
         );
     }
 
@@ -1365,8 +1551,8 @@ mod tests {
         ideal.register(&var_b);
 
         // lub_div(Vec(Uni(2),2), Uni(1)) = Vec(lub_div(Uni(2), Uni(1)), 2)
-        //                                   = Vec(Uni(1), 2)
-        let result_t = ATyp::Vec(Box::new(ATyp::Uni(1)), 2);
+        //                                   = Vec(Uni(2), 2)
+        let result_t = ATyp::Vec(Box::new(ATyp::Uni(2)), 2);
         let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Witness);
         ideal.register(&var_r);
 
@@ -1381,12 +1567,13 @@ mod tests {
             &mut ideal,
         );
 
-        // Each element is Uni(2)/Uni(1) (mb=1): 3 identity + 6 degree-chain + 2 linking = 11.
+        // Each element is Uni(2)/Uni(1) (ma=2, mb=1): 4 identity + 7 degree-chain
+        // + 3 linking = 14.
 
         // All result slots populated.
         for i in 0..2 {
             let elem = var_r.clone().with_index(i).unwrap();
-            for j in 0..2 {
+            for j in 0..3 {
                 let slot = elem.clone().with_index(j).unwrap();
                 assert!(
                     ideal.pl.contains(&slot),
@@ -1419,8 +1606,8 @@ mod tests {
         ideal.register(&var_b);
 
         // lub_div(Uni(2), Vec(Uni(1),2)) = Vec(lub_div(Uni(2), Uni(1)), 2)
-        //                                 = Vec(Uni(1), 2)
-        let result_t = ATyp::Vec(Box::new(ATyp::Uni(1)), 2);
+        //                                 = Vec(Uni(2), 2)
+        let result_t = ATyp::Vec(Box::new(ATyp::Uni(2)), 2);
         let var_r = Var::from_node(NodeIndex::new(2), result_t.clone(), Qualifier::Witness);
         ideal.register(&var_r);
 
@@ -1436,11 +1623,12 @@ mod tests {
         );
 
         // Each element divides the same dividend by a different divisor element.
-        // Each element is Uni(2)/Uni(1) (mb=1): 3 identity + 6 degree-chain + 2 linking = 11.
+        // Each element is Uni(2)/Uni(1) (ma=2, mb=1): 4 identity + 7 degree-chain
+        // + 3 linking = 14.
 
         for i in 0..2 {
             let elem = var_r.clone().with_index(i).unwrap();
-            for j in 0..2 {
+            for j in 0..3 {
                 let slot = elem.clone().with_index(j).unwrap();
                 assert!(
                     ideal.pl.contains(&slot),

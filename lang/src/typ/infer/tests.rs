@@ -411,10 +411,34 @@ fn test_binary_div_inference() {
         ))
     );
 
-    // Create expression p / p; Poly / Poly remains accepted.
+    // Create expression p / p; Poly / Poly remains accepted and keeps the
+    // dividend's declared degree bound (both indices are upper bounds).
     let uni_div = div(varstr("p"), varstr("p"));
     assert_eq!(
         uni_div.infer(&KIND_CTX, &fctx, &vctx),
+        Ok(CTyp::Poly(
+            Tid::from("F"),
+            Spanned::dummy(1),
+            Spanned::dummy(5)
+        ))
+    );
+
+    // Dividing by a declared-constant polynomial keeps the dividend's bound.
+    let uni_div_constant = div(varstr("p"), varstr("pc"));
+    assert_eq!(
+        uni_div_constant.infer(&KIND_CTX, &fctx, &vctx),
+        Ok(CTyp::Poly(
+            Tid::from("F"),
+            Spanned::dummy(1),
+            Spanned::dummy(5)
+        ))
+    );
+
+    // A divisor bound above the dividend's is well-typed: declared bounds do
+    // not compare actual degrees, and the quotient is bounded by the dividend.
+    let uni_div_larger_divisor_bound = div(varstr("pc"), varstr("p"));
+    assert_eq!(
+        uni_div_larger_divisor_bound.infer(&KIND_CTX, &fctx, &vctx),
         Ok(CTyp::Poly(
             Tid::from("F"),
             Spanned::dummy(1),

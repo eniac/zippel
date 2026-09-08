@@ -38,15 +38,19 @@ expression: value
 52435875175126190479447740508185965837690552500527637822603658699938581184511*srs_g2_s*com_f*__zippel::gb::div_q::0[1]^2 + srs_g2_s*proof_f*__zippel::gb::div_q::0[0]*__zippel::gb::div_q::0[1] + 52435875175126190479447740508185965837690552500527637822603658699938581184511*gen_g2*com_f*__zippel::gb::div_q::0[0]*__zippel::gb::div_q::0[1] + 2*srs_g2_s*com_h*__zippel::gb::div_q::2[0]*__zippel::gb::div_q::0[1] + gen_g2*s[1]*com_h*__zippel::gb::div_q::0[1] + gen_g2*s[0]*com_h*__zippel::gb::div_q::0[1] + gen_g2*proof_f*__zippel::gb::div_q::0[0]^2
 52435875175126190479447740508185965837690552500527637822603658699938581184511*srs_g2_s*com_f*f_eval*__zippel::gb::div_q::0[1] + f_coeffs[0]*srs_g2_s*com_f*__zippel::gb::div_q::0[1] + 52435875175126190479447740508185965837690552500527637822603658699938581184511*gen_g2*com_f*f_eval*__zippel::gb::div_q::0[0] + gen_g2*com_h*alpha*__zippel::gb::div_q::0[0] - srs_g2_s*com_h*__zippel::gb::div_q::0[0] + f_coeffs[0]*gen_g2*com_f*__zippel::gb::div_q::0[0] + srs_g2_s*com_h*f_eval*__zippel::gb::div_q::2[0] - gen_g2*com_h*alpha*h_eval + srs_g2_s*com_h*h_eval + gen_g2*com_h*f_eval^2
 52435875175126190479447740508185965837690552500527637822603658699938581184511*srs_g2_s*com_f*f_eval*__zippel::gb::div_q::0[1] - s[1]*srs_g2_s*com_f*__zippel::gb::div_q::0[1] - s[0]*srs_g2_s*com_f*__zippel::gb::div_q::0[1] + 2*f_coeffs[0]*srs_g2_s*com_f*__zippel::gb::div_q::0[1] + 52435875175126190479447740508185965837690552500527637822603658699938581184511*gen_g2*com_f*f_eval*__zippel::gb::div_q::0[0] + gen_g2*com_h*alpha*__zippel::gb::div_q::0[0] - srs_g2_s*com_h*__zippel::gb::div_q::0[0] - gen_g2*s[1]*com_f*__zippel::gb::div_q::0[0] - gen_g2*s[0]*com_f*__zippel::gb::div_q::0[0] + 2*f_coeffs[0]*gen_g2*com_f*__zippel::gb::div_q::0[0] + 2*srs_g2_s*com_h*f_eval*__zippel::gb::div_q::2[0] + gen_g2*s[1]*com_h*f_eval + gen_g2*s[0]*com_h*f_eval
+__zippel::gb::div_q::0[2]
+__zippel::gb::div_q::1[1]
+__zippel::gb::div_q::1[2]
+__zippel::gb::div_q::2[1]
 __zippel::gb::div_r::0[0]
 __zippel::gb::div_r::1[0]
 __zippel::gb::div_r::2[0]
-__zippel::node::50 - 1
-__zippel::node::58 - 1
-__zippel::node::62 - 1
-__zippel::node::73 - 1
-__zippel::node::80[0] - 1
-__zippel::node::84 - 1
+__zippel::node::53 - 1
+__zippel::node::61 - 1
+__zippel::node::65 - 1
+__zippel::node::76 - 1
+__zippel::node::83[0] - 1
+__zippel::node::87 - 1
 alpha*__zippel::gb::div_q::0[0] + 52435875175126190479447740508185965837690552500527637822603658699938581184511*alpha*h_eval + 2*f_eval^2 - s[1]*f_eval - s[0]*f_eval + 52435875175126190479447740508185965837690552500527637822603658699938581184511*f_coeffs[0]*f_eval + f_coeffs[0]*s[1] + f_coeffs[0]*s[0]
 alpha*__zippel::gb::div_q::0[0] - alpha*h_eval + f_eval^2 + 52435875175126190479447740508185965837690552500527637822603658699938581184511*f_coeffs[0]*f_eval + f_coeffs[0]^2
 alpha*__zippel::gb::div_q::0[1] + __zippel::gb::div_q::0[0] - h_eval

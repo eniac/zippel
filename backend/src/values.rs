@@ -1437,45 +1437,6 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
-    /// Typed division.
-    ///
-    /// This delegates to `value_div` for most types, but for `ATyp::Uni(_)`
-    /// it switches `value_div` into "polynomial mode" by wrapping the operands
-    /// as `Value::Poly` first so that the existing `Poly/Poly` arm performs
-    /// true polynomial division, and then normalizes the quotient length.
-    #[inline]
-    pub fn value_div_typed(self, other: Self, typ: &ATyp) -> Self {
-        match typ {
-            ATyp::Uni(out_len) => {
-                // Use the existing `Value::Poly / Value::Poly` arm in `value_div`.
-                let mut rhs = other.value_poly();
-                let lhs_poly = self.value_poly();
-                lhs_poly.value_div(&mut rhs);
-
-                // `rhs` now holds the quotient as a polynomial; convert to coeffs.
-                let q_coeffs = rhs.value_coef();
-                let mut coeffs = match q_coeffs {
-                    Value::VecScalar(v) => v,
-                    _ => unreachable!("value_coef must return VecScalar"),
-                };
-
-                // Ensure coefficient vector length matches the inferred Uni size.
-                if coeffs.len() < *out_len {
-                    coeffs.extend(std::iter::repeat_n(C::F::zero(), *out_len - coeffs.len()));
-                } else if coeffs.len() > *out_len {
-                    coeffs.truncate(*out_len);
-                }
-
-                Value::VecScalar(coeffs)
-            }
-            _ => {
-                let mut rhs = other;
-                self.value_div(&mut rhs);
-                rhs
-            }
-        }
-    }
-
     pub fn value_rem(&self, other: &mut Self) {
         match (self, &other) {
             (Value::Index(a), Value::Index(b)) => *other.into_index_mut() = *a % *b,
@@ -2724,6 +2685,39 @@ impl<C: ArkConfig> Value<C> {
                 Value::VecScalar(v.iter().map(|i| C::FOps::from_usize(*i)).collect())
             }
             _ => panic!("Expected poly or coefficient vector, found {}", self),
+        }
+    }
+
+    /// Coefficient extraction at a *declared* type.
+    ///
+    /// `ATyp::Uni(m)` promises exactly `m + 1` coefficient slots (see
+    /// `docs/poly-encoding.md`), but the canonical Arkworks representation
+    /// drops trailing zero coefficients, so a value of declared type
+    /// `Uni(m)` may carry fewer. Zero-pad the raw extraction up to the
+    /// declared width so the runtime value always matches the shape its
+    /// type promises. Never truncate: a payload wider than the declared
+    /// bound is a genuine bound violation, not something to hide.
+    ///
+    /// Non-`Uni` types keep the raw [`Value::value_coef`] behavior.
+    pub fn value_coef_typed(&self, typ: &ATyp) -> Self {
+        let coefs = self.value_coef();
+        match typ {
+            ATyp::Uni(m) => {
+                let expected = typ.physical_len();
+                let Value::VecScalar(mut v) = coefs else {
+                    unreachable!("value_coef must return VecScalar")
+                };
+                assert!(
+                    v.len() <= expected,
+                    "value_coef_typed: actual univariate coefficient count {} exceeds declared Uni({}) bound of {}",
+                    v.len(),
+                    m,
+                    expected
+                );
+                v.resize(expected, C::F::zero());
+                Value::VecScalar(v)
+            }
+            _ => coefs,
         }
     }
 

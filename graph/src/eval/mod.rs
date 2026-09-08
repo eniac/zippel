@@ -748,8 +748,13 @@ where
             let results = eval_loop_body_each(body, env, dom.into_elements(), loop_params)?;
             Ok(Arc::new(Value::value_vec(results).value_reduce(*op)))
         }
+        // Extract at the operand's declared type so a `Uni(m)` polynomial
+        // always yields exactly its promised `m + 1` coefficient slots,
+        // rather than the canonical Arkworks length with trailing zeros
+        // dropped.
         Op::Coef(a) => Ok(Arc::new(
-            (*eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?).value_coef(),
+            (*eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?)
+                .value_coef_typed(&a.typ()),
         )),
         Op::Poly(a) => Ok(Arc::new(
             (*eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?).value_poly(),

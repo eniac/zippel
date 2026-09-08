@@ -38,7 +38,10 @@ proto membership<
     let poly_x = poly([0, 1]);
     let h_poly = g_poly / poly_x;
 
-    let h_coeffs = coef(h_poly);
+    // The quotient type keeps the dividend's bound; dividing by the exact
+    // degree-1 divisor X leaves L meaningful coefficients.
+    let h_coeffs_full = coef(h_poly);
+    let h_coeffs = h_coeffs_full[0..L];
     com_h <- dot(h_coeffs, srs_g1[0..L]);
 
     // Challenge alpha
@@ -53,11 +56,13 @@ proto membership<
 
     // KZG Proof for f
     let q_f = (poly_f - f_alpha) / poly([-alpha, 1]);
-    proof_f <- dot(coef(q_f), srs_g1[0..N - 1]);
+    let q_f_coeffs = coef(q_f);
+    proof_f <- dot(q_f_coeffs[0..N - 1], srs_g1[0..N - 1]);
 
     // KZG Proof for h
     let q_h = (h_poly - h_alpha) / poly([-alpha, 1]);
-    proof_h <- dot(coef(q_h), srs_g1[0..L - 1]);
+    let q_h_coeffs = coef(q_h);
+    proof_h <- dot(q_h_coeffs[0..L - 1], srs_g1[0..L - 1]);
 
     // Verifier checks KZG proof for f
     let pairing_lhs_f = pair(proof_f, srs_g2_s - gen_g2 * alpha);

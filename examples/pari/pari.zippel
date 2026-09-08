@@ -161,14 +161,17 @@ proto pari<
     let z_a_sq = z_a_poly * z_a_poly;
     let num_poly = z_a_sq - z_b_poly;
     let q_poly = num_poly / v_k_poly;
-    // q has degree K-2 → K-1 coefficients. Truncate sigma_q to match
-    // (KZG idiom: don't pad coeffs with zero, slice the SRS instead).
+    // The quotient type carries the dividend's conservative static capacity
+    // (both `Uni` indices are upper bounds). Mathematically q has degree
+    // K-2 → K-1 meaningful coefficients, because v_k_poly is the supplied
+    // exact polynomial X^K - 1; every higher coefficient is zero.
     let q_coeffs = coef(q_poly);
+    let q_coeffs_trunc = q_coeffs[0..K - 1];
     let sigma_q_trunc = sigma_q[0..K - 1];
 
     // T_Q := Σ_{i=0..K-2} q_i · Σ_q[i] (paper line 7 with implicit top
     // coefficient = 0 elided from the MSM).
-    let t_q = dot(q_coeffs, sigma_q_trunc);
+    let t_q = dot(q_coeffs_trunc, sigma_q_trunc);
 
     // T := -(T_AB + T_Q) (paper line 8). G1 element.
     let t_value = (t_ab + t_q) * f_neg_one;
@@ -194,19 +197,25 @@ proto pari<
     let q_at_r = q_poly(r);
     let w_q_witness = (q_poly - q_at_r) / x_minus_r;
 
-    // Witness quotients: w_a, w_b have degree K-2 (K-1 coeffs);
-    // w_q has degree K-3 (K-2 coeffs). Slice the SRS bases to match.
+    // Witness quotients: w_a, w_b have degree K-2 (K-1 meaningful coeffs);
+    // w_q has degree K-3 (K-2 meaningful coeffs). Their declared types keep
+    // the dividends' conservative bounds, so slice both the coefficient
+    // vectors and the SRS bases to the meaningful prefix.
     let w_a_coeffs = coef(w_a_witness);
     let w_b_coeffs = coef(w_b_witness);
     let w_q_coeffs = coef(w_q_witness);
+
+    let w_a_coeffs_trunc = w_a_coeffs[0..K - 1];
+    let w_b_coeffs_trunc = w_b_coeffs[0..K - 1];
+    let w_q_coeffs_trunc = w_q_coeffs[0..K - 2];
 
     let sigma_a_trunc = sigma_a[0..K - 1];
     let sigma_b_trunc = sigma_b[0..K - 1];
     let sigma_q_prime_trunc = sigma_q_prime[0..K - 2];
 
-    let u_a = dot(w_a_coeffs, sigma_a_trunc);
-    let u_b = dot(w_b_coeffs, sigma_b_trunc);
-    let u_q = dot(w_q_coeffs, sigma_q_prime_trunc);
+    let u_a = dot(w_a_coeffs_trunc, sigma_a_trunc);
+    let u_b = dot(w_b_coeffs_trunc, sigma_b_trunc);
+    let u_q = dot(w_q_coeffs_trunc, sigma_q_prime_trunc);
 
     let u_value = u_a + u_b + u_q;
 

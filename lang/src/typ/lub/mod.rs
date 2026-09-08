@@ -709,18 +709,16 @@ impl Lub for CTyp {
             )),
             // Polynomial-by-polynomial division is supported only for
             // univariate operands. Multivariate division requires a term order.
-            (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, mb))
-                if na.node == 1 && nb.node == 1 && ma >= mb =>
-            {
+            // Both indices are degree *upper bounds*, not exact degrees, so the
+            // quotient keeps the dividend's bound: `ma - mb` would be unsound
+            // whenever the divisor's actual degree is below its bound.
+            (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, _mb)) if na.node == 1 && nb.node == 1 => {
                 let num_vars = na.max(nb).clone();
-                let degree = ma
-                    .checked_sub(mb.node)
-                    .ok_or_else(|| LubError::div(&x, &y))?;
                 Ok(CTyp::Poly(
                     Tid::lub_div(a, b, ctx)
                         .map_err(|e| LubError::next(LubError::div(&x, &y), e))?,
                     num_vars,
-                    Spanned::dummy(degree),
+                    ma.clone(),
                 ))
             }
             // Vec<A> / Vec<B> = Vec<C> where C = A = B

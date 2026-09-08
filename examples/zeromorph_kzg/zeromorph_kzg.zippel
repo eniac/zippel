@@ -38,9 +38,11 @@ proto zeromorph_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>
     let s = random<F>;
 
     // pi = [q(tau)]_1 + s[xi]_1
-    // q has N-1 coefficients.
+    // q's declared bound is the dividend's; the monic linear divisor X - u
+    // leaves N-1 meaningful coefficients.
     let q_coeffs = coef(q_poly);
-    let pi_coeffs = q_coeffs ++ [s];
+    let q_coeffs_truncated = q_coeffs[0..N - 1];
+    let pi_coeffs = q_coeffs_truncated ++ [s];
 
     let srs_for_pi = srs_g1[0..N - 1] ++ [srs_g1[N]];
     pi <- dot(pi_coeffs, srs_for_pi);

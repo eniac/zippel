@@ -93,22 +93,40 @@ Let `p₁ : Poly<F, n₁, m₁>`, `p₂ : Poly<F, n₂, m₂>`.
 | `p₁ + p₂` | `Poly<F, max(n₁,n₂), max(m₁, m₂)>` |
 | `p₁ − p₂` | `Poly<F, max(n₁,n₂), max(m₁, m₂)>` |
 | `p₁ × p₂` | `Poly<F, max(n₁,n₂), m₁ + m₂>` |
-| `p₁ / p₂` (req. `n₁ = n₂ = 1`, `m₁ ≥ m₂`) | `Poly<F, 1, m₁ − m₂>` |
+| `p₁ / p₂` (req. `n₁ = n₂ = 1`) | `Poly<F, 1, m₁>` |
 | `p₁ % p₂` (req. `n₁ = n₂ = 1`, `m₂ ≥ 1`) | `Poly<F, 1, m₂ − 1>` |
 | `p : Poly<…> ± c : F` | input Poly type |
 | `p : Poly<…> × c : F` | input Poly type |
 | `p : Poly<…> / c : F` | input Poly type (scalar division) |
 
+The index `m` is a degree *upper bound*, not an exact degree, so `m₁ − m₂`
+would be unsound: a divisor declared `Uni<F, m₂>` may have any actual degree
+`≤ m₂`, and the quotient's only sound bound is the dividend's own `m₁`.
+
 The identity `P = D·Q + R` with `deg(R) < deg(D)` is used by the Gröbner
-layer for `Uni / Uni` and `Uni % Uni`: witnesses
-`q : Uni<F, m₁ − m₂>` and `r : Uni<F, m₂ − 1>`. Polynomial-by-polynomial
-operations on `Mle` and `VPoly` are rejected by the type system because
-multivariate division requires a term order.
+layer for `Uni / Uni` and `Uni % Uni`. The encoder has two branches:
+
+- **Declared-constant divisor** (`m₂ = 0`): witnesses `q : Uni<F, m₁>` and a
+  zero remainder. One row per dividend coefficient, `a[k] = b[0]·q[k]` for
+  `k ∈ 0..=m₁`, plus the scalar nonzero-divisor row.
+- **`m₂ > 0`**: witnesses `q : Uni<F, m₁>` and `r : Uni<F, m₂ − 1>`, with
+  identity rows for every `k ∈ 0..=m₁ + m₂`. Dividend coefficients above
+  `m₁` are zero; those extra rows force the high coefficients of `D·Q` to
+  cancel. `m₁ < m₂` is not a special case — declared bounds do not compare
+  actual degrees, so it uses the same encoding.
+
+Polynomial-by-polynomial operations on `Mle` and `VPoly` are rejected by the
+type system because multivariate division requires a term order.
 
 Division constraints model defined program traces only. Scalar division and
 `Uni(0)` division enforce `D ≠ 0` with an inverse witness `D·D⁻¹ - 1 = 0`.
 Higher-degree `Uni` division enforces that at least one divisor coefficient is
 nonzero through the degree chain's final `s₀ = 1` constraint.
+
+At runtime, `coef(p)` on a value of declared type `Uni(m)` returns exactly
+`m + 1` elements: the canonical Arkworks representation drops trailing zero
+coefficients, so the extraction zero-pads up to the declared width (and never
+truncates).
 
 ## Vec ↔ Poly length relations
 

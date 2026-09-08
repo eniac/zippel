@@ -1112,6 +1112,40 @@ fn pin_bin_rem() {
     assert!(gs[0] == expected);
 }
 
+/// Polynomial division: `a / b` on univariates creates a Bin(Div) node whose
+/// result keeps the dividend's declared degree bound.
+/// Tests: CExp::Bin(Div) → GOp::div fallthrough for polynomial Ref operands.
+#[test]
+fn pin_bin_poly_div() {
+    let src = r#"
+        fn f<F: Field>(instance a: Uni<F, 3>, instance b: Uni<F, 2>) -> Uni<F, 3> { a / b }
+    "#;
+    let gs = parse_and_build(src);
+
+    let mut expected = UDag::<B>::new();
+    let a = Vid::new("a");
+    let b = Vid::new("b");
+    let at_a = ATyp::Uni(3);
+    let at_b = ATyp::Uni(2);
+    let at_res = ATyp::Uni(3);
+
+    let (_inp, _inp_args) = expected_inp(
+        &mut expected,
+        "f",
+        &[instance_t("a", at_a.clone()), instance_t("b", at_b.clone())],
+    );
+    let arg_a = _inp_args[0];
+    let arg_b = _inp_args[1];
+    let var_a = GOp::<B>::var(&a, arg_a, at_a);
+    let var_b = GOp::<B>::var(&b, arg_b, at_b);
+
+    let div_node = expected.add_node(Node::bin(BinOp::Div, &var_a, &var_b, &at_res));
+    expected.add_edges(DepType::Data, div_node, var_a);
+    expected.add_edges(DepType::Data, div_node, var_b);
+
+    assert!(gs[0] == expected);
+}
+
 // ============================================================================
 // Group 13: Map, Ram, Eval
 // ============================================================================

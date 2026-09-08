@@ -113,7 +113,12 @@ proto dekart<
     let h = g * beta + reduce(+, [h_j_vec[j] * beta_pow[j] for j in 0..l_chunk]);
 
     // Step 7: Commit to h
-    let h_coeffs = coef(h);
+    // `h`'s declared bound is the conservative static capacity of the
+    // quotient type (the dividend's bound). The mathematically meaningful
+    // coefficients stop at h_deg: v_s is the exact degree-n vanishing
+    // polynomial with leading coefficient 1, so every higher slot is zero.
+    let h_coeffs_full = coef(h);
+    let h_coeffs = h_coeffs_full[0..h_deg + 1];
     com_h <- dot(h_coeffs, srs_g1_h) + xi_g1 * rho_h;
 
     // Step 8: Batch challenge mu
@@ -151,7 +156,11 @@ proto dekart<
         + mu_h * rho_h
         + reduce(+, [rho_vec[j] * mu_j[j] for j in 0..l_chunk]);
 
-    pi_1 <- xi_g1 * s_blind + dot(coef(q_u), srs_g1_h[0..h_deg]);
+    // The opening divisor X - gamma has exact degree 1, so q_u's meaningful
+    // coefficients stop at h_deg - 1 (h_deg slots).
+    let q_u_coeffs = coef(q_u);
+    let q_u_coeffs_truncated = q_u_coeffs[0..h_deg];
+    pi_1 <- xi_g1 * s_blind + dot(q_u_coeffs_truncated, srs_g1_h[0..h_deg]);
     pi_2 <- gen_g1 * rho_u - (srs_g1_h[1] - gen_g1 * gamma) * s_blind;
 
     // VERIFICATION

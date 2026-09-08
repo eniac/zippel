@@ -38,10 +38,10 @@ impl<'a, C: ArkConfig + HasOpFactory> EncodeCtx<'a, C> {
 /// Emits `var(var[j]) − var(wit[j]) = 0` for every slot, and
 /// registers `pl[var[j]] = var(wit[j])`.
 ///
-/// The type checker computes exact degree bounds for quotient
-/// (`m - m'`) and remainder (`m' - 1`), so the witness and target
-/// must have the same number of physical slots. A mismatch indicates
-/// a bug in either the type checker or the caller.
+/// The type checker computes the witness bounds — quotient `m` (the
+/// dividend's own upper bound) and remainder `m' - 1` — so the witness
+/// and target must have the same number of physical slots. A mismatch
+/// indicates a bug in either the type checker or the caller.
 pub fn link_to_witness<C: ArkConfig>(ideal: &mut Ideal<C>, var: &Var, wit: &Var) {
     let var_slots = var.slots();
     let wit_slots = wit.slots();

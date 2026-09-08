@@ -833,9 +833,9 @@ fn main() {
     // Sumcheck starts at nv=3 because sumcheck.zippel's `V: 2..NUM_VARS_CONST`
     // range must be non-empty (V is the per-round residual var count).
     //
-    // PARI starts at M=2 because the protocol divides q(X) by (X−r); at
-    // K=2 the quotient q has degree 0 and the type checker rejects the
-    // div. K=4 (M=2) is the smallest size where q has degree ≥ 1.
+    // PARI starts at M=2 because the q-opening MSM slices its bases to
+    // `[0..K-2]`, which is empty at K=2. K=4 (M=2) is the smallest size
+    // where that opening is non-degenerate.
     let (pari_ms, sumcheck_nvs, ipa_ss, kzg_ns, groth16_log_ns, pst13_ns, hyrax_ns, spartan_ms) =
         if let Some(ls) = &args.sizes {
             let kzg = ls.iter().map(|&s| 1usize << s).collect::<Vec<_>>();
