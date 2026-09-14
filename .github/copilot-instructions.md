@@ -4,7 +4,7 @@ Zippel is a compiler for cryptographic protocols (zero-knowledge proofs, commitm
 
 ## Build & Test
 
-Requires **Rust nightly** (pinned in `rust-toolchain.toml` at the repo root, mirrored in `share/rust-toolchain.toml`). The `.cargo/config.toml` sets `RUST_MIN_STACK = "33554432"` (32 MB) and `SYMBOLICA_HIDE_BANNER = "1"` — needed because deep recursion in graph passes can otherwise overflow the default thread stack during tests.
+Requires **Rust nightly** (pinned in `rust-toolchain.toml` at the repo root). The `.cargo/config.toml` sets `RUST_MIN_STACK = "33554432"` (32 MB) and `SYMBOLICA_HIDE_BANNER = "1"` — needed because deep recursion in graph passes can otherwise overflow the default thread stack during tests.
 
 ```bash
 cargo build                              # build everything (workspace)
@@ -14,7 +14,7 @@ cargo test -p graph op_unit_tests        # run a specific test module
 cargo test -p graph -- --test scalar     # run tests matching "scalar"
 cargo test -- --nocapture                # show stdout/stderr (also: cargo test-verbose)
 cargo run --example zippel -- ipa       # run an example (from repo root)
-cargo bench --bench graph_execution      # Criterion benchmark
+cargo bench --bench execution            # Criterion benchmark
 ```
 
 Aliases live in `.cargo/config.toml`: `test-all`, `test-verbose`, `test-coverage` (the latter requires `cargo-tarpaulin`), plus `ex` / `exr` for running one example (`cargo ex ipa`, `cargo exr hyperplonk`).
@@ -57,7 +57,7 @@ The entry point is `ZippelHandler<C: ArkConfig>` in `src/lib.rs`. It is paramete
 
 Examples live in `examples/<name>/main.rs`, each exposing `pub fn run(args: &[String])` and reading a `.zippel` file from `examples/`. All of them are linked into the single `zippel` example target via the `#[path] mod` declarations and the `EXAMPLES` table in `examples/main.rs`, and are invoked as `cargo run --example zippel -- <name>`. **Adding a new example means editing `examples/main.rs`, not `Cargo.toml`** — `autoexamples = false` disables glob discovery, and one example target keeps `target/` to one link product for all protocols.
 
-Integration tests at the repo root (`tests/groebner_correctness.rs`, `tests/groebner_sage.rs`) and Criterion benchmarks under `benches/` (`graph_execution`, `groebner`) are part of the workspace.
+Integration tests live per-crate under `<crate>/tests/` (e.g. `analyses/tests/gb_snapshots.rs` for Gröbner-basis snapshot tests, plus `lang/tests/` and `fmt/tests/`), not at the repo root. Criterion benchmarks live under `benches/` (`execution`, `compilation`, `inline`, `inline_all`).
 
 The formal language definition is in `docs/grammar.ott` (Ott source) and built to `docs/grammar.pdf` via `docs/Makefile` — consult it when reasoning about Zippel surface syntax or typing rules.
 
@@ -90,13 +90,13 @@ All implement `StaticAnalysis<C, A>` trait in `graph/src/analyses/`:
 
 ## Conventions
 
-- **Error handling**: `thiserror` throughout. Each domain has its own error type (`InputError`, `TypeError`, `RangeError`, `GraphError`, `DeclError`, `ModuleError`, `SigError`).
+- **Error handling**: `thiserror` throughout. Each domain has its own error type (`TypeError`, `RangeError`, `GraphError`, `DeclError`, `ModuleError`, `SigError`).
 - **Cryptographic generics**: Most types are parameterized by `C: ArkConfig`. The default test config is `ArkBls12_381` (aliased as `TestConfig` in graph tests).
 - **Testing**: Graph tests use `GraphBuilder` and `execute_graph` helpers from `graph/src/tests/test_helpers.rs`. Property-based testing uses `arbtest`/`arbitrary` crates. `Op::Record` fields must be evaluated recursively via `evaluate_op` to produce `Value::Record`.
 - **Pretty printing**: Types implement the `Pretty` trait from `share` for Wadler-style output.
 - **Logging**: `log` crate with `env_logger`. Enable with `RUST_LOG=debug`. Library code uses `log` macros only — no `println!` in library crates.
 - **Qualifier semantics**: `Private ≤ Public` — qualifier propagation computes the join (least upper bound).
-- **Identifier conventions in `.zippel` source**: identifiers starting with an **uppercase** letter are size-type variables (`Tid`); those starting **lowercase** are value variables (`Vid`). This is enforced in `lang/src/ast/exp.rs` `FromPest` parsing, not just stylistic.
+- **Identifier conventions in `.zippel` source**: identifiers starting with an **uppercase** letter are size-type variables (`Tid`); those starting **lowercase** are value variables (`Vid`). This is enforced in `lang/src/parser/mod.rs` during parsing, not just stylistic.
 - **Polynomial encoding**: `Uni(m)` stores `m+1` coefficients, `VPoly(n,m)` stores `C(m+n,n)` slots, `Mle(n)` stores `2^n` slots. See `backend/src/types.rs` and `backend/src/poly_variant.rs`.
 - **Polynomial and Vec are distinct types**: `lub(Poly, Vec)` is a type error. A `Vec(F, k)` is **not** implicitly reinterpreted as a polynomial's coefficient list (or MLE evaluation table) under `+ / - / · / ++`. Use explicit `poly([...])` / `mle([...])` to lift a `Vec` into a polynomial, or `coef(p)` to extract a coefficient `Vec` from a polynomial. Polynomial ↔ polynomial coercion across `Uni` / `Mle` / `VPoly` still works via the general `(Poly, Poly)` lub arms and produces a `VPoly`. See `lang/src/typ/lub.rs`.
 - **Univariate evaluation**: `p(x)` for `p: Uni<F, n>` and `x: F` desugars to `Op::Evaluate(p, x)` (single-scalar variant), not `dot(p, [x^0, x^1, ..., x^n])`. The dot-based form would require an implicit `Poly ↔ Vec` coercion that no longer exists. See `graph/src/lib.rs` `CExp::App` handling.

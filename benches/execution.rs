@@ -4,7 +4,7 @@
 //! via the public `ZippelHandler` API. They are useful for comparing
 //! different `run_graph` implementations and tracking performance regressions.
 //!
-//! Run with: cargo bench --bench `graph_execution`
+//! Run with: cargo bench --bench `execution`
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::PathBuf;
@@ -545,34 +545,31 @@ fn kzg_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
     let n_size = 2;
 
-    let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
+    let gen_g1_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
+    let gen_g1: Value<ArkBls12_381> = Value::G1(gen_g1_input);
 
-    let h_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
+    let gen_g2_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
+    let gen_g2: Value<ArkBls12_381> = Value::G2(gen_g2_input);
 
-    let poly_coeffs: Value<ArkBls12_381> =
-        Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_size));
+    let poly_x: Value<ArkBls12_381> =
+        Value::<ArkBls12_381>::random(&mut rng, &ATyp::uni(n_size - 1));
     let eval_point: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
     let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
 
-    let ss_g: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|_| g_input).collect());
-    let ss_index = Value::VecScalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect());
-    let srs_g1 = ss_g * ss_index;
+    let srs_g1: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|_| gen_g1_input).collect())
+        * Value::VecScalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect());
 
-    let z_val: Value<ArkBls12_381> = Value::Vec(
-        (0..n_size)
-            .map(|i| eval_point.clone() ^ Value::Index(i))
-            .collect(),
-    );
-    let eval_result: Value<ArkBls12_381> = poly_coeffs.clone().dot(z_val);
-    let srs_g2_s: Value<ArkBls12_381> = Value::G2(h_input * tau_input);
+    let eval_result: Value<ArkBls12_381> = poly_x.clone().value_eval(eval_point.clone());
+
+    let srs_g2_s: Value<ArkBls12_381> = Value::G2(gen_g2_input * tau_input);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("poly_coeffs".to_string()), poly_coeffs),
+        (Vid("poly_x".to_string()), poly_x),
         (Vid("eval_point".to_string()), eval_point),
         (Vid("eval_result".to_string()), eval_result),
         (Vid("srs_g1".to_string()), srs_g1),
-        (Vid("gen_g1".to_string()), Value::G1(g_input)),
-        (Vid("gen_g2".to_string()), Value::G2(h_input)),
+        (Vid("gen_g1".to_string()), gen_g1),
+        (Vid("gen_g2".to_string()), gen_g2),
         (Vid("srs_g2_s".to_string()), srs_g2_s),
     ])
 }
@@ -610,10 +607,7 @@ fn bench_kzg_verifier(c: &mut Criterion) {
 
     group.bench_function("verifier", |b| {
         b.iter(|| {
-            let mut verifier_handler: ZippelHandler<ArkBls12_381> =
-                ZippelHandler::new(ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel")));
-            verifier_handler.compile(&sizes);
-            verifier_handler
+            handler
                 .run_verifier(&proof, &inputs)
                 .expect("run_verifier failed")
         });

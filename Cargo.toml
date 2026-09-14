@@ -66,12 +66,8 @@ process-wrap = { version = "10", default-features = false, features = ["std", "p
 # ark-snark = { git = "https://github.com/arkworks-rs/snark.git", branch = "release/0.6.0" }
 
 [[bench]]
-name = "graph_execution"
+name = "execution"
 test = false
-harness = false
-
-[[bench]]
-name = "groth16"
 harness = false
 
 [[bench]]
