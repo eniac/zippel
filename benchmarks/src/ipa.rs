@@ -244,6 +244,7 @@ pub mod native_side {
 
             // ---- Prover (sampled PROVER_SAMPLES times) ----
             let mut prove_sum = std::time::Duration::ZERO;
+            #[allow(clippy::type_complexity)]
             let mut last_state: Option<(Fr, Fr, Vec<(Projective, Projective)>)> = None;
             for _ in 0..*crate::PROVER_SAMPLES {
                 let mut prover_transcript = Transcript::new(b"ipa-bench");

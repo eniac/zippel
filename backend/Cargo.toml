@@ -6,12 +6,9 @@ edition = "2024"
 [dependencies]
 ark-ec = { version = "0.6", features = ["parallel"] }
 ark-serialize = { version = "0.6", features = ["parallel"] }
-ark-bls12-377 = { version = "0.6" }
 ark-bls12-381 = { version = "0.6" }
-ark-ed-on-cp6-782 = { version = "0.6" }
 ark-bn254 = { version = "0.6" }
 ark-mnt4-298 = { version = "0.6" }
-ark-mnt4-753 = { version = "0.6" }
 ark-pallas = { version = "0.6" }
 ark-secp256k1 = { version = "0.6" }
 ark-curve25519 = { version = "0.6" }

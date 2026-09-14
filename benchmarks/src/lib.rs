@@ -48,18 +48,28 @@ pub static PROVER_SAMPLES: std::sync::LazyLock<u32> = std::sync::LazyLock::new(|
         .unwrap_or(1)
 });
 
+// The `*_upstream` modules below are vendored third-party code (see each
+// module's doc comment for provenance) and are not to be edited to satisfy
+// lints. `#[allow(warnings)]` here — in this non-vendored file, applying
+// recursively to the vendored module tree it annotates — blanket-suppresses
+// lints for them instead.
+#[allow(warnings)]
 pub mod ark_spartan_upstream;
 pub mod cache;
 pub mod groth16;
 pub mod hyrax;
+#[allow(warnings)]
 pub mod hyrax_upstream;
 pub mod ipa;
 pub mod kzg;
 pub mod pari;
+#[allow(warnings)]
 pub mod pari_upstream;
 pub mod pst13;
+#[allow(warnings)]
 pub mod pst13_upstream;
 pub mod schnorr;
 pub mod spartan;
 pub mod sumcheck;
+#[allow(warnings)]
 pub mod sumcheck_upstream;

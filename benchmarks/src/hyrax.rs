@@ -25,7 +25,7 @@ pub mod zippel_side {
     impl Setup {
         pub fn new(n: usize) -> Self {
             assert!(
-                n >= 2 && n <= 20 && n % 2 == 0,
+                (2..=20).contains(&n) && n.is_multiple_of(2),
                 "n must be an even number in 2..=20 (eq_weights cap)"
             );
             let l = n / 2;

@@ -86,7 +86,7 @@ pub mod inst_gen {
         assert!(n_pub >= 1, "need n_pub ≥ 1 (the constant-1 row)");
         let k = 1usize << m_log;
         assert!(
-            k >= n_pub + 1,
+            k > n_pub,
             "need K ≥ n_pub + 1 (room for K-n original constraints)"
         );
 

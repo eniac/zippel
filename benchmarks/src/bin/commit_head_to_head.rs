@@ -77,8 +77,9 @@ fn run_all() {
         let w: Vec<Fr> = (0..wlen).map(|_| Fr::rand(&mut rng)).collect();
 
         // Zippel-side inputs (matching spartan.rs prover_create_inputs).
-        let g_vec_proj: Vec<EdwardsProjective> =
-            (0..ncols).map(|_| EdwardsProjective::rand(&mut rng)).collect();
+        let g_vec_proj: Vec<EdwardsProjective> = (0..ncols)
+            .map(|_| EdwardsProjective::rand(&mut rng))
+            .collect();
         let g_vec: Vec<EdwardsAffine> = EdwardsProjective::normalize_batch(&g_vec_proj);
         let h_base = EdwardsProjective::rand(&mut rng);
         let r_rows: Vec<Fr> = (0..nrows).map(|_| Fr::rand(&mut rng)).collect();
@@ -112,12 +113,11 @@ fn run_all() {
                 let mut acc = EdwardsProjective::zero();
                 for i in 0..nrows {
                     let row = &w[i * ncols..(i + 1) * ncols];
-                    let c = h_base * r_rows[i]
-                        + EdwardsProjective::msm(&g_vec, row).expect("msm");
+                    let c = h_base * r_rows[i] + EdwardsProjective::msm(&g_vec, row).expect("msm");
                     acc += c;
                 }
                 let dt = t.elapsed().as_secs_f64() * 1e3;
-                std::hint::black_box(acc);
+                let _ = std::hint::black_box(acc);
                 if rep > 0 {
                     t_z.push(dt);
                 }
@@ -134,8 +134,7 @@ fn run_all() {
                     .into_par_iter()
                     .map(|i| {
                         let row = &w[i * ncols..(i + 1) * ncols];
-                        h_base * r_rows[i]
-                            + EdwardsProjective::msm(&g_vec, row).expect("msm")
+                        h_base * r_rows[i] + EdwardsProjective::msm(&g_vec, row).expect("msm")
                     })
                     .collect();
                 let dt = t.elapsed().as_secs_f64() * 1e3;
@@ -159,21 +158,32 @@ fn run_all() {
             }
         }
 
-        println!(
-            "M={m}  (witness 2^{ell}, {nrows} rows x {ncols} cols)"
-        );
+        println!("M={m}  (witness 2^{ell}, {nrows} rows x {ncols} cols)");
         if !t_z.is_empty() {
-            println!("  Z     (serial row loop)          : {:9.2} ms", mean_ms(&t_z));
+            println!(
+                "  Z     (serial row loop)          : {:9.2} ms",
+                mean_ms(&t_z)
+            );
         }
         if !t_zpar.is_empty() {
-            println!("  Z_par (rows via par_iter)        : {:9.2} ms", mean_ms(&t_zpar));
+            println!(
+                "  Z_par (rows via par_iter)        : {:9.2} ms",
+                mean_ms(&t_zpar)
+            );
         }
         if !t_s.is_empty() {
-            println!("  S     (ark-spartan poly.commit)  : {:9.2} ms", mean_ms(&t_s));
+            println!(
+                "  S     (ark-spartan poly.commit)  : {:9.2} ms",
+                mean_ms(&t_s)
+            );
         }
         if !t_z.is_empty() && !t_s.is_empty() {
             let (z, s) = (mean_ms(&t_z), mean_ms(&t_s));
-            let zp = if t_zpar.is_empty() { f64::NAN } else { mean_ms(&t_zpar) };
+            let zp = if t_zpar.is_empty() {
+                f64::NAN
+            } else {
+                mean_ms(&t_zpar)
+            };
             println!(
                 "  Z vs S: {:+.2} ms ({:+.1}%)   Z_par vs S: {:+.2} ms ({:+.1}%)",
                 z - s,

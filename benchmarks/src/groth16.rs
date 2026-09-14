@@ -62,8 +62,8 @@ pub mod shared {
     ///   * 1 instance input  (`y` = final squared value, M=2 incl. constant 1)
     ///   * N witness vars  (`w[0..N]`, with `w[0]` a random seed)
     ///   * N constraints:
-    ///       row i in [0, N-2]:  w[i] * w[i] = w[i+1]
-    ///       row N-1:            w[N-1] * w[N-1] = y
+    ///     row i in [0, N-2]:  w[i] * w[i] = w[i+1]
+    ///     row N-1:            w[N-1] * w[N-1] = y
     ///
     /// R1CS matrices are N × (N+2) — near-square (vs. the prior
     /// N × (3N+1) shape). Crucially, **M is constant in N** so the
@@ -367,9 +367,8 @@ pub mod bridge {
         // `num_inputs` instance positions into A at the constraint-domain
         // tail: A[constraints + i] = e_i. Mirror that so the QAP relation
         // matches the keys.
-        for i in 0..num_inputs {
-            a[num_constraints + i] = full_assignment[i];
-        }
+        a[num_constraints..(num_inputs + num_constraints)]
+            .copy_from_slice(&full_assignment[..num_inputs]);
 
         domain.ifft_in_place(&mut a);
         domain.ifft_in_place(&mut b);

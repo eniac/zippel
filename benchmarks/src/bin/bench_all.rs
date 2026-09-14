@@ -611,8 +611,8 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                     bind.append_message(b"inst", &inst_bytes);
                     bind.append_message(b"io", &inputs_bytes);
                 }
-                let proof =
-                    timed_pool().install(|| NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt));
+                let proof = timed_pool()
+                    .install(|| NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt));
                 prove_sum += t.elapsed().saturating_sub(n_matvec);
                 last_proof = Some(proof);
             }

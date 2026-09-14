@@ -187,6 +187,7 @@ fn run_nizk(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_snark(
     m: u32,
     num_cons: usize,

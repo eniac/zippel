@@ -56,7 +56,7 @@ pub mod zippel_side {
             let mut rng = rand::rngs::OsRng;
             let x = F::rand(&mut rng);
             let g = G1::rand(&mut rng);
-            let h_affines = G1Ops::vec_mul(&g, &vec![x]);
+            let h_affines = G1Ops::vec_mul(&g, &[x]);
             let h = h_affines.into_iter().next().unwrap();
             let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
                 (Vid("x".to_string()), Value::Scalar(x)),
@@ -102,6 +102,12 @@ pub mod zippel_side {
             assert!(result, "zippel schnorr verification FAILED");
 
             Timing { prove, verify }
+        }
+    }
+
+    impl Default for Setup {
+        fn default() -> Self {
+            Self::new()
         }
     }
 }
@@ -170,6 +176,12 @@ pub mod native_side {
             assert!(last_ok, "ark-crypto-primitives schnorr verification FAILED");
 
             Timing { prove, verify }
+        }
+    }
+
+    impl Default for Setup {
+        fn default() -> Self {
+            Self::new()
         }
     }
 }

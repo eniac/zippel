@@ -198,7 +198,7 @@ fn main() {
                 acc += EdwardsProjective::msm(&bases, row).expect("msm");
             }
             let dt = t.elapsed().as_secs_f64() * 1e3;
-            std::hint::black_box(acc);
+            let _ = std::hint::black_box(acc);
             if rep > 0 {
                 t_a.push(dt);
             }
@@ -215,7 +215,7 @@ fn main() {
                 acc += EdwardsProjective::msm(&b, &s).expect("msm");
             }
             let dt = t.elapsed().as_secs_f64() * 1e3;
-            std::hint::black_box(acc);
+            let _ = std::hint::black_box(acc);
             if rep > 0 {
                 t_a_prime.push(dt);
             }
@@ -246,10 +246,22 @@ fn main() {
         let total_muls = (k * n) as f64;
 
         println!("shape K={k} N={n}  ({label}, {} scalar-muls)", k * n);
-        println!("  A  (arkworks msm xK, affine bases)   : {a:9.2} ms  ({:6.1} ns/mul)", a * 1e6 / total_muls);
-        println!("  A' (ark-spartan batch_commit pattern): {ap:9.2} ms  ({:6.1} ns/mul)", ap * 1e6 / total_muls);
-        println!("  B0 (hand-rolled, fresh buffers)      : {b0:9.2} ms  ({:6.1} ns/mul)", b0 * 1e6 / total_muls);
-        println!("  B1 (hand-rolled, shared buffers)     : {b1:9.2} ms  ({:6.1} ns/mul)", b1 * 1e6 / total_muls);
+        println!(
+            "  A  (arkworks msm xK, affine bases)   : {a:9.2} ms  ({:6.1} ns/mul)",
+            a * 1e6 / total_muls
+        );
+        println!(
+            "  A' (ark-spartan batch_commit pattern): {ap:9.2} ms  ({:6.1} ns/mul)",
+            ap * 1e6 / total_muls
+        );
+        println!(
+            "  B0 (hand-rolled, fresh buffers)      : {b0:9.2} ms  ({:6.1} ns/mul)",
+            b0 * 1e6 / total_muls
+        );
+        println!(
+            "  B1 (hand-rolled, shared buffers)     : {b1:9.2} ms  ({:6.1} ns/mul)",
+            b1 * 1e6 / total_muls
+        );
         println!(
             "  B1 vs A: {:+.2} ms ({:+.1}%)   B1 vs B0: {:+.2} ms   A' vs A: {:+.2} ms",
             b1 - a,

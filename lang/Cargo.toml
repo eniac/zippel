@@ -6,25 +6,18 @@ authors = ["Lef Ioannidis <elefthei@seas.upenn.edu>", "Alireza Shirzad <alrshir@
 
 [dependencies]
 share = { path = "../share" }
-itertools = "0.12.0"
 lazy_static = "1.4.0"
 thiserror = "1.0.58"
-rayon = "1.10.0"
-log = "0.4.22"
-dashmap = "6.1.0"
 arbitrary = "1.4.1"
-arbtest = "0.3.1"
-bumpalo = "3.17.0"
 num = "0.4.3"
 rand = { version = "0.8", features = ["std"] }
 logos = "0.14"
-num-derive = "0.5"
-num-traits = "0.2"
 chumsky = { version = "0.13", features = ["pratt"] }
 ariadne = "0.5"
 lang-derive = { path = "./lang-derive" }
 
 [dev-dependencies]
+arbtest = "0.3.1"
 insta = { version = "1.48", features = ["yaml"] }
 yansi = "1.0"
 

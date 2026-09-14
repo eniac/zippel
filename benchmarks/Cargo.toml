@@ -4,6 +4,22 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[lints.clippy]
+# Explicit `for i in a..b { ...v[i]... }` reads more plainly than the
+# iterator-adapter chains clippy suggests here, especially once a loop
+# body indexes more than one array by the same `i`.
+needless_range_loop = "allow"
+
+[lints.cargo]
+# `colored` backs the vendored `ark_spartan_upstream::timer` module's
+# `#[cfg(feature = "profile")]` prints; it looks unused because we never
+# wired up a `profile` feature here. Leave the vendored module as-is and
+# just silence the false positive rather than dropping the dependency.
+unused_dependencies = "allow"
+# These binary names mirror their `.rs` filenames and are used as-is by
+# benchmarks/run_*.sh and docs/RUNBOOK.md; not worth a rename+doc churn.
+non_kebab_case_bins = "allow"
+
 [features]
 # `cfg_into_iter!` and friends in arkworks check `feature = "parallel"` in
 # the *calling* crate, so the vendored hyperplonk sumcheck stack needs us
