@@ -46,13 +46,8 @@ proto kzh<
     // Trusted setup: sample the trapdoors (τ_x, τ_y), then derive the
     // KZH-2 SRS tensor structure at those trapdoors.
     //   H^ {i,j} = g · eq(τ_x, i_bits) · eq(τ_y, j_bits)
-    //   D^i    = g · eq(τ_x, i_bits)
     //   H^j    = g · eq(τ_y, j_bits)
     //   V^i    = h · eq(τ_x, i_bits),   V' = h.
-    // The pairing check e(C, V') == Σ_x e(D^x, V^x) then verifies that
-    // C is well-formed. eq_weights inlined LSB-first (bit_j(k) =
-    // (k / 2^j) % 2) because the analyzer can't dispatch recursive
-    // function calls inside `where`.
     let tau_x = [random<F> for _ in 0..NX];
     let tau_y = [random<F> for _ in 0..NY];
     let eq_x = [
@@ -73,7 +68,11 @@ proto kzh<
         &&,
         [h_xy[k] for k in 0..NXY] == [g_gen * (eq_x[k / NYV] * eq_y[k % NYV]) for k in 0..NXY],
     )
-        && reduce(&&, [d_x[i] for i in 0..NXV] == [g_gen * eq_x[i] for i in 0..NXV])
+        && reduce(
+            &&,
+            [d_x[i] for i in 0..NXV]
+                == [reduce(+, [f_evals[i * NYV + j] * h_y[j] for j in 0..NYV]) for i in 0..NXV],
+        )
         && reduce(&&, [h_y[j] for j in 0..NYV] == [g_gen * eq_y[j] for j in 0..NYV])
         && v_prime == h_gen
         && reduce(&&, [v_x[i] for i in 0..NXV] == [h_gen * eq_x[i] for i in 0..NXV])
