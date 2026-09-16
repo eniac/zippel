@@ -1,14 +1,37 @@
 //! Single-protocol completeness benchmark with and without pl-table inlining.
 //!
 //! Usage:
-//!   inline [--no-inline] [--backend singular|default] <`protocol_name`>
+//!   inline [--no-inline] [--backend singular|default]
+//!          [--memory-limit-mb MB] <`protocol_name`>
 //!
-//! Prints JSON to stdout with timing and basis size.
-//! Exit code 0 = analysis succeeded, 1 = analysis error, 2 = panic/crash.
+//! Prints JSON to stdout with timing and basis size. Status is one of `ok`,
+//! `incomplete`, `crashed` (a real bug/panic), or `oom`.
 //!
-//! For batch runs across all protocols with timeout/OOM handling, use
+//! `--memory-limit-mb` caps the process's virtual address space (`RLIMIT_AS`,
+//! unix only), but only around the Gröbner-basis backend (e.g. Singular)
+//! call — not for the whole process. Parsing/concretizing/building the
+//! ideal (the "compile" phase) runs unbounded beforehand, and the final
+//! verifier-polynomial reduction (`run()`, pure Rust, no backend/subprocess
+//! involvement) runs unbounded afterward — a failure in either is
+//! unambiguously a real bug: `crashed`. Only the backend call itself is
+//! bounded (the limit is inherited by the backend subprocess when it's
+//! spawned), so a failure there — in the surrounding Rust code or in the
+//! backend itself — is `oom`. This split is tracked with a flag, not
+//! inferred from error text.
+//!
+//! Even a hard allocator abort (unrecoverable via `panic`/`catch_unwind`) still
+//! reports `oom`: a minimal JSON line is pre-built before the limit goes
+//! into effect and written with no further allocation from the allocation
+//! error hook.
+//!
+//! For batch runs across all protocols with timeout handling, use
 //! `inline_all` instead.
 
+#![feature(alloc_error_hook)]
+
+use std::io::Write as _;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use analyses::{CompletenessAnalysis, GbBackendKind, QualifierPropagation};
@@ -23,6 +46,102 @@ use share::unwrap;
 use graph::UDags;
 
 const STACK_SIZE: usize = 256 * 1024 * 1024;
+
+/// Set once `run_bench` starts imposing `--memory-limit-mb`, right before
+/// invoking the Gröbner-basis backend. Read by `main`'s panic catch to
+/// decide `"crashed"` (panicked before the limit was active — a real bug)
+/// vs `"oom"` (panicked once the limit was active).
+static LIMIT_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// The final JSON line to print on a hard allocator abort, pre-built (while
+/// allocation still works) before the memory limit goes into effect. The
+/// allocation-error hook below must not allocate, so this is the only way
+/// it can report anything.
+static OOM_LINE: OnceLock<Vec<u8>> = OnceLock::new();
+
+/// Allocation-error hook: writes the pre-built [`OOM_LINE`] (if any) with no
+/// further allocation, then aborts — same as the default hook, but leaves a
+/// real status line on stdout for `inline_all` to pick up instead of a
+/// silent death.
+fn oom_alloc_error_hook(_layout: std::alloc::Layout) {
+    if let Some(line) = OOM_LINE.get() {
+        let mut out = std::io::stdout();
+        let _ = out.write_all(line);
+        let _ = out.write_all(b"\n");
+        let _ = out.flush();
+    }
+    std::process::abort();
+}
+
+/// Cap the process's virtual address space at `limit_mb` megabytes
+/// (`RLIMIT_AS`). Inherited by child processes spawned afterwards (e.g. the
+/// Singular backend), so it bounds their memory too. Returns the previous
+/// soft limit on success (`None` if the limit wasn't applied), so the
+/// caller can restore it with [`restore_memory_limit`] once the
+/// memory-constrained phase is done.
+///
+/// Only lowers the *soft* limit, leaving the hard limit untouched — so it
+/// can be raised again later with another `setrlimit` call (up to whatever
+/// the hard limit already allows), unlike lowering both, which is a
+/// one-way ratchet no unprivileged process can undo.
+#[cfg(unix)]
+fn apply_memory_limit(limit_mb: u64) -> Option<u64> {
+    let bytes = limit_mb.saturating_mul(1024 * 1024) as libc::rlim_t;
+
+    let mut current = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    if unsafe { libc::getrlimit(libc::RLIMIT_AS, &raw mut current) } != 0 {
+        eprintln!(
+            "warning: failed to read current memory limit: {}",
+            std::io::Error::last_os_error()
+        );
+        return None;
+    }
+
+    let limit = libc::rlimit {
+        rlim_cur: bytes.min(current.rlim_max),
+        rlim_max: current.rlim_max,
+    };
+    if unsafe { libc::setrlimit(libc::RLIMIT_AS, &raw const limit) } == 0 {
+        Some(current.rlim_cur)
+    } else {
+        eprintln!(
+            "warning: failed to set {limit_mb} MB memory limit: {}",
+            std::io::Error::last_os_error()
+        );
+        None
+    }
+}
+
+#[cfg(not(unix))]
+fn apply_memory_limit(limit_mb: u64) -> Option<u64> {
+    eprintln!("warning: --memory-limit-mb is only supported on unix; ignoring {limit_mb} MB limit");
+    None
+}
+
+/// Restore a soft `RLIMIT_AS` previously returned by [`apply_memory_limit`].
+/// Best-effort: if it fails, the process just stays under the tighter
+/// limit for the rest of its (already nearly-finished) run.
+#[cfg(unix)]
+fn restore_memory_limit(previous_soft: u64) {
+    let mut current = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    if unsafe { libc::getrlimit(libc::RLIMIT_AS, &raw mut current) } != 0 {
+        return;
+    }
+    let limit = libc::rlimit {
+        rlim_cur: previous_soft as libc::rlim_t,
+        rlim_max: current.rlim_max,
+    };
+    let _ = unsafe { libc::setrlimit(libc::RLIMIT_AS, &raw const limit) };
+}
+
+#[cfg(not(unix))]
+fn restore_memory_limit(_previous_soft: u64) {}
 
 /// JSON output emitted by the `inline` bench. Partial lines (status
 /// `"running"`) omit fields that aren't available yet. The final line
@@ -55,8 +174,6 @@ struct BenchOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
-
-use std::io::Write as _;
 
 fn emit(output: &BenchOutput) {
     println!("{}", serde_json::to_string(output).unwrap());
@@ -234,7 +351,12 @@ fn build_sizes_ctx(sizes: &[(&str, usize)]) -> Ctx<Tid, usize> {
     ctx
 }
 
-fn run_bench(protocol: &ProtocolConfig, no_inline: bool, backend: GbBackendKind) -> String {
+fn run_bench(
+    protocol: &ProtocolConfig,
+    no_inline: bool,
+    backend: GbBackendKind,
+    memory_limit_mb: Option<u64>,
+) -> String {
     let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let path = manifest.join(protocol.path);
 
@@ -309,10 +431,44 @@ fn run_bench(protocol: &ProtocolConfig, no_inline: bool, backend: GbBackendKind)
         ..Default::default()
     });
 
+    // Everything above this point ("compile" — parsing, concretizing,
+    // building the ideal) runs with no memory limit: a failure there is
+    // unambiguously a real bug, not memory exhaustion. From here on, the
+    // Gröbner-basis backend (e.g. Singular, inheriting this limit when
+    // spawned) does the actual expensive/memory-heavy work, so this is
+    // where the configured limit — and oom attribution — starts applying.
+    let mut previous_memory_limit: Option<u64> = None;
+    if let Some(limit_mb) = memory_limit_mb {
+        let oom_line = serde_json::to_string(&BenchOutput {
+            protocol: protocol.name.to_string(),
+            inline: i32::from(inline),
+            status: "oom".to_string(),
+            ..Default::default()
+        })
+        .unwrap()
+        .into_bytes();
+        let _ = OOM_LINE.set(oom_line);
+
+        previous_memory_limit = apply_memory_limit(limit_mb);
+        if previous_memory_limit.is_some() {
+            LIMIT_ACTIVE.store(true, Ordering::SeqCst);
+        }
+    }
+
     // Stage 3: Compute GB (expensive — may hang).
     let gb_start = Instant::now();
     let mut ca = CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, backend);
     let gb_ms = gb_start.elapsed().as_secs_f64() * 1000.0;
+
+    // The memory-constrained phase (backend invocation) is done — restore
+    // the original limit and stop attributing failures to it. `run()` below
+    // only reduces the already-computed basis against the verifier
+    // polynomials — no backend/subprocess involvement — so a failure there
+    // is a real bug, not memory exhaustion.
+    if let Some(previous) = previous_memory_limit {
+        restore_memory_limit(previous);
+        LIMIT_ACTIVE.store(false, Ordering::SeqCst);
+    }
 
     let basis_size = ca.basis.polys.len();
     let max_degree = ca
@@ -373,7 +529,7 @@ fn json_error(name: &str, no_inline: bool, error: &str) -> String {
     serde_json::to_string(&BenchOutput {
         protocol: name.to_string(),
         inline: i32::from(!no_inline),
-        status: "failed".to_string(),
+        status: "crashed".to_string(),
         error: Some(error.to_string()),
         ..Default::default()
     })
@@ -390,6 +546,7 @@ fn main() {
 
     let mut no_inline = false;
     let mut backend = GbBackendKind::default();
+    let mut memory_limit_mb: Option<u64> = None;
     let mut protocol_name: Option<&str> = None;
 
     let mut i = 0;
@@ -411,6 +568,17 @@ fn main() {
                     }
                 };
             }
+            "--memory-limit-mb" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("--memory-limit-mb requires a value (megabytes)");
+                    std::process::exit(2);
+                }
+                memory_limit_mb = Some(args[i].parse().unwrap_or_else(|_| {
+                    eprintln!("invalid --memory-limit-mb value: {}", args[i]);
+                    std::process::exit(2);
+                }));
+            }
             other if protocol_name.is_none() => protocol_name = Some(other),
             other => {
                 eprintln!("unexpected argument: {other}");
@@ -421,7 +589,10 @@ fn main() {
     }
 
     let Some(protocol_name) = protocol_name else {
-        eprintln!("usage: inline [--no-inline] [--backend singular|default] <protocol_name>");
+        eprintln!(
+            "usage: inline [--no-inline] [--backend singular|default] \
+             [--memory-limit-mb MB] <protocol_name>"
+        );
         eprintln!();
         eprintln!("available protocols:");
         for p in PROTOCOLS {
@@ -435,19 +606,35 @@ fn main() {
         std::process::exit(2);
     };
 
+    std::alloc::set_alloc_error_hook(oom_alloc_error_hook);
+
     // Run in a thread with a large stack to avoid stack overflow.
     let protocol_clone = protocol.name;
     let result = std::thread::Builder::new()
         .stack_size(STACK_SIZE)
-        .spawn(move || run_bench(protocol, no_inline, backend))
+        .spawn(move || run_bench(protocol, no_inline, backend, memory_limit_mb))
         .expect("failed to spawn thread")
         .join()
-        .unwrap_or_else(|_| {
+        .unwrap_or_else(|payload| {
+            let message = payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_string()))
+                .unwrap_or_else(|| "thread panicked".to_string());
+            // LIMIT_ACTIVE is true only for the duration of the GB backend
+            // call itself (set right before it, cleared right after it
+            // returns) — if it's active, this panic happened during that
+            // call, not during "compile" or the later verifier reduction.
+            let status = if LIMIT_ACTIVE.load(Ordering::SeqCst) {
+                "oom"
+            } else {
+                "crashed"
+            };
             serde_json::to_string(&BenchOutput {
                 protocol: protocol_clone.to_string(),
                 inline: i32::from(!no_inline),
-                status: "failed".to_string(),
-                error: Some("thread panicked".to_string()),
+                status: status.to_string(),
+                error: Some(message),
                 ..Default::default()
             })
             .unwrap()

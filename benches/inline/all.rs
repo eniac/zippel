@@ -8,11 +8,18 @@
 //! Usage (via cargo):
 //!   cargo bench --bench `inline_all` -- [--timeout SECS] [--protocols a,b,...]
 //!                                      [--output PATH] [--log PATH]
+//!                                      [--memory-limit-mb MB]
 //!
 //! Defaults:
-//!   --timeout   1200  (20 minutes per run)
-//!   --output    `inline_results.json`
-//!   --log       `inline_all.log`
+//!   --timeout           1200   (20 minutes per run)
+//!   --output            `inline_results.json`
+//!   --log               `inline_all.log`
+//!   --memory-limit-mb   16384  (16 GiB per run)
+//!
+//! `--memory-limit-mb` is forwarded to every `inline` invocation verbatim
+//! (like `--backend`). `inline` decides `ok`/`incomplete`/`crashed`/`oom`
+//! for itself (see its own module docs) — `inline_all` adds only
+//! `timeout`, which it alone can observe.
 
 use std::env;
 use std::fs::{File, OpenOptions};
@@ -24,6 +31,11 @@ use std::time::{Duration, Instant};
 use process_wrap::std::*;
 
 use serde::{Deserialize, Serialize};
+
+/// Default `--memory-limit-mb`: 16 GiB per run. Generous enough not to
+/// interfere with normal-sized protocols, but still bounds a runaway one
+/// instead of letting it swap the machine to a halt.
+const DEFAULT_MEMORY_LIMIT_MB: u64 = 16 * 1024;
 
 const PROTOCOLS: &[&str] = &[
     "sumcheck",
@@ -168,6 +180,8 @@ impl BenchResult {
 #[derive(Serialize)]
 struct ResultsFile {
     timeout_s: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    memory_limit_mb: Option<u64>,
     results: Vec<BenchResult>,
 }
 
@@ -245,6 +259,7 @@ fn run_one(
     protocol: &str,
     no_inline: bool,
     timeout_secs: u64,
+    memory_limit_mb: Option<u64>,
 ) -> BenchResult {
     let mut cmd = CommandWrap::with_new(bin, |cmd| {
         cmd.args([protocol, "--backend", "singular"])
@@ -253,6 +268,9 @@ fn run_one(
             .stderr(Stdio::piped());
         if no_inline {
             cmd.arg("--no-inline");
+        }
+        if let Some(mb) = memory_limit_mb {
+            cmd.args(["--memory-limit-mb", &mb.to_string()]);
         }
     });
 
@@ -276,7 +294,7 @@ fn run_one(
                 protocol,
                 inline_flag,
                 0.0,
-                "failed",
+                "crashed",
                 &format!("spawn failed: {e}"),
             );
         }
@@ -293,13 +311,18 @@ fn run_one(
                 let stdout = read_stdout(&mut child);
                 if !stdout.is_empty() {
                     let mut result = BenchResult::from_stdout(&stdout, wall);
-                    // If the process was killed by a signal (e.g. OOM,
-                    // SIGSEGV) it died before emitting the final status
-                    // line, leaving only "running" stages in stdout.
-                    // Override to "failed" so "running" doesn't leak.
+                    // inline reports its own status (including "oom") in
+                    // its final JSON line whenever it can. If it couldn't —
+                    // killed by something other than its own reporting path
+                    // (e.g. SIGSEGV from an actual bug) — it died before
+                    // emitting a final line, leaving only "running" stages
+                    // in stdout. Override to "crashed" so "running" doesn't
+                    // leak; this is deliberately not reclassified as "oom"
+                    // here — inline is the one that knows whether the limit
+                    // was active when it died, not inline_all.
                     if !status.success() && result.status == "running" {
                         let stderr = read_stderr(&mut child);
-                        result.status = "failed".to_string();
+                        result.status = "crashed".to_string();
                         result.error = Some(format!(
                             "exit code {:?}, stderr: {}",
                             status.code(),
@@ -315,7 +338,7 @@ fn run_one(
                     protocol,
                     inline_flag,
                     wall,
-                    "failed",
+                    "crashed",
                     &format!("exit code {code}, stderr: {}", truncate(&stderr, 500)),
                 );
             }
@@ -330,7 +353,7 @@ fn run_one(
                     let stdout = read_stdout(&mut child);
                     if !stdout.is_empty() {
                         let mut result = BenchResult::from_stdout(&stdout, wall);
-                        result.status = "failed".to_string();
+                        result.status = "timeout".to_string();
                         result.error = Some(format!("exceeded {timeout_secs}s timeout"));
                         return result;
                     }
@@ -338,7 +361,7 @@ fn run_one(
                         protocol,
                         inline_flag,
                         wall,
-                        "failed",
+                        "timeout",
                         &format!("exceeded {timeout_secs}s timeout"),
                     );
                 }
@@ -349,7 +372,7 @@ fn run_one(
                     protocol,
                     inline_flag,
                     0.0,
-                    "failed",
+                    "crashed",
                     &format!("wait failed: {e}"),
                 );
             }
@@ -382,9 +405,10 @@ fn truncate(s: &str, max: usize) -> String {
 }
 
 /// Write results to JSON file.
-fn write_results(path: &Path, timeout: u64, results: &[BenchResult]) {
+fn write_results(path: &Path, timeout: u64, memory_limit_mb: Option<u64>, results: &[BenchResult]) {
     let file = ResultsFile {
         timeout_s: timeout,
+        memory_limit_mb,
         results: results.to_vec(),
     };
     let json = serde_json::to_string_pretty(&file).unwrap();
@@ -422,6 +446,7 @@ struct Args {
     output: String,
     log: String,
     protocols: Option<Vec<String>>,
+    memory_limit_mb: Option<u64>,
 }
 
 fn parse_args() -> Args {
@@ -430,6 +455,7 @@ fn parse_args() -> Args {
     let mut output = "inline_results.json".to_string();
     let mut log = "inline_all.log".to_string();
     let mut protocols: Option<Vec<String>> = None;
+    let mut memory_limit_mb = Some(DEFAULT_MEMORY_LIMIT_MB);
 
     let mut i = 0;
     while i < raw.len() {
@@ -458,6 +484,12 @@ fn parse_args() -> Args {
                     protocols = Some(raw[i].split(',').map(|s| s.trim().to_string()).collect());
                 }
             }
+            "--memory-limit-mb" => {
+                i += 1;
+                if i < raw.len() {
+                    memory_limit_mb = raw[i].parse().ok();
+                }
+            }
             _ => {}
         }
         i += 1;
@@ -467,6 +499,7 @@ fn parse_args() -> Args {
         output,
         log,
         protocols,
+        memory_limit_mb,
     }
 }
 
@@ -511,7 +544,14 @@ fn main() {
     for proto in &protocols {
         for &(label, no_inline) in &[("inline", false), ("no_inline", true)] {
             let prefix = format!("[{proto:>30}] {label:>9} ... ");
-            let result = run_one(&inline_bin, &repo_root, proto, no_inline, args.timeout);
+            let result = run_one(
+                &inline_bin,
+                &repo_root,
+                proto,
+                no_inline,
+                args.timeout,
+                args.memory_limit_mb,
+            );
 
             let fmt_ms =
                 |ms: Option<f64>| ms.map_or_else(|| "-".to_string(), |v| format!("{:.1}ms", v));
@@ -541,7 +581,12 @@ fn main() {
             tee(&mut log, &line);
 
             results.push(result);
-            write_results(Path::new(&args.output), args.timeout, &results);
+            write_results(
+                Path::new(&args.output),
+                args.timeout,
+                args.memory_limit_mb,
+                &results,
+            );
         }
     }
 
