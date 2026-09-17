@@ -1,10 +1,10 @@
 target
+target-small
+.git
 .DS_Store
-*.pdf
 *.dot
 *.lic
 gurobi.log
-target-small
 cargo-flamegraph.trace/
 flamegraph.svg
 __pycache__/
@@ -13,4 +13,3 @@ benchmarks/artifacts/
 artifacts/
 bench_results*.csv
 results_*.csv
-artifact/output/

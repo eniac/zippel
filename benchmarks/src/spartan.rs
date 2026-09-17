@@ -70,6 +70,14 @@ impl Setup {
         self.compile_time
     }
 
+    /// (prover graph node count, verifier graph node count).
+    pub fn graph_sizes(&self) -> (usize, usize) {
+        (
+            self.handler.prover_graph().node_count(),
+            self.handler.verifier_graph().node_count(),
+        )
+    }
+
     pub fn time_protocol(&mut self) -> ZippelTiming {
         let mut prove_sum = std::time::Duration::ZERO;
         let mut last_proof = None;

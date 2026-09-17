@@ -48,6 +48,14 @@ pub mod zippel_side {
             self.compile_time
         }
 
+        /// (prover graph node count, verifier graph node count).
+        pub fn graph_sizes(&self) -> (usize, usize) {
+            (
+                self.handler.prover_graph().node_count(),
+                self.handler.verifier_graph().node_count(),
+            )
+        }
+
         pub fn time_protocol(&mut self) -> Timing {
             type F = <ArkBls12_381 as ArkConfig>::F;
             type G1 = <ArkBls12_381 as ArkConfig>::G1;

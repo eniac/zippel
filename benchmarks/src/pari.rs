@@ -373,6 +373,14 @@ pub mod zippel_side {
             self.compile_time
         }
 
+        /// (prover graph node count, verifier graph node count).
+        pub fn graph_sizes(&self) -> (usize, usize) {
+            (
+                self.handler.prover_graph().node_count(),
+                self.handler.verifier_graph().node_count(),
+            )
+        }
+
         pub fn time_protocol(&mut self, inst: &super::Instance<F>) -> Timing {
             assert_eq!(inst.k, self.k);
             assert_eq!(inst.instance_len, self.n_pub);

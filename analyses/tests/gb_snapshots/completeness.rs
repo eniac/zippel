@@ -239,6 +239,12 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
             sizes: &[("M", 2), ("N", 1), ("KMN", 3)],
             ignored: true,
         },
+        CompletenessEntry {
+            name: "spartan",
+            zippel_path: "examples/spartan/spartan.zippel",
+            sizes: &[("M", 3)],
+            ignored: true,
+        },
     ]
 });
 

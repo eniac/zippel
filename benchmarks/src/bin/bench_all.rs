@@ -92,6 +92,12 @@ struct Row {
     /// vs (b) library-stack cost (dalek vs arkworks 0.6). `None` for
     /// every other system.
     ark_native: Option<Timing>,
+    /// Graph IR node counts (prover graph, verifier graph) at this row's
+    /// `log_size` -- independent of `threads`, so the same pair repeats
+    /// across a thread sweep at a fixed size. See docs/ARTIFACT_PLAN.md's
+    /// Figure 7 (graph-size table).
+    prover_nodes: usize,
+    verifier_nodes: usize,
 }
 
 fn ms(t: std::time::Duration) -> f64 {
@@ -264,7 +270,7 @@ fn init_csv(path: &PathBuf, header: bool, append: bool) -> std::io::Result<()> {
         // on ark-curve25519 v0.6). Blank for every other system.
         writeln!(
             w,
-            "system,threads,log_size,prover_time_ms,verifier_time_ms,native_prover_time_ms,native_verifier_time_ms,zippel_ncloc,native_ncloc,compiler,ark_native_prover_time_ms,ark_native_verifier_time_ms"
+            "system,threads,log_size,prover_time_ms,verifier_time_ms,native_prover_time_ms,native_verifier_time_ms,zippel_ncloc,native_ncloc,compiler,ark_native_prover_time_ms,ark_native_verifier_time_ms,prover_nodes,verifier_nodes"
         )?;
         w.flush()?;
     }
@@ -286,7 +292,7 @@ fn write_row(r: &Row) {
     };
     writeln!(
         w,
-        "{},{},{},{:.3},{:.3},{:.3},{:.3},{},{},{:.3},{},{}",
+        "{},{},{},{:.3},{:.3},{:.3},{:.3},{},{},{:.3},{},{},{},{}",
         r.system,
         r.threads,
         r.log_size,
@@ -299,6 +305,8 @@ fn write_row(r: &Row) {
         ms(r.compile),
         ark_prove,
         ark_verify,
+        r.prover_nodes,
+        r.verifier_nodes,
     )
     .expect("write csv row");
     w.flush().expect("flush csv row");
@@ -337,6 +345,7 @@ fn run_schnorr(threads: usize) -> Vec<Row> {
         )
     });
     let compile = z.compile_time();
+    let (prover_nodes, verifier_nodes) = z.graph_sizes();
     let zippel = z.time_protocol();
     let native = timed_pool().install(|| n.time_protocol());
     // Schnorr has no size knob — log_size = 0 marks "single fixed point".
@@ -348,6 +357,8 @@ fn run_schnorr(threads: usize) -> Vec<Row> {
         native,
         compile,
         ark_native: None,
+        prover_nodes,
+        verifier_nodes,
     }]
 }
 
@@ -362,6 +373,7 @@ fn run_sumcheck(threads: usize, sizes: &[usize], max_degree: usize) -> Vec<Row> 
                 )
             });
             let compile = z.compile_time();
+            let (prover_nodes, verifier_nodes) = z.graph_sizes();
             let zippel = z.time_protocol();
             let native = timed_pool().install(|| n.time_protocol());
             // Sumcheck size knob is `num_vars` itself — the hypercube has 2^nv
@@ -374,6 +386,8 @@ fn run_sumcheck(threads: usize, sizes: &[usize], max_degree: usize) -> Vec<Row> 
                 native,
                 compile,
                 ark_native: None,
+                prover_nodes,
+                verifier_nodes,
             };
             print_row(&r);
             r
@@ -391,6 +405,7 @@ fn run_ipa(threads: usize, ss: &[usize]) -> Vec<Row> {
                 )
             });
             let compile = z.compile_time();
+            let (prover_nodes, verifier_nodes) = z.graph_sizes();
             let zippel = z.time_protocol();
             let native = timed_pool().install(|| n.time_protocol());
             let r = Row {
@@ -401,6 +416,8 @@ fn run_ipa(threads: usize, ss: &[usize]) -> Vec<Row> {
                 native,
                 compile,
                 ark_native: None,
+                prover_nodes,
+                verifier_nodes,
             };
             print_row(&r);
             r
@@ -418,6 +435,7 @@ fn run_kzg(threads: usize, ns: &[usize]) -> Vec<Row> {
                 )
             });
             let compile = z.compile_time();
+            let (prover_nodes, verifier_nodes) = z.graph_sizes();
             let zippel = z.time_protocol();
             let native = timed_pool().install(|| n.time_protocol());
             // KZG's grid is restricted to powers of two so log_2 is exact;
@@ -430,6 +448,8 @@ fn run_kzg(threads: usize, ns: &[usize]) -> Vec<Row> {
                 native,
                 compile,
                 ark_native: None,
+                prover_nodes,
+                verifier_nodes,
             };
             print_row(&r);
             r
@@ -449,6 +469,7 @@ fn run_pari(threads: usize, ms: &[usize], n_pub: usize, k_vars: usize) -> Vec<Ro
                 (inst, z, n)
             });
             let compile = z.compile_time();
+            let (prover_nodes, verifier_nodes) = z.graph_sizes();
             let zippel = z.time_protocol(&inst);
             let native = timed_pool().install(|| n.time_protocol(&inst));
             let r = Row {
@@ -459,6 +480,8 @@ fn run_pari(threads: usize, ms: &[usize], n_pub: usize, k_vars: usize) -> Vec<Ro
                 native,
                 compile,
                 ark_native: None,
+                prover_nodes,
+                verifier_nodes,
             };
             print_row(&r);
             r
@@ -487,6 +510,7 @@ fn run_groth16(threads: usize, log_sizes: &[usize]) -> Vec<Row> {
                 )
             });
             let compile = z.compile_time();
+            let (prover_nodes, verifier_nodes) = z.graph_sizes();
             let zippel = z.time_protocol();
             let native = timed_pool().install(|| n.time_protocol());
             let r = Row {
@@ -497,6 +521,8 @@ fn run_groth16(threads: usize, log_sizes: &[usize]) -> Vec<Row> {
                 native,
                 compile,
                 ark_native: None,
+                prover_nodes,
+                verifier_nodes,
             };
             print_row(&r);
             r
@@ -515,6 +541,7 @@ fn run_pst13(threads: usize, ns: &[usize]) -> Vec<Row> {
                 )
             });
             let compile = z.compile_time();
+            let (prover_nodes, verifier_nodes) = z.graph_sizes();
             let zippel = z.time_protocol();
             let native = timed_pool().install(|| np.time_protocol());
             let r = Row {
@@ -525,6 +552,8 @@ fn run_pst13(threads: usize, ns: &[usize]) -> Vec<Row> {
                 native,
                 compile,
                 ark_native: None,
+                prover_nodes,
+                verifier_nodes,
             };
             print_row(&r);
             r
@@ -542,6 +571,7 @@ fn run_hyrax(threads: usize, ns: &[usize]) -> Vec<Row> {
                 )
             });
             let compile = z.compile_time();
+            let (prover_nodes, verifier_nodes) = z.graph_sizes();
             let zippel = z.time_protocol();
             let native = timed_pool().install(|| np.time_protocol());
             let r = Row {
@@ -552,6 +582,8 @@ fn run_hyrax(threads: usize, ns: &[usize]) -> Vec<Row> {
                 native,
                 compile,
                 ark_native: None,
+                prover_nodes,
+                verifier_nodes,
             };
             print_row(&r);
             r
@@ -564,6 +596,7 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
         .map(|&m| {
             let mut z = setup_pool().install(|| spartan::Setup::new(m));
             let compile = z.compile_time();
+            let (prover_nodes, verifier_nodes) = z.graph_sizes();
             // `z.timing()` IS the timed region for the zippel side —
             // it runs run_prover + run_verifier internally, so we hand
             // it to the global (bench) pool, not the setup pool.
@@ -709,6 +742,8 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                 native,
                 compile,
                 ark_native,
+                prover_nodes,
+                verifier_nodes,
             };
             print_row(&r);
             r

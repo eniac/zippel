@@ -74,6 +74,20 @@ pub(crate) static SOUNDNESS_ENTRIES: LazyLock<Vec<SoundnessEntry>> = LazyLock::n
             // NotVisible(- m2 + m1)".
             ignored: true,
         },
+        SoundnessEntry {
+            name: "cds",
+            zippel_path: "examples/cds/cds.zippel",
+            sizes: &[],
+            l_vec: &[2],
+            ignored: true,
+        },
+        SoundnessEntry {
+            name: "coin_proof",
+            zippel_path: "examples/coin_proof/coin_proof.zippel",
+            sizes: &[],
+            l_vec: &[2],
+            ignored: true,
+        },
     ]
 });
 
