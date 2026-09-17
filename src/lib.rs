@@ -24,6 +24,17 @@ use runtime::RunResult;
 use share::traversal::ToTraversal1;
 use std::sync::Arc;
 
+// Re-exported so downstream crates can depend on `zippel` alone
+// instead of also listing each workspace member as its own direct
+// git dependency, which Rust otherwise requires since a crate's
+// dependencies are not visible to its consumers unless re-exported.
+pub use analyses;
+pub use backend;
+pub use graph;
+pub use lang;
+pub use runtime;
+pub use share;
+
 /// Arguments for the Zippel handler
 #[derive(Debug, Clone)]
 pub struct ZippelArgs {

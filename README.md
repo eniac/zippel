@@ -23,22 +23,7 @@ Bulletproofs, Hyrax, PST13, Dory).
 > **Status: research prototype.** Zippel has not been independently
 > audited. Do not use it to protect anything of value.
 
-## Repository structure
-
-| Crate / directory | Description |
-|---|---|
-| [`lang`](lang) | Zippel language: parser, type checker, size concretization |
-| [`graph`](graph) | Graph IR construction and prover/verifier projection |
-| [`backend`](backend) | Concrete curve and field types backed by `arkworks` |
-| [`analyses`](analyses) | Completeness and special-soundness analyses over Gröbner bases |
-| [`runtime`](runtime) | Executes projected prover/verifier graphs on a work-stealing scheduler |
-| [`share`](share) | Utilities shared across the workspace |
-| [`fmt`](fmt) | `zippel-fmt`, the source formatter |
-| [`benchmarks`](benchmarks) | Zippel vs. hand-optimized native baselines |
-| [`examples`](examples) | Protocol implementations and their Rust harnesses |
-| [`artifact`](artifact) | Docker image and scripts to reproduce our evaluation results |
-
-## Usage
+## Quick start
 
 Clone the repository and build it with [Rust](https://www.rust-lang.org/)
 nightly; the exact toolchain is pinned in
@@ -53,8 +38,6 @@ cargo build
 
 ### Running examples
 
-All protocol examples are compiled into one binary, dispatched by name:
-
 ```bash
 cargo run --example zippel -- ipa       # run the IPA example
 cargo run --example zippel -- schnorr   # run the Schnorr protocol
@@ -65,22 +48,20 @@ cargo run --example zippel              # list every available example
 ### Testing
 
 ```bash
-cargo test           # test the default workspace members
+cargo test
 ```
 
 Some tests (`analyses`' Gröbner-basis regression suite) use
 [Singular](https://www.singular.uni-kl.de/) as a backend when it is on
 `PATH`, and are skipped with a warning otherwise.
 
-### Writing your own protocol
+## Writing your own protocol
 
-Zippel is not published on crates.io. Depend on it directly from git:
+Zippel is not published on crates.io; depend on it directly from git:
 
 ```toml
 [dependencies]
 zippel = { git = "https://github.com/eniac/zippel" }
-backend = { git = "https://github.com/eniac/zippel" }
-share = { git = "https://github.com/eniac/zippel" }
 ```
 
 A protocol is a `.zippel` file describing the prover/verifier
@@ -101,9 +82,9 @@ A Rust harness compiles it against a concrete curve, supplies witness and
 instance values, and runs the prover and verifier:
 
 ```rust
-use backend::ArkBls12_381;
-use share::Ctx;
 use std::path::PathBuf;
+use zippel::backend::ArkBls12_381;
+use zippel::share::Ctx;
 use zippel::{ZippelArgs, ZippelHandler};
 
 let args = ZippelArgs::new(PathBuf::from("path/to/protocol.zippel"));

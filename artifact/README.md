@@ -173,18 +173,17 @@ test result: ok. 4 passed; 0 failed; 5 ignored; ...
 soundness pass=4   ignored=5   failed=0
 ```
 
-A pass requires `0 failed`. The `ignored` count is expected and does not
-indicate a defect in the artifact: `okamoto`, `cds`, and `coin_proof`
-fail for the reasons given in the submitted paper's Section 9.3.
-`commitment_equality` and `pedersen_eq` are two protocols that are not
-discussed in the paper.
-
 This suite covers all 6 of the paper's special-sound candidates
-(Schnorr, Multi-Schnorr, Chaum-Pedersen, Okamoto, CDS Disjunction,
+(Schnorr, Multi-Schnorr, Chaum-Pedersen, Okamoto, CDS,
 E-Cash Coin) plus 3 protocols not discussed in the paper
-(`okamoto_elgamal`, `commitment_equality`, `pedersen_eq`). It matches
-the paper's result exactly for the 6 protocols it discusses: the first 3
-pass and the remaining 3 are marked ignored.
+(`okamoto_elgamal`, `commitment_equality`, `pedersen_eq`). 4 pass
+(Schnorr, Multi-Schnorr, Chaum-Pedersen, `okamoto_elgamal`) and 5 are
+marked ignored (Okamoto, CDS, E-Cash Coin,
+`commitment_equality`, `pedersen_eq`).
+
+A pass requires `0 failed`; the `ignored` count is expected. Among the
+paper's 6 candidates, Okamoto, CDS, and E-Cash Coin fail for the
+reasons given in its Section 9.3, matching its result exactly.
 
 ---
 

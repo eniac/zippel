@@ -1,9 +1,24 @@
 # Contributing to Zippel
 
+## Code layout
+
+| Crate / directory | Description |
+|---|---|
+| [`lang`](lang) | Zippel language: parser, type checker, size concretization |
+| [`graph`](graph) | Graph IR construction and prover/verifier projection |
+| [`backend`](backend) | Concrete curve and field types backed by `arkworks` |
+| [`analyses`](analyses) | Completeness and special-soundness analyses over Gröbner bases |
+| [`runtime`](runtime) | Executes projected prover/verifier graphs on a work-stealing scheduler |
+| [`share`](share) | Utilities shared across the workspace |
+| [`fmt`](fmt) | `zippel-fmt`, the source formatter |
+| [`benchmarks`](benchmarks) | Zippel vs. hand-optimized native baselines |
+| [`examples`](examples) | Protocol implementations and their Rust harnesses |
+| [`artifact`](artifact) | Docker image and scripts to reproduce our evaluation results |
+
 ## Development setup
 
 Building the default workspace members only requires the nightly Rust
-toolchain (see [README.md](README.md#installation)). Building or testing
+toolchain (see [README.md](README.md#quick-start)). Building or testing
 everything, including the `benchmarks` crate (`cargo test-all`, or
 anything under `cargo build --workspace`), also requires:
 
