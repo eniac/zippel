@@ -7,22 +7,11 @@
 //! Prints JSON to stdout with timing and basis size. Status is one of `ok`,
 //! `incomplete`, `crashed` (a real bug/panic), or `oom`.
 //!
-//! `--memory-limit-mb` caps the process's virtual address space (`RLIMIT_AS`,
-//! unix only), but only around the Gröbner-basis backend (e.g. Singular)
-//! call — not for the whole process. Parsing/concretizing/building the
-//! ideal (the "compile" phase) runs unbounded beforehand, and the final
-//! verifier-polynomial reduction (`run()`, pure Rust, no backend/subprocess
-//! involvement) runs unbounded afterward — a failure in either is
-//! unambiguously a real bug: `crashed`. Only the backend call itself is
-//! bounded (the limit is inherited by the backend subprocess when it's
-//! spawned), so a failure there — in the surrounding Rust code or in the
-//! backend itself — is `oom`. This split is tracked with a flag, not
-//! inferred from error text.
-//!
-//! Even a hard allocator abort (unrecoverable via `panic`/`catch_unwind`) still
-//! reports `oom`: a minimal JSON line is pre-built before the limit goes
-//! into effect and written with no further allocation from the allocation
-//! error hook.
+//! `--memory-limit-mb` caps virtual address space (`RLIMIT_AS`, unix only)
+//! around `build_inputs` (ideal construction) and the GB backend call —
+//! not the whole process. See `LIMIT_ACTIVE` for the exact boundary and
+//! why it's there, and `docs/DECISIONS.md` for a traced example of
+//! `build_inputs` alone blowing up memory (a `where`-clause grand product).
 //!
 //! For batch runs across all protocols with timeout handling, use
 //! `inline_all` instead.
@@ -47,10 +36,12 @@ use graph::UDags;
 
 const STACK_SIZE: usize = 256 * 1024 * 1024;
 
-/// Set once `run_bench` starts imposing `--memory-limit-mb`, right before
-/// invoking the Gröbner-basis backend. Read by `main`'s panic catch to
-/// decide `"crashed"` (panicked before the limit was active — a real bug)
-/// vs `"oom"` (panicked once the limit was active).
+/// True from right before `build_inputs` (ideal construction) to right
+/// after the GB backend call returns — the memory-constrained window.
+/// Parsing/concretizing/DAG construction before it, and the final
+/// verifier-polynomial `run()` after it, are unbounded: a failure there is
+/// unambiguously a real bug. Read by `main`'s panic catch to decide
+/// `"crashed"` (panic outside this window) vs `"oom"` (inside it).
 static LIMIT_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// The final JSON line to print on a hard allocator abort, pre-built (while
@@ -74,16 +65,11 @@ fn oom_alloc_error_hook(_layout: std::alloc::Layout) {
 }
 
 /// Cap the process's virtual address space at `limit_mb` megabytes
-/// (`RLIMIT_AS`). Inherited by child processes spawned afterwards (e.g. the
-/// Singular backend), so it bounds their memory too. Returns the previous
-/// soft limit on success (`None` if the limit wasn't applied), so the
-/// caller can restore it with [`restore_memory_limit`] once the
-/// memory-constrained phase is done.
-///
-/// Only lowers the *soft* limit, leaving the hard limit untouched — so it
-/// can be raised again later with another `setrlimit` call (up to whatever
-/// the hard limit already allows), unlike lowering both, which is a
-/// one-way ratchet no unprivileged process can undo.
+/// (`RLIMIT_AS`), inherited by child processes (e.g. Singular). Only
+/// lowers the *soft* limit, leaving the hard limit untouched, so it can be
+/// raised back via [`restore_memory_limit`] — lowering both would be a
+/// one-way ratchet. Returns the previous soft limit on success, `None` if
+/// the limit wasn't applied.
 #[cfg(unix)]
 fn apply_memory_limit(limit_mb: u64) -> Option<u64> {
     let bytes = limit_mb.saturating_mul(1024 * 1024) as libc::rlim_t;
@@ -400,7 +386,26 @@ fn run_bench(
         ..Default::default()
     });
 
-    // Stage 2: Build inputs (cheap), compute pre-GB metrics, emit.
+    // See LIMIT_ACTIVE: the memory-constrained window starts here.
+    let mut previous_memory_limit: Option<u64> = None;
+    if let Some(limit_mb) = memory_limit_mb {
+        let oom_line = serde_json::to_string(&BenchOutput {
+            protocol: protocol.name.to_string(),
+            inline: i32::from(inline),
+            status: "oom".to_string(),
+            ..Default::default()
+        })
+        .unwrap()
+        .into_bytes();
+        let _ = OOM_LINE.set(oom_line);
+
+        previous_memory_limit = apply_memory_limit(limit_mb);
+        if previous_memory_limit.is_some() {
+            LIMIT_ACTIVE.store(true, Ordering::SeqCst);
+        }
+    }
+
+    // Stage 2: Build inputs, compute pre-GB metrics, emit.
     let build_start = Instant::now();
     let inputs = CompletenessAnalysis::<ArkBls12_381>::build_inputs(&dag, inline);
     let build_ms = build_start.elapsed().as_secs_f64() * 1000.0;
@@ -431,40 +436,12 @@ fn run_bench(
         ..Default::default()
     });
 
-    // Everything above this point ("compile" — parsing, concretizing,
-    // building the ideal) runs with no memory limit: a failure there is
-    // unambiguously a real bug, not memory exhaustion. From here on, the
-    // Gröbner-basis backend (e.g. Singular, inheriting this limit when
-    // spawned) does the actual expensive/memory-heavy work, so this is
-    // where the configured limit — and oom attribution — starts applying.
-    let mut previous_memory_limit: Option<u64> = None;
-    if let Some(limit_mb) = memory_limit_mb {
-        let oom_line = serde_json::to_string(&BenchOutput {
-            protocol: protocol.name.to_string(),
-            inline: i32::from(inline),
-            status: "oom".to_string(),
-            ..Default::default()
-        })
-        .unwrap()
-        .into_bytes();
-        let _ = OOM_LINE.set(oom_line);
-
-        previous_memory_limit = apply_memory_limit(limit_mb);
-        if previous_memory_limit.is_some() {
-            LIMIT_ACTIVE.store(true, Ordering::SeqCst);
-        }
-    }
-
     // Stage 3: Compute GB (expensive — may hang).
     let gb_start = Instant::now();
     let mut ca = CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, backend);
     let gb_ms = gb_start.elapsed().as_secs_f64() * 1000.0;
 
-    // The memory-constrained phase (backend invocation) is done — restore
-    // the original limit and stop attributing failures to it. `run()` below
-    // only reduces the already-computed basis against the verifier
-    // polynomials — no backend/subprocess involvement — so a failure there
-    // is a real bug, not memory exhaustion.
+    // See LIMIT_ACTIVE: the memory-constrained window ends here.
     if let Some(previous) = previous_memory_limit {
         restore_memory_limit(previous);
         LIMIT_ACTIVE.store(false, Ordering::SeqCst);
@@ -621,10 +598,7 @@ fn main() {
                 .cloned()
                 .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_string()))
                 .unwrap_or_else(|| "thread panicked".to_string());
-            // LIMIT_ACTIVE is true only for the duration of the GB backend
-            // call itself (set right before it, cleared right after it
-            // returns) — if it's active, this panic happened during that
-            // call, not during "compile" or the later verifier reduction.
+            // See LIMIT_ACTIVE for what this checks.
             let status = if LIMIT_ACTIVE.load(Ordering::SeqCst) {
                 "oom"
             } else {

@@ -26,6 +26,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+#[cfg(unix)]
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
 use process_wrap::std::*;
@@ -300,6 +302,17 @@ fn run_one(
         }
     };
 
+    // ProcessGroup::leader() makes this child the leader of its own new
+    // group, so its PGID equals its own PID — record it so a SIGINT/SIGTERM
+    // to inline_all can clean it (and Singular) up too, instead of Ctrl-C
+    // only killing inline_all and orphaning the rest. Dropped (and thus
+    // cleared) automatically on every exit path below.
+    #[cfg(unix)]
+    let _pgid_guard = {
+        CURRENT_CHILD_PGID.store(child.id().cast_signed(), Ordering::SeqCst);
+        ChildPgidGuard
+    };
+
     let start = Instant::now();
     let deadline = start + Duration::from_secs(timeout_secs);
 
@@ -504,6 +517,8 @@ fn parse_args() -> Args {
 }
 
 fn main() {
+    install_signal_handlers();
+
     let args = parse_args();
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
@@ -629,4 +644,74 @@ fn main() {
     tee(&mut log, &sep);
     tee(&mut log, &format!("\nResults written to {}", args.output));
     tee(&mut log, &format!("Log written to {}", args.log));
+}
+
+// ---------------------------------------------------------------------
+// Ctrl-C / SIGTERM cleanup.
+//
+// `run_one` puts each `inline` child in its own new process group (see
+// `ProcessGroup::leader()`) so a timeout can `killpg` just that child (and
+// the Singular subprocess it spawns) without also killing `inline_all`.
+// That isolation has a side effect: the terminal's Ctrl-C delivers
+// `SIGINT` only to `inline_all`'s own (different) process group, never
+// reaching the child — so without the handler below, `inline_all` would
+// just die and leave `inline`/Singular running, orphaned.
+// ---------------------------------------------------------------------
+
+/// PGID of whichever `inline` invocation is currently running, or `0` if
+/// none. Read/written only via `Ordering::SeqCst` so the signal handler
+/// (which may run on any thread, at any point) always sees an up-to-date
+/// value.
+#[cfg(unix)]
+static CURRENT_CHILD_PGID: AtomicI32 = AtomicI32::new(0);
+
+/// Signal handler for `SIGINT`/`SIGTERM`: kill the current child's process
+/// group (if any) before exiting, so Ctrl-C actually cleans up `inline`
+/// and Singular instead of orphaning them. Must only call
+/// async-signal-safe functions — `AtomicI32::load`, `killpg`, and `_exit`
+/// all qualify; nothing here allocates or takes a lock.
+#[cfg(unix)]
+extern "C" fn kill_current_child_and_exit(_sig: libc::c_int) {
+    let pgid = CURRENT_CHILD_PGID.load(Ordering::SeqCst);
+    if pgid != 0 {
+        unsafe {
+            libc::killpg(pgid, libc::SIGKILL);
+        }
+    }
+    unsafe {
+        libc::_exit(130);
+    }
+}
+
+/// Install the Ctrl-C/SIGTERM cleanup handler. Best-effort: on non-unix,
+/// there's no separate child process group to orphan in the first place
+/// (see `JobObject` in `run_one`), so nothing to install.
+#[cfg(unix)]
+fn install_signal_handlers() {
+    unsafe {
+        libc::signal(
+            libc::SIGINT,
+            kill_current_child_and_exit as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGTERM,
+            kill_current_child_and_exit as *const () as libc::sighandler_t,
+        );
+    }
+}
+
+#[cfg(not(unix))]
+fn install_signal_handlers() {}
+
+/// Clears [`CURRENT_CHILD_PGID`] when dropped, so it's reset on every exit
+/// path out of `run_one` — normal completion, timeout, or an early error
+/// return — not just the ones that happen to remember to do it.
+#[cfg(unix)]
+struct ChildPgidGuard;
+
+#[cfg(unix)]
+impl Drop for ChildPgidGuard {
+    fn drop(&mut self) {
+        CURRENT_CHILD_PGID.store(0, Ordering::SeqCst);
+    }
 }
