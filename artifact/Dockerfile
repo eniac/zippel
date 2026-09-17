@@ -1,9 +1,11 @@
 # Zippel IEEE S&P 2027 artifact-evaluation image.
 #
 # Build from the repository root (not from artifact/), so the build
-# context includes the whole workspace:
+# context includes the whole workspace. UID/GID must match the host user
+# (see below), so build with:
 #
-#   docker build -f artifact/Dockerfile -t zippel-ae .
+#   docker build -f artifact/Dockerfile -t zippel-ae \
+#     --build-arg UID=$(id -u) --build-arg GID=$(id -g) .
 #
 # Run with a shell to explore, or invoke one of artifact/scripts/*.sh
 # directly:
@@ -23,8 +25,25 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends gcc m4 pkg-config singular && \
     rm -rf /var/lib/apt/lists/*
 
+# Build and run as a non-root user matching the host UID/GID, so files
+# written to /zippel/target and to a bind-mounted artifact/output/ aren't
+# left owned by root. No default: a guessed one (e.g. "1000") could
+# silently mismatch the host and produce wrong ownership instead of a
+# build failure.
+ARG UID
+ARG GID
+RUN if [ -z "${UID}" ] || [ -z "${GID}" ]; then \
+      echo "ERROR: build with --build-arg UID=\$(id -u) --build-arg GID=\$(id -g) so the image's user matches yours. Refusing to guess a default." >&2; \
+      exit 1; \
+    fi
+RUN groupadd -o -g "${GID}" zippel && \
+    useradd -o -m -u "${UID}" -g "${GID}" -s /bin/bash zippel && \
+    chown -R "${UID}:${GID}" /usr/local/cargo /usr/local/rustup
+
+COPY --chown=${UID}:${GID} . /zippel
 WORKDIR /zippel
-COPY . .
+
+USER zippel
 
 # Resolves rust-toolchain.toml's pinned nightly and prebuilds the full
 # workspace (including the benchmarks crate, a workspace member but not a

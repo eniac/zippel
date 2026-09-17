@@ -34,16 +34,19 @@ which figure, if any, it corresponds to.
 
 ## Setup
 
-Build the image from the repository root, not from `artifact/`:
+Build the image from the repository root, not from `artifact/`. The
+image builds and runs as a non-root user matching your own UID/GID, so
+`--build-arg` is required:
 
 ```sh
-docker build -f artifact/Dockerfile -t zippel-ae .
+docker build -f artifact/Dockerfile -t zippel-ae \
+  --build-arg UID=$(id -u) --build-arg GID=$(id -g) .
 ```
 
 This installs the nightly Rust toolchain pinned by `rust-toolchain.toml`,
 the build dependencies `gcc`, `m4`, and `pkg-config`, and Singular via
 apt, and prebuilds the workspace in release mode. The build takes
-approximately 10 minutes, requires 25GB of disk space, and requires
+approximately 10 minutes, produces a roughly 6GB image, and requires
 network access to pull the base image and fetch crates.
 
 To verify the environment:

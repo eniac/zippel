@@ -1,5 +1,5 @@
-target
-target-small
+**/target
+**/target-small
 .git
 .DS_Store
 *.dot
