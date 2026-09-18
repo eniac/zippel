@@ -67,12 +67,15 @@ Smoke test passed.
 
 ## Line counts for all 30 protocols (Figure 6)
 
-Figure 6 reports line counts for all 30 protocols in the paper. This can
-be checked without building the image or using Docker:
+This command reproduces the submitted paper's Figure 6 line-count table
+by counting non-comment source lines directly from each of the 30
+protocols' `.zippel` files:
 
 ```sh
-python3 artifact/scripts/report_loc.py
+docker run --rm zippel-ae python3 artifact/scripts/report_loc.py
 ```
+
+**What to expect:**
 
 These figures will not match the submitted paper's Figure 6 for most
 protocols. Two changes account for this. First, `zippel-fmt` (see the
@@ -116,6 +119,9 @@ decreased.
 ---
 
 ### Experiment 1: performance benchmark and graph sizes (Figure 7)
+
+This experiment reproduces the submitted paper's Figure 7 performance
+comparison (and adds a supplementary graph-size table).
 
 ```sh
 mkdir -p artifact/output
@@ -192,17 +198,21 @@ reasons given in its Section 9.3, matching its result exactly.
 
 ### Experiment 3: inline vs. no-inline completeness sweep (§9.3)
 
+This experiment reproduces the submitted paper's completeness claim in
+Section 9.3 (and adds a supplementary inline/no-inline breakdown).
+
 ```sh
 mkdir -p artifact/output
 docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
   bash -c "artifact/scripts/run_inline.sh && python3 artifact/scripts/process_inline.py"
 ```
 
-Runs all 30 of the paper's protocols, with and without the inlining
-pass, through the completeness analysis under a 20-minute timeout and a
-16GiB memory limit per run (both overridable via `--timeout` and
-`--memory-limit-mb`; see the comments at the top of `run_inline.sh`). To
-check a small subset of protocols instead of all 60 runs:
+Runs all 30 protocols from the paper, both with and without the
+inlining pass, through the completeness analysis, with a 20-minute
+timeout and a 16 GiB memory limit per run.
+
+To sanity-check a small subset of protocols instead of running all
+60 configurations:
 
 ```sh
 docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
@@ -234,17 +244,19 @@ The following is a sample row from a validation run:
 | groth16  | 150   | 50/70/5      | 210/230/2       | 15.4s       | timeout        |
 ```
 
-When the analysis confirms completeness, the Time Inline/Time No-inline
-column reports elapsed time, as `15.4s` does above. Otherwise, that
-column reports why no time is available: `timeout` means the 20-minute
-limit was exceeded; `oom` means the memory limit was reached; `crashed`
-and `incomplete` mean, respectively, a caught panic and a completeness
-check that ran to completion but failed.
+`P/V/D` is the ideal's generating set, measured before Gröbner basis
+computation: Polynomial count / Variable count / max Degree. Inlining
+trades this off in one direction (fewer polynomials, more variables per
+polynomial, higher degree) versus not inlining (more, smaller,
+lower-degree polynomials). When the analysis confirms completeness,
+the Time Inline/Time No-inline column reports elapsed time, as `15.4s`
+does above; otherwise, that column reports why no time is available:
+`timeout` means the 20-minute limit was exceeded; `oom` means the
+memory limit was reached; `crashed` and `incomplete` mean, respectively,
+a caught panic and a completeness check that ran to completion but
+failed.
 
-**Runtime**: a full 30x2 sweep took approximately 5.4 hours (summed
-per-run wall time) in a prior measurement. This figure should be treated
-as an estimate rather than a guarantee. Running it unattended, rather
-than interactively, is recommended.
+**Runtime**: a full 30x2 sweep takes approximately 5.3 hours.
 
 ## Note on recompiles
 

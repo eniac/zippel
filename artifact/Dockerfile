@@ -22,7 +22,7 @@ FROM rustlang/rust:nightly
 # the arkworks/GMP dependency chain, singular for the Groebner-basis
 # backend used by the completeness/soundness analyses).
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc m4 pkg-config singular && \
+    apt-get install -y --no-install-recommends gcc m4 pkg-config singular python3 && \
     rm -rf /var/lib/apt/lists/*
 
 # Build and run as a non-root user matching the host UID/GID, so files
