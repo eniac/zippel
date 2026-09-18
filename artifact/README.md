@@ -155,29 +155,16 @@ docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" -e SYSTEMS=s
   the Zippel protocol and its native baseline, the ratio of native
   baseline time to Zippel time at each thread count, and the
   single-thread verifier ratio.
-  - **Hyrax**: prover speedup differs sharply between one and two
-    threads; this is expected and has already been discussed with the
-    paper's reviewers.
-  - **Spartan**: The prover speedup reported in the primary `spartan`
-    row (0.29x-0.72x) is below the paper's claimed "on par" range
-    (0.76x-1.49x). This discrepancy is due to a previously known
-    mismeasurement. The primary native baseline for `spartan` is
-    libspartan, which uses curve25519-dalek rather than arkworks and
-    includes hand-optimized code. We have since added a separate
-    benchmark, `spartan (ark-spartan)`, which compares the same Zippel
-    measurements against ark-spartan using the same curve and
-    arkworks version. This benchmark achieves a 0.98x-1.51x prover
-    speedup and a 0.99x verifier speedup, closely matching the range
-    claimed in the paper. We will therefore adjust the reported
-    numbers when comparing against `spartan` and add an additional
-    row comparing against `spartan (ark-spartan)` in the camera-ready
-    version.
+  - **Hyrax**: the submitted paper's prose claimed a prover speedup up
+    to 6.05x at one thread; this was corrected during review to 1.11x.
+    This is expected and has already been discussed with the paper's
+    reviewers.
 - **Graph-size table** (prover and verifier Graph IR node counts): not
   included in the submitted paper; added in response to reviewer
   feedback.
 
 **Runtime**: a full run across all nine systems and all four thread
-counts takes approximately 37 minutes.
+counts takes approximately 40 minutes.
 
 ---
 
@@ -261,4 +248,13 @@ verifies for **18 of 30** protocols, 2 fewer than the paper's submitted
 count of 20. This is because of bugs that were found and fixed after
 submission.
 
-**Runtime**: a full run takes approximately 12 minutes.
+**Runtime**: a full run takes approximately 15 minutes.
+
+---
+
+## Paper-to-code index
+
+[`artifact/index.html`](index.html) maps each central claim in the
+paper to the source declaration that backs it, and lists every known
+delta from the submitted paper (completeness count, LoC drift, the
+Hyrax speedup correction above) in one place.
