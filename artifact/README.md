@@ -34,6 +34,8 @@ any, it corresponds to.
 
 ## Setup
 
+Requires [Docker](https://www.docker.com/) already installed.
+
 Build the image from the repository root, not from `artifact/`. The
 image builds and runs as a non-root user matching your own UID/GID, so
 `--build-arg` is required:
@@ -150,7 +152,7 @@ docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" -e SYSTEMS=s
     threads; this is expected and has already been discussed with the
     paper's reviewers.
   - **Spartan**: The prover speedup reported in the primary `spartan`
-    row (0.29x–0.72x) is below the paper's claimed "on par" range
+    row (0.29x-0.72x) is below the paper's claimed "on par" range
     (0.76x-1.49x). This discrepancy is due to a previously known
     mismeasurement. The primary native baseline for `spartan` is
     libspartan, which uses curve25519-dalek rather than arkworks and
