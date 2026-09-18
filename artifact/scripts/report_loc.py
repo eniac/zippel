@@ -32,10 +32,6 @@ protocols).
 from pathlib import Path
 
 PROTOCOLS = [
-    # Note: benches/inline/main.rs uses sumcheck_full.zippel (100 lines) for
-    # its completeness sweep, a separate, more-unrolled file from the one
-    # actually benchmarked and counted for the paper's LoC tables. Use
-    # sumcheck.zippel here to match the paper.
     ("sumcheck", "examples/sumcheck/sumcheck.zippel"),
     ("schnorr", "examples/schnorr/schnorr.zippel"),
     ("schnorr_3round", "examples/schnorr_3round/schnorr_3round.zippel"),
@@ -58,9 +54,18 @@ PROTOCOLS = [
     ("dory", "examples/dory/dory.zippel"),
     ("r1cs_sigma", "examples/r1cs_sigma/r1cs_sigma.zippel"),
     ("hyperplonk_multiset", "examples/hyperplonk_multiset/hyperplonk_multiset.zippel"),
-    ("hyperplonk_permutation", "examples/hyperplonk_permutation/hyperplonk_permutation.zippel"),
-    ("hyperplonk_zerocheck", "examples/hyperplonk_zerocheck/hyperplonk_zerocheck.zippel"),
-    ("hyperplonk_productcheck", "examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel"),
+    (
+        "hyperplonk_permutation",
+        "examples/hyperplonk_permutation/hyperplonk_permutation.zippel",
+    ),
+    (
+        "hyperplonk_zerocheck",
+        "examples/hyperplonk_zerocheck/hyperplonk_zerocheck.zippel",
+    ),
+    (
+        "hyperplonk_productcheck",
+        "examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel",
+    ),
     ("hyperplonk", "examples/hyperplonk/hyperplonk.zippel"),
     ("zk_kzg", "examples/zk_kzg/zk_kzg.zippel"),
     ("kzh", "examples/kzh/kzh.zippel"),
