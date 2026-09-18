@@ -155,13 +155,13 @@ docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" -e SYSTEMS=s
     mismeasurement. The primary native baseline for `spartan` is
     libspartan, which uses curve25519-dalek rather than arkworks and
     includes hand-optimized code. We have since added a separate
-    benchmark, `spartan (ark)`, which compares the same Zippel
+    benchmark, `spartan (ark-spartan)`, which compares the same Zippel
     measurements against ark-spartan using the same curve and
     arkworks version. This benchmark achieves a 0.98x-1.51x prover
     speedup and a 0.99x verifier speedup, closely matching the range
     claimed in the paper. We will therefore adjust the reported
     numbers when comparing against `spartan` and add an additional
-    row comparing against `spartan (ark)` in the camera-ready
+    row comparing against `spartan (ark-spartan)` in the camera-ready
     version.
 - **Graph-size table** (prover and verifier Graph IR node counts): not
   included in the submitted paper; added in response to reviewer

@@ -1,8 +1,12 @@
 //! Runs every benchmark (schnorr, sumcheck, ipa, kzg, pari, groth16, pst13, hyrax, spartan) at the rayon
 //! thread count of the current process and writes a single CSV.
 //!
-//! Columns: system, threads, log_size, prover_time_ms, verifier_time_ms,
-//!          native_prover_time_ms, native_verifier_time_ms
+//! One row per (system, baseline, threads, log_size) — most systems have
+//! one baseline (named after the system itself); spartan has two
+//! (`spartan`, `ark-spartan`). See `Baseline`/`Row`. Columns: system,
+//! baseline, threads, log_size, zippel_prover_ms, zippel_verifier_ms,
+//! zippel_ncloc, baseline_prover_ms, baseline_verifier_ms,
+//! baseline_ncloc, compile_ms, prover_nodes, verifier_nodes.
 //!
 //! `log_size` is log_2 of the natural complexity parameter (so rows plot
 //! linearly on a log-size x-axis):
@@ -71,27 +75,31 @@ struct Args {
     sizes: Option<Vec<usize>>,
 }
 
+/// A native baseline timed against the same Zippel measurement. Most
+/// systems have one (named after the system); spartan has two
+/// (`spartan`, `ark-spartan`). The first in `Row::baselines` is the one
+/// Figure 7 reports and renders unlabeled; later ones render as
+/// `system (name)`.
+struct Baseline {
+    name: &'static str,
+    ncloc: usize,
+    prove: std::time::Duration,
+    verify: std::time::Duration,
+}
+
 struct Row {
     system: &'static str,
     threads: usize,
     log_size: usize,
     zippel: Timing,
-    native: Timing,
     /// Wall-clock time for the zippel compiler: source → executable
     /// graph (parse + type-check + graph construction inside
     /// `ZippelHandler::compile`). Excludes the Rust compiler (which
     /// builds this binary once), excludes runtime scheduling
     /// (graph→TDag), and excludes prove/verify execution.
     compile: std::time::Duration,
-    /// Optional second native baseline for the same system. Populated
-    /// today only for spartan: `native` holds Microsoft's `libspartan`
-    /// (curve25519-dalek stack), `ark_native` holds the vendored
-    /// ark-spartan on ark-curve25519 0.6 — the same curve zippel runs
-    /// on. Two natives so the reader can attribute the gap to (a)
-    /// implementation quality (libspartan vs zippel-generated code)
-    /// vs (b) library-stack cost (dalek vs arkworks 0.6). `None` for
-    /// every other system.
-    ark_native: Option<Timing>,
+    /// See `Baseline`.
+    baselines: Vec<Baseline>,
     /// Graph IR node counts (prover graph, verifier graph) at this row's
     /// `log_size` -- independent of `threads`, so the same pair repeats
     /// across a thread sweep at a fixed size. See docs/ARTIFACT_PLAN.md's
@@ -151,6 +159,14 @@ const GROTH16_EXT_NCLOC: usize = 458; // ark-groth16-0.6.0 src/{prover,verifier,
 const SPARTAN_EXT_NCLOC: usize = 1867; // spartan-0.9.0 src/{r1csproof,sumcheck}.rs + src/nizk/{mod,bullet}.rs
 // PST13, Hyrax, PARI, and IPA native NCLOC are computed dynamically from their
 // respective source files above.
+
+// ark-spartan's NCLOC, same scope as SPARTAN_EXT_NCLOC but over the
+// vendored ark-spartan port.
+const ARK_SPARTAN_R1CSPROOF_RS: &str = include_str!("../../src/ark_spartan_upstream/r1csproof.rs");
+const ARK_SPARTAN_SUMCHECK_RS: &str = include_str!("../../src/ark_spartan_upstream/sumcheck.rs");
+const ARK_SPARTAN_NIZK_MOD_RS: &str = include_str!("../../src/ark_spartan_upstream/nizk/mod.rs");
+const ARK_SPARTAN_NIZK_BULLET_RS: &str =
+    include_str!("../../src/ark_spartan_upstream/nizk/bullet.rs");
 
 fn count_ncloc_line_comments(src: &str) -> usize {
     src.lines()
@@ -228,14 +244,20 @@ fn zippel_ncloc(sys: &str) -> usize {
     }
 }
 
-fn native_ncloc(sys: &str) -> usize {
-    match sys {
+fn native_ncloc(baseline: &str) -> usize {
+    match baseline {
         "schnorr" => SCHNORR_EXT_NCLOC,
         "sumcheck" => SUMCHECK_EXT_NCLOC,
         "kzg" => KZG_EXT_NCLOC,
         "groth16" => GROTH16_EXT_NCLOC,
         "pst13" => count_ncloc_rust(NATIVE_PST13_MOD_RS) + count_ncloc_rust(NATIVE_PST13_DS_RS),
         "spartan" => SPARTAN_EXT_NCLOC,
+        "ark-spartan" => {
+            count_ncloc_rust(ARK_SPARTAN_R1CSPROOF_RS)
+                + count_ncloc_rust(ARK_SPARTAN_SUMCHECK_RS)
+                + count_ncloc_rust(ARK_SPARTAN_NIZK_MOD_RS)
+                + count_ncloc_rust(ARK_SPARTAN_NIZK_BULLET_RS)
+        }
         "ipa" => count_ncloc_rust(extract_braced_block(NATIVE_IPA_RS, "pub mod native_side")),
         "hyrax" => count_ncloc_rust(NATIVE_HYRAX_MOD_RS),
         "pari" => {
@@ -265,12 +287,9 @@ fn init_csv(path: &PathBuf, header: bool, append: bool) -> std::io::Result<()> {
     let f = OpenOptions::new().create(true).append(true).open(path)?;
     let mut w = BufWriter::new(f);
     if header {
-        // ark_native_prover_time_ms / ark_native_verifier_time_ms are
-        // populated only for the spartan row (the ark-spartan baseline
-        // on ark-curve25519 v0.6). Blank for every other system.
         writeln!(
             w,
-            "system,threads,log_size,prover_time_ms,verifier_time_ms,native_prover_time_ms,native_verifier_time_ms,zippel_ncloc,native_ncloc,compiler,ark_native_prover_time_ms,ark_native_verifier_time_ms,prover_nodes,verifier_nodes"
+            "system,baseline,threads,log_size,zippel_prover_ms,zippel_verifier_ms,zippel_ncloc,baseline_prover_ms,baseline_verifier_ms,baseline_ncloc,compile_ms,prover_nodes,verifier_nodes"
         )?;
         w.flush()?;
     }
@@ -279,32 +298,23 @@ fn init_csv(path: &PathBuf, header: bool, append: bool) -> std::io::Result<()> {
         .map_err(|_| std::io::Error::other("CSV_WRITER already initialized"))
 }
 
-fn write_row(r: &Row) {
+fn write_row(r: &Row, b: &Baseline) {
     let Some(m) = CSV_WRITER.get() else { return };
     let mut w = m.lock().unwrap();
-    // ark_native columns: 6-decimal ms if present, empty string otherwise.
-    let (ark_prove, ark_verify) = match r.ark_native {
-        Some(t) => (
-            format!("{:.3}", ms(t.prove)),
-            format!("{:.3}", ms(t.verify)),
-        ),
-        None => (String::new(), String::new()),
-    };
     writeln!(
         w,
-        "{},{},{},{:.3},{:.3},{:.3},{:.3},{},{},{:.3},{},{},{},{}",
+        "{},{},{},{},{:.3},{:.3},{},{:.3},{:.3},{},{:.3},{},{}",
         r.system,
+        b.name,
         r.threads,
         r.log_size,
         ms(r.zippel.prove),
         ms(r.zippel.verify),
-        ms(r.native.prove),
-        ms(r.native.verify),
         zippel_ncloc(r.system),
-        native_ncloc(r.system),
+        ms(b.prove),
+        ms(b.verify),
+        b.ncloc,
         ms(r.compile),
-        ark_prove,
-        ark_verify,
         r.prover_nodes,
         r.verifier_nodes,
     )
@@ -313,28 +323,22 @@ fn write_row(r: &Row) {
 }
 
 fn print_row(r: &Row) {
-    eprintln!(
-        "  {:<8} threads={} log_size={:>2}  prove={:>8.2}ms / native {:>8.2}ms   verify={:>7.2}ms / native {:>7.2}ms   compile={:>8.2}ms",
-        r.system,
-        r.threads,
-        r.log_size,
-        ms(r.zippel.prove),
-        ms(r.native.prove),
-        ms(r.zippel.verify),
-        ms(r.native.verify),
-        ms(r.compile),
-    );
-    if let Some(t) = r.ark_native {
+    for b in &r.baselines {
         eprintln!(
-            "  {:<8} threads={} log_size={:>2}  ark_native prove={:>8.2}ms   verify={:>7.2}ms   (ark-spartan on ark-curve25519 0.6)",
+            "  {:<8} threads={} log_size={:>2}  prove={:>8.2}ms / {:<10} {:>8.2}ms   verify={:>7.2}ms / {:<10} {:>7.2}ms   compile={:>8.2}ms",
             r.system,
             r.threads,
             r.log_size,
-            ms(t.prove),
-            ms(t.verify),
+            ms(r.zippel.prove),
+            b.name,
+            ms(b.prove),
+            ms(r.zippel.verify),
+            b.name,
+            ms(b.verify),
+            ms(r.compile),
         );
+        write_row(r, b);
     }
-    write_row(r);
 }
 
 fn run_schnorr(threads: usize) -> Vec<Row> {
@@ -354,9 +358,13 @@ fn run_schnorr(threads: usize) -> Vec<Row> {
         threads,
         log_size: 0,
         zippel,
-        native,
         compile,
-        ark_native: None,
+        baselines: vec![Baseline {
+            name: "schnorr",
+            ncloc: native_ncloc("schnorr"),
+            prove: native.prove,
+            verify: native.verify,
+        }],
         prover_nodes,
         verifier_nodes,
     }]
@@ -383,9 +391,13 @@ fn run_sumcheck(threads: usize, sizes: &[usize], max_degree: usize) -> Vec<Row> 
                 threads,
                 log_size: nv,
                 zippel,
-                native,
                 compile,
-                ark_native: None,
+                baselines: vec![Baseline {
+                    name: "sumcheck",
+                    ncloc: native_ncloc("sumcheck"),
+                    prove: native.prove,
+                    verify: native.verify,
+                }],
                 prover_nodes,
                 verifier_nodes,
             };
@@ -413,9 +425,13 @@ fn run_ipa(threads: usize, ss: &[usize]) -> Vec<Row> {
                 threads,
                 log_size: s,
                 zippel,
-                native,
                 compile,
-                ark_native: None,
+                baselines: vec![Baseline {
+                    name: "ipa",
+                    ncloc: native_ncloc("ipa"),
+                    prove: native.prove,
+                    verify: native.verify,
+                }],
                 prover_nodes,
                 verifier_nodes,
             };
@@ -445,9 +461,13 @@ fn run_kzg(threads: usize, ns: &[usize]) -> Vec<Row> {
                 threads,
                 log_size: n_coeffs.trailing_zeros() as usize,
                 zippel,
-                native,
                 compile,
-                ark_native: None,
+                baselines: vec![Baseline {
+                    name: "kzg",
+                    ncloc: native_ncloc("kzg"),
+                    prove: native.prove,
+                    verify: native.verify,
+                }],
                 prover_nodes,
                 verifier_nodes,
             };
@@ -477,9 +497,13 @@ fn run_pari(threads: usize, ms: &[usize], n_pub: usize, k_vars: usize) -> Vec<Ro
                 threads,
                 log_size: m_log,
                 zippel,
-                native,
                 compile,
-                ark_native: None,
+                baselines: vec![Baseline {
+                    name: "pari",
+                    ncloc: native_ncloc("pari"),
+                    prove: native.prove,
+                    verify: native.verify,
+                }],
                 prover_nodes,
                 verifier_nodes,
             };
@@ -518,9 +542,13 @@ fn run_groth16(threads: usize, log_sizes: &[usize]) -> Vec<Row> {
                 threads,
                 log_size,
                 zippel,
-                native,
                 compile,
-                ark_native: None,
+                baselines: vec![Baseline {
+                    name: "groth16",
+                    ncloc: native_ncloc("groth16"),
+                    prove: native.prove,
+                    verify: native.verify,
+                }],
                 prover_nodes,
                 verifier_nodes,
             };
@@ -549,9 +577,13 @@ fn run_pst13(threads: usize, ns: &[usize]) -> Vec<Row> {
                 threads,
                 log_size: n,
                 zippel,
-                native,
                 compile,
-                ark_native: None,
+                baselines: vec![Baseline {
+                    name: "pst13",
+                    ncloc: native_ncloc("pst13"),
+                    prove: native.prove,
+                    verify: native.verify,
+                }],
                 prover_nodes,
                 verifier_nodes,
             };
@@ -579,9 +611,13 @@ fn run_hyrax(threads: usize, ns: &[usize]) -> Vec<Row> {
                 threads,
                 log_size: n,
                 zippel,
-                native,
                 compile,
-                ark_native: None,
+                baselines: vec![Baseline {
+                    name: "hyrax",
+                    ncloc: native_ncloc("hyrax"),
+                    prove: native.prove,
+                    verify: native.verify,
+                }],
                 prover_nodes,
                 verifier_nodes,
             };
@@ -728,10 +764,10 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                 }
                 let ark_verify = verify_sum / benchmarks::VERIFY_SAMPLES;
 
-                Some(Timing {
+                Timing {
                     prove: ark_prove,
                     verify: ark_verify,
-                })
+                }
             };
 
             let r = Row {
@@ -739,9 +775,21 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                 threads,
                 log_size: m,
                 zippel,
-                native,
                 compile,
-                ark_native,
+                baselines: vec![
+                    Baseline {
+                        name: "spartan",
+                        ncloc: native_ncloc("spartan"),
+                        prove: native.prove,
+                        verify: native.verify,
+                    },
+                    Baseline {
+                        name: "ark-spartan",
+                        ncloc: native_ncloc("ark-spartan"),
+                        prove: ark_native.prove,
+                        verify: ark_native.verify,
+                    },
+                ],
                 prover_nodes,
                 verifier_nodes,
             };

@@ -7,20 +7,10 @@
    happens to be first for that system.
 
 2. Performance table (the submitted paper's Figure 7, page 13):
-   per-system LoC, prover speedup (native/zippel) at each thread count
+   per-system LoC, prover speedup (baseline/zippel) at each thread count
    present in the CSV, and verifier speedup at threads=1 (matches the
    paper's methodology: "we evaluate the prover with 1-8 threads and the
    verifier with 1 thread").
-
-For any system with `ark_native_*` columns populated (currently just
-spartan, which `bench_all` also times against a second, same-curve/
-same-arkworks-version native baseline vendored under
-`benchmarks/src/ark_spartan_upstream/`, for a closer apples-to-apples
-comparison than the primary libspartan baseline), the performance table
-gets one extra row, e.g. "spartan (ark)". It reuses that system's own
-zippel prover/verifier times unchanged (zippel-spartan isn't re-run —
-only the native side being compared against differs) against the
-`ark_native_*` timings instead.
 
 See ../README.md for more on why the first table has no paper figure to
 check it against.
@@ -36,12 +26,6 @@ import sys
 from collections import defaultdict
 
 DEFAULT_CSV = "artifact/output/bench_results.csv"
-
-# ark-spartan (vendored under benchmarks/src/ark_spartan_upstream/) has no
-# separate NCLOC column in the CSV -- counted once locally the same way
-# bench_all.rs's SPARTAN_EXT_NCLOC (libspartan) constant was, over the
-# same-scoped files: r1csproof.rs + sumcheck.rs + nizk/{mod,bullet}.rs.
-ARK_SPARTAN_NCLOC = 2037
 
 
 def load_rows(path):
@@ -72,9 +56,16 @@ def render_graph_size_table(rows):
 
 
 def render_performance_table(rows):
-    by_system = defaultdict(dict)
+    # system -> baseline -> {threads: row}, plus first-seen order per
+    # system so the paper-matching baseline (whichever appears first in
+    # the CSV) renders unlabeled and any later ones get a "(name)" suffix.
+    by_system_baseline = defaultdict(lambda: defaultdict(dict))
+    baseline_order = defaultdict(list)
     for r in rows:
-        by_system[r["system"]][int(r["threads"])] = r
+        system, baseline = r["system"], r["baseline"]
+        if baseline not in by_system_baseline[system]:
+            baseline_order[system].append(baseline)
+        by_system_baseline[system][baseline][int(r["threads"])] = r
 
     all_threads = sorted({int(r["threads"]) for r in rows})
 
@@ -86,41 +77,24 @@ def render_performance_table(rows):
     sep = "|---|---|---|" + "---|" * len(all_threads) + "---|"
     lines = [header, sep]
 
-    for system, by_thread in by_system.items():
-        any_row = next(iter(by_thread.values()))
-        cells = [system, any_row["zippel_ncloc"], any_row["native_ncloc"]]
-        for t in all_threads:
-            r = by_thread.get(t)
-            if r is None:
-                cells.append("N/A")
-                continue
-            zippel_ms = float(r["prover_time_ms"])
-            native_ms = float(r["native_prover_time_ms"])
-            cells.append(f"{native_ms / zippel_ms:.2f}x" if zippel_ms > 0 else "N/A")
-        # Verifier speedup at threads=1, per the paper's methodology.
-        r1 = by_thread.get(1)
-        if r1 is not None and float(r1["verifier_time_ms"]) > 0:
-            v_speedup = float(r1["native_verifier_time_ms"]) / float(r1["verifier_time_ms"])
-            cells.append(f"{v_speedup:.2f}x")
-        else:
-            cells.append("N/A")
-        lines.append("| " + " | ".join(str(c) for c in cells) + " |")
-
-        # Extra row for a second native baseline (ark-spartan), when
-        # present: same zippel prover/verifier times as the row above,
-        # compared against ark_native_* instead of native_*.
-        if any_row.get("ark_native_prover_time_ms"):
-            cells = [f"{system} (ark)", any_row["zippel_ncloc"], ARK_SPARTAN_NCLOC]
+    for system, baselines in by_system_baseline.items():
+        for i, baseline in enumerate(baseline_order[system]):
+            by_thread = baselines[baseline]
+            any_row = next(iter(by_thread.values()))
+            label = system if i == 0 else f"{system} ({baseline})"
+            cells = [label, any_row["zippel_ncloc"], any_row["baseline_ncloc"]]
             for t in all_threads:
                 r = by_thread.get(t)
-                if r is None or not r.get("ark_native_prover_time_ms"):
+                if r is None:
                     cells.append("N/A")
                     continue
-                zippel_ms = float(r["prover_time_ms"])
-                ark_ms = float(r["ark_native_prover_time_ms"])
-                cells.append(f"{ark_ms / zippel_ms:.2f}x" if zippel_ms > 0 else "N/A")
-            if r1 is not None and r1.get("ark_native_verifier_time_ms") and float(r1["verifier_time_ms"]) > 0:
-                v_speedup = float(r1["ark_native_verifier_time_ms"]) / float(r1["verifier_time_ms"])
+                zippel_ms = float(r["zippel_prover_ms"])
+                baseline_ms = float(r["baseline_prover_ms"])
+                cells.append(f"{baseline_ms / zippel_ms:.2f}x" if zippel_ms > 0 else "N/A")
+            # Verifier speedup at threads=1, per the paper's methodology.
+            r1 = by_thread.get(1)
+            if r1 is not None and float(r1["zippel_verifier_ms"]) > 0:
+                v_speedup = float(r1["baseline_verifier_ms"]) / float(r1["zippel_verifier_ms"])
                 cells.append(f"{v_speedup:.2f}x")
             else:
                 cells.append("N/A")

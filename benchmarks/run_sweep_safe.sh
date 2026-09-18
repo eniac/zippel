@@ -48,7 +48,7 @@ case "$OUT" in /*) ;; *) OUT="$(pwd)/$OUT" ;; esac
 
 # Reset output, write the header once.
 : > "$OUT"
-echo 'system,threads,log_size,prover_time_ms,verifier_time_ms,native_prover_time_ms,native_verifier_time_ms,zippel_ncloc,native_ncloc' > "$OUT"
+echo 'system,baseline,threads,log_size,zippel_prover_ms,zippel_verifier_ms,zippel_ncloc,baseline_prover_ms,baseline_verifier_ms,baseline_ncloc,compile_ms,prover_nodes,verifier_nodes' > "$OUT"
 
 export RUST_MIN_STACK=536870912
 
