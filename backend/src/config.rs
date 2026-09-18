@@ -172,14 +172,14 @@ pub trait ArkScalarOps<F: PrimeField> {
         ark_ff::fields::batch_inversion::<F>(f);
     }
 
-    /// Vector division by batch inversion, saves result in f2
+    /// Pointwise vector division, saving the result in `f2`.
+    ///
+    /// Computes `f2 := f1 / f2` via a single batch inversion, mirroring the
+    /// scalar [`div`](ArkScalarOps::div) contract.
     #[inline]
     fn vec_div(f1: &Vec<F>, f2: &mut Vec<F>) {
         Self::vec_inv(f2);
-        ark_ff::fields::batch_inversion::<F>(f2);
-        f2.par_iter_mut()
-            .zip(f1.par_iter())
-            .for_each(|(a, b)| *a *= b);
+        Self::vec_mul(f1, f2);
     }
 
     /// Raises every entry of `f1` to the `i`-th power in place.
