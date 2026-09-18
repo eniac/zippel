@@ -10,11 +10,17 @@ use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 use std::fmt;
 use thiserror::Error;
 
+/// Failure of matching a call site against a declaration signature.
 #[derive(PartialEq, Error, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum SigError {
+    /// The call supplies a different number of arguments than the signature
+    /// declares; carries `(expected, got)`.
     #[error("SigError: Arity mismatch: expected {0} arguments, got {1}")]
     ArityMismatch(usize, usize),
+    /// Unifying the signature's parameter types with the actual argument
+    /// types failed; carries the signature, the actual types and the
+    /// underlying `UnifyError`.
     #[error("SigError: Unifying signatures {0} ~ {1}\n\n{2}")]
     Unify(CSig, CTyps, UnifyError),
 }
@@ -22,9 +28,14 @@ pub enum SigError {
 /// Function and protocol argument signatures
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Sig<N> {
+    /// Declared name of the function or protocol; also the overload key.
     pub name: Spanned<Vid>,
+    /// Type variables bound by the declaration, with their kinds — size
+    /// variables, range-kinded variables, field/group tags.
     pub typevars: Spanned<TypeVars<N>>,
+    /// Formal parameters, in declaration order.
     pub args: Spanned<GArgs<N>>,
+    /// Declared return type; `None` when the declaration leaves it implicit.
     pub ret: Option<Spanned<GTyp<N>>>,
 }
 
@@ -35,6 +46,20 @@ pub type USig = Sig<Size>;
 pub type CSig = Sig<usize>;
 
 impl CSig {
+    /// Resolve this signature against the actual argument types of a call.
+    ///
+    /// Type variables captured by `kctx` are first freshened so a caller's
+    /// names cannot collide with the declaration's own. Each parameter type
+    /// is then unified with the corresponding actual type under the union of
+    /// the signature's own kind context and `kctx`, and the resulting alias
+    /// substitution is applied to the signature. Returns the instantiated
+    /// signature together with those substitutions, which overload
+    /// resolution uses to pick between declarations of the same name.
+    ///
+    /// # Errors
+    /// Returns `SigError::ArityMismatch` if the argument count differs from
+    /// the declared arity, and `SigError::Unify` if some parameter type
+    /// fails to unify with the corresponding actual type.
     pub fn unify(
         self,
         typs: &CTyps,

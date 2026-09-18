@@ -1,3 +1,17 @@
+//! Criterion sweep for the sumcheck protocol: the zippel-compiled prover and
+//! verifier against the vendored `hyperplonk` native implementation.
+//!
+//! The grid crosses `num_vars` (hypercube dimension) with `max_degree` (the
+//! degree of `base(x)^d`). Each sample drives one full protocol through
+//! `Setup::time_protocol`, which reports prove and verify time separately, so
+//! the benchmark uses `iter_custom` rather than letting criterion time the
+//! whole closure.
+
+#![allow(
+    missing_docs,
+    reason = "criterion_group! synthesises an undocumentable `pub fn benches`"
+)]
+
 use benchmarks::sumcheck::{native_side, zippel_side};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::time::Duration;

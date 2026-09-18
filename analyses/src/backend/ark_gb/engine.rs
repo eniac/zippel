@@ -36,6 +36,13 @@ pub struct ArkGb<F: PrimeField> {
 }
 
 impl<F: PrimeField> ArkGb<F> {
+    /// Builds a backend whose packed monomial width is `w`.
+    ///
+    /// `w` bounds the number of symbolic variables an ideal may mention
+    /// (`8 * w - 1`, so the `w = 128` default allows 1023); narrower widths
+    /// make monomial comparison cheaper for small problems. Only `8`, `16`,
+    /// and `128` are wired up in `compute_gb`'s dispatch — any other value is
+    /// accepted here and panics at the first `compute_gb` call.
     pub fn with_width(w: usize) -> Self {
         ArkGb {
             _phantom: PhantomData,

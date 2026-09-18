@@ -34,8 +34,13 @@
 
 use crate::Timing;
 
+/// Default `log_2` of the SR1CS constraint-domain size, i.e. `K = 2^DEFAULT_M_LOG`.
 pub const DEFAULT_M_LOG: usize = 4; // K = 2^M_LOG = 16
+/// Default number of instance (public input) variables, counting the implicit
+/// constant-1 slot at position 0.
 pub const DEFAULT_N_PUB: usize = 1;
+/// Default total variable count of the assignment vector `z`, i.e. `num_vars`
+/// in the instance-outliner layout `num_vars = 2 * n_pub + m_witness`.
 pub const DEFAULT_K_VARS: usize = 8;
 
 // ---------------------------------------------------------------------------
@@ -44,20 +49,35 @@ pub const DEFAULT_K_VARS: usize = 8;
 
 /// SR1CS instance shared by both sides.
 pub struct Instance<F> {
-    pub k: usize,            // num_constraints = 2^M_LOG
+    /// Number of SR1CS constraints; always a power of two so the `K`-domain
+    /// admits an FFT.
+    pub k: usize, // num_constraints = 2^M_LOG
+    /// Length `n` of the instance prefix of `z`, including the constant-1 at
+    /// position 0.
     pub instance_len: usize, // n (includes the constant-1 at position 0)
-    pub num_vars: usize,     // k_vars = n + witness + n_aux
+    /// Total length of `z`, i.e. instance + witness + instance-outliner aux
+    /// variables.
+    pub num_vars: usize, // k_vars = n + witness + n_aux
     /// Variable assignment `z = (x ∥ w ∥ aux)`, length `num_vars`.
     pub z: Vec<F>,
+    /// Sparse rows of the left matrix `A`, each entry a `(coefficient, column)`
+    /// pair; `a_mat[i]` is constraint `i`.
     pub a_mat: Vec<Vec<(F, usize)>>,
+    /// Sparse rows of the right matrix `B`, in the same layout as `a_mat`; the
+    /// SR1CS relation is `(A·z) ∘ (A·z) = B·z`.
     pub b_mat: Vec<Vec<(F, usize)>>,
     /// Precomputed evaluation vectors A·z, B·z, A·(x∥0), B·(x∥0) on K.
     pub z_a_evals: Vec<F>,
+    /// Evaluations of `B·z` on the `K`-domain.
     pub z_b_evals: Vec<F>,
+    /// Evaluations of `A·(x ∥ 0)` on the `K`-domain — the instance-only part
+    /// the verifier can recompute.
     pub x_a_evals: Vec<F>,
+    /// Evaluations of `B·(x ∥ 0)` on the `K`-domain.
     pub x_b_evals: Vec<F>,
 }
 
+/// Random satisfying SR1CS instance generation shared by both benchmark sides.
 pub mod inst_gen {
     use super::Instance;
     use ark_ff::Field;
@@ -67,16 +87,22 @@ pub mod inst_gen {
     /// outliner" layout, so the native verifier's Lagrange shortcut is
     /// valid:
     ///
-    /// - z = [1, x[1..n], w[0..m], aux[0..n]] where aux[i] = z[i]^2.
+    /// - `z = [1, x[1..n], w[0..m], aux[0..n]]` where `aux[i] = z[i]^2`.
     ///   Total `num_vars = 2n + m` for `m` "real" witness variables.
     /// - A has zero columns at the instance positions on constraints
     ///   `[0, K-n)` (so x̂_A vanishes on those domain points), and
     ///   `A[K-n+i] = e_i` on constraints `[K-n, K)`.
     /// - B has zero columns at the instance positions everywhere, and
-    ///   `B[K-n+i][n+m+i] = 1` so that (Bz)[K-n+i] = aux[i] = z[i]^2.
+    ///   `B[K-n+i][n+m+i] = 1` so that `(Bz)[K-n+i] = aux[i] = z[i]^2`.
     /// - Original constraints (j ∈ 0..K-n): random A row over witness
     ///   columns; B row places `(Az)[j]^2 / z[c]` in a chosen witness
-    ///   column c, so (Bz)[j] = (Az)[j]^2.
+    ///   column c, so `(Bz)[j] = (Az)[j]^2`.
+    ///
+    /// # Panics
+    /// Panics if `n_pub` is zero or if `2^m_log <= n_pub`, i.e. if there is no
+    /// room left for the original (non-outlining) constraints. Also panics if a
+    /// sampled witness value fails to invert, which cannot happen because
+    /// witness entries are drawn nonzero.
     pub fn build_random<F: Field, R: Rng>(
         m_log: usize,
         n_pub: usize,
@@ -188,6 +214,8 @@ pub mod inst_gen {
 // Zippel side: refactor of examples/pari/main.rs into the bench harness.
 // ---------------------------------------------------------------------------
 
+/// Zippel side of the comparison: compiles `examples/pari/pari.zippel`, builds
+/// the matching SRS, and times prove/verify through `ZippelHandler`.
 pub mod zippel_side {
     use super::*;
     use ark_ff::{Field, One, UniformRand, Zero};
@@ -327,6 +355,8 @@ pub mod zippel_side {
         }
     }
 
+    /// Compiled PARI protocol plus its cached SRS, reused across the whole
+    /// thread/size sweep.
     pub struct Setup {
         handler: ZippelHandler<C>,
         m_log: usize,
@@ -339,6 +369,13 @@ pub mod zippel_side {
     }
 
     impl Setup {
+        /// Compiles the PARI protocol at the given shape and loads (or builds
+        /// and caches) the matching SRS for `inst`.
+        ///
+        /// # Panics
+        /// Panics if the `K`-domain does not exist for `2^m_log`, if the SRS
+        /// trapdoor `delta2` is zero, or if compilation of
+        /// `examples/pari/pari.zippel` fails.
         pub fn new(m_log: usize, n_pub: usize, inst: &super::Instance<F>) -> Self {
             let k = 1usize << m_log;
             let num_vars = inst.num_vars;
@@ -369,6 +406,7 @@ pub mod zippel_side {
             }
         }
 
+        /// Wall-clock time the `.zippel` source took to compile in [`Setup::new`].
         pub fn compile_time(&self) -> std::time::Duration {
             self.compile_time
         }
@@ -381,6 +419,12 @@ pub mod zippel_side {
             )
         }
 
+        /// Runs the compiled prover and verifier `PROVER_SAMPLES`/`VERIFY_SAMPLES`
+        /// times and returns the mean durations.
+        ///
+        /// # Panics
+        /// Panics if `inst` does not match the shape this `Setup` was compiled
+        /// for, if either graph fails to execute, or if verification fails.
         pub fn time_protocol(&mut self, inst: &super::Instance<F>) -> Timing {
             assert_eq!(inst.k, self.k);
             assert_eq!(inst.instance_len, self.n_pub);
@@ -485,9 +529,11 @@ pub mod zippel_side {
             Timing { prove, verify }
         }
 
+        /// `log_2` of the constraint count this setup was compiled for.
         pub fn m_log(&self) -> usize {
             self.m_log
         }
+        /// Constraint-domain size `K = 2^m_log`.
         pub fn k(&self) -> usize {
             self.k
         }
@@ -522,6 +568,8 @@ pub mod native_side {
     type E = Bls12_381;
     type F = <E as Pairing>::ScalarField;
 
+    /// Upstream PARI proving/verifying keys plus the SR1CS data they were
+    /// generated from.
     pub struct Setup {
         instance_assignment: Vec<F>,
         witness_assignment: Vec<F>,
@@ -533,6 +581,12 @@ pub mod native_side {
     }
 
     impl Setup {
+        /// Splits `inst.z` into instance/witness assignments and loads (or
+        /// builds and caches) the upstream `(pk, vk)` pair for its matrices.
+        ///
+        /// # Panics
+        /// Panics if `inst.instance_len` is zero, since the verifier input is
+        /// the instance assignment with the constant-1 slot dropped.
         pub fn new(inst: &Instance<F>) -> Self {
             let instance_assignment = inst.z[..inst.instance_len].to_vec();
             let witness_assignment = inst.z[inst.instance_len..].to_vec();
@@ -566,6 +620,12 @@ pub mod native_side {
             }
         }
 
+        /// Times upstream prove/verify over the configured sample counts; the
+        /// prove timer includes the four sparse matrix-vector products.
+        ///
+        /// # Panics
+        /// Panics if the upstream prover errors or if the resulting proof fails
+        /// upstream verification.
         pub fn time_protocol(&self, _inst: &Instance<F>) -> Timing {
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_proof = None;
@@ -599,6 +659,10 @@ pub mod native_side {
             Timing { prove, verify }
         }
 
+        /// Compressed serialized size, in bytes, of one upstream PARI proof.
+        ///
+        /// # Panics
+        /// Panics if the upstream prover errors.
         pub fn proof_size(&self, _inst: &Instance<F>) -> usize {
             let proof = Pari::<E>::prove_from_sr1cs(
                 &self.a_mat,

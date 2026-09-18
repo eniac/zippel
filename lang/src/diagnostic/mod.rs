@@ -20,6 +20,7 @@ use ariadne::{Config, IndexType, Label, Report, ReportKind};
 /// Rendered via ariadne by [`render_diagnostic`].
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
+    /// Whether this report is a hard error or a non-fatal warning.
     pub severity: Severity,
     /// Which compiler phase produced this diagnostic.
     /// Used for deterministic error ordering.
@@ -41,27 +42,49 @@ pub struct Diagnostic {
     pub code: Option<String>,
 }
 
+/// The compiler phase that produced a [`Diagnostic`].
+///
+/// The derived `Ord` matches pipeline order (parse before semantic before
+/// type), which is what `analyze()` sorts on to keep error output
+/// deterministic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Phase {
+    /// Raised while parsing `.zippel` source with the `pest` PEG grammar.
     Parse,
+    /// Raised by post-parse well-formedness checks (scoping, declarations).
     Semantic,
+    /// Raised by kind-directed type inference in `lang::typ`.
     Type,
 }
 
+/// How serious a [`Diagnostic`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
+    /// Compilation cannot continue past this diagnostic.
     Error,
+    /// Reported for review, but compilation continues.
     Warning,
 }
 
+/// An additional annotated span shown alongside a diagnostic's primary span.
+///
+/// Used to point at the other half of a conflict, e.g. the earlier
+/// declaration that collides with the one being reported.
 #[derive(Debug, Clone)]
 pub struct SecondaryLabel {
+    /// Byte range in the source file this label underlines.
     pub span: Range<usize>,
+    /// Text rendered next to the underlined span.
     pub message: String,
 }
 
+/// A spanless piece of context attached to a diagnostic.
+///
+/// Rendered as a trailing "note: ..." line; use this rather than a
+/// [`Suggestion`] when there is no concrete edit to propose.
 #[derive(Debug, Clone)]
 pub struct Note {
+    /// Text of the note.
     pub message: String,
 }
 
@@ -169,7 +192,7 @@ impl Diagnostic {
 ///
 /// `phase` is used for sorting in `analyze()`, not for rendering.
 /// `code` is `None` for diagnostics without a code; when present, it could be
-/// prepended to the summary (e.g. "error[E0001]: ...").
+/// prepended to the summary (e.g. `error[E0001]: ...`).
 pub fn render_diagnostic(diag: &Diagnostic, filename: &str, src: &str) -> String {
     let mut buf = Vec::new();
     let config = Config::new().with_index_type(IndexType::Byte);

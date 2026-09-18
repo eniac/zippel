@@ -9,37 +9,49 @@ use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 
 /// `Arg` represents an argument in the Zippel language, including its identifier, type, and principals.
 ///
-///     **Zippel Code:**
-///     ```zippel
-///     fn foo<Verifier>(a: F  & Verifier) { ... }
-///     ```
+/// **Zippel Code:**
+/// ```zippel
+/// fn foo<Verifier>(a: F  & Verifier) { ... }
+/// ```
 ///
-///     In this example, `a` is the identifier of the argument, `F` is the type and `Verifier` is
-///     the principal.
+/// In this example, `a` is the identifier of the argument, `F` is the type and `Verifier` is
+/// the principal.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Arg<T, N> {
+    /// Visibility of the argument (`witness`, `local`, `extra`, `instance`);
+    /// the seed value for qualifier propagation over the DAG.
     pub qualifier: Spanned<Qualifier>,
+    /// Whether the argument is assumed uniformly distributed; the seed value
+    /// for uniformity propagation.
     pub distribution: Spanned<Distribution>,
+    /// The bound value variable.
     pub id: Spanned<Vid>,
+    /// Declared type of the argument, with size repr `N` and base-type tag `T`.
     pub typ: Spanned<Typ<T, N>>,
 }
 
+/// The argument list of a signature, in declaration order.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Args<T, N>(pub Vec<Spanned<Arg<T, N>>>);
 
 /// Generic typed argument
 pub type GArg<N> = Arg<Tid, N>;
+/// Argument list whose base types are `Tid` tags.
 pub type GArgs<N> = Args<Tid, N>;
 
 /// Symbolically sized arg
 pub type UArg = Arg<Tid, Size>;
+/// Argument list of a freshly parsed declaration, with symbolic sizes.
 pub type UArgs = Args<Tid, Size>;
 
 /// Concrete sized arg
 pub type CArg = Arg<Tid, usize>;
+/// Argument list after concretization, with `usize` sizes.
 pub type CArgs = Args<Tid, usize>;
 
 impl<T, N> Arg<T, N> {
+    /// Builds an argument with explicit visibility and distribution and
+    /// dummy (non-source) spans.
     pub fn new(qualifier: Qualifier, distribution: Distribution, id: &str, typ: Typ<T, N>) -> Self {
         Arg {
             qualifier: Spanned::dummy(qualifier),
@@ -48,6 +60,8 @@ impl<T, N> Arg<T, N> {
             typ: Spanned::dummy(typ),
         }
     }
+    /// Builds a public (`Instance`, nonuniform) argument with dummy spans;
+    /// the shorthand used when constructing signatures programmatically.
     pub fn instance(id: &str, typ: Typ<T, N>) -> Self {
         Arg {
             qualifier: Spanned::dummy(Qualifier::Instance),
@@ -59,15 +73,20 @@ impl<T, N> Arg<T, N> {
 }
 
 impl<T, N> Args<T, N> {
+    /// Iterates over the arguments in declaration order.
     pub fn iter(&self) -> std::slice::Iter<'_, Spanned<Arg<T, N>>> {
         self.0.iter()
     }
+    /// Number of arguments.
     pub fn len(&self) -> usize {
         self.0.len()
     }
+    /// Whether the signature takes no arguments.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+    /// Collects the arguments into the variable context used by type
+    /// inference, mapping each identifier to its declared type.
     pub fn to_ctx(&self) -> Ctx<Vid, Typ<T, N>>
     where
         T: Clone,
@@ -108,7 +127,7 @@ impl<N: Clone> TidSubst for GArgs<N> {
     }
 }
 
-/// How to traverse the first type parameter [T] of [Arg<T, N>]
+/// How to traverse the first type parameter `T` of [Arg<T, N>]
 impl<T: Clone, N: Clone> ToTraversal1<T> for Arg<T, N> {
     type Output<Z> = Arg<Z, N>;
     fn traverse1<Z: Clone, E>(
@@ -130,7 +149,7 @@ impl<T: Clone, N: Clone> ToTraversal1<T> for Arg<T, N> {
     }
 }
 
-/// How to traverse the second type parameter [N] of [Arg<T, N>]
+/// How to traverse the second type parameter `N` of [Arg<T, N>]
 impl<T: Clone, N: Clone> ToTraversal2<N> for Arg<T, N> {
     type Output<Z> = Arg<T, Z>;
     fn traverse2<Z: Clone, E>(
@@ -152,7 +171,7 @@ impl<T: Clone, N: Clone> ToTraversal2<N> for Arg<T, N> {
     }
 }
 
-/// How to traverse the first type parameter [T] of [Args<T, N>]
+/// How to traverse the first type parameter `T` of [Args<T, N>]
 impl<T: Clone, N: Clone> ToTraversal1<T> for Args<T, N> {
     type Output<Z> = Args<Z, N>;
     fn traverse1<Z: Clone, E>(
@@ -171,7 +190,7 @@ impl<T: Clone, N: Clone> ToTraversal1<T> for Args<T, N> {
     }
 }
 
-/// How to traverse the second type parameter [N] of [Args<T, N>]
+/// How to traverse the second type parameter `N` of [Args<T, N>]
 impl<T: Clone, N: Clone> ToTraversal2<N> for Args<T, N> {
     type Output<Z> = Args<T, Z>;
     fn traverse2<Z: Clone, E>(

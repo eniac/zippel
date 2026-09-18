@@ -1,3 +1,17 @@
+//! Criterion sweep for KZG10 polynomial commitments on BLS12-381: the
+//! zippel-compiled protocol against `ark-poly-commit`'s `kzg10::KZG10`.
+//!
+//! `n` is the coefficient count (degree `n - 1`). The zippel source performs
+//! the commitment inside the protocol body, so the native "prove" number
+//! covers `commit + open` and "verify" covers `check` only. Timing goes
+//! through `Setup::time_protocol`, which splits prove from verify, so the
+//! benches use `iter_custom`.
+
+#![allow(
+    missing_docs,
+    reason = "criterion_group! synthesises an undocumentable `pub fn benches`"
+)]
+
 use benchmarks::kzg::{native_side, zippel_side};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::time::Duration;

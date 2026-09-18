@@ -18,70 +18,130 @@ use thiserror::Error;
 /// Type alias for sparse multivariate polynomial
 type SparseMultivariatePolynomial<F> = MultiSparsePolynomial<F, MultiSparseTerm>;
 
+/// Failures raised by `PolyVariant` arithmetic, evaluation and conversion.
+///
+/// These are value-level runtime failures hit while a scheduled DAG node
+/// executes (shape violations between polynomial encodings, zero divisors,
+/// unsupported operand combinations), as distinct from the source-level
+/// `TypeError` produced by `lang` during inference. Every variant carries the
+/// offending operands so `Display` can print the whole attempted operation.
 #[derive(Error, Debug, Clone)]
 pub enum PolyError<F: Field> {
+    /// A binary operation has no implementation for this pair of encodings,
+    /// e.g. multiplying two `SparseMultivariate` polynomials.
     #[error("Unsupported polynomial operation:\n\t{left} {op} {right}")]
     UnsupportedOperation {
+        /// The binary operator that was attempted.
         op: BinOp,
+        /// Left-hand operand.
         left: PolyVariant<F>,
+        /// Right-hand operand.
         right: PolyVariant<F>,
     },
 
+    /// A divisor was the zero polynomial, or a scalar divisor was zero.
     #[error("Division by zero")]
-    DivisionByZero { v: PolyVariant<F> },
+    DivisionByZero {
+        /// The polynomial involved in the failed division: the divisor when a
+        /// polynomial divisor is zero, otherwise the dividend of a division by
+        /// a zero scalar.
+        v: PolyVariant<F>,
+    },
 
+    /// `scalar / polynomial` is only defined when the polynomial is a
+    /// constant (degree-0) polynomial that can be inverted.
     #[error("Can only divide scalar by constant polynomial:\n\t{scalar} / {polynomial}")]
     ScalarDivByNonConstant {
+        /// The scalar numerator.
         scalar: F,
+        /// The non-constant denominator that cannot be inverted.
         polynomial: PolyVariant<F>,
     },
 
+    /// A polynomial was required to collapse to a field element but is not
+    /// degree-0 (see `PolyVariant::try_to_scalar`).
     #[error("Cannot convert non-constant polynomial {0} to scalar")]
     NotConstantPolynomial(PolyVariant<F>),
 
+    /// Two multivariate operands disagree on their variable count, so their
+    /// evaluation domains cannot be aligned.
     #[error(
         "Cannot perform operation on multivariate polynomial with different number of variables:\n\t{v1} has {n1}, while {v2} has {n2}"
     )]
     VariableMismatch {
+        /// First operand.
         v1: PolyVariant<F>,
+        /// Variable count of the first operand.
         n1: usize,
+        /// Second operand.
         v2: PolyVariant<F>,
+        /// Variable count of the second operand.
         n2: usize,
     },
 
+    /// An evaluation point has the wrong arity for the polynomial being
+    /// evaluated or partially fixed.
     #[error(
         "Evaluation point dimension mismatch: expected {expected} variables, but received {actual}"
     )]
     DimensionMismatch {
+        /// The polynomial that was being evaluated.
         polynomial: PolyVariant<F>,
+        /// Number of coordinates the polynomial requires.
         expected: usize,
+        /// Number of coordinates actually supplied.
         actual: usize,
     },
 
+    /// Vector evaluation (evaluating one polynomial at many points) is only
+    /// defined for univariate encodings.
     #[error("Vector evaluation requires a univariate polynomial:\n\t{polynomial}")]
-    VectorEvaluationRequiresUnivariate { polynomial: PolyVariant<F> },
+    VectorEvaluationRequiresUnivariate {
+        /// The non-univariate polynomial that was supplied.
+        polynomial: PolyVariant<F>,
+    },
 
+    /// Two multilinear extensions disagree on their number of variables.
     #[error("MLE variable count mismatch: {v1} vs {v2}")]
-    MleVariableMismatch { v1: usize, v2: usize },
+    MleVariableMismatch {
+        /// Variable count of the first extension.
+        v1: usize,
+        /// Variable count of the second extension.
+        v2: usize,
+    },
 
+    /// Multilinear extensions cannot be multiplied in place: the product of
+    /// two multilinear polynomials is no longer multilinear, so callers must
+    /// build a `VirtualPolynomial` (a sum of products) instead.
     #[error("MLE multiplication not directly supported: {v1} * {v2}")]
     MleMultiplication {
+        /// First factor.
         v1: PolyVariant<F>,
+        /// Second factor.
         v2: PolyVariant<F>,
     },
 
+    /// Division is undefined for this pair of encodings (any operand that is
+    /// multilinear or sparse multivariate).
     #[error("Division not applicable for: {v1} / {v2}")]
     DivisionNotApplicable {
+        /// Dividend.
         v1: PolyVariant<F>,
+        /// Divisor.
         v2: PolyVariant<F>,
     },
 
+    /// Remainder (`%`) has no meaning for multivariate encodings.
     #[error("Modulo operation not applicable for MLE")]
     ModuloNotApplicable,
 
+    /// The operation is only implemented for multilinear extensions and was
+    /// handed some other encoding.
     #[error("Operation requires MLE polynomial")]
     RequiresMle,
 
+    /// The polynomial is not a `DenseMle`, so MLE-specific evaluation cannot
+    /// be performed.
     #[error("Not an MLE polynomial")]
     NotMlePolynomial,
 }
@@ -109,7 +169,11 @@ pub enum PolyVariant<F: Field> {
     /// back to `to_dense` first (correct but expensive); the only fast
     /// paths are `evaluate` and `evaluate_or_fix_mle`.
     SparseMle {
+        /// Number of boolean variables of the underlying function; the dense
+        /// evaluation table this stands for would have `2^num_vars` entries.
         num_vars: usize,
+        /// Non-zero entries as `(boolean_index, value)` pairs; all unlisted
+        /// indices evaluate to zero.
         evals: Vec<(usize, F)>,
     },
 }
@@ -359,6 +423,11 @@ impl<F: Field> PolyVariant<F> {
     }
 
     /// Evaluate polynomial at a point (convenience method)
+    ///
+    /// # Panics
+    /// Panics if `point` has the wrong arity for a multivariate encoding, or
+    /// if it is empty for a univariate one. Use [`Self::evaluate_mv`] for the
+    /// fallible form.
     pub fn evaluate(&self, point: &Vec<F>) -> F {
         match self {
             // A little hackish - univariate polynomials evaluate over a single Field element
@@ -567,6 +636,11 @@ impl<F: Field> PolyVariant<F> {
     }
 
     /// Evaluate multivariate polynomial at a point
+    ///
+    /// # Errors
+    /// Returns [`PolyError::DimensionMismatch`] if `point` does not have
+    /// exactly one coordinate per variable of the polynomial (one coordinate
+    /// for the univariate encodings).
     pub fn evaluate_mv(&self, point: &[F]) -> Result<F, PolyError<F>> {
         match self {
             PolyVariant::DenseMle(mle) => {
@@ -625,6 +699,10 @@ impl<F: Field> PolyVariant<F> {
     /// Evaluate at a boolean hypercube vertex given as a little-endian table
     /// index, without constructing a field point. DenseMle reads the table;
     /// SparseMle sums matching entries; a degree-0 univariate is its constant.
+    ///
+    /// # Panics
+    /// Panics if `self` is neither an MLE encoding nor a degree-0 univariate,
+    /// and if `index` is outside the dense evaluation table of a `DenseMle`.
     pub fn evaluate_at_boolean_index(&self, index: usize) -> F {
         match self {
             PolyVariant::DenseMle(mle) => mle.evaluations[index],
@@ -643,6 +721,13 @@ impl<F: Field> PolyVariant<F> {
     // ========== Arithmetic Operations ==========
 
     /// Add two polynomials
+    ///
+    /// # Errors
+    /// Returns [`PolyError::MleVariableMismatch`] or
+    /// [`PolyError::VariableMismatch`] when the operands disagree on their
+    /// variable count, and [`PolyError::UnsupportedOperation`] for encoding
+    /// pairs with no addition rule (for example `DenseMle` plus
+    /// `SparseMultivariate`).
     pub fn poly_add(&self, other: &Self) -> Result<Self, PolyError<F>> {
         match (self, other) {
             // Univariate + Univariate
@@ -802,6 +887,10 @@ impl<F: Field> PolyVariant<F> {
         }
     }
     /// Subtract two polynomials
+    ///
+    /// # Errors
+    /// Propagates the errors of [`Self::poly_add`] applied to the negated
+    /// right-hand operand.
     pub fn poly_sub(&self, other: &Self) -> Result<Self, PolyError<F>> {
         self.poly_add(&other.poly_neg())
     }
@@ -812,6 +901,10 @@ impl<F: Field> PolyVariant<F> {
     }
 
     /// Subtract polynomial from scalar
+    ///
+    /// # Errors
+    /// Propagates the errors of [`Self::poly_sub`] with the scalar lifted to a
+    /// degree-0 univariate polynomial.
     pub fn scalar_sub_poly(scalar: F, poly: &Self) -> Result<Self, PolyError<F>> {
         let scalar_poly = PolyVariant::from_scalar(scalar);
         scalar_poly.poly_sub(poly)
@@ -824,7 +917,14 @@ impl<F: Field> PolyVariant<F> {
     /// → interpolate). That's O(n log n); the previous `naive_mul` path was
     /// O(n²) and dominated zippel-side prover time at large K. The
     /// `F: FftField` bound is already satisfied wherever this is called
-    /// from (Value<C> uses C::F: PrimeField, and PrimeField: FftField).
+    /// from (`Value<C>` uses C::F: PrimeField, and PrimeField: FftField).
+    ///
+    /// # Errors
+    /// Returns [`PolyError::MleMultiplication`] if either operand is a
+    /// `DenseMle` (the product would no longer be multilinear — build a
+    /// `VirtualPolynomial` instead), and
+    /// [`PolyError::UnsupportedOperation`] for sparse-multivariate operands
+    /// and any other unhandled encoding pair.
     pub fn poly_mul(&self, other: &Self) -> Result<Self, PolyError<F>>
     where
         F: ark_ff::FftField,
@@ -912,6 +1012,11 @@ impl<F: Field> PolyVariant<F> {
     }
 
     /// Divide two polynomials
+    ///
+    /// # Errors
+    /// Returns [`PolyError::DivisionByZero`] if the divisor is the zero
+    /// polynomial, and [`PolyError::DivisionNotApplicable`] if either operand
+    /// is multilinear or sparse multivariate.
     pub fn poly_div(&self, other: &Self) -> Result<Self, PolyError<F>>
     where
         F: PrimeField,
@@ -954,6 +1059,10 @@ impl<F: Field> PolyVariant<F> {
     }
 
     /// Divide polynomial by scalar
+    ///
+    /// # Errors
+    /// Returns [`PolyError::DivisionByZero`] if `scalar` is zero or has no
+    /// multiplicative inverse.
     pub fn poly_div_scalar(&self, scalar: F) -> Result<Self, PolyError<F>> {
         if scalar.is_zero() {
             return Err(PolyError::DivisionByZero { v: self.clone() });
@@ -1012,6 +1121,11 @@ impl<F: Field> PolyVariant<F> {
     }
 
     /// Polynomial remainder (modulo)
+    ///
+    /// # Errors
+    /// Returns [`PolyError::DivisionByZero`] if the divisor is the zero
+    /// polynomial, and [`PolyError::ModuloNotApplicable`] if either operand is
+    /// multilinear or sparse multivariate.
     pub fn poly_rem(&self, other: &Self) -> Result<Self, PolyError<F>>
     where
         F: PrimeField,
@@ -1049,6 +1163,13 @@ impl<F: Field> PolyVariant<F> {
     /// variables `[range.end, input_num_vars)`. `input_num_vars` is the
     /// caller's static polynomial arity; selected eval must not guess arity
     /// from constant/zero payloads.
+    ///
+    /// # Errors
+    /// Returns [`PolyError::DimensionMismatch`] if `free_range` is not a
+    /// unit-step, non-empty range inside `input_num_vars`, if `fixed` does not
+    /// supply exactly one value per non-free variable, or if the polynomial's
+    /// own arity differs from `input_num_vars`. Univariate encodings are only
+    /// accepted for the degenerate range `0..1` with no fixed values.
     pub fn fix_variables_except_range(
         &self,
         input_num_vars: usize,
@@ -1160,6 +1281,11 @@ impl<F: Field> PolyVariant<F> {
     }
 
     /// Evaluate MLE at a boolean hypercube point
+    ///
+    /// # Errors
+    /// Returns [`PolyError::DimensionMismatch`] if `point` has the wrong
+    /// arity, and [`PolyError::NotMlePolynomial`] for any encoding other than
+    /// `DenseMle`.
     pub fn evaluate_mle(&self, point: &[F]) -> Result<F, PolyError<F>> {
         match self {
             PolyVariant::DenseMle(mle) => {
@@ -1178,6 +1304,10 @@ impl<F: Field> PolyVariant<F> {
 
     /// Evaluate univariate polynomial at multiple points.
     /// Returns an MLE representing the vector of results.
+    ///
+    /// # Errors
+    /// Returns [`PolyError::VectorEvaluationRequiresUnivariate`] if `self` is
+    /// not a univariate encoding.
     pub fn try_evaluate_vec(&self, points: &[F]) -> Result<Self, PolyError<F>> {
         match self {
             PolyVariant::DenseUni(p) => {
@@ -1210,6 +1340,9 @@ impl<F: Field> PolyVariant<F> {
     ///
     /// This infallible compatibility wrapper panics explicitly on unsupported
     /// shapes; use [`Self::try_evaluate_vec`] to handle errors.
+    ///
+    /// # Panics
+    /// Panics if `self` is not a univariate encoding.
     pub fn evaluate_vec(&self, points: &[F]) -> Self {
         self.try_evaluate_vec(points)
             .expect("PolyVariant::evaluate_vec failed; use try_evaluate_vec to handle errors")
@@ -1217,6 +1350,11 @@ impl<F: Field> PolyVariant<F> {
 
     /// Evaluate or partially fix MLE variables
     /// Always returns a polynomial (possibly constant after full evaluation)
+    ///
+    /// # Errors
+    /// Returns [`PolyError::DimensionMismatch`] if more points are supplied
+    /// than the extension has variables, and [`PolyError::RequiresMle`] for
+    /// any encoding that is not `DenseMle` or `SparseMle`.
     pub fn evaluate_or_fix_mle(&self, points: &[F]) -> Result<Self, PolyError<F>> {
         match self {
             PolyVariant::DenseMle(mle) => {
@@ -1266,6 +1404,10 @@ impl<F: Field> PolyVariant<F> {
     // ========== Serialization ==========
 
     /// Serialize to writer
+    ///
+    /// # Errors
+    /// Returns `SerializationError` if the underlying writer fails or an
+    /// arkworks component rejects the value.
     pub fn serialize_compressed<W: Write>(&self, mut writer: W) -> Result<(), SerializationError> {
         match self {
             PolyVariant::DenseUni(p) => {

@@ -1,3 +1,6 @@
+//! Transitive closure of a `QDag` — the flattening step that turns the graph
+//! IR into the linear `(Var, GOp)` list the ideal builder consumes.
+
 use crate::Var;
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
@@ -138,7 +141,13 @@ fn topo_sort_nodes<C: ArkConfig>(dag: &QDag<C>, nodes: &HashSet<NodeIndex>) -> V
 ///   doesn't recurse past the transcript boundary.
 #[derive(Clone)]
 pub struct TransClos<C: ArkConfig> {
+    /// The flattened computation, in topological order: each entry binds a
+    /// fresh `Var` to the op that produces it, with `Op::Ref` children already
+    /// resolved to the Vars of their targets.
     pub clos: Vec<(Var, GOp<C>)>,
+    /// The leaf Vars of the closure — opaque inputs such as protocol
+    /// arguments, transcript challenges and randomness. Disjoint from the
+    /// bindings in `clos`.
     pub vars: Vec<Var>,
     /// Refs of `vars` that are actual protocol args (not transcript vars).
     /// Used by `IdealBuilder::build()` to emit divisor-invertibility

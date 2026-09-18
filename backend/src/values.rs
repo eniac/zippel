@@ -29,24 +29,49 @@ use std::fmt;
 use std::io::Write;
 use std::ops::{Add, AddAssign, BitXor, Div, Mul, MulAssign, Rem, Sub};
 
+/// A runtime value: the payload carried by a node of a scheduled DAG during
+/// execution by `runtime::MutexGraph`.
+///
+/// Each variant fixes both an arkworks carrier type and a shape (single
+/// element, flat homogeneous vector, nested vector, record, polynomial) and
+/// corresponds to an `ATyp` recoverable via [`Value::typ`]. The flat `Vec*`
+/// variants are not merely `Value::Vec` specializations: they let bulk
+/// operations dispatch straight to batched `arkworks` routines (MSM, batch
+/// affine normalization) instead of walking boxed elements. The `into_*_mut`
+/// casts move a value between those representations in place, so an operand
+/// silently re-shapes itself to whatever the operator needs.
 #[derive(Debug, Clone, Eq)]
 pub enum Value<C: ArkConfig> {
     /// Scalars
     Index(usize),
+    /// A single element of the backend scalar field `C::F`.
     Scalar(C::F),
+    /// A flat vector of machine indices; the vector form of `Value::Index`.
     VecIndex(Vec<usize>),
+    /// A flat vector of scalar-field elements; the dense carrier for a
+    /// source-level `Vec(F, n)`.
     VecScalar(Vec<C::F>),
     /// Groups
     G1(C::G1),
+    /// A projective point of the second pairing source group.
     G2(C::G2),
+    /// An element of the pairing target group.
     GT(PairingOutput<C::P>),
+    /// A flat vector of projective first-source-group points, kept flat so
+    /// dot products lower to a single multi-scalar multiplication.
     VecG1(Vec<C::G1>),
+    /// A flat vector of projective second-source-group points.
     VecG2(Vec<C::G2>),
+    /// A flat vector of pairing target group elements.
     VecGT(Vec<PairingOutput<C::P>>),
     /// Affine group elements
     G1Affine(C::G1Affine),
+    /// An affine point of the second pairing source group.
     G2Affine(C::G2Affine),
+    /// A flat vector of affine first-source-group points, the form the
+    /// batched `arkworks` MSM routines consume directly.
     VecG1Affine(Vec<C::G1Affine>),
+    /// A flat vector of affine second-source-group points.
     VecG2Affine(Vec<C::G2Affine>),
     /// Vectors of vectors etc
     Vec(Vec<Value<C>>),
@@ -234,6 +259,17 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
     }
 }
 
+/// Writes the compressed canonical byte encoding of `value` to `writer`.
+///
+/// This is the encoding fed to the Fiat-Shamir transcript and used to measure
+/// proof size, so it is deliberately untagged and length-free for the flat
+/// vector variants; only `Value::Record` writes a field count, because field
+/// order alone does not determine the byte layout. `Value::Unit` writes nothing.
+///
+/// # Errors
+/// Returns `SerializationError` if the underlying `arkworks`
+/// `CanonicalSerialize` implementation fails, which in practice means the writer
+/// returned an I/O error.
 pub fn serialize_value<C: ArkConfig, W: Write>(
     value: &Value<C>,
     mut writer: W,
@@ -241,6 +277,14 @@ pub fn serialize_value<C: ArkConfig, W: Write>(
     serialize_value_internal(value, &mut writer)
 }
 
+/// Serializes `value` into a freshly allocated byte buffer.
+///
+/// Convenience wrapper over [`serialize_value`] used wherever the encoded bytes
+/// are needed as a value (transcript absorption, proof-size accounting).
+///
+/// # Errors
+/// Returns `SerializationError` if serializing any component fails; see
+/// [`serialize_value`].
 pub fn value_to_bytes<C: ArkConfig>(value: &Value<C>) -> Result<Vec<u8>, SerializationError> {
     let mut buffer = Vec::new();
     serialize_value(value, &mut buffer)?;
@@ -274,6 +318,10 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Lifts a machine integer into the backend scalar field.
+    ///
+    /// Used wherever an `Index`-typed operand has to meet a field-typed one. The
+    /// coercion is one-directional: indices are never recovered from `C::F`.
     pub fn scalar_from_usize(i: usize) -> Self {
         Value::Scalar(C::FOps::from_usize(i))
     }
@@ -443,6 +491,18 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Subtracts `other` from `self`, storing `self - other` back into `other`.
+    ///
+    /// As with [`Value::value_add`] the destination operand re-shapes itself as
+    /// needed (`Index` promotes to `Scalar`, affine points promote to projective),
+    /// and a mixed scalar/polynomial pair lifts the scalar to a constant polynomial.
+    /// Vector arms subtract element-wise in parallel.
+    ///
+    /// # Panics
+    /// Panics when the operand pair has no subtraction rule: `Record`, `Unit` and
+    /// `Bool` receivers, a mismatched variant pair, or a polynomial subtraction that
+    /// reports incompatible arities. These are IR invariant violations; user-facing
+    /// checks happen during `lang` type inference.
     #[inline]
     pub fn value_sub(&self, other: &mut Self) {
         match self {
@@ -542,6 +602,16 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Applies the bilinear pairing to `self` and `other`, storing the target group
+    /// result in `other`.
+    ///
+    /// Accepts the two source groups in either order and in either affine or
+    /// projective form; vector operands pair component-wise and yield a vector of
+    /// target group elements.
+    ///
+    /// # Panics
+    /// Panics if the operands are not a source-group pair of matching shape, or if
+    /// either operand is a record.
     #[inline]
     pub fn value_pair(&self, other: &mut Self) {
         match (self, &other) {
@@ -1437,6 +1507,14 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Computes `self % other`, storing the result in `other`.
+    ///
+    /// Defined only on index-typed values, which are the loop and array-offset
+    /// domain; a field has no remainder operation.
+    ///
+    /// # Panics
+    /// Panics if either operand is not an `Index` or `VecIndex`, and (through the
+    /// integer operation itself) if a divisor is zero.
     pub fn value_rem(&self, other: &mut Self) {
         match (self, &other) {
             (Value::Index(a), Value::Index(b)) => *other.into_index_mut() = *a % *b,
@@ -1509,6 +1587,18 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Computes the dot product of `self` and `other`, storing it in `other`.
+    ///
+    /// This is the hot prover primitive. Scalar-times-group arms lower to a batched
+    /// multi-scalar multiplication, and a projective basis is first converted with
+    /// `normalize_batch` so the whole batch costs one field inversion instead of one
+    /// per element. Group-times-group arms lower to a multi-pairing, and nested
+    /// `Value::Vec` operands recurse element-wise.
+    ///
+    /// # Panics
+    /// Panics if the operand pair has no dot-product rule. Note that zipped
+    /// iteration truncates to the shorter operand rather than failing on a length
+    /// mismatch.
     #[inline]
     pub fn value_dot(&self, other: &mut Self) {
         match (&self, &other) {
@@ -1651,6 +1741,11 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Owning form of [`Value::value_dot`]: consumes both operands and returns the
+    /// dot product.
+    ///
+    /// # Panics
+    /// Panics under the same conditions as [`Value::value_dot`].
     #[inline]
     pub fn dot(self, other: Self) -> Self {
         let mut other = other;
@@ -1658,6 +1753,11 @@ impl<C: ArkConfig> Value<C> {
         other
     }
 
+    /// Owning form of [`Value::concat`]: returns the concatenation of `self` and
+    /// `other`.
+    ///
+    /// # Panics
+    /// Panics under the same conditions as [`Value::concat`].
     #[inline]
     pub fn value_concat(self, other: Self) -> Self {
         let mut other = other;
@@ -1665,6 +1765,16 @@ impl<C: ArkConfig> Value<C> {
         other
     }
 
+    /// Evaluates `self` at the point `other` and returns the result.
+    ///
+    /// A `VecScalar`/`VecIndex` receiver is first lifted into a univariate
+    /// polynomial via [`Value::value_poly`], because a `Uni` value is often still
+    /// carried as its bare coefficient vector at runtime; anything else goes
+    /// straight to [`Value::eval`].
+    ///
+    /// # Panics
+    /// Panics if `self` is neither a polynomial nor a coefficient vector, or if
+    /// `other` is not a valid point shape; see [`Value::eval`].
     #[inline]
     pub fn value_eval(self, other: Self) -> Self {
         let mut other = other;
@@ -1680,6 +1790,18 @@ impl<C: ArkConfig> Value<C> {
         other
     }
 
+    /// Partially evaluates a multivariate polynomial, fixing every variable outside
+    /// `free_range` to the corresponding entry of `fixed`.
+    ///
+    /// This backs the selected-evaluation op used by sum-check style protocols.
+    /// `shape` carries the statically known input and output arities so the result
+    /// keeps the arity its `ATyp` promises instead of collapsing to whatever the
+    /// data happens to permit.
+    ///
+    /// # Panics
+    /// Panics if `self` is not (and cannot be lifted to) a polynomial, if `fixed` is
+    /// not a scalar vector, or if the fixed-point arity is inconsistent with `shape`
+    /// and `free_range`.
     #[inline]
     pub fn value_eval_selected(
         self,
@@ -1715,6 +1837,21 @@ impl<C: ArkConfig> Value<C> {
         )
     }
 
+    /// Produces the univariate round polynomial obtained by summing `self` over the
+    /// Boolean hypercube of every variable outside `free_range`.
+    ///
+    /// This fuses the "fix all but one variable, then sum over the cube" pair of ops
+    /// into a single pass. A fast path handles polynomials that are sums of products
+    /// of multilinear factors; otherwise the round polynomial is recovered by
+    /// evaluating at `0..=degree` and interpolating. Both paths bump the
+    /// optimization counters so the fusion rate stays observable.
+    ///
+    /// # Panics
+    /// Panics unless `free_range` is exactly one variable at index `0`,
+    /// `shape.output_num_vars` is `1`, and `tail_num_vars` equals
+    /// `shape.input_num_vars - 1`. Also panics if `self` is not a polynomial, if
+    /// `tail_num_vars` exceeds the `usize` bit width, or if a hypercube evaluation
+    /// fails.
     #[inline]
     pub fn value_hypercube_reduce_selected(
         self,
@@ -1789,6 +1926,11 @@ impl<C: ArkConfig> Value<C> {
         Value::Poly(round)
     }
 
+    /// Owning form of [`Value::value_pair`]: consumes both operands and returns the
+    /// target group result.
+    ///
+    /// # Panics
+    /// Panics under the same conditions as [`Value::value_pair`].
     #[inline]
     pub fn pair(self, other: Self) -> Self {
         let mut other = other;
@@ -1796,6 +1938,11 @@ impl<C: ArkConfig> Value<C> {
         other
     }
 
+    /// Reports whether this value is the multiplicative identity.
+    ///
+    /// A vector is one only if every element is, and `Bool(true)` counts as one
+    /// under the 0/1 encoding used when booleans feed arithmetic. Every other
+    /// variant, including a constant-one polynomial, answers `false`.
     #[inline]
     pub fn is_one(&self) -> bool {
         match self {
@@ -1905,10 +2052,21 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Squeezes a fresh scalar-field challenge out of the Fiat-Shamir transcript
+    /// held in `state`.
     pub fn challenge<H: DuplexSpongeInterface<U = u8>>(state: &mut ProverState<H>) -> Self {
         Value::Scalar(C::FOps::challenge(state))
     }
 
+    /// Absorbs this value into the Fiat-Shamir transcript as a public message.
+    ///
+    /// Uses the same canonical byte encoding as [`serialize_value`], so prover and
+    /// verifier transcripts agree. `Value::Vec` absorbs its elements in order rather
+    /// than as one blob.
+    ///
+    /// # Panics
+    /// Panics for `Value::Poly`, `Value::Record` and `Value::Unit`, which have no
+    /// transcript encoding, and if byte conversion of a component fails.
     #[allow(clippy::should_implement_trait)]
     pub fn hash<H: DuplexSpongeInterface<U = u8>>(&self, state: &mut ProverState<H>) {
         match self {
@@ -1935,10 +2093,25 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Cannot hash {}", self),
         }
     }
+    /// Owning form of [`Value::ram_ref`]: indexes `self` by `r`.
+    ///
+    /// # Panics
+    /// Panics under the same conditions as [`Value::ram_ref`].
     pub fn ram(self, r: Self) -> Self {
         self.ram_ref(&r)
     }
 
+    /// Random-access read: gathers the entries of `self` named by the index value
+    /// `r`.
+    ///
+    /// An `Index` selector returns a single element; a `VecIndex` selector returns a
+    /// vector shaped like the selector, gathered in parallel. This is the runtime
+    /// meaning of source-level `a[i]`.
+    ///
+    /// # Panics
+    /// Panics if `self` is a record (record components are reached by field name,
+    /// not by index), if the operand pair has no indexing rule, or if any index is
+    /// out of bounds for `self`.
     pub fn ram_ref(&self, r: &Self) -> Self {
         match (self, r) {
             (Value::VecIndex(a), Value::VecIndex(b)) => {
@@ -1987,6 +2160,18 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Evaluates the polynomial `self` at the point held in `other`, storing the
+    /// result back into `other`.
+    ///
+    /// A scalar or index point performs univariate evaluation. A vector point
+    /// performs multivariate evaluation; when fewer points are supplied than the
+    /// polynomial's declared arity, the residual polynomial is kept as a
+    /// `Value::Poly` so the value still matches its declared type instead of
+    /// silently collapsing to a scalar.
+    ///
+    /// # Panics
+    /// Panics if `self` is not a `Value::Poly`, if `other` is not a valid point
+    /// shape, or if the underlying multilinear evaluation fails.
     #[inline]
     pub fn eval(self, other: &mut Self) {
         match (&self, &other) {
@@ -2068,6 +2253,16 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Appends `r` onto `self`, storing the concatenation in `r`.
+    ///
+    /// Scalar-shaped operands are first promoted to one-element vectors, and a mixed
+    /// index/scalar pair widens to `VecScalar`. Concatenating a flat homogeneous
+    /// vector with a boxed `Value::Vec` re-flattens the boxed side so the result
+    /// keeps the batched representation.
+    ///
+    /// # Panics
+    /// Panics if `self` is a polynomial, record, unit or bool (no concatenation
+    /// rule), or if `r` cannot be re-shaped to match `self`.
     pub fn concat(self, r: &mut Self) {
         match &self {
             Value::VecScalar(a) => {
@@ -2302,6 +2497,16 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Recovers the IR-level type of this runtime value.
+    ///
+    /// The inverse direction of [`Value::zero`] and [`Value::random`]: affine and
+    /// projective points collapse to the same `ATyp`, `VecIndex` reports the
+    /// tightest `Fin` range covering its contents, and a polynomial reports `Uni` or
+    /// `Mle` according to its current representation.
+    ///
+    /// # Panics
+    /// Panics if a `Value::Vec` holds elements of differing types, or if a
+    /// `VecIndex` is empty and therefore has no range to report.
     pub fn typ(&self) -> ATyp {
         match self {
             Value::Index(n) => ATyp::fin(CRange::singleton(*n)),
@@ -2364,6 +2569,10 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Borrows the virtual polynomial inside a `Value::Poly`.
+    ///
+    /// # Panics
+    /// Panics if this value is not a polynomial.
     #[inline]
     pub fn into_poly(&self) -> &VirtualPolynomial<C::F> {
         match self {
@@ -2371,6 +2580,10 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected poly, found {}", self),
         }
     }
+    /// Returns a mutable scalar view, converting an `Index` in place first.
+    ///
+    /// # Panics
+    /// Panics if this value is neither a scalar nor an index.
     #[inline]
     pub fn into_scalar_mut(&mut self) -> &mut C::F {
         match self {
@@ -2383,6 +2596,11 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Returns a mutable projective first-source-group view, converting an affine
+    /// point in place first.
+    ///
+    /// # Panics
+    /// Panics if this value is not a first-source-group point.
     #[inline]
     pub fn into_g1_mut(&mut self) -> &mut C::G1 {
         match self {
@@ -2395,6 +2613,11 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Returns a mutable projective second-source-group view, converting an affine
+    /// point in place first.
+    ///
+    /// # Panics
+    /// Panics if this value is not a second-source-group point.
     #[inline]
     pub fn into_g2_mut(&mut self) -> &mut C::G2 {
         match self {
@@ -2406,6 +2629,10 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected mut group2, found {}", self),
         }
     }
+    /// Returns a mutable view of a pairing target group element.
+    ///
+    /// # Panics
+    /// Panics if this value is not a target group element.
     #[inline]
     pub fn into_gt_mut(&mut self) -> &mut PairingOutput<C::P> {
         match self {
@@ -2413,6 +2640,11 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected mut groupt, found {}", self),
         }
     }
+    /// Returns a mutable affine first-source-group view, normalizing a projective
+    /// point in place first.
+    ///
+    /// # Panics
+    /// Panics if this value is not a first-source-group point.
     #[inline]
     pub fn into_g1_affine_mut(&mut self) -> &mut C::G1Affine {
         match self {
@@ -2424,6 +2656,11 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected mut group1, found {}", self),
         }
     }
+    /// Returns a mutable affine second-source-group view, normalizing a projective
+    /// point in place first.
+    ///
+    /// # Panics
+    /// Panics if this value is not a second-source-group point.
     #[inline]
     pub fn into_g2_affine_mut(&mut self) -> &mut C::G2Affine {
         match self {
@@ -2435,6 +2672,12 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected mut group2, found {}", self),
         }
     }
+    /// Returns a mutable scalar-vector view, converting a `VecIndex` or a boxed
+    /// `Value::Vec` of scalars in place first.
+    ///
+    /// # Panics
+    /// Panics if this value cannot be re-shaped to a scalar vector, including when a
+    /// boxed element is not scalar-like.
     #[inline]
     pub fn into_vec_scalar_mut(&mut self) -> &mut Vec<C::F> {
         match self {
@@ -2451,6 +2694,15 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Returns a mutable boxed-element view, un-flattening any homogeneous flat
+    /// vector variant in place first.
+    ///
+    /// This runs opposite to the other `into_vec_*_mut` casts and costs one
+    /// allocation per element, so it is reserved for the generic element-wise
+    /// fallback arms.
+    ///
+    /// # Panics
+    /// Panics if this value is not a vector.
     #[inline]
     pub fn into_vec_mut(&mut self) -> &mut Vec<Self> {
         match self {
@@ -2483,6 +2735,12 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Returns a mutable projective first-source-group vector view, converting
+    /// affine or boxed representations in place first.
+    ///
+    /// # Panics
+    /// Panics if this value is not such a vector, or if a boxed element is not a
+    /// first-source-group point.
     pub fn into_vec_g1_mut(&mut self) -> &mut Vec<C::G1> {
         match self {
             Value::VecG1(v) => v,
@@ -2505,6 +2763,12 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected mut vec group1, found {}", self),
         }
     }
+    /// Returns a mutable projective second-source-group vector view, converting
+    /// affine or boxed representations in place first.
+    ///
+    /// # Panics
+    /// Panics if this value is not such a vector, or if a boxed element is not a
+    /// second-source-group point.
     pub fn into_vec_g2_mut(&mut self) -> &mut Vec<C::G2> {
         match self {
             Value::VecG2(v) => v,
@@ -2527,6 +2791,12 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected mut vec group2, found {}", self),
         }
     }
+    /// Returns a mutable target-group vector view, flattening a boxed `Value::Vec`
+    /// in place first.
+    ///
+    /// # Panics
+    /// Panics if this value is not such a vector, or if a boxed element is not a
+    /// target group element.
     pub fn into_vec_gt_mut(&mut self) -> &mut Vec<PairingOutput<C::P>> {
         match self {
             Value::VecGT(v) => v,
@@ -2544,6 +2814,11 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected mut vec groupt, found {}", self),
         }
     }
+    /// Returns a mutable affine first-source-group vector view, batch-normalizing a
+    /// projective vector in place first.
+    ///
+    /// # Panics
+    /// Panics if this value is not a first-source-group vector.
     pub fn into_vec_g1_affine_mut(&mut self) -> &mut Vec<C::G1Affine> {
         match self {
             Value::VecG1Affine(v) => v,
@@ -2554,6 +2829,11 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected mut vec group1, found {}", self),
         }
     }
+    /// Returns a mutable affine second-source-group vector view, batch-normalizing a
+    /// projective vector in place first.
+    ///
+    /// # Panics
+    /// Panics if this value is not a second-source-group vector.
     pub fn into_vec_g2_affine_mut(&mut self) -> &mut Vec<C::G2Affine> {
         match self {
             Value::VecG2Affine(v) => v,
@@ -2564,30 +2844,56 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected mut vec group2, found {}", self),
         }
     }
+    /// Returns a mutable view of the index vector backing a range value.
+    ///
+    /// A range is materialized as its enumerated indices, so this is the same
+    /// representation as [`Value::into_vec_index_mut`].
+    ///
+    /// # Panics
+    /// Panics if this value is not a `VecIndex`.
     pub fn into_range_mut(&mut self) -> &mut Vec<usize> {
         match self {
             Value::VecIndex(r) => r,
             _ => panic!("Expected mut range, found {}", self),
         }
     }
+    /// Returns a mutable index-vector view.
+    ///
+    /// Unlike the scalar and group casts this performs no conversion: indices are
+    /// never recovered from field elements.
+    ///
+    /// # Panics
+    /// Panics if this value is not a `VecIndex`.
     pub fn into_vec_index_mut(&mut self) -> &mut Vec<usize> {
         match self {
             Value::VecIndex(v) => v,
             _ => panic!("Expected mut vec index, found {}", self),
         }
     }
+    /// Borrows the index vector of a `VecIndex`.
+    ///
+    /// # Panics
+    /// Panics if this value is not a `VecIndex`.
     pub fn into_vec_index(&self) -> &Vec<usize> {
         match self {
             Value::VecIndex(v) => v,
             _ => panic!("Expected vec index, found {}", self),
         }
     }
+    /// Reads the machine index out of an `Index`.
+    ///
+    /// # Panics
+    /// Panics if this value is not an `Index`.
     pub fn into_index(&self) -> usize {
         match self {
             Value::Index(i) => *i,
             _ => panic!("Expected index, found {}", self),
         }
     }
+    /// Returns a mutable view of the machine index inside an `Index`.
+    ///
+    /// # Panics
+    /// Panics if this value is not an `Index`.
     pub fn into_index_mut(&mut self) -> &mut usize {
         match self {
             Value::Index(i) => i,
@@ -2595,6 +2901,8 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Reports whether this value has vector shape, in either the boxed or any of
+    /// the flat homogeneous representations.
     pub fn is_vec(&self) -> bool {
         matches!(
             self,
@@ -2609,6 +2917,11 @@ impl<C: ArkConfig> Value<C> {
         )
     }
 
+    /// Reports whether this value is the additive identity of its type.
+    ///
+    /// Vectors and records are zero only if every component is, `Unit` is vacuously
+    /// zero, and `Bool` is zero when false, matching the 0/1 encoding used when
+    /// booleans feed arithmetic.
     pub fn is_zero(&self) -> bool {
         match self {
             Value::Scalar(a) => a.is_zero(),
@@ -2633,6 +2946,17 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Builds a vector value from element values, collapsing to the flat
+    /// homogeneous representation whenever the elements share a base type.
+    ///
+    /// The element type is derived by folding `ATyp::lub_equ` over the elements, so
+    /// this both checks homogeneity and picks the carrier. Element types with no
+    /// flat carrier (polynomials, records, nested vectors, unit, bool) stay as a
+    /// boxed `Value::Vec`.
+    ///
+    /// # Panics
+    /// Panics if `vec` is empty, if the element types have no least upper bound, or
+    /// if an element does not match the derived carrier.
     pub fn value_vec(vec: Vec<Self>) -> Self {
         let mut typ = vec[0].typ();
         for i in vec.iter().skip(1) {
@@ -2671,6 +2995,17 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Extracts the raw coefficient (or multilinear evaluation) vector of a
+    /// polynomial.
+    ///
+    /// A value that is already a coefficient vector is returned unchanged, since a
+    /// `Uni` value is frequently never materialized as a polynomial at all. The
+    /// canonical representation drops trailing zeros, so use
+    /// [`Value::value_coef_typed`] when the declared width matters.
+    ///
+    /// # Panics
+    /// Panics if this value is neither a polynomial nor a scalar/index vector, or if
+    /// the polynomial is a virtual product with no flat coefficient form.
     pub fn value_coef(&self) -> Self {
         match self {
             Value::Poly(p) => {
@@ -2721,6 +3056,14 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Lifts a scalar or index vector into a univariate polynomial by reading it as
+    /// a coefficient list.
+    ///
+    /// This is the explicit `poly([...])` coercion; the type system has no implicit
+    /// vector-to-polynomial conversion.
+    ///
+    /// # Panics
+    /// Panics if this value is not a scalar or index vector.
     pub fn value_poly(&self) -> Self {
         match self {
             Value::VecScalar(v) => Value::Poly(VirtualPolynomial::from_poly(
@@ -2736,6 +3079,15 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Lifts a scalar or index vector into a multilinear extension by reading it as
+    /// the evaluation table over the Boolean hypercube.
+    ///
+    /// This is the explicit `mle([...])` coercion; the arity is `log2(len)`.
+    ///
+    /// # Panics
+    /// Panics if this value is not a scalar or index vector. A length that is not a
+    /// power of two yields a truncated arity rather than an error, so the
+    /// power-of-two check belongs to the `Op::Mle` typing rule.
     pub fn value_mle(&self) -> Self {
         match self {
             Value::VecScalar(v) => {
@@ -2784,6 +3136,17 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Interpolates the univariate polynomial through the evaluations held in
+    /// `self`.
+    ///
+    /// With no `points` the evaluations are assumed to lie on the FFT evaluation
+    /// domain and an inverse FFT is used. With explicit `points` the domain is
+    /// checked first: FFT-domain points still take the inverse FFT path, while
+    /// arbitrary points fall back to general interpolation.
+    ///
+    /// # Panics
+    /// Panics if the evaluations are empty, if `points` and evaluations have
+    /// different lengths, or if either operand is not a scalar/index vector.
     pub fn value_interpolate(&self, points: Option<&Self>) -> Self {
         let evals = value_as_scalar_vec::<C>(self);
         assert!(
@@ -2823,6 +3186,15 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Evaluates a polynomial over the FFT domain, returning the evaluation vector.
+    ///
+    /// A multilinear polynomial already stores its hypercube evaluations, so that
+    /// case is a direct read; a univariate polynomial is transformed from
+    /// coefficients by a forward FFT.
+    ///
+    /// # Panics
+    /// Panics if this value is not a polynomial, if the virtual polynomial cannot be
+    /// normalized to a concrete representation, or if it has no coefficient form.
     pub fn value_fft(&self) -> Self {
         match self {
             Value::Poly(p) => {
@@ -3232,6 +3604,15 @@ fn divide_by_x_minus_a<F: PrimeField>(p: &[F], a: F) -> Vec<F> {
     q
 }
 
+/// Evaluates at `x` the unique polynomial of degree `evals.len() - 1` taking the
+/// values `evals` at the points `0, 1, ..., evals.len() - 1`.
+///
+/// Companion to the round-polynomial reconstruction used when a sum-check round
+/// is transmitted as an evaluation table rather than as coefficients.
+///
+/// # Panics
+/// Panics if `evals` is empty, or if the interpolation system is singular over
+/// the backend field.
 pub fn eval_univariate_from_evals_0d<F: PrimeField>(evals: &[F], x: F) -> F {
     let g = round_univariate_from_marginalize_evals::<F>(evals);
     g.evaluate_uv(&x)

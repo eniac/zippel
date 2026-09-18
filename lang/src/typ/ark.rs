@@ -2,13 +2,25 @@ use std::fmt;
 
 use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 
+/// Names of the concrete `arkworks` element classes a source-level base type can denote.
+///
+/// This is the surface-language spelling of the backend's element kinds; the IR-level
+/// counterpart is `backend::ATyp` / `ABase`. It carries no size or curve information — only
+/// which family of `arkworks` value (scalar field element, curve point in either
+/// representation, or target-group element) is meant.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Ark {
+    /// An element of the scalar field of the configured curve.
     Scalar,
+    /// A point of the first pairing source group, in projective coordinates.
     G1,
+    /// A point of the second pairing source group, in projective coordinates.
     G2,
+    /// A point of the first pairing source group, in affine coordinates.
     G1Affine,
+    /// A point of the second pairing source group, in affine coordinates.
     G2Affine,
+    /// An element of the pairing target group.
     GT,
 }
 

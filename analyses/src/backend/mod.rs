@@ -2,7 +2,7 @@
 //! reduction, owned by the [`GbBackend`] trait.
 //!
 //! The backend owns all leading-term / ordering logic. Analyses hand the
-//! backend an ideal and a [`MonoOrder`](crate::frontend::MonoOrder) and receive
+//! backend an ideal and a [`MonoOrder`] and receive
 //! a [`GbBasis`] or a reduced polynomial.
 
 pub mod ark_gb;
@@ -42,11 +42,14 @@ impl GbBackendKind {
 /// were computed under (so [`GbBackend::reduce`] can reuse it).
 #[derive(Clone, Debug)]
 pub struct GbBasis<F: ark_ff::PrimeField> {
+    /// The reduced Gröbner basis generators, in the backend's output order.
     pub polys: Vec<Polynomial<F>>,
+    /// The monomial ordering `polys` was computed under; reduction must reuse it.
     pub order: MonoOrder,
 }
 
 impl<F: ark_ff::PrimeField> GbBasis<F> {
+    /// A basis with no generators, i.e. the zero ideal, tagged with `order`.
     pub fn empty(order: MonoOrder) -> Self {
         GbBasis {
             polys: Vec::new(),
@@ -54,18 +57,24 @@ impl<F: ark_ff::PrimeField> GbBasis<F> {
         }
     }
 
+    /// Whether the basis has no generators (the zero ideal).
     pub fn is_empty(&self) -> bool {
         self.polys.is_empty()
     }
 
+    /// Number of generators in the basis.
     pub fn len(&self) -> usize {
         self.polys.len()
     }
 
+    /// Iterate over the basis generators.
     pub fn iter(&self) -> impl Iterator<Item = &Polynomial<F>> {
         self.polys.iter()
     }
 
+    /// The union of all variables occurring in the basis generators.
+    ///
+    /// Used to decide which [`Var`]s an ideal actually constrains.
     pub fn vars(&self) -> Set<Var> {
         self.polys
             .iter()

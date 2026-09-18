@@ -8,9 +8,19 @@ use petgraph::{Direction, graph::NodeIndex, visit::Topo};
 use share::{Ctx, Set};
 use std::fmt;
 
+/// Result of uniformity propagation: which nodes each node depends on, and the
+/// [`Distribution`] of every node whose randomness could be determined.
+///
+/// Knowledge analysis uses this to recognise one-time-pad masks — a witness
+/// value whose distribution is uniform and independent of the values it masks.
 #[derive(Clone)]
 pub struct UniformityPropagation {
+    /// Transitive incoming dependencies per node. `Challenge` nodes are reset
+    /// to the singleton `{self}` so they count as fresh randomness rather than
+    /// inheriting the ancestors of whatever was absorbed before them.
     pub ancestors: Ctx<NodeIndex, Set<NodeIndex>>,
+    /// Distribution per node reference; nodes absent from the map are treated
+    /// as [`Distribution::Nonuniform`] by [`Self::find_distribution`].
     pub distributions: Ctx<Ref, Distribution>,
 }
 
@@ -304,6 +314,13 @@ fn compute_reduce_map_generic<C: ArkConfig>(
 }
 
 impl UniformityPropagation {
+    /// Runs uniformity propagation over the qualified DAG.
+    ///
+    /// Ancestor sets are computed first, then distributions are assigned in
+    /// topological order so that each operation sees its children's already
+    /// resolved distributions. `Arg` nodes take the distribution declared in
+    /// the source; operations derive theirs structurally, and nodes whose
+    /// distribution cannot be established are simply left unmapped.
     pub fn from_dag<C: ArkConfig>(dag: &QDag<C>) -> Self {
         let mut ancestors: Ctx<NodeIndex, Set<NodeIndex>> = dag
             .node_indices()
@@ -339,6 +356,8 @@ impl UniformityPropagation {
         }
     }
 
+    /// Distribution of node `r`, defaulting to [`Distribution::Nonuniform`]
+    /// when propagation could not establish one.
     pub fn find_distribution(&self, r: NodeIndex) -> Distribution {
         self.distributions
             .get(&Ref(r))

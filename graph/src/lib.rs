@@ -1,5 +1,16 @@
 #![feature(deref_patterns)]
 #![allow(clippy::result_large_err)]
+//! Graph intermediate representation for Zippel protocols.
+//!
+//! This crate sits between `lang` and `runtime` in the pipeline: a concretized
+//! `CModule` is lowered into one [`Dag`] per declaration ([`UDags::from_module`]),
+//! static analyses in `graph::analyses` re-annotate it, and the prover and
+//! verifier are obtained as subgraph projections ([`Dag::get_prover`],
+//! [`Dag::get_verifier`]) before scheduling and execution.
+//!
+//! A [`Dag`] is a `petgraph` graph whose nodes are [`Node`]s carrying
+//! hash-consed [`HOp`] operations and whose edges are [`Dep`]s, distinguishing
+//! data flow from Fiat-Shamir transcript ordering.
 
 // In #[cfg(test)] builds, alias the crate as `graph` so that test-only
 // modules included via `#[path]` from outside the crate root (e.g. the
@@ -10,7 +21,9 @@
 extern crate self as graph;
 
 mod dep;
+/// Fiat-Shamir domain separation derived from a protocol's instance inputs.
 pub mod domain_seperator;
+/// Interpreter for individual graph operations over `Value<C>`.
 pub mod eval;
 mod node;
 
@@ -50,6 +63,7 @@ use thiserror::Error;
 /// node annotation like costs, schedules etc.
 #[derive(Clone)]
 pub struct Dag<C: ArkConfig, A> {
+    /// The underlying `petgraph` structure: [`Node`] weights, [`Dep`] edges.
     pub graph: Graph<Node<C, A>, Dep>,
     /// Variable names for nodes (both let-bindings and transcript vars)
     pub vctx: Ctx<NodeIndex, Vid>,
@@ -66,23 +80,39 @@ pub type QDag<C> = Dag<C, Qualifier>;
 /// A collection of dags
 #[derive(Clone)]
 pub struct Dags<C: ArkConfig, A>(Vec<Dag<C, A>>);
+/// A collection of unannotated DAGs, one per module declaration.
 pub type UDags<C> = Dags<C, Nothing>;
+/// A collection of DAGs after qualifier propagation.
 pub type QDags<C> = Dags<C, Qualifier>;
 
+/// Failures raised while lowering a module into DAGs or projecting a DAG onto
+/// one of the two protocol roles.
 #[derive(Error, PartialEq, Debug)]
 pub enum GraphError {
+    /// A variable was referenced with no binding in the lowering context.
     #[error("Variable not found {0}")]
     VarNotFound(Vid),
+    /// A `NodeIndex` (reported by its `usize` index) is absent from the graph.
     #[error("Node not found: {0}")]
     NodeNotFound(usize),
+    /// The named protocol has no `Node::Rel` marker, so it has no relation to
+    /// project onto.
     #[error("Relation not found in {0}")]
     RelationNotFound(Vid),
+    /// The verifier projection reached an argument that is not
+    /// `Qualifier::Instance` — the verifier would have to know a witness.
+    /// Holds the offending operation and reference, rendered as strings.
     #[error("Non-instance node found in verifier: {0}: {1}")]
     NonInstanceNodeInVerifier(String, String),
+    /// Two independent failures, reported together.
     #[error("{0}\n\n{1}")]
     Next(Box<GraphError>, Box<GraphError>),
+    /// A `lang`-level typing failure surfaced during lowering.
     #[error(transparent)]
     Type(Box<TypeError>),
+    /// A `fun` body could not be reified as a `PolyVariant` because it uses
+    /// operations outside the polynomial fragment (only addition, subtraction,
+    /// multiplication and negation of bound variables are supported).
     #[error("Fun expression contains non-polynomial operations: {0}")]
     NonPolynomialFun(String),
 }
@@ -95,22 +125,33 @@ impl From<TypeError> for GraphError {
 
 /// A trait for writing a graph to a PDF file
 pub trait WritePdf {
+    /// Renders the graph to `filename` as a PDF.
+    ///
+    /// # Errors
+    /// Returns the underlying `std::io::Error` if the intermediate DOT file
+    /// cannot be written or the external `dot` invocation fails.
     fn write_pdf(&self, filename: &str) -> std::io::Result<()>;
 }
 
 impl GraphError {
+    /// Chains two failures so both are reported.
     pub fn next(e1: GraphError, e2: GraphError) -> Self {
         GraphError::Next(Box::new(e1), Box::new(e2))
     }
+    /// Builds a [`GraphError::VarNotFound`] for an unbound variable.
     pub fn var_not_found(vid: &Vid) -> Self {
         GraphError::VarNotFound(vid.clone())
     }
+    /// Builds a [`GraphError::NonInstanceNodeInVerifier`] from the operation
+    /// and reference that would have leaked a witness into the verifier.
     pub fn non_instance_node_in_verifier<C: ArkConfig>(op: &GOp<C>, r: &Ref) -> Self {
         GraphError::NonInstanceNodeInVerifier(op.to_string(), r.to_string())
     }
+    /// Builds a [`GraphError::RelationNotFound`] for the named protocol.
     pub fn relation_not_found(vid: &Vid) -> Self {
         GraphError::RelationNotFound(vid.clone())
     }
+    /// Builds a [`GraphError::NodeNotFound`] from a `NodeIndex`.
     pub fn node_not_found(n: NodeIndex) -> Self {
         GraphError::NodeNotFound(n.index())
     }
@@ -159,6 +200,7 @@ impl<C: ArkConfig, A> Default for Dag<C, A> {
 }
 
 impl<C: ArkConfig, A> Dag<C, A> {
+    /// Creates an empty DAG with no nodes and empty name contexts.
     pub fn new() -> Self {
         Dag {
             graph: Graph::new(),
@@ -181,6 +223,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
         self.graph.node_count()
     }
 
+    /// All node indices, materialised into a `Vec`.
     pub fn nodes_indices(&self) -> Vec<NodeIndex> {
         self.graph.node_indices().collect()
     }
@@ -190,6 +233,11 @@ impl<C: ArkConfig, A> Dag<C, A> {
         self.graph.edge_count()
     }
 
+    /// The `Node::Inp` marker that anchors the declaration's arguments.
+    ///
+    /// # Panics
+    /// Panics if the DAG has no input marker, i.e. it was never populated by
+    /// `add_decl`.
     pub fn input_node(&self) -> NodeIndex {
         self.graph
             .node_indices()
@@ -197,12 +245,15 @@ impl<C: ArkConfig, A> Dag<C, A> {
             .expect("No input node found, DAG uninitialized")
     }
 
+    /// The `Node::Rel` marker, present only for protocols (a `fun` declaration
+    /// has no `where` clause and therefore no relation).
     pub fn relation_node(&self) -> Option<NodeIndex> {
         self.graph
             .node_indices()
             .find(|n| self.graph[*n].is_relation())
     }
 
+    /// All nodes holding a non-transcript operation.
     pub fn op_nodes(&self) -> Vec<NodeIndex> {
         self.graph
             .node_indices()
@@ -246,7 +297,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
         });
     }
 
-    /// Returns the reachable nodes (transitive, reflexive closure) from [n] in [direction]
+    /// Returns the reachable nodes (transitive, reflexive closure) from `n` in `direction`
     pub fn trc(&self, n: NodeIndex, direction: Direction) -> Set<NodeIndex> {
         let mut closure = Set::new();
         let mut worklist = vec![n];
@@ -268,6 +319,8 @@ impl<C: ArkConfig, A> Dag<C, A> {
         self.graph.add_node(node)
     }
 
+    /// Mutable access to a node weight, used by passes that rewrite
+    /// annotations in place.
     pub fn get_node(&mut self, it: NodeIndex) -> &mut Node<C, A> {
         &mut self.graph[it]
     }
@@ -281,10 +334,13 @@ impl<C: ArkConfig, A> Dag<C, A> {
         self[node].name().cloned()
     }
 
+    /// Wraps a node index as a [`Ref`], the form operations use to point at
+    /// their children.
     pub fn find_ref(&self, node: NodeIndex) -> Ref {
         Ref(node)
     }
 
+    /// Iterator over the graph's node indices.
     pub fn node_indices(&self) -> NodeIndices {
         self.graph.node_indices()
     }
@@ -295,16 +351,24 @@ impl<C: ArkConfig, A> Dag<C, A> {
         &self.graph
     }
 
+    /// The highest node index currently allocated.
+    ///
+    /// # Panics
+    /// Panics if the graph is empty.
     pub fn max_node(&self) -> NodeIndex {
         self.graph.node_indices().next_back().unwrap()
     }
 
+    /// The declaration's name, read off its input marker.
+    ///
+    /// # Panics
+    /// Panics if the DAG has no input marker or the marker carries no name.
     pub fn name(&self) -> Vid {
         let inp = self.input_node();
         self[inp].name().unwrap().clone()
     }
 
-    /// Annotate the graph using function [f]
+    /// Annotate the graph using function `f`
     pub fn map_annotations<B, F: Fn(&GOp<C>, &A) -> B>(&self, f: &F) -> Dag<C, B> {
         Dag {
             graph: self.graph.map(
@@ -322,6 +386,8 @@ impl<C: ArkConfig, A> Dag<C, A> {
         }
     }
 
+    /// Neighbours of `node_index` along `direction`, over both data and
+    /// transcript edges.
     pub fn neighbors_directed(
         &self,
         node_index: NodeIndex,
@@ -330,6 +396,9 @@ impl<C: ArkConfig, A> Dag<C, A> {
         self.graph.neighbors_directed(node_index, direction)
     }
 
+    /// The transcript edge incident to `n` in `dir`, if any.
+    ///
+    /// At most one exists per direction, since transcript nodes form a chain.
     pub fn transcript_edge<'a>(
         &'a self,
         n: NodeIndex,
@@ -346,6 +415,10 @@ impl<C: ArkConfig, A> Dag<C, A> {
     /// Graph construction maintains transcript nodes as a single transcript-edge
     /// chain, so ordering is just walking from the root transcript node to the end
     /// of that chain.
+    ///
+    /// # Panics
+    /// Panics if no transcript node lacks a transcript parent, which means the
+    /// chain contains a cycle.
     pub fn transcript_nodes(&self) -> Vec<NodeIndex> {
         let transcript_nodes: Vec<NodeIndex> = self
             .graph
@@ -477,14 +550,20 @@ impl<C: ArkConfig, A> Dag<C, A> {
         roots
     }
 
+    /// Successors of `n`: the nodes that consume it or follow it in the
+    /// transcript.
     pub fn nodes_from(&self, n: NodeIndex) -> Neighbors<'_, Dep, u32> {
         self.graph.neighbors_directed(n, Direction::Outgoing)
     }
 
+    /// Predecessors of `n`: the nodes it consumes or follows.
     pub fn nodes_to(&self, n: NodeIndex) -> Neighbors<'_, Dep, u32> {
         self.graph.neighbors_directed(n, Direction::Incoming)
     }
 
+    /// Drops every node annotation, yielding an unannotated [`UDag`].
+    ///
+    /// Used to re-run an analysis from scratch on an already-annotated DAG.
     pub fn erase_ann(self) -> UDag<C> {
         Dag {
             graph: self.graph.map(
@@ -596,6 +675,12 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
 /// Methods requiring hash-consing (HasOpFactory)
 impl<C: HasOpFactory, A> Dag<C, A> {
+    /// Rewrites every `NodeIndex` — both the graph's own and those buried
+    /// inside [`Ref`]s in hash-consed operations — through `f`.
+    ///
+    /// This is what makes subgraph projection sound: a projected DAG is built
+    /// with cloned ops that still point at source-graph indices, and this pass
+    /// translates them to the projection's own indices.
     pub fn map_node_indices<F: Fn(NodeIndex) -> NodeIndex>(&self, f: &F) -> Dag<C, A>
     where
         A: Clone,
@@ -610,6 +695,18 @@ impl<C: HasOpFactory, A> Dag<C, A> {
     }
 
     /// Get the prover graph, by reachability analysis starting from the transcript nodes
+    ///
+    /// Seeds are `prover_roots` — the transcript nodes plus terminal
+    /// `Assert` nodes outside the relation — and the walk runs backwards along
+    /// incoming edges. The input marker and its `Arg` nodes are replicated
+    /// first so the projection keeps index 0 as its input and the same argument
+    /// structure. Returns the projected DAG together with the map from source
+    /// node indices to references in it.
+    ///
+    /// # Panics
+    /// Panics if remapping encounters a reference to a source node that was not
+    /// copied into the projection, which would mean the reachability walk and
+    /// the operations' references disagree.
     pub fn get_prover(&self) -> (Dag<C, A>, HashMap<NodeIndex, Ref>)
     where
         A: Clone,
@@ -692,6 +789,10 @@ impl<C: HasOpFactory, A> Dag<C, A> {
     }
 
     /// Get the relation graph, by reachability analysis starting from the relation node
+    ///
+    /// # Errors
+    /// Returns [`GraphError::RelationNotFound`] if this DAG has no `Node::Rel`
+    /// marker, i.e. it is a `fun` rather than a protocol.
     pub fn get_relation(&self) -> Result<Dag<C, A>, GraphError>
     where
         A: Clone,
@@ -731,6 +832,11 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         Ok(g_relation.map_node_indices(&|n| node_map_rel[&n]))
     }
 
+    /// Mangles `vctx` entries for non-argument bindings by appending their node
+    /// index, so that composing several DAGs keeps PDF labels unique.
+    ///
+    /// Argument names are left untouched because they are part of the
+    /// declaration's interface.
     pub fn rename_inner_nodes(&mut self) -> Dag<C, A>
     where
         A: Clone,
@@ -758,6 +864,8 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         result
     }
 
+    /// Rebuilds the DAG with every operation rewritten by `f` and re-interned
+    /// through the hash-consing factory. Annotations and edges are preserved.
     pub fn map_ops<F: Fn(&GOp<C>) -> GOp<C>>(&mut self, f: &F) -> Dag<C, A>
     where
         A: Clone,
@@ -778,6 +886,20 @@ impl<C: HasOpFactory, A> Dag<C, A> {
 
     /// Get the verifier graph, by reachability analysis starting from the verifier assertion
     /// and stopping at transcript nodes.
+    ///
+    /// Instance arguments are replicated, challenge transcript nodes are kept
+    /// as computations, and each non-challenge (proof) transcript node is
+    /// turned into a `ArgKind::TranscriptInput` argument the verifier reads
+    /// from the proof instead of recomputing.
+    ///
+    /// # Errors
+    /// Returns [`GraphError::NonInstanceNodeInVerifier`] if the backwards walk
+    /// from a `Verify` node reaches a witness argument — the verifier cannot
+    /// depend on private data.
+    ///
+    /// # Panics
+    /// Panics if the protocol contains no terminal `Verify` node, so there is
+    /// nothing for the verifier to check.
     pub fn get_verifier(&self) -> Result<Dag<C, A>, GraphError>
     where
         A: Clone,
@@ -1061,22 +1183,30 @@ impl<C: ArkConfig, A> Default for Dags<C, A> {
 }
 
 impl<C: ArkConfig, A> Dags<C, A> {
+    /// Creates an empty collection.
     pub fn new() -> Self {
         Dags(Vec::new())
     }
 
+    /// Removes and returns the last DAG, if any.
     pub fn pop(&mut self) -> Option<Dag<C, A>> {
         self.0.pop()
     }
 
+    /// Number of DAGs in the collection.
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
+    /// Whether the collection holds no DAGs.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
+    /// Finds the protocol whose input marker carries `name`.
+    ///
+    /// Only protocols are searched, so a `fun` declaration sharing the name is
+    /// never returned.
     pub fn get_proto(&self, name: &String) -> Option<&Dag<C, A>> {
         self.protocols().into_iter().find(|g| {
             if let Some(v) = g[g.input_node()].name() {
@@ -1095,6 +1225,7 @@ impl<C: ArkConfig, A> Dags<C, A> {
             .collect()
     }
 
+    /// The declarations with no relation node, i.e. plain `fun` definitions.
     pub fn functions(&self) -> Vec<&Dag<C, A>> {
         self.0
             .iter()
@@ -1102,7 +1233,7 @@ impl<C: ArkConfig, A> Dags<C, A> {
             .collect()
     }
 
-    /// Annotate all graphs using function [f]
+    /// Annotate all graphs using function `f`
     pub fn map_annotations<B, F: Fn(&GOp<C>, &A) -> B>(&self, f: &F) -> Dags<C, B> {
         Dags(self.0.iter().map(|g| g.map_annotations(f)).collect())
     }
@@ -1111,6 +1242,14 @@ impl<C: ArkConfig, A> Dags<C, A> {
 /// A collection of DAGs without annotations
 impl<C: HasOpFactory> UDags<C> {
     /// Create a collection of Dags from a module
+    ///
+    /// One DAG is built per declaration, in module order. The full signature to
+    /// body map is passed to every lowering so that calls can be inlined.
+    ///
+    /// # Errors
+    /// Returns a [`GraphError`] if any declaration fails to lower — an unbound
+    /// variable, a `lang`-level type error surfaced during inference, or a
+    /// `fun` body outside the polynomial fragment.
     pub fn from_module(m: CModule) -> Result<Self, GraphError> {
         let mut gs = UDags::new();
 

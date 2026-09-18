@@ -1,6 +1,16 @@
+//! Cross-crate utility layer shared by `lang`, `graph`, `backend`, and `runtime`.
+//!
+//! It holds the three data structures that every stage of the compiler threads
+//! through itself: [`Ctx`] (the ordered map used for kind/function/variable
+//! environments), [`Pretty`] (Wadler-style pretty printing used by every
+//! diagnostic and by `fmt`), and [`Traversal`] (generic tree walkers used by the
+//! analyses).
+
 mod context;
+/// Assertion and unwrapping macros used across the workspace test suites.
 pub mod macros;
 mod pretty;
+/// Generic structure-to-subfield walkers, used by the `lang` and `graph` passes.
 pub mod traversal;
 
 pub use context::{Ctx, CtxValueTraversal, Set};

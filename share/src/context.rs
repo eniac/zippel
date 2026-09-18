@@ -145,6 +145,7 @@ impl<K: Ord, V> Index<K> for Ctx<K, V> {
 
 /// Special and wrapper methods for Ctx
 impl<K, V> Ctx<K, V> {
+    /// Creates an empty context.
     pub fn new() -> Self
     where
         K: Ord,
@@ -152,6 +153,7 @@ impl<K, V> Ctx<K, V> {
         Ctx(OrdMap::new())
     }
 
+    /// Creates a context holding the single binding `k` to `v`.
     pub fn singleton(k: K, v: V) -> Self
     where
         K: Ord + Clone,
@@ -162,6 +164,7 @@ impl<K, V> Ctx<K, V> {
         Ctx(m)
     }
 
+    /// Returns the first binding, in key order, satisfying `f`.
     pub fn find<FF>(&self, f: FF) -> Option<(&K, &V)>
     where
         FF: Fn(&K, &V) -> bool,
@@ -170,6 +173,7 @@ impl<K, V> Ctx<K, V> {
         self.0.iter().find(|(k, v)| f(k, v))
     }
 
+    /// Returns the first non-`None` result of applying `f` to a binding, in key order.
     pub fn find_map<FF, Y>(&self, f: FF) -> Option<Y>
     where
         FF: Fn(&K, &V) -> Option<Y>,
@@ -178,6 +182,7 @@ impl<K, V> Ctx<K, V> {
         self.0.iter().find_map(|(k, v)| f(k, v))
     }
 
+    /// Returns the binding with the smallest key.
     pub fn first(&self) -> Option<(&K, &V)>
     where
         K: Ord,
@@ -185,6 +190,7 @@ impl<K, V> Ctx<K, V> {
         self.0.iter().next()
     }
 
+    /// Returns the binding with the largest key.
     pub fn last(&self) -> Option<(&K, &V)>
     where
         K: Ord,
@@ -192,6 +198,9 @@ impl<K, V> Ctx<K, V> {
         self.0.iter().next_back()
     }
 
+    /// Removes and returns the binding with the smallest key.
+    ///
+    /// Used to drain a context as a work queue in deterministic key order.
     pub fn pop_first(&mut self) -> Option<(K, V)>
     where
         K: Ord + Clone,
@@ -202,6 +211,7 @@ impl<K, V> Ctx<K, V> {
         result
     }
 
+    /// Reports whether any binding satisfies `f`.
     pub fn any<FF>(&self, f: FF) -> bool
     where
         FF: Fn(&K, &V) -> bool,
@@ -209,13 +219,16 @@ impl<K, V> Ctx<K, V> {
     {
         self.find(f).is_some()
     }
+    /// Returns the number of bindings.
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
+    /// Removes every binding, leaving an empty context.
     pub fn clear(&mut self) {
         self.0.clear();
     }
+    /// Binds `k` to `v`, cloning both, and returns the value previously bound to `k`.
     pub fn insert(&mut self, k: &K, v: &V) -> Option<V>
     where
         K: Ord + Clone,
@@ -224,6 +237,17 @@ impl<K, V> Ctx<K, V> {
         self.0.insert(k.clone(), v.clone())
     }
 
+    /// Inserts `k` with value `v`, resolving a key collision by renaming rather than
+    /// overwriting.
+    ///
+    /// If `k` is already bound, `f` is called with the key, the incoming value and the
+    /// existing value and must yield a replacement key; insertion is then retried with
+    /// that key. This is how gensym-style shadowing avoidance is expressed for `Vid` and
+    /// `Tid` environments.
+    ///
+    /// # Errors
+    /// Returns the `E` produced by `f` when it refuses to rename a colliding key, e.g.
+    /// because the collision is a genuine redeclaration rather than shadowing.
     pub fn insert_with<E, FF>(&mut self, k: K, v: V, f: &FF) -> Result<(), E>
     where
         K: Ord + Clone,
@@ -242,6 +266,7 @@ impl<K, V> Ctx<K, V> {
         }
     }
 
+    /// Inserts every binding of `other` into `self`; on a shared key `other` wins.
     pub fn append(&mut self, other: &Ctx<K, V>)
     where
         K: Ord + Clone,
@@ -251,6 +276,9 @@ impl<K, V> Ctx<K, V> {
             self.0.insert(k.clone(), v.clone());
         }
     }
+    /// Returns the union of `self` and `other`; on a shared key `other`'s value wins.
+    ///
+    /// Neither operand is modified: `Ctx` clones are `O(1)` thanks to structural sharing.
     pub fn union(&self, other: &Ctx<K, V>) -> Ctx<K, V>
     where
         K: Ord + Clone,
@@ -259,9 +287,11 @@ impl<K, V> Ctx<K, V> {
         Ctx(other.0.clone().union(self.0.clone()))
     }
 
+    /// Reports whether the context has no bindings.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+    /// Looks up the value bound to `k`.
     pub fn get(&self, k: &K) -> Option<&V>
     where
         K: Ord,
@@ -269,6 +299,8 @@ impl<K, V> Ctx<K, V> {
         self.0.get(k)
     }
 
+    /// Looks up the value bound to `k` for in-place mutation, cloning the affected path
+    /// out of any shared structure first.
     pub fn get_mut(&mut self, k: &K) -> Option<&mut V>
     where
         K: Ord + Clone,
@@ -277,6 +309,7 @@ impl<K, V> Ctx<K, V> {
         self.0.get_mut(k)
     }
 
+    /// Removes the binding for `k` and returns its value.
     pub fn remove(&mut self, k: &K) -> Option<V>
     where
         K: Ord + Clone,
@@ -285,12 +318,14 @@ impl<K, V> Ctx<K, V> {
         self.0.remove(k)
     }
 
+    /// Returns the bound keys as a [`Set`], in key order.
     pub fn keys(&self) -> Set<K>
     where
         K: Ord + Clone,
     {
         Set(self.0.keys().cloned().collect::<BTreeSet<_>>())
     }
+    /// Returns the bound values, in key order.
     pub fn values(&self) -> Vec<V>
     where
         V: Clone,
@@ -298,18 +333,21 @@ impl<K, V> Ctx<K, V> {
     {
         self.0.values().cloned().collect()
     }
+    /// Reports whether `k` is bound.
     pub fn contains(&self, k: &K) -> bool
     where
         K: Ord,
     {
         self.0.contains_key(k)
     }
+    /// Iterates over the bindings in ascending key order.
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = (&K, &V)>
     where
         K: Ord,
     {
         self.0.iter()
     }
+    /// Rewrites every value in place, preserving the key set and ordering.
     pub fn modify<F>(&mut self, mut f: F)
     where
         K: Ord + Clone,
@@ -325,6 +363,7 @@ impl<K, V> Ctx<K, V> {
         }
         self.0 = new_map;
     }
+    /// Drops every binding for which `f` returns `false`.
     pub fn retain(&mut self, f: impl Fn(&K, &V) -> bool)
     where
         K: Ord + Clone,
@@ -340,6 +379,7 @@ impl<K, V> Ctx<K, V> {
         self.0 = new_map;
     }
 
+    /// Returns the underlying map entry for `k`, for insert-or-update in one lookup.
     pub fn entry(&mut self, k: K) -> im::ordmap::Entry<'_, K, V>
     where
         K: Ord + Clone,
@@ -348,6 +388,10 @@ impl<K, V> Ctx<K, V> {
         self.0.entry(k)
     }
 
+    /// Returns the unique binding satisfying `f`, or `None` if zero or several match.
+    ///
+    /// The "several match" case deliberately collapses to `None` so callers can treat
+    /// ambiguity and absence uniformly (e.g. overload resolution that must be unique).
     pub fn find_one(&self, f: impl Fn(&K, &V) -> bool) -> Option<(K, V)>
     where
         K: Ord + Clone,
@@ -366,6 +410,7 @@ impl<K, V> Ctx<K, V> {
         }
     }
 
+    /// Removes every binding satisfying `f` from `self` and returns them as a new context.
     pub fn extract_if(&mut self, f: impl Fn(&K, &V) -> bool) -> Ctx<K, V>
     where
         K: Ord + Clone,
@@ -410,6 +455,11 @@ impl<X, Y, K: From<X> + Ord + Clone, V: From<Y> + Clone> From<Vec<(X, Y)>> for C
 ///////////////////////////////////////////////////////////////////////////////////
 // A set of values with Pretty and Display traits and other useful methods
 ///////////////////////////////////////////////////////////////////////////////////
+/// Ordered set of values with `Pretty`/`Display` instances, used for key sets, free-variable
+/// sets and signature sets throughout the compiler.
+///
+/// Backed by a `BTreeSet`, so iteration order is the `Ord` order of `V`; this is what keeps
+/// analysis output and pretty-printed diagnostics deterministic.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Set<V>(BTreeSet<V>);
 
@@ -444,6 +494,7 @@ impl<V> IntoIterator for Set<V> {
 }
 
 // Iterator for borrowing key-value pairs
+/// Borrowing iterator over the elements of a [`Set`], in ascending order.
 #[derive(Debug, Clone)]
 pub struct SetIterator<'a, V> {
     iter: std::collections::btree_set::Iter<'a, V>,
@@ -502,28 +553,37 @@ impl<V: Ord> From<Set<V>> for Vec<V> {
 }
 
 impl<V: Ord> Set<V> {
+    /// Creates an empty set.
     pub fn new() -> Self
     where
         V: Ord,
     {
         Set(BTreeSet::new())
     }
+    /// Creates a set holding exactly `v`.
     pub fn singleton(v: V) -> Self {
         Set(BTreeSet::from([v]))
     }
 
+    /// Returns the number of elements.
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
+    /// Inserts `k`, returning `true` if it was not already present.
     pub fn insert(&mut self, k: V) -> bool {
         self.0.insert(k)
     }
 
+    /// Removes and returns the smallest element.
     pub fn pop_first(&mut self) -> Option<V> {
         self.0.pop_first()
     }
 
+    /// Inserts every element of `it`, returning `true` if at least one was new.
+    ///
+    /// The boolean is the fixed-point signal used by the dataflow analyses: they keep
+    /// iterating while some `append` still changes a set.
     pub fn append<It>(&mut self, it: It) -> bool
     where
         It: Iterator<Item = V>,
@@ -534,21 +594,26 @@ impl<V: Ord> Set<V> {
         }
         ins
     }
+    /// Returns the smallest element.
     pub fn first(&self) -> Option<&V> {
         self.0.first()
     }
 
+    /// Reports whether `self` and `other` share no element.
     pub fn is_disjoint(&self, other: &Set<V>) -> bool {
         self.0.is_disjoint(&other.0)
     }
 
+    /// Returns the largest element.
     pub fn last(&self) -> Option<&V> {
         self.0.last()
     }
+    /// Reports whether `k` is a member.
     pub fn contains(&self, k: &V) -> bool {
         self.0.contains(k)
     }
 
+    /// Returns the smallest element satisfying `f`.
     pub fn find<FF>(&self, f: FF) -> Option<&V>
     where
         FF: Fn(&V) -> bool,
@@ -556,6 +621,7 @@ impl<V: Ord> Set<V> {
         self.0.iter().find(|v| f(v))
     }
 
+    /// Reports whether the set is empty.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -577,13 +643,14 @@ impl<V: Ord> Set<V> {
         Set(self.0.intersection(&other.0).cloned().collect())
     }
 
+    /// Iterates over the elements in ascending order, borrowing them.
     pub fn iter<'a>(&'a self) -> SetIterator<'a, V> {
         SetIterator {
             iter: self.0.iter(),
         }
     }
 
-    /// Method to iterate over a mutable Vec, modify elements, and return a new Set<T>
+    /// Method to iterate over a mutable Vec, modify elements, and return a new `Set<T>`
     pub fn modify<F>(&mut self, mut f: F)
     where
         V: Clone,
@@ -619,12 +686,14 @@ impl<V: Ord> Set<V> {
         s
     }
 
+    /// Drops every element for which `f` returns `false`.
     pub fn retain(&mut self, f: impl Fn(&V) -> bool) {
         self.0.retain(f);
     }
 }
 
 impl<V: Ord + Clone> Set<&V> {
+    /// Clones every borrowed element, turning a set of references into an owning set.
     pub fn cloned(self) -> Set<V> {
         Set(self.0.into_iter().cloned().collect())
     }

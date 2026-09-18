@@ -31,12 +31,23 @@ pub type UKind = Kind<Size>;
 pub type CKind = Kind<usize>;
 
 impl<N> Kind<N> {
+    /// Returns `true` if a type variable of this kind resolves to a scalar-field element.
+    ///
+    /// Both an unconstrained `Field` and the scalar field `Scalar(groups)` of a set of groups
+    /// collapse to `ABase::Scalar` during `ATyp::from_ctyp`.
     pub fn is_scalar(&self) -> bool {
         matches!(self, Kind::Field | Kind::Scalar(_))
     }
+    /// Returns `true` if a type variable of this kind resolves to an elliptic-curve group
+    /// element, whether it is an unconstrained `Group` or one half of a `Pairing`.
     pub fn is_group(&self) -> bool {
         matches!(self, Kind::Group | Kind::Pairing(_, _))
     }
+    /// Returns `true` if this kind is a pairing over exactly the two given type identifiers,
+    /// in either order.
+    ///
+    /// Pairings are unordered here: the source group roles are distinguished later, when
+    /// `ATyp::from_ctyp` searches the `kctx` to route one `Tid` to `G1` and the other to `G2`.
     pub fn is_pairing(&self, a: &Tid, b: &Tid) -> bool {
         match self {
             Kind::Pairing(x, y) => (&x.node == a && &y.node == b) || (&y.node == a && &x.node == b),
@@ -44,6 +55,10 @@ impl<N> Kind<N> {
         }
     }
 
+    /// If this kind is a pairing that mentions `a`, returns its two source-group identifiers
+    /// in declaration order; otherwise returns `None`.
+    ///
+    /// Used to recover a group's pairing partner from the kind context.
     pub fn get_pairing_of(&self, a: &Tid) -> Option<(Tid, Tid)> {
         match self {
             Kind::Pairing(x, y) => {

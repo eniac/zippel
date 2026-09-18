@@ -7,7 +7,13 @@ where
     A: 'a,
     D: DocAllocator<'a, A>,
 {
+    /// Render `self` into an allocator-owned document, consuming it.
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A>;
+    /// Whether [`pretty`](Pretty::pretty) would produce an empty document.
+    ///
+    /// Callers use this to suppress separators and enclosing groups around
+    /// values that print to nothing (e.g. `Nothing` annotations or empty
+    /// contexts), so no stray whitespace or punctuation is emitted.
     fn is_nil(&self) -> bool;
 }
 

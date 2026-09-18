@@ -89,8 +89,14 @@ pub enum ResultKind {
 /// `Err(RuntimeError::AssertionFailed)` instead of a `RunResult`.
 #[derive(Debug)]
 pub enum RunResult<C: ArkConfig> {
+    /// Proof transcript values emitted by the prover, in transcript order.
     Prover(Vec<Value<C>>),
-    Verifier { verify_results: Vec<bool> },
+    /// Outcome of every terminal `Op::Verify` node in the verifier graph.
+    Verifier {
+        /// One boolean per `Op::Verify` node, in graph-collection order;
+        /// the protocol verifies iff every entry is `true`.
+        verify_results: Vec<bool>,
+    },
 }
 
 /// Runtime information attached to each Op/Transcr node in the DAG.
@@ -122,6 +128,9 @@ impl<C: ArkConfig> Default for RuntimeInformation<C> {
 }
 
 impl<C: ArkConfig> RuntimeInformation<C> {
+    /// Create runtime state for a not-yet-executed node: no value computed
+    /// and a zero dependency counter that `run_graph` overwrites with the
+    /// node's unique-predecessor count during initialization.
     pub fn new() -> Self {
         RuntimeInformation {
             return_value: OnceLock::new(),
@@ -130,6 +139,13 @@ impl<C: ArkConfig> RuntimeInformation<C> {
     }
 }
 
+/// A [`UDag`] whose per-node annotation is the shared [`RuntimeInformation`]
+/// used to execute it.
+///
+/// This is the final stage of the pipeline: a scheduled DAG wrapped with
+/// enough interior mutability (`OnceLock` values, atomic dependency counters,
+/// a mutex-guarded check map) that `rayon` workers and the sponge-owning main
+/// thread can drive it concurrently.
 pub struct MutexGraph<C: ArkConfig> {
     mutex_graph: Dag<C, Arc<RuntimeInformation<C>>>,
     /// Auxiliary map storing pass/fail results for `Op::Assert` and
@@ -261,6 +277,9 @@ fn log_double_execute(kind: &str, node: NodeIndex, op_disc: usize) {
 // ---------------------------------------------------------------------------
 
 impl<C: ArkConfig> MutexGraph<C> {
+    /// Wrap a scheduled DAG for execution, replacing every node annotation
+    /// with fresh [`RuntimeInformation`] and starting with an empty
+    /// assert/verify result map.
     pub fn new(dag: UDag<C>) -> Self {
         MutexGraph {
             mutex_graph: dag.map_annotations(&|_, _| Arc::new(RuntimeInformation::<C>::new())),
@@ -268,6 +287,8 @@ impl<C: ArkConfig> MutexGraph<C> {
         }
     }
 
+    /// Log every edge of the graph at `debug` level, for diagnosing
+    /// scheduling and readiness-counter problems.
     pub fn print_edges(&self) {
         for node in self.mutex_graph.node_indices() {
             for neighbor in self
@@ -279,6 +300,19 @@ impl<C: ArkConfig> MutexGraph<C> {
         }
     }
 
+    /// Resolve the value a `graph::Ref` points at: either a previously
+    /// computed node value or, for an `Arg` node, the caller-supplied input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::MissingArg`] when the reference resolves to an
+    /// `Arg` node whose `Vid` is absent from `inputs`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the referenced `Op`/`Transcr` node has not been executed yet
+    /// (a scheduling/readiness-counter bug), or if the reference points at an
+    /// `Inp`/`Rel` marker node, which carries no value.
     pub fn get_value(
         &self,
         r: graph::Ref,
@@ -312,6 +346,17 @@ impl<C: ArkConfig> MutexGraph<C> {
     /// This keeps the runtime's per-node semantics in lockstep with the test
     /// executors and the unit-level `eval_op` callers — there is no separate
     /// runtime-only dispatch table.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`RuntimeError::MissingArg`] from [`MutexGraph::get_value`]
+    /// when a referenced argument is not present in `inputs`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `eval_op` fails on a scheduled node: every shape and type
+    /// precondition is established by the `lang` type checker and the
+    /// scheduler, so a failure here is a compiler invariant violation.
     pub fn handle_op(
         &self,
         operation: &GOp<C>,
@@ -335,6 +380,21 @@ impl<C: ArkConfig> MutexGraph<C> {
         Ok((value, check_sink))
     }
 
+    /// Execute one node: compute its value, record any `Assert`/`Verify`
+    /// outcome into the check map, and publish the value for its successors.
+    ///
+    /// `Inp`, `Rel`, and `Arg` nodes are pure markers and do nothing here.
+    /// Re-entry on an already-evaluated node is tolerated: it is counted in
+    /// [`DOUBLE_EXECUTE_COUNT`] and skipped rather than recomputed.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`RuntimeError::MissingArg`] from the operand lookup.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the check-results mutex is poisoned, or if `eval_op`
+    /// violates a runtime invariant (see [`MutexGraph::handle_op`]).
     pub fn handle_node(
         &self,
         node_curr: NodeIndex,
@@ -421,6 +481,20 @@ impl<C: ArkConfig> MutexGraph<C> {
     /// - For `ResultKind::Verifier`: `RunResult::Verifier { verify_results }` —
     ///   per-Verify pass/fail booleans.
     /// - If any Assert fails (in either role): `Err(RuntimeError::AssertionFailed)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::MissingArg`] if an `Arg` node references an
+    /// input the caller did not supply, and
+    /// [`RuntimeError::AssertionFailed`] if any terminal `Op::Assert`
+    /// evaluated to `false`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a node is executed twice (`Challenge` set-race), if a
+    /// `Transcr` value is missing after `handle_node`, if a transcript value
+    /// cannot be serialized for the sponge, if a non-sync node reaches the
+    /// sync channel, or if the error/check mutexes are poisoned.
     pub fn run_graph<H: DuplexSpongeInterface<U = u8>>(
         g: Arc<MutexGraph<C>>,
         inputs: Arc<Ctx<Vid, Value<C>>>,

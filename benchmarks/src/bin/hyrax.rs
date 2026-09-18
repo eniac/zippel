@@ -1,3 +1,12 @@
+//! Head-to-head benchmark of the Zippel-compiled Hyrax polynomial commitment against a
+//! hand-rolled native implementation on BLS12-381.
+//!
+//! Both sides prove `p̃(z) = y` for a multilinear polynomial with `2^N` coefficients. The prover
+//! timer covers the Pedersen row commitments plus the Schnorr-style proof of dot product; the
+//! verifier timer covers the `T` reconstruction and the two group equality checks. `--sweep`
+//! sweeps a grid of `N` values and `--nodes` additionally reports the scheduled prover and
+//! verifier DAG node counts.
+
 use benchmarks::hyrax::{DEFAULT_N, native_side, zippel_side};
 use clap::Parser;
 

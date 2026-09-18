@@ -3,27 +3,50 @@ use std::fmt;
 
 use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 
+/// Visibility qualifier attached to every protocol variable and DAG node.
+///
+/// The four qualifiers form a total order `Witness <= Local <= Extra <= Instance`,
+/// from "known only to the prover" up to "known to everyone". Qualifier
+/// propagation in `graph` joins the qualifiers of an operation's children, and the
+/// result decides whether a node is projected into the prover subgraph, the
+/// verifier subgraph, or both.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Qualifier {
+    /// Secret prover input (surface keyword `witness`); never revealed to the verifier.
     Witness,
+    /// The default for an unannotated argument or a compiler-introduced intermediate:
+    /// a value local to the party that computes it, not part of the transcript.
     Local,
+    /// Transcript material (surface keyword `extra`): computed by the prover and sent
+    /// to the verifier as part of the proof.
     Extra,
+    /// Public statement data (surface keyword `instance`) known to prover and verifier alike.
     Instance,
 }
 
 impl Qualifier {
+    /// Returns `true` for [`Qualifier::Witness`].
     pub fn is_witness(&self) -> bool {
         matches!(self, Qualifier::Witness)
     }
+    /// Returns `true` for [`Qualifier::Local`].
     pub fn is_local(&self) -> bool {
         matches!(self, Qualifier::Local)
     }
+    /// Returns `true` for [`Qualifier::Extra`].
     pub fn is_extra(&self) -> bool {
         matches!(self, Qualifier::Extra)
     }
+    /// Returns `true` for [`Qualifier::Instance`].
     pub fn is_instance(&self) -> bool {
         matches!(self, Qualifier::Instance)
     }
+    /// Joins two qualifiers in the secrecy lattice, yielding the least (most secret)
+    /// of the two.
+    ///
+    /// This is the propagation rule: a value derived from a `witness` is itself a
+    /// witness, and only a value derived exclusively from `instance` data stays
+    /// `Instance`.
     pub fn join(&self, other: &Self) -> Self {
         match (self, other) {
             // Witness ≤ Local ≤ Extra ≤ Instance (join = min in the lattice)

@@ -3,8 +3,17 @@
 /// Define traversals as a relation between a structure and a
 /// subfield of that structure. Maybe this is more akin to lenses.
 pub trait Traversal<A, B = A> {
+    /// The structure being traversed, i.e. the container holding the `A` positions.
     type Domain;
+    /// The structure produced once every `A` position has been replaced by a `B`.
     type Codomain;
+    /// Rewrites every `A` position of `on` with `f`, rebuilding the container.
+    ///
+    /// The closure is applied left-to-right and the traversal short-circuits on the first
+    /// error, so effects performed by `f` on later positions are not observable.
+    ///
+    /// # Errors
+    /// Returns the first `E` produced by `f`; the traversal itself never fails.
     fn traverse<E>(
         on: Self::Domain,
         f: &mut dyn FnMut(A) -> Result<B, E>,
@@ -13,27 +22,60 @@ pub trait Traversal<A, B = A> {
 
 /// Acess the traversal for free type parameters (1, 2, 3)
 pub trait ToTraversal1<A>: Sized {
+    /// The same container shape with its focused `A` positions replaced by `Z`.
     type Output<Z>;
+    /// Traverses the first free type parameter of `self`, mapping each `A` to a `Z`.
+    ///
+    /// # Errors
+    /// Returns the first `E` produced by `f`.
     fn traverse1<Z: Clone, E>(
         self,
         f: &mut dyn FnMut(A) -> Result<Z, E>,
     ) -> Result<Self::Output<Z>, E>;
+    /// Infallible form of [`ToTraversal1::traverse1`] for closures that cannot fail.
+    ///
+    /// # Panics
+    /// Never: `f` is lifted into the uninhabited-error type `Result<Z, ()>`, so the
+    /// internal `unwrap` is unreachable.
     fn map1<Z: Clone>(self, f: &mut dyn FnMut(A) -> Z) -> Self::Output<Z> {
         self.traverse1::<Z, ()>(&mut |x| Ok(f(x))).unwrap()
     }
 }
+/// Traversal over the *second* free type parameter of a structure.
+///
+/// Implemented by containers with two parameters (e.g. an AST node generic over both a
+/// name and an annotation) so callers can rewrite one parameter without touching the other.
 pub trait ToTraversal2<A>: Sized {
+    /// The same container shape with its focused `A` positions replaced by `Z`.
     type Output<Z>;
+    /// Traverses the second free type parameter of `self`, mapping each `A` to a `Z`.
+    ///
+    /// # Errors
+    /// Returns the first `E` produced by `f`.
     fn traverse2<Z: Clone, E>(
         self,
         f: &mut dyn FnMut(A) -> Result<Z, E>,
     ) -> Result<Self::Output<Z>, E>;
+    /// Infallible form of [`ToTraversal2::traverse2`] for closures that cannot fail.
+    ///
+    /// # Panics
+    /// Never: `f` is lifted into the uninhabited-error type `Result<Z, ()>`, so the
+    /// internal `unwrap` is unreachable.
     fn map2<Z: Clone>(self, f: &mut dyn FnMut(A) -> Z) -> Self::Output<Z> {
         self.traverse2::<Z, ()>(&mut |x| Ok(f(x))).unwrap()
     }
 }
+/// Traversal over the *third* free type parameter of a structure.
+///
+/// Deliberately has no `map3` convenience method; the third parameter is only ever
+/// rewritten by fallible passes.
 pub trait ToTraversal3<A> {
+    /// The same container shape with its focused `A` positions replaced by `Z`.
     type Output<Z>;
+    /// Traverses the third free type parameter of `self`, mapping each `A` to a `Z`.
+    ///
+    /// # Errors
+    /// Returns the first `E` produced by `f`.
     fn traverse3<Z: Clone, E>(
         self,
         f: &mut dyn FnMut(A) -> Result<Z, E>,
@@ -84,6 +126,7 @@ impl<A, B, C> Traversal<A, B> for Vec2Traversal1<(A, C)> {
     }
 }
 
+/// Traverses the second component of each pair in a `Vec` of pairs.
 pub struct Vec2Traversal2<A>(std::marker::PhantomData<A>);
 impl<A, B, C> Traversal<B, C> for Vec2Traversal2<(A, B)> {
     type Domain = Vec<(A, B)>;

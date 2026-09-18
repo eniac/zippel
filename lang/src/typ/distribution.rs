@@ -2,25 +2,46 @@ use std::fmt;
 
 use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 
+/// How a value is distributed over its type's domain, used by the uniformity
+/// analysis to reason about masking and zero-knowledge.
+///
+/// The variants form the abstract domain that `UniformityPropagation` propagates
+/// through arithmetic: only a value that is provably uniform (and, for division,
+/// provably non-zero) can perfectly hide a secret.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd, Default)]
 pub enum Distribution {
+    /// Uniformly distributed over the whole domain, zero included.
     Uniform,
+    /// Uniformly distributed over the non-zero elements; the only distribution that
+    /// is safe to invert or to use as a multiplicative mask.
     UniformNonZero,
+    /// No uniformity guarantee; the conservative default.
+    ///
+    /// This is also the [`Default`], so an unannotated value is assumed biased.
     #[default]
     Nonuniform,
 }
 
 impl Distribution {
+    /// Returns `true` for [`Distribution::Uniform`].
     pub fn is_uniform(&self) -> bool {
         matches!(self, Distribution::Uniform)
     }
+    /// Returns `true` for [`Distribution::UniformNonZero`].
     pub fn is_uniform_nz(&self) -> bool {
         matches!(self, Distribution::UniformNonZero)
     }
+    /// Returns `true` for [`Distribution::Nonuniform`].
     pub fn is_nonuniform(&self) -> bool {
         matches!(self, Distribution::Nonuniform)
     }
 
+    /// Abstract addition: the distribution of `self + other`, assuming the two
+    /// operands are independent.
+    ///
+    /// Adding a uniform value (zero included) to anything re-randomizes it, so
+    /// `Uniform` absorbs. A sum of non-zero uniform values may hit zero, so it
+    /// degrades to `Nonuniform`.
     // Assumes independence, adding two distributions
     pub fn add(&self, other: &Distribution) -> Distribution {
         match (self, other) {
@@ -34,6 +55,8 @@ impl Distribution {
         }
     }
 
+    /// Abstract subtraction: the distribution of `self - other`, assuming the two
+    /// operands are independent. Same lattice rules as [`Distribution::add`].
     pub fn sub(&self, other: &Distribution) -> Distribution {
         match (self, other) {
             (Distribution::Uniform, _) | (_, Distribution::Uniform) => Distribution::Uniform,
@@ -46,6 +69,12 @@ impl Distribution {
         }
     }
 
+    /// Abstract multiplication: the distribution of `self * other`, assuming the two
+    /// operands are independent.
+    ///
+    /// Only a product of two uniform non-zero values stays uniform non-zero; any
+    /// factor that can be zero biases `Pr[0]` and collapses the result, as spelled
+    /// out in the comments below.
     // Assumes independence, multiplying two distributions.
     //
     // Cryptographic reasoning:
@@ -87,6 +116,11 @@ impl Distribution {
         }
     }
 
+    /// Abstract inversion: the distribution of `1 / self`.
+    ///
+    /// Only a uniform non-zero value is invertible in the first place, and its
+    /// inverse is again uniform over the non-zero elements, reported here as the
+    /// weaker `Uniform`. Everything else is `Nonuniform`.
     pub fn inv(&self) -> Distribution {
         match self {
             Distribution::UniformNonZero => Distribution::Uniform,

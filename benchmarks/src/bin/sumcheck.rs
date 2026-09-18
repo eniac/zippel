@@ -1,3 +1,14 @@
+//! Side-by-side sumcheck timing: zippel vs. the vendored hyperplonk-native
+//! implementation.
+//!
+//! Both sides prove the same statement — `base(x)^d` summed over the boolean
+//! hypercube, where `base` is a random dense MLE — and the table reports
+//! prove/verify wall times plus the zippel-to-native ratio.
+//!
+//! `--num-vars` / `--max-degree` pick a single point; the comma-separated
+//! `--sweep-num-vars` / `--sweep-max-degree` override them with a grid. When
+//! only one `max_degree` is in play the table drops its `deg` column.
+
 use benchmarks::sumcheck::{DEFAULT_MAX_DEGREE, DEFAULT_NUM_VARS, native_side, zippel_side};
 use clap::Parser;
 

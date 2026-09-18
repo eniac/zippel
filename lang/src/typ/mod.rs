@@ -1,12 +1,24 @@
+//! The `lang`-level type system: source types, kinds, qualifiers, and type inference.
+//!
+//! Source types are [`Typ`](crate::typ::Typ), where `T` is the base-type tag (normally
+//! [`Tid`](crate::id::Tid)) and `N` is the size representation — [`Size`](crate::ast::size::Size)
+//! before concretization ([`UTyp`](crate::typ::UTyp)) and `usize` afterwards
+//! ([`CTyp`](crate::typ::CTyp)). The IR-level counterpart is `backend::ATyp`.
+
+/// Bridge from source types to the `arkworks`-flavoured base types.
 pub mod ark;
 mod distribution;
+/// Kind-directed type inference (`Typeable`, `TypeError`).
 pub mod infer;
 mod kind;
+/// Least-upper bounds joining operand types of binary operations.
 pub mod lub;
 mod nothing;
 mod qualifier;
+/// Substitutions for type aliases and symbolic sizes.
 pub mod subst;
 mod typevar;
+/// Kind-aware unification of source types.
 pub mod unify;
 
 pub use crate::ast::range::{CRange, Range, RangeError, RangeTraversal};
@@ -28,14 +40,14 @@ use share::traversal::{ToTraversal1, ToTraversal2};
 use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 use std::fmt;
 
-/// The types of expressions, [N] is the size parameter
+/// The types of expressions, `N` is the size parameter
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Typ<T, N> {
     /// Polynomial with M variables and degree N over base type T
     /// Poly(F, 1, N) represents univariate polynomials of degree N
     /// Poly(F, M, 1) represents multilinear polynomials of M variables
     Poly(T, Spanned<N>, Spanned<N>),
-    /// Vector of size [N] and base type [Typ]
+    /// Vector of size `N` and base type [Typ]
     Vec(Box<Spanned<Typ<T, N>>>, Spanned<N>),
     /// Tid type [Tid]
     Base(T),
@@ -55,14 +67,18 @@ pub struct Typs<T, N>(pub Vec<Spanned<Typ<T, N>>>);
 
 /// Generic type [Tid]
 pub type GTyp<N> = Typ<Tid, N>;
+/// Several generic types over [`Tid`] base tags.
 pub type GTyps<N> = Typs<Tid, N>;
 
 /// Symbolically sized type
 pub type UTyp = Typ<Tid, Size>;
+/// Alias intended for several symbolically sized types; note it currently expands to a single
+/// `Typ<Tid, Size>`, i.e. it is identical to [`UTyp`].
 pub type UTyps = Typ<Tid, Size>;
 
 /// Concrete size type
 pub type CTyp = Typ<Tid, usize>;
+/// Several concretely sized types.
 pub type CTyps = Typs<Tid, usize>;
 
 impl<N: Clone> TidSubst for GTyp<N> {
@@ -102,12 +118,14 @@ impl<N: Clone> TidSubst for GTyps<N> {
 }
 
 impl<T, N> Typ<T, N> {
+    /// Wraps a base-type tag as a [`Typ::Base`].
     pub fn base(b: &T) -> Self
     where
         T: Clone,
     {
         Typ::Base(b.clone())
     }
+    /// Builds the type of a length-`n` vector whose elements have type `b`, with dummy spans.
     pub fn vec(b: &Typ<T, N>, n: N) -> Self
     where
         T: Clone,
@@ -115,15 +133,22 @@ impl<T, N> Typ<T, N> {
     {
         Typ::Vec(Box::new(Spanned::dummy(b.clone())), Spanned::dummy(n))
     }
+    /// Builds a [`Typ::Fin`] constrained to the integer `range`.
     pub fn fin(range: Range<N>) -> Self {
         Typ::Fin(range)
     }
+    /// The unit type, returned by `assert` / `verify` / protocol bodies.
     pub fn unit() -> Self {
         Typ::Unit
     }
+    /// The boolean type, produced by `==`.
     pub fn bool() -> Self {
         Typ::Bool
     }
+    /// Splits a vector type into its element type and length.
+    ///
+    /// # Panics
+    /// Panics if `self` is not a [`Typ::Vec`]; callers must have established the shape already.
     pub fn into_vec(self) -> (Spanned<Self>, Spanned<N>) {
         match self {
             Typ::Vec(deref!(t), n) => (t, n),
@@ -133,12 +158,14 @@ impl<T, N> Typ<T, N> {
 }
 
 impl<N> GTyp<N> {
+    /// The univariate encoding `Poly(b, 1, n)`: a degree-`n` polynomial over base type `b`.
     pub fn uni(b: &Tid, n: N) -> Self
     where
         N: From<usize>,
     {
         Typ::Poly(b.clone(), Spanned::dummy(N::from(1)), Spanned::dummy(n))
     }
+    /// The multilinear encoding `Poly(b, m, 1)`: a polynomial in `m` variables over base type `b`.
     pub fn mle(b: &Tid, m: N) -> Self
     where
         N: From<usize>,
@@ -146,6 +173,12 @@ impl<N> GTyp<N> {
         Typ::Poly(b.clone(), Spanned::dummy(m), Spanned::dummy(N::from(1)))
     }
 
+    /// Resolves this type to the scalar-kinded [`Tid`] it can be treated as, if any.
+    ///
+    /// A [`Typ::Base`] resolves to itself when its kind in `ctx` is scalar-shaped. An integer
+    /// [`Typ::Fin`] has no base tag of its own, so it resolves to the unique `Field` in `ctx`, or
+    /// — when no field is present — to the unique `Scalar` kind. Ambiguity (several candidates) and
+    /// any other type shape yield `None`.
     pub fn to_scalar<M>(&self, ctx: &Ctx<Tid, Kind<M>>) -> Option<Tid> {
         match self {
             Typ::Base(b) => {
@@ -185,12 +218,15 @@ impl<N> GTyp<N> {
 }
 
 impl<T, N> Typs<T, N> {
+    /// Number of types in the sequence.
     pub fn len(&self) -> usize {
         self.0.len()
     }
+    /// Iterates over the spanned types in declaration order.
     pub fn iter(&self) -> std::slice::Iter<'_, Spanned<Typ<T, N>>> {
         self.0.iter()
     }
+    /// Whether the sequence is empty.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -318,6 +354,7 @@ impl<T: Clone, N: Clone> RangeTraversal<N> for Typs<T, N> {
 /// Trait for inlining type aliases. Replaces `Typ::Base(name)` with the
 /// expanded type when `name` is a key in the type alias context.
 pub trait TypeInline<N>: Sized {
+    /// Expands every alias occurring in `self` using the alias context `ctx`.
     fn type_inline(self, ctx: &Ctx<Tid, GTyp<N>>) -> Self;
 }
 

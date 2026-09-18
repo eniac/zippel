@@ -1,3 +1,16 @@
+//! Driver crate for the Zippel protocol compiler.
+//!
+//! [`ZippelHandler`] wires the whole pipeline together for one cryptographic
+//! backend `C`: parse a `.zippel` file into a `UModule`, concretize its symbolic
+//! sizes into a `CModule`, build the protocol `UDag`, project prover and
+//! verifier subgraphs, run them through the `runtime` engine, and run the
+//! static analyses (completeness, knowledge, special soundness) on the
+//! qualifier-propagated `QDag`.
+//!
+//! The workspace member crates (`lang`, `graph`, `backend`, `runtime`,
+//! `analyses`, `share`) are re-exported here so a downstream crate can depend on
+//! `zippel` alone.
+
 use analyses::{CompletenessAnalysis, KnowledgeAnalysis, QualifierPropagation};
 use backend::op::HasOpFactory;
 use backend::{ArkConfig, Value, value_to_bytes};
@@ -56,6 +69,8 @@ pub struct ZippelArgs {
 }
 
 impl ZippelArgs {
+    /// Create arguments for `file_path` with no PDF output, no explicit
+    /// subgraph, and the default (path-derived) transcript session.
     #[must_use]
     pub const fn new(file_path: PathBuf) -> Self {
         Self {
@@ -66,6 +81,8 @@ impl ZippelArgs {
         }
     }
 
+    /// Create arguments for `file_path` with an explicit Fiat-Shamir session
+    /// label instead of the source path.
     pub fn new_with_domain_session(
         file_path: PathBuf,
         domain_separator_session: impl Into<String>,
@@ -73,12 +90,16 @@ impl ZippelArgs {
         Self::new(file_path).with_domain_session(domain_separator_session)
     }
 
+    /// Set the Fiat-Shamir session label, pinning transcript identity to a value
+    /// that does not move when the source file is relocated.
     #[must_use]
     pub fn with_domain_session(mut self, domain_separator_session: impl Into<String>) -> Self {
         self.domain_separator_session = Some(domain_separator_session.into());
         self
     }
 
+    /// The Fiat-Shamir session label, falling back to the source file path when
+    /// none was set explicitly.
     #[must_use]
     pub fn domain_separator_session(&self) -> String {
         self.domain_separator_session
@@ -86,12 +107,16 @@ impl ZippelArgs {
             .unwrap_or_else(|| self.file_path.display().to_string())
     }
 
+    /// Request graph PDFs; each pipeline stage is written as
+    /// `<pdf_path>_<stage>.pdf`.
     #[must_use]
     pub fn with_pdf(mut self, pdf_path: PathBuf) -> Self {
         self.pdf_path_opt = Some(pdf_path);
         self
     }
 
+    /// Select which protocol declaration of the module to compile and analyse;
+    /// without it the first protocol in the module is used.
     #[must_use]
     pub fn with_subgraph(mut self, subgraph: String) -> Self {
         self.subgraph = Some(subgraph);
@@ -99,16 +124,24 @@ impl ZippelArgs {
     }
 }
 
+/// Stateful driver over one `.zippel` source file.
+///
+/// Each stage caches its output: `compile` fills the module caches and the
+/// prover / verifier projections, and `analyze_graph` lazily builds the
+/// qualifier-propagated DAG the analyses consume.
 pub struct ZippelHandler<C: ArkConfig> {
     args: ZippelArgs,
     sized_module: Option<UModule>,
     concrete_module: Option<CModule>,
+    /// Prover projection of the protocol DAG; `Some` only after `compile`.
     pub prover_graph: Option<UDag<C>>,
+    /// Verifier projection of the protocol DAG; `Some` only after `compile`.
     pub verifier_graph: Option<UDag<C>>,
     analyze_graph: Option<Dag<C, Qualifier>>,
 }
 
 impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
+    /// Create a handler for `args`; nothing is parsed until `compile` is called.
     #[must_use]
     pub const fn new(args: ZippelArgs) -> Self {
         Self {
@@ -121,6 +154,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         }
     }
 
+    /// The arguments this handler was constructed with.
     #[must_use]
     pub const fn args(&self) -> &ZippelArgs {
         &self.args

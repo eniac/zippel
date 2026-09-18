@@ -110,80 +110,80 @@ impl<F: PrimeField> AsRef<[u64]> for NoCurve<F> {
 }
 
 impl<F: PrimeField> From<bool> for NoCurve<F> {
-    /// Converts a value of type T into NoCurve<F>.
+    /// Converts a value of type T into `NoCurve<F>`.
     fn from(_: bool) -> Self {
         panic!("{}", NOCURVE_ERR)
     }
 }
 
 impl<F: PrimeField> From<u128> for NoCurve<F> {
-    /// Converts a value of type T into NoCurve<F>.
+    /// Converts a value of type T into `NoCurve<F>`.
     fn from(_: u128) -> Self {
         panic!("{}", NOCURVE_ERR)
     }
 }
 impl<F: PrimeField> From<u64> for NoCurve<F> {
-    /// Converts a value of type T into NoCurve<F>.
+    /// Converts a value of type T into `NoCurve<F>`.
     fn from(_: u64) -> Self {
         panic!("{}", NOCURVE_ERR)
     }
 }
 impl<F: PrimeField> From<u32> for NoCurve<F> {
-    /// Converts a value of type T into NoCurve<F>.
+    /// Converts a value of type T into `NoCurve<F>`.
     fn from(_: u32) -> Self {
         panic!("{}", NOCURVE_ERR)
     }
 }
 impl<F: PrimeField> From<u16> for NoCurve<F> {
-    /// Converts a value of type T into NoCurve<F>.
+    /// Converts a value of type T into `NoCurve<F>`.
     fn from(_: u16) -> Self {
         panic!("{}", NOCURVE_ERR)
     }
 }
 impl<F: PrimeField> From<u8> for NoCurve<F> {
-    /// Converts a value of type T into NoCurve<F>.
+    /// Converts a value of type T into `NoCurve<F>`.
     fn from(_: u8) -> Self {
         panic!("{}", NOCURVE_ERR)
     }
 }
 
 impl<F: PrimeField> From<i128> for NoCurve<F> {
-    /// Converts a value of type T into NoCurve<F>.
+    /// Converts a value of type T into `NoCurve<F>`.
     fn from(_: i128) -> Self {
         panic!("{}", NOCURVE_ERR)
     }
 }
 
 impl<F: PrimeField> From<i64> for NoCurve<F> {
-    /// Converts a value of type T into NoCurve<F>.
+    /// Converts a value of type T into `NoCurve<F>`.
     fn from(_: i64) -> Self {
         panic!("{}", NOCURVE_ERR)
     }
 }
 
 impl<F: PrimeField> From<i32> for NoCurve<F> {
-    /// Converts a value of type T into NoCurve<F>.
+    /// Converts a value of type T into `NoCurve<F>`.
     fn from(_: i32) -> Self {
         panic!("{}", NOCURVE_ERR)
     }
 }
 
 impl<F: PrimeField> From<i16> for NoCurve<F> {
-    /// Converts a value of type T into NoCurve<F>.
+    /// Converts a value of type T into `NoCurve<F>`.
     fn from(_: i16) -> Self {
         panic!("{}", NOCURVE_ERR)
     }
 }
 
 impl<F: PrimeField> From<i8> for NoCurve<F> {
-    /// Converts a value of type T into NoCurve<F>.
+    /// Converts a value of type T into `NoCurve<F>`.
     fn from(_: i8) -> Self {
         panic!("{}", NOCURVE_ERR)
     }
 }
 
 impl<F: PrimeField> From<BigUint> for NoCurve<F> {
-    /// Converts a value of type T into NoCurve<F>.
+    /// Converts a value of type T into `NoCurve<F>`.
     fn from(_: BigUint) -> Self {
         panic!("{}", NOCURVE_ERR)
     }

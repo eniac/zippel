@@ -1,3 +1,9 @@
+//! Head-to-head benchmark of the Zippel-compiled Schnorr proof of knowledge against the
+//! hand-written `ark-crypto-primitives` Schnorr implementation on BLS12-381 G1.
+//!
+//! Both sides prove knowledge of `x` such that `h = g·x`; the binary prints prover and verifier
+//! wall times and the Zippel/`ark-cp` ratio for each.
+
 use benchmarks::schnorr::{native_side, zippel_side};
 
 fn main() {

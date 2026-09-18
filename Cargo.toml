@@ -4,6 +4,7 @@ default-members = [".", "lang", "runtime", "share", "graph", "backend", "analyse
 resolver = "2"
 
 [lints.rust]
+missing_docs = "warn"
 unused_import_braces = "warn"
 unused_lifetimes = "warn"
 

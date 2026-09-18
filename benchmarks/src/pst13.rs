@@ -23,12 +23,15 @@
 
 use crate::Timing;
 
+/// Default `log_2` of the multilinear polynomial size, i.e. `2^DEFAULT_N`
+/// coefficients.
 pub const DEFAULT_N: usize = 10;
 
 // ---------------------------------------------------------------------------
 // Shared inputs: one PST13 setup + one (p, z, y) pair, fed to both sides.
 // ---------------------------------------------------------------------------
 
+/// Seeded PST13 SRS plus the `(p, z, y)` statement handed to both sides.
 pub mod shared {
     use ark_bls12_381::{Fr, G1Affine, G1Projective, G2Projective};
     use ark_ec::AffineRepr;
@@ -49,18 +52,30 @@ pub mod shared {
     /// in-memory footprint and cache file size.
     #[derive(CanonicalSerialize, CanonicalDeserialize)]
     pub struct Shared {
+        /// Number of variables of the multilinear polynomial; its coefficient
+        /// table has `2^n` entries.
         pub n: usize,
+        /// Fixed `G1` generator the commitment key is built from.
         pub g_gen: G1Projective,
+        /// Fixed `G2` generator used for the verifier's pairing check.
         pub h_gen: G2Projective,
+        /// The `N` trapdoor coordinates α, one per polynomial variable.
         pub alpha: Vec<Fr>,
-        /// ck_affine[i] = eq_N(α, i) · g_gen for i ∈ {0, 1}^N, MSB-first
+        /// `ck_affine[i] = eq_N(α, i) · g_gen` for i ∈ {0, 1}^N, MSB-first
         /// indexing (bit `n-1-j` of `i` is the value of variable j).
         /// Already-affine so `MultilinearPC::commit` / zippel's
         /// `dot(VecG1Affine, VecScalar)` skip per-call `normalize_batch`.
         pub ck_affine: Vec<G1Affine>,
+        /// `alpha_h[j] = alpha[j] · h_gen`, the verifier key: the only SRS part
+        /// the pairing equation actually touches.
         pub alpha_h: Vec<G2Projective>,
+        /// Coefficients of the multilinear polynomial in MSB-first Lagrange
+        /// (`eq`) basis, length `2^n`.
         pub p: Vec<Fr>,
+        /// The evaluation point, one field element per variable.
         pub z: Vec<Fr>,
+        /// The claimed evaluation `y = p̃(z)`, precomputed so neither side pays
+        /// for it inside its prove timer.
         pub y: Fr,
     }
 
@@ -77,6 +92,10 @@ pub mod shared {
     ///   * `ck_scalars` and `y` use `par_iter` — the previous serial fold
     ///     pinned the build to one core even though we run it inside
     ///     `setup_pool().install(...)`.
+    ///
+    /// # Panics
+    /// Panics if `n` is outside `1..=20`, or if reading/writing the cached
+    /// artifact under `artifacts/` fails.
     pub fn build(n: usize) -> Shared {
         assert!((1..=20).contains(&n), "n must be in 1..=20");
 
@@ -204,6 +223,8 @@ pub mod native_side {
 
     type Pcs = MultilinearPC<Bls12_381>;
 
+    /// Trimmed committer/verifier keys for the vendored `MultilinearPC` at a
+    /// fixed number of variables.
     pub struct Setup {
         n: usize,
         ck: CommitterKey<Bls12_381>,
@@ -215,6 +236,10 @@ pub mod native_side {
         /// own SRS + polynomial + point internally. Both sides run the
         /// same protocol on a random size-2^n MLE; only the wall-clock
         /// matters for the comparison.
+        ///
+        /// # Panics
+        /// Panics if reading or writing the cached `UniversalParams` artifact
+        /// fails, or if the upstream `trim` rejects `n`.
         pub fn new(shared: &Shared) -> Self {
             let n = shared.n;
             // Cache UniversalParams — the heavy setup at n=20. Re-trim
@@ -233,6 +258,12 @@ pub mod native_side {
             Setup { n, ck, vk }
         }
 
+        /// Times native commit+open as "prove" and the pairing check as
+        /// "verify", each averaged over the configured sample count.
+        ///
+        /// # Panics
+        /// Panics if `PROVER_SAMPLES` is zero or if the produced proof fails
+        /// the native verifier.
         pub fn time_protocol(&self) -> Timing {
             // Re-seed for the per-call poly/point so timing is reproducible.
             let mut seed_bytes = [0u8; 32];
@@ -446,6 +477,8 @@ mod textbook_native_side {
 // log-N π log-events (open).
 // ---------------------------------------------------------------------------
 
+/// Zippel side: compiles `examples/pst13/pst13.zippel` at `N = shared.n` and
+/// times its prover and verifier on the shared statement.
 pub mod zippel_side {
     use super::Timing;
     use super::shared::Shared;
@@ -456,6 +489,8 @@ pub mod zippel_side {
     use std::time::Instant;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
+    /// Compiled PST13 protocol plus the instance/witness context derived from
+    /// the shared SRS; borrows the [`Shared`] data it was built from.
     pub struct Setup<'a> {
         handler: ZippelHandler<ArkBls12_381>,
         inputs_base: Ctx<Vid, Value<ArkBls12_381>>,
@@ -465,6 +500,12 @@ pub mod zippel_side {
     }
 
     impl<'a> Setup<'a> {
+        /// Compiles `examples/pst13/pst13.zippel` with size variable `N` bound
+        /// to `shared.n` and precomputes the input context.
+        ///
+        /// # Panics
+        /// Panics if parsing, type checking, or DAG construction of the
+        /// `.zippel` source fails.
         pub fn new(shared: &'a Shared) -> Self {
             // Pre-affinize ck — same fix as the Groth16 bench (avoids per-prove
             // `normalize_batch`). ck_affine is already computed in `Shared`.
@@ -500,6 +541,7 @@ pub mod zippel_side {
             }
         }
 
+        /// Wall-clock time the `.zippel` source took to compile in [`Setup::new`].
         pub fn compile_time(&self) -> std::time::Duration {
             self.compile_time
         }
@@ -512,6 +554,12 @@ pub mod zippel_side {
             )
         }
 
+        /// Runs the compiled prover (commit + open) and verifier over the
+        /// configured sample counts and returns the mean durations.
+        ///
+        /// # Panics
+        /// Panics if either graph fails to execute, if `PROVER_SAMPLES` is
+        /// zero, or if verification does not pass.
         pub fn time_protocol(&mut self) -> Timing {
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_proof = None;

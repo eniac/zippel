@@ -10,8 +10,13 @@
 
 use std::ops::Range;
 
+/// A machine-applicable code edit proposed by a diagnostic.
+///
+/// Structured rather than message-only so that `--fix` style tooling can
+/// apply the replacement without re-parsing the rendered message.
 #[derive(Debug, Clone)]
 pub struct Suggestion {
+    /// Human-readable description of the proposed edit.
     pub message: String,
     /// Span to replace.
     pub span: Range<usize>,
@@ -21,6 +26,7 @@ pub struct Suggestion {
     pub applicability: Applicability,
 }
 
+/// Confidence that applying a [`Suggestion`] yields correct source.
 #[derive(Debug, Clone, Copy)]
 pub enum Applicability {
     /// The fix is definitely correct (e.g. missing `)`).

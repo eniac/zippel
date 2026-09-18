@@ -1,7 +1,22 @@
+//! Hyrax comparison: zippel-compiled Hyrax polynomial commitment vs. the
+//! vendored `ark-poly-commit` Hyrax implementation — both on BLS12-381 G1.
+//!
+//! Statement on both sides: an `n`-variate multilinear polynomial `p` is
+//! viewed as a `2^L x 2^M` matrix (`L + M = n`); the prover Pedersen-commits
+//! each row, then proves `p(z_row, z_col) = y` by a sigma protocol on the
+//! row-combined commitment. Prove covers commit + open, verify covers check.
+//!
+//! Sizes are bound via `sizes.insert("L", l)` / `sizes.insert("M", m)` at
+//! compile time, so `n` must be even and in `2..=20`.
+
 use crate::Timing;
 
+/// Default number of variables of the committed multilinear polynomial;
+/// split evenly into `L` row bits and `M` column bits.
 pub const DEFAULT_N: usize = 10;
 
+/// Zippel half: compiles `examples/hyrax/hyrax.zippel` and times its
+/// generated prover and verifier.
 pub mod zippel_side {
     use super::Timing;
     use ark_bls12_381::{Fr, G1Projective};
@@ -16,6 +31,12 @@ pub mod zippel_side {
     use std::time::Instant;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
+    /// A compiled Hyrax instance together with the fixed, seeded inputs it is
+    /// timed on.
+    ///
+    /// Inputs (polynomial, evaluation point, claimed value, Pedersen bases)
+    /// are generated once in `new` from an `n`-derived seed so repeated
+    /// `time_protocol` calls measure the same instance.
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
         inputs: Ctx<Vid, Value<ArkBls12_381>>,
@@ -23,6 +44,16 @@ pub mod zippel_side {
     }
 
     impl Setup {
+        /// Generates the seeded instance for an `n`-variate polynomial and
+        /// compiles the protocol with `L = n/2`, `M = n - n/2`.
+        ///
+        /// The claimed evaluation `y` is computed directly as
+        /// `L_vec^T * matrix * R_vec` over the equality-polynomial weights, so
+        /// the proof is always honest.
+        ///
+        /// # Panics
+        /// Panics unless `n` is even and in `2..=20` (the `eq_weights` cap),
+        /// or if compiling the `.zippel` source fails.
         pub fn new(n: usize) -> Self {
             assert!(
                 (2..=20).contains(&n) && n.is_multiple_of(2),
@@ -97,10 +128,18 @@ pub mod zippel_side {
             }
         }
 
+        /// Wall-time spent parsing, type checking, and building the prover and
+        /// verifier graphs. Excludes scheduling and execution.
         pub fn compile_time(&self) -> std::time::Duration {
             self.compile_time
         }
 
+        /// Runs the compiled prover and verifier on the stored instance and
+        /// returns their mean wall-times.
+        ///
+        /// # Panics
+        /// Panics if the prover or verifier graph fails to execute, or if the
+        /// verifier rejects the honestly generated proof.
         pub fn time_protocol(&mut self) -> Timing {
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_proof = None;
@@ -134,6 +173,8 @@ pub mod zippel_side {
             Timing { prove, verify }
         }
 
+        /// Node counts of the projected prover and verifier graphs, in that
+        /// order — the size proxy reported alongside the timings.
         pub fn graph_sizes(&self) -> (usize, usize) {
             (
                 self.handler.prover_graph().node_count(),
@@ -183,6 +224,8 @@ pub mod native_side {
 
     use crate::hyrax_upstream::{self, CommitterKey, VerifierKey};
 
+    /// Vendored-Hyrax keys plus the fixed polynomial, evaluation point, and
+    /// claimed value that `time_protocol` is measured on.
     pub struct Setup {
         _num_vars: usize,
         ck: CommitterKey,
@@ -193,6 +236,15 @@ pub mod native_side {
     }
 
     impl Setup {
+        /// Loads or builds the Hyrax universal parameters for `n` variables
+        /// from the artifact cache, trims them into a committer/verifier key
+        /// pair, and samples the polynomial, point, and value.
+        ///
+        /// All of this stays out of the timed region; the caller runs it inside
+        /// the setup thread pool.
+        ///
+        /// # Panics
+        /// Panics if the cached parameters cannot be read or written.
         pub fn new(n: usize) -> Self {
             // Cache UniversalParams. Byte format matches upstream's
             // derived CanonicalSerialize (same field order: com_key, h),
@@ -225,6 +277,13 @@ pub mod native_side {
             }
         }
 
+        /// Times the vendored `commit` + `open` as the prover and `check` as
+        /// the verifier, using a fresh Poseidon sponge per run so each sample
+        /// starts from the same transcript state.
+        ///
+        /// # Panics
+        /// Panics if the vendored verifier rejects the honestly generated
+        /// proof.
         pub fn time_protocol(&self) -> Timing {
             let point = &self.point;
             let _ = self.value;

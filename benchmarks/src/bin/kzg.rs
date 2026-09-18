@@ -1,3 +1,11 @@
+//! Head-to-head benchmark of the Zippel-compiled KZG polynomial commitment against
+//! `ark-poly-commit`'s `KZG10` on BLS12-381.
+//!
+//! Both sides prove `p(z) = v` for a polynomial of degree `N - 1`; the prover timer covers commit
+//! plus open so that it matches the scope of the Zippel protocol. `--sweep-n` sweeps a grid of
+//! sizes, and `--no-srs-check` renders the `.zippel` source without its `where`-clause SRS
+//! structure check (which costs `N - 1` pairings) to isolate the protocol body's verifier cost.
+
 use benchmarks::kzg::{DEFAULT_N, native_side, zippel_side};
 use clap::Parser;
 

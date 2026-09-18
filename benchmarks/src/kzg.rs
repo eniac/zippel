@@ -15,6 +15,8 @@
 
 use crate::Timing;
 
+/// Default number of polynomial coefficients (degree `N-1`) when no size is
+/// swept. Must be a power of two — the cache key is `N.trailing_zeros()`.
 pub const DEFAULT_N: usize = 4;
 
 /// Diagnostic variant: same KZG protocol body, but the `where` clause
@@ -49,6 +51,9 @@ fn render_zippel_source_no_srs_check() -> &'static str {
 "#
 }
 
+/// Zippel half: compiles `examples/kzg/kzg.zippel` (or the
+/// `no-srs-check` diagnostic variant) and times its generated prover and
+/// verifier.
 pub mod zippel_side {
     use super::*;
     use ark_ec::scalar_mul::ScalarMul;
@@ -81,6 +86,12 @@ pub mod zippel_side {
         h_val: G2,
     }
 
+    /// A compiled KZG instance plus its cached SRS, reusable across
+    /// `time_protocol` calls.
+    ///
+    /// The SRS depends only on `(seed, n)` and is loaded from (or written to)
+    /// the artifact cache in `new_with`, so it is built at most once per size
+    /// across a whole thread sweep.
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
         n: usize,
@@ -93,6 +104,12 @@ pub mod zippel_side {
     }
 
     impl Setup {
+        /// Compiles `examples/kzg/kzg.zippel` with `N` bound to `n` and
+        /// prepares the SRS, keeping the `where`-clause SRS-structure check.
+        ///
+        /// # Panics
+        /// Panics if compilation fails or the SRS artifact cannot be read or
+        /// written.
         pub fn new(n: usize) -> Self {
             Self::new_with(n, false)
         }
@@ -155,6 +172,8 @@ pub mod zippel_side {
             }
         }
 
+        /// Wall-time spent compiling the `.zippel` source into prover and
+        /// verifier graphs. Excludes SRS construction and cache I/O.
         pub fn compile_time(&self) -> std::time::Duration {
             self.compile_time
         }
@@ -167,6 +186,13 @@ pub mod zippel_side {
             )
         }
 
+        /// Samples a random polynomial and evaluation point, runs the compiled
+        /// prover (commit + open) and verifier (pairing check), and returns
+        /// their mean wall-times.
+        ///
+        /// # Panics
+        /// Panics if the prover or verifier graph fails to execute, or if the
+        /// verifier rejects the honestly generated proof.
         pub fn time_protocol(&mut self) -> Timing {
             let mut rng = rand::rngs::OsRng;
             let n = self.n;
@@ -236,6 +262,11 @@ pub mod zippel_side {
     }
 }
 
+/// Native baseline: `ark_poly_commit::kzg10::KZG10` over BLS12-381.
+///
+/// Prove covers `commit` + `open` (run concurrently, mirroring what the
+/// zippel scheduler does with the two independent MSM nodes); verify covers
+/// `check` only.
 pub mod native_side {
     use super::*;
     use ark_bls12_381::Bls12_381;
@@ -249,6 +280,8 @@ pub mod native_side {
         KZG10<Bls12_381, DensePolynomial<<Bls12_381 as ark_ec::pairing::Pairing>::ScalarField>>;
     type Fr = <Bls12_381 as ark_ec::pairing::Pairing>::ScalarField;
 
+    /// Owned prover key (`Powers`), verifier key, and instance size for the
+    /// native KZG10 baseline.
     pub struct Setup {
         powers: PowersOwned,
         vk: VerifierKey<Bls12_381>,
@@ -294,6 +327,12 @@ pub mod native_side {
     }
 
     impl Setup {
+        /// Loads or builds the `UniversalParams` for degree `n-1` from the
+        /// artifact cache and derives the prover/verifier keys from them.
+        ///
+        /// # Panics
+        /// Panics if `n == 0`, if the arkworks setup fails, or if the cache
+        /// artifact cannot be read or written.
         pub fn new(n: usize) -> Self {
             // n coefficients => degree n-1
             let degree = n - 1;
@@ -312,6 +351,12 @@ pub mod native_side {
             Setup { powers, vk, n }
         }
 
+        /// Samples a random degree-`n-1` polynomial and evaluation point, then
+        /// times `commit` + `open` as the prover and `check` as the verifier.
+        ///
+        /// # Panics
+        /// Panics if any of `commit`, `open`, or `check` errors out, or if the
+        /// resulting opening proof fails to verify.
         pub fn time_protocol(&self) -> Timing {
             let mut rng = ark_std::test_rng();
             let degree = self.n - 1;

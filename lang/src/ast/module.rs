@@ -75,12 +75,18 @@ where
     }
 }
 
+/// Failure while assembling or concretizing a module.
 #[derive(Error, Debug)]
 pub enum ModuleError {
+    /// Two declarations concretized to the same signature, so a call could
+    /// not be resolved to a unique body.
     #[error("Overlapping declarations: {0}")]
     OverlapDeclaration(CSig),
+    /// A declaration failed its own checks (size substitution, range
+    /// instantiation, concretization).
     #[error("Declaration error: {0}")]
     DeclarationError(#[from] DeclError),
+    /// No declaration with the requested name exists in the module.
     #[error("Declaration not found: {0}")]
     DeclarationNotFound(String),
 }
@@ -92,15 +98,19 @@ pub type UModule = Module<Size>;
 pub type CModule = Module<usize>;
 
 impl<N: Ord> Module<N> {
+    /// Number of declarations in the module.
     pub fn len(&self) -> usize {
         self.0.len()
     }
+    /// Whether the module declares nothing.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+    /// Iterate over `(signature, body)` pairs in declaration order.
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = (&Sig<N>, &Body<N>)> {
         self.0.iter()
     }
+    /// Names of all declarations, including each overload separately.
     pub fn get_names(&self) -> impl Iterator<Item = &str> {
         self.0.iter().map(|(sig, _)| sig.name.0.as_str())
     }
@@ -221,6 +231,8 @@ impl UModule {
         Module(m)
     }
 
+    /// Rebuild owned `UDecl` values from the stored signature/body pairs,
+    /// for passes that want whole declarations rather than the split map.
     pub fn iter_decls(&self) -> impl Iterator<Item = UDecl> + '_ {
         self.0.iter().map(|(sig, body)| UDecl {
             sig: sig.clone(),
@@ -229,6 +241,16 @@ impl UModule {
     }
 
     /// Concretize sizes in all declarations to generate a CModule
+    ///
+    /// Each declaration is expanded once per assignment of its range-kinded
+    /// type variables, with `sizes` supplying values for the remaining
+    /// `Size` variables.
+    ///
+    /// # Errors
+    /// Returns `ModuleError::DeclarationError` if a declaration's sizes
+    /// cannot be resolved or concretized, and
+    /// `ModuleError::OverlapDeclaration` if two expansions collapse onto the
+    /// same concrete signature.
     pub fn concretize(&self, sizes: &Ctx<Tid, usize>) -> Result<CModule, ModuleError> {
         let mut ctx = Ctx::new();
 

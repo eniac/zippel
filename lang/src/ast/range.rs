@@ -6,8 +6,12 @@ use crate::ast::spanned::Spanned;
 use share::traversal::ToTraversal1;
 use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 
+/// Failure of the range well-formedness check.
 #[derive(Error, PartialEq, Debug)]
 pub enum RangeError {
+    /// The triple `[start, step..end]` is not a valid strided range: `start`
+    /// exceeds `end`, `step` is zero, or `end - start` is not a whole number
+    /// of steps.
     #[error("Instantiated an invalid range [{0},{1}..{2}]")]
     RangeOrder(usize, usize, usize),
 }
@@ -20,13 +24,23 @@ pub enum RangeError {
 /// `end()` which fill in defaults (`step=1`, `end=start+1`).
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
 pub struct Range<N> {
+    /// Lower bound, always present and always included in the range.
     pub start: Spanned<N>,
+    /// Stride between successive elements; `None` means the source wrote no
+    /// stride and the default `1` applies.
     pub step: Option<Spanned<N>>,
+    /// Exclusive upper bound; `None` means the source wrote a bare bound and
+    /// the range denotes the single value `start`.
     pub end: Option<Spanned<N>>,
 }
 
 /// Implementations of this trait can modify ranges
 pub trait RangeTraversal<N>: Sized {
+    /// Rewrite every `Range<N>` occurring inside `self`, short-circuiting on
+    /// the first error the rewrite function reports.
+    ///
+    /// # Errors
+    /// Propagates whatever error `f` returns for some nested range.
     fn range_traverse<E>(
         self,
         f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>,
@@ -86,6 +100,10 @@ impl CRange {
     }
 
     /// Create a range from a start, step and end numbers, checking their order
+    ///
+    /// # Errors
+    /// Returns `RangeError::RangeOrder` if `start > end`, `step == 0`, or
+    /// `end - start` is not an exact multiple of `step`.
     pub fn from_num(start: usize, step: usize, end: usize) -> Result<Self, RangeError> {
         if (start <= end)
             && (step > 0)
@@ -100,6 +118,12 @@ impl CRange {
         }
     }
 
+    /// Re-check that this range satisfies the `from_num` well-formedness
+    /// invariant. Ranges built by `from_raw` or by the parser bypass the
+    /// check, so passes that rely on the invariant call this first.
+    ///
+    /// # Errors
+    /// Returns `RangeError::RangeOrder` if the range is not well formed.
     pub fn check(&self) -> Result<(), RangeError> {
         Range::from_num(self.start(), self.step(), self.end()).map(|_| ())
     }
@@ -113,6 +137,12 @@ impl CRange {
         }
     }
 
+    /// Sample a uniformly random element of the range, used to pick a
+    /// witness value for a range-kinded size variable.
+    ///
+    /// # Panics
+    /// Panics if the range is empty (division by a zero length) or if
+    /// `start + offset * step` overflows `usize`.
     pub fn random<R: Rng>(&self, rng: &mut R) -> usize {
         let offset = (rng.next_u32() % (self.len() as u32)) as usize;
         self.start()
@@ -132,6 +162,9 @@ impl CRange {
         (value - self.start()).is_multiple_of(self.step())
     }
 
+    /// Fuse two ranges into one when `other` starts exactly one past this
+    /// range's end and both share a stride; returns `None` when the two
+    /// cannot be described by a single strided range.
     pub fn concat(&self, other: &CRange) -> Option<CRange> {
         if self.step() == other.step() && self.end() == other.start().checked_add(1)? {
             Some(Range::from_raw(self.start(), self.step(), other.end()))
@@ -140,14 +173,17 @@ impl CRange {
         }
     }
 
+    /// Whether the range denotes only the value zero.
     pub fn is_zero(&self) -> bool {
         self.start() == 0 && self.end() <= self.step()
     }
 
+    /// Number of elements the range yields.
     pub fn len(&self) -> usize {
         (self.end() - self.start()) / self.step()
     }
 
+    /// Whether the range yields no elements at all.
     pub fn is_empty(&self) -> bool {
         self.start() >= self.end()
     }

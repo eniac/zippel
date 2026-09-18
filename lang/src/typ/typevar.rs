@@ -12,7 +12,9 @@ use std::fmt;
 /// typevar name without needing a separate span parameter.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct TypeVar<N> {
+    /// The type variable's name, together with the source span it was declared at.
     pub id: Spanned<Tid>,
+    /// The kind constraining what this variable may be instantiated with.
     pub kind: Kind<N>,
 }
 
@@ -22,6 +24,10 @@ pub type UTypeVar = TypeVar<Size>;
 pub type CTypeVar = TypeVar<usize>;
 
 impl<N> TypeVar<N> {
+    /// Builds a type variable from a name and a kind, attaching a dummy span.
+    ///
+    /// Use this for typevars synthesized by the compiler; parsed typevars keep the real span
+    /// recorded by the parser.
     pub fn new(id: &Tid, kind: &Kind<N>) -> Self
     where
         N: Clone,
@@ -43,14 +49,20 @@ pub type UTypeVars = TypeVars<Size>;
 pub type CTypeVars = TypeVars<usize>;
 
 impl<N> TypeVars<N> {
+    /// Drops the type variable named `id`, if present.
+    ///
+    /// Used when a size or base type variable becomes bound and must no longer be
+    /// quantified over.
     pub fn remove(&mut self, id: &Tid) {
         self.0.retain(|tvar| &tvar.node.id.node != id);
     }
 
+    /// Iterates over the type variables, discarding their spans.
     pub fn iter(&self) -> impl Iterator<Item = &TypeVar<N>> {
         self.0.iter().map(|s| &s.node)
     }
 
+    /// Collects the names of the type variables, in declaration order.
     pub fn ids(&self) -> Vec<Tid> {
         self.0
             .iter()
@@ -58,9 +70,14 @@ impl<N> TypeVars<N> {
             .collect()
     }
 
+    /// Returns `true` if a type variable named `id` is declared here.
     pub fn contains(&self, id: &Tid) -> bool {
         self.0.iter().any(|tvar| &tvar.node.id.node == id)
     }
+    /// Builds the kind context `kctx` for these type variables.
+    ///
+    /// This is how a declaration's quantifier list becomes the `Ctx<Tid, Kind<N>>` threaded
+    /// through inference and through `ATyp::from_ctyp`.
     pub fn to_ctx(&self) -> Ctx<Tid, Kind<N>>
     where
         N: Clone,

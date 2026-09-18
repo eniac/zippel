@@ -23,8 +23,11 @@ use super::lexer::Token;
 /// They tell the user *what* the parser was building when the error occurred.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Context {
+    /// Any top-level declaration (`fn`, `proto`, `type`, …).
     Declaration,
+    /// Any value-level expression.
     Expression,
+    /// A type annotation or type expression.
     Type,
     /// Kind annotation after `:` in type variables (e.g. `F: Field`).
     Kind,
@@ -114,7 +117,9 @@ impl TryFrom<&str> for Context {
 /// `Context` which tells what *construct* was being parsed.
 #[derive(Debug, Clone, Copy)]
 pub enum Terminal {
+    /// A `Tid`/`Vid` identifier token.
     Identifier,
+    /// A nonzero unsigned integer literal, used for sizes and degrees.
     PositiveInteger,
     /// The `.set` method on records — used to label the `select!` filter
     /// that distinguishes `.set(` from field projection `.field`.
@@ -126,6 +131,7 @@ pub enum Terminal {
 }
 
 impl Terminal {
+    /// The string chumsky stores in `RichPattern::Label`.
     pub const fn as_str(self) -> &'static str {
         match self {
             Terminal::Identifier => "identifier",

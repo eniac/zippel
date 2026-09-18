@@ -12,7 +12,9 @@ use std::fmt;
 /// or to its specification relation (`Relation`).
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum ArgKind {
+    /// Argument supplied to the protocol implementation itself.
     Input,
+    /// Argument supplied only to the specification relation.
     Relation,
     /// Verifier-only argument materialised from a transcript (proof) value.
     TranscriptInput,
@@ -36,21 +38,28 @@ pub enum Node<C: ArkConfig, A> {
 }
 
 impl<C: ArkConfig, N> Node<C, N> {
+    /// Returns `true` when this node carries a hash-consed operation, i.e. it is
+    /// either an `Op` or a `Transcr` node rather than a marker or argument.
     pub fn is_op(&self) -> bool {
         self.op().is_some()
     }
 
+    /// Returns `true` for the protocol/function entry marker node.
     pub fn is_input(&self) -> bool {
         matches!(self, Node::Inp(_))
     }
+    /// Returns `true` for the specification relation marker node.
     pub fn is_relation(&self) -> bool {
         matches!(self, Node::Rel(_))
     }
 
+    /// Returns `true` for any per-argument node, regardless of its `ArgKind`.
     pub fn is_arg(&self) -> bool {
         matches!(self, Node::Arg(_, _, _, _, _))
     }
 
+    /// Returns `true` for arguments belonging to the implementation side, which
+    /// includes verifier arguments reconstructed from the transcript.
     pub fn is_input_arg(&self) -> bool {
         matches!(
             self,
@@ -58,10 +67,12 @@ impl<C: ArkConfig, N> Node<C, N> {
         )
     }
 
+    /// Returns `true` for arguments belonging to the specification relation.
     pub fn is_relation_arg(&self) -> bool {
         matches!(self, Node::Arg(_, _, _, _, ArgKind::Relation))
     }
 
+    /// Returns the argument flavour, or `None` when this is not an `Arg` node.
     pub fn arg_kind(&self) -> Option<ArgKind> {
         match self {
             Node::Arg(_, _, _, _, k) => Some(*k),
@@ -69,6 +80,9 @@ impl<C: ArkConfig, N> Node<C, N> {
         }
     }
 
+    /// Borrows the hash-consed operation of an `Op` or `Transcr` node.
+    ///
+    /// Marker and argument nodes have no operation and yield `None`.
     pub fn op(&self) -> Option<&HOp<C>> {
         match self {
             Node::Op(op, _) => Some(op),
@@ -77,6 +91,8 @@ impl<C: ArkConfig, N> Node<C, N> {
         }
     }
 
+    /// Returns `true` when this node is an `Op::Verify` check, i.e. one of the
+    /// boolean results collected by `run_verifier`.
     pub fn is_verifier_check(&self) -> bool {
         match self {
             Node::Op(op, _) | Node::Transcr(op, _) => matches!(&**op, Op::Verify(_)),
@@ -84,6 +100,9 @@ impl<C: ArkConfig, N> Node<C, N> {
         }
     }
 
+    /// Returns the `Vid` naming this marker or argument node.
+    ///
+    /// Operation and transcript nodes are unnamed and yield `None`.
     pub fn name(&self) -> Option<&Vid> {
         match self {
             Node::Inp(name) => Some(name),
@@ -93,6 +112,9 @@ impl<C: ArkConfig, N> Node<C, N> {
         }
     }
 
+    /// Collects the `Ref` handles this node's operation reads from.
+    ///
+    /// Markers and arguments read nothing and return an empty vector.
     pub fn references(&self) -> Vec<Ref> {
         match self {
             Node::Op(op, _) => op.references().clone(),
@@ -101,10 +123,14 @@ impl<C: ArkConfig, N> Node<C, N> {
         }
     }
 
+    /// Returns `true` when this node is part of the transcript, i.e. either a
+    /// verifier challenge or a prover-emitted proof value.
     pub fn is_transcript(&self) -> bool {
         matches!(self, Node::Transcr(_, _))
     }
 
+    /// Returns `true` for transcript nodes holding an `Op::Challenge`, the
+    /// values the verifier samples during Fiat-Shamir.
     pub fn is_challenge(&self) -> bool {
         match self {
             Node::Transcr(op, _) => matches!(&**op, Op::Challenge(_, _)),
@@ -112,10 +138,16 @@ impl<C: ArkConfig, N> Node<C, N> {
         }
     }
 
+    /// Returns `true` for transcript nodes that are prover messages rather than
+    /// challenges; these make up the proof certificate.
     pub fn is_proof(&self) -> bool {
         self.is_transcript() && !self.is_challenge()
     }
 
+    /// Promotes an `Op` node in place to a `Transcr` node, keeping its operation
+    /// and annotation, so that its value is sent over the transcript.
+    ///
+    /// Nodes that are not `Op` nodes are left untouched.
     pub fn set_transcript(&mut self)
     where
         N: Clone,
@@ -125,6 +157,10 @@ impl<C: ArkConfig, N> Node<C, N> {
         }
     }
 
+    /// Consumes the node and returns its hash-consed operation.
+    ///
+    /// # Panics
+    /// Panics on marker and argument nodes, which carry no operation.
     pub fn into_op(self) -> HOp<C> {
         match self {
             Node::Op(op, _) => op,
@@ -133,6 +169,10 @@ impl<C: ArkConfig, N> Node<C, N> {
         }
     }
 
+    /// Consumes the node and returns its analysis annotation.
+    ///
+    /// # Panics
+    /// Panics on marker and argument nodes, which carry no annotation.
     pub fn into_ann(self) -> N {
         match self {
             Node::Op(_, ann) => ann,
@@ -141,6 +181,10 @@ impl<C: ArkConfig, N> Node<C, N> {
         }
     }
 
+    /// Pairs the existing annotation with `ann`, producing a node annotated by
+    /// the tuple so a later analysis can be layered onto an earlier one.
+    ///
+    /// Markers and arguments are rebuilt unchanged since they hold no annotation.
     pub fn add_annotation<M>(&self, ann: M) -> Node<C, (N, M)>
     where
         N: Clone,
@@ -154,6 +198,8 @@ impl<C: ArkConfig, N> Node<C, N> {
         }
     }
 
+    /// Erases the analysis annotation, turning this node back into the shape
+    /// used by an unanalyzed `UDag`.
     pub fn drop_annotation(&self) -> Node<C, Nothing> {
         match self {
             Node::Op(op, _) => Node::Op(op.clone(), Nothing),
@@ -164,6 +210,14 @@ impl<C: ArkConfig, N> Node<C, N> {
         }
     }
 
+    /// Returns the arkworks-level type this node produces.
+    ///
+    /// Operation and transcript nodes delegate to `Op::typ`, argument nodes
+    /// return their declared type, and markers have no value hence `None`.
+    ///
+    /// # Panics
+    /// Propagates the panics of `Op::typ`, which asserts the shape invariants of
+    /// the operation's children.
     pub fn typ(&self) -> Option<ATyp> {
         match self {
             Node::Op(op, _) => Some(op.typ()),
@@ -176,6 +230,9 @@ impl<C: ArkConfig, N> Node<C, N> {
 
 /// Methods requiring `HasOpFactory` (for creating new hash-consed operations)
 impl<C: HasOpFactory, N> Node<C, N> {
+    /// Rewrites every `NodeIndex` embedded in this node's operation through `f`,
+    /// re-interning the result; used when a subgraph is copied into another `Dag`
+    /// and indices are renumbered.
     pub fn map_node_indices<F: Fn(NodeIndex) -> NodeIndex>(&self, f: &F) -> Node<C, N>
     where
         N: Clone,
@@ -189,6 +246,8 @@ impl<C: HasOpFactory, N> Node<C, N> {
         }
     }
 
+    /// Rewrites every `Ref` in this node's operation through `f`, re-interning the
+    /// result. Nodes without an operation are cloned unchanged.
     pub fn map_refs<F: Fn(Ref) -> Ref>(&self, f: &F) -> Node<C, N>
     where
         N: Clone,
@@ -202,16 +261,22 @@ impl<C: HasOpFactory, N> Node<C, N> {
 }
 
 impl<C: ArkConfig> Node<C, Nothing> {
+    /// Builds the entry marker node for the protocol or function named `f`.
     pub fn inp(f: Vid) -> Self {
         Node::Inp(f)
     }
+    /// Builds the marker node for the specification relation named `f`.
     pub fn rel(f: Vid) -> Self {
         Node::Rel(f)
     }
+    /// Builds a single typed argument node with its qualifier, distribution and
+    /// argument flavour.
     pub fn arg(name: Vid, typ: ATyp, qual: Qualifier, dist: Distribution, kind: ArgKind) -> Self {
         Node::Arg(name, typ, qual, dist, kind)
     }
 
+    /// Attaches `ann` to an unannotated node, the step that turns a `UDag` node
+    /// into an analyzed one such as a `QDag` node.
     pub fn with_annotation<M>(&self, ann: M) -> Node<C, M> {
         match self {
             Node::Op(op, _) => Node::Op(op.clone(), ann),
@@ -225,60 +290,83 @@ impl<C: ArkConfig> Node<C, Nothing> {
 
 /// Constructors requiring `HasOpFactory` (for creating new hash-consed operations)
 impl<C: HasOpFactory> Node<C, Nothing> {
+    /// Builds a node lifting a coefficient `Vec` into a univariate polynomial.
     pub fn poly(op: &GOp<C>) -> Self {
         Node::Op(mk::<C>(GOp::poly(op.clone())), Nothing)
     }
+    /// Builds a node extracting the coefficient `Vec` of a polynomial.
     pub fn coef(op: &GOp<C>) -> Self {
         Node::Op(mk::<C>(GOp::coef(op.clone())), Nothing)
     }
+    /// Builds a node interpolating the polynomial through `evals` taken at `points`.
     pub fn interpolate(points: &GOp<C>, evals: &GOp<C>) -> Self {
         Node::Op(
             mk::<C>(GOp::interpolate(points.clone(), evals.clone())),
             Nothing,
         )
     }
+    /// Builds a node performing an inverse `FFT`, i.e. evaluations to coefficients.
     pub fn ifft(op: &GOp<C>) -> Self {
         Node::Op(mk::<C>(GOp::ifft(op.clone())), Nothing)
     }
+    /// Builds a node performing a forward `FFT`, i.e. coefficients to evaluations.
     pub fn fft(op: &GOp<C>) -> Self {
         Node::Op(mk::<C>(GOp::fft(op.clone())), Nothing)
     }
+    /// Builds a node evaluating `p` over its whole implicit evaluation grid,
+    /// producing every point at once rather than a single value.
     pub fn evaluate_grid(p: &GOp<C>) -> Self {
         Node::Op(mk::<C>(GOp::evaluate_grid(p.clone())), Nothing)
     }
+    /// Builds a node evaluating polynomial `p` at the single point `x`.
     pub fn evaluate(p: &GOp<C>, x: &GOp<C>) -> Self {
         Node::Op(mk::<C>(GOp::evaluate(p.clone(), x.clone())), Nothing)
     }
+    /// Builds a node lifting a `Vec` of evaluations into a multilinear extension.
     pub fn mle(op: &GOp<C>) -> Self {
         Node::Op(mk::<C>(GOp::mle(op.clone())), Nothing)
     }
+    /// Builds a node projecting the record field `field`, whose type is `typ`,
+    /// out of `op`.
     pub fn proj(op: &GOp<C>, field: &str, typ: &ATyp) -> Self {
         Node::Op(
             mk::<C>(GOp::proj(op.clone(), field.to_string(), typ.clone())),
             Nothing,
         )
     }
+    /// Builds a node for the binary operation `op` on `a` and `b`, carrying the
+    /// authoritative result type `typ` chosen by the lowering code.
     pub fn bin(op: BinOp, a: &GOp<C>, b: &GOp<C>, typ: &ATyp) -> Self {
         Node::Op(
             mk::<C>(GOp::bin(op, a.clone(), b.clone(), typ.clone())),
             Nothing,
         )
     }
+    /// Builds a transcript node sampling a Fiat-Shamir challenge of type `typ`;
+    /// `non_zero` requests a value rejected if it is zero.
     pub fn challenge(typ: &ATyp, non_zero: bool) -> Self {
         Node::Transcr(mk::<C>(Op::Challenge(typ.clone(), non_zero)), Nothing)
     }
+    /// Builds a node sampling prover-local randomness of type `typ`; `non_zero`
+    /// requests a value rejected if it is zero.
     pub fn random(typ: &ATyp, non_zero: bool) -> Self {
         Node::Op(mk::<C>(Op::Random(typ.clone(), non_zero)), Nothing)
     }
+    /// Builds a transcript node emitting `op` as a prover message in the proof.
     pub fn transcr(op: &GOp<C>) -> Self {
         Node::Transcr(mk::<C>(op.clone()), Nothing)
     }
+    /// Builds a node asserting that `op` holds, a prover-side consistency check.
     pub fn assert(op: &GOp<C>) -> Self {
         Node::Op(mk::<C>(GOp::assert(op.clone())), Nothing)
     }
+    /// Builds a node for a verifier check on `op`; its boolean result is part of
+    /// the vector returned by `run_verifier`.
     pub fn verify(op: &GOp<C>) -> Self {
         Node::Op(mk::<C>(GOp::verify(op.clone())), Nothing)
     }
+    /// Builds a plain operation node returning the value of `op`, used for the
+    /// result position of a function or protocol body.
     pub fn ret(op: &GOp<C>) -> Self {
         Node::Op(mk::<C>(op.clone()), Nothing)
     }

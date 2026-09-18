@@ -1,3 +1,16 @@
+//! Criterion benchmark for `fmt::format_source`, the whole parse →
+//! pretty-print round trip of the `zippel-fmt` formatter.
+//!
+//! Three real `.zippel` sources from `examples/` stand in for the size range
+//! the formatter sees in practice: `schnorr` (7 lines), `dory` (301), and
+//! `spartan` (590). They are embedded with `include_str!`, so file I/O never
+//! enters a measured number.
+
+#![allow(
+    missing_docs,
+    reason = "criterion_group! synthesises an undocumentable `pub fn benches`"
+)]
+
 use criterion::{Criterion, criterion_group, criterion_main};
 use fmt::format_source;
 

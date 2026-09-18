@@ -30,7 +30,11 @@ pub enum Body<N> {
     ///   and let bindings. The graph wraps it in `Assert` (the relation
     ///   IS the assertion).
     Proto {
+        /// Executable part of the protocol, lowered into the DAG; `None`
+        /// for an empty body `{}`.
         body: Option<Spanned<Exp<N>>>,
+        /// The `Bool` relation this protocol must satisfy; the graph
+        /// builder turns it into the protocol's assertion.
         relation: Spanned<Exp<N>>,
     },
 
@@ -39,7 +43,11 @@ pub enum Body<N> {
     /// # fields
     /// - `body`: The body of the function. `None` for an empty body `{}`,
     ///   which is semantically equivalent to `Unit`.
-    Func { body: Option<Spanned<Exp<N>>> },
+    Func {
+        /// The body of the function. `None` for an empty body `{}`,
+        /// which is semantically equivalent to `Unit`.
+        body: Option<Spanned<Exp<N>>>,
+    },
 
     /// A type alias declaration (e.g., `type Point = { x: F, y: F };`)
     /// The aliased type is stored in the Sig's return type.
@@ -49,33 +57,48 @@ pub enum Body<N> {
 /// A zippel declaration is either a protocol or a function.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decl<N> {
+    /// Name, size-type variables, arguments, and (for functions) return type.
     pub sig: Sig<N>,
+    /// What the declaration computes: protocol, function, or type alias.
     pub body: Body<N>,
 }
 
+/// Failures raised while concretizing a symbolically sized declaration.
 #[derive(Error, Debug)]
 pub enum DeclError {
+    /// A size expression in the declaration could not be evaluated to a `usize`.
     #[error("DeclError: Error evaluating size type variables: \n\n{0}")]
     EvalError(#[from] EvalError),
+    /// A `Range` size-type variable of the named signature violates its own
+    /// `start`/`end`/`step` well-formedness check after substitution.
     #[error("DeclError: Invalid ranges in declaration {0}: \n\n{1}")]
     InvalidRange(CSig, RangeError),
+    /// Substituting size-type variables into the declaration's types failed.
     #[error("DeclError: {0}")]
     SubstError(#[from] SubstError),
 }
 
 impl<N> Body<N> {
+    /// Whether this body is a protocol body (has a relation).
     pub fn is_proto(&self) -> bool {
         matches!(self, Body::Proto { .. })
     }
 
+    /// Whether this body is a function body.
     pub fn is_func(&self) -> bool {
         matches!(self, Body::Func { .. })
     }
 
+    /// Whether this body is a type alias, which carries no expression at all.
     pub fn is_type_alias(&self) -> bool {
         matches!(self, Body::TypeAlias)
     }
 
+    /// Consumes the body and returns its expression, `None` for an empty body.
+    ///
+    /// # Panics
+    /// Panics on `Body::TypeAlias`, which has no expression; callers must
+    /// guard with [`Body::is_type_alias`].
     pub fn body(self) -> Option<Spanned<Exp<N>>> {
         match self {
             Body::Proto { body, .. } => body,
@@ -83,6 +106,8 @@ impl<N> Body<N> {
             Body::TypeAlias => panic!("TypeAlias has no body"),
         }
     }
+    /// Consumes the body and returns the protocol relation, or `None` for
+    /// function bodies and type aliases.
     pub fn relation(self) -> Option<Spanned<Exp<N>>> {
         match self {
             Body::Proto { relation, .. } => Some(relation),
@@ -107,6 +132,8 @@ impl FreeVars for CBody {
 
 /// Useful constructors
 impl<N> Decl<N> {
+    /// Builds a protocol declaration: a signature with no return type plus a
+    /// [`Body::Proto`] holding the `where`-clause relation and optional body.
     pub fn proto(
         name: Spanned<Vid>,
         typevars: Spanned<TypeVars<N>>,
@@ -124,6 +151,7 @@ impl<N> Decl<N> {
         Decl { sig, body }
     }
 
+    /// Builds a function declaration from its signature parts and optional body.
     pub fn func(
         name: Spanned<Vid>,
         typevars: Spanned<TypeVars<N>>,
@@ -141,6 +169,8 @@ impl<N> Decl<N> {
         Decl { sig, body }
     }
 
+    /// Builds a type-alias declaration; the aliased type is stored as the
+    /// signature's return type, with no type variables and no arguments.
     pub fn type_alias(name: Spanned<Vid>, typ: Spanned<GTyp<N>>) -> Self {
         use crate::ast::arg::Args;
         let sig = Sig {
@@ -182,6 +212,10 @@ impl UDecl {
     /// Each declaration has typevariables that can be concretized to different sizes.
     /// This method returns all possible size substitutions for the declaration.
     /// If `sizes` pins a Range typevar, only that value is generated.
+    ///
+    /// # Errors
+    /// Returns `DeclError::SubstError` if a size-type variable cannot be
+    /// enumerated (for example a non-`Range` kind or an unbound variable).
     pub fn get_size_substitutions(
         &'_ self,
         sizes: &Ctx<Tid, usize>,
@@ -190,6 +224,11 @@ impl UDecl {
     }
 
     /// Concretize a declaration with a given size substitution
+    ///
+    /// # Errors
+    /// Returns `DeclError::EvalError` if a size expression in the signature or
+    /// body cannot be evaluated under `substs`, and `DeclError::InvalidRange`
+    /// if a resulting `Range` fails its well-formedness check.
     pub fn concretize(&self, substs: &SizeSubsts) -> Result<CDecl, DeclError> {
         let mut csig = self.sig.clone().traverse1(&mut |x| x.eval(&substs.0))?;
         let cbody = self.body.clone().traverse1(&mut |x| x.eval(&substs.0))?;
@@ -238,6 +277,19 @@ impl<N> FromIterator<Decl<N>> for Decls<N> {
 }
 
 impl CBody {
+    /// Type-checks this body against its own (concretized) signature and the
+    /// set of visible function signatures `fctx`.
+    ///
+    /// The kind context is taken from the signature's type variables, and
+    /// singleton `Range` type variables are additionally bound as `Fin` values
+    /// so they can be used as ordinary scalars inside the body.
+    ///
+    /// # Errors
+    /// Returns a `TypeError` if inference of the relation or body fails; if a
+    /// protocol relation is not relation-pure (mentions `Challenge`, `Log`,
+    /// `Verify`, or `Assert`); if the relation does not infer to `Bool`; if a
+    /// protocol body does not infer to `Unit`; or if a function body's type has
+    /// no least upper bound with the declared return type.
     pub fn typecheck(&self, sig: CSig, fctx: &Set<CSig>) -> Result<(), TypeError> {
         // Kind context
         let kctx = sig.typevars.node.to_ctx();

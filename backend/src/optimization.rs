@@ -10,14 +10,32 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// compute deltas with [`OptimizationStats::delta_since`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OptimizationStats {
+    /// Number of `Value::value_eval_selected` calls, i.e. selected-eval terms
+    /// that were actually materialized into a restricted polynomial.
     pub selected_eval_terms_materialized: u64,
+    /// Number of selected-eval restrictions that had to go through the generic
+    /// Lagrange-interpolation path instead of a specialized variable fixing.
     pub selected_eval_interpolation_fallback: u64,
+    /// Number of `Value::value_reduce(BinOp::Add)` calls whose operands were
+    /// all univariate polynomials and were summed coefficient-wise rather than
+    /// through the generic parallel `Value` fold.
     pub reduce_univariate_post_materialization: u64,
+    /// Number of `Value::value_hypercube_reduce_selected` calls, i.e. sumcheck
+    /// rounds that reached the fused selected-eval + hypercube-sum entry point.
     pub canonical_sumcheck_rows_seen: u64,
+    /// Number of those rounds that produced a round polynomial through the
+    /// fused path, whether by the MLE-product fast path or the shared
+    /// evaluate-and-sum fallback.
     pub canonical_sumcheck_rows_fused: u64,
 }
 
 impl OptimizationStats {
+    /// Field-wise difference between this snapshot and an earlier one.
+    ///
+    /// Saturating subtraction, so an out-of-order pair of snapshots yields
+    /// zeros rather than wrapping. Counters are only ever incremented or reset
+    /// wholesale, so a non-zero delta means those code paths ran between the
+    /// two snapshots.
     pub fn delta_since(self, before: OptimizationStats) -> OptimizationStats {
         OptimizationStats {
             selected_eval_terms_materialized: self
@@ -45,6 +63,11 @@ static REDUCE_UNIVARIATE_POST_MATERIALIZATION: AtomicU64 = AtomicU64::new(0);
 static CANONICAL_SUMCHECK_ROWS_SEEN: AtomicU64 = AtomicU64::new(0);
 static CANONICAL_SUMCHECK_ROWS_FUSED: AtomicU64 = AtomicU64::new(0);
 
+/// Reads all optimizer counters into a single [`OptimizationStats`].
+///
+/// The five loads are independent relaxed atomic reads, so a snapshot taken
+/// while worker threads are running is not a consistent cut. Take snapshots
+/// around a quiesced protocol run to get meaningful deltas.
 pub fn optimization_stats_snapshot() -> OptimizationStats {
     OptimizationStats {
         selected_eval_terms_materialized: SELECTED_EVAL_TERMS_MATERIALIZED.load(Ordering::Relaxed),
@@ -57,6 +80,10 @@ pub fn optimization_stats_snapshot() -> OptimizationStats {
     }
 }
 
+/// Zeroes every optimizer counter.
+///
+/// Intended to be called once before a measured run; it affects the whole
+/// process, so concurrent measurements interfere with each other.
 pub fn reset_optimization_stats() {
     SELECTED_EVAL_TERMS_MATERIALIZED.store(0, Ordering::Relaxed);
     SELECTED_EVAL_INTERPOLATION_FALLBACK.store(0, Ordering::Relaxed);

@@ -8,11 +8,14 @@
 /// equality.
 #[derive(Debug, Clone)]
 pub struct Spanned<T> {
+    /// The wrapped AST node.
     pub node: T,
+    /// Byte offsets of the node in the source text, as produced by `pest`.
     pub span: std::ops::Range<usize>,
 }
 
 impl<T> Spanned<T> {
+    /// Attach an explicit source span to a node.
     pub fn new(node: T, span: std::ops::Range<usize>) -> Self {
         Self { node, span }
     }
@@ -23,6 +26,8 @@ impl<T> Spanned<T> {
         Self { node, span: 0..0 }
     }
 
+    /// Rewrite the wrapped node while keeping the original span, so a
+    /// desugaring step stays attributable to the syntax it came from.
     pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Spanned<U> {
         Spanned {
             node: f(self.node),

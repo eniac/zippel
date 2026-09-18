@@ -1,8 +1,17 @@
 use std::fmt;
 
+/// The kind of dependency an edge in a [`Dag`](crate::Dag) represents.
+///
+/// The ordering is significant: `Data < Transcript`, which is relied on when
+/// edge weights are sorted or compared.
 #[derive(Debug, Copy, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub enum DepType {
+    /// The sink consumes the value produced by the source node.
     Data,
+    /// The sink follows the source in the Fiat-Shamir transcript chain.
+    ///
+    /// Transcript edges form a single chain through all proof and challenge
+    /// nodes, which is what makes `Dag::transcript_nodes` a linear walk.
     Transcript,
 }
 
@@ -12,24 +21,30 @@ pub enum DepType {
 pub struct Dep(pub DepType);
 
 impl Dep {
+    /// Builds a dependency edge of the given kind.
     pub fn new(edge_type: DepType) -> Dep {
         Dep(edge_type)
     }
 
+    /// Builds a transcript-ordering edge.
     pub fn transcript() -> Dep {
         Dep(DepType::Transcript)
     }
 
+    /// Builds a data-dependency edge.
     pub fn data() -> Dep {
         Dep(DepType::Data)
     }
 
+    /// Returns `true` for data-dependency edges.
     pub fn is_data(&self) -> bool {
         self.0 == DepType::Data
     }
+    /// Returns `true` for transcript-ordering edges.
     pub fn is_transcript(&self) -> bool {
         self.0 == DepType::Transcript
     }
+    /// Returns the underlying [`DepType`] of this edge.
     pub fn edge_type(&self) -> DepType {
         self.0
     }

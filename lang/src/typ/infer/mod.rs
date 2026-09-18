@@ -15,8 +15,27 @@ use crate::typ::lub::{Lub, LubError};
 use crate::typ::{CKind, CTyp, CTyps};
 use share::{Ctx, Set};
 
+/// Kind-directed type inference for concretized AST nodes.
+///
+/// Implemented for `CExp` and `CBody`, i.e. after `concretize` has replaced symbolic sizes
+/// with `usize`. Inference is the last `lang`-level check before DAG lowering, so this is
+/// where user-facing type errors are raised; shape violations that survive this point are
+/// treated as compiler invariants and panic in `Op::typ()`.
 pub trait Typeable {
+    /// The variable environment this node is inferred under; `Ctx<Vid, CTyp>` for both
+    /// expressions and bodies.
     type Context;
+    /// Infers the concrete type of this node under the three contexts that flow together
+    /// through the checker: `kctx` (kinds of type variables), `fctx` (visible function
+    /// signatures), and `vctx` (types of bound value variables).
+    ///
+    /// # Errors
+    /// Returns a `TypeError` whose variant identifies the offending construct — an unbound
+    /// variable or type variable, a function application whose arguments do not match any
+    /// signature in `fctx`, an operand whose kind is wrong for the operator, a size or
+    /// degree mismatch, or a failed least-upper-bound (`LubError`) when combining branch,
+    /// element, or operand types. Each variant carries `kctx`, `vctx`, and the expression so
+    /// the full typing judgement can be pretty-printed.
     fn infer(
         &self,
         kctx: &Ctx<Tid, CKind>,

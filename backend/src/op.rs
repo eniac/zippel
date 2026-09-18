@@ -116,6 +116,12 @@ pub type OpFactory<C> = HConsign<GOp<C>>;
 
 /// Trait for types that have an associated Op factory
 pub trait HasOpFactory: ArkConfig {
+    /// Returns the process-wide hash-consing factory for this configuration's graph
+    /// operations.
+    ///
+    /// Every `GOp<C>` handed out as an `HOp<C>` is interned here, so structural equality
+    /// of operations becomes pointer equality. Implementors must return the same lock on
+    /// every call — a fresh factory would break sharing across already-built subgraphs.
     fn op_factory() -> &'static RwLock<OpFactory<Self>>;
 }
 
@@ -125,10 +131,12 @@ pub fn mk<C: HasOpFactory>(op: GOp<C>) -> HOp<C> {
 }
 
 impl Ref {
+    /// Wraps a `petgraph` `NodeIndex` as a graph reference.
     pub fn new(n: NodeIndex) -> Self {
         Ref(n)
     }
 
+    /// Returns the `NodeIndex` of the graph node this reference resolves to.
     pub fn node(&self) -> NodeIndex {
         self.0
     }
@@ -406,40 +414,67 @@ impl<C: ArkConfig, R> Op<C, R> {
         }
     }
 
+    /// Builds the constant index `i`, the literal form used for positions into vectors
+    /// and for values of `Fin` range types.
     pub fn index(i: usize) -> Self {
         Op::Value(Value::Index(i))
     }
 
+    /// Lifts an already-evaluated runtime `Value<C>` into a constant operation.
     pub fn value(v: &Value<C>) -> Self {
         Op::Value(v.clone())
     }
 
+    /// Builds the constant vector of indices enumerating `r`, the selector form consumed
+    /// by `Op::Ram` when lowering a slice expression.
     pub fn range(r: CRange) -> Op<C, R> {
         Op::Value(Value::VecIndex(r.into_iter().collect()))
     }
+    /// Builds the additive-identity constant of type `typ`.
+    ///
+    /// # Panics
+    /// Panics if `typ` has no canonical zero representation, for instance a `Fin` range
+    /// that does not contain `0`.
     pub fn zero(typ: &ATyp) -> Op<C, R> {
         Op::Value(Value::zero(typ))
     }
 
+    /// Builds a reference to another graph node, carrying the referent's type explicitly
+    /// because it is not recoverable from the reference alone.
     pub fn reference(r: R, typ: ATyp) -> Op<C, R> {
         Op::Ref(r, typ)
     }
 
+    /// Builds a Fiat-Shamir random-oracle challenge of type `typ`, with no nonzero
+    /// constraint.
     pub fn challenge(typ: ATyp) -> Op<C, R> {
         Op::Challenge(typ, false)
     }
+    /// Builds a locally sampled random element of type `typ`, with no nonzero constraint.
     pub fn random(typ: ATyp) -> Op<C, R> {
         Op::Random(typ, false)
     }
+    /// Builds a Fiat-Shamir challenge of type `typ` that is constrained to be nonzero
+    /// (needed wherever the challenge is used as a divisor or evaluation denominator).
     pub fn challenge_nz(typ: ATyp) -> Op<C, R> {
         Op::Challenge(typ, true)
     }
+    /// Builds a locally sampled random element of type `typ` constrained to be nonzero,
+    /// e.g. a blinding factor that must be invertible.
     pub fn random_nz(typ: ATyp) -> Op<C, R> {
         Op::Random(typ, true)
     }
 }
 
 impl<C: HasOpFactory> GOp<C> {
+    /// Dispatches to the smart constructor for `op`, so that constant folding and the
+    /// vector/`Fft` commuting conversions apply uniformly.
+    ///
+    /// `typ` is the authoritative result type chosen by the lowering code; it is stored
+    /// on the resulting `Op::Bin` rather than recomputed downstream.
+    ///
+    /// # Panics
+    /// Panics via `Op::div` if `op` is `BinOp::Div` and `b` is the constant zero.
     pub fn bin(op: BinOp, a: Self, b: Self, typ: ATyp) -> Self {
         match op {
             BinOp::Add => Self::add(a, b, typ),
@@ -455,26 +490,38 @@ impl<C: HasOpFactory> GOp<C> {
         }
     }
 
+    /// Builds an evaluation of polynomial `p` at the point(s) `x` (a scalar for
+    /// univariate evaluation, a vector for one multivariate point).
     pub fn evaluate(p: Self, x: Self) -> Self {
         Op::Evaluate(mk::<C>(p), None, Some(mk::<C>(x)))
     }
 
+    /// Builds an evaluation of `p` over the whole FFT grid, i.e. the `(None, None)`
+    /// mode of `Op::Evaluate` whose result is the coefficient/evaluation vector.
     pub fn evaluate_grid(p: Self) -> Self {
         Op::Evaluate(mk::<C>(p), None, None)
     }
 
+    /// Builds a partial evaluation that leaves the variables in `range` free and binds
+    /// the remaining ones to `fixed`, yielding a lower-arity polynomial.
     pub fn evaluate_selected(p: Self, range: CRange, fixed: Self) -> Self {
         Op::Evaluate(mk::<C>(p), Some(range), Some(mk::<C>(fixed)))
     }
 
+    /// Builds a placeholder for the current element of an enclosing `Map`/`ReduceMap`
+    /// body. `level` is a de Bruijn *level* into the runtime loop-parameter stack.
     pub fn loop_param(level: usize, typ: ATyp) -> Self {
         Op::LoopParam(level, typ)
     }
 
+    /// Builds the persistent map `[body for x in domain]`; `body` may mention
+    /// `Op::LoopParam` to refer to the current element.
     pub fn map(domain: Self, body: Self) -> Self {
         Op::Map(mk::<C>(domain), mk::<C>(body))
     }
 
+    /// Builds `reduce(op, [body for x in domain])`, fusing the map and the fold so the
+    /// intermediate vector is never materialized.
     pub fn reduce_map(op: BinOp, domain: Self, body: Self) -> Self {
         Op::ReduceMap(op, mk::<C>(domain), mk::<C>(body))
     }
@@ -556,6 +603,15 @@ impl<C: HasOpFactory> GOp<C> {
         }
     }
 
+    /// Addition smart constructor.
+    ///
+    /// Folds constants, distributes elementwise over `Op::Vec` operands, and applies the
+    /// commuting conversions `fft a + fft b = fft (a + b)`, the `ifft` dual, and the
+    /// same for `interpolate` at identical point vectors. Falls back to `Op::Bin`.
+    ///
+    /// # Panics
+    /// Panics if `typ` is not a vector type while either operand is a vector, since the
+    /// elementwise arms destructure `typ` with `into_vec`.
     pub fn add(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
             // v + 0 = 0 + v = v
@@ -601,6 +657,13 @@ impl<C: HasOpFactory> GOp<C> {
         }
     }
 
+    /// Subtraction smart constructor.
+    ///
+    /// Mirrors `Op::add`: constant folding, elementwise distribution over `Op::Vec`, and
+    /// the `fft`/`ifft`/`interpolate` commuting conversions.
+    ///
+    /// # Panics
+    /// Panics if `typ` is not a vector type while either operand is a vector.
     pub fn sub(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
             // v - 0
@@ -645,6 +708,13 @@ impl<C: HasOpFactory> GOp<C> {
         }
     }
 
+    /// Multiplication smart constructor.
+    ///
+    /// Folds `0 * v`, `1 * v`, and constant pairs, and distributes over `Op::Vec` either
+    /// elementwise (vector constant) or by scalar broadcast.
+    ///
+    /// # Panics
+    /// Panics if `typ` is not a vector type while either operand is a vector.
     pub fn mul(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
             // 0 * v = v * 0 = 0
@@ -687,6 +757,13 @@ impl<C: HasOpFactory> GOp<C> {
         }
     }
 
+    /// Division smart constructor.
+    ///
+    /// Folds `0 / v`, `v / 1`, and constant pairs, and distributes over `Op::Vec`.
+    ///
+    /// # Panics
+    /// Panics on a syntactically zero divisor, and if `typ` is not a vector type while
+    /// either operand is a vector.
     pub fn div(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
             (_, Op::Value(b)) if b.is_zero() => panic!("UncaughtError: Division by zero"),
@@ -728,6 +805,8 @@ impl<C: HasOpFactory> GOp<C> {
         }
     }
 
+    /// Bilinear pairing smart constructor: folds two group constants into their pairing
+    /// output, otherwise builds `Op::Pair` carrying the target-group type `typ`.
     pub fn pair(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
             (Op::Value(a), Op::Value(mut b)) => {
@@ -738,6 +817,10 @@ impl<C: HasOpFactory> GOp<C> {
         }
     }
 
+    /// Remainder smart constructor: folds constant pairs and distributes over `Op::Vec`.
+    ///
+    /// # Panics
+    /// Panics if `typ` is not a vector type while either operand is a vector.
     pub fn rem(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
             // v1 % v2
@@ -776,6 +859,14 @@ impl<C: HasOpFactory> GOp<C> {
         }
     }
 
+    /// Builds the multiplicative-identity constant of type `typ`.
+    ///
+    /// For `Uni(n)` this is the constant-one polynomial encoded as its coefficient
+    /// vector; for vectors it is the pointwise one.
+    ///
+    /// # Panics
+    /// Panics if `typ` has no representable one, e.g. a `Fin` range excluding `1`, a
+    /// group or record type, or `Uni(0)`.
     pub fn one(typ: &ATyp) -> GOp<C> {
         match typ {
             ATyp::Base(ABase::Fin(r)) if r.contains(1) => Op::Value(Value::Index(1)),
@@ -802,6 +893,11 @@ impl<C: HasOpFactory> GOp<C> {
         }
     }
 
+    /// Exponentiation smart constructor: folds `v ^ 0` to `Op::one` and `v ^ 1` to `v`.
+    ///
+    /// # Panics
+    /// Panics through `Op::one` when the exponent is the literal `0` and `typ` has no
+    /// representable one.
     pub fn pow(v1: Self, v2: Self, typ: ATyp) -> Self {
         match v2 {
             Op::Value(Value::Index(0)) => Op::one(&typ),
@@ -810,6 +906,8 @@ impl<C: HasOpFactory> GOp<C> {
         }
     }
 
+    /// Inner-product smart constructor: folds two constant vectors into their dot
+    /// product, otherwise builds `Op::Bin(BinOp::Dot, ..)`.
     pub fn dot(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
             // v1 . v2 = v1.dot(v2)
@@ -823,22 +921,30 @@ impl<C: HasOpFactory> GOp<C> {
         }
     }
 
+    /// Builds `Op::Poly`, reading `op` as the coefficient vector of a univariate
+    /// polynomial (`Vec<F, k>` becomes `Uni(k - 1)`).
     pub fn poly(op: Self) -> GOp<C> {
         Op::Poly(mk::<C>(op))
     }
 
+    /// Builds `Op::Coef`, flattening a polynomial into its canonical coefficient vector.
     pub fn coef(op: Self) -> GOp<C> {
         Op::Coef(mk::<C>(op))
     }
 
+    /// Builds `Op::Mle`, reading `op` as the evaluation table of a multilinear extension
+    /// over the boolean hypercube.
     pub fn mle(op: Self) -> GOp<C> {
         Op::Mle(mk::<C>(op))
     }
 
+    /// Builds a projection of field `field` out of a record-valued operation. `typ` is
+    /// the field's type, stored because it is chosen by the lowering code.
     pub fn proj(record_op: Self, field: String, typ: ATyp) -> GOp<C> {
         Op::Proj(mk::<C>(record_op), field, typ)
     }
 
+    /// Builds a fold of a vector-valued operation with the binary operation `op`.
     pub fn reduce(op: BinOp, v: Self) -> GOp<C> {
         Op::Reduce(op, mk::<C>(v))
     }
@@ -865,6 +971,12 @@ impl<C: HasOpFactory> GOp<C> {
         }
     }
 
+    /// Right-pads the vector-valued operation `v` with zeroes until it has length `n`,
+    /// returning `v` unchanged when it is already at least that long. Used to align
+    /// operands before an FFT-sized transform.
+    ///
+    /// # Panics
+    /// Panics if `v` does not have a vector type.
     pub fn pad_zeroes(v: GOp<C>, n: usize) -> GOp<C> {
         let typ = v.typ();
         let (t, m) = typ.into_vec();
@@ -875,13 +987,18 @@ impl<C: HasOpFactory> GOp<C> {
         }
     }
 
+    /// Builds an `Op::Vec` by hash-consing each element operation.
     pub fn vec(vs: Vec<GOp<C>>) -> GOp<C> {
         Op::Vec(vs.into_iter().map(mk::<C>).collect())
     }
 
+    /// Builds a prover-side assertion; the operand must evaluate to `Bool` at proving
+    /// time or the prover aborts.
     pub fn assert(op: GOp<C>) -> GOp<C> {
         Op::Assert(mk::<C>(op))
     }
+    /// Builds a verifier-side check; its result feeds the `Vec<Value<C>>` returned by
+    /// `run_verifier`.
     pub fn verify(op: GOp<C>) -> GOp<C> {
         Op::Verify(mk::<C>(op))
     }
@@ -896,6 +1013,8 @@ fn v_inner_clone<C: ArkConfig>(op: &GOp<C>) -> GOp<C> {
 }
 
 impl<C: ArkConfig> GOp<C> {
+    /// Builds an anonymous reference to graph node `n` of type `typ`, used where the
+    /// referent has no source-level variable name.
     pub fn underscore(n: NodeIndex, typ: ATyp) -> Self {
         Op::Ref(Ref(n), typ)
     }
@@ -908,10 +1027,16 @@ impl<C: ArkConfig> GOp<C> {
         Op::Ref(Ref(n), typ)
     }
 
+    /// Returns whether this operation is a bare reference to another graph node, i.e.
+    /// whether it contributes no computation of its own.
     pub fn is_ref(&self) -> bool {
         matches!(self, Op::Ref(_, _))
     }
 
+    /// Collects every graph node this operation depends on, in traversal order and with
+    /// duplicates retained.
+    ///
+    /// `Op::LoopParam` contributes nothing: it names a loop element, not a node.
     pub fn references(&self) -> Vec<Ref> {
         match self {
             Op::Ref(n, _) => vec![*n],
@@ -947,6 +1072,9 @@ impl<C: ArkConfig> GOp<C> {
 }
 
 impl<C: HasOpFactory> GOp<C> {
+    /// Rebuilds this operation with every referenced `NodeIndex` rewritten by `f`,
+    /// re-hash-consing each child. Used when a subgraph is copied into another `Dag`
+    /// and node numbering shifts.
     pub fn map_node_indices<F: Fn(NodeIndex) -> NodeIndex>(&self, f: &F) -> GOp<C> {
         match self {
             Op::Ref(r, typ) => Op::Ref(Ref(f(r.0)), typ.clone()),
@@ -1006,6 +1134,8 @@ impl<C: HasOpFactory> GOp<C> {
         }
     }
 
+    /// Rebuilds this operation with every `Ref` rewritten by `f`, re-hash-consing each
+    /// child. The `Ref`-level counterpart of `map_node_indices`.
     pub fn map_refs<F: Fn(Ref) -> Ref>(&self, f: &F) -> GOp<C> {
         match self {
             Op::Ref(r, typ) => Op::Ref(f(*r), typ.clone()),

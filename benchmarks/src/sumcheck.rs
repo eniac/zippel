@@ -12,9 +12,15 @@
 
 use crate::Timing;
 
+/// Default number of MLE variables (`NUM_VARS_CONST`) when the caller does
+/// not sweep a size; the summation domain is `{0,1}^NUM_VARS`.
 pub const DEFAULT_NUM_VARS: usize = 10;
+/// Default power (`MAX_DEGREE_CONST`) the base MLE is raised to, i.e. the
+/// per-round degree of the sumcheck univariate messages.
 pub const DEFAULT_MAX_DEGREE: usize = 10;
 
+/// Zippel half: compiles `examples/sumcheck/sumcheck.zippel` and times its
+/// generated prover and verifier.
 pub mod zippel_side {
     use super::*;
     use ark_ff::Zero;
@@ -28,6 +34,11 @@ pub mod zippel_side {
     use std::time::Instant;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
+    /// A compiled sumcheck instance, reusable across `time_protocol` calls.
+    ///
+    /// Holds the `ZippelHandler` (which owns the compiled prover/verifier
+    /// graphs), the two size parameters bound at compile time, and how long
+    /// compilation took.
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
         num_vars: usize,
@@ -36,6 +47,15 @@ pub mod zippel_side {
     }
 
     impl Setup {
+        /// Compiles the sumcheck protocol with `NUM_VARS_CONST = num_vars`
+        /// and `MAX_DEGREE_CONST = max_degree` bound as concrete sizes.
+        ///
+        /// The compile is timed; execution inputs are sampled later, per
+        /// `time_protocol` call.
+        ///
+        /// # Panics
+        /// Panics if the `.zippel` source cannot be read, parsed, type
+        /// checked, or lowered to a graph for these sizes.
         pub fn new(num_vars: usize, max_degree: usize) -> Self {
             let compile_start = Instant::now();
             let args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"));
@@ -54,6 +74,8 @@ pub mod zippel_side {
             }
         }
 
+        /// Wall-time spent in `ZippelHandler::compile` for this instance:
+        /// parsing, type checking, and graph construction only.
         pub fn compile_time(&self) -> std::time::Duration {
             self.compile_time
         }
@@ -66,6 +88,17 @@ pub mod zippel_side {
             )
         }
 
+        /// Samples a random base MLE, runs the compiled prover and verifier,
+        /// and returns their mean wall-times.
+        ///
+        /// The claimed sum is computed directly from the evaluation table, and
+        /// the summand polynomial is the base MLE multiplied by itself
+        /// `max_degree` times.
+        ///
+        /// # Panics
+        /// Panics if the polynomial product cannot be formed, if the prover or
+        /// verifier graph fails to execute, or if the verifier rejects the
+        /// honestly generated proof.
         pub fn time_protocol(&mut self) -> Timing {
             type F = <ArkBls12_381 as ArkConfig>::F;
             let nv = self.num_vars;
@@ -139,12 +172,15 @@ pub mod native_side {
     use std::sync::Arc;
     use std::time::Instant;
 
+    /// The native sumcheck parameters; there is no setup phase to amortize,
+    /// so this only records the instance size.
     pub struct Setup {
         num_vars: usize,
         max_degree: usize,
     }
 
     impl Setup {
+        /// Records the instance size; hyperplonk's sumcheck needs no setup.
         pub fn new(num_vars: usize, max_degree: usize) -> Self {
             Setup {
                 num_vars,
@@ -152,6 +188,19 @@ pub mod native_side {
             }
         }
 
+        /// Builds an equivalent instance (the same base MLE repeated
+        /// `max_degree` times in one `VirtualPolynomial` product term), runs
+        /// hyperplonk's prover and verifier, and returns their mean
+        /// wall-times.
+        ///
+        /// The final subclaim evaluation is deliberately excluded from the
+        /// verifier timing — in a real SNARK it would be a commitment opening
+        /// — but is still checked for correctness.
+        ///
+        /// # Panics
+        /// Panics if the virtual polynomial cannot be assembled, if prove or
+        /// verify errors out, or if the subclaim does not match the direct
+        /// evaluation of the polynomial.
         pub fn time_protocol(&self) -> Timing {
             let nv = self.num_vars;
             let md = self.max_degree;

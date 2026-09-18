@@ -10,6 +10,11 @@ use petgraph::graph::NodeIndex;
 
 use crate::Var;
 
+/// Prefix stamped on every variable name minted by the Gröbner-basis lowering.
+///
+/// It cannot collide with a source-level `Vid`, so any name carrying it is
+/// known to be compiler-generated (division witnesses, sentinels, auxiliary
+/// polynomial variables) rather than user-written.
 pub const GB_GENERATED_NAME_PREFIX: &str = "__zippel::gb::";
 
 /// Namespace for sentinel allocation shared across Ideal builders.
@@ -27,6 +32,9 @@ impl<C: ArkConfig + HasOpFactory> Default for IdealNamespace<C> {
 }
 
 impl<C: ArkConfig + HasOpFactory> IdealNamespace<C> {
+    /// Creates an empty namespace whose sentinel indices count down from
+    /// `usize::MAX`, keeping them disjoint from the `petgraph` indices of real
+    /// `TransClos` nodes, which count up from zero.
     pub fn new() -> Self {
         Self {
             sentinel_counter: usize::MAX,

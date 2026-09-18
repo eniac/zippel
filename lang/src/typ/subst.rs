@@ -5,10 +5,15 @@ use share::traversal::ToTraversal1;
 use share::{Ctx, Set};
 use thiserror::Error;
 
+/// Failure while building a [`SizeSubsts`] valuation from a signature's type variables.
 #[derive(Error, Debug)]
 pub enum SubstError {
+    /// A caller-supplied size pins a `Range` type variable to a value outside the
+    /// range declared for it.
     #[error("Size {1} for typevar {0} is outside its declared range")]
     OutOfRange(Tid, usize),
+    /// A range bound could not be evaluated to a concrete `usize`, typically because
+    /// it mentions a size variable that is not yet bound.
     #[error("Error evaluating range for typevar {0}: {1}")]
     Eval(Tid, EvalError),
 }
@@ -30,15 +35,19 @@ impl<T> Default for Substs<T> {
 }
 
 impl<T> Substs<T> {
+    /// Creates an empty substitution.
     pub fn new() -> Self {
         Substs(Ctx::new())
     }
+    /// Looks up the value bound to `tid`, or `None` when it is unbound.
     pub fn get(&self, tid: &Tid) -> Option<&T> {
         self.0.get(tid)
     }
+    /// Returns whether `tid` is bound by this substitution.
     pub fn contains(&self, tid: &Tid) -> bool {
         self.0.contains(tid)
     }
+    /// Returns the set of type variables bound by this substitution.
     pub fn keys(&self) -> Set<Tid> {
         self.0.keys()
     }
@@ -60,6 +69,18 @@ impl<T: Clone> FromIterator<(Tid, T)> for Substs<T> {
 }
 
 impl SizeSubsts {
+    /// Enumerates every concrete size valuation admitted by a signature's type
+    /// variables.
+    ///
+    /// Each `Range`-kinded type variable contributes one dimension of the product;
+    /// `sizes` pins a variable to a single value instead of expanding it. Non-range
+    /// type variables are skipped, and a signature with no range variables yields the
+    /// single empty substitution.
+    ///
+    /// # Errors
+    /// Returns [`SubstError::OutOfRange`] when a pinned size lies outside the
+    /// variable's declared range, and [`SubstError::Eval`] when a range bound cannot
+    /// be evaluated with the sizes bound so far.
     // Collect all sized type variables, for example [N: 0..10, M: 3,2..7]
     // and take all possible combinations of sizes.
     // If `sizes` provides a value for a Range typevar, pin to that value
@@ -178,17 +199,31 @@ impl AliasSubsts {
         self.get_repr(tid) == Some(tid.clone())
     }
 
+    /// Iterates over the bound type variables paired with the representative of their
+    /// equivalence class.
+    ///
+    /// # Panics
+    /// Panics if an equivalence class stored in this substitution is empty, which
+    /// [`AliasSubsts::add_equ`] never produces.
     pub fn iter(&self) -> impl Iterator<Item = (&Tid, &Tid)> {
         self.0.iter().map(|(k, v)| (k, v.iter().min().unwrap()))
     }
 
+    /// Returns whether no aliasing has been recorded.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+    /// Drops every recorded alias.
     pub fn clear(&mut self) {
         self.0.clear();
     }
 
+    /// Rewrites every aliased type variable in `on` to its class representative,
+    /// canonicalising a type or expression after unification.
+    ///
+    /// # Panics
+    /// Panics if an equivalence class stored in this substitution is empty, which
+    /// [`AliasSubsts::add_equ`] never produces.
     pub fn tid_subst<T: TidSubst>(&self, on: &mut T) {
         for k in self.0.keys() {
             on.tid_subst(&k, &self.get_repr(&k).unwrap());

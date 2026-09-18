@@ -99,6 +99,14 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         }
     }
 
+    /// Reduces every verifier polynomial against the prover/relation Gröbner
+    /// basis; a zero remainder means the verifier equation is implied by the
+    /// prover's computation, i.e. the protocol is complete.
+    ///
+    /// # Errors
+    /// Returns [`AnalysisError::UnitIdeal`] if the basis degenerated to the
+    /// unit ideal, and [`AnalysisError::Incomplete`] with the non-zero
+    /// remainder for the first verifier equation that is not derivable.
     pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
         if self.basis.is_unit() {
             return Err(AnalysisError::UnitIdeal {

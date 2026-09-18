@@ -13,6 +13,8 @@
 
 use crate::Timing;
 
+/// Zippel half: compiles `examples/schnorr/schnorr.zippel` and times its
+/// generated prover and verifier.
 pub mod zippel_side {
     use super::*;
     use ark_std::UniformRand;
@@ -23,12 +25,20 @@ pub mod zippel_side {
     use std::time::Instant;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
+    /// The compiled Schnorr protocol. It takes no size parameters, so the only
+    /// per-instance state is the handler and the measured compile time.
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
         compile_time: std::time::Duration,
     }
 
     impl Setup {
+        /// Compiles `examples/schnorr/schnorr.zippel` with an empty size
+        /// context and records how long the compile took.
+        ///
+        /// # Panics
+        /// Panics if the `.zippel` source cannot be read, parsed, type
+        /// checked, or lowered to prover and verifier graphs.
         pub fn new() -> Self {
             let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("..")
@@ -44,6 +54,8 @@ pub mod zippel_side {
             }
         }
 
+        /// Wall-time spent parsing, type checking, and building the prover and
+        /// verifier graphs.
         pub fn compile_time(&self) -> std::time::Duration {
             self.compile_time
         }
@@ -56,6 +68,16 @@ pub mod zippel_side {
             )
         }
 
+        /// Samples a witness `x` and bases `g`, `h = g*x`, then times the
+        /// compiled prover and verifier.
+        ///
+        /// The prover is averaged over `VERIFY_SAMPLES` (not
+        /// `PROVER_SAMPLES`) runs because a single Schnorr proof takes ~0.1 ms
+        /// and is jitter-dominated.
+        ///
+        /// # Panics
+        /// Panics if the prover or verifier graph fails to execute, or if the
+        /// verifier rejects the honestly generated proof.
         pub fn time_protocol(&mut self) -> Timing {
             type F = <ArkBls12_381 as ArkConfig>::F;
             type G1 = <ArkBls12_381 as ArkConfig>::G1;
@@ -120,6 +142,12 @@ pub mod zippel_side {
     }
 }
 
+/// Native baseline: `ark_crypto_primitives::signature::schnorr` in its
+/// Fiat-Shamir signature form, over BLS12-381 G1 with a `Blake2s256` hash.
+///
+/// The API shape differs (sign/verify a message rather than an interactive
+/// sigma protocol) but the group work — one scalar multiplication to prove,
+/// one two-base MSM to verify — matches the zippel side.
 pub mod native_side {
     use super::*;
     use ark_bls12_381::G1Projective;
@@ -129,6 +157,8 @@ pub mod native_side {
 
     type SchnorrSig = Schnorr<G1Projective, Blake2s256>;
 
+    /// Signature-scheme parameters, key pair, and the fixed message that
+    /// `time_protocol` signs and verifies.
     pub struct Setup {
         params: <SchnorrSig as SignatureScheme>::Parameters,
         pk: <SchnorrSig as SignatureScheme>::PublicKey,
@@ -137,6 +167,11 @@ pub mod native_side {
     }
 
     impl Setup {
+        /// Runs the scheme's setup and key generation with a deterministic
+        /// test RNG and fixes the benchmark message.
+        ///
+        /// # Panics
+        /// Panics if setup or key generation fails.
         pub fn new() -> Self {
             let mut rng = ark_std::test_rng();
             let params = SchnorrSig::setup(&mut rng).expect("schnorr setup");
@@ -149,6 +184,15 @@ pub mod native_side {
             }
         }
 
+        /// Times `sign` as the prover and `verify` as the verifier, both
+        /// averaged over `VERIFY_SAMPLES` runs.
+        ///
+        /// Each signature uses fresh randomness, mirroring the `random<F>`
+        /// nonce on the zippel side; the last one is what gets verified.
+        ///
+        /// # Panics
+        /// Panics if signing or verification errors out, or if the final
+        /// signature fails to verify.
         pub fn time_protocol(&self) -> Timing {
             let mut rng = ark_std::test_rng();
 

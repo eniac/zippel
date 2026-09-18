@@ -16,19 +16,91 @@ pub trait Lub
 where
     Self: Sized,
 {
+    /// Extra information needed to resolve the bound, typically the kind context
+    /// `kctx` mapping every [`Tid`] to its [`CKind`].
     type Context;
+    /// Least upper bound for equality: the widest type that both `a` and `b` inhabit.
+    ///
+    /// This is the rule behind `==`, vector literals and function-argument checking:
+    /// sizes are widened to the maximum and record types shrink to their common
+    /// fields.
+    ///
+    /// # Errors
+    /// Returns a [`LubError`] when the two shapes have no common supertype.
     fn lub_equ(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
+    /// Least upper bound for `+`.
+    ///
+    /// # Errors
+    /// Returns a [`LubError`] when addition is undefined on the two shapes, for
+    /// instance vectors of different lengths or a polynomial added to a `Vec`.
     fn lub_add(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
+    /// Least upper bound for `-`; mirrors [`Lub::lub_add`].
+    ///
+    /// # Errors
+    /// Returns a [`LubError`] when subtraction is undefined on the two shapes.
     fn lub_sub(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
+    /// Least upper bound for `*`, covering scalar multiplication of group elements
+    /// and the degree arithmetic of polynomial products.
+    ///
+    /// # Errors
+    /// Returns a [`LubError`] when multiplication is undefined on the two shapes.
     fn lub_mul(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
+    /// Least upper bound for `/`.
+    ///
+    /// # Errors
+    /// Returns a [`LubError`] when division is undefined on the two shapes, for
+    /// example dividing by a group element.
     fn lub_div(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
+    /// Least upper bound for `^`.
+    ///
+    /// # Errors
+    /// Returns a [`LubError`] when exponentiation is undefined on the two shapes; at
+    /// the kind level this is always an error.
     fn lub_pow(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
+    /// Least upper bound for the dot product `.`.
+    ///
+    /// Both sides must be vectors of the same length; the result is the element-wise
+    /// product, which for `G1 . G2` resolves to the pairing target group and is
+    /// executed as a multi-pairing at runtime.
+    ///
+    /// # Errors
+    /// Returns a [`LubError`] when the lengths differ, when either side is not a
+    /// vector, or when the element-wise product is itself ill-typed.
     fn lub_dot(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
+    /// Least upper bound for a pairing `e(a, b)`.
+    ///
+    /// Only defined for two group elements whose [`Tid`]s appear together in a
+    /// `Pairing` kind, in which case the result is that pairing's target group.
+    ///
+    /// # Errors
+    /// Returns a [`LubError`] when no pairing kind relates the two operands.
     fn lub_pair(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
+    /// Least upper bound for the remainder `%`.
+    ///
+    /// # Errors
+    /// Returns a [`LubError`] when the remainder is undefined on the two shapes; it
+    /// is only meaningful on integer ranges, and is always an error at the kind level.
     fn lub_rem(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
+    /// Least upper bound for concatenation `++`, which also covers appending or
+    /// prepending a single element to a vector.
+    ///
+    /// # Errors
+    /// Returns a [`LubError`] when neither operand is a vector of the other's element
+    /// type, or when the summed length overflows.
     fn lub_concat(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
+    /// Least upper bound for logical `&&`, defined only on booleans.
+    ///
+    /// # Errors
+    /// Returns a [`LubError`] when either operand is not a boolean.
     fn lub_and(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
 
+    /// Dispatches to the per-operator bound for `op`.
+    ///
+    /// This is the entry point used by expression inference and by `Op::Reduce`,
+    /// which folds a vector with a single [`BinOp`].
+    ///
+    /// # Errors
+    /// Returns whatever [`LubError`] the selected per-operator bound reports.
     fn lub_op(op: BinOp, a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
         match op {
             BinOp::Add => Self::lub_add(a, b, ctx),

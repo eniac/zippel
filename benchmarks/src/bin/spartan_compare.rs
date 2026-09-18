@@ -1,3 +1,12 @@
+//! Head-to-head benchmark of the Zippel-compiled Spartan-Hyrax NIZK against Microsoft's
+//! hand-written `libspartan` NIZK, both instantiated over Curve25519.
+//!
+//! The Zippel side compiles `examples/spartan/spartan.zippel` through the normal pipeline on the
+//! `ArkCurve25519` backend; the native side runs `libspartan::NIZK` over `curve25519-dalek`.
+//! For each R1CS size `M` the binary prints prover/verifier wall times, a matrix-vector-adjusted
+//! prove ratio (the native prover folds the sparse matvec into `prove`, so it is timed separately
+//! and subtracted), and both proof sizes.
+
 use benchmarks::spartan::{DEFAULT_M, Setup as ZippelSetup, hyrax_split};
 use clap::Parser;
 use libspartan::{Instance, NIZK, NIZKGens};

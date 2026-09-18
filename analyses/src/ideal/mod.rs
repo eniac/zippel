@@ -28,6 +28,8 @@ use ops::{EncodeCtx, link_to_polys};
 /// returns a fresh `Ideal` with its own `vars` namespace.
 #[derive(Clone)]
 pub struct IdealBuilder<C: ArkConfig> {
+    /// Name and sentinel allocator, shared by every `build()` call so that
+    /// generated division witnesses and sentinels stay globally unique.
     pub ns: IdealNamespace<C>,
     /// Map from Ref to the GOp that produced it, for tracing `&&` chains
     /// in assert/verify operands back to their leaf bools.
@@ -41,6 +43,8 @@ impl<C: ArkConfig + HasOpFactory> Default for IdealBuilder<C> {
 }
 
 impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
+    /// Creates a builder with an empty namespace and no recorded node
+    /// operations.
     pub fn new() -> Self {
         Self {
             ns: IdealNamespace::new(),

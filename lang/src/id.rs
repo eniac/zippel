@@ -3,6 +3,10 @@ use std::fmt;
 
 /// Generate a new identifier not in the set
 pub trait Fresh: Ord + Sized {
+    /// Mint an identifier based on `root` that does not collide with any
+    /// member of `s`, inserting the new identifier into `s`.
+    ///
+    /// Freshening appends/increments a numeric suffix on `root`.
     fn fresh(root: &str, s: &mut Set<Self>) -> Self;
 }
 
@@ -12,6 +16,7 @@ pub struct Tid(pub String);
 
 /// Traverse TIDs
 pub trait TidSubst: Sized {
+    /// Rewrite every occurrence of the type identifier `from` to `to`.
     fn tid_subst(&mut self, from: &Tid, to: &Tid);
 }
 
@@ -95,6 +100,7 @@ impl<'a> Arbitrary<'a> for Tid {
 }
 
 impl Tid {
+    /// Wrap a string as a type identifier without freshening it.
     pub fn new(s: &str) -> Self {
         Tid(s.to_string())
     }
@@ -152,6 +158,7 @@ impl<'a> Arbitrary<'a> for Vid {
 }
 
 impl Vid {
+    /// Wrap a string as an expression variable without freshening it.
     pub fn new(s: &str) -> Self {
         Vid(s.to_string())
     }

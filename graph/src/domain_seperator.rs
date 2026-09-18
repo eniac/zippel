@@ -26,6 +26,13 @@ impl Encoding<[u8]> for InstanceBytes {
     }
 }
 
+/// Fiat-Shamir domain separator for a Zippel protocol.
+///
+/// Binds a `spongefish` transcript to both the protocol's session name and a
+/// canonical encoding of its instance (public) inputs, so that a proof produced
+/// for one statement cannot be replayed against another. `C` only fixes the
+/// cryptographic backend and is carried phantom-wise; the separator itself is
+/// byte-oriented.
 pub struct ZippelDomainSeparator<C: ArkConfig> {
     session: String,
     instance_bytes: Vec<u8>,
@@ -33,6 +40,11 @@ pub struct ZippelDomainSeparator<C: ArkConfig> {
 }
 
 impl<C: ArkConfig> ZippelDomainSeparator<C> {
+    /// Builds a separator that binds only the session string `domsep`.
+    ///
+    /// The DAG is accepted for signature symmetry with
+    /// [`Self::new_zippel_domain_seperator`] but is not inspected, so the
+    /// instance part of the separator is empty.
     pub fn new<A>(domsep: &str, _dag: &Dag<C, A>) -> Self {
         Self {
             session: domsep.to_string(),
@@ -41,6 +53,14 @@ impl<C: ArkConfig> ZippelDomainSeparator<C> {
         }
     }
 
+    /// Builds a separator binding `session` together with the instance inputs
+    /// of `dag`.
+    ///
+    /// Instance-qualified [`ArgKind::Input`] nodes are collected, sorted by
+    /// variable name so the encoding is independent of `NodeIndex` allocation
+    /// order, and each contributes its name bytes followed by the little-endian
+    /// `u64` physical length of its type. Only shapes are bound, not values:
+    /// the actual instance values enter the transcript during execution.
     pub fn new_zippel_domain_seperator<A>(session: &str, dag: &Dag<C, A>) -> Self {
         // Collect instance, non-transcript Arg nodes sorted by name.
         let mut instance_args: Vec<(&Vid, &backend::ATyp)> = dag
@@ -76,6 +96,7 @@ impl<C: ArkConfig> ZippelDomainSeparator<C> {
         }
     }
 
+    /// Opens a `spongefish` prover state seeded with this domain separator.
     pub fn std_prover(&self) -> spongefish::ProverState {
         let session_bytes = session_id_from_str(&self.session);
         let instance = InstanceBytes(self.instance_bytes.clone());

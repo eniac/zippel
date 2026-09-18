@@ -33,6 +33,7 @@ pub struct Block {
     /// block (mirrors Singular's auto-sized last block). The backend infers
     /// the variable set from the ideal.
     pub vars: Option<Vec<Var>>,
+    /// Which ordering this block applies to its variables.
     pub kind: BlockKind,
 }
 
@@ -55,8 +56,12 @@ pub enum BlockKind {
 /// log it or surface it without knowing the internal failure taxonomy.
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum BackendError {
+    /// The backend cannot realise the requested [`MonoOrder`]; the caller may
+    /// retry with a different backend or a simpler ordering.
     #[error("the requested monomial ordering is not supported by this backend")]
     UnsupportedOrder,
+    /// An operational failure carrying a backend-specific message (missing
+    /// binary, output parse failure, and similar).
     #[error("{0}")]
     Other(String),
 }

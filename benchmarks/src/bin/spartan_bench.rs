@@ -1,7 +1,7 @@
 //! Native Microsoft/Spartan baseline driver.
 //!
 //! Sweeps both the **NIZK** and **SNARK** variants from
-//! https://github.com/microsoft/Spartan over a square-R1CS size grid.
+//! <https://github.com/microsoft/Spartan> over a square-R1CS size grid.
 //! For each `M` in the sweep:
 //!   * `num_cons = num_vars = 2^M` (square)
 //!   * `num_inputs = 1` (matches the zippel-side |io| at M = 2)

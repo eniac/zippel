@@ -17,13 +17,23 @@ use crate::frontend::Polynomial;
 /// polynomial definitions (pl), and the vars used in the basis.
 #[derive(Clone)]
 pub struct Ideal<C: ArkConfig> {
+    /// The generators of the ideal: every polynomial constrained to vanish on
+    /// honest executions of the protocol fragment being analysed.
     pub generating_set: Vec<Polynomial<C::F>>,
+    /// Definitional equations kept out of the generating set: each `Var` maps to
+    /// the polynomial it abbreviates, so chains of intermediate DAG nodes can be
+    /// substituted away by [`Ideal::inline`] instead of bloating the basis.
     pub pl: Ctx<Var, Polynomial<C::F>>,
+    /// Namespace mapping each DAG node reference to the `Var` that stands for its
+    /// value, so repeated visits to the same node reuse one variable.
     pub vars: HashMap<Ref, Var>,
+    /// Variables in the order they were introduced; used as the seed ranking when
+    /// building the lex / elimination monomial order for the Gröbner run.
     pub var_order: Vec<Var>,
 }
 
 impl<C: ArkConfig + HasOpFactory> Ideal<C> {
+    /// Create an empty ideal: no generators, no definitions, empty namespace.
     pub fn new() -> Self {
         Self {
             generating_set: Vec::new(),
@@ -40,6 +50,10 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
     }
 
     /// Look up a Ref in the namespace. Panics if not found.
+    ///
+    /// # Panics
+    /// Panics if `r` was never registered, which means a DAG node was consumed
+    /// before the ideal builder visited its definition.
     pub fn find_ref(&self, r: &Ref) -> Var {
         if let Some(v) = self.vars.get(r) {
             return v.clone();
@@ -47,6 +61,8 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         panic!("ideal: ref {} not found in namespace vars", r)
     }
 
+    /// All variables occurring in the ideal: the defined `pl` keys together with
+    /// every variable appearing in a generator.
     pub fn vars(&self) -> Set<Var> {
         let mut vars: Set<Var> = self.pl.keys().into_iter().collect();
         for p in &self.generating_set {
@@ -64,6 +80,9 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         self.pl.retain(|p, _| !f(p));
     }
 
+    /// Drop every generator all of whose monomials satisfy the predicate, then
+    /// prune `pl` down to the definitions still reachable from the surviving
+    /// generators.
     pub fn eliminate_monomial<F: Fn(&crate::frontend::Monomial) -> bool>(&mut self, f: &F) {
         self.generating_set
             .retain(|p| p.terms.keys().any(|t| !f(t)));

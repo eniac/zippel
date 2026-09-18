@@ -299,21 +299,27 @@ pub enum Exp<N> {
 
 /// Free variables
 pub trait FreeVars {
+    /// Value variables that occur free in `self`, i.e. are not bound by an
+    /// enclosing `let`, `map` binder or `fun` parameter.
     fn freevars(&self) -> Set<Vid>;
 }
 
+/// A sequence of expressions: a vector literal's elements, a call's actual
+/// arguments, or a statement block whose value is its last expression.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Exps<N>(pub Vec<Spanned<Exp<N>>>);
 
 /// Symbolic sized AST node, as parsed from input
 pub type UExp = Exp<Size>;
+/// Sequence of symbolically sized expressions.
 pub type UExps = Exps<Size>;
 
 /// Concrete size untyped AST node
 pub type CExp = Exp<usize>;
+/// Sequence of concretely sized expressions.
 pub type CExps = Exps<usize>;
 
-/// How to traverse the first type parameter [N] for Exp<N>
+/// How to traverse the first type parameter `N` for `Exp<N>`
 impl<N: Clone> ToTraversal1<N> for Exp<N> {
     type Output<Z> = Exp<Z>;
     fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Exp<Z>, E> {
@@ -401,7 +407,7 @@ impl<N: Clone> ToTraversal1<N> for Exp<N> {
     }
 }
 
-/// How to traverse the first type parameter [N] for Exps<N>
+/// How to traverse the first type parameter `N` for `Exps<N>`
 impl<N: Clone> ToTraversal1<N> for Exps<N> {
     type Output<Z> = Exps<Z>;
     fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Exps<Z>, E> {
@@ -414,7 +420,7 @@ impl<N: Clone> ToTraversal1<N> for Exps<N> {
     }
 }
 
-/// Traverse [Tid] inside [TExp]
+/// Traverse `Tid` inside `TExp`
 impl TidSubst for CExp {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         match self {
@@ -638,16 +644,26 @@ impl<N: Clone> RangeTraversal<N> for Exps<N> {
 }
 
 impl<N> Exps<N> {
+    /// Borrowing iterator over the spanned elements, in source order.
     pub fn iter(&self) -> std::slice::Iter<'_, Spanned<Exp<N>>> {
         self.0.iter()
     }
+    /// Whether the sequence holds no expressions.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+    /// Number of expressions in the sequence.
     pub fn len(&self) -> usize {
         self.0.len()
     }
     // Parser guarantees that the vector is non-empty
+    /// Last expression of the sequence — for a statement block this is the
+    /// expression whose value the block returns.
+    ///
+    /// # Panics
+    /// Panics if the sequence is empty. The grammar cannot produce an empty
+    /// `Exps`, so an empty one means the AST was built programmatically and
+    /// violates that invariant.
     pub fn last(&self) -> &Spanned<Exp<N>> {
         self.0.last().unwrap()
     }
@@ -682,6 +698,10 @@ impl<T> Index<usize> for Exps<T> {
 }
 
 impl<N> Exp<N> {
+    /// Whether evaluating this expression has no protocol-visible effect:
+    /// no transcript logging (`log`), no oracle `challenge`, no `random`
+    /// sampling and no `assert`/`verify`. Purity is what lets the graph
+    /// builder duplicate, hoist or drop a subexpression freely.
     pub fn is_pure(&self) -> bool {
         match self {
             Exp::Lit(_) | Exp::Unit | Exp::Var(_) | Exp::Range(_) => true,
@@ -802,7 +822,7 @@ where
     }
 }
 
-/// Blanket Pretty impl for Spanned<T> — delegates to inner T's Pretty.
+/// Blanket Pretty impl for `Spanned<T>` — delegates to inner T's Pretty.
 /// This lets all Pretty impls work with Spanned wrappers without .node calls.
 impl<'a, D, A, T> Pretty<'a, D, A> for Spanned<T>
 where

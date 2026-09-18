@@ -6,25 +6,45 @@ use crate::id::Tid;
 use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 use share::{Ctx, Set};
 
+/// A symbolic size expression appearing in source-level types, such as the
+/// length of a `Vec` or the degree of a polynomial.
+///
+/// Sizes are built from size-type variables (`Tid`, written with a leading
+/// uppercase letter in `.zippel` source) and literals, and are eliminated by
+/// [`Size::eval`] when a `UModule` is concretized into a `CModule`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Size {
-    Var(Tid),                                    // N
-    Lit(u32),                                    // 15
+    /// A size-type variable, resolved from the substitution context at
+    /// concretization time.
+    Var(Tid), // N
+    /// A literal size known at parse time.
+    Lit(u32), // 15
+    /// Sum of two sizes.
     Add(Box<Spanned<Size>>, Box<Spanned<Size>>), // A + B
+    /// Difference of two sizes; must not underflow when evaluated.
     Sub(Box<Spanned<Size>>, Box<Spanned<Size>>), // A - B
+    /// Product of two sizes.
     Mul(Box<Spanned<Size>>, Box<Spanned<Size>>), // A * B
+    /// Integer (truncating) quotient of two sizes.
     Div(Box<Spanned<Size>>, Box<Spanned<Size>>), // A / B
+    /// Exponentiation of a size by a size.
     Pow(Box<Spanned<Size>>, Box<Spanned<Size>>), // A ^ B
 }
 
+/// Failure while evaluating a [`Size`] to a concrete `usize`.
 #[derive(Error, Debug)]
 pub enum EvalError {
+    /// The divisor evaluated to zero.
     #[error("Division by zero: {0} / {1}")]
     DivisionByZero(Size, Size),
+    /// The right operand of a subtraction exceeded the left one; sizes are
+    /// unsigned.
     #[error("Underflow by subtraction: {0} - {1}")]
     UnderflowBySubtraction(Size, Size),
+    /// A size-type variable was bound to a negative value.
     #[error("Negative variable value: {0}")]
     NegativeVariableValue(Size),
+    /// A size-type variable is not bound in the substitution context.
     #[error("Variable not found: {0}")]
     VariableNotFound(Tid),
 }
@@ -47,6 +67,7 @@ impl Size {
         matches!(self, Size::Pow(_, _))
     }
 
+    /// The size-type variables this expression depends on.
     pub fn free_vars(&self) -> Set<Tid> {
         match self {
             Size::Var(id) => Set::from([id.clone()]),
@@ -59,6 +80,18 @@ impl Size {
         }
     }
 
+    /// Evaluates this size expression to a concrete `usize` under the
+    /// size-variable bindings `ctx`.
+    ///
+    /// # Errors
+    /// Returns `EvalError::VariableNotFound` for an unbound variable,
+    /// `EvalError::UnderflowBySubtraction` when a subtraction would go below
+    /// zero, and `EvalError::DivisionByZero` for a zero divisor.
+    ///
+    /// # Panics
+    /// Panics on arithmetic overflow of addition, multiplication, or
+    /// exponentiation when overflow checks are enabled; exponents larger than
+    /// `u32::MAX` are truncated.
     pub fn eval(&self, ctx: &Ctx<Tid, usize>) -> Result<usize, EvalError> {
         match self {
             Size::Var(id) => ctx

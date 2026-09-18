@@ -6,30 +6,42 @@ use crate::typ::{AliasSubsts, CKind, CTyp, Kind, Nothing};
 use share::Ctx;
 use thiserror::Error;
 
+/// Failure raised while unifying two concrete types or two type variables.
 #[derive(Error, PartialEq, Debug)]
 pub enum UnifyError {
+    /// Wraps the failure that occurred while unifying the two given types, so the
+    /// full typing judgement can be pretty-printed.
     #[error("UnifyError: While unifying types {0} ~ {1}\n\n{2}")]
     Typ(CTyp, CTyp, Box<UnifyError>),
+    /// A least-upper-bound computation on a nested size range failed.
     #[error(transparent)]
     Lub(LubError),
+    /// A type variable has no entry in the kind context `kctx`.
     #[error("UnifyError: Kind not found {0}")]
     KindNotFound(Tid),
+    /// Two type variables were equated but their kinds describe different sorts of
+    /// arkworks elements.
     #[error("UnifyError: Type variable {0}: {1} does not match {2}: {3}")]
     KindMismatch(Tid, CKind, Tid, CKind),
+    /// The two type shapes have no common unifier at all.
     #[error("UnifyError: Type mismatch {0} ~ {1}")]
     TypMismatch(CTyp, CTyp),
 }
 
 impl UnifyError {
+    /// Builds a [`UnifyError::KindNotFound`] for a type variable missing from `kctx`.
     pub fn kind_not_found(a: &Tid) -> Self {
         UnifyError::KindNotFound(a.clone())
     }
+    /// Wraps `e` with the pair of types whose unification produced it.
     pub fn typ(a: &CTyp, b: &CTyp, e: UnifyError) -> Self {
         UnifyError::Typ(a.clone(), b.clone(), Box::new(e))
     }
+    /// Builds a [`UnifyError::KindMismatch`] recording both variables and their kinds.
     pub fn kind_mismatch(a: &Tid, ka: &CKind, b: &Tid, kb: &CKind) -> Self {
         UnifyError::KindMismatch(a.clone(), ka.clone(), b.clone(), kb.clone())
     }
+    /// Builds a [`UnifyError::TypMismatch`] for two irreconcilable type shapes.
     pub fn typ_mismatch(a: &CTyp, b: &CTyp) -> Self {
         UnifyError::TypMismatch(a.clone(), b.clone())
     }
@@ -40,7 +52,16 @@ pub trait Unify
 where
     Self: Sized,
 {
+    /// Failure reported when the two values have no common unifier.
     type Error;
+    /// Unifies `a` and `b` under the kind context `ctx`, recording the type-variable
+    /// aliases discovered along the way in `subs`.
+    ///
+    /// The returned value is the unified type, with size arguments widened where the
+    /// two sides differ in degree or variable count.
+    ///
+    /// # Errors
+    /// Returns `Self::Error` when the two values have incompatible kinds or shapes.
     fn unify(
         a: &Self,
         b: &Self,

@@ -1,3 +1,10 @@
+//! Standalone compile-time timing suite for the bundled example protocols at size `2^18`.
+//!
+//! Unlike the Criterion benches this is a plain `main` that runs each `.zippel` example through
+//! `ZippelHandler::compile` once with its size variables bound to `18`, on whichever backend the
+//! protocol targets (`ArkBls12_381`, `ArkSecp256k1`, or `ArkCurve25519`), and prints each
+//! protocol's wall time plus the fastest and slowest entries.
+
 use backend::{ArkBls12_381, ArkCurve25519, ArkSecp256k1};
 use lang::id::Tid;
 use share::Ctx;

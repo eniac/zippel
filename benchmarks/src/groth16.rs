@@ -34,6 +34,8 @@
 
 use crate::Timing;
 
+/// Default circuit-size knob for the Groth16 comparison: the benchmark runs
+/// `2^DEFAULT_LOG_CONSTRAINTS` R1CS constraints unless a caller overrides it.
 pub const DEFAULT_LOG_CONSTRAINTS: usize = 10;
 
 // ---------------------------------------------------------------------------
@@ -44,6 +46,12 @@ pub const DEFAULT_LOG_CONSTRAINTS: usize = 10;
 // identity since shared and bridge share the same arkworks version.
 // ---------------------------------------------------------------------------
 
+/// Size-parameterised Groth16 fixture shared by both benchmark sides.
+///
+/// Runs `ark-groth16` keygen and replays the squaring-chain circuit to capture
+/// the R1CS matrices and the instance/witness assignment. Everything both the
+/// zippel-compiled and the vendored native prover consume originates here, so
+/// neither side can accidentally be measured against a different statement.
 pub mod shared {
     use ark_bls12_381::{Bls12_381, Fr};
     use ark_ff::UniformRand;
@@ -53,7 +61,9 @@ pub mod shared {
         SynthesisError, SynthesisMode, predicate::polynomial_constraint::R1CS_PREDICATE_LABEL,
     };
 
+    /// Pairing engine the whole comparison is fixed to (BLS12-381).
     pub type E = Bls12_381;
+    /// Scalar field of [`E`]; the field all R1CS coefficients live in.
     pub type F = Fr;
 
     /// Bench circuit: a squaring chain producing one instance output.
@@ -62,7 +72,7 @@ pub mod shared {
     ///   * 1 instance input  (`y` = final squared value, M=2 incl. constant 1)
     ///   * N witness vars  (`w[0..N]`, with `w[0]` a random seed)
     ///   * N constraints:
-    ///     row i in [0, N-2]:  w[i] * w[i] = w[i+1]
+    ///     `row i in [0, N-2]:  w[i] * w[i] = w[i+1]`
     ///     row N-1:            w[N-1] * w[N-1] = y
     ///
     /// R1CS matrices are N × (N+2) — near-square (vs. the prior
@@ -72,6 +82,8 @@ pub mod shared {
     /// rather than the degenerate "every output is public" case.
     #[derive(Clone)]
     pub struct BenchCircuit {
+        /// Number of squaring rows `N`; also the witness count, giving
+        /// `N x (N + 2)` R1CS matrices.
         pub num_constraints: usize,
     }
 
@@ -139,15 +151,32 @@ pub mod shared {
     /// `[0]=A, [1]=B, [2]=C` (in 0.5 r1cs the equivalent was a struct
     /// with `.a/.b/.c` fields).
     pub struct Shared {
+        /// `ark-groth16` proving key for this circuit size.
         pub pk: ProvingKey<E>,
+        /// Verifying key, cloned out of [`Shared::pk`].
         pub vk: VerifyingKey<E>,
+        /// R1CS-predicate matrix triple, indexed `[0]=A`, `[1]=B`, `[2]=C`.
         pub matrices: Vec<Matrix<F>>,
+        /// Number of instance variables `M`, including the leading constant 1.
         pub num_inputs: usize,
+        /// Number of constraints as finalized by the constraint system.
         pub num_constraints: usize,
+        /// Instance assignment, constant 1 first, then the public output `y`.
         pub instance_assignment: Vec<F>,
+        /// Witness assignment `w[0..N]` of the squaring chain.
         pub witness_assignment: Vec<F>,
     }
 
+    /// Runs keygen and synthesises the circuit at `num_constraints` rows.
+    ///
+    /// The circuit is replayed twice under the same seed — once for keygen and
+    /// once in `SynthesisMode::Prove` to capture matrices and assignments — so
+    /// the keys and the witness describe the same instance.
+    ///
+    /// # Panics
+    /// Panics if `ark-groth16` setup fails, if the constraint system cannot be
+    /// finalized into matrices, if the `R1CS` predicate is absent, or if the
+    /// instance/witness assignments were not materialized.
     pub fn build(num_constraints: usize) -> Shared {
         let mut setup_rng = ark_std_test_rng_seeded(0xC0FFEE_u64 ^ num_constraints as u64);
         let circuit = BenchCircuit { num_constraints };
@@ -210,6 +239,12 @@ pub mod shared {
 // stable. The byte-roundtrip helpers are now identity / Affine→Projective.
 // ---------------------------------------------------------------------------
 
+/// Flattens [`shared::Shared`] into the [`bridge::Translated`] view both sides consume.
+///
+/// Historically this crossed an `arkworks` version boundary; after the 0.6
+/// migration the projections are the identity (or `Affine` to `Projective`),
+/// but the layer is kept so downstream call sites stay stable and so the
+/// `R1CS`-to-QAP witness map has one shared implementation.
 pub mod bridge {
     use super::shared::Shared;
     use ark_bls12_381::{
@@ -222,26 +257,32 @@ pub mod bridge {
     type NpG1Affine = <Bls12_381 as Pairing>::G1Affine;
     type NpG2Affine = <Bls12_381 as Pairing>::G2Affine;
 
+    /// Identity projection of a scalar; the version-bridging hook for `Fr`.
     pub fn fr_to_git(x: &GitFr) -> GitFr {
         *x
     }
 
+    /// Identity projection of a scalar slice into an owned `Vec`.
     pub fn fr_vec_to_git(xs: &[GitFr]) -> Vec<GitFr> {
         xs.to_vec()
     }
 
+    /// Lifts a `G1` affine point into projective form.
     pub fn g1_to_git_proj(p: &NpG1Affine) -> GitG1Proj {
         p.into_group()
     }
 
+    /// Lifts a `G2` affine point into projective form.
     pub fn g2_to_git_proj(p: &NpG2Affine) -> GitG2Proj {
         p.into_group()
     }
 
+    /// Lifts a `G1` affine slice into projective points, one per element.
     pub fn g1_vec_to_git(ps: &[NpG1Affine]) -> Vec<GitG1Proj> {
         ps.iter().map(g1_to_git_proj).collect()
     }
 
+    /// Lifts a `G2` affine slice into projective points, one per element.
     pub fn g2_vec_to_git(ps: &[NpG2Affine]) -> Vec<GitG2Proj> {
         ps.iter().map(g2_to_git_proj).collect()
     }
@@ -249,37 +290,60 @@ pub mod bridge {
     /// Proving + verifying key fields, projected into git-main BLS12-381.
     #[derive(ark_serialize::CanonicalSerialize, ark_serialize::CanonicalDeserialize)]
     pub struct GitKeys {
+        /// `alpha` in `G1`, the left pairing factor of the verification equation.
         pub alpha_g1: GitG1Proj,
+        /// `beta` in `G1`, used when forming the prover's `B` element over `G1`.
         pub beta_g1: GitG1Proj,
+        /// `beta` in `G2`, paired against `alpha` by the verifier.
         pub beta_g2: GitG2Proj,
+        /// `gamma` in `G2`, paired against the instance commitment `IC`.
         pub gamma_g2: GitG2Proj,
+        /// `delta` in `G1`, the blinding base for the prover's `r`/`s`.
         pub delta_g1: GitG1Proj,
+        /// `delta` in `G2`, paired against the proof element `C`.
         pub delta_g2: GitG2Proj,
+        /// MSM bases for `A`, indexed by the full assignment.
         pub a_query: Vec<GitG1Proj>,
+        /// `G1` MSM bases for `B`, indexed by the full assignment.
         pub b_g1_query: Vec<GitG1Proj>,
+        /// `G2` MSM bases for `B`, indexed by the full assignment.
         pub b_g2_query: Vec<GitG2Proj>,
+        /// MSM bases for the quotient polynomial `h`, one per domain slot minus one.
         pub h_query: Vec<GitG1Proj>,
+        /// MSM bases for the witness-only part of `C`.
         pub l_query: Vec<GitG1Proj>,
+        /// Verifying-key bases for the instance commitment `IC`.
         pub gamma_abc_g1: Vec<GitG1Proj>,
     }
 
     /// Constraint matrices, projected into git-main field.
     #[derive(ark_serialize::CanonicalSerialize, ark_serialize::CanonicalDeserialize)]
     pub struct GitMatrices {
+        /// Sparse rows of `A`, each entry a `(coefficient, column)` pair.
         pub a: Vec<Vec<(GitFr, usize)>>,
+        /// Sparse rows of `B`, each entry a `(coefficient, column)` pair.
         pub b: Vec<Vec<(GitFr, usize)>>,
+        /// Sparse rows of `C`, each entry a `(coefficient, column)` pair.
         pub c: Vec<Vec<(GitFr, usize)>>,
     }
 
     /// All inputs both sides need, expressed entirely in git-main types.
     #[derive(ark_serialize::CanonicalSerialize, ark_serialize::CanonicalDeserialize)]
     pub struct Translated {
+        /// Proving and verifying key material.
         pub keys: GitKeys,
+        /// The `R1CS` matrix triple.
         pub mat: GitMatrices,
+        /// Instance assignment, constant 1 first.
         pub instance_assignment: Vec<GitFr>,
+        /// Witness assignment.
         pub witness_assignment: Vec<GitFr>,
+        /// Instance assignment followed by witness assignment; the MSM index
+        /// order the `a_query` / `b_*_query` bases expect.
         pub full_assignment: Vec<GitFr>,
+        /// Number of instance variables, including the constant 1.
         pub num_inputs: usize,
+        /// Number of `R1CS` constraints.
         pub num_constraints: usize,
         /// Size of `pk.h_query` (= domain.size() − 1).
         pub h_size: usize,
@@ -289,6 +353,10 @@ pub mod bridge {
         pub l: usize,
     }
 
+    /// Projects a [`Shared`] fixture into the flat [`Translated`] view.
+    ///
+    /// Also derives `full_assignment` (instance then witness) and the three
+    /// size knobs `h_size` / `m` / `l` that parameterise the zippel protocol.
     pub fn translate_shared(s: &Shared) -> Translated {
         let keys = GitKeys {
             alpha_g1: g1_to_git_proj(&s.pk.vk.alpha_g1),
@@ -338,6 +406,12 @@ pub mod bridge {
     /// ark-groth16's `LibsnarkReduction::witness_map_from_matrices`. Both
     /// the zippel-side and the vendored native prover call this inside
     /// their prove timer.
+    ///
+    /// # Panics
+    /// Panics if no evaluation domain of size `num_constraints + num_inputs`
+    /// exists over the scalar field, if the coset shifted by the field
+    /// generator cannot be formed, or if the vanishing polynomial evaluates to
+    /// zero at that generator (it cannot, since the generator is off-domain).
     pub fn witness_map(
         mat: &GitMatrices,
         num_inputs: usize,
@@ -417,6 +491,11 @@ pub mod bridge {
 // vendored native prover.
 // ---------------------------------------------------------------------------
 
+/// The zippel-compiled side of the comparison.
+///
+/// Compiles `examples/groth16/groth16.zippel`, feeds it the [`bridge::Translated`]
+/// inputs, and times prove and verify. The prove timer includes
+/// [`bridge::witness_map`] so it measures the same work as the native prover.
 pub mod zippel_side {
     use super::Timing;
     use super::bridge::{Translated, witness_map};
@@ -430,6 +509,8 @@ pub mod zippel_side {
     use std::time::Instant;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
+    /// A compiled zippel Groth16 handler plus the size-invariant part of its
+    /// input context, ready to be timed at one circuit size.
     pub struct Setup<'a> {
         handler: ZippelHandler<ArkBls12_381>,
         inputs_base: Ctx<Vid, Value<ArkBls12_381>>,
@@ -438,6 +519,15 @@ pub mod zippel_side {
     }
 
     impl<'a> Setup<'a> {
+        /// Compiles the protocol and pre-affinizes the key MSM bases.
+        ///
+        /// Affinization happens here, outside the prove timer, mirroring the
+        /// native side's `AffineKeys::from`, so neither side is charged for
+        /// coordinate normalization during the measured protocol run.
+        ///
+        /// # Panics
+        /// Panics if `examples/groth16/groth16.zippel` cannot be read, parsed,
+        /// or compiled at the sizes `M` / `L` / `H` derived from `translated`.
         pub fn new(translated: &'a Translated) -> Self {
             // Pre-affinize the query vectors ONCE here, then feed them as
             // `Value::VecG{1,2}Affine`. The `dot(VecG_, VecScalar)` arms
@@ -522,6 +612,8 @@ pub mod zippel_side {
             }
         }
 
+        /// Wall time spent compiling the `.zippel` source into prover and
+        /// verifier graphs.
         pub fn compile_time(&self) -> std::time::Duration {
             self.compile_time
         }
@@ -534,6 +626,14 @@ pub mod zippel_side {
             )
         }
 
+        /// Times prove and verify, averaged over the configured sample counts.
+        ///
+        /// Each prove sample recomputes `h_coeffs` via [`witness_map`]
+        /// inside the timer; verify samples replay the last proof.
+        ///
+        /// # Panics
+        /// Panics if the prover or verifier graph fails to execute, if the
+        /// sample counts are zero, or if verification does not accept.
         pub fn time_protocol(&mut self) -> Timing {
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_proof = None;
@@ -588,6 +688,11 @@ pub mod zippel_side {
 // (`Bls12_381::multi_pairing`) implementations the zippel backend uses.
 // ---------------------------------------------------------------------------
 
+/// The vendored native side of the comparison.
+///
+/// A hand-written Groth16 prover and verifier built directly on the same
+/// `arkworks` MSM and pairing routines the zippel backend calls, so any
+/// timing gap reflects the compiler rather than a library-version asymmetry.
 pub mod native_side {
     use super::Timing;
     use super::bridge::{Translated, witness_map};
@@ -621,6 +726,10 @@ pub mod native_side {
     }
 
     impl AffineKeys {
+        /// Normalizes every proving/verifying-key base into affine form.
+        ///
+        /// Called once at setup so the prove timer never pays for
+        /// `normalize_batch`.
         pub fn from(translated: &Translated) -> Self {
             let keys = &translated.keys;
             AffineKeys {
@@ -640,12 +749,14 @@ pub mod native_side {
         }
     }
 
+    /// Prepared native-side state: the shared inputs plus their affine keys.
     pub struct Setup<'a> {
         translated: &'a Translated,
         keys: AffineKeys,
     }
 
     impl<'a> Setup<'a> {
+        /// Prepares the affine key views for one circuit size.
         pub fn new(translated: &'a Translated) -> Self {
             Setup {
                 translated,
@@ -653,6 +764,16 @@ pub mod native_side {
             }
         }
 
+        /// Times the vendored prover and verifier, averaged over the
+        /// configured sample counts.
+        ///
+        /// Blinding factors `r` and `s` are drawn once so every prove sample
+        /// does identical work. The verifier is handed the instance vector
+        /// with its leading constant 1 dropped, matching `ark-groth16`.
+        ///
+        /// # Panics
+        /// Panics if the sample counts are zero or if the final verification
+        /// does not accept.
         pub fn time_protocol(&self) -> Timing {
             let mut rng = ark_std::test_rng();
             let r = GitFr::rand(&mut rng);
@@ -705,9 +826,13 @@ pub mod native_side {
         }
     }
 
+    /// A Groth16 proof triple in projective coordinates.
     pub struct Proof {
+        /// `A` in `G1`.
         pub a: G1Projective,
+        /// `B` in `G2`.
         pub b: G2Projective,
+        /// `C` in `G1`.
         pub c: G1Projective,
     }
 
@@ -722,6 +847,11 @@ pub mod native_side {
     /// (e.g. `into_bigint` of one MSM overlapping with bucket-fill of
     /// the next). Without this, the prover serializes 5 large MSMs and
     /// looks artificially slow next to zippel's identical work.
+    ///
+    /// # Panics
+    /// Panics if [`super::bridge::witness_map`] cannot build its evaluation
+    /// domain, or if any of the five MSM tasks fails to publish its result
+    /// (which would mean a panicking `rayon` worker poisoned its mutex).
     #[allow(clippy::too_many_arguments)]
     pub fn prove(
         keys: &AffineKeys,
@@ -808,6 +938,10 @@ pub mod native_side {
     /// Vendored Groth16 verifier. One MSM over `gamma_abc_g1` plus a
     /// single 3-pair `multi_pairing` (one Miller loop + one
     /// final-exponentiation), then GT identity check via `result == result − result`.
+    ///
+    /// # Panics
+    /// Panics if `gamma_abc_g1` is empty, or if it is shorter than
+    /// `instance_inputs.len() + 1`.
     #[allow(clippy::eq_op)]
     pub fn verify(keys: &AffineKeys, proof: &Proof, instance_inputs: &[GitFr]) -> bool {
         // IC = gamma_abc_g1[0] + MSM(gamma_abc_g1[1..], instance_inputs).
@@ -861,6 +995,13 @@ pub mod native_side {
 // git-main translation cost happens once per size, not per side.
 // ---------------------------------------------------------------------------
 
+/// Builds the fully translated benchmark inputs for one circuit size.
+///
+/// Both `bench_all` and the standalone binary go through this so setup and
+/// translation happen once per size rather than once per side.
+///
+/// # Panics
+/// Panics if [`shared::build`] fails to run keygen or synthesise the circuit.
 pub fn build_translated(num_constraints: usize) -> bridge::Translated {
     bridge::translate_shared(&shared::build(num_constraints))
 }

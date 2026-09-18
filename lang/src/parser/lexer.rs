@@ -51,79 +51,171 @@ fn block_comment_end(lex: &mut Lexer<RawToken>) -> Result<(), LexingError> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Token<'src> {
     // Punctuation
+    /// `(` — opens a parenthesised expression, tuple/argument list, or
+    /// call/application argument group.
     LParen,
+    /// `)` — closes a group opened by [`Token::LParen`].
     RParen,
+    /// `{` — opens a protocol/function body block.
     LBrace,
+    /// `}` — closes a block opened by [`Token::LBrace`].
     RBrace,
+    /// `[` — opens a vector literal or an index/slice bracket.
     LBrack,
+    /// `]` — closes a bracket opened by [`Token::LBrack`].
     RBrack,
+    /// `<` — opens a type/size argument list such as `Fin<..>` or `Uni<F, n>`.
+    ///
+    /// The lexer does not distinguish this from a less-than operator; the
+    /// parser decides by position.
     LAngle,
+    /// `>` — closes a type/size argument list opened by [`Token::LAngle`].
     RAngle,
+    /// `,` — separator inside argument lists, vectors, records, and ranges.
     Comma,
+    /// `;` — statement terminator; sequences a `let`/log binding with its
+    /// continuation expression.
     Semi,
+    /// `:` — ascription separator between a binder (or record field) and its
+    /// type or value.
     Colon,
+    /// `=` — binding sign in `let`, `type`, and declaration forms.
     Eq,
+    /// `->` — function-type arrow in signatures and kind annotations.
     Arrow,
+    /// `=>` — lambda arrow separating `fun (args)` from its body.
     FatArrow,
+    /// `==` — equality comparison operator.
     EqEq,
+    /// `.` — record projection.
     Dot,
+    /// `..` — range separator in `start..end` and `start, step..end` size
+    /// ranges (see `Fin<..>`).
     DotDot,
+    /// `<-` — transcript log binding, parsed into `UExp::Log`.
     LArrow,
+    /// `{|` — opens a record construction literal.
     LBraceBar,
+    /// `|}` — closes a record construction literal opened by
+    /// [`Token::LBraceBar`].
     BarRBrace,
     // Operators
+    /// `+` — addition.
     Plus,
+    /// `-` — subtraction (also lexed for unary negation position).
     Minus,
+    /// `*` — multiplication.
     Star,
+    /// `/` — division.
     Slash,
+    /// `^` — exponentiation (`BinOp::Pow`).
     Caret,
+    /// `%` — remainder (`BinOp::Rem`).
     Percent,
+    /// `++` — concatenation of vectors/polynomials.
     PlusPlus,
+    /// `&&` — logical conjunction (`BinOp::And`).
     AmpAmp,
     // Literals — carry source text (borrowed during parsing)
+    /// A non-negative integer literal, carrying its verbatim source digits.
+    ///
+    /// The text is kept unparsed so both sizes and field constants can be
+    /// built from it later without losing the original spelling.
     Positive(Cow<'src, str>),
     // Identifiers — carry source text (borrowed during parsing)
+    /// An identifier that is not a keyword, carrying its verbatim source text.
+    ///
+    /// Case decides the namespace downstream: leading uppercase becomes a
+    /// size-type variable (`Tid`), leading lowercase a value variable (`Vid`).
     Id(Cow<'src, str>),
     // Keywords
+    /// `let` — value binding declaration.
     KwLet,
+    /// `fn` — function declaration.
     KwFn,
+    /// `proto` — protocol declaration.
     KwProto,
+    /// `type` — type/size abbreviation declaration.
     KwType,
+    /// `fun` — lambda abstraction introducer.
     KwFun,
+    /// `for` — comprehension/iteration introducer.
     KwFor,
+    /// `in` — separates a `for` binder from the sequence it ranges over.
     KwIn,
+    /// `interpolate` — build a polynomial through given evaluations.
     KwInterpolate,
+    /// `poly` — lift a coefficient vector into a univariate polynomial.
     KwPoly,
+    /// `eval` — evaluate a polynomial at a point (or over a range).
     KwEval,
+    /// `coef` — extract the coefficient vector of a polynomial.
     KwCoef,
+    /// `mle` — lift an evaluation table into a multilinear extension.
     KwMle,
+    /// `dot` — inner product of two vectors.
     KwDot,
+    /// `reduce` — fold a vector with a binary operator.
     KwReduce,
+    /// `random` — sample a value (prover-side randomness).
     KwRandom,
+    /// `challenge` — draw a verifier challenge from the transcript.
     KwChallenge,
+    /// `assert` — prover-side assertion.
     KwAssert,
+    /// `verify` — verifier-side check contributing to the verification result.
     KwVerify,
+    /// `pair` — bilinear pairing application.
     KwPair,
+    /// `where` — introduces constraints on a declaration's size variables.
     KwWhere,
+    /// `instance` — public qualifier (`Qualifier::Instance`).
     KwInstance,
+    /// `witness` — private qualifier (`Qualifier::Witness`).
     KwWitness,
+    /// `extra` — auxiliary qualifier (`Qualifier::Extra`).
     KwExtra,
+    /// `uniform` — marks a value as uniformly distributed for the uniformity
+    /// analysis.
     KwUniform,
+    /// `Field` — field kind.
     KwField,
+    /// `Group` — group kind.
     KwGroup,
+    /// `Pairing` — pairing kind relating two group `Tid`s.
     KwPairing,
+    /// `Scalar` — scalar kind over a set of `Tid`s.
     KwScalar,
+    /// `Size` — size-variable kind.
     KwSize,
+    /// `Unit` — unit type.
     KwUnit,
+    /// `Fin` — bounded-range type `Fin<start..end>`.
     KwFin,
+    /// `Poly` — general polynomial type constructor.
+    ///
+    /// Spelled `PolyTy` to avoid clashing with the lowercase `poly` expression
+    /// keyword [`Token::KwPoly`].
     KwPolyTy,
+    /// `Uni` — univariate polynomial type constructor.
     KwUni,
+    /// `Mle` — multilinear polynomial type constructor.
+    ///
+    /// Spelled `MleTy` to avoid clashing with the lowercase `mle` expression
+    /// keyword [`Token::KwMle`].
     KwMleTy,
     // Trivia
+    /// A run of spaces, tabs, carriage returns, or newlines.
     Whitespace,
+    /// A `//` comment running to the end of the line.
     LineComment,
+    /// A `/* ... */` comment; does not nest.
     BlockComment,
     // Error
+    /// A single character that matched no other rule.
+    ///
+    /// Emitted one per offending character so the stream stays lossless and
+    /// the parser can report the position instead of aborting the lex.
     Error,
 }
 

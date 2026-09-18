@@ -22,14 +22,21 @@ use std::fmt;
 pub struct Monomial(pub(crate) Ctx<Var, usize>);
 
 impl Monomial {
+    /// Wrap an already-built variable/exponent context as a monomial.
+    ///
+    /// The caller is responsible for the representation invariant: exponents
+    /// must be positive, since a zero exponent would make two semantically
+    /// equal monomials hash differently.
     pub fn new(vars: Ctx<Var, usize>) -> Self {
         Monomial(vars)
     }
 
+    /// The variables occurring in this monomial, in `Var` order.
     pub fn vars(&self) -> Vec<Var> {
         self.0.keys().into_iter().collect()
     }
 
+    /// The exponents, positionally aligned with [`Monomial::vars`].
     pub fn powers(&self) -> Vec<usize> {
         self.0.values().into_iter().collect()
     }
@@ -39,14 +46,21 @@ impl Monomial {
         self.0.get(v).copied().unwrap_or(0)
     }
 
+    /// Total degree: the sum of all exponents (`0` for the empty monomial).
     pub fn degree(&self) -> usize {
         self.powers().iter().sum()
     }
 
+    /// Whether this is the empty monomial `1`.
     pub fn is_constant(&self) -> bool {
         self.0.is_empty()
     }
 
+    /// Evaluate the monomial at the point `p` by multiplying each assigned
+    /// variable's value raised to its exponent.
+    ///
+    /// Variables absent from `p` are silently skipped, i.e. treated as `1`,
+    /// so a partial point yields a partial evaluation rather than an error.
     pub fn evaluate<F: Field>(&self, p: &Ctx<Var, F>) -> F {
         let mut result = F::one();
         for (var, power) in self.0.iter() {
@@ -59,6 +73,11 @@ impl Monomial {
         result
     }
 
+    /// Whether `other` divides `self`, i.e. every variable of `other` occurs
+    /// in `self` with at least the same exponent.
+    ///
+    /// This is the divisibility test driving reduction and Buchberger's
+    /// criteria.
     pub fn is_divided(&self, other: &Self) -> bool {
         for (var, power2) in other.0.iter() {
             match self.0.get(var) {
@@ -73,6 +92,8 @@ impl Monomial {
         true
     }
 
+    /// Least common multiple: every variable of either monomial, carrying the
+    /// larger of the two exponents. Used to form S-polynomials.
     pub fn lcm(&self, other: &Self) -> Self {
         let mut lcm_powers: Vec<(Var, usize)> =
             self.0.iter().map(|(v, p)| (v.clone(), *p)).collect();
@@ -85,6 +106,9 @@ impl Monomial {
         Monomial(lcm_powers.into_iter().collect())
     }
 
+    /// Greatest common divisor: the variables shared by both monomials, each
+    /// carrying the smaller exponent. Variables with a zero minimum exponent
+    /// are omitted so the result stays canonical.
     pub fn gcd(&self, other: &Self) -> Self {
         let mut gcd_powers: Vec<(Var, usize)> = Vec::new();
         for (var1, power1) in self.0.iter() {

@@ -6,6 +6,11 @@
 //!
 //! Run with: cargo bench --bench `execution`
 
+#![allow(
+    missing_docs,
+    reason = "criterion_group! synthesises an undocumentable `pub fn benches`"
+)]
+
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::PathBuf;
 

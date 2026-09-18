@@ -5,7 +5,11 @@ use petgraph::Direction;
 use petgraph::graph::NodeIndex;
 use share::{Ctx, Set};
 
+/// Result of the qualifier-propagation pass: the qualifier assigned to every
+/// node that is reachable from the prover's arguments or backwards from a
+/// verifier check.
 pub struct QualifierPropagation {
+    /// Qualifier per node; nodes outside both reachable sets are absent.
     pub quals: Ctx<NodeIndex, Qualifier>,
 }
 
@@ -80,6 +84,17 @@ impl QualifierPropagation {
         }
     }
 
+    /// Runs qualifier propagation over `dag` and returns the annotated
+    /// [`QDag`].
+    ///
+    /// Nodes forward-reachable from the arguments (prover side) and
+    /// backward-reachable from the `verify` checks (verifier side) are
+    /// qualified by iterating the per-op join rule to a fixpoint; transcript
+    /// nodes bound both traversals and are pinned to `Instance`.
+    ///
+    /// # Panics
+    /// Panics if `dag` contains no `verify` check, since the verifier side
+    /// would then be empty and the projection meaningless.
     pub fn from_dag<C: ArkConfig>(dag: &UDag<C>) -> QDag<C> {
         let mut qp = QualifierPropagation { quals: Ctx::new() };
 

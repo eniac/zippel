@@ -3,6 +3,7 @@
 /// Indentation style.
 #[derive(Clone, Copy, Debug)]
 pub enum Indent {
+    /// Indent one level with this many spaces.
     Spaces(usize),
 }
 

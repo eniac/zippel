@@ -14,9 +14,14 @@ use std::fmt;
 /// `with_index` / `collect_slots` as they recurse into composite types.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct Var {
+    /// The graph node this `Var` ultimately reads from.
     pub reference: Ref,
+    /// Logical path from `reference` down to this slot; empty for the whole value.
     pub index: Vec<usize>,
+    /// Type of the value at `index` (already narrowed by `with_index`).
     pub typ: ATyp,
+    /// Qualifier assigned to `reference` by qualifier propagation
+    /// (`Witness`/`Instance`/`Local`/`Extra`).
     pub qualifier: Qualifier,
     /// Source-level variable name. For `Node::Arg` Vars this is the
     /// argument's `Vid`; for transcript-source Vars it is the log-variable
@@ -25,6 +30,7 @@ pub struct Var {
 }
 
 impl Var {
+    /// Builds a whole-value `Var` (empty `index`) with an explicit source name.
     pub fn new_named(
         reference: Ref,
         name: impl Into<String>,
@@ -40,6 +46,8 @@ impl Var {
         }
     }
 
+    /// Builds a whole-value `Var` for `node` with a synthetic
+    /// `__zippel::node::N` name, used when no source-level name exists.
     pub fn from_node(node: NodeIndex, typ: ATyp, qualifier: Qualifier) -> Self {
         Var {
             reference: Ref(node),
@@ -67,16 +75,21 @@ impl Var {
         }
     }
 
+    /// Whether this slot is prover-private witness data.
     pub fn is_witness(&self) -> bool {
         self.qualifier.is_witness()
     }
+    /// Whether this slot is verifier-visible instance data.
     pub fn is_instance(&self) -> bool {
         self.qualifier.is_instance()
     }
+    /// Whether this slot is a prover-internal local (eliminated first during
+    /// Gröbner elimination).
     pub fn is_local(&self) -> bool {
         self.qualifier.is_local()
     }
 
+    /// The `petgraph` index of the node this `Var` refers to.
     pub fn node(&self) -> NodeIndex {
         self.reference.node()
     }
@@ -212,6 +225,8 @@ impl Var {
         self.collect_slots()
     }
 
+    /// Renders the fully-qualified slot as `qualifier name[i][j]: type`, the
+    /// long form used in analysis diagnostics.
     pub fn verbose(&self) -> String {
         let label = &self.name;
         let idx_str = self

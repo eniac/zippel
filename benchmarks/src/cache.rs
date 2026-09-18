@@ -24,6 +24,12 @@ use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
 
+/// Directory that setup artifacts are cached in, creating it if needed.
+///
+/// Reads `BENCH_ARTIFACTS_DIR`, defaulting to `artifacts` relative to the
+/// current working directory. Directory-creation failures are swallowed —
+/// a missing directory simply turns every later cache probe into a miss
+/// plus a failed write, which surfaces at the call site instead.
 pub fn artifacts_dir() -> PathBuf {
     let dir = std::env::var("BENCH_ARTIFACTS_DIR").unwrap_or_else(|_| "artifacts".to_string());
     let path = PathBuf::from(dir);
@@ -31,6 +37,12 @@ pub fn artifacts_dir() -> PathBuf {
     path
 }
 
+/// Path of the cache entry for `name` at the given `log_size`, of the form
+/// `<artifacts_dir>/<name>_log<log_size>.bin`.
+///
+/// `log_size` is part of the key because every cached artifact (SRS,
+/// universal parameters, committer keys, generated witnesses) is sized by
+/// the sweep's log-size parameter.
 pub fn artifact_path(name: &str, log_size: usize) -> PathBuf {
     artifacts_dir().join(format!("{name}_log{log_size}.bin"))
 }

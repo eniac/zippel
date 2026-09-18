@@ -1,3 +1,9 @@
+//! Head-to-head benchmark of the Zippel-compiled inner-product argument against Alex Ozdemir's
+//! hand-written `Bp2aryStep` bulletproofs implementation on Secp256k1.
+//!
+//! The vector length is `N = 2^S`; both sides verify internally, so the reported verifier
+//! times are comparable. `--sweep-s` sweeps a grid of `S` values.
+
 use benchmarks::ipa::{native_side, zippel_side};
 use clap::Parser;
 

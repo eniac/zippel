@@ -1,3 +1,12 @@
+//! Spartan comparison: zippel-compiled Spartan NIZK vs. the vendored
+//! `ark-spartan` implementation — both on Curve25519.
+//!
+//! Statement on both sides: a synthetic satisfiable R1CS instance with
+//! `2^M` constraints, proved with a sumcheck-based polynomial IOP whose
+//! witness commitment is Hyrax over a `2^L x 2^Mh` matrix (see
+//! [`hyrax_split`]). Timing covers prove and verify only — instance
+//! generation and `.zippel` compilation are excluded.
+
 use crate::Timing;
 use ark_curve25519::{EdwardsProjective as G1Projective, Fr};
 use ark_ec::CurveGroup;
@@ -12,8 +21,18 @@ use std::path::PathBuf;
 use std::time::Instant;
 use zippel::{ZippelArgs, ZippelHandler, check_verification, proof_size_bytes};
 
+/// Default `log_2` of the R1CS constraint count used by the Spartan sweep.
 pub const DEFAULT_M: usize = 8;
 
+/// Splits the `m - 1` witness variables into the row/column halves of the
+/// Hyrax commitment matrix, returning `(log2(rows), log2(cols))`.
+///
+/// The column half absorbs the odd variable, so `cols >= rows`; the verifier
+/// cost is `O(cols)` group operations while the prover commits `rows` rows.
+///
+/// # Panics
+/// Panics on debug builds if `m` is zero, since the witness variable count
+/// `m - 1` underflows.
 pub fn hyrax_split(m: usize) -> (usize, usize) {
     let nw = m - 1;
     let l = nw / 2;
@@ -21,13 +40,21 @@ pub fn hyrax_split(m: usize) -> (usize, usize) {
     (l, m_h)
 }
 
+/// Result of one timed zippel Spartan run: mean prove/verify durations plus
+/// the proof size and verification outcome of the last sample.
 pub struct ZippelTiming {
+    /// Mean wall-time of a single prover run.
     pub prove: std::time::Duration,
+    /// Mean wall-time of a single verifier run on the produced proof.
     pub verify: std::time::Duration,
+    /// Serialized size of the produced proof certificate, in bytes.
     pub proof_bytes: usize,
+    /// Whether the verifier graph returned all-`true`, i.e. the proof checked.
     pub passed: bool,
 }
 
+/// Compiled Spartan protocol plus its pre-generated prover inputs, reused
+/// across every timing sample at one size.
 pub struct Setup {
     m: usize,
     handler: ZippelHandler<ArkCurve25519>,
@@ -36,6 +63,13 @@ pub struct Setup {
 }
 
 impl Setup {
+    /// Compiles `examples/spartan/spartan.zippel` with size variable `M` bound
+    /// to `m` and generates a satisfying synthetic R1CS instance for it.
+    ///
+    /// # Panics
+    /// Panics if `m < 3` (the Hyrax split needs at least two witness
+    /// variables), if the generated R1CS is unsatisfied, or if compiling the
+    /// `.zippel` source fails.
     pub fn new(m: usize) -> Self {
         assert!(m >= 3, "M must be >= 3 (Hyrax needs NW >= 2)");
 
@@ -66,6 +100,7 @@ impl Setup {
         }
     }
 
+    /// Wall-clock time the `.zippel` source took to compile in [`Setup::new`].
     pub fn compile_time(&self) -> std::time::Duration {
         self.compile_time
     }
@@ -78,6 +113,13 @@ impl Setup {
         )
     }
 
+    /// Runs prover and verifier over the configured sample counts and reports
+    /// the mean durations, the proof size, and whether verification passed.
+    ///
+    /// # Panics
+    /// Panics if either graph fails to execute or if `PROVER_SAMPLES` is zero.
+    /// Unlike the other benches this does not assert on a failed verification;
+    /// the outcome is reported in [`ZippelTiming::passed`].
     pub fn time_protocol(&mut self) -> ZippelTiming {
         let mut prove_sum = std::time::Duration::ZERO;
         let mut last_proof = None;
@@ -117,6 +159,11 @@ impl Setup {
         }
     }
 
+    /// [`Self::time_protocol`] reduced to the crate-wide [`Timing`] shape,
+    /// dropping the proof size and the pass flag.
+    ///
+    /// # Panics
+    /// Panics under the same conditions as [`Self::time_protocol`].
     pub fn timing(&mut self) -> Timing {
         let t = self.time_protocol();
         Timing {
@@ -125,6 +172,7 @@ impl Setup {
         }
     }
 
+    /// `log_2` of the constraint count this setup was compiled for.
     pub fn m(&self) -> usize {
         self.m
     }

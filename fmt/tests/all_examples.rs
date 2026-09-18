@@ -1,3 +1,9 @@
+//! Corpus test: every bundled `.zippel` example must survive a formatting round trip.
+//!
+//! Each example is formatted twice; the second pass must be a fixed point of the first, which is
+//! the formatter's idempotency contract. Failures are collected across the whole corpus so one
+//! run reports every offending example rather than stopping at the first.
+
 mod common;
 
 use common::{fmt, zippel_examples};

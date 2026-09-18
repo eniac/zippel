@@ -18,6 +18,8 @@
 
 use crate::Timing;
 
+/// Zippel half: compiles `examples/ipa/ipa.zippel` and times its generated
+/// prover and verifier on Secp256k1.
 pub mod zippel_side {
     use super::*;
     use ark_ec::{CurveGroup, VariableBaseMSM};
@@ -83,6 +85,12 @@ pub mod zippel_side {
         }
     }
 
+    /// A compiled IPA instance plus the cached bases and witness it is timed
+    /// on.
+    ///
+    /// Everything instance-specific lives in `inputs`, which is deterministic
+    /// in `S` and therefore cached on disk — the benchmark measures asymptotic
+    /// cost, which is data-independent.
     pub struct Setup {
         handler: ZippelHandler<ArkSecp256k1>,
         _n: usize,
@@ -91,6 +99,13 @@ pub mod zippel_side {
     }
 
     impl Setup {
+        /// Compiles the IPA protocol with the size parameter `S` bound to
+        /// `s_const` (vector length `N = 2^S`) and loads or builds the cached
+        /// bases, witness, and derived commitment.
+        ///
+        /// # Panics
+        /// Panics if compilation fails, if the cache artifact cannot be read
+        /// or written, or if an MSM over the generated bases fails.
         pub fn new(s_const: usize) -> Self {
             let n = 1usize << s_const;
             let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -117,6 +132,8 @@ pub mod zippel_side {
             }
         }
 
+        /// Wall-time spent compiling the `.zippel` source into prover and
+        /// verifier graphs. Excludes input generation and cache I/O.
         pub fn compile_time(&self) -> std::time::Duration {
             self.compile_time
         }
@@ -129,6 +146,14 @@ pub mod zippel_side {
             )
         }
 
+        /// Runs the compiled prover and verifier on the cached instance.
+        ///
+        /// The verifier is measured single-shot rather than averaged: it is an
+        /// O(N) MSM per round and takes tens of seconds at `S = 20`.
+        ///
+        /// # Panics
+        /// Panics if the prover or verifier graph fails to execute, or if the
+        /// verifier rejects the honestly generated proof.
         pub fn time_protocol(&mut self) -> Timing {
             let inputs = Ctx::<Vid, Value<ArkSecp256k1>>::from_iter([
                 (
@@ -193,6 +218,12 @@ pub mod zippel_side {
     }
 }
 
+/// Native baseline: a vendored port of alex-ozdemir's `Bp2aryStep`, the
+/// textbook BCC/BBB+18 Protocol 2, over Secp256k1 with a `merlin`
+/// Fiat-Shamir transcript.
+///
+/// The verifier folds the bases itself each round (naive `O(n log n)`),
+/// matching upstream rather than using the delayed-scalars optimization.
 pub mod native_side {
     use super::*;
     use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
@@ -204,6 +235,8 @@ pub mod native_side {
     use rayon::prelude::*;
     use std::time::Instant;
 
+    /// The Pedersen bases `g_vec`, `h_vec` and the binding point `q` for one
+    /// instance size, together with the vector length `n = 2^S`.
     pub struct Setup {
         n: usize,
         g_vec: Vec<SecpAffine>,
@@ -212,6 +245,11 @@ pub mod native_side {
     }
 
     impl Setup {
+        /// Loads or builds the `(g_vec, h_vec, q)` SRS for `N = 2^s_const`
+        /// from the artifact cache.
+        ///
+        /// # Panics
+        /// Panics if the cache artifact cannot be read or written.
         pub fn new(s_const: usize) -> Self {
             let n = 1usize << s_const;
             // Cache the SRS (g_vec, h_vec, q). At s=20, this is 2 ×
@@ -233,6 +271,13 @@ pub mod native_side {
             Setup { n, g_vec, h_vec, q }
         }
 
+        /// Samples a witness pair `(a, b)`, computes the untimed initial
+        /// commitment `P = <g,a> + <h,b>`, then times the recursive folding
+        /// prover and the base-folding verifier.
+        ///
+        /// # Panics
+        /// Panics if an MSM fails, if a Fiat-Shamir challenge is zero (it must
+        /// be invertible), or if the final folded check does not hold.
         pub fn time_protocol(&self) -> Timing {
             let mut rng = ark_std::test_rng();
             let a_vec: Vec<Fr> = (0..self.n).map(|_| Fr::rand(&mut rng)).collect();

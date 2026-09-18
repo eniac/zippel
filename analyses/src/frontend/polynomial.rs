@@ -21,6 +21,9 @@ use super::monomial::Monomial;
 /// before printing (output-only determinism).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Polynomial<F: Field> {
+    /// Nonzero terms, keyed by monomial. A missing key means a zero
+    /// coefficient; arithmetic prunes entries that cancel, so the empty map
+    /// is the canonical representation of the zero polynomial.
     pub terms: HashMap<Monomial, F>,
 }
 
@@ -185,32 +188,41 @@ impl<F: Field> fmt::Display for Polynomial<F> {
 // -----------------------------------------------------------------------
 
 impl<F: Field> Polynomial<F> {
+    /// The zero polynomial (no terms).
     pub fn zero() -> Self {
         Polynomial {
             terms: HashMap::new(),
         }
     }
 
+    /// Whether this is the zero polynomial, i.e. it has no surviving terms.
     pub fn is_zero(&self) -> bool {
         self.terms.is_empty()
     }
 
+    /// The constant polynomial `f`, stored as `f` times the empty monomial.
     pub fn lit(f: &F) -> Self {
         let mut terms = HashMap::new();
         terms.insert(Monomial::default(), *f);
         Polynomial { terms }
     }
 
+    /// The polynomial `v`, i.e. the degree-one monomial in `v` with
+    /// coefficient one.
     pub fn var(v: &Var) -> Self {
         let mut terms = HashMap::new();
         terms.insert(Monomial::from(vec![(v.clone(), 1)]), F::one());
         Polynomial { terms }
     }
 
+    /// Total degree: the largest degree over all terms, or `0` when zero or
+    /// constant.
     pub fn degree(&self) -> usize {
         self.terms.keys().map(|t| t.degree()).max().unwrap_or(0)
     }
 
+    /// Whether every term is the empty monomial, so the polynomial denotes a
+    /// field constant.
     pub fn is_constant(&self) -> bool {
         self.degree() == 0
     }
@@ -224,18 +236,27 @@ impl<F: Field> Polynomial<F> {
             .unwrap_or(F::zero())
     }
 
+    /// Whether `v` occurs with a nonzero exponent in some term.
     pub fn contains(&self, v: &Var) -> bool {
         self.vars().contains(v)
     }
 
+    /// The set of variables occurring anywhere in this polynomial; the
+    /// support used when building an ideal's variable set.
     pub fn vars(&self) -> Set<Var> {
         self.terms.keys().flat_map(|t| t.vars()).collect()
     }
 
+    /// Square in place (`self *= self`).
     pub fn square(&mut self) {
         *self *= self.clone();
     }
 
+    /// Raise to the power `exp` in place, by repeated squaring on the trailing
+    /// factors of two followed by repeated multiplication.
+    ///
+    /// `exp == 0` replaces `self` with the constant one, including for the
+    /// zero polynomial.
     pub fn pow(&mut self, exp: usize) {
         if exp == 0 {
             *self = Polynomial::lit(&F::one());
@@ -257,6 +278,11 @@ impl<F: Field> Polynomial<F> {
         }
     }
 
+    /// Substitute every variable through `f` and expand the result.
+    ///
+    /// Each term's variables are replaced by `f(var)` raised to that
+    /// variable's exponent, and the products are summed, so the result is a
+    /// fully expanded polynomial rather than a formal composition.
     pub fn flat_map_vars<FF: Fn(Var) -> Self>(self, f: &FF) -> Self {
         let mut new_poly = Polynomial::zero();
         for (term, coeff) in self.terms.into_iter() {

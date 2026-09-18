@@ -1,3 +1,17 @@
+//! Criterion comparison for the Schnorr identification protocol: the
+//! zippel-compiled prover and verifier against `ark-crypto-primitives`'
+//! native `Schnorr` signature scheme.
+//!
+//! Schnorr has no size knob, so this is a single fixed point rather than a
+//! sweep. Both sides are sub-millisecond, hence the raised sample count.
+//! Timing goes through `Setup::time_protocol`, which splits prove from
+//! verify, so the benches use `iter_custom`.
+
+#![allow(
+    missing_docs,
+    reason = "criterion_group! synthesises an undocumentable `pub fn benches`"
+)]
+
 use benchmarks::schnorr::{native_side, zippel_side};
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::time::Duration;

@@ -1,3 +1,4 @@
+/// `EvalError`, the failure type raised while interpreting a DAG node.
 pub mod error;
 
 use crate::{GOp, HOp, Op, Ref};
@@ -44,6 +45,14 @@ fn selected_eval_shape<C: ArkConfig>(p: &HOp<C>, range: &lang::ast::CRange) -> S
     SelectedEvalShape::new(input_num_vars, range.len(), max_degree)
 }
 
+/// Whether `op`'s subtree reads the loop parameter bound at de Bruijn level
+/// `target_level`.
+///
+/// Used by the `Op::Map` / `Op::ReduceMap` fast paths to decide whether a
+/// body is loop-invariant (and so hoistable / shareable) or genuinely
+/// depends on the element currently being iterated. Leaves that can never
+/// mention a loop parameter (`Value`, `Ref`, `Random`, `Challenge`) are
+/// `false`.
 pub fn op_has_loop_param<C: ArkConfig>(op: &GOp<C>, target_level: usize) -> bool {
     match op {
         Op::LoopParam(level, _) => *level == target_level,
@@ -490,6 +499,18 @@ fn is_vector_value<C: ArkConfig>(v: &Value<C>) -> bool {
     )
 }
 
+/// Evaluate a closed `GOp` in `env`, drawing randomness from `rng`.
+///
+/// Thin wrapper over [`eval_op_with_loop_params`] with an empty loop-parameter
+/// stack, so `Op::LoopParam` leaves outside a `Map`/`ReduceMap` body fail.
+/// `check_sink` collects the boolean outcome of every `Op::Assert` /
+/// `Op::Verify` encountered during the walk.
+///
+/// # Errors
+/// Returns `EvalError::UndefinedRef` when an `Op::Ref` leaf is absent from
+/// `env`, `EvalError::TypeMismatch` or `EvalError::ValueError` when a
+/// runtime value has a shape the operation cannot accept, and
+/// `EvalError::LoopParam` when an `Op::LoopParam` names an unbound level.
 pub fn eval_op<C, R>(
     op: &GOp<C>,
     env: &HashMap<Ref, Arc<Value<C>>>,

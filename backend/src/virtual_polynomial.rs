@@ -57,12 +57,19 @@ impl<F: Field> fmt::Debug for ArcPtr<F> {
 /// polynomial payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectedEvalShape {
+    /// Arity of the polynomial the selected evaluation is applied to.
     pub input_num_vars: usize,
+    /// Arity of the residual polynomial left after the non-selected variables
+    /// are fixed; equals the length of the free range.
     pub output_num_vars: usize,
+    /// Degree bound used to size the interpolation used when the free range
+    /// is a single variable.
     pub max_degree: usize,
 }
 
 impl SelectedEvalShape {
+    /// Build a selected-evaluation shape from the statically known arities and
+    /// degree bound.
     pub fn new(input_num_vars: usize, output_num_vars: usize, max_degree: usize) -> Self {
         SelectedEvalShape {
             input_num_vars,
@@ -280,6 +287,20 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
         }
     }
 
+    /// Fix the first `points.len()` variables of every factor independently,
+    /// without expanding the sum of products.
+    ///
+    /// This is the fast path for products of multilinear extensions: each
+    /// factor is partially evaluated in parallel and the product structure is
+    /// preserved, so no `MleMultiplication` normalization is ever needed. The
+    /// declared arity shrinks by `points.len()`, and is dropped entirely once
+    /// no products remain.
+    ///
+    /// # Errors
+    /// Propagates [`PolyVariant::evaluate_or_fix_mle`] failures, i.e.
+    /// [`PolyError::DimensionMismatch`] if `points` is longer than a factor's
+    /// arity and [`PolyError::RequiresMle`] if a factor is not a multilinear
+    /// encoding.
     pub fn fix_first_mle_variables_factorwise(&self, points: &[F]) -> Result<Self, PolyError<F>> {
         if points.is_empty() {
             return Ok(self.clone());
@@ -334,6 +355,13 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
 
     /// Fix all variables outside a selected free range, using the static
     /// shape from type inference/lowering rather than runtime payload arity.
+    ///
+    /// # Errors
+    /// Returns [`PolyError::DimensionMismatch`] if `free_range` is not a
+    /// unit-step, non-empty range inside `shape.input_num_vars`, if its length
+    /// disagrees with `shape.output_num_vars`, or if `fixed` does not supply
+    /// one value per non-selected variable. Also propagates the errors of
+    /// [`Self::normalize`] and of the underlying `PolyVariant` restriction.
     pub fn fix_variables_except_range_with_shape(
         &self,
         shape: SelectedEvalShape,
@@ -419,6 +447,9 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
     /// Compatibility helper for tests and non-selected-eval callers. The input
     /// arity is derived from the selected-eval call shape (`fixed.len() +
     /// free_range.len()`), not from potentially untyped constant payloads.
+    ///
+    /// # Errors
+    /// Propagates [`Self::fix_variables_except_range_with_shape`].
     pub fn fix_variables_except_range(
         &self,
         free_range: CRange,
@@ -512,6 +543,10 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
 
     /// Add a product of polynomials to this virtual polynomial
     /// The polynomials will be multiplied together, then multiplied by the coefficient
+    ///
+    /// # Errors
+    /// Currently infallible — the `Result` exists so callers can stay uniform
+    /// with the other mutating builders.
     pub fn add_poly_list(
         &mut self,
         poly_list: impl IntoIterator<Item = Arc<PolyVariant<F>>>,
@@ -543,6 +578,10 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
     }
 
     /// Multiply this virtual polynomial by another polynomial
+    ///
+    /// # Errors
+    /// Currently infallible — the `Result` exists so callers can stay uniform
+    /// with the other mutating builders.
     pub fn mul_by_poly(
         &mut self,
         poly: Arc<PolyVariant<F>>,
@@ -624,6 +663,10 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
     }
 
     /// Evaluate the virtual polynomial at a point
+    ///
+    /// # Panics
+    /// Panics if any factor is a multivariate encoding, since a single-point
+    /// univariate evaluation is then the wrong shape.
     pub fn evaluate_uv(&self, point: &F) -> F {
         self.products
             .iter()
@@ -638,6 +681,10 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
     }
 
     /// Evaluate multivariate - the virtual polynomial at a multidimensional point
+    ///
+    /// # Errors
+    /// Returns [`PolyError::DimensionMismatch`] if `point` disagrees with the
+    /// declared arity, and propagates per-factor evaluation failures.
     pub fn evaluate_mv(&self, point: &[F]) -> Result<F, PolyError<F>> {
         if let Some(num_vars) = self.num_variables
             && point.len() != num_vars
@@ -662,6 +709,10 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
 
     /// Sum-of-products evaluation at a boolean hypercube vertex (little-endian
     /// table index). Mirrors `evaluate_mv` without constructing a field point.
+    ///
+    /// # Panics
+    /// Panics if a factor is neither an MLE encoding nor a degree-0
+    /// univariate, or if `index` is outside a factor's evaluation table.
     pub fn evaluate_at_boolean_index(&self, index: usize) -> F {
         let mut result = F::zero();
         for (coeff, indices) in &self.products {
@@ -751,6 +802,10 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
     }
 
     /// Add two polynomials
+    ///
+    /// # Errors
+    /// Currently infallible: addition merges the two sums of products without
+    /// normalizing, so no shape violation can arise.
     pub fn poly_add(&self, other: &Self) -> Result<Self, PolyError<F>> {
         let mut result = self.clone();
         result.add_virtual(other);
@@ -763,6 +818,10 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
     }
 
     /// Subtract two polynomials
+    ///
+    /// # Errors
+    /// Currently infallible: subtraction negates and merges the sums of
+    /// products without normalizing.
     pub fn poly_sub(&self, other: &Self) -> Result<Self, PolyError<F>> {
         let mut other_neg = other.clone();
         other_neg.neg_virtual();
@@ -779,11 +838,18 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
     }
 
     /// Multiply two polynomials
+    ///
+    /// # Errors
+    /// Currently infallible: multiplication distributes the two sums of
+    /// products and never normalizes.
     pub fn poly_mul(&self, other: &Self) -> Result<Self, PolyError<F>> {
         Ok(self.mul_virtual(other))
     }
 
     /// Subtract polynomial from scalar (scalar - poly)
+    ///
+    /// # Errors
+    /// Propagates [`Self::poly_sub`].
     pub fn scalar_sub_poly(scalar: F, poly: &Self) -> Result<Self, PolyError<F>> {
         let scalar_vp = VirtualPolynomial::from_scalar(scalar);
         scalar_vp.poly_sub(poly)
@@ -791,6 +857,13 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
 
     /// Normalize the virtual polynomial to a single PolyVariant
     /// This expands the sum-of-products into a single polynomial
+    ///
+    /// # Errors
+    /// Returns [`PolyError::MleMultiplication`] when a product contains two
+    /// multilinear factors (their product is not multilinear, so the virtual
+    /// form cannot be collapsed), plus any other
+    /// [`PolyVariant::poly_mul`]/[`PolyVariant::poly_add`] failure such as
+    /// [`PolyError::UnsupportedOperation`] between incompatible encodings.
     pub fn normalize(&self) -> Result<PolyVariant<F>, PolyError<F>> {
         if self.products.is_empty() {
             // Empty virtual polynomial = zero polynomial
@@ -838,6 +911,11 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
 
     // Wrapper methods that delegate to normalized PolyVariant
 
+    /// Whether the normalized polynomial is univariate.
+    ///
+    /// Answers from the declared arity when one is recorded, and otherwise
+    /// falls back to normalizing; a normalization failure degrades to the
+    /// arity reported by [`Self::num_vars`].
     pub fn is_univariate(&self) -> bool {
         if let Some(num_vars) = self.num_variables {
             return num_vars == 1;
@@ -847,6 +925,11 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
             .unwrap_or_else(|_| self.num_vars() == Some(1))
     }
 
+    /// Whether the normalized polynomial is multilinear.
+    ///
+    /// A declared arity together with a degree bound of at most one is
+    /// sufficient; otherwise the sum of products is normalized, and a
+    /// normalization failure answers `false`.
     pub fn is_multilinear(&self) -> bool {
         if self.num_variables.is_some() && self.degree_bound() <= 1 {
             return true;
@@ -856,6 +939,9 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
             .unwrap_or(false)
     }
 
+    /// Declared arity, falling back to the arity of the first factor when it
+    /// is multivariate. `None` means the arity is unknown (for instance a
+    /// purely scalar or univariate virtual polynomial).
     pub fn num_vars(&self) -> Option<usize> {
         self.num_variables.or_else(|| {
             if let Some(poly) = self.flattened_polys.first() {
@@ -870,14 +956,24 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
         })
     }
 
+    /// Degree of the normalized polynomial, or `0` if it cannot be normalized.
     pub fn degree(&self) -> usize {
         self.normalize().map(|p| p.degree()).unwrap_or(0)
     }
 
+    /// Coefficients of the normalized polynomial, or `None` if it does not
+    /// normalize to a univariate encoding.
     pub fn to_coeffs(&self) -> Option<Vec<F>> {
         self.normalize().ok().and_then(|p| p.to_coeffs())
     }
 
+    /// Evaluate the normalized univariate polynomial at every point, returning
+    /// the results as a virtual polynomial wrapping an MLE.
+    ///
+    /// # Errors
+    /// Propagates [`Self::normalize`] and
+    /// [`PolyVariant::try_evaluate_vec`] failures, notably
+    /// [`PolyError::VectorEvaluationRequiresUnivariate`].
     pub fn try_evaluate_vec(&self, points: &[F]) -> Result<Self, PolyError<F>> {
         // Normalize and evaluate at all points, returning errors instead of
         // silently converting normalization/evaluation failures into zero.
@@ -886,11 +982,27 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
         Ok(VirtualPolynomial::from_poly(evaluated))
     }
 
+    /// Infallible wrapper around [`Self::try_evaluate_vec`].
+    ///
+    /// # Panics
+    /// Panics if normalization fails or the normalized polynomial is not
+    /// univariate; use [`Self::try_evaluate_vec`] to handle those cases.
     pub fn evaluate_vec(&self, points: &[F]) -> Self {
         self.try_evaluate_vec(points)
             .expect("VirtualPolynomial::evaluate_vec failed; use try_evaluate_vec to handle errors")
     }
 
+    /// Evaluate or partially fix the leading variables, keeping the virtual
+    /// form whenever possible.
+    ///
+    /// Typed zeroes and constants are answered directly from the declared
+    /// arity, a product made purely of `DenseMle` factors takes the
+    /// factor-wise fast path, and anything else falls back to normalizing.
+    ///
+    /// # Errors
+    /// Returns [`PolyError::DimensionMismatch`] if more points are supplied
+    /// than the declared arity, and otherwise propagates
+    /// [`Self::normalize`] and [`PolyVariant::evaluate_or_fix_mle`].
     pub fn evaluate_or_fix_mle(&self, points: &[F]) -> Result<Self, PolyError<F>> {
         if let Some(num_vars) = self.num_variables
             && (self.is_zero() || self.to_scalar().is_some())
@@ -928,6 +1040,12 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
         Ok(VirtualPolynomial::from_poly(result))
     }
 
+    /// Divide two virtual polynomials by normalizing both sides first.
+    ///
+    /// # Errors
+    /// Propagates [`Self::normalize`] on either operand, and
+    /// [`PolyVariant::poly_div`] failures such as
+    /// [`PolyError::DivisionByZero`] or [`PolyError::DivisionNotApplicable`].
     pub fn poly_div(&self, other: &Self) -> Result<Self, PolyError<F>>
     where
         F: ark_ff::PrimeField,
@@ -938,6 +1056,11 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
         Ok(VirtualPolynomial::from_poly(result))
     }
 
+    /// Divide by a scalar by multiplying with its inverse, which keeps the
+    /// sum-of-products form intact.
+    ///
+    /// # Errors
+    /// Returns [`PolyError::DivisionByZero`] if `scalar` has no inverse.
     pub fn poly_div_scalar(&self, scalar: F) -> Result<Self, PolyError<F>>
     where
         F: ark_ff::PrimeField,
@@ -948,6 +1071,11 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
         Ok(self.poly_mul_scalar(inv))
     }
 
+    /// Dividing a scalar by a virtual polynomial is not supported.
+    ///
+    /// # Errors
+    /// Always returns [`PolyError::DivisionNotApplicable`], after propagating
+    /// a [`Self::normalize`] failure on `poly` if one occurs.
     pub fn scalar_div_poly(scalar: F, poly: &Self) -> Result<Self, PolyError<F>> {
         let divisor = poly.normalize()?;
         Err(PolyError::DivisionNotApplicable {

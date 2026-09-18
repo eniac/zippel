@@ -1,3 +1,18 @@
+//! Criterion sweep for the Bulletproofs inner-product argument on Secp256k1:
+//! the zippel-compiled protocol against the vendored port of
+//! `Bp2aryStep` (BCC/BBB+18 Protocol 2).
+//!
+//! `S` is the folding parameter; the committed vectors have length `2^S`.
+//! Computing the initial commitment `P` is setup, not protocol, so it stays
+//! outside the timed region on both sides. Timing goes through
+//! `Setup::time_protocol`, which splits prove from verify, so the benches use
+//! `iter_custom`.
+
+#![allow(
+    missing_docs,
+    reason = "criterion_group! synthesises an undocumentable `pub fn benches`"
+)]
+
 use benchmarks::ipa::{native_side, zippel_side};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::time::Duration;

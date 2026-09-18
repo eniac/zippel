@@ -1,3 +1,10 @@
+//! Command-line driver for the Zippel source formatter.
+//!
+//! Reads `.zippel` files (or stdin when no paths are given), reparses them with `lang` and
+//! re-renders them through `fmt::format_source`. `--write` rewrites files in place, `--check`
+//! exits non-zero and prints a unified diff for any file that is not already formatted, and with
+//! no flag the formatted text goes to stdout. Parse failures are reported as `lang` diagnostics.
+
 use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
 

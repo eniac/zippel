@@ -77,12 +77,19 @@ pub enum AnalysisError<C: ArkConfig> {
     #[error(
         "Not a 2n+1-move protocol: l_vec has {expected} round(s) but verifier has {found} challenge(s)"
     )]
-    Not2nPlus1MoveProtocol { expected: usize, found: usize },
+    Not2nPlus1MoveProtocol {
+        /// Number of challenge rounds implied by the caller's `l_vec`.
+        expected: usize,
+        /// Number of challenges actually found in the verifier subgraph.
+        found: usize,
+    },
 
     /// No valid extractor found for a witness slot.
     #[error("No valid extractor for witness {witness}: {reason:?}")]
     NoValidExtractor {
+        /// The witness slot [`Var`] for which extraction failed.
         witness: Var,
+        /// Why every candidate extractor was rejected.
         reason: Box<ExtractorRejection<C>>,
     },
 
@@ -94,5 +101,8 @@ pub enum AnalysisError<C: ArkConfig> {
     /// This indicates the protocol is self-contradictory or the backend
     /// produced an inconsistent basis.
     #[error("Unit ideal: {context}")]
-    UnitIdeal { context: &'static str },
+    UnitIdeal {
+        /// Which analysis produced the degenerate basis, for diagnostics.
+        context: &'static str,
+    },
 }

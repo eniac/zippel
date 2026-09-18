@@ -48,6 +48,12 @@ mod parse;
 
 use parse::{DiagAttr, FieldAttr, InterpolatedString};
 
+/// Derives a `build(self) -> Diagnostic` method from the `#[diag]`, `#[span]`, `#[suggestion]`,
+/// `#[note]`, and `#[secondary_label]` attributes on a diagnostic struct.
+///
+/// Attribute parsing errors are reported as `compile_error!` in the expansion rather than as a
+/// panic, so a malformed annotation surfaces at the definition site. See the module header for
+/// the attribute grammar and the `{$field}` interpolation syntax.
 #[proc_macro_derive(Diagnostic, attributes(diag, span, suggestion, note, secondary_label))]
 pub fn derive_diagnostic(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

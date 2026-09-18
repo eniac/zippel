@@ -7,9 +7,21 @@
 
 use std::time::Duration;
 
+/// Mean prover and verifier wall-times for one protocol measurement.
+///
+/// Produced by every `Setup::time_protocol` in this crate, for both the
+/// `zippel_side` and `native_side` halves, so the two are directly
+/// comparable. Neither field includes input generation, key/SRS setup, or
+/// `.zippel` compilation — those happen in `Setup::new`.
 #[derive(Debug, Clone, Copy)]
 pub struct Timing {
+    /// Mean wall-time of a single prover run, averaged over
+    /// `PROVER_SAMPLES` (or `VERIFY_SAMPLES`, for the jitter-dominated
+    /// Schnorr prover) invocations on identical inputs.
     pub prove: Duration,
+    /// Mean wall-time of a single verifier run on one fixed proof,
+    /// averaged over `VERIFY_SAMPLES` invocations. IPA is single-sample
+    /// because its verifier is an O(N) MSM.
     pub verify: Duration,
 }
 

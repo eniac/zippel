@@ -59,6 +59,11 @@ pub struct KnowledgeAnalysis<C: ArkConfig> {
 }
 
 impl<C: HasOpFactory> KnowledgeAnalysis<C> {
+    /// Builds the analysis with the default Gröbner-basis backend.
+    ///
+    /// # Panics
+    /// Panics if the backend cannot compute a basis under the knowledge
+    /// block order.
     pub fn from_input(dag: &QDag<C>) -> Self {
         Self::from_input_with_backend(dag, GbBackendKind::default())
     }

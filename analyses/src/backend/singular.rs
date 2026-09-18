@@ -1,9 +1,9 @@
 //! Singular backend: shells out to the Singular CLI for Gröbner basis
 //! computation.
 //!
-//! Translates [`MonoOrder`](crate::frontend::MonoOrder) into a Singular ring
+//! Translates [`MonoOrder`] into a Singular ring
 //! declaration, pipes a script via stdin to `Singular -q`, and parses the
-//! positional output back into [`Polynomial`](crate::frontend::Polynomial)s.
+//! positional output back into [`Polynomial`]s.
 //!
 //! ## Coefficient field
 //!

@@ -28,17 +28,45 @@ pub fn binomial(n: usize, k: usize) -> usize {
     result
 }
 
+/// Atomic (non-aggregate) arkworks-level type.
+///
+/// `ABase` is the leaf of [`ATyp`]: it names a concrete runtime element kind
+/// that a `Value<C>` can hold for a given `ArkConfig`. Source-level base types
+/// (`Typ::Base(Tid)`) are collapsed onto these variants by
+/// [`ATyp::from_ctyp`], which consults the kind context to decide which
+/// arkworks type a bare `Tid` stands for.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Hash)]
 pub enum ABase {
+    /// First pairing source group, and the default group when the config
+    /// declares no pairing at all.
     G1,
+    /// Second pairing source group; only reachable when `kctx` contains a
+    /// `Pairing(..)` kind naming this `Tid` as its right component.
     G2,
+    /// Pairing target group, the codomain of `e: G1 × G2 → GT`.
     GT,
+    /// Element of the scalar field of the configured curve.
     Scalar,
+    /// Empty type, occupying zero physical slots; used for operations
+    /// evaluated only for effect.
     Unit,
+    /// Boolean, the result type of comparisons and of verifier checks.
     Bool,
+    /// Machine integer constrained to a concrete range, carried over from the
+    /// source-level `Typ::Fin` after concretization.
     Fin(CRange),
 }
 
+/// Arkworks-level (IR and runtime) type.
+///
+/// `ATyp` is the second of Zippel's two type levels: source types
+/// (`lang::typ::Typ`) are converted here by [`ATyp::from_ctyp`] once sizes are
+/// concrete and kinds are known. The essential difference from the source
+/// level is that the single source constructor `Typ::Poly(_, num_vars,
+/// max_degree)` is split into the three distinct polynomial encodings
+/// [`ATyp::Uni`], [`ATyp::Mle`] and [`ATyp::VPoly`], each with its own
+/// coefficient layout (see [`ATyp::physical_len`]). Every `Op<C, R>` in the
+/// graph IR reports its result as an `ATyp`.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Hash)]
 pub enum ATyp {
     /// Base type
@@ -61,51 +89,68 @@ pub enum ATyp {
 }
 
 impl ATyp {
+    /// The scalar-field type of the configured curve.
     pub fn scalar() -> Self {
         ATyp::Base(ABase::Scalar)
     }
+    /// The first pairing source group (also the plain group type).
     pub fn g1() -> Self {
         ATyp::Base(ABase::G1)
     }
+    /// The second pairing source group.
     pub fn g2() -> Self {
         ATyp::Base(ABase::G2)
     }
+    /// The pairing target group.
     pub fn gt() -> Self {
         ATyp::Base(ABase::GT)
     }
+    /// The unit type, which occupies no physical slots.
     pub fn unit() -> Self {
         ATyp::Base(ABase::Unit)
     }
+    /// The boolean type.
     pub fn bool() -> Self {
         ATyp::Base(ABase::Bool)
     }
+    /// A bounded integer type over the concrete range `r`.
     pub fn fin(r: CRange) -> Self {
         ATyp::Base(ABase::Fin(r))
     }
+    /// A univariate polynomial of max degree `n`, i.e. `n + 1` coefficients.
     pub fn uni(n: usize) -> Self {
         ATyp::Uni(n)
     }
+    /// A length-`n` vector of scalars.
     pub fn vec_scalar(n: usize) -> Self {
         ATyp::Vec(Box::new(ATyp::scalar()), n)
     }
+    /// A length-`n` vector of `G1` elements.
     pub fn vec_g1(n: usize) -> Self {
         ATyp::Vec(Box::new(ATyp::g1()), n)
     }
+    /// A length-`n` vector of `G2` elements.
     pub fn vec_g2(n: usize) -> Self {
         ATyp::Vec(Box::new(ATyp::g2()), n)
     }
+    /// A length-`n` vector of `GT` elements.
     pub fn vec_gt(n: usize) -> Self {
         ATyp::Vec(Box::new(ATyp::gt()), n)
     }
+    /// A length-`n` vector of bounded integers over the range `r`.
     pub fn vec_fin(r: CRange, n: usize) -> Self {
         ATyp::Vec(Box::new(ATyp::fin(r)), n)
     }
+    /// A length-`n` vector whose elements have type `t`.
     pub fn vec(t: &ATyp, n: usize) -> Self {
         ATyp::Vec(Box::new(t.clone()), n)
     }
+    /// A multilinear extension over `n` boolean variables, i.e. `2^n` slots.
     pub fn mle(n: usize) -> Self {
         ATyp::Mle(n)
     }
+    /// A virtual polynomial in `num_vars` variables of max total degree
+    /// `max_degree`.
     pub fn vpoly(num_vars: usize, max_degree: usize) -> Self {
         ATyp::VPoly(num_vars, max_degree)
     }
@@ -113,6 +158,10 @@ impl ATyp {
     /// is the coefficient count `m + 1` (not the degree). This matches
     /// `size()` and the `Vec<F, m + 1>` ↔ `Poly<F, 1, m>` consistency
     /// rule in `docs/poly-encoding.md`.
+    ///
+    /// # Panics
+    /// Panics if `self` is neither a `Vec` nor a `Uni`, or if the `Uni`
+    /// coefficient count `m + 1` overflows `usize`.
     pub fn into_vec(self) -> (ATyp, usize) {
         match self {
             ATyp::Vec(deref!(b), n) => (b, n),
@@ -124,54 +173,71 @@ impl ATyp {
         }
     }
 
+    /// Whether this is the scalar-field base type.
     pub fn is_scalar(&self) -> bool {
         matches!(self, ATyp::Base(ABase::Scalar))
     }
 
+    /// Whether this is a vector type; note that polynomial types are *not*
+    /// vectors, even though `Uni` shares a flat layout with one.
     pub fn is_vec(&self) -> bool {
         matches!(self, ATyp::Vec(_, _))
     }
 
+    /// Whether this is a univariate polynomial in coefficient form.
     pub fn is_uni(&self) -> bool {
         matches!(self, ATyp::Uni(_))
     }
 
+    /// Whether this is a multilinear extension.
     pub fn is_mle(&self) -> bool {
         matches!(self, ATyp::Mle(_))
     }
 
+    /// Whether this is a general virtual (multivariate) polynomial.
     pub fn is_vpoly(&self) -> bool {
         matches!(self, ATyp::VPoly(_, _))
     }
 
+    /// Whether this is a range-bounded integer type.
     pub fn is_fin(&self) -> bool {
         matches!(self, ATyp::Base(ABase::Fin(_)))
     }
 
+    /// Whether this is the unit type.
     pub fn is_unit(&self) -> bool {
         matches!(self, ATyp::Base(ABase::Unit))
     }
 
+    /// Whether this is the boolean type.
     pub fn is_bool(&self) -> bool {
         matches!(self, ATyp::Base(ABase::Bool))
     }
 
+    /// Whether this is any of the three group types `G1`, `G2` or `GT`.
     pub fn is_group(&self) -> bool {
         matches!(self, ATyp::Base(ABase::G1 | ABase::G2 | ABase::GT))
     }
 
+    /// Whether this is the first pairing source group.
     pub fn is_g1(&self) -> bool {
         matches!(self, ATyp::Base(ABase::G1))
     }
 
+    /// Whether this is the second pairing source group.
     pub fn is_g2(&self) -> bool {
         matches!(self, ATyp::Base(ABase::G2))
     }
 
+    /// Whether this is the pairing target group.
     pub fn is_gt(&self) -> bool {
         matches!(self, ATyp::Base(ABase::GT))
     }
 
+    /// The scalar-level element type obtained by stripping every layer of
+    /// aggregation: nested `Vec`s are peeled recursively and any `Uni`
+    /// resolves to [`ATyp::scalar`]. Base types, `Mle`, `VPoly` and `Record`
+    /// are returned unchanged.
     pub fn into_inner(&self) -> ATyp {
         match self {
             ATyp::Vec(deref!(t), _) => t.into_inner(),
@@ -188,6 +254,12 @@ impl ATyp {
     /// - `Mle(n)` has `2^n` evaluations over the boolean hypercube.
     /// - `VPoly(n, m)` has `C(m + n, n)` multi-indices with total
     ///   degree `≤ m`.
+    ///
+    /// # Panics
+    /// Panics if the slot count is not representable: a `Vec` whose
+    /// element count times length overflows, a `Uni`/`VPoly` whose degree
+    /// arithmetic overflows, or an `Mle` whose variable count does not fit
+    /// in a `u32` or makes `1 << n` overflow.
     pub fn physical_len(&self) -> usize {
         match self {
             ATyp::Vec(t, n) => t
@@ -210,6 +282,26 @@ impl ATyp {
     }
 
     // Convert from Generic types to arkworks types
+    /// Lowers a concrete source type to its arkworks-level counterpart.
+    ///
+    /// Base types are resolved through the kind context `kctx`: a `Field` or
+    /// `Scalar` kind becomes [`ABase::Scalar`], a `Pairing` kind becomes
+    /// [`ABase::GT`], and a `Group` kind is routed to `G1` or `G2` by looking
+    /// for a `Pairing` kind in `kctx` that mentions it (defaulting to `G1`
+    /// when the config declares no pairing). `CTyp::Poly` is split into the
+    /// three arkworks polynomial encodings by convention: `Poly(_, 1, m)` is
+    /// `Uni(m)`, `Poly(_, n, 1)` with `n >= 2` is `Mle(n)`, and anything else
+    /// is `VPoly(m, m * n)`. Arm order matters — `Poly(_, 1, 1)` is a
+    /// degree-1 univariate, not a one-variable multilinear.
+    ///
+    /// Returns `None` if a base type is absent from `kctx`, if a nested field
+    /// or element type fails to convert, or if the `VPoly` total-degree bound
+    /// `m * n` overflows.
+    ///
+    /// # Panics
+    /// Panics on a `Range` or `SizeVar` kind: those are eliminated by
+    /// concretization, so reaching one here means the pipeline was run out of
+    /// order.
     pub fn from_ctyp(typ: &CTyp, kctx: &Ctx<Tid, CKind>) -> Option<Self> {
         match typ {
             CTyp::Base(b) => {
@@ -395,7 +487,7 @@ impl Lub for ABase {
     }
 }
 
-/// Least-upper bounds for [Range] overapproximate sets of integers
+/// Least-upper bounds for `Range` overapproximate sets of integers
 impl Lub for ATyp {
     type Context = Nothing;
     fn lub_equ(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
