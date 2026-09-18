@@ -40,6 +40,9 @@ to containers (20 GiB recommended). Experiment 1 runs thread counts up
 to 8, and Experiment 3 runs each completeness check under a 16 GiB
 memory limit.
 
+- On macOS, open Docker Desktop, go to Settings > Resources, raise the
+  CPUs and Memory sliders to meet the above, then Apply & restart.
+
 Build the image from the repository root, not from `artifact/`. The
 image builds and runs as a non-root user matching your own UID/GID, so
 `--build-arg` is required:
@@ -119,8 +122,8 @@ decreased.
 | # | Script | Produces | Paper reference |
 |---|---|---|---|
 | 1 | `run_benchmark.sh` + `process_benchmark.py` | Zippel-vs-native speedup table; Graph IR node-count table | Figure 7 (p.13); the node-count table is supplementary |
-| 2 | `run_correctness.sh` | Pass/fail/ignored counts for special soundness | §9.3 prose |
-| 3 | `run_inline.sh` + `process_inline.py` | 30-protocol completeness table | §9.3 prose; the table itself is supplementary |
+| 2 | `run_soundness.sh` + `process_soundness.py` | Per-trial pass/fail table for special soundness | §9.3 prose |
+| 3 | `run_completeness.sh` + `process_completeness.py` | 30-protocol completeness table | §9.3 prose; the table itself is supplementary |
 
 ---
 
@@ -184,14 +187,16 @@ This experiment reproduces the submitted paper's special-soundness claim
 in Section 9.3.
 
 ```sh
-docker run --rm zippel-ae bash artifact/scripts/run_correctness.sh
+mkdir -p artifact/output
+docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
+  bash -c "artifact/scripts/run_soundness.sh && python3 artifact/scripts/process_soundness.py"
 ```
 
 Runs the `soundness::*` trials in `analyses/tests/gb_snapshots` (the
 same test binary also contains `completeness::*` and `knowledge::*`
 trials unrelated to this claim), which assert that the special-soundness
-analysis succeeds. It prints a summary and produces no other output.
-The run completes in a few seconds.
+analysis succeeds, then renders a per-trial pass/fail table. The run
+completes in a few seconds.
 
 **What to expect:**
 
@@ -202,6 +207,12 @@ test result: ok. 4 passed; 0 failed; 5 ignored; ...
 
 == Summary ==
 soundness pass=4   ignored=5   failed=0
+
+| Trial | Pass |
+|---|---|
+| soundness::schnorr | ✓ |
+| soundness::okamoto | ignored |
+...
 ```
 
 This suite covers all 6 of the paper's special-sound candidates
@@ -212,9 +223,10 @@ E-Cash Coin) plus 3 protocols not discussed in the paper
 marked ignored (Okamoto, CDS, E-Cash Coin,
 `commitment_equality`, `pedersen_eq`).
 
-A pass requires `0 failed`; the `ignored` count is expected. Among the
-paper's 6 candidates, Okamoto, CDS, and E-Cash Coin fail for the
-reasons given in its Section 9.3, matching its result exactly.
+A pass requires 0 crosses in the table (equivalently, `0 failed` in the
+summary line); `ignored` is expected. Among the paper's 6 candidates,
+Okamoto, CDS, and E-Cash Coin fail for the reasons given in its
+Section 9.3, matching its result exactly.
 
 ---
 
@@ -226,7 +238,7 @@ Section 9.3 (and adds a supplementary per-protocol timing table).
 ```sh
 mkdir -p artifact/output
 docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
-  bash -c "artifact/scripts/run_inline.sh --inline-only --timeout 60 && python3 artifact/scripts/process_inline.py"
+  bash -c "artifact/scripts/run_completeness.sh --inline-only --timeout 60 && python3 artifact/scripts/process_completeness.py"
 ```
 
 Runs all 30 protocols from the paper through the completeness analysis,
@@ -236,7 +248,7 @@ To sanity-check a small subset of protocols instead of all 30:
 
 ```sh
 docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
-  bash -c "artifact/scripts/run_inline.sh --inline-only --timeout 60 --protocols schnorr,groth16,ipa,hyperplonk && python3 artifact/scripts/process_inline.py"
+  bash -c "artifact/scripts/run_completeness.sh --inline-only --timeout 60 --protocols schnorr,groth16,ipa,hyperplonk && python3 artifact/scripts/process_completeness.py"
 ```
 
 **Note on the timeout.** The paper's own methodology budgets 20 minutes

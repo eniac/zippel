@@ -8,12 +8,14 @@
 # basis for regression detection. See ../README.md for the full mapping.
 #
 # Usage:
-#   artifact/scripts/run_correctness.sh [FILTER]
+#   artifact/scripts/run_soundness.sh [FILTER]
 #
 # Defaults to the `soundness::*` trials. FILTER (optional) is forwarded
 # as libtest-mimic's substring test-name filter and overrides this, e.g.
 # `soundness::okamoto` to run a single trial. The summary below always
-# reports soundness counts.
+# reports soundness counts. Also writes the raw test log to
+# artifact/output/soundness_results.log for process_soundness.py to
+# render into a per-trial pass/fail table.
 
 set -euo pipefail
 
@@ -23,8 +25,9 @@ cd "${ROOT}"
 
 FILTER="${1:-soundness::}"
 
-LOG="$(mktemp)"
-trap 'rm -f "${LOG}"' EXIT
+OUT_DIR="artifact/output"
+mkdir -p "${OUT_DIR}"
+LOG="${OUT_DIR}/soundness_results.log"
 
 echo "== Special-soundness correctness suite (analyses/tests/gb_snapshots) =="
 set +e

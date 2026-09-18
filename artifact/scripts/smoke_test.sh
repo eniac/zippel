@@ -3,9 +3,10 @@
 # the toolchain versions, runs a handful of protocol examples end to end,
 # runs one completeness-analysis trial through Singular, and runs the
 # `inline` bench binary on one small protocol. This is NOT one of the
-# three paper experiments (see run_correctness.sh / run_benchmark.sh /
-# run_inline.sh for those) — it's meant to finish in well under a minute
-# and catch a broken environment before a reviewer commits to a full run.
+# three paper experiments (see run_soundness.sh / run_benchmark.sh /
+# run_completeness.sh for those). It's meant to finish in well under a
+# minute and catch a broken environment before a reviewer commits to a
+# full run.
 #
 # Usage: artifact/scripts/smoke_test.sh
 
