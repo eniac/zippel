@@ -34,7 +34,11 @@ any, it corresponds to.
 
 ## Setup
 
-Requires [Docker](https://www.docker.com/) already installed.
+Requires [Docker](https://www.docker.com/) already installed. Docker
+should have at least 8 CPU threads and 16 GiB of free memory available
+to containers (20 GiB recommended). Experiment 1 runs thread counts up
+to 8, and Experiment 3 runs each completeness check under a 16 GiB
+memory limit.
 
 Build the image from the repository root, not from `artifact/`. The
 image builds and runs as a non-root user matching your own UID/GID, so
