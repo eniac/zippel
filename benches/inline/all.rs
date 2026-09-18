@@ -8,13 +8,14 @@
 //! Usage (via cargo):
 //!   cargo bench --bench `inline_all` -- [--timeout SECS] [--protocols a,b,...]
 //!                                      [--output PATH] [--log PATH]
-//!                                      [--memory-limit-mb MB]
+//!                                      [--memory-limit-mb MB] [--inline-only]
 //!
 //! Defaults:
 //!   --timeout           1200   (20 minutes per run)
 //!   --output            `inline_results.json`
 //!   --log               `inline_all.log`
 //!   --memory-limit-mb   16384  (16 GiB per run)
+//!   --inline-only       off    (runs both inline and no-inline per protocol)
 //!
 //! `--memory-limit-mb` is forwarded to every `inline` invocation verbatim
 //! (like `--backend`). `inline` decides `ok`/`incomplete`/`crashed`/`oom`
@@ -460,6 +461,7 @@ struct Args {
     log: String,
     protocols: Option<Vec<String>>,
     memory_limit_mb: Option<u64>,
+    inline_only: bool,
 }
 
 fn parse_args() -> Args {
@@ -469,6 +471,7 @@ fn parse_args() -> Args {
     let mut log = "inline_all.log".to_string();
     let mut protocols: Option<Vec<String>> = None;
     let mut memory_limit_mb = Some(DEFAULT_MEMORY_LIMIT_MB);
+    let mut inline_only = false;
 
     let mut i = 0;
     while i < raw.len() {
@@ -503,6 +506,9 @@ fn parse_args() -> Args {
                     memory_limit_mb = raw[i].parse().ok();
                 }
             }
+            "--inline-only" => {
+                inline_only = true;
+            }
             _ => {}
         }
         i += 1;
@@ -513,6 +519,7 @@ fn parse_args() -> Args {
         log,
         protocols,
         memory_limit_mb,
+        inline_only,
     }
 }
 
@@ -556,8 +563,14 @@ fn main() {
 
     let mut results: Vec<BenchResult> = Vec::new();
 
+    let variants: &[(&str, bool)] = if args.inline_only {
+        &[("inline", false)]
+    } else {
+        &[("inline", false), ("no_inline", true)]
+    };
+
     for proto in &protocols {
-        for &(label, no_inline) in &[("inline", false), ("no_inline", true)] {
+        for &(label, no_inline) in variants {
             let prefix = format!("[{proto:>30}] {label:>9} ... ");
             let result = run_one(
                 &inline_bin,

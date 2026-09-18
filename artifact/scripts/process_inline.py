@@ -4,8 +4,12 @@ not present in the submitted paper, which only has prose in Section 9.3).
 See ../README.md for the completeness-count accounting this table's `ok`
 column substantiates.
 
-Columns:
+Columns, when the input has no-inline rows (the default `run_inline.sh`
+sweep):
     Protocol | Nodes | P/V/D Inline | P/V/D No-inline | Time Inline | Time No-inline
+
+Columns, when the input is inline-only (`run_inline.sh --inline-only`):
+    Protocol | Time
 
 P/V/D is generating-set polynomial count / variable count / max degree,
 measured before Groebner basis computation (`gen_set_size` /
@@ -66,21 +70,31 @@ def main():
     print(f"Source: {json_path} ({len(results)} rows, timeout={data.get('timeout_s')}s, "
           f"memory_limit_mb={data.get('memory_limit_mb')})")
     print()
-    print("| Protocol | Nodes | P/V/D Inline | P/V/D No-inline | Time Inline | Time No-inline |")
-    print("|---|---|---|---|---|---|")
-    for protocol, variants in by_protocol.items():
-        inline = variants.get(1, {})
-        no_inline = variants.get(0, {})
-        nodes = inline.get("graph_size", no_inline.get("graph_size", "?"))
-        print(
-            f"| {protocol} | {nodes} | {fmt_pvd(inline)} | {fmt_pvd(no_inline)} "
-            f"| {fmt_time(inline)} | {fmt_time(no_inline)} |"
-        )
+
+    inline_only = not any(r.get("inline") == 0 for r in results)
+
+    if inline_only:
+        print("| Protocol | Time |")
+        print("|---|---|")
+        for protocol, variants in by_protocol.items():
+            inline = variants.get(1, {})
+            print(f"| {protocol} | {fmt_time(inline)} |")
+    else:
+        print("| Protocol | Nodes | P/V/D Inline | P/V/D No-inline | Time Inline | Time No-inline |")
+        print("|---|---|---|---|---|---|")
+        for protocol, variants in by_protocol.items():
+            inline = variants.get(1, {})
+            no_inline = variants.get(0, {})
+            nodes = inline.get("graph_size", no_inline.get("graph_size", "?"))
+            print(
+                f"| {protocol} | {nodes} | {fmt_pvd(inline)} | {fmt_pvd(no_inline)} "
+                f"| {fmt_time(inline)} | {fmt_time(no_inline)} |"
+            )
 
     ok_count = sum(1 for r in results if r.get("status") == "ok" and r.get("inline") == 1)
     total_protocols = len(by_protocol)
     print()
-    print(f"Automatically verified complete (inline): {ok_count} of {total_protocols} protocols present in this run.")
+    print(f"Automatically verified complete: {ok_count} of {total_protocols} protocols present in this run.")
 
 
 if __name__ == "__main__":

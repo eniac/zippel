@@ -51,9 +51,14 @@ cargo run --example zippel              # list every available example
 cargo test
 ```
 
-Some tests (`analyses`' Gröbner-basis regression suite) use
-[Singular](https://www.singular.uni-kl.de/) as a backend when it is on
-`PATH`, and are skipped with a warning otherwise.
+Some tests use the Singular backend (see Optional dependencies below)
+and are skipped with a warning when it isn't found on `PATH`.
+
+## Optional dependencies
+
+[Singular](https://www.singular.uni-kl.de/) provides an alternative
+Gröbner-basis backend for the completeness and soundness analyses. It
+must be on `PATH` to be used.
 
 ## Writing your own protocol
 

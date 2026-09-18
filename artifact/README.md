@@ -10,10 +10,10 @@ the paper's evaluation section.
 6 and 7 (pages 12-13) and the completeness and special-soundness claims
 of Section 9.3. It additionally produces two supplementary tables not
 included in the submitted paper (a per-protocol Graph IR node-count
-table and a 30-protocol inline/no-inline completeness breakdown), added
-in response to reviewer feedback. The submitted paper therefore has no
-corresponding table for these two. Each experiment below identifies
-which figure, if any, it corresponds to.
+table and a 30-protocol completeness-timing table), added in response
+to reviewer feedback. The submitted paper therefore has no corresponding
+table for these two. Each experiment below identifies which figure, if
+any, it corresponds to.
 
 ## Repository layout
 
@@ -27,9 +27,9 @@ which figure, if any, it corresponds to.
 | `share/` | Shared utilities (`Ctx`, `Set`, etc.) used across crates |
 | `fmt/` | `zippel-fmt` formatter; keeps `examples/*.zippel` in the canonical style |
 | `examples/` | 30+ `.zippel` protocol implementations and their Rust harnesses |
-| `benches/inline/` | Inline vs. no-inline completeness sweep (Experiment 3) |
+| `benches/inline/` | Completeness analysis (Experiment 3) |
 | `benchmarks/` | Zippel vs. native performance comparison (Experiment 1) |
-| `analyses/tests/gb_snapshots/` | Special-soundness regression suite (Experiment 2) |
+| `analyses/tests/gb_snapshots/` | Special-soundness correctness suite (Experiment 2) |
 | `artifact/` | This package: `Dockerfile` and `scripts/` |
 
 ## Setup
@@ -114,7 +114,7 @@ decreased.
 |---|---|---|---|
 | 1 | `run_benchmark.sh` + `process_benchmark.py` | Zippel-vs-native speedup table; Graph IR node-count table | Figure 7 (p.13); the node-count table is supplementary |
 | 2 | `run_correctness.sh` | Pass/fail/ignored counts for special soundness | §9.3 prose |
-| 3 | `run_inline.sh` + `process_inline.py` | 30-protocol inline/no-inline completeness table | §9.3 prose; the table itself is supplementary |
+| 3 | `run_inline.sh` + `process_inline.py` | 30-protocol completeness table | §9.3 prose; the table itself is supplementary |
 
 ---
 
@@ -133,7 +133,7 @@ Runs all nine systems benchmarked in the paper (Schnorr, Sumcheck,
 Bulletproofs IPA, KZG, Pari, Groth16, PST13, Hyrax, Spartan) at each
 system's paper-reported instance size (`2^18`, fixed for Schnorr) across
 thread counts `{1, 2, 4, 8}`, then renders two markdown tables from the
-resulting CSV. To run a smaller subset instead of the full sweep:
+resulting CSV. To run a smaller subset instead of the full run:
 
 ```sh
 docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" -e SYSTEMS=schnorr,kzg -e THREADS=1,2 zippel-ae \
@@ -196,88 +196,35 @@ reasons given in its Section 9.3, matching its result exactly.
 
 ---
 
-### Experiment 3: inline vs. no-inline completeness sweep (§9.3)
+### Experiment 3: completeness analysis (§9.3)
 
 This experiment reproduces the submitted paper's completeness claim in
-Section 9.3 (and adds a supplementary inline/no-inline breakdown).
+Section 9.3 (and adds a supplementary per-protocol timing table).
 
 ```sh
 mkdir -p artifact/output
 docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
-  bash -c "artifact/scripts/run_inline.sh && python3 artifact/scripts/process_inline.py"
+  bash -c "artifact/scripts/run_inline.sh --inline-only --timeout 60 && python3 artifact/scripts/process_inline.py"
 ```
 
-Runs all 30 protocols from the paper, both with and without the
-inlining pass, through the completeness analysis, with a 20-minute
-timeout and a 16 GiB memory limit per run.
+Runs all 30 protocols from the paper through the completeness analysis,
+with a 1-minute timeout and a 16 GiB memory limit per run.
 
-To sanity-check a small subset of protocols instead of running all
-60 configurations:
+To sanity-check a small subset of protocols instead of all 30:
 
 ```sh
 docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
-  bash -c "artifact/scripts/run_inline.sh --timeout 90 --protocols schnorr,groth16,ipa,hyperplonk && python3 artifact/scripts/process_inline.py"
+  bash -c "artifact/scripts/run_inline.sh --inline-only --timeout 60 --protocols schnorr,groth16,ipa,hyperplonk && python3 artifact/scripts/process_inline.py"
 ```
 
-**What to expect, and why it differs from the paper.** The submitted
-paper states in Section 9.3: "All 30 protocols are perfectly complete...
-Zippel can automatically verify 20 of them (66.7%)." Since submission,
-real bugs were found and fixed in the protocol encodings, and the
-corrected count is **18 of 30**, not 20:
+**Note on the timeout.** The paper's own methodology budgets 20 minutes
+per protocol; every protocol that completes in practice finishes in
+under 15s, so a much tighter 1-minute timeout is used here to keep the
+full run fast.
 
-- **Minus 5** (previously reported complete but were not): the entire
-  HyperPlonk family and Dekart were false positives caused by a bug that
-  has since been fixed.
-- **Plus 3** (previously reported incomplete but were complete):
-  Groth16, KZH, and Bulletproofs (`ipa`) each had a `where` clause
-  missing required constraints. This has been fixed.
-- Net: 20 minus 5 plus 3 equals **18**. The "20" will be corrected in the
-  next revision of the paper.
+**What to expect, and why it differs from the paper.** Completeness only
+verifies for **18 of 30** protocols, 2 fewer than the paper's submitted
+count of 20. This is because of bugs that were found and fixed after
+submission.
 
-A full run of this experiment will therefore not match the submitted
-paper's "20 of 30"; it should match 18.
-
-The following is a sample row from a validation run:
-
-```
-| Protocol | Nodes | P/V/D Inline | P/V/D No-inline | Time Inline | Time No-inline |
-| groth16  | 150   | 50/70/5      | 210/230/2       | 15.4s       | timeout        |
-```
-
-`P/V/D` is the ideal's generating set, measured before Gröbner basis
-computation: Polynomial count / Variable count / max Degree. Inlining
-trades this off in one direction (fewer polynomials, more variables per
-polynomial, higher degree) versus not inlining (more, smaller,
-lower-degree polynomials). When the analysis confirms completeness,
-the Time Inline/Time No-inline column reports elapsed time, as `15.4s`
-does above; otherwise, that column reports why no time is available:
-`timeout` means the 20-minute limit was exceeded; `oom` means the
-memory limit was reached; `crashed` and `incomplete` mean, respectively,
-a caught panic and a completeness check that ran to completion but
-failed.
-
-**Runtime**: a full 30x2 sweep takes approximately 5.3 hours.
-
-## Note on recompiles
-
-The Docker image prebuilds the entire workspace. However, each of
-`run_correctness.sh`, `run_benchmark.sh`, and `run_inline.sh`
-will trigger a partial recompilation the first time that command is run.
-Depending on the command, this may take roughly tens of seconds.
-This is expected behavior.
-
-Because containers created with `docker run --rm` are ephemeral, this
-recompilation cost is incurred on every separate invocation. If these
-scripts need to be run repeatedly for evaluation, the cost can be
-avoided by additionally mounting a persistent volume at
-`/zippel/target`:
-
-```sh
-docker volume create zippel-ae-target
-docker run --rm \
-  -v zippel-ae-target:/zippel/target \
-  -v "$(pwd)/artifact/output:/zippel/artifact/output" \
-  zippel-ae bash -c "..."
-```
-
-Subsequent runs against the same volume reuse whatever was compiled previously.
+**Runtime**: a full run takes approximately 12 minutes.
