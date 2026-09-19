@@ -1,4 +1,0 @@
-system,threads,log_size,prover_time_ms,verifier_time_ms,native_prover_time_ms,native_verifier_time_ms,zippel_ncloc,native_ncloc,compiler,ark_native_prover_time_ms,ark_native_verifier_time_ms
-spartan,1,16,540.649,70.273,249.824,67.811,433,1867,3958.558,638.003,92.907
-spartan,1,17,1068.948,146.190,479.623,127.995,433,1867,4228.537,1170.954,149.511
-spartan,1,18,1918.187,303.980,858.172,256.795,433,1867,4868.144,1753.592,278.967
