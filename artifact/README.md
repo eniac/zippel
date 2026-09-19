@@ -29,7 +29,7 @@ any, it corresponds to.
 | `examples/` | 30+ `.zippel` protocol implementations and their Rust harnesses |
 | `benches/inline/` | Completeness analysis (Experiment 3) |
 | `benchmarks/` | Zippel vs. native performance comparison (Experiment 1) |
-| `analyses/tests/gb_snapshots/` | Special-soundness correctness suite (Experiment 2) |
+| `analyses/tests/gb_snapshots/` | Special-soundness analysis (Experiment 2) |
 | `artifact/` | This package: `Dockerfile` and `scripts/` |
 
 ## Setup
@@ -53,10 +53,9 @@ docker build -f artifact/Dockerfile -t zippel-ae \
 ```
 
 This installs the nightly Rust toolchain pinned by `rust-toolchain.toml`,
-the build dependencies `gcc`, `m4`, and `pkg-config`, and Singular via
-apt, and prebuilds the workspace in release mode. The build takes
-approximately 10 minutes, produces a roughly 6GB image, and requires
-network access to pull the base image and fetch crates.
+`gcc` and Singular via apt, and prebuilds the workspace in release mode.
+The build takes approximately 10 minutes, produces a roughly 6GB image,
+and requires network access to pull the base image and fetch crates.
 
 To verify the environment:
 
@@ -168,7 +167,7 @@ counts takes approximately 40 minutes.
 
 ---
 
-### Experiment 2: special-soundness correctness suite (§9.3)
+### Experiment 2: special-soundness analysis (§9.3)
 
 This experiment reproduces the submitted paper's special-soundness claim
 in Section 9.3.
@@ -258,3 +257,13 @@ submission.
 paper to the source declaration that backs it, and lists every known
 delta from the submitted paper (completeness count, LoC drift, the
 Hyrax speedup correction above) in one place.
+
+---
+
+## Writing your own protocol
+
+This artifact only reproduces the paper's evaluation. If you'd like to
+create your own protocol and try Zippel yourself, see
+[`docs/library-usage.md`](../docs/library-usage.md); it also links to
+[`CONTRIBUTING.md`](../CONTRIBUTING.md#creating-a-new-protocol-with-zippel)
+if you'd rather add your protocol to this repository's own `examples/`.

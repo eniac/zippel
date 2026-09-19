@@ -18,12 +18,8 @@ pub fn run(_args: &[String]) {
     common::run_prover_and_verify(&mut handler, &inputs);
 
     println!("\n--- Static Analysis ---");
-    let analysis_args = ZippelArgs::new(PathBuf::from("examples/pedersen_eq/pedersen_eq.zippel"));
-    let mut analysis_handler: ZippelHandler<ArkSecp256k1> = ZippelHandler::new(analysis_args);
-    analysis_handler.compile(&Ctx::new());
-
-    common::time_analysis!("Completeness", analysis_handler.analyze_completeness());
-    common::time_analysis!("ZK", analysis_handler.analyze_knowledge());
+    common::time_analysis!("Completeness", handler.analyze_completeness());
+    common::time_analysis!("ZK", handler.analyze_knowledge());
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {

@@ -62,23 +62,16 @@ pub fn run(_args: &[String]) {
 
     let analysis_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         println!("\n--- Static Analysis ---");
-        let analysis_args = ZippelArgs::new(PathBuf::from("examples/dekart/dekart.zippel"));
-        let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
-        let mut analysis_sizes = Ctx::new();
-        analysis_sizes.insert(&Tid::new("n"), &n_size);
-        analysis_sizes.insert(&Tid::new("b"), &b_size);
-        analysis_sizes.insert(&Tid::new("l_chunk"), &l_chunk);
-        analysis_handler.compile(&analysis_sizes);
 
         let completeness_start = Instant::now();
-        match analysis_handler.analyze_completeness() {
+        match handler.analyze_completeness() {
             Ok(()) => println!("Completeness:    ✓"),
             Err(e) => println!("Completeness:    ✗ {}", e),
         }
         println!("Completeness time: {:.2?}", completeness_start.elapsed());
 
         let zk_start = Instant::now();
-        match analysis_handler.analyze_knowledge() {
+        match handler.analyze_knowledge() {
             Ok(()) => println!("ZK:              ✓"),
             Err(e) => println!("ZK:              ✗ {}", e),
         }

@@ -23,14 +23,8 @@ pub fn run(_args: &[String]) {
     // kzg's `where` clause contains `for i in 0..N-1`, which is empty (and
     // ill-typed) at the auto-minimized N=1, so analyze at the compiled N=2.
     println!("\n--- Static Analysis ---");
-    let analysis_args = ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel"));
-    let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
-    let mut analysis_sizes = Ctx::new();
-    analysis_sizes.insert(&Tid::new("N"), &2);
-    analysis_handler.compile(&analysis_sizes);
-
-    common::time_analysis!("Completeness", analysis_handler.analyze_completeness());
-    common::time_analysis!("ZK", analysis_handler.analyze_knowledge());
+    common::time_analysis!("Completeness", handler.analyze_completeness());
+    common::time_analysis!("ZK", handler.analyze_knowledge());
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {

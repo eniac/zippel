@@ -45,6 +45,9 @@ cargo run --example zippel -- kzg       # run the KZG commitment scheme
 cargo run --example zippel              # list every available example
 ```
 
+See [`examples/`](examples) for 30+ more protocols implemented in
+Zippel.
+
 ### Testing
 
 ```bash
@@ -60,50 +63,11 @@ and are skipped with a warning when it isn't found on `PATH`.
 Gröbner-basis backend for the completeness and soundness analyses. It
 must be on `PATH` to be used.
 
-## Writing your own protocol
+## Using Zippel as a library
 
-Zippel is not published on crates.io; depend on it directly from git:
-
-```toml
-[dependencies]
-zippel = { git = "https://github.com/eniac/zippel" }
-```
-
-A protocol is a `.zippel` file describing the prover/verifier
-choreography, for example the full Schnorr protocol,
-[`examples/schnorr/schnorr.zippel`](examples/schnorr/schnorr.zippel):
-
-```
-proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g * x {
-    let r = random<F>;
-    u <- g * r;
-    c <- challenge<F*>;
-    z <- r + x * c;
-    verify(g * z == u + h * c)
-}
-```
-
-A Rust harness compiles it against a concrete curve, supplies witness and
-instance values, and runs the prover and verifier:
-
-```rust
-use std::path::PathBuf;
-use zippel::backend::ArkBls12_381;
-use zippel::share::Ctx;
-use zippel::{ZippelArgs, ZippelHandler};
-
-let args = ZippelArgs::new(PathBuf::from("path/to/protocol.zippel"));
-let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-handler.compile(&Ctx::new()); // size parameters for generic protocols, empty here
-
-let proof = handler.run_prover(&inputs)?;
-let result = handler.run_verifier(&proof, &inputs)?;
-```
-
-The same handler also exposes `analyze_completeness()`,
-`analyze_knowledge()`, and `analyze_special_soundness(l_vec)` for the
-static analyses. See [`examples/`](examples) for complete harnesses
-covering all 30+ protocols.
+See [`docs/library-usage.md`](docs/library-usage.md) for how to depend
+on Zippel from your own crate, then write, compile, run, and analyze a
+protocol.
 
 ## Reproducing our evaluation
 

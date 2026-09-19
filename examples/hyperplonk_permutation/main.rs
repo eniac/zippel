@@ -20,7 +20,7 @@ pub fn run(_args: &[String]) {
     println!("=== HyperPlonk Permutation PIOP ===");
     println!("num_points = {NUM_POINTS}, s = log num_points = {S}");
 
-    let args = ZippelArgs::new(zippel_file.clone());
+    let args = ZippelArgs::new(zippel_file);
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &S);
@@ -52,21 +52,16 @@ pub fn run(_args: &[String]) {
 
     let analysis_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         println!("\n--- Static Analysis ---");
-        let analysis_args = ZippelArgs::new(zippel_file.clone());
-        let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
-        let mut analysis_sizes = Ctx::new();
-        analysis_sizes.insert(&Tid::new("S"), &S);
-        analysis_handler.compile(&analysis_sizes);
 
         let completeness_start = Instant::now();
-        match analysis_handler.analyze_completeness() {
+        match handler.analyze_completeness() {
             Ok(()) => println!("Completeness:    ✓"),
             Err(e) => println!("Completeness:    ✗ {}", e),
         }
         println!("Completeness time: {:.2?}", completeness_start.elapsed());
 
         let zk_start = Instant::now();
-        match analysis_handler.analyze_knowledge() {
+        match handler.analyze_knowledge() {
             Ok(()) => println!("ZK:              ✓"),
             Err(e) => println!("ZK:              ✗ {}", e),
         }
