@@ -12,7 +12,6 @@ table{border-collapse:collapse;width:100%;margin:.75rem 0}
 th,td{border:1px solid #ccc;padding:.35rem .5rem;vertical-align:top;text-align:left}
 th{background:#f2f2f2}
 code{font-size:.92em}
-.note{background:#fff6d6;border-left:4px solid #d9a400;padding:.4rem .6rem;margin:.5rem 0}
 </style>
 </head>
 <body>
@@ -45,7 +44,7 @@ code{font-size:.92em}
 
 <tr><td><b>Performance against native implementations — Figure 7</b> (§9.2) — nine systems at instance size 2<sup>18</sup>, prover at 1, 2, 4 and 8 threads, verifier single-threaded.</td><td>Experiment 1: <a href="scripts/run_benchmark.sh"><code>artifact/scripts/run_benchmark.sh</code></a> &rarr; <a class="src" href="../benchmarks/src/bin/bench_all.rs" data-sym="const ALL_SYSTEMS"><code>benchmarks/src/bin/bench_all.rs</code> &rsaquo; <code>const ALL_SYSTEMS</code></a>. Per-system Zippel-versus-native harnesses in <a href="../benchmarks/src/"><code>benchmarks/src/</code></a>.</td></tr>
 
-<tr><td><b>Completeness verified automatically</b> (§9.3) — paper: 20 of 30 protocols; corrected: <b>18 of 30</b> (see note below).</td><td>Experiment 3: <a href="scripts/run_completeness.sh"><code>artifact/scripts/run_completeness.sh</code></a> &rarr; <a class="src" href="../benches/inline/all.rs" data-sym="const PROTOCOLS"><code>benches/inline/all.rs</code> &rsaquo; <code>const PROTOCOLS</code></a> (30 entries). Per-protocol trial status: <a class="src" href="../analyses/tests/gb_snapshots/completeness.rs" data-sym="COMPLETENESS_ENTRIES"><code>analyses/tests/gb_snapshots/completeness.rs</code> &rsaquo; <code>COMPLETENESS_ENTRIES</code></a>.</td></tr>
+<tr><td><b>Completeness verified automatically</b> (§9.3) — 18 of 30 protocols. (The submitted paper says 20; the count was corrected after submission — see <a href="README.md">README.md</a>.)</td><td>Experiment 3: <a href="scripts/run_completeness.sh"><code>artifact/scripts/run_completeness.sh</code></a> &rarr; <a class="src" href="../benches/inline/all.rs" data-sym="const PROTOCOLS"><code>benches/inline/all.rs</code> &rsaquo; <code>const PROTOCOLS</code></a> (30 entries). Per-protocol trial status: <a class="src" href="../analyses/tests/gb_snapshots/completeness.rs" data-sym="COMPLETENESS_ENTRIES"><code>analyses/tests/gb_snapshots/completeness.rs</code> &rsaquo; <code>COMPLETENESS_ENTRIES</code></a>.</td></tr>
 
 <tr><td><b>Special soundness verified</b> (§9.3) — of the six special-sound protocols (Schnorr, Multi-Schnorr, Chaum-Pedersen, Okamoto, CDS, E-Cash Coin), the analysis works on the first three (3 of 6).</td><td>Experiment 2: <a href="scripts/run_soundness.sh"><code>artifact/scripts/run_soundness.sh</code></a> &rarr; <a class="src" href="../analyses/tests/gb_snapshots/soundness.rs" data-sym="SOUNDNESS_ENTRIES"><code>analyses/tests/gb_snapshots/soundness.rs</code> &rsaquo; <code>SOUNDNESS_ENTRIES</code></a>. The suite prints <code>pass=4 ignored=5</code> over <b>nine</b> trials, not six: it also covers <code>okamoto_elgamal</code>, <code>commitment_equality</code> and <code>pedersen_eq</code>, which the paper does not discuss, and the fourth pass is <code>okamoto_elgamal</code>. Restricted to the paper's six, the result is exactly 3 pass / 3 ignored.</td></tr>
 
@@ -86,11 +85,6 @@ code{font-size:.92em}
 <tr><td>Dekart (2025)</td><td><a href="../examples/dekart/dekart.zippel"><code>examples/dekart/dekart.zippel</code></a></td></tr>
 <tr><td>Pari (2026)</td><td><a href="../examples/pari/pari.zippel"><code>examples/pari/pari.zippel</code></a></td></tr>
 </table>
-
-<p class="note"><b>Known deltas from the submitted paper</b> (full accounting in <a href="README.md">README.md</a>):
-<br>(1) <b>Completeness count.</b> §9.3 says "Zippel can automatically verify 20 of them (66.7%)"; the corrected count is <b>18 of 30</b>.
-<br>(2) <b>LoC drift.</b> Figure 6 and the Zippel LoC column of Figure 7 have moved: <a href="../fmt/"><code>zippel-fmt</code></a> did not exist at submission time and reformatting the examples changed line counts on its own, and several <code>where</code> clauses were revised (see (1)). Native baseline LoC are unchanged and Zippel stays shorter than native for all nine benchmarked systems.
-<br>(3) <b>Figure 7 Hyrax.</b> The submitted prose claimed a prover speedup up to 6.1x (1 thread). Corrected during review to 1.11x prover at 1 thread. This is expected and has been discussed with the paper's reviewers.
 
 </body>
 </html>
