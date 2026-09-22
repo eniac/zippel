@@ -11,6 +11,7 @@
 | [`runtime`](runtime) | Executes projected prover/verifier graphs on a work-stealing scheduler |
 | [`share`](share) | Utilities shared across the workspace |
 | [`fmt`](fmt) | `zippel-fmt`, the source formatter |
+| [`check`](check) | `zippel-check`, which runs every compile-time check on `.zippel` files without a harness or inputs |
 | [`benchmarks`](benchmarks) | Zippel vs. hand-optimized native baselines |
 | [`examples`](examples) | Protocol implementations and their Rust harnesses |
 | [`artifact`](artifact) | Docker image and scripts to reproduce our evaluation results |
@@ -32,14 +33,25 @@ anything under `cargo build --workspace`), also requires:
 CI runs four checks on every push and pull request:
 
 ```bash
-cargo fmt --all -- --check                                         # Rust formatting
-cargo clippy --workspace --all-targets                             # lints
-cargo run -p fmt --bin zippel-fmt -- --check examples/*/*.zippel   # Zippel formatting
-cargo test --workspace                                             # tests
+cargo fmt --all -- --check                # Rust formatting
+cargo clippy --workspace --all-targets    # lints
+cargo zfmt --check examples/*/*.zippel    # Zippel formatting
+cargo test --workspace                    # tests
 ```
 
-Run these locally before submitting. Drop `--check` from either
-formatting command to reformat in place instead of only checking.
+Run these locally before submitting. To reformat in place instead of
+only checking, drop `--check` from `cargo fmt`, or pass `--write`
+instead of `--check` to `cargo zfmt`.
+
+`cargo zfmt`, `cargo zcheck`, `cargo zrun`, and `cargo zrunr` are
+aliases defined in [`.cargo/config.toml`](.cargo/config.toml) for
+`zippel-fmt`, `zippel-check`, and the example runner (debug and
+release).
+
+`cargo test` also runs `zippel-check` over every example
+(`check/tests/examples.rs`). Examples that only pass at sizes
+larger than the defaults are listed with their sizes in
+`EXAMPLE_SIZES` there; add yours if it needs specific sizes.
 
 CI also fails if any path component (a directory or file name, ignoring
 extension, case-insensitively) is a reserved Windows device name (`con`,
@@ -98,7 +110,26 @@ stating the relation being proven. The body samples randomness
 (`random<F>`), draws challenges (`challenge<F*>`), computes messages
 with `<-`, and ends in a `verify(...)` check.
 
-### 4. Define the harness
+### 4. Check it
+
+```bash
+cargo zcheck examples/schnorr4/schnorr4.zippel
+```
+
+`zippel-check` runs everything `compile` does, with no harness or
+inputs needed: parsing, the semantic checks, type checking, and
+splitting the protocol into prover and verifier programs. The last step
+rejects a `verify` that depends on a `witness`, an `extra` argument, or
+a `random` value, since the verifier never sees those. Checking
+happens at concrete sizes: set a `Size` parameter with
+`--size NAME=VALUE` (repeatable). Parameters you leave unset default
+to the smallest value that keeps every range non-empty, which may be
+too small for some protocols (for example, one that indexes `v[1]`
+needs `N >= 2`). A pass only covers the sizes printed on the status
+line. Add `--verbose` to see the full typing context of each type
+error.
+
+### 5. Define the harness
 
 The harness compiles the protocol against a concrete curve, generates
 witness/instance values, and runs the prover and verifier.
@@ -163,8 +194,8 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
   `l`-special soundness (schnorr4 is 2-special-sound, hence
   `vec![2]`).
 
-### 5. Compile and run
+### 6. Compile and run
 
 ```bash
-cargo run --example zippel -- schnorr4
+cargo zrun schnorr4
 ```

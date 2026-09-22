@@ -44,6 +44,22 @@ pub trait Typeable {
     ) -> Result<CTyp, TypeError>;
 }
 
+/// Recursive calls on spanned children resolve here (auto-deref stops at `Spanned<T>`), so a
+/// failure is tagged with the span of the innermost spanned expression on its path.
+impl<T: Typeable> Typeable for Spanned<T> {
+    type Context = T::Context;
+    fn infer(
+        &self,
+        kctx: &Ctx<Tid, CKind>,
+        fctx: &Set<CSig>,
+        vctx: &Self::Context,
+    ) -> Result<CTyp, TypeError> {
+        self.node
+            .infer(kctx, fctx, vctx)
+            .map_err(|e| TypeError::located(&self.span, e))
+    }
+}
+
 /// Type inference for [CExp]
 impl Typeable for CExp {
     type Context = Ctx<Vid, CTyp>;

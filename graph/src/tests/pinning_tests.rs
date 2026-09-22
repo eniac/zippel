@@ -6,7 +6,9 @@
 
 use super::test_helpers::parse_and_concretize;
 use crate::node::ArgKind;
-use crate::{Dep, DepType, GOp, GraphError, HOp, Node, Nothing, Ref, UDag, UDags, mk};
+use crate::{
+    Dep, DepType, GOp, GraphError, HOp, Node, Nothing, PrivateValue, Ref, UDag, UDags, mk,
+};
 use backend::{ATyp, ArkBls12_381};
 use lang::ast::BinOp;
 use lang::id::Vid;
@@ -1673,7 +1675,7 @@ fn pin_get_relation_no_duplicate_edges() {
 }
 
 /// get_verifier returns error when verifier body references a witness input directly.
-/// Tests: GraphError::NonInstanceNodeInVerifier.
+/// Tests: GraphError::PrivateValueInVerifier.
 #[test]
 fn pin_get_verifier_witness_leak() {
     let src = r#"
@@ -1687,10 +1689,50 @@ fn pin_get_verifier_witness_leak() {
     // The verifier assertion `s == s` directly uses witness `s`.
     let result = dag.get_verifier();
     match result {
-        Err(GraphError::NonInstanceNodeInVerifier(_, _)) => {}
-        Err(e) => panic!("Expected NonInstanceNodeInVerifier, got: {}", e),
+        Err(GraphError::PrivateValueInVerifier {
+            kind: PrivateValue::Arg(Qualifier::Witness),
+            name: Some(name),
+            ..
+        }) => assert_eq!(name, Vid::new("s")),
+        Err(e) => panic!("Expected PrivateValueInVerifier, got: {}", e),
         Ok(_) => panic!("Expected error but got Ok"),
     }
+}
+
+/// get_verifier returns error when a verifier check needs a `random` sample
+/// that never went through the transcript: the verifier would draw its own.
+/// Tests: GraphError::PrivateValueInVerifier.
+#[test]
+fn pin_get_verifier_random_leak() {
+    // `r` is reached through `t`, not directly from the check.
+    let src = r#"
+        proto foo<G: Group, F: Scalar<G>>(instance g: G) where g == g {
+            let r = random<F>;
+            u <- g * r;
+            let t = r + r;
+            c <- challenge<F*>;
+            verify(g * t == u + u)
+        }
+    "#;
+    match parse_and_build(src)[0].get_verifier() {
+        Err(GraphError::PrivateValueInVerifier {
+            kind: PrivateValue::Random,
+            name: Some(name),
+            ..
+        }) => assert_eq!(name, Vid::new("r")),
+        Err(e) => panic!("Expected PrivateValueInVerifier, got: {}", e),
+        Ok(_) => panic!("Expected error but got Ok"),
+    }
+    // A random value the verifier only sees through the transcript is fine.
+    let src_ok = r#"
+        proto foo<G: Group, F: Scalar<G>>(instance g: G) where g == g {
+            let r = random<F>;
+            u <- g * r;
+            c <- challenge<F*>;
+            verify(u == u)
+        }
+    "#;
+    assert!(parse_and_build(src_ok)[0].get_verifier().is_ok());
 }
 
 /// get_relation returns error for a function (no `where` clause).
@@ -2357,7 +2399,7 @@ fn pin_error_non_polynomial_fun() {
     "#;
     let result = try_parse_and_build(src);
     match result {
-        Err(GraphError::NonPolynomialFun(_)) => {}
+        Err(GraphError::NonPolynomialFun(_, _)) => {}
         Err(e) => panic!("Expected NonPolynomialFun, got: {}", e),
         Ok(_) => panic!("Expected error but got Ok"),
     }

@@ -24,8 +24,18 @@ test-verbose = "test --workspace -- --nocapture"
 test-coverage = "tarpaulin --workspace --out Html --output-dir coverage"
 
 # Run one protocol out of the single `zippel` example binary.
-#   cargo ex ipa            (dev)
-#   cargo exr hyperplonk    (release)
-ex = "run --example zippel --"
-exr = "run --release --example zippel --"
+#   cargo zrun ipa            (dev; no argument lists every example)
+#   cargo zrunr hyperplonk    (release)
+zrun = "run --example zippel --"
+zrunr = "run --release --example zippel --"
+
+# Run every compile-time check on .zippel files without a harness or inputs.
+#   cargo zcheck examples/kzg/kzg.zippel
+#   cargo zcheck --size N=2 examples/zk_kzg/zk_kzg.zippel
+zcheck = "run -q -p check --bin zippel-check --"
+
+# Format .zippel files.
+#   cargo zfmt --check examples/*/*.zippel
+#   cargo zfmt --write examples/kzg/kzg.zippel
+zfmt = "run -q -p fmt --bin zippel-fmt --"
 

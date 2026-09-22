@@ -135,30 +135,6 @@ fn set_record<N>(
     ))
 }
 
-/// Extension trait so `Spanned<CExp>` can call `.infer()` directly, delegating
-/// to the inner `CExp`'s `Typeable` impl. This lets test-helper-constructed
-/// expressions (which return `Spanned<Exp<N>>`) call `.infer()` without
-/// manually unwrapping `.node` at every call site.
-trait SpannedTypeable {
-    fn infer(
-        &self,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
-        vctx: &Ctx<Vid, CTyp>,
-    ) -> Result<CTyp, TypeError>;
-}
-
-impl SpannedTypeable for Spanned<CExp> {
-    fn infer(
-        &self,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
-        vctx: &Ctx<Vid, CTyp>,
-    ) -> Result<CTyp, TypeError> {
-        self.node.infer(kctx, fctx, vctx)
-    }
-}
-
 lazy_static! {
     static ref KIND_CTX: Ctx<Tid, CKind> = {
         let mut kctx = Ctx::new();

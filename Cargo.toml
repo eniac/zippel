@@ -1,6 +1,6 @@
 [workspace]
-members = ["lang", "lang/lang-derive", "runtime", "share", "graph", "backend", "analyses", "fmt", "benchmarks"]
-default-members = [".", "lang", "runtime", "share", "graph", "backend", "analyses"]
+members = ["lang", "lang/lang-derive", "runtime", "share", "graph", "backend", "analyses", "fmt", "check", "benchmarks"]
+default-members = [".", "lang", "runtime", "share", "graph", "backend", "analyses", "check"]
 resolver = "2"
 
 [lints.rust]

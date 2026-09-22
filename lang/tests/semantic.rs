@@ -16,7 +16,8 @@ const SNAP_DIR: &str = "snapshots/semantic";
 
 #[test]
 fn semantic_undefined_variable() {
-    let rendered = render_errors("proto p<F: Field>(instance a: F) where a == b { }");
+    let rendered =
+        render_errors("proto p<F: Field>(instance a: F) where a == b { verify(a == a) }");
     assert!(
         rendered.contains("undefined variable"),
         "expected semantic error for undefined variable `b`"
@@ -57,7 +58,8 @@ fn semantic_type_alias_self_ref() {
 #[test]
 fn semantic_unbound_size_var() {
     // N is used in the type [F; N] but not declared in the typevar list.
-    let rendered = render_errors("proto p<F: Field>(instance a: [F; N]) where a == a { }");
+    let rendered =
+        render_errors("proto p<F: Field>(instance a: [F; N]) where a == a { verify(a == a) }");
     assert!(
         rendered.contains("unbound size variable"),
         "expected unbound size variable error"
@@ -68,7 +70,7 @@ fn semantic_unbound_size_var() {
 #[test]
 fn semantic_pairing_refs_non_group() {
     // Pairing<F, F> is invalid — F is Field, not Group.
-    let src = "proto p<F: Field, P: Pairing<F, F>>(instance a: F) where a == a { }";
+    let src = "proto p<F: Field, P: Pairing<F, F>>(instance a: F) where a == a { verify(a == a) }";
     let rendered = render_errors(src);
     assert!(
         rendered.contains("`F` is not a Group"),
@@ -80,7 +82,7 @@ fn semantic_pairing_refs_non_group() {
 #[test]
 fn semantic_unresolved_group_ref() {
     // Pairing<G, H> where G and H are not declared at all.
-    let src = "proto p<P: Pairing<G, H>>(instance a: F) where a == a { }";
+    let src = "proto p<P: Pairing<G, H>>(instance a: F) where a == a { verify(a == a) }";
     let rendered = render_errors(src);
     assert!(
         rendered.contains("unresolved group reference"),
@@ -92,7 +94,8 @@ fn semantic_unresolved_group_ref() {
 #[test]
 fn semantic_invalid_range_bounds() {
     // Range 10..5 has start > end.
-    let rendered = render_errors("proto p<N: 10..5>(instance a: [F; N]) where a == a { }");
+    let rendered =
+        render_errors("proto p<N: 10..5>(instance a: [F; N]) where a == a { verify(a == a) }");
     assert!(
         rendered.contains("invalid range bounds"),
         "expected invalid range bounds error"
@@ -104,7 +107,7 @@ fn semantic_invalid_range_bounds() {
 fn semantic_impure_verify_in_where() {
     // verify() nested in a where clause constraint is impure.
     // The where clause requires `exp == exp`, so we embed verify inside one side.
-    let src = "proto p<F: Field>(instance a: F, instance b: F) where a == verify(b == b) { }";
+    let src = "proto p<F: Field>(instance a: F, instance b: F) where a == verify(b == b) { verify(a == a) }";
     let rendered = render_errors(src);
     assert!(
         rendered.contains("impure"),
@@ -116,7 +119,7 @@ fn semantic_impure_verify_in_where() {
 #[test]
 fn semantic_circular_typevar_ref() {
     // V: Pairing<G> and G: Pairing<V> — circular kind reference.
-    let src = "proto p<V: Pairing<G, G>, G: Pairing<V, V>>(instance a: V) where a == a { }";
+    let src = "proto p<V: Pairing<G, G>, G: Pairing<V, V>>(instance a: V) where a == a { verify(a == a) }";
     let rendered = render_errors(src);
     assert!(
         rendered.contains("circular type variable reference"),
@@ -128,7 +131,8 @@ fn semantic_circular_typevar_ref() {
 #[test]
 fn semantic_undefined_variable_repeated() {
     // `b` used twice — should merge into one error with "also used here".
-    let rendered = render_errors("proto p<F: Field>(instance a: F) where b == b { }");
+    let rendered =
+        render_errors("proto p<F: Field>(instance a: F) where b == b { verify(a == a) }");
     assert!(
         rendered.contains("undefined variable `b`"),
         "expected undefined variable error, got: {rendered}"
@@ -143,8 +147,9 @@ fn semantic_undefined_variable_repeated() {
 #[test]
 fn semantic_unbound_size_var_repeated() {
     // `N` used in two places — should merge into one error with "also used here".
-    let rendered =
-        render_errors("proto p<F: Field>(instance a: [F; N], instance b: [F; N]) where a == a { }");
+    let rendered = render_errors(
+        "proto p<F: Field>(instance a: [F; N], instance b: [F; N]) where a == a { verify(a == a) }",
+    );
     assert!(
         rendered.contains("unbound size variable `N`"),
         "expected unbound size variable error, got: {rendered}"
@@ -159,8 +164,9 @@ fn semantic_unbound_size_var_repeated() {
 #[test]
 fn semantic_duplicate_typevar_triple() {
     // `F` declared three times — should merge into one error with "also declared here".
-    let rendered =
-        render_errors("proto p<F: Field, F: Group, F: Field>(instance a: F) where a == a { }");
+    let rendered = render_errors(
+        "proto p<F: Field, F: Group, F: Field>(instance a: F) where a == a { verify(a == a) }",
+    );
     assert!(
         rendered.contains("duplicate type variable `F`"),
         "expected duplicate typevar error, got: {rendered}"
@@ -193,7 +199,7 @@ fn semantic_undefined_variable_did_you_mean_let() {
 
 #[test]
 fn semantic_defined_variable_ok() {
-    let src = "proto p<F: Field>(instance a: F) where a == a { }";
+    let src = "proto p<F: Field>(instance a: F) where a == a { verify(a == a) }";
     let (_, diags) = UModule::parse(src);
     let sem_errors: Vec<_> = diags
         .iter()
@@ -208,7 +214,7 @@ fn semantic_defined_variable_ok() {
 
 #[test]
 fn semantic_let_binding_in_scope() {
-    let src = "proto p<F: Field>(instance a: F) where let x = a; x == a { }";
+    let src = "proto p<F: Field>(instance a: F) where let x = a; x == a { verify(a == a) }";
     let (_, diags) = UModule::parse(src);
     let sem_errors: Vec<_> = diags
         .iter()
@@ -297,11 +303,57 @@ fn semantic_duplicate_typevar() {
     );
 }
 
+#[test]
+fn semantic_proto_without_verify() {
+    let rendered = render_errors("proto p<F: Field>(instance a: F) where a == a { let b = a; }");
+    assert!(
+        rendered.contains("has no `verify` check"),
+        "expected E0013, got: {rendered}"
+    );
+    assert_snap!(SNAP_DIR, "proto_without_verify", rendered);
+}
+
+#[test]
+fn semantic_proto_empty_body_has_no_verify() {
+    let (_, diags) = UModule::parse("proto p<F: Field>(instance a: F) where a == a { }");
+    assert!(
+        diags.iter().any(|d| d.code.as_deref() == Some("E0013")),
+        "expected E0013, got: {:?}",
+        diags.iter().map(|d| &d.summary).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn semantic_proto_verify_through_function_calls() {
+    // `check` verifies; `outer` only calls `check`; the proto only calls `outer`.
+    let src = "fn check<F: Field>(instance a: F) { verify(a == a) }\n\
+               fn outer<F: Field>(instance a: F) { check(a) }\n\
+               proto p<F: Field>(instance a: F) where a == a { outer(a) }";
+    let (_, diags) = UModule::parse(src);
+    assert!(
+        !diags.iter().any(|d| d.code.as_deref() == Some("E0013")),
+        "verify reached through calls should satisfy E0013, got: {:?}",
+        diags.iter().map(|d| &d.summary).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn semantic_proto_calling_non_verifying_function_has_no_verify() {
+    let src = "fn f<F: Field>(instance a: F) -> F { a }\n\
+               proto p<F: Field>(instance a: F) where a == a { let b = f(a); }";
+    let (_, diags) = UModule::parse(src);
+    assert!(
+        diags.iter().any(|d| d.code.as_deref() == Some("E0013")),
+        "expected E0013, got: {:?}",
+        diags.iter().map(|d| &d.summary).collect::<Vec<_>>()
+    );
+}
+
 // ── Valid programs (assertion only) ─────────────────────────────────────
 
 #[test]
 fn valid_program_no_errors() {
-    let src = "proto p<F: Field>(instance a: F) where a == a { }";
+    let src = "proto p<F: Field>(instance a: F) where a == a { verify(a == a) }";
     let (_, diags) = UModule::parse(src);
     let errors: Vec<_> = diags
         .iter()
@@ -320,7 +372,7 @@ fn valid_program_with_let() {
                let x = a;\n\
                let y = x;\n\
                y == a\n\
-               { }";
+               { verify(a == a) }";
     let (_, diags) = UModule::parse(src);
     let errors: Vec<_> = diags
         .iter()

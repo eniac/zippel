@@ -26,6 +26,11 @@ pub enum TypeError {
     #[error("{0}\n\n{1}")]
     Next(Box<TypeError>, Box<TypeError>),
 
+    /// Attaches the source span of the expression whose inference failed. Only the innermost
+    /// spanned expression on the failing path is recorded; `Display` is unchanged.
+    #[error("{1}")]
+    Located(std::ops::Range<usize>, Box<TypeError>),
+
     /// A specification relation referenced transcript or randomness, so it is not a pure
     /// predicate over the statement and witness.
     #[error(
@@ -222,6 +227,76 @@ impl TypeError {
     /// Attributes an existing error to the declaration `id` currently being checked.
     pub fn decl(id: &Vid, e: TypeError) -> Self {
         TypeError::Decl(id.clone(), Box::new(e))
+    }
+    /// Attaches `span` to `e` unless `e` already carries a location or `span` is a dummy
+    /// (empty) span, so the innermost real location wins.
+    pub fn located(span: &std::ops::Range<usize>, e: TypeError) -> Self {
+        if span.is_empty() || e.span().is_some() {
+            e
+        } else {
+            TypeError::Located(span.clone(), Box::new(e))
+        }
+    }
+    /// Source span of the innermost located sub-error, if inference recorded one.
+    pub fn span(&self) -> Option<std::ops::Range<usize>> {
+        match self {
+            TypeError::Located(span, e) => e.span().or_else(|| Some(span.clone())),
+            TypeError::Next(a, b) => b.span().or_else(|| a.span()),
+            TypeError::Decl(_, e) | TypeError::Vec(_, _, _, _, e) => e.span(),
+            _ => None,
+        }
+    }
+    /// The most specific error in the chain, skipping location, declaration, and
+    /// parent-expression wrappers.
+    pub fn cause(&self) -> &TypeError {
+        match self {
+            TypeError::Located(_, e) | TypeError::Decl(_, e) | TypeError::Next(_, e) => e.cause(),
+            _ => self,
+        }
+    }
+    /// A one-line description of [`Self::cause`], without the kind and variable contexts
+    /// that the full `Display` prints.
+    pub fn summary(&self) -> String {
+        fn short(e: &impl std::fmt::Display) -> String {
+            const MAX: usize = 80;
+            let s = e
+                .to_string()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if s.chars().count() > MAX {
+                format!("{}...", s.chars().take(MAX).collect::<String>())
+            } else {
+                s
+            }
+        }
+        match self.cause() {
+            TypeError::CExp(_, _, e @ CExp::Map(..)) => format!(
+                "MapError: A [for] comprehension must range over a non-empty vector: `{}`",
+                short(e)
+            ),
+            TypeError::CExp(_, _, e) => format!("TypeError: ill-typed expression `{}`", short(e)),
+            TypeError::VecEmpty(..) => {
+                "VecEmptyError: Cannot infer the type of an empty vector".to_string()
+            }
+            TypeError::Vec(_, _, a, b, _) => {
+                format!("VecTypeError: Vector elements must have the same type: {a} != {b}")
+            }
+            TypeError::Ark(_, _, e, t) => format!(
+                "TypeError: Cannot find an Arkworks type for `{}` : {t}",
+                short(e)
+            ),
+            TypeError::VarNotFound(v, _) => format!("VarError: Variable {v} not found"),
+            e => e
+                .to_string()
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .trim_end_matches([':', ' '])
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+        }
     }
     /// Chains `b` after `a` so both the specific failure and its cause are reported.
     pub fn next(a: Self, b: Self) -> Self {

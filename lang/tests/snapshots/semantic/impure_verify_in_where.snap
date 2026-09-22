@@ -1,11 +1,10 @@
 ---
 source: lang/tests/semantic.rs
-assertion_line: 113
 ---
 error: impure construct `verify` in proto relation
    ╭─[ test.zippel:1:60 ]
    │
- 1 │ proto p<F: Field>(instance a: F, instance b: F) where a == verify(b == b) { }
+ 1 │ proto p<F: Field>(instance a: F, instance b: F) where a == verify(b == b) { verify(a == a) }
    │                                                            ───────┬──────  
    │                                                                   ╰──────── `verify` is not allowed in a proto relation
    │                                                                   │        
