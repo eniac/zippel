@@ -9,6 +9,7 @@ mod suggestion;
 
 pub use suggestion::{insert_before, replace, Applicability, Suggestion};
 
+use std::io::IsTerminal;
 use std::ops::Range;
 
 use ariadne::{Config, IndexType, Label, Report, ReportKind};
@@ -190,21 +191,28 @@ impl Diagnostic {
 
 /// Render a single diagnostic as an ariadne report string.
 ///
+/// Colors are switched on only when stderr — where every caller prints diagnostics — is a
+/// terminal, so callers don't need to detect this themselves.
+///
 /// `phase` is used for sorting in `analyze()`, not for rendering.
 /// `code` is `None` for diagnostics without a code; when present, it could be
 /// prepended to the summary (e.g. `error[E0001]: ...`).
 pub fn render_diagnostic(diag: &Diagnostic, filename: &str, src: &str) -> String {
-    render_diagnostic_with_color(diag, filename, src, true)
-}
+    let use_color = std::io::stderr().is_terminal();
 
-/// [`render_diagnostic`] with ANSI colors switched on or off, e.g. off when the output is not a
-/// terminal.
-pub fn render_diagnostic_with_color(
-    diag: &Diagnostic,
-    filename: &str,
-    src: &str,
-    use_color: bool,
-) -> String {
+    // `Config::with_color` below only gates ariadne's own built-in colors (e.g. margins); the
+    // `ReportKind::Custom` header and every `Label::with_color` call further down are painted
+    // through `yansi` unconditionally regardless of it (confirmed against ariadne 0.5.1's
+    // source: `ReportKind::Custom`'s header color skips the `Config::color` check that
+    // `ReportKind::Error`/`Warning`/`Advice` go through, and `Label::with_color` never consults
+    // it at all). Toggling yansi's own global switch covers all of these at once, instead of
+    // rendering in color and stripping the ANSI back out.
+    if use_color {
+        yansi::enable();
+    } else {
+        yansi::disable();
+    }
+
     let mut buf = Vec::new();
     let config = Config::new()
         .with_index_type(IndexType::Byte)
@@ -274,29 +282,5 @@ pub fn render_diagnostic_with_color(
         )
         .unwrap();
 
-    let out = String::from_utf8(buf).unwrap_or_default();
-    if use_color {
-        out
-    } else {
-        // ariadne 0.5 colors `ReportKind::Custom` headers even with `with_color(false)`.
-        strip_ansi(&out)
-    }
-}
-
-/// Remove ANSI SGR escape sequences (`ESC [ ... m`).
-fn strip_ansi(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c == '\x1b' {
-            for c in chars.by_ref() {
-                if c == 'm' {
-                    break;
-                }
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
+    String::from_utf8(buf).unwrap_or_default()
 }

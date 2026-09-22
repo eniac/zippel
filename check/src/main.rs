@@ -9,27 +9,33 @@
 //! Exit status: 0 if every file checks without errors, 1 if any file has errors or cannot be
 //! read, 2 on invalid command-line usage.
 
-use std::io::IsTerminal;
 use std::process::ExitCode;
 
 use check::check;
+use clap::Parser;
 use lang::check::CheckReport;
-use lang::diagnostic::render_diagnostic_with_color;
+use lang::diagnostic::render_diagnostic;
 use lang::id::Tid;
 use share::Ctx;
+use share::thread;
 
-/// Matches the stack `ZippelHandler::compile` gives its compiler thread; inference recurses once
-/// per statement of a body.
-const STACK_SIZE: usize = 64 * 1024 * 1024;
+/// Runs every compile-time check on `.zippel` files without running the protocol or supplying
+/// inputs.
+#[derive(Parser)]
+#[command(name = "zippel-check")]
+struct Cli {
+    /// Set a size parameter for every FILE (repeatable). Unset `Size` parameters default to the
+    /// smallest value that keeps every dependent range non-empty.
+    #[arg(short = 's', long = "size", value_name = "NAME=VALUE", value_parser = parse_size)]
+    sizes: Vec<(Tid, usize)>,
 
-fn usage() {
-    eprintln!("Usage: zippel-check [--size NAME=VALUE]... [--verbose] FILE...");
-    eprintln!();
-    eprintln!("  -s, --size NAME=VALUE  Set a size parameter for every FILE (repeatable).");
-    eprintln!("                         Unset `Size` parameters default to the smallest");
-    eprintln!("                         value that keeps every dependent range non-empty.");
-    eprintln!("  -v, --verbose          Also print the full typing judgement of each type error.");
-    eprintln!("  -h, --help             Print this help.");
+    /// Also print the full typing judgement of each type error.
+    #[arg(short, long)]
+    verbose: bool,
+
+    /// Files to check.
+    #[arg(required = true, value_name = "FILE")]
+    files: Vec<String>,
 }
 
 struct Options {
@@ -38,9 +44,14 @@ struct Options {
     files: Vec<String>,
 }
 
-enum Parsed {
-    Run(Options),
-    Help,
+impl From<Cli> for Options {
+    fn from(cli: Cli) -> Self {
+        Options {
+            sizes: Ctx::from(cli.sizes),
+            verbose: cli.verbose,
+            files: cli.files,
+        }
+    }
 }
 
 fn parse_size(arg: &str) -> Result<(Tid, usize), String> {
@@ -54,36 +65,6 @@ fn parse_size(arg: &str) -> Result<(Tid, usize), String> {
         .parse::<usize>()
         .map_err(|_| format!("size `{name}` must be a non-negative integer, got `{value}`"))?;
     Ok((Tid::new(name), value))
-}
-
-fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Parsed, String> {
-    let mut opts = Options {
-        sizes: Ctx::new(),
-        verbose: false,
-        files: Vec::new(),
-    };
-    while let Some(arg) = args.next() {
-        let size_arg = if arg == "-s" || arg == "--size" {
-            Some(args.next().ok_or("--size requires NAME=VALUE")?)
-        } else {
-            arg.strip_prefix("--size=").map(str::to_string)
-        };
-        if let Some(size_arg) = size_arg {
-            let (name, value) = parse_size(&size_arg)?;
-            opts.sizes.insert(&name, &value);
-            continue;
-        }
-        match arg.as_str() {
-            "-v" | "--verbose" => opts.verbose = true,
-            "-h" | "--help" => return Ok(Parsed::Help),
-            flag if flag.starts_with('-') => return Err(format!("unknown option `{flag}`")),
-            _ => opts.files.push(arg),
-        }
-    }
-    if opts.files.is_empty() {
-        return Err("no input files".to_string());
-    }
-    Ok(Parsed::Run(opts))
 }
 
 fn describe_sizes(report: &CheckReport) -> String {
@@ -115,25 +96,14 @@ fn check_file(path: &str, opts: &Options) -> Option<CheckReport> {
             return None;
         }
     };
-    let report = std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .name("zippel-check".to_string())
-            .stack_size(STACK_SIZE)
-            .spawn_scoped(scope, || check(&src, &opts.sizes))
-            .expect("failed to spawn checker thread")
-            .join()
-    });
+    let report = thread::run("zippel-check", || check(&src, &opts.sizes));
     let Ok(report) = report else {
         eprintln!("error: internal compiler error while checking {path}");
         return None;
     };
 
-    let color = std::io::stderr().is_terminal();
     for finding in &report.findings {
-        eprint!(
-            "{}",
-            render_diagnostic_with_color(&finding.diagnostic, path, &src, color)
-        );
+        eprint!("{}", render_diagnostic(&finding.diagnostic, path, &src));
         if opts.verbose
             && let Some(detail) = &finding.detail
         {
@@ -165,18 +135,7 @@ fn check_file(path: &str, opts: &Options) -> Option<CheckReport> {
 }
 
 fn main() -> ExitCode {
-    let opts = match parse_args(std::env::args().skip(1)) {
-        Ok(Parsed::Run(opts)) => opts,
-        Ok(Parsed::Help) => {
-            usage();
-            return ExitCode::SUCCESS;
-        }
-        Err(msg) => {
-            eprintln!("error: {msg}\n");
-            usage();
-            return ExitCode::from(2);
-        }
-    };
+    let opts = Options::from(Cli::parse());
 
     let mut failed = false;
     let mut unknown_everywhere: Option<Vec<Tid>> = None;

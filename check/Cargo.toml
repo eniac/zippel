@@ -8,6 +8,7 @@ lang = { path = "../lang" }
 share = { path = "../share" }
 graph = { path = "../graph" }
 backend = { path = "../backend" }
+clap = { version = "4", features = ["derive"] }
 
 [[bin]]
 name = "zippel-check"

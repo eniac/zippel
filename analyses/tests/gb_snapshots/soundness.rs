@@ -2,7 +2,7 @@
 //! actually passes, then snapshot the search Gröbner basis for regression
 //! detection.
 
-use crate::common::{ANALYSIS_STACK_SIZE, assert_named_snapshot, compile_to_dag, normalize_basis};
+use crate::common::{assert_named_snapshot, compile_to_dag, normalize_basis};
 use analyses::{GbBackendKind, SpecialSoundnessAnalysis};
 use libtest_mimic::{Failed, Trial};
 use std::path::PathBuf;
@@ -101,20 +101,16 @@ fn run_soundness_snapshot(entry: &SoundnessEntry) -> Result<(), Failed> {
     let sizes = entry.sizes.to_vec();
     let l_vec = entry.l_vec.to_vec();
 
-    let normalized = std::thread::Builder::new()
-        .stack_size(ANALYSIS_STACK_SIZE)
-        .spawn(move || {
-            let dag = compile_to_dag(&path, &sizes);
-            let inputs = SpecialSoundnessAnalysis::build_inputs(&dag, l_vec, true)
-                .map_err(|e| Failed::from(e.to_string()))?;
-            let mut sa = SpecialSoundnessAnalysis::from_inputs(inputs, backend, true)
-                .map_err(|e| Failed::from(e.to_string()))?;
-            sa.run().map_err(|e| Failed::from(e.to_string()))?;
-            Ok::<String, Failed>(normalize_basis(&sa.search_gb.polys))
-        })
-        .expect("failed to spawn thread")
-        .join()
-        .expect("thread panicked")?;
+    let normalized = share::thread::run("gb-soundness", move || {
+        let dag = compile_to_dag(&path, &sizes);
+        let inputs = SpecialSoundnessAnalysis::build_inputs(&dag, l_vec, true)
+            .map_err(|e| Failed::from(e.to_string()))?;
+        let mut sa = SpecialSoundnessAnalysis::from_inputs(inputs, backend, true)
+            .map_err(|e| Failed::from(e.to_string()))?;
+        sa.run().map_err(|e| Failed::from(e.to_string()))?;
+        Ok::<String, Failed>(normalize_basis(&sa.search_gb.polys))
+    })
+    .expect("thread panicked")?;
 
     assert_named_snapshot(&snap_name, &normalized);
     Ok(())

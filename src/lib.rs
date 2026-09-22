@@ -283,21 +283,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     /// # Panics
     /// If parsing or graph construction fails, or if the compiler thread panics.
     pub fn compile(&mut self, sizes: &Ctx<Tid, usize>) {
-        let stack_size = std::env::var("ZIPPEL_COMPILE_STACK_SIZE")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(64 * 1024 * 1024);
-
-        std::thread::scope(|scope| {
-            let handle = std::thread::Builder::new()
-                .name("zippel-compile".to_string())
-                .stack_size(stack_size)
-                .spawn_scoped(scope, || self.compile_inner(sizes))
-                .expect("failed to spawn zippel compiler thread");
-            if let Err(payload) = handle.join() {
-                std::panic::resume_unwind(payload);
-            }
-        });
+        share::thread::run_or_panic("zippel-compile", || self.compile_inner(sizes));
     }
 
     fn compile_inner(&mut self, sizes: &Ctx<Tid, usize>) {

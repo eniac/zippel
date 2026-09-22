@@ -4,9 +4,8 @@ use crate::ast::{Body, CSig, Sig};
 use crate::diagnostic::Diagnostic;
 use crate::id::Tid;
 use crate::semantic::{
-    check_dead_variables, check_duplicate_declarations, check_proto_requirement,
-    check_proto_verify, check_purity, check_scope, check_size_binding, check_type_alias_cycles,
-    check_typevars,
+    check_dead_variables, check_duplicate_declarations, check_proto_requirement, check_purity,
+    check_scope, check_size_binding, check_type_alias_cycles, check_typevars,
 };
 
 use std::fmt;
@@ -145,7 +144,6 @@ impl UModule {
         let file_span = 0..src.len();
         diags.extend(check_duplicate_declarations(&decls));
         diags.extend(check_proto_requirement(&decls, file_span));
-        diags.extend(check_proto_verify(&decls));
         let alias_cycle_errors = check_type_alias_cycles(&decls);
         let has_alias_cycle = !alias_cycle_errors.is_empty();
         diags.extend(alias_cycle_errors);
@@ -175,8 +173,12 @@ impl UModule {
         // Phase 5: Type checking (deferred — TypeError stays as-is)
         // TODO: Integrate type inference here, then enable:
         //   - check_relation_assertion (proto relation has assert, direct or transitive)
+        //   - check_proto_verify (proto body has verify, direct or transitive) — implemented in
+        //     `semantic::verify`, but resolves calls by name with no overload resolution; not
+        //     wired in until there's a real function-resolution module to give it correct call
+        //     targets instead.
         //   - check_dead_code (uncalled function)
-        // Both need a typed call graph (CSig::unify) for correct overload resolution.
+        // All need a typed call graph (CSig::unify) for correct overload resolution.
 
         // Deterministic ordering: span.start → severity → phase
         diags.sort_by(|a, b| {

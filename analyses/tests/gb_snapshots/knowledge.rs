@@ -6,7 +6,7 @@
 //! either enable per-entry (like `completeness`/`soundness`) or record
 //! the actual blocker.
 
-use crate::common::{ANALYSIS_STACK_SIZE, assert_named_snapshot, compile_to_dag, normalize_basis};
+use crate::common::{assert_named_snapshot, compile_to_dag, normalize_basis};
 use crate::completeness::{COMPLETENESS_ENTRIES, CompletenessEntry};
 use analyses::{GbBackendKind, KnowledgeAnalysis};
 use libtest_mimic::{Failed, Trial};
@@ -22,22 +22,18 @@ fn run_knowledge_snapshot(entry: &CompletenessEntry) -> Result<(), Failed> {
         .join(entry.zippel_path);
     let sizes = entry.sizes.to_vec();
 
-    let (basis_norm, rel_norm) = std::thread::Builder::new()
-        .stack_size(ANALYSIS_STACK_SIZE)
-        .spawn(move || {
-            let dag = compile_to_dag(&path, &sizes);
-            let ka = KnowledgeAnalysis::from_input_with_backend(&dag, backend);
-            let basis_norm = normalize_basis(&ka.basis.polys);
-            let rel_norm = ka
-                .relation_basis
-                .as_ref()
-                .map(|rb| normalize_basis(&rb.polys))
-                .unwrap_or_default();
-            (basis_norm, rel_norm)
-        })
-        .expect("failed to spawn thread")
-        .join()
-        .expect("thread panicked");
+    let (basis_norm, rel_norm) = share::thread::run("gb-knowledge", move || {
+        let dag = compile_to_dag(&path, &sizes);
+        let ka = KnowledgeAnalysis::from_input_with_backend(&dag, backend);
+        let basis_norm = normalize_basis(&ka.basis.polys);
+        let rel_norm = ka
+            .relation_basis
+            .as_ref()
+            .map(|rb| normalize_basis(&rb.polys))
+            .unwrap_or_default();
+        (basis_norm, rel_norm)
+    })
+    .expect("thread panicked");
 
     assert_named_snapshot(&snap_basis, &basis_norm);
     if !rel_norm.is_empty() {
