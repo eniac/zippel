@@ -36,17 +36,45 @@ cd zippel
 cargo build
 ```
 
+The commands below use Cargo aliases defined in
+[`.cargo/config.toml`](.cargo/config.toml), which work from anywhere
+inside the repository.
+
 ### Running examples
 
 ```bash
-cargo run --example zippel -- ipa       # run the IPA example
-cargo run --example zippel -- schnorr   # run the Schnorr protocol
-cargo run --example zippel -- kzg       # run the KZG commitment scheme
-cargo run --example zippel              # list every available example
+cargo zrun ipa          # run the IPA example
+cargo zrun schnorr      # run the Schnorr protocol
+cargo zrun kzg          # run the KZG commitment scheme
+cargo zrun              # list every available example
+cargo zrunr hyperplonk  # run in release mode
 ```
 
 See [`examples/`](examples) for 30+ more protocols implemented in
 Zippel.
+
+### Checking a protocol
+
+`cargo zcheck` runs every compile-time check on a `.zippel` file
+without a Rust harness or protocol inputs: parsing, type checking, and
+splitting the protocol into prover and verifier, which catches a
+`verify` that depends on a witness or on the prover's randomness:
+
+```bash
+cargo zcheck examples/kzg/kzg.zippel
+cargo zcheck --size N=2 examples/zk_kzg/zk_kzg.zippel
+```
+
+Checks run at concrete sizes. Pass `--size NAME=VALUE` for the
+sizes you care about; unset `Size` parameters default to the smallest
+value that keeps every range non-empty.
+
+### Formatting
+
+```bash
+cargo zfmt --check examples/*/*.zippel   # report unformatted files
+cargo zfmt --write examples/kzg/kzg.zippel
+```
 
 ### Testing
 

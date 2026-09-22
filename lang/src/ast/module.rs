@@ -1,11 +1,12 @@
-use crate::ast::decl::{DeclError, UDecl};
+use crate::ast::decl::{CDecl, DeclError, UDecl};
 use crate::ast::spanned::Spanned;
 use crate::ast::{Body, CSig, Sig};
 use crate::diagnostic::Diagnostic;
 use crate::id::Tid;
 use crate::semantic::{
-    check_dead_variables, check_duplicate_declarations, check_proto_requirement, check_purity,
-    check_scope, check_size_binding, check_type_alias_cycles, check_typevars,
+    check_dead_variables, check_duplicate_declarations, check_proto_requirement,
+    check_proto_verify, check_purity, check_scope, check_size_binding, check_type_alias_cycles,
+    check_typevars,
 };
 
 use std::fmt;
@@ -144,6 +145,7 @@ impl UModule {
         let file_span = 0..src.len();
         diags.extend(check_duplicate_declarations(&decls));
         diags.extend(check_proto_requirement(&decls, file_span));
+        diags.extend(check_proto_verify(&decls));
         let alias_cycle_errors = check_type_alias_cycles(&decls);
         let has_alias_cycle = !alias_cycle_errors.is_empty();
         diags.extend(alias_cycle_errors);
@@ -173,9 +175,8 @@ impl UModule {
         // Phase 5: Type checking (deferred — TypeError stays as-is)
         // TODO: Integrate type inference here, then enable:
         //   - check_relation_assertion (proto relation has assert, direct or transitive)
-        //   - check_proto_verify (proto body has verify, direct or transitive)
         //   - check_dead_code (uncalled function)
-        // All need a typed call graph (CSig::unify) for correct overload resolution.
+        // Both need a typed call graph (CSig::unify) for correct overload resolution.
 
         // Deterministic ordering: span.start → severity → phase
         diags.sort_by(|a, b| {
@@ -255,8 +256,25 @@ impl UModule {
         let mut ctx = Ctx::new();
 
         for decl in self.iter_decls() {
-            let all_substs = decl.get_size_substitutions(sizes)?;
-            for mut substs in all_substs.into_iter() {
+            for cdecl in Self::concretize_decl(&decl, sizes)? {
+                ctx.insert_with(cdecl.sig, cdecl.body, &|sig, _, _| {
+                    Err(ModuleError::OverlapDeclaration(sig.clone()))
+                })?;
+            }
+        }
+        // Return the concretized module
+        Ok(Module(ctx))
+    }
+
+    /// Expand one declaration into one concrete declaration per assignment of its
+    /// range-kinded type variables, with `sizes` supplying the remaining `Size` variables.
+    pub(crate) fn concretize_decl(
+        decl: &UDecl,
+        sizes: &Ctx<Tid, usize>,
+    ) -> Result<Vec<CDecl>, DeclError> {
+        decl.get_size_substitutions(sizes)?
+            .into_iter()
+            .map(|mut substs| {
                 // Merge externally-provided SizeVar values (e.g. S: Size) into the
                 // substitution context. Skip keys already set by range expansion
                 // to avoid overriding pinned Range typevar values.
@@ -265,14 +283,9 @@ impl UModule {
                         substs.0.insert(k, v);
                     }
                 }
-                let cdecl = decl.concretize(&substs)?;
-                ctx.insert_with(cdecl.sig, cdecl.body, &|sig, _, _| {
-                    Err(ModuleError::OverlapDeclaration(sig.clone()))
-                })?;
-            }
-        }
-        // Return the concretized module
-        Ok(Module(ctx))
+                decl.concretize(&substs)
+            })
+            .collect()
     }
 }
 

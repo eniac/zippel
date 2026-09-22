@@ -99,11 +99,19 @@ pub enum GraphError {
     /// project onto.
     #[error("Relation not found in {0}")]
     RelationNotFound(Vid),
-    /// The verifier projection reached an argument that is not
-    /// `Qualifier::Instance` — the verifier would have to know a witness.
-    /// Holds the offending operation and reference, rendered as strings.
-    #[error("Non-instance node found in verifier: {0}: {1}")]
-    NonInstanceNodeInVerifier(String, String),
+    /// The verifier projection reached a value only the prover has: an argument
+    /// that is not `Qualifier::Instance`, or a `random` sample. `name` is the
+    /// value's variable name when it has one, and `node` the index of its node
+    /// in the projected DAG.
+    #[error("The verifier depends on {}, which only the prover knows", describe_private(*.kind, .name.as_ref()))]
+    PrivateValueInVerifier {
+        /// What kind of prover-only value was reached.
+        kind: PrivateValue,
+        /// The value's variable name, if it is bound to one.
+        name: Option<Vid>,
+        /// Index of the value's node in the DAG `get_verifier` was called on.
+        node: usize,
+    },
     /// Two independent failures, reported together.
     #[error("{0}\n\n{1}")]
     Next(Box<GraphError>, Box<GraphError>),
@@ -112,9 +120,32 @@ pub enum GraphError {
     Type(Box<TypeError>),
     /// A `fun` body could not be reified as a `PolyVariant` because it uses
     /// operations outside the polynomial fragment (only addition, subtraction,
-    /// multiplication and negation of bound variables are supported).
+    /// multiplication and negation of bound variables are supported). Holds
+    /// the reason and the source span of the offending subexpression.
     #[error("Fun expression contains non-polynomial operations: {0}")]
-    NonPolynomialFun(String),
+    NonPolynomialFun(String, std::ops::Range<usize>),
+}
+
+/// A value reachable from a verifier check that the verifier cannot know or recompute.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrivateValue {
+    /// An argument that is not qualified `instance`; holds its qualifier.
+    Arg(Qualifier),
+    /// A `random` sample, which the verifier would draw independently of the prover.
+    Random,
+}
+
+fn describe_private(kind: PrivateValue, name: Option<&Vid>) -> String {
+    let what = match kind {
+        PrivateValue::Arg(Qualifier::Witness) => "witness",
+        PrivateValue::Arg(Qualifier::Extra) => "`extra` argument",
+        PrivateValue::Arg(_) => "argument not marked `instance`",
+        PrivateValue::Random => "random value",
+    };
+    match name {
+        Some(name) => format!("{what} `{name}`"),
+        None => format!("a {what}"),
+    }
 }
 
 impl From<TypeError> for GraphError {
@@ -142,10 +173,17 @@ impl GraphError {
     pub fn var_not_found(vid: &Vid) -> Self {
         GraphError::VarNotFound(vid.clone())
     }
-    /// Builds a [`GraphError::NonInstanceNodeInVerifier`] from the operation
-    /// and reference that would have leaked a witness into the verifier.
-    pub fn non_instance_node_in_verifier<C: ArkConfig>(op: &GOp<C>, r: &Ref) -> Self {
-        GraphError::NonInstanceNodeInVerifier(op.to_string(), r.to_string())
+    /// Builds a [`GraphError::PrivateValueInVerifier`] for the prover-only value at `node`.
+    pub fn private_value_in_verifier(
+        kind: PrivateValue,
+        name: Option<Vid>,
+        node: NodeIndex,
+    ) -> Self {
+        GraphError::PrivateValueInVerifier {
+            kind,
+            name,
+            node: node.index(),
+        }
     }
     /// Builds a [`GraphError::RelationNotFound`] for the named protocol.
     pub fn relation_not_found(vid: &Vid) -> Self {
@@ -893,8 +931,9 @@ impl<C: HasOpFactory, A> Dag<C, A> {
     /// from the proof instead of recomputing.
     ///
     /// # Errors
-    /// Returns [`GraphError::NonInstanceNodeInVerifier`] if the backwards walk
-    /// from a `Verify` node reaches a witness argument — the verifier cannot
+    /// Returns [`GraphError::PrivateValueInVerifier`] if the backwards walk
+    /// from a `Verify` node reaches a non-instance argument or a `random`
+    /// sample without passing through the transcript — the verifier cannot
     /// depend on private data.
     ///
     /// # Panics
@@ -959,18 +998,28 @@ impl<C: HasOpFactory, A> Dag<C, A> {
                 continue;
             }
 
-            // Check if the node refers to a non-instance argument, then it is a leak
+            // A `random` sample the verifier needs is a leak: the verifier would
+            // draw its own value instead of the prover's.
             let op = self[n].clone().into_op();
+            if matches!(&*op, Op::Random(_, _)) {
+                return Err(GraphError::private_value_in_verifier(
+                    PrivateValue::Random,
+                    self.find_var(n),
+                    n,
+                ));
+            }
+            // So is any reference to a non-instance argument.
             for r in op.references() {
                 let target = r.node();
-                if self[target].is_input_arg() {
-                    let is_non_instance_input = matches!(
-                        &self[target],
-                        Node::Arg(_, _, qual, _, _) if !qual.is_instance()
-                    );
-                    if is_non_instance_input {
-                        return Err(GraphError::non_instance_node_in_verifier(&op, &r));
-                    }
+                if self[target].is_input_arg()
+                    && let Node::Arg(name, _, qual, _, _) = &self[target]
+                    && !qual.is_instance()
+                {
+                    return Err(GraphError::private_value_in_verifier(
+                        PrivateValue::Arg(*qual),
+                        Some(name.clone()),
+                        target,
+                    ));
                 }
             }
 
@@ -1488,13 +1537,14 @@ impl<C: HasOpFactory> UDag<C> {
     /// Convert a Fun expression body to a PolyVariant
     /// Only polynomial operations (Add, Sub, Mul with scalars, Var, Lit) are allowed
     fn exp_to_poly_variant(
-        exp: &CExp,
+        exp: &Spanned<CExp>,
         vars: &[Vid],
         var_map: &HashMap<Vid, usize>,
     ) -> Result<PolyVariant<C::F>, GraphError> {
         use ark_ff::{One, Zero};
 
-        match exp {
+        let non_poly = |msg: String| GraphError::NonPolynomialFun(msg, exp.span.clone());
+        match &exp.node {
             CExp::Lit(n) => {
                 // Scalar constant
                 let scalar = C::F::from(*n as u64);
@@ -1523,8 +1573,8 @@ impl<C: HasOpFactory> UDag<C> {
                         Ok(PolyVariant::DenseMle(mle))
                     }
                 } else {
-                    Err(GraphError::NonPolynomialFun(format!(
-                        "Unbound variable {} in Fun expression",
+                    Err(non_poly(format!(
+                        "variable `{}` is not a parameter of the fun",
                         vid
                     )))
                 }
@@ -1533,29 +1583,29 @@ impl<C: HasOpFactory> UDag<C> {
                 let pa = Self::exp_to_poly_variant(a, vars, var_map)?;
                 let pb = Self::exp_to_poly_variant(b, vars, var_map)?;
                 pa.poly_add(&pb)
-                    .map_err(|e| GraphError::NonPolynomialFun(format!("Add failed: {}", e)))
+                    .map_err(|e| non_poly(format!("Add failed: {}", e)))
             }
             CExp::Bin(BinOp::Sub, deref!(a), deref!(b)) => {
                 let pa = Self::exp_to_poly_variant(a, vars, var_map)?;
                 let pb = Self::exp_to_poly_variant(b, vars, var_map)?;
                 pa.poly_sub(&pb)
-                    .map_err(|e| GraphError::NonPolynomialFun(format!("Sub failed: {}", e)))
+                    .map_err(|e| non_poly(format!("Sub failed: {}", e)))
             }
             CExp::Bin(BinOp::Mul, deref!(a), deref!(b)) => {
                 let pa = Self::exp_to_poly_variant(a, vars, var_map)?;
                 let pb = Self::exp_to_poly_variant(b, vars, var_map)?;
                 pa.poly_mul(&pb)
-                    .map_err(|e| GraphError::NonPolynomialFun(format!("Mul failed: {}", e)))
+                    .map_err(|e| non_poly(format!("Mul failed: {}", e)))
             }
             CExp::Neg(deref!(a)) => {
                 let p = Self::exp_to_poly_variant(a, vars, var_map)?;
                 PolyVariant::from_scalar(C::F::zero())
                     .poly_sub(&p)
-                    .map_err(|e| GraphError::NonPolynomialFun(format!("Neg failed: {}", e)))
+                    .map_err(|e| non_poly(format!("Neg failed: {}", e)))
             }
-            _ => Err(GraphError::NonPolynomialFun(format!(
-                "Unsupported operation in Fun expression: {:?}",
-                exp
+            _ => Err(non_poly(format!(
+                "`{}` is not an addition, subtraction, multiplication, or negation",
+                exp.node
             ))),
         }
     }

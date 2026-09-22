@@ -9,6 +9,7 @@
 //! - Type alias cycles
 //! - Proto declaration requirement
 //! - Relation purity
+//! - Proto `verify` requirement
 
 mod alias_cycle;
 mod dead_var;
@@ -19,6 +20,7 @@ mod purity;
 mod scope;
 mod size;
 mod typevar;
+mod verify;
 
 use std::ops::Range;
 
@@ -33,6 +35,7 @@ pub use purity::check_purity;
 pub use scope::check_scope;
 pub use size::check_size_binding;
 pub use typevar::check_typevars;
+pub use verify::check_proto_verify;
 
 pub(crate) use edit_distance::levenshtein;
 

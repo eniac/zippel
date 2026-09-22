@@ -698,6 +698,40 @@ impl<T> Index<usize> for Exps<T> {
 }
 
 impl<N> Exp<N> {
+    /// The direct subexpressions of this expression, in source order.
+    pub fn children(&self) -> Vec<&Spanned<Exp<N>>> {
+        match self {
+            Exp::Lit(_)
+            | Exp::Unit
+            | Exp::Var(_)
+            | Exp::Range(_)
+            | Exp::Random(_, _)
+            | Exp::Challenge(_, _) => vec![],
+            Exp::App(_, args) | Exp::Vec(args) => args.0.iter().collect(),
+            Exp::Let(_, val, cont) | Exp::Log(_, val, cont) => {
+                std::iter::once(&**val).chain(cont.as_deref()).collect()
+            }
+            Exp::Map(a, _, b)
+            | Exp::Bin(_, a, b)
+            | Exp::Pair(a, b)
+            | Exp::Ram(a, b)
+            | Exp::SetRecord(a, _, b)
+            | Exp::Interpolate(Some(a), b) => vec![a, b],
+            Exp::Evaluate(a, _, b) => std::iter::once(&**a).chain(b.as_deref()).collect(),
+            Exp::Neg(a)
+            | Exp::Interpolate(None, a)
+            | Exp::Coef(a)
+            | Exp::Poly(a)
+            | Exp::Mle(a)
+            | Exp::Reduce(_, a)
+            | Exp::Assert(a)
+            | Exp::Verify(a)
+            | Exp::Fun(_, a)
+            | Exp::Proj(a, _) => vec![a],
+            Exp::Record(fields) => fields.iter().map(|(_, e)| e).collect(),
+        }
+    }
+
     /// Whether evaluating this expression has no protocol-visible effect:
     /// no transcript logging (`log`), no oracle `challenge`, no `random`
     /// sampling and no `assert`/`verify`. Purity is what lets the graph

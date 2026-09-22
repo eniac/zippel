@@ -18,12 +18,10 @@ use graph::Dag;
 use graph::WritePdf;
 use graph::domain_seperator::ZippelDomainSeparator;
 use graph::{ArgKind, Node, UDag, UDags};
-use lang::ast::Size;
-use lang::ast::range::Range;
 use lang::ast::{CModule, UModule};
 use lang::diagnostic::render_diagnostic;
 use lang::id::{Tid, Vid};
-use lang::typ::{Kind, Qualifier};
+use lang::typ::Qualifier;
 use log::{debug, error, info};
 use runtime::RuntimeError;
 use runtime::graph::ResultKind;
@@ -34,7 +32,6 @@ use std::process;
 
 use runtime::MutexGraph;
 use runtime::RunResult;
-use share::traversal::ToTraversal1;
 use std::sync::Arc;
 
 // Re-exported so downstream crates can depend on `zippel` alone
@@ -538,75 +535,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     }
 }
 
-/// Find the smallest concrete value for each `Kind::SizeVar` parameter in the module
-/// such that all dependent `Kind::Range` expressions have at least one element.
-#[must_use]
-pub fn find_minimal_sizes(module: &UModule) -> Ctx<Tid, usize> {
-    // Pass 1: Collect all SizeVar params
-    let mut size_vars: Vec<Tid> = Vec::new();
-    for (sig, _body) in module.iter() {
-        for tv in &sig.typevars.0 {
-            if matches!(&tv.kind, Kind::SizeVar) && !size_vars.contains(&tv.id.node) {
-                size_vars.push(tv.id.node.clone());
-            }
-        }
-    }
-
-    // Pass 2: Collect all Range params that depend on SizeVars
-    let mut ranges: Vec<Range<Size>> = Vec::new();
-    for (sig, _body) in module.iter() {
-        for tv in &sig.typevars.0 {
-            if let Kind::Range(r) = &tv.kind {
-                let fvs = r.start.node.free_vars().union(
-                    r.end
-                        .as_ref()
-                        .map(|e| e.node.free_vars())
-                        .unwrap_or_default(),
-                );
-                if fvs.iter().any(|v| size_vars.contains(v)) {
-                    ranges.push(r.clone());
-                }
-            }
-        }
-    }
-
-    // For each SizeVar, brute-force S=1..=10 to find the smallest value
-    // where all dependent ranges have at least one element (start < end)
-    let mut sizes = Ctx::new();
-    for sv in &size_vars {
-        let mut found = false;
-        for candidate in 1..=10usize {
-            let mut ctx = sizes.clone();
-            ctx.insert(sv, &candidate);
-
-            let all_ok = ranges.iter().all(|r| {
-                let fvs = r.start.node.free_vars().union(
-                    r.end
-                        .as_ref()
-                        .map(|e| e.node.free_vars())
-                        .unwrap_or_default(),
-                );
-                if !fvs.contains(sv) {
-                    return true; // Not dependent on this SizeVar
-                }
-                r.clone()
-                    .traverse1(&mut |s| s.eval(&ctx))
-                    .is_ok_and(|cr| cr.start() < cr.end())
-            });
-
-            if all_ok {
-                sizes.insert(sv, &candidate);
-                found = true;
-                break;
-            }
-        }
-        if !found {
-            // Fallback: use 3 if brute-force fails
-            sizes.insert(sv, &3);
-        }
-    }
-    sizes
-}
+pub use lang::check::find_minimal_sizes;
 
 /// Interpret verifier output as pass/fail.
 /// Passes if every Check in the output returned `true`.
@@ -651,28 +580,6 @@ mod tests {
         );
     }
 
-    /// Regression: `find_minimal_sizes` must collect all `SizeVars` before
-    /// collecting ranges, so ranges that appear before their `SizeVar`
-    /// in typevars are still found.
-    #[test]
-    fn test_find_minimal_sizes_ordering() {
-        // Protocol where N: 1..S appears before S: Size in a different declaration
-        let src = r"
-            fn foo<F: Field, N: 1..S, S: Size>(a: [F; N]) -> F { a[0] }
-            proto bar<F: Field, S: Size, M: 2..S+1>(instance x: F) where x == x {
-                verify(x == x)
-            }
-        ";
-        let module = UModule::parse(src).0.unwrap();
-        let sizes = find_minimal_sizes(&module);
-        // S should be found and have a value ≥ 2 (so N: 1..S and M: 2..S+1 are non-empty)
-        assert!(
-            sizes.get(&Tid::new("S")).is_some(),
-            "SizeVar S should be found even when Range appears first"
-        );
-        let s_val = *sizes.get(&Tid::new("S")).unwrap();
-        assert!(s_val >= 2, "S should be ≥ 2, got {}", s_val);
-    }
     /// Runtime test: protocol with two verify statements, both passing.
     /// Compile, run prover, run verifier, check that verification passes.
     #[test]
@@ -682,7 +589,7 @@ proto eq_proof<F: Field>(witness a: F, witness b: F) where a == b {
     let r = random<F>;
     x <- a * r;
     y <- b * r;
-    verify(r == r);
+    verify(x == x);
     verify(x == y)
 }
 ";

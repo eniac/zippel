@@ -194,8 +194,21 @@ impl Diagnostic {
 /// `code` is `None` for diagnostics without a code; when present, it could be
 /// prepended to the summary (e.g. `error[E0001]: ...`).
 pub fn render_diagnostic(diag: &Diagnostic, filename: &str, src: &str) -> String {
+    render_diagnostic_with_color(diag, filename, src, true)
+}
+
+/// [`render_diagnostic`] with ANSI colors switched on or off, e.g. off when the output is not a
+/// terminal.
+pub fn render_diagnostic_with_color(
+    diag: &Diagnostic,
+    filename: &str,
+    src: &str,
+    use_color: bool,
+) -> String {
     let mut buf = Vec::new();
-    let config = Config::new().with_index_type(IndexType::Byte);
+    let config = Config::new()
+        .with_index_type(IndexType::Byte)
+        .with_color(use_color);
 
     let (kind, color) = match diag.severity {
         Severity::Error => (
@@ -261,5 +274,29 @@ pub fn render_diagnostic(diag: &Diagnostic, filename: &str, src: &str) -> String
         )
         .unwrap();
 
-    String::from_utf8(buf).unwrap_or_default()
+    let out = String::from_utf8(buf).unwrap_or_default();
+    if use_color {
+        out
+    } else {
+        // ariadne 0.5 colors `ReportKind::Custom` headers even with `with_color(false)`.
+        strip_ansi(&out)
+    }
+}
+
+/// Remove ANSI SGR escape sequences (`ESC [ ... m`).
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            for c in chars.by_ref() {
+                if c == 'm' {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }

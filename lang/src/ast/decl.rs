@@ -308,24 +308,30 @@ impl CBody {
                 if !relation.node.is_relation_pure() {
                     return Err(TypeError::decl(
                         &sig.name,
-                        TypeError::not_pure_rel(&relation.node),
+                        TypeError::located(&relation.span, TypeError::not_pure_rel(&relation.node)),
                     ));
                 }
                 // Relation must infer to Bool (the relation IS the assertion)
-                let rel_typ = relation.node.infer(&kctx, fctx, &vctx)?;
+                let rel_typ = relation.infer(&kctx, fctx, &vctx)?;
                 if !matches!(rel_typ, CTyp::Bool) {
                     return Err(TypeError::decl(
                         &sig.name,
-                        TypeError::relation_not_bool(&rel_typ, &relation.node),
+                        TypeError::located(
+                            &relation.span,
+                            TypeError::relation_not_bool(&rel_typ, &relation.node),
+                        ),
                     ));
                 }
                 // Body must infer to Unit (empty body is Unit)
                 if let Some(body) = body {
-                    let br = body.node.infer(&kctx, fctx, &vctx)?;
+                    let br = body.infer(&kctx, fctx, &vctx)?;
                     if br != CTyp::Unit {
                         return Err(TypeError::decl(
                             &sig.name,
-                            TypeError::unit(&kctx, &vctx, &body.node),
+                            TypeError::located(
+                                &body.span,
+                                TypeError::unit(&kctx, &vctx, &body.node),
+                            ),
                         ));
                     }
                 }
@@ -335,7 +341,7 @@ impl CBody {
                 let ret = sig.ret.as_ref().map(|r| &r.node).unwrap_or(&CTyp::Unit);
                 match body {
                     Some(body) => {
-                        let br = body.node.infer(&kctx, fctx, &vctx)?;
+                        let br = body.infer(&kctx, fctx, &vctx)?;
                         // Use lub_equ rather than strict structural equality so that
                         // a body inferred as `Fin<n>` (e.g. a bare numeric literal)
                         // coerces to a `Base(F)` return type via the scalar
@@ -347,13 +353,16 @@ impl CBody {
                             Ok(_) => Ok(()),
                             Err(_) => Err(TypeError::decl(
                                 &sig.name,
-                                TypeError::func_ret(
-                                    &kctx,
-                                    &vctx,
-                                    &body.node,
-                                    &sig.name.node,
-                                    ret,
-                                    &br,
+                                TypeError::located(
+                                    &body.span,
+                                    TypeError::func_ret(
+                                        &kctx,
+                                        &vctx,
+                                        &body.node,
+                                        &sig.name.node,
+                                        ret,
+                                        &br,
+                                    ),
                                 ),
                             )),
                         }
@@ -364,13 +373,16 @@ impl CBody {
                             Ok(_) => Ok(()),
                             Err(_) => Err(TypeError::decl(
                                 &sig.name,
-                                TypeError::func_ret(
-                                    &kctx,
-                                    &vctx,
-                                    &Spanned::new(Exp::Unit, 0..0),
-                                    &sig.name.node,
-                                    ret,
-                                    &CTyp::Unit,
+                                TypeError::located(
+                                    &sig.ret.as_ref().map_or(0..0, |r| r.span.clone()),
+                                    TypeError::func_ret(
+                                        &kctx,
+                                        &vctx,
+                                        &Spanned::new(Exp::Unit, 0..0),
+                                        &sig.name.node,
+                                        ret,
+                                        &CTyp::Unit,
+                                    ),
                                 ),
                             )),
                         }

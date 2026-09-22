@@ -17,7 +17,7 @@ cargo run --example zippel -- ipa       # run an example (from repo root)
 cargo bench --bench execution            # Criterion benchmark
 ```
 
-Aliases live in `.cargo/config.toml`: `test-all`, `test-verbose`, `test-coverage` (the latter requires `cargo-tarpaulin`), plus `ex` / `exr` for running one example (`cargo ex ipa`, `cargo exr hyperplonk`).
+Aliases live in `.cargo/config.toml`: `test-all`, `test-verbose`, `test-coverage` (the latter requires `cargo-tarpaulin`), plus `zrun` / `zrunr` for running one example (`cargo zrun ipa`, `cargo zrunr hyperplonk`), `zcheck` for running every compile-time check on `.zippel` files without a harness (`cargo zcheck --size N=2 examples/zk_kzg/zk_kzg.zippel`), and `zfmt` for formatting them (`cargo zfmt --check examples/*/*.zippel`).
 
 CI runs on GitHub Actions (`.github/workflows/ci.yml`) inside the `rustlang/rust:nightly` container. The exact CI commands are:
 

@@ -1,11 +1,10 @@
 ---
 source: lang/tests/semantic.rs
-assertion_line: 140
 ---
 error: undefined variable `b`
    ╭─[ test.zippel:1:40 ]
    │
- 1 │ proto p<F: Field>(instance a: F) where b == b { }
+ 1 │ proto p<F: Field>(instance a: F) where b == b { verify(a == a) }
    │                                        ┬    ┬  
    │                                        ╰─────── `b` is not defined in this scope
    │                                        │    │  
