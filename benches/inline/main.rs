@@ -34,8 +34,6 @@ use share::unwrap;
 
 use graph::UDags;
 
-const STACK_SIZE: usize = 256 * 1024 * 1024;
-
 /// True from right before `build_inputs` (ideal construction) to right
 /// after the GB backend call returns — the memory-constrained window.
 /// Parsing/concretizing/DAG construction before it, and the final
@@ -587,32 +585,30 @@ fn main() {
 
     // Run in a thread with a large stack to avoid stack overflow.
     let protocol_clone = protocol.name;
-    let result = std::thread::Builder::new()
-        .stack_size(STACK_SIZE)
-        .spawn(move || run_bench(protocol, no_inline, backend, memory_limit_mb))
-        .expect("failed to spawn thread")
-        .join()
-        .unwrap_or_else(|payload| {
-            let message = payload
-                .downcast_ref::<String>()
-                .cloned()
-                .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_string()))
-                .unwrap_or_else(|| "thread panicked".to_string());
-            // See LIMIT_ACTIVE for what this checks.
-            let status = if LIMIT_ACTIVE.load(Ordering::SeqCst) {
-                "oom"
-            } else {
-                "crashed"
-            };
-            serde_json::to_string(&BenchOutput {
-                protocol: protocol_clone.to_string(),
-                inline: i32::from(!no_inline),
-                status: status.to_string(),
-                error: Some(message),
-                ..Default::default()
-            })
-            .unwrap()
-        });
+    let result = share::thread::run("inline-bench", move || {
+        run_bench(protocol, no_inline, backend, memory_limit_mb)
+    })
+    .unwrap_or_else(|payload| {
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_string()))
+            .unwrap_or_else(|| "thread panicked".to_string());
+        // See LIMIT_ACTIVE for what this checks.
+        let status = if LIMIT_ACTIVE.load(Ordering::SeqCst) {
+            "oom"
+        } else {
+            "crashed"
+        };
+        serde_json::to_string(&BenchOutput {
+            protocol: protocol_clone.to_string(),
+            inline: i32::from(!no_inline),
+            status: status.to_string(),
+            error: Some(message),
+            ..Default::default()
+        })
+        .unwrap()
+    });
 
     println!("{result}");
 }

@@ -765,6 +765,7 @@ name = "check"
 version = "0.1.0"
 dependencies = [
  "backend",
+ "clap",
  "graph",
  "lang",
  "share",
@@ -1265,6 +1266,7 @@ dependencies = [
 name = "fmt"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "criterion",
  "lang",
  "share",
