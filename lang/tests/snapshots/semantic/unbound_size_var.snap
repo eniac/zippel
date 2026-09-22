@@ -4,7 +4,7 @@ source: lang/tests/semantic.rs
 error: unbound size variable `N`
    ╭─[ test.zippel:1:35 ]
    │
- 1 │ proto p<F: Field>(instance a: [F; N]) where a == a { }
+ 1 │ proto p<F: Field>(instance a: [F; N]) where a == a { verify(a == a) }
    │         │                         ┬  
    │         │                         ╰── `N` is not declared as a type variable
    │         │                            

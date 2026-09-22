@@ -13,6 +13,8 @@ extern crate self as lang;
 
 /// Untyped/typed abstract syntax: modules, declarations, expressions, spans.
 pub mod ast;
+/// Parse, concretize, and type-check source without lowering it (`zippel-check`).
+pub mod check;
 pub mod diagnostic;
 /// Gensym-backed identifiers: `Tid` for size/type variables, `Vid` for values.
 pub mod id;

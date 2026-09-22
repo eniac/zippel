@@ -4,7 +4,7 @@ source: lang/tests/semantic.rs
 error: circular type variable reference
    ╭─[ test.zippel:1:38 ]
    │
- 1 │ proto p<V: Pairing<G, G>, G: Pairing<V, V>>(instance a: V) where a == a { }
+ 1 │ proto p<V: Pairing<G, G>, G: Pairing<V, V>>(instance a: V) where a == a { verify(a == a) }
    │                    ┬                 ┬  
    │                    │                 ╰── cycle: G → V → G
    │                    │                 │  

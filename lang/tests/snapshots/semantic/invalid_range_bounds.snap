@@ -4,7 +4,7 @@ source: lang/tests/semantic.rs
 error: invalid range bounds for `N`
    ╭─[ test.zippel:1:9 ]
    │
- 1 │ proto p<N: 10..5>(instance a: [F; N]) where a == a { }
+ 1 │ proto p<N: 10..5>(instance a: [F; N]) where a == a { verify(a == a) }
    │         ────┬───  
    │             ╰───── range `10..5` is invalid: start (10) must be ≤ end (5)
 ───╯
