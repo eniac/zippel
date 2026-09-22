@@ -2,7 +2,7 @@
 //! actually passes, then snapshot the computed Gröbner basis for
 //! regression detection.
 
-use crate::common::{ANALYSIS_STACK_SIZE, assert_named_snapshot, compile_to_dag, normalize_basis};
+use crate::common::{assert_named_snapshot, compile_to_dag, normalize_basis};
 use analyses::{CompletenessAnalysis, GbBackendKind};
 use backend::ArkBls12_381;
 use libtest_mimic::{Failed, Trial};
@@ -257,18 +257,14 @@ fn run_completeness_snapshot(entry: &CompletenessEntry) -> Result<(), Failed> {
         .join(entry.zippel_path);
     let sizes = entry.sizes.to_vec();
 
-    let normalized = std::thread::Builder::new()
-        .stack_size(ANALYSIS_STACK_SIZE)
-        .spawn(move || {
-            let dag = compile_to_dag(&path, &sizes);
-            let inputs = CompletenessAnalysis::<ArkBls12_381>::build_inputs(&dag, true);
-            let mut ca = CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, backend);
-            ca.run().map_err(|e| Failed::from(e.to_string()))?;
-            Ok::<String, Failed>(normalize_basis(&ca.basis.polys))
-        })
-        .expect("failed to spawn thread")
-        .join()
-        .expect("thread panicked")?;
+    let normalized = share::thread::run("gb-completeness", move || {
+        let dag = compile_to_dag(&path, &sizes);
+        let inputs = CompletenessAnalysis::<ArkBls12_381>::build_inputs(&dag, true);
+        let mut ca = CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, backend);
+        ca.run().map_err(|e| Failed::from(e.to_string()))?;
+        Ok::<String, Failed>(normalize_basis(&ca.basis.polys))
+    })
+    .expect("thread panicked")?;
 
     assert_named_snapshot(&snap_name, &normalized);
     Ok(())

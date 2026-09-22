@@ -303,9 +303,22 @@ fn semantic_duplicate_typevar() {
     );
 }
 
+// `check_proto_verify` (E0013) is implemented in `lang::semantic::verify` but not yet wired
+// into `UModule::parse` — it resolves calls by name with no overload resolution, which isn't
+// mature enough to enforce on every parse. See the TODO in `lang/src/ast/module.rs`. These tests
+// exercise the check directly instead of through `UModule::parse`/`render_errors`, so they stay
+// green (and keep covering the check's own logic) independent of that deferral.
+
 #[test]
 fn semantic_proto_without_verify() {
-    let rendered = render_errors("proto p<F: Field>(instance a: F) where a == a { let b = a; }");
+    let src = "proto p<F: Field>(instance a: F) where a == a { let b = a; }";
+    let (decls, parse_errors) = lang::parser::parse_decls(src);
+    assert!(parse_errors.is_empty());
+    let diags = lang::semantic::check_proto_verify(&decls);
+    let rendered: String = diags
+        .iter()
+        .map(|d| lang::diagnostic::render_diagnostic(d, "test.zippel", src))
+        .collect();
     assert!(
         rendered.contains("has no `verify` check"),
         "expected E0013, got: {rendered}"
@@ -315,7 +328,9 @@ fn semantic_proto_without_verify() {
 
 #[test]
 fn semantic_proto_empty_body_has_no_verify() {
-    let (_, diags) = UModule::parse("proto p<F: Field>(instance a: F) where a == a { }");
+    let src = "proto p<F: Field>(instance a: F) where a == a { }";
+    let (decls, _) = lang::parser::parse_decls(src);
+    let diags = lang::semantic::check_proto_verify(&decls);
     assert!(
         diags.iter().any(|d| d.code.as_deref() == Some("E0013")),
         "expected E0013, got: {:?}",
@@ -329,7 +344,8 @@ fn semantic_proto_verify_through_function_calls() {
     let src = "fn check<F: Field>(instance a: F) { verify(a == a) }\n\
                fn outer<F: Field>(instance a: F) { check(a) }\n\
                proto p<F: Field>(instance a: F) where a == a { outer(a) }";
-    let (_, diags) = UModule::parse(src);
+    let (decls, _) = lang::parser::parse_decls(src);
+    let diags = lang::semantic::check_proto_verify(&decls);
     assert!(
         !diags.iter().any(|d| d.code.as_deref() == Some("E0013")),
         "verify reached through calls should satisfy E0013, got: {:?}",
@@ -341,7 +357,8 @@ fn semantic_proto_verify_through_function_calls() {
 fn semantic_proto_calling_non_verifying_function_has_no_verify() {
     let src = "fn f<F: Field>(instance a: F) -> F { a }\n\
                proto p<F: Field>(instance a: F) where a == a { let b = f(a); }";
-    let (_, diags) = UModule::parse(src);
+    let (decls, _) = lang::parser::parse_decls(src);
+    let diags = lang::semantic::check_proto_verify(&decls);
     assert!(
         diags.iter().any(|d| d.code.as_deref() == Some("E0013")),
         "expected E0013, got: {:?}",

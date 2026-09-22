@@ -17,8 +17,6 @@ use std::sync::OnceLock;
 type AnalysisDag = graph::Dag<ArkBls12_381, Qualifier>;
 type F = <ArkBls12_381 as ArkConfig>::F;
 
-pub(crate) const ANALYSIS_STACK_SIZE: usize = 256 * 1024 * 1024;
-
 /// Snapshot directory, relative to this file's directory
 /// (`analyses/tests/gb_snapshots/`) — resolves to
 /// `analyses/tests/snapshots/gb_snapshots/`.

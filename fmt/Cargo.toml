@@ -7,6 +7,7 @@ edition = "2024"
 lang = { path = "../lang" }
 share = { path = "../share" }
 similar = "2.7"
+clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 criterion = "0.5"
