@@ -171,19 +171,19 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
             name: "coin_proof",
             zippel_path: "examples/coin_proof/coin_proof.zippel",
             sizes: &[],
-            ignored: true,
+            ignored: false,
         },
         CompletenessEntry {
             name: "r1cs_sigma",
             zippel_path: "examples/r1cs_sigma/r1cs_sigma.zippel",
             sizes: &[("N", 2), ("n", 1), ("m", 1)],
-            ignored: true,
+            ignored: false,
         },
         CompletenessEntry {
             name: "hyperplonk_zerocheck",
             zippel_path: "examples/hyperplonk_zerocheck/hyperplonk_zerocheck.zippel",
             sizes: &[("S", 3)],
-            ignored: true,
+            ignored: false,
         },
         CompletenessEntry {
             name: "hyperplonk_productcheck",
