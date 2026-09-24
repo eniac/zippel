@@ -1,0 +1,16 @@
+---
+source: analyses/tests/gb_snapshots/common.rs
+expression: value
+---
+- __zippel::gb::div_inv::0 + __zippel::gb::div_inv::1
+- __zippel::gb::div_inv::0 + c_inv
+- g_base*r_xi*y - r_tau*xi + g_vec[1]*r_tau*x_vec[1] + g_vec[0]*r_tau*x_vec[0] + r_xi*tau
+- xi + g_vec[1]*x_vec[1] + g_vec[0]*x_vec[0] + h_base*r_xi
+- y + a_vec[1]*x_vec[1] + a_vec[0]*x_vec[0]
+__zippel::node::116 - 1
+__zippel::node::120 - 1
+__zippel::node::123 - 1
+__zippel::node::99 - 1
+a_vec[0]*g_base*r_xi*y - g_vec[0]*r_tau*y + a_vec[0]*r_tau*xi - a_vec[0]*g_vec[1]*r_tau*x_vec[1] + a_vec[1]*g_vec[0]*r_tau*x_vec[1] - a_vec[0]*r_xi*tau
+c*__zippel::gb::div_inv::0 - 1
+g_base*y - tau + h_base*r_tau
