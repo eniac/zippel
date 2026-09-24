@@ -242,10 +242,10 @@ per protocol; every protocol that completes in practice finishes in
 under 15s, so a much tighter 1-minute timeout is used here to keep the
 full run fast.
 
-**What to expect, and why it differs from the paper.** Completeness only
-verifies for **18 of 30** protocols, 2 fewer than the paper's submitted
-count of 20. This is because of bugs that were found and fixed after
-submission.
+**What to expect, and why it differs from the paper.** Completeness 
+verifies **22 of 30** protocols, 2 more than what we had in the paper.
+This is because we improved our inlining optimization and fixed some bugs that we found 
+after submission.
 
 **Runtime**: a full run takes approximately 15 minutes.
 
