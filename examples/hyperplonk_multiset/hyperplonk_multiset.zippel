@@ -8,10 +8,12 @@
 // below picks up the new size via its <S: Size, N: 2^S> parameters; no
 // edits needed in this file.
 //
-// Note: the universal-hash randomness r and the rational product tree v
-// are computed by the driver (simulating Fiat-Shamir) and passed in as
-// instance inputs. This keeps the proto fully parametric in S; in a real
-// SNARK they would be drawn from the verifier-side Fiat-Shamir transcript.
+// Note: the universal-hash randomness r is computed by the driver
+// (simulating Fiat-Shamir) and passed in as an instance input. This keeps
+// the proto fully parametric in S; in a real SNARK it would be drawn from
+// the verifier-side Fiat-Shamir transcript. The rational product tree v_evs
+// and the inverses g_shift_inv are prover witnesses, constrained by the
+// where clause.
 
 // Build the Lagrange (eq) basis at x ∈ F^K: 2^K evaluations of eq(x, ·), LSB-first.
 fn eq_weights<F: Field>(instance x: [F; 1]) -> [F; 2] {
@@ -132,26 +134,30 @@ fn ms_round<F: Field, S: Size, V: 3..S + 1, N: 2 ^ S>(
     )
 }
 
-// ===== Relation helper (used in the where clause) =====
-// Characteristic polynomial of a vector: char_poly(f)(X) = Π_i (f[i] + X).
-// Two vectors have equal characteristic polynomials in F[X] iff they are
-// equal as multisets (uniqueness of monic-polynomial factorization).
-fn char_poly<F: Field, S: Size, N: 2 ^ S>(instance f: [F; N]) -> Uni<F, N> {
-    reduce(*, [poly([f[i], 1]) for i in 0..N])
-}
-
 proto hyperplonk_multiset<F: Field, S: Size, N: 2 ^ S>(
     instance f_evs: [F; N],
     instance g_evs: [F; N],
     instance r: F,
-    instance v_evs: [F; 2 ^ (S + 1)],
+    witness v_evs: [F; 2 ^ (S + 1)],
+    witness g_shift_inv: [F; N],
 ) where
-    // Relation: the multisets  {f_evs} and {g_evs} coincide. Stated as
-    // an equality of characteristic polynomials in F[X]:
-    //   Π_i (f_evs[i] + X) == Π_i (g_evs[i] + X).
-    // Independent of the FS challenge r; the proto body attests via a
-    // grand-product PIOP that specializes this identity at r.
-    char_poly(f_evs) == char_poly(g_evs)
+    // Relation: the multisets  {f_evs} and {g_evs} coincide. That implies,
+    // for every shift r, the grand-product identity
+    //   Π_i (r + f_evs[i]) == Π_i (r + g_evs[i]),
+    // which is the form of the relation the proto attests to.
+    let f_shift = [r + f_evs[i] for i in 0..N];
+    let g_shift = [r + g_evs[i] for i in 0..N];
+    reduce(*, f_shift) == reduce(*, g_shift)
+        // r + g[i] is nonzero, witnessed by its inverse.
+        && reduce(&&, [g_shift[i] * g_shift_inv[i] for i in 0..N] == [1 for _ in 0..N])
+        // v_evs is the honest rational product tree: leaves f_shift/g_shift,
+        // v[1 + 2y] = v[y]·v[y + N], and v[2N - 1] = 0.
+        && reduce(&&, [v_evs[2 * i] * g_shift[i] for i in 0..N] == f_shift)
+        && reduce(
+            &&,
+            [v_evs[1 + 2 * y] for y in 0..N - 1] == [v_evs[y] * v_evs[y + N] for y in 0..N - 1],
+        )
+        && v_evs[2 * N - 1] == 0
 {
     let one = f_evs[0] - f_evs[0] + 1;
     let zero = f_evs[0] - f_evs[0];

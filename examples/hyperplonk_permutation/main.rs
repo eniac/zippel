@@ -80,6 +80,7 @@ struct PermutationInstance<F> {
     r2: F,
     r: F,
     v_evs: Vec<F>,
+    g_shift_inv: Vec<F>,
 }
 
 fn build_v_tree<F: Field + Zero>(leaves: &[F]) -> Vec<F> {
@@ -129,8 +130,11 @@ where
 
     let f_hat: Vec<F> = (0..num_points).map(|i| s_id[i] + r2 * f[i]).collect();
     let g_hat: Vec<F> = (0..num_points).map(|i| s_sigma[i] + r2 * g[i]).collect();
+    let g_shift_inv: Vec<F> = (0..num_points)
+        .map(|i| (r + g_hat[i]).inverse().expect("r + g_hat[i] nonzero"))
+        .collect();
     let leaves: Vec<F> = (0..num_points)
-        .map(|i| (r + f_hat[i]) * (r + g_hat[i]).inverse().expect("r + g_hat[i] nonzero"))
+        .map(|i| (r + f_hat[i]) * g_shift_inv[i])
         .collect();
     let v_evs = build_v_tree(&leaves);
 
@@ -142,6 +146,7 @@ where
         r2,
         r,
         v_evs,
+        g_shift_inv,
     }
 }
 
@@ -162,5 +167,9 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("r2".to_string()), Value::Scalar(inst.r2)),
         (Vid("r".to_string()), Value::Scalar(inst.r)),
         (Vid("v_evs".to_string()), Value::VecScalar(inst.v_evs)),
+        (
+            Vid("g_shift_inv".to_string()),
+            Value::VecScalar(inst.g_shift_inv),
+        ),
     ])
 }

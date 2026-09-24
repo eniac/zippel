@@ -32,19 +32,30 @@ proto dekart<
     extra srs_g1_n: [g1; n + 1],
     extra srs_g1_h: [g1; h_deg + 1],
 ) where
-    srs_g1_n[0] == gen_g1
-        && srs_g1_h[0] == gen_g1
+    // Trusted setup: sample the trapdoors (τ, ξ) and derive the SRS.
+    let tau = random<f>;
+    let xi = random<f>;
+    reduce(&&, srs_g1_n == [gen_g1 * tau ^ i for i in 0..n + 1])
+        && reduce(&&, srs_g1_h == [gen_g1 * tau ^ i for i in 0..h_deg + 1])
+        && srs_g2_tau == gen_g2 * tau
+        && xi_g1 == gen_g1 * xi
+        && srs_g2_xi == gen_g2 * xi
+        // s0_commit commits (via srs_g1_n) to the Lagrange polynomial L_0,
+        // i.e. evaluations [1, 0, ..., 0] on the size-(n + 1) domain.
+        && s0_commit == dot(coef(interpolate([1] ++ [0 for _ in 0..n])), srs_g1_n)
+        // Range: every chunk value on the constraint domain lies in [0, b).
         && reduce(
             &&,
-            [pair(srs_g1_n[i], srs_g2_tau) for i in 0..n]
-                == [pair(srs_g1_n[i + 1], gen_g2) for i in 0..n],
+            [
+                let chunk_j = chunks_evals[j];
+                reduce(
+                    &&,
+                    [reduce(*, [chunk_j[i] - d for d in 0..b]) for i in 1..n + 1]
+                        == [0 for _ in 1..n + 1],
+                )
+                for j in 0..l_chunk
+            ],
         )
-        && reduce(
-            &&,
-            [pair(srs_g1_h[i], srs_g2_tau) for i in 0..h_deg]
-                == [pair(srs_g1_h[i + 1], gen_g2) for i in 0..h_deg],
-        )
-        && pair(xi_g1, gen_g2) == pair(gen_g1, srs_g2_xi)
         && f_evals[0] == 0
         && reduce(
             &&,

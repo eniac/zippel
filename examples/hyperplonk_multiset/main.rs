@@ -77,6 +77,7 @@ struct MultiSetInstance<F> {
     g: Vec<F>,
     r: F,
     v_evs: Vec<F>,
+    g_shift_inv: Vec<F>,
 }
 
 /// Build the rational product tree ṽ from per-point ratios `leaves`.
@@ -125,14 +126,24 @@ where
 
     // Leaves of ṽ: (r + f[i]) / (r + g[i]). When `g` is a permutation of `f`
     // (which we ensure by construction), r + g[i] is never zero w.h.p.
+    let g_shift_inv: Vec<F> = g
+        .iter()
+        .map(|gi| (r + *gi).inverse().expect("r + g[i] nonzero"))
+        .collect();
     let leaves: Vec<F> = f
         .iter()
-        .zip(g.iter())
-        .map(|(fi, gi)| (r + *fi) * (r + *gi).inverse().expect("r + g[i] nonzero"))
+        .zip(g_shift_inv.iter())
+        .map(|(fi, gi_inv)| (r + *fi) * *gi_inv)
         .collect();
     let v_evs = build_v_tree(&leaves);
 
-    MultiSetInstance { f, g, r, v_evs }
+    MultiSetInstance {
+        f,
+        g,
+        r,
+        v_evs,
+        g_shift_inv,
+    }
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
@@ -146,5 +157,9 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("g_evs".to_string()), Value::VecScalar(inst.g)),
         (Vid("r".to_string()), Value::Scalar(inst.r)),
         (Vid("v_evs".to_string()), Value::VecScalar(inst.v_evs)),
+        (
+            Vid("g_shift_inv".to_string()),
+            Value::VecScalar(inst.g_shift_inv),
+        ),
     ])
 }
