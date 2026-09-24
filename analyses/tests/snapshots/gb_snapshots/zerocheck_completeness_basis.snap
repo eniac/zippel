@@ -1,5 +1,5 @@
 ---
-source: analyses/tests/gb_snapshots.rs
+source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
 - __zippel::gb::div_c::0 + __zippel::gb::div_c::2
@@ -20,9 +20,7 @@ expression: value
 - __zippel::gb::div_inv::1*__zippel::gb::div_q::0[1] + __zippel::gb::div_inv::3*__zippel::gb::div_q::0[1]
 - __zippel::gb::div_inv::2*__zippel::gb::div_q::0[1] - __zippel::gb::div_inv::1*__zippel::gb::div_c::0*__zippel::gb::div_q::0[0] + p[1]*__zippel::gb::div_inv::2*__zippel::gb::div_inv::1
 - __zippel::gb::div_q::0[0] + __zippel::gb::div_q::1[0]
-- __zippel::gb::div_q::0[0] + q[0]
 - __zippel::gb::div_q::0[1] + __zippel::gb::div_q::1[1]
-- __zippel::gb::div_q::0[1] + q[1]
 - __zippel::gb::div_q::0[1]^2 + p[1]*__zippel::gb::div_inv::1*__zippel::gb::div_q::0[1]
 - p[0]*__zippel::gb::div_inv::0*__zippel::gb::div_q::0[1] - __zippel::gb::div_c::0*__zippel::gb::div_q::0[0]^2 + p[1]*__zippel::gb::div_inv::0*__zippel::gb::div_q::0[0]
 - p[0]*__zippel::gb::div_inv::2*__zippel::gb::div_q::0[1] - __zippel::gb::div_c::0*__zippel::gb::div_q::0[0]^2 + p[1]*__zippel::gb::div_inv::2*__zippel::gb::div_q::0[0]

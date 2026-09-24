@@ -116,7 +116,7 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
             name: "hyrax_ipa",
             zippel_path: "examples/hyrax_ipa/hyrax_ipa.zippel",
             sizes: &[("S", 1)],
-            ignored: true,
+            ignored: false,
         },
         CompletenessEntry {
             name: "hyrax_podp",

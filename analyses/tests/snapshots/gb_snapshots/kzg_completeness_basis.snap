@@ -1,13 +1,10 @@
 ---
-source: analyses/tests/gb_snapshots.rs
+source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
 - __zippel::gb::div_q::0[0] + poly_x[1]
-- eval_point*commitment*tau - poly_x[0]*srs_g1[1]*tau + eval_result*srs_g1[1]*tau + eval_point*poly_x[0]*srs_g1[1]
-- poly_x[0]*srs_g1[1]*__zippel::gb::div_q::0[0] + eval_result*srs_g1[1]*__zippel::gb::div_q::0[0] + eval_point*poly_x[0]*proof + poly_x[0]*commitment - eval_result*commitment
 - srs_g1[0] + gen_g1
 - srs_g1[0]*srs_g2_s + gen_g2*srs_g1[1]
-- srs_g1[1]*__zippel::gb::div_q::0[0] + proof*tau
 __zippel::gb::div_q::0[1]
 __zippel::gb::div_r::0[0]
 __zippel::node::27 - 1
@@ -17,10 +14,4 @@ __zippel::node::43 - 1
 __zippel::node::46 - 1
 eval_point*__zippel::gb::div_q::0[0] + poly_x[0] - eval_result
 gen_g2*tau - srs_g2_s
-srs_g1[0]*__zippel::gb::div_q::0[0] - proof
 srs_g1[0]*tau - srs_g1[1]
-srs_g1[1]*__zippel::gb::div_q::0[0] - commitment + poly_x[0]*srs_g1[0]
-srs_g1[1]*__zippel::gb::div_q::0[0] - eval_point*proof - commitment + eval_result*srs_g1[0]
-srs_g1[1]*__zippel::gb::div_q::0[0]^2 - commitment*__zippel::gb::div_q::0[0] + poly_x[0]*proof
-srs_g1[1]*tau*__zippel::gb::div_q::0[0] - commitment*tau + poly_x[0]*srs_g1[1]
-srs_g2_s*proof*__zippel::gb::div_q::0[0] - gen_g2*commitment*__zippel::gb::div_q::0[0] + gen_g2*poly_x[0]*proof

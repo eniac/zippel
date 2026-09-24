@@ -1,22 +1,10 @@
 ---
-source: analyses/tests/gb_snapshots.rs
+source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- evs0_msg[0] + p[6] + p[4] + p[2] + p[0]
-- evs0_msg[1] + p[7] + p[5] + p[3] + p[1]
-- evs0_msg[1] - evs0_msg[0] + claimed_sum
-- evs0_msg[1]*evs_msg[1] + evs0_msg[0]*evs_msg[1] - p[7]*evs_msg[1] + p[6]*evs_msg[1] + p[5]*evs_msg[1] - p[4]*evs_msg[1] - p[7]*evs_msg[0] + p[6]*evs_msg[0] + p[5]*evs_msg[0] - p[4]*evs_msg[0] + 2*p[7]*evs_msg[1]*r_next + 52435875175126190479447740508185965837690552500527637822603658699938581184511*p[6]*evs_msg[1]*r_next + 52435875175126190479447740508185965837690552500527637822603658699938581184511*p[5]*evs_msg[1]*r_next + 2*p[4]*evs_msg[1]*r_next + p[6]*evs0_msg[1]*r_next - p[4]*evs0_msg[1]*r_next - p[7]*evs0_msg[0]*r_next + p[5]*evs0_msg[0]*r_next + p[5]*evs_msg[1] - p[4]*evs_msg[1] + p[7]*evs_msg[0] - p[6]*evs_msg[0] + p[4]*evs0_msg[1] - p[5]*evs0_msg[0]
-- evs0_msg[1]*evs_msg[1]*evs_msg[1] + evs0_msg[0]*evs_msg[1]*evs_msg[1] + p[7]*evs_msg[1]*evs_msg[1] - p[6]*evs_msg[1]*evs_msg[1] - p[5]*evs_msg[1]*evs_msg[1] + p[4]*evs_msg[1]*evs_msg[1] + evs0_msg[1]*evs_msg[0]*evs_msg[1] - evs0_msg[0]*evs_msg[0]*evs_msg[1] + p[7]*evs_msg[0]*evs_msg[1] - p[6]*evs_msg[0]*evs_msg[1] - p[5]*evs_msg[0]*evs_msg[1] + p[4]*evs_msg[0]*evs_msg[1] + p[6]*evs0_msg[1]*evs_msg[1] - p[4]*evs0_msg[1]*evs_msg[1] - p[7]*evs0_msg[0]*evs_msg[1] + p[5]*evs0_msg[0]*evs_msg[1] + p[7]*evs_msg[1]*evs_msg[0] - p[6]*evs_msg[1]*evs_msg[0] - p[5]*evs_msg[1]*evs_msg[0] + p[4]*evs_msg[1]*evs_msg[0] + p[7]*evs_msg[0]*evs_msg[0] - p[6]*evs_msg[0]*evs_msg[0] - p[5]*evs_msg[0]*evs_msg[0] + p[4]*evs_msg[0]*evs_msg[0] + p[6]*evs0_msg[1]*evs_msg[0] - p[4]*evs0_msg[1]*evs_msg[0] - p[7]*evs0_msg[0]*evs_msg[0] + p[5]*evs0_msg[0]*evs_msg[0] + p[5]*evs_msg[1]^2 - p[4]*evs_msg[1]^2 - p[7]*evs_msg[0]*evs_msg[1] + p[6]*evs_msg[0]*evs_msg[1] + p[5]*evs_msg[0]*evs_msg[1] - p[4]*evs_msg[0]*evs_msg[1] + p[4]*evs0_msg[1]*evs_msg[1] - p[5]*evs0_msg[0]*evs_msg[1] - p[7]*evs_msg[0]^2 + p[6]*evs_msg[0]^2 - p[6]*evs0_msg[1]*evs_msg[0] + p[7]*evs0_msg[0]*evs_msg[0]
-- evs_msg[1] + p[7]*r1*r_next - p[6]*r1*r_next - p[5]*r1*r_next + p[4]*r1*r_next + p[6]*r_next - p[4]*r_next + p[5]*r1 - p[4]*r1 + p[4]
-- evs_msg[1]*evs_msg[1] + evs_msg[0]*evs_msg[1] + p[7]*r1*evs_msg[1] - p[6]*r1*evs_msg[1] - p[5]*r1*evs_msg[1] + p[4]*r1*evs_msg[1] + p[6]*evs_msg[1] - p[4]*evs_msg[1] + p[7]*r1*evs_msg[0] - p[6]*r1*evs_msg[0] - p[5]*r1*evs_msg[0] + p[4]*r1*evs_msg[0] + p[6]*evs_msg[0] - p[4]*evs_msg[0] + p[5]*r1*evs_msg[1] - p[4]*r1*evs_msg[1] + p[4]*evs_msg[1] - p[7]*r1*evs_msg[0] + p[6]*r1*evs_msg[0] - p[6]*evs_msg[0]
+- p[7] - p[6] - p[5] - p[4] - p[3] - p[2] - p[1] - p[0] + claimed_sum
 __zippel::node::11 - 1
 __zippel::node::27 - 1
 __zippel::node::43 - 1
 __zippel::node::51 - 1
 __zippel::node::64 - 1
-evs0_msg[1]*evs_msg[1] - evs0_msg[0]*evs_msg[1] - p[7]*evs_msg[1] + p[6]*evs_msg[1] - p[3]*evs_msg[1] + p[2]*evs_msg[1] - p[7]*evs_msg[0] + p[6]*evs_msg[0] - p[3]*evs_msg[0] + p[2]*evs_msg[0] - p[6]*evs0_msg[1] - p[2]*evs0_msg[1] + p[7]*evs0_msg[0] + p[3]*evs0_msg[0]
-evs_msg[1] + evs_msg[0] - evs0_msg[1]*r1 + evs0_msg[0]*r1 - evs0_msg[0]
-evs_msg[1] + evs_msg[0] - evs_msg[1]*r_next + evs_msg[0]*r_next - evs_msg[0]
-evs_msg[1] - p[7]*r1 + p[6]*r1 - p[3]*r1 + p[2]*r1 - p[6] - p[2]
-p[5]*evs_msg[1]*evs_msg[1] - p[4]*evs_msg[1]*evs_msg[1] + p[3]*evs_msg[1]*evs_msg[1] - p[2]*evs_msg[1]*evs_msg[1] - p[7]*evs_msg[0]*evs_msg[1] + p[6]*evs_msg[0]*evs_msg[1] - p[3]*evs_msg[0]*evs_msg[1] + p[2]*evs_msg[0]*evs_msg[1] + p[4]*p[7]*evs_msg[1] + p[2]*p[7]*evs_msg[1] - p[5]*p[6]*evs_msg[1] - p[3]*p[6]*evs_msg[1] - p[2]*p[5]*evs_msg[1] + p[3]*p[4]*evs_msg[1] - p[7]*evs_msg[1]*evs_msg[0] + p[6]*evs_msg[1]*evs_msg[0] + p[5]*evs_msg[1]*evs_msg[0] - p[4]*evs_msg[1]*evs_msg[0] + p[4]*p[7]*evs_msg[0] + p[2]*p[7]*evs_msg[0] - p[5]*p[6]*evs_msg[0] - p[3]*p[6]*evs_msg[0] - p[2]*p[5]*evs_msg[0] + p[3]*p[4]*evs_msg[0] - p[5]*evs_msg[1]^2 + p[4]*evs_msg[1]^2 + p[7]*evs_msg[0]*evs_msg[1] - p[6]*evs_msg[0]*evs_msg[1] - p[4]*p[7]*evs_msg[1] + p[5]*p[6]*evs_msg[1] + p[2]*p[5]*evs_msg[1] - p[3]*p[4]*evs_msg[1] - p[2]*p[7]*evs_msg[0] + p[3]*p[6]*evs_msg[0]
-p[7]*evs_msg[1] - p[6]*evs_msg[1] + p[3]*evs_msg[1] - p[2]*evs_msg[1] - p[7]*evs_msg[1]*r_next + p[6]*evs_msg[1]*r_next + p[5]*evs_msg[1]*r_next - p[4]*evs_msg[1]*r_next + p[4]*p[7]*r_next + p[2]*p[7]*r_next - p[5]*p[6]*r_next - p[3]*p[6]*r_next - p[2]*p[5]*r_next + p[3]*p[4]*r_next - p[5]*evs_msg[1] + p[4]*evs_msg[1] - p[4]*p[7] + p[5]*p[6] + p[2]*p[5] - p[3]*p[4]
