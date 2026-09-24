@@ -1,33 +1,7 @@
 ---
-source: analyses/tests/gb_snapshots.rs
+source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- c1*z2 + c2*z1 - r1*c2 + c1*r2
-- c1*z3 + c3*z1 - r1*c3 + c1*r3
-- c2*z3 + c3*z2 - r2*c3 + c2*r3
-- g*c1*z2 + g*c2*z1 - u1*c2 + c1*u2
-- g*c1*z3 + g*c3*z1 - u1*c3 + c1*u3
-- g*c2*z3 + g*c3*z2 - u2*c3 + c2*u3
-- g*z1 + h*c1 + u1
-- g*z2 + h*c2 + u2
-- g*z3 + h*c3 + u3
-- r1*u2 + u1*r2
-- r1*u3 + u1*r3
-- r2*u3 + u2*r3
-- u1 + g*r1
-- u1*c1*z2 + u1*c2*z1 - r1*u1*c2 + r1*c1*u2
-- u1*c1*z3 + u1*c3*z1 - r1*u1*c3 + r1*c1*u3
-- u1*c2*z3 + c1*u2*z3 + u1*c3*z2 - c1*u3*z2 - u2*c3*z1 + c2*u3*z1
-- u1*c2*z3 + u1*c3*z2 - r1*u2*c3 + r1*c2*u3
-- u2 + g*r2
-- u2*c2*z3 + u2*c3*z2 - r2*u2*c3 + r2*c2*u3
-- u3 + g*r3
-- x*u1 + h*r1
-- x*u2 + h*r2
-- x*u3 + h*r3
-- z1 + x*c1 + r1
-- z2 + x*c2 + r2
-- z3 + x*c3 + r3
 __zippel::node::28 - 1
 __zippel::node::33 - 1
 __zippel::node::38 - 1

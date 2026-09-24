@@ -1,20 +1,13 @@
 ---
-source: analyses/tests/gb_snapshots.rs
+source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- d_x[1]*__zippel::node::49 + c_commit + f_evals[1]*h_xy[3] + f_evals[0]*h_xy[2] - d_x[0]
-- d_x[1]*__zippel::node::49 + d_x[0]*__zippel::node::49 + c_commit - d_x[0]
+- d_x[0]*__zippel::node::49 + f_evals[1]*h_xy[3] + f_evals[0]*h_xy[2]
+- d_x[0]*f_evals[2]*__zippel::node::49 + d_x[1]*f_evals[0]*__zippel::node::49 - f_evals[0]*f_evals[3]*h_xy[3] + f_evals[1]*f_evals[2]*h_xy[3]
 - d_x[1]*__zippel::node::49 + f_evals[3]*h_xy[3] + f_evals[2]*h_xy[2]
-- d_x[1]*__zippel::node::49 + h_xy[3]*pi[1] + h_xy[2]*pi[0] - c_commit*__zippel::node::11 + d_x[0]*__zippel::node::11 + c_commit - d_x[0]
-- d_x[1]*__zippel::node::49 - h_y[1]*pi[1] + h_xy[3]*pi[1] - h_y[0]*pi[0] + h_xy[2]*pi[0] - c_commit*__zippel::node::11 + d_x[1]*__zippel::node::11 + c_commit
-- d_x[1]*f_evals[2]*__zippel::node::49 + d_x[1]*f_evals[0]*__zippel::node::49 + f_evals[2]*h_xy[3]*pi[1] - f_evals[0]*h_xy[3]*pi[1] - f_evals[3]*h_xy[3]*pi[0] + f_evals[1]*h_xy[3]*pi[0] + f_evals[2]*c_commit - d_x[0]*f_evals[2]
-- d_x[1]*f_evals[3]*__zippel::node::13*__zippel::node::49*__zippel::node::51 + d_x[1]*f_evals[1]*__zippel::node::13*__zippel::node::49*__zippel::node::51 + d_x[1]*f_evals[3]*__zippel::node::49*__zippel::node::51 - d_x[1]*f_evals[1]*__zippel::node::49*__zippel::node::51 + f_evals[3]*h_xy[3]*z0*__zippel::node::51 - f_evals[1]*h_xy[3]*z0*__zippel::node::51 - c_commit*__zippel::node::13*pi[1]*__zippel::node::51 + d_x[0]*__zippel::node::13*pi[1]*__zippel::node::51 + c_commit*pi[1]*__zippel::node::51 - f_evals[3]*h_xy[3]*pi[1]*__zippel::node::51 + f_evals[1]*h_xy[3]*pi[1]*__zippel::node::51 - d_x[0]*pi[1]*__zippel::node::51 + f_evals[3]*c_commit*__zippel::node::13*__zippel::node::51 - d_x[0]*f_evals[3]*__zippel::node::13*__zippel::node::51 - f_evals[3]*c_commit*__zippel::node::51 + d_x[0]*f_evals[3]*__zippel::node::51 - f_evals[3]*h_xy[3]*z0 + f_evals[1]*h_xy[3]*z0 + f_evals[3]*h_xy[3]*__zippel::node::13*pi[1] - f_evals[1]*h_xy[3]*__zippel::node::13*pi[1]
+- f_evals[0]*f_evals[3]*h_y[1] + f_evals[1]*f_evals[2]*h_y[1] - d_x[0]*f_evals[2] + d_x[1]*f_evals[0]
 - f_evals[1]*h_y[1]*__zippel::node::51 + f_evals[0]*h_y[1]*__zippel::node::51 + d_x[0]*__zippel::node::51 - f_evals[0]*h_y[1]
-- f_evals[2]*pi[1] + f_evals[0]*pi[1] + f_evals[3]*pi[0] - f_evals[1]*pi[0] - f_evals[0]*f_evals[3] + f_evals[1]*f_evals[2]
 - f_evals[3]*h_y[1]*__zippel::node::51 + f_evals[2]*h_y[1]*__zippel::node::51 + d_x[1]*__zippel::node::51 - f_evals[2]*h_y[1]
-- f_evals[3]*h_y[1]*pi[1] + f_evals[1]*h_y[1]*pi[1] + d_x[1]*pi[1] - d_x[0]*pi[1] - f_evals[3]*h_y[0]*pi[0] + f_evals[1]*h_y[0]*pi[0] + d_x[0]*f_evals[3] - d_x[1]*f_evals[1]
-- f_evals[3]*h_y[1]*z0*__zippel::node::51 + f_evals[1]*h_y[1]*z0*__zippel::node::51 + d_x[1]*__zippel::node::13*pi[1]*__zippel::node::51 - d_x[0]*__zippel::node::13*pi[1]*__zippel::node::51 + f_evals[3]*h_y[1]*pi[1]*__zippel::node::51 - f_evals[1]*h_y[1]*pi[1]*__zippel::node::51 - d_x[1]*pi[1]*__zippel::node::51 + d_x[0]*pi[1]*__zippel::node::51 + d_x[0]*f_evals[3]*__zippel::node::13*__zippel::node::51 - d_x[1]*f_evals[1]*__zippel::node::13*__zippel::node::51 - d_x[0]*f_evals[3]*__zippel::node::51 + d_x[1]*f_evals[1]*__zippel::node::51 + f_evals[3]*h_y[1]*z0 - f_evals[1]*h_y[1]*z0 - f_evals[3]*h_y[1]*__zippel::node::13*pi[1] + f_evals[1]*h_y[1]*__zippel::node::13*pi[1]
-- f_evals[3]*h_y[1]*z0*__zippel::node::51 + f_evals[1]*h_y[1]*z0*__zippel::node::51 + d_x[1]*__zippel::node::13*pi[1]*__zippel::node::51 - d_x[0]*__zippel::node::13*pi[1]*__zippel::node::51 + f_evals[3]*h_y[1]*pi[1]*__zippel::node::51 - f_evals[1]*h_y[1]*pi[1]*__zippel::node::51 - d_x[1]*pi[1]*__zippel::node::51 + d_x[0]*pi[1]*__zippel::node::51 + d_x[0]*f_evals[3]*__zippel::node::13*__zippel::node::51 - d_x[1]*f_evals[1]*__zippel::node::13*__zippel::node::51 - d_x[0]*f_evals[3]*__zippel::node::51 + d_x[1]*f_evals[1]*__zippel::node::51 - f_evals[2]*h_y[1]*__zippel::node::13*pi[1] + f_evals[0]*h_y[1]*__zippel::node::13*pi[1] + f_evals[2]*h_y[1]*pi[1] - f_evals[0]*h_y[1]*pi[1] + d_x[0]*f_evals[2]*__zippel::node::13 - d_x[1]*f_evals[0]*__zippel::node::13 - d_x[0]*f_evals[2] + d_x[1]*f_evals[0]
 - h_xy[2]*h_y[1] + h_xy[3]*h_y[0]
 - h_y[0] + h_xy[2] + h_xy[0]
 - h_y[0]*v_x[1] + h_xy[2]*v_x[1] + h_xy[2]*v_x[0]
@@ -23,7 +16,6 @@ expression: value
 - h_y[1]*v_x[1] + h_xy[3]*v_x[1] + h_xy[3]*v_x[0]
 - v_x[1] - v_x[0] + h_gen
 - v_x[1] - v_x[0] + v_prime
-- v_x[1]*c_commit - v_x[0]*c_commit + d_x[1]*v_x[1] + d_x[0]*v_x[0]
 __zippel::node::30 - 1
 __zippel::node::34 - 1
 __zippel::node::37 - 1
@@ -38,25 +30,13 @@ __zippel::node::66[1] - 1
 __zippel::node::69 - 1
 __zippel::node::73[0] - 1
 __zippel::node::73[1] - 1
+d_x[0]*__zippel::node::49*__zippel::node::51 - f_evals[1]*h_xy[3]*__zippel::node::51 + f_evals[0]*h_xy[3]*__zippel::node::51 - f_evals[0]*h_xy[3]
 d_x[0]*f_evals[3]*__zippel::node::51 - d_x[0]*f_evals[2]*__zippel::node::51 - d_x[1]*f_evals[1]*__zippel::node::51 + d_x[1]*f_evals[0]*__zippel::node::51 + d_x[0]*f_evals[2] - d_x[1]*f_evals[0]
-d_x[1]*__zippel::node::49*__zippel::node::51 - c_commit*__zippel::node::51 - f_evals[1]*h_xy[3]*__zippel::node::51 + f_evals[0]*h_xy[3]*__zippel::node::51 + d_x[0]*__zippel::node::51 - f_evals[0]*h_xy[3]
 d_x[1]*__zippel::node::49*__zippel::node::51 - f_evals[3]*h_xy[3]*__zippel::node::51 + f_evals[2]*h_xy[3]*__zippel::node::51 - f_evals[2]*h_xy[3]
-d_x[1]*f_evals[2]*__zippel::node::13*__zippel::node::49 - d_x[1]*f_evals[0]*__zippel::node::13*__zippel::node::49 - d_x[1]*f_evals[2]*__zippel::node::49 + d_x[1]*f_evals[0]*__zippel::node::49 - f_evals[3]*h_xy[3]*z0 + f_evals[1]*h_xy[3]*z0 + f_evals[3]*h_xy[3]*__zippel::node::13*pi[1] - f_evals[2]*h_xy[3]*__zippel::node::13*pi[1] - f_evals[1]*h_xy[3]*__zippel::node::13*pi[1] + f_evals[0]*h_xy[3]*__zippel::node::13*pi[1] + f_evals[2]*h_xy[3]*pi[1] - f_evals[0]*h_xy[3]*pi[1] - f_evals[2]*c_commit*__zippel::node::13 + d_x[0]*f_evals[2]*__zippel::node::13 + f_evals[2]*c_commit - d_x[0]*f_evals[2]
-d_x[1]*f_evals[2]*pi[0]*__zippel::node::49 - d_x[1]*f_evals[0]*pi[0]*__zippel::node::49 - d_x[1]*f_evals[2]^2*__zippel::node::49 + d_x[1]*f_evals[0]*f_evals[2]*__zippel::node::49 + f_evals[2]^2*h_xy[3]*pi[1] - f_evals[0]*f_evals[2]*h_xy[3]*pi[1] - f_evals[2]*c_commit*pi[0] - f_evals[2]*f_evals[3]*h_xy[3]*pi[0] + f_evals[0]*f_evals[3]*h_xy[3]*pi[0] + d_x[0]*f_evals[2]*pi[0] + f_evals[2]^2*c_commit - d_x[0]*f_evals[2]^2
-d_x[1]*f_evals[3]*__zippel::node::13*__zippel::node::49 - d_x[1]*f_evals[1]*__zippel::node::13*__zippel::node::49 - d_x[1]*f_evals[3]*__zippel::node::49 + d_x[1]*f_evals[1]*__zippel::node::49 + f_evals[3]*h_xy[2]*z0 - f_evals[1]*h_xy[2]*z0 + c_commit*__zippel::node::13*pi[1] - f_evals[3]*h_xy[3]*__zippel::node::13*pi[1] + f_evals[1]*h_xy[3]*__zippel::node::13*pi[1] - f_evals[3]*h_xy[2]*__zippel::node::13*pi[1] + f_evals[1]*h_xy[2]*__zippel::node::13*pi[1] - d_x[0]*__zippel::node::13*pi[1] - c_commit*pi[1] + f_evals[3]*h_xy[3]*pi[1] - f_evals[1]*h_xy[3]*pi[1] + d_x[0]*pi[1] - f_evals[3]*c_commit*__zippel::node::13 + d_x[0]*f_evals[3]*__zippel::node::13 + f_evals[3]*c_commit - d_x[0]*f_evals[3]
-d_x[1]*f_evals[3]*__zippel::node::49 - d_x[1]*f_evals[1]*__zippel::node::49 + c_commit*pi[1] - f_evals[3]*h_xy[3]*pi[1] + f_evals[1]*h_xy[3]*pi[1] - d_x[0]*pi[1] - f_evals[3]*h_xy[2]*pi[0] + f_evals[1]*h_xy[2]*pi[0] - f_evals[3]*c_commit + d_x[0]*f_evals[3]
 f_evals[1]*h_y[1] + f_evals[0]*h_y[0] - d_x[0]
-f_evals[2]*h_y[1]*pi[1] - f_evals[0]*h_y[1]*pi[1] - f_evals[3]*h_y[1]*pi[0] + f_evals[1]*h_y[1]*pi[0] - d_x[0]*f_evals[2] + d_x[1]*f_evals[0]
-f_evals[2]^2*h_y[1]*pi[1] - f_evals[0]*f_evals[2]*h_y[1]*pi[1] - f_evals[2]*f_evals[3]*h_y[1]*pi[0] + f_evals[0]*f_evals[3]*h_y[1]*pi[0] + d_x[0]*f_evals[2]*pi[0] - d_x[1]*f_evals[0]*pi[0] - d_x[0]*f_evals[2]^2 + d_x[1]*f_evals[0]*f_evals[2]
 f_evals[3]*h_y[1] + f_evals[2]*h_y[0] - d_x[1]
-f_evals[3]*h_y[1]*z0*__zippel::node::51 - f_evals[1]*h_y[1]*z0*__zippel::node::51 - d_x[1]*__zippel::node::13*pi[1]*__zippel::node::51 + d_x[0]*__zippel::node::13*pi[1]*__zippel::node::51 - f_evals[3]*h_y[1]*pi[1]*__zippel::node::51 + f_evals[1]*h_y[1]*pi[1]*__zippel::node::51 + d_x[1]*pi[1]*__zippel::node::51 - d_x[0]*pi[1]*__zippel::node::51 - d_x[0]*f_evals[3]*__zippel::node::13*__zippel::node::51 + d_x[1]*f_evals[1]*__zippel::node::13*__zippel::node::51 + d_x[0]*f_evals[3]*__zippel::node::51 - d_x[1]*f_evals[1]*__zippel::node::51 - f_evals[3]*h_y[1]*z0 + f_evals[1]*h_y[1]*z0 + f_evals[3]*h_y[0]*z0 - f_evals[1]*h_y[0]*z0 - f_evals[3]*h_y[0]*__zippel::node::13*pi[1] + f_evals[1]*h_y[0]*__zippel::node::13*pi[1] + d_x[1]*__zippel::node::13*pi[1] - d_x[0]*__zippel::node::13*pi[1] + f_evals[3]*h_y[1]*pi[1] - f_evals[1]*h_y[1]*pi[1] - d_x[1]*pi[1] + d_x[0]*pi[1] + d_x[0]*f_evals[3]*__zippel::node::13 - d_x[1]*f_evals[1]*__zippel::node::13 - d_x[0]*f_evals[3] + d_x[1]*f_evals[1]
 h_xy[3]*__zippel::node::51 + h_xy[2]*__zippel::node::51 - h_xy[3]
 h_y[0]*__zippel::node::49 - h_xy[2]
-h_y[0]*c_commit - d_x[0]*h_y[0] - d_x[1]*h_xy[2] + d_x[0]*h_xy[2]
 h_y[1]*__zippel::node::49 - h_xy[3]
 h_y[1]*__zippel::node::51 + h_y[0]*__zippel::node::51 - h_y[1]
-h_y[1]*c_commit - d_x[0]*h_y[1] - d_x[1]*h_xy[3] + d_x[0]*h_xy[3]
-pi[0] - f_evals[2]*__zippel::node::11 + f_evals[0]*__zippel::node::11 - f_evals[0]
-pi[1] - f_evals[3]*__zippel::node::11 + f_evals[1]*__zippel::node::11 - f_evals[1]
 v_x[1]*__zippel::node::49 + v_x[0]*__zippel::node::49 - v_x[1]
-z0 - __zippel::node::13*pi[1] + __zippel::node::13*pi[0] - pi[0]

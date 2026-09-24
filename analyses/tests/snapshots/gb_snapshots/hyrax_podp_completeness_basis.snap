@@ -1,59 +1,14 @@
 ---
-source: analyses/tests/gb_snapshots.rs
+source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- a_vec[0]*z_vec[0] + y*c + a_vec[0]*__zippel::node::11
-- delta + h*r_delta + g_vec[0]*__zippel::node::11
-- g*g_vec[0]*y*z_beta + a_vec[0]*g*xi*z_beta + a_vec[0]*g^2*y*z_delta - a_vec[0]*g*tau*z_delta - g_vec[0]*r_tau*beta + a_vec[0]*g*r_tau*delta - a_vec[0]*g*xi*r_beta + g_vec[0]*tau*r_beta
 - g*r_xi*y - r_tau*xi + g_vec[0]*r_tau*x_vec[0] + r_xi*tau
-- g_vec[0]*r_xi*y*delta*z_beta + a_vec[0]*r_xi*xi*delta*z_beta + 2*g_vec[0]*xi*y*r_delta*z_beta - g_vec[0]^2*x_vec[0]*y*r_delta*z_beta - a_vec[0]*xi^2*r_delta*z_beta + g_vec[0]*r_xi*y*beta*z_delta - a_vec[0]*r_xi*tau*delta*z_delta - g_vec[0]*xi*y*r_beta*z_delta + g_vec[0]^2*x_vec[0]*y*r_beta*z_delta - g_vec[0]*tau*y*r_delta*z_delta + a_vec[0]*tau*xi*r_delta*z_delta - g_vec[0]*r_xi*y*r_delta*beta + g_vec[0]*r_xi*y*r_beta*delta - a_vec[0]*r_xi*xi*r_beta*delta + a_vec[0]*r_xi*tau*r_delta*delta - g_vec[0]*xi*y*r_delta*r_beta + a_vec[0]*xi^2*r_delta*r_beta + g_vec[0]*tau*y*r_delta^2 - a_vec[0]*tau*xi*r_delta^2
-- g_vec[0]*x_vec[0]*z_delta + g_vec[0]*r_xi*z_vec[0] - r_xi*delta + xi*r_delta
-- g_vec[0]*xi*z_beta + g_vec[0]^2*x_vec[0]*z_beta - g*g_vec[0]*y*z_delta + g_vec[0]*tau*z_delta + g_vec[0]*r_xi*beta - a_vec[0]*g*r_xi*delta + a_vec[0]*g*xi*r_delta - g_vec[0]*tau*r_delta
-- h*__zippel::node::11*z_beta - beta*z_vec[0] + h*r_beta*z_vec[0] + tau*__zippel::node::11*c + __zippel::node::11*beta
-- h*x_vec[0]*__zippel::node::11*z_beta - x_vec[0]*beta*z_vec[0] + h*x_vec[0]*r_beta*z_vec[0] + tau*__zippel::node::11*z_vec[0] + x_vec[0]*__zippel::node::11*beta - tau*__zippel::node::11^2
-- h*x_vec[0]*__zippel::node::11*z_delta - x_vec[0]*delta*z_vec[0] + h*x_vec[0]*r_delta*z_vec[0] + xi*__zippel::node::11*z_vec[0] + x_vec[0]*__zippel::node::11*delta - xi*__zippel::node::11^2
-- h*xi*y*z_delta*z_beta - g_vec[0]*xi*y*z_vec[0]*z_beta + a_vec[0]*xi^2*z_vec[0]*z_beta + h*xi*y*r_delta*z_beta + h*tau*y*z_delta^2 + g_vec[0]*tau*y*z_vec[0]*z_delta - a_vec[0]*tau*xi*z_vec[0]*z_delta + xi*y*beta*z_delta - tau*y*delta*z_delta - h*tau*y*r_delta*z_delta + g_vec[0]*xi*y*r_beta*z_vec[0] - a_vec[0]*xi^2*r_beta*z_vec[0] - g_vec[0]*tau*y*r_delta*z_vec[0] + a_vec[0]*tau*xi*r_delta*z_vec[0] - xi*y*r_delta*beta + tau*y*r_delta*delta
-- h*z_delta - g_vec[0]*z_vec[0] + xi*c + delta
-- x_vec[0]*__zippel::node::11*delta*z_beta + xi*__zippel::node::11^2*z_beta + x_vec[0]*__zippel::node::11*beta*z_delta - tau*__zippel::node::11^2*z_delta - x_vec[0]*r_delta*beta*z_vec[0] + x_vec[0]*r_beta*delta*z_vec[0] - xi*__zippel::node::11*r_beta*z_vec[0] + tau*__zippel::node::11*r_delta*z_vec[0]
-- x_vec[0]*beta + h*x_vec[0]*r_beta + g*y*__zippel::node::11
-- x_vec[0]*xi*z_delta*z_beta + r_xi*xi*z_vec[0]*z_beta - r_xi*x_vec[0]*delta*z_beta + 2*x_vec[0]*xi*r_delta*z_beta - g_vec[0]*x_vec[0]^2*r_delta*z_beta + tau*x_vec[0]*z_delta^2 - r_xi*tau*z_vec[0]*z_delta + r_xi*x_vec[0]*beta*z_delta + g_vec[0]*x_vec[0]^2*r_beta*z_delta + 52435875175126190479447740508185965837690552500527637822603658699938581184511*tau*x_vec[0]*r_delta*z_delta - r_xi*xi*r_beta*z_vec[0] + r_xi*tau*r_delta*z_vec[0] - r_xi*x_vec[0]*r_delta*beta + r_xi*x_vec[0]*r_beta*delta - x_vec[0]*xi*r_delta*r_beta + tau*x_vec[0]*r_delta^2
-- x_vec[0]^2*xi*z_beta^2 + tau*x_vec[0]^2*z_delta*z_beta + 2*r_tau*x_vec[0]*xi*z_vec[0]*z_beta - r_xi*tau*x_vec[0]*z_vec[0]*z_beta - r_tau*x_vec[0]^2*delta*z_beta + x_vec[0]^2*xi*r_beta*z_beta - r_tau*tau*x_vec[0]*z_vec[0]*z_delta + r_tau*x_vec[0]^2*beta*z_delta - tau*x_vec[0]^2*r_beta*z_delta - r_tau^2*xi*z_vec[0]^2 + r_tau*r_xi*tau*z_vec[0]^2 - r_tau*r_xi*x_vec[0]*beta*z_vec[0] + r_tau^2*x_vec[0]*delta*z_vec[0] - r_tau*x_vec[0]*xi*r_beta*z_vec[0] + r_xi*tau*x_vec[0]*r_beta*z_vec[0]
 - xi + g_vec[0]*x_vec[0] + h*r_xi
-- xi*z_beta + g_vec[0]*x_vec[0]*z_beta - g*y*z_delta + tau*z_delta + xi*r_beta - g_vec[0]*x_vec[0]*r_beta + g*y*r_delta - tau*r_delta
-- xi*z_beta - g*y*z_delta + tau*z_delta + g_vec[0]*r_tau*z_vec[0] - r_tau*delta + xi*r_beta
 - y + a_vec[0]*x_vec[0]
-- z_beta + r_tau*c + r_beta
-- z_delta + r_xi*c + r_delta
-- z_vec[0] + x_vec[0]*c + __zippel::node::11
-2*g_vec[0]*r_xi*xi*y*z_beta - g_vec[0]^2*r_xi*x_vec[0]*y*z_beta - a_vec[0]*r_xi*xi^2*z_beta + g*g_vec[0]*r_xi*y^2*z_delta - g_vec[0]*r_tau*xi*y*z_delta - g_vec[0]*r_xi*tau*y*z_delta + a_vec[0]*r_tau*xi^2*z_delta - g_vec[0]*r_xi^2*y*beta + g_vec[0]*r_tau*r_xi*y*delta - a_vec[0]*r_tau*r_xi*xi*delta + a_vec[0]*r_xi^2*tau*delta - g_vec[0]*r_xi*xi*y*r_beta + a_vec[0]*r_xi*xi^2*r_beta + g_vec[0]*r_xi*tau*y*r_delta - a_vec[0]*r_xi*tau*xi*r_delta
-2*x_vec[0]*xi*z_beta - g_vec[0]*x_vec[0]^2*z_beta + g*x_vec[0]*y*z_delta + 52435875175126190479447740508185965837690552500527637822603658699938581184511*tau*x_vec[0]*z_delta - r_tau*xi*z_vec[0] + r_xi*tau*z_vec[0] - r_xi*x_vec[0]*beta + r_tau*x_vec[0]*delta - x_vec[0]*xi*r_beta + tau*x_vec[0]*r_delta
-2*xi*y*z_beta - g_vec[0]*x_vec[0]*y*z_beta + g*y^2*z_delta + 52435875175126190479447740508185965837690552500527637822603658699938581184511*tau*y*z_delta - a_vec[0]*r_tau*xi*z_vec[0] + a_vec[0]*r_xi*tau*z_vec[0] - r_xi*y*beta + r_tau*y*delta - xi*y*r_beta + tau*y*r_delta
-52435875175126190479447740508185965837690552500527637822603658699938581184511*g_vec[0]*xi*y*z_beta + g_vec[0]^2*x_vec[0]*y*z_beta + a_vec[0]*xi^2*z_beta - g*g_vec[0]*y^2*z_delta + a_vec[0]*g*xi*y*z_delta + g_vec[0]*tau*y*z_delta - a_vec[0]*tau*xi*z_delta + g_vec[0]*r_xi*y*beta - g_vec[0]*r_tau*y*delta + a_vec[0]*r_tau*xi*delta - a_vec[0]*r_xi*tau*delta + g_vec[0]*xi*y*r_beta - a_vec[0]*xi^2*r_beta - g_vec[0]*tau*y*r_delta + a_vec[0]*tau*xi*r_delta
 __zippel::node::41 - 1
 __zippel::node::49 - 1
 __zippel::node::67 - 1
 __zippel::node::71 - 1
 __zippel::node::74 - 1
 a_vec[0]*g*r_xi*y - g_vec[0]*r_tau*y + a_vec[0]*r_tau*xi - a_vec[0]*r_xi*tau
-a_vec[0]*g_vec[0]*r_xi*y*delta*z_beta - a_vec[0]^2*r_xi*xi*delta*z_beta + g_vec[0]^2*y^2*r_delta*z_beta + 52435875175126190479447740508185965837690552500527637822603658699938581184511*a_vec[0]*g_vec[0]*xi*y*r_delta*z_beta + a_vec[0]^2*xi^2*r_delta*z_beta - a_vec[0]*g_vec[0]*r_xi*y*beta*z_delta + a_vec[0]^2*r_xi*tau*delta*z_delta - g_vec[0]^2*y^2*r_beta*z_delta + a_vec[0]*g_vec[0]*xi*y*r_beta*z_delta + a_vec[0]*g_vec[0]*tau*y*r_delta*z_delta - a_vec[0]^2*tau*xi*r_delta*z_delta + a_vec[0]*g_vec[0]*r_xi*y*r_delta*beta - a_vec[0]*g_vec[0]*r_xi*y*r_beta*delta + a_vec[0]^2*r_xi*xi*r_beta*delta - a_vec[0]^2*r_xi*tau*r_delta*delta + a_vec[0]*g_vec[0]*xi*y*r_delta*r_beta - a_vec[0]^2*xi^2*r_delta*r_beta - a_vec[0]*g_vec[0]*tau*y*r_delta^2 + a_vec[0]^2*tau*xi*r_delta^2
-a_vec[0]*g_vec[0]*z_vec[0] - g_vec[0]*y*c - a_vec[0]*delta + a_vec[0]*h*r_delta
-a_vec[0]*h*z_vec[0]*z_beta - h*y*c*z_beta - a_vec[0]*tau*c*z_vec[0] - a_vec[0]*h*r_beta*z_vec[0] + tau*y*c^2 + y*beta*c
-g*g_vec[0]*r_xi*y*z_beta - a_vec[0]*g*r_xi*xi*z_beta - g*g_vec[0]*r_tau*y*z_delta + a_vec[0]*g*r_tau*xi*z_delta + g_vec[0]*r_tau*r_xi*beta - a_vec[0]*g*r_tau*r_xi*delta + a_vec[0]*g*r_xi*xi*r_beta - g_vec[0]*r_xi*tau*r_beta
-g*xi*y*z_beta - g*g_vec[0]*x_vec[0]*y*z_beta + g^2*y^2*z_delta - g*tau*y*z_delta - g*r_xi*y*beta - r_tau*xi*beta + r_xi*tau*beta + g*r_tau*y*delta - g*xi*y*r_beta + g_vec[0]*tau*x_vec[0]*r_beta
 g*y - tau + h*r_tau
-g_vec[0]^2*r_tau*r_xi*y^2*z_beta + 52435875175126190479447740508185965837690552500527637822603658699938581184511*a_vec[0]*g_vec[0]*r_tau*r_xi*xi*y*z_beta + a_vec[0]*g_vec[0]*r_xi^2*tau*y*z_beta + a_vec[0]^2*r_tau*r_xi*xi^2*z_beta - a_vec[0]^2*r_xi^2*tau*xi*z_beta - g_vec[0]^2*r_tau^2*y^2*z_delta + 2*a_vec[0]*g_vec[0]*r_tau^2*xi*y*z_delta - a_vec[0]*g_vec[0]*r_tau*r_xi*tau*y*z_delta - a_vec[0]^2*r_tau^2*xi^2*z_delta + a_vec[0]^2*r_tau*r_xi*tau*xi*z_delta + a_vec[0]*g_vec[0]*r_tau*r_xi^2*y*beta - a_vec[0]*g_vec[0]*r_tau^2*r_xi*y*delta + a_vec[0]^2*r_tau^2*r_xi*xi*delta - a_vec[0]^2*r_tau*r_xi^2*tau*delta + a_vec[0]*g_vec[0]*r_tau*r_xi*xi*y*r_beta - a_vec[0]*g_vec[0]*r_xi^2*tau*y*r_beta - a_vec[0]^2*r_tau*r_xi*xi^2*r_beta + a_vec[0]^2*r_xi^2*tau*xi*r_beta
-g_vec[0]^2*r_xi*y^2*z_beta + 52435875175126190479447740508185965837690552500527637822603658699938581184511*a_vec[0]*g_vec[0]*r_xi*xi*y*z_beta + a_vec[0]^2*r_xi*xi^2*z_beta - g_vec[0]^2*r_tau*y^2*z_delta + 2*a_vec[0]*g_vec[0]*r_tau*xi*y*z_delta - a_vec[0]^2*r_tau*xi^2*z_delta + a_vec[0]*g_vec[0]*r_xi^2*y*beta - a_vec[0]*g_vec[0]*r_tau*r_xi*y*delta + a_vec[0]^2*r_tau*r_xi*xi*delta - a_vec[0]^2*r_xi^2*tau*delta + a_vec[0]*g_vec[0]*r_xi*xi*y*r_beta - a_vec[0]^2*r_xi*xi^2*r_beta - a_vec[0]*g_vec[0]*r_xi*tau*y*r_delta + a_vec[0]^2*r_xi*tau*xi*r_delta
-h*delta*z_beta - h^2*r_delta*z_beta + g_vec[0]*beta*z_vec[0] - g_vec[0]*h*r_beta*z_vec[0] - tau*delta*c + h*tau*r_delta*c - delta*beta + h*r_delta*beta
-h*x_vec[0]*z_beta + g*y*z_vec[0] - tau*z_vec[0] - x_vec[0]*beta + tau*__zippel::node::11
-h*x_vec[0]*z_delta - xi*z_vec[0] + g_vec[0]*x_vec[0]*z_vec[0] - x_vec[0]*delta + xi*__zippel::node::11
-h*xi*__zippel::node::11*z_beta - h*tau*__zippel::node::11*z_delta + xi*beta*z_vec[0] - tau*delta*z_vec[0] - h*xi*r_beta*z_vec[0] + h*tau*r_delta*z_vec[0] - xi*__zippel::node::11*beta + tau*__zippel::node::11*delta
-h*xi*z_beta - g_vec[0]*h*x_vec[0]*z_beta + g*h*y*z_delta - h*tau*z_delta + g_vec[0]*x_vec[0]*beta - g*y*delta - h*xi*r_beta + h*tau*r_delta
-h*y*z_delta*z_beta + g_vec[0]*y*z_vec[0]*z_beta - a_vec[0]*xi*z_vec[0]*z_beta - h*y*r_delta*z_beta + a_vec[0]*tau*z_vec[0]*z_delta - tau*y*c*z_delta - y*beta*z_delta - g_vec[0]*y*r_beta*z_vec[0] + a_vec[0]*xi*r_beta*z_vec[0] - a_vec[0]*tau*r_delta*z_vec[0] + tau*y*r_delta*c + y*r_delta*beta
-h*z_beta + a_vec[0]*g*z_vec[0] - tau*c - beta
-h*z_beta + g*y*c - tau*c - h*r_beta
-h^2*y*z_delta*z_beta + g_vec[0]*h*y*z_vec[0]*z_beta - a_vec[0]*h*xi*z_vec[0]*z_beta - h*y*delta*z_beta + a_vec[0]*h*tau*z_vec[0]*z_delta - h*tau*y*c*z_delta - h*y*beta*z_delta + a_vec[0]*g_vec[0]*tau*z_vec[0]^2 - g_vec[0]*tau*y*c*z_vec[0] - g_vec[0]*y*beta*z_vec[0] - a_vec[0]*tau*delta*z_vec[0] + a_vec[0]*h*xi*r_beta*z_vec[0] + tau*y*delta*c + y*delta*beta
-r_xi*z_beta - r_tau*z_delta - r_xi*r_beta + r_tau*r_delta
-x_vec[0]*delta*z_beta - h*x_vec[0]*r_delta*z_beta - xi*__zippel::node::11*z_beta - x_vec[0]*beta*z_delta + h*x_vec[0]*r_beta*z_delta + tau*__zippel::node::11*z_delta + x_vec[0]*r_delta*beta - x_vec[0]*r_beta*delta + xi*__zippel::node::11*r_beta - tau*__zippel::node::11*r_delta
-x_vec[0]*xi*z_vec[0]*z_beta - x_vec[0]^2*delta*z_beta + x_vec[0]*xi*__zippel::node::11*z_beta - tau*x_vec[0]*z_vec[0]*z_delta + x_vec[0]^2*beta*z_delta - tau*x_vec[0]*__zippel::node::11*z_delta - r_tau*xi*z_vec[0]^2 + r_xi*tau*z_vec[0]^2 - r_xi*x_vec[0]*beta*z_vec[0] + r_tau*x_vec[0]*delta*z_vec[0] - x_vec[0]*xi*r_beta*z_vec[0] + tau*x_vec[0]*r_delta*z_vec[0]
-x_vec[0]*z_beta - r_tau*z_vec[0] - x_vec[0]*r_beta + r_tau*__zippel::node::11
-x_vec[0]*z_delta - r_xi*z_vec[0] - x_vec[0]*r_delta + r_xi*__zippel::node::11

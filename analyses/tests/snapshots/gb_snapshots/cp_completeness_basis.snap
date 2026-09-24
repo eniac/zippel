@@ -1,19 +1,10 @@
 ---
-source: analyses/tests/gb_snapshots.rs
+source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- beta*v_r + v*beta_r
-- beta*w_r + w*beta_r
-- beta_z + beta*c + beta_r
-- g*beta_z + v*c + v_r
 - g*w + u*v
-- g*w_r + u*v_r
-- u*beta_z + w*c + w_r
 - v + beta*g
-- v*w_r + w*v_r
-- v_r + g*beta_r
 - w + beta*u
-- w_r + u*beta_r
 __zippel::node::18 - 1
 __zippel::node::23 - 1
 __zippel::node::33 - 1

@@ -1,15 +1,7 @@
 ---
-source: analyses/tests/gb_snapshots.rs
+source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- g*x*sr + g*r*sx - r*t + comm*rr
-- h*sr - g*sx + comm*c + t
-- h*x*rx*sr - x*t*sx + h*x*rr*sx + comm*rx*sx + x*rx*t - comm*rx^2
-- sr + r*c + rr
-- sx + x*c + rx
-- t + h*rr + g*rx
 __zippel::node::24 - 1
 __zippel::node::36 - 1
 g*x + h*r - comm
-h*x*sr + g*x*sx - comm*sx - x*t + comm*rx
-x*sr - r*sx - x*rr + r*rx

@@ -1,11 +1,7 @@
 ---
-source: analyses/tests/gb_snapshots.rs
+source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- g*z + h*c + u
-- u + g*r
-- x*u + h*r
-- z + x*c + r
 __zippel::node::14 - 1
 __zippel::node::22 - 1
 g*x - h
