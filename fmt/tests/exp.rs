@@ -64,6 +64,113 @@ fn f<F: Field>(instance a: F, instance b: F, instance c: F) -> F {
     );
 }
 
+#[test]
+fn let_operand_keeps_parens() {
+    // Without parens, `let a = b; a + a` re-scopes the second `a`:
+    // it would compute 2b instead of b + a.
+    assert_ok(
+        "fn f<F: Field>(instance a: F, instance b: F) -> F { (let a = b; a) + a }",
+        "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    (
+        let a = b;
+        a
+    )
+        + a
+}
+",
+    );
+}
+
+#[test]
+fn multi_let_operand_keeps_parens() {
+    assert_ok(
+        "fn f<F: Field>(instance a: F, instance b: F) -> F { (let a = b; let c = a; c) + a }",
+        "\
+fn f<F: Field>(instance a: F, instance b: F) -> F {
+    (
+        let a = b;
+        let c = a;
+        c
+    )
+        + a
+}
+",
+    );
+}
+
+#[test]
+fn let_as_relation_statement_keeps_parens() {
+    // Unparenthesized, `let a = b;` would scope over the following
+    // `a == a` too.
+    assert_ok(
+        "proto p<F: Field>(instance a: F, instance b: F) where (let a = b; a == b); a == a { verify(a == a) }",
+        "\
+proto p<F: Field>(instance a: F, instance b: F) where
+    (
+        let a = b;
+        a == b
+    );
+    a == a
+{
+    verify(a == a)
+}
+",
+    );
+}
+
+#[test]
+fn let_as_let_value_keeps_parens() {
+    // `let z = let y = a; ...` does not parse: a let value is exp_no_seq.
+    assert_ok(
+        "fn f<F: Field>(instance a: F) -> F { let z = (let y = a; y); z }",
+        "\
+fn f<F: Field>(instance a: F) -> F {
+    let z = (
+        let y = a;
+        y
+    );
+    z
+}
+",
+    );
+}
+
+#[test]
+fn let_as_vec_element_keeps_parens() {
+    assert_ok(
+        "fn f<F: Field>(instance a: F) -> [F; 2] { [(let y = a; y), a] }",
+        "\
+fn f<F: Field>(instance a: F) -> [F; 2] {
+    [
+        (
+            let y = a;
+            y
+        ),
+        a,
+    ]
+}
+",
+    );
+}
+
+#[test]
+fn let_comprehension_body_stays_bare() {
+    // A comprehension body is a full `exp`; no parens needed.
+    assert_ok(
+        "fn f<F: Field, N: Size>(instance x: [F; N]) -> [F; N] { [let y = x[i]; y for i in 0..N] }",
+        "\
+fn f<F: Field, N: Size>(instance x: [F; N]) -> [F; N] {
+    [
+        let y = x[i];
+        y
+        for i in 0..N
+    ]
+}
+",
+    );
+}
+
 // ══════════════════════════════════════════════════════════════════
 // Section: Range
 // ══════════════════════════════════════════════════════════════════

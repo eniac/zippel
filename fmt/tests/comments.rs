@@ -165,6 +165,59 @@ fn f<F: Field>(instance a: F) -> F {
 }
 
 #[test]
+fn comment_before_let_in_comprehension() {
+    // A comment leading a `let` body inside `[ ... for ... ]` must not gain
+    // a blank line after `[` (previously one more on every pass).
+    assert_ok(
+        "\
+fn f<F: Field, N: Size>(instance x: [F; N]) -> [F; N] {
+    [
+        // comment
+        let y = x[i];
+        y
+        for i in 0..N
+    ]
+}",
+        "\
+fn f<F: Field, N: Size>(instance x: [F; N]) -> [F; N] {
+    [
+        // comment
+        let y = x[i];
+        y
+        for i in 0..N
+    ]
+}
+",
+    );
+}
+
+#[test]
+fn blank_lines_after_comprehension_open_dropped() {
+    assert_ok(
+        "\
+fn f<F: Field, N: Size>(instance x: [F; N]) -> [F; N] {
+    [
+
+        // comment
+        let y = x[i];
+        y
+        for i in 0..N
+    ]
+}",
+        "\
+fn f<F: Field, N: Size>(instance x: [F; N]) -> [F; N] {
+    [
+        // comment
+        let y = x[i];
+        y
+        for i in 0..N
+    ]
+}
+",
+    );
+}
+
+#[test]
 fn no_comments_unchanged() {
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { a }",

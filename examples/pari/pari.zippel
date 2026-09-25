@@ -159,10 +159,7 @@ proto pari<
                 == [f_one for _ in 0..N],
         )
         //     v_K(X) = X^K - 1.
-        && reduce(
-            &&,
-            coef(v_k_poly) == [0 - f_one] ++ [0 * f_one for _ in 0..K - 1] ++ [f_one],
-        )
+        && reduce(&&, coef(v_k_poly) == [0 - f_one] ++ [0 * f_one for _ in 0..K - 1] ++ [f_one])
 {
     // === Constant scalars derived from f_one ===
     let f_zero = 0;

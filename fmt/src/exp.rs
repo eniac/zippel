@@ -200,7 +200,7 @@ fn format_exp(
         Exp::Range(range) => format_range(range, cursor, end, style),
         Exp::Map(body, var, range) => {
             let open_gap = cursor.advance_to_token(end, |token| matches!(token, Token::LBrack));
-            let (body_gap, body_doc) = format_exp(body, cursor, style);
+            let (body_gap, body_doc) = format_seq_exp(body, cursor, style);
             let for_gap = cursor.advance_to_token(end, |token| matches!(token, Token::KwFor));
             let var_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
             let in_gap = cursor.advance_to_token(end, |token| matches!(token, Token::KwIn));
@@ -219,7 +219,13 @@ fn format_exp(
                             ALLOC.line_(),
                             ALLOC
                                 .concat([
-                                    format_gap(body_gap, Some(ALLOC.nil()), None, None, style),
+                                    format_gap(
+                                        body_gap.trim_start(),
+                                        Some(ALLOC.nil()),
+                                        None,
+                                        None,
+                                        style,
+                                    ),
                                     body_doc,
                                 ])
                                 .group(),
@@ -316,8 +322,22 @@ fn format_exp(
             style,
         ),
         Exp::Let(_, _, _) | Exp::Log(_, _, _) => {
-            let doc = format_body_inner(exp, cursor, style);
-            (TriviaGap::default(), doc)
+            // Reached only from operand (`exp_no_seq`) positions, where the
+            // source must have parenthesized the sequence: without parens
+            // `(let a = b; a) + a` would print as `let a = b; a + a`.
+            // Positions that accept a bare sequence use `format_seq_exp`.
+            let (gap, doc) = format_seq_exp(exp, cursor, style);
+            let doc = ALLOC
+                .concat([
+                    ALLOC.text("("),
+                    ALLOC
+                        .concat([ALLOC.line_(), doc])
+                        .nest(style.indent_width() as isize),
+                    ALLOC.line_(),
+                    ALLOC.text(")"),
+                ])
+                .group();
+            (gap, doc)
         }
         Exp::Assert(exp) => format_assertion(
             "assert",
@@ -354,7 +374,7 @@ fn format_exp(
             let close_comments =
                 cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
             let arrow_gap = cursor.advance_to_token(end, |token| matches!(token, Token::FatArrow));
-            let (body_gap, body_doc) = format_exp(body, cursor, style);
+            let (body_gap, body_doc) = format_seq_exp(body, cursor, style);
 
             (
                 keyword_gap,
@@ -444,6 +464,27 @@ fn format_exp(
                 ]),
             )
         }
+    }
+}
+
+/// Format an expression in a position whose grammar rule is the full `exp`
+/// (comprehension body, `fun` body, relation), where a `let`/`<-` sequence
+/// needs no parentheses. Everything else goes through `format_exp`.
+fn format_seq_exp(
+    exp: &Spanned<Exp<Size>>,
+    cursor: &mut TokenCursor,
+    style: &Style,
+) -> (TriviaGap, Doc<'static>) {
+    match &exp.node {
+        Exp::Let(_, _, _) | Exp::Log(_, _, _) => {
+            // Hand the leading trivia back to the caller like every other
+            // arm, so it is placed for the caller's context instead of by
+            // `format_body_inner`'s statement-level `gap_none`.
+            let gap = cursor.advance_to(exp.span.start).trim_if_clean();
+            let doc = format_body_inner(exp, cursor, style);
+            (gap, doc)
+        }
+        _ => format_exp(exp, cursor, style),
     }
 }
 
@@ -710,7 +751,15 @@ fn format_relation_inner(
             ])
         }
         Exp::Let(None, value, body) => {
-            let value = format_relation_inner(value, cursor, style);
+            // The value is an operand (`exp_no_seq`): a `let` there was
+            // parenthesized in the source and must stay so, which
+            // `format_exp` does. Recursing into `format_relation_inner`
+            // would print it bare and re-scope its binding over the rest.
+            let (value_gap, value_doc) = format_exp(value, cursor, style);
+            let value = ALLOC.concat([
+                format_gap(value_gap, Some(ALLOC.nil()), None, None, style),
+                value_doc,
+            ]);
             let body = if let Some(body) = body.as_ref() {
                 let before_semi =
                     cursor.advance_to_token(exp.span.end, |token| matches!(token, Token::Semi));
@@ -730,7 +779,7 @@ fn format_relation_inner(
             ALLOC.concat([value, body])
         }
         _ => {
-            let (gap, doc) = format_exp(exp, cursor, style);
+            let (gap, doc) = format_seq_exp(exp, cursor, style);
             ALLOC.concat([format_gap(gap, Some(ALLOC.nil()), None, None, style), doc])
         }
     }
