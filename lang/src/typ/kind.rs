@@ -1,11 +1,11 @@
 use crate::id::Tid;
-use share::traversal::ToTraversal1;
 use share::Set;
+use share::traversal::ToTraversal1;
 use std::fmt;
 
+use crate::ast::Size;
 use crate::ast::range::{Range, RangeTraversal};
 use crate::ast::spanned::Spanned;
-use crate::ast::Size;
 
 /// The kinds of type variables, parameterized by size type N
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]

@@ -9,7 +9,7 @@ mod label;
 mod lexer;
 
 pub use label::{Context, Terminal};
-pub use lexer::{lex_iter, Token};
+pub use lexer::{Token, lex_iter};
 
 use std::borrow::Cow;
 
@@ -19,10 +19,10 @@ use chumsky::pratt::{self, Associativity};
 use chumsky::prelude::*;
 use chumsky::span::SimpleSpan;
 
+use crate::ast::Size;
 use crate::ast::arg::Args;
 use crate::ast::decl::{Decl, UDecl};
 use crate::ast::spanned::Spanned;
-use crate::ast::Size;
 use crate::ast::{BinOp, Exps, GArg, UExp};
 use crate::diagnostic::Diagnostic;
 use crate::id::{Tid, Vid};
@@ -36,8 +36,8 @@ type RichError<'src> = Rich<'src, Token<'src>, SimpleSpan>;
 // ── Token matching helpers ─────────────────────────────────────────────
 
 /// Match an identifier, returning its name as a `Spanned<Vid>`.
-fn id_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>(
-) -> impl Parser<'src, I, Spanned<Vid>, extra::Err<RichError<'src>>> + Clone {
+fn id_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>()
+-> impl Parser<'src, I, Spanned<Vid>, extra::Err<RichError<'src>>> + Clone {
     select! { Token::Id(s) => s }
         .labelled(Terminal::Identifier)
         .map_with(|s, e| {
@@ -47,8 +47,8 @@ fn id_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>(
 }
 
 /// Match an identifier, returning its name as a `Spanned<Tid>`.
-fn tid_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>(
-) -> impl Parser<'src, I, Spanned<Tid>, extra::Err<RichError<'src>>> + Clone {
+fn tid_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>()
+-> impl Parser<'src, I, Spanned<Tid>, extra::Err<RichError<'src>>> + Clone {
     select! { Token::Id(s) => s }
         .labelled(Terminal::Identifier)
         .map_with(|s, e| {
@@ -58,8 +58,8 @@ fn tid_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>(
 }
 
 /// Match a positive integer literal, returning its value.
-fn positive_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>(
-) -> impl Parser<'src, I, u32, extra::Err<RichError<'src>>> + Clone {
+fn positive_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>()
+-> impl Parser<'src, I, u32, extra::Err<RichError<'src>>> + Clone {
     select! { Token::Positive(s) => s }
         .labelled(Terminal::PositiveInteger)
         .map(|s| s.parse::<u32>().unwrap_or(0))
@@ -71,8 +71,8 @@ fn positive_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan
 /// Mirrors `size_ty` in the pest grammar:
 ///   size_ty = { size_ty_term ~ (size_bin_op ~ size_ty_term)* }
 ///   size_ty_term = _{ "(" ~ size_ty ~ ")" | positive | size_var }
-fn size_ty_parser<'src, I>(
-) -> impl Parser<'src, I, Spanned<Size>, extra::Err<RichError<'src>>> + Clone
+fn size_ty_parser<'src, I>()
+-> impl Parser<'src, I, Spanned<Size>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -268,8 +268,8 @@ where
 /// Parse a type.
 /// Mirrors `typ` in the pest grammar:
 ///   typ = _{ poly_ty | uni_ty | mle_ty | vec_ty | fin_ty | unit_ty | base_ty | record_ty }
-fn typ_parser<'src, I>(
-) -> impl Parser<'src, I, Spanned<GTyp<Size>>, extra::Err<RichError<'src>>> + Clone
+fn typ_parser<'src, I>()
+-> impl Parser<'src, I, Spanned<GTyp<Size>>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -410,8 +410,8 @@ where
 
 /// Parse a type variable declaration.
 /// Mirrors `tvar = { id ~ ":" ~ kind_ty }`
-fn tvar_parser<'src, I>(
-) -> impl Parser<'src, I, Spanned<TypeVar<Size>>, extra::Err<RichError<'src>>> + Clone
+fn tvar_parser<'src, I>()
+-> impl Parser<'src, I, Spanned<TypeVar<Size>>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -426,8 +426,8 @@ where
 
 /// Parse a list of type variables.
 /// Mirrors `tvars = { tvar ~ ("," ~ tvar)* }`
-fn tvars_parser<'src, I>(
-) -> impl Parser<'src, I, Spanned<TypeVars<Size>>, extra::Err<RichError<'src>>> + Clone
+fn tvars_parser<'src, I>()
+-> impl Parser<'src, I, Spanned<TypeVars<Size>>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -447,8 +447,8 @@ where
 
 /// Parse a qualifier.
 /// Mirrors `qualifier = { instance | witness | extra }`
-fn qualifier_parser<'src, I>(
-) -> impl Parser<'src, I, Spanned<Qualifier>, extra::Err<RichError<'src>>> + Clone
+fn qualifier_parser<'src, I>()
+-> impl Parser<'src, I, Spanned<Qualifier>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -465,8 +465,8 @@ where
 
 /// Parse a distribution.
 /// Mirrors `distribution = { "uniform" ~ star? }`
-fn distribution_parser<'src, I>(
-) -> impl Parser<'src, I, Spanned<Distribution>, extra::Err<RichError<'src>>> + Clone
+fn distribution_parser<'src, I>()
+-> impl Parser<'src, I, Spanned<Distribution>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -486,8 +486,8 @@ where
 
 /// Parse an argument.
 /// Mirrors `arg = { qualifier? ~ distribution? ~ id ~ ":" ~ typ }`
-fn arg_parser<'src, I>(
-) -> impl Parser<'src, I, Spanned<GArg<Size>>, extra::Err<RichError<'src>>> + Clone
+fn arg_parser<'src, I>()
+-> impl Parser<'src, I, Spanned<GArg<Size>>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -937,8 +937,8 @@ where
 
 /// Parse an expression without `;` sequencing, using pratt parsing.
 /// Mirrors `exp_no_seq = { exp_term ~ (record_set_op | proj_op | bin_op ~ exp_term)* }`
-fn exp_no_seq_parser<'src, I>(
-) -> impl Parser<'src, I, Spanned<UExp>, extra::Err<RichError<'src>>> + Clone
+fn exp_no_seq_parser<'src, I>()
+-> impl Parser<'src, I, Spanned<UExp>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -1184,8 +1184,8 @@ where
 /// Parse a comma-separated argument list inside `(...)`.
 /// Labelled with `Context::ArgumentList` so error reporting can distinguish
 /// errors inside the argument list from errors in generic params or body.
-fn arg_list_parser<'src, I>(
-) -> impl Parser<'src, I, Vec<Spanned<GArg<Size>>>, extra::Err<RichError<'src>>> + Clone
+fn arg_list_parser<'src, I>()
+-> impl Parser<'src, I, Vec<Spanned<GArg<Size>>>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -1199,8 +1199,8 @@ where
 
 /// Parse a declaration.
 /// Mirrors `decl = { proto_decl | func_decl | type_decl }`
-fn decl_parser<'src, I>(
-) -> impl Parser<'src, I, Spanned<UDecl>, extra::Err<RichError<'src>>> + Clone
+fn decl_parser<'src, I>()
+-> impl Parser<'src, I, Spanned<UDecl>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {

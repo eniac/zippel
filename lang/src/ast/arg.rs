@@ -1,11 +1,11 @@
 use std::fmt;
 
-use crate::ast::spanned::Spanned;
 use crate::ast::Size;
+use crate::ast::spanned::Spanned;
 use crate::id::{Tid, TidSubst, Vid};
 use crate::typ::{Distribution, GTyp, Qualifier, Range, RangeTraversal, Typ, TypeInline};
-use share::traversal::{ToTraversal1, ToTraversal2};
 use share::Ctx;
+use share::traversal::{ToTraversal1, ToTraversal2};
 
 /// `Arg` represents an argument in the Zippel language, including its identifier, type, and principals.
 ///

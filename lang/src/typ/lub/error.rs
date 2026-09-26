@@ -1,5 +1,5 @@
-use crate::ast::range::{Range, RangeError};
 use crate::ast::BinOp;
+use crate::ast::range::{Range, RangeError};
 use crate::id::Tid;
 use std::fmt;
 use thiserror::Error;

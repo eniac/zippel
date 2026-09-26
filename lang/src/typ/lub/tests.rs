@@ -316,12 +316,14 @@ fn lub_typ() {
     // lub_rem requires m2 >= 1; Poly<F,1,n> % Poly<F,1,0> is an error.
     assert!(CTyp::lub_rem(&CTyp::uni(&f, 5), &CTyp::uni(&f, 0), &ctx).is_err());
     // Multivariate polynomial remainder is rejected because it requires a term order.
-    assert!(CTyp::lub_rem(
-        &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(5)),
-        &CTyp::Poly(f.clone(), Spanned::dummy(3), Spanned::dummy(2)),
-        &ctx
-    )
-    .is_err());
+    assert!(
+        CTyp::lub_rem(
+            &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(5)),
+            &CTyp::Poly(f.clone(), Spanned::dummy(3), Spanned::dummy(2)),
+            &ctx
+        )
+        .is_err()
+    );
 
     // Phase B: lub_add(Poly, Vec) / lub_sub(Poly, Vec) is now a type error.
     // Vec is no longer implicitly reinterpreted as a coefficient list.
@@ -391,12 +393,14 @@ fn test_ctyp_poly_degree_offbyone() {
         Ok(CTyp::Poly(f.clone(), Spanned::dummy(1), Spanned::dummy(2)))
     );
     // General Poly/Poly: multivariate division is still rejected outright.
-    assert!(CTyp::lub_div(
-        &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(3)),
-        &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(4)),
-        &ctx
-    )
-    .is_err());
+    assert!(
+        CTyp::lub_div(
+            &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(3)),
+            &CTyp::Poly(f.clone(), Spanned::dummy(2), Spanned::dummy(4)),
+            &ctx
+        )
+        .is_err()
+    );
     // Far off: a much larger divisor bound still yields the dividend's bound.
     assert_eq!(
         CTyp::lub_div(&CTyp::uni(&f, 0), &CTyp::uni(&f, 5), &ctx),

@@ -436,7 +436,7 @@ mod tests {
         let big = (usize::MAX as f64).sqrt() as usize + 1;
         let a = crange_new(big, big + 1); // singleton {big}
         let b = crange_new(big, big + 1); // singleton {big}
-                                          // big * big overflows
+        // big * big overflows
         assert_eq!(a.checked_mul(b), None);
     }
 
@@ -510,7 +510,7 @@ mod tests {
         let big = usize::MAX - 1;
         let a = crange_new(big, big + 1); // singleton {big} — big+1 = MAX, fits
         let b = crange_new(2, 3); // singleton {2}
-                                  // big^2 overflows
+        // big^2 overflows
         assert_eq!(a.checked_pow(b), None);
     }
 

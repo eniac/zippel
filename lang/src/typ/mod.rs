@@ -21,9 +21,9 @@ mod typevar;
 /// Kind-aware unification of source types.
 pub mod unify;
 
+use crate::ast::Size;
 pub use crate::ast::range::{CRange, Range, RangeError, RangeTraversal};
 use crate::ast::spanned::Spanned;
-use crate::ast::Size;
 use crate::id::{Tid, TidSubst};
 
 pub use ark::Ark;
@@ -36,8 +36,8 @@ pub use qualifier::Qualifier;
 pub use subst::{AliasSubsts, SizeSubsts};
 pub use typevar::{CTypeVar, CTypeVars, TypeVar, TypeVars, UTypeVar, UTypeVars};
 
-use share::traversal::{ToTraversal1, ToTraversal2};
 use share::Ctx;
+use share::traversal::{ToTraversal1, ToTraversal2};
 use std::fmt;
 
 /// The types of expressions, `N` is the size parameter
@@ -183,11 +183,7 @@ impl<N> GTyp<N> {
         match self {
             Typ::Base(b) => {
                 let k = ctx.get(b)?;
-                if k.is_scalar() {
-                    Some(b.clone())
-                } else {
-                    None
-                }
+                if k.is_scalar() { Some(b.clone()) } else { None }
             }
             Typ::Fin(_) => {
                 let fields: Vec<_> = ctx

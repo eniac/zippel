@@ -2,10 +2,10 @@
 
 use std::ops::Range;
 
+use crate::ast::Size;
 use crate::ast::decl::UDecl;
 use crate::ast::sig::Sig;
 use crate::ast::spanned::Spanned;
-use crate::ast::Size;
 use crate::diagnostic::Diagnostic;
 use lang_derive::Diagnostic as DiagnosticDerive;
 

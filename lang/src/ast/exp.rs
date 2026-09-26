@@ -4,9 +4,9 @@ use std::ops::Index;
 
 use share::traversal::ToTraversal1;
 
+use crate::ast::Size;
 use crate::ast::range::{Range, RangeTraversal};
 use crate::ast::spanned::Spanned;
-use crate::ast::Size;
 use crate::id::{Tid, TidSubst, Vid};
 use share::Set;
 
@@ -1113,8 +1113,8 @@ impl<N: fmt::Display> fmt::Display for Exps<N> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::ast::spanned::Spanned;
     use crate::ast::Size;
+    use crate::ast::spanned::Spanned;
     use crate::id::Vid;
 
     fn varstr(x: &str) -> Spanned<Exp<Size>> {

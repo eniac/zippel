@@ -9,9 +9,9 @@
 use std::collections::{BTreeSet, HashSet};
 use std::ops::Range;
 
+use crate::ast::Sig;
 use crate::ast::size::Size;
 use crate::ast::spanned::Spanned;
-use crate::ast::Sig;
 use crate::diagnostic::{Applicability, Diagnostic, Phase};
 use crate::id::Tid;
 use crate::typ::{Kind, TypeVar};
@@ -195,18 +195,18 @@ pub fn check_typevars(sig: &Sig<Size>) -> Vec<Diagnostic> {
             // where M is another typevar) cannot be compared until size
             // resolution, which happens later during concretization.
             let end_node = r.end.as_ref().map(|e| &e.node).unwrap_or(&r.start.node);
-            if let (Size::Lit(start), Size::Lit(end)) = (&r.start.node, end_node) {
-                if start > end {
-                    errors.push(
-                        InvalidRangeBounds {
-                            span: tv.span.clone(),
-                            name: tv.node.id.node.clone(),
-                            start: start.to_string(),
-                            end: end.to_string(),
-                        }
-                        .build(),
-                    );
-                }
+            if let (Size::Lit(start), Size::Lit(end)) = (&r.start.node, end_node)
+                && start > end
+            {
+                errors.push(
+                    InvalidRangeBounds {
+                        span: tv.span.clone(),
+                        name: tv.node.id.node.clone(),
+                        start: start.to_string(),
+                        end: end.to_string(),
+                    }
+                    .build(),
+                );
             }
         }
     }

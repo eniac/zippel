@@ -8,7 +8,7 @@ mod common;
 
 use common::assert_snap;
 use lang::ast::module::UModule;
-use lang::diagnostic::{render_diagnostic, Severity};
+use lang::diagnostic::{Severity, render_diagnostic};
 use lang::id::Tid;
 use share::Ctx;
 
