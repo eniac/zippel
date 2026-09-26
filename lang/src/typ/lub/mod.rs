@@ -2,7 +2,7 @@ mod error;
 #[cfg(test)]
 mod tests;
 
-pub use error::LubError;
+pub use error::{describe_bin, LubError};
 
 use crate::ast::range::Range;
 use crate::ast::spanned::Spanned;

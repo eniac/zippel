@@ -303,11 +303,8 @@ fn semantic_duplicate_typevar() {
     );
 }
 
-// `check_proto_verify` (E0013) is implemented in `lang::semantic::verify` but not yet wired
-// into `UModule::parse` — it resolves calls by name with no overload resolution, which isn't
-// mature enough to enforce on every parse. See the TODO in `lang/src/ast/module.rs`. These tests
-// exercise the check directly instead of through `UModule::parse`/`render_errors`, so they stay
-// green (and keep covering the check's own logic) independent of that deferral.
+// `check_proto_verify` (E0013) is implemented in `lang::semantic::verify` but not enabled (see
+// the TODO in `CModule::typecheck`), so these tests call it directly.
 
 #[test]
 fn semantic_proto_without_verify() {

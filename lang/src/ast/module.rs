@@ -1,19 +1,22 @@
 use crate::ast::decl::{CDecl, DeclError, UDecl};
+use crate::ast::range::Range;
 use crate::ast::spanned::Spanned;
 use crate::ast::{Body, CSig, Sig};
-use crate::diagnostic::Diagnostic;
+use crate::diagnostic::{Diagnostic, Phase};
 use crate::id::Tid;
 use crate::semantic::{
     check_dead_variables, check_duplicate_declarations, check_proto_requirement, check_purity,
     check_scope, check_size_binding, check_type_alias_cycles, check_typevars,
 };
 
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use thiserror::Error;
 
 use crate::ast::Size;
-use crate::typ::{TypeInline, UTyp};
-use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
+use crate::typ::{Kind, TypeError, TypeInline, UTyp};
+use share::traversal::ToTraversal1;
+use share::{Ctx, Set};
 
 /// Polymorphic Module, a collection of declarations indexed by their typevars and signature
 pub struct Module<N>(pub Ctx<Sig<N>, Body<N>>);
@@ -83,12 +86,55 @@ pub enum ModuleError {
     #[error("Overlapping declarations: {0}")]
     OverlapDeclaration(CSig),
     /// A declaration failed its own checks (size substitution, range
-    /// instantiation, concretization).
-    #[error("Declaration error: {0}")]
-    DeclarationError(#[from] DeclError),
+    /// instantiation, concretization); carries the span of its name.
+    #[error("Declaration error: {1}")]
+    DeclarationError(std::ops::Range<usize>, #[source] DeclError),
     /// No declaration with the requested name exists in the module.
     #[error("Declaration not found: {0}")]
     DeclarationNotFound(String),
+}
+
+impl From<&ModuleError> for Diagnostic {
+    fn from(e: &ModuleError) -> Self {
+        let (span, summary) = match e {
+            ModuleError::OverlapDeclaration(sig) => (
+                sig.name.span.clone(),
+                format!(
+                    "Declarations of `{}` overlap after size concretization",
+                    sig.name.node
+                ),
+            ),
+            ModuleError::DeclarationError(span, DeclError::EvalError(e)) => (
+                span.clone(),
+                format!("Cannot evaluate a size expression: {e}"),
+            ),
+            ModuleError::DeclarationError(span, DeclError::InvalidRange(sig, e)) => (
+                span.clone(),
+                format!("Invalid range in `{}`: {e}", sig.name.node),
+            ),
+            ModuleError::DeclarationError(span, DeclError::SubstError(e)) => {
+                (span.clone(), e.to_string())
+            }
+            ModuleError::DeclarationNotFound(name) => {
+                (0..0, format!("Declaration `{name}` not found"))
+            }
+        };
+        let mut d = Diagnostic::error(Phase::Type, span, &one_line(&summary))
+            .primary_label("while concretizing sizes for this declaration");
+        if let ModuleError::OverlapDeclaration(sig) = e {
+            d = d.note(&format!(
+                "both declarations concretize to `{}`",
+                one_line(&sig.to_string())
+            ));
+        }
+        d
+    }
+}
+
+impl From<ModuleError> for Diagnostic {
+    fn from(e: ModuleError) -> Self {
+        Diagnostic::from(&e)
+    }
 }
 
 /// Polymorphic module with symbolic sizes
@@ -116,8 +162,123 @@ impl<N: Ord> Module<N> {
     }
 }
 
+/// Module with concrete sizes
+impl CModule {
+    /// Type-check every declaration, returning one diagnostic per failing declaration, sorted
+    /// by source position.
+    ///
+    /// Range-kinded type variables expand one declaration into several instances that share
+    /// source spans, so an error common to several instances is reported once, naming the
+    /// first failing instance.
+    pub fn typecheck(&self) -> Vec<Diagnostic> {
+        let fctx: Set<CSig> = self.iter().map(|(sig, _)| sig.clone()).collect();
+        let mut instances: HashMap<&str, usize> = HashMap::new();
+        for (sig, _) in self.iter() {
+            *instances.entry(sig.name.node.0.as_str()).or_default() += 1;
+        }
+        let mut seen = HashSet::new();
+        let mut diags = Vec::new();
+        for (sig, body) in self.iter() {
+            let Err(e) = body.typecheck(sig.clone(), &fctx) else {
+                continue;
+            };
+            // Fall back to the declaration's name when inference located nothing.
+            let mut d = Diagnostic::from(TypeError::located(&sig.name.span, e));
+            if !seen.insert((d.span.clone(), d.summary.clone())) {
+                continue;
+            }
+            if instances[sig.name.node.0.as_str()] > 1 {
+                d = d.note(&format!("in the instance `{}`", one_line(&sig.to_string())));
+            }
+            diags.push(d);
+        }
+        // TODO: Checks that follow calls belong here, after inference, not in `UModule::parse`:
+        //   - check_relation_assertion (proto relation has assert, direct or transitive)
+        //   - check_proto_verify (E0013: proto body has verify, direct or transitive);
+        //     `semantic::verify` implements it but resolves calls by name, ignoring overloads,
+        //     so it is not enabled.
+        //   - check_dead_code (uncalled function)
+        // They need the typed call graph: inference resolves each call to one signature but
+        // does not record which.
+        diags.sort_by_key(|d| d.span.start);
+        diags
+    }
+}
+
 /// Polymorphic module with symbolic sizes
 impl UModule {
+    /// Type variables whose values a caller may supply to [`Self::concretize`]: `Size`
+    /// parameters, and range-kinded variables (pinning one selects a single value instead of
+    /// the whole range).
+    pub fn size_params(&self) -> Set<Tid> {
+        self.iter()
+            .flat_map(|(sig, _)| sig.typevars.0.iter())
+            .filter(|tv| matches!(tv.kind, Kind::SizeVar | Kind::Range(_)))
+            .map(|tv| tv.id.node.clone())
+            .collect()
+    }
+
+    /// `fixed`, extended with values for the other `Size` parameters that make every
+    /// range-kinded type variable non-empty, or `None` if no such values are found.
+    ///
+    /// Values are at least 1. Among the assignments with every value at most
+    /// [`MAX_DEFAULT_SIZE`], this returns the one with the smallest sum, breaking ties by the
+    /// smallest values in name order, so the result does not depend on declaration order. Only
+    /// ranges whose bounds mention nothing but `Size` parameters and `fixed` values can be
+    /// checked here; ranges nested in other ranges are left to concretization.
+    ///
+    /// Sizes allow `*` and `^`, so whether any assignment exists is undecidable in general;
+    /// `None` means none exists within the bound, not that none exists at all.
+    pub fn minimal_sizes(&self, fixed: &Ctx<Tid, usize>) -> Option<Ctx<Tid, usize>> {
+        let typevars = || self.iter().flat_map(|(sig, _)| sig.typevars.0.iter());
+        let size_vars: Set<Tid> = typevars()
+            .filter(|tv| matches!(tv.kind, Kind::SizeVar))
+            .map(|tv| tv.id.node.clone())
+            .collect();
+        let checkable = |r: &Range<Size>| {
+            let vars = range_free_vars(r);
+            vars.iter()
+                .all(|v| size_vars.contains(v) || fixed.contains(v))
+                && vars.iter().any(|v| !fixed.contains(v))
+        };
+        let ranges: Vec<Range<Size>> = typevars()
+            .filter_map(|tv| match &tv.kind {
+                Kind::Range(r) if checkable(r) => Some(r.clone()),
+                _ => None,
+            })
+            .collect();
+
+        // The unset parameters, in name order: those some range mentions are searched jointly;
+        // the others are unconstrained, so their smallest value is 1.
+        let (searched, unconstrained): (Vec<Tid>, Vec<Tid>) = size_vars
+            .iter()
+            .filter(|v| !fixed.contains(v))
+            .cloned()
+            .partition(|v| ranges.iter().any(|r| range_free_vars(r).contains(v)));
+        let mut base = fixed.clone();
+        for v in &unconstrained {
+            base.insert(v, &1);
+        }
+
+        let n = searched.len();
+        (n..=n * MAX_DEFAULT_SIZE)
+            .flat_map(|total| compositions(total, n, MAX_DEFAULT_SIZE))
+            .map(|values| {
+                let mut sizes = base.clone();
+                for (v, x) in searched.iter().zip(&values) {
+                    sizes.insert(v, x);
+                }
+                sizes
+            })
+            .find(|sizes| {
+                ranges.iter().all(|r| {
+                    r.clone()
+                        .traverse1(&mut |s| s.eval(sizes))
+                        .is_ok_and(|cr| cr.start() < cr.end())
+                })
+            })
+    }
+
     /// Parse source text into a polymorphic, untyped module with symbolic
     /// sizes, running all semantic checks (scope, typevar, size binding,
     /// duplicate declarations, proto requirement, type alias cycles).
@@ -169,16 +330,6 @@ impl UModule {
         } else {
             Self::from_decls(decls)
         };
-
-        // Phase 5: Type checking (deferred — TypeError stays as-is)
-        // TODO: Integrate type inference here, then enable:
-        //   - check_relation_assertion (proto relation has assert, direct or transitive)
-        //   - check_proto_verify (proto body has verify, direct or transitive) — implemented in
-        //     `semantic::verify`, but resolves calls by name with no overload resolution; not
-        //     wired in until there's a real function-resolution module to give it correct call
-        //     targets instead.
-        //   - check_dead_code (uncalled function)
-        // All need a typed call graph (CSig::unify) for correct overload resolution.
 
         // Deterministic ordering: span.start → severity → phase
         diags.sort_by(|a, b| {
@@ -258,7 +409,9 @@ impl UModule {
         let mut ctx = Ctx::new();
 
         for decl in self.iter_decls() {
-            for cdecl in Self::concretize_decl(&decl, sizes)? {
+            let cdecls = Self::concretize_decl(&decl, sizes)
+                .map_err(|e| ModuleError::DeclarationError(decl.sig.name.span.clone(), e))?;
+            for cdecl in cdecls {
                 ctx.insert_with(cdecl.sig, cdecl.body, &|sig, _, _| {
                     Err(ModuleError::OverlapDeclaration(sig.clone()))
                 })?;
@@ -270,10 +423,7 @@ impl UModule {
 
     /// Expand one declaration into one concrete declaration per assignment of its
     /// range-kinded type variables, with `sizes` supplying the remaining `Size` variables.
-    pub(crate) fn concretize_decl(
-        decl: &UDecl,
-        sizes: &Ctx<Tid, usize>,
-    ) -> Result<Vec<CDecl>, DeclError> {
+    fn concretize_decl(decl: &UDecl, sizes: &Ctx<Tid, usize>) -> Result<Vec<CDecl>, DeclError> {
         decl.get_size_substitutions(sizes)?
             .into_iter()
             .map(|mut substs| {
@@ -313,48 +463,51 @@ where
     }
 }
 
-/// Pretty printer instance
-impl<'a, D, A, N> Pretty<'a, D, A> for Module<N>
-where
-    N: Pretty<'a, D, A> + Ord + Clone + 'a,
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.intersperse(
-            self.0.into_iter().map(|(sig, body)| {
-                allocator.concat([
-                    if body.is_proto() {
-                        allocator.text("proto")
-                    } else {
-                        allocator.text("fn")
-                    },
-                    allocator.space(),
-                    sig.pretty(allocator),
-                    body.pretty(allocator),
-                    allocator.hardline(),
-                ])
-            }),
-            allocator.hardline(),
-        )
-    }
-
-    fn is_nil(&self) -> bool {
-        self.0.is_empty()
+/// Source syntax: declarations separated by blank lines with `{:#}` (bodies on several
+/// lines), by spaces with `{}`.
+impl<N: Ord + fmt::Display> fmt::Display for Module<N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, (sig, body)) in self.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str(if f.alternate() { "\n\n" } else { " " })?;
+            }
+            crate::ast::decl::write_decl(f, sig, body)?;
+        }
+        Ok(())
     }
 }
 
-/// Display instance calls the pretty printer
-impl<'a, N> fmt::Display for Module<N>
-where
-    N: Clone + Ord + Pretty<'a, BoxAllocator, ()> + 'a,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Module<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-            .1
-            .render_fmt(100, f)
+/// The largest value [`UModule::minimal_sizes`] tries for a `Size` parameter.
+pub const MAX_DEFAULT_SIZE: usize = 16;
+
+/// Every way to write `total` as `parts` values in `1..=max`, in lexicographic order.
+fn compositions(total: usize, parts: usize, max: usize) -> Vec<Vec<usize>> {
+    if parts == 0 {
+        return if total == 0 { vec![vec![]] } else { vec![] };
     }
+    (1..=max.min(total))
+        .flat_map(|first| {
+            compositions(total - first, parts - 1, max)
+                .into_iter()
+                .map(move |mut rest| {
+                    rest.insert(0, first);
+                    rest
+                })
+        })
+        .collect()
+}
+
+fn range_free_vars(r: &Range<Size>) -> Set<Tid> {
+    r.start.node.free_vars().union(
+        r.end
+            .as_ref()
+            .map(|e| e.node.free_vars())
+            .unwrap_or_default(),
+    )
+}
+
+fn one_line(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[test]

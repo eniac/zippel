@@ -73,8 +73,6 @@ mod pedersen_eq;
 mod pst13;
 #[path = "r1cs_sigma/main.rs"]
 mod r1cs_sigma;
-#[path = "sc_test_m3/main.rs"]
-mod sc_test_m3;
 #[path = "schnorr/main.rs"]
 mod schnorr;
 #[path = "schnorr_3round/main.rs"]
@@ -123,7 +121,6 @@ const EXAMPLES: &[(&str, Runner)] = &[
     ("pedersen_eq", pedersen_eq::run),
     ("pst13", pst13::run),
     ("r1cs_sigma", r1cs_sigma::run),
-    ("sc_test_m3", sc_test_m3::run),
     ("schnorr", schnorr::run),
     ("schnorr_3round", schnorr_3round::run),
     ("spartan", spartan::run),

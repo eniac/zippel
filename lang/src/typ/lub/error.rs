@@ -11,36 +11,34 @@ use thiserror::Error;
 /// implemented for several different carriers (`CTyp`, `Tid`, `Range<usize>`, `CTypeVar`).
 #[derive(Error, PartialEq, Debug)]
 pub enum LubError {
-    /// Chains a high-level failure with the more specific failure that caused it; rendered as two
-    /// blank-line separated messages.
-    #[error("{0}\n\n{1}")]
+    /// Chains a high-level failure with the more specific failure that caused it; displays the
+    /// high-level failure, which is stated in terms of types (its cause is in terms of kinds).
+    #[error("{0}")]
     Next(Box<LubError>, Box<LubError>),
     /// Two types have no common supertype under `==` / `lub_equ`.
-    #[error("LubError: Cannot take equality of {0} == {1}")]
+    #[error("{}", describe_bin(BinOp::Equ, .0, .1))]
     Equ(String, String),
     /// No least-upper bound exists for the given [`BinOp`] applied to the two operand types.
-    #[error("LubError: Cannot take the least-upper bound: {1} {0} {2}")]
+    #[error("{}", describe_bin(*.0, .1, .2))]
     Bin(BinOp, String, String),
     /// Dot product between two incompatible operand types.
-    #[error("LubError: Cannot take dot-product of {0} . {1}")]
+    #[error("{}", describe_bin(BinOp::Dot, .0, .1))]
     Dot(String, String),
     /// Bilinear pairing applied to operands that are not a `G1`/`G2` pair.
-    #[error("LubError: Cannot take bilinear pairing of {0} and {1}")]
+    #[error("Cannot pair {0} and {1}")]
     Pair(String, String),
     /// A [`Range`] operand failed its own well-formedness check during the join.
-    #[error("LubError: Malformed range {0}\n\n{1}")]
+    #[error("Malformed range {0}: {1}")]
     BadRange(Range<usize>, RangeError),
     /// A [`Tid`] has no entry in the kind context, so its kind cannot be consulted.
-    #[error("LubError: Kind {0} not found")]
+    #[error("Unknown type `{0}`")]
     KindNotFound(Tid),
     /// A polynomial evaluation whose point shape is incompatible with the polynomial.
-    #[error("LubError: Cannot evaluate {0} at {1}")]
+    #[error("Cannot evaluate {0} at {1}")]
     Eval(String, String),
     /// `reduce(*)` over a vector of polynomials overflowed `usize` when multiplying the element
     /// degree by the vector length.
-    #[error(
-        "LubError: Degree overflow under reduce multiplication: degree {0} * vector length {1}"
-    )]
+    #[error("Polynomial degree overflows: degree {0} times vector length {1}")]
     DegreeOverflow(usize, usize),
 }
 
@@ -105,5 +103,22 @@ impl LubError {
     /// Boolean conjunction (`lub_and`) failed between `a` and `b`.
     pub fn and<K: fmt::Display>(a: &K, b: &K) -> Self {
         LubError::Bin(BinOp::And, a.to_string(), b.to_string())
+    }
+}
+
+/// A user-facing sentence saying that `op` cannot be applied to operands described by `a` and
+/// `b`.
+pub fn describe_bin(op: BinOp, a: &str, b: &str) -> String {
+    match op {
+        BinOp::Add => format!("Cannot add {a} and {b}"),
+        BinOp::Sub => format!("Cannot subtract {b} from {a}"),
+        BinOp::Mul => format!("Cannot multiply {a} by {b}"),
+        BinOp::Div => format!("Cannot divide {a} by {b}"),
+        BinOp::Pow => format!("Cannot raise {a} to the power {b}"),
+        BinOp::Dot => format!("Cannot take the dot product of {a} and {b}"),
+        BinOp::Concat => format!("Cannot concatenate {a} and {b}"),
+        BinOp::Rem => format!("Cannot take {a} modulo {b}"),
+        BinOp::Equ => format!("Cannot compare {a} and {b}"),
+        BinOp::And => format!("Cannot combine {a} and {b} with `&&`"),
     }
 }

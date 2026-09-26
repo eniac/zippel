@@ -1,6 +1,6 @@
 //! Shared formatter context: allocator, doc type, and common helpers.
 
-use share::{BoxAllocator, DocAllocator, DocBuilder};
+use pretty::{BoxAllocator, DocAllocator, DocBuilder};
 
 pub(crate) const ALLOC: BoxAllocator = BoxAllocator;
 pub(crate) type Doc<'a> = DocBuilder<'a, BoxAllocator, ()>;

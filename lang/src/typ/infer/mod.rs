@@ -364,9 +364,10 @@ impl Typeable for CExp {
                 let mut t = ts.0[0].node.clone();
 
                 // Unify types of all elements in the vector to [t]
-                for tx in ts.0[1..].iter() {
-                    t = CTyp::lub_equ(&t, tx, kctx)
-                        .map_err(|e| TypeError::vec(kctx, vctx, tx, &t, e.into()))?;
+                for (i, tx) in ts.0.iter().enumerate().skip(1) {
+                    t = CTyp::lub_equ(&t, tx, kctx).map_err(|e| {
+                        TypeError::vec(kctx, vctx, &v.0[i], tx, &v.0[0], &ts.0[0], e.into())
+                    })?;
                 }
 
                 // Vector length
@@ -398,7 +399,7 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_add(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
+                    .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))
             }
 
             // Handle -
@@ -411,7 +412,7 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_sub(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
+                    .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))
             }
 
             // Handle *
@@ -424,7 +425,7 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_mul(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
+                    .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))
             }
 
             // Handle /
@@ -437,7 +438,7 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_div(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
+                    .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))
             }
 
             // Handle ^
@@ -450,7 +451,7 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_pow(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
+                    .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))
             }
 
             // Handle .
@@ -463,7 +464,7 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_dot(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
+                    .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))
             }
 
             // Handle %
@@ -476,7 +477,7 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_rem(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
+                    .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))
             }
             // Handle ++
             CExp::Bin(BinOp::Concat, a, b) => {
@@ -488,7 +489,7 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_concat(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
+                    .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))
             }
 
             // Handle ==
@@ -502,7 +503,7 @@ impl Typeable for CExp {
 
                 // Check lub_equ compatibility
                 let _lub = CTyp::lub_equ(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+                    .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))?;
 
                 // Return Bool for scalar/poly/record operands, Vec<Bool, N> for vec operands
                 match &ta {
@@ -521,7 +522,7 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_and(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
+                    .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))
             }
 
             // Handle unary negation: same type as operand
@@ -560,7 +561,7 @@ impl Typeable for CExp {
 
                         Ok(CTyp::vec(&tx, n.node))
                     }
-                    _ => Err(TypeError::exp(kctx, vctx, self)),
+                    _ => Err(TypeError::map(kctx, vctx, &x.node, &id.node, &r.node, &tr)),
                 }
             }
 
@@ -655,7 +656,7 @@ impl Typeable for CExp {
                         if r.end() <= n.node {
                             Ok(typ.node)
                         } else {
-                            Err(TypeError::ram(kctx, vctx, a, ta, b, tb))
+                            Err(TypeError::ram(kctx, vctx, self, ta, tb))
                         }
                     }
                     (CTyp::Vec(typ, n), CTyp::Vec(inner, m)) => {
@@ -663,14 +664,14 @@ impl Typeable for CExp {
                             if r.end() <= n.node {
                                 Ok(CTyp::vec(&typ.node, m.node))
                             } else {
-                                Err(TypeError::ram(kctx, vctx, a, ta, b, tb))
+                                Err(TypeError::ram(kctx, vctx, self, ta, tb))
                             }
                         } else {
-                            Err(TypeError::ram_dynamic_index(kctx, vctx, a, ta, b, tb))
+                            Err(TypeError::ram_dynamic_index(kctx, vctx, self, ta, tb))
                         }
                     }
                     // Index is not Fin-typed → dynamic RAM, unsupported.
-                    (_, _) => Err(TypeError::ram_dynamic_index(kctx, vctx, a, ta, b, tb)),
+                    (_, _) => Err(TypeError::ram_dynamic_index(kctx, vctx, self, ta, tb)),
                 }
             }
 
@@ -798,6 +799,7 @@ impl Typeable for CExp {
                                 Some(vs)
                             })
                             .collect();
+                        let matched = matching_sigs.len();
                         // [CTyp::unify] uses max() on univariate degree so many overloads
                         // Poly<F,1,d> all unify with Poly<F,1,1>. When ambiguous, keep only
                         // signatures whose parameters match argument types exactly (no widening).
@@ -810,11 +812,16 @@ impl Typeable for CExp {
                             });
                         }
 
-                        // Only one function shoud match
-                        if matching_sigs.len() != 1 {
+                        // Exactly one function must match
+                        if matched == 0 {
                             Err(TypeError::next(
                                 TypeError::exp(kctx, vctx, self),
-                                TypeError::app_multiple(fctx, id, param_types),
+                                TypeError::func_not_found(kctx, fctx, id, param_types, params),
+                            ))
+                        } else if matching_sigs.len() != 1 {
+                            Err(TypeError::next(
+                                TypeError::exp(kctx, vctx, self),
+                                TypeError::app_multiple(kctx, fctx, id, param_types, params),
                             ))
                         } else {
                             let sig = &matching_sigs[0];
@@ -834,9 +841,11 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 // The operand must be Bool (not Vec<Bool>)
-                match &t {
-                    CTyp::Bool => {}
-                    _ => return Err(TypeError::exp(kctx, vctx, self)),
+                if t != CTyp::Bool {
+                    return Err(TypeError::located(
+                        &exp.span,
+                        TypeError::condition(kctx, vctx, self, &t),
+                    ));
                 }
 
                 // Assert/Verify return Unit
@@ -888,7 +897,10 @@ impl Typeable for CExp {
                     match body_type {
                         CTyp::Poly(tid, m, degree) if m.node == 1 => Ok(CTyp::Poly(tid, m, degree)),
                         CTyp::Base(tid) => Ok(CTyp::uni(&tid, 0)), // Constant polynomial
-                        _ => Err(TypeError::exp(kctx, vctx, self)),
+                        t => Err(TypeError::located(
+                            &body.span,
+                            TypeError::fun_body(kctx, vctx, self, vars.len(), &t),
+                        )),
                     }
                 } else {
                     // Multilinear polynomial - type variables as scalars and validate structure
@@ -906,7 +918,10 @@ impl Typeable for CExp {
                             // Backend validation will catch if it's not actually multilinear
                             Ok(CTyp::mle(&tid, vars.len()))
                         }
-                        _ => Err(TypeError::exp(kctx, vctx, self)),
+                        t => Err(TypeError::located(
+                            &body.span,
+                            TypeError::fun_body(kctx, vctx, self, vars.len(), &t),
+                        )),
                     }
                 }
             }
@@ -1009,7 +1024,10 @@ impl Typeable for CBody {
                 if let Some(body) = body {
                     let tbody = body.infer(kctx, fctx, &vctx.clone())?;
                     if tbody != CTyp::Unit {
-                        return Err(TypeError::unit(kctx, vctx, body));
+                        return Err(TypeError::located(
+                            &tail(body).span,
+                            TypeError::unit(kctx, vctx, tail(body), &tbody),
+                        ));
                     }
                 }
 
@@ -1021,5 +1039,13 @@ impl Typeable for CBody {
             },
             CBody::TypeAlias => Ok(CTyp::Unit), // Type aliases have no body to check
         }
+    }
+}
+
+/// The expression a `let`/`<-`/`;` chain ends in: its value is the chain's value.
+pub(crate) fn tail(e: &Spanned<CExp>) -> &Spanned<CExp> {
+    match &e.node {
+        CExp::Let(_, _, Some(rest)) | CExp::Log(_, _, Some(rest)) => tail(rest),
+        _ => e,
     }
 }

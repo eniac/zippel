@@ -8,7 +8,7 @@ use crate::ast::range::{Range, RangeTraversal};
 use crate::ast::spanned::Spanned;
 use crate::ast::Size;
 use crate::id::{Tid, TidSubst, Vid};
-use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty, Set};
+use share::Set;
 
 /// Represents binary operations in the Zippel language.
 /// Each variant corresponds to a different kind of binary operation that can be performed on arithmetic expressions.
@@ -808,9 +808,8 @@ impl<N> Exp<N> {
 }
 
 impl BinOp {
-    /// Precedence matching the parser's Pratt table.
-    /// Lower binds looser. Used by the formatter to produce text that
-    /// re-parses to the same AST.
+    /// Precedence matching the parser's Pratt table; lower binds looser. Printers use it to
+    /// produce text that parses back to the same AST.
     pub fn precedence(&self) -> usize {
         match self {
             BinOp::And => 0, // lowest precedence
@@ -827,342 +826,287 @@ impl BinOp {
     pub fn is_right_assoc(&self) -> bool {
         matches!(self, BinOp::Pow)
     }
-}
 
-/// Pretty printer instance
-impl<'a, D, A> Pretty<'a, D, A> for BinOp
-where
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        match self {
-            BinOp::Add => allocator.text(" + "),
-            BinOp::Sub => allocator.text(" - "),
-            BinOp::Mul => allocator.text(" * "),
-            BinOp::Div => allocator.text(" / "),
-            BinOp::Pow => allocator.text(" ^ "),
-            BinOp::Dot => allocator.text(" . "),
-            BinOp::Concat => allocator.text(" ++ "),
-            BinOp::Rem => allocator.text(" % "),
-            BinOp::Equ => allocator.text(" == "),
-            BinOp::And => allocator.text(" && "),
+    /// Whether `lhs` needs parentheses as the left operand of `self` to parse back unchanged.
+    pub fn lhs_needs_paren<N>(&self, lhs: &Exp<N>) -> bool {
+        match lhs {
+            // `-x op y` parses as `(-x) op y` only when `op` binds looser than prefix minus.
+            Exp::Neg(_) => self.precedence() >= NEG_PRECEDENCE,
+            Exp::Range(_) => self.is_size_operator(),
+            Exp::Bin(child, _, _) => {
+                child.precedence() < self.precedence()
+                    || (child.precedence() == self.precedence() && self.is_right_assoc())
+            }
+            _ => false,
         }
     }
 
-    fn is_nil(&self) -> bool {
-        false
-    }
-}
-
-/// Blanket Pretty impl for `Spanned<T>` — delegates to inner T's Pretty.
-/// This lets all Pretty impls work with Spanned wrappers without .node calls.
-impl<'a, D, A, T> Pretty<'a, D, A> for Spanned<T>
-where
-    T: Pretty<'a, D, A>,
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        self.node.pretty(allocator)
-    }
-    fn is_nil(&self) -> bool {
-        self.node.is_nil()
-    }
-}
-
-/// Pretty printer instance for typed Exp
-impl<'a, D, A, N> Pretty<'a, D, A> for Exp<N>
-where
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    N: Pretty<'a, D, A> + Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        match self {
-            Exp::Lit(p) => p.pretty(allocator),
-            Exp::Unit => allocator.text("()"),
-            Exp::Interpolate(None, ev) => allocator.concat([
-                allocator.text("interpolate("),
-                ev.pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Exp::Interpolate(Some(points), evals) => allocator.concat([
-                allocator.text("interpolate("),
-                points.pretty(allocator),
-                allocator.text(", "),
-                evals.pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Exp::Poly(p) => allocator.concat([
-                allocator.text("poly("),
-                p.pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Exp::Coef(p) => allocator.concat([
-                allocator.text("coef("),
-                p.pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Exp::Evaluate(p, None, None) => allocator.concat([
-                allocator.text("eval("),
-                p.pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Exp::Evaluate(p, None, Some(x)) => allocator.concat([
-                allocator.text("eval("),
-                p.pretty(allocator),
-                allocator.text(", "),
-                x.pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Exp::Evaluate(p, Some(range), Some(x)) => allocator.concat([
-                allocator.text("eval<"),
-                range.pretty(allocator),
-                allocator.text(">("),
-                p.pretty(allocator),
-                allocator.text(", "),
-                x.pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Exp::Evaluate(p, Some(range), None) => allocator.concat([
-                allocator.text("eval<"),
-                range.pretty(allocator),
-                allocator.text(">("),
-                p.pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Exp::Mle(p) => allocator.concat([
-                allocator.text("mle("),
-                p.pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Exp::Vec(ts) => allocator.concat([
-                allocator.text("["),
-                allocator.intersperse(ts.into_iter().map(|x| x.pretty(allocator)), ", "),
-                allocator.text("]"),
-            ]),
-            Exp::Bin(op, a, b) => {
-                let parent_prec = op.precedence();
-                let right_assoc = op.is_right_assoc();
-                let lhs_needs_paren = matches!(&a.node,
-                    Exp::Bin(child_op, _, _) if child_op.precedence() < parent_prec
-                        || (child_op.precedence() == parent_prec && right_assoc));
-                let rhs_needs_paren = matches!(&b.node,
-                    Exp::Bin(child_op, _, _) if child_op.precedence() < parent_prec
-                        || (child_op.precedence() == parent_prec && !right_assoc));
-                let lhs = a.pretty(allocator);
-                let lhs = if lhs_needs_paren {
-                    allocator.concat([allocator.text("("), lhs, allocator.text(")")])
-                } else {
-                    lhs
-                };
-                let rhs = b.pretty(allocator);
-                let rhs = if rhs_needs_paren {
-                    allocator.concat([allocator.text("("), rhs, allocator.text(")")])
-                } else {
-                    rhs
-                };
-                allocator.concat([lhs, op.pretty(allocator), rhs])
+    /// Whether `rhs` needs parentheses as the right operand of `self` to parse back unchanged.
+    pub fn rhs_needs_paren<N>(&self, rhs: &Exp<N>) -> bool {
+        match rhs {
+            // Prefix minus is allowed in any operand position.
+            Exp::Neg(_) => false,
+            Exp::Range(_) => self.is_size_operator(),
+            Exp::Bin(child, _, _) => {
+                child.precedence() < self.precedence()
+                    || (child.precedence() == self.precedence() && !self.is_right_assoc())
             }
-            Exp::Neg(a) => allocator.concat([allocator.text("-"), (*a).pretty(allocator)]),
-            Exp::Map(x, id, range) => allocator.concat([
-                allocator.text("["),
-                x.pretty(allocator),
-                allocator.text(format!(" for {} in ", id)),
-                range.pretty(allocator),
-                allocator.text("]"),
-            ]),
-            Exp::Reduce(op, a) => allocator.concat([
-                allocator.text("reduce("),
-                op.pretty(allocator),
-                allocator.text(", "),
-                (*a).pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Exp::Var(x) => allocator.concat([x.pretty(allocator)]),
-            Exp::Challenge(t, b) => allocator.concat([
-                allocator.text("challenge<"),
-                t.pretty(allocator),
-                if b {
-                    allocator.text("*")
-                } else {
-                    allocator.text("")
-                },
-                allocator.text(">"),
-            ]),
-            Exp::Random(t, b) => allocator.concat([
-                allocator.text("random<"),
-                t.pretty(allocator),
-                if b {
-                    allocator.text("*")
-                } else {
-                    allocator.text("")
-                },
-                allocator.text(">"),
-            ]),
-            Exp::Pair(t, e) => allocator.concat([
-                allocator.text("pair("),
-                t.pretty(allocator),
-                allocator.text(", "),
-                e.pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Exp::Range(r) => allocator.concat([r.pretty(allocator)]),
-            Exp::App(x, d) => allocator.concat([
-                x.pretty(allocator),
-                allocator.text("("),
-                d.pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Exp::Ram(x, i) => allocator.concat([
-                (*x).pretty(allocator),
-                allocator.text("["),
-                (*i).pretty(allocator),
-                allocator.text("]"),
-            ]),
-            Exp::Let(Some(x), t, e) => {
-                let mut docs = vec![
-                    allocator.text("let "),
-                    x.pretty(allocator),
-                    allocator.text(" = "),
-                    (*t).pretty(allocator),
-                    allocator.text(";"),
-                ];
-                if let Some(e) = e {
-                    docs.push(allocator.hardline());
-                    docs.push((*e).pretty(allocator));
-                }
-                allocator.concat(docs)
-            }
-            Exp::Let(None, t, e) => {
-                let mut docs = vec![(*t).pretty(allocator), allocator.text(";")];
-                if let Some(e) = e {
-                    docs.push(allocator.hardline());
-                    docs.push((*e).pretty(allocator));
-                }
-                allocator.concat(docs)
-            }
-            Exp::Log(x, t, e) => {
-                let mut docs = vec![
-                    x.pretty(allocator),
-                    allocator.text(" <- "),
-                    (*t).pretty(allocator),
-                    allocator.text(";"),
-                ];
-                if let Some(e) = e {
-                    docs.push(allocator.hardline());
-                    docs.push((*e).pretty(allocator));
-                }
-                allocator.concat(docs)
-            }
-            Exp::Assert(exp) => allocator.concat([
-                allocator.text("assert("),
-                exp.pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Exp::Verify(exp) => allocator.concat([
-                allocator.text("verify("),
-                exp.pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Exp::Fun(vars, body) => {
-                let vars_str = vars
-                    .iter()
-                    .map(|v| v.node.0.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                allocator.concat([
-                    allocator.text("fun "),
-                    allocator.text(vars_str),
-                    allocator.text(" => "),
-                    (*body).pretty(allocator),
-                ])
-            }
-            Exp::Record(fields) => {
-                let mut docs = Vec::new();
-                docs.push(allocator.text("{|"));
-                let field_docs: Vec<_> = fields
-                    .into_iter()
-                    .map(|(name, exp)| {
-                        allocator.concat([
-                            allocator.text(name.node),
-                            allocator.text(": "),
-                            exp.pretty(allocator),
-                        ])
-                    })
-                    .collect();
-                docs.push(allocator.intersperse(field_docs, ", "));
-                docs.push(allocator.text("|}"));
-                allocator.concat(docs)
-            }
-            Exp::Proj(exp, field) => allocator.concat([
-                exp.pretty(allocator),
-                allocator.text("."),
-                allocator.text(field.node),
-            ]),
-            Exp::SetRecord(record, field, value) => allocator.concat([
-                record.pretty(allocator),
-                allocator.text(".set("),
-                allocator.text(field.node),
-                allocator.text(", "),
-                value.pretty(allocator),
-                allocator.text(")"),
-            ]),
+            _ => false,
         }
     }
 
-    fn is_nil(&self) -> bool {
-        false
+    /// Operators that range bounds also accept, so an unparenthesized range operand would
+    /// absorb them into its bound.
+    fn is_size_operator(&self) -> bool {
+        matches!(
+            self,
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow
+        )
     }
 }
 
-impl<'a, D, A, N> Pretty<'a, D, A> for Exps<N>
-where
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    N: Pretty<'a, D, A> + Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.intersperse(self.0.into_iter().map(|x| x.pretty(allocator)), ", ")
-    }
-    fn is_nil(&self) -> bool {
-        self.0.is_empty()
+impl<N> Exp<N> {
+    /// Whether `self` must be parenthesized as the operand of prefix `-`: a binary operator
+    /// that binds looser than `-` would otherwise take `-` into its left operand.
+    pub fn needs_paren_under_neg(&self) -> bool {
+        matches!(self, Exp::Bin(op, _, _) if op.precedence() < NEG_PRECEDENCE)
     }
 }
 
-/// Display instance calls the pretty printer
+/// Binding precedence of prefix `-`, on the scale of [`BinOp::precedence`].
+const NEG_PRECEDENCE: usize = 4;
+
+/// The operator as written in source, e.g. `+`.
 impl fmt::Display for BinOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <BinOp as Pretty<'_, BoxAllocator, ()>>::pretty(*self, &BoxAllocator)
-            .1
-            .render_fmt(100, f)
+        f.write_str(match self {
+            BinOp::Add => "+",
+            BinOp::Sub => "-",
+            BinOp::Mul => "*",
+            BinOp::Div => "/",
+            BinOp::Pow => "^",
+            BinOp::Dot => "dot",
+            BinOp::Concat => "++",
+            BinOp::Rem => "%",
+            BinOp::Equ => "==",
+            BinOp::And => "&&",
+        })
     }
 }
 
-impl<'a, N> fmt::Display for Exp<N>
-where
-    N: Clone + Pretty<'a, BoxAllocator, ()>,
-{
+/// Source syntax, parenthesized only where needed to parse back to the same tree. `{}`
+/// prints a `let`/`<-`/`;` chain on one line; `{:#}` puts each statement on its own line.
+///
+/// A precision limits the depth for use in messages: `{:.3}` prints three levels of the tree,
+/// writes deeper subexpressions as `…` (variables, literals, and ranges are always printed),
+/// and shortens lists to their first [`MAX_LISTED`] elements followed by `…`.
+impl<N: fmt::Display> fmt::Display for Exp<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Exp<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-            .1
-            .render_fmt(100, f)
+        if f.precision() == Some(0) && !self.is_leaf() {
+            return f.write_str("…");
+        }
+        // Children print one level shallower, in the same one-line/multi-line mode.
+        let m = Mode {
+            alternate: f.alternate(),
+            precision: f.precision(),
+        };
+        let star = |nonzero: &bool| if *nonzero { "*" } else { "" };
+        match self {
+            Exp::Lit(p) => write!(f, "{p}"),
+            Exp::Unit => f.write_str("()"),
+            Exp::Interpolate(None, ev) => write!(f, "interpolate({})", m.sub(ev)),
+            Exp::Interpolate(Some(points), evals) => {
+                write!(f, "interpolate({}, {})", m.sub(points), m.sub(evals))
+            }
+            Exp::Poly(p) => write!(f, "poly({})", m.sub(p)),
+            Exp::Coef(p) => write!(f, "coef({})", m.sub(p)),
+            Exp::Evaluate(p, None, None) => write!(f, "eval({})", m.sub(p)),
+            Exp::Evaluate(p, None, Some(x)) => write!(f, "eval({}, {})", m.sub(p), m.sub(x)),
+            Exp::Evaluate(p, Some(range), Some(x)) => {
+                write!(f, "eval<{range}>({}, {})", m.sub(p), m.sub(x))
+            }
+            Exp::Evaluate(p, Some(range), None) => write!(f, "eval<{range}>({})", m.sub(p)),
+            Exp::Mle(p) => write!(f, "mle({})", m.sub(p)),
+            Exp::Vec(ts) => write!(f, "[{}]", m.list(ts)),
+            // Dot products are written as a call, not infix.
+            Exp::Bin(BinOp::Dot, a, b) => write!(f, "dot({}, {})", m.sub(a), m.sub(b)),
+            Exp::Bin(op, a, b) => {
+                let parens = |needed| if needed { ("(", ")") } else { ("", "") };
+                let (l, r) = parens(op.lhs_needs_paren(&a.node));
+                write!(f, "{l}{}{r} {op} ", m.sub(a))?;
+                let (l, r) = parens(op.rhs_needs_paren(&b.node));
+                write!(f, "{l}{}{r}", m.sub(b))
+            }
+            Exp::Neg(a) if a.node.needs_paren_under_neg() => write!(f, "-({})", m.sub(a)),
+            Exp::Neg(a) => write!(f, "-{}", m.sub(a)),
+            Exp::Map(x, id, range) => write!(f, "[{} for {id} in {}]", m.sub(x), m.sub(range)),
+            Exp::Reduce(op, a) => write!(f, "reduce({op}, {})", m.sub(a)),
+            Exp::Var(x) => write!(f, "{x}"),
+            Exp::Challenge(t, nonzero) => write!(f, "challenge<{t}{}>", star(nonzero)),
+            Exp::Random(t, nonzero) => write!(f, "random<{t}{}>", star(nonzero)),
+            Exp::Pair(t, e) => write!(f, "pair({}, {})", m.sub(t), m.sub(e)),
+            Exp::Range(r) => write!(f, "{r}"),
+            Exp::App(x, d) => write!(f, "{x}({})", m.list(d)),
+            Exp::Ram(x, i) => write!(f, "{}[{}]", m.sub(x), m.sub(i)),
+            Exp::Let(Some(x), t, e) => {
+                write!(f, "let {x} = {};", m.sub(t))?;
+                rest(f, e)
+            }
+            Exp::Let(None, t, e) => {
+                write!(f, "{};", m.sub(t))?;
+                rest(f, e)
+            }
+            Exp::Log(x, t, e) => {
+                write!(f, "{x} <- {};", m.sub(t))?;
+                rest(f, e)
+            }
+            Exp::Assert(e) => write!(f, "assert({})", m.sub(e)),
+            Exp::Verify(e) => write!(f, "verify({})", m.sub(e)),
+            Exp::Fun(vars, body) => {
+                f.write_str("fun ")?;
+                crate::display::sep(f, vars.iter().map(|v| &v.node), ", ")?;
+                write!(f, " => {}", m.sub(body))
+            }
+            Exp::Record(fields) => {
+                f.write_str("{|")?;
+                let limit = f.precision().map_or(usize::MAX, |_| MAX_LISTED);
+                for (i, (name, e)) in fields.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    if i == limit {
+                        f.write_str("…")?;
+                        break;
+                    }
+                    write!(f, "{}: {}", name.node, m.sub(e))?;
+                }
+                f.write_str("|}")
+            }
+            Exp::Proj(e, field) => write!(f, "{}.{}", m.sub(e), field.node),
+            Exp::SetRecord(record, field, value) => {
+                write!(f, "{}.set({}, {})", m.sub(record), field.node, m.sub(value))
+            }
+        }
     }
 }
 
-impl<'a, N> fmt::Display for Exps<N>
-where
-    N: Clone + Pretty<'a, BoxAllocator, ()>,
-{
+/// How many elements of a list a depth-limited [`Exp`] display shows before `…`.
+pub const MAX_LISTED: usize = 4;
+
+impl<N> Exp<N> {
+    /// Whether `self` prints in full at any depth.
+    fn is_leaf(&self) -> bool {
+        matches!(
+            self,
+            Exp::Lit(_)
+                | Exp::Unit
+                | Exp::Var(_)
+                | Exp::Range(_)
+                | Exp::Challenge(..)
+                | Exp::Random(..)
+        )
+    }
+}
+
+/// The one-line/multi-line mode and remaining depth an expression is printed in.
+#[derive(Clone, Copy)]
+struct Mode {
+    alternate: bool,
+    precision: Option<usize>,
+}
+
+impl Mode {
+    /// A child of the expression printed in this mode.
+    fn sub<N>(self, e: &Spanned<Exp<N>>) -> Sub<'_, N> {
+        Sub::new(&e.node, self.alternate, self.precision)
+    }
+
+    /// A list of children of the expression printed in this mode.
+    fn list<N>(self, exps: &Exps<N>) -> List<'_, N> {
+        List {
+            exps,
+            alternate: self.alternate,
+            precision: self.precision,
+        }
+    }
+}
+
+/// A child expression, printed one level shallower than its parent and in its mode.
+struct Sub<'a, N> {
+    exp: &'a Exp<N>,
+    alternate: bool,
+    precision: Option<usize>,
+}
+
+impl<'a, N> Sub<'a, N> {
+    /// `exp` as a child of a parent printed with `alternate` and depth `precision`.
+    fn new(exp: &'a Exp<N>, alternate: bool, precision: Option<usize>) -> Self {
+        Sub {
+            exp,
+            alternate,
+            precision: precision.map(|p| p.saturating_sub(1)),
+        }
+    }
+}
+
+impl<N: fmt::Display> fmt::Display for Sub<'_, N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Exps<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-            .1
-            .render_fmt(100, f)
+        match (self.alternate, self.precision) {
+            (false, None) => write!(f, "{}", self.exp),
+            (true, None) => write!(f, "{:#}", self.exp),
+            (false, Some(p)) => write!(f, "{:.*}", p, self.exp),
+            (true, Some(p)) => write!(f, "{:#.*}", p, self.exp),
+        }
+    }
+}
+
+/// Comma-separated child expressions; with a depth limit, the first [`MAX_LISTED`] then `…`.
+struct List<'a, N> {
+    exps: &'a Exps<N>,
+    alternate: bool,
+    precision: Option<usize>,
+}
+
+impl<N: fmt::Display> fmt::Display for List<'_, N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let limit = self.precision.map_or(usize::MAX, |_| MAX_LISTED);
+        for (i, e) in self.exps.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str(", ")?;
+            }
+            if i == limit {
+                return f.write_str("…");
+            }
+            write!(f, "{}", Sub::new(&e.node, self.alternate, self.precision))?;
+        }
+        Ok(())
+    }
+}
+
+/// Prints the statements after the first in a chain.
+fn rest<N: fmt::Display>(
+    f: &mut fmt::Formatter<'_>,
+    e: &Option<Box<Spanned<Exp<N>>>>,
+) -> fmt::Result {
+    let Some(e) = e else { return Ok(()) };
+    let sep = if f.alternate() { "\n" } else { " " };
+    // The chain continues at the same depth: its statements are siblings, not children.
+    let next = Sub {
+        exp: &e.node,
+        alternate: f.alternate(),
+        precision: f.precision(),
+    };
+    write!(f, "{sep}{next}")
+}
+
+impl<N: fmt::Display> fmt::Display for Exps<N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let list = List {
+            exps: self,
+            alternate: f.alternate(),
+            precision: f.precision(),
+        };
+        write!(f, "{list}")
     }
 }
 

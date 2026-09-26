@@ -1,0 +1,10 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: `verify` expects a boolean condition, but this has type G (Group)
+   ╭─[ test.zippel:3:12 ]
+   │
+ 3 │     verify(g * x)
+   │            ──┬──  
+   │              ╰──── has type G (Group)
+───╯

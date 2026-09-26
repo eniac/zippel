@@ -4,7 +4,7 @@ use crate::ast::Size;
 use crate::id::{Tid, TidSubst};
 use crate::typ::kind::Kind;
 use share::traversal::ToTraversal1;
-use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
+use share::Ctx;
 use std::fmt;
 
 /// A type variable with an associated kind, parameterized by size type N.
@@ -187,55 +187,15 @@ impl<N: Clone> RangeTraversal<N> for TypeVars<N> {
     }
 }
 
-/// Pretty printer instance
-impl<'a, D, A, N> Pretty<'a, D, A> for TypeVar<N>
-where
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    N: Pretty<'a, D, A> + Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.concat([
-            self.id.node.pretty(allocator),
-            allocator.text(": "),
-            self.kind.pretty(allocator),
-        ])
-    }
-
-    fn is_nil(&self) -> bool {
-        false
-    }
-}
-
-impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone + 'a> fmt::Display for TypeVar<N> {
+/// `id: kind`
+impl<N: fmt::Display> fmt::Display for TypeVar<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <TypeVar<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-            .1
-            .render_fmt(100, f)
+        write!(f, "{}: {}", self.id.node, self.kind)
     }
 }
 
-impl<'a, D, A, N> Pretty<'a, D, A> for TypeVars<N>
-where
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    N: Pretty<'a, D, A> + Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.intersperse(self.0.into_iter().map(|tvar| tvar.pretty(allocator)), ", ")
-    }
-
-    fn is_nil(&self) -> bool {
-        self.0.is_empty()
-    }
-}
-
-impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone + 'a> fmt::Display for TypeVars<N> {
+impl<N: fmt::Display> fmt::Display for TypeVars<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <TypeVars<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-            .1
-            .render_fmt(100, f)
+        crate::display::sep(f, &self.0, ", ")
     }
 }

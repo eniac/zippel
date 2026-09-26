@@ -40,6 +40,7 @@ use backend::{ATyp, ArkConfig, PolyVariant, Value, VirtualPolynomial};
 use lang::ast::range::CRange;
 use lang::ast::spanned::Spanned;
 use lang::ast::{BinOp, CBody, CExp, CModule, CSig, Exp, Exps};
+use lang::diagnostic::{Diagnostic, Phase};
 use lang::id::{Fresh, Tid, Vid};
 use lang::typ::infer::{TypeError, Typeable};
 use lang::typ::{CKind, CTyp, CTyps, Distribution, Nothing, Qualifier};
@@ -69,6 +70,9 @@ pub struct Dag<C: ArkConfig, A> {
     pub vctx: Ctx<NodeIndex, Vid>,
     /// Which variables are transcript variables (true) vs let-bindings (false)
     pub transcript_vars: Ctx<NodeIndex, bool>,
+    /// Source binding of every argument, `random` sample, and input marker, used to locate
+    /// diagnostics. The name is `None` for a sample never bound with `let`.
+    pub sources: Ctx<NodeIndex, Spanned<Option<Vid>>>,
 }
 
 /// Dag with no annotations
@@ -100,17 +104,15 @@ pub enum GraphError {
     #[error("Relation not found in {0}")]
     RelationNotFound(Vid),
     /// The verifier projection reached a value only the prover has: an argument
-    /// that is not `Qualifier::Instance`, or a `random` sample. `name` is the
-    /// value's variable name when it has one, and `node` the index of its node
-    /// in the projected DAG.
+    /// that is not `Qualifier::Instance`, or a `random` sample.
     #[error("The verifier depends on {}, which only the prover knows", describe_private(*.kind, .name.as_ref()))]
     PrivateValueInVerifier {
         /// What kind of prover-only value was reached.
         kind: PrivateValue,
         /// The value's variable name, if it is bound to one.
         name: Option<Vid>,
-        /// Index of the value's node in the DAG `get_verifier` was called on.
-        node: usize,
+        /// Where the value is bound in the source.
+        span: std::ops::Range<usize>,
     },
     /// Two independent failures, reported together.
     #[error("{0}\n\n{1}")]
@@ -148,10 +150,82 @@ fn describe_private(kind: PrivateValue, name: Option<&Vid>) -> String {
     }
 }
 
+/// Anchored where the failure is in the source. Errors that are internal invariants carry no
+/// location and are reported at the start of the file.
+impl From<&GraphError> for Diagnostic {
+    fn from(e: &GraphError) -> Self {
+        match e {
+            GraphError::Type(e) => Diagnostic::from(&**e),
+            GraphError::NonPolynomialFun(reason, span) => {
+                Diagnostic::error(Phase::Type, span.clone(), "`fun` body is not a polynomial")
+                    .primary_label(reason)
+                    .note(
+                        "a `fun` body may only add, subtract, multiply, and negate its parameters and constants",
+                    )
+            }
+            GraphError::PrivateValueInVerifier { kind, span, .. } => {
+                let label = match kind {
+                    PrivateValue::Random => {
+                        "sampled by the prover; the verifier would draw its own, different value"
+                    }
+                    PrivateValue::Arg(_) => "the verifier never receives this",
+                };
+                Diagnostic::error(Phase::Type, span.clone(), &e.to_string())
+                    .primary_label(label)
+                    .note(
+                        "a `verify` check may only use `instance` arguments, challenges, and values \
+                         the prover sends with `<-` (directly or through `let`s)",
+                    )
+            }
+            other => Diagnostic::error(
+                Phase::Type,
+                0..0,
+                &other.to_string().split_whitespace().collect::<Vec<_>>().join(" "),
+            )
+            .primary_label("while building the protocol graph"),
+        }
+    }
+}
+
+impl From<GraphError> for Diagnostic {
+    fn from(e: GraphError) -> Self {
+        Diagnostic::from(&e)
+    }
+}
+
 impl From<TypeError> for GraphError {
     fn from(e: TypeError) -> Self {
         GraphError::Type(Box::new(e))
     }
+}
+
+/// `exp`, of type `typ`, has no Arkworks type; located at `exp`.
+fn ark_error(
+    kctx: &Ctx<Tid, CKind>,
+    vctx: &Ctx<Vid, CTyp>,
+    exp: &Spanned<CExp>,
+    typ: &CTyp,
+) -> TypeError {
+    TypeError::located(
+        &exp.span,
+        TypeError::next(
+            TypeError::exp(kctx, vctx, exp),
+            TypeError::ark(kctx, vctx, exp, typ),
+        ),
+    )
+}
+
+/// `name`, or the first of `name#2`, `name#3`, ... not in `taken`, which it is added to.
+/// Source identifiers cannot contain `#`, so the result never collides with one.
+fn unique_name(name: &Vid, taken: &mut HashSet<Vid>) -> Vid {
+    let mut candidate = name.clone();
+    let mut k = 2;
+    while taken.contains(&candidate) {
+        candidate = Vid(format!("{}#{k}", name.0));
+        k += 1;
+    }
+    taken.insert(candidate.clone());
+    candidate
 }
 
 /// A trait for writing a graph to a PDF file
@@ -173,17 +247,13 @@ impl GraphError {
     pub fn var_not_found(vid: &Vid) -> Self {
         GraphError::VarNotFound(vid.clone())
     }
-    /// Builds a [`GraphError::PrivateValueInVerifier`] for the prover-only value at `node`.
+    /// Builds a [`GraphError::PrivateValueInVerifier`] for the prover-only value bound at `span`.
     pub fn private_value_in_verifier(
         kind: PrivateValue,
         name: Option<Vid>,
-        node: NodeIndex,
+        span: std::ops::Range<usize>,
     ) -> Self {
-        GraphError::PrivateValueInVerifier {
-            kind,
-            name,
-            node: node.index(),
-        }
+        GraphError::PrivateValueInVerifier { kind, name, span }
     }
     /// Builds a [`GraphError::RelationNotFound`] for the named protocol.
     pub fn relation_not_found(vid: &Vid) -> Self {
@@ -192,6 +262,13 @@ impl GraphError {
     /// Builds a [`GraphError::NodeNotFound`] from a `NodeIndex`.
     pub fn node_not_found(n: NodeIndex) -> Self {
         GraphError::NodeNotFound(n.index())
+    }
+    /// Attaches `span` to a type error that inference left unlocated.
+    fn located(self, span: &std::ops::Range<usize>) -> Self {
+        match self {
+            GraphError::Type(e) => GraphError::Type(Box::new(TypeError::located(span, *e))),
+            e => e,
+        }
     }
 }
 
@@ -244,6 +321,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
             graph: Graph::new(),
             vctx: Ctx::new(),
             transcript_vars: Ctx::new(),
+            sources: Ctx::new(),
         }
     }
 
@@ -363,6 +441,12 @@ impl<C: ArkConfig, A> Dag<C, A> {
         &mut self.graph[it]
     }
 
+    /// Source binding of `node`, which must be an argument, `random` sample, or input marker
+    /// (see [`Dag::sources`]).
+    pub fn source(&self, node: NodeIndex) -> &Spanned<Option<Vid>> {
+        &self.sources[&node]
+    }
+
     /// Find the variable name for a node via vctx (let/transcript bindings)
     /// or by reading the name off `Node::Arg`/`Node::Inp`/`Node::Rel` markers.
     pub fn find_var(&self, node: NodeIndex) -> Option<Vid> {
@@ -421,6 +505,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
             ),
             vctx: self.vctx.clone(),
             transcript_vars: self.transcript_vars.clone(),
+            sources: self.sources.clone(),
         }
     }
 
@@ -616,6 +701,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
             ),
             vctx: self.vctx.clone(),
             transcript_vars: self.transcript_vars.clone(),
+            sources: self.sources.clone(),
         }
     }
 
@@ -703,10 +789,23 @@ impl<C: ArkConfig, A> Dag<C, A> {
             }
         }
 
+        let mut merged_sources = Ctx::new();
+        for (k, v) in self.sources.iter() {
+            if let Some(new_k) = node_map_self.get(k) {
+                merged_sources.insert(new_k, v);
+            }
+        }
+        for (k, v) in other.sources.iter() {
+            if let Some(new_k) = node_map_other.get(k) {
+                merged_sources.insert(new_k, v);
+            }
+        }
+
         Dag {
             graph: combined_graph,
             vctx: merged_vctx,
             transcript_vars: merged_transcript,
+            sources: merged_sources,
         }
     }
 }
@@ -729,6 +828,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
                 .map(|_, node| node.map_node_indices(f), |_, e| *e),
             vctx: self.vctx.clone(),
             transcript_vars: self.transcript_vars.clone(),
+            sources: self.sources.clone(),
         }
     }
 
@@ -870,38 +970,6 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         Ok(g_relation.map_node_indices(&|n| node_map_rel[&n]))
     }
 
-    /// Mangles `vctx` entries for non-argument bindings by appending their node
-    /// index, so that composing several DAGs keeps PDF labels unique.
-    ///
-    /// Argument names are left untouched because they are part of the
-    /// declaration's interface.
-    pub fn rename_inner_nodes(&mut self) -> Dag<C, A>
-    where
-        A: Clone,
-    {
-        // Phase B: Ref carries only NodeIndex; arg names live on Arg nodes
-        // and let-binding names live in `vctx`. Renaming inner refs is now
-        // a no-op (the structural change in Phase B already disambiguates
-        // them by NodeIndex), but we still mangle vctx entries for non-arg
-        // bindings to keep PDF labels unique across compositions.
-        let arg_names: Vec<String> = self
-            .input_args()
-            .iter()
-            .filter_map(|n| self[*n].name().map(|v| v.0.clone()))
-            .collect();
-        let mut result = self.clone();
-        let mut new_vctx = Ctx::new();
-        for (k, v) in result.vctx.iter() {
-            if arg_names.contains(&v.0) {
-                new_vctx.insert(k, v);
-            } else {
-                new_vctx.insert(k, &Vid(v.0.clone() + &format!("_{:?}", k)));
-            }
-        }
-        result.vctx = new_vctx;
-        result
-    }
-
     /// Rebuilds the DAG with every operation rewritten by `f` and re-interned
     /// through the hash-consing factory. Annotations and edges are preserved.
     pub fn map_ops<F: Fn(&GOp<C>) -> GOp<C>>(&mut self, f: &F) -> Dag<C, A>
@@ -919,6 +987,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             ),
             vctx: self.vctx.clone(),
             transcript_vars: self.transcript_vars.clone(),
+            sources: self.sources.clone(),
         }
     }
 
@@ -1002,10 +1071,11 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             // draw its own value instead of the prover's.
             let op = self[n].clone().into_op();
             if matches!(&*op, Op::Random(_, _)) {
+                let source = self.source(n);
                 return Err(GraphError::private_value_in_verifier(
                     PrivateValue::Random,
-                    self.find_var(n),
-                    n,
+                    source.node.clone().or_else(|| self.find_var(n)),
+                    source.span.clone(),
                 ));
             }
             // So is any reference to a non-instance argument.
@@ -1018,7 +1088,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
                     return Err(GraphError::private_value_in_verifier(
                         PrivateValue::Arg(*qual),
                         Some(name.clone()),
-                        target,
+                        self.source(target).span.clone(),
                     ));
                 }
             }
@@ -1077,11 +1147,11 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         // Arg nodes for transcript proof values and rewrite each
         // non-challenge Transcr op to reference its Arg. These freshly
         // allocated indices will not be re-mapped.
-        let mut transcript_arg_nodes: HashMap<Vid, NodeIndex> = HashMap::new();
-        // Snapshot the transcript nodes we added (now at their verifier-local indices).
-        // Iterate in source-graph transcript order so that the verifier's
-        // transcript Arg nodes are created in the same order the prover
-        // emits proof values.
+        //
+        // Each proof value gets its own input, keyed by its transcript node rather than its
+        // name: the same name can be sent several times (a function with `x <- ...` inlined
+        // twice) or shadow an argument. Iterate in source-graph transcript order so that the verifier's transcript Arg
+        // nodes are created in the same order the prover emits proof values.
         let transcr_pairs: Vec<(NodeIndex, Vid)> = self
             .transcript_nodes()
             .iter()
@@ -1092,32 +1162,22 @@ impl<C: HasOpFactory, A> Dag<C, A> {
                 Some((new_idx, v))
             })
             .collect();
+        // The runtime supplies verifier inputs by name, so every input needs a distinct one.
+        let mut taken: HashSet<Vid> = instance_args.iter().map(|(_, name)| name.clone()).collect();
 
         for (new_idx, transcript_var) in transcr_pairs {
-            // Determine/create the Arg node for this transcript var.
-            let arg_node = if let Some(&n) = transcript_arg_nodes.get(&transcript_var) {
-                n
-            } else if let Some((old, _)) = instance_args
-                .iter()
-                .find(|(_, name)| name == &transcript_var)
-            {
-                node_map_self[old]
-            } else {
-                let typ = match &verifier[new_idx] {
-                    Node::Transcr(op, _) => op.typ(),
-                    _ => unreachable!("non-challenge transcript must be Transcr"),
-                };
-                let arg_node = verifier.add_node(Node::Arg(
-                    transcript_var.clone(),
-                    typ,
-                    Qualifier::Instance,
-                    Distribution::default(),
-                    ArgKind::TranscriptInput,
-                ));
-                verifier.add_edge(n_input, arg_node, Dep::data());
-                transcript_arg_nodes.insert(transcript_var.clone(), arg_node);
-                arg_node
+            let typ = match &verifier[new_idx] {
+                Node::Transcr(op, _) => op.typ(),
+                _ => unreachable!("non-challenge transcript must be Transcr"),
             };
+            let arg_node = verifier.add_node(Node::Arg(
+                unique_name(&transcript_var, &mut taken),
+                typ,
+                Qualifier::Instance,
+                Distribution::default(),
+                ArgKind::TranscriptInput,
+            ));
+            verifier.add_edge(n_input, arg_node, Dep::data());
 
             // Rewrite Transcr op to reference the Arg, and add the data edge.
             if let Node::Transcr(op, _) = &mut verifier[new_idx] {
@@ -1311,7 +1371,8 @@ impl<C: HasOpFactory> UDags<C> {
         for (sig, body) in m.into_iter() {
             debug!("Adding declaration: {}", sig);
             let mut g = UDag::new();
-            g.add_decl(sig.clone(), body.clone(), &fctx)?;
+            g.add_decl(sig.clone(), body.clone(), &fctx)
+                .map_err(|e| e.located(&sig.name.span))?;
             gs.0.push(g);
         }
         Ok(gs)
@@ -1371,6 +1432,9 @@ impl<C: HasOpFactory> UDag<C> {
         // Add arguments to [vctx] and [vars]
         let mut vctx = Ctx::new();
 
+        // Source bindings of the arguments, recorded on their nodes for diagnostics.
+        let arg_ids: HashMap<&Vid, &Spanned<Vid>> =
+            sig.args.iter().map(|arg| (&arg.id.node, &arg.id)).collect();
         // Build a lookup from arg name → (qualifier, distribution) for Node::Arg construction.
         let arg_meta: HashMap<&Vid, (Qualifier, Distribution)> = sig
             .args
@@ -1384,11 +1448,14 @@ impl<C: HasOpFactory> UDag<C> {
             let at = ATyp::from_ctyp(&arg.typ, &kctx).ok_or_else(|| {
                 TypeError::decl(
                     &sig.name,
-                    TypeError::ark(
-                        &kctx,
-                        &vctx,
-                        &Spanned::dummy(Exp::Var(arg.id.clone())),
-                        &arg.typ,
+                    TypeError::located(
+                        &arg.id.span,
+                        TypeError::ark(
+                            &kctx,
+                            &vctx,
+                            &Spanned::dummy(Exp::Var(arg.id.clone())),
+                            &arg.typ,
+                        ),
                     ),
                 )
             })?;
@@ -1414,6 +1481,7 @@ impl<C: HasOpFactory> UDag<C> {
                 debug!("Adding proto: {:?}", sig);
                 // Start node (input marker)
                 let mut start = self.add_node(Node::inp(sig.name.node.clone()));
+                self.sources.insert(&start, &sig.name.clone().map(Some));
                 let mut vars: Ctx<Vid, GOp<C>> = Ctx::new();
                 for (id, typ) in atyps.iter() {
                     let (qualifier, distribution) = arg_meta
@@ -1428,6 +1496,8 @@ impl<C: HasOpFactory> UDag<C> {
                         ArgKind::Input,
                     ));
                     self.graph.add_edge(start, arg_node, Dep::data());
+                    self.sources
+                        .insert(&arg_node, &arg_ids[id].clone().map(Some));
                     vars.insert(id, &GOp::var(id, arg_node, typ.clone()));
                 }
                 for (tid, kind) in kctx.iter() {
@@ -1460,6 +1530,8 @@ impl<C: HasOpFactory> UDag<C> {
                         ArgKind::Relation,
                     ));
                     self.graph.add_edge(start, arg_node, Dep::data());
+                    self.sources
+                        .insert(&arg_node, &arg_ids[id].clone().map(Some));
                     vars.insert(id, &GOp::var(id, arg_node, typ.clone()));
                 }
                 for (tid, kind) in kctx.iter() {
@@ -1489,6 +1561,7 @@ impl<C: HasOpFactory> UDag<C> {
             }
             CBody::Func { body } => {
                 let mut start = self.add_node(Node::inp(sig.name.node.clone()));
+                self.sources.insert(&start, &sig.name.clone().map(Some));
                 let mut vars: Ctx<Vid, GOp<C>> = Ctx::new();
                 for (id, typ) in atyps.iter() {
                     let (qualifier, distribution) = arg_meta
@@ -1503,6 +1576,8 @@ impl<C: HasOpFactory> UDag<C> {
                         ArgKind::Input,
                     ));
                     self.graph.add_edge(start, arg_node, Dep::data());
+                    self.sources
+                        .insert(&arg_node, &arg_ids[id].clone().map(Some));
                     vars.insert(id, &GOp::var(id, arg_node, typ.clone()));
                 }
                 for (tid, kind) in kctx.iter() {
@@ -2135,36 +2210,24 @@ impl<C: HasOpFactory> UDag<C> {
 
                             return Ok(GOp::underscore(
                                 neval,
-                                ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                                    TypeError::next(
-                                        TypeError::exp(kctx, &vctx, &exp),
-                                        TypeError::ark(kctx, &vctx, &exp, &typ),
-                                    )
-                                })?,
+                                ATyp::from_ctyp(&typ, kctx)
+                                    .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?,
                             ));
                         }
                         // Binary form: eval(p, points) -> Op::Evaluate(p, None, Some(points)).
                         (None, Some(deref!(x))) => {
                             let vx =
                                 self.add_exp(x, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
-                            let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                                TypeError::next(
-                                    TypeError::exp(kctx, &vctx, &exp),
-                                    TypeError::ark(kctx, &vctx, &exp, &typ),
-                                )
-                            })?;
+                            let atyp = ATyp::from_ctyp(&typ, kctx)
+                                .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
                             return Ok(self.materialize(GOp::evaluate(vp, vx), edge_type, atyp));
                         }
                         // Selected form: eval<range>(p, fixed).
                         (Some(range), Some(deref!(fixed))) => {
                             let vfixed =
                                 self.add_exp(fixed, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
-                            let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                                TypeError::next(
-                                    TypeError::exp(kctx, &vctx, &exp),
-                                    TypeError::ark(kctx, &vctx, &exp, &typ),
-                                )
-                            })?;
+                            let atyp = ATyp::from_ctyp(&typ, kctx)
+                                .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
                             return Ok(self.materialize(
                                 GOp::evaluate_selected(vp, range, vfixed),
                                 edge_type,
@@ -2190,12 +2253,8 @@ impl<C: HasOpFactory> UDag<C> {
 
                     return Ok(GOp::underscore(
                         npoly,
-                        ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                            TypeError::next(
-                                TypeError::exp(kctx, &vctx, &exp),
-                                TypeError::ark(kctx, &vctx, &exp, &typ),
-                            )
-                        })?,
+                        ATyp::from_ctyp(&typ, kctx)
+                            .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?,
                     ));
                 }
 
@@ -2208,12 +2267,8 @@ impl<C: HasOpFactory> UDag<C> {
 
                     return Ok(GOp::underscore(
                         npoly,
-                        ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                            TypeError::next(
-                                TypeError::exp(kctx, &vctx, &exp),
-                                TypeError::ark(kctx, &vctx, &exp, &typ),
-                            )
-                        })?,
+                        ATyp::from_ctyp(&typ, kctx)
+                            .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?,
                     ));
                 }
 
@@ -2230,12 +2285,8 @@ impl<C: HasOpFactory> UDag<C> {
 
                             return Ok(GOp::underscore(
                                 nifft,
-                                ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                                    TypeError::next(
-                                        TypeError::exp(kctx, &vctx, &exp),
-                                        TypeError::ark(kctx, &vctx, &exp, &typ),
-                                    )
-                                })?,
+                                ATyp::from_ctyp(&typ, kctx)
+                                    .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?,
                             ));
                         }
                         // Binary: interpolate(pts, evs) → Op::Interpolate(pts, evs)
@@ -2248,12 +2299,8 @@ impl<C: HasOpFactory> UDag<C> {
 
                             return Ok(GOp::underscore(
                                 ninterp,
-                                ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                                    TypeError::next(
-                                        TypeError::exp(kctx, &vctx, &exp),
-                                        TypeError::ark(kctx, &vctx, &exp, &typ),
-                                    )
-                                })?,
+                                ATyp::from_ctyp(&typ, kctx)
+                                    .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?,
                             ));
                         }
                     }
@@ -2263,12 +2310,8 @@ impl<C: HasOpFactory> UDag<C> {
                     let vec_op = GOp::vec(vs.0.traverse1(&mut |v| {
                         self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)
                     })?);
-                    let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                        TypeError::next(
-                            TypeError::exp(kctx, &vctx, &exp),
-                            TypeError::ark(kctx, &vctx, &exp, &typ),
-                        )
-                    })?;
+                    let atyp = ATyp::from_ctyp(&typ, kctx)
+                        .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
                     return Ok(self.materialize(vec_op, edge_type, atyp));
                 }
 
@@ -2283,12 +2326,8 @@ impl<C: HasOpFactory> UDag<C> {
 
                     return Ok(GOp::underscore(
                         nmle,
-                        ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                            TypeError::next(
-                                TypeError::exp(kctx, &vctx, &exp),
-                                TypeError::ark(kctx, &vctx, &exp, &typ),
-                            )
-                        })?,
+                        ATyp::from_ctyp(&typ, kctx)
+                            .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?,
                     ));
                 }
 
@@ -2297,12 +2336,8 @@ impl<C: HasOpFactory> UDag<C> {
                     let va = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     let vb = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
-                    let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                        TypeError::next(
-                            TypeError::exp(kctx, &vctx, &exp),
-                            TypeError::ark(kctx, &vctx, &exp, &typ),
-                        )
-                    })?;
+                    let atyp = ATyp::from_ctyp(&typ, kctx)
+                        .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
 
                     return Ok(self.materialize(GOp::pair(va, vb, atyp.clone()), edge_type, atyp));
                 }
@@ -2322,12 +2357,8 @@ impl<C: HasOpFactory> UDag<C> {
                     let vr = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
                     // Convert type [typ] to [ATyp]
-                    let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                        TypeError::next(
-                            TypeError::exp(kctx, &vctx, &exp),
-                            TypeError::ark(kctx, &vctx, &exp, &typ),
-                        )
-                    })?;
+                    let atyp = ATyp::from_ctyp(&typ, kctx)
+                        .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
 
                     let bop = GOp::bin(op, vl.clone(), vr.clone(), atyp.clone());
 
@@ -2349,12 +2380,8 @@ impl<C: HasOpFactory> UDag<C> {
                 CExp::Range(r) => return Ok(GOp::range(r)),
 
                 CExp::Map(deref!(l), x, deref!(e)) => {
-                    let map_atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                        TypeError::next(
-                            TypeError::exp(kctx, &vctx, &exp),
-                            TypeError::ark(kctx, &vctx, &exp, &typ),
-                        )
-                    })?;
+                    let map_atyp = ATyp::from_ctyp(&typ, kctx)
+                        .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
                     // Fast path: lower to a persistent `Op::Map` when the body
                     // and domain are pure. Falls back to the unroll otherwise.
                     if let Some(map_op) = self.lower_loop_body_template(
@@ -2375,19 +2402,11 @@ impl<C: HasOpFactory> UDag<C> {
 
                     let (ie, n) = te.into_vec();
 
-                    let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                        TypeError::next(
-                            TypeError::exp(kctx, &vctx, &exp),
-                            TypeError::ark(kctx, &vctx, &exp, &typ),
-                        )
-                    })?;
+                    let atyp = ATyp::from_ctyp(&typ, kctx)
+                        .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
 
-                    let input_element_typ = ATyp::from_ctyp(&ie, kctx).ok_or_else(|| {
-                        TypeError::next(
-                            TypeError::exp(kctx, &vctx, &exp),
-                            TypeError::ark(kctx, &vctx, &exp, &ie),
-                        )
-                    })?;
+                    let input_element_typ = ATyp::from_ctyp(&ie, kctx)
+                        .ok_or_else(|| ark_error(kctx, &vctx, &exp, &ie))?;
 
                     let mut res = Vec::with_capacity(n.node);
                     for i in 0..n.node {
@@ -2433,42 +2452,26 @@ impl<C: HasOpFactory> UDag<C> {
                             None
                         };
                     if let Some(rm) = reduce_map {
-                        let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                            TypeError::next(
-                                TypeError::exp(kctx, &vctx, &exp),
-                                TypeError::ark(kctx, &vctx, &exp, &typ),
-                            )
-                        })?;
+                        let atyp = ATyp::from_ctyp(&typ, kctx)
+                            .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
                         return Ok(self.materialize(rm, edge_type, atyp));
                     }
                     let ov = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
-                    let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                        TypeError::next(
-                            TypeError::exp(kctx, &vctx, &exp),
-                            TypeError::ark(kctx, &vctx, &exp, &typ),
-                        )
-                    })?;
+                    let atyp = ATyp::from_ctyp(&typ, kctx)
+                        .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
                     return Ok(self.materialize(GOp::reduce(op, ov), edge_type, atyp));
                 }
                 CExp::Ram(deref!(a), deref!(b)) => {
                     // Add children
                     let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     let ob = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
-                    let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                        TypeError::next(
-                            TypeError::exp(kctx, &vctx, &exp),
-                            TypeError::ark(kctx, &vctx, &exp, &typ),
-                        )
-                    })?;
+                    let atyp = ATyp::from_ctyp(&typ, kctx)
+                        .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
                     return Ok(self.materialize(GOp::ram(oa, ob), edge_type, atyp));
                 }
                 CExp::Challenge(_, non_zero) => {
-                    let at = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                        TypeError::next(
-                            TypeError::exp(kctx, &vctx, &exp),
-                            TypeError::ark(kctx, &vctx, &exp, &typ),
-                        )
-                    })?;
+                    let at = ATyp::from_ctyp(&typ, kctx)
+                        .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
                     let nchallenge = self.add_node(Node::challenge(&at, non_zero));
                     // Add transcript edge to [nchallenge]
                     self.add_edge(*transcr, nchallenge, Dep::transcript());
@@ -2479,13 +2482,11 @@ impl<C: HasOpFactory> UDag<C> {
                     return Ok(GOp::underscore(nchallenge, at));
                 }
                 CExp::Random(_, non_zero) => {
-                    let at = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                        TypeError::next(
-                            TypeError::exp(kctx, &vctx, &exp),
-                            TypeError::ark(kctx, &vctx, &exp, &typ),
-                        )
-                    })?;
+                    let at = ATyp::from_ctyp(&typ, kctx)
+                        .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
                     let nrand = self.add_node(Node::random(&at, non_zero));
+                    self.sources
+                        .insert(&nrand, &Spanned::new(None, exp.span.clone()));
                     return Ok(GOp::underscore(nrand, at));
                 }
                 CExp::App(fid, params) => {
@@ -2654,12 +2655,17 @@ impl<C: HasOpFactory> UDag<C> {
                     // Infer the type of [l]
                     let tl = l.infer(kctx, &fctx.keys(), &vctx)?;
                     // Add left-hand side as node
+                    let is_random = matches!(l.node, CExp::Random(..));
                     let nl = self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Register the node name so find_var() returns the correct name
                     // instead of falling back to __zippel::node::N
                     if let GOp::Ref(r, _) = &nl {
                         self.vctx.insert(&r.node(), &id.node);
                         self.transcript_vars.insert(&r.node(), &false);
+                        // A sample is reported where it is named, not at `random<..>`.
+                        if is_random {
+                            self.sources.insert(&r.node(), &id.clone().map(Some));
+                        }
                     }
                     // Add [id] to the variable context (clone-on-write)
                     vctx.insert(&id.node, &tl);
@@ -2795,12 +2801,8 @@ impl<C: HasOpFactory> UDag<C> {
                         field_ops.insert(field_name, &hop);
                     }
 
-                    let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                        TypeError::next(
-                            TypeError::exp(kctx, &vctx, &exp),
-                            TypeError::ark(kctx, &vctx, &exp, &typ),
-                        )
-                    })?;
+                    let atyp = ATyp::from_ctyp(&typ, kctx)
+                        .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
                     return Ok(self.materialize(GOp::Record(field_ops), edge_type, atyp));
                 }
                 CExp::Proj(deref!(record_exp), field_name) => {
@@ -2884,11 +2886,14 @@ impl<C: HasOpFactory> UDag<C> {
                                             let field_typ_atyp =
                                                 ATyp::from_ctyp(field_typ_ctyp, kctx).ok_or_else(
                                                     || {
-                                                        GraphError::from(TypeError::ark(
-                                                            kctx,
-                                                            &vctx,
-                                                            &CExp::Var(id_clone.clone()),
-                                                            field_typ_ctyp,
+                                                        GraphError::from(TypeError::located(
+                                                            &exp.span,
+                                                            TypeError::ark(
+                                                                kctx,
+                                                                &vctx,
+                                                                &CExp::Var(id_clone.clone()),
+                                                                field_typ_ctyp,
+                                                            ),
                                                         ))
                                                     },
                                                 )?;
@@ -2940,10 +2945,7 @@ impl<C: HasOpFactory> UDag<C> {
 
                                     // For complex expressions, we'd need to evaluate them first
                                     // For now, return an error indicating this isn't fully supported
-                                    Err(GraphError::from(TypeError::next(
-                                        TypeError::exp(kctx, &vctx, &exp),
-                                        TypeError::ark(kctx, &vctx, &exp, &typ),
-                                    )))
+                                    Err(GraphError::from(ark_error(kctx, &vctx, &exp, &typ)))
                                 }
                                 _ => Err(GraphError::from(TypeError::not_a_record(
                                     kctx,

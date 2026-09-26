@@ -1,0 +1,14 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: Cannot add F (Scalar<G>) and G (Group)
+   ╭─[ test.zippel:3:62 ]
+   │
+ 3 │     verify(reduce(+, [v[i] * x + v[i] * x * x for i in 0..4]) + g == g)
+   │            ─────────────────────────┬─────────────────────────┬─┬  
+   │                                     │                         ╰──── `+` is not defined for these operands
+   │                                     │                           │  
+   │                                     ╰────────────────────────────── `reduce(+, [… + … for i in 0..4])` has type F (Scalar<G>)
+   │                                                                 │  
+   │                                                                 ╰── `g` has type G (Group)
+───╯

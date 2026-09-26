@@ -11,7 +11,7 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use crate::Var;
 use ark_ff::Field;
-use share::{Ctx, DocAllocator, DocBuilder, Pretty, Set};
+use share::{Ctx, Set};
 
 use super::monomial::Monomial;
 
@@ -336,21 +336,5 @@ impl<F: Field> Polynomial<F> {
         }
         new_poly.terms.retain(|_, c| !c.is_zero());
         new_poly
-    }
-}
-
-impl<'a, F, D, A> Pretty<'a, D, A> for Polynomial<F>
-where
-    F: Field,
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.text(format!("{}", self))
-    }
-
-    fn is_nil(&self) -> bool {
-        false
     }
 }

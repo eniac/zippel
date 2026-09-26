@@ -5,7 +5,7 @@ use crate::ast::Size;
 use crate::id::{Tid, TidSubst, Vid};
 use crate::typ::{Distribution, GTyp, Qualifier, Range, RangeTraversal, Typ, TypeInline};
 use share::traversal::{ToTraversal1, ToTraversal2};
-use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
+use share::Ctx;
 
 /// `Arg` represents an argument in the Zippel language, including its identifier, type, and principals.
 ///
@@ -266,77 +266,21 @@ impl<const L: usize, N, T> From<[Spanned<Arg<T, N>>; L]> for Args<T, N> {
     }
 }
 
-/// Pretty printer instance
-impl<'a, D, T, N, A> Pretty<'a, D, A> for Arg<T, N>
-where
-    D: DocAllocator<'a, A>,
-    N: 'a + Clone + Pretty<'a, D, A>,
-    T: 'a + Clone + Pretty<'a, D, A>,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        let Arg {
-            qualifier,
-            distribution,
-            id,
-            typ,
-        } = self;
-        allocator.concat([
-            qualifier.pretty(allocator),
-            distribution.pretty(allocator),
-            id.pretty(allocator),
-            allocator.text(": "),
-            typ.pretty(allocator),
-        ])
-    }
-
-    fn is_nil(&self) -> bool {
-        false
-    }
-}
-
-/// Display instance calls the pretty printer
-impl<'a, T, N> fmt::Display for Arg<T, N>
-where
-    T: Clone + Pretty<'a, BoxAllocator, ()> + 'a,
-    N: Clone + Pretty<'a, BoxAllocator, ()> + 'a,
-{
+/// `[qualifier ][distribution ]id: typ`; qualifiers and distributions print their own
+/// trailing space.
+impl<T: fmt::Display, N: fmt::Display> fmt::Display for Arg<T, N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Arg<T, N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-            .1
-            .render_fmt(60, f)
+        write!(
+            f,
+            "{}{}{}: {}",
+            self.qualifier, self.distribution, self.id, self.typ
+        )
     }
 }
 
-/// Pretty printer instance
-impl<'a, D, T, N, A> Pretty<'a, D, A> for Args<T, N>
-where
-    D: DocAllocator<'a, A>,
-    N: 'a + Clone + Pretty<'a, D, A>,
-    T: 'a + Clone + Pretty<'a, D, A>,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.intersperse(self.0.into_iter().map(|arg| arg.pretty(allocator)), ", ")
-    }
-
-    fn is_nil(&self) -> bool {
-        self.0.is_empty()
-    }
-}
-
-/// Display instance calls the pretty printer
-impl<'a, T, N> fmt::Display for Args<T, N>
-where
-    T: Clone + Pretty<'a, BoxAllocator, ()> + 'a,
-    N: Clone + Pretty<'a, BoxAllocator, ()> + 'a,
-{
+impl<T: fmt::Display, N: fmt::Display> fmt::Display for Args<T, N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Args<T, N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-            .1
-            .render_fmt(140, f)
+        crate::display::sep(f, &self.0, ", ")
     }
 }
 
