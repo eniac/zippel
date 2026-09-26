@@ -1269,6 +1269,7 @@ dependencies = [
  "clap",
  "criterion",
  "lang",
+ "pretty",
  "share",
  "similar",
 ]
@@ -2657,7 +2658,6 @@ name = "share"
 version = "0.1.0"
 dependencies = [
  "im",
- "pretty",
 ]
 
 [[package]]

@@ -128,6 +128,8 @@ impl ZippelArgs {
 /// qualifier-propagated DAG the analyses consume.
 pub struct ZippelHandler<C: ArkConfig> {
     args: ZippelArgs,
+    /// Source text of `args.file_path`, read by `parse`; diagnostics are rendered against it.
+    source: String,
     sized_module: Option<UModule>,
     concrete_module: Option<CModule>,
     /// Prover projection of the protocol DAG; `Some` only after `compile`.
@@ -143,6 +145,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     pub const fn new(args: ZippelArgs) -> Self {
         Self {
             args,
+            source: String::new(),
             sized_module: None,
             concrete_module: None,
             prover_graph: None,
@@ -252,6 +255,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             process::exit(1);
         }
         self.sized_module = module;
+        self.source = zfile;
     }
 
     /// Will output a PDF if a path is provided, noop otherwise
@@ -290,23 +294,24 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         self.parse();
 
         debug!("Concretizing module type variables");
-        self.concrete_module = Some(
-            self.sized_module
-                .as_ref()
-                .unwrap()
-                .concretize(sizes)
-                .unwrap(),
-        );
+        let module = self.sized_module.as_ref().unwrap();
+        let cmodule = module
+            .concretize(sizes)
+            .unwrap_or_else(|e| self.fail(&[e.into()]));
+
+        debug!("Type checking module");
+        let diags = cmodule.typecheck();
+        if !diags.is_empty() {
+            self.fail(&diags);
+        }
 
         debug!("Creating graphs from module");
-        let gs = unwrap!(UDags::<C>::from_module(
-            self.concrete_module.as_ref().unwrap().clone()
-        ));
+        let gs =
+            UDags::<C>::from_module(cmodule.clone()).unwrap_or_else(|e| self.fail(&[e.into()]));
         self.output_pdf(&gs, "symbolic_protocol_graph");
 
-        // Extract protocol subgraph and rename inner nodes
-        let g = self.get_protocol_subgraph(&gs).clone().rename_inner_nodes();
-        self.output_pdf(&g, "concrete_protocol_graph");
+        let g = self.get_protocol_subgraph(&gs);
+        self.output_pdf(g, "concrete_protocol_graph");
 
         debug!("Projecting prover");
         let (prover, _) = g.get_prover();
@@ -314,9 +319,19 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         self.output_pdf(&prover, "prover_graph");
 
         debug!("Projecting verifier");
-        let verifier = g.get_verifier().unwrap();
+        let verifier = g.get_verifier().unwrap_or_else(|e| self.fail(&[e.into()]));
+        self.concrete_module = Some(cmodule);
         self.verifier_graph = Some(verifier.clone());
         self.output_pdf(&verifier, "verifier_graph");
+    }
+
+    /// Render `diags` against the parsed source and exit with status 1, as for parse errors.
+    fn fail(&self, diags: &[lang::diagnostic::Diagnostic]) -> ! {
+        let filename = self.args.file_path.display().to_string();
+        for diag in diags {
+            eprint!("{}", render_diagnostic(diag, &filename, &self.source));
+        }
+        process::exit(1);
     }
 
     /// Compose the prover and verifier graphs into a single combined DAG and
@@ -520,8 +535,6 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             .run()
     }
 }
-
-pub use lang::check::find_minimal_sizes;
 
 /// Interpret verifier output as pass/fail.
 /// Passes if every Check in the output returned `true`.

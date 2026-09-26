@@ -1,0 +1,14 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: No definition of `f` accepts arguments of type G (Group)
+   ╭─[ test.zippel:4:12 ]
+   │
+ 4 │     verify(f(g) == x)
+   │            ──┬─  
+   │              ╰─── no definition takes these argument types
+   │              │   
+   │              ╰─── `g` has type G (Group)
+   │              │   
+   │              ╰─── note: `f` takes F (Scalar<G>)
+───╯

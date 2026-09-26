@@ -1,22 +1,18 @@
 //! Cross-crate utility layer shared by `lang`, `graph`, `backend`, and `runtime`.
 //!
-//! It holds the three data structures that every stage of the compiler threads
-//! through itself: [`Ctx`] (the ordered map used for kind/function/variable
-//! environments), [`Pretty`] (Wadler-style pretty printing used by every
-//! diagnostic and by `fmt`), and [`Traversal`] (generic tree walkers used by the
-//! analyses).
+//! It holds the data structures that every stage of the compiler threads through
+//! itself: [`Ctx`] (the ordered map used for kind/function/variable environments),
+//! [`Set`], and [`Traversal`] (generic tree walkers used by the analyses).
 
 mod context;
 /// Assertion and unwrapping macros used across the workspace test suites.
 pub mod macros;
-mod pretty;
 /// Run a closure on a scoped thread with a larger-than-default stack.
 pub mod thread;
 /// Generic structure-to-subfield walkers, used by the `lang` and `graph` passes.
 pub mod traversal;
 
 pub use context::{Ctx, CtxValueTraversal, Set};
-pub use pretty::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 pub use traversal::Traversal;
 
 /// Re-export im::ordmap iterator types for downstream crates

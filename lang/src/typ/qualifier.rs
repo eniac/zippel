@@ -1,8 +1,6 @@
 use std::cmp::Ordering;
 use std::fmt;
 
-use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
-
 /// Visibility qualifier attached to every protocol variable and DAG node.
 ///
 /// The four qualifiers form a total order `Witness <= Local <= Extra <= Instance`,
@@ -79,33 +77,14 @@ impl Ord for Qualifier {
     }
 }
 
-////////////////////////////////////////////////////////////////////////////////////////
-/* Pretty Formatting & Display */
-////////////////////////////////////////////////////////////////////////////////////////
-impl<'a, D, A> Pretty<'a, D, A> for Qualifier
-where
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        match self {
-            Qualifier::Witness => allocator.text("witness "),
-            Qualifier::Local => allocator.text("local "),
-            Qualifier::Extra => allocator.text("extra "),
-            Qualifier::Instance => allocator.text("instance "),
-        }
-    }
-    fn is_nil(&self) -> bool {
-        false
-    }
-}
-
 impl fmt::Display for Qualifier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Qualifier as Pretty<'_, BoxAllocator, ()>>::pretty(*self, &BoxAllocator)
-            .1
-            .render_fmt(20, f)
+        f.write_str(match self {
+            Qualifier::Witness => "witness ",
+            Qualifier::Local => "local ",
+            Qualifier::Extra => "extra ",
+            Qualifier::Instance => "instance ",
+        })
     }
 }
 

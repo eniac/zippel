@@ -103,8 +103,11 @@ fn type_error_reports_location_and_fails() {
     let out = zippel_check(&[path.to_str().unwrap()]);
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("bad.zippel:3:12"), "{stderr}");
-    assert!(stderr.contains("LubError"), "{stderr}");
+    assert!(stderr.contains("bad.zippel:3:13"), "{stderr}");
+    assert!(
+        stderr.contains("Cannot add F (Scalar<G>) and G (Group)"),
+        "{stderr}"
+    );
     assert!(
         !stderr.contains('\x1b'),
         "colors must be off when not a terminal"
@@ -133,7 +136,7 @@ fn witness_in_verifier_is_reported_at_the_witness() {
     );
     assert_eq!(code, Some(1), "{stderr}");
     assert!(
-        stderr.contains("the verifier depends on witness `x`"),
+        stderr.contains("The verifier depends on witness `x`"),
         "{stderr}"
     );
     assert!(stderr.contains("witness_leak.zippel:1:44"), "{stderr}");
@@ -147,16 +150,17 @@ fn random_in_verifier_is_reported_at_the_sample() {
     );
     assert_eq!(code, Some(1), "{stderr}");
     assert!(
-        stderr.contains("the verifier depends on random value `r`"),
+        stderr.contains("The verifier depends on random value `r`"),
         "{stderr}"
     );
     assert!(stderr.contains("random_leak.zippel:2:9"), "{stderr}");
 }
 
 // A `proto` without `verify` isn't reported by `zippel-check` yet: `check_proto_verify`
-// (E0013, `lang::semantic::verify`) exists but isn't wired into `UModule::parse` — see the TODO
-// in `lang/src/ast/module.rs`. Once it is, add back a `proto_without_verify_is_reported` test
-// here exercising it end-to-end through the `zippel-check` binary.
+// (E0013, `lang::semantic::verify`) exists but isn't enabled — see the TODO in
+// `CModule::typecheck` (`lang/src/ast/module.rs`). Once it is, add back a
+// `proto_without_verify_is_reported` test here exercising it end-to-end through the
+// `zippel-check` binary.
 
 #[test]
 fn non_polynomial_fun_is_reported_at_the_operation() {

@@ -1,0 +1,10 @@
+---
+source: lang/tests/concretize.rs
+---
+error: Cannot evaluate a size expression: Underflow by subtraction: N - 1
+   ╭─[ test.zippel:2:4 ]
+   │
+ 2 │ fn sum<N: 0..3, F: Field>(instance a: [F; N]) -> F {
+   │    ─┬─  
+   │     ╰─── while concretizing sizes for this declaration
+───╯

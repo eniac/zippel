@@ -1,4 +1,4 @@
-use share::{DocAllocator, DocBuilder, Pretty, Set};
+use share::Set;
 use std::fmt;
 
 /// Generate a new identifier not in the set
@@ -18,21 +18,6 @@ pub struct Tid(pub String);
 pub trait TidSubst: Sized {
     /// Rewrite every occurrence of the type identifier `from` to `to`.
     fn tid_subst(&mut self, from: &Tid, to: &Tid);
-}
-
-impl<'a, D, A> Pretty<'a, D, A> for Tid
-where
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.text(self.0.to_string())
-    }
-
-    fn is_nil(&self) -> bool {
-        self.0.is_empty()
-    }
 }
 
 impl fmt::Display for Tid {
@@ -109,20 +94,6 @@ impl Tid {
 /// Expression variable identifier
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct Vid(pub String);
-
-impl<'a, D, A> Pretty<'a, D, A> for Vid
-where
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.text(self.0.to_string())
-    }
-    fn is_nil(&self) -> bool {
-        self.0.is_empty()
-    }
-}
 
 impl fmt::Display for Vid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

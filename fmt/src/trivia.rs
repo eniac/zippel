@@ -56,7 +56,7 @@
 use crate::ctx::hardlines;
 use crate::style::Style;
 use lang::parser::Token;
-use share::{BoxAllocator, DocAllocator, DocBuilder};
+use pretty::{BoxAllocator, DocAllocator, DocBuilder};
 use std::ops::Range;
 
 const ALLOC: BoxAllocator = BoxAllocator;

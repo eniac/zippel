@@ -1,7 +1,5 @@
 use std::fmt;
 
-use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
-
 /// Names of the concrete `arkworks` element classes a source-level base type can denote.
 ///
 /// This is the surface-language spelling of the backend's element kinds; the IR-level
@@ -24,34 +22,16 @@ pub enum Ark {
     GT,
 }
 
-/// Pretty-printer for Ark
-impl<'a, D, A> Pretty<'a, D, A> for Ark
-where
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        match self {
-            Ark::Scalar => allocator.text("Scalar"),
-            Ark::G1 => allocator.text("G1"),
-            Ark::G2 => allocator.text("G2"),
-            Ark::G1Affine => allocator.text("G1Affine"),
-            Ark::G2Affine => allocator.text("G2Affine"),
-            Ark::GT => allocator.text("GT"),
-        }
-    }
-
-    fn is_nil(&self) -> bool {
-        false
-    }
-}
-
-impl<'a> fmt::Display for Ark {
+impl fmt::Display for Ark {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Ark as Pretty<'a, BoxAllocator, ()>>::pretty(*self, &BoxAllocator)
-            .1
-            .render_fmt(100, f)
+        f.write_str(match self {
+            Ark::Scalar => "Scalar",
+            Ark::G1 => "G1",
+            Ark::G2 => "G2",
+            Ark::G1Affine => "G1Affine",
+            Ark::G2Affine => "G2Affine",
+            Ark::GT => "GT",
+        })
     }
 }
 
@@ -71,7 +51,6 @@ mod tests {
         ];
         for (ark, expected) in cases {
             assert_eq!(ark.to_string(), expected);
-            assert!(!<Ark as Pretty<'_, BoxAllocator, ()>>::is_nil(&ark));
         }
     }
 }

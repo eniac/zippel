@@ -3,7 +3,6 @@ use thiserror::Error;
 
 use crate::ast::spanned::Spanned;
 use crate::id::Tid;
-use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 use share::{Ctx, Set};
 
 /// A symbolic size expression appearing in source-level types, such as the
@@ -65,6 +64,18 @@ impl Size {
     /// Right-associative? (Only Pow; all other size binops are left-assoc.)
     pub fn is_right_assoc(&self) -> bool {
         matches!(self, Size::Pow(_, _))
+    }
+
+    /// Whether `lhs` needs parentheses as the left operand of `self` to parse back unchanged.
+    pub fn lhs_needs_paren(&self, lhs: &Size) -> bool {
+        let (parent, child) = (self.precedence(), lhs.precedence());
+        child < parent || (child == parent && self.is_right_assoc())
+    }
+
+    /// Whether `rhs` needs parentheses as the right operand of `self` to parse back unchanged.
+    pub fn rhs_needs_paren(&self, rhs: &Size) -> bool {
+        let (parent, child) = (self.precedence(), rhs.precedence());
+        child < parent || (child == parent && !self.is_right_assoc())
     }
 
     /// The size-type variables this expression depends on.
@@ -135,83 +146,29 @@ impl Size {
     }
 }
 
-//////////////////////////////////////////////////////////////////////////////////////////////
-/// Pretty printing and display for Size
-//////////////////////////////////////////////////////////////////////////////////////////////
-impl<'a, D, A> Pretty<'a, D, A> for Size
-where
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        fn pretty_child<'a, D, A>(
-            child: Size,
-            parent_prec: usize,
-            is_right: bool,
-            allocator: &'a D,
-        ) -> DocBuilder<'a, D, A>
-        where
-            D: DocAllocator<'a, A>,
-            D::Doc: Clone,
-            A: 'a + Clone,
-        {
-            let child_prec = child.precedence();
-            let need_parens = if child_prec < parent_prec {
-                true
-            } else if child_prec == parent_prec {
-                match parent_prec {
-                    1 => is_right,
-                    2 => is_right,
-                    3 => !is_right,
-                    _ => false,
-                }
-            } else {
-                false
-            };
-
-            if need_parens {
-                allocator
-                    .text("(")
-                    .append(child.pretty(allocator))
-                    .append(allocator.text(")"))
-            } else {
-                child.pretty(allocator)
-            }
-        }
-
-        match self {
-            Size::Var(id) => id.pretty(allocator),
-            Size::Lit(n) => allocator.text(n.to_string()),
-            Size::Add(a, b) => pretty_child(a.node.clone(), 1, false, allocator)
-                .append(allocator.text(" + "))
-                .append(pretty_child(b.node.clone(), 1, true, allocator)),
-            Size::Sub(a, b) => pretty_child(a.node.clone(), 1, false, allocator)
-                .append(allocator.text(" - "))
-                .append(pretty_child(b.node.clone(), 1, true, allocator)),
-            Size::Mul(a, b) => pretty_child(a.node.clone(), 2, false, allocator)
-                .append(allocator.text(" * "))
-                .append(pretty_child(b.node.clone(), 2, true, allocator)),
-            Size::Div(a, b) => pretty_child(a.node.clone(), 2, false, allocator)
-                .append(allocator.text(" / "))
-                .append(pretty_child(b.node.clone(), 2, true, allocator)),
-            Size::Pow(a, b) => pretty_child(a.node.clone(), 3, false, allocator)
-                .append(allocator.text(" ^ "))
-                .append(pretty_child(b.node.clone(), 3, true, allocator)),
-        }
-    }
-
-    fn is_nil(&self) -> bool {
-        false
-    }
-}
-
-/// Display instance calls the pretty printer
+/// Infix, parenthesizing an operand only where needed to parse back to the same tree.
 impl fmt::Display for Size {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Size as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-            .1
-            .render_fmt(100, f)
+        let (a, op, b) = match self {
+            Size::Var(id) => return write!(f, "{id}"),
+            Size::Lit(n) => return write!(f, "{n}"),
+            Size::Add(a, b) => (a, "+", b),
+            Size::Sub(a, b) => (a, "-", b),
+            Size::Mul(a, b) => (a, "*", b),
+            Size::Div(a, b) => (a, "/", b),
+            Size::Pow(a, b) => (a, "^", b),
+        };
+        if self.lhs_needs_paren(&a.node) {
+            write!(f, "({})", a.node)?;
+        } else {
+            write!(f, "{}", a.node)?;
+        }
+        write!(f, " {op} ")?;
+        if self.rhs_needs_paren(&b.node) {
+            write!(f, "({})", b.node)
+        } else {
+            write!(f, "{}", b.node)
+        }
     }
 }
 
@@ -420,12 +377,5 @@ mod tests {
         let mut ctx = Ctx::new();
         ctx.insert(&Tid::from("N"), &4);
         assert_eq!(size.eval(&ctx).unwrap(), 48); // 2^4 * 3 = 16 * 3 = 48
-    }
-
-    // Test is_nil
-    #[test]
-    fn test_is_nil() {
-        let size = Size::Lit(42);
-        assert!(!<Size as Pretty<'_, BoxAllocator, ()>>::is_nil(&size));
     }
 }

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+pretty = "0.12.3"
 lang = { path = "../lang" }
 share = { path = "../share" }
 similar = "2.7"

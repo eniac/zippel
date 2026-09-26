@@ -188,6 +188,7 @@ impl QualifierPropagation {
             ),
             vctx: dag.vctx.clone(),
             transcript_vars: dag.transcript_vars.clone(),
+            sources: dag.sources.clone(),
         }
     }
 }

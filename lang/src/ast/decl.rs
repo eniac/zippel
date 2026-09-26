@@ -13,7 +13,7 @@ use crate::typ::{
     CKind, CTyp, GTyp, Range, RangeError, RangeTraversal, SizeSubsts, TypeInline, TypeVars,
 };
 use share::traversal::ToTraversal1;
-use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty, Set};
+use share::{Ctx, Set};
 
 /// Body of Zippel declarations (protocols, functions, and type aliases).
 /// Specs are given either by an explicit relation on inputs (precondition)
@@ -318,7 +318,7 @@ impl CBody {
                         &sig.name,
                         TypeError::located(
                             &relation.span,
-                            TypeError::relation_not_bool(&rel_typ, &relation.node),
+                            TypeError::relation_not_bool(&kctx, &rel_typ, &relation.node),
                         ),
                     ));
                 }
@@ -326,11 +326,12 @@ impl CBody {
                 if let Some(body) = body {
                     let br = body.infer(&kctx, fctx, &vctx)?;
                     if br != CTyp::Unit {
+                        let last = crate::typ::infer::tail(body);
                         return Err(TypeError::decl(
                             &sig.name,
                             TypeError::located(
-                                &body.span,
-                                TypeError::unit(&kctx, &vctx, &body.node),
+                                &last.span,
+                                TypeError::unit(&kctx, &vctx, &last.node, &br),
                             ),
                         ));
                     }
@@ -338,18 +339,18 @@ impl CBody {
                 Ok(())
             }
             Body::Func { body } => {
-                let ret = sig.ret.as_ref().map(|r| &r.node).unwrap_or(&CTyp::Unit);
+                // The declared return type, at its annotation (`Unit`, unlocated, if omitted).
+                let ret = sig
+                    .ret
+                    .clone()
+                    .unwrap_or_else(|| Spanned::dummy(CTyp::Unit));
                 match body {
                     Some(body) => {
                         let br = body.infer(&kctx, fctx, &vctx)?;
-                        // Use lub_equ rather than strict structural equality so that
-                        // a body inferred as `Fin<n>` (e.g. a bare numeric literal)
-                        // coerces to a `Base(F)` return type via the scalar
-                        // fallback in `CTyp::lub_equ` (`lang/src/typ/lub.rs:510`).
-                        // Same lift the binary operator arms apply via `lub_add`
-                        // (`lang/src/typ/lub.rs:597-613`), now extended to the
-                        // return-type check.
-                        match CTyp::lub_equ(&br, ret, &kctx) {
+                        // `lub_equ`, not structural equality, so a body of type `Fin<n>`
+                        // (e.g. a numeric literal) coerces to a scalar return type, as the
+                        // binary operators allow.
+                        match CTyp::lub_equ(&br, &ret.node, &kctx) {
                             Ok(_) => Ok(()),
                             Err(_) => Err(TypeError::decl(
                                 &sig.name,
@@ -360,7 +361,7 @@ impl CBody {
                                         &vctx,
                                         &body.node,
                                         &sig.name.node,
-                                        ret,
+                                        &ret,
                                         &br,
                                     ),
                                 ),
@@ -369,7 +370,7 @@ impl CBody {
                     }
                     None => {
                         // Empty body `{}` is semantically Unit.
-                        match CTyp::lub_equ(&CTyp::Unit, ret, &kctx) {
+                        match CTyp::lub_equ(&CTyp::Unit, &ret.node, &kctx) {
                             Ok(_) => Ok(()),
                             Err(_) => Err(TypeError::decl(
                                 &sig.name,
@@ -380,7 +381,7 @@ impl CBody {
                                         &vctx,
                                         &Spanned::new(Exp::Unit, 0..0),
                                         &sig.name.node,
-                                        ret,
+                                        &ret,
                                         &CTyp::Unit,
                                     ),
                                 ),
@@ -466,119 +467,63 @@ where
     }
 }
 
-/// Pretty printer instance for Body
-impl<'a, D, N, A> Pretty<'a, D, A> for Body<N>
-where
-    D: DocAllocator<'a, A>,
-    N: Clone + Pretty<'a, D, A> + 'a,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
+/// `where relation { body }` for a protocol, `{ body }` for a function. `{}` prints on one
+/// line; `{:#}` puts the body's statements on their own lines, indented.
+impl<N: fmt::Display> fmt::Display for Body<N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let block = |f: &mut fmt::Formatter<'_>, body: &Option<Spanned<Exp<N>>>| match body {
+            None => f.write_str("{}"),
+            Some(body) if f.alternate() => {
+                let lines = format!("{:#}", body.node).replace('\n', "\n  ");
+                write!(f, "{{\n  {lines}\n}}")
+            }
+            Some(body) => write!(f, "{{ {} }}", body.node),
+        };
         match self {
             Body::Proto { relation, body } => {
-                let body_doc = match body {
-                    Some(body) => allocator.concat([
-                        allocator.text(" {"),
-                        allocator.line(),
-                        body.pretty(allocator).group().indent(2),
-                        allocator.line(),
-                        allocator.text("}"),
-                    ]),
-                    None => allocator.text(" {}"),
-                };
-                allocator.concat([
-                    allocator.text(" where "),
-                    relation.pretty(allocator),
-                    body_doc,
-                ])
+                if f.alternate() {
+                    write!(f, "where {:#} ", relation.node)?;
+                } else {
+                    write!(f, "where {} ", relation.node)?;
+                }
+                block(f, body)
             }
-            Body::Func { body } => match body {
-                Some(body) => allocator.concat([
-                    allocator.text("{"),
-                    allocator.line(),
-                    body.pretty(allocator).group().indent(2),
-                    allocator.line(),
-                    allocator.text("}"),
-                ]),
-                None => allocator.text("{}"),
-            },
-            Body::TypeAlias => allocator.nil(),
+            Body::Func { body } => block(f, body),
+            Body::TypeAlias => Ok(()),
         }
     }
-
-    fn is_nil(&self) -> bool {
-        false
-    }
 }
 
-/// Pretty printer instance
-impl<'a, D, N, A> Pretty<'a, D, A> for Decl<N>
-where
-    D: DocAllocator<'a, A>,
-    N: Clone + Pretty<'a, D, A> + 'a,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        let Decl { sig, body, .. } = self;
-        allocator.concat([
-            if body.is_proto() {
-                allocator.text("proto")
-            } else {
-                allocator.text("fn")
-            },
-            allocator.space(),
-            sig.pretty(allocator),
-            allocator.space(),
-            body.pretty(allocator),
-        ])
-    }
-
-    fn is_nil(&self) -> bool {
-        false
-    }
-}
-
-/// Display instance calls the pretty printer
-impl<'a, N> fmt::Display for Decl<N>
-where
-    N: Clone + Pretty<'a, BoxAllocator, ()> + 'a,
-{
+/// Source syntax; `{:#}` prints the body on several lines.
+impl<N: fmt::Display> fmt::Display for Decl<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Decl<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-            .1
-            .render_fmt(100, f)
-    }
-}
-/// Pretty instance for decls
-impl<'a, D, N, A> Pretty<'a, D, A> for Decls<N>
-where
-    D: DocAllocator<'a, A>,
-    N: Clone + Pretty<'a, D, A> + 'a,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.intersperse(
-            self.0.into_iter().map(|d| d.pretty(allocator)),
-            allocator.hardline(),
-        )
-    }
-
-    fn is_nil(&self) -> bool {
-        self.0.is_empty()
+        write_decl(f, &self.sig, &self.body)
     }
 }
 
-/// Display instance calls the pretty printer
-impl<'a, N> fmt::Display for Decls<N>
-where
-    N: Clone + Pretty<'a, BoxAllocator, ()> + 'a,
-{
+/// One declaration per line with `{:#}`; space-separated with `{}`.
+impl<N: fmt::Display> fmt::Display for Decls<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Decls<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-            .1
-            .render_fmt(100, f)
+        for (i, decl) in self.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str(if f.alternate() { "\n" } else { " " })?;
+            }
+            write_decl(f, &decl.sig, &decl.body)?;
+        }
+        Ok(())
+    }
+}
+
+/// `proto`/`fn`, the signature, and the body, in `f`'s one-line or multi-line mode.
+pub(crate) fn write_decl<N: fmt::Display>(
+    f: &mut fmt::Formatter<'_>,
+    sig: &Sig<N>,
+    body: &Body<N>,
+) -> fmt::Result {
+    let keyword = if body.is_proto() { "proto" } else { "fn" };
+    if f.alternate() {
+        write!(f, "{keyword} {sig} {body:#}")
+    } else {
+        write!(f, "{keyword} {sig} {body}")
     }
 }

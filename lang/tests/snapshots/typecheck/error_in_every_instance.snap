@@ -1,0 +1,16 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: Cannot add F (Field) and G (Group)
+   ╭─[ test.zippel:3:9 ]
+   │
+ 3 │     a[0] + g
+   │     ──┬──┬─┬  
+   │       │  ╰──── `+` is not defined for these operands
+   │       │  │ │  
+   │       ╰─────── `a[0]` has type F (Field)
+   │          │ │  
+   │          │ ╰── `g` has type G (Group)
+   │          │    
+   │          ╰──── note: in the instance `f<F: Field, G: Group>(instance a: [F; 1], instance g: G) -> F`
+───╯

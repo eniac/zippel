@@ -1,0 +1,14 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: Cannot add F (Scalar<G>) and G (Group)
+   ╭─[ test.zippel:4:13 ]
+   │
+ 4 │     verify(x + g == u)
+   │            ┬─┬─┬  
+   │            │ ╰──── `+` is not defined for these operands
+   │            │   │  
+   │            ╰────── `x` has type F (Scalar<G>)
+   │                │  
+   │                ╰── `g` has type G (Group)
+───╯

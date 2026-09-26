@@ -7,7 +7,7 @@ use lang::ast::{Size, Spanned};
 use lang::id::Tid;
 use lang::parser::Token;
 use lang::typ::{Distribution, Qualifier};
-use share::DocAllocator;
+use pretty::DocAllocator;
 
 use crate::ctx::{ALLOC, Doc, hardlines};
 use crate::delim_list::{DelimList, take_separator_gap_split};

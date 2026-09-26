@@ -123,11 +123,11 @@ rejects a `verify` that depends on a `witness`, an `extra` argument, or
 a `random` value, since the verifier never sees those. Checking
 happens at concrete sizes: set a `Size` parameter with
 `--size NAME=VALUE` (repeatable). Parameters you leave unset default
-to the smallest value that keeps every range non-empty, which may be
-too small for some protocols (for example, one that indexes `v[1]`
+to the smallest values (by sum, each at most 16) that keep every range
+non-empty; if none exist, `zippel-check` reports an error asking for
+`--size`. Defaults may be too small for some protocols (for example, one that indexes `v[1]`
 needs `N >= 2`). A pass only covers the sizes printed on the status
-line. Add `--verbose` to see the full typing context of each type
-error.
+line.
 
 ### 5. Define the harness
 

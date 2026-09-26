@@ -7,7 +7,7 @@ use lang::typ::lub::Lub;
 
 use hashconsing::{HConsed, HConsign, HashConsign};
 use petgraph::graph::NodeIndex;
-use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
+use share::Ctx;
 use std::fmt;
 use std::ops::{
     Add, AddAssign, BitXor, BitXorAssign, Div, DivAssign, Mul, MulAssign, Rem, RemAssign, Sub,
@@ -1255,27 +1255,10 @@ impl<C: HasOpFactory> GOp<C> {
     }
 }
 
-/// Pretty-printer for Operations
-impl<'a, D, A> Pretty<'a, D, A> for Ref
-where
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.text(format!("n{}", self.0.index()))
-    }
-
-    fn is_nil(&self) -> bool {
-        false
-    }
-}
-
+/// `n<index>`
 impl fmt::Display for Ref {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Ref as Pretty<'_, BoxAllocator, ()>>::pretty(*self, &BoxAllocator)
-            .1
-            .render_fmt(100, f)
+        write!(f, "n{}", self.0.index())
     }
 }
 
@@ -1375,202 +1358,73 @@ impl<C: HasOpFactory> BitXor for GOp<C> {
     }
 }
 
-/// Pretty-printer for Operations
-impl<'a, D, C, A, R> Pretty<'a, D, A> for Op<C, R>
-where
-    D: DocAllocator<'a, A>,
-    C: ArkConfig,
-    R: Pretty<'a, D, A>,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        match self {
-            Op::Value(v) => allocator.text(format!("{}", v)),
-            Op::Bin(op, a, b, _) => {
-                let a_op = a.get().clone();
-                let b_op = b.get().clone();
-                let needs_left_paren =
-                    matches!(&a_op, Op::Bin(op1, _, _, _) if op1.precedence() < op.precedence());
-                let needs_right_paren =
-                    matches!(&b_op, Op::Bin(op2, _, _, _) if op2.precedence() < op.precedence());
-                if needs_left_paren {
-                    allocator.concat(vec![
-                        allocator.text("("),
-                        a_op.pretty(allocator),
-                        allocator.text(")"),
-                        allocator.text(format!("{}", op)),
-                        b_op.pretty(allocator),
-                    ])
-                } else if needs_right_paren {
-                    allocator.concat(vec![
-                        a_op.pretty(allocator),
-                        allocator.text(format!("{}", op)),
-                        allocator.text("("),
-                        b_op.pretty(allocator),
-                        allocator.text(")"),
-                    ])
-                } else {
-                    allocator.concat(vec![
-                        a_op.pretty(allocator),
-                        allocator.text(format!("{}", op)),
-                        b_op.pretty(allocator),
-                    ])
-                }
-            }
-            Op::Fft(v) => allocator.concat([
-                allocator.text("(fft "),
-                v.get().clone().pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Op::Ifft(v) => allocator.concat([
-                allocator.text("(ifft "),
-                v.get().clone().pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Op::Poly(v) => allocator.concat([
-                allocator.text("(poly "),
-                v.get().clone().pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Op::Coef(v) => allocator.concat([
-                allocator.text("(coef "),
-                v.get().clone().pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Op::Evaluate(p, None, None) => allocator.concat([
-                allocator.text("(eval "),
-                p.get().clone().pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Op::Evaluate(p, None, Some(x)) => allocator.concat([
-                allocator.text("(eval "),
-                p.get().clone().pretty(allocator),
-                allocator.text(", "),
-                x.get().clone().pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Op::Evaluate(p, Some(range), Some(fixed)) => allocator.concat([
-                allocator.text("(eval<"),
-                range.pretty(allocator),
-                allocator.text("> "),
-                p.get().clone().pretty(allocator),
-                allocator.text(", "),
-                fixed.get().clone().pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Op::Evaluate(p, Some(range), None) => allocator.concat([
-                allocator.text("(eval<"),
-                range.pretty(allocator),
-                allocator.text("> "),
-                p.get().clone().pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Op::LoopParam(i, t) => allocator.text(format!("loop_param#{}: {}", i, t)),
-            Op::Map(d, b) => allocator.concat([
-                allocator.text("(map "),
-                d.get().clone().pretty(allocator),
-                allocator.text(" "),
-                b.get().clone().pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Op::ReduceMap(op, d, b) => allocator.concat([
-                allocator.text(format!("(reduce_map {} ", op)),
-                d.get().clone().pretty(allocator),
-                allocator.text(", "),
-                b.get().clone().pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Op::Mle(v) => allocator.concat([
-                allocator.text("(mle "),
-                v.get().clone().pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Op::Proj(v, field, _) => allocator.concat([
-                allocator.text("(proj "),
-                v.get().clone().pretty(allocator),
-                allocator.text(" ."),
-                allocator.text(field.clone()),
-                allocator.text(")"),
-            ]),
-            Op::Pair(a, b, _) => allocator.concat([
-                allocator.text("(pair "),
-                a.get().clone().pretty(allocator),
-                allocator.text(", "),
-                b.get().clone().pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Op::Interpolate(points, evals) => allocator.concat([
-                allocator.text("(interpolate "),
-                points.get().clone().pretty(allocator),
-                allocator.text(", "),
-                evals.get().clone().pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Op::Assert(op) => allocator.concat([
-                allocator.text("(assert "),
-                op.get().clone().pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Op::Verify(op) => allocator.concat([
-                allocator.text("(verify "),
-                op.get().clone().pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Op::Challenge(t, true) => allocator.text(format!("challenge<{}*>", t)),
-            Op::Random(t, true) => allocator.text(format!("random<{}*>", t)),
-            Op::Challenge(t, false) => allocator.text(format!("challenge<{}>", t)),
-            Op::Random(t, false) => allocator.text(format!("random<{}>", t)),
-            Op::Ram(v, r) => allocator.concat([
-                v.get().clone().pretty(allocator),
-                allocator.text("["),
-                r.get().clone().pretty(allocator),
-                allocator.text("]"),
-            ]),
-            Op::Vec(vs) => allocator.concat([
-                allocator.text("["),
-                allocator.intersperse(
-                    vs.into_iter().map(|v| v.get().clone().pretty(allocator)),
-                    ", ",
-                ),
-                allocator.text("]"),
-            ]),
-            Op::Record(fields) => {
-                let mut field_docs = Vec::new();
-                for (name, op) in fields {
-                    field_docs.push(allocator.concat([
-                        allocator.text(name.clone()),
-                        allocator.text(": "),
-                        op.get().clone().pretty(allocator),
-                    ]));
-                }
-                allocator.concat([
-                    allocator.text("{|"),
-                    allocator.intersperse(field_docs, ", "),
-                    allocator.text("|}"),
-                ])
-            }
-            Op::Ref(n, _) => n.pretty(allocator),
-            Op::Reduce(op, v) => allocator.concat([
-                allocator.text("(reduce "),
-                allocator.text(format!("{}", op)),
-                allocator.text(", "),
-                v.get().clone().pretty(allocator),
-                allocator.text(")"),
-            ]),
-        }
-    }
-
-    fn is_nil(&self) -> bool {
-        false
-    }
-}
-
-impl<'a, C: ArkConfig, R: Pretty<'a, BoxAllocator, ()> + Clone> fmt::Display for Op<C, R> {
+/// S-expression-like IR syntax, e.g. `(eval n3, n4)`; binary operators are infix.
+impl<C: ArkConfig, R: fmt::Display> fmt::Display for Op<C, R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Op<C, R> as Pretty<'a, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-            .1
-            .render_fmt(100, f)
+        match self {
+            Op::Value(v) => write!(f, "{v}"),
+            // Dot products are written as a call, as in the source language.
+            Op::Bin(BinOp::Dot, a, b, _) => write!(f, "dot({}, {})", a.get(), b.get()),
+            Op::Bin(op, a, b, _) => {
+                let (a, b) = (a.get(), b.get());
+                let looser = |child: &Op<C, Ref>| matches!(child, Op::Bin(child_op, _, _, _) if child_op.precedence() < op.precedence());
+                if looser(a) {
+                    write!(f, "({a}) {op} {b}")
+                } else if looser(b) {
+                    write!(f, "{a} {op} ({b})")
+                } else {
+                    write!(f, "{a} {op} {b}")
+                }
+            }
+            Op::Fft(v) => write!(f, "(fft {})", v.get()),
+            Op::Ifft(v) => write!(f, "(ifft {})", v.get()),
+            Op::Poly(v) => write!(f, "(poly {})", v.get()),
+            Op::Coef(v) => write!(f, "(coef {})", v.get()),
+            Op::Evaluate(p, None, None) => write!(f, "(eval {})", p.get()),
+            Op::Evaluate(p, None, Some(x)) => write!(f, "(eval {}, {})", p.get(), x.get()),
+            Op::Evaluate(p, Some(range), Some(fixed)) => {
+                write!(f, "(eval<{range}> {}, {})", p.get(), fixed.get())
+            }
+            Op::Evaluate(p, Some(range), None) => write!(f, "(eval<{range}> {})", p.get()),
+            Op::LoopParam(i, t) => write!(f, "loop_param#{i}: {t}"),
+            Op::Map(d, b) => write!(f, "(map {} {})", d.get(), b.get()),
+            Op::ReduceMap(op, d, b) => write!(f, "(reduce_map {op} {}, {})", d.get(), b.get()),
+            Op::Mle(v) => write!(f, "(mle {})", v.get()),
+            Op::Proj(v, field, _) => write!(f, "(proj {} .{field})", v.get()),
+            Op::Pair(a, b, _) => write!(f, "(pair {}, {})", a.get(), b.get()),
+            Op::Interpolate(points, evals) => {
+                write!(f, "(interpolate {}, {})", points.get(), evals.get())
+            }
+            Op::Assert(op) => write!(f, "(assert {})", op.get()),
+            Op::Verify(op) => write!(f, "(verify {})", op.get()),
+            Op::Challenge(t, true) => write!(f, "challenge<{t}*>"),
+            Op::Random(t, true) => write!(f, "random<{t}*>"),
+            Op::Challenge(t, false) => write!(f, "challenge<{t}>"),
+            Op::Random(t, false) => write!(f, "random<{t}>"),
+            Op::Ram(v, r) => write!(f, "{}[{}]", v.get(), r.get()),
+            Op::Vec(vs) => {
+                f.write_str("[")?;
+                for (i, v) in vs.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{}", v.get())?;
+                }
+                f.write_str("]")
+            }
+            Op::Record(fields) => {
+                f.write_str("{|")?;
+                for (i, (name, op)) in fields.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{name}: {}", op.get())?;
+                }
+                f.write_str("|}")
+            }
+            Op::Ref(n, _) => write!(f, "{n}"),
+            Op::Reduce(op, v) => write!(f, "(reduce {op}, {})", v.get()),
+        }
     }
 }
 

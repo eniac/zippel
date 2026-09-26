@@ -14,7 +14,7 @@ use lang::ast::exp::{BinOp, Exp, Exps};
 use lang::ast::{Size, Spanned};
 use lang::id::Tid;
 use lang::parser::Token;
-use share::DocAllocator;
+use pretty::DocAllocator;
 
 use crate::ctx::{ALLOC, Doc, parenthesize};
 use crate::delim_list::{DelimList, take_separator_gap_split};
@@ -44,7 +44,7 @@ fn format_exp(
         Exp::Neg(inner) => {
             let minus_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Minus));
             let (inner_gap, inner_doc) = format_exp(inner, cursor, style);
-            let inner = parenthesize(inner_doc, neg_needs_paren(&inner.node));
+            let inner = parenthesize(inner_doc, inner.node.needs_paren_under_neg());
             (
                 minus_gap,
                 ALLOC.concat([ALLOC.text("-"), gap_none(inner_gap, style), inner.group()]),
@@ -91,14 +91,14 @@ fn format_exp(
             // Return its gap to the caller so the caller can apply
             // appropriate gap formatting (e.g. gap_none after `[`).
             let (first_gap, first_doc) = format_exp(chain[0], cursor, style);
-            let first = parenthesize(first_doc, lhs_needs_paren(*op, &chain[0].node));
+            let first = parenthesize(first_doc, op.lhs_needs_paren(&chain[0].node));
             parts.push(first);
 
             // Remaining operands — each preceded by `op`.
             for operand in &chain[1..] {
                 let op_gap = cursor.advance_to_token(end, |token| matches_binop(*op, token));
                 let (operand_gap, operand_doc) = format_exp(operand, cursor, style);
-                let operand = parenthesize(operand_doc, rhs_needs_paren(*op, &operand.node));
+                let operand = parenthesize(operand_doc, op.rhs_needs_paren(&operand.node));
                 // Line comments need a hardline after (forces break);
                 // inline block comments need nil (line() before op
                 // provides the space). When hardline is used, suppress
@@ -920,68 +920,4 @@ fn binop_symbol(op: BinOp) -> &'static str {
         BinOp::Equ => "==",
         BinOp::And => "&&",
     }
-}
-
-fn neg_needs_paren(exp: &Exp<Size>) -> bool {
-    // Neg has prefix precedence 4. A child Bin with precedence < 4
-    // (And/Equ/Add/Sub/Mul/Div/Rem) binds looser than Neg, so `-a + b`
-    // re-parses as `(-a) + b` — parens needed to preserve `Neg(Add(a, b))`.
-    // A child Bin with precedence >= 4 (Concat/Pow) binds at least as
-    // tight, so `-a ++ b` re-parses as `-(a ++ b)` — no parens needed.
-    matches!(exp, Exp::Bin(op, _, _) if op.precedence() < 4)
-}
-
-/// Does the lhs of a binary op need parentheses?
-fn lhs_needs_paren(op: BinOp, lhs: &Exp<Size>) -> bool {
-    // Neg has prefix precedence 4. As a Bin lhs, `-x op y` re-parses as
-    // `(-x) op y` when op.precedence() < 4 (Neg binds tighter), but as
-    // `-(x op y)` when op.precedence() >= 4 (op binds at least as tight).
-    if matches!(lhs, Exp::Neg(_)) {
-        return op.precedence() >= 4;
-    }
-    // Range as a Bin child needs parens when the operator is also a
-    // size_ty operator (Add/Sub/Mul/Div/Pow) — the range parser
-    // greedily consumes size_ty operators into the bounds. Rem and
-    // Concat are not size_ty operators, so no parens needed.
-    if matches!(lhs, Exp::Range(_)) {
-        return range_needs_paren_in_bin(op);
-    }
-    let parent_prec = op.precedence();
-    let right_assoc = op.is_right_assoc();
-    matches!(lhs, Exp::Bin(child_op, _, _)
-        if child_op.precedence() < parent_prec
-            || (child_op.precedence() == parent_prec && right_assoc))
-}
-
-/// Does the rhs of a binary op need parentheses?
-fn rhs_needs_paren(op: BinOp, rhs: &Exp<Size>) -> bool {
-    // Neg as a Bin rhs never needs parens — `x op -y` always re-parses
-    // as `op(x, Neg(y))` because the pratt parser allows prefix minus
-    // in operand positions regardless of binding precedence.
-    if matches!(rhs, Exp::Neg(_)) {
-        return false;
-    }
-    // Range as a Bin rhs — same rule as lhs: only size_ty operators
-    // cause the range parser to greedily consume into bounds.
-    if matches!(rhs, Exp::Range(_)) {
-        return range_needs_paren_in_bin(op);
-    }
-    let parent_prec = op.precedence();
-    let right_assoc = op.is_right_assoc();
-    matches!(rhs, Exp::Bin(child_op, _, _)
-        if child_op.precedence() < parent_prec
-            || (child_op.precedence() == parent_prec && !right_assoc))
-}
-
-/// Whether a Range child of a BinOp needs parens.
-///
-/// The range parser uses `size_ty_parser` for its bounds, which handles
-/// Add/Sub/Mul/Div/Pow. For those operators, `0..n op m` re-parses with
-/// `op` consumed into the bound. Rem and Concat are not size_ty
-/// operators, so the range parser stops and the Bin applies correctly.
-fn range_needs_paren_in_bin(op: BinOp) -> bool {
-    matches!(
-        op,
-        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow
-    )
 }

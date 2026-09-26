@@ -1,0 +1,12 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: Index `5` is out of bounds for a vector of length 2
+   ╭─[ test.zippel:3:14 ]
+   │
+ 3 │     verify(a[5] == a[0])
+   │            ┬ ┬  
+   │            │ ╰── index `5`
+   │            │    
+   │            ╰──── `a` has length 2
+───╯
