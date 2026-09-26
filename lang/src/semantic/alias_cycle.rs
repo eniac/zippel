@@ -29,13 +29,13 @@ pub fn check_type_alias_cycles(decls: &[Spanned<UDecl>]) -> Vec<Diagnostic> {
     // Collect type aliases: name → (aliased type, span)
     let mut type_ctx: Ctx<Tid, (UTyp, std::ops::Range<usize>)> = Ctx::new();
     for d in decls {
-        if d.node.body.is_type_alias() {
-            if let Some(ret) = &d.node.sig.ret {
-                type_ctx.insert(
-                    &Tid::from(d.node.sig.name.node.0.as_str()),
-                    &(ret.node.clone(), ret.span.clone()),
-                );
-            }
+        if d.node.body.is_type_alias()
+            && let Some(ret) = &d.node.sig.ret
+        {
+            type_ctx.insert(
+                &Tid::from(d.node.sig.name.node.0.as_str()),
+                &(ret.node.clone(), ret.span.clone()),
+            );
         }
     }
 
@@ -91,10 +91,10 @@ fn detect_cycle(
 
     if let Some((typ, _)) = type_ctx.get(node) {
         for dep in type_dependencies(typ) {
-            if type_ctx.contains(&dep) {
-                if let Some(cycle) = detect_cycle(&dep, type_ctx, path, visited) {
-                    return Some(cycle);
-                }
+            if type_ctx.contains(&dep)
+                && let Some(cycle) = detect_cycle(&dep, type_ctx, path, visited)
+            {
+                return Some(cycle);
             }
         }
     }

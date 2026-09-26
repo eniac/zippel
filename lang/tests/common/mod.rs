@@ -5,7 +5,7 @@
 //! suppresses the resulting warnings.
 
 use lang::ast::module::UModule;
-use lang::diagnostic::{render_diagnostic, Severity};
+use lang::diagnostic::{Severity, render_diagnostic};
 
 /// Render all diagnostics for a source string, sorted by span.
 /// `render_diagnostic` only colors output when stderr is a terminal, which it never is under

@@ -350,10 +350,10 @@ impl UModule {
         // Collect type aliases from type_decl declarations
         let mut type_ctx: Ctx<Tid, UTyp> = Ctx::new();
         for d in decls.iter() {
-            if d.node.body.is_type_alias() {
-                if let Some(ret) = &d.node.sig.ret {
-                    type_ctx.insert(&Tid::from(d.node.sig.name.node.0.as_str()), ret);
-                }
+            if d.node.body.is_type_alias()
+                && let Some(ret) = &d.node.sig.ret
+            {
+                type_ctx.insert(&Tid::from(d.node.sig.name.node.0.as_str()), ret);
             }
         }
 
@@ -536,11 +536,13 @@ fn from_decl_duplicate() {
         "   a[0]\n",
         "}"
     );
-    assert!(UModule::parse(ex)
-        .0
-        .unwrap()
-        .concretize(&Ctx::new())
-        .is_err());
+    assert!(
+        UModule::parse(ex)
+            .0
+            .unwrap()
+            .concretize(&Ctx::new())
+            .is_err()
+    );
 }
 
 #[test]
@@ -550,11 +552,13 @@ fn from_decl_underflow() {
         "    sum(a[0..2^(N-1)]) + sum(a[2^(N-1)..2^N])\n",
         "}"
     );
-    assert!(UModule::parse(ex)
-        .0
-        .unwrap()
-        .concretize(&Ctx::new())
-        .is_err());
+    assert!(
+        UModule::parse(ex)
+            .0
+            .unwrap()
+            .concretize(&Ctx::new())
+            .is_err()
+    );
 }
 
 #[test]

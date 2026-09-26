@@ -238,11 +238,7 @@ mod additional_tests {
     fn test_vec2_traversal2_error() {
         let v = vec![('a', 1), ('b', 2), ('c', 3)];
         let result = Vec2Traversal2::traverse(v, &mut |x| {
-            if x > 1 {
-                Err("Too large")
-            } else {
-                Ok(x)
-            }
+            if x > 1 { Err("Too large") } else { Ok(x) }
         });
         assert!(result.is_err());
     }
