@@ -1,0 +1,10 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: A protocol body must end in a statement such as `verify(...)`, but this has type F (Field)
+   ╭─[ test.zippel:4:5 ]
+   │
+ 4 │     a
+   │     ┬  
+   │     ╰── has type F (Field)
+───╯

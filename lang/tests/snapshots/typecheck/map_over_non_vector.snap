@@ -1,0 +1,10 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: A `for` comprehension must range over a non-empty vector, but this has type F (Field)
+   ╭─[ test.zippel:3:13 ]
+   │
+ 3 │     let v = [y for y in x];
+   │             ───────┬──────  
+   │                    ╰──────── ranges over F (Field)
+───╯

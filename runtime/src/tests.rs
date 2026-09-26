@@ -53,7 +53,7 @@ mod runtime_tests {
         "#;
         let m = parse_and_concretize(src, &Ctx::new());
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
-        let dag = gs.protocols()[0].clone().rename_inner_nodes();
+        let dag = gs.protocols()[0].clone();
 
         // Prover graph
         let (prover, _) = dag.get_prover();
@@ -161,7 +161,7 @@ mod runtime_tests {
         "#;
         let m = parse_and_concretize(src, &Ctx::new());
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
-        let dag = gs.protocols()[0].clone().rename_inner_nodes();
+        let dag = gs.protocols()[0].clone();
         let (prover, _) = dag.get_prover();
 
         // Omit 'b' in inputs to cause a MissingArg runtime error on verify(b == 999)

@@ -1,0 +1,13 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: Function `f` must return F (Scalar<G>), but its body has type G (Group)
+   ╭─[ test.zippel:3:5 ]
+   │
+ 2 │ fn f<G: Group, F: Scalar<G>>(instance g: G, instance x: F) -> F {
+   │                                                               ┬  
+   │                                                               ╰── `f` must return F (Scalar<G>)
+ 3 │     g * x
+   │     ──┬──  
+   │       ╰──── has type G (Group)
+───╯

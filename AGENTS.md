@@ -46,7 +46,7 @@ that examples and external users call into.
 | [`analyses/`](analyses) | Completeness (`completeness.rs`) and (generalized) special-soundness (`soundness.rs`) analyses, plus zero-knowledge/qualifier propagation (`knowledge.rs`, `qualifier.rs`). Encodes Graph IR as polynomial ideals (`ideal/`, `frontend/`) and checks ideal membership via a Gröbner-basis backend (`backend/`, including an optional Singular integration in `backend/singular.rs`). `extractor.rs` builds candidate knowledge extractors for the soundness check. |
 | [`share/`](share) | Small utilities shared across the workspace: a generic `Ctx` map keyed by identifiers (`context.rs`), tree traversal helpers (`traversal.rs`), pretty-printing (`pretty.rs`), macros (`macros.rs`). |
 | [`fmt/`](fmt) | `zippel-fmt`, the source formatter for `.zippel` files (binary in `fmt/src/bin/zippel-fmt.rs`). |
-| [`check/`](check) | `zippel-check`: every compile-time check, no harness or inputs. `lang::check` (`lang/src/check.rs`) parses, concretizes sizes, and type-checks; `check/src/lib.rs` then builds the Graph IR and projects prover/verifier exactly like `ZippelHandler::compile`, mapping graph errors back to source spans. `check/tests/examples.rs` runs it over every example; `EXAMPLE_SIZES` there lists the examples that need non-default sizes. |
+| [`check/`](check) | `zippel-check`: every compile-time check, no harness or inputs. A thin driver (`check/src/main.rs`) over the same stages and diagnostics as `ZippelHandler::compile`: `UModule::parse`, `UModule::concretize`, `CModule::typecheck`, and Graph IR construction/projection, with every error turned into a `Diagnostic` via `From` (`TypeError`, `ModuleError`, `GraphError`); it only adds default sizes (`UModule::minimal_sizes`). `check/tests/examples.rs` runs it over every example; `EXAMPLE_SIZES` there lists the examples that need non-default sizes. |
 | [`benchmarks/`](benchmarks) | Criterion-style benchmarks comparing Zippel-generated code against hand-optimized native/upstream baselines (`*_upstream/` subdirs) for protocols like Schnorr, KZG, IPA, Hyrax, Spartan, PST13, Pari. Not a default workspace member (see below). |
 | [`examples/`](examples) | 30+ protocol implementations. Each `examples/<name>/` has a `<name>.zippel` source file and a `main.rs` harness that compiles it against a concrete curve and runs prover/verifier/analyses. `examples/main.rs` is the single dispatch binary (`cargo zrun <name>`); `examples/common/analysis.rs` has shared harness helpers (`time_analysis!` macro, etc.). |
 | [`artifact/`](artifact) | Docker image and scripts (`artifact/scripts/`) to reproduce the paper's compilation/runtime benchmarks and completeness/soundness analysis results. |
@@ -88,7 +88,7 @@ cargo zrun kzg                    # run one, e.g. kzg, schnorr, spartan, ...
 cargo zrunr hyperplonk            # same, release build
 
 # run every compile-time check without a harness; unset Size params get minimal defaults
-cargo zcheck [--size N=2]... [--verbose] FILE...
+cargo zcheck [--size N=2]... FILE...
 
 cargo fmt --all -- --check              # Rust formatting
 cargo clippy --workspace --all-targets  # lints

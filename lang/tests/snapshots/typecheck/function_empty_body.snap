@@ -1,0 +1,10 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: Function `f` must return F (Field), but its body does not produce a value
+   ╭─[ test.zippel:2:34 ]
+   │
+ 2 │ fn f<F: Field>(instance a: F) -> F { }
+   │                                  ┬  
+   │                                  ╰── `f` must return F (Field)
+───╯

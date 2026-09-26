@@ -1,0 +1,12 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: Index `1` is out of bounds for a vector of length 1
+   ╭─[ test.zippel:2:56 ]
+   │
+ 2 │ proto p<F: Field, N: Size>(instance a: [F; N]) where a[1] == a[1] {
+   │                                                      ┬ ┬  
+   │                                                      │ ╰── index `1`
+   │                                                      │    
+   │                                                      ╰──── `a` has length 1
+───╯

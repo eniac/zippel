@@ -1018,7 +1018,7 @@ fn test_phase14_ram_uni_scalar_index_boundary() {
     assert!(
         matches!(
             e_overflow.infer(&KIND_CTX, &fctx, &vctx),
-            Err(TypeError::Ram(_, _, _, _, _, _))
+            Err(TypeError::Ram(..))
         ),
         "coef(p3)[4] is out of bounds (only 4 coefficients) and must be rejected",
     );
@@ -1051,7 +1051,7 @@ fn test_phase14_ram_uni_vector_index_boundary() {
     assert!(
         matches!(
             e_overflow.infer(&KIND_CTX, &fctx, &vctx),
-            Err(TypeError::Ram(_, _, _, _, _, _))
+            Err(TypeError::Ram(..))
         ),
         "coef(p3)[0..5] reaches an out-of-bounds index and must be rejected",
     );
@@ -1912,7 +1912,7 @@ fn test_proto_body_blames_body_not_relation() {
     // Under correct behavior, this should wrap the offending body expression CExp::Lit(5)
     assert!(matches!(
         err,
-        TypeError::Decl(_, TypeError::Unit(_, _, CExp::Lit(5)))
+        TypeError::Decl(_, TypeError::Unit(_, _, CExp::Lit(5), _))
     ));
 }
 

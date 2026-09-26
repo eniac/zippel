@@ -1,0 +1,12 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: No function named `duble`
+   ╭─[ test.zippel:4:12 ]
+   │
+ 4 │     verify(duble(a) == a)
+   │            ──┬──  
+   │              ╰──── `duble` is not defined in this scope
+   │              │    
+   │              ╰──── help: did you mean `double`?
+───╯

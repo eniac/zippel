@@ -2,7 +2,7 @@ use lang::ast::range::CRange;
 use lang::id::Tid;
 pub use lang::typ::lub::{Lub, LubError};
 use lang::typ::{CKind, CTyp, Nothing};
-use share::{Ctx, DocAllocator, DocBuilder, Pretty};
+use share::Ctx;
 use std::fmt;
 
 /// Binomial coefficient `C(n, k)`.
@@ -867,21 +867,6 @@ impl fmt::Display for ATyp {
             ATyp::Mle(n) => write!(f, "Mle<{}>", n),
             ATyp::VPoly(m, n) => write!(f, "VPoly<{}, {}>", m, n),
         }
-    }
-}
-
-impl<'a, D, A> Pretty<'a, D, A> for ATyp
-where
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.text(format!("{}", self))
-    }
-
-    fn is_nil(&self) -> bool {
-        false
     }
 }
 

@@ -1,0 +1,26 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: Function `f` must return F (Scalar<G>), but its body has type G (Group)
+   ╭─[ test.zippel:3:5 ]
+   │
+ 2 │ fn f<G: Group, F: Scalar<G>>(instance g: G, instance x: F) -> F {
+   │                                                               ┬  
+   │                                                               ╰── `f` must return F (Scalar<G>)
+ 3 │     g * x
+   │     ──┬──  
+   │       ╰──── has type G (Group)
+───╯
+
+---
+error: Cannot add F (Scalar<G>) and G (Group)
+   ╭─[ test.zippel:6:13 ]
+   │
+ 6 │     verify(x + g == g)
+   │            ┬─┬─┬  
+   │            │ ╰──── `+` is not defined for these operands
+   │            │   │  
+   │            ╰────── `x` has type F (Scalar<G>)
+   │                │  
+   │                ╰── `g` has type G (Group)
+───╯

@@ -2,7 +2,7 @@
 
 use lang::ast::{Range, Size, Spanned};
 use lang::parser::Token;
-use share::DocAllocator;
+use pretty::DocAllocator;
 
 use crate::ctx::{ALLOC, Doc, parenthesize};
 use crate::style::Style;
@@ -52,10 +52,10 @@ fn format_size_binary(
 ) -> (TriviaGap, Doc<'static>) {
     let op = size_op_str(parent);
     let (lhs_gap, lhs_doc) = format_size(&lhs.node, cursor, lhs.span.end, style);
-    let lhs = parenthesize(lhs_doc, size_lhs_needs_paren(parent, &lhs.node));
+    let lhs = parenthesize(lhs_doc, parent.lhs_needs_paren(&lhs.node));
     let op_gap = cursor.advance_to_token(end, |token| matches_size_op(op, token));
     let (rhs_gap, rhs_doc) = format_size(&rhs.node, cursor, rhs.span.end, style);
-    let rhs = parenthesize(rhs_doc, size_rhs_needs_paren(parent, &rhs.node));
+    let rhs = parenthesize(rhs_doc, parent.rhs_needs_paren(&rhs.node));
 
     let doc = ALLOC.concat([
         lhs,
@@ -139,18 +139,4 @@ fn matches_size_op(op: &str, token: &Token) -> bool {
         "^" => matches!(token, Token::Caret),
         _ => false,
     }
-}
-
-fn size_lhs_needs_paren(parent: &Size, lhs: &Size) -> bool {
-    let parent_prec = parent.precedence();
-    let right_assoc = parent.is_right_assoc();
-    let child = lhs.precedence();
-    child < parent_prec || (child == parent_prec && right_assoc)
-}
-
-fn size_rhs_needs_paren(parent: &Size, rhs: &Size) -> bool {
-    let parent_prec = parent.precedence();
-    let right_assoc = parent.is_right_assoc();
-    let child = rhs.precedence();
-    child < parent_prec || (child == parent_prec && !right_assoc)
 }

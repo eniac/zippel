@@ -4,7 +4,6 @@ use std::fmt;
 use std::hash::Hash;
 use std::ops::Index;
 
-use crate::pretty::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 use crate::traversal::Traversal;
 
 /// General ordered map context backed by im::OrdMap for O(1) structural-sharing clones
@@ -48,38 +47,14 @@ impl<K: Ord + fmt::Debug, V: fmt::Debug> fmt::Debug for Ctx<K, V> {
     }
 }
 
-/// Pretty printer instance for Ctx
-impl<'a, D, A, K, V> Pretty<'a, D, A> for Ctx<K, V>
-where
-    K: Ord + Clone + Pretty<'a, D, A>,
-    V: Clone + Pretty<'a, D, A>,
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.concat([
-            allocator.text("{"),
-            allocator.hardline(),
-            allocator
-                .intersperse(
-                    self.0.iter().map(|(k, v)| {
-                        k.clone()
-                            .pretty(allocator)
-                            .append(allocator.text(": "))
-                            .append(v.clone().pretty(allocator))
-                    }),
-                    allocator.hardline(),
-                )
-                .group()
-                .indent(2),
-            allocator.hardline(),
-            allocator.text("}"),
-        ])
-    }
-
-    fn is_nil(&self) -> bool {
-        self.0.is_empty()
+/// One `key: value` per line, indented, between braces.
+impl<K: Ord + fmt::Display, V: fmt::Display> fmt::Display for Ctx<K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("{\n")?;
+        for (k, v) in self.0.iter() {
+            writeln!(f, "  {k}: {v}")?;
+        }
+        f.write_str("}")
     }
 }
 
@@ -113,19 +88,6 @@ where
 {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
         Ctx(OrdMap::from_iter(iter))
-    }
-}
-
-/// Display instance for Ctx calls the pretty printer
-impl<'a, K, V> fmt::Display for Ctx<K, V>
-where
-    K: Ord + Pretty<'a, BoxAllocator, ()> + Clone,
-    V: Pretty<'a, BoxAllocator, ()> + Clone,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Ctx<_, _> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-            .1
-            .render_fmt(80, f)
     }
 }
 
@@ -453,36 +415,15 @@ impl<X, Y, K: From<X> + Ord + Clone, V: From<Y> + Clone> From<Vec<(X, Y)>> for C
 }
 
 ///////////////////////////////////////////////////////////////////////////////////
-// A set of values with Pretty and Display traits and other useful methods
+// A set of values with a Display trait and other useful methods
 ///////////////////////////////////////////////////////////////////////////////////
-/// Ordered set of values with `Pretty`/`Display` instances, used for key sets, free-variable
+/// Ordered set of values with a `Display` instance, used for key sets, free-variable
 /// sets and signature sets throughout the compiler.
 ///
 /// Backed by a `BTreeSet`, so iteration order is the `Ord` order of `V`; this is what keeps
 /// analysis output and pretty-printed diagnostics deterministic.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Set<V>(BTreeSet<V>);
-
-/// Pretty printer instance
-impl<'a, D, A, V> Pretty<'a, D, A> for Set<V>
-where
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    A: 'a + Clone,
-    V: Pretty<'a, D, A> + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.concat([
-            allocator.text("{"),
-            allocator.intersperse(self.0.into_iter().map(|k| k.pretty(allocator)), ", "),
-            allocator.text("}"),
-        ])
-    }
-
-    fn is_nil(&self) -> bool {
-        self.0.is_empty()
-    }
-}
 
 impl<V> IntoIterator for Set<V> {
     type Item = V;
@@ -523,14 +464,17 @@ impl<V> Default for Set<V> {
     }
 }
 
-impl<'a, V> fmt::Display for Set<V>
-where
-    V: Pretty<'a, BoxAllocator, ()> + Clone,
-{
+/// `{a, b, c}`
+impl<V: fmt::Display> fmt::Display for Set<V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Set<_> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-            .1
-            .render_fmt(80, f)
+        f.write_str("{")?;
+        for (i, v) in self.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str(", ")?;
+            }
+            write!(f, "{v}")?;
+        }
+        f.write_str("}")
     }
 }
 
