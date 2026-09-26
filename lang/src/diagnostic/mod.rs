@@ -7,7 +7,7 @@
 
 mod suggestion;
 
-pub use suggestion::{insert_before, replace, Applicability, Suggestion};
+pub use suggestion::{Applicability, Suggestion, insert_before, replace};
 
 use std::io::IsTerminal;
 use std::ops::Range;

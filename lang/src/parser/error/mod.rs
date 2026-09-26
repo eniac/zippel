@@ -11,8 +11,8 @@ mod tests;
 
 use chumsky::error::RichPattern;
 
-use super::label::Context;
 use super::RichError;
+use super::label::Context;
 use crate::diagnostic::{Diagnostic, Phase, SecondaryLabel};
 
 /// Convert a chumsky `Rich` error directly into a `Diagnostic`.

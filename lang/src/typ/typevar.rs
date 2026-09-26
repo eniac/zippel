@@ -1,10 +1,10 @@
+use crate::ast::Size;
 use crate::ast::range::{Range, RangeTraversal};
 use crate::ast::spanned::Spanned;
-use crate::ast::Size;
 use crate::id::{Tid, TidSubst};
 use crate::typ::kind::Kind;
-use share::traversal::ToTraversal1;
 use share::Ctx;
+use share::traversal::ToTraversal1;
 use std::fmt;
 
 /// A type variable with an associated kind, parameterized by size type N.

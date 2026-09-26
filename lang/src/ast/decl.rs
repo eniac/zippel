@@ -1,9 +1,9 @@
 use std::fmt;
 use thiserror::Error;
 
+use crate::ast::Size;
 use crate::ast::size::EvalError;
 use crate::ast::spanned::Spanned;
-use crate::ast::Size;
 use crate::ast::{CSig, Exp, FreeVars, GArgs, Sig};
 use crate::id::{Tid, TidSubst, Vid};
 use crate::typ::infer::{TypeError, Typeable};
@@ -296,10 +296,11 @@ impl CBody {
         // Add arguments to [vctx] and [vars]
         let mut vctx = sig.args.node.to_ctx();
         for (tid, kind) in kctx.iter() {
-            if let CKind::Range(r) = kind {
-                if r.step() == 1 && r.end() == r.start() + 1 {
-                    vctx.insert(&Vid::new(&tid.0), &CTyp::Fin(r.clone()));
-                }
+            if let CKind::Range(r) = kind
+                && r.step() == 1
+                && r.end() == r.start() + 1
+            {
+                vctx.insert(&Vid::new(&tid.0), &CTyp::Fin(r.clone()));
             }
         }
         match self {

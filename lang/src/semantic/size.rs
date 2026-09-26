@@ -10,9 +10,9 @@
 use std::collections::HashSet;
 use std::ops::Range;
 
+use crate::ast::Sig;
 use crate::ast::size::Size;
 use crate::ast::spanned::Spanned;
-use crate::ast::Sig;
 use crate::diagnostic::{Applicability, Diagnostic, Phase};
 use crate::id::Tid;
 use crate::typ::Kind;

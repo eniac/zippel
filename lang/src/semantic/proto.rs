@@ -39,21 +39,25 @@ pub fn check_proto_requirement(
         .collect();
 
     match proto_spans.len() {
-        0 => vec![NoProtoDeclaration {
-            file_span,
-            _note: (),
-        }
-        .build()],
+        0 => vec![
+            NoProtoDeclaration {
+                file_span,
+                _note: (),
+            }
+            .build(),
+        ],
         1 => vec![],
         _ => {
             let mut spans = proto_spans.into_iter();
             let first_span = spans.next().unwrap();
             let second_span = spans.next().unwrap();
-            vec![MultipleProtoDeclarations {
-                first_span,
-                second_span,
-            }
-            .build()]
+            vec![
+                MultipleProtoDeclarations {
+                    first_span,
+                    second_span,
+                }
+                .build(),
+            ]
         }
     }
 }

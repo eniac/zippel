@@ -1044,11 +1044,7 @@ mod additional_tests {
         ctx.insert(&2, &20);
 
         let result = CtxValueTraversal::traverse(ctx, &mut |v: i32| {
-            if v > 15 {
-                Err("Too large")
-            } else {
-                Ok(v)
-            }
+            if v > 15 { Err("Too large") } else { Ok(v) }
         });
         assert!(result.is_err());
     }

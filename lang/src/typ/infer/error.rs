@@ -5,7 +5,7 @@ use crate::ast::{BinOp, CExp, CExps};
 use crate::diagnostic::{Applicability, Diagnostic, Phase};
 use crate::id::{Tid, Vid};
 use crate::semantic::levenshtein;
-use crate::typ::lub::{describe_bin, LubError};
+use crate::typ::lub::{LubError, describe_bin};
 use crate::typ::unify::UnifyError;
 use crate::typ::{CKind, CTyp, CTyps};
 use share::{Ctx, Set};
@@ -102,9 +102,7 @@ pub enum TypeError {
 
     /// Unary `interpolate` lowers to an inverse FFT, so its input vector length must be a power
     /// of two; the offending length is carried as the last component.
-    #[error(
-        "`interpolate` needs a vector whose length is a power of two, but this has length {3}"
-    )]
+    #[error("`interpolate` needs a vector whose length is a power of two, but this has length {3}")]
     InterpolateUnaryNotPow2(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, usize),
 
     /// `poly` was applied to something other than a vector of field elements.

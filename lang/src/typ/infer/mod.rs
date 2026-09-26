@@ -574,21 +574,20 @@ impl Typeable for CExp {
                     CTyp::Vec(elem, n) if n.node > 0 => {
                         // Multiplying a vector of polynomials multiplies all factors, so
                         // the resulting degree is the element degree times vector length.
-                        if *op == BinOp::Mul {
-                            if let CTyp::Poly(_, _, d) = &elem.node {
-                                // Validate the pairwise multiplication under the kind context first.
-                                let res_t = CTyp::lub_op(*op, &elem, &elem, kctx).map_err(|e| {
-                                    TypeError::lub(TypeError::exp(kctx, vctx, self), e)
+                        if *op == BinOp::Mul
+                            && let CTyp::Poly(_, _, d) = &elem.node
+                        {
+                            // Validate the pairwise multiplication under the kind context first.
+                            let res_t = CTyp::lub_op(*op, &elem, &elem, kctx)
+                                .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+                            if let CTyp::Poly(res_a, num_vars, _) = res_t {
+                                let degree = d.checked_mul(n.node).ok_or_else(|| {
+                                    TypeError::lub(
+                                        TypeError::exp(kctx, vctx, self),
+                                        LubError::DegreeOverflow(d.node, n.node),
+                                    )
                                 })?;
-                                if let CTyp::Poly(res_a, num_vars, _) = res_t {
-                                    let degree = d.checked_mul(n.node).ok_or_else(|| {
-                                        TypeError::lub(
-                                            TypeError::exp(kctx, vctx, self),
-                                            LubError::DegreeOverflow(d.node, n.node),
-                                        )
-                                    })?;
-                                    return Ok(CTyp::Poly(res_a, num_vars, Spanned::dummy(degree)));
-                                }
+                                return Ok(CTyp::Poly(res_a, num_vars, Spanned::dummy(degree)));
                             }
                         }
 

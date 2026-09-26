@@ -3,8 +3,8 @@
 
 use std::ops::Range;
 
-use crate::ast::spanned::Spanned;
 use crate::ast::Exp;
+use crate::ast::spanned::Spanned;
 use crate::diagnostic::Diagnostic;
 use lang_derive::Diagnostic as DiagnosticDerive;
 

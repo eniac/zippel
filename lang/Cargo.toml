@@ -1,7 +1,7 @@
 [package]
 name = "lang"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 authors = ["Lef Ioannidis <elefthei@seas.upenn.edu>", "Alireza Shirzad <alrshir@seas.upenn.edu>"]
 
 [dependencies]

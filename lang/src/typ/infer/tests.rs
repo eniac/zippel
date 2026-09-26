@@ -1122,10 +1122,10 @@ fn test_reduce_dot_nested_vec_rejected() {
     let e = reduce(BinOp::Dot, varstr("vv"));
     let result = e.infer(&KIND_CTX, &fctx, &vctx);
     assert!(
-            result.is_err(),
-            "reduce(dot, [Vec(F,2); 3]) should be rejected — dot produces F, but F . Vec(F,2) is ill-typed; got {:?}",
-            result
-        );
+        result.is_err(),
+        "reduce(dot, [Vec(F,2); 3]) should be rejected — dot produces F, but F . Vec(F,2) is ill-typed; got {:?}",
+        result
+    );
 }
 
 #[test]

@@ -1,12 +1,12 @@
-use crate::ast::spanned::Spanned;
 use crate::ast::GArgs;
 use crate::ast::Size;
+use crate::ast::spanned::Spanned;
 use crate::id::{Fresh, Tid, TidSubst, Vid};
 use crate::typ::subst::AliasSubsts;
 use crate::typ::unify::{Unify, UnifyError};
 use crate::typ::{CKind, CTyp, CTyps, GTyp, Range, RangeTraversal, TypeInline, TypeVars};
-use share::traversal::{ToTraversal1, ToTraversal2};
 use share::Ctx;
+use share::traversal::{ToTraversal1, ToTraversal2};
 use std::fmt;
 use thiserror::Error;
 
