@@ -2,7 +2,6 @@ use backend::op::Ref;
 use graph::{Dag, Node};
 use lang::typ::Qualifier;
 use petgraph::graph::NodeIndex;
-use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 
 use backend::{ABase, ATyp, ArkConfig, binomial};
 use std::fmt;
@@ -244,30 +243,14 @@ impl Var {
     }
 }
 
+/// `name[i][j]…`
 impl fmt::Display for Var {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Var as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-            .1
-            .render_fmt(100, f)
-    }
-}
-
-impl<'a, D, A> Pretty<'a, D, A> for Var
-where
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        let mut text = self.name;
+        f.write_str(&self.name)?;
         for i in &self.index {
-            text.push_str(&format!("[{}]", i));
+            write!(f, "[{i}]")?;
         }
-        allocator.text(text)
-    }
-
-    fn is_nil(&self) -> bool {
-        false
+        Ok(())
     }
 }
 

@@ -1,6 +1,6 @@
 //! Delimited list builder and separator-gap utilities.
 
-use share::DocAllocator;
+use pretty::DocAllocator;
 
 use crate::ctx::{ALLOC, Doc};
 use crate::style::Style;

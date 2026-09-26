@@ -2,11 +2,11 @@ mod error;
 #[cfg(test)]
 mod tests;
 
-pub use error::LubError;
+pub use error::{LubError, describe_bin};
 
+use crate::ast::BinOp;
 use crate::ast::range::Range;
 use crate::ast::spanned::Spanned;
-use crate::ast::BinOp;
 use crate::id::Tid;
 use crate::typ::{CKind, CTyp, CTypeVar, Kind, Nothing};
 use share::Ctx;
@@ -405,10 +405,10 @@ impl Lub for Tid {
         let ka = ctx.get(a).ok_or(LubError::kind_not_found(a))?;
         let kb = ctx.get(b).ok_or(LubError::kind_not_found(b))?;
 
-        if let (Kind::Group, Kind::Group) = (ka, kb) {
-            if let Some((pid, _)) = ctx.find(|_, k| k.is_pairing(a, b)) {
-                return Ok(pid.clone());
-            }
+        if let (Kind::Group, Kind::Group) = (ka, kb)
+            && let Some((pid, _)) = ctx.find(|_, k| k.is_pairing(a, b))
+        {
+            return Ok(pid.clone());
         }
 
         Self::lub_mul(a, b, ctx).map_err(|e| {

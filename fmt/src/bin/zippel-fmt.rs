@@ -8,18 +8,28 @@
 use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
 
+use clap::Parser;
 use fmt::{check, format_source, normalize_newlines};
 use lang::diagnostic::render_diagnostic;
 use similar::{ChangeTag, TextDiff};
 
-fn usage() {
-    eprintln!("Usage: zippel-fmt [--check] [--write] [FILE...]");
-    eprintln!();
-    eprintln!("  --check    Exit 0 if all files are formatted, 1 otherwise.");
-    eprintln!("             Prints diff for unformatted files.");
-    eprintln!("  --write    Write formatted output back to file.");
-    eprintln!("  No flags    Format stdin to stdout.");
-    eprintln!("  FILE        Format file(s). Without --write, prints to stdout.");
+/// Reads `.zippel` files (or stdin when no paths are given), reparses them with `lang` and
+/// re-renders them through `format_source`.
+#[derive(Parser)]
+#[command(name = "zippel-fmt")]
+struct Cli {
+    /// Exit 0 if all files are formatted, 1 otherwise. Prints diff for unformatted files.
+    #[arg(long, conflicts_with = "write")]
+    check: bool,
+
+    /// Write formatted output back to file.
+    #[arg(long)]
+    write: bool,
+
+    /// Format file(s). Without --write, prints to stdout. With no FILE, formats stdin to
+    /// stdout.
+    #[arg(value_name = "FILE")]
+    files: Vec<PathBuf>,
 }
 
 enum Mode {
@@ -59,27 +69,15 @@ fn print_diff(old: &str, new: &str, filename: &str) {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let mut mode = Mode::Stdout;
-    let mut files: Vec<PathBuf> = Vec::new();
-
-    for arg in &args {
-        match arg.as_str() {
-            "--check" => mode = Mode::Check,
-            "--write" => mode = Mode::Write,
-            "-h" | "--help" => {
-                usage();
-                return;
-            }
-            f if f.starts_with('-') => {
-                eprintln!("Unknown flag: {}", f);
-                usage();
-                std::process::exit(2);
-            }
-            _ => files.push(PathBuf::from(arg)),
-        }
-    }
+    let cli = Cli::parse();
+    let mode = if cli.check {
+        Mode::Check
+    } else if cli.write {
+        Mode::Write
+    } else {
+        Mode::Stdout
+    };
+    let files = cli.files;
 
     if files.is_empty() {
         // stdin -> stdout

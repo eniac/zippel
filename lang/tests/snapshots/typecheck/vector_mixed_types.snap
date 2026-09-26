@@ -1,0 +1,14 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: Vector elements must all have the same type, but found F (Scalar<G>) and G (Group)
+   ╭─[ test.zippel:3:13 ]
+   │
+ 3 │     let v = [x, g];
+   │             ─┬─┬┬─  
+   │              │ ╰──── in this vector
+   │              │  │   
+   │              ╰────── `x` has type F (Scalar<G>)
+   │                 │   
+   │                 ╰─── `g` has type G (Group)
+───╯

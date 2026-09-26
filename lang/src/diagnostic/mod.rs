@@ -7,8 +7,9 @@
 
 mod suggestion;
 
-pub use suggestion::{insert_before, replace, Applicability, Suggestion};
+pub use suggestion::{Applicability, Suggestion, insert_before, replace};
 
+use std::io::IsTerminal;
 use std::ops::Range;
 
 use ariadne::{Config, IndexType, Label, Report, ReportKind};
@@ -190,12 +191,32 @@ impl Diagnostic {
 
 /// Render a single diagnostic as an ariadne report string.
 ///
+/// Colors are switched on only when stderr — where every caller prints diagnostics — is a
+/// terminal, so callers don't need to detect this themselves.
+///
 /// `phase` is used for sorting in `analyze()`, not for rendering.
 /// `code` is `None` for diagnostics without a code; when present, it could be
 /// prepended to the summary (e.g. `error[E0001]: ...`).
 pub fn render_diagnostic(diag: &Diagnostic, filename: &str, src: &str) -> String {
+    let use_color = std::io::stderr().is_terminal();
+
+    // `Config::with_color` below only gates ariadne's own built-in colors (e.g. margins); the
+    // `ReportKind::Custom` header and every `Label::with_color` call further down are painted
+    // through `yansi` unconditionally regardless of it (confirmed against ariadne 0.5.1's
+    // source: `ReportKind::Custom`'s header color skips the `Config::color` check that
+    // `ReportKind::Error`/`Warning`/`Advice` go through, and `Label::with_color` never consults
+    // it at all). Toggling yansi's own global switch covers all of these at once, instead of
+    // rendering in color and stripping the ANSI back out.
+    if use_color {
+        yansi::enable();
+    } else {
+        yansi::disable();
+    }
+
     let mut buf = Vec::new();
-    let config = Config::new().with_index_type(IndexType::Byte);
+    let config = Config::new()
+        .with_index_type(IndexType::Byte)
+        .with_color(use_color);
 
     let (kind, color) = match diag.severity {
         Severity::Error => (

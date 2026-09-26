@@ -21,9 +21,9 @@ mod typevar;
 /// Kind-aware unification of source types.
 pub mod unify;
 
+use crate::ast::Size;
 pub use crate::ast::range::{CRange, Range, RangeError, RangeTraversal};
 use crate::ast::spanned::Spanned;
-use crate::ast::Size;
 use crate::id::{Tid, TidSubst};
 
 pub use ark::Ark;
@@ -36,8 +36,8 @@ pub use qualifier::Qualifier;
 pub use subst::{AliasSubsts, SizeSubsts};
 pub use typevar::{CTypeVar, CTypeVars, TypeVar, TypeVars, UTypeVar, UTypeVars};
 
+use share::Ctx;
 use share::traversal::{ToTraversal1, ToTraversal2};
-use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 use std::fmt;
 
 /// The types of expressions, `N` is the size parameter
@@ -183,11 +183,7 @@ impl<N> GTyp<N> {
         match self {
             Typ::Base(b) => {
                 let k = ctx.get(b)?;
-                if k.is_scalar() {
-                    Some(b.clone())
-                } else {
-                    None
-                }
+                if k.is_scalar() { Some(b.clone()) } else { None }
             }
             Typ::Fin(_) => {
                 let fields: Vec<_> = ctx
@@ -386,99 +382,32 @@ impl<N: Clone> TypeInline<N> for GTyps<N> {
     }
 }
 
-/// Pretty-printer for zippel types.
-impl<'a, D, A, T, N> Pretty<'a, D, A> for Typ<T, N>
-where
-    D: DocAllocator<'a, A>,
-    T: Pretty<'a, D, A> + Clone,
-    N: Pretty<'a, D, A> + Clone,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
+/// Zippel type syntax, e.g. `Poly<F, 1, 3>`, `[F; 4]`, `{a: F, b: G}`.
+impl<T: fmt::Display, N: fmt::Display> fmt::Display for Typ<T, N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Typ::Poly(b, m, n) => allocator.concat([
-                allocator.text("Poly<"),
-                b.pretty(allocator),
-                allocator.text(", "),
-                m.node.pretty(allocator),
-                allocator.text(", "),
-                n.node.pretty(allocator),
-                allocator.text(">"),
-            ]),
-            Typ::Base(base) => base.pretty(allocator),
-            Typ::Vec(t, n) => allocator.concat([
-                allocator.text("["),
-                t.pretty(allocator),
-                allocator.text("; "),
-                n.node.pretty(allocator),
-                allocator.text("]"),
-            ]),
-            Typ::Fin(r) => allocator.concat([
-                allocator.text("Fin<"),
-                r.pretty(allocator),
-                allocator.text(">"),
-            ]),
-            Typ::Unit => allocator.text("Unit"),
-            Typ::Bool => allocator.text("Bool"),
+            Typ::Poly(b, m, n) => write!(f, "Poly<{b}, {}, {}>", m.node, n.node),
+            Typ::Base(base) => write!(f, "{base}"),
+            Typ::Vec(t, n) => write!(f, "[{t}; {}]", n.node),
+            Typ::Fin(r) => write!(f, "Fin<{r}>"),
+            Typ::Unit => f.write_str("Unit"),
+            Typ::Bool => f.write_str("Bool"),
             Typ::Record(fields) => {
-                let mut docs = Vec::new();
-                docs.push(allocator.text("{"));
-                let field_docs: Vec<_> = fields
-                    .into_iter()
-                    .map(|(name, typ)| {
-                        allocator.concat([
-                            allocator.text(name.node),
-                            allocator.text(": "),
-                            typ.pretty(allocator),
-                        ])
-                    })
-                    .collect();
-                docs.push(allocator.intersperse(field_docs, ", "));
-                docs.push(allocator.text("}"));
-                allocator.concat(docs)
+                f.write_str("{")?;
+                for (i, (name, typ)) in fields.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{}: {typ}", name.node)?;
+                }
+                f.write_str("}")
             }
         }
     }
-
-    fn is_nil(&self) -> bool {
-        false
-    }
 }
 
-impl<'a, D, A, T, N> Pretty<'a, D, A> for Typs<T, N>
-where
-    D: DocAllocator<'a, A>,
-    T: Pretty<'a, D, A> + Clone,
-    N: Pretty<'a, D, A> + Clone,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.intersperse(self.0.into_iter().map(|t| t.pretty(allocator)), ", ")
-    }
-
-    fn is_nil(&self) -> bool {
-        self.0.is_empty()
-    }
-}
-
-impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone, T: Pretty<'a, BoxAllocator, ()> + Clone>
-    fmt::Display for Typ<T, N>
-{
+impl<T: fmt::Display, N: fmt::Display> fmt::Display for Typs<T, N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Typ<T, N> as Pretty<'a, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-            .1
-            .render_fmt(100, f)
-    }
-}
-
-impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone, T: Pretty<'a, BoxAllocator, ()> + Clone>
-    fmt::Display for Typs<T, N>
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Typs<T, N> as Pretty<'a, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-            .1
-            .render_fmt(100, f)
+        crate::display::sep(f, &self.0, ", ")
     }
 }

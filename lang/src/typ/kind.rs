@@ -1,11 +1,11 @@
 use crate::id::Tid;
+use share::Set;
 use share::traversal::ToTraversal1;
-use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty, Set};
 use std::fmt;
 
+use crate::ast::Size;
 use crate::ast::range::{Range, RangeTraversal};
 use crate::ast::spanned::Spanned;
-use crate::ast::Size;
 
 /// The kinds of type variables, parameterized by size type N
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
@@ -101,41 +101,20 @@ impl<N: Clone> RangeTraversal<N> for Kind<N> {
     }
 }
 
-impl<'a, D, A, N> Pretty<'a, D, A> for Kind<N>
-where
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    N: Pretty<'a, D, A> + Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        match self {
-            Kind::Field => allocator.text("Field"),
-            Kind::Group => allocator.text("Group".to_string()),
-            Kind::Scalar(f) => allocator.concat([
-                allocator.text("Scalar<"),
-                allocator.intersperse(
-                    f.iter().map(|t| allocator.text(format!("{}", t.node))),
-                    ", ",
-                ),
-                allocator.text(">"),
-            ]),
-            Kind::Pairing(g1, g2) => allocator.text(format!("Pairing<{}, {}>", g1.node, g2.node)),
-            Kind::Range(r) => r.pretty(allocator),
-            Kind::SizeVar => allocator.text("Size"),
-        }
-    }
-
-    fn is_nil(&self) -> bool {
-        false
-    }
-}
-
-impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone + 'a> fmt::Display for Kind<N> {
+impl<N: fmt::Display> fmt::Display for Kind<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Kind<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-            .1
-            .render_fmt(100, f)
+        match self {
+            Kind::Field => f.write_str("Field"),
+            Kind::Group => f.write_str("Group"),
+            Kind::Scalar(groups) => {
+                f.write_str("Scalar<")?;
+                crate::display::sep(f, groups.iter().map(|t| &t.node), ", ")?;
+                f.write_str(">")
+            }
+            Kind::Pairing(g1, g2) => write!(f, "Pairing<{}, {}>", g1.node, g2.node),
+            Kind::Range(r) => write!(f, "{r}"),
+            Kind::SizeVar => f.write_str("Size"),
+        }
     }
 }
 

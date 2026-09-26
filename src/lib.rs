@@ -18,12 +18,10 @@ use graph::Dag;
 use graph::WritePdf;
 use graph::domain_seperator::ZippelDomainSeparator;
 use graph::{ArgKind, Node, UDag, UDags};
-use lang::ast::Size;
-use lang::ast::range::Range;
 use lang::ast::{CModule, UModule};
 use lang::diagnostic::render_diagnostic;
 use lang::id::{Tid, Vid};
-use lang::typ::{Kind, Qualifier};
+use lang::typ::Qualifier;
 use log::{debug, error, info};
 use runtime::RuntimeError;
 use runtime::graph::ResultKind;
@@ -34,7 +32,6 @@ use std::process;
 
 use runtime::MutexGraph;
 use runtime::RunResult;
-use share::traversal::ToTraversal1;
 use std::sync::Arc;
 
 // Re-exported so downstream crates can depend on `zippel` alone
@@ -131,6 +128,8 @@ impl ZippelArgs {
 /// qualifier-propagated DAG the analyses consume.
 pub struct ZippelHandler<C: ArkConfig> {
     args: ZippelArgs,
+    /// Source text of `args.file_path`, read by `parse`; diagnostics are rendered against it.
+    source: String,
     sized_module: Option<UModule>,
     concrete_module: Option<CModule>,
     /// Prover projection of the protocol DAG; `Some` only after `compile`.
@@ -146,6 +145,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     pub const fn new(args: ZippelArgs) -> Self {
         Self {
             args,
+            source: String::new(),
             sized_module: None,
             concrete_module: None,
             prover_graph: None,
@@ -255,6 +255,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             process::exit(1);
         }
         self.sized_module = module;
+        self.source = zfile;
     }
 
     /// Will output a PDF if a path is provided, noop otherwise
@@ -286,44 +287,31 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     /// # Panics
     /// If parsing or graph construction fails, or if the compiler thread panics.
     pub fn compile(&mut self, sizes: &Ctx<Tid, usize>) {
-        let stack_size = std::env::var("ZIPPEL_COMPILE_STACK_SIZE")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(64 * 1024 * 1024);
-
-        std::thread::scope(|scope| {
-            let handle = std::thread::Builder::new()
-                .name("zippel-compile".to_string())
-                .stack_size(stack_size)
-                .spawn_scoped(scope, || self.compile_inner(sizes))
-                .expect("failed to spawn zippel compiler thread");
-            if let Err(payload) = handle.join() {
-                std::panic::resume_unwind(payload);
-            }
-        });
+        share::thread::run_or_panic("zippel-compile", || self.compile_inner(sizes));
     }
 
     fn compile_inner(&mut self, sizes: &Ctx<Tid, usize>) {
         self.parse();
 
         debug!("Concretizing module type variables");
-        self.concrete_module = Some(
-            self.sized_module
-                .as_ref()
-                .unwrap()
-                .concretize(sizes)
-                .unwrap(),
-        );
+        let module = self.sized_module.as_ref().unwrap();
+        let cmodule = module
+            .concretize(sizes)
+            .unwrap_or_else(|e| self.fail(&[e.into()]));
+
+        debug!("Type checking module");
+        let diags = cmodule.typecheck();
+        if !diags.is_empty() {
+            self.fail(&diags);
+        }
 
         debug!("Creating graphs from module");
-        let gs = unwrap!(UDags::<C>::from_module(
-            self.concrete_module.as_ref().unwrap().clone()
-        ));
+        let gs =
+            UDags::<C>::from_module(cmodule.clone()).unwrap_or_else(|e| self.fail(&[e.into()]));
         self.output_pdf(&gs, "symbolic_protocol_graph");
 
-        // Extract protocol subgraph and rename inner nodes
-        let g = self.get_protocol_subgraph(&gs).clone().rename_inner_nodes();
-        self.output_pdf(&g, "concrete_protocol_graph");
+        let g = self.get_protocol_subgraph(&gs);
+        self.output_pdf(g, "concrete_protocol_graph");
 
         debug!("Projecting prover");
         let (prover, _) = g.get_prover();
@@ -331,9 +319,19 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         self.output_pdf(&prover, "prover_graph");
 
         debug!("Projecting verifier");
-        let verifier = g.get_verifier().unwrap();
+        let verifier = g.get_verifier().unwrap_or_else(|e| self.fail(&[e.into()]));
+        self.concrete_module = Some(cmodule);
         self.verifier_graph = Some(verifier.clone());
         self.output_pdf(&verifier, "verifier_graph");
+    }
+
+    /// Render `diags` against the parsed source and exit with status 1, as for parse errors.
+    fn fail(&self, diags: &[lang::diagnostic::Diagnostic]) -> ! {
+        let filename = self.args.file_path.display().to_string();
+        for diag in diags {
+            eprint!("{}", render_diagnostic(diag, &filename, &self.source));
+        }
+        process::exit(1);
     }
 
     /// Compose the prover and verifier graphs into a single combined DAG and
@@ -538,76 +536,6 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     }
 }
 
-/// Find the smallest concrete value for each `Kind::SizeVar` parameter in the module
-/// such that all dependent `Kind::Range` expressions have at least one element.
-#[must_use]
-pub fn find_minimal_sizes(module: &UModule) -> Ctx<Tid, usize> {
-    // Pass 1: Collect all SizeVar params
-    let mut size_vars: Vec<Tid> = Vec::new();
-    for (sig, _body) in module.iter() {
-        for tv in &sig.typevars.0 {
-            if matches!(&tv.kind, Kind::SizeVar) && !size_vars.contains(&tv.id.node) {
-                size_vars.push(tv.id.node.clone());
-            }
-        }
-    }
-
-    // Pass 2: Collect all Range params that depend on SizeVars
-    let mut ranges: Vec<Range<Size>> = Vec::new();
-    for (sig, _body) in module.iter() {
-        for tv in &sig.typevars.0 {
-            if let Kind::Range(r) = &tv.kind {
-                let fvs = r.start.node.free_vars().union(
-                    r.end
-                        .as_ref()
-                        .map(|e| e.node.free_vars())
-                        .unwrap_or_default(),
-                );
-                if fvs.iter().any(|v| size_vars.contains(v)) {
-                    ranges.push(r.clone());
-                }
-            }
-        }
-    }
-
-    // For each SizeVar, brute-force S=1..=10 to find the smallest value
-    // where all dependent ranges have at least one element (start < end)
-    let mut sizes = Ctx::new();
-    for sv in &size_vars {
-        let mut found = false;
-        for candidate in 1..=10usize {
-            let mut ctx = sizes.clone();
-            ctx.insert(sv, &candidate);
-
-            let all_ok = ranges.iter().all(|r| {
-                let fvs = r.start.node.free_vars().union(
-                    r.end
-                        .as_ref()
-                        .map(|e| e.node.free_vars())
-                        .unwrap_or_default(),
-                );
-                if !fvs.contains(sv) {
-                    return true; // Not dependent on this SizeVar
-                }
-                r.clone()
-                    .traverse1(&mut |s| s.eval(&ctx))
-                    .is_ok_and(|cr| cr.start() < cr.end())
-            });
-
-            if all_ok {
-                sizes.insert(sv, &candidate);
-                found = true;
-                break;
-            }
-        }
-        if !found {
-            // Fallback: use 3 if brute-force fails
-            sizes.insert(sv, &3);
-        }
-    }
-    sizes
-}
-
 /// Interpret verifier output as pass/fail.
 /// Passes if every Check in the output returned `true`.
 #[must_use]
@@ -651,28 +579,6 @@ mod tests {
         );
     }
 
-    /// Regression: `find_minimal_sizes` must collect all `SizeVars` before
-    /// collecting ranges, so ranges that appear before their `SizeVar`
-    /// in typevars are still found.
-    #[test]
-    fn test_find_minimal_sizes_ordering() {
-        // Protocol where N: 1..S appears before S: Size in a different declaration
-        let src = r"
-            fn foo<F: Field, N: 1..S, S: Size>(a: [F; N]) -> F { a[0] }
-            proto bar<F: Field, S: Size, M: 2..S+1>(instance x: F) where x == x {
-                verify(x == x)
-            }
-        ";
-        let module = UModule::parse(src).0.unwrap();
-        let sizes = find_minimal_sizes(&module);
-        // S should be found and have a value ≥ 2 (so N: 1..S and M: 2..S+1 are non-empty)
-        assert!(
-            sizes.get(&Tid::new("S")).is_some(),
-            "SizeVar S should be found even when Range appears first"
-        );
-        let s_val = *sizes.get(&Tid::new("S")).unwrap();
-        assert!(s_val >= 2, "S should be ≥ 2, got {}", s_val);
-    }
     /// Runtime test: protocol with two verify statements, both passing.
     /// Compile, run prover, run verifier, check that verification passes.
     #[test]
@@ -682,7 +588,7 @@ proto eq_proof<F: Field>(witness a: F, witness b: F) where a == b {
     let r = random<F>;
     x <- a * r;
     y <- b * r;
-    verify(r == r);
+    verify(x == x);
     verify(x == y)
 }
 ";

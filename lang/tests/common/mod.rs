@@ -5,13 +5,14 @@
 //! suppresses the resulting warnings.
 
 use lang::ast::module::UModule;
-use lang::diagnostic::{render_diagnostic, Severity};
+use lang::diagnostic::{Severity, render_diagnostic};
 
 /// Render all diagnostics for a source string, sorted by span.
-/// Disables ANSI colors for clean snapshot text.
+/// `render_diagnostic` only colors output when stderr is a terminal, which it never is under
+/// `cargo test` (even with `--nocapture` — cargo still pipes the test binary's stdio), so
+/// snapshots stay clean without forcing color off here.
 #[allow(dead_code)]
 pub fn render_all(src: &str) -> String {
-    yansi::disable();
     let (_, diags) = UModule::parse(src);
     diags
         .iter()
@@ -23,7 +24,6 @@ pub fn render_all(src: &str) -> String {
 /// Render only error diagnostics (filter out warnings).
 #[allow(dead_code)]
 pub fn render_errors(src: &str) -> String {
-    yansi::disable();
     let (_, diags) = UModule::parse(src);
     diags
         .iter()
@@ -36,7 +36,6 @@ pub fn render_errors(src: &str) -> String {
 /// Render only warning diagnostics (filter out errors).
 #[allow(dead_code)]
 pub fn render_warnings(src: &str) -> String {
-    yansi::disable();
     let (_, diags) = UModule::parse(src);
     diags
         .iter()

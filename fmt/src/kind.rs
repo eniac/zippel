@@ -2,7 +2,7 @@
 
 use lang::parser::Token;
 use lang::typ::Kind;
-use share::DocAllocator;
+use pretty::DocAllocator;
 
 use crate::ctx::{ALLOC, Doc};
 use crate::delim_list::{DelimList, take_separator_gap_split};

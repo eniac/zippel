@@ -42,7 +42,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, DeriveInput, Field};
+use syn::{DeriveInput, Field, parse_macro_input};
 
 mod parse;
 
@@ -101,10 +101,10 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         .map(|a| {
             let items = parse::parse_attr_items(a)?;
             for item in &items {
-                if let parse::AttrItem::KeyValue { key, value } = item {
-                    if key == "label" {
-                        return Ok(InterpolatedString::parse(value));
-                    }
+                if let parse::AttrItem::KeyValue { key, value } = item
+                    && key == "label"
+                {
+                    return Ok(InterpolatedString::parse(value));
                 }
             }
             Err(syn::Error::new_spanned(a, "expected `label = \"...\"`"))

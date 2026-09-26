@@ -14,6 +14,7 @@ extern crate self as lang;
 /// Untyped/typed abstract syntax: modules, declarations, expressions, spans.
 pub mod ast;
 pub mod diagnostic;
+mod display;
 /// Gensym-backed identifiers: `Tid` for size/type variables, `Vid` for values.
 pub mod id;
 pub mod parser;

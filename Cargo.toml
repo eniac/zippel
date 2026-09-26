@@ -1,7 +1,11 @@
 [workspace]
-members = ["lang", "lang/lang-derive", "runtime", "share", "graph", "backend", "analyses", "fmt", "benchmarks"]
-default-members = [".", "lang", "runtime", "share", "graph", "backend", "analyses"]
+members = ["lang", "lang/lang-derive", "runtime", "share", "graph", "backend", "analyses", "fmt", "check", "benchmarks"]
+default-members = [".", "lang", "runtime", "share", "graph", "backend", "analyses", "check"]
 resolver = "2"
+
+# Every crate inherits this edition (`edition.workspace = true`); keep `rustfmt.toml` in sync.
+[workspace.package]
+edition = "2024"
 
 [lints.rust]
 missing_docs = "warn"
@@ -31,7 +35,7 @@ debug = 0
 [package]
 name = "zippel"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
 autoexamples = false
 
 [dependencies]

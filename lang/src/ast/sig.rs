@@ -1,12 +1,12 @@
-use crate::ast::spanned::Spanned;
 use crate::ast::GArgs;
 use crate::ast::Size;
+use crate::ast::spanned::Spanned;
 use crate::id::{Fresh, Tid, TidSubst, Vid};
 use crate::typ::subst::AliasSubsts;
 use crate::typ::unify::{Unify, UnifyError};
 use crate::typ::{CKind, CTyp, CTyps, GTyp, Range, RangeTraversal, TypeInline, TypeVars};
+use share::Ctx;
 use share::traversal::{ToTraversal1, ToTraversal2};
-use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 use std::fmt;
 use thiserror::Error;
 
@@ -149,41 +149,14 @@ impl<N: Clone> TypeInline<N> for Sig<N> {
     }
 }
 
-/// Pretty-printer for function signature
-impl<'a, D, A, N> Pretty<'a, D, A> for Sig<N>
-where
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    N: Pretty<'a, D, A> + Clone + 'a,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        let ret_doc = match self.ret {
-            Some(ret) => allocator.concat([allocator.text(" -> "), ret.pretty(allocator)]),
-            None => allocator.nil(),
-        };
-        allocator.concat([
-            self.name.pretty(allocator),
-            allocator.text("<"),
-            self.typevars.pretty(allocator),
-            allocator.text(">"),
-            allocator.text("("),
-            self.args.pretty(allocator),
-            allocator.text(")"),
-            ret_doc,
-        ])
-    }
-
-    fn is_nil(&self) -> bool {
-        false
-    }
-}
-
-impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone + 'a> fmt::Display for Sig<N> {
+/// `name<typevars>(args)[ -> ret]`
+impl<N: fmt::Display> fmt::Display for Sig<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Sig<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-            .1
-            .render_fmt(100, f)
+        write!(f, "{}<{}>({})", self.name, self.typevars, self.args)?;
+        if let Some(ret) = &self.ret {
+            write!(f, " -> {ret}")?;
+        }
+        Ok(())
     }
 }
 

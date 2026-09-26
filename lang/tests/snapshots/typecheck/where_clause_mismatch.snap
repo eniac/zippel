@@ -1,0 +1,14 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: Cannot compare G (Group) and F (Scalar<G>)
+   ╭─[ test.zippel:2:69 ]
+   │
+ 2 │ proto p<G: Group, F: Scalar<G>>(witness x: F, instance h: G) where h == x {
+   │                                                                    ┬──┬─┬  
+   │                                                                    │  ╰──── `==` is not defined for these operands
+   │                                                                    │    │  
+   │                                                                    ╰─────── `h` has type G (Group)
+   │                                                                         │  
+   │                                                                         ╰── `x` has type F (Scalar<G>)
+───╯

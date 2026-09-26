@@ -1,0 +1,15 @@
+[package]
+name = "check"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+lang = { path = "../lang" }
+share = { path = "../share" }
+graph = { path = "../graph" }
+backend = { path = "../backend" }
+clap = { version = "4", features = ["derive"] }
+
+[[bin]]
+name = "zippel-check"
+path = "src/main.rs"

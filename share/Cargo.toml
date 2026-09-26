@@ -1,8 +1,7 @@
 [package]
 name = "share"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 
 [dependencies]
 im = "15"
-pretty = "0.12.3"

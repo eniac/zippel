@@ -8,7 +8,7 @@ use std::fmt;
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
 use graph::Ref;
-use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty, Set};
+use share::{Ctx, Set};
 
 use crate::Var;
 use crate::frontend::Polynomial;
@@ -205,36 +205,14 @@ impl<C: ArkConfig + HasOpFactory> Default for Ideal<C> {
     }
 }
 
-impl<'a, C, D, A> Pretty<'a, D, A> for Ideal<C>
-where
-    C: ArkConfig,
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.concat([
-            allocator.text("Basis: "),
-            allocator.hardline(),
-            allocator.intersperse(
-                self.generating_set
-                    .into_iter()
-                    .map(|p| p.pretty(allocator).indent(8)),
-                allocator.hardline(),
-            ),
-        ])
-    }
-
-    fn is_nil(&self) -> bool {
-        self.generating_set.is_empty() && self.pl.is_empty()
-    }
-}
-
+/// `Basis: ` followed by one generator per line, indented.
 impl<C: ArkConfig> fmt::Display for Ideal<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Ideal<C> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-            .1
-            .render_fmt(100, f)
+        f.write_str("Basis: ")?;
+        for p in &self.generating_set {
+            write!(f, "\n        {p}")?;
+        }
+        Ok(())
     }
 }
 

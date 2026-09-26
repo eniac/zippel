@@ -4,7 +4,6 @@ use thiserror::Error;
 
 use crate::ast::spanned::Spanned;
 use share::traversal::ToTraversal1;
-use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 
 /// Failure of the range well-formedness check.
 #[derive(Error, PartialEq, Debug)]
@@ -325,41 +324,17 @@ impl IntoIterator for CRange {
     }
 }
 
-/// Pretty printer instance
-impl<'a, D, A, N> Pretty<'a, D, A> for Range<N>
-where
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    N: Pretty<'a, D, A>,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        let mut docs = vec![self.start.node.pretty(allocator)];
-        if let Some(step) = self.step {
-            docs.push(allocator.text(","));
-            docs.push(step.node.pretty(allocator));
-        }
-        if let Some(end) = self.end {
-            docs.push(allocator.text(".."));
-            docs.push(end.node.pretty(allocator));
-        }
-        allocator.concat(docs)
-    }
-
-    fn is_nil(&self) -> bool {
-        false
-    }
-}
-
-/// Display instance calls the pretty printer
-impl<'a, N> fmt::Display for Range<N>
-where
-    N: Pretty<'a, BoxAllocator, ()> + Clone,
-{
+/// `start[,step][..end]`
+impl<N: fmt::Display> fmt::Display for Range<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Range<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-            .1
-            .render_fmt(100, f)
+        write!(f, "{}", self.start.node)?;
+        if let Some(step) = &self.step {
+            write!(f, ",{}", step.node)?;
+        }
+        if let Some(end) = &self.end {
+            write!(f, "..{}", end.node)?;
+        }
+        Ok(())
     }
 }
 
@@ -461,7 +436,7 @@ mod tests {
         let big = (usize::MAX as f64).sqrt() as usize + 1;
         let a = crange_new(big, big + 1); // singleton {big}
         let b = crange_new(big, big + 1); // singleton {big}
-                                          // big * big overflows
+        // big * big overflows
         assert_eq!(a.checked_mul(b), None);
     }
 
@@ -535,7 +510,7 @@ mod tests {
         let big = usize::MAX - 1;
         let a = crange_new(big, big + 1); // singleton {big} — big+1 = MAX, fits
         let b = crange_new(2, 3); // singleton {2}
-                                  // big^2 overflows
+        // big^2 overflows
         assert_eq!(a.checked_pow(b), None);
     }
 

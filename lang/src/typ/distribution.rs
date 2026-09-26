@@ -1,7 +1,5 @@
 use std::fmt;
 
-use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
-
 /// How a value is distributed over its type's domain, used by the uniformity
 /// analysis to reason about masking and zero-knowledge.
 ///
@@ -129,32 +127,13 @@ impl Distribution {
     }
 }
 
-////////////////////////////////////////////////////////////////////////////////////////
-/* Pretty Formatting & Display */
-////////////////////////////////////////////////////////////////////////////////////////
-impl<'a, D, A> Pretty<'a, D, A> for Distribution
-where
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        match self {
-            Distribution::Uniform => allocator.text("uniform "),
-            Distribution::UniformNonZero => allocator.text("uniform*"),
-            Distribution::Nonuniform => allocator.text(""),
-        }
-    }
-    fn is_nil(&self) -> bool {
-        self.is_nonuniform()
-    }
-}
-
 impl fmt::Display for Distribution {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Distribution as Pretty<'_, BoxAllocator, ()>>::pretty(*self, &BoxAllocator)
-            .1
-            .render_fmt(20, f)
+        f.write_str(match self {
+            Distribution::Uniform => "uniform ",
+            Distribution::UniformNonZero => "uniform*",
+            Distribution::Nonuniform => "",
+        })
     }
 }
 
@@ -302,18 +281,5 @@ mod tests {
         assert_eq!(Distribution::Uniform.to_string(), "uniform ");
         assert_eq!(Distribution::UniformNonZero.to_string(), "uniform*");
         assert_eq!(Distribution::Nonuniform.to_string(), "");
-    }
-
-    #[test]
-    fn test_is_nil() {
-        assert!(!<Distribution as Pretty<'_, BoxAllocator, ()>>::is_nil(
-            &Distribution::Uniform
-        ));
-        assert!(!<Distribution as Pretty<'_, BoxAllocator, ()>>::is_nil(
-            &Distribution::UniformNonZero
-        ));
-        assert!(<Distribution as Pretty<'_, BoxAllocator, ()>>::is_nil(
-            &Distribution::Nonuniform
-        ));
     }
 }

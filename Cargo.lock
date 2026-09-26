@@ -761,6 +761,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
+name = "check"
+version = "0.1.0"
+dependencies = [
+ "backend",
+ "clap",
+ "graph",
+ "lang",
+ "share",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1255,8 +1266,10 @@ dependencies = [
 name = "fmt"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "criterion",
  "lang",
+ "pretty",
  "share",
  "similar",
 ]
@@ -2645,7 +2658,6 @@ name = "share"
 version = "0.1.0"
 dependencies = [
  "im",
- "pretty",
 ]
 
 [[package]]

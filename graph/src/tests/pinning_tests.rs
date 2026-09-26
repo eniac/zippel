@@ -6,7 +6,9 @@
 
 use super::test_helpers::parse_and_concretize;
 use crate::node::ArgKind;
-use crate::{Dep, DepType, GOp, GraphError, HOp, Node, Nothing, Ref, UDag, UDags, mk};
+use crate::{
+    Dep, DepType, GOp, GraphError, HOp, Node, Nothing, PrivateValue, Ref, UDag, UDags, mk,
+};
 use backend::{ATyp, ArkBls12_381};
 use lang::ast::BinOp;
 use lang::id::Vid;
@@ -1673,7 +1675,7 @@ fn pin_get_relation_no_duplicate_edges() {
 }
 
 /// get_verifier returns error when verifier body references a witness input directly.
-/// Tests: GraphError::NonInstanceNodeInVerifier.
+/// Tests: GraphError::PrivateValueInVerifier.
 #[test]
 fn pin_get_verifier_witness_leak() {
     let src = r#"
@@ -1687,10 +1689,50 @@ fn pin_get_verifier_witness_leak() {
     // The verifier assertion `s == s` directly uses witness `s`.
     let result = dag.get_verifier();
     match result {
-        Err(GraphError::NonInstanceNodeInVerifier(_, _)) => {}
-        Err(e) => panic!("Expected NonInstanceNodeInVerifier, got: {}", e),
+        Err(GraphError::PrivateValueInVerifier {
+            kind: PrivateValue::Arg(Qualifier::Witness),
+            name: Some(name),
+            ..
+        }) => assert_eq!(name, Vid::new("s")),
+        Err(e) => panic!("Expected PrivateValueInVerifier, got: {}", e),
         Ok(_) => panic!("Expected error but got Ok"),
     }
+}
+
+/// get_verifier returns error when a verifier check needs a `random` sample
+/// that never went through the transcript: the verifier would draw its own.
+/// Tests: GraphError::PrivateValueInVerifier.
+#[test]
+fn pin_get_verifier_random_leak() {
+    // `r` is reached through `t`, not directly from the check.
+    let src = r#"
+        proto foo<G: Group, F: Scalar<G>>(instance g: G) where g == g {
+            let r = random<F>;
+            u <- g * r;
+            let t = r + r;
+            c <- challenge<F*>;
+            verify(g * t == u + u)
+        }
+    "#;
+    match parse_and_build(src)[0].get_verifier() {
+        Err(GraphError::PrivateValueInVerifier {
+            kind: PrivateValue::Random,
+            name: Some(name),
+            ..
+        }) => assert_eq!(name, Vid::new("r")),
+        Err(e) => panic!("Expected PrivateValueInVerifier, got: {}", e),
+        Ok(_) => panic!("Expected error but got Ok"),
+    }
+    // A random value the verifier only sees through the transcript is fine.
+    let src_ok = r#"
+        proto foo<G: Group, F: Scalar<G>>(instance g: G) where g == g {
+            let r = random<F>;
+            u <- g * r;
+            c <- challenge<F*>;
+            verify(u == u)
+        }
+    "#;
+    assert!(parse_and_build(src_ok)[0].get_verifier().is_ok());
 }
 
 /// get_relation returns error for a function (no `where` clause).
@@ -2217,7 +2259,7 @@ fn pin_find_verify_cross_function_verify() {
         "Full DAG should have 2 terminal checks: one inlined from function, one from protocol"
     );
     // Verifier subgraph: both checks are also present
-    let verifier = proto.clone().rename_inner_nodes().get_verifier().unwrap();
+    let verifier = proto.get_verifier().unwrap();
     assert!(
         verifier.find_verify().len() >= 2,
         "Verifier should have both inlined and protocol check nodes, got {}",
@@ -2357,7 +2399,7 @@ fn pin_error_non_polynomial_fun() {
     "#;
     let result = try_parse_and_build(src);
     match result {
-        Err(GraphError::NonPolynomialFun(_)) => {}
+        Err(GraphError::NonPolynomialFun(_, _)) => {}
         Err(e) => panic!("Expected NonPolynomialFun, got: {}", e),
         Ok(_) => panic!("Expected error but got Ok"),
     }
@@ -2679,4 +2721,70 @@ fn pin_reduce_sub() {
     expected.add_edges(DepType::Data, reduce, var_v);
 
     assert!(gs[0] == expected);
+}
+
+// ============================================================================
+// Verifier transcript inputs are identified by node, not by name
+// ============================================================================
+
+/// Names of the verifier's transcript inputs, in the order proof values fill them.
+fn transcript_inputs(verifier: &UDag<B>) -> Vec<String> {
+    verifier
+        .input_args()
+        .into_iter()
+        .filter_map(|n| match &verifier[n] {
+            Node::Arg(name, _, _, _, ArgKind::TranscriptInput) => Some(name.0.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A function that sends `u` is inlined twice: the two sends are different proof values, so
+/// the verifier needs two inputs even though both are named `u`.
+#[test]
+fn pin_same_name_sent_twice_gets_two_verifier_inputs() {
+    let src = r#"
+        fn send<G: Group, F: Scalar<G>>(instance g: G, witness x: F) -> G {
+            u <- g * x;
+            u
+        }
+        proto p<G: Group, F: Scalar<G>>(witness x: F, witness y: F, instance g: G) where g == g {
+            let a = send(g, x);
+            let b = send(g, y);
+            verify(a == b)
+        }
+    "#;
+    let verifier = parse_and_build(src)[0].get_verifier().unwrap();
+    // Labelled by the caller's `let` names; what matters is that there are two.
+    assert_eq!(transcript_inputs(&verifier).len(), 2);
+}
+
+/// `u <- ...` shadows the instance argument `u`: the sent value is a new binding and must be
+/// read from the proof, not replaced by the instance.
+#[test]
+fn pin_transcript_shadowing_an_instance_argument_is_read_from_the_proof() {
+    let src = r#"
+        proto p<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance u: G) where g == g {
+            u <- g * x;
+            verify(u == g)
+        }
+    "#;
+    let verifier = parse_and_build(src)[0].get_verifier().unwrap();
+    assert_eq!(transcript_inputs(&verifier), ["u#2"]);
+}
+
+/// Resending an instance argument (`g <- g`) is a proof value like any other: the prover puts
+/// it in the proof, so the verifier needs an input for it, or every later proof value would
+/// be read into the wrong input.
+#[test]
+fn pin_resent_instance_argument_is_read_from_the_proof() {
+    let src = r#"
+        proto p<G: Group, F: Scalar<G>>(witness x: F, instance g: G) where g == g {
+            g <- g;
+            u <- g * x;
+            verify(u == g)
+        }
+    "#;
+    let verifier = parse_and_build(src)[0].get_verifier().unwrap();
+    assert_eq!(transcript_inputs(&verifier), ["g#2", "u"]);
 }

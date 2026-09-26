@@ -9,22 +9,22 @@ use thiserror::Error;
 /// Failure raised while unifying two concrete types or two type variables.
 #[derive(Error, PartialEq, Debug)]
 pub enum UnifyError {
-    /// Wraps the failure that occurred while unifying the two given types, so the
-    /// full typing judgement can be pretty-printed.
-    #[error("UnifyError: While unifying types {0} ~ {1}\n\n{2}")]
+    /// Wraps the failure that occurred while unifying the two given types; displays that
+    /// failure.
+    #[error("{2}")]
     Typ(CTyp, CTyp, Box<UnifyError>),
     /// A least-upper-bound computation on a nested size range failed.
     #[error(transparent)]
     Lub(LubError),
     /// A type variable has no entry in the kind context `kctx`.
-    #[error("UnifyError: Kind not found {0}")]
+    #[error("Unknown type variable `{0}`")]
     KindNotFound(Tid),
     /// Two type variables were equated but their kinds describe different sorts of
     /// arkworks elements.
-    #[error("UnifyError: Type variable {0}: {1} does not match {2}: {3}")]
+    #[error("Type {0} ({1}) does not match {2} ({3})")]
     KindMismatch(Tid, CKind, Tid, CKind),
     /// The two type shapes have no common unifier at all.
-    #[error("UnifyError: Type mismatch {0} ~ {1}")]
+    #[error("Type {0} does not match {1}")]
     TypMismatch(CTyp, CTyp),
 }
 

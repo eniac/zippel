@@ -293,9 +293,11 @@ fn size_substs_dependent_range_from_singleton_typevar() {
         .collect();
 
     assert_eq!(v_values, Set::from(vec![2, 3, 4, 5, 6, 7, 8, 9]));
-    assert!(substs
-        .iter()
-        .all(|subst| subst.get(&Tid::from("NUM_VARS_CONST")) == Some(&10)));
+    assert!(
+        substs
+            .iter()
+            .all(|subst| subst.get(&Tid::from("NUM_VARS_CONST")) == Some(&10))
+    );
 }
 
 #[test]

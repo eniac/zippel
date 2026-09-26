@@ -1,0 +1,14 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: Cannot add G (Group) and F (Scalar<G>)
+   ╭─[ test.zippel:4:16 ]
+   │
+ 4 │     let z = ((y + x) * x) * x;
+   │               ┬─┬─┬  
+   │               │ ╰──── `+` is not defined for these operands
+   │               │   │  
+   │               ╰────── `y` has type G (Group)
+   │                   │  
+   │                   ╰── `x` has type F (Scalar<G>)
+───╯

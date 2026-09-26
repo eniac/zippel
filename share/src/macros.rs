@@ -2,7 +2,7 @@
 /// [`Debug`](std::fmt::Debug).
 ///
 /// Most compiler IR types (`Typ`, `Exp`, `Dag`, `Value`) have a readable
-/// `Display` (via `Pretty`) and a useless or absent `Debug`, so the standard
+/// `Display` and a useless or absent `Debug`, so the standard
 /// macro is either unusable or unreadable on them.
 ///
 /// # Panics

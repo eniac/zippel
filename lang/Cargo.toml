@@ -1,7 +1,7 @@
 [package]
 name = "lang"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 authors = ["Lef Ioannidis <elefthei@seas.upenn.edu>", "Alireza Shirzad <alrshir@seas.upenn.edu>"]
 
 [dependencies]
@@ -14,12 +14,12 @@ rand = { version = "0.8", features = ["std"] }
 logos = "0.14"
 chumsky = { version = "0.13", features = ["pratt"] }
 ariadne = "0.5"
+yansi = "1.0"
 lang-derive = { path = "./lang-derive" }
 
 [dev-dependencies]
 arbtest = "0.3.1"
 insta = { version = "1.48", features = ["yaml"] }
-yansi = "1.0"
 
 [lib]
 doctest = false

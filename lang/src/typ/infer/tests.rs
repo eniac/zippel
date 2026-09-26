@@ -135,30 +135,6 @@ fn set_record<N>(
     ))
 }
 
-/// Extension trait so `Spanned<CExp>` can call `.infer()` directly, delegating
-/// to the inner `CExp`'s `Typeable` impl. This lets test-helper-constructed
-/// expressions (which return `Spanned<Exp<N>>`) call `.infer()` without
-/// manually unwrapping `.node` at every call site.
-trait SpannedTypeable {
-    fn infer(
-        &self,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
-        vctx: &Ctx<Vid, CTyp>,
-    ) -> Result<CTyp, TypeError>;
-}
-
-impl SpannedTypeable for Spanned<CExp> {
-    fn infer(
-        &self,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
-        vctx: &Ctx<Vid, CTyp>,
-    ) -> Result<CTyp, TypeError> {
-        self.node.infer(kctx, fctx, vctx)
-    }
-}
-
 lazy_static! {
     static ref KIND_CTX: Ctx<Tid, CKind> = {
         let mut kctx = Ctx::new();
@@ -1042,7 +1018,7 @@ fn test_phase14_ram_uni_scalar_index_boundary() {
     assert!(
         matches!(
             e_overflow.infer(&KIND_CTX, &fctx, &vctx),
-            Err(TypeError::Ram(_, _, _, _, _, _))
+            Err(TypeError::Ram(..))
         ),
         "coef(p3)[4] is out of bounds (only 4 coefficients) and must be rejected",
     );
@@ -1075,7 +1051,7 @@ fn test_phase14_ram_uni_vector_index_boundary() {
     assert!(
         matches!(
             e_overflow.infer(&KIND_CTX, &fctx, &vctx),
-            Err(TypeError::Ram(_, _, _, _, _, _))
+            Err(TypeError::Ram(..))
         ),
         "coef(p3)[0..5] reaches an out-of-bounds index and must be rejected",
     );
@@ -1146,10 +1122,10 @@ fn test_reduce_dot_nested_vec_rejected() {
     let e = reduce(BinOp::Dot, varstr("vv"));
     let result = e.infer(&KIND_CTX, &fctx, &vctx);
     assert!(
-            result.is_err(),
-            "reduce(dot, [Vec(F,2); 3]) should be rejected — dot produces F, but F . Vec(F,2) is ill-typed; got {:?}",
-            result
-        );
+        result.is_err(),
+        "reduce(dot, [Vec(F,2); 3]) should be rejected — dot produces F, but F . Vec(F,2) is ill-typed; got {:?}",
+        result
+    );
 }
 
 #[test]
@@ -1936,7 +1912,7 @@ fn test_proto_body_blames_body_not_relation() {
     // Under correct behavior, this should wrap the offending body expression CExp::Lit(5)
     assert!(matches!(
         err,
-        TypeError::Decl(_, TypeError::Unit(_, _, CExp::Lit(5)))
+        TypeError::Decl(_, TypeError::Unit(_, _, CExp::Lit(5), _))
     ));
 }
 
