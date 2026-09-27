@@ -53,20 +53,21 @@ cargo zrunr hyperplonk  # run in release mode
 See [`examples/`](examples) for 30+ more protocols implemented in
 Zippel.
 
-### Checking a protocol
+### Typechecking a protocol
 
-`cargo zcheck` runs every compile-time check on a `.zippel` file
-without a Rust harness or protocol inputs: parsing, type checking, and
-splitting the protocol into prover and verifier, which catches a
-`verify` that depends on a witness or on the prover's randomness:
+If you are developing a new Zippel protocol and just want to typecheck it to make
+sure your syntax is correct and there are no obvious bugs, you can use `cargo zcheck`.
+Note that typechecking does not invoke any of our static analyses. This only ensures
+the program is valid and the verifier is not using prover-only variables
+(instance, extra, random). Since Zippel has sized types, you can also specify the
+sizes. Some examples:
 
 ```bash
 cargo zcheck examples/kzg/kzg.zippel
 cargo zcheck --size N=2 examples/zk_kzg/zk_kzg.zippel
 ```
 
-Checks run at concrete sizes. Pass `--size NAME=VALUE` for the
-sizes you care about; unset `Size` parameters default to the smallest
+Pass `--size NAME=VALUE` for the sizes you care about; unset `Size` parameters default to the smallest
 value that keeps every range non-empty.
 
 ### Formatting
