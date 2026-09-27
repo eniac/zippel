@@ -173,6 +173,53 @@ pub(crate) fn add_coeffs_assign<F: Field>(target: &mut Vec<F>, addend: &[F]) {
     }
 }
 
+/// Products whose coefficient count is at most this are multiplied out
+/// schoolbook by `sum_univariate_products_dense` (sumcheck round polynomials:
+/// a few degree-1 factors). Larger ones go through `sum_products_eval_form`.
+const SCHOOLBOOK_PRODUCT_LEN: usize = 64;
+
+/// One `c · Π f` term: the coefficient and each factor's coefficient vector,
+/// keyed by the factor's source polynomial so shared factors are FFT'd once.
+type KeyedProduct<F> = (F, Vec<(*const PolyVariant<F>, Vec<F>)>);
+
+/// Coefficients of `Σ c · Π f` over univariate products given as coefficient
+/// vectors, computed in evaluation form: every distinct factor (keyed by its
+/// source polynomial) is FFT'd once over a domain large enough for the
+/// biggest product, products are summed pointwise, and one inverse FFT gives
+/// the coefficients. Same polynomial as multiplying out each product, in
+/// O(k · n log n) instead of O(n^2) per product.
+fn sum_products_eval_form<F: PrimeField>(products: &[KeyedProduct<F>]) -> Vec<F> {
+    use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
+    let num_coeffs = products
+        .iter()
+        .map(|(_, factors)| factors.iter().map(|(_, c)| c.len() - 1).sum::<usize>() + 1)
+        .max()
+        .unwrap_or(1);
+    let domain = GeneralEvaluationDomain::<F>::new(num_coeffs)
+        .expect("field is not smooth enough to construct domain");
+    let mut evals: HashMap<*const PolyVariant<F>, Vec<F>> = HashMap::new();
+    let mut acc = vec![F::zero(); domain.size()];
+    for (coefficient, factors) in products {
+        for (key, coeffs) in factors {
+            evals.entry(*key).or_insert_with(|| domain.fft(coeffs));
+        }
+        let factor_evals: Vec<&[F]> = factors
+            .iter()
+            .map(|(key, _)| evals[key].as_slice())
+            .collect();
+        acc.par_iter_mut().enumerate().for_each(|(k, a)| {
+            let mut t = *coefficient;
+            for f in &factor_evals {
+                t *= f[k];
+            }
+            *a += t;
+        });
+    }
+    let mut coeffs = domain.ifft(&acc);
+    trim_trailing_zero_coeffs(&mut coeffs);
+    coeffs
+}
+
 pub(crate) fn mul_coeffs<F: Field>(left: &[F], right: &[F]) -> Vec<F> {
     if left.is_empty() || right.is_empty() {
         return vec![F::zero()];
@@ -507,10 +554,40 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
             return None;
         }
 
+        // Small products (sumcheck rounds: a handful of degree-1 factors) are
+        // multiplied out schoolbook, term by term. Large ones (e.g. products
+        // of degree-n univariates) would make that O(n^2), so they are summed
+        // in evaluation form instead (see `sum_products_eval_form`).
         let mut total = vec![F::zero()];
+        let mut large: Vec<KeyedProduct<F>> = Vec::new();
         for poly in polys {
-            let coeffs = poly.univariate_products_coeffs()?;
-            add_coeffs_assign(&mut total, &coeffs);
+            if let Some(num_vars) = poly.num_variables
+                && num_vars != 1
+            {
+                return None;
+            }
+            for (coefficient, indices) in &poly.products {
+                let factors = indices
+                    .iter()
+                    .map(|&idx| {
+                        let p = poly.flattened_polys[idx].as_ref();
+                        univariate_factor_coeffs(p).map(|c| (std::ptr::from_ref(p), c))
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                let product_len = factors.iter().map(|(_, c)| c.len() - 1).sum::<usize>() + 1;
+                if factors.len() >= 2 && product_len > SCHOOLBOOK_PRODUCT_LEN {
+                    large.push((*coefficient, factors));
+                } else {
+                    let mut term = vec![*coefficient];
+                    for (_, factor) in &factors {
+                        term = mul_coeffs(&term, factor);
+                    }
+                    add_coeffs_assign(&mut total, &term);
+                }
+            }
+        }
+        if !large.is_empty() {
+            add_coeffs_assign(&mut total, &sum_products_eval_form(&large));
         }
         trim_trailing_zero_coeffs(&mut total);
 
@@ -519,26 +596,6 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
         ));
         result.num_variables = Some(1);
         Some(result)
-    }
-
-    fn univariate_products_coeffs(&self) -> Option<Vec<F>> {
-        if let Some(num_vars) = self.num_variables
-            && num_vars != 1
-        {
-            return None;
-        }
-
-        let mut total = vec![F::zero()];
-        for (coefficient, indices) in &self.products {
-            let mut term = vec![*coefficient];
-            for &idx in indices {
-                let factor = univariate_factor_coeffs(self.flattened_polys[idx].as_ref())?;
-                term = mul_coeffs(&term, &factor);
-            }
-            add_coeffs_assign(&mut total, &term);
-        }
-        trim_trailing_zero_coeffs(&mut total);
-        Some(total)
     }
 
     /// Add a product of polynomials to this virtual polynomial
@@ -923,6 +980,22 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
         self.normalize()
             .map(|p| p.is_univariate())
             .unwrap_or_else(|_| self.num_vars() == Some(1))
+    }
+
+    /// Same answer as [`Self::is_univariate`], without expanding the
+    /// sum-of-products when every referenced polynomial is univariate
+    /// (products and sums of univariates, and scalar-only terms, normalize
+    /// to a univariate). Falls back to `is_univariate` otherwise.
+    pub fn is_univariate_shallow(&self) -> bool {
+        if let Some(num_vars) = self.num_variables {
+            return num_vars == 1;
+        }
+        let all_uni = self
+            .products
+            .iter()
+            .flat_map(|(_, idx)| idx.iter())
+            .all(|&i| self.flattened_polys[i].is_univariate());
+        all_uni || self.is_univariate()
     }
 
     /// Whether the normalized polynomial is multilinear.
@@ -1370,6 +1443,64 @@ mod tests {
     use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePolynomial};
     use ark_std::test_rng;
     use lang::ast::BinOp;
+
+    /// `sum_univariate_products_dense` sums large products in evaluation
+    /// form and small ones schoolbook; check both against a direct
+    /// Σ c·Π P expansion with ark-poly's own mul/add.
+    #[test]
+    fn sum_univariate_products_dense_matches_direct_expansion() {
+        let mut rng = test_rng();
+        for trial in 0..10 {
+            let deg = |k: usize| 20 + (trial * 7 + k * 13) % 90;
+            let polys: Vec<Arc<PolyVariant<Fr>>> = (0..5)
+                .map(|k| {
+                    Arc::new(PolyVariant::DenseUni(DensePolynomial::rand(
+                        deg(k),
+                        &mut rng,
+                    )))
+                })
+                .collect();
+            let small = Arc::new(PolyVariant::DenseUni(DensePolynomial::rand(3, &mut rng)));
+            // Two virtual polynomials sharing factor 0, as a reduce(+) sees them.
+            let terms: Vec<Vec<_>> = vec![
+                vec![
+                    (Fr::rand(&mut rng), vec![polys[0].clone(), polys[0].clone()]), // large square
+                    (Fr::rand(&mut rng), vec![polys[1].clone()]),                   // linear
+                    (Fr::rand(&mut rng), vec![]),                                   // scalar
+                ],
+                vec![
+                    (
+                        Fr::rand(&mut rng),
+                        vec![polys[0].clone(), polys[2].clone(), polys[3].clone()],
+                    ),
+                    (Fr::rand(&mut rng), vec![small.clone(), small.clone()]), // schoolbook path
+                    (Fr::rand(&mut rng), vec![polys[4].clone(), small.clone()]),
+                ],
+            ];
+            let mut vps = Vec::new();
+            let mut expected = DensePolynomial::<Fr>::zero();
+            for vp_terms in &terms {
+                let mut vp = VirtualPolynomial::new();
+                for (c, factors) in vp_terms {
+                    vp.add_poly_list(factors.iter().cloned(), *c).unwrap();
+                    let mut t = DensePolynomial::from_coefficients_vec(vec![*c]);
+                    for f in factors {
+                        let PolyVariant::DenseUni(d) = &**f else {
+                            unreachable!()
+                        };
+                        t = t.naive_mul(d);
+                    }
+                    expected = &expected + &t;
+                }
+                vps.push(vp);
+            }
+            let got = VirtualPolynomial::sum_univariate_products_dense(&vps).unwrap();
+            match got.normalize().unwrap() {
+                PolyVariant::DenseUni(p) => assert_eq!(p, expected, "trial {trial}"),
+                other => panic!("expected DenseUni, got {other:?}"),
+            }
+        }
+    }
 
     // ========== Test Helpers ==========
     fn create_vp_from_scalar(val: u64) -> VirtualPolynomial<Fr> {

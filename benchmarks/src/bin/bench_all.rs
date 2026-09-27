@@ -27,7 +27,9 @@
 //! single-thread pool installed mid-process — running with the global pool
 //! sized by `RAYON_NUM_THREADS` is the reliable path.
 
-use benchmarks::{Timing, groth16, hyrax, ipa, kzg, pari, pst13, schnorr, spartan, sumcheck};
+use benchmarks::{
+    Timing, dekart, groth16, hyrax, ipa, kzg, pari, pst13, schnorr, spartan, sumcheck,
+};
 use clap::Parser;
 use libspartan::{Instance, NIZK, NIZKGens};
 use merlin::Transcript;
@@ -38,7 +40,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 const ALL_SYSTEMS: &[&str] = &[
-    "schnorr", "sumcheck", "ipa", "kzg", "pari", "groth16", "pst13", "hyrax", "spartan",
+    "schnorr", "sumcheck", "ipa", "kzg", "pari", "groth16", "pst13", "hyrax", "spartan", "dekart",
 ];
 
 #[derive(Parser, Debug)]
@@ -121,8 +123,18 @@ const ZIPPEL_GROTH16: &str = include_str!("../../../examples/groth16/groth16.zip
 const ZIPPEL_PST13: &str = include_str!("../../../examples/pst13/pst13.zippel");
 const ZIPPEL_HYRAX: &str = include_str!("../../../examples/hyrax/hyrax.zippel");
 const ZIPPEL_SPARTAN: &str = include_str!("../../../examples/spartan/spartan.zippel");
+const ZIPPEL_DEKART: &str = include_str!("../../../examples/dekart/dekart.zippel");
 
 const NATIVE_IPA_RS: &str = include_str!("../../src/ipa.rs");
+// DeKART native baseline is vendored from aptos-dkg's dekart_univariate_v2
+// (+ the hiding-KZG / sigma-protocol / FS helpers it uses), flattened into
+// one file (see src/dekart_upstream/). NCLOC excludes its `#[cfg(test)]`
+// module, which sits at the end of the file.
+const NATIVE_DEKART_MOD_RS: &str = include_str!("../../src/dekart_upstream/mod.rs");
+// Bit width for the DeKART bench: the middle of upstream's
+// BIT_WIDTHS = [8, 16, 32, 64] grid. Use the standalone `dekart` bin's
+// `--ell` to vary it.
+const DEKART_ELL: usize = 16;
 // Upstream PARI baseline: vendored from alireza-shirzad/garuda-pari (commit
 // 3db79ad). NCLOC sums prover + verifier + generator + data_structures +
 // utils + the bit of `shared-utils` Pari actually uses (the transcript and
@@ -240,6 +252,7 @@ fn zippel_ncloc(sys: &str) -> usize {
         "pst13" => count_ncloc_line_comments(ZIPPEL_PST13),
         "hyrax" => count_ncloc_line_comments(ZIPPEL_HYRAX),
         "spartan" => count_ncloc_line_comments(ZIPPEL_SPARTAN),
+        "dekart" => count_ncloc_line_comments(ZIPPEL_DEKART),
         _ => 0,
     }
 }
@@ -260,6 +273,12 @@ fn native_ncloc(baseline: &str) -> usize {
         }
         "ipa" => count_ncloc_rust(extract_braced_block(NATIVE_IPA_RS, "pub mod native_side")),
         "hyrax" => count_ncloc_rust(NATIVE_HYRAX_MOD_RS),
+        "dekart" => count_ncloc_rust(
+            NATIVE_DEKART_MOD_RS
+                .split("#[cfg(test)]")
+                .next()
+                .unwrap_or(NATIVE_DEKART_MOD_RS),
+        ),
         "pari" => {
             count_ncloc_rust(NATIVE_PARI_MOD_RS)
                 + count_ncloc_rust(NATIVE_PARI_GEN_RS)
@@ -627,6 +646,42 @@ fn run_hyrax(threads: usize, ns: &[usize]) -> Vec<Row> {
         .collect()
 }
 
+fn run_dekart(threads: usize, ls: &[usize], ell: usize) -> Vec<Row> {
+    ls.iter()
+        .map(|&l| {
+            let sh = setup_pool().install(|| dekart::shared::build(l, ell));
+            let (mut z, np) = setup_pool().install(|| {
+                (
+                    dekart::zippel_side::Setup::new(&sh),
+                    dekart::native_side::Setup::new(&sh),
+                )
+            });
+            let compile = z.compile_time();
+            let (prover_nodes, verifier_nodes) = z.graph_sizes();
+            let zippel = z.time_protocol();
+            let native = timed_pool().install(|| np.time_protocol());
+            // log_size = L: domain 2^L, n = 2^L - 1 values in [0, 2^ell).
+            let r = Row {
+                system: "dekart",
+                threads,
+                log_size: l,
+                zippel,
+                compile,
+                baselines: vec![Baseline {
+                    name: "dekart",
+                    ncloc: native_ncloc("dekart"),
+                    prove: native.prove,
+                    verify: native.verify,
+                }],
+                prover_nodes,
+                verifier_nodes,
+            };
+            print_row(&r);
+            r
+        })
+        .collect()
+}
+
 fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
     ms.iter()
         .map(|&m| {
@@ -960,6 +1015,12 @@ fn main() {
         };
     // Sumcheck max_degree=3 matches the default the existing sumcheck bench uses;
     // pari n_pub=1 / k_vars=3 mirrors the sweep we've been running by hand.
+    // DeKART's size knob is L (domain 2^L, n = 2^L - 1 values).
+    let dekart_ls = match (&args.sizes, args.quick) {
+        (Some(ls), _) => ls.clone(),
+        (None, true) => vec![4usize, 8],
+        (None, false) => vec![18usize],
+    };
     let sumcheck_degree = 3usize;
     let pari_n_pub = 1usize;
     let pari_k_vars = 3usize;
@@ -1002,6 +1063,7 @@ fn main() {
             "pst13" => run_pst13(threads, &pst13_ns),
             "hyrax" => run_hyrax(threads, &hyrax_ns),
             "spartan" => run_spartan(threads, &spartan_ms),
+            "dekart" => run_dekart(threads, &dekart_ls, DEKART_ELL),
             other => panic!("unknown system: {other}"),
         };
         all_rows.extend(chunk);

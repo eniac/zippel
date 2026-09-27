@@ -152,6 +152,14 @@ name = "hyrax"
 path = "src/bin/hyrax.rs"
 
 [[bin]]
+name = "dekart"
+path = "src/bin/dekart.rs"
+
+[[bin]]
+name = "dekart_profile"
+path = "src/bin/dekart_profile.rs"
+
+[[bin]]
 name = "groth16_profile"
 path = "src/bin/groth16_profile.rs"
 

@@ -1,7 +1,5 @@
-use ark_ff::{One, UniformRand, Zero};
-use ark_poly::{
-    DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain, univariate::DensePolynomial,
-};
+use ark_ff::{Field, One, UniformRand, Zero};
+use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_std::test_rng;
 use backend::{ArkBls12_381, ArkConfig, Value};
 use lang::id::{Tid, Vid};
@@ -95,16 +93,18 @@ fn build_inputs(n_size: usize, b_size: usize, l_chunk: usize, h_deg: usize) -> C
     let srs_g2_xi = gen_g2 * xi;
     let xi_g1 = gen_g1 * xi;
 
-    // 2. Monomial SRS in G1
-    let mut srs_g1_n_vec = Vec::new();
-    let mut current_tau = F::one();
-    for _ in 0..=n_size {
-        srs_g1_n_vec.push(gen_g1 * current_tau);
-        current_tau *= tau;
-    }
+    // 2. SRS in G1: monomial [τ^i]_1 for the quotients, Lagrange [ℓ_i(τ)]_1
+    //    over the size-(n+1) domain for the commitments to f and the digits.
+    let domain_s = GeneralEvaluationDomain::<F>::new(n_size + 1).unwrap();
+    let tau_pows: Vec<F> = (0..=n_size).map(|i| tau.pow([i as u64])).collect();
+    let srs_g1_lagr_vec: Vec<G1> = domain_s
+        .ifft(&tau_pows)
+        .iter()
+        .map(|l| gen_g1 * l)
+        .collect();
 
     let mut srs_g1_h_vec = Vec::new();
-    current_tau = F::one();
+    let mut current_tau = F::one();
     for _ in 0..=h_deg {
         srs_g1_h_vec.push(gen_g1 * current_tau);
         current_tau *= tau;
@@ -127,26 +127,20 @@ fn build_inputs(n_size: usize, b_size: usize, l_chunk: usize, h_deg: usize) -> C
         f_evals.push(F::from(*z));
     }
 
-    // Decompose values into radix-b chunks
-    let mut chunks_evals = Vec::new();
+    // Decompose values into radix-b digits (the prover blinds f_j(ω^0) itself)
+    let mut chunks_bits = Vec::new();
     for j in 0..l_chunk {
-        let r_j = F::rand(&mut rng);
-        let mut chunk_j = vec![r_j];
-        for z in &z_vals {
-            let chunk_val = (z / (b_size as u64).pow(u32::try_from(j).unwrap())) % (b_size as u64);
-            chunk_j.push(F::from(chunk_val));
-        }
-        chunks_evals.push(Value::VecScalar(chunk_j));
+        let digits = z_vals
+            .iter()
+            .map(|z| {
+                F::from((z / (b_size as u64).pow(u32::try_from(j).unwrap())) % (b_size as u64))
+            })
+            .collect();
+        chunks_bits.push(Value::VecScalar(digits));
     }
 
-    // Blinding factors
+    // Commitment randomness of the statement
     let rho = F::rand(&mut rng);
-    let delta_rho = F::rand(&mut rng);
-    let rho_h = F::rand(&mut rng);
-    let mut rho_vec = Vec::new();
-    for _ in 0..l_chunk {
-        rho_vec.push(F::rand(&mut rng));
-    }
 
     // Range constants
     let mut b_pow = Vec::new();
@@ -157,26 +151,20 @@ fn build_inputs(n_size: usize, b_size: usize, l_chunk: usize, h_deg: usize) -> C
         current_pow *= b_scalar;
     }
 
-    // 4. Compute s0_commit
-    // Lagrange polynomial s0 has evaluations [1, 0, 0, 0] on the domain of size n+1
-    let domain_s = GeneralEvaluationDomain::<F>::new(n_size + 1).unwrap();
-    let mut s0_evals = vec![F::zero(); n_size + 1];
-    s0_evals[0] = F::one();
-    let s0_coeffs = domain_s.ifft(&s0_evals);
-    let s0_poly = DensePolynomial::from_coefficients_vec(s0_coeffs);
+    // 4. s0_commit commits to the Lagrange polynomial L_0: [ℓ_0(τ)]_1
+    let s0_commit = srs_g1_lagr_vec[0];
 
-    let mut s0_commit = G1::zero();
-    for (coeff, g) in s0_poly.coeffs.iter().zip(srs_g1_n_vec.iter()) {
-        s0_commit += *g * *coeff;
+    // 5. Statement: com_f = Σ_i f(ω^i)·[ℓ_i(τ)]_1 + ρ·[ξ]_1
+    let mut com_f = xi_g1 * rho;
+    for (v, g) in f_evals.iter().zip(srs_g1_lagr_vec.iter()) {
+        com_f += *g * *v;
     }
 
     Ctx::<Vid, Value<C>>::from_iter([
         (Vid("f_evals".to_string()), Value::VecScalar(f_evals)),
-        (Vid("chunks_evals".to_string()), Value::Vec(chunks_evals)),
+        (Vid("chunks_bits".to_string()), Value::Vec(chunks_bits)),
         (Vid("rho".to_string()), Value::Scalar(rho)),
-        (Vid("delta_rho".to_string()), Value::Scalar(delta_rho)),
-        (Vid("rho_h".to_string()), Value::Scalar(rho_h)),
-        (Vid("rho_vec".to_string()), Value::VecScalar(rho_vec)),
+        (Vid("com_f".to_string()), Value::G1(com_f)),
         (Vid("b_pow".to_string()), Value::VecScalar(b_pow.clone())),
         (Vid("gen_g1".to_string()), Value::G1(gen_g1)),
         (Vid("gen_g2".to_string()), Value::G2(gen_g2)),
@@ -185,9 +173,13 @@ fn build_inputs(n_size: usize, b_size: usize, l_chunk: usize, h_deg: usize) -> C
         (Vid("xi_g1".to_string()), Value::G1(xi_g1)),
         (Vid("s0_commit".to_string()), Value::G1(s0_commit)),
         (
-            Vid("srs_g1_n".to_string()),
-            Value::VecG1(srs_g1_n_vec.clone()),
+            Vid("srs_g1_lagr".to_string()),
+            Value::VecG1(srs_g1_lagr_vec),
         ),
         (Vid("srs_g1_h".to_string()), Value::VecG1(srs_g1_h_vec)),
+        (
+            Vid("v_star".to_string()),
+            Value::VecScalar(vec![F::one(); n_size + 1]),
+        ),
     ])
 }

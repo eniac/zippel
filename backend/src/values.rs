@@ -2507,6 +2507,18 @@ impl<C: ArkConfig> Value<C> {
     /// # Panics
     /// Panics if a `Value::Vec` holds elements of differing types, or if a
     /// `VecIndex` is empty and therefore has no range to report.
+    /// Like [`Self::typ`], except that a univariate polynomial maps to
+    /// `ATyp::uni(0)`: its kind is right but the degree is NOT meaningful.
+    /// `typ()` on a `Poly` expands the lazy sum-of-products (one FFT
+    /// multiplication per product term) just to read the degree; use this
+    /// where only the kind of the type matters.
+    pub fn shape_typ(&self) -> ATyp {
+        match self {
+            Value::Poly(poly) if poly.is_univariate_shallow() => ATyp::uni(0),
+            _ => self.typ(),
+        }
+    }
+
     pub fn typ(&self) -> ATyp {
         match self {
             Value::Index(n) => ATyp::fin(CRange::singleton(*n)),
@@ -2958,9 +2970,11 @@ impl<C: ArkConfig> Value<C> {
     /// Panics if `vec` is empty, if the element types have no least upper bound, or
     /// if an element does not match the derived carrier.
     pub fn value_vec(vec: Vec<Self>) -> Self {
-        let mut typ = vec[0].typ();
+        // Only the kind of the element type matters here (it picks the
+        // Vec variant; every polynomial kind keeps `Value::Vec`).
+        let mut typ = vec[0].shape_typ();
         for i in vec.iter().skip(1) {
-            typ = ATyp::lub_equ(&i.typ(), &typ, &Nothing).unwrap();
+            typ = ATyp::lub_equ(&i.shape_typ(), &typ, &Nothing).unwrap();
         }
         let mut vec_value = Value::Vec(vec);
         match typ {
@@ -3228,20 +3242,21 @@ impl<C: ArkConfig> Value<C> {
                     record_reduce_univariate_post_materialization();
                     return Value::Poly(poly);
                 }
-                let elem_typ = elements[0].typ();
+                // The identity element only depends on the kind of the type.
+                let elem_typ = elements[0].shape_typ();
                 elements
                     .into_par_iter()
                     .reduce(|| Value::<C>::zero(&elem_typ), |a, b| a + b)
             }
             BinOp::Mul => {
-                let elem_typ = elements[0].typ();
+                let elem_typ = elements[0].shape_typ();
                 elements
                     .into_par_iter()
                     .reduce(|| Value::<C>::one(&elem_typ), |a, b| a * b)
             }
             // && is multiplication in the GB encoding (Bool values are 0/1)
             BinOp::And => {
-                let elem_typ = elements[0].typ();
+                let elem_typ = elements[0].shape_typ();
                 elements
                     .into_par_iter()
                     .reduce(|| Value::<C>::one(&elem_typ), |a, b| a * b)
