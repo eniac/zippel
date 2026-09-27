@@ -153,6 +153,37 @@ fn random_in_verifier_is_reported_at_the_sample() {
     assert!(stderr.contains("random_leak.zippel:2:9"), "{stderr}");
 }
 
+/// Sampled inside a function, named by the caller: reported at the caller's binding, not at
+/// `random<F>` in the function.
+#[test]
+fn random_from_a_function_is_reported_where_it_is_named() {
+    let (code, stderr) = check_program(
+        "random_fn_leak",
+        "fn sample<G: Group, F: Scalar<G>>(instance _like: F) -> F {\n    random<F>\n}\nproto leak<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g * x {\n    let r = sample(x);\n    u <- g * r;\n    c <- challenge<F*>;\n    z <- r + x * c;\n    verify(g * r == u)\n}\n",
+    );
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(
+        stderr.contains("The verifier depends on random value `r`"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("random_fn_leak.zippel:5:9"), "{stderr}");
+}
+
+/// Never bound with `let`: reported at the sample itself.
+#[test]
+fn unnamed_random_is_reported_at_the_sample() {
+    let (code, stderr) = check_program(
+        "random_anon_leak",
+        "proto leak<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g * x {\n    verify(g * random<F> == h)\n}\n",
+    );
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(
+        stderr.contains("The verifier depends on a random value"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("random_anon_leak.zippel:2:16"), "{stderr}");
+}
+
 // A `proto` without `verify` isn't reported by `zippel-check` yet: `check_proto_verify`
 // (E0013, `lang::semantic::verify`) exists but isn't enabled — see the TODO in
 // `CModule::typecheck` (`lang/src/ast/module.rs`). Once it is, add back a

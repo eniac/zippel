@@ -651,27 +651,23 @@ impl Typeable for CExp {
                 // loop variables bound to fixed ranges — all compile-time known.
                 // Non-Fin indices (e.g. Scalar-typed runtime values) are rejected
                 // because the GB analysis cannot resolve dynamic RAM reads.
-                match (ta.clone(), tb.clone()) {
+                match (&ta, &tb) {
                     (CTyp::Vec(typ, n), CTyp::Fin(r)) => {
                         if r.end() <= n.node {
-                            Ok(typ.node)
+                            Ok(typ.node.clone())
                         } else {
                             Err(TypeError::ram(kctx, vctx, self, ta, tb))
                         }
                     }
-                    (CTyp::Vec(typ, n), CTyp::Vec(inner, m)) => {
-                        if let CTyp::Fin(r) = &inner.node {
-                            if r.end() <= n.node {
-                                Ok(CTyp::vec(&typ.node, m.node))
-                            } else {
-                                Err(TypeError::ram(kctx, vctx, self, ta, tb))
-                            }
+                    (CTyp::Vec(typ, n), CTyp::Vec(CTyp::Fin(r), m)) => {
+                        if r.end() <= n.node {
+                            Ok(CTyp::vec(&typ.node, m.node))
                         } else {
-                            Err(TypeError::ram_dynamic_index(kctx, vctx, self, ta, tb))
+                            Err(TypeError::ram(kctx, vctx, self, ta, tb))
                         }
                     }
                     // Index is not Fin-typed → dynamic RAM, unsupported.
-                    (_, _) => Err(TypeError::ram_dynamic_index(kctx, vctx, self, ta, tb)),
+                    _ => Err(TypeError::ram_dynamic_index(kctx, vctx, self, ta, tb)),
                 }
             }
 
@@ -728,50 +724,30 @@ impl Typeable for CExp {
                         }
 
                         // The argument must be a field and the same as the MLE
-                        match param_types.0[0].node.clone() {
-                            CTyp::Fin(_r) if n.node > 0 => {
+                        match &param_types.0[0].node {
+                            CTyp::Fin(_) if n.node > 0 => {
                                 let rem = n.checked_sub(1).ok_or_else(|| {
                                     TypeError::mle_app(kctx, vctx, &id.node, params, &param_types)
                                 })?;
                                 Ok(CTyp::mle(tbase, rem))
                             }
-                            CTyp::Base(tb) if &tb == tbase && n.node > 0 => {
+                            CTyp::Base(tb) if tb == tbase && n.node > 0 => {
                                 let rem = n.checked_sub(1).ok_or_else(|| {
                                     TypeError::mle_app(kctx, vctx, &id.node, params, &param_types)
                                 })?;
                                 Ok(CTyp::mle(tbase, rem))
                             }
-                            CTyp::Vec(
-                                Spanned {
-                                    node: CTyp::Base(tb),
-                                    ..
-                                },
-                                m,
-                            ) if &tb == tbase && n.node == m.node => Ok(CTyp::base(tbase)),
-                            CTyp::Vec(
-                                Spanned {
-                                    node: CTyp::Fin(_), ..
-                                },
-                                m,
-                            ) if n.node == m.node => Ok(CTyp::base(tbase)),
-                            CTyp::Vec(
-                                Spanned {
-                                    node: CTyp::Fin(_), ..
-                                },
-                                m,
-                            ) if n.node > m.node => {
+                            CTyp::Vec(CTyp::Base(tb), m) if tb == tbase && n.node == m.node => {
+                                Ok(CTyp::base(tbase))
+                            }
+                            CTyp::Vec(CTyp::Fin(_), m) if n.node == m.node => Ok(CTyp::base(tbase)),
+                            CTyp::Vec(CTyp::Fin(_), m) if n.node > m.node => {
                                 let rem = n.checked_sub(m.node).ok_or_else(|| {
                                     TypeError::mle_app(kctx, vctx, &id.node, params, &param_types)
                                 })?;
                                 Ok(CTyp::mle(tbase, rem))
                             }
-                            CTyp::Vec(
-                                Spanned {
-                                    node: CTyp::Base(tb),
-                                    ..
-                                },
-                                m,
-                            ) if &tb == tbase && n.node > m.node => {
+                            CTyp::Vec(CTyp::Base(tb), m) if tb == tbase && n.node > m.node => {
                                 let rem = n.checked_sub(m.node).ok_or_else(|| {
                                     TypeError::mle_app(kctx, vctx, &id.node, params, &param_types)
                                 })?;

@@ -24,4 +24,5 @@ spongefish = { version = "0.7", features = [
 [dev-dependencies]
 arbitrary = { version = "1.4.1", features = ["derive"] }
 arbtest = "0.3.2"
+insta = "1.48"
 serial_test = "3.2.0"

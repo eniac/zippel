@@ -58,20 +58,23 @@ impl<C: HasOpFactory> GraphBuilder<C> {
     /// Create a new graph builder with an input node
     pub fn new() -> Self {
         let mut dag = UDag::new();
-        let input_node = dag.add_node(Node::Inp(Vid::from("inputs")));
+        let input_node = dag.add_node(Node::Inp(Vid::from("inputs")), 0..0);
         GraphBuilder { dag, input_node }
     }
 
     /// Add a variable input as an `Arg` node connected to the input marker.
     pub fn add_input(&mut self, name: &str, typ: ATyp) -> Ref {
         let vid = Vid::from(name);
-        let arg = self.dag.add_node(Node::Arg(
-            vid,
-            typ,
-            Qualifier::Witness,
-            Distribution::Nonuniform,
-            ArgKind::Input,
-        ));
+        let arg = self.dag.add_node(
+            Node::Arg(
+                vid,
+                typ,
+                Qualifier::Witness,
+                Distribution::Nonuniform,
+                ArgKind::Input,
+            ),
+            0..0,
+        );
         self.dag.add_edge(self.input_node, arg, Dep::data());
         Ref(arg)
     }
@@ -80,7 +83,7 @@ impl<C: HasOpFactory> GraphBuilder<C> {
     pub fn add_op(&mut self, op: GOp<C>) -> Ref {
         use crate::DepType;
         let hop = mk::<C>(op.clone());
-        let node = self.dag.add_node(Node::Op(hop, Nothing));
+        let node = self.dag.add_node(Node::Op(hop, Nothing), 0..0);
         // Add edges from dependencies to this node
         self.dag.add_edges(DepType::Data, node, op);
         Ref(node)

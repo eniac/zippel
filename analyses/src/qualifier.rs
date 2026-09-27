@@ -1,5 +1,6 @@
 use backend::ArkConfig;
 use graph::{Dag, GOp, Node, Op, QDag, UDag};
+use lang::ast::spanned::Spanned;
 use lang::typ::Qualifier;
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
@@ -177,18 +178,18 @@ impl QualifierPropagation {
 
         Dag {
             graph: dag.graph.map(
-                |i, node| {
-                    node.with_annotation(if node.is_transcript() {
+                |i, w| {
+                    let q = if w.is_transcript() {
                         Qualifier::Instance
                     } else {
                         *qp.quals.get(&i).unwrap_or(&Qualifier::Local)
-                    })
+                    };
+                    Spanned::new(w.with_annotation(q), w.span.clone())
                 },
                 |_, e| *e,
             ),
-            vctx: dag.vctx.clone(),
+            bindings: dag.bindings.clone(),
             transcript_vars: dag.transcript_vars.clone(),
-            sources: dag.sources.clone(),
         }
     }
 }

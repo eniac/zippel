@@ -1,0 +1,24 @@
+---
+source: graph/src/tests/pinning_tests.rs
+expression: rendered
+---
+error: The verifier depends on random value `r`, which only the prover knows
+   ╭─[ test.zippel:2:9 ]
+   │
+ 2 │     let r = random<F>;
+   │         ┬  
+   │         ╰── sampled by the prover; the verifier would draw its own, different value
+   │         │  
+   │         ╰── note: a `verify` check may only use `instance` arguments, challenges, and values the prover sends with `<-` (directly or through `let`s)
+   │ 
+ 4 │     let t = r + r;
+   │         ┬  
+   │         ╰── `t` depends on `r`
+ 5 │     let w = t * t;
+   │         ┬  
+   │         ╰── `w` depends on `t`
+   │ 
+ 8 │     verify(g * w == u)
+   │     ─────────┬────────  
+   │              ╰────────── the verifier checks it here
+───╯

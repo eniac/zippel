@@ -1375,6 +1375,7 @@ dependencies = [
  "ark-poly",
  "ark-std",
  "backend",
+ "insta",
  "lang",
  "log",
  "petgraph",

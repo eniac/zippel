@@ -64,15 +64,15 @@ use thiserror::Error;
 /// node annotation like costs, schedules etc.
 #[derive(Clone)]
 pub struct Dag<C: ArkConfig, A> {
-    /// The underlying `petgraph` structure: [`Node`] weights, [`Dep`] edges.
-    pub graph: Graph<Node<C, A>, Dep>,
-    /// Variable names for nodes (both let-bindings and transcript vars)
-    pub vctx: Ctx<NodeIndex, Vid>,
+    /// The underlying `petgraph` structure: each node with the source span that created it
+    /// (nodes are never deduplicated, so each has one), and [`Dep`] edges. The span lives here,
+    /// not in the hash-consed operation, which every node computing it shares.
+    pub graph: Graph<Spanned<Node<C, A>>, Dep>,
+    /// The source names bound to each node, in order, each at its binding: an argument's
+    /// declaration, then every `let`/`<-` naming it. The first is the node's name.
+    pub bindings: Ctx<NodeIndex, Vec<Spanned<Vid>>>,
     /// Which variables are transcript variables (true) vs let-bindings (false)
     pub transcript_vars: Ctx<NodeIndex, bool>,
-    /// Source binding of every argument, `random` sample, and input marker, used to locate
-    /// diagnostics. The name is `None` for a sample never bound with `let`.
-    pub sources: Ctx<NodeIndex, Spanned<Option<Vid>>>,
 }
 
 /// Dag with no annotations
@@ -94,15 +94,12 @@ pub type QDags<C> = Dags<C, Qualifier>;
 #[derive(Error, PartialEq, Debug)]
 pub enum GraphError {
     /// A variable was referenced with no binding in the lowering context.
-    #[error("Variable not found {0}")]
-    VarNotFound(Vid),
-    /// A `NodeIndex` (reported by its `usize` index) is absent from the graph.
-    #[error("Node not found: {0}")]
-    NodeNotFound(usize),
+    #[error("Variable `{0}` is not defined")]
+    VarNotFound(Spanned<Vid>),
     /// The named protocol has no `Node::Rel` marker, so it has no relation to
     /// project onto.
-    #[error("Relation not found in {0}")]
-    RelationNotFound(Vid),
+    #[error("`{0}` has no `where` relation")]
+    RelationNotFound(Spanned<Vid>),
     /// The verifier projection reached a value only the prover has: an argument
     /// that is not `Qualifier::Instance`, or a `random` sample.
     #[error("The verifier depends on {}, which only the prover knows", describe_private(*.kind, .name.as_ref()))]
@@ -113,10 +110,11 @@ pub enum GraphError {
         name: Option<Vid>,
         /// Where the value is bound in the source.
         span: std::ops::Range<usize>,
+        /// The named values on the way from it to the check, innermost first.
+        via: Vec<Spanned<Vid>>,
+        /// The `verify` check that needs it.
+        check: std::ops::Range<usize>,
     },
-    /// Two independent failures, reported together.
-    #[error("{0}\n\n{1}")]
-    Next(Box<GraphError>, Box<GraphError>),
     /// A `lang`-level typing failure surfaced during lowering.
     #[error(transparent)]
     Type(Box<TypeError>),
@@ -150,8 +148,7 @@ fn describe_private(kind: PrivateValue, name: Option<&Vid>) -> String {
     }
 }
 
-/// Anchored where the failure is in the source. Errors that are internal invariants carry no
-/// location and are reported at the start of the file.
+/// Anchored where the failure is in the source.
 impl From<&GraphError> for Diagnostic {
     fn from(e: &GraphError) -> Self {
         match e {
@@ -163,26 +160,44 @@ impl From<&GraphError> for Diagnostic {
                         "a `fun` body may only add, subtract, multiply, and negate its parameters and constants",
                     )
             }
-            GraphError::PrivateValueInVerifier { kind, span, .. } => {
+            GraphError::PrivateValueInVerifier {
+                kind,
+                name,
+                span,
+                via,
+                check,
+            } => {
                 let label = match kind {
                     PrivateValue::Random => {
                         "sampled by the prover; the verifier would draw its own, different value"
                     }
                     PrivateValue::Arg(_) => "the verifier never receives this",
                 };
-                Diagnostic::error(Phase::Type, span.clone(), &e.to_string())
-                    .primary_label(label)
+                let mut d = Diagnostic::error(Phase::Type, span.clone(), &e.to_string())
+                    .primary_label(label);
+                // "`t` depends on `r`", from the value out to the check.
+                let mut previous = name.as_ref().map_or("it".to_string(), |n| format!("`{n}`"));
+                for step in via {
+                    d = d.secondary_label(
+                        step.span.clone(),
+                        &format!("`{}` depends on {previous}", step.node),
+                    );
+                    previous = format!("`{}`", step.node);
+                }
+                d.secondary_label(check.clone(), "the verifier checks it here")
                     .note(
                         "a `verify` check may only use `instance` arguments, challenges, and values \
                          the prover sends with `<-` (directly or through `let`s)",
                     )
             }
-            other => Diagnostic::error(
-                Phase::Type,
-                0..0,
-                &other.to_string().split_whitespace().collect::<Vec<_>>().join(" "),
-            )
-            .primary_label("while building the protocol graph"),
+            GraphError::VarNotFound(id) => {
+                Diagnostic::error(Phase::Type, id.span.clone(), &e.to_string())
+                    .primary_label("not defined here")
+            }
+            GraphError::RelationNotFound(name) => {
+                Diagnostic::error(Phase::Type, name.span.clone(), &e.to_string())
+                    .primary_label("declared without a `where` clause")
+            }
         }
     }
 }
@@ -215,6 +230,14 @@ fn ark_error(
     )
 }
 
+/// `weight` with its node replaced by `f` of it, keeping the node's span.
+fn respan<C: ArkConfig, A, B>(
+    weight: &Spanned<Node<C, A>>,
+    f: impl FnOnce(&Node<C, A>) -> Node<C, B>,
+) -> Spanned<Node<C, B>> {
+    Spanned::new(f(&weight.node), weight.span.clone())
+}
+
 /// `name`, or the first of `name#2`, `name#3`, ... not in `taken`, which it is added to.
 /// Source identifiers cannot contain `#`, so the result never collides with one.
 fn unique_name(name: &Vid, taken: &mut HashSet<Vid>) -> Vid {
@@ -239,29 +262,30 @@ pub trait WritePdf {
 }
 
 impl GraphError {
-    /// Chains two failures so both are reported.
-    pub fn next(e1: GraphError, e2: GraphError) -> Self {
-        GraphError::Next(Box::new(e1), Box::new(e2))
-    }
-    /// Builds a [`GraphError::VarNotFound`] for an unbound variable.
-    pub fn var_not_found(vid: &Vid) -> Self {
+    /// Builds a [`GraphError::VarNotFound`] for an unbound variable, at its use.
+    pub fn var_not_found(vid: &Spanned<Vid>) -> Self {
         GraphError::VarNotFound(vid.clone())
     }
-    /// Builds a [`GraphError::PrivateValueInVerifier`] for the prover-only value bound at `span`.
+    /// Builds a [`GraphError::PrivateValueInVerifier`] for the prover-only value bound at `span`,
+    /// reaching the check at `check` through the named values `via`.
     pub fn private_value_in_verifier(
         kind: PrivateValue,
         name: Option<Vid>,
         span: std::ops::Range<usize>,
+        via: Vec<Spanned<Vid>>,
+        check: std::ops::Range<usize>,
     ) -> Self {
-        GraphError::PrivateValueInVerifier { kind, name, span }
+        GraphError::PrivateValueInVerifier {
+            kind,
+            name,
+            span,
+            via,
+            check,
+        }
     }
-    /// Builds a [`GraphError::RelationNotFound`] for the named protocol.
-    pub fn relation_not_found(vid: &Vid) -> Self {
+    /// Builds a [`GraphError::RelationNotFound`] for the declaration named `vid`.
+    pub fn relation_not_found(vid: &Spanned<Vid>) -> Self {
         GraphError::RelationNotFound(vid.clone())
-    }
-    /// Builds a [`GraphError::NodeNotFound`] from a `NodeIndex`.
-    pub fn node_not_found(n: NodeIndex) -> Self {
-        GraphError::NodeNotFound(n.index())
     }
     /// Attaches `span` to a type error that inference left unlocated.
     fn located(self, span: &std::ops::Range<usize>) -> Self {
@@ -303,7 +327,7 @@ impl<C: HasOpFactory, A: PartialEq + Clone> PartialEq for Dag<C, A> {
             &other.graph,
             |a, b| nodes_isomorphic_eq(a, b),
             |a, b| a == b,
-        ) && self.vctx == other.vctx
+        ) && self.bindings == other.bindings
             && self.transcript_vars == other.transcript_vars
     }
 }
@@ -319,9 +343,8 @@ impl<C: ArkConfig, A> Dag<C, A> {
     pub fn new() -> Self {
         Dag {
             graph: Graph::new(),
-            vctx: Ctx::new(),
+            bindings: Ctx::new(),
             transcript_vars: Ctx::new(),
-            sources: Ctx::new(),
         }
     }
 
@@ -430,30 +453,61 @@ impl<C: ArkConfig, A> Dag<C, A> {
         closure
     }
 
-    /// Add a node to the graph (no deduplication)
-    pub fn add_node(&mut self, node: Node<C, A>) -> NodeIndex {
-        self.graph.add_node(node)
+    /// Adds `node`, created by the source at `span` (no deduplication).
+    pub fn add_node(&mut self, node: Node<C, A>, span: std::ops::Range<usize>) -> NodeIndex {
+        self.graph.add_node(Spanned::new(node, span))
+    }
+
+    /// Adds a copy of another graph's node, keeping its span.
+    fn add_weight(&mut self, weight: Spanned<Node<C, A>>) -> NodeIndex {
+        self.graph.add_node(weight)
+    }
+
+    /// The source span that created `node`.
+    pub fn span(&self, node: NodeIndex) -> std::ops::Range<usize> {
+        self.graph[node].span.clone()
     }
 
     /// Mutable access to a node weight, used by passes that rewrite
     /// annotations in place.
     pub fn get_node(&mut self, it: NodeIndex) -> &mut Node<C, A> {
-        &mut self.graph[it]
+        &mut self.graph[it].node
     }
 
-    /// Source binding of `node`, which must be an argument, `random` sample, or input marker
-    /// (see [`Dag::sources`]).
-    pub fn source(&self, node: NodeIndex) -> &Spanned<Option<Vid>> {
-        &self.sources[&node]
+    /// Records that the source binds `name` to `node`.
+    pub fn bind(&mut self, node: NodeIndex, name: &Spanned<Vid>) {
+        let mut names = self.bindings.get(&node).cloned().unwrap_or_default();
+        names.push(name.clone());
+        self.bindings.insert(&node, &names);
     }
 
-    /// Find the variable name for a node via vctx (let/transcript bindings)
-    /// or by reading the name off `Node::Arg`/`Node::Inp`/`Node::Rel` markers.
+    /// The first binding of `node`, if the source names it.
+    pub fn binding(&self, node: NodeIndex) -> Option<&Spanned<Vid>> {
+        self.bindings.get(&node).and_then(|names| names.first())
+    }
+
+    /// The name of `node`: its first binding, or the name on an input or relation marker.
     pub fn find_var(&self, node: NodeIndex) -> Option<Vid> {
-        if let Some(v) = self.vctx.get(&node).cloned() {
-            return Some(v);
+        match self.binding(node) {
+            Some(name) => Some(name.node.clone()),
+            None => self[node].name().cloned(),
         }
-        self[node].name().cloned()
+    }
+
+    /// The path from `from` to the check that needed it, following `via` (each node ↦ the node
+    /// that needed it): the named nodes on the way, innermost first, and the check's span.
+    fn use_path(
+        &self,
+        via: &HashMap<NodeIndex, NodeIndex>,
+        from: NodeIndex,
+    ) -> (Vec<Spanned<Vid>>, std::ops::Range<usize>) {
+        let mut steps = Vec::new();
+        let mut node = from;
+        while let Some(&next) = via.get(&node) {
+            steps.extend(self.binding(node).cloned());
+            node = next;
+        }
+        (steps, self.span(node))
     }
 
     /// Wraps a node index as a [`Ref`], the form operations use to point at
@@ -469,7 +523,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
     /// Get reference to internal graph (for testing)
     #[cfg(test)]
-    pub(crate) fn inner_graph(&self) -> &Graph<Node<C, A>, Dep> {
+    pub(crate) fn inner_graph(&self) -> &Graph<Spanned<Node<C, A>>, Dep> {
         &self.graph
     }
 
@@ -494,18 +548,19 @@ impl<C: ArkConfig, A> Dag<C, A> {
     pub fn map_annotations<B, F: Fn(&GOp<C>, &A) -> B>(&self, f: &F) -> Dag<C, B> {
         Dag {
             graph: self.graph.map(
-                |_, node| match node {
-                    Node::Op(op, ann) => Node::Op(op.clone(), f(op, ann)),
-                    Node::Transcr(op, ann) => Node::Transcr(op.clone(), f(op, ann)),
-                    Node::Inp(a) => Node::Inp(a.clone()),
-                    Node::Rel(a) => Node::Rel(a.clone()),
-                    Node::Arg(v, t, q, d, k) => Node::Arg(v.clone(), t.clone(), *q, *d, *k),
+                |_, w| {
+                    respan(w, |node| match node {
+                        Node::Op(op, ann) => Node::Op(op.clone(), f(op, ann)),
+                        Node::Transcr(op, ann) => Node::Transcr(op.clone(), f(op, ann)),
+                        Node::Inp(a) => Node::Inp(a.clone()),
+                        Node::Rel(a) => Node::Rel(a.clone()),
+                        Node::Arg(v, t, q, d, k) => Node::Arg(v.clone(), t.clone(), *q, *d, *k),
+                    })
                 },
                 |_, e| *e,
             ),
-            vctx: self.vctx.clone(),
+            bindings: self.bindings.clone(),
             transcript_vars: self.transcript_vars.clone(),
-            sources: self.sources.clone(),
         }
     }
 
@@ -690,18 +745,19 @@ impl<C: ArkConfig, A> Dag<C, A> {
     pub fn erase_ann(self) -> UDag<C> {
         Dag {
             graph: self.graph.map(
-                |_, node| match node {
-                    Node::Inp(a) => Node::Inp(a.clone()),
-                    Node::Rel(a) => Node::Rel(a.clone()),
-                    Node::Arg(v, t, q, d, k) => Node::Arg(v.clone(), t.clone(), *q, *d, *k),
-                    Node::Op(op, _) => Node::Op(op.clone(), Nothing),
-                    Node::Transcr(op, _) => Node::Transcr(op.clone(), Nothing),
+                |_, w| {
+                    respan(w, |node| match node {
+                        Node::Inp(a) => Node::Inp(a.clone()),
+                        Node::Rel(a) => Node::Rel(a.clone()),
+                        Node::Arg(v, t, q, d, k) => Node::Arg(v.clone(), t.clone(), *q, *d, *k),
+                        Node::Op(op, _) => Node::Op(op.clone(), Nothing),
+                        Node::Transcr(op, _) => Node::Transcr(op.clone(), Nothing),
+                    })
                 },
                 |_, e| *e,
             ),
-            vctx: self.vctx.clone(),
+            bindings: self.bindings.clone(),
             transcript_vars: self.transcript_vars.clone(),
-            sources: self.sources.clone(),
         }
     }
 
@@ -765,16 +821,16 @@ impl<C: ArkConfig, A> Dag<C, A> {
             }
         }
 
-        // Merge vctx and transcript_vars from both DAGs with remapped keys
-        let mut merged_vctx = Ctx::new();
-        for (k, v) in self.vctx.iter() {
+        // Merge bindings and transcript_vars from both DAGs with remapped keys
+        let mut merged_bindings = Ctx::new();
+        for (k, v) in self.bindings.iter() {
             if let Some(new_k) = node_map_self.get(k) {
-                merged_vctx.insert(new_k, v);
+                merged_bindings.insert(new_k, v);
             }
         }
-        for (k, v) in other.vctx.iter() {
+        for (k, v) in other.bindings.iter() {
             if let Some(new_k) = node_map_other.get(k) {
-                merged_vctx.insert(new_k, v);
+                merged_bindings.insert(new_k, v);
             }
         }
         let mut merged_transcript = Ctx::new();
@@ -789,23 +845,10 @@ impl<C: ArkConfig, A> Dag<C, A> {
             }
         }
 
-        let mut merged_sources = Ctx::new();
-        for (k, v) in self.sources.iter() {
-            if let Some(new_k) = node_map_self.get(k) {
-                merged_sources.insert(new_k, v);
-            }
-        }
-        for (k, v) in other.sources.iter() {
-            if let Some(new_k) = node_map_other.get(k) {
-                merged_sources.insert(new_k, v);
-            }
-        }
-
         Dag {
             graph: combined_graph,
-            vctx: merged_vctx,
+            bindings: merged_bindings,
             transcript_vars: merged_transcript,
-            sources: merged_sources,
         }
     }
 }
@@ -825,10 +868,9 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         Dag {
             graph: self
                 .graph
-                .map(|_, node| node.map_node_indices(f), |_, e| *e),
-            vctx: self.vctx.clone(),
+                .map(|_, w| respan(w, |node| node.map_node_indices(f)), |_, e| *e),
+            bindings: self.bindings.clone(),
             transcript_vars: self.transcript_vars.clone(),
-            sources: self.sources.clone(),
         }
     }
 
@@ -857,11 +899,11 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         let mut node_map: HashMap<NodeIndex, Ref> = HashMap::new();
 
         // Add input node first, so it is NodeIndex::new(0)
-        let n_input = prover.add_node(self[self.input_node()].clone());
+        let n_input = prover.add_weight(self.graph[self.input_node()].clone());
         node_map.insert(self.input_node(), Ref(n_input));
         // Replicate input Arg nodes (so the projected dag has the same arg structure).
         for arg_idx in self.input_args() {
-            let new_arg = prover.add_node(self[arg_idx].clone());
+            let new_arg = prover.add_weight(self.graph[arg_idx].clone());
             prover.add_edge(n_input, new_arg, Dep::data());
             node_map.insert(arg_idx, Ref(new_arg));
         }
@@ -871,7 +913,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
                 continue;
             }
             // Add node to prover graph
-            let new_node = prover.add_node(self[n].clone());
+            let new_node = prover.add_weight(self.graph[n].clone());
             node_map.insert(n, Ref(new_node));
 
             // Add previous neighbors to worklist
@@ -881,10 +923,10 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             }
         }
 
-        // Propagate vctx and transcript_vars for mapped nodes
+        // Propagate bindings and transcript_vars for mapped nodes
         for (old_idx, new_ref) in &node_map {
-            if let Some(vid) = self.vctx.get(old_idx) {
-                prover.vctx.insert(&new_ref.node(), vid);
+            if let Some(names) = self.bindings.get(old_idx) {
+                prover.bindings.insert(&new_ref.node(), names);
             }
             if let Some(is_transcript) = self.transcript_vars.get(old_idx) {
                 prover
@@ -936,9 +978,10 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         A: Clone,
     {
         let mut g_relation = Dag::new();
-        let relation_node = self
-            .relation_node()
-            .ok_or(GraphError::RelationNotFound(self.name()))?;
+        let relation_node = self.relation_node().ok_or_else(|| {
+            let name = Spanned::new(self.name(), self.span(self.input_node()));
+            GraphError::relation_not_found(&name)
+        })?;
 
         let mut worklist = vec![relation_node];
         let mut node_map_rel = HashMap::<NodeIndex, NodeIndex>::new();
@@ -947,7 +990,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             if node_map_rel.contains_key(&n) {
                 continue;
             }
-            let new_node = g_relation.add_node(self[n].clone());
+            let new_node = g_relation.add_weight(self.graph[n].clone());
             node_map_rel.insert(n, new_node);
             for e in self.graph.edges_directed(n, Direction::Outgoing) {
                 worklist.push(e.target());
@@ -978,16 +1021,17 @@ impl<C: HasOpFactory, A> Dag<C, A> {
     {
         Dag {
             graph: self.graph.map(
-                |_, node| match node {
-                    Node::Op(op, ann) => Node::Op(mk::<C>(f(op)), ann.clone()),
-                    Node::Transcr(op, ann) => Node::Transcr(mk::<C>(f(op)), ann.clone()),
-                    _ => node.clone(),
+                |_, w| {
+                    respan(w, |node| match node {
+                        Node::Op(op, ann) => Node::Op(mk::<C>(f(op)), ann.clone()),
+                        Node::Transcr(op, ann) => Node::Transcr(mk::<C>(f(op)), ann.clone()),
+                        _ => node.clone(),
+                    })
                 },
                 |_, e| *e,
             ),
-            vctx: self.vctx.clone(),
+            bindings: self.bindings.clone(),
             transcript_vars: self.transcript_vars.clone(),
-            sources: self.sources.clone(),
         }
     }
 
@@ -1029,11 +1073,11 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         let mut node_map_self = HashMap::<NodeIndex, NodeIndex>::new();
 
         // Make new input node + replicate instance Args.
-        let n_input = verifier.add_node(Node::Inp(name));
+        let n_input = verifier.add_node(Node::Inp(name), self.span(self.input_node()));
         node_map_self.insert(self.input_node(), n_input);
 
         for (old_arg_idx, _) in &instance_args {
-            let new_arg = verifier.add_node(self[*old_arg_idx].clone());
+            let new_arg = verifier.add_weight(self.graph[*old_arg_idx].clone());
             verifier.add_edge(n_input, new_arg, Dep::data());
             node_map_self.insert(*old_arg_idx, new_arg);
         }
@@ -1044,20 +1088,22 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         // they will be rewritten *after* `map_node_indices` so verifier-local
         // indices are not subject to remapping).
         for &n_transcr in &self.transcript_nodes() {
-            let node = &self[n_transcr];
+            let node = &self.graph[n_transcr];
             if node.is_challenge() {
-                let new_node = verifier.add_node(node.clone());
+                let new_node = verifier.add_weight(node.clone());
                 node_map_self.insert(n_transcr, new_node);
                 continue;
             }
             non_challenge_transcripts.insert(n_transcr);
-            let new_idx = verifier.add_node(node.clone());
+            let new_idx = verifier.add_weight(node.clone());
             node_map_self.insert(n_transcr, new_idx);
         }
 
         // Add the verifier nodes, start with the verifier checks
         let mut worklist = self.find_verify();
         assert!(!worklist.is_empty(), "No verifier check found");
+        // Each reached node ↦ the node that needed it, back to a check, for reporting leaks.
+        let mut via: HashMap<NodeIndex, NodeIndex> = HashMap::new();
 
         while let Some(n) = worklist.pop() {
             if node_map_self.contains_key(&n) {
@@ -1071,13 +1117,18 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             // draw its own value instead of the prover's.
             let op = self[n].clone().into_op();
             if matches!(&*op, Op::Random(_, _)) {
-                let source = self.source(n);
+                // Reported where it is named, or at `random<..>` if it never is.
+                let binding = self.binding(n);
+                let (steps, check) = self.use_path(&via, via.get(&n).copied().unwrap_or(n));
                 return Err(GraphError::private_value_in_verifier(
                     PrivateValue::Random,
-                    source.node.clone().or_else(|| self.find_var(n)),
-                    source.span.clone(),
+                    binding.map(|b| b.node.clone()),
+                    binding.map_or_else(|| self.span(n), |b| b.span.clone()),
+                    steps,
+                    check,
                 ));
             }
+
             // So is any reference to a non-instance argument.
             for r in op.references() {
                 let target = r.node();
@@ -1085,16 +1136,19 @@ impl<C: HasOpFactory, A> Dag<C, A> {
                     && let Node::Arg(name, _, qual, _, _) = &self[target]
                     && !qual.is_instance()
                 {
+                    let (steps, check) = self.use_path(&via, n);
                     return Err(GraphError::private_value_in_verifier(
                         PrivateValue::Arg(*qual),
                         Some(name.clone()),
-                        self.source(target).span.clone(),
+                        self.span(target),
+                        steps,
+                        check,
                     ));
                 }
             }
 
             // Add node to verifier graph
-            let new_node = verifier.add_node(self[n].clone());
+            let new_node = verifier.add_weight(self.graph[n].clone());
             node_map_self.insert(n, new_node);
 
             // Add parent neighbors to worklist
@@ -1105,6 +1159,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
                         self[e.source()].drop_annotation(),
                         self[n].drop_annotation()
                     );
+                    via.entry(e.source()).or_insert(n);
                     worklist.push(e.source());
                 }
             }
@@ -1170,13 +1225,18 @@ impl<C: HasOpFactory, A> Dag<C, A> {
                 Node::Transcr(op, _) => op.typ(),
                 _ => unreachable!("non-challenge transcript must be Transcr"),
             };
-            let arg_node = verifier.add_node(Node::Arg(
-                unique_name(&transcript_var, &mut taken),
-                typ,
-                Qualifier::Instance,
-                Distribution::default(),
-                ArgKind::TranscriptInput,
-            ));
+            // The verifier reads the value where the prover sends it.
+            let span = verifier.span(new_idx);
+            let arg_node = verifier.add_node(
+                Node::Arg(
+                    unique_name(&transcript_var, &mut taken),
+                    typ,
+                    Qualifier::Instance,
+                    Distribution::default(),
+                    ArgKind::TranscriptInput,
+                ),
+                span,
+            );
             verifier.add_edge(n_input, arg_node, Dep::data());
 
             // Rewrite Transcr op to reference the Arg, and add the data edge.
@@ -1390,11 +1450,17 @@ impl<C: HasOpFactory> UDag<C> {
     ///
     /// This is the primary mechanism for enforcing `add_exp`'s invariant
     /// that its return value is always `Op::Ref` or `Op::Value`.
-    fn materialize(&mut self, op: GOp<C>, edge_type: DepType, atyp: ATyp) -> GOp<C> {
+    fn materialize(
+        &mut self,
+        op: GOp<C>,
+        edge_type: DepType,
+        atyp: ATyp,
+        span: std::ops::Range<usize>,
+    ) -> GOp<C> {
         match &op {
             Op::Ref(_, _) | Op::Value(_) => op,
             _ => {
-                let node = self.add_node(Node::Op(mk::<C>(op.clone()), Nothing));
+                let node = self.add_node(Node::Op(mk::<C>(op.clone()), Nothing), span);
                 self.add_edges(edge_type, node, op);
                 GOp::underscore(node, atyp)
             }
@@ -1412,9 +1478,10 @@ impl<C: HasOpFactory> UDag<C> {
         vars: &Ctx<Vid, GOp<C>>,
     ) -> Result<(), GraphError> {
         debug!("Adding top-level expression: {:?}", exp);
+        let span = exp.span.clone();
         let op = self.add_exp(exp, start, DepType::Data, kctx, fctx, vctx, vars)?;
         if !op.is_ref() {
-            let nr = self.add_node(Node::ret(&op));
+            let nr = self.add_node(Node::ret(&op), span);
             self.add_edges(DepType::Data, nr, op);
         };
         Ok(())
@@ -1480,24 +1547,26 @@ impl<C: HasOpFactory> UDag<C> {
             CBody::Proto { body, relation } => {
                 debug!("Adding proto: {:?}", sig);
                 // Start node (input marker)
-                let mut start = self.add_node(Node::inp(sig.name.node.clone()));
-                self.sources.insert(&start, &sig.name.clone().map(Some));
+                let mut start =
+                    self.add_node(Node::inp(sig.name.node.clone()), sig.name.span.clone());
                 let mut vars: Ctx<Vid, GOp<C>> = Ctx::new();
                 for (id, typ) in atyps.iter() {
                     let (qualifier, distribution) = arg_meta
                         .get(id)
                         .copied()
                         .expect("arg meta must be present for every sig arg");
-                    let arg_node = self.add_node(Node::arg(
-                        id.clone(),
-                        typ.clone(),
-                        qualifier,
-                        distribution,
-                        ArgKind::Input,
-                    ));
+                    let arg_node = self.add_node(
+                        Node::arg(
+                            id.clone(),
+                            typ.clone(),
+                            qualifier,
+                            distribution,
+                            ArgKind::Input,
+                        ),
+                        arg_ids[id].span.clone(),
+                    );
                     self.graph.add_edge(start, arg_node, Dep::data());
-                    self.sources
-                        .insert(&arg_node, &arg_ids[id].clone().map(Some));
+                    self.bind(arg_node, arg_ids[id]);
                     vars.insert(id, &GOp::var(id, arg_node, typ.clone()));
                 }
                 for (tid, kind) in kctx.iter() {
@@ -1515,23 +1584,26 @@ impl<C: HasOpFactory> UDag<C> {
                 // Relation start: its own per-arg `Node::Arg` children so
                 // walking the relation does not pull in the protocol body
                 // through shared `Arg` nodes.
-                start = self.add_node(Node::rel(sig.name.node.clone()));
+                let where_span = relation.span.clone();
+                start = self.add_node(Node::rel(sig.name.node.clone()), where_span.clone());
                 let mut vars: Ctx<Vid, GOp<C>> = Ctx::new();
                 for (id, typ) in atyps.iter() {
                     let (qualifier, distribution) = arg_meta
                         .get(id)
                         .copied()
                         .expect("arg meta must be present for every sig arg");
-                    let arg_node = self.add_node(Node::arg(
-                        id.clone(),
-                        typ.clone(),
-                        qualifier,
-                        distribution,
-                        ArgKind::Relation,
-                    ));
+                    let arg_node = self.add_node(
+                        Node::arg(
+                            id.clone(),
+                            typ.clone(),
+                            qualifier,
+                            distribution,
+                            ArgKind::Relation,
+                        ),
+                        arg_ids[id].span.clone(),
+                    );
                     self.graph.add_edge(start, arg_node, Dep::data());
-                    self.sources
-                        .insert(&arg_node, &arg_ids[id].clone().map(Some));
+                    self.bind(arg_node, arg_ids[id]);
                     vars.insert(id, &GOp::var(id, arg_node, typ.clone()));
                 }
                 for (tid, kind) in kctx.iter() {
@@ -1556,28 +1628,30 @@ impl<C: HasOpFactory> UDag<C> {
                     &vctx,
                     &vars,
                 )?;
-                let nassert = self.add_node(Node::assert(&rel_op));
+                let nassert = self.add_node(Node::assert(&rel_op), where_span);
                 self.add_edges(DepType::Data, nassert, rel_op);
             }
             CBody::Func { body } => {
-                let mut start = self.add_node(Node::inp(sig.name.node.clone()));
-                self.sources.insert(&start, &sig.name.clone().map(Some));
+                let mut start =
+                    self.add_node(Node::inp(sig.name.node.clone()), sig.name.span.clone());
                 let mut vars: Ctx<Vid, GOp<C>> = Ctx::new();
                 for (id, typ) in atyps.iter() {
                     let (qualifier, distribution) = arg_meta
                         .get(id)
                         .copied()
                         .expect("arg meta must be present for every sig arg");
-                    let arg_node = self.add_node(Node::arg(
-                        id.clone(),
-                        typ.clone(),
-                        qualifier,
-                        distribution,
-                        ArgKind::Input,
-                    ));
+                    let arg_node = self.add_node(
+                        Node::arg(
+                            id.clone(),
+                            typ.clone(),
+                            qualifier,
+                            distribution,
+                            ArgKind::Input,
+                        ),
+                        arg_ids[id].span.clone(),
+                    );
                     self.graph.add_edge(start, arg_node, Dep::data());
-                    self.sources
-                        .insert(&arg_node, &arg_ids[id].clone().map(Some));
+                    self.bind(arg_node, arg_ids[id]);
                     vars.insert(id, &GOp::var(id, arg_node, typ.clone()));
                 }
                 for (tid, kind) in kctx.iter() {
@@ -1603,8 +1677,8 @@ impl<C: HasOpFactory> UDag<C> {
     }
 
     /// Variables to operations by lookup in [vars]
-    fn op_from_var(id: &Vid, vars: &Ctx<Vid, GOp<C>>) -> Result<GOp<C>, GraphError> {
-        vars.get(id)
+    fn op_from_var(id: &Spanned<Vid>, vars: &Ctx<Vid, GOp<C>>) -> Result<GOp<C>, GraphError> {
+        vars.get(&id.node)
             .cloned()
             .ok_or_else(|| GraphError::var_not_found(id))
     }
@@ -2187,6 +2261,8 @@ impl<C: HasOpFactory> UDag<C> {
         loop {
             // Type inference for [self]
             let typ = exp.infer(kctx, &fctx.keys(), &vctx)?;
+            // Nodes created for this expression come from its source.
+            let span = exp.span.clone();
             // Convert [CExp] to [Op] while creating the graph
             match exp.node.clone() {
                 // Literals get appended to the last node [self.it]
@@ -2205,7 +2281,7 @@ impl<C: HasOpFactory> UDag<C> {
                         // Unary form: eval(p) -> materialized merged Op::Evaluate(p, None, None).
                         // This preserves the old Node::fft sharing behavior for reusable bindings.
                         (None, None) => {
-                            let neval = self.add_node(Node::evaluate_grid(&vp));
+                            let neval = self.add_node(Node::evaluate_grid(&vp), span.clone());
                             self.add_edges(edge_type, neval, vp);
 
                             return Ok(GOp::underscore(
@@ -2220,7 +2296,12 @@ impl<C: HasOpFactory> UDag<C> {
                                 self.add_exp(x, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                             let atyp = ATyp::from_ctyp(&typ, kctx)
                                 .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
-                            return Ok(self.materialize(GOp::evaluate(vp, vx), edge_type, atyp));
+                            return Ok(self.materialize(
+                                GOp::evaluate(vp, vx),
+                                edge_type,
+                                atyp,
+                                span.clone(),
+                            ));
                         }
                         // Selected form: eval<range>(p, fixed).
                         (Some(range), Some(deref!(fixed))) => {
@@ -2232,6 +2313,7 @@ impl<C: HasOpFactory> UDag<C> {
                                 GOp::evaluate_selected(vp, range, vfixed),
                                 edge_type,
                                 atyp,
+                                span.clone(),
                             ));
                         }
                         // Parser conversion rejects this; inference is defensive too.
@@ -2247,7 +2329,7 @@ impl<C: HasOpFactory> UDag<C> {
                 CExp::Poly(deref!(v)) => {
                     let child = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
-                    let npoly = self.add_node(Node::poly(&child));
+                    let npoly = self.add_node(Node::poly(&child), span.clone());
 
                     self.add_edges(edge_type, npoly, child);
 
@@ -2261,7 +2343,7 @@ impl<C: HasOpFactory> UDag<C> {
                 CExp::Coef(deref!(v)) => {
                     let child = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
-                    let npoly = self.add_node(Node::coef(&child));
+                    let npoly = self.add_node(Node::coef(&child), span.clone());
 
                     self.add_edges(edge_type, npoly, child);
 
@@ -2280,7 +2362,7 @@ impl<C: HasOpFactory> UDag<C> {
                     match points_opt {
                         // Unary: interpolate(evs) → Op::Ifft(evs)  (FFT-grid interpolation)
                         None => {
-                            let nifft = self.add_node(Node::ifft(&evals_op));
+                            let nifft = self.add_node(Node::ifft(&evals_op), span.clone());
                             self.add_edges(edge_type, nifft, evals_op);
 
                             return Ok(GOp::underscore(
@@ -2293,7 +2375,8 @@ impl<C: HasOpFactory> UDag<C> {
                         Some(deref!(p)) => {
                             let points_op =
                                 self.add_exp(p, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
-                            let ninterp = self.add_node(Node::interpolate(&points_op, &evals_op));
+                            let ninterp = self
+                                .add_node(Node::interpolate(&points_op, &evals_op), span.clone());
                             self.add_edges(edge_type, ninterp, points_op);
                             self.add_edges(edge_type, ninterp, evals_op);
 
@@ -2312,7 +2395,7 @@ impl<C: HasOpFactory> UDag<C> {
                     })?);
                     let atyp = ATyp::from_ctyp(&typ, kctx)
                         .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
-                    return Ok(self.materialize(vec_op, edge_type, atyp));
+                    return Ok(self.materialize(vec_op, edge_type, atyp, span.clone()));
                 }
 
                 // MLE is a noop?
@@ -2320,7 +2403,7 @@ impl<C: HasOpFactory> UDag<C> {
                 CExp::Mle(deref!(v)) => {
                     let child = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
-                    let nmle = self.add_node(Node::mle(&child));
+                    let nmle = self.add_node(Node::mle(&child), span.clone());
 
                     self.add_edges(edge_type, nmle, child);
 
@@ -2339,7 +2422,12 @@ impl<C: HasOpFactory> UDag<C> {
                     let atyp = ATyp::from_ctyp(&typ, kctx)
                         .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
 
-                    return Ok(self.materialize(GOp::pair(va, vb, atyp.clone()), edge_type, atyp));
+                    return Ok(self.materialize(
+                        GOp::pair(va, vb, atyp.clone()),
+                        edge_type,
+                        atyp,
+                        span.clone(),
+                    ));
                 }
                 // Create a new [bin] node
                 // Unary negation: lower as 0 - x
@@ -2365,14 +2453,14 @@ impl<C: HasOpFactory> UDag<C> {
                     // Maybe there will be no node
                     if let GOp::Bin(op, vl, vr, atyp) = bop {
                         // Add new node
-                        let nbin = self.add_node(Node::bin(op, &vl, &vr, &atyp));
+                        let nbin = self.add_node(Node::bin(op, &vl, &vr, &atyp), span.clone());
 
                         // Add edges from [nbin] to [vl] and [vr]
                         self.add_edges(edge_type, nbin, (*vl).clone());
                         self.add_edges(edge_type, nbin, (*vr).clone());
                         return Ok(GOp::underscore(nbin, atyp));
                     } else {
-                        return Ok(self.materialize(bop, edge_type, atyp));
+                        return Ok(self.materialize(bop, edge_type, atyp, span.clone()));
                     }
                 }
 
@@ -2392,7 +2480,7 @@ impl<C: HasOpFactory> UDag<C> {
                         &vctx,
                         &vars,
                     )? {
-                        return Ok(self.materialize(map_op, edge_type, map_atyp));
+                        return Ok(self.materialize(map_op, edge_type, map_atyp, span.clone()));
                     }
 
                     let te = e.infer(kctx, &fctx.keys(), &vctx)?;
@@ -2415,8 +2503,12 @@ impl<C: HasOpFactory> UDag<C> {
                         let mut local_vars = vars.clone();
                         let mut local_vctx = vctx.clone();
                         let ram_op = GOp::ram(oe.clone(), GOp::index(i));
-                        let ram_ref =
-                            self.materialize(ram_op, edge_type, input_element_typ.clone());
+                        let ram_ref = self.materialize(
+                            ram_op,
+                            edge_type,
+                            input_element_typ.clone(),
+                            span.clone(),
+                        );
                         local_vars.insert(&x.node, &ram_ref);
                         local_vctx.insert(&x.node, &ie);
                         // Add subexpression
@@ -2431,7 +2523,7 @@ impl<C: HasOpFactory> UDag<C> {
                         )?;
                         res.push(ol);
                     }
-                    return Ok(self.materialize(GOp::vec(res), edge_type, atyp));
+                    return Ok(self.materialize(GOp::vec(res), edge_type, atyp, span.clone()));
                 }
 
                 CExp::Reduce(op, deref!(v)) => {
@@ -2454,12 +2546,17 @@ impl<C: HasOpFactory> UDag<C> {
                     if let Some(rm) = reduce_map {
                         let atyp = ATyp::from_ctyp(&typ, kctx)
                             .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
-                        return Ok(self.materialize(rm, edge_type, atyp));
+                        return Ok(self.materialize(rm, edge_type, atyp, span.clone()));
                     }
                     let ov = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     let atyp = ATyp::from_ctyp(&typ, kctx)
                         .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
-                    return Ok(self.materialize(GOp::reduce(op, ov), edge_type, atyp));
+                    return Ok(self.materialize(
+                        GOp::reduce(op, ov),
+                        edge_type,
+                        atyp,
+                        span.clone(),
+                    ));
                 }
                 CExp::Ram(deref!(a), deref!(b)) => {
                     // Add children
@@ -2467,12 +2564,12 @@ impl<C: HasOpFactory> UDag<C> {
                     let ob = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     let atyp = ATyp::from_ctyp(&typ, kctx)
                         .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
-                    return Ok(self.materialize(GOp::ram(oa, ob), edge_type, atyp));
+                    return Ok(self.materialize(GOp::ram(oa, ob), edge_type, atyp, span.clone()));
                 }
                 CExp::Challenge(_, non_zero) => {
                     let at = ATyp::from_ctyp(&typ, kctx)
                         .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
-                    let nchallenge = self.add_node(Node::challenge(&at, non_zero));
+                    let nchallenge = self.add_node(Node::challenge(&at, non_zero), span.clone());
                     // Add transcript edge to [nchallenge]
                     self.add_edge(*transcr, nchallenge, Dep::transcript());
                     // Update transcript node
@@ -2484,9 +2581,7 @@ impl<C: HasOpFactory> UDag<C> {
                 CExp::Random(_, non_zero) => {
                     let at = ATyp::from_ctyp(&typ, kctx)
                         .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
-                    let nrand = self.add_node(Node::random(&at, non_zero));
-                    self.sources
-                        .insert(&nrand, &Spanned::new(None, exp.span.clone()));
+                    let nrand = self.add_node(Node::random(&at, non_zero), span.clone());
                     return Ok(GOp::underscore(nrand, at));
                 }
                 CExp::App(fid, params) => {
@@ -2639,17 +2734,10 @@ impl<C: HasOpFactory> UDag<C> {
                     // Infer the type of [l]
                     let tl = l.infer(kctx, &fctx.keys(), &vctx)?;
                     // Add left-hand side as node
-                    let is_random = matches!(l.node, CExp::Random(..));
                     let nl = self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
-                    // Register the node name so find_var() returns the correct name
-                    // instead of falling back to __zippel::node::N
                     if let GOp::Ref(r, _) = &nl {
-                        self.vctx.insert(&r.node(), &id.node);
+                        self.bind(r.node(), &id);
                         self.transcript_vars.insert(&r.node(), &false);
-                        // A sample is reported where it is named, not at `random<..>`.
-                        if is_random {
-                            self.sources.insert(&r.node(), &id.clone().map(Some));
-                        }
                     }
                     // Add [id] to the variable context (clone-on-write)
                     vctx.insert(&id.node, &tl);
@@ -2675,6 +2763,8 @@ impl<C: HasOpFactory> UDag<C> {
                     }
                 }
                 CExp::Log(id, deref!(l), r) => {
+                    // A transcript node comes from the value sent.
+                    let sent = l.span.clone();
                     // Infer the type of [l]
                     let tl = l.infer(kctx, &fctx.keys(), &vctx)?;
                     // Add left-hand side as node
@@ -2683,38 +2773,35 @@ impl<C: HasOpFactory> UDag<C> {
                     let transcr_op = match &ol {
                         GOp::Ref(r, _)
                             if self[r.node()].is_transcript()
-                                && !self
-                                    .vctx
-                                    .get(&r.node())
-                                    .map(|v| *v != id.node)
-                                    .unwrap_or(false) =>
+                                && self.binding(r.node()).is_none_or(|b| b.node == id.node) =>
                         {
                             let n = r.node();
                             // Node is already a transcript node and either has no name
                             // or the same name — register directly.
-                            self.vctx.insert(&n, &id.node);
+                            self.bind(n, &id);
                             self.transcript_vars.insert(&n, &true);
                             GOp::Ref(Ref(n), ol.typ())
                         }
                         GOp::Ref(r, _) => {
                             let n = r.node();
                             // Reuse: create a wrapper transcript node.
-                            let nl = self.add_node(Node::transcr(&GOp::Ref(Ref(n), ol.typ())));
+                            let nl = self
+                                .add_node(Node::transcr(&GOp::Ref(Ref(n), ol.typ())), sent.clone());
                             self.add_edges(DepType::Data, nl, ol.clone());
                             self.add_edge(*transcr, nl, Dep::transcript());
-                            self.graph.node_weight_mut(nl).unwrap().set_transcript();
-                            self.vctx.insert(&nl, &id.node);
+                            self.get_node(nl).set_transcript();
+                            self.bind(nl, &id);
                             self.transcript_vars.insert(&nl, &true);
                             *transcr = nl;
                             GOp::Ref(Ref(nl), ol.typ())
                         }
                         _ => {
                             // Add new transcript node
-                            let nl = self.add_node(Node::transcr(&ol));
+                            let nl = self.add_node(Node::transcr(&ol), sent.clone());
                             self.add_edges(DepType::Data, nl, ol.clone());
                             self.add_edge(*transcr, nl, Dep::transcript());
-                            self.graph.node_weight_mut(nl).unwrap().set_transcript();
-                            self.vctx.insert(&nl, &id.node);
+                            self.get_node(nl).set_transcript();
+                            self.bind(nl, &id);
                             self.transcript_vars.insert(&nl, &true);
                             *transcr = nl;
                             GOp::Ref(Ref(nl), ol.typ())
@@ -2735,7 +2822,7 @@ impl<C: HasOpFactory> UDag<C> {
                 CExp::Assert(deref!(exp)) => {
                     let oa = self.add_exp(exp, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Add new node
-                    let nassert = self.add_node(Node::assert(&oa));
+                    let nassert = self.add_node(Node::assert(&oa), span.clone());
                     // Add edges
                     self.add_edges(edge_type, nassert, oa);
                     // Assert is prover-side — no transcript edge.
@@ -2745,7 +2832,7 @@ impl<C: HasOpFactory> UDag<C> {
                 CExp::Verify(deref!(exp)) => {
                     let oa = self.add_exp(exp, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Add new node
-                    let nverify = self.add_node(Node::verify(&oa));
+                    let nverify = self.add_node(Node::verify(&oa), span.clone());
                     self.add_edges(edge_type, nverify, oa);
                     // No transcript edge — the Op::Verify variant itself
                     // distinguishes verifier checks from prover assertions.
@@ -2787,7 +2874,12 @@ impl<C: HasOpFactory> UDag<C> {
 
                     let atyp = ATyp::from_ctyp(&typ, kctx)
                         .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
-                    return Ok(self.materialize(GOp::Record(field_ops), edge_type, atyp));
+                    return Ok(self.materialize(
+                        GOp::Record(field_ops),
+                        edge_type,
+                        atyp,
+                        span.clone(),
+                    ));
                 }
                 CExp::Proj(deref!(record_exp), field_name) => {
                     // For projection, we need to extract the field from the record
@@ -2887,11 +2979,10 @@ impl<C: HasOpFactory> UDag<C> {
                                             if self[r.node()].is_arg() {
                                                 return Ok(Op::Ref(Ref(r.node()), field_typ_atyp));
                                             }
-                                            let proj_node = self.add_node(Node::proj(
-                                                record_op,
-                                                &field_name,
-                                                &field_typ_atyp,
-                                            ));
+                                            let proj_node = self.add_node(
+                                                Node::proj(record_op, &field_name, &field_typ_atyp),
+                                                span.clone(),
+                                            );
                                             self.add_edges(edge_type, proj_node, record_op.clone());
                                             Ok(Op::Ref(Ref(proj_node), field_typ_atyp))
                                         }
@@ -2974,13 +3065,13 @@ impl<C: HasOpFactory> UDag<C> {
 impl<C: ArkConfig, A> Index<NodeIndex> for Dag<C, A> {
     type Output = Node<C, A>;
     fn index(&self, index: NodeIndex) -> &Self::Output {
-        &self.graph[index]
+        &self.graph[index].node
     }
 }
 
 impl<C: ArkConfig, A> std::ops::IndexMut<NodeIndex> for Dag<C, A> {
     fn index_mut(&mut self, index: NodeIndex) -> &mut Self::Output {
-        &mut self.graph[index]
+        &mut self.graph[index].node
     }
 }
 
