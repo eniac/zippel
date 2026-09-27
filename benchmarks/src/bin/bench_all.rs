@@ -12,6 +12,7 @@
 //!   kzg      : log_2(N)    (N = coefficient count; degree = N-1)
 //!   pari     : M           (K = 2^M constraints)
 //!   groth16  : log_2(C)    (C = num_constraints in the bench circuit)
+//!   dekart   : L           (n = 2^L - 1 values, each in [0, 2^DEKART_ELL))
 //!
 //! Thread sweeping is done by running this binary multiple times with
 //! different `RAYON_NUM_THREADS`. The wrapper script `run_all.sh` does that
@@ -20,7 +21,9 @@
 //! single-thread pool installed mid-process — running with the global pool
 //! sized by `RAYON_NUM_THREADS` is the reliable path.
 
-use benchmarks::{Timing, groth16, hyrax, ipa, kzg, pari, pst13, schnorr, spartan, sumcheck};
+use benchmarks::{
+    Timing, dekart, groth16, hyrax, ipa, kzg, pari, pst13, schnorr, spartan, sumcheck,
+};
 use clap::Parser;
 use libspartan::{Instance, NIZK, NIZKGens};
 use merlin::Transcript;
@@ -31,7 +34,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 const ALL_SYSTEMS: &[&str] = &[
-    "schnorr", "sumcheck", "ipa", "kzg", "pari", "groth16", "pst13", "hyrax", "spartan",
+    "schnorr", "sumcheck", "ipa", "kzg", "pari", "groth16", "pst13", "hyrax", "spartan", "dekart",
 ];
 
 #[derive(Parser, Debug)]
@@ -93,6 +96,7 @@ const ZIPPEL_KZG: &str = include_str!("../../../examples/kzg/kzg.zippel");
 const ZIPPEL_PARI: &str = include_str!("../../../examples/pari/pari.zippel");
 const ZIPPEL_GROTH16: &str = include_str!("../../../examples/groth16/groth16.zippel");
 const ZIPPEL_PST13: &str = include_str!("../../../examples/pst13/pst13.zippel");
+const ZIPPEL_DEKART: &str = include_str!("../../../examples/dekart/dekart.zippel");
 // `examples/hyrax/hyrax.zippel` is intentionally NOT pulled in here —
 // the bench renders a sized proto at run time via
 // `hyrax::zippel_side::render_proto(l, m)`, and `zippel_ncloc("hyrax")`
@@ -128,6 +132,12 @@ const NATIVE_PST13_DS_RS: &str = include_str!("../../src/pst13_upstream/data_str
 // the per-column 16KB temp Vec and the cache-hostile column gathers.
 const NATIVE_HYRAX_MOD_RS: &str = include_str!("../../src/hyrax_upstream/mod.rs");
 
+// DeKART native baseline is vendored from aptos-dkg's dekart_univariate_v2
+// (+ the hiding-KZG / sigma-protocol / FS helpers it uses), flattened into
+// one file (see src/dekart_upstream/). NCLOC excludes its `#[cfg(test)]`
+// module, which sits at the end of the file.
+const NATIVE_DEKART_MOD_RS: &str = include_str!("../../src/dekart_upstream/mod.rs");
+
 // For systems delegating to external crates, native = prover + verifier code
 // in the underlying crate (counted once locally with `cloc`-style NCLOC, pinned
 // to the version in benchmarks/Cargo.lock at the time these were measured).
@@ -141,6 +151,8 @@ const GROTH16_EXT_NCLOC: usize = 458;   // ark-groth16-0.6.0 src/{prover,verifie
 const SPARTAN_EXT_NCLOC: usize = 1867;  // spartan-0.9.0 src/{r1csproof,sumcheck}.rs + src/nizk/{mod,bullet}.rs
 // Hyrax native NCLOC is computed dynamically from the vendored module
 // (see NATIVE_HYRAX_MOD_RS above); no static constant needed.
+
+const DEKART_ELL: usize = 16;
 
 fn count_ncloc_line_comments(src: &str) -> usize {
     src.lines()
@@ -241,6 +253,7 @@ fn zippel_ncloc(sys: &str) -> usize {
         // This guarantees the LOC matches exactly what's executed.
         "hyrax" => count_ncloc_line_comments(&hyrax::zippel_side::render_proto(4, 4)),
         "spartan" => spartan_zippel_ncloc(),
+        "dekart" => count_ncloc_line_comments(ZIPPEL_DEKART),
         _ => 0,
     }
 }
@@ -257,6 +270,12 @@ fn native_ncloc(sys: &str) -> usize {
         "spartan" => SPARTAN_EXT_NCLOC,
         "ipa" => count_ncloc_rust(extract_braced_block(NATIVE_IPA_RS, "pub mod native_side")),
         "hyrax" => count_ncloc_rust(NATIVE_HYRAX_MOD_RS),
+        "dekart" => count_ncloc_rust(
+            NATIVE_DEKART_MOD_RS
+                .split("#[cfg(test)]")
+                .next()
+                .unwrap_or(NATIVE_DEKART_MOD_RS),
+        ),
         "pari" => {
             count_ncloc_rust(NATIVE_PARI_MOD_RS)
                 + count_ncloc_rust(NATIVE_PARI_GEN_RS)
@@ -652,6 +671,33 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
         .collect()
 }
 
+fn run_dekart(threads: usize, ls: &[usize], ell: usize) -> Vec<Row> {
+    ls.iter()
+        .map(|&l| {
+            let sh = setup_pool().install(|| dekart::shared::build(l, ell));
+            let (mut z, np) = setup_pool().install(|| {
+                (
+                    dekart::zippel_side::Setup::new(&sh),
+                    dekart::native_side::Setup::new(&sh),
+                )
+            });
+            let compile = z.compile_time();
+            let zippel = z.time_protocol();
+            let native = np.time_protocol();
+            let r = Row {
+                system: "dekart",
+                threads,
+                log_size: l,
+                zippel,
+                native,
+                compile,
+            };
+            print_row(&r);
+            r
+        })
+        .collect()
+}
+
 // Separate rayon pool used for the setup/SRS-generation work that runs
 // OUTSIDE the timed prove/verify. The global pool is constrained to the
 // benchmark thread count (1, 2, 4, 8, 16...) so we can measure scaling,
@@ -772,6 +818,14 @@ fn main() {
         };
     // Sumcheck max_degree=3 matches the default the existing sumcheck bench uses;
     // pari n_pub=1 / k_vars=3 mirrors the sweep we've been running by hand.
+    // DeKART's size knob is L (domain 2^L, n = 2^L - 1 values); the bit
+    // width is fixed at DEKART_ELL = 16, the middle of upstream's
+    // BIT_WIDTHS = [8, 16, 32, 64] grid.
+    let dekart_ls = match (&args.sizes, args.quick) {
+        (Some(ls), _) => ls.clone(),
+        (None, true) => vec![4usize, 8],
+        (None, false) => vec![18usize],
+    };
     let sumcheck_degree = 3usize;
     let pari_n_pub = 1usize;
     let pari_k_vars = 3usize;
@@ -809,6 +863,7 @@ fn main() {
             "pst13" => run_pst13(threads, &pst13_ns),
             "hyrax" => run_hyrax(threads, &hyrax_ns),
             "spartan" => run_spartan(threads, &spartan_ms),
+            "dekart" => run_dekart(threads, &dekart_ls, DEKART_ELL),
             other => panic!("unknown system: {other}"),
         };
         all_rows.extend(chunk);

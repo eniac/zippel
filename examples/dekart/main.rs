@@ -1,4 +1,4 @@
-use ark_ff::{One, UniformRand, Zero};
+use ark_ff::{Field, One, UniformRand, Zero};
 use ark_poly::{
     DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain, univariate::DensePolynomial,
 };
@@ -118,26 +118,18 @@ fn build_inputs(
         f_evals.push(F::from(*z));
     }
 
-    // Decompose values into radix-b chunks
-    let mut chunks_evals = Vec::new();
+    // Decompose values into radix-b digits (the prover blinds f_j(ω^0) itself)
+    let mut chunks_bits = Vec::new();
     for j in 0..l_chunk {
-        let r_j = F::rand(&mut rng);
-        let mut chunk_j = vec![r_j];
-        for z in &z_vals {
-            let chunk_val = (z / (b_size as u64).pow(j as u32)) % (b_size as u64);
-            chunk_j.push(F::from(chunk_val));
-        }
-        chunks_evals.push(Value::VecScalar(chunk_j));
+        let digits = z_vals
+            .iter()
+            .map(|z| F::from((z / (b_size as u64).pow(j as u32)) % (b_size as u64)))
+            .collect();
+        chunks_bits.push(Value::VecScalar(digits));
     }
 
-    // Blinding factors
+    // Commitment randomness of the statement
     let rho = F::rand(&mut rng);
-    let delta_rho = F::rand(&mut rng);
-    let rho_h = F::rand(&mut rng);
-    let mut rho_vec = Vec::new();
-    for _ in 0..l_chunk {
-        rho_vec.push(F::rand(&mut rng));
-    }
 
     // Range constants
     let mut b_vals = Vec::new();
@@ -166,13 +158,23 @@ fn build_inputs(
         s0_commit += *g * *coeff;
     }
 
+    // Lagrange-basis SRS [ℓ_i(τ)]_1: ℓ_i(τ) = ifft(1, τ, ..., τ^n)_i over the same domain
+    let tau_pows: Vec<F> = (0..=n_size).map(|i| tau.pow([i as u64])).collect();
+    let srs_g1_lagr_vec: Vec<G1> = domain_s.ifft(&tau_pows).iter().map(|c| gen_g1 * c).collect();
+    assert_eq!(srs_g1_lagr_vec[0], s0_commit);
+
+    // 5. Statement: com_f = [f(τ)]_1 + ξ·ρ
+    let f_coeffs = domain_s.ifft(&f_evals);
+    let mut com_f = xi_g1 * rho;
+    for (coeff, g) in f_coeffs.iter().zip(srs_g1_n_vec.iter()) {
+        com_f += *g * *coeff;
+    }
+
     let inputs = Ctx::<Vid, Value<C>>::from_iter([
         (Vid("f_evals".to_string()), Value::VecScalar(f_evals)),
-        (Vid("chunks_evals".to_string()), Value::Vec(chunks_evals)),
+        (Vid("chunks_bits".to_string()), Value::Vec(chunks_bits)),
         (Vid("rho".to_string()), Value::Scalar(rho)),
-        (Vid("delta_rho".to_string()), Value::Scalar(delta_rho)),
-        (Vid("rho_h".to_string()), Value::Scalar(rho_h)),
-        (Vid("rho_vec".to_string()), Value::VecScalar(rho_vec)),
+        (Vid("com_f".to_string()), Value::G1(com_f)),
         (Vid("b_vals".to_string()), Value::VecScalar(b_vals.clone())),
         (Vid("b_pow".to_string()), Value::VecScalar(b_pow.clone())),
         (Vid("f_one".to_string()), Value::Scalar(F::one())),
@@ -182,14 +184,13 @@ fn build_inputs(
         (Vid("srs_g2_xi".to_string()), Value::G2(srs_g2_xi)),
         (Vid("xi_g1".to_string()), Value::G1(xi_g1)),
         (Vid("s0_commit".to_string()), Value::G1(s0_commit)),
-        (
-            Vid("srs_g1_n".to_string()),
-            Value::VecG1(srs_g1_n_vec.clone()),
-        ),
+        (Vid("srs_g1_lagr".to_string()), Value::VecG1(srs_g1_lagr_vec)),
         (Vid("srs_g1_h".to_string()), Value::VecG1(srs_g1_h_vec)),
+        (Vid("v_star".to_string()), Value::VecScalar(vec![F::one(); n_size + 1])),
     ]);
 
     let public_inputs = Ctx::<Vid, Value<C>>::from_iter([
+        (Vid("com_f".to_string()), Value::G1(com_f)),
         (Vid("b_vals".to_string()), Value::VecScalar(b_vals)),
         (Vid("b_pow".to_string()), Value::VecScalar(b_pow)),
         (Vid("f_one".to_string()), Value::Scalar(F::one())),

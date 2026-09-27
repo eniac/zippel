@@ -2203,6 +2203,18 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Like [`Self::typ`], except that a univariate polynomial maps to
+    /// `ATyp::uni(0)`: its kind is right but the degree is NOT meaningful.
+    /// `typ()` on a `Poly` expands the lazy sum-of-products (one FFT
+    /// multiplication per product term) twice just to read the degree; use
+    /// this where only the kind of the type matters.
+    pub fn shape_typ(&self) -> ATyp {
+        match self {
+            Value::Poly(poly) if poly.is_univariate_shallow() => ATyp::uni(0),
+            _ => self.typ(),
+        }
+    }
+
     pub fn typ(&self) -> ATyp {
         match self {
             Value::Bool(_) => ATyp::bool(),
@@ -2554,9 +2566,11 @@ impl<C: ArkConfig> Value<C> {
     }
 
     pub fn value_vec(vec: Vec<Self>) -> Self {
-        let mut typ = vec[0].typ();
+        // Only the kind of the element type matters here (it picks the
+        // Vec variant; every polynomial kind keeps `Value::Vec`).
+        let mut typ = vec[0].shape_typ();
         for i in vec.iter().skip(1) {
-            typ = ATyp::lub_equ(&i.typ(), &typ, &Nothing).unwrap();
+            typ = ATyp::lub_equ(&i.shape_typ(), &typ, &Nothing).unwrap();
         }
         let mut vec_value = Value::Vec(vec);
         match typ {
@@ -2739,13 +2753,14 @@ impl<C: ArkConfig> Value<C> {
         assert!(!elements.is_empty(), "Cannot reduce empty vector");
         match op {
             BinOp::Add => {
-                let elem_typ = elements[0].typ();
+                // Identity element only depends on the kind of the type.
+                let elem_typ = elements[0].shape_typ();
                 elements
                     .into_par_iter()
                     .reduce(|| Value::<C>::zero(&elem_typ), |a, b| a + b)
             }
             BinOp::Mul => {
-                let elem_typ = elements[0].typ();
+                let elem_typ = elements[0].shape_typ();
                 elements
                     .into_par_iter()
                     .reduce(|| Value::<C>::one(&elem_typ), |a, b| a * b)

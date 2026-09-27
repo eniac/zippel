@@ -49,6 +49,8 @@ pub static PROVER_SAMPLES: std::sync::LazyLock<u32> = std::sync::LazyLock::new(|
 });
 
 pub mod cache;
+pub mod dekart;
+pub mod dekart_upstream;
 pub mod groth16;
 pub mod hyrax;
 pub mod hyrax_upstream;

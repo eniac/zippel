@@ -1,12 +1,12 @@
 # benchmarks
 
 Wall-clock comparison between **zippel-compiled protocols** and **native Rust
-baselines** for nine SNARK / commitment / signature schemes. Each system runs
+baselines** for ten SNARK / commitment / signature / range-proof schemes. Each system runs
 both sides on the same machine, same curve, same input size, inside the same
 rayon thread pool — only the implementation differs.
 
 Systems benched: `schnorr`, `sumcheck`, `ipa`, `kzg`, `pari`, `groth16`,
-`pst13`, `hyrax`, `spartan`.
+`pst13`, `hyrax`, `spartan`, `dekart`.
 
 For every (system, log_size, threads) point the bench measures:
 
@@ -66,11 +66,13 @@ benchmarks/
 │   ├── pst13.rs
 │   ├── hyrax.rs
 │   ├── spartan.rs
+│   ├── dekart.rs
 │   │
 │   ├── pari_upstream/     vendored garuda-pari (was outside arkworks-0.6 / fixes for fair compare)
 │   ├── pst13_upstream/    vendored ark-poly-commit::multilinear_pc with two open() fixes
 │   ├── hyrax_upstream/    vendored ark-poly-commit::hyrax with flat-matrix row_mul rewrite
 │   ├── sumcheck_upstream/ vendored hyperplonk sumcheck (ported to ark 0.6)
+│   ├── dekart_upstream/   vendored aptos-dkg dekart_univariate_v2 (ported to ark 0.6)
 │   │
 │   └── bin/
 │       ├── bench_all.rs           main entry point used by run_all.sh
@@ -162,6 +164,8 @@ plot linearly on a log-size x-axis):
 - `pst13` — `N` (polynomial has 2^N coefficients)
 - `hyrax` — `N` (multilinear poly has 2^N evaluations; N must be even)
 - `spartan` — `M` (num_cons = 2^M)
+- `dekart` — `L` (n = 2^L − 1 values, each in [0, 2^16); ell is fixed at 16
+  in `bench_all`, use `--ell` on the standalone `dekart` bin to vary it)
 
 `compiler` is the zippel compile time alone: source parse + concretization
 + graph construction + prover/verifier projection. It excludes the Rust

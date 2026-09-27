@@ -1,5 +1,9 @@
 use crate::{PolyError, PolyVariant};
-use ark_ff::{Field, PrimeField};
+use ark_ff::{Field, PrimeField, Zero};
+use ark_poly::{
+    DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain, Polynomial,
+    univariate::DensePolynomial,
+};
 use ark_serialize::{CanonicalSerialize, SerializationError};
 use rayon::prelude::*;
 use std::cmp::Ordering;
@@ -408,6 +412,83 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
         scalar_vp.poly_sub(poly)
     }
 
+    /// Expands `Σ c · Π P_i` over univariate products (each with >= 2
+    /// factors) in evaluation form: every distinct factor is FFT'd once over
+    /// a domain large enough for the biggest product, products are summed
+    /// pointwise, and a single inverse FFT gives the coefficients.
+    ///
+    /// Same polynomial as multiplying term by term with `poly_mul` (FFT
+    /// multiplication: 2 FFTs + 1 IFFT per multiplication) and adding the
+    /// results, at a fraction of the FFTs: e.g. Σ_j c_j·f_j·f_j costs one
+    /// FFT per f_j plus one IFFT, instead of three FFTs per term.
+    fn expand_univariate_products(&self, products: &[&(F, Vec<usize>)]) -> DensePolynomial<F> {
+        let dense = |i: usize| -> DensePolynomial<F> {
+            match &*self.flattened_polys[i] {
+                PolyVariant::DenseUni(p) => p.clone(),
+                PolyVariant::SparseUni(p) => p.clone().into(),
+                _ => unreachable!("caller only passes univariate factors"),
+            }
+        };
+        let dense: Vec<Option<DensePolynomial<F>>> = {
+            let mut used = vec![false; self.flattened_polys.len()];
+            products.iter().flat_map(|(_, idx)| idx).for_each(|&i| used[i] = true);
+            (0..used.len()).map(|i| used[i].then(|| dense(i))).collect()
+        };
+
+        // A product with a zero factor vanishes; the rest fix the domain.
+        let is_zero = |(_, idx): &&&(F, Vec<usize>)| {
+            idx.iter().any(|&i| dense[i].as_ref().unwrap().is_zero())
+        };
+        let products: Vec<_> = products.iter().filter(|p| !is_zero(p)).collect();
+        let Some(num_coeffs) = products
+            .iter()
+            .map(|(_, idx)| idx.iter().map(|&i| dense[i].as_ref().unwrap().degree()).sum::<usize>() + 1)
+            .max()
+        else {
+            return DensePolynomial::zero();
+        };
+        let domain = GeneralEvaluationDomain::<F>::new(num_coeffs)
+            .expect("field is not smooth enough to construct domain");
+
+        // Keep a factor's evaluations only until the last product using it.
+        let mut remaining = vec![0usize; self.flattened_polys.len()];
+        for (_, idx) in &products {
+            let mut distinct = idx.clone();
+            distinct.sort_unstable();
+            distinct.dedup();
+            distinct.into_iter().for_each(|i| remaining[i] += 1);
+        }
+        let mut evals: HashMap<usize, Vec<F>> = HashMap::new();
+        let mut acc = vec![F::zero(); domain.size()];
+
+        for (coeff, idx) in products {
+            for &i in idx {
+                evals
+                    .entry(i)
+                    .or_insert_with(|| domain.fft(&dense[i].as_ref().unwrap().coeffs));
+            }
+            let factors: Vec<&[F]> = idx.iter().map(|&i| evals[&i].as_slice()).collect();
+            acc.par_iter_mut().enumerate().for_each(|(k, a)| {
+                let mut t = *coeff;
+                for f in &factors {
+                    t *= f[k];
+                }
+                *a += t;
+            });
+            let mut distinct = idx.clone();
+            distinct.sort_unstable();
+            distinct.dedup();
+            for i in distinct {
+                remaining[i] -= 1;
+                if remaining[i] == 0 {
+                    evals.remove(&i);
+                }
+            }
+        }
+
+        DensePolynomial::from_coefficients_vec(domain.ifft(&acc))
+    }
+
     /// Normalize the virtual polynomial to a single PolyVariant
     /// This expands the sum-of-products into a single polynomial
     pub fn normalize(&self) -> Result<PolyVariant<F>, PolyError<F>> {
@@ -416,10 +497,26 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
             return Ok(PolyVariant::from_scalar(F::zero()));
         }
 
-        // Start with zero polynomial
-        let mut result: Option<PolyVariant<F>> = None;
+        // Univariate products of >= 2 factors are expanded together in
+        // evaluation form (see `expand_univariate_products`); everything
+        // else goes through the term-by-term loop below.
+        let (multi, rest): (Vec<_>, Vec<_>) = self.products.iter().partition(|(_, idx)| {
+            idx.len() >= 2
+                && idx.iter().all(|&i| {
+                    self.flattened_polys
+                        .get(i)
+                        .is_some_and(|p| p.is_univariate())
+                })
+        });
 
-        for (coeff, indices) in &self.products {
+        // Start with zero polynomial
+        let mut result: Option<PolyVariant<F>> = if multi.is_empty() {
+            None
+        } else {
+            Some(PolyVariant::DenseUni(self.expand_univariate_products(&multi)))
+        };
+
+        for (coeff, indices) in rest {
             // Compute the product of all polynomials in this term
             let mut term_result: Option<PolyVariant<F>> = None;
 
@@ -459,6 +556,20 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
     pub fn is_univariate(&self) -> bool {
         self.normalize().map(|p| p.is_univariate()).unwrap_or(false)
     }
+
+    /// Same answer as [`Self::is_univariate`], without expanding the
+    /// sum-of-products when every referenced polynomial is univariate
+    /// (products and sums of univariates, and scalar-only terms, normalize
+    /// to a univariate). Falls back to `is_univariate` otherwise.
+    pub fn is_univariate_shallow(&self) -> bool {
+        let all_uni = self
+            .products
+            .iter()
+            .flat_map(|(_, idx)| idx.iter())
+            .all(|&i| self.flattened_polys[i].is_univariate());
+        all_uni || self.is_univariate()
+    }
+
 
     pub fn is_multilinear(&self) -> bool {
         self.normalize()
@@ -813,6 +924,53 @@ mod tests {
     use ark_ff::{One, UniformRand, Zero};
     use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePolynomial};
     use ark_std::test_rng;
+
+    /// `normalize` expands univariate products in evaluation form; check it
+    /// against a direct Σ c·Π P expansion with ark-poly's own mul/add.
+    #[test]
+    fn normalize_univariate_products_matches_direct_expansion() {
+        use ark_poly::univariate::SparsePolynomial;
+        let mut rng = test_rng();
+        for trial in 0..20 {
+            let deg = |k: usize| (trial * 7 + k * 13) % 40;
+            let mut polys: Vec<Arc<PolyVariant<Fr>>> = (0..5)
+                .map(|k| Arc::new(PolyVariant::DenseUni(DensePolynomial::rand(deg(k), &mut rng))))
+                .collect();
+            polys.push(Arc::new(PolyVariant::SparseUni(SparsePolynomial::from_coefficients_vec(vec![
+                (0, Fr::rand(&mut rng)),
+                (deg(9) + 3, Fr::rand(&mut rng)),
+            ]))));
+            polys.push(Arc::new(PolyVariant::DenseUni(DensePolynomial::zero())));
+            let terms: Vec<(Fr, Vec<usize>)> = vec![
+                (Fr::rand(&mut rng), vec![0, 0]),       // square
+                (Fr::rand(&mut rng), vec![1, 2]),
+                (Fr::rand(&mut rng), vec![1, 3, 5]),    // shared factor, sparse factor
+                (Fr::rand(&mut rng), vec![4]),          // linear
+                (Fr::rand(&mut rng), vec![]),           // constant
+                (Fr::rand(&mut rng), vec![2, 6]),       // zero factor
+                (Fr::rand(&mut rng), vec![0, 4, 0]),    // repeated, non-adjacent
+            ];
+            let mut vp = VirtualPolynomial::new();
+            let mut expected = DensePolynomial::<Fr>::zero();
+            for (c, idx) in &terms {
+                vp.add_poly_list(idx.iter().map(|&i| polys[i].clone()), *c).unwrap();
+                let mut t = DensePolynomial::from_coefficients_vec(vec![*c]);
+                for &i in idx {
+                    let d: DensePolynomial<Fr> = match &*polys[i] {
+                        PolyVariant::DenseUni(p) => p.clone(),
+                        PolyVariant::SparseUni(p) => p.clone().into(),
+                        _ => unreachable!(),
+                    };
+                    t = t.naive_mul(&d);
+                }
+                expected = &expected + &t;
+            }
+            match vp.normalize().unwrap() {
+                PolyVariant::DenseUni(got) => assert_eq!(got, expected, "trial {trial}"),
+                other => panic!("expected DenseUni, got {other:?}"),
+            }
+        }
+    }
 
     // ========== Test Helpers ==========
     fn create_vp_from_scalar(val: u64) -> VirtualPolynomial<Fr> {
