@@ -1,56 +1,49 @@
-// Zero-Knowledge KZG polynomial commitment scheme.
+// Zero-knowledge KZG: PolyCommit_Ped (Kate, Zaverucha, Goldberg 2010, §3.3; Marlin, App. B.2.1).
 //
-// Standard KZG leaks information about p(x) through the commitment and proof.
-// To achieve ZK, the prover blinds p(x) with random polynomial delta(x)*(x - z)
-// where delta(x) = b0 + b1*x. Since the blinding vanishes at x = z,
-// we still have p_tilde(z) = p(z) = y, so the evaluation is preserved.
+// Plain KZG leaks p(x): its commitment is deterministic. Here the prover also commits to a random
+// polynomial r(x) of the same degree, under a second generator gamma * g whose discrete log is
+// unknown:
+//   commit: c  = [p(tau)]_1 + [gamma r(tau)]_1
+//   open z: pi = [q(tau)]_1 + [gamma q_r(tau)]_1, with q = (p - y) / (x - z) and
+//           q_r = (r - r(z)) / (x - z), and r(z) is sent in the clear
+//   check:  e(pi, tau h - z h) == e(c - y g - r(z) gamma g, h)
 //
-// The quotient q_tilde(x) = (p_tilde(x) - y) / (x - z) = q(x) + b0 + b1*x
-// is now randomized, and the pairing check remains identical.
-//
-// SRS needs N+1 elements (one extra) to commit to the degree-N blinded polynomial.
-// The `where` clause specifies the trusted setup directly: sample a random
-// trapdoor tau, then derive the SRS as powers of tau times the generators.
+// The SRS is two parallel vectors of N powers of tau: ss for g, gs for gamma * g.
+// The `where` clause specifies the trusted setup directly.
 
 proto zk_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>(
     witness p_val: Uni<F, N - 1>,
     instance z: F,
     instance y: F,
-    extra ss: [G1; N + 1],
+    extra ss: [G1; N],
+    extra gs: [G1; N],
     instance g: G1,
+    instance gamma_g: G1,
     instance h: G2,
     instance h_val: G2,
 ) where
     let tau = random<F>;
-    reduce(&&, ss == [tau ^ i * g for i in 0..N + 1]) && h_val == tau * h && p_val(z) == y
+    let gamma = random<F>;
+    reduce(&&, ss == [tau ^ i * g for i in 0..N])
+        && reduce(&&, gs == [tau ^ i * gamma_g for i in 0..N])
+        && gamma_g == gamma * g
+        && h_val == tau * h
+        && p_val(z) == y
 {
-    // Sample blinding factors
-    let b0 = random<F>;
-    let b1 = random<F>;
+    // Blinding polynomial, of the same degree as p.
+    let r_val = poly([random<F> for _ in 0..N]);
+    c <- dot(coef(p_val), ss) + dot(coef(r_val), gs);
 
-    // Blinding polynomial: (b0 + b1*x)*(x - z) = -b0*z + (b0 - b1*z)*x + b1*x^2
-    let blind_coefs = [-b0 * z, b0 - b1 * z, b1];
-    let blind_val = poly(blind_coefs);
+    // The quotients keep their dividends' bounds; dividing by the monic linear X - z leaves
+    // N - 1 meaningful coefficients.
+    let x_minus_z = poly([-z, 1]);
+    let q = (p_val - y) / x_minus_z;
+    let r_z = r_val(z);
+    let q_r = (r_val - r_z) / x_minus_z;
+    let q_coefs = coef(q);
+    let q_r_coefs = coef(q_r);
+    pi <- dot(q_coefs[0..N - 1], ss[0..N - 1]) + dot(q_r_coefs[0..N - 1], gs[0..N - 1]);
+    r_z_sent <- r_z;
 
-    // Blinded polynomial: p_tilde(x) = p(x) + blind(x)
-    // Note: p_tilde(z) = p(z) + 0 = y (blinding vanishes at z)
-    let p_tilde = p_val + blind_val;
-    let p_tilde_coefs = coef(p_tilde);
-
-    // Commit to the blinded polynomial (needs N+1 SRS elements)
-    c <- dot(p_tilde_coefs, ss);
-
-    // Quotient: q_tilde(x) = (p_tilde(x) - y) / (x - z) = q(x) + b0 + b1*x
-    let q_tilde = (p_tilde - y) / poly([-z, 1]);
-    // The quotient keeps p_tilde's declared bound; the monic linear divisor
-    // X - z leaves N meaningful coefficients for the proof MSM.
-    let q_coefs = coef(q_tilde);
-    let q_coefs_truncated = q_coefs[0..N];
-    let ss_q = ss[0..N];
-    pi <- dot(q_coefs_truncated, ss_q);
-
-    // Verification: same pairing check as standard KZG
-    let lhs = pair(pi, h_val - h * z);
-    let rhs = pair(c - y * g, h);
-    verify(lhs == rhs)
+    verify(pair(pi, h_val - h * z) == pair(c - y * g - r_z_sent * gamma_g, h))
 }

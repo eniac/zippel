@@ -46,7 +46,6 @@ fn ms_round<F: Field, S: Size, N: 2 ^ S>(
     instance prev_challenges: [F; S - 1],
     instance prev_eval: F,
     instance round_challenge: F,
-    instance curr_round: Fin<0..S>,
     instance sent_v: [F; 2 ^ (S + 1)],
     instance f_shift_evs: [F; N],
     instance g_shift_evs: [F; N],
@@ -56,7 +55,6 @@ fn ms_round<F: Field, S: Size, N: 2 ^ S>(
     let residual_poly = eval(curr_poly, [round_challenge]);
     let evs_local = [residual_poly(t) for t in points];
     evs <- evs_local;
-    let _drop_round = curr_round;
     verify(prev_eval == evs[0] + evs[1]);
 
     let g = interpolate(points, evs);
@@ -92,7 +90,6 @@ fn ms_round<F: Field, S: Size, V: 3..S + 1, N: 2 ^ S>(
     instance prev_challenges: [F; S - V + 1],
     instance prev_eval: F,
     instance round_challenge: F,
-    instance curr_round: Fin<0..S>,
     instance sent_v: [F; 2 ^ (S + 1)],
     instance f_shift_evs: [F; N],
     instance g_shift_evs: [F; N],
@@ -125,7 +122,6 @@ fn ms_round<F: Field, S: Size, V: 3..S + 1, N: 2 ^ S>(
         new_challenges,
         next_prev,
         r_next,
-        curr_round + 1,
         sent_v,
         f_shift_evs,
         g_shift_evs,
@@ -216,19 +212,7 @@ proto hyperplonk_multiset<F: Field, S: Size, N: 2 ^ S>(
     r0 <- challenge<F>;
     let prev = g0(r0);
 
-    ms_round(
-        p_poly,
-        points,
-        [r0],
-        prev,
-        r0,
-        1,
-        sent_v,
-        f_shift_evs,
-        g_shift_evs,
-        eq_tau_evs,
-        alpha,
-    );
+    ms_round(p_poly, points, [r0], prev, r0, sent_v, f_shift_evs, g_shift_evs, eq_tau_evs, alpha);
 
     // Product-tree root is 1 iff the multisets coincide.
     verify(sent_v[N - 1] == one)

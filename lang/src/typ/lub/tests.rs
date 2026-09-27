@@ -1535,3 +1535,39 @@ mod ctyp_lub_fin_scalar_coercion_tests {
         assert!(CTyp::lub_add(&g_base, &fin0(), &ctx).is_err());
     }
 }
+
+#[test]
+fn fits_is_one_way() {
+    let f = Tid::from("F");
+    let g = Tid::from("G");
+    let ctx = Ctx::from([(f.clone(), Kind::Field), (g.clone(), Kind::Group)]);
+    let fin = CTyp::fin(CRange::from_raw(0, 1, 3));
+
+    // A polynomial fits one with as many or more variables and as high or higher a degree.
+    assert!(CTyp::uni(&f, 3).fits(&CTyp::uni(&f, 5), &ctx));
+    assert!(!CTyp::uni(&f, 5).fits(&CTyp::uni(&f, 3), &ctx));
+    assert!(CTyp::mle(&f, 2).fits(&CTyp::mle(&f, 3), &ctx));
+    assert!(!CTyp::mle(&f, 3).fits(&CTyp::mle(&f, 2), &ctx));
+    // An integer fits a range containing its range, and a scalar, not the other way round,
+    // and not a group.
+    assert!(fin.fits(&CTyp::fin(CRange::from_raw(0, 1, 8)), &ctx));
+    assert!(!CTyp::fin(CRange::from_raw(0, 1, 8)).fits(&fin, &ctx));
+    assert!(fin.fits(&CTyp::base(&f), &ctx));
+    assert!(!CTyp::base(&f).fits(&fin, &ctx));
+    assert!(!fin.fits(&CTyp::base(&g), &ctx));
+    // No scalar ↔ polynomial coercion.
+    assert!(!CTyp::base(&f).fits(&CTyp::uni(&f, 3), &ctx));
+    // Vectors need equal lengths.
+    assert!(CTyp::vec(&fin, 2).fits(&CTyp::vec(&CTyp::base(&f), 2), &ctx));
+    assert!(!CTyp::vec(&CTyp::base(&f), 2).fits(&CTyp::vec(&CTyp::base(&f), 3), &ctx));
+    // A record needs every expected field; extra fields are fine.
+    let field =
+        |name: &str, t: &CTyp| (Spanned::dummy(name.to_string()), Spanned::dummy(t.clone()));
+    let wide = CTyp::Record(Ctx::from([
+        field("a", &CTyp::base(&f)),
+        field("b", &CTyp::base(&g)),
+    ]));
+    let narrow = CTyp::Record(Ctx::from([field("a", &CTyp::base(&f))]));
+    assert!(wide.fits(&narrow, &ctx));
+    assert!(!narrow.fits(&wide, &ctx));
+}

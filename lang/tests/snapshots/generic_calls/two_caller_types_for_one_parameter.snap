@@ -1,0 +1,16 @@
+---
+source: lang/tests/generic_calls.rs
+---
+error: No definition of `same` accepts arguments of type F (Field), K (Field)
+   ╭─[ test.zippel:6:12 ]
+   │
+ 6 │     verify(same(a, b) == a)
+   │            ─────┬──┬─  
+   │                 ╰────── no definition takes these argument types
+   │                 │  │   
+   │                 ╰────── `a` has type F (Field)
+   │                 │  │   
+   │                 │  ╰─── `b` has type K (Field)
+   │                 │      
+   │                 ╰────── note: `same` takes T (Field), T (Field)
+───╯

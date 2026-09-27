@@ -88,6 +88,36 @@ fn minimal_sizes_is_none_when_no_sizes_fit() {
     assert_eq!(minimal_sizes(&with_typevars("X: Size, M: X..X"), &[]), None);
 }
 
+/// A range in a body, over a derived size, inside `reduce`: `0..D` is non-empty only from
+/// `D = (B - 1) * N >= 1`.
+#[test]
+fn minimal_sizes_sees_body_ranges_over_derived_sizes() {
+    let src = r"
+proto p<F: Field, N: Size, B: Size, D: (B - 1) * N>(instance a: [F; D + 1]) where a[0] == a[0] {
+    verify(reduce(&&, [a[i] == a[i] for i in 0..D]))
+}
+";
+    assert_eq!(minimal_sizes(src, &[]), sizes(&[("B", 2), ("N", 1)]));
+}
+
+/// `L - 1` in a body must not underflow.
+#[test]
+fn minimal_sizes_avoids_underflow_in_bodies() {
+    let src = r"
+proto p<F: Field, L: Size>(instance a: [F; L]) where a[0] == a[0] {
+    verify(a[L - 1] == a[L - 1])
+}
+";
+    assert_eq!(minimal_sizes(src, &[]), sizes(&[("L", 1)]));
+    let src = r"
+proto p<F: Field, L: Size>(instance a: [F; L + 1]) where a[0] == a[0] {
+    let b = a[0..L - 1];
+    verify(a[0] == a[0])
+}
+";
+    assert_eq!(minimal_sizes(src, &[]), sizes(&[("L", 2)]));
+}
+
 #[test]
 fn concretize_error_is_reported_at_its_declaration() {
     let src = r"
@@ -106,6 +136,30 @@ proto p<F: Field>(instance a: F) where a == a {
     assert_snap!(
         SNAP_DIR,
         "error_at_declaration",
+        render_diagnostic(&d, "test.zippel", src)
+    );
+}
+
+/// Two declarations that differ only in type-variable names and return types tie at every call.
+#[test]
+fn interchangeable_declarations_are_rejected() {
+    let src = r"
+fn id<A: Group>(instance x: A) -> A {
+    x
+}
+fn id<B: Group>(instance y: B) -> [B; 1] {
+    [y]
+}
+proto p<G: Group, F: Scalar<G>>(instance g: G) where g == g {
+    verify(g == g)
+}
+";
+    let module = UModule::parse(src).0.unwrap();
+    let e = module.concretize(&Ctx::new()).unwrap_err();
+    let d = Diagnostic::from(e);
+    assert_snap!(
+        SNAP_DIR,
+        "interchangeable_declarations",
         render_diagnostic(&d, "test.zippel", src)
     );
 }

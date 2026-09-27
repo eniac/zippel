@@ -2788,3 +2788,81 @@ fn pin_resent_instance_argument_is_read_from_the_proof() {
     let verifier = parse_and_build(src)[0].get_verifier().unwrap();
     assert_eq!(transcript_inputs(&verifier), ["g#2", "u"]);
 }
+
+// ============================================================================
+// Inlining uses the callee's own type parameters
+// ============================================================================
+
+/// The indices read by `Ram` ops whose index is a literal, in node order.
+fn literal_ram_indices(dag: &UDag<B>) -> Vec<usize> {
+    dag.graph
+        .node_indices()
+        .filter_map(|n| match &dag[n] {
+            Node::Op(op, _) => match &**op {
+                crate::Op::Ram(_, i) => match i.get() {
+                    crate::Op::Value(backend::Value::Index(k)) => Some(*k),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+/// `at`'s singleton range `K` is 2 for this call; the inlined body must read that, not the
+/// caller's own `K` (1).
+#[test]
+fn pin_inlined_body_reads_the_callees_range_parameter() {
+    let src = r#"
+        fn at<F: Field, K: 1..3>(instance a: [F; 3], instance k: [F; K]) -> F {
+            a[K]
+        }
+        proto p<F: Field, K: 1..2>(instance a: [F; 3], instance k: [F; 2], instance j: [F; K]) where a[0] == a[0] {
+            verify(at(a, k) == j[0])
+        }
+    "#;
+    let dags = parse_and_build(src);
+    let indices = literal_ram_indices(dags.protocols()[0]);
+    assert!(indices.contains(&2) && !indices.contains(&1), "{indices:?}");
+}
+
+/// `scale`'s scalar `G` is bound to the caller's `F`: the inlined `random<G>` must have `F`'s
+/// type, not the type of the caller's group `G`.
+#[test]
+fn pin_inlined_body_uses_the_callers_type_for_a_parameter() {
+    let src = r#"
+        fn scale<H: Group, G: Scalar<H>>(instance a: H) -> H {
+            a * random<G>
+        }
+        proto p<G: Group, H: Group, GT: Pairing<G, H>, F: Scalar<G, H>>(instance g: G, instance h: H, instance s: F) where g == g {
+            u <- scale(h);
+            verify(u == h)
+        }
+    "#;
+    let dags = try_parse_and_build(src).expect("the program is well-typed");
+    let proto = dags.protocols()[0];
+    let arg_type = |name: &str| {
+        proto
+            .graph
+            .node_weights()
+            .find_map(|n| match n {
+                Node::Arg(v, t, ..) if v.0 == name => Some(t.clone()),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let random_types: Vec<ATyp> = proto
+        .graph
+        .node_weights()
+        .filter_map(|n| match n {
+            Node::Op(op, _) => match &**op {
+                crate::Op::Random(t, _) => Some(t.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(random_types, [arg_type("s")]);
+    assert_ne!(arg_type("s"), arg_type("g"));
+}

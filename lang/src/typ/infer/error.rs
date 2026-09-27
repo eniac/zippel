@@ -1,5 +1,5 @@
 use crate::ast::range::{Range, RangeError};
-use crate::ast::sig::CSig;
+use crate::ast::sig::{CSig, SigError};
 use crate::ast::spanned::Spanned;
 use crate::ast::{BinOp, CExp, CExps};
 use crate::diagnostic::{Applicability, Diagnostic, Phase};
@@ -222,14 +222,28 @@ pub enum TypeError {
         Spanned<CTyp>,
     ),
 
-    /// Overload resolution found more than one signature in the function context matching the
-    /// call's argument types.
+    /// Several signatures fit the call's argument types and none is at least as specific as
+    /// all the others; carries the ones no other is more specific than.
     #[error("Call to `{2}` is ambiguous: several definitions accept arguments of type {}", kinded_list(.3, .0))]
-    AppMultiple(Ctx<Tid, CKind>, Set<CSig>, Spanned<Vid>, CTyps, CExps),
+    AppMultiple(Ctx<Tid, CKind>, Vec<CSig>, Spanned<Vid>, CTyps, CExps),
 
-    /// Overload resolution found no signature matching the call's argument types.
+    /// Overload resolution found no signature matching the call's argument types. The last
+    /// field holds the declarations that fit the arguments but whose type parameters could not
+    /// all be solved, with the reason.
     #[error("{}", func_not_found_message(.1, .2, .3, .0))]
-    FuncNotFound(Ctx<Tid, CKind>, Set<CSig>, Spanned<Vid>, CTyps, CExps),
+    FuncNotFound(
+        Ctx<Tid, CKind>,
+        Set<CSig>,
+        Spanned<Vid>,
+        CTyps,
+        CExps,
+        Vec<(CSig, SigError)>,
+    ),
+
+    /// The only declaration that fits a call's arguments leaves a type parameter unsolved or
+    /// violates a kind.
+    #[error("{}", call_message(.1, .2))]
+    Call(Ctx<Tid, CKind>, Spanned<Vid>, SigError),
 
     /// A protocol body ended in an expression that is not unit-typed; carries its type.
     #[error("A protocol body must end in a statement such as `verify(...)`, but this has type {}", kinded(.3, .0))]
@@ -259,6 +273,11 @@ pub enum TypeError {
     /// A record projection named a field the record type does not declare.
     #[error("Record has no field `{3}`")]
     FieldNotFound(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, String),
+
+    /// A record update's new value does not fit the field's type; carries the field, the
+    /// field's type and the value's type.
+    #[error("Field `{3}` has type {}, but the new value has type {}", kinded(.4, .0), kinded(.5, .0))]
+    FieldUpdate(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, String, CTyp, CTyp),
 
     /// A field projection was applied to an expression whose type is not a record.
     #[error("Expected a record, but got {}", kinded(.3, .0))]
@@ -307,10 +326,6 @@ impl TypeError {
     /// Chains `b` after `a` so both the specific failure and its cause are reported.
     pub fn next(a: Self, b: Self) -> Self {
         TypeError::Next(Box::new(a), Box::new(b))
-    }
-    /// Chains a unification failure `u` behind the higher-level error `a`.
-    pub fn unify(a: Self, u: UnifyError) -> Self {
-        TypeError::next(a, TypeError::from(u))
     }
     /// Reports that specification relation `e` is not pure.
     pub fn not_pure_rel(e: &CExp) -> Self {
@@ -624,26 +639,35 @@ impl TypeError {
             tb.clone(),
         )
     }
-    /// Reports that call `id(params)` matches several signatures in `fctx`.
+    /// Reports that call `id(params)` fits the signatures `tied` equally well.
     pub fn app_multiple(
         kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
+        tied: Vec<CSig>,
         id: &Spanned<Vid>,
         params: CTyps,
         args: &CExps,
     ) -> Self {
-        TypeError::AppMultiple(kctx.clone(), fctx.clone(), id.clone(), params, args.clone())
+        TypeError::AppMultiple(kctx.clone(), tied, id.clone(), params, args.clone())
     }
 
-    /// Reports that call `id(params)` matches no signature in `fctx`.
+    /// Reports that call `id(params)` matches no signature in `fctx`; `unresolved` are the
+    /// declarations that fit the arguments but not their type parameters.
     pub fn func_not_found(
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         id: &Spanned<Vid>,
         params: CTyps,
         args: &CExps,
+        unresolved: Vec<(CSig, SigError)>,
     ) -> Self {
-        TypeError::FuncNotFound(kctx.clone(), fctx.clone(), id.clone(), params, args.clone())
+        TypeError::FuncNotFound(
+            kctx.clone(),
+            fctx.clone(),
+            id.clone(),
+            params,
+            args.clone(),
+            unresolved,
+        )
     }
 
     /// Reports that the body `e` of function `id` inferred to `r` instead of its declared
@@ -693,6 +717,26 @@ impl TypeError {
         field: &str,
     ) -> Self {
         TypeError::FieldNotFound(kctx.clone(), vctx.clone(), e.clone(), field.to_string())
+    }
+
+    /// Reports that the value `e` of type `value`, stored into `field` of type `field_typ`,
+    /// does not fit it.
+    pub fn field_update(
+        kctx: &Ctx<Tid, CKind>,
+        vctx: &Ctx<Vid, CTyp>,
+        e: &CExp,
+        field: &str,
+        field_typ: &CTyp,
+        value: &CTyp,
+    ) -> Self {
+        TypeError::FieldUpdate(
+            kctx.clone(),
+            vctx.clone(),
+            e.clone(),
+            field.to_string(),
+            field_typ.clone(),
+            value.clone(),
+        )
     }
 
     /// Reports that `e` has type `t`, which is not a record, so projection is ill-typed.
@@ -774,6 +818,19 @@ fn primary_label(cause: &TypeError) -> String {
             format!("compares {} with {}", kinded(a, kctx), kinded(b, kctx))
         }
         E::FieldNotFound(_, _, _, f) => format!("no field `{f}`"),
+        E::FieldUpdate(kctx, _, _, _, _, t) => has_type(t, kctx),
+        E::Call(
+            _,
+            _,
+            SigError::Uninferable {
+                param,
+                kind,
+                reason,
+            },
+        ) => {
+            format!("`{param}` ({kind}) {reason}")
+        }
+        E::Call(_, _, e) => e.to_string(),
         E::Unify(_) | E::Lub(_) => "types do not match here".to_string(),
         // Labelled by `decorate`, which knows the parts of the expression.
         E::Bin(..)
@@ -850,9 +907,18 @@ fn decorate(cause: &TypeError, mut d: Diagnostic) -> Diagnostic {
                 d.secondary_label(declared.span.clone(), &must_return)
             }
         }
-        TypeError::FuncNotFound(kctx, fctx, id, ts, args)
-        | TypeError::AppMultiple(kctx, fctx, id, ts, args) => {
-            let defined = candidates(fctx, id);
+        TypeError::FuncNotFound(..) | TypeError::AppMultiple(..) => {
+            // The declarations to list: every one of the name, or only the tied ones.
+            let (kctx, fctx, id, ts, args, defined) = match cause {
+                TypeError::FuncNotFound(kctx, fctx, id, ts, args, _) => {
+                    let named = fctx.iter().filter(|sig| sig.name.node == id.node);
+                    (kctx, Some(fctx), id, ts, args, candidates(named))
+                }
+                TypeError::AppMultiple(kctx, tied, id, ts, args) => {
+                    (kctx, None, id, ts, args, candidates(tied.iter()))
+                }
+                _ => unreachable!("matched above"),
+            };
             if !defined.is_empty() {
                 d.primary_label = if matches!(cause, TypeError::FuncNotFound(..)) {
                     "no definition takes these argument types"
@@ -871,7 +937,8 @@ fn decorate(cause: &TypeError, mut d: Diagnostic) -> Diagnostic {
                 }
                 d.primary_label = format!("`{id}` is not defined in this scope");
                 let mut similar: Vec<&str> = fctx
-                    .iter()
+                    .into_iter()
+                    .flat_map(|fctx| fctx.iter())
                     .map(|sig| sig.name.node.0.as_str())
                     .filter(|n| (1..=2).contains(&levenshtein(&id.node.0, n)))
                     .collect();
@@ -897,18 +964,20 @@ fn decorate(cause: &TypeError, mut d: Diagnostic) -> Diagnostic {
                     defined.len() - MAX_SHOWN
                 ));
             }
+            if let TypeError::FuncNotFound(.., unresolved) = cause {
+                for (sig, e) in unresolved {
+                    d = d.note(&format!("`{sig}` does not fit: {e}"));
+                }
+            }
             d
         }
         _ => d,
     }
 }
 
-/// The distinct argument lists of the declarations named `id`, each type with its kind in that
-/// declaration.
-fn candidates(fctx: &Set<CSig>, id: &Spanned<Vid>) -> Vec<String> {
-    let mut args: Vec<String> = fctx
-        .iter()
-        .filter(|sig| sig.name.node == id.node)
+/// The distinct argument lists of `sigs`, each type with its kind in that declaration.
+fn candidates<'a>(sigs: impl Iterator<Item = &'a CSig>) -> Vec<String> {
+    let mut args: Vec<String> = sigs
         .map(|sig| {
             let kctx = sig.typevars.node.to_ctx();
             sig.args
@@ -1034,13 +1103,23 @@ fn func_not_found_message(
     ts: &CTyps,
     kctx: &Ctx<Tid, CKind>,
 ) -> String {
-    if candidates(fctx, id).is_empty() {
+    if !fctx.iter().any(|sig| sig.name.node == id.node) {
         format!("No function named `{id}`")
     } else {
         format!(
             "No definition of `{id}` accepts arguments of type {}",
             kinded_list(ts, kctx)
         )
+    }
+}
+
+/// Message for a call to `id` that fits one declaration's arguments but fails with `e`.
+fn call_message(id: &Spanned<Vid>, e: &SigError) -> String {
+    match e {
+        SigError::Uninferable { param, .. } => {
+            format!("Cannot infer type parameter `{param}` of `{id}`")
+        }
+        _ => format!("Cannot call `{id}`: {e}"),
     }
 }
 

@@ -1,0 +1,14 @@
+---
+source: lang/tests/concretize.rs
+---
+error: Declarations of `id` accept the same arguments, so every call to them is ambiguous
+   ╭─[ test.zippel:5:4 ]
+   │
+ 2 │ fn id<A: Group>(instance x: A) -> A {
+   │    ─┬  
+   │     ╰── `id<A: Group>(instance x: A) -> A`
+   │ 
+ 5 │ fn id<B: Group>(instance y: B) -> [B; 1] {
+   │    ─┬  
+   │     ╰── `id<B: Group>(instance y: B) -> [B; 1]`
+───╯

@@ -1,0 +1,13 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: Function `shrink` must return Poly<F, 1, 3> (F: Field), but its body has type Poly<F, 1, 5> (F: Field)
+   ╭─[ test.zippel:3:5 ]
+   │
+ 2 │ fn shrink<F: Field>(instance p: Uni<F, 5>) -> Uni<F, 3> {
+   │                                               ────┬────  
+   │                                                   ╰────── `shrink` must return Poly<F, 1, 3> (F: Field)
+ 3 │     p
+   │     ┬  
+   │     ╰── has type Poly<F, 1, 5> (F: Field)
+───╯

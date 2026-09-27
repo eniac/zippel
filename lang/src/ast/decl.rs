@@ -348,12 +348,10 @@ impl CBody {
                 match body {
                     Some(body) => {
                         let br = body.infer(&kctx, fctx, &vctx)?;
-                        // `lub_equ`, not structural equality, so a body of type `Fin<n>`
-                        // (e.g. a numeric literal) coerces to a scalar return type, as the
-                        // binary operators allow.
-                        match CTyp::lub_equ(&br, &ret.node, &kctx) {
-                            Ok(_) => Ok(()),
-                            Err(_) => Err(TypeError::decl(
+                        if br.fits(&ret.node, &kctx) {
+                            Ok(())
+                        } else {
+                            Err(TypeError::decl(
                                 &sig.name,
                                 TypeError::located(
                                     &body.span,
@@ -366,7 +364,7 @@ impl CBody {
                                         &br,
                                     ),
                                 ),
-                            )),
+                            ))
                         }
                     }
                     None => {
@@ -414,17 +412,17 @@ impl<N: Clone> ToTraversal1<N> for Body<N> {
 }
 
 impl TidSubst for CBody {
-    fn tid_subst(&mut self, from: &Tid, to: &Tid) {
+    fn map_tids(&mut self, f: &dyn Fn(&Tid) -> Option<Tid>) {
         match self {
             Body::Proto { relation, body } => {
-                relation.node.tid_subst(from, to);
+                relation.node.map_tids(f);
                 if let Some(body) = body {
-                    body.node.tid_subst(from, to);
+                    body.node.map_tids(f);
                 }
             }
             Body::Func { body } => {
                 if let Some(body) = body {
-                    body.node.tid_subst(from, to);
+                    body.node.map_tids(f);
                 }
             }
             Body::TypeAlias => {}

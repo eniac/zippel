@@ -995,3 +995,29 @@ impl Lub for CTyp {
         }
     }
 }
+
+impl CTyp {
+    /// Whether a value of this type can stand where `expected` is declared: a function body
+    /// against its return type, a value against a record field. Unlike [`Lub::lub_equ`], this
+    /// is one-way:
+    /// - a polynomial fits one with at least as many variables and as high a degree;
+    /// - an integer (`Fin`) fits a wider integer range, and a scalar;
+    /// - vectors need equal lengths, records every expected field;
+    /// - base types must be equal (up to kinds, as in [`Lub::lub_equ`]).
+    pub fn fits(&self, expected: &Self, ctx: &Ctx<Tid, CKind>) -> bool {
+        match (self, expected) {
+            (CTyp::Unit, CTyp::Unit) | (CTyp::Bool, CTyp::Bool) => true,
+            (CTyp::Base(a), CTyp::Base(b)) => Tid::lub_equ(a, b, ctx).is_ok(),
+            (CTyp::Fin(a), CTyp::Fin(b)) => a.is_subset_of(b),
+            (CTyp::Fin(_), CTyp::Base(b)) => ctx.get(b).is_some_and(CKind::is_scalar),
+            (CTyp::Poly(a, an, ad), CTyp::Poly(b, bn, bd)) => {
+                an.node <= bn.node && ad.node <= bd.node && Tid::lub_equ(a, b, ctx).is_ok()
+            }
+            (CTyp::Vec(a, n), CTyp::Vec(b, m)) => n == m && a.node.fits(&b.node, ctx),
+            (CTyp::Record(fa), CTyp::Record(fb)) => fb
+                .iter()
+                .all(|(name, b)| fa.get(name).is_some_and(|a| a.node.fits(&b.node, ctx))),
+            _ => false,
+        }
+    }
+}

@@ -127,8 +127,8 @@ where
 }
 
 impl<T: crate::id::TidSubst> crate::id::TidSubst for Spanned<T> {
-    fn tid_subst(&mut self, from: &crate::id::Tid, to: &crate::id::Tid) {
-        self.node.tid_subst(from, to);
+    fn map_tids(&mut self, f: &dyn Fn(&crate::id::Tid) -> Option<crate::id::Tid>) {
+        self.node.map_tids(f);
     }
 }
 

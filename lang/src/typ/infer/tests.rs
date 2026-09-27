@@ -1917,19 +1917,6 @@ fn test_proto_body_blames_body_not_relation() {
 }
 
 #[test]
-fn test_unify_err_identifies_missing_variable() {
-    let mut ctx = Ctx::new();
-    ctx.insert(&Tid::from("a"), &Kind::<usize>::Field);
-    let mut subs = crate::typ::AliasSubsts::new();
-    let res = crate::typ::unify::Unify::unify(&Tid::from("a"), &Tid::from("b"), &ctx, &mut subs);
-    // Under correct behavior, this should fail with KindNotFound(b) since b is missing.
-    assert_eq!(
-        res,
-        Err(crate::typ::unify::UnifyError::KindNotFound(Tid::from("b")))
-    );
-}
-
-#[test]
 fn test_fin_coercion_avoids_fragile_alphabetical_fallback() {
     let mut ctx = Ctx::new();
     ctx.insert(&Tid::from("F"), &Kind::<usize>::Field);

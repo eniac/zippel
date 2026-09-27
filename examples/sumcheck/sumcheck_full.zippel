@@ -24,7 +24,6 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, V: 3..NUM_VARS_CONST + 1, MAX_
     instance challenges: [F; NUM_VARS_CONST - V + 1],
     instance prev_eval: F,
     instance ch: F,
-    instance curr_round: Fin<0..NUM_VARS_CONST>,
 ) -> Unit {
     let residual_poly = eval(curr_poly, [ch]);
     // Round polynomial: sum the residual evaluated over the Boolean-tail
@@ -48,15 +47,7 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, V: 3..NUM_VARS_CONST + 1, MAX_
     let next_prev = g(r_next);
 
     let next_challenges = challenges ++ [r_next];
-    sumcheck_round(
-        orig_poly,
-        residual_poly,
-        points,
-        next_challenges,
-        next_prev,
-        r_next,
-        curr_round + 1,
-    )
+    sumcheck_round(orig_poly, residual_poly, points, next_challenges, next_prev, r_next)
 }
 
 fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
@@ -66,7 +57,6 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
     instance challenges: [F; NUM_VARS_CONST - 1],
     instance prev_eval: F,
     instance ch: F,
-    instance curr_round: Fin<0..NUM_VARS_CONST>,
 ) -> Unit {
     let residual_poly = eval(curr_poly, [ch]);
     let eval_points = points;
@@ -83,7 +73,6 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
     let full_challenges = challenges ++ [r_final];
     let from_orig = eval(orig_poly, full_challenges);
 
-    let _drop_round = curr_round;
     verify(from_round == from_orig)
 }
 
@@ -124,5 +113,5 @@ proto sumcheck<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
     r1 <- challenge<F>;
     let g = interpolate(points, evs0_msg);
     let prev = g(r1);
-    sumcheck_round(p, p, points, [r1], prev, r1, 1)
+    sumcheck_round(p, p, points, [r1], prev, r1)
 }

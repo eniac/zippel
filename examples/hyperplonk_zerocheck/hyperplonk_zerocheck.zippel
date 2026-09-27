@@ -30,7 +30,6 @@ fn zc_round<F: Field, S: Size, N: 2 ^ S>(
     instance prev_challenges: [F; S - 1],
     instance prev_eval: F,
     instance round_challenge: F,
-    instance curr_round: Fin<0..S>,
     instance a_evs: [F; N],
     instance b_evs: [F; N],
     instance c_evs: [F; N],
@@ -39,7 +38,6 @@ fn zc_round<F: Field, S: Size, N: 2 ^ S>(
     let residual_poly = eval(curr_poly, [round_challenge]);
     let evs_local = [residual_poly(t) for t in points];
     evs <- evs_local;
-    let _drop_round = curr_round;
     verify(prev_eval == evs[0] + evs[1]);
 
     let g = interpolate(points, evs);
@@ -65,7 +63,6 @@ fn zc_round<F: Field, S: Size, V: 3..S + 1, N: 2 ^ S>(
     instance prev_challenges: [F; S - V + 1],
     instance prev_eval: F,
     instance round_challenge: F,
-    instance curr_round: Fin<0..S>,
     instance a_evs: [F; N],
     instance b_evs: [F; N],
     instance c_evs: [F; N],
@@ -97,7 +94,6 @@ fn zc_round<F: Field, S: Size, V: 3..S + 1, N: 2 ^ S>(
         new_challenges,
         next_prev,
         r_next,
-        curr_round + 1,
         a_evs,
         b_evs,
         c_evs,
@@ -161,5 +157,5 @@ proto hyperplonk_zerocheck<F: Field, S: Size, N: 2 ^ S>(
     r0 <- challenge<F>;
     let prev = g0(r0);
 
-    zc_round(h_poly, points, [r0], prev, r0, 1, a_evs, b_evs, c_evs, eq_tau_evs)
+    zc_round(h_poly, points, [r0], prev, r0, a_evs, b_evs, c_evs, eq_tau_evs)
 }

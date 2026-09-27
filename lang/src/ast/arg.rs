@@ -114,16 +114,14 @@ impl<T, N> FromIterator<Spanned<Arg<T, N>>> for Args<T, N> {
 }
 
 impl<N: Clone> TidSubst for GArg<N> {
-    fn tid_subst(&mut self, from: &Tid, to: &Tid) {
-        self.typ.node.tid_subst(from, to)
+    fn map_tids(&mut self, f: &dyn Fn(&Tid) -> Option<Tid>) {
+        self.typ.node.map_tids(f)
     }
 }
 
 impl<N: Clone> TidSubst for GArgs<N> {
-    fn tid_subst(&mut self, from: &Tid, to: &Tid) {
-        self.0
-            .iter_mut()
-            .for_each(|arg| arg.node.tid_subst(from, to))
+    fn map_tids(&mut self, f: &dyn Fn(&Tid) -> Option<Tid>) {
+        self.0.iter_mut().for_each(|arg| arg.node.map_tids(f))
     }
 }
 

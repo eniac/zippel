@@ -10,6 +10,7 @@ pub mod ark;
 mod distribution;
 /// Kind-directed type inference (`Typeable`, `TypeError`).
 pub mod infer;
+pub mod instantiate;
 mod kind;
 /// Least-upper bounds joining operand types of binary operations.
 pub mod lub;
@@ -33,7 +34,7 @@ pub use kind::{CKind, Kind, UKind};
 pub use lub::LubError;
 pub use nothing::Nothing;
 pub use qualifier::Qualifier;
-pub use subst::{AliasSubsts, SizeSubsts};
+pub use subst::SizeSubsts;
 pub use typevar::{CTypeVar, CTypeVars, TypeVar, TypeVars, UTypeVar, UTypeVars};
 
 use share::Ctx;
@@ -82,16 +83,20 @@ pub type CTyp = Typ<Tid, usize>;
 pub type CTyps = Typs<Tid, usize>;
 
 impl<N: Clone> TidSubst for GTyp<N> {
-    fn tid_subst(&mut self, from: &Tid, to: &Tid) {
+    fn map_tids(&mut self, f: &dyn Fn(&Tid) -> Option<Tid>) {
         match self {
-            Typ::Poly(b, _, _) | Typ::Base(b) if b == from => *b = to.clone(),
-            Typ::Vec(b, _) => b.node.tid_subst(from, to),
+            Typ::Poly(b, _, _) | Typ::Base(b) => {
+                if let Some(t) = f(b) {
+                    *b = t;
+                }
+            }
+            Typ::Vec(b, _) => b.node.map_tids(f),
             Typ::Record(fields) => {
                 fields.modify(|_, field_typ| {
-                    field_typ.node.tid_subst(from, to);
+                    field_typ.node.map_tids(f);
                 });
             }
-            Typ::Fin(_) | Typ::Unit | Typ::Bool | Typ::Base(_) | Typ::Poly(_, _, _) => {}
+            Typ::Fin(_) | Typ::Unit | Typ::Bool => {}
         }
     }
 }
@@ -112,8 +117,8 @@ impl<T, N> FromIterator<Spanned<Typ<T, N>>> for Typs<T, N> {
 }
 
 impl<N: Clone> TidSubst for GTyps<N> {
-    fn tid_subst(&mut self, from: &Tid, to: &Tid) {
-        self.0.iter_mut().for_each(|t| t.node.tid_subst(from, to))
+    fn map_tids(&mut self, f: &dyn Fn(&Tid) -> Option<Tid>) {
+        self.0.iter_mut().for_each(|t| t.node.map_tids(f))
     }
 }
 
