@@ -11,6 +11,7 @@ use crate::{
 };
 use backend::{ATyp, ArkBls12_381};
 use lang::ast::BinOp;
+use lang::ast::spanned::Spanned;
 use lang::id::Vid;
 use lang::typ::{Distribution, Qualifier};
 use petgraph::Direction;
@@ -40,10 +41,14 @@ fn try_parse_and_build(src: &str) -> Result<UDags<B>, GraphError> {
 type ArgSpec = (Vid, ATyp, Qualifier, Distribution);
 
 fn expected_inp(g: &mut UDag<B>, name: &str, args: &[ArgSpec]) -> (NodeIndex, Vec<NodeIndex>) {
-    let inp = g.add_node(Node::inp(Vid::new(name)));
+    let inp = g.add_node(Node::inp(Vid::new(name)), 0..0);
     let mut idxs = Vec::with_capacity(args.len());
     for (n, t, q, d) in args {
-        let a = g.add_node(Node::arg(n.clone(), t.clone(), *q, *d, ArgKind::Input));
+        let a = g.add_node(
+            Node::arg(n.clone(), t.clone(), *q, *d, ArgKind::Input),
+            0..0,
+        );
+        g.bind(a, &Spanned::dummy(n.clone()));
         g.add_edge(inp, a, Dep::data());
         idxs.push(a);
     }
@@ -51,10 +56,14 @@ fn expected_inp(g: &mut UDag<B>, name: &str, args: &[ArgSpec]) -> (NodeIndex, Ve
 }
 
 fn expected_rel(g: &mut UDag<B>, name: &str, args: &[ArgSpec]) -> (NodeIndex, Vec<NodeIndex>) {
-    let rel = g.add_node(Node::rel(Vid::new(name)));
+    let rel = g.add_node(Node::rel(Vid::new(name)), 0..0);
     let mut idxs = Vec::with_capacity(args.len());
     for (n, t, q, d) in args {
-        let a = g.add_node(Node::arg(n.clone(), t.clone(), *q, *d, ArgKind::Relation));
+        let a = g.add_node(
+            Node::arg(n.clone(), t.clone(), *q, *d, ArgKind::Relation),
+            0..0,
+        );
+        g.bind(a, &Spanned::dummy(n.clone()));
         g.add_edge(rel, a, Dep::data());
         idxs.push(a);
     }
@@ -104,7 +113,7 @@ fn pin_func_lit_return() {
     let mut expected = UDag::<B>::new();
     let _ = expected_inp(&mut expected, "f", &[]);
     let lit_1 = GOp::<B>::Value(backend::Value::Index(1));
-    let _ret = expected.add_node(Node::Op(crate::mk::<B>(lit_1), lang::typ::Nothing));
+    let _ret = expected.add_node(Node::Op(crate::mk::<B>(lit_1), lang::typ::Nothing), 0..0);
 
     assert!(gs[0] == expected);
 }
@@ -125,7 +134,7 @@ fn pin_func_lit_in_binop() {
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, s.clone());
     let lit_1 = GOp::<B>::Value(backend::Value::Index(1));
-    let bin = expected.add_node(Node::bin(BinOp::Add, &var_a, &lit_1, &s));
+    let bin = expected.add_node(Node::bin(BinOp::Add, &var_a, &lit_1, &s), 0..0);
     expected.add_edges(DepType::Data, bin, var_a);
 
     assert!(gs[0] == expected);
@@ -168,32 +177,33 @@ fn pin_proto_simple() {
     let arg_s = _inp_args[0];
     let var_s_body = GOp::<B>::var(&s, arg_s, ATyp::scalar());
 
-    let equ = expected.add_node(Node::bin(
-        BinOp::Equ,
-        &var_s_body,
-        &var_s_body,
-        &ATyp::bool(),
-    ));
+    let equ = expected.add_node(
+        Node::bin(BinOp::Equ, &var_s_body, &var_s_body, &ATyp::bool()),
+        0..0,
+    );
     expected.add_edges(DepType::Data, equ, var_s_body.clone());
     expected.add_edges(DepType::Data, equ, var_s_body);
     let equ_ref = GOp::<B>::underscore(equ, ATyp::bool());
-    let check = expected.add_node(Node::verify(&equ_ref));
+    let check = expected.add_node(Node::verify(&equ_ref), 0..0);
     expected.add_edges(DepType::Data, check, equ_ref);
 
     // Continuation Lit(0) → Ret(Value::Unit)
     let unit = GOp::<B>::Value(backend::Value::Unit);
-    let ret = expected.add_node(Node::ret(&unit));
+    let ret = expected.add_node(Node::ret(&unit), 0..0);
     expected.add_edges(DepType::Data, ret, unit);
 
     // Relation: Rel + Equ(var_s_rel, var_s_rel) + Assert(equ_rel_ref)
     let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[witness_s("s")]);
     let rel_arg_s = _rel_args[0];
     let var_s_rel = GOp::<B>::var(&s, rel_arg_s, ATyp::scalar());
-    let equ_rel = expected.add_node(Node::bin(BinOp::Equ, &var_s_rel, &var_s_rel, &ATyp::bool()));
+    let equ_rel = expected.add_node(
+        Node::bin(BinOp::Equ, &var_s_rel, &var_s_rel, &ATyp::bool()),
+        0..0,
+    );
     expected.add_edges(DepType::Data, equ_rel, var_s_rel.clone());
     expected.add_edges(DepType::Data, equ_rel, var_s_rel);
     let equ_rel_ref = GOp::<B>::underscore(equ_rel, ATyp::bool());
-    let assert_rel = expected.add_node(Node::assert(&equ_rel_ref));
+    let assert_rel = expected.add_node(Node::assert(&equ_rel_ref), 0..0);
     expected.add_edges(DepType::Data, assert_rel, equ_rel_ref);
 
     assert!(gs[0] == expected);
@@ -223,7 +233,7 @@ fn pin_range() {
     let ram_op = GOp::<B>::ram(var_a, GOp::<B>::range(lang::ast::CRange::from_raw(0, 1, 5)));
 
     // add_exp returned a non-Ref op → add_top_exp adds a Ret node.
-    let ret = expected.add_node(Node::ret(&ram_op));
+    let ret = expected.add_node(Node::ret(&ram_op), 0..0);
     expected.add_edges(DepType::Data, ret, ram_op);
 
     assert!(gs[0] == expected);
@@ -249,7 +259,7 @@ fn assert_binop(op_str: &str, binop: BinOp, result_typ: ATyp) {
     let arg_b = _inp_args[1];
     let var_a = GOp::<B>::var(&a, arg_a, ATyp::scalar());
     let var_b = GOp::<B>::var(&b, arg_b, ATyp::scalar());
-    let bin = expected.add_node(Node::bin(binop, &var_a, &var_b, &result_typ));
+    let bin = expected.add_node(Node::bin(binop, &var_a, &var_b, &result_typ), 0..0);
     expected.add_edges(DepType::Data, bin, var_a);
     expected.add_edges(DepType::Data, bin, var_b);
 
@@ -290,7 +300,7 @@ fn pin_random() {
     let mut expected = UDag::<B>::new();
     let (_inp, __inp_args) = expected_inp(&mut expected, "f", &[instance_s("a")]);
     let _arg_a = __inp_args[0];
-    let _rand = expected.add_node(Node::random(&ATyp::scalar(), false));
+    let _rand = expected.add_node(Node::random(&ATyp::scalar(), false), 0..0);
 
     assert!(gs[0] == expected);
 }
@@ -304,7 +314,7 @@ fn pin_random_nz() {
     let mut expected = UDag::<B>::new();
     let (_inp, __inp_args) = expected_inp(&mut expected, "f", &[instance_s("a")]);
     let _arg_a = __inp_args[0];
-    let _rand = expected.add_node(Node::random(&ATyp::scalar(), true));
+    let _rand = expected.add_node(Node::random(&ATyp::scalar(), true), 0..0);
 
     assert!(gs[0] == expected);
 }
@@ -319,7 +329,7 @@ fn pin_challenge() {
     let mut expected = UDag::<B>::new();
     let (inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a")]);
     let _arg_a = _inp_args[0];
-    let ch = expected.add_node(Node::challenge(&ATyp::scalar(), false));
+    let ch = expected.add_node(Node::challenge(&ATyp::scalar(), false), 0..0);
     expected.add_edge(inp, ch, Dep::transcript());
 
     assert!(gs[0] == expected);
@@ -334,7 +344,7 @@ fn pin_challenge_nz() {
     let mut expected = UDag::<B>::new();
     let (inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a")]);
     let _arg_a = _inp_args[0];
-    let ch = expected.add_node(Node::challenge(&ATyp::scalar(), true));
+    let ch = expected.add_node(Node::challenge(&ATyp::scalar(), true), 0..0);
     expected.add_edge(inp, ch, Dep::transcript());
 
     assert!(gs[0] == expected);
@@ -368,14 +378,14 @@ fn pin_let_named() {
     let var_b = GOp::<B>::var(&b, arg_b, s.clone());
 
     // a + b creates a bin node
-    let bin = expected.add_node(Node::bin(BinOp::Add, &var_a, &var_b, &s));
+    let bin = expected.add_node(Node::bin(BinOp::Add, &var_a, &var_b, &s), 0..0);
     expected.add_edges(DepType::Data, bin, var_a);
     expected.add_edges(DepType::Data, bin, var_b);
 
     // `c` resolves to Ref(bin); since the body is a Ref, add_top_exp does
     // not add a Ret node.
     // let-binding registers the name in vctx and marks it as non-transcript.
-    expected.vctx.insert(&bin, &c);
+    expected.bind(bin, &Spanned::dummy(c.clone()));
     expected.transcript_vars.insert(&bin, &false);
 
     assert!(gs[0] == expected);
@@ -404,15 +414,15 @@ fn pin_let_anon() {
     let var_b = GOp::<B>::var(&b, arg_b, s.clone());
 
     // let _ = a + b → Bin(Add) node (result discarded)
-    let add = expected.add_node(Node::bin(BinOp::Add, &var_a, &var_b, &s));
+    let add = expected.add_node(Node::bin(BinOp::Add, &var_a, &var_b, &s), 0..0);
     expected.add_edges(DepType::Data, add, var_a.clone());
     expected.add_edges(DepType::Data, add, var_b.clone());
     // let-binding registers the name in vctx and marks it as non-transcript.
-    expected.vctx.insert(&add, &Vid::new("_"));
+    expected.bind(add, &Spanned::dummy(Vid::new("_").clone()));
     expected.transcript_vars.insert(&add, &false);
 
     // a * b → Bin(Mul) node (this is the return value; add_exp returns Ref(mul) so add_top_exp skips Ret)
-    let mul = expected.add_node(Node::bin(BinOp::Mul, &var_a, &var_b, &s));
+    let mul = expected.add_node(Node::bin(BinOp::Mul, &var_a, &var_b, &s), 0..0);
     expected.add_edges(DepType::Data, mul, var_a);
     expected.add_edges(DepType::Data, mul, var_b);
 
@@ -440,16 +450,16 @@ fn pin_assert() {
 
     // assert(a == b) → Equ(var_a, var_b) node, then Assert(equ_ref) node
     // Assert is prover-side — no transcript edge.
-    let equ = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_b, &ATyp::bool()));
+    let equ = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_b, &ATyp::bool()), 0..0);
     expected.add_edges(DepType::Data, equ, var_a);
     expected.add_edges(DepType::Data, equ, var_b);
     let equ_ref = GOp::<B>::underscore(equ, ATyp::bool());
-    let check = expected.add_node(Node::assert(&equ_ref));
+    let check = expected.add_node(Node::assert(&equ_ref), 0..0);
     expected.add_edges(DepType::Data, check, equ_ref);
 
     // Continuation Lit(0) → Ret(Value::Unit)
     let unit = GOp::<B>::Value(backend::Value::Unit);
-    let ret = expected.add_node(Node::ret(&unit));
+    let ret = expected.add_node(Node::ret(&unit), 0..0);
     expected.add_edges(DepType::Data, ret, unit);
 
     assert!(gs[0] == expected);
@@ -475,16 +485,16 @@ fn pin_verify() {
     let var_a = GOp::<B>::var(&a, arg_a, ATyp::scalar());
     let var_b = GOp::<B>::var(&b, arg_b, ATyp::scalar());
 
-    let equ = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_b, &ATyp::bool()));
+    let equ = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_b, &ATyp::bool()), 0..0);
     expected.add_edges(DepType::Data, equ, var_a);
     expected.add_edges(DepType::Data, equ, var_b);
     let equ_ref = GOp::<B>::underscore(equ, ATyp::bool());
-    let check = expected.add_node(Node::verify(&equ_ref));
+    let check = expected.add_node(Node::verify(&equ_ref), 0..0);
     expected.add_edges(DepType::Data, check, equ_ref);
 
     // Continuation Lit(0) → Ret(Value::Unit)
     let unit = GOp::<B>::Value(backend::Value::Unit);
-    let ret = expected.add_node(Node::ret(&unit));
+    let ret = expected.add_node(Node::ret(&unit), 0..0);
     expected.add_edges(DepType::Data, ret, unit);
 
     assert!(gs[0] == expected);
@@ -516,40 +526,43 @@ fn pin_log_node_ref() {
     let var_s = GOp::<B>::var(&s_vid, arg_s, ATyp::scalar());
 
     // s + s → Bin(Add) node, then set_transcript converts it to Transcr
-    let bin_add = expected.add_node(Node::bin(BinOp::Add, &var_s, &var_s, &ATyp::scalar()));
+    let bin_add = expected.add_node(Node::bin(BinOp::Add, &var_s, &var_s, &ATyp::scalar()), 0..0);
     expected.add_edges(DepType::Data, bin_add, var_s.clone());
     expected.add_edges(DepType::Data, bin_add, var_s.clone());
 
     let bin_add_ref = GOp::<B>::underscore(bin_add, ATyp::scalar());
     let transcr_op = GOp::<B>::Ref(Ref(bin_add), ATyp::scalar());
-    let transcr = expected.add_node(Node::transcr(&transcr_op));
+    let transcr = expected.add_node(Node::transcr(&transcr_op), 0..0);
     expected.add_edges(DepType::Data, transcr, bin_add_ref.clone());
     expected.add_edge(inp, transcr, Dep::transcript());
-    expected.vctx.insert(&transcr, &a_vid);
+    expected.bind(transcr, &Spanned::dummy(a_vid.clone()));
     expected.transcript_vars.insert(&transcr, &true);
     // a == s → Equ(var_a, var_s) node, then Verify(equ_ref) node
     let var_a = GOp::<B>::var(&a_vid, transcr, ATyp::scalar());
-    let equ = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_s, &ATyp::bool()));
+    let equ = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_s, &ATyp::bool()), 0..0);
     expected.add_edges(DepType::Data, equ, var_a);
     expected.add_edges(DepType::Data, equ, var_s);
     let equ_ref = GOp::<B>::underscore(equ, ATyp::bool());
-    let check = expected.add_node(Node::verify(&equ_ref));
+    let check = expected.add_node(Node::verify(&equ_ref), 0..0);
     expected.add_edges(DepType::Data, check, equ_ref);
 
     // Continuation Lit(0) → Ret(Value::Unit)
     let unit = GOp::<B>::Value(backend::Value::Unit);
-    let ret = expected.add_node(Node::ret(&unit));
+    let ret = expected.add_node(Node::ret(&unit), 0..0);
     expected.add_edges(DepType::Data, ret, unit);
 
     // Relation: Rel + Equ(var_s_rel, var_s_rel) + Assert(equ_rel_ref)
     let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[witness_s("s")]);
     let rel_arg_s = _rel_args[0];
     let var_s_rel = GOp::<B>::var(&s_vid, rel_arg_s, ATyp::scalar());
-    let equ_rel = expected.add_node(Node::bin(BinOp::Equ, &var_s_rel, &var_s_rel, &ATyp::bool()));
+    let equ_rel = expected.add_node(
+        Node::bin(BinOp::Equ, &var_s_rel, &var_s_rel, &ATyp::bool()),
+        0..0,
+    );
     expected.add_edges(DepType::Data, equ_rel, var_s_rel.clone());
     expected.add_edges(DepType::Data, equ_rel, var_s_rel);
     let equ_rel_ref = GOp::<B>::underscore(equ_rel, ATyp::bool());
-    let assert_rel = expected.add_node(Node::assert(&equ_rel_ref));
+    let assert_rel = expected.add_node(Node::assert(&equ_rel_ref), 0..0);
     expected.add_edges(DepType::Data, assert_rel, equ_rel_ref);
 
     assert!(gs[0] == expected);
@@ -577,34 +590,37 @@ fn pin_log_new_transcr() {
 
     // `1` is Value(Index(1)), not a Ref → second branch of Log: creates new Transcr node
     let lit_op = GOp::<B>::Value(backend::Value::Index(1));
-    let transcr = expected.add_node(Node::transcr(&lit_op));
+    let transcr = expected.add_node(Node::transcr(&lit_op), 0..0);
     expected[transcr].set_transcript();
     // transcript edge from inp to transcr
     expected.add_edge(inp, transcr, Dep::transcript());
-    expected.vctx.insert(&transcr, &a_vid);
+    expected.bind(transcr, &Spanned::dummy(a_vid.clone()));
     expected.transcript_vars.insert(&transcr, &true);
     let var_s = GOp::<B>::var(&s_vid, arg_s, ATyp::scalar());
-    let equ = expected.add_node(Node::bin(BinOp::Equ, &var_s, &var_s, &ATyp::bool()));
+    let equ = expected.add_node(Node::bin(BinOp::Equ, &var_s, &var_s, &ATyp::bool()), 0..0);
     expected.add_edges(DepType::Data, equ, var_s.clone());
     expected.add_edges(DepType::Data, equ, var_s);
     let equ_ref = GOp::<B>::underscore(equ, ATyp::bool());
-    let check = expected.add_node(Node::verify(&equ_ref));
+    let check = expected.add_node(Node::verify(&equ_ref), 0..0);
     expected.add_edges(DepType::Data, check, equ_ref);
 
     // Continuation Lit(0) → Ret(Value::Unit)
     let unit = GOp::<B>::Value(backend::Value::Unit);
-    let ret = expected.add_node(Node::ret(&unit));
+    let ret = expected.add_node(Node::ret(&unit), 0..0);
     expected.add_edges(DepType::Data, ret, unit);
 
     // Relation: Rel + Equ(var_s_rel, var_s_rel) + Assert(equ_rel_ref)
     let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[witness_s("s")]);
     let rel_arg_s = _rel_args[0];
     let var_s_rel = GOp::<B>::var(&s_vid, rel_arg_s, ATyp::scalar());
-    let equ_rel = expected.add_node(Node::bin(BinOp::Equ, &var_s_rel, &var_s_rel, &ATyp::bool()));
+    let equ_rel = expected.add_node(
+        Node::bin(BinOp::Equ, &var_s_rel, &var_s_rel, &ATyp::bool()),
+        0..0,
+    );
     expected.add_edges(DepType::Data, equ_rel, var_s_rel.clone());
     expected.add_edges(DepType::Data, equ_rel, var_s_rel);
     let equ_rel_ref = GOp::<B>::underscore(equ_rel, ATyp::bool());
-    let assert_rel = expected.add_node(Node::assert(&equ_rel_ref));
+    let assert_rel = expected.add_node(Node::assert(&equ_rel_ref), 0..0);
     expected.add_edges(DepType::Data, assert_rel, equ_rel_ref);
 
     assert!(gs[0] == expected);
@@ -632,7 +648,7 @@ fn pin_poly() {
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, vec_typ);
 
-    let poly = expected.add_node(Node::poly(&var_a));
+    let poly = expected.add_node(Node::poly(&var_a), 0..0);
     expected.add_edges(DepType::Data, poly, var_a);
 
     assert!(gs[0] == expected);
@@ -656,7 +672,7 @@ fn pin_coef() {
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, poly_typ);
 
-    let coef_node = expected.add_node(Node::coef(&var_a));
+    let coef_node = expected.add_node(Node::coef(&var_a), 0..0);
     expected.add_edges(DepType::Data, coef_node, var_a);
 
     assert!(gs[0] == expected);
@@ -690,11 +706,11 @@ fn pin_interpolate() {
         GOp::index(3),
     ]);
     // add_exp materializes the Vec, creating a node for it
-    let points_node = expected.add_node(Node::Op(mk::<B>(points.clone()), Nothing));
+    let points_node = expected.add_node(Node::Op(mk::<B>(points.clone()), Nothing), 0..0);
     let points_typ = points.typ();
     let points_ref = GOp::underscore(points_node, points_typ);
     expected.add_edges(DepType::Data, points_node, points);
-    let interpolate_node = expected.add_node(Node::interpolate(&points_ref, &var_a));
+    let interpolate_node = expected.add_node(Node::interpolate(&points_ref, &var_a), 0..0);
     expected.add_edges(DepType::Data, interpolate_node, points_ref);
     expected.add_edges(DepType::Data, interpolate_node, var_a);
 
@@ -723,7 +739,7 @@ fn pin_fft() {
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, poly_typ);
 
-    let eval_node = expected.add_node(Node::evaluate_grid(&var_a));
+    let eval_node = expected.add_node(Node::evaluate_grid(&var_a), 0..0);
     expected.add_edges(DepType::Data, eval_node, var_a);
 
     assert!(gs[0] == expected);
@@ -838,7 +854,7 @@ fn pin_mle() {
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, vec_typ);
 
-    let mle_node = expected.add_node(Node::mle(&var_a));
+    let mle_node = expected.add_node(Node::mle(&var_a), 0..0);
     expected.add_edges(DepType::Data, mle_node, var_a);
 
     assert!(gs[0] == expected);
@@ -871,7 +887,7 @@ fn pin_vec() {
     let var_a = GOp::<B>::var(&a, arg_a, s.clone());
     let var_b = GOp::<B>::var(&b, arg_b, s.clone());
     let vec_op = GOp::<B>::vec(vec![var_a.clone(), var_b.clone()]);
-    let ret = expected.add_node(Node::ret(&vec_op));
+    let ret = expected.add_node(Node::ret(&vec_op), 0..0);
     expected.add_edges(DepType::Data, ret, vec_op);
 
     assert!(gs[0] == expected);
@@ -907,7 +923,7 @@ fn pin_record() {
     rec_fields.insert(&"y".to_string(), &mk::<B>(var_b));
     let record_op = GOp::<B>::Record(rec_fields);
 
-    let ret = expected.add_node(Node::ret(&record_op));
+    let ret = expected.add_node(Node::ret(&record_op), 0..0);
     expected.add_edges(DepType::Data, ret, record_op);
 
     assert!(gs[0] == expected);
@@ -958,7 +974,7 @@ fn pin_app_function() {
     let (_inp, _inp_args) = expected_inp(&mut expected_f, "f", &[instance_s("a")]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, s.clone());
-    let bin = expected_f.add_node(Node::bin(BinOp::Add, &var_a, &var_a, &s));
+    let bin = expected_f.add_node(Node::bin(BinOp::Add, &var_a, &var_a, &s), 0..0);
     expected_f.add_edges(DepType::Data, bin, var_a.clone());
     expected_f.add_edges(DepType::Data, bin, var_a);
 
@@ -1010,7 +1026,7 @@ fn pin_bin_pow() {
     let var_a = GOp::<B>::var(&a, arg_a, s.clone());
     let lit_2 = GOp::<B>::Value(backend::Value::Index(2));
 
-    let bin = expected.add_node(Node::bin(BinOp::Pow, &var_a, &lit_2, &s));
+    let bin = expected.add_node(Node::bin(BinOp::Pow, &var_a, &lit_2, &s), 0..0);
     expected.add_edges(DepType::Data, bin, var_a);
     // lit_2 is Value, no references → no edge
 
@@ -1042,7 +1058,7 @@ fn pin_bin_dot() {
     let var_a = GOp::<B>::var(&a, arg_a, vs2.clone());
     let var_b = GOp::<B>::var(&b, arg_b, vs2.clone());
 
-    let dot_node = expected.add_node(Node::bin(BinOp::Dot, &var_a, &var_b, &s));
+    let dot_node = expected.add_node(Node::bin(BinOp::Dot, &var_a, &var_b, &s), 0..0);
     expected.add_edges(DepType::Data, dot_node, var_a);
     expected.add_edges(DepType::Data, dot_node, var_b);
 
@@ -1074,7 +1090,7 @@ fn pin_bin_concat() {
     let var_a = GOp::<B>::var(&a, arg_a, vs2.clone());
     let var_b = GOp::<B>::var(&b, arg_b, vs2.clone());
 
-    let concat_node = expected.add_node(Node::bin(BinOp::Concat, &var_a, &var_b, &vs4));
+    let concat_node = expected.add_node(Node::bin(BinOp::Concat, &var_a, &var_b, &vs4), 0..0);
     expected.add_edges(DepType::Data, concat_node, var_a);
     expected.add_edges(DepType::Data, concat_node, var_b);
 
@@ -1107,7 +1123,7 @@ fn pin_bin_rem() {
     let var_a = GOp::<B>::var(&a, arg_a, at_a);
     let var_b = GOp::<B>::var(&b, arg_b, at_b);
 
-    let rem_node = expected.add_node(Node::bin(BinOp::Rem, &var_a, &var_b, &at_res));
+    let rem_node = expected.add_node(Node::bin(BinOp::Rem, &var_a, &var_b, &at_res), 0..0);
     expected.add_edges(DepType::Data, rem_node, var_a);
     expected.add_edges(DepType::Data, rem_node, var_b);
 
@@ -1141,7 +1157,7 @@ fn pin_bin_poly_div() {
     let var_a = GOp::<B>::var(&a, arg_a, at_a);
     let var_b = GOp::<B>::var(&b, arg_b, at_b);
 
-    let div_node = expected.add_node(Node::bin(BinOp::Div, &var_a, &var_b, &at_res));
+    let div_node = expected.add_node(Node::bin(BinOp::Div, &var_a, &var_b, &at_res), 0..0);
     expected.add_edges(DepType::Data, div_node, var_a);
     expected.add_edges(DepType::Data, div_node, var_b);
 
@@ -1179,7 +1195,7 @@ fn pin_map() {
         s,
     );
     let map_op = GOp::<B>::map(var_a, body);
-    let map_node = expected.add_node(Node::ret(&map_op));
+    let map_node = expected.add_node(Node::ret(&map_op), 0..0);
     expected.add_edges(DepType::Data, map_node, map_op);
 
     assert!(gs[0] == expected);
@@ -1239,7 +1255,7 @@ fn pin_ram_expr() {
     // a[0] → Ram(var_a, Value(Index(0))) — no graph node created
     let ram_op = GOp::<B>::ram(var_a, GOp::<B>::index(0));
     // Not a Ref → ret node created
-    let ret = expected.add_node(Node::ret(&ram_op));
+    let ret = expected.add_node(Node::ret(&ram_op), 0..0);
     expected.add_edges(DepType::Data, ret, ram_op);
 
     assert!(gs[0] == expected);
@@ -1273,7 +1289,7 @@ fn pin_eval() {
     // evaluate(p, x) → Evaluate(var_p, var_x) — no graph node
     let eval_op = GOp::<B>::evaluate(var_p, var_x);
     // Not a Ref → ret node created
-    let ret = expected.add_node(Node::ret(&eval_op));
+    let ret = expected.add_node(Node::ret(&eval_op), 0..0);
     expected.add_edges(DepType::Data, ret, eval_op);
 
     assert!(gs[0] == expected);
@@ -1310,7 +1326,7 @@ fn pin_pair() {
 
     // pair(a, b) → Pair(var_a, var_b, gt()) — no graph node
     let pair_op = GOp::<B>::pair(var_a, var_b, ATyp::gt());
-    let ret = expected.add_node(Node::ret(&pair_op));
+    let ret = expected.add_node(Node::ret(&pair_op), 0..0);
     expected.add_edges(DepType::Data, ret, pair_op);
 
     assert!(gs[0] == expected);
@@ -1384,7 +1400,7 @@ fn pin_set_record() {
     let record_op = GOp::<B>::Record(rec_fields);
 
     // Not a Ref → ret node
-    let ret = expected.add_node(Node::ret(&record_op));
+    let ret = expected.add_node(Node::ret(&record_op), 0..0);
     expected.add_edges(DepType::Data, ret, record_op);
 
     assert!(gs[0] == expected);
@@ -1416,42 +1432,45 @@ fn pin_log_var_ref() {
     let var_s = GOp::<B>::var(&s_vid, arg_s, ATyp::scalar());
 
     // let x = s + s → Bin(Add) node
-    let bin_add = expected.add_node(Node::bin(BinOp::Add, &var_s, &var_s, &ATyp::scalar()));
+    let bin_add = expected.add_node(Node::bin(BinOp::Add, &var_s, &var_s, &ATyp::scalar()), 0..0);
     expected.add_edges(DepType::Data, bin_add, var_s.clone());
     expected.add_edges(DepType::Data, bin_add, var_s.clone());
     // let-binding registers the name in vctx and marks it as non-transcript.
-    expected.vctx.insert(&bin_add, &Vid::new("x"));
+    expected.bind(bin_add, &Spanned::dummy(Vid::new("x").clone()));
     expected.transcript_vars.insert(&bin_add, &false);
     let transcr_op = GOp::<B>::Ref(Ref(bin_add), ATyp::scalar());
-    let transcr = expected.add_node(Node::transcr(&transcr_op));
+    let transcr = expected.add_node(Node::transcr(&transcr_op), 0..0);
     expected[transcr].set_transcript();
     expected.add_edges(DepType::Data, transcr, transcr_op.clone());
     expected.add_edge(inp, transcr, Dep::transcript());
-    expected.vctx.insert(&transcr, &a_vid);
+    expected.bind(transcr, &Spanned::dummy(a_vid.clone()));
     expected.transcript_vars.insert(&transcr, &true);
     // because Log's first arm uses `ol.clone()` which is op_from_var(x) = GOp::Ref(Ref(bin_add), scalar)
     let var_a = GOp::<B>::var(&a_vid, transcr, ATyp::scalar());
-    let equ = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_s, &ATyp::bool()));
+    let equ = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_s, &ATyp::bool()), 0..0);
     expected.add_edges(DepType::Data, equ, var_a);
     expected.add_edges(DepType::Data, equ, var_s);
     let equ_ref = GOp::<B>::underscore(equ, ATyp::bool());
-    let check = expected.add_node(Node::verify(&equ_ref));
+    let check = expected.add_node(Node::verify(&equ_ref), 0..0);
     expected.add_edges(DepType::Data, check, equ_ref);
 
     // Continuation Lit(0) → Ret(Value::Unit)
     let unit = GOp::<B>::Value(backend::Value::Unit);
-    let ret = expected.add_node(Node::ret(&unit));
+    let ret = expected.add_node(Node::ret(&unit), 0..0);
     expected.add_edges(DepType::Data, ret, unit);
 
     // Relation: Rel + Equ(var_s_rel, var_s_rel) + Assert(equ_rel_ref)
     let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[witness_s("s")]);
     let rel_arg_s = _rel_args[0];
     let var_s_rel = GOp::<B>::var(&s_vid, rel_arg_s, ATyp::scalar());
-    let equ_rel = expected.add_node(Node::bin(BinOp::Equ, &var_s_rel, &var_s_rel, &ATyp::bool()));
+    let equ_rel = expected.add_node(
+        Node::bin(BinOp::Equ, &var_s_rel, &var_s_rel, &ATyp::bool()),
+        0..0,
+    );
     expected.add_edges(DepType::Data, equ_rel, var_s_rel.clone());
     expected.add_edges(DepType::Data, equ_rel, var_s_rel);
     let equ_rel_ref = GOp::<B>::underscore(equ_rel, ATyp::bool());
-    let assert_rel = expected.add_node(Node::assert(&equ_rel_ref));
+    let assert_rel = expected.add_node(Node::assert(&equ_rel_ref), 0..0);
     expected.add_edges(DepType::Data, assert_rel, equ_rel_ref);
 
     assert!(gs[0] == expected);
@@ -1488,11 +1507,11 @@ fn pin_proj_var_record() {
     let mut fields = Ctx::<String, HOp<B>>::new();
     fields.insert(&"x".to_string(), &mk::<B>(ref_a.clone()));
     fields.insert(&"y".to_string(), &mk::<B>(ref_b.clone()));
-    let rec_node = expected.add_node(Node::Op(mk::<B>(GOp::Record(fields)), Nothing));
+    let rec_node = expected.add_node(Node::Op(mk::<B>(GOp::Record(fields)), Nothing), 0..0);
     expected.add_edges(DepType::Data, rec_node, ref_a);
     expected.add_edges(DepType::Data, rec_node, ref_b);
     // let-binding registers the name in vctx and marks it as non-transcript.
-    expected.vctx.insert(&rec_node, &Vid::new("r"));
+    expected.bind(rec_node, &Spanned::dummy(Vid::new("r").clone()));
     expected.transcript_vars.insert(&rec_node, &false);
 
     // r.x — Proj derefs Ref(Record) to extract field x, returns Ref(arg_a) directly.
@@ -1529,7 +1548,7 @@ fn pin_app_univariate_poly() {
     let var_x = GOp::<B>::var(&Vid::new("x"), arg_x, s.clone());
 
     // p(x) lowers directly to evaluate(p, x).
-    let eval = expected.add_node(Node::evaluate(&var_p, &var_x));
+    let eval = expected.add_node(Node::evaluate(&var_p, &var_x), 0..0);
     expected.add_edges(DepType::Data, eval, var_p);
     expected.add_edges(DepType::Data, eval, var_x);
 
@@ -1563,7 +1582,7 @@ fn pin_fun_lit() {
     let val = GOp::<B>::Value(Value::Poly(vp));
 
     // Value is not a Ref → add_top_exp creates ret node
-    let ret = expected.add_node(Node::ret(&val));
+    let ret = expected.add_node(Node::ret(&val), 0..0);
     // Value has no references → no edges
     expected.add_edges(DepType::Data, ret, val);
 
@@ -1699,6 +1718,30 @@ fn pin_get_verifier_witness_leak() {
     }
 }
 
+/// A leaked value is reported with the named values it flows through, out to the check.
+#[test]
+fn pin_private_value_error_shows_the_use_chain() {
+    let src = "proto leak<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g * x {
+    let r = random<F>;
+    u <- g * r;
+    let t = r + r;
+    let w = t * t;
+    c <- challenge<F*>;
+    z <- r + x * c;
+    verify(g * w == u)
+}
+";
+    let Err(err) = parse_and_build(src)[0].get_verifier() else {
+        panic!("expected the leak to be reported");
+    };
+    let rendered = lang::diagnostic::render_diagnostic(
+        &lang::diagnostic::Diagnostic::from(err),
+        "test.zippel",
+        src,
+    );
+    insta::assert_snapshot!("private_value_use_chain", rendered);
+}
+
 /// get_verifier returns error when a verifier check needs a `random` sample
 /// that never went through the transcript: the verifier would draw its own.
 /// Tests: GraphError::PrivateValueInVerifier.
@@ -1747,10 +1790,63 @@ fn pin_get_relation_no_relation() {
 
     let result = dag.get_relation();
     match result {
-        Err(GraphError::RelationNotFound(_)) => {}
+        // Reported at the declaration's name.
+        Err(GraphError::RelationNotFound(name)) => assert_eq!(&src[name.span], "f"),
         Err(e) => panic!("Expected RelationNotFound, got: {}", e),
         Ok(_) => panic!("Expected error but got Ok"),
     }
+}
+
+/// Every node carries the source that created it: the declaration for markers and arguments,
+/// the expression for operations, and the sent value for a transcript node.
+#[test]
+fn pin_nodes_carry_their_source_spans() {
+    let src = r#"
+        proto p<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g * x {
+            let r = random<F>;
+            u <- g * r;
+            c <- challenge<F>;
+            z <- r + c * x;
+            verify(g * z == u + h * c)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+    let text = |n| &src[dag.span(n)];
+    let spans: Vec<(String, &str)> = dag
+        .node_indices()
+        .map(|n| (format!("{:?}", std::mem::discriminant(&dag[n])), text(n)))
+        .collect();
+    assert_eq!(text(dag.input_node()), "p");
+    for n in dag.node_indices() {
+        match &dag[n] {
+            Node::Arg(v, ..) => assert_eq!(text(n), v.0, "{spans:?}"),
+            Node::Op(op, _) if matches!(&**op, GOp::Random(..)) => assert_eq!(text(n), "random<F>"),
+            Node::Op(op, _) if matches!(&**op, GOp::Verify(_)) => {
+                assert_eq!(text(n), "verify(g * z == u + h * c)")
+            }
+            _ => {}
+        }
+    }
+    let sent: Vec<&str> = dag.transcript_nodes().into_iter().map(text).collect();
+    assert_eq!(sent, ["g * r", "challenge<F>", "r + c * x"]);
+    assert_eq!(text(dag.relation_node().unwrap()), "h == g * x");
+
+    // Projection keeps them; the verifier reads each proof value where the prover sends it.
+    let verifier = dag.get_verifier().unwrap();
+    let vtext = |n| &src[verifier.span(n)];
+    let mut read: Vec<&str> = Vec::new();
+    for n in verifier.node_indices() {
+        match &verifier[n] {
+            Node::Arg(_, _, _, _, ArgKind::TranscriptInput) => read.push(vtext(n)),
+            Node::Op(op, _) if matches!(&**op, GOp::Verify(_)) => {
+                assert_eq!(vtext(n), "verify(g * z == u + h * c)")
+            }
+            _ => {}
+        }
+    }
+    read.sort_unstable();
+    assert_eq!(read, ["g * r", "r + c * x"]);
 }
 
 // ============================================================================
@@ -2446,26 +2542,26 @@ fn pin_nested_let_chain() {
     let var_y = GOp::<B>::var(&Vid::new("y"), arg_y, s.clone());
 
     // a = x + y
-    let add_a = expected.add_node(Node::bin(BinOp::Add, &var_x, &var_y, &s));
+    let add_a = expected.add_node(Node::bin(BinOp::Add, &var_x, &var_y, &s), 0..0);
     expected.add_edges(DepType::Data, add_a, var_x.clone());
     expected.add_edges(DepType::Data, add_a, var_y.clone());
-    expected.vctx.insert(&add_a, &Vid::new("a"));
+    expected.bind(add_a, &Spanned::dummy(Vid::new("a").clone()));
     expected.transcript_vars.insert(&add_a, &false);
 
     // b = a + x
     let ref_a = GOp::<B>::var(&Vid::new("a"), add_a, s.clone());
-    let add_b = expected.add_node(Node::bin(BinOp::Add, &ref_a, &var_x, &s));
+    let add_b = expected.add_node(Node::bin(BinOp::Add, &ref_a, &var_x, &s), 0..0);
     expected.add_edges(DepType::Data, add_b, ref_a);
     expected.add_edges(DepType::Data, add_b, var_x);
-    expected.vctx.insert(&add_b, &Vid::new("b"));
+    expected.bind(add_b, &Spanned::dummy(Vid::new("b").clone()));
     expected.transcript_vars.insert(&add_b, &false);
 
     // c = b + y
     let ref_b = GOp::<B>::var(&Vid::new("b"), add_b, s.clone());
-    let add_c = expected.add_node(Node::bin(BinOp::Add, &ref_b, &var_y, &s));
+    let add_c = expected.add_node(Node::bin(BinOp::Add, &ref_b, &var_y, &s), 0..0);
     expected.add_edges(DepType::Data, add_c, ref_b);
     expected.add_edges(DepType::Data, add_c, var_y);
-    expected.vctx.insert(&add_c, &Vid::new("c"));
+    expected.bind(add_c, &Spanned::dummy(Vid::new("c").clone()));
     expected.transcript_vars.insert(&add_c, &false);
 
     // `c` resolves to Ref(add_c); since the body is a Ref, add_top_exp
@@ -2536,7 +2632,7 @@ fn pin_fun_multilinear() {
     let vp = VirtualPolynomial::from_poly(pv);
     let val = GOp::<B>::Value(Value::Poly(vp));
 
-    let ret = expected.add_node(Node::ret(&val));
+    let ret = expected.add_node(Node::ret(&val), 0..0);
     expected.add_edges(DepType::Data, ret, val);
 
     assert!(gs[0] == expected);
@@ -2569,7 +2665,7 @@ fn pin_map_nested_binop() {
     );
     let body = GOp::<B>::bin(BinOp::Add, mul, GOp::<B>::loop_param(0, s.clone()), s);
     let map_op = GOp::<B>::map(var_a, body);
-    let map_node = expected.add_node(Node::ret(&map_op));
+    let map_node = expected.add_node(Node::ret(&map_op), 0..0);
     expected.add_edges(DepType::Data, map_node, map_op);
 
     assert!(gs[0] == expected);
@@ -2596,15 +2692,15 @@ fn pin_diamond_dag() {
     let var_b = GOp::<B>::var(&Vid::new("b"), arg_b, s.clone());
 
     // c = a + b
-    let add = expected.add_node(Node::bin(BinOp::Add, &var_a, &var_b, &s));
+    let add = expected.add_node(Node::bin(BinOp::Add, &var_a, &var_b, &s), 0..0);
     expected.add_edges(DepType::Data, add, var_a);
     expected.add_edges(DepType::Data, add, var_b);
-    expected.vctx.insert(&add, &Vid::new("c"));
+    expected.bind(add, &Spanned::dummy(Vid::new("c").clone()));
     expected.transcript_vars.insert(&add, &false);
 
     // c * c  — both operands ref the same node
     let ref_c = GOp::<B>::var(&Vid::new("c"), add, s.clone());
-    let mul = expected.add_node(Node::bin(BinOp::Mul, &ref_c, &ref_c, &s));
+    let mul = expected.add_node(Node::bin(BinOp::Mul, &ref_c, &ref_c, &s), 0..0);
     expected.add_edges(DepType::Data, mul, ref_c.clone());
     expected.add_edges(DepType::Data, mul, ref_c);
 
@@ -2671,7 +2767,7 @@ fn pin_reduce_add() {
     let arg_v = _inp_args[0];
     let var_v = GOp::<B>::var(&Vid::new("v"), arg_v, ATyp::vec_scalar(3));
 
-    let reduce = expected.add_node(Node::ret(&GOp::reduce(BinOp::Add, var_v.clone())));
+    let reduce = expected.add_node(Node::ret(&GOp::reduce(BinOp::Add, var_v.clone())), 0..0);
     expected.add_edges(DepType::Data, reduce, var_v);
 
     assert!(gs[0] == expected);
@@ -2694,7 +2790,7 @@ fn pin_reduce_mul() {
     let arg_v = _inp_args[0];
     let var_v = GOp::<B>::var(&Vid::new("v"), arg_v, ATyp::vec_scalar(4));
 
-    let reduce = expected.add_node(Node::ret(&GOp::reduce(BinOp::Mul, var_v.clone())));
+    let reduce = expected.add_node(Node::ret(&GOp::reduce(BinOp::Mul, var_v.clone())), 0..0);
     expected.add_edges(DepType::Data, reduce, var_v);
 
     assert!(gs[0] == expected);
@@ -2717,7 +2813,7 @@ fn pin_reduce_sub() {
     let arg_v = _inp_args[0];
     let var_v = GOp::<B>::var(&Vid::new("v"), arg_v, ATyp::vec_scalar(3));
 
-    let reduce = expected.add_node(Node::ret(&GOp::reduce(BinOp::Sub, var_v.clone())));
+    let reduce = expected.add_node(Node::ret(&GOp::reduce(BinOp::Sub, var_v.clone())), 0..0);
     expected.add_edges(DepType::Data, reduce, var_v);
 
     assert!(gs[0] == expected);

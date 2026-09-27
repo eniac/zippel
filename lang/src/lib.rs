@@ -5,6 +5,7 @@
 //! lowers into DAG IR. It owns the source-level type level `Typ<T, N>`,
 //! kind-directed inference, and the diagnostics reported for both.
 #![feature(deref_patterns)]
+#![feature(deref_pure_trait)]
 #![allow(clippy::result_large_err)]
 
 // Allow proc-macro generated code to reference `lang::diagnostic::...`

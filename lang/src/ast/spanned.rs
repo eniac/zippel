@@ -53,6 +53,10 @@ impl<T> std::ops::Deref for Spanned<T> {
     }
 }
 
+// SAFETY: `deref` returns a field, so it is pure: no side effects, and the same place every
+// time. That lets deref patterns match on a `Spanned<T>` as on `T`.
+unsafe impl<T> std::ops::DerefPure for Spanned<T> {}
+
 // ── Equality / ordering / hashing ─────────────────────────────────────
 //
 // The span is treated as metadata: it is NOT considered for equality,
