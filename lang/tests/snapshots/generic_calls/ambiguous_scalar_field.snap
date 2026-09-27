@@ -1,0 +1,10 @@
+---
+source: lang/tests/generic_calls.rs
+---
+error: Cannot infer type parameter `F` of `sample`
+   ╭─[ test.zippel:6:12 ]
+   │
+ 6 │     verify(sample(g) == sample(g))
+   │            ────┬────  
+   │                ╰────── `F` (Scalar<G>) could be `F` or `K`
+───╯

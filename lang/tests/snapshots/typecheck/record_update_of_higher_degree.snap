@@ -1,0 +1,10 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: Field `c` has type Poly<F, 1, 3> (F: Field), but the new value has type Poly<F, 1, 5> (F: Field)
+   ╭─[ test.zippel:4:22 ]
+   │
+ 4 │     let s = r.set(c, q);
+   │                      ┬  
+   │                      ╰── has type Poly<F, 1, 5> (F: Field)
+───╯

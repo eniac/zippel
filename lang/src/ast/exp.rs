@@ -422,67 +422,65 @@ impl<N: Clone> ToTraversal1<N> for Exps<N> {
 
 /// Traverse `Tid` inside `TExp`
 impl TidSubst for CExp {
-    fn tid_subst(&mut self, from: &Tid, to: &Tid) {
+    fn map_tids(&mut self, f: &dyn Fn(&Tid) -> Option<Tid>) {
         match self {
-            Exp::Challenge(t, _) if &t.node == from => t.node = to.clone(),
-            Exp::Random(t, _) if &t.node == from => t.node = to.clone(),
-            Exp::Interpolate(None, e) => e.tid_subst(from, to),
-            Exp::Interpolate(Some(p), e) => {
-                p.tid_subst(from, to);
-                e.tid_subst(from, to);
+            Exp::Challenge(t, _) | Exp::Random(t, _) => {
+                if let Some(n) = f(&t.node) {
+                    t.node = n;
+                }
             }
-            Exp::Evaluate(p, _, None) => p.tid_subst(from, to),
+            Exp::Interpolate(None, e) => e.map_tids(f),
+            Exp::Interpolate(Some(p), e) => {
+                p.map_tids(f);
+                e.map_tids(f);
+            }
+            Exp::Evaluate(p, _, None) => p.map_tids(f),
             Exp::Evaluate(p, _, Some(x)) => {
-                p.tid_subst(from, to);
-                x.tid_subst(from, to);
+                p.map_tids(f);
+                x.map_tids(f);
             }
             Exp::Mle(p) | Exp::Poly(p) | Exp::Reduce(_, p) | Exp::Coef(p) | Exp::Neg(p) => {
-                p.tid_subst(from, to)
+                p.map_tids(f)
             }
             Exp::Assert(exp) | Exp::Verify(exp) => {
-                exp.tid_subst(from, to);
+                exp.map_tids(f);
             }
-            Exp::Vec(v) | Exp::App(_, v) => v.tid_subst(from, to),
+            Exp::Vec(v) | Exp::App(_, v) => v.map_tids(f),
             Exp::Bin(_, a, b) | Exp::Map(a, _, b) | Exp::Ram(a, b) | Exp::Pair(a, b) => {
-                a.tid_subst(from, to);
-                b.tid_subst(from, to);
+                a.map_tids(f);
+                b.map_tids(f);
             }
             Exp::Let(_, a, b) => {
-                a.tid_subst(from, to);
+                a.map_tids(f);
                 if let Some(b) = b {
-                    b.tid_subst(from, to);
+                    b.map_tids(f);
                 }
             }
             Exp::Log(_, a, b) => {
-                a.tid_subst(from, to);
+                a.map_tids(f);
                 if let Some(b) = b {
-                    b.tid_subst(from, to);
+                    b.map_tids(f);
                 }
             }
-            Exp::Fun(_, body) => body.tid_subst(from, to),
+            Exp::Fun(_, body) => body.map_tids(f),
             Exp::Record(fields) => {
                 fields.modify(|_, field_exp| {
-                    field_exp.tid_subst(from, to);
+                    field_exp.map_tids(f);
                 });
             }
-            Exp::Proj(exp, _) => exp.tid_subst(from, to),
+            Exp::Proj(exp, _) => exp.map_tids(f),
             Exp::SetRecord(record, _, value) => {
-                record.tid_subst(from, to);
-                value.tid_subst(from, to);
+                record.map_tids(f);
+                value.map_tids(f);
             }
-            Exp::Lit(_)
-            | Exp::Unit
-            | Exp::Var(_)
-            | Exp::Range(_)
-            | Exp::Challenge(_, _)
-            | Exp::Random(_, _) => {}
+            Exp::Lit(_) | Exp::Unit | Exp::Var(_) | Exp::Range(_) => {}
         }
     }
 }
 
 impl TidSubst for CExps {
-    fn tid_subst(&mut self, from: &Tid, to: &Tid) {
-        self.0.iter_mut().for_each(|x| x.tid_subst(from, to))
+    fn map_tids(&mut self, f: &dyn Fn(&Tid) -> Option<Tid>) {
+        self.0.iter_mut().for_each(|x| x.map_tids(f))
     }
 }
 
@@ -594,6 +592,7 @@ impl<N: Clone> RangeTraversal<N> for Exp<N> {
                 Box::new(i.range_traverse(f)?),
             )),
             Exp::Coef(x) => Ok(Exp::Coef(Box::new(x.range_traverse(f)?))),
+            Exp::Reduce(op, x) => Ok(Exp::Reduce(op, Box::new(x.range_traverse(f)?))),
             Exp::Let(x, t, e) => {
                 let e = match e {
                     Some(e) => Some(Box::new((*e).range_traverse(f)?)),

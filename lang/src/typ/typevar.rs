@@ -111,18 +111,16 @@ impl<N, const L: usize> From<[Spanned<TypeVar<N>>; L]> for TypeVars<N> {
 }
 
 impl<N> TidSubst for TypeVar<N> {
-    fn tid_subst(&mut self, from: &Tid, to: &Tid) {
-        if &self.id.node == from {
-            self.id.node = to.clone();
+    fn map_tids(&mut self, f: &dyn Fn(&Tid) -> Option<Tid>) {
+        if let Some(t) = f(&self.id.node) {
+            self.id.node = t;
         }
     }
 }
 
 impl<N> TidSubst for TypeVars<N> {
-    fn tid_subst(&mut self, from: &Tid, to: &Tid) {
-        self.0
-            .iter_mut()
-            .for_each(|tvar| tvar.node.tid_subst(from, to));
+    fn map_tids(&mut self, f: &dyn Fn(&Tid) -> Option<Tid>) {
+        self.0.iter_mut().for_each(|tvar| tvar.node.map_tids(f));
     }
 }
 

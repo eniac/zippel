@@ -8,15 +8,11 @@
 //
 // Generic over NX, NY (log-dimensions): 2^NX × 2^NY grid, 2^(NX+NY) evals.
 
-fn eq_weights<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
-    instance x: [F; 1],
-) -> [F; 2] {
+fn eq_weights<F: Field>(instance x: [F; 1]) -> [F; 2] {
     [1 - x[0], x[0]]
 }
 
-fn eq_weights<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 2..16>(
-    instance x: [F; K],
-) -> [F; 2 ^ K] {
+fn eq_weights<F: Field, K: 2..16>(instance x: [F; K]) -> [F; 2 ^ K] {
     let x_lo = x[0..K - 1];
     let a = x[K - 1];
     let prev = eq_weights(x_lo);

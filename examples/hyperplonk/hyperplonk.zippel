@@ -45,7 +45,6 @@ fn gate_round<F: Field, S: Size, N: 2 ^ S>(
     instance prev_challenges: [F; S - 1],
     instance prev_eval: F,
     instance round_challenge: F,
-    instance curr_round: Fin<0..S>,
     instance a_evs: [F; N],
     instance b_evs: [F; N],
     instance c_evs: [F; N],
@@ -59,7 +58,6 @@ fn gate_round<F: Field, S: Size, N: 2 ^ S>(
     let residual_poly = eval(curr_poly, [round_challenge]);
     let evs_local = [residual_poly(t) for t in points];
     evs <- evs_local;
-    let _drop_round = curr_round;
     verify(prev_eval == evs[0] + evs[1]);
 
     let g = interpolate(points, evs);
@@ -93,7 +91,6 @@ fn gate_round<F: Field, S: Size, V: 3..S + 1, N: 2 ^ S>(
     instance prev_challenges: [F; S - V + 1],
     instance prev_eval: F,
     instance round_challenge: F,
-    instance curr_round: Fin<0..S>,
     instance a_evs: [F; N],
     instance b_evs: [F; N],
     instance c_evs: [F; N],
@@ -130,7 +127,6 @@ fn gate_round<F: Field, S: Size, V: 3..S + 1, N: 2 ^ S>(
         new_challenges,
         next_prev,
         r_next,
-        curr_round + 1,
         a_evs,
         b_evs,
         c_evs,
@@ -150,7 +146,6 @@ fn perm_round<F: Field, S: Size, N: 2 ^ S>(
     instance prev_challenges: [F; S - 1],
     instance prev_eval: F,
     instance round_challenge: F,
-    instance curr_round: Fin<0..S>,
     instance sent_v: [F; 2 ^ (S + 1)],
     instance f_shift_evs: [F; N],
     instance g_shift_evs: [F; N],
@@ -160,7 +155,6 @@ fn perm_round<F: Field, S: Size, N: 2 ^ S>(
     let residual_poly = eval(curr_poly, [round_challenge]);
     let evs_local = [residual_poly(t) for t in points];
     evs <- evs_local;
-    let _drop_round = curr_round;
     verify(prev_eval == evs[0] + evs[1]);
 
     let g = interpolate(points, evs);
@@ -196,7 +190,6 @@ fn perm_round<F: Field, S: Size, V: 3..S + 1, N: 2 ^ S>(
     instance prev_challenges: [F; S - V + 1],
     instance prev_eval: F,
     instance round_challenge: F,
-    instance curr_round: Fin<0..S>,
     instance sent_v: [F; 2 ^ (S + 1)],
     instance f_shift_evs: [F; N],
     instance g_shift_evs: [F; N],
@@ -229,7 +222,6 @@ fn perm_round<F: Field, S: Size, V: 3..S + 1, N: 2 ^ S>(
         new_challenges,
         next_prev,
         r_next,
-        curr_round + 1,
         sent_v,
         f_shift_evs,
         g_shift_evs,
@@ -298,19 +290,7 @@ fn perm_piop_column<F: Field, S: Size, N: 2 ^ S>(
     sx0 <- challenge<F>;
     let prev0 = g0(sx0);
 
-    perm_round(
-        p_poly,
-        pts3,
-        [sx0],
-        prev0,
-        sx0,
-        1,
-        sent_v,
-        f_shift_evs,
-        g_shift_evs,
-        eq_sau_evs,
-        alpha,
-    )
+    perm_round(p_poly, pts3, [sx0], prev0, sx0, sent_v, f_shift_evs, g_shift_evs, eq_sau_evs, alpha)
 }
 
 // ===== Relation helper (used in the where clause) =====
@@ -425,7 +405,6 @@ proto hyperplonk<F: Field, S: Size, N: 2 ^ S>(
         [rx0],
         prev0_p1,
         rx0,
-        1,
         a_evs,
         b_evs,
         c_evs,

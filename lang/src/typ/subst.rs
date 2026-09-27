@@ -1,5 +1,5 @@
 use crate::ast::size::EvalError;
-use crate::id::{Tid, TidSubst};
+use crate::id::Tid;
 use crate::typ::{Kind, UTypeVars};
 use share::traversal::ToTraversal1;
 use share::{Ctx, Set};
@@ -24,9 +24,6 @@ pub struct Substs<T>(pub Ctx<Tid, T>);
 
 /// Substitute type variables with sizes
 pub type SizeSubsts = Substs<usize>;
-
-/// Aliasing for type variables
-pub type AliasSubsts = Substs<Set<Tid>>;
 
 impl<T> Default for Substs<T> {
     fn default() -> Self {
@@ -148,89 +145,6 @@ impl SizeSubsts {
     }
 }
 
-impl AliasSubsts {
-    /// Transitive, reflexive, symmetric closure of the equivalence relation
-    pub fn add_equ(&mut self, a: &Tid, b: &Tid) -> Tid {
-        // Quick return if a and b are equal
-        if a == b {
-            return a.clone();
-        }
-
-        // Create a new equivalence class with [a, b]
-        let mut eqclass = Set::from([a.clone(), b.clone()]);
-
-        // Add equivalence classes of [a] into [eqclass]
-        for v in self.0.get(a).cloned().unwrap_or(Set::new()) {
-            eqclass.insert(v.clone());
-        }
-
-        // Add equivalence classes of [b] into [eqclass]
-        for v in self.0.get(b).cloned().unwrap_or(Set::new()) {
-            eqclass.insert(v.clone());
-        }
-
-        // Update all related entries to maintain transitive closure
-        for item in eqclass.iter() {
-            self.0.insert(item, &eqclass);
-        }
-
-        // Return the representative of the class as the lowest lexicographic [Tid]
-        // TODO: Perhaps a better way would be to return the [Tid] with less dependencies
-        // (i.e. the one with the lowest number of type variables)
-        eqclass.into_iter().min().unwrap()
-    }
-
-    /// Return the equivalence class of a type variable
-    pub fn get_equivalents(&self, tid: &Tid) -> Set<Tid> {
-        if let Some(x) = self.0.get(tid) {
-            x.clone()
-        } else {
-            Set::new()
-        }
-    }
-
-    /// Return the representative of the equivalence class of a type variable
-    pub fn get_repr(&self, tid: &Tid) -> Option<Tid> {
-        self.get_equivalents(tid).into_iter().min()
-    }
-
-    /// Check if a Tid is a representative of its equivalence class
-    pub fn is_repr(&self, tid: &Tid) -> bool {
-        self.get_repr(tid) == Some(tid.clone())
-    }
-
-    /// Iterates over the bound type variables paired with the representative of their
-    /// equivalence class.
-    ///
-    /// # Panics
-    /// Panics if an equivalence class stored in this substitution is empty, which
-    /// [`AliasSubsts::add_equ`] never produces.
-    pub fn iter(&self) -> impl Iterator<Item = (&Tid, &Tid)> {
-        self.0.iter().map(|(k, v)| (k, v.iter().min().unwrap()))
-    }
-
-    /// Returns whether no aliasing has been recorded.
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-    /// Drops every recorded alias.
-    pub fn clear(&mut self) {
-        self.0.clear();
-    }
-
-    /// Rewrites every aliased type variable in `on` to its class representative,
-    /// canonicalising a type or expression after unification.
-    ///
-    /// # Panics
-    /// Panics if an equivalence class stored in this substitution is empty, which
-    /// [`AliasSubsts::add_equ`] never produces.
-    pub fn tid_subst<T: TidSubst>(&self, on: &mut T) {
-        for k in self.0.keys() {
-            on.tid_subst(&k, &self.get_repr(&k).unwrap());
-        }
-    }
-}
-
 impl<T: Clone> From<Vec<(Tid, T)>> for Substs<T> {
     fn from(v: Vec<(Tid, T)>) -> Self {
         Substs(Ctx::from(v))
@@ -310,54 +224,4 @@ fn size_substs_pinning_out_of_range() {
         SizeSubsts::from_typevars(&decl.sig.typevars, &sizes),
         Err(SubstError::OutOfRange(_, 10))
     ));
-}
-
-#[test]
-fn alias_substs_equ_clos() {
-    let mut alias = AliasSubsts::new();
-    alias.add_equ(&Tid::from("A"), &Tid::from("B"));
-    alias.add_equ(&Tid::from("B"), &Tid::from("C"));
-    alias.add_equ(&Tid::from("D"), &Tid::from("E"));
-
-    assert_eq!(
-        alias.get_equivalents(&Tid::from("A")),
-        Set::from(vec![Tid::from("A"), Tid::from("B"), Tid::from("C")])
-    );
-    assert_eq!(
-        alias.get_equivalents(&Tid::from("B")),
-        Set::from(vec![Tid::from("A"), Tid::from("B"), Tid::from("C")])
-    );
-    assert_eq!(
-        alias.get_equivalents(&Tid::from("C")),
-        Set::from(vec![Tid::from("A"), Tid::from("B"), Tid::from("C")])
-    );
-    assert_eq!(
-        alias.get_equivalents(&Tid::from("D")),
-        Set::from(vec![Tid::from("D"), Tid::from("E")])
-    );
-    assert_eq!(
-        alias.get_equivalents(&Tid::from("E")),
-        Set::from(vec![Tid::from("D"), Tid::from("E")])
-    );
-
-    assert_eq!(alias.get_repr(&Tid::from("B")), Some(Tid::from("A")));
-    assert_eq!(alias.get_repr(&Tid::from("C")), Some(Tid::from("A")));
-    assert_eq!(alias.get_repr(&Tid::from("D")), Some(Tid::from("D")));
-    assert_eq!(alias.get_repr(&Tid::from("E")), Some(Tid::from("D")));
-}
-
-#[test]
-fn alias_substs_tid_subst() {
-    let mut alias = AliasSubsts::new();
-    alias.add_equ(&Tid::from("A"), &Tid::from("B"));
-    alias.add_equ(&Tid::from("B"), &Tid::from("C"));
-
-    use crate::typ::CTyp;
-    let mut typ1 = CTyp::base(&Tid::from("C"));
-    alias.tid_subst(&mut typ1);
-    assert_eq!(typ1, CTyp::base(&Tid::from("A")));
-
-    let mut typ2 = CTyp::base(&Tid::from("B"));
-    alias.tid_subst(&mut typ2);
-    assert_eq!(typ2, CTyp::base(&Tid::from("A")));
 }

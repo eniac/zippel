@@ -37,7 +37,6 @@ fn sc_recurse_d3<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
     instance prev_challenges: [F; M - V + 1],
     instance prev_eval: F,
     instance round_challenge: F,
-    instance curr_round: Fin<0..M>,
 ) -> {final_eval: F, challenges: [F; M]} {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let round_poly = reduce(
@@ -67,7 +66,7 @@ fn sc_recurse_d3<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
     // ZK for round polys, do a full port of `prove_quad` — do NOT
     // resurrect this half-form.
 
-    sc_recurse_d3(residual_poly, points, new_challenges, next_prev, r_next, curr_round + 1)
+    sc_recurse_d3(residual_poly, points, new_challenges, next_prev, r_next)
 }
 
 fn sc_recurse_d3<G: Group, F: Scalar<G>, M: Size>(
@@ -76,12 +75,10 @@ fn sc_recurse_d3<G: Group, F: Scalar<G>, M: Size>(
     instance prev_challenges: [F; M - 1],
     instance prev_eval: F,
     instance round_challenge: F,
-    instance curr_round: Fin<0..M>,
 ) -> {final_eval: F, challenges: [F; M]} {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let evs_local = [residual_poly(t) for t in points];
     evs <- evs_local;
-    let _drop_round = curr_round;
     verify(prev_eval == evs[0] + evs[1]);
     let g = interpolate(points, evs);
     r_final <- challenge<F>;
@@ -100,7 +97,6 @@ fn sc_recurse_d2<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
     instance prev_challenges: [F; M - V + 1],
     instance prev_eval: F,
     instance round_challenge: F,
-    instance curr_round: Fin<0..M>,
 ) -> {final_eval: F, challenges: [F; M]} {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let round_poly = reduce(
@@ -122,7 +118,7 @@ fn sc_recurse_d2<G: Group, F: Scalar<G>, M: Size, V: 3..M + 1>(
     // commit + Schnorr PoK block (see sc_recurse_d3 V-generic for
     // the full rationale).
 
-    sc_recurse_d2(residual_poly, points, new_challenges, next_prev, r_next, curr_round + 1)
+    sc_recurse_d2(residual_poly, points, new_challenges, next_prev, r_next)
 }
 
 fn sc_recurse_d2<G: Group, F: Scalar<G>, M: Size>(
@@ -131,12 +127,10 @@ fn sc_recurse_d2<G: Group, F: Scalar<G>, M: Size>(
     instance prev_challenges: [F; M - 1],
     instance prev_eval: F,
     instance round_challenge: F,
-    instance curr_round: Fin<0..M>,
 ) -> {final_eval: F, challenges: [F; M]} {
     let residual_poly = eval(curr_poly, [round_challenge]);
     let evs_local = [residual_poly(t) for t in points];
     evs <- evs_local;
-    let _drop_round = curr_round;
     verify(prev_eval == evs[0] + evs[1]);
     let g = interpolate(points, evs);
     r_final <- challenge<F>;
@@ -326,7 +320,7 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     // Pedersen commit + Schnorr PoK block (see sc_recurse_d3
     // V-generic for the full rationale).
 
-    let sc1 = sc_recurse_d3(g_poly, pts3, [rx0], prev1, rx0, 1);
+    let sc1 = sc_recurse_d3(g_poly, pts3, [rx0], prev1, rx0);
     let rx = sc1.challenges;
     let e_x = sc1.final_eval;
 
@@ -416,7 +410,7 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     // Pedersen commit + Schnorr PoK block (see sc_recurse_d3
     // V-generic for the full rationale).
 
-    let sc2 = sc_recurse_d2(m_poly, pts2, [ry0], prev2, ry0, 1);
+    let sc2 = sc_recurse_d2(m_poly, pts2, [ry0], prev2, ry0);
     let ry = sc2.challenges;
     let e_y = sc2.final_eval;
 

@@ -14,7 +14,7 @@ use std::fmt;
 use thiserror::Error;
 
 use crate::ast::Size;
-use crate::typ::{Kind, TypeError, TypeInline, UTyp};
+use crate::typ::{Kind, RangeTraversal, TypeError, TypeInline, UTyp};
 use share::traversal::ToTraversal1;
 use share::{Ctx, Set};
 
@@ -85,6 +85,11 @@ pub enum ModuleError {
     /// not be resolved to a unique body.
     #[error("Overlapping declarations: {0}")]
     OverlapDeclaration(CSig),
+    /// Two declarations of the same name are each at least as specific as the other (e.g.
+    /// they differ only in type-variable names or return types), so every call that fits one
+    /// is ambiguous.
+    #[error("Interchangeable declarations: {0} and {1}")]
+    InterchangeableDeclarations(CSig, CSig),
     /// A declaration failed its own checks (size substitution, range
     /// instantiation, concretization); carries the span of its name.
     #[error("Declaration error: {1}")]
@@ -96,6 +101,21 @@ pub enum ModuleError {
 
 impl From<&ModuleError> for Diagnostic {
     fn from(e: &ModuleError) -> Self {
+        if let ModuleError::InterchangeableDeclarations(first, second) = e {
+            return Diagnostic::error(
+                Phase::Type,
+                second.name.span.clone(),
+                &format!(
+                    "Declarations of `{}` accept the same arguments, so every call to them is ambiguous",
+                    second.name.node
+                ),
+            )
+            .primary_label(&format!("`{}`", one_line(&second.to_string())))
+            .secondary_label(
+                first.name.span.clone(),
+                &format!("`{}`", one_line(&first.to_string())),
+            );
+        }
         let (span, summary) = match e {
             ModuleError::OverlapDeclaration(sig) => (
                 sig.name.span.clone(),
@@ -118,6 +138,7 @@ impl From<&ModuleError> for Diagnostic {
             ModuleError::DeclarationNotFound(name) => {
                 (0..0, format!("Declaration `{name}` not found"))
             }
+            ModuleError::InterchangeableDeclarations(..) => unreachable!("handled above"),
         };
         let mut d = Diagnostic::error(Phase::Type, span, &one_line(&summary))
             .primary_label("while concretizing sizes for this declaration");
@@ -218,43 +239,35 @@ impl UModule {
             .collect()
     }
 
-    /// `fixed`, extended with values for the other `Size` parameters that make every
-    /// range-kinded type variable non-empty, or `None` if no such values are found.
+    /// Extends `fixed` with default values for the other `Size` parameters.
     ///
-    /// Values are at least 1. Among the assignments with every value at most
-    /// [`MAX_DEFAULT_SIZE`], this returns the one with the smallest sum, breaking ties by the
-    /// smallest values in name order, so the result does not depend on declaration order. Only
-    /// ranges whose bounds mention nothing but `Size` parameters and `fixed` values can be
-    /// checked here; ranges nested in other ranges are left to concretization.
+    /// The defaults are the smallest values in `1..=MAX_DEFAULT_SIZE` under which every size
+    /// expression in signatures and bodies evaluates without underflow and every range is
+    /// non-empty. Returns `None` if no such values exist within that bound.
     ///
-    /// Sizes allow `*` and `^`, so whether any assignment exists is undecidable in general;
-    /// `None` means none exists within the bound, not that none exists at all.
+    /// Only expressions over `Size` parameters, `fixed` values and derived sizes
+    /// (`L: (N - 1) * M`) are checked; the rest (e.g. over `K: 2..16`) are left to
+    /// concretization. Smallest means the least sum, ties broken by the smallest values in
+    /// name order.
     pub fn minimal_sizes(&self, fixed: &Ctx<Tid, usize>) -> Option<Ctx<Tid, usize>> {
-        let typevars = || self.iter().flat_map(|(sig, _)| sig.typevars.0.iter());
-        let size_vars: Set<Tid> = typevars()
+        let size_vars: Set<Tid> = self
+            .iter()
+            .flat_map(|(sig, _)| sig.typevars.0.iter())
             .filter(|tv| matches!(tv.kind, Kind::SizeVar))
             .map(|tv| tv.id.node.clone())
             .collect();
-        let checkable = |r: &Range<Size>| {
-            let vars = range_free_vars(r);
-            vars.iter()
-                .all(|v| size_vars.contains(v) || fixed.contains(v))
-                && vars.iter().any(|v| !fixed.contains(v))
-        };
-        let ranges: Vec<Range<Size>> = typevars()
-            .filter_map(|tv| match &tv.kind {
-                Kind::Range(r) if checkable(r) => Some(r.clone()),
-                _ => None,
-            })
+        let decls: Vec<SizeConstraints> = self
+            .iter()
+            .map(|(sig, body)| SizeConstraints::new(sig, body, &size_vars, fixed))
             .collect();
 
-        // The unset parameters, in name order: those some range mentions are searched jointly;
-        // the others are unconstrained, so their smallest value is 1.
+        // The unset parameters, in name order: those some constraint mentions are searched
+        // jointly; the others are unconstrained, so their smallest value is 1.
         let (searched, unconstrained): (Vec<Tid>, Vec<Tid>) = size_vars
             .iter()
             .filter(|v| !fixed.contains(v))
             .cloned()
-            .partition(|v| ranges.iter().any(|r| range_free_vars(r).contains(v)));
+            .partition(|v| decls.iter().any(|d| d.mentioned.contains(v)));
         let mut base = fixed.clone();
         for v in &unconstrained {
             base.insert(v, &1);
@@ -270,13 +283,7 @@ impl UModule {
                 }
                 sizes
             })
-            .find(|sizes| {
-                ranges.iter().all(|r| {
-                    r.clone()
-                        .traverse1(&mut |s| s.eval(sizes))
-                        .is_ok_and(|cr| cr.start() < cr.end())
-                })
-            })
+            .find(|sizes| decls.iter().all(|d| d.hold(sizes)))
     }
 
     /// Parse source text into a polymorphic, untyped module with symbolic
@@ -404,7 +411,8 @@ impl UModule {
     /// Returns `ModuleError::DeclarationError` if a declaration's sizes
     /// cannot be resolved or concretized, and
     /// `ModuleError::OverlapDeclaration` if two expansions collapse onto the
-    /// same concrete signature.
+    /// same concrete signature, and `ModuleError::InterchangeableDeclarations` if two
+    /// declarations of the same name accept exactly the same arguments.
     pub fn concretize(&self, sizes: &Ctx<Tid, usize>) -> Result<CModule, ModuleError> {
         let mut ctx = Ctx::new();
 
@@ -417,7 +425,20 @@ impl UModule {
                 })?;
             }
         }
-        // Return the concretized module
+        let sigs: Vec<&CSig> = ctx.iter().map(|(sig, _)| sig).collect();
+        for (i, a) in sigs.iter().enumerate() {
+            if let Some(b) = sigs[i + 1..].iter().find(|b| a.interchangeable_with(b)) {
+                let (first, second) = if a.name.span.start <= b.name.span.start {
+                    (a, b)
+                } else {
+                    (b, a)
+                };
+                return Err(ModuleError::InterchangeableDeclarations(
+                    (*first).clone(),
+                    (**second).clone(),
+                ));
+            }
+        }
         Ok(Module(ctx))
     }
 
@@ -474,6 +495,107 @@ impl<N: Ord + fmt::Display> fmt::Display for Module<N> {
             crate::ast::decl::write_decl(f, sig, body)?;
         }
         Ok(())
+    }
+}
+
+/// The size constraints of one declaration that [`UModule::minimal_sizes`] can check: those
+/// over `Size` parameters, fixed values and the declaration's derived sizes, depending on at
+/// least one unset parameter.
+struct SizeConstraints {
+    /// Singleton range variables (`L: (N - 1) * M`) and their definitions, each over the
+    /// parameters and the derived sizes before it.
+    derived: Vec<(Tid, Size)>,
+    /// Size expressions, which must evaluate.
+    exprs: Vec<Size>,
+    /// Ranges, which must be non-empty.
+    ranges: Vec<Range<Size>>,
+    /// The unset `Size` parameters these depend on.
+    mentioned: Set<Tid>,
+}
+
+impl SizeConstraints {
+    fn new(
+        sig: &Sig<Size>,
+        body: &Body<Size>,
+        size_vars: &Set<Tid>,
+        fixed: &Ctx<Tid, usize>,
+    ) -> Self {
+        // Each name the constraints may mention ↦ the unset parameters it depends on.
+        let mut deps: Ctx<Tid, Set<Tid>> =
+            fixed.iter().map(|(v, _)| (v.clone(), Set::new())).collect();
+        for v in size_vars.iter().filter(|v| !fixed.contains(v)) {
+            deps.insert(v, &Set::singleton(v.clone()));
+        }
+        let depends_on = |vars: Set<Tid>, deps: &Ctx<Tid, Set<Tid>>| {
+            vars.iter().try_fold(Set::new(), |acc, v| {
+                deps.get(v).map(|d| acc.union(d.clone()))
+            })
+        };
+
+        let mut derived = Vec::new();
+        for tv in sig.typevars.0.iter() {
+            if let Kind::Range(r) = &tv.kind
+                && r.end.is_none()
+                && !deps.contains(&tv.id.node)
+                && let Some(d) = depends_on(r.start.node.free_vars(), &deps)
+            {
+                deps.insert(&tv.id.node, &d);
+                derived.push((tv.id.node.clone(), r.start.node.clone()));
+            }
+        }
+
+        let mut exprs = Vec::new();
+        let _ = sig.clone().traverse1(&mut |s: Size| {
+            exprs.push(s.clone());
+            Ok::<_, ()>(s)
+        });
+        let _ = body.clone().traverse1(&mut |s: Size| {
+            exprs.push(s.clone());
+            Ok::<_, ()>(s)
+        });
+        let mut ranges = Vec::new();
+        let _ = sig.clone().range_traverse(&mut |r: Range<Size>| {
+            ranges.push(r.clone());
+            Ok::<_, ()>(r)
+        });
+        let _ = body.clone().range_traverse(&mut |r: Range<Size>| {
+            ranges.push(r.clone());
+            Ok::<_, ()>(r)
+        });
+
+        let mut mentioned = Set::new();
+        let mut checkable = |vars: Set<Tid>| match depends_on(vars, &deps) {
+            Some(d) if !d.is_empty() => {
+                mentioned = mentioned.clone().union(d);
+                true
+            }
+            _ => false,
+        };
+        exprs.retain(|s| checkable(s.free_vars()));
+        ranges.retain(|r| checkable(range_free_vars(r)));
+        SizeConstraints {
+            derived,
+            exprs,
+            ranges,
+            mentioned,
+        }
+    }
+
+    /// Whether every constraint holds under `sizes`.
+    fn hold(&self, sizes: &Ctx<Tid, usize>) -> bool {
+        let mut ctx = sizes.clone();
+        for (v, def) in &self.derived {
+            match def.eval(&ctx) {
+                Ok(x) => ctx.insert(v, &x),
+                Err(_) => return false,
+            };
+        }
+        self.exprs.iter().all(|s| s.eval(&ctx).is_ok())
+            && self.ranges.iter().all(|r| {
+                r.clone()
+                    .traverse1(&mut |s| s.eval(&ctx))
+                    .is_ok_and(|cr| cr.start() < cr.end())
+            })
     }
 }
 

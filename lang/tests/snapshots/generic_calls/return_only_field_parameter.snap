@@ -1,0 +1,10 @@
+---
+source: lang/tests/generic_calls.rs
+---
+error: Cannot infer type parameter `F` of `zero`
+   ╭─[ test.zippel:6:12 ]
+   │
+ 6 │     verify(zero(g) == zero(g))
+   │            ───┬───  
+   │               ╰───── `F` (Field) appears in no argument type
+───╯

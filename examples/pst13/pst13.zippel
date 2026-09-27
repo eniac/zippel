@@ -27,15 +27,11 @@
 // Used in the proto's `where` clause to express the canonical PCS
 // evaluation statement:  y == dot(eq_mle(z), p) == p̃(z).
 // =============================================================================
-fn eq_mle<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
-    instance z: [F; 1],
-) -> [F; 2] {
+fn eq_mle<F: Field>(instance z: [F; 1]) -> [F; 2] {
     [1 - z[0], z[0]]
 }
 
-fn eq_mle<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 2..21>(
-    instance z: [F; K],
-) -> [F; 2 ^ K] {
+fn eq_mle<F: Field, K: 2..21>(instance z: [F; K]) -> [F; 2 ^ K] {
     let a = z[0]; // first variable = MSB (peeled first)
     let rest = z[1..K];
     let prev = eq_mle(rest); // [F; 2^(K-1)] over the K-1 low-bit variables

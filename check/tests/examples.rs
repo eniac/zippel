@@ -5,11 +5,8 @@ use std::process::{Command, Output};
 
 /// Examples that only pass at sizes larger than the defaults `zippel-check` picks. The
 /// values match the sizes their `main.rs` harnesses compile with.
-const EXAMPLE_SIZES: &[(&str, &[&str])] = &[
-    ("dekart/dekart.zippel", &["n=3", "b=2", "l_chunk=8"]),
-    ("membership/membership.zippel", &["N=2", "M=2", "S=2"]),
-    ("zk_kzg/zk_kzg.zippel", &["N=2"]),
-];
+const EXAMPLE_SIZES: &[(&str, &[&str])] =
+    &[("membership/membership.zippel", &["N=2", "M=2", "S=2"])];
 
 fn examples_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples")

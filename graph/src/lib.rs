@@ -2588,33 +2588,17 @@ impl<C: HasOpFactory> UDag<C> {
                             continue;
                         }
                         _ => {
-                            let mut matching_sigs: Vec<_> = fctx
+                            // Type checking resolved this call already, so it resolves here.
+                            let decls = fctx
                                 .iter()
-                                .filter_map(|(sig, body)| {
-                                    if sig.name.node != fid.node {
-                                        return None;
-                                    }
-                                    let (sig, subs) = sig.clone().unify(&param_types, kctx).ok()?;
-                                    Some((sig, body, subs))
-                                })
-                                .collect();
-
-                            if matching_sigs.len() > 1 {
-                                matching_sigs.retain(|(sig, _, _)| {
-                                    sig.args
-                                        .iter()
-                                        .zip(param_types.0.iter())
-                                        .all(|(a, t)| a.typ.node == t.node)
-                                });
-                            }
-
-                            // Only one function shoud match (enforced by the type system)
-                            assert_eq!(matching_sigs.len(), 1);
-                            let triple = matching_sigs[0].clone();
-                            let sig = triple.0;
-                            let mut body = triple.1.clone();
-                            let subs = triple.2;
-                            subs.tid_subst(&mut body);
+                                .map(|(sig, _)| sig)
+                                .filter(|sig| sig.name.node == fid.node);
+                            let (decl, sig, inst) = CSig::resolve_call(decls, &param_types, kctx)
+                                .expect("type checking resolved this call");
+                            let body = fctx.get(decl).expect("a declaration has a body");
+                            let mut body = body.clone();
+                            inst.apply(&mut body)
+                                .expect("a resolved signature declares every parameter");
 
                             // First add the arguments to the graph
                             let oparams: Vec<GOp<C>> = params

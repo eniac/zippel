@@ -51,6 +51,43 @@ proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G
     assert!(cmodule.typecheck().is_empty());
 }
 
+/// A body of higher degree than the declared return type is rejected.
+#[test]
+fn typecheck_return_of_higher_degree() {
+    let src = r"
+fn shrink<F: Field>(instance p: Uni<F, 5>) -> Uni<F, 3> {
+    p
+}
+proto t<F: Field>(instance p: Uni<F, 5>, instance x: F) where x == x {
+    let q = shrink(p);
+    verify(q(x) == p(x))
+}
+";
+    assert_snap!(
+        SNAP_DIR,
+        "return_of_higher_degree",
+        render_type_errors(src, &[])
+    );
+}
+
+/// Updating a record field with a value of higher degree than the field is rejected.
+#[test]
+fn typecheck_record_update_of_higher_degree() {
+    let src = r"
+proto t<F: Field>(instance p: Uni<F, 3>, instance q: Uni<F, 5>, instance x: F) where x == x {
+    let r = {| c: p |};
+    let s = r.set(c, q);
+    let t = s.c;
+    verify(t(x) == p(x))
+}
+";
+    assert_snap!(
+        SNAP_DIR,
+        "record_update_of_higher_degree",
+        render_type_errors(src, &[])
+    );
+}
+
 #[test]
 fn typecheck_binop_mismatch() {
     let src = r"

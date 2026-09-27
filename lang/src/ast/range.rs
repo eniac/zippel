@@ -161,6 +161,15 @@ impl CRange {
         (value - self.start()).is_multiple_of(self.step())
     }
 
+    /// Whether every value of this range is in `other`.
+    pub fn is_subset_of(&self, other: &CRange) -> bool {
+        let n = self.len();
+        n == 0
+            || (other.contains(self.start())
+                && other.contains(self.start() + (n - 1) * self.step())
+                && (n == 1 || self.step().is_multiple_of(other.step())))
+    }
+
     /// Fuse two ranges into one when `other` starts exactly one past this
     /// range's end and both share a stride; returns `None` when the two
     /// cannot be described by a single strided range.
@@ -522,4 +531,17 @@ mod tests {
         assert_eq!(it.next(), Some(usize::MAX - 1));
         assert_eq!(it.next(), None);
     }
+}
+
+#[test]
+fn is_subset_of_respects_bounds_and_steps() {
+    let r = |a, s, b| CRange::from_raw(a, s, b);
+    assert!(r(1, 1, 3).is_subset_of(&r(0, 1, 4)));
+    assert!(!r(0, 1, 5).is_subset_of(&r(0, 1, 4)));
+    // Evens within 0..10 are in the evens, not in the odds.
+    assert!(r(2, 2, 8).is_subset_of(&r(0, 2, 10)));
+    assert!(!r(1, 2, 7).is_subset_of(&r(0, 2, 10)));
+    // A single value only needs to be a member; an empty range is in everything.
+    assert!(CRange::singleton(4).is_subset_of(&r(0, 2, 10)));
+    assert!(r(3, 1, 3).is_subset_of(&r(0, 1, 1)));
 }

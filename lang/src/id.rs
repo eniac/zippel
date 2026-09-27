@@ -14,10 +14,11 @@ pub trait Fresh: Ord + Sized {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct Tid(pub String);
 
-/// Traverse TIDs
+/// Rewrites the type identifiers in a structure.
 pub trait TidSubst: Sized {
-    /// Rewrite every occurrence of the type identifier `from` to `to`.
-    fn tid_subst(&mut self, from: &Tid, to: &Tid);
+    /// Replaces every type identifier `t` with `f(t)` where that is `Some`, in one pass, so no
+    /// replacement is itself rewritten again.
+    fn map_tids(&mut self, f: &dyn Fn(&Tid) -> Option<Tid>);
 }
 
 impl fmt::Display for Tid {
@@ -41,21 +42,6 @@ impl From<String> for Tid {
 impl Default for Tid {
     fn default() -> Self {
         Tid("".to_string())
-    }
-}
-
-/// Fresh type variable generator
-impl Fresh for Tid {
-    fn fresh(root: &str, s: &mut Set<Self>) -> Self {
-        let (root, mut i) = split_alphanumeric(root);
-        loop {
-            i += 1;
-            let id = Tid(format!("{}{}", root, i));
-            if !s.contains(&id) {
-                s.insert(id.clone());
-                return id;
-            }
-        }
     }
 }
 
@@ -211,13 +197,6 @@ fn test_special_characters_with_trailing_number() {
 #[test]
 fn test_utf8_split_alphanumeric() {
     assert_eq!(split_alphanumeric("α32"), ("α".to_string(), 32));
-}
-
-#[test]
-fn tid_fresh() {
-    let mut bound = Set::from(vec![Tid("T0".to_string()), Tid("T1".to_string())]);
-    let t = Tid::fresh("T", &mut bound);
-    assert_eq!(t, Tid("T2".to_string()));
 }
 
 #[test]

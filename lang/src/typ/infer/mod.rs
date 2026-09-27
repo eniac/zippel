@@ -7,10 +7,11 @@ mod tests;
 pub use error::TypeError;
 
 use crate::ast::range::Range;
-use crate::ast::sig::CSig;
+use crate::ast::sig::{CSig, SigError};
 use crate::ast::spanned::Spanned;
 use crate::ast::{BinOp, CBody, CExp};
 use crate::id::{Tid, Vid};
+use crate::typ::instantiate::CallError;
 use crate::typ::lub::{Lub, LubError};
 use crate::typ::{CKind, CTyp, CTyps};
 use share::{Ctx, Set};
@@ -786,50 +787,44 @@ impl Typeable for CExp {
                         }
                     }
                     _ => {
-                        // It is a function
-                        // Find all matching functions in function context [fctx]
-                        let mut matching_sigs: Vec<_> = fctx
-                            .iter()
-                            .filter_map(|sig| {
-                                if sig.name.node != id.node {
-                                    return None;
+                        // It is a function: resolve the call among the declarations of this name.
+                        let decls = fctx.iter().filter(|sig| sig.name.node == id.node);
+                        let cause = match CSig::resolve_call(decls, &param_types, kctx) {
+                            Ok((_, sig, _)) => {
+                                return Ok(sig.ret.map_or(CTyp::Unit, |r| r.node));
+                            }
+                            Err(CallError::NoMatch(failures)) => {
+                                // Declarations that fit the arguments but whose type parameters
+                                // could not all be solved.
+                                let mut unresolved: Vec<(CSig, SigError)> = failures
+                                    .into_iter()
+                                    .filter(|(_, e)| {
+                                        matches!(
+                                            e,
+                                            SigError::Uninferable { .. }
+                                                | SigError::KindUnsatisfied { .. }
+                                        )
+                                    })
+                                    .collect();
+                                if unresolved.len() == 1 {
+                                    let (_, e) = unresolved.pop().expect("one element");
+                                    TypeError::Call(kctx.clone(), id.clone(), e)
+                                } else {
+                                    TypeError::func_not_found(
+                                        kctx,
+                                        fctx,
+                                        id,
+                                        param_types,
+                                        params,
+                                        unresolved,
+                                    )
                                 }
-                                let (vs, _) = sig.clone().unify(&param_types, kctx).ok()?;
-                                Some(vs)
-                            })
-                            .collect();
-                        let matched = matching_sigs.len();
-                        // [CTyp::unify] uses max() on univariate degree so many overloads
-                        // Poly<F,1,d> all unify with Poly<F,1,1>. When ambiguous, keep only
-                        // signatures whose parameters match argument types exactly (no widening).
-                        if matching_sigs.len() > 1 {
-                            matching_sigs.retain(|vs| {
-                                vs.args
-                                    .iter()
-                                    .zip(param_types.0.iter())
-                                    .all(|(a, t)| a.typ.node == t.node)
-                            });
-                        }
-
-                        // Exactly one function must match
-                        if matched == 0 {
-                            Err(TypeError::next(
-                                TypeError::exp(kctx, vctx, self),
-                                TypeError::func_not_found(kctx, fctx, id, param_types, params),
-                            ))
-                        } else if matching_sigs.len() != 1 {
-                            Err(TypeError::next(
-                                TypeError::exp(kctx, vctx, self),
-                                TypeError::app_multiple(kctx, fctx, id, param_types, params),
-                            ))
-                        } else {
-                            let sig = &matching_sigs[0];
-                            Ok(sig
-                                .ret
-                                .as_ref()
-                                .map(|r| r.node.clone())
-                                .unwrap_or(CTyp::Unit))
-                        }
+                            }
+                            Err(CallError::Ambiguous(tied)) => {
+                                TypeError::app_multiple(kctx, tied, id, param_types, params)
+                            }
+                        };
+                        Err(TypeError::next(TypeError::exp(kctx, vctx, self), cause))
                     }
                 }
             }
@@ -981,7 +976,7 @@ impl Typeable for CExp {
                         TypeError::not_a_record(kctx, vctx, record_exp, &record_typ),
                     ));
                 };
-                // Check the field exists and the value has a type compatible with the field (e.g. Fin unifies with F)
+                // Check the field exists and the value fits its type (e.g. an integer fits F)
                 let field_typ = fields.get(field_name).ok_or_else(|| {
                     TypeError::next(
                         TypeError::exp(kctx, vctx, self),
@@ -991,12 +986,22 @@ impl Typeable for CExp {
                 let value_typ = value_exp
                     .infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let _ = CTyp::lub_equ(&value_typ, field_typ, kctx).map_err(|e| {
-                    TypeError::next(
+                if !value_typ.fits(field_typ, kctx) {
+                    return Err(TypeError::next(
                         TypeError::exp(kctx, vctx, self),
-                        TypeError::lub(TypeError::exp(kctx, vctx, self), e),
-                    )
-                })?;
+                        TypeError::located(
+                            &value_exp.span,
+                            TypeError::field_update(
+                                kctx,
+                                vctx,
+                                &value_exp.node,
+                                &field_name.node,
+                                field_typ,
+                                &value_typ,
+                            ),
+                        ),
+                    ));
+                }
                 // Result type is the same record type
                 Ok(record_typ.clone())
             }

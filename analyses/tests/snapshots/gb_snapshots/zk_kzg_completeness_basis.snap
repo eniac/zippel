@@ -2,21 +2,28 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- __zippel::gb::div_q::0[0] + b0 + p_val[1]
-- __zippel::gb::div_q::0[1] + b1
+- __zippel::gb::div_q::0[0] + p_val[1]
+- __zippel::gb::div_q::1[0] + __zippel::node::11
+- gs[0] + gamma_g
+- gs[0]*h_val + gs[1]*h
+- gs[0]*ss[1] + gs[1]*ss[0]
 - h*ss[1] + h_val*ss[0]
-- h*ss[2] + h_val*ss[1]
 - ss[0] + g
-- ss[0]*ss[2] + ss[1]^2
-- z*__zippel::gb::div_q::0[0] + z*b0 + y - p_val[0]
-__zippel::gb::div_q::0[2]
+__zippel::gb::div_q::0[1]
+__zippel::gb::div_q::1[1]
 __zippel::gb::div_r::0[0]
-__zippel::node::36 - 1
-__zippel::node::49[0] - 1
-__zippel::node::49[1] - 1
-__zippel::node::49[2] - 1
-__zippel::node::52 - 1
-__zippel::node::55 - 1
+__zippel::gb::div_r::1[0]
+__zippel::node::47 - 1
+__zippel::node::63[0] - 1
+__zippel::node::63[1] - 1
+__zippel::node::66[0] - 1
+__zippel::node::66[1] - 1
+__zippel::node::70 - 1
+__zippel::node::73 - 1
+__zippel::node::76 - 1
+gs[0]*tau - gs[1]
 h*tau - h_val
+ss[0]*gamma - gs[0]
 ss[0]*tau - ss[1]
-ss[1]*tau - ss[2]
+ss[1]*gamma - gs[1]
+z*__zippel::gb::div_q::0[0] - y + p_val[0]
