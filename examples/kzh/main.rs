@@ -1,4 +1,4 @@
-use ark_ff::Zero;
+use ark_ec::PrimeGroup;
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, Value};
 use lang::id::{Tid, Vid};
@@ -7,6 +7,10 @@ use std::path::PathBuf;
 use zippel::*;
 
 use crate::common;
+
+type F = <ArkBls12_381 as ArkConfig>::F;
+type G1 = <ArkBls12_381 as ArkConfig>::G1;
+type G2 = <ArkBls12_381 as ArkConfig>::G2;
 
 const NX: usize = 1;
 const NY: usize = 1;
@@ -19,25 +23,10 @@ fn build_sizes_ctx() -> Ctx<Tid, usize> {
 }
 
 pub fn run(_args: &[String]) {
-    println!("=== KZH (ArkBls12_381, NX={}, NY={}) ===", NX, NY);
+    println!("=== KZH-2 (ArkBls12_381, NX={}, NY={}) ===", NX, NY);
     let args = ZippelArgs::new(PathBuf::from("examples/kzh/kzh.zippel"));
-    let sizes = build_sizes_ctx();
-    let compile_result = std::panic::catch_unwind(|| {
-        let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-        handler.compile(&sizes);
-        handler
-    });
-
-    let mut handler = match compile_result {
-        Ok(h) => h,
-        Err(e) => {
-            println!("Compilation:    ✗ KZH protocol has syntax not yet supported by the compiler");
-            if let Some(msg) = e.downcast_ref::<String>() {
-                println!("  Error: {}", msg);
-            }
-            std::process::exit(0);
-        }
-    };
+    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+    handler.compile(&build_sizes_ctx());
 
     let inputs = prover_create_inputs();
     common::run_prover_and_verify(&mut handler, &inputs);
@@ -47,64 +36,55 @@ pub fn run(_args: &[String]) {
     common::time_analysis!("ZK", handler.analyze_knowledge());
 }
 
+/// eq(x, r) over x ∈ {0,1}^n with r[0] the low bit (irondict's `build_eq_x_r`).
+fn eq_weights(r: &[F]) -> Vec<F> {
+    let mut w = vec![F::from(1u64)];
+    for &ri in r {
+        w = w
+            .iter()
+            .map(|&v| v * (F::from(1u64) - ri))
+            .chain(w.iter().map(|&v| v * ri))
+            .collect();
+    }
+    w
+}
+
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
+    let (nxv, nyv) = (1usize << NX, 1usize << NY);
 
-    let g2_base = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
-    let alpha = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-
-    let h_xy_size = 1usize << (NX + NY);
-    let h_y_size = 1usize << NY;
-    let d_x_size = 1usize << NX;
-
-    let g_cols: Vec<<ArkBls12_381 as ArkConfig>::G1> = (0..h_y_size)
-        .map(|_| <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng))
+    // KZH-k setup (Figure 12) at k = 2.
+    let g = G1::generator();
+    let v = G2::generator();
+    let mu1: Vec<F> = (0..nxv).map(|_| F::rand(&mut rng)).collect();
+    let mu2: Vec<F> = (0..nyv).map(|_| F::rand(&mut rng)).collect();
+    let h1: Vec<G1> = (0..nxv * nyv)
+        .map(|k| g * (mu1[k / nyv] * mu2[k % nyv]))
         .collect();
-    let tau_rows: Vec<<ArkBls12_381 as ArkConfig>::F> = (0..d_x_size)
-        .map(|_| <ArkBls12_381 as ArkConfig>::F::rand(&mut rng))
-        .collect();
+    let h2: Vec<G1> = mu2.iter().map(|m| g * m).collect();
+    let v1: Vec<G2> = mu1.iter().map(|m| v * m).collect();
 
-    let h_xy_vals: Vec<_> = (0..h_xy_size)
-        .map(|k| {
-            let i = k >> NY;
-            let j = k & (h_y_size - 1);
-            g_cols[j] * tau_rows[i]
-        })
-        .collect();
-    let h_y_vals: Vec<_> = (0..h_y_size).map(|j| g_cols[j] * alpha).collect();
+    let f: Vec<F> = (0..nxv * nyv).map(|_| F::rand(&mut rng)).collect();
+    let x0: Vec<F> = (0..NX).map(|_| F::rand(&mut rng)).collect();
+    let y0: Vec<F> = (0..NY).map(|_| F::rand(&mut rng)).collect();
+    let (eqx, eqy) = (eq_weights(&x0), eq_weights(&y0));
+    let z0: F = (0..nxv * nyv)
+        .map(|k| eqx[k / nyv] * eqy[k % nyv] * f[k])
+        .sum();
 
-    let v_prime = g2_base * alpha;
-    let v_x_vals: Vec<_> = (0..d_x_size).map(|i| g2_base * tau_rows[i]).collect();
-
-    let f_evals: Vec<<ArkBls12_381 as ArkConfig>::F> = (0..h_xy_size)
-        .map(|_| <ArkBls12_381 as ArkConfig>::F::rand(&mut rng))
-        .collect();
-
-    let d_x_vals: Vec<_> = (0..d_x_size)
-        .map(|i| {
-            let mut acc = <ArkBls12_381 as ArkConfig>::G1::zero();
-            for j in 0..h_y_size {
-                acc += h_y_vals[j] * f_evals[i * h_y_size + j];
-            }
-            acc
-        })
-        .collect();
-
-    // g_gen / h_gen are the generators referenced by the proto's `where`
-    // clause to state the SRS tensor structure. The body doesn't read
-    // them, so runtime values are unconstrained; use the group
-    // generators for semantic clarity.
-    let g_gen = <ArkBls12_381 as ArkConfig>::G1::zero();
-    let h_gen = <ArkBls12_381 as ArkConfig>::G2::zero();
-
-    Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("f_evals".to_string()), Value::VecScalar(f_evals)),
-        (Vid("h_xy".to_string()), Value::VecG1(h_xy_vals)),
-        (Vid("h_y".to_string()), Value::VecG1(h_y_vals)),
-        (Vid("d_x".to_string()), Value::VecG1(d_x_vals)),
-        (Vid("v_prime".to_string()), Value::G2(v_prime)),
-        (Vid("v_x".to_string()), Value::VecG2(v_x_vals)),
-        (Vid("g_gen".to_string()), Value::G1(g_gen)),
-        (Vid("h_gen".to_string()), Value::G2(h_gen)),
-    ])
+    Ctx::<Vid, Value<ArkBls12_381>>::from_iter(
+        [
+            ("f", Value::VecScalar(f)),
+            ("x0", Value::VecScalar(x0)),
+            ("y0", Value::VecScalar(y0)),
+            ("z0", Value::Scalar(z0)),
+            ("h1", Value::VecG1(h1)),
+            ("h2", Value::VecG1(h2)),
+            ("v1", Value::VecG2(v1)),
+            ("v_gen", Value::G2(v)),
+            ("g_gen", Value::G1(g)),
+        ]
+        .into_iter()
+        .map(|(k, val)| (Vid(k.to_string()), val)),
+    )
 }

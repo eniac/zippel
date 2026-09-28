@@ -54,6 +54,14 @@ where
     }
 }
 
+/// A value queued for the Fiat-Shamir sponge (see `run_graph`).
+enum PendingAbsorb<C: ArkConfig> {
+    /// An instance input, absorbed with [`absorb_instance_input`].
+    Instance(Arc<Value<C>>),
+    /// A prover message, absorbed as its serialized bytes.
+    Message(Arc<Value<C>>),
+}
+
 /// Shared first-error slot used to propagate failures out of rayon-spawned
 /// workers. The first task to fail records its error here; subsequent
 /// workers short-circuit, drop their `SyncSender` clones, and let the sync
@@ -639,6 +647,11 @@ impl<C: ArkConfig> MutexGraph<C> {
         // Compute values for sync nodes (transcript and challenge).
         // Spawn non-sync computes onto shared worker threads, and wait for completion.
         let mut loop_count = 0u32;
+        // Sponge inputs are queued and absorbed, in order, only when a
+        // challenge is squeezed: the sponge's only output is challenges, so
+        // values after the last challenge (every value, in a protocol with
+        // no challenges) never need serializing.
+        let mut pending: Vec<PendingAbsorb<C>> = Vec::new();
         while let Some(SyncMessage { node_idx, tx }) = rx.pop() {
             loop_count += 1;
 
@@ -677,14 +690,25 @@ impl<C: ArkConfig> MutexGraph<C> {
                                     return Err(err);
                                 }
                             };
-                            absorb_instance_input::<C, H>(prover_state, &**value);
+                            pending.push(PendingAbsorb::Instance(Arc::clone(value)));
                         }
                     }
                 }
                 Node::Transcr(op, annotation) => {
                     if matches!(**op, Op::Challenge(_, _)) {
                         debug!("[run_graph] node {:?} is Challenge", node_idx);
-                        // Challenge node: squeeze the sponge.
+                        // Challenge node: absorb what is queued, then squeeze.
+                        for p in pending.drain(..) {
+                            match p {
+                                PendingAbsorb::Instance(v) => {
+                                    absorb_instance_input::<C, H>(prover_state, &v);
+                                }
+                                PendingAbsorb::Message(v) => {
+                                    let serialized = value_to_bytes(&*v).unwrap();
+                                    prover_state.public_message(serialized.as_slice());
+                                }
+                            }
+                        }
                         let return_val = Value::<C>::challenge(prover_state);
                         annotation
                             .return_value
@@ -703,8 +727,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                             .return_value
                             .get()
                             .expect("Transcr node return_value should be set after handle_node");
-                        let serialized = value_to_bytes(&**arc_val).unwrap();
-                        prover_state.public_message(serialized.as_slice());
+                        pending.push(PendingAbsorb::Message(Arc::clone(arc_val)));
                     }
                 }
                 Node::Op(_, _) | Node::Rel(_) | Node::Arg(_, _, _, _, _) => {

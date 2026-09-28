@@ -441,9 +441,33 @@ pub trait ArkPairingOps<P: Pairing> {
     /// `multi_pairing` by definition (`Σᵢ e(...)` is exactly what the latter
     /// returns). The verifier's pairing check goes through this path via the
     /// `dot(VecG1, VecG2) -> GT` arm in `value_dot`.
+    ///
+    /// Inputs are batch-normalised and prepared in parallel first: arkworks'
+    /// `multi_miller_loop` prepares each pair serially before its parallel
+    /// loop, and G2 preparation dominates for long vectors.
     #[inline]
     fn billinear_vec_dot(g1: &[P::G1], g2: &[P::G2]) -> PairingOutput<P> {
-        P::multi_pairing(g1.iter().copied(), g2.iter().copied())
+        let g1: Vec<P::G1Prepared> = P::G1::normalize_batch(g1)
+            .into_par_iter()
+            .map(P::G1Prepared::from)
+            .collect();
+        let g2: Vec<P::G2Prepared> = P::G2::normalize_batch(g2)
+            .into_par_iter()
+            .map(P::G2Prepared::from)
+            .collect();
+        P::multi_pairing(g1, g2)
+    }
+
+    /// [`Self::billinear_vec_dot`] with the second-group side already
+    /// prepared, as a verifier key stores it.
+    #[inline]
+    fn billinear_vec_dot_prepared(g1: &[P::G1], g2: &[P::G2Prepared]) -> PairingOutput<P> {
+        let g1: Vec<P::G1Prepared> = P::G1::normalize_batch(g1)
+            .into_par_iter()
+            .map(P::G1Prepared::from)
+            .collect();
+        let g2: Vec<P::G2Prepared> = g2.par_iter().cloned().collect();
+        P::multi_pairing(g1, g2)
     }
 }
 

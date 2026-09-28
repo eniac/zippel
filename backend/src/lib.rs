@@ -45,7 +45,7 @@ pub use op::{GOp, HasOpFactory, Op, Ref};
 pub use optimization::{OptimizationStats, optimization_stats_snapshot, reset_optimization_stats};
 pub use poly_variant::{PolyError, PolyVariant};
 pub use types::{ABase, ATyp, binomial};
-pub use values::{Value, value_to_bytes};
+pub use values::{PreparedG2Vec, Value, value_to_bytes};
 pub use virtual_polynomial::{SelectedEvalShape, VirtualPolynomial};
 
 #[cfg(test)]

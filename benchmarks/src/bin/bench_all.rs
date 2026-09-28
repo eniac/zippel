@@ -28,7 +28,7 @@
 //! sized by `RAYON_NUM_THREADS` is the reliable path.
 
 use benchmarks::{
-    Timing, dekart, groth16, hyrax, ipa, kzg, pari, pst13, schnorr, spartan, sumcheck,
+    Timing, dekart, groth16, hyrax, ipa, kzg, kzh, pari, pst13, schnorr, spartan, sumcheck,
 };
 use clap::Parser;
 use libspartan::{Instance, NIZK, NIZKGens};
@@ -41,6 +41,7 @@ use std::time::{Duration, Instant};
 
 const ALL_SYSTEMS: &[&str] = &[
     "schnorr", "sumcheck", "ipa", "kzg", "pari", "groth16", "pst13", "hyrax", "spartan", "dekart",
+    "kzh",
 ];
 
 #[derive(Parser, Debug)]
@@ -124,6 +125,7 @@ const ZIPPEL_PST13: &str = include_str!("../../../examples/pst13/pst13.zippel");
 const ZIPPEL_HYRAX: &str = include_str!("../../../examples/hyrax/hyrax.zippel");
 const ZIPPEL_SPARTAN: &str = include_str!("../../../examples/spartan/spartan.zippel");
 const ZIPPEL_DEKART: &str = include_str!("../../../examples/dekart/dekart.zippel");
+const ZIPPEL_KZH: &str = include_str!("../../../examples/kzh/kzh.zippel");
 
 const NATIVE_IPA_RS: &str = include_str!("../../src/ipa.rs");
 // DeKART native baseline is vendored from aptos-dkg's dekart_univariate_v2
@@ -131,6 +133,7 @@ const NATIVE_IPA_RS: &str = include_str!("../../src/ipa.rs");
 // one file (see src/dekart_upstream/). NCLOC excludes its `#[cfg(test)]`
 // module, which sits at the end of the file.
 const NATIVE_DEKART_MOD_RS: &str = include_str!("../../src/dekart_upstream/mod.rs");
+const NATIVE_KZH_MOD_RS: &str = include_str!("../../src/kzh_upstream/mod.rs");
 // Bit width for the DeKART bench: the middle of upstream's
 // BIT_WIDTHS = [8, 16, 32, 64] grid. Use the standalone `dekart` bin's
 // `--ell` to vary it.
@@ -253,6 +256,7 @@ fn zippel_ncloc(sys: &str) -> usize {
         "hyrax" => count_ncloc_line_comments(ZIPPEL_HYRAX),
         "spartan" => count_ncloc_line_comments(ZIPPEL_SPARTAN),
         "dekart" => count_ncloc_line_comments(ZIPPEL_DEKART),
+        "kzh" => count_ncloc_line_comments(ZIPPEL_KZH),
         _ => 0,
     }
 }
@@ -273,6 +277,12 @@ fn native_ncloc(baseline: &str) -> usize {
         }
         "ipa" => count_ncloc_rust(extract_braced_block(NATIVE_IPA_RS, "pub mod native_side")),
         "hyrax" => count_ncloc_rust(NATIVE_HYRAX_MOD_RS),
+        "kzh" => count_ncloc_rust(
+            NATIVE_KZH_MOD_RS
+                .split("#[cfg(test)]")
+                .next()
+                .unwrap_or(NATIVE_KZH_MOD_RS),
+        ),
         "dekart" => count_ncloc_rust(
             NATIVE_DEKART_MOD_RS
                 .split("#[cfg(test)]")
@@ -682,6 +692,41 @@ fn run_dekart(threads: usize, ls: &[usize], ell: usize) -> Vec<Row> {
         .collect()
 }
 
+fn run_kzh(threads: usize, ns: &[usize]) -> Vec<Row> {
+    ns.iter()
+        .map(|&n| {
+            let sh = setup_pool().install(|| kzh::shared::build(n));
+            let (mut z, np) = setup_pool().install(|| {
+                (
+                    kzh::zippel_side::Setup::new(&sh),
+                    kzh::native_side::Setup::new(&sh),
+                )
+            });
+            let compile = z.compile_time();
+            let (prover_nodes, verifier_nodes) = z.graph_sizes();
+            let zippel = z.time_protocol();
+            let native = timed_pool().install(|| np.time_protocol());
+            let r = Row {
+                system: "kzh",
+                threads,
+                log_size: n,
+                zippel,
+                compile,
+                baselines: vec![Baseline {
+                    name: "kzh",
+                    ncloc: native_ncloc("kzh"),
+                    prove: native.prove,
+                    verify: native.verify,
+                }],
+                prover_nodes,
+                verifier_nodes,
+            };
+            print_row(&r);
+            r
+        })
+        .collect()
+}
+
 fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
     ms.iter()
         .map(|&m| {
@@ -1021,6 +1066,12 @@ fn main() {
         (None, true) => vec![4usize, 8],
         (None, false) => vec![18usize],
     };
+    // KZH-2's size knob is N (2^N evaluations, split NX = ceil(N/2), NY = floor(N/2)).
+    let kzh_ns = match (&args.sizes, args.quick) {
+        (Some(ls), _) => ls.clone(),
+        (None, true) => vec![4usize, 8],
+        (None, false) => vec![18usize],
+    };
     let sumcheck_degree = 3usize;
     let pari_n_pub = 1usize;
     let pari_k_vars = 3usize;
@@ -1064,6 +1115,7 @@ fn main() {
             "hyrax" => run_hyrax(threads, &hyrax_ns),
             "spartan" => run_spartan(threads, &spartan_ms),
             "dekart" => run_dekart(threads, &dekart_ls, DEKART_ELL),
+            "kzh" => run_kzh(threads, &kzh_ns),
             other => panic!("unknown system: {other}"),
         };
         all_rows.extend(chunk);

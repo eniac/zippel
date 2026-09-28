@@ -1,12 +1,11 @@
-// KZH-2 polynomial commitment scheme (Figure 2 of KZH-Fold paper).
+// KZH-2 multilinear polynomial commitment: KZH-k (Figure 12 of KZH-Fold,
+// https://eprint.iacr.org/2025/144) at k = 2, following irondict's
+// `pcs/kzhk` (commit, dense open at an arbitrary point, non-zk verify).
 //
-// Flow:
-//   1. Prover commits (sends c_commit).
-//   2. Verifier samples evaluation point (x0, y0) via challenges.
-//   3. Prover opens (sends pi_vals = f*(Y) evaluations and claimed value z0).
-//   4. Verifier checks the three Figure-2 equations.
-//
-// Generic over NX, NY (log-dimensions): 2^NX × 2^NY grid, 2^(NX+NY) evals.
+// f has NX + NY variables; its evaluation table is a 2^NX × 2^NY matrix T,
+// T[x][y] = f[x * NYV + y]. The point is (x0, y0): x0 binds the row block
+// (the high variables), y0 the column block; x0[0] and y0[0] are the low
+// bits of their blocks, as in irondict's `build_eq_x_r` / `fix_last_variables`.
 
 fn eq_weights<F: Field>(instance x: [F; 1]) -> [F; 2] {
     [1 - x[0], x[0]]
@@ -30,78 +29,48 @@ proto kzh<
     NYV: 2 ^ NY,
     NXY: 2 ^ (NX + NY),
 >(
-    witness f_evals: [F; NXY],
-    instance h_xy: [G1; NXY],
-    instance h_y: [G1; NYV],
-    instance d_x: [G1; NXV],
-    instance v_prime: G2,
-    instance v_x: [G2; NXV],
+    witness f: [F; NXY],
+    // Statement: f(x0, y0) = z0
+    instance x0: [F; NX],
+    instance y0: [F; NY],
+    instance z0: F,
+    // SRS: H1[x, y] = µ1_x µ2_y G (prover only), H2[y] = µ2_y G, V1[x] = µ1_x V
+    extra h1: [G1; NXY],
+    instance h2: [G1; NYV],
+    instance v1: [G2; NXV],
+    instance v_gen: G2,
     instance g_gen: G1,
-    instance h_gen: G2,
 ) where
-    // Trusted setup: sample the trapdoors (τ_x, τ_y), then derive the
-    // KZH-2 SRS tensor structure at those trapdoors.
-    //   H^ {i,j} = g · eq(τ_x, i_bits) · eq(τ_y, j_bits)
-    //   H^j    = g · eq(τ_y, j_bits)
-    //   V^i    = h · eq(τ_x, i_bits),   V' = h.
-    let tau_x = [random<F> for _ in 0..NX];
-    let tau_y = [random<F> for _ in 0..NY];
-    let eq_x = [
-        reduce(
-            *,
-            [tau_x[j] * (k / 2 ^ j % 2) + (1 - tau_x[j]) * (1 - k / 2 ^ j % 2) for j in 0..NX],
-        )
-        for k in 0..NXV
-    ];
-    let eq_y = [
-        reduce(
-            *,
-            [tau_y[j] * (k / 2 ^ j % 2) + (1 - tau_y[j]) * (1 - k / 2 ^ j % 2) for j in 0..NY],
-        )
-        for k in 0..NYV
-    ];
-    reduce(
-        &&,
-        [h_xy[k] for k in 0..NXY] == [g_gen * (eq_x[k / NYV] * eq_y[k % NYV]) for k in 0..NXY],
-    )
-        && reduce(
-            &&,
-            [d_x[i] for i in 0..NXV]
-                == [reduce(+, [f_evals[i * NYV + j] * h_y[j] for j in 0..NYV]) for i in 0..NXV],
-        )
-        && reduce(&&, [h_y[j] for j in 0..NYV] == [g_gen * eq_y[j] for j in 0..NYV])
-        && v_prime == h_gen
-        && reduce(&&, [v_x[i] for i in 0..NXV] == [h_gen * eq_x[i] for i in 0..NXV])
-{
-    // -------- Phase 1: commit --------
-    let c = dot(f_evals, h_xy);
-    c_commit <- c;
-
-    // -------- Phase 2: verifier samples the evaluation point --------
-    let x0 = [challenge<F> for _ in 0..NX];
-    let y0 = [challenge<F> for _ in 0..NY];
-
-    // -------- Phase 3: open --------
+    // Trusted setup: sample the trapdoors µ1, µ2 and derive the SRS.
+    let mu1 = [random<F> for _ in 0..NXV];
+    let mu2 = [random<F> for _ in 0..NYV];
     let eqx = eq_weights(x0);
     let eqy = eq_weights(y0);
+    z0 == dot([eqx[k / NYV] * eqy[k % NYV] for k in 0..NXY], f)
+        && reduce(
+            &&,
+            [h1[k] for k in 0..NXY] == [g_gen * (mu1[k / NYV] * mu2[k % NYV]) for k in 0..NXY],
+        )
+        && reduce(&&, [h2[y] for y in 0..NYV] == [g_gen * mu2[y] for y in 0..NYV])
+        && reduce(&&, [v1[x] for x in 0..NXV] == [v_gen * mu1[x] for x in 0..NXV])
+{
+    // Commit: C = <T, H1>
+    c <- dot(f, h1);
 
-    // pi_vals[y] = sum_x eq(x, x0) * f(x, y)
-    let pi_vals = [reduce(+, [eqx[xi] * f_evals[xi * NYV + yi] for xi in 0..NXV]) for yi in 0..NYV];
-    pi <- pi_vals;
+    // Open (j = 1): D[x] = <T[x], H2> and T2 = <T, eq(x0)>
+    d <- [dot([f[x * NYV + y] for y in 0..NYV], h2) for x in 0..NXV];
+    let eqx = eq_weights(x0);
+    t2 <- [dot(eqx, [f[x * NYV + y] for x in 0..NXV]) for y in 0..NYV];
 
-    // Claimed value z0 = f*(y0) = sum_y eq(y, y0) * pi_vals[y]
-    let z = reduce(+, [pi_vals[yi] * eqy[yi] for yi in 0..NYV]);
-    z0 <- z;
+    // Verify 1: e(C, V) == Σ_x e(D[x], V1[x]), as one multi-pairing
+    let zero_g1 = g_gen - g_gen;
+    let pairing = dot([zero_g1 - c] ++ d, [v_gen] ++ v1);
+    verify(pairing == pairing - pairing);
 
-    // -------- Phase 4: verify --------
-    // The verifier only uses the sent values: c_commit, pi, z0.
-    // Check 1 (pairing): e(C, V') == sum_x e(D^(x), V^(x))
-    verify(pair(c_commit, v_prime) == reduce(+, pair(d_x, v_x)));
+    // Verify 2: C1 = <eq(x0), D> == <T2, H2>
+    verify(dot(eqx, d) == dot(t2, h2));
 
-    // Check 2 (G1 MSM): sum_y f*(y) H^(y) == sum_x eq(x, x0) D^(x)
-    verify(dot(pi, h_y) == dot(eqx, d_x));
-
-    // Check 3: f*(y0) == z0, where f*(y0) = sum_y eq(y, y0) * pi[y].
-    let claim = reduce(+, [pi[yi] * eqy[yi] for yi in 0..NYV]);
-    verify(claim == z0)
+    // Verify 3: <T2, eq(y0)> == z0
+    let eqy = eq_weights(y0);
+    verify(dot(t2, eqy) == z0)
 }

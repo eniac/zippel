@@ -76,6 +76,8 @@ pub mod hyrax;
 pub mod hyrax_upstream;
 pub mod ipa;
 pub mod kzg;
+pub mod kzh;
+pub mod kzh_upstream;
 pub mod pari;
 #[allow(warnings)]
 pub mod pari_upstream;
