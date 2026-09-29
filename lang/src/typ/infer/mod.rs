@@ -681,6 +681,11 @@ impl Typeable for CExp {
                 // loop variables bound to fixed ranges — all compile-time known.
                 // Non-Fin indices (e.g. Scalar-typed runtime values) are rejected
                 // because the GB analysis cannot resolve dynamic RAM reads.
+                // A strided index `[start, step..end]` reaches `end - step`
+                // at most, so it may name an `end` past the vector's length.
+                let in_bounds = |r: &crate::typ::CRange, n: usize| {
+                    r.end() <= n || (!r.is_empty() && r.start() + (r.len() - 1) * r.step() < n)
+                };
                 match (&ta, &tb) {
                     // An integer beyond the finite-index range is never reduced to an index.
                     (_, CTyp::FieldLiteral) => Err(TypeError::located(
@@ -688,14 +693,14 @@ impl Typeable for CExp {
                         TypeError::FiniteIndexOverflow(kctx.clone(), vctx.clone(), self.clone()),
                     )),
                     (CTyp::Vec(typ, n), CTyp::Fin(r)) => {
-                        if r.end() <= n.node {
+                        if in_bounds(r, n.node) {
                             Ok(typ.node.clone())
                         } else {
                             Err(TypeError::ram(kctx, vctx, self, ta, tb))
                         }
                     }
                     (CTyp::Vec(typ, n), CTyp::Vec(CTyp::Fin(r), m)) => {
-                        if r.end() <= n.node {
+                        if in_bounds(r, n.node) {
                             Ok(CTyp::vec(&typ.node, m.node))
                         } else {
                             Err(TypeError::ram(kctx, vctx, self, ta, tb))

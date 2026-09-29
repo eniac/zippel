@@ -184,6 +184,28 @@ proto p<F: Field>(instance a: [F; 2]) where a[0] == a[0] {
     );
 }
 
+/// A strided index may name an end past the vector's length as long as its
+/// last element, `end - step`, is in bounds: `a[1, 2..5]` reads `a[1], a[3]`.
+#[test]
+fn typecheck_strided_index_bounds_use_the_last_element() {
+    let typecheck = |index: &str| {
+        let src = format!(
+            "proto p<F: Field>(instance a: [F; 4]) where a[0] == a[0] {{\n    let b = a[{index}];\n    verify(b[0] == b[1])\n}}\n"
+        );
+        let (module, _) = UModule::parse(&src);
+        module.unwrap().concretize(&Ctx::new()).unwrap().typecheck()
+    };
+    assert!(
+        typecheck("1, 2..5").is_empty(),
+        "odd entries of a length-4 vector"
+    );
+    assert!(
+        typecheck("0, 2..4").is_empty(),
+        "even entries of a length-4 vector"
+    );
+    assert!(!typecheck("1, 2..7").is_empty(), "a[5] is out of bounds");
+}
+
 #[test]
 fn typecheck_size_dependent_index() {
     // Well-typed at N = 2, ill-typed at N = 1.

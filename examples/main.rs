@@ -41,6 +41,8 @@ mod hyperplonk_multiset;
 mod hyperplonk_permutation;
 #[path = "hyperplonk_productcheck/main.rs"]
 mod hyperplonk_productcheck;
+#[path = "hyperplonk_snark/main.rs"]
+mod hyperplonk_snark;
 #[path = "hyperplonk_zerocheck/main.rs"]
 mod hyperplonk_zerocheck;
 #[path = "hyrax/main.rs"]
@@ -107,6 +109,7 @@ const EXAMPLES: &[(&str, Runner)] = &[
     ("hyperplonk_multiset", hyperplonk_multiset::run),
     ("hyperplonk_permutation", hyperplonk_permutation::run),
     ("hyperplonk_productcheck", hyperplonk_productcheck::run),
+    ("hyperplonk_snark", hyperplonk_snark::run),
     ("hyperplonk_zerocheck", hyperplonk_zerocheck::run),
     ("hyrax", hyrax::run),
     ("hyrax_ipa", hyrax_ipa::run),

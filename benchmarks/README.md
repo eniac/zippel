@@ -1,12 +1,12 @@
 # benchmarks
 
 Wall-clock comparison between **zippel-compiled protocols** and **native Rust
-baselines** for twelve SNARK / commitment / signature / range-proof schemes. Each system runs
+baselines** for thirteen SNARK / commitment / signature / range-proof schemes. Each system runs
 both sides on the same machine, same curve, same input size, inside the same
 rayon thread pool — only the implementation differs.
 
 Systems benched: `schnorr`, `sumcheck`, `ipa`, `kzg`, `pari`, `groth16`,
-`pst13`, `hyrax`, `spartan`, `dekart`, `kzh`, `dory`.
+`pst13`, `hyrax`, `spartan`, `dekart`, `kzh`, `dory`, `hyperplonk`.
 
 For every (system, log_size, threads) point the bench measures:
 
@@ -73,6 +73,7 @@ benchmarks/
 │   ├── dekart.rs
 │   ├── kzh.rs
 │   ├── dory.rs
+│   ├── hyperplonk.rs
 │   │
 │   ├── pari_upstream/     vendored garuda-pari (was outside arkworks-0.6 / fixes for fair compare)
 │   ├── pst13_upstream/    vendored ark-poly-commit::multilinear_pc with two open() fixes
@@ -81,6 +82,7 @@ benchmarks/
 │   ├── dekart_upstream/   vendored aptos-dkg dekart_univariate_v2 (ported to ark 0.6)
 │   ├── kzh_upstream/      vendored irondict KZH-k, dense non-zk path (ported to ark 0.6)
 │   ├── dory_upstream/     vendored a16z dory-pcs, transparent path, concrete BLS12-381
+│   ├── hyperplonk_upstream/ vendored Espresso HyperPlonk SNARK over multilinear KZG (ported to ark 0.6)
 │   │
 │   └── bin/
 │       ├── bench_all.rs           main entry point used by run_all.sh
@@ -179,6 +181,9 @@ plot linearly on a log-size x-axis):
   column variables as irondict does)
 - `dory` — `N` (2^N evaluations as a square 2^(N/2) × 2^(N/2) matrix; N must
   be even). "prove" is commit + evaluation proof on both sides
+- `hyperplonk` — `N` (vanilla-Plonk circuit of 2^N gates, the end-to-end
+  SNARK: PIOP plus multilinear-KZG batch opening). "prove" starts from the
+  witness and includes the witness commitments; preprocessing is untimed
 
 `compiler` is the zippel compile time alone: source parse + concretization
 + graph construction + prover/verifier projection. It excludes the Rust

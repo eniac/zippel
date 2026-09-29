@@ -1,0 +1,540 @@
+// HyperPlonk SNARK (Chen, Bünz, Boneh, Zhang 2022), end to end: vanilla
+// Plonk gate, gate-identity zerocheck, permutation check, and the batched
+// opening of every claim with multilinear KZG. Aligned message for message
+// with EspressoSystems/hyperplonk (benchmarks/src/hyperplonk_upstream).
+//
+// Sizes: S variables, N = 2^S gates, S >= 2. Three witness columns w0, w1,
+// w2; five selectors q0..q4 with
+//     q0·w0 + q1·w1 + q2·w2 + q3·w0·w1 + q4 = 0 on every gate;
+// four public inputs, the first four entries of w0.
+//
+// Polynomials are multilinear over their evaluation tables, variable 0 the
+// least significant bit, as in arkworks.
+
+// Lagrange (eq) basis at x: 2^J evaluations of eq(x, ·), LSB-first.
+fn eq_weights<F: Field>(instance x: [F; 1]) -> [F; 2] {
+    [1 - x[0], x[0]]
+}
+
+fn eq_weights<F: Field, J: 2..21>(instance x: [F; J]) -> [F; 2 ^ J] {
+    let x_lo = x[0..J - 1];
+    let a = x[J - 1];
+    let prev = eq_weights(x_lo);
+    (prev * (1 - a)) ++ (prev * a)
+}
+
+// eq(x, y) = prod_i (x_i y_i + (1 - x_i)(1 - y_i)).
+fn eq_eval<F: Field, S: Size>(instance x: [F; S], instance y: [F; S]) -> F {
+    reduce(*, [x[i] * y[i] + x[i] * y[i] - x[i] - y[i] + 1 for i in 0..S])
+}
+
+// Draw one challenge per entry of the placeholder.
+fn draw<F: Field>(instance _placeholder: [F; 1]) -> [F; 1] {
+    c <- challenge<F>;
+    [c]
+}
+
+fn draw<F: Field, DK: 2..21>(instance placeholder: [F; DK]) -> [F; DK] {
+    let prev = draw(placeholder[0..DK - 1]);
+    c <- challenge<F>;
+    prev ++ [c]
+}
+
+// The all-ones vector and the identity vector [0, 1, ..., 2^IK - 1], built by
+// doubling from two_pows = [1, 2, 4, ..., 2^(IK-1)].
+fn iota<F: Field>(instance two_pows: [F; 1]) -> {ones: [F; 2], id: [F; 2]} {
+    let one = two_pows[0];
+    {|ones: [one, one], id: [one - one, one]|}
+}
+
+fn iota<F: Field, IK: 2..21>(instance two_pows: [F; IK]) -> {ones: [F; 2 ^ IK], id: [F; 2 ^ IK]} {
+    let prev = iota(two_pows[0..IK - 1]);
+    let top = two_pows[IK - 1];
+    {|ones: prev.ones ++ prev.ones, id: prev.id ++ (prev.id + prev.ones * top)|}
+}
+
+// Product tree of the product check: layer by layer, each entry the product
+// of two adjacent entries of the layer below, 2^PK - 1 entries in all.
+fn prod_tree<F: Field>(witness v: [F; 2]) -> [F; 1] {
+    [v[0] * v[1]]
+}
+
+fn prod_tree<F: Field, PK: 2..21>(witness v: [F; 2 ^ PK]) -> [F; 2 ^ PK - 1] {
+    let layer = v[0, 2..2 ^ PK] * v[1, 2..2 ^ PK + 1];
+    layer ++ prod_tree(layer)
+}
+
+// ===== Sumcheck, one family per round degree =====
+// Round 0 runs in the proto body; each call here fixes variable 0 of `p`
+// to the previous challenge, sends the round polynomial's evaluations at
+// 0..D, and draws the next challenge.
+
+fn sc_d4<F: Field, S: Size, V: 3..S + 1>(
+    witness p: Poly<F, V, 4>,
+    instance points: [F; 5],
+    instance prev_challenges: [F; S - V + 1],
+    instance prev_eval: F,
+    instance ch: F,
+) -> {final_eval: F, challenges: [F; S]} {
+    let residual = eval(p, [ch]);
+    let round_poly = reduce(
+        +,
+        [
+            eval<0>(residual, tail)
+            for tail in [[i / 2 ^ j % 2 for j in 0..V - 2] for i in 0..2 ^ (V - 2)]
+        ],
+    );
+    let evs_local = [round_poly(t) for t in points];
+    evs <- evs_local;
+    verify(prev_eval == evs[0] + evs[1]);
+    let g = interpolate(points, evs);
+    r_next <- challenge<F>;
+    sc_d4(residual, points, prev_challenges ++ [r_next], g(r_next), r_next)
+}
+
+fn sc_d4<F: Field, S: Size>(
+    witness p: Poly<F, 2, 4>,
+    instance points: [F; 5],
+    instance prev_challenges: [F; S - 1],
+    instance prev_eval: F,
+    instance ch: F,
+) -> {final_eval: F, challenges: [F; S]} {
+    let residual = eval(p, [ch]);
+    let evs_local = [residual(t) for t in points];
+    evs <- evs_local;
+    verify(prev_eval == evs[0] + evs[1]);
+    let g = interpolate(points, evs);
+    r_final <- challenge<F>;
+    {|final_eval: g(r_final), challenges: prev_challenges ++ [r_final]|}
+}
+
+fn sc_d5<F: Field, S: Size, V: 3..S + 1>(
+    witness p: Poly<F, V, 5>,
+    instance points: [F; 6],
+    instance prev_challenges: [F; S - V + 1],
+    instance prev_eval: F,
+    instance ch: F,
+) -> {final_eval: F, challenges: [F; S]} {
+    let residual = eval(p, [ch]);
+    let round_poly = reduce(
+        +,
+        [
+            eval<0>(residual, tail)
+            for tail in [[i / 2 ^ j % 2 for j in 0..V - 2] for i in 0..2 ^ (V - 2)]
+        ],
+    );
+    let evs_local = [round_poly(t) for t in points];
+    evs <- evs_local;
+    verify(prev_eval == evs[0] + evs[1]);
+    let g = interpolate(points, evs);
+    r_next <- challenge<F>;
+    sc_d5(residual, points, prev_challenges ++ [r_next], g(r_next), r_next)
+}
+
+fn sc_d5<F: Field, S: Size>(
+    witness p: Poly<F, 2, 5>,
+    instance points: [F; 6],
+    instance prev_challenges: [F; S - 1],
+    instance prev_eval: F,
+    instance ch: F,
+) -> {final_eval: F, challenges: [F; S]} {
+    let residual = eval(p, [ch]);
+    let evs_local = [residual(t) for t in points];
+    evs <- evs_local;
+    verify(prev_eval == evs[0] + evs[1]);
+    let g = interpolate(points, evs);
+    r_final <- challenge<F>;
+    {|final_eval: g(r_final), challenges: prev_challenges ++ [r_final]|}
+}
+
+fn sc_d2<F: Field, S: Size, V: 3..S + 1>(
+    witness p: Poly<F, V, 2>,
+    instance points: [F; 3],
+    instance prev_challenges: [F; S - V + 1],
+    instance prev_eval: F,
+    instance ch: F,
+) -> {final_eval: F, challenges: [F; S]} {
+    let residual = eval(p, [ch]);
+    let round_poly = reduce(
+        +,
+        [
+            eval<0>(residual, tail)
+            for tail in [[i / 2 ^ j % 2 for j in 0..V - 2] for i in 0..2 ^ (V - 2)]
+        ],
+    );
+    let evs_local = [round_poly(t) for t in points];
+    evs <- evs_local;
+    verify(prev_eval == evs[0] + evs[1]);
+    let g = interpolate(points, evs);
+    r_next <- challenge<F>;
+    sc_d2(residual, points, prev_challenges ++ [r_next], g(r_next), r_next)
+}
+
+fn sc_d2<F: Field, S: Size>(
+    witness p: Poly<F, 2, 2>,
+    instance points: [F; 3],
+    instance prev_challenges: [F; S - 1],
+    instance prev_eval: F,
+    instance ch: F,
+) -> {final_eval: F, challenges: [F; S]} {
+    let residual = eval(p, [ch]);
+    let evs_local = [residual(t) for t in points];
+    evs <- evs_local;
+    verify(prev_eval == evs[0] + evs[1]);
+    let g = interpolate(points, evs);
+    r_final <- challenge<F>;
+    {|final_eval: g(r_final), challenges: prev_challenges ++ [r_final]|}
+}
+
+// ===== Multilinear KZG opening =====
+// Fold variable 0 at z[0]: the quotient is odd - even, committed against the
+// next SRS level; `levels` holds levels of 2^(KO-1), ..., 2, 1 bases.
+fn kzg_open<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
+    witness f: [F; 2],
+    extra levels: [G1; 1],
+    instance _z: [F; 1],
+) -> [G1; 1] {
+    let q = f[1..2] - f[0..1];
+    pi <- dot(q, levels);
+    [pi]
+}
+
+fn kzg_open<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, KO: 2..21>(
+    witness f: [F; 2 ^ KO],
+    extra levels: [G1; 2 ^ KO - 1],
+    instance z: [F; KO],
+) -> [G1; KO] {
+    let f_even = f[0, 2..2 ^ KO];
+    let f_odd = f[1, 2..2 ^ KO + 1];
+    let q = f_odd - f_even;
+    pi <- dot(q, levels[0..2 ^ (KO - 1)]);
+    let rest = kzg_open(f_even + q * z[0], levels[2 ^ (KO - 1)..2 ^ KO - 1], z[1..KO]);
+    [pi] ++ rest
+}
+
+proto hyperplonk_snark<
+    G1: Group,
+    G2: Group,
+    GT: Pairing<G1, G2>,
+    F: Scalar<G1, G2>,
+    S: Size,
+    N: 2 ^ S,
+>(
+    witness w0: [F; N],
+    witness w1: [F; N],
+    witness w2: [F; N],
+    // Circuit: selectors and wiring permutation (prover's copies) and their
+    // commitments (the verifying key).
+    extra q0: [F; N],
+    extra q1: [F; N],
+    extra q2: [F; N],
+    extra q3: [F; N],
+    extra q4: [F; N],
+    extra s0: [F; N],
+    extra s1: [F; N],
+    extra s2: [F; N],
+    instance sel_comms: [G1; 5],
+    instance perm_comms: [G1; 3],
+    instance pub_input: [F; 4],
+    // Multilinear KZG: prover key levels of N, N/2, ..., 1 bases (the last
+    // is g); verifier key g, h, and t_i·h.
+    extra ck: [G1; 2 * N - 1],
+    instance g: G1,
+    instance h: G2,
+    instance h_mask: [G2; S],
+) where
+    let zero = pub_input[0] - pub_input[0];
+    // Wiring as a scalar identity: the multisets of (cell, value) pairs
+    // agree between the identity and the permuted wiring (Schwartz-Zippel
+    // over the random y, x).
+    let y = random<F>;
+    let x = random<F>;
+    let cells = [i * (zero + 1) for i in 0..N];
+    reduce(&&, q0 * w0 + q1 * w1 + q2 * w2 + q3 * w0 * w1 + q4 == [zero for _ in 0..N])
+        && reduce(&&, pub_input == w0[0..4])
+        && reduce(*, [cells[i] + y * w0[i] + x for i in 0..N])
+            * reduce(*, [cells[i] + N * (zero + 1) + y * w1[i] + x for i in 0..N])
+            * reduce(*, [cells[i] + 2 * N * (zero + 1) + y * w2[i] + x for i in 0..N])
+            == reduce(*, [s0[i] + y * w0[i] + x for i in 0..N])
+                * reduce(*, [s1[i] + y * w1[i] + x for i in 0..N])
+                * reduce(*, [s2[i] + y * w2[i] + x for i in 0..N])
+        && reduce(
+            &&,
+            sel_comms
+                == [
+                    dot(q0, ck[0..N]),
+                    dot(q1, ck[0..N]),
+                    dot(q2, ck[0..N]),
+                    dot(q3, ck[0..N]),
+                    dot(q4, ck[0..N]),
+                ],
+        )
+        && reduce(&&, perm_comms == [dot(s0, ck[0..N]), dot(s1, ck[0..N]), dot(s2, ck[0..N])])
+{
+    let zero = pub_input[0] - pub_input[0];
+    let one = zero + 1;
+    let neg_one = zero - one;
+    let placeholder = [zero for _ in 0..S];
+    let ck0 = ck[0..N];
+    let two_pows = [2 ^ i * one for i in 0..S];
+    let iota_n = iota(two_pows);
+    let ones = iota_n.ones;
+    let id_vec = iota_n.id;
+
+    // ---------------------------------------------------------------
+    // 1. Commit the witness columns.
+    // ---------------------------------------------------------------
+    c_w0 <- dot(w0, ck0);
+    c_w1 <- dot(w1, ck0);
+    c_w2 <- dot(w2, ck0);
+
+    let w0_m = mle(w0);
+    let w1_m = mle(w1);
+    let w2_m = mle(w2);
+
+    // ---------------------------------------------------------------
+    // 2. Gate identity: zerocheck of f = q0 w0 + q1 w1 + q2 w2 + q3 w0 w1 + q4,
+    //    a sumcheck of f(x)·eq(x, r_g) with degree-4 rounds.
+    // ---------------------------------------------------------------
+    let r_g = draw(placeholder);
+    let f_gate = mle(q0) * w0_m + mle(q1) * w1_m + mle(q2) * w2_m + mle(q3) * w0_m * w1_m + mle(q4);
+    let f_hat = f_gate * mle(eq_weights(r_g));
+
+    let pts5 = [i * one for i in 0..5];
+    let g_round0 = reduce(
+        +,
+        [
+            eval<0>(f_hat, tail)
+            for tail in [[i / 2 ^ j % 2 for j in 0..S - 1] for i in 0..2 ^ (S - 1)]
+        ],
+    );
+    let g_evs0_local = [g_round0(t) for t in pts5];
+    g_evs0 <- g_evs0_local;
+    verify(zero == g_evs0[0] + g_evs0[1]);
+    let g_poly0 = interpolate(pts5, g_evs0);
+    rg0 <- challenge<F>;
+    let gate_sc = sc_d4(f_hat, pts5, [rg0], g_poly0(rg0), rg0);
+    let zg = gate_sc.challenges;
+
+    // ---------------------------------------------------------------
+    // 3. Permutation check: numerators w + beta·id + gamma, denominators
+    //    w + beta·sigma + gamma, frac = prod(num) / prod(den), and the
+    //    product tree prod; then a zerocheck of
+    //      Q = prod - p1·p2 + alpha·(frac·d0·d1·d2 - n0·n1·n2)
+    //    with degree-5 rounds.
+    // ---------------------------------------------------------------
+    beta <- challenge<F>;
+    gamma <- challenge<F>;
+    let n_off = N * one;
+    let beta_id = id_vec * beta;
+    let n0 = w0 + (beta_id + ones * gamma);
+    let n1 = w1 + (beta_id + ones * (gamma + beta * n_off));
+    let n2 = w2 + (beta_id + ones * (gamma + beta * (n_off + n_off)));
+    let d0 = w0 + (s0 * beta + ones * gamma);
+    let d1 = w1 + (s1 * beta + ones * gamma);
+    let d2 = w2 + (s2 * beta + ones * gamma);
+    let frac = n0 * n1 * n2 / (d0 * d1 * d2);
+    let prod = prod_tree(frac) ++ [zero];
+
+    c_frac <- dot(frac, ck0);
+    c_prod <- dot(prod, ck0);
+    alpha <- challenge<F>;
+
+    let p1 = frac[0, 2..N] ++ prod[0, 2..N];
+    let p2 = frac[1, 2..N + 1] ++ prod[1, 2..N + 1];
+    let frac_m = mle(frac);
+    let prod_m = mle(prod);
+    let neg_alpha = zero - alpha;
+    let q_perm = prod_m
+        + mle(p1) * neg_one * mle(p2)
+        + mle(d0) * alpha * mle(d1) * mle(d2) * frac_m
+        + mle(n0) * neg_alpha * mle(n1) * mle(n2);
+
+    let r_p = draw(placeholder);
+    let q_hat = q_perm * mle(eq_weights(r_p));
+
+    let pts6 = [i * one for i in 0..6];
+    let p_round0 = reduce(
+        +,
+        [
+            eval<0>(q_hat, tail)
+            for tail in [[i / 2 ^ j % 2 for j in 0..S - 1] for i in 0..2 ^ (S - 1)]
+        ],
+    );
+    let p_evs0_local = [p_round0(t) for t in pts6];
+    p_evs0 <- p_evs0_local;
+    verify(zero == p_evs0[0] + p_evs0[1]);
+    let p_poly0 = interpolate(pts6, p_evs0);
+    rp0 <- challenge<F>;
+    let perm_sc = sc_d5(q_hat, pts6, [rp0], p_poly0(rp0), rp0);
+    let zp = perm_sc.challenges;
+
+    // ---------------------------------------------------------------
+    // 4. Evaluations at the opening points.
+    // ---------------------------------------------------------------
+    let pc0 = [zero] ++ zp[0..S - 1];
+    let pc1 = [one] ++ zp[0..S - 1];
+    let fin = [zero] ++ [one for _ in 0..S - 1];
+    let r_pi = draw([zero, zero]);
+    let rpi_ext = r_pi ++ placeholder;
+    let rpi = rpi_ext[0..S];
+
+    let e_zp = eq_weights(zp);
+    let e_pc0 = eq_weights(pc0);
+    let e_pc1 = eq_weights(pc1);
+    let e_fin = eq_weights(fin);
+    let e_zg = eq_weights(zg);
+    let e_rpi = eq_weights(rpi);
+
+    let evals_local = [
+        dot(e_zp, prod),
+        dot(e_pc0, prod),
+        dot(e_pc1, prod),
+        dot(e_fin, prod),
+        dot(e_zp, frac),
+        dot(e_pc0, frac),
+        dot(e_pc1, frac),
+        dot(e_zp, s0),
+        dot(e_zp, s1),
+        dot(e_zp, s2),
+        dot(e_zp, w0),
+        dot(e_zp, w1),
+        dot(e_zp, w2),
+        dot(e_zg, w0),
+        dot(e_zg, w1),
+        dot(e_zg, w2),
+        dot(e_zg, q0),
+        dot(e_zg, q1),
+        dot(e_zg, q2),
+        dot(e_zg, q3),
+        dot(e_zg, q4),
+        dot(e_rpi, w0),
+    ];
+    evals <- evals_local;
+
+    // Gate identity at zg.
+    let f_at_zg = evals[16] * evals[13]
+        + evals[17] * evals[14]
+        + evals[18] * evals[15]
+        + evals[19] * evals[13] * evals[14]
+        + evals[20];
+    verify(gate_sc.final_eval == f_at_zg * eq_eval(zg, r_g));
+
+    // Permutation check at zp; the identity wiring evaluates to
+    // sum_i 2^i zp_i + l·N on column l.
+    let x1 = zp[S - 1];
+    let p1_at = evals[5] + x1 * (evals[1] - evals[5]);
+    let p2_at = evals[6] + x1 * (evals[2] - evals[6]);
+    let id0 = dot(two_pows, zp);
+    let f_prod = (evals[10] + beta * id0 + gamma)
+        * (evals[11] + beta * (id0 + n_off) + gamma)
+        * (evals[12] + beta * (id0 + n_off + n_off) + gamma);
+    let g_prod = (evals[10] + beta * evals[7] + gamma)
+        * (evals[11] + beta * evals[8] + gamma)
+        * (evals[12] + beta * evals[9] + gamma);
+    let q_at_zp = evals[0] - p1_at * p2_at + alpha * (evals[4] * g_prod - f_prod);
+    verify(perm_sc.final_eval == q_at_zp * eq_eval(zp, r_p));
+
+    // Public inputs.
+    verify(dot(eq_weights(r_pi), pub_input) == evals[21]);
+
+    // ---------------------------------------------------------------
+    // 5. Batch opening: merge the claims per point with eq(t, i) weights,
+    //    sumcheck sum_j g_j(b)·eq(b, z_j) down to one point a2, and open
+    //    g' = sum_j eq(a2, z_j)·g_j there.
+    // ---------------------------------------------------------------
+    let et = eq_weights(draw([zero, zero, zero, zero, zero]));
+    let g_zp = prod * et[0]
+        + frac * et[4]
+        + s0 * et[7]
+        + s1 * et[8]
+        + s2 * et[9]
+        + w0 * et[10]
+        + w1 * et[11]
+        + w2 * et[12];
+    let g_pc0 = prod * et[1] + frac * et[5];
+    let g_pc1 = prod * et[2] + frac * et[6];
+    let g_fin = prod * et[3];
+    let g_zg = w0 * et[13]
+        + w1 * et[14]
+        + w2 * et[15]
+        + q0 * et[16]
+        + q1 * et[17]
+        + q2 * et[18]
+        + q3 * et[19]
+        + q4 * et[20];
+    let g_rpi = w0 * et[21];
+    let b_poly = mle(g_zp) * mle(e_zp)
+        + mle(g_pc0) * mle(e_pc0)
+        + mle(g_pc1) * mle(e_pc1)
+        + mle(g_fin) * mle(e_fin)
+        + mle(g_zg) * mle(e_zg)
+        + mle(g_rpi) * mle(e_rpi);
+    let b_claim = dot(et[0..22], evals);
+
+    let pts3 = [i * one for i in 0..3];
+    let b_round0 = reduce(
+        +,
+        [
+            eval<0>(b_poly, tail)
+            for tail in [[i / 2 ^ j % 2 for j in 0..S - 1] for i in 0..2 ^ (S - 1)]
+        ],
+    );
+    let b_evs0_local = [b_round0(t) for t in pts3];
+    b_evs0 <- b_evs0_local;
+    verify(b_claim == b_evs0[0] + b_evs0[1]);
+    let b_poly0 = interpolate(pts3, b_evs0);
+    rb0 <- challenge<F>;
+    let batch_sc = sc_d2(b_poly, pts3, [rb0], b_poly0(rb0), rb0);
+    let a2 = batch_sc.challenges;
+
+    let a_zp = eq_eval(a2, zp);
+    let a_pc0 = eq_eval(a2, pc0);
+    let a_pc1 = eq_eval(a2, pc1);
+    let a_fin = eq_eval(a2, fin);
+    let a_zg = eq_eval(a2, zg);
+    let a_rpi = eq_eval(a2, rpi);
+    let g_prime = g_zp * a_zp
+        + g_pc0 * a_pc0
+        + g_pc1 * a_pc1
+        + g_fin * a_fin
+        + g_zg * a_zg
+        + g_rpi * a_rpi;
+    let pis = kzg_open(g_prime, ck[N..2 * N - 1], a2);
+
+    // The verifier's commitment to g', and the multilinear KZG check
+    //   prod_i e(pi_i, t_i·h - a2_i·h) · e(v·g - C', h) == 1.
+    let comms = [c_prod, c_prod, c_prod, c_prod, c_frac, c_frac, c_frac]
+        ++ perm_comms
+        ++ [c_w0, c_w1, c_w2, c_w0, c_w1, c_w2]
+        ++ sel_comms
+        ++ [c_w0];
+    let weights = [
+        a_zp * et[0],
+        a_pc0 * et[1],
+        a_pc1 * et[2],
+        a_fin * et[3],
+        a_zp * et[4],
+        a_pc0 * et[5],
+        a_pc1 * et[6],
+        a_zp * et[7],
+        a_zp * et[8],
+        a_zp * et[9],
+        a_zp * et[10],
+        a_zp * et[11],
+        a_zp * et[12],
+        a_zg * et[13],
+        a_zg * et[14],
+        a_zg * et[15],
+        a_zg * et[16],
+        a_zg * et[17],
+        a_zg * et[18],
+        a_zg * et[19],
+        a_zg * et[20],
+        a_rpi * et[21],
+    ];
+    let c_prime = dot(weights, comms);
+    let h_vec = h_mask - a2 * h;
+    let pairing = dot(pis ++ [g * batch_sc.final_eval - c_prime], h_vec ++ [h]);
+    verify(pairing == pairing - pairing)
+}

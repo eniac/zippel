@@ -73,6 +73,8 @@ pub mod dekart_upstream;
 pub mod dory;
 pub mod dory_upstream;
 pub mod groth16;
+pub mod hyperplonk;
+pub mod hyperplonk_upstream;
 pub mod hyrax;
 #[allow(warnings)]
 pub mod hyrax_upstream;

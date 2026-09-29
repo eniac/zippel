@@ -15,7 +15,7 @@ pub use errors::TranscriptError;
 use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
 use merlin::Transcript;
-use std::marker::PhantomData;
+use std::{collections::VecDeque, marker::PhantomData};
 
 /// An IOP transcript consists of a Merlin transcript and a flag `is_empty` to
 /// indicate that if the transcript is empty.
@@ -30,6 +30,10 @@ use std::marker::PhantomData;
 pub struct IOPTranscript<F: PrimeField> {
     transcript: Transcript,
     is_empty: bool,
+    /// Test hook (not upstream): when set, challenges are popped from this
+    /// queue instead of squeezed, so a proof can be replayed against
+    /// challenges drawn by another implementation.
+    replay: Option<VecDeque<F>>,
     #[doc(hidden)]
     phantom: PhantomData<F>,
 }
@@ -41,8 +45,17 @@ impl<F: PrimeField> IOPTranscript<F> {
         Self {
             transcript: Transcript::new(label),
             is_empty: true,
+            replay: None,
             phantom: PhantomData,
         }
+    }
+
+    /// Test hook (not upstream): answer every later challenge from
+    /// `challenges`, in order. Panics if the queue runs out.
+    #[must_use]
+    pub fn replay(mut self, challenges: Vec<F>) -> Self {
+        self.replay = Some(challenges.into());
+        self
     }
 
     // Append the message to the transcript.
@@ -87,9 +100,14 @@ impl<F: PrimeField> IOPTranscript<F> {
             ));
         }
 
-        let mut buf = [0u8; 64];
-        self.transcript.challenge_bytes(label, &mut buf);
-        let challenge = F::from_le_bytes_mod_order(&buf);
+        let challenge = match &mut self.replay {
+            Some(queue) => queue.pop_front().expect("replay queue exhausted"),
+            None => {
+                let mut buf = [0u8; 64];
+                self.transcript.challenge_bytes(label, &mut buf);
+                F::from_le_bytes_mod_order(&buf)
+            }
+        };
         self.append_serializable_element(label, &challenge)?;
         Ok(challenge)
     }

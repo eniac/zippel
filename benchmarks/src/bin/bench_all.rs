@@ -28,7 +28,8 @@
 //! sized by `RAYON_NUM_THREADS` is the reliable path.
 
 use benchmarks::{
-    Timing, dekart, dory, groth16, hyrax, ipa, kzg, kzh, pari, pst13, schnorr, spartan, sumcheck,
+    Timing, dekart, dory, groth16, hyperplonk, hyrax, ipa, kzg, kzh, pari, pst13, schnorr, spartan,
+    sumcheck,
 };
 use clap::Parser;
 use libspartan::{Instance, NIZK, NIZKGens};
@@ -40,8 +41,19 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 const ALL_SYSTEMS: &[&str] = &[
-    "schnorr", "sumcheck", "ipa", "kzg", "pari", "groth16", "pst13", "hyrax", "spartan", "dekart",
-    "kzh", "dory",
+    "schnorr",
+    "sumcheck",
+    "ipa",
+    "kzg",
+    "pari",
+    "groth16",
+    "pst13",
+    "hyrax",
+    "spartan",
+    "dekart",
+    "kzh",
+    "dory",
+    "hyperplonk",
 ];
 
 #[derive(Parser, Debug)]
@@ -127,6 +139,8 @@ const ZIPPEL_SPARTAN: &str = include_str!("../../../examples/spartan/spartan.zip
 const ZIPPEL_DEKART: &str = include_str!("../../../examples/dekart/dekart.zippel");
 const ZIPPEL_KZH: &str = include_str!("../../../examples/kzh/kzh.zippel");
 const ZIPPEL_DORY: &str = include_str!("../../../examples/dory_pcs/dory_pcs.zippel");
+const ZIPPEL_HYPERPLONK: &str =
+    include_str!("../../../examples/hyperplonk_snark/hyperplonk_snark.zippel");
 
 const NATIVE_IPA_RS: &str = include_str!("../../src/ipa.rs");
 // DeKART native baseline is vendored from aptos-dkg's dekart_univariate_v2
@@ -136,6 +150,9 @@ const NATIVE_IPA_RS: &str = include_str!("../../src/ipa.rs");
 const NATIVE_DEKART_MOD_RS: &str = include_str!("../../src/dekart_upstream/mod.rs");
 const NATIVE_KZH_MOD_RS: &str = include_str!("../../src/kzh_upstream/mod.rs");
 const NATIVE_DORY_MOD_RS: &str = include_str!("../../src/dory_upstream/mod.rs");
+const NATIVE_HYPERPLONK_PCS_RS: &str = include_str!("../../src/hyperplonk_upstream/pcs.rs");
+const NATIVE_HYPERPLONK_PIOP_RS: &str = include_str!("../../src/hyperplonk_upstream/piop.rs");
+const NATIVE_HYPERPLONK_SNARK_RS: &str = include_str!("../../src/hyperplonk_upstream/snark.rs");
 // Bit width for the DeKART bench: the middle of upstream's
 // BIT_WIDTHS = [8, 16, 32, 64] grid. Use the standalone `dekart` bin's
 // `--ell` to vary it.
@@ -260,6 +277,7 @@ fn zippel_ncloc(sys: &str) -> usize {
         "dekart" => count_ncloc_line_comments(ZIPPEL_DEKART),
         "kzh" => count_ncloc_line_comments(ZIPPEL_KZH),
         "dory" => count_ncloc_line_comments(ZIPPEL_DORY),
+        "hyperplonk" => count_ncloc_line_comments(ZIPPEL_HYPERPLONK),
         _ => 0,
     }
 }
@@ -280,6 +298,13 @@ fn native_ncloc(baseline: &str) -> usize {
         }
         "ipa" => count_ncloc_rust(extract_braced_block(NATIVE_IPA_RS, "pub mod native_side")),
         "hyrax" => count_ncloc_rust(NATIVE_HYRAX_MOD_RS),
+        // The SNARK layers plus the vendored sumcheck stack they run on.
+        "hyperplonk" => {
+            SUMCHECK_EXT_NCLOC
+                + count_ncloc_rust(NATIVE_HYPERPLONK_PCS_RS)
+                + count_ncloc_rust(NATIVE_HYPERPLONK_PIOP_RS)
+                + count_ncloc_rust(NATIVE_HYPERPLONK_SNARK_RS)
+        }
         "dory" => count_ncloc_rust(
             NATIVE_DORY_MOD_RS
                 .split("#[cfg(test)]")
@@ -771,6 +796,37 @@ fn run_dory(threads: usize, ns: &[usize]) -> Vec<Row> {
         .collect()
 }
 
+fn run_hyperplonk(threads: usize, ns: &[usize]) -> Vec<Row> {
+    ns.iter()
+        .map(|&n| {
+            let sh = setup_pool().install(|| hyperplonk::shared::build(n));
+            let mut z = setup_pool().install(|| hyperplonk::zippel_side::Setup::new(&sh));
+            let np = hyperplonk::native_side::Setup::new(&sh);
+            let compile = z.compile_time();
+            let (prover_nodes, verifier_nodes) = z.graph_sizes();
+            let zippel = z.time_protocol();
+            let native = timed_pool().install(|| np.time_protocol());
+            let r = Row {
+                system: "hyperplonk",
+                threads,
+                log_size: n,
+                zippel,
+                compile,
+                baselines: vec![Baseline {
+                    name: "hyperplonk",
+                    ncloc: native_ncloc("hyperplonk"),
+                    prove: native.prove,
+                    verify: native.verify,
+                }],
+                prover_nodes,
+                verifier_nodes,
+            };
+            print_row(&r);
+            r
+        })
+        .collect()
+}
+
 fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
     ms.iter()
         .map(|&m| {
@@ -1198,6 +1254,12 @@ fn main() {
         (None, true) => vec![4usize, 8],
         (None, false) => vec![18usize],
     };
+    // HyperPlonk's size knob is the number of variables (2^N gates).
+    let hyperplonk_ns = match (&args.sizes, args.quick) {
+        (Some(ls), _) => ls.clone(),
+        (None, true) => vec![4usize, 8],
+        (None, false) => vec![18usize],
+    };
     let sumcheck_degree = 3usize;
     let pari_n_pub = 1usize;
     let pari_k_vars = 3usize;
@@ -1247,6 +1309,7 @@ fn main() {
             "dekart" => run_dekart(threads, &dekart_ls, DEKART_ELL),
             "kzh" => run_kzh(threads, &kzh_ns),
             "dory" => run_dory(threads, &dory_ns),
+            "hyperplonk" => run_hyperplonk(threads, &hyperplonk_ns),
             other => panic!("unknown system: {other}"),
         };
         all_rows.extend(chunk);
