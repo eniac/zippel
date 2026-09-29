@@ -51,6 +51,10 @@ pub struct ZippelTiming {
     pub proof_bytes: usize,
     /// Whether the verifier graph returned all-`true`, i.e. the proof checked.
     pub passed: bool,
+    /// Peak heap of one prover run (see [`crate::mem`]).
+    pub prove_peak: usize,
+    /// Peak heap of one verifier run.
+    pub verify_peak: usize,
 }
 
 /// Compiled Spartan protocol plus its pre-generated prover inputs, reused
@@ -121,41 +125,26 @@ impl Setup {
     /// Unlike the other benches this does not assert on a failed verification;
     /// the outcome is reported in [`ZippelTiming::passed`].
     pub fn time_protocol(&mut self) -> ZippelTiming {
-        let mut prove_sum = std::time::Duration::ZERO;
-        let mut last_proof = None;
-        for _ in 0..*crate::PROVER_SAMPLES {
-            let inputs_c = self.inputs.clone();
-            let t = Instant::now();
-            let proof = self
-                .handler
-                .run_prover(&inputs_c)
-                .expect("zippel spartan prover failed");
-            prove_sum += t.elapsed();
-            last_proof = Some(proof);
-        }
-        let prove = prove_sum / *crate::PROVER_SAMPLES;
-        let proof = last_proof.expect("PROVER_SAMPLES > 0");
+        let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+            self.handler
+                .run_prover(&self.inputs)
+                .expect("zippel spartan prover failed")
+        });
         let proof_bytes = proof_size_bytes::<ArkCurve25519>(&proof);
-        let mut verify_sum = std::time::Duration::ZERO;
-        let mut last_result = None;
-        for _ in 0..crate::VERIFY_SAMPLES {
-            let proof_c = proof.clone();
-            let t = Instant::now();
-            let verifier_result = self
-                .handler
-                .run_verifier(&proof_c, &self.inputs)
-                .expect("zippel spartan verifier failed");
-            verify_sum += t.elapsed();
-            last_result = Some(verifier_result);
-        }
-        let verify = verify_sum / crate::VERIFY_SAMPLES;
-        let passed = check_verification(&last_result.expect("VERIFY_SAMPLES > 0"));
+        let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+            self.handler
+                .run_verifier(&proof, &self.inputs)
+                .expect("zippel spartan verifier failed")
+        });
+        let passed = check_verification(&result);
 
         ZippelTiming {
             prove,
             verify,
             proof_bytes,
             passed,
+            prove_peak,
+            verify_peak,
         }
     }
 
@@ -169,6 +158,8 @@ impl Setup {
         Timing {
             prove: t.prove,
             verify: t.verify,
+            prove_peak: t.prove_peak,
+            verify_peak: t.verify_peak,
         }
     }
 

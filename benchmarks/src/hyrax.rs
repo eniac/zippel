@@ -141,36 +141,26 @@ pub mod zippel_side {
         /// Panics if the prover or verifier graph fails to execute, or if the
         /// verifier rejects the honestly generated proof.
         pub fn time_protocol(&mut self) -> Timing {
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last_proof = None;
-            for _ in 0..*crate::PROVER_SAMPLES {
-                let inputs_c = self.inputs.clone();
-                let t = Instant::now();
-                let proof = self
-                    .handler
-                    .run_prover(&inputs_c)
-                    .expect("zippel hyrax prover failed");
-                prove_sum += t.elapsed();
-                last_proof = Some(proof);
+            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+                self.handler
+                    .run_prover(&self.inputs)
+                    .expect("zippel hyrax prover failed")
+            });
+            let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+                self.handler
+                    .run_verifier(&proof, &self.inputs)
+                    .expect("zippel hyrax verifier failed")
+            });
+            assert!(
+                check_verification(&result),
+                "zippel hyrax verification FAILED"
+            );
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
             }
-            let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let proof = last_proof.expect("PROVER_SAMPLES > 0");
-            let mut verify_sum = std::time::Duration::ZERO;
-            let mut last_result = None;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let proof_c = proof.clone();
-                let t = Instant::now();
-                let verifier_result = self
-                    .handler
-                    .run_verifier(&proof_c, &self.inputs)
-                    .expect("zippel hyrax verifier failed");
-                verify_sum += t.elapsed();
-                last_result = Some(verifier_result);
-            }
-            let verify = verify_sum / crate::VERIFY_SAMPLES;
-            let result = check_verification(&last_result.expect("VERIFY_SAMPLES > 0"));
-            assert!(result, "zippel hyrax verification FAILED");
-            Timing { prove, verify }
         }
 
         /// Node counts of the projected prover and verifier graphs, in that
@@ -220,7 +210,6 @@ pub mod native_side {
     };
     use ark_ff::{PrimeField, UniformRand};
     use ark_poly::{DenseMultilinearExtension, MultilinearExtension, Polynomial};
-    use std::time::Instant;
 
     use crate::hyrax_upstream::{self, CommitterKey, VerifierKey};
 
@@ -288,32 +277,24 @@ pub mod native_side {
             let point = &self.point;
             let _ = self.value;
 
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last_outputs = None;
-            for _ in 0..*crate::PROVER_SAMPLES {
-                let t = Instant::now();
+            let (prove, prove_peak, (com, proof)) = crate::sample(*crate::PROVER_SAMPLES, || {
                 let (com, state) = hyrax_upstream::commit(&self.ck, &self.poly);
                 let mut sponge = test_sponge::<Fr>();
                 let proof = hyrax_upstream::open(&self.ck, &com, point, &mut sponge, &state);
-                prove_sum += t.elapsed();
-                last_outputs = Some((com, proof));
-            }
-            let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let (com, proof) = last_outputs.expect("PROVER_SAMPLES > 0");
+                (com, proof)
+            });
+            let (verify, verify_peak, ok) =
+                crate::sample_with(crate::VERIFY_SAMPLES, test_sponge::<Fr>, |mut sponge_v| {
+                    hyrax_upstream::check(&self.vk, &com, point, &proof, &mut sponge_v)
+                });
+            assert!(ok, "vendored Hyrax verification FAILED");
 
-            let mut verify_sum = std::time::Duration::ZERO;
-            let mut last_ok = false;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let mut sponge_v = test_sponge::<Fr>();
-                let t = Instant::now();
-                let ok = hyrax_upstream::check(&self.vk, &com, point, &proof, &mut sponge_v);
-                verify_sum += t.elapsed();
-                last_ok = ok;
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
             }
-            let verify = verify_sum / crate::VERIFY_SAMPLES;
-            assert!(last_ok, "vendored Hyrax verification FAILED");
-
-            Timing { prove, verify }
         }
     }
 

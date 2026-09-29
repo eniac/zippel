@@ -97,41 +97,25 @@ pub mod zippel_side {
             // Average the prover over VERIFY_SAMPLES samples too.
             // Schnorr's sign is ~0.1ms — single-shot is dominated by
             // jitter — so we sample at the same rate as the verifier.
-            // Inputs + scheduled both have to be cloned per iter since
-            // run_prover consumes them; clones happen outside the per-
-            // call timer.
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last_proof = None;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let inputs_c = inputs.clone();
-                let t = Instant::now();
-                let proof = self
-                    .handler
-                    .run_prover(&inputs_c)
-                    .expect("run_prover failed");
-                prove_sum += t.elapsed();
-                last_proof = Some(proof);
-            }
-            let prove = prove_sum / crate::VERIFY_SAMPLES;
-            let proof = last_proof.expect("VERIFY_SAMPLES > 0");
-            let mut verify_sum = std::time::Duration::ZERO;
-            let mut last_result = None;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let proof_c = proof.clone();
-                let t = Instant::now();
-                let verifier_result = self
-                    .handler
-                    .run_verifier(&proof_c, &inputs)
-                    .expect("run_verifier failed");
-                verify_sum += t.elapsed();
-                last_result = Some(verifier_result);
-            }
-            let verify = verify_sum / crate::VERIFY_SAMPLES;
+            let (prove, prove_peak, proof) = crate::sample(crate::VERIFY_SAMPLES, || {
+                self.handler.run_prover(&inputs).expect("run_prover failed")
+            });
+            let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+                self.handler
+                    .run_verifier(&proof, &inputs)
+                    .expect("run_verifier failed")
+            });
+            assert!(
+                check_verification(&result),
+                "zippel schnorr verification FAILED"
+            );
 
-            let result = check_verification(&last_result.expect("VERIFY_SAMPLES > 0"));
-            assert!(result, "zippel schnorr verification FAILED");
-
-            Timing { prove, verify }
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
+            }
         }
     }
 
@@ -153,7 +137,6 @@ pub mod native_side {
     use ark_bls12_381::G1Projective;
     use ark_crypto_primitives::signature::{SignatureScheme, schnorr::Schnorr};
     use blake2::Blake2s256;
-    use std::time::Instant;
 
     type SchnorrSig = Schnorr<G1Projective, Blake2s256>;
 
@@ -202,32 +185,22 @@ pub mod native_side {
             // fresh randomness per call (and so does the zippel side, via
             // `random<F>` in the proto), so each sample is an independent
             // signature; the last one is what we verify against.
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last_sig = None;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let t = Instant::now();
-                let sig = SchnorrSig::sign(&self.params, &self.sk, &self.message, &mut rng)
-                    .expect("schnorr sign");
-                prove_sum += t.elapsed();
-                last_sig = Some(sig);
+            let (prove, prove_peak, sig) = crate::sample(crate::VERIFY_SAMPLES, || {
+                SchnorrSig::sign(&self.params, &self.sk, &self.message, &mut rng)
+                    .expect("schnorr sign")
+            });
+            let (verify, verify_peak, ok) = crate::sample(crate::VERIFY_SAMPLES, || {
+                SchnorrSig::verify(&self.params, &self.pk, &self.message, &sig)
+                    .expect("schnorr verify")
+            });
+            assert!(ok, "ark-crypto-primitives schnorr verification FAILED");
+
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
             }
-            let prove = prove_sum / crate::VERIFY_SAMPLES;
-            let sig = last_sig.expect("VERIFY_SAMPLES > 0");
-
-            let mut verify_sum = std::time::Duration::ZERO;
-            let mut last_ok = false;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let t = Instant::now();
-                let ok = SchnorrSig::verify(&self.params, &self.pk, &self.message, &sig)
-                    .expect("schnorr verify");
-                verify_sum += t.elapsed();
-                last_ok = ok;
-            }
-            let verify = verify_sum / crate::VERIFY_SAMPLES;
-
-            assert!(last_ok, "ark-crypto-primitives schnorr verification FAILED");
-
-            Timing { prove, verify }
         }
     }
 

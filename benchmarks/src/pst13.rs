@@ -216,7 +216,6 @@ pub mod native_side {
     use ark_ff::UniformRand;
     use ark_poly::{DenseMultilinearExtension, MultilinearExtension, Polynomial};
     use ark_std::rand::SeedableRng;
-    use std::time::Instant;
 
     use crate::pst13_upstream::MultilinearPC;
     use crate::pst13_upstream::data_structures::{CommitterKey, VerifierKey};
@@ -297,30 +296,22 @@ pub mod native_side {
             // own the worker pool exclusively; open's internal
             // pipelining (in `pst13_upstream::open`) is preserved and
             // still gives the t=1,2,4 wins.
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last_outputs = None;
-            for _ in 0..*crate::PROVER_SAMPLES {
-                let t = Instant::now();
+            let (prove, prove_peak, (comm, proof)) = crate::sample(*crate::PROVER_SAMPLES, || {
                 let comm = Pcs::commit(&self.ck, &poly);
                 let proof = Pcs::open(&self.ck, &poly, &point);
-                prove_sum += t.elapsed();
-                last_outputs = Some((comm, proof));
-            }
-            let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let (comm, proof) = last_outputs.expect("PROVER_SAMPLES > 0");
+                (comm, proof)
+            });
+            let (verify, verify_peak, ok) = crate::sample(crate::VERIFY_SAMPLES, || {
+                Pcs::check(&self.vk, &comm, &point, value, &proof)
+            });
+            assert!(ok, "ark-poly-commit MultilinearPC verification FAILED");
 
-            let mut verify_sum = std::time::Duration::ZERO;
-            let mut last_ok = false;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let t = Instant::now();
-                let ok = Pcs::check(&self.vk, &comm, &point, value, &proof);
-                verify_sum += t.elapsed();
-                last_ok = ok;
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
             }
-            let verify = verify_sum / crate::VERIFY_SAMPLES;
-            assert!(last_ok, "ark-poly-commit MultilinearPC verification FAILED");
-
-            Timing { prove, verify }
         }
     }
 }
@@ -341,7 +332,6 @@ mod textbook_native_side {
     use ark_ec::scalar_mul::ScalarMul;
     use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
     use ark_ff::PrimeField;
-    use std::time::Instant;
 
     type E = Bls12_381;
 
@@ -360,16 +350,16 @@ mod textbook_native_side {
         }
 
         pub fn time_protocol(&self) -> Timing {
-            let t = Instant::now();
-            let proof = prove(self.shared);
-            let prove = t.elapsed();
-
-            let t = Instant::now();
-            let ok = verify(self.shared, &proof);
-            let verify = t.elapsed();
+            let (prove, prove_peak, proof) = crate::sample(1, || prove(self.shared));
+            let (verify, verify_peak, ok) = crate::sample(1, || verify(self.shared, &proof));
             assert!(ok, "native PST13 verification FAILED");
 
-            Timing { prove, verify }
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
+            }
         }
     }
 
@@ -561,37 +551,26 @@ pub mod zippel_side {
         /// Panics if either graph fails to execute, if `PROVER_SAMPLES` is
         /// zero, or if verification does not pass.
         pub fn time_protocol(&mut self) -> Timing {
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last_proof = None;
-            for _ in 0..*crate::PROVER_SAMPLES {
-                let inputs_c = self.inputs_base.clone();
-                let t = Instant::now();
-                let proof = self
-                    .handler
-                    .run_prover(&inputs_c)
-                    .expect("zippel pst13 prover failed");
-                prove_sum += t.elapsed();
-                last_proof = Some(proof);
+            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+                self.handler
+                    .run_prover(&self.inputs_base)
+                    .expect("zippel pst13 prover failed")
+            });
+            let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+                self.handler
+                    .run_verifier(&proof, &self.inputs_base)
+                    .expect("zippel pst13 verifier failed")
+            });
+            assert!(
+                check_verification(&result),
+                "zippel PST13 verification FAILED"
+            );
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
             }
-            let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let proof = last_proof.expect("PROVER_SAMPLES > 0");
-            let mut verify_sum = std::time::Duration::ZERO;
-            let mut last_result = None;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let proof_c = proof.clone();
-                let t = Instant::now();
-                let verifier_result = self
-                    .handler
-                    .run_verifier(&proof_c, &self.inputs_base)
-                    .expect("zippel pst13 verifier failed");
-                verify_sum += t.elapsed();
-                last_result = Some(verifier_result);
-            }
-            let verify = verify_sum / crate::VERIFY_SAMPLES;
-            let result = check_verification(&last_result.expect("VERIFY_SAMPLES > 0"));
-            assert!(result, "zippel PST13 verification FAILED");
-
-            Timing { prove, verify }
         }
     }
 }

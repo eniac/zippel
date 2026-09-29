@@ -167,37 +167,26 @@ pub mod zippel_side {
         /// # Panics
         /// Panics if either graph fails to execute or the verifier rejects.
         pub fn time_protocol(&mut self) -> Timing {
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last_proof = None;
-            for _ in 0..*crate::PROVER_SAMPLES {
-                let t = Instant::now();
-                let proof = self
-                    .handler
+            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+                self.handler
                     .run_prover(&self.inputs)
-                    .expect("run_prover failed");
-                prove_sum += t.elapsed();
-                last_proof = Some(proof);
-            }
-            let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let proof = last_proof.expect("PROVER_SAMPLES > 0");
-
-            let mut verify_sum = std::time::Duration::ZERO;
-            let mut last_result = None;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let t = Instant::now();
-                let r = self
-                    .handler
+                    .expect("run_prover failed")
+            });
+            let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+                self.handler
                     .run_verifier(&proof, &self.inputs)
-                    .expect("run_verifier failed");
-                verify_sum += t.elapsed();
-                last_result = Some(r);
-            }
-            let verify = verify_sum / crate::VERIFY_SAMPLES;
+                    .expect("run_verifier failed")
+            });
             assert!(
-                check_verification(&last_result.expect("VERIFY_SAMPLES > 0")),
+                check_verification(&result),
                 "zippel Dory verification FAILED"
             );
-            Timing { prove, verify }
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
+            }
         }
     }
 }
@@ -205,7 +194,6 @@ pub mod zippel_side {
 pub mod native_side {
     use super::*;
     use crate::dory_upstream::{self as dory, Blake2bTranscript, PreparedCache};
-    use std::time::Instant;
 
     pub struct Setup<'a> {
         sh: &'a shared::Shared,
@@ -224,10 +212,7 @@ pub mod native_side {
         /// Panics if the native verifier rejects the honest proof.
         pub fn time_protocol(&self) -> Timing {
             let (sh, k) = (self.sh, self.sh.k);
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last = None;
-            for _ in 0..*crate::PROVER_SAMPLES {
-                let t = Instant::now();
+            let (prove, prove_peak, (com, proof)) = crate::sample(*crate::PROVER_SAMPLES, || {
                 let (com, rows) = dory::commit(&sh.coeffs, k, k, &sh.setup, &self.cache);
                 let mut transcript = Blake2bTranscript::new(b"dory-bench");
                 let proof = dory::create_evaluation_proof(
@@ -240,30 +225,26 @@ pub mod native_side {
                     &self.cache,
                     &mut transcript,
                 );
-                prove_sum += t.elapsed();
-                last = Some((com, proof));
-            }
-            let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let (com, proof) = last.expect("PROVER_SAMPLES > 0");
-
-            let mut verify_sum = std::time::Duration::ZERO;
-            let mut ok = false;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let t = Instant::now();
+                (com, proof)
+            });
+            let (verify, verify_peak, ok) = crate::sample(crate::VERIFY_SAMPLES, || {
                 let mut transcript = Blake2bTranscript::new(b"dory-bench");
-                ok = dory::verify_evaluation_proof(
+                dory::verify_evaluation_proof(
                     com,
                     sh.y,
                     &sh.point,
                     &proof,
                     &sh.vsetup,
                     &mut transcript,
-                );
-                verify_sum += t.elapsed();
-            }
-            let verify = verify_sum / crate::VERIFY_SAMPLES;
+                )
+            });
             assert!(ok, "native Dory verification FAILED");
-            Timing { prove, verify }
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
+            }
         }
     }
 }

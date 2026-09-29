@@ -121,38 +121,25 @@ pub mod zippel_side {
                 (Vid("claimed_sum".to_string()), Value::Scalar(claimed_sum)),
                 (Vid("p".to_string()), Value::Poly(full_poly)),
             ]);
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last_proof = None;
-            for _ in 0..*crate::PROVER_SAMPLES {
-                let inputs_c = inputs.clone();
-                let t = Instant::now();
-                let proof = self
-                    .handler
-                    .run_prover(&inputs_c)
-                    .expect("run_prover failed");
-                prove_sum += t.elapsed();
-                last_proof = Some(proof);
-            }
-            let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let proof = last_proof.expect("PROVER_SAMPLES > 0");
-            let mut verify_sum = std::time::Duration::ZERO;
-            let mut last_result = None;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let proof_c = proof.clone();
-                let t = Instant::now();
-                let verifier_result = self
-                    .handler
-                    .run_verifier(&proof_c, &inputs)
-                    .expect("run_verifier failed");
-                verify_sum += t.elapsed();
-                last_result = Some(verifier_result);
-            }
-            let verify = verify_sum / crate::VERIFY_SAMPLES;
+            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+                self.handler.run_prover(&inputs).expect("run_prover failed")
+            });
+            let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+                self.handler
+                    .run_verifier(&proof, &inputs)
+                    .expect("run_verifier failed")
+            });
+            assert!(
+                check_verification(&result),
+                "zippel sumcheck verification FAILED"
+            );
 
-            let result = check_verification(&last_result.expect("VERIFY_SAMPLES > 0"));
-            assert!(result, "zippel sumcheck verification FAILED");
-
-            Timing { prove, verify }
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
+            }
         }
     }
 }
@@ -170,7 +157,6 @@ pub mod native_side {
     use ark_ff::{One, UniformRand, Zero};
     use ark_poly::DenseMultilinearExtension;
     use std::sync::Arc;
-    use std::time::Instant;
 
     /// The native sumcheck parameters; there is no setup phase to amortize,
     /// so this only records the instance size.
@@ -217,40 +203,31 @@ pub mod native_side {
             poly.add_mle_list(vec![mle.clone(); md], Fr::one())
                 .expect("add_mle_list");
 
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last_proof = None;
-            for _ in 0..*crate::PROVER_SAMPLES {
-                let mut transcript = <PolyIOP<Fr> as SumCheck<Fr>>::init_transcript();
-                let t = Instant::now();
-                let proof = <PolyIOP<Fr> as SumCheck<Fr>>::prove(&poly, &mut transcript)
-                    .expect("hyperplonk prove failed");
-                prove_sum += t.elapsed();
-                last_proof = Some(proof);
-            }
-            let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let proof = last_proof.expect("PROVER_SAMPLES > 0");
+            let (prove, prove_peak, proof) = crate::sample_with(
+                *crate::PROVER_SAMPLES,
+                <PolyIOP<Fr> as SumCheck<Fr>>::init_transcript,
+                |mut transcript| {
+                    <PolyIOP<Fr> as SumCheck<Fr>>::prove(&poly, &mut transcript)
+                        .expect("hyperplonk prove failed")
+                },
+            );
 
             let aux = poly.aux_info.clone();
-            // Verify takes &mut transcript; we re-init transcript per
-            // iteration so each run starts from the same state. The
-            // re-init happens OUTSIDE the per-call timer.
-            let mut verify_sum = std::time::Duration::ZERO;
-            let mut last_subclaim = None;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let mut transcript = <PolyIOP<Fr> as SumCheck<Fr>>::init_transcript();
-                let t = Instant::now();
-                let subclaim = <PolyIOP<Fr> as SumCheck<Fr>>::verify(
-                    claimed_sum,
-                    &proof,
-                    &aux,
-                    &mut transcript,
-                )
-                .expect("hyperplonk verify failed");
-                verify_sum += t.elapsed();
-                last_subclaim = Some(subclaim);
-            }
-            let verify = verify_sum / crate::VERIFY_SAMPLES;
-            let subclaim = last_subclaim.expect("VERIFY_SAMPLES > 0");
+            // Verify takes &mut transcript; each run gets a fresh one, made
+            // outside the timer.
+            let (verify, verify_peak, subclaim) = crate::sample_with(
+                crate::VERIFY_SAMPLES,
+                <PolyIOP<Fr> as SumCheck<Fr>>::init_transcript,
+                |mut transcript| {
+                    <PolyIOP<Fr> as SumCheck<Fr>>::verify(
+                        claimed_sum,
+                        &proof,
+                        &aux,
+                        &mut transcript,
+                    )
+                    .expect("hyperplonk verify failed")
+                },
+            );
 
             // Subclaim opening (the final O(2^NV) poly eval) is
             // deliberately outside the timer — in a real SNARK it would
@@ -265,7 +242,12 @@ pub mod native_side {
                 "hyperplonk sumcheck subclaim mismatch"
             );
 
-            Timing { prove, verify }
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
+            }
         }
     }
 }

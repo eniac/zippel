@@ -248,37 +248,26 @@ pub mod zippel_side {
         /// Panics if the prover or verifier graph fails to execute, or if the
         /// verifier rejects the honestly generated proof.
         pub fn time_protocol(&mut self) -> Timing {
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last_proof = None;
-            for _ in 0..*crate::PROVER_SAMPLES {
-                let t = Instant::now();
-                let proof = self
-                    .handler
+            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+                self.handler
                     .run_prover(&self.inputs)
-                    .expect("run_prover failed");
-                prove_sum += t.elapsed();
-                last_proof = Some(proof);
+                    .expect("run_prover failed")
+            });
+            let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+                self.handler
+                    .run_verifier(&proof, &self.inputs)
+                    .expect("run_verifier failed")
+            });
+            assert!(
+                check_verification(&result),
+                "zippel DeKART verification FAILED"
+            );
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
             }
-            let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let proof = last_proof.expect("PROVER_SAMPLES > 0");
-
-            let mut verify_sum = std::time::Duration::ZERO;
-            let mut last_result = None;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let proof_c = proof.clone();
-                let t = Instant::now();
-                let r = self
-                    .handler
-                    .run_verifier(&proof_c, &self.inputs)
-                    .expect("run_verifier failed");
-                verify_sum += t.elapsed();
-                last_result = Some(r);
-            }
-            let verify = verify_sum / crate::VERIFY_SAMPLES;
-
-            let passed = check_verification(&last_result.expect("VERIFY_SAMPLES > 0"));
-            assert!(passed, "zippel DeKART verification FAILED");
-            Timing { prove, verify }
         }
     }
 }
@@ -289,7 +278,6 @@ pub mod native_side {
     use ark_bls12_381::{Bls12_381, Fr};
     use ark_ec::CurveGroup;
     use ark_std::rand::{SeedableRng, rngs::StdRng};
-    use std::time::Instant;
 
     pub struct Setup {
         pk: ProverKey<Bls12_381>,
@@ -332,28 +320,21 @@ pub mod native_side {
                 comm
             );
 
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last = None;
-            for _ in 0..*crate::PROVER_SAMPLES {
-                let t = Instant::now();
+            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
                 let proof: Proof<Bls12_381> =
                     dk::prove(&self.pk, &self.values, self.ell, &comm, self.rho, &mut rng).into();
-                prove_sum += t.elapsed();
-                last = Some(proof);
+                proof
+            });
+            let (verify, verify_peak, ok) = crate::sample(crate::VERIFY_SAMPLES, || {
+                proof.verify(&self.vk, self.n, self.ell, &comm)
+            });
+            ok.expect("native DeKART verification FAILED");
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
             }
-            let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let proof = last.expect("PROVER_SAMPLES > 0");
-
-            let mut verify_sum = std::time::Duration::ZERO;
-            let mut last_ok = Ok(());
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let t = Instant::now();
-                last_ok = proof.verify(&self.vk, self.n, self.ell, &comm);
-                verify_sum += t.elapsed();
-            }
-            let verify = verify_sum / crate::VERIFY_SAMPLES;
-            last_ok.expect("native DeKART verification FAILED");
-            Timing { prove, verify }
         }
     }
 }

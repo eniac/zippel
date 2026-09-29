@@ -635,49 +635,39 @@ pub mod zippel_side {
         /// Panics if the prover or verifier graph fails to execute, if the
         /// sample counts are zero, or if verification does not accept.
         pub fn time_protocol(&mut self) -> Timing {
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last_proof = None;
-            let mut last_inputs = None;
-            for _ in 0..*crate::PROVER_SAMPLES {
-                let t = Instant::now();
-                let mut h_coeffs = witness_map(
-                    &self.translated.mat,
-                    self.translated.num_inputs,
-                    self.translated.num_constraints,
-                    &self.translated.full_assignment,
-                );
-                h_coeffs.resize(self.translated.h_size, GitFr::zero());
-                let mut inputs = self.inputs_base.clone();
-                inputs.insert(&Vid("h_coeffs".to_string()), &Value::VecScalar(h_coeffs));
-                let proof = self
-                    .handler
-                    .run_prover(&inputs)
-                    .expect("zippel groth16 prover failed");
-                prove_sum += t.elapsed();
-                last_proof = Some(proof);
-                last_inputs = Some(inputs);
-            }
-            let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let proof = last_proof.expect("PROVER_SAMPLES > 0");
-            let inputs = last_inputs.expect("PROVER_SAMPLES > 0");
+            let (prove, prove_peak, (proof, inputs)) =
+                crate::sample(*crate::PROVER_SAMPLES, || {
+                    let mut h_coeffs = witness_map(
+                        &self.translated.mat,
+                        self.translated.num_inputs,
+                        self.translated.num_constraints,
+                        &self.translated.full_assignment,
+                    );
+                    h_coeffs.resize(self.translated.h_size, GitFr::zero());
+                    let mut inputs = self.inputs_base.clone();
+                    inputs.insert(&Vid("h_coeffs".to_string()), &Value::VecScalar(h_coeffs));
+                    let proof = self
+                        .handler
+                        .run_prover(&inputs)
+                        .expect("zippel groth16 prover failed");
+                    (proof, inputs)
+                });
+            let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+                self.handler
+                    .run_verifier(&proof, &inputs)
+                    .expect("zippel groth16 verifier failed")
+            });
+            assert!(
+                check_verification(&result),
+                "zippel Groth16 verification FAILED"
+            );
 
-            let mut verify_sum = std::time::Duration::ZERO;
-            let mut last_result = None;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let proof_c = proof.clone();
-                let t = Instant::now();
-                let verifier_result = self
-                    .handler
-                    .run_verifier(&proof_c, &inputs)
-                    .expect("zippel groth16 verifier failed");
-                verify_sum += t.elapsed();
-                last_result = Some(verifier_result);
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
             }
-            let verify = verify_sum / crate::VERIFY_SAMPLES;
-            let result = check_verification(&last_result.expect("VERIFY_SAMPLES > 0"));
-            assert!(result, "zippel Groth16 verification FAILED");
-
-            Timing { prove, verify }
         }
     }
 }
@@ -701,7 +691,6 @@ pub mod native_side {
     use ark_ec::pairing::Pairing;
     use ark_ec::{AffineRepr, VariableBaseMSM};
     use ark_ff::{PrimeField, UniformRand};
-    use std::time::Instant;
 
     type E = GitBls12_381;
     type G1Affine = <E as Pairing>::G1Affine;
@@ -784,11 +773,8 @@ pub mod native_side {
             // explicitly to produce h_coeffs; native prove does it as the
             // first step of `prove(...)`). Subtracting on one side biased
             // the comparison.
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last_proof = None;
-            for _ in 0..*crate::PROVER_SAMPLES {
-                let t = Instant::now();
-                let proof = prove(
+            let (prove_t, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+                prove(
                     &self.keys,
                     &self.translated.mat,
                     self.translated.num_inputs,
@@ -798,30 +784,22 @@ pub mod native_side {
                     self.translated.h_size,
                     r,
                     s,
-                );
-                prove_sum += t.elapsed();
-                last_proof = Some(proof);
-            }
-            let prove_t = prove_sum / *crate::PROVER_SAMPLES;
-            let proof = last_proof.expect("PROVER_SAMPLES > 0");
+                )
+            });
 
             // Verifier convention: drop the leading constant-1 from the
             // instance-input vector (matches ark-groth16's verify_proof).
             let instance_inputs = &self.translated.instance_assignment[1..];
-            let mut verify_sum = std::time::Duration::ZERO;
-            let mut last_ok = false;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let t = Instant::now();
-                let ok = verify(&self.keys, &proof, instance_inputs);
-                verify_sum += t.elapsed();
-                last_ok = ok;
-            }
-            let verify_t = verify_sum / crate::VERIFY_SAMPLES;
-            assert!(last_ok, "native (vendored) Groth16 verification FAILED");
+            let (verify_t, verify_peak, ok) = crate::sample(crate::VERIFY_SAMPLES, || {
+                verify(&self.keys, &proof, instance_inputs)
+            });
+            assert!(ok, "native (vendored) Groth16 verification FAILED");
 
             Timing {
                 prove: prove_t,
                 verify: verify_t,
+                prove_peak,
+                verify_peak,
             }
         }
     }

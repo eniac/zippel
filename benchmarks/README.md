@@ -8,16 +8,15 @@ rayon thread pool — only the implementation differs.
 Systems benched: `schnorr`, `sumcheck`, `ipa`, `kzg`, `pari`, `groth16`,
 `pst13`, `hyrax`, `spartan`, `dekart`, `kzh`, `dory`, `hyperplonk`.
 
-For every (system, log_size, threads) point the bench measures:
+For every (system, log_size, threads) point the bench measures, for the
+zippel side and the native baseline:
 
-- `prover_time_ms` — zippel prover wall-clock
-- `verifier_time_ms` — zippel verifier wall-clock
-- `native_prover_time_ms` — native baseline prover wall-clock
-- `native_verifier_time_ms` — native baseline verifier wall-clock
-- `compiler` — zippel compile time (source → executable graph)
-- `zippel_ncloc`, `native_ncloc` — non-comment source lines, one number per side
+- prover and verifier wall-clock (mean over the sample count)
+- prover and verifier peak heap (see *Peak memory* below)
+- non-comment source lines of each side
+- zippel compile time (source → executable graph) and graph sizes
 
-All times in milliseconds, written to a single CSV.
+Times are in milliseconds and memory in MiB, one CSV row per baseline.
 
 ## Quick start
 
@@ -160,7 +159,7 @@ others — they're independent of `bench_all` and don't share CSV output.
 ## CSV format
 
 ```
-system,threads,log_size,prover_time_ms,verifier_time_ms,native_prover_time_ms,native_verifier_time_ms,zippel_ncloc,native_ncloc,compiler
+system,baseline,threads,log_size,zippel_prover_ms,zippel_verifier_ms,zippel_ncloc,baseline_prover_ms,baseline_verifier_ms,baseline_ncloc,compile_ms,prover_nodes,verifier_nodes,zippel_prover_peak_mib,zippel_verifier_peak_mib,baseline_prover_peak_mib,baseline_verifier_peak_mib
 ```
 
 `log_size` is log₂ of each system's natural complexity parameter (so points
@@ -194,6 +193,20 @@ excludes runtime scheduling and the prove/verify execution.
 systems where the proto is template-generated). `native_ncloc` is the line
 count of the native module file or vendored upstream copy. Both are
 non-comment, non-blank lines.
+
+## Peak memory
+
+`bench_all` installs a counting global allocator (`benchmarks::mem`). The
+`*_peak_mib` columns are the most heap live at any moment during one prover
+(or verifier) call, counted from zero at the call's start: every buffer the
+call allocates counts, even one freed before it returns, while memory that
+was already live (the proving key, SRS, witness and other inputs both sides
+hold) does not. For zippel this includes the runtime's own copy of its
+inputs and every intermediate value it keeps during the run.
+
+The counter is off during the timed samples; each measurement adds one
+untimed prover run and one untimed verifier run with counting on, after the
+timed ones. Stack memory is not counted.
 
 ## Output caching
 

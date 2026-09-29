@@ -493,40 +493,26 @@ pub mod zippel_side {
                 (Vid("k_inv".to_string()), Value::Scalar(self.srs.k_inv)),
             ]);
 
-            // --- Time prove (mean of PROVER_SAMPLES samples) ---
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last_proof = None;
-            for _ in 0..*crate::PROVER_SAMPLES {
-                let inputs_c = inputs.clone();
-                let t = Instant::now();
-                let proof = self
-                    .handler
-                    .run_prover(&inputs_c)
-                    .expect("zippel pari prover failed");
-                prove_sum += t.elapsed();
-                last_proof = Some(proof);
+            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+                self.handler
+                    .run_prover(&inputs)
+                    .expect("zippel pari prover failed")
+            });
+            let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+                self.handler
+                    .run_verifier(&proof, &inputs)
+                    .expect("zippel pari verifier failed")
+            });
+            assert!(
+                check_verification(&result),
+                "zippel PARI verification FAILED"
+            );
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
             }
-            let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let proof = last_proof.expect("PROVER_SAMPLES > 0");
-
-            // --- Time verify (mean of VERIFY_SAMPLES samples) ---
-            let mut verify_sum = std::time::Duration::ZERO;
-            let mut last_result = None;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let proof_c = proof.clone();
-                let t = Instant::now();
-                let verifier_result = self
-                    .handler
-                    .run_verifier(&proof_c, &inputs)
-                    .expect("zippel pari verifier failed");
-                verify_sum += t.elapsed();
-                last_result = Some(verifier_result);
-            }
-            let verify = verify_sum / crate::VERIFY_SAMPLES;
-            let result = check_verification(&last_result.expect("VERIFY_SAMPLES > 0"));
-            assert!(result, "zippel PARI verification FAILED");
-
-            Timing { prove, verify }
         }
 
         /// `log_2` of the constraint count this setup was compiled for.
@@ -563,7 +549,6 @@ pub mod native_side {
     use ark_ec::pairing::Pairing;
     use ark_serialize::CanonicalSerialize;
     use ark_std::rand::{SeedableRng, rngs::StdRng};
-    use std::time::Instant;
 
     type E = Bls12_381;
     type F = <E as Pairing>::ScalarField;
@@ -627,36 +612,27 @@ pub mod native_side {
         /// Panics if the upstream prover errors or if the resulting proof fails
         /// upstream verification.
         pub fn time_protocol(&self, _inst: &Instance<F>) -> Timing {
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last_proof = None;
-            for _ in 0..*crate::PROVER_SAMPLES {
-                let t = Instant::now();
-                let proof = Pari::<E>::prove_from_sr1cs(
+            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+                Pari::<E>::prove_from_sr1cs(
                     &self.a_mat,
                     &self.b_mat,
                     &self.instance_assignment,
                     &self.witness_assignment,
                     &self.pk,
                 )
-                .expect("Pari::prove_from_sr1cs failed");
-                prove_sum += t.elapsed();
-                last_proof = Some(proof);
-            }
-            let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let proof = last_proof.expect("PROVER_SAMPLES > 0");
+                .expect("Pari::prove_from_sr1cs failed")
+            });
+            let (verify, verify_peak, ok) = crate::sample(crate::VERIFY_SAMPLES, || {
+                Pari::<E>::verify(&proof, &self.vk, &self.instance_inputs)
+            });
+            assert!(ok, "upstream PARI verification FAILED");
 
-            let mut verify_sum = std::time::Duration::ZERO;
-            let mut last_ok = false;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let t = Instant::now();
-                let ok = Pari::<E>::verify(&proof, &self.vk, &self.instance_inputs);
-                verify_sum += t.elapsed();
-                last_ok = ok;
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
             }
-            let verify = verify_sum / crate::VERIFY_SAMPLES;
-            assert!(last_ok, "upstream PARI verification FAILED");
-
-            Timing { prove, verify }
         }
 
         /// Compressed serialized size, in bytes, of one upstream PARI proof.

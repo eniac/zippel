@@ -40,6 +40,11 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+// Counts heap bytes during the untimed memory-probe runs (see
+// `benchmarks::mem`); forwards to the system allocator otherwise.
+#[global_allocator]
+static ALLOC: benchmarks::mem::Counting = benchmarks::mem::Counting;
+
 const ALL_SYSTEMS: &[&str] = &[
     "schnorr",
     "sumcheck",
@@ -100,6 +105,8 @@ struct Baseline {
     ncloc: usize,
     prove: std::time::Duration,
     verify: std::time::Duration,
+    prove_peak: usize,
+    verify_peak: usize,
 }
 
 struct Row {
@@ -125,6 +132,11 @@ struct Row {
 
 fn ms(t: std::time::Duration) -> f64 {
     t.as_secs_f64() * 1000.0
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn mib(bytes: usize) -> f64 {
+    bytes as f64 / (1024.0 * 1024.0)
 }
 
 const ZIPPEL_SCHNORR: &str = include_str!("../../../examples/schnorr/schnorr.zippel");
@@ -352,7 +364,7 @@ fn init_csv(path: &PathBuf, header: bool, append: bool) -> std::io::Result<()> {
     if header {
         writeln!(
             w,
-            "system,baseline,threads,log_size,zippel_prover_ms,zippel_verifier_ms,zippel_ncloc,baseline_prover_ms,baseline_verifier_ms,baseline_ncloc,compile_ms,prover_nodes,verifier_nodes"
+            "system,baseline,threads,log_size,zippel_prover_ms,zippel_verifier_ms,zippel_ncloc,baseline_prover_ms,baseline_verifier_ms,baseline_ncloc,compile_ms,prover_nodes,verifier_nodes,zippel_prover_peak_mib,zippel_verifier_peak_mib,baseline_prover_peak_mib,baseline_verifier_peak_mib"
         )?;
         w.flush()?;
     }
@@ -366,7 +378,7 @@ fn write_row(r: &Row, b: &Baseline) {
     let mut w = m.lock().unwrap();
     writeln!(
         w,
-        "{},{},{},{},{:.3},{:.3},{},{:.3},{:.3},{},{:.3},{},{}",
+        "{},{},{},{},{:.3},{:.3},{},{:.3},{:.3},{},{:.3},{},{},{:.3},{:.3},{:.3},{:.3}",
         r.system,
         b.name,
         r.threads,
@@ -380,6 +392,10 @@ fn write_row(r: &Row, b: &Baseline) {
         ms(r.compile),
         r.prover_nodes,
         r.verifier_nodes,
+        mib(r.zippel.prove_peak),
+        mib(r.zippel.verify_peak),
+        mib(b.prove_peak),
+        mib(b.verify_peak),
     )
     .expect("write csv row");
     w.flush().expect("flush csv row");
@@ -388,7 +404,7 @@ fn write_row(r: &Row, b: &Baseline) {
 fn print_row(r: &Row) {
     for b in &r.baselines {
         eprintln!(
-            "  {:<8} threads={} log_size={:>2}  prove={:>8.2}ms / {:<10} {:>8.2}ms   verify={:>7.2}ms / {:<10} {:>7.2}ms   compile={:>8.2}ms",
+            "  {:<8} threads={} log_size={:>2}  prove={:>8.2}ms / {:<10} {:>8.2}ms   verify={:>7.2}ms / {:<10} {:>7.2}ms   compile={:>8.2}ms   peak MiB prove={:.1}/{:.1} verify={:.1}/{:.1}",
             r.system,
             r.threads,
             r.log_size,
@@ -399,6 +415,10 @@ fn print_row(r: &Row) {
             b.name,
             ms(b.verify),
             ms(r.compile),
+            mib(r.zippel.prove_peak),
+            mib(b.prove_peak),
+            mib(r.zippel.verify_peak),
+            mib(b.verify_peak),
         );
         write_row(r, b);
     }
@@ -427,6 +447,8 @@ fn run_schnorr(threads: usize) -> Vec<Row> {
             ncloc: native_ncloc("schnorr"),
             prove: native.prove,
             verify: native.verify,
+            prove_peak: native.prove_peak,
+            verify_peak: native.verify_peak,
         }],
         prover_nodes,
         verifier_nodes,
@@ -460,6 +482,8 @@ fn run_sumcheck(threads: usize, sizes: &[usize], max_degree: usize) -> Vec<Row> 
                     ncloc: native_ncloc("sumcheck"),
                     prove: native.prove,
                     verify: native.verify,
+                    prove_peak: native.prove_peak,
+                    verify_peak: native.verify_peak,
                 }],
                 prover_nodes,
                 verifier_nodes,
@@ -494,6 +518,8 @@ fn run_ipa(threads: usize, ss: &[usize]) -> Vec<Row> {
                     ncloc: native_ncloc("ipa"),
                     prove: native.prove,
                     verify: native.verify,
+                    prove_peak: native.prove_peak,
+                    verify_peak: native.verify_peak,
                 }],
                 prover_nodes,
                 verifier_nodes,
@@ -530,6 +556,8 @@ fn run_kzg(threads: usize, ns: &[usize]) -> Vec<Row> {
                     ncloc: native_ncloc("kzg"),
                     prove: native.prove,
                     verify: native.verify,
+                    prove_peak: native.prove_peak,
+                    verify_peak: native.verify_peak,
                 }],
                 prover_nodes,
                 verifier_nodes,
@@ -566,6 +594,8 @@ fn run_pari(threads: usize, ms: &[usize], n_pub: usize, k_vars: usize) -> Vec<Ro
                     ncloc: native_ncloc("pari"),
                     prove: native.prove,
                     verify: native.verify,
+                    prove_peak: native.prove_peak,
+                    verify_peak: native.verify_peak,
                 }],
                 prover_nodes,
                 verifier_nodes,
@@ -611,6 +641,8 @@ fn run_groth16(threads: usize, log_sizes: &[usize]) -> Vec<Row> {
                     ncloc: native_ncloc("groth16"),
                     prove: native.prove,
                     verify: native.verify,
+                    prove_peak: native.prove_peak,
+                    verify_peak: native.verify_peak,
                 }],
                 prover_nodes,
                 verifier_nodes,
@@ -646,6 +678,8 @@ fn run_pst13(threads: usize, ns: &[usize]) -> Vec<Row> {
                     ncloc: native_ncloc("pst13"),
                     prove: native.prove,
                     verify: native.verify,
+                    prove_peak: native.prove_peak,
+                    verify_peak: native.verify_peak,
                 }],
                 prover_nodes,
                 verifier_nodes,
@@ -680,6 +714,8 @@ fn run_hyrax(threads: usize, ns: &[usize]) -> Vec<Row> {
                     ncloc: native_ncloc("hyrax"),
                     prove: native.prove,
                     verify: native.verify,
+                    prove_peak: native.prove_peak,
+                    verify_peak: native.verify_peak,
                 }],
                 prover_nodes,
                 verifier_nodes,
@@ -716,6 +752,8 @@ fn run_dekart(threads: usize, ls: &[usize], ell: usize) -> Vec<Row> {
                     ncloc: native_ncloc("dekart"),
                     prove: native.prove,
                     verify: native.verify,
+                    prove_peak: native.prove_peak,
+                    verify_peak: native.verify_peak,
                 }],
                 prover_nodes,
                 verifier_nodes,
@@ -751,6 +789,8 @@ fn run_kzh(threads: usize, ns: &[usize]) -> Vec<Row> {
                     ncloc: native_ncloc("kzh"),
                     prove: native.prove,
                     verify: native.verify,
+                    prove_peak: native.prove_peak,
+                    verify_peak: native.verify_peak,
                 }],
                 prover_nodes,
                 verifier_nodes,
@@ -786,6 +826,8 @@ fn run_dory(threads: usize, ns: &[usize]) -> Vec<Row> {
                     ncloc: native_ncloc("dory"),
                     prove: native.prove,
                     verify: native.verify,
+                    prove_peak: native.prove_peak,
+                    verify_peak: native.verify_peak,
                 }],
                 prover_nodes,
                 verifier_nodes,
@@ -817,6 +859,8 @@ fn run_hyperplonk(threads: usize, ns: &[usize]) -> Vec<Row> {
                     ncloc: native_ncloc("hyperplonk"),
                     prove: native.prove,
                     verify: native.verify,
+                    prove_peak: native.prove_peak,
+                    verify_peak: native.verify_peak,
                 }],
                 prover_nodes,
                 verifier_nodes,
@@ -868,50 +912,47 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                     (inst, vars, inputs, gens, inst_bytes, inputs_bytes, n_matvec)
                 });
 
-            // Prover sampled PROVER_SAMPLES times. Each iteration
-            // re-inits the transcript (NIZK::prove takes &mut and consumes it).
-            let mut prove_sum = Duration::ZERO;
-            let mut last_proof = None;
-            for _ in 0..*benchmarks::PROVER_SAMPLES {
-                let mut pt = Transcript::new(b"bench_all_spartan");
-                let t = Instant::now();
-                {
-                    let mut bind = Transcript::new(b"matrix_bind");
-                    bind.append_message(b"inst", &inst_bytes);
-                    bind.append_message(b"io", &inputs_bytes);
-                }
-                let proof = timed_pool()
-                    .install(|| NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt));
-                prove_sum += t.elapsed().saturating_sub(n_matvec);
-                last_proof = Some(proof);
-            }
-            let native_prove = prove_sum / *benchmarks::PROVER_SAMPLES;
-            let proof = last_proof.expect("PROVER_SAMPLES > 0");
+            // Prover sampled PROVER_SAMPLES times. Each run gets a fresh
+            // transcript (NIZK::prove takes &mut and consumes it), made
+            // outside the timer; the matrix-vector product libspartan
+            // repeats inside prove is subtracted from the mean.
+            let (native_prove, native_prove_peak, proof) = benchmarks::sample_with(
+                *benchmarks::PROVER_SAMPLES,
+                || Transcript::new(b"bench_all_spartan"),
+                |mut pt| {
+                    {
+                        let mut bind = Transcript::new(b"matrix_bind");
+                        bind.append_message(b"inst", &inst_bytes);
+                        bind.append_message(b"io", &inputs_bytes);
+                    }
+                    timed_pool()
+                        .install(|| NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt))
+                },
+            );
+            let native_prove = native_prove.saturating_sub(n_matvec);
 
-            // Verifier sampled VERIFY_SAMPLES times. Transcript
-            // construction is the same trivial work the original timer
-            // included (mirrors the prover-side measurement), so we keep
-            // it inside the per-call timer. libspartan's verify takes
-            // &mut transcript, so it must be re-init per iteration.
-            let mut verify_sum = Duration::ZERO;
-            for _ in 0..benchmarks::VERIFY_SAMPLES {
-                let mut vt = Transcript::new(b"bench_all_spartan");
-                let t = Instant::now();
-                {
-                    let mut bind = Transcript::new(b"matrix_bind");
-                    bind.append_message(b"inst", &inst_bytes);
-                    bind.append_message(b"io", &inputs_bytes);
-                }
-                timed_pool()
-                    .install(|| proof.verify(&inst, &inputs, &mut vt, &gens))
-                    .expect("verify");
-                verify_sum += t.elapsed();
-            }
-            let native_verify = verify_sum / benchmarks::VERIFY_SAMPLES;
+            // Verifier sampled VERIFY_SAMPLES times, a fresh transcript
+            // per run (libspartan's verify takes &mut transcript).
+            let (native_verify, native_verify_peak, ()) = benchmarks::sample_with(
+                benchmarks::VERIFY_SAMPLES,
+                || Transcript::new(b"bench_all_spartan"),
+                |mut vt| {
+                    {
+                        let mut bind = Transcript::new(b"matrix_bind");
+                        bind.append_message(b"inst", &inst_bytes);
+                        bind.append_message(b"io", &inputs_bytes);
+                    }
+                    timed_pool()
+                        .install(|| proof.verify(&inst, &inputs, &mut vt, &gens))
+                        .expect("verify");
+                },
+            );
 
             let native = Timing {
                 prove: native_prove,
                 verify: native_verify,
+                prove_peak: native_prove_peak,
+                verify_peak: native_verify_peak,
             };
 
             // Second native baseline: ark-spartan on ark-curve25519 v0.6
@@ -933,40 +974,37 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                     (ark_inst, ark_vars, ark_inputs, ark_gens)
                 });
 
-                let mut prove_sum = Duration::ZERO;
-                let mut last_ark_proof = None;
-                for _ in 0..*benchmarks::PROVER_SAMPLES {
-                    let mut pt = Transcript::new(b"bench_all_spartan_ark");
-                    let t = Instant::now();
-                    let proof = timed_pool().install(|| {
-                        ArkNIZK::<C25519>::prove(
-                            &ark_inst,
-                            ark_vars.clone(),
-                            &ark_inputs,
-                            &ark_gens,
-                            &mut pt,
-                        )
-                    });
-                    prove_sum += t.elapsed();
-                    last_ark_proof = Some(proof);
-                }
-                let ark_prove = prove_sum / *benchmarks::PROVER_SAMPLES;
-                let proof = last_ark_proof.expect("PROVER_SAMPLES > 0");
+                let (ark_prove, ark_prove_peak, proof) = benchmarks::sample_with(
+                    *benchmarks::PROVER_SAMPLES,
+                    || Transcript::new(b"bench_all_spartan_ark"),
+                    |mut pt| {
+                        timed_pool().install(|| {
+                            ArkNIZK::<C25519>::prove(
+                                &ark_inst,
+                                ark_vars.clone(),
+                                &ark_inputs,
+                                &ark_gens,
+                                &mut pt,
+                            )
+                        })
+                    },
+                );
 
-                let mut verify_sum = Duration::ZERO;
-                for _ in 0..benchmarks::VERIFY_SAMPLES {
-                    let mut vt = Transcript::new(b"bench_all_spartan_ark");
-                    let t = Instant::now();
-                    timed_pool()
-                        .install(|| proof.verify(&ark_inst, &ark_inputs, &mut vt, &ark_gens))
-                        .expect("ark-spartan verify");
-                    verify_sum += t.elapsed();
-                }
-                let ark_verify = verify_sum / benchmarks::VERIFY_SAMPLES;
+                let (ark_verify, ark_verify_peak, ()) = benchmarks::sample_with(
+                    benchmarks::VERIFY_SAMPLES,
+                    || Transcript::new(b"bench_all_spartan_ark"),
+                    |mut vt| {
+                        timed_pool()
+                            .install(|| proof.verify(&ark_inst, &ark_inputs, &mut vt, &ark_gens))
+                            .expect("ark-spartan verify");
+                    },
+                );
 
                 Timing {
                     prove: ark_prove,
                     verify: ark_verify,
+                    prove_peak: ark_prove_peak,
+                    verify_peak: ark_verify_peak,
                 }
             };
 
@@ -982,12 +1020,16 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                         ncloc: native_ncloc("spartan"),
                         prove: native.prove,
                         verify: native.verify,
+                        prove_peak: native.prove_peak,
+                        verify_peak: native.verify_peak,
                     },
                     Baseline {
                         name: "ark-spartan",
                         ncloc: native_ncloc("ark-spartan"),
                         prove: ark_native.prove,
                         verify: ark_native.verify,
+                        prove_peak: ark_native.prove_peak,
+                        verify_peak: ark_native.verify_peak,
                     },
                 ],
                 prover_nodes,

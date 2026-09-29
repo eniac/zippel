@@ -130,37 +130,26 @@ pub mod zippel_side {
         /// # Panics
         /// Panics if either graph fails to execute or the verifier rejects.
         pub fn time_protocol(&mut self) -> Timing {
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last_proof = None;
-            for _ in 0..*crate::PROVER_SAMPLES {
-                let t = Instant::now();
-                let proof = self
-                    .handler
+            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+                self.handler
                     .run_prover(&self.inputs)
-                    .expect("run_prover failed");
-                prove_sum += t.elapsed();
-                last_proof = Some(proof);
-            }
-            let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let proof = last_proof.expect("PROVER_SAMPLES > 0");
-
-            let mut verify_sum = std::time::Duration::ZERO;
-            let mut last_result = None;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let t = Instant::now();
-                let r = self
-                    .handler
+                    .expect("run_prover failed")
+            });
+            let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+                self.handler
                     .run_verifier(&proof, &self.inputs)
-                    .expect("run_verifier failed");
-                verify_sum += t.elapsed();
-                last_result = Some(r);
-            }
-            let verify = verify_sum / crate::VERIFY_SAMPLES;
+                    .expect("run_verifier failed")
+            });
             assert!(
-                check_verification(&last_result.expect("VERIFY_SAMPLES > 0")),
+                check_verification(&result),
                 "zippel KZH-2 verification FAILED"
             );
-            Timing { prove, verify }
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
+            }
         }
     }
 }
@@ -169,7 +158,6 @@ pub mod native_side {
     use super::*;
     use crate::kzh_upstream::{self as kzh, ProverParam, VerifierParam};
     use ark_bls12_381::{Bls12_381, Fr};
-    use std::time::Instant;
 
     pub struct Setup {
         pp: ProverParam<Bls12_381>,
@@ -194,29 +182,23 @@ pub mod native_side {
         /// # Panics
         /// Panics if the native verifier rejects the honest proof.
         pub fn time_protocol(&self) -> Timing {
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last = None;
-            for _ in 0..*crate::PROVER_SAMPLES {
-                let t = Instant::now();
-                let com = kzh::commit(&self.pp, &self.f);
-                let (proof, value) = kzh::open(&self.pp, &self.f, &self.point);
-                prove_sum += t.elapsed();
-                last = Some((com, proof, value));
-            }
-            let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let (com, proof, value) = last.expect("PROVER_SAMPLES > 0");
+            let (prove, prove_peak, (com, proof, value)) =
+                crate::sample(*crate::PROVER_SAMPLES, || {
+                    let com = kzh::commit(&self.pp, &self.f);
+                    let (proof, value) = kzh::open(&self.pp, &self.f, &self.point);
+                    (com, proof, value)
+                });
             assert_eq!(value, self.value);
-
-            let mut verify_sum = std::time::Duration::ZERO;
-            let mut ok = false;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let t = Instant::now();
-                ok = kzh::verify(&self.vp, &com, &self.point, &self.value, &proof);
-                verify_sum += t.elapsed();
-            }
-            let verify = verify_sum / crate::VERIFY_SAMPLES;
+            let (verify, verify_peak, ok) = crate::sample(crate::VERIFY_SAMPLES, || {
+                kzh::verify(&self.vp, &com, &self.point, &self.value, &proof)
+            });
             assert!(ok, "native KZH-2 verification FAILED");
-            Timing { prove, verify }
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
+            }
         }
     }
 }

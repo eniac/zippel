@@ -200,37 +200,26 @@ pub mod zippel_side {
         /// # Panics
         /// Panics if either graph fails to execute or the verifier rejects.
         pub fn time_protocol(&mut self) -> Timing {
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last_proof = None;
-            for _ in 0..*crate::PROVER_SAMPLES {
-                let t = Instant::now();
-                let proof = self
-                    .handler
+            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+                self.handler
                     .run_prover(&self.inputs)
-                    .expect("run_prover failed");
-                prove_sum += t.elapsed();
-                last_proof = Some(proof);
-            }
-            let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let proof = last_proof.expect("PROVER_SAMPLES > 0");
-
-            let mut verify_sum = std::time::Duration::ZERO;
-            let mut last_result = None;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let t = Instant::now();
-                let r = self
-                    .handler
+                    .expect("run_prover failed")
+            });
+            let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+                self.handler
                     .run_verifier(&proof, &self.inputs)
-                    .expect("run_verifier failed");
-                verify_sum += t.elapsed();
-                last_result = Some(r);
-            }
-            let verify = verify_sum / crate::VERIFY_SAMPLES;
+                    .expect("run_verifier failed")
+            });
             assert!(
-                check_verification(&last_result.expect("VERIFY_SAMPLES > 0")),
+                check_verification(&result),
                 "zippel HyperPlonk verification FAILED"
             );
-            Timing { prove, verify }
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
+            }
         }
     }
 }
@@ -238,7 +227,6 @@ pub mod zippel_side {
 pub mod native_side {
     use super::*;
     use crate::hyperplonk_upstream::{IOPTranscript, prove, verify};
-    use std::time::Instant;
 
     pub struct Setup<'a> {
         sh: &'a shared::Shared,
@@ -253,39 +241,31 @@ pub mod native_side {
         /// Panics if the native prover fails or the verifier rejects.
         pub fn time_protocol(&self) -> Timing {
             let sh = self.sh;
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last = None;
-            for _ in 0..*crate::PROVER_SAMPLES {
-                let t = Instant::now();
-                let proof = prove(
+            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+                prove(
                     &sh.pk,
                     &sh.public_inputs,
                     &sh.witnesses,
                     &mut IOPTranscript::new(b"hyperplonk"),
                 )
-                .expect("native HyperPlonk prove");
-                prove_sum += t.elapsed();
-                last = Some(proof);
-            }
-            let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let proof = last.expect("PROVER_SAMPLES > 0");
-
-            let mut verify_sum = std::time::Duration::ZERO;
-            let mut ok = false;
-            for _ in 0..crate::VERIFY_SAMPLES {
-                let t = Instant::now();
-                ok = verify(
+                .expect("native HyperPlonk prove")
+            });
+            let (verify, verify_peak, ok) = crate::sample(crate::VERIFY_SAMPLES, || {
+                verify(
                     &sh.vk,
                     &sh.public_inputs,
                     &proof,
                     &mut IOPTranscript::new(b"hyperplonk"),
                 )
-                .unwrap_or(false);
-                verify_sum += t.elapsed();
-            }
-            let verify = verify_sum / crate::VERIFY_SAMPLES;
+                .unwrap_or(false)
+            });
             assert!(ok, "native HyperPlonk verification FAILED");
-            Timing { prove, verify }
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
+            }
         }
     }
 }

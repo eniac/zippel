@@ -189,31 +189,26 @@ pub mod zippel_side {
                     Value::VecScalar(self.inputs.sum_vec.clone()),
                 ),
             ]);
-            let mut prove_sum = std::time::Duration::ZERO;
-            let mut last_proof = None;
-            for _ in 0..*crate::PROVER_SAMPLES {
-                let inputs_c = inputs.clone();
-                let t = Instant::now();
-                let proof = self
-                    .handler
-                    .run_prover(&inputs_c)
-                    .expect("run_prover failed");
-                prove_sum += t.elapsed();
-                last_proof = Some(proof);
+            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+                self.handler.run_prover(&inputs).expect("run_prover failed")
+            });
+            // Single-shot verifier (see above).
+            let (verify, verify_peak, result) = crate::sample(1, || {
+                self.handler
+                    .run_verifier(&proof, &inputs)
+                    .expect("run_verifier failed")
+            });
+            assert!(
+                check_verification(&result),
+                "zippel IPA verification FAILED"
+            );
+
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
             }
-            let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let proof = last_proof.expect("PROVER_SAMPLES > 0");
-            let t = Instant::now();
-            let verifier_result = self
-                .handler
-                .run_verifier(&proof, &inputs)
-                .expect("run_verifier failed");
-            let verify = t.elapsed();
-
-            let result = check_verification(&verifier_result);
-            assert!(result, "zippel IPA verification FAILED");
-
-            Timing { prove, verify }
         }
     }
 }
@@ -233,7 +228,6 @@ pub mod native_side {
     use ark_std::UniformRand;
     use merlin::Transcript;
     use rayon::prelude::*;
-    use std::time::Instant;
 
     /// The Pedersen bases `g_vec`, `h_vec` and the binding point `q` for one
     /// instance size, together with the vector length `n = 2^S`.
@@ -296,110 +290,120 @@ pub mod native_side {
             let h_proj_init: Vec<Projective> = self.h_vec.iter().map(|p| p.into_group()).collect();
 
             // ---- Prover (sampled PROVER_SAMPLES times) ----
-            let mut prove_sum = std::time::Duration::ZERO;
-            #[allow(clippy::type_complexity)]
-            let mut last_state: Option<(Fr, Fr, Vec<(Projective, Projective)>)> = None;
-            for _ in 0..*crate::PROVER_SAMPLES {
-                let mut prover_transcript = Transcript::new(b"ipa-bench");
-                let t = Instant::now();
-                absorb_point(&mut prover_transcript, b"p_initial", &p_initial);
-                absorb_scalar(&mut prover_transcript, b"c", &ip_val_claimed);
-                let x_chal = challenge_scalar(&mut prover_transcript, b"x_chal");
-                let q_raised = self.q * x_chal;
-                let p_prime = p_initial + q_raised * ip_val_claimed;
+            let (prove, prove_peak, (final_a, final_b, proofs)) = crate::sample_with(
+                *crate::PROVER_SAMPLES,
+                || Transcript::new(b"ipa-bench"),
+                |mut prover_transcript| {
+                    absorb_point(&mut prover_transcript, b"p_initial", &p_initial);
+                    absorb_scalar(&mut prover_transcript, b"c", &ip_val_claimed);
+                    let x_chal = challenge_scalar(&mut prover_transcript, b"x_chal");
+                    let q_raised = self.q * x_chal;
+                    let p_prime = p_initial + q_raised * ip_val_claimed;
 
-                // Fresh per-iteration state: vectors get consumed by the
-                // recursive folding loop, so clone once per sample.
-                let mut a = a_vec.clone();
-                let mut b = b_vec.clone();
-                let mut g = g_proj_init.clone();
-                let mut h = h_proj_init.clone();
-                let mut p_cur = p_prime;
-                let mut proofs: Vec<(Projective, Projective)> = Vec::new();
-                while a.len() > 1 {
-                    let n = a.len() / 2;
-                    let l = msm_proj(&g[n..], &a[..n])
-                        + msm_proj(&h[..n], &b[n..])
-                        + q_raised * ip_fr(&a[..n], &b[n..]);
-                    let r = msm_proj(&g[..n], &a[n..])
-                        + msm_proj(&h[n..], &b[..n])
-                        + q_raised * ip_fr(&a[n..], &b[..n]);
-                    absorb_point(&mut prover_transcript, b"L", &l);
-                    absorb_point(&mut prover_transcript, b"R", &r);
-                    let x = challenge_scalar(&mut prover_transcript, b"x");
-                    let x_inv = x.inverse().expect("nonzero challenge");
-                    p_cur = l * x.square() + r * x_inv.square() + p_cur;
-                    let a_next: Vec<Fr> = a[..n]
-                        .par_iter()
-                        .zip(&a[n..])
-                        .map(|(lo, hi)| x * lo + x_inv * hi)
-                        .collect();
-                    let b_next: Vec<Fr> = b[..n]
-                        .par_iter()
-                        .zip(&b[n..])
-                        .map(|(lo, hi)| x_inv * lo + x * hi)
-                        .collect();
-                    let g_next: Vec<Projective> = g[..n]
-                        .par_iter()
-                        .zip(&g[n..])
-                        .map(|(lo, hi)| *lo * x_inv + *hi * x)
-                        .collect();
-                    let h_next: Vec<Projective> = h[..n]
-                        .par_iter()
-                        .zip(&h[n..])
-                        .map(|(lo, hi)| *lo * x + *hi * x_inv)
-                        .collect();
-                    proofs.push((l, r));
-                    a = a_next;
-                    b = b_next;
-                    g = g_next;
-                    h = h_next;
-                }
-                let final_a = a[0];
-                let final_b = b[0];
-                let _ = std::hint::black_box(p_cur);
-                prove_sum += t.elapsed();
-                last_state = Some((final_a, final_b, proofs));
-            }
-            let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let (final_a, final_b, proofs) = last_state.expect("PROVER_SAMPLES > 0");
+                    // Fresh per-iteration state: vectors get consumed by the
+                    // recursive folding loop, so clone once per sample.
+                    let mut a = a_vec.clone();
+                    let mut b = b_vec.clone();
+                    let mut g = g_proj_init.clone();
+                    let mut h = h_proj_init.clone();
+                    let mut p_cur = p_prime;
+                    let mut proofs: Vec<(Projective, Projective)> = Vec::new();
+                    while a.len() > 1 {
+                        let n = a.len() / 2;
+                        let l = msm_proj(&g[n..], &a[..n])
+                            + msm_proj(&h[..n], &b[n..])
+                            + q_raised * ip_fr(&a[..n], &b[n..]);
+                        let r = msm_proj(&g[..n], &a[n..])
+                            + msm_proj(&h[n..], &b[..n])
+                            + q_raised * ip_fr(&a[n..], &b[..n]);
+                        absorb_point(&mut prover_transcript, b"L", &l);
+                        absorb_point(&mut prover_transcript, b"R", &r);
+                        let x = challenge_scalar(&mut prover_transcript, b"x");
+                        let x_inv = x.inverse().expect("nonzero challenge");
+                        p_cur = l * x.square() + r * x_inv.square() + p_cur;
+                        let a_next: Vec<Fr> = a[..n]
+                            .par_iter()
+                            .zip(&a[n..])
+                            .map(|(lo, hi)| x * lo + x_inv * hi)
+                            .collect();
+                        let b_next: Vec<Fr> = b[..n]
+                            .par_iter()
+                            .zip(&b[n..])
+                            .map(|(lo, hi)| x_inv * lo + x * hi)
+                            .collect();
+                        let g_next: Vec<Projective> = g[..n]
+                            .par_iter()
+                            .zip(&g[n..])
+                            .map(|(lo, hi)| *lo * x_inv + *hi * x)
+                            .collect();
+                        let h_next: Vec<Projective> = h[..n]
+                            .par_iter()
+                            .zip(&h[n..])
+                            .map(|(lo, hi)| *lo * x + *hi * x_inv)
+                            .collect();
+                        proofs.push((l, r));
+                        a = a_next;
+                        b = b_next;
+                        g = g_next;
+                        h = h_next;
+                    }
+                    let final_a = a[0];
+                    let final_b = b[0];
+                    let _ = std::hint::black_box(p_cur);
+                    (final_a, final_b, proofs)
+                },
+            );
 
             // ---- Verifier (naive: fold bases each round, matching upstream) ----
-            let mut verifier_transcript = Transcript::new(b"ipa-bench");
-            let t = Instant::now();
-            absorb_point(&mut verifier_transcript, b"p_initial", &p_initial);
-            absorb_scalar(&mut verifier_transcript, b"c", &ip_val_claimed);
-            let x_chal = challenge_scalar(&mut verifier_transcript, b"x_chal");
-            let q_raised = self.q * x_chal;
-            let p_prime = p_initial + q_raised * ip_val_claimed;
+            // Single-shot, like the zippel side; the bases are cloned outside
+            // the timer because the folding consumes them.
+            let (verify, verify_peak, ok) = crate::sample_with(
+                1,
+                || {
+                    (
+                        Transcript::new(b"ipa-bench"),
+                        g_proj_init.clone(),
+                        h_proj_init.clone(),
+                    )
+                },
+                |(mut verifier_transcript, mut g, mut h)| {
+                    absorb_point(&mut verifier_transcript, b"p_initial", &p_initial);
+                    absorb_scalar(&mut verifier_transcript, b"c", &ip_val_claimed);
+                    let x_chal = challenge_scalar(&mut verifier_transcript, b"x_chal");
+                    let q_raised = self.q * x_chal;
+                    let p_prime = p_initial + q_raised * ip_val_claimed;
 
-            let mut g = g_proj_init;
-            let mut h = h_proj_init;
-            let mut p_cur = p_prime;
-            for (l, r) in &proofs {
-                absorb_point(&mut verifier_transcript, b"L", l);
-                absorb_point(&mut verifier_transcript, b"R", r);
-                let x = challenge_scalar(&mut verifier_transcript, b"x");
-                let x_inv = x.inverse().expect("nonzero challenge");
-                p_cur = *l * x.square() + *r * x_inv.square() + p_cur;
-                let n = g.len() / 2;
-                g = g[..n]
-                    .par_iter()
-                    .zip(&g[n..])
-                    .map(|(lo, hi)| *lo * x_inv + *hi * x)
-                    .collect();
-                h = h[..n]
-                    .par_iter()
-                    .zip(&h[n..])
-                    .map(|(lo, hi)| *lo * x + *hi * x_inv)
-                    .collect();
-            }
-            let expected = g[0] * final_a + h[0] * final_b + q_raised * (final_a * final_b);
-            let ok = p_cur == expected;
-            let verify = t.elapsed();
+                    let mut p_cur = p_prime;
+                    for (l, r) in &proofs {
+                        absorb_point(&mut verifier_transcript, b"L", l);
+                        absorb_point(&mut verifier_transcript, b"R", r);
+                        let x = challenge_scalar(&mut verifier_transcript, b"x");
+                        let x_inv = x.inverse().expect("nonzero challenge");
+                        p_cur = *l * x.square() + *r * x_inv.square() + p_cur;
+                        let n = g.len() / 2;
+                        g = g[..n]
+                            .par_iter()
+                            .zip(&g[n..])
+                            .map(|(lo, hi)| *lo * x_inv + *hi * x)
+                            .collect();
+                        h = h[..n]
+                            .par_iter()
+                            .zip(&h[n..])
+                            .map(|(lo, hi)| *lo * x + *hi * x_inv)
+                            .collect();
+                    }
+                    let expected = g[0] * final_a + h[0] * final_b + q_raised * (final_a * final_b);
+                    p_cur == expected
+                },
+            );
 
             assert!(ok, "vendored Bp2aryStep IPA verification FAILED");
-            Timing { prove, verify }
+            Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
+            }
         }
     }
 
