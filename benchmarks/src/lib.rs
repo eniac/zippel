@@ -70,6 +70,8 @@ pub mod ark_spartan_upstream;
 pub mod cache;
 pub mod dekart;
 pub mod dekart_upstream;
+pub mod dory;
+pub mod dory_upstream;
 pub mod groth16;
 pub mod hyrax;
 #[allow(warnings)]

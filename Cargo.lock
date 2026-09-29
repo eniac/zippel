@@ -603,6 +603,7 @@ dependencies = [
  "displaydoc",
  "itertools 0.13.0",
  "lang",
+ "libc",
  "merlin",
  "num-bigint 0.4.8",
  "rand 0.8.6",

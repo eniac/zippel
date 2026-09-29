@@ -28,7 +28,7 @@
 //! sized by `RAYON_NUM_THREADS` is the reliable path.
 
 use benchmarks::{
-    Timing, dekart, groth16, hyrax, ipa, kzg, kzh, pari, pst13, schnorr, spartan, sumcheck,
+    Timing, dekart, dory, groth16, hyrax, ipa, kzg, kzh, pari, pst13, schnorr, spartan, sumcheck,
 };
 use clap::Parser;
 use libspartan::{Instance, NIZK, NIZKGens};
@@ -41,7 +41,7 @@ use std::time::{Duration, Instant};
 
 const ALL_SYSTEMS: &[&str] = &[
     "schnorr", "sumcheck", "ipa", "kzg", "pari", "groth16", "pst13", "hyrax", "spartan", "dekart",
-    "kzh",
+    "kzh", "dory",
 ];
 
 #[derive(Parser, Debug)]
@@ -126,6 +126,7 @@ const ZIPPEL_HYRAX: &str = include_str!("../../../examples/hyrax/hyrax.zippel");
 const ZIPPEL_SPARTAN: &str = include_str!("../../../examples/spartan/spartan.zippel");
 const ZIPPEL_DEKART: &str = include_str!("../../../examples/dekart/dekart.zippel");
 const ZIPPEL_KZH: &str = include_str!("../../../examples/kzh/kzh.zippel");
+const ZIPPEL_DORY: &str = include_str!("../../../examples/dory_pcs/dory_pcs.zippel");
 
 const NATIVE_IPA_RS: &str = include_str!("../../src/ipa.rs");
 // DeKART native baseline is vendored from aptos-dkg's dekart_univariate_v2
@@ -134,6 +135,7 @@ const NATIVE_IPA_RS: &str = include_str!("../../src/ipa.rs");
 // module, which sits at the end of the file.
 const NATIVE_DEKART_MOD_RS: &str = include_str!("../../src/dekart_upstream/mod.rs");
 const NATIVE_KZH_MOD_RS: &str = include_str!("../../src/kzh_upstream/mod.rs");
+const NATIVE_DORY_MOD_RS: &str = include_str!("../../src/dory_upstream/mod.rs");
 // Bit width for the DeKART bench: the middle of upstream's
 // BIT_WIDTHS = [8, 16, 32, 64] grid. Use the standalone `dekart` bin's
 // `--ell` to vary it.
@@ -257,6 +259,7 @@ fn zippel_ncloc(sys: &str) -> usize {
         "spartan" => count_ncloc_line_comments(ZIPPEL_SPARTAN),
         "dekart" => count_ncloc_line_comments(ZIPPEL_DEKART),
         "kzh" => count_ncloc_line_comments(ZIPPEL_KZH),
+        "dory" => count_ncloc_line_comments(ZIPPEL_DORY),
         _ => 0,
     }
 }
@@ -277,6 +280,12 @@ fn native_ncloc(baseline: &str) -> usize {
         }
         "ipa" => count_ncloc_rust(extract_braced_block(NATIVE_IPA_RS, "pub mod native_side")),
         "hyrax" => count_ncloc_rust(NATIVE_HYRAX_MOD_RS),
+        "dory" => count_ncloc_rust(
+            NATIVE_DORY_MOD_RS
+                .split("#[cfg(test)]")
+                .next()
+                .unwrap_or(NATIVE_DORY_MOD_RS),
+        ),
         "kzh" => count_ncloc_rust(
             NATIVE_KZH_MOD_RS
                 .split("#[cfg(test)]")
@@ -727,6 +736,41 @@ fn run_kzh(threads: usize, ns: &[usize]) -> Vec<Row> {
         .collect()
 }
 
+fn run_dory(threads: usize, ns: &[usize]) -> Vec<Row> {
+    ns.iter()
+        .map(|&n| {
+            let sh = setup_pool().install(|| dory::shared::build(n));
+            let (mut z, np) = setup_pool().install(|| {
+                (
+                    dory::zippel_side::Setup::new(&sh),
+                    dory::native_side::Setup::new(&sh),
+                )
+            });
+            let compile = z.compile_time();
+            let (prover_nodes, verifier_nodes) = z.graph_sizes();
+            let zippel = z.time_protocol();
+            let native = timed_pool().install(|| np.time_protocol());
+            let r = Row {
+                system: "dory",
+                threads,
+                log_size: n,
+                zippel,
+                compile,
+                baselines: vec![Baseline {
+                    name: "dory",
+                    ncloc: native_ncloc("dory"),
+                    prove: native.prove,
+                    verify: native.verify,
+                }],
+                prover_nodes,
+                verifier_nodes,
+            };
+            print_row(&r);
+            r
+        })
+        .collect()
+}
+
 fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
     ms.iter()
         .map(|&m| {
@@ -928,12 +972,69 @@ fn setup_pool() -> &'static rayon::ThreadPool {
 //
 // Applied to every native baseline's timed region (each system's
 // `n.time_protocol()` and spartan's inline libspartan/ark-spartan
-// loops). The zippel side is intentionally NOT wrapped: its runtime
-// already routes all compute through the global pool via
-// `rayon::spawn`, so it is confined by construction.
+// loops). The zippel side is NOT wrapped: its runtime `rayon::spawn`s
+// onto the global pool. Its main thread also computes transcript
+// messages, though (measured ~1.14 cores at T=1), so the thread count
+// alone does not bound it; see `pin_timed_threads`.
 static TIMED_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
 fn timed_pool() -> &'static rayon::ThreadPool {
     TIMED_POOL.get().expect("TIMED_POOL not initialized")
+}
+
+/// One logical CPU per physical core (the lowest-numbered SMT sibling),
+/// in ascending order, read from sysfs; `0..n` if sysfs is unavailable.
+fn physical_cpus() -> Vec<usize> {
+    let n = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    let cpus: Vec<usize> = (0..n)
+        .filter(|&cpu| {
+            std::fs::read_to_string(format!(
+                "/sys/devices/system/cpu/cpu{cpu}/topology/thread_siblings_list"
+            ))
+            .ok()
+            .and_then(|l| l.trim().split([',', '-']).next()?.parse::<usize>().ok())
+            .is_none_or(|first| first == cpu)
+        })
+        .collect();
+    if cpus.is_empty() {
+        (0..n).collect()
+    } else {
+        cpus
+    }
+}
+
+/// Restricts the calling thread to `cpus`.
+fn pin_current_thread(cpus: &[usize]) {
+    // SAFETY: `set` is a plain bitmask initialised by CPU_ZERO/CPU_SET and
+    // passed with its own size; pid 0 is the calling thread.
+    unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        libc::CPU_ZERO(&mut set);
+        for &cpu in cpus {
+            libc::CPU_SET(cpu, &mut set);
+        }
+        libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &raw const set);
+    }
+}
+
+/// The CPUs the timed threads run on when `RAYON_NUM_THREADS = T` is set:
+/// T distinct physical cores. `None` (no pinning) when T is unset or
+/// `BENCH_NO_PIN` is set.
+///
+/// The global pool (zippel's runtime), the timed pool (native baselines)
+/// and the main thread (which computes zippel's transcript messages) are
+/// all confined to these cores, so both sides get exactly T cores; the
+/// untimed setup pool keeps every core.
+fn pin_timed_threads(num_threads: usize) -> Option<Vec<usize>> {
+    if num_threads == 0 || std::env::var_os("BENCH_NO_PIN").is_some() {
+        return None;
+    }
+    let cpus = physical_cpus();
+    assert!(
+        num_threads <= cpus.len(),
+        "RAYON_NUM_THREADS={num_threads} exceeds the {} physical cores",
+        cpus.len()
+    );
+    Some(cpus[..num_threads].to_vec())
 }
 
 fn main() {
@@ -949,9 +1050,16 @@ fn main() {
         .and_then(|s| s.parse::<usize>().ok())
         .filter(|&n| n > 0)
         .unwrap_or(0); // 0 → rayon picks (= num CPUs)
+    let pinned = pin_timed_threads(num_threads);
+    let pin_global = pinned.clone();
     rayon::ThreadPoolBuilder::new()
         .num_threads(num_threads)
         .stack_size(64 * 1024 * 1024)
+        .start_handler(move |_| {
+            if let Some(cpus) = &pin_global {
+                pin_current_thread(cpus);
+            }
+        })
         .build_global()
         .expect("init rayon global pool");
 
@@ -979,11 +1087,23 @@ fn main() {
     } else {
         num_threads
     };
+    let pin_timed = pinned.clone();
     let timed = rayon::ThreadPoolBuilder::new()
         .num_threads(timed_threads)
         .stack_size(64 * 1024 * 1024)
+        .start_handler(move |_| {
+            if let Some(cpus) = &pin_timed {
+                pin_current_thread(cpus);
+            }
+        })
         .build()
         .expect("init rayon timed pool");
+    // The main thread runs the zippel runtime's transcript loop, which
+    // computes prover messages: it shares the same T cores. (It only
+    // blocks while `setup_pool().install` runs setup on the other pool.)
+    if let Some(cpus) = &pinned {
+        pin_current_thread(cpus);
+    }
     TIMED_POOL
         .set(timed)
         .map_err(|_| ())
@@ -1072,6 +1192,12 @@ fn main() {
         (None, true) => vec![4usize, 8],
         (None, false) => vec![18usize],
     };
+    // Dory's size knob is N = 2K variables (a 2^K x 2^K matrix); N must be even.
+    let dory_ns = match (&args.sizes, args.quick) {
+        (Some(ls), _) => ls.clone(),
+        (None, true) => vec![4usize, 8],
+        (None, false) => vec![18usize],
+    };
     let sumcheck_degree = 3usize;
     let pari_n_pub = 1usize;
     let pari_k_vars = 3usize;
@@ -1079,6 +1205,10 @@ fn main() {
     eprintln!("=== bench_all ===");
     eprintln!("systems : {:?}", selected);
     eprintln!("threads : {} (RAYON_NUM_THREADS or default)", threads);
+    match &pinned {
+        Some(cpus) => eprintln!("pinned  : timed threads on physical cores {cpus:?}"),
+        None => eprintln!("pinned  : no (RAYON_NUM_THREADS unset or BENCH_NO_PIN set)"),
+    }
     eprintln!("out     : {}", args.out.display());
     eprintln!();
     eprintln!("source NCLOC (zippel proto vs native_side Rust module):");
@@ -1116,6 +1246,7 @@ fn main() {
             "spartan" => run_spartan(threads, &spartan_ms),
             "dekart" => run_dekart(threads, &dekart_ls, DEKART_ELL),
             "kzh" => run_kzh(threads, &kzh_ns),
+            "dory" => run_dory(threads, &dory_ns),
             other => panic!("unknown system: {other}"),
         };
         all_rows.extend(chunk);

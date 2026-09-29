@@ -1060,6 +1060,6 @@ mod tests {
                 count += 1;
             }
         }
-        assert_eq!(count, 38, "expected 38 .zippel examples");
+        assert_eq!(count, 39, "expected 39 .zippel examples");
     }
 }

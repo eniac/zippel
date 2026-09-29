@@ -1,12 +1,12 @@
 # benchmarks
 
 Wall-clock comparison between **zippel-compiled protocols** and **native Rust
-baselines** for eleven SNARK / commitment / signature / range-proof schemes. Each system runs
+baselines** for twelve SNARK / commitment / signature / range-proof schemes. Each system runs
 both sides on the same machine, same curve, same input size, inside the same
 rayon thread pool — only the implementation differs.
 
 Systems benched: `schnorr`, `sumcheck`, `ipa`, `kzg`, `pari`, `groth16`,
-`pst13`, `hyrax`, `spartan`, `dekart`, `kzh`.
+`pst13`, `hyrax`, `spartan`, `dekart`, `kzh`, `dory`.
 
 For every (system, log_size, threads) point the bench measures:
 
@@ -37,11 +37,15 @@ For iteration, narrow the sweep with environment variables:
 SYSTEMS=hyrax THREADS=1,4,8 OUT=hyrax.csv PROVER_SAMPLES=3 benchmarks/run_all.sh
 ```
 
-On a multi-socket NUMA box (e.g. Xeon Platinum with several CPU nodes), pin
-to one socket so memory locality is consistent across thread counts:
+When `RAYON_NUM_THREADS=T` is set (as `run_all.sh` does), `bench_all` pins
+every timed thread (both rayon pools and the main thread, which computes
+zippel's transcript messages) to the first T physical cores, one SMT
+sibling each, and prints the core list in its header. Both sides therefore
+get exactly T cores. The setup pool stays unpinned. Set `BENCH_NO_PIN=1` to
+disable pinning, e.g. to pin externally:
 
 ```sh
-SYSTEMS=hyrax THREADS=1,2,4,8 OUT=hyrax.csv numactl --cpunodebind=0 --membind=0 benchmarks/run_all.sh
+SYSTEMS=hyrax THREADS=1,2,4,8 OUT=hyrax.csv BENCH_NO_PIN=1 numactl --cpunodebind=0 --membind=0 benchmarks/run_all.sh
 ```
 
 ## Folder layout
@@ -68,6 +72,7 @@ benchmarks/
 │   ├── spartan.rs
 │   ├── dekart.rs
 │   ├── kzh.rs
+│   ├── dory.rs
 │   │
 │   ├── pari_upstream/     vendored garuda-pari (was outside arkworks-0.6 / fixes for fair compare)
 │   ├── pst13_upstream/    vendored ark-poly-commit::multilinear_pc with two open() fixes
@@ -75,6 +80,7 @@ benchmarks/
 │   ├── sumcheck_upstream/ vendored hyperplonk sumcheck (ported to ark 0.6)
 │   ├── dekart_upstream/   vendored aptos-dkg dekart_univariate_v2 (ported to ark 0.6)
 │   ├── kzh_upstream/      vendored irondict KZH-k, dense non-zk path (ported to ark 0.6)
+│   ├── dory_upstream/     vendored a16z dory-pcs, transparent path, concrete BLS12-381
 │   │
 │   └── bin/
 │       ├── bench_all.rs           main entry point used by run_all.sh
@@ -171,6 +177,8 @@ plot linearly on a log-size x-axis):
   in `bench_all`, use `--ell` on the standalone `dekart` bin to vary it)
 - `kzh` — `N` (KZH-2: 2^N evaluations, split into ⌈N/2⌉ row and ⌊N/2⌋
   column variables as irondict does)
+- `dory` — `N` (2^N evaluations as a square 2^(N/2) × 2^(N/2) matrix; N must
+  be even). "prove" is commit + evaluation proof on both sides
 
 `compiler` is the zippel compile time alone: source parse + concretization
 + graph construction + prover/verifier projection. It excludes the Rust
@@ -206,6 +214,7 @@ serialization-format changes.
 - **t=1 numbers are noisy.** Single-sample timings at one thread on a
   loaded server jitter 20-50%. Use `PROVER_SAMPLES=3` (or higher) when t=1
   matters for your analysis.
-- **`numactl` for Xeon multi-socket.** Without pinning, the bench scatters
-  threads across sockets and adds NUMA crossbar costs that confound the
-  scaling story. Pin to a single NUMA node for clean scaling curves.
+- **Pinning is on by default.** Without it the scheduler scatters threads
+  across sockets and SMT siblings, which adds NUMA crossbar costs and lets
+  either side borrow extra cores. Keep the machine otherwise idle during a
+  sweep: other load on the pinned cores skews both sides.

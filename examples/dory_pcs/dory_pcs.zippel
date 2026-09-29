@@ -1,0 +1,356 @@
+// Dory multilinear polynomial commitment, transparent Eval-VMV-RE (Lee, TCC
+// 2021, §3-5), following a16z's dory-pcs step by step: same commitment,
+// same VMV message, same reduce-and-fold messages and challenges (β then α
+// per round), Fold-Scalars with γ, and the same batched 4-pairing final
+// check with challenge d.
+//
+// The coefficient table is a 2^K × 2^K matrix M[i][j] = m[i * NV + j]
+// (square: nu = sigma = K). The point is (col_pt, row_pt): col_pt binds the
+// columns (upstream's point[..sigma]), row_pt the rows; index 0 is the low bit.
+
+fn eq_weights<F: Field>(instance x: [F; 1]) -> [F; 2] {
+    [1 - x[0], x[0]]
+}
+
+fn eq_weights<F: Field, J: 2..16>(instance x: [F; J]) -> [F; 2 ^ J] {
+    let x_lo = x[0..J - 1];
+    let a = x[J - 1];
+    let prev = eq_weights(x_lo);
+    (prev * (1 - a)) ++ (prev * a)
+}
+
+// Setup precomputation (upstream `to_verifier_setup`): for k = 0..=K,
+//   chi[k]      = <Γ1[..2^k], Γ2[..2^k]>
+//   delta_1r[k] = <Γ1[2^(k-1)..2^k], Γ2[..2^(k-1)]>, delta_1r[0] = 0
+//   delta_2r[k] = <Γ1[..2^(k-1)], Γ2[2^(k-1)..2^k]>, delta_2r[0] = 0
+// and delta_1l = delta_2l = [0] ++ chi[0..K].
+fn chi_vec<G1: Group, G2: Group, GT: Pairing<G1, G2>>(
+    instance g1: [G1; 1],
+    instance g2: [G2; 1],
+) -> [GT; 1] {
+    [dot(g1, g2)]
+}
+
+fn chi_vec<G1: Group, G2: Group, GT: Pairing<G1, G2>, J: 1..16>(
+    instance g1: [G1; 2 ^ J],
+    instance g2: [G2; 2 ^ J],
+) -> [GT; J + 1] {
+    chi_vec(g1[0..2 ^ (J - 1)], g2[0..2 ^ (J - 1)]) ++ [dot(g1, g2)]
+}
+
+fn delta_1r_vec<G1: Group, G2: Group, GT: Pairing<G1, G2>>(
+    instance g1: [G1; 1],
+    instance g2: [G2; 1],
+) -> [GT; 1] {
+    let e = dot(g1, g2);
+    [e - e]
+}
+
+fn delta_1r_vec<G1: Group, G2: Group, GT: Pairing<G1, G2>, J: 1..16>(
+    instance g1: [G1; 2 ^ J],
+    instance g2: [G2; 2 ^ J],
+) -> [GT; J + 1] {
+    delta_1r_vec(g1[0..2 ^ (J - 1)], g2[0..2 ^ (J - 1)])
+        ++ [dot(g1[2 ^ (J - 1)..2 ^ J], g2[0..2 ^ (J - 1)])]
+}
+
+fn delta_2r_vec<G1: Group, G2: Group, GT: Pairing<G1, G2>>(
+    instance g1: [G1; 1],
+    instance g2: [G2; 1],
+) -> [GT; 1] {
+    let e = dot(g1, g2);
+    [e - e]
+}
+
+fn delta_2r_vec<G1: Group, G2: Group, GT: Pairing<G1, G2>, J: 1..16>(
+    instance g1: [G1; 2 ^ J],
+    instance g2: [G2; 2 ^ J],
+) -> [GT; J + 1] {
+    delta_2r_vec(g1[0..2 ^ (J - 1)], g2[0..2 ^ (J - 1)])
+        ++ [dot(g1[0..2 ^ (J - 1)], g2[2 ^ (J - 1)..2 ^ J])]
+}
+
+// Fold-Scalars, final message and the batched final check (after all rounds).
+fn dory_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: Size>(
+    // prover state
+    witness v1: [G1; 1],
+    witness v2: [G2; 1],
+    witness s1: [F; 1],
+    witness s2: [F; 1],
+    witness _g1_vec: [G1; 1],
+    witness _g2_vec: [G2; 1],
+    // verifier state
+    instance c: GT,
+    instance d1: GT,
+    instance d2: GT,
+    instance e1: G1,
+    instance e2: G2,
+    instance s1_acc: F,
+    instance s2_acc: F,
+    instance _col_pt: [F; K],
+    instance _row_pt: [F; K],
+    instance chi: [GT; K + 1],
+    instance _delta_1l: [GT; K + 1],
+    instance _delta_1r: [GT; K + 1],
+    instance _delta_2r: [GT; K + 1],
+    instance g1_0: G1,
+    instance g2_0: G2,
+    instance h1: G1,
+    instance h2: G2,
+    instance ht: GT,
+    instance e1_init: G1,
+    instance d2_init: GT,
+) -> Unit {
+    gamma <- challenge<F>;
+    let gamma_inv = 1 / gamma;
+    final_e1 <- v1[0] + h1 * (gamma * s1[0]);
+    final_e2 <- v2[0] + h2 * (gamma_inv * s2[0]);
+    d <- challenge<F>;
+
+    // e(E1_fin + d Γ1,0, E2_fin + d^-1 Γ2,0) · e(H1, -γ (E2 + d^-1 s1 Γ2,0))
+    //   · e(-γ^-1 (E1 + d s2 Γ1,0), H2) · e(d² E1_init, Γ2,0)
+    //   == C + s1 s2 HT + χ0 + d D2 + d^-1 D1 + d² D2_init
+    let d_inv = 1 / d;
+    let d_sq = d * d;
+    let lhs = dot(
+        [final_e1 + g1_0 * d, h1, (e1 + g1_0 * (d * s2_acc)) * (0 - gamma_inv), e1_init * d_sq],
+        [final_e2 + g2_0 * d_inv, (e2 + g2_0 * (d_inv * s1_acc)) * (0 - gamma), h2, g2_0],
+    );
+    let rhs = c + s1_acc * s2_acc * ht + chi[0] + d * d2 + d_inv * d1 + d_sq * d2_init;
+    verify(lhs == rhs)
+}
+
+// One reduce-and-fold round (extended Dory-Reduce, §3.2 & §4.2) on vectors of
+// length 2^R, then recurse on 2^(R-1).
+fn dory_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: Size, R: 1..K + 1>(
+    witness v1: [G1; 2 ^ R],
+    witness v2: [G2; 2 ^ R],
+    witness s1: [F; 2 ^ R],
+    witness s2: [F; 2 ^ R],
+    witness g1_vec: [G1; 2 ^ R],
+    witness g2_vec: [G2; 2 ^ R],
+    instance c: GT,
+    instance d1: GT,
+    instance d2: GT,
+    instance e1: G1,
+    instance e2: G2,
+    instance s1_acc: F,
+    instance s2_acc: F,
+    instance col_pt: [F; K],
+    instance row_pt: [F; K],
+    instance chi: [GT; K + 1],
+    instance delta_1l: [GT; K + 1],
+    instance delta_1r: [GT; K + 1],
+    instance delta_2r: [GT; K + 1],
+    instance g1_0: G1,
+    instance g2_0: G2,
+    instance h1: G1,
+    instance h2: G2,
+    instance ht: GT,
+    instance e1_init: G1,
+    instance d2_init: GT,
+) -> Unit {
+    let g1_half = g1_vec[0..2 ^ (R - 1)];
+    let g2_half = g2_vec[0..2 ^ (R - 1)];
+
+    // First message
+    d1_left <- dot(v1[0..2 ^ (R - 1)], g2_half);
+    d1_right <- dot(v1[2 ^ (R - 1)..2 ^ R], g2_half);
+    d2_left <- dot(g1_half, v2[0..2 ^ (R - 1)]);
+    d2_right <- dot(g1_half, v2[2 ^ (R - 1)..2 ^ R]);
+    e1_beta <- dot(g1_vec, s2);
+    e2_beta <- dot(g2_vec, s1);
+    beta <- challenge<F>;
+    let beta_inv = 1 / beta;
+    let w1 = v1 + g1_vec * beta;
+    let w2 = v2 + g2_vec * beta_inv;
+
+    // Second message
+    let w1_l = w1[0..2 ^ (R - 1)];
+    let w1_r = w1[2 ^ (R - 1)..2 ^ R];
+    let w2_l = w2[0..2 ^ (R - 1)];
+    let w2_r = w2[2 ^ (R - 1)..2 ^ R];
+    let s1_l = s1[0..2 ^ (R - 1)];
+    let s1_r = s1[2 ^ (R - 1)..2 ^ R];
+    let s2_l = s2[0..2 ^ (R - 1)];
+    let s2_r = s2[2 ^ (R - 1)..2 ^ R];
+    c_plus <- dot(w1_l, w2_r);
+    c_minus <- dot(w1_r, w2_l);
+    e1_plus <- dot(w1_l, s2_r);
+    e1_minus <- dot(w1_r, s2_l);
+    e2_plus <- dot(w2_r, s1_l);
+    e2_minus <- dot(w2_l, s1_r);
+    alpha <- challenge<F>;
+    let alpha_inv = 1 / alpha;
+
+    // Verifier state update (process_round)
+    let c_next = c + chi[R] + beta * d2 + beta_inv * d1 + alpha * c_plus + alpha_inv * c_minus;
+    let d1_next = alpha * d1_left + d1_right + alpha * beta * delta_1l[R] + beta * delta_1r[R];
+    let d2_next = alpha_inv * d2_left
+        + d2_right
+        + alpha_inv * beta_inv * delta_1l[R]
+        + beta_inv * delta_2r[R];
+    let e1_next = e1 + e1_beta * beta + e1_plus * alpha + e1_minus * alpha_inv;
+    let e2_next = e2 + e2_beta * beta_inv + e2_plus * alpha + e2_minus * alpha_inv;
+    let y_t = col_pt[R - 1];
+    let x_t = row_pt[R - 1];
+
+    dory_rounds(
+        w1_l * alpha + w1_r,
+        w2_l * alpha_inv + w2_r,
+        s1_l * alpha + s1_r,
+        s2_l * alpha_inv + s2_r,
+        g1_half,
+        g2_half,
+        c_next,
+        d1_next,
+        d2_next,
+        e1_next,
+        e2_next,
+        s1_acc * (alpha * (1 - y_t) + y_t),
+        s2_acc * (alpha_inv * (1 - x_t) + x_t),
+        col_pt,
+        row_pt,
+        chi,
+        delta_1l,
+        delta_1r,
+        delta_2r,
+        g1_0,
+        g2_0,
+        h1,
+        h2,
+        ht,
+        e1_init,
+        d2_init,
+    )
+}
+
+proto dory_pcs<
+    G1: Group,
+    G2: Group,
+    GT: Pairing<G1, G2>,
+    F: Scalar<G1, G2>,
+    K: Size,
+    NV: 2 ^ K,
+    NM: 2 ^ (2 * K),
+>(
+    witness m: [F; NM],
+    // Statement: f(col_pt, row_pt) = y
+    instance col_pt: [F; K],
+    instance row_pt: [F; K],
+    instance y: F,
+    // Setup: Γ1, Γ2 (prover), their precomputed pairings (verifier), H1, H2, HT
+    extra g1_vec: [G1; NV],
+    extra g2_vec: [G2; NV],
+    instance g1_0: G1,
+    instance g2_0: G2,
+    instance h1: G1,
+    instance h2: G2,
+    instance ht: GT,
+    instance chi: [GT; K + 1],
+    instance delta_1l: [GT; K + 1],
+    instance delta_1r: [GT; K + 1],
+    instance delta_2r: [GT; K + 1],
+) where
+    let eqr = eq_weights(row_pt);
+    let eqc = eq_weights(col_pt);
+    y == dot([eqr[i / NV] * eqc[i % NV] for i in 0..NM], m)
+        && g1_0 == g1_vec[0]
+        && g2_0 == g2_vec[0]
+        && ht == pair(h1, h2)
+        && reduce(&&, chi == chi_vec(g1_vec, g2_vec))
+        && reduce(&&, delta_1l == [chi[0] - chi[0]] ++ chi[0..K])
+        && reduce(&&, delta_1r == delta_1r_vec(g1_vec, g2_vec))
+        && reduce(&&, delta_2r == delta_2r_vec(g1_vec, g2_vec))
+{
+    // Commit: row commitments T[i] = <M[i], Γ1>, then C = <T, Γ2>
+    let rows = [dot([m[i * NV + j] for j in 0..NV], g1_vec) for i in 0..NV];
+    com <- dot(rows, g2_vec);
+
+    // VMV message: v = L^T M, C = e(<T, v>, Γ2,0), D2 = e(<Γ1, v>, Γ2,0), E1 = <T, L>
+    let left = eq_weights(row_pt);
+    let right = eq_weights(col_pt);
+    let v_vec = [dot(left, [m[i * NV + j] for i in 0..NV]) for j in 0..NV];
+    vmv_c <- pair(dot(rows, v_vec), g2_0);
+    vmv_d2 <- pair(dot(g1_vec, v_vec), g2_0);
+    vmv_e1 <- dot(rows, left);
+    let v2 = g2_0 * v_vec;
+
+    // Round 1, as upstream: v2 = v · Γ2,0, so D2L/D2R pair one MSM with Γ2,0
+    let g1_half = g1_vec[0..2 ^ (K - 1)];
+    let g2_half = g2_vec[0..2 ^ (K - 1)];
+    d1_left <- dot(rows[0..2 ^ (K - 1)], g2_half);
+    d1_right <- dot(rows[2 ^ (K - 1)..2 ^ K], g2_half);
+    d2_left <- pair(dot(g1_half, v_vec[0..2 ^ (K - 1)]), g2_0);
+    d2_right <- pair(dot(g1_half, v_vec[2 ^ (K - 1)..2 ^ K]), g2_0);
+    e1_beta <- dot(g1_vec, left);
+    e2_beta <- dot(g2_vec, right);
+    beta <- challenge<F>;
+    let beta_inv = 1 / beta;
+    let w1 = rows + g1_vec * beta;
+    let w2 = v2 + g2_vec * beta_inv;
+
+    let w1_l = w1[0..2 ^ (K - 1)];
+    let w1_r = w1[2 ^ (K - 1)..2 ^ K];
+    let w2_l = w2[0..2 ^ (K - 1)];
+    let w2_r = w2[2 ^ (K - 1)..2 ^ K];
+    let s1_l = right[0..2 ^ (K - 1)];
+    let s1_r = right[2 ^ (K - 1)..2 ^ K];
+    let s2_l = left[0..2 ^ (K - 1)];
+    let s2_r = left[2 ^ (K - 1)..2 ^ K];
+    c_plus <- dot(w1_l, w2_r);
+    c_minus <- dot(w1_r, w2_l);
+    e1_plus <- dot(w1_l, s2_r);
+    e1_minus <- dot(w1_r, s2_l);
+    e2_plus <- dot(w2_r, s1_l);
+    e2_minus <- dot(w2_l, s1_r);
+    alpha <- challenge<F>;
+    let alpha_inv = 1 / alpha;
+
+    // Verifier: initial state (C, D1 = com, D2, E1, E2 = y Γ2,0), then round 1
+    let e2_0 = g2_0 * y;
+    let c_next = vmv_c
+        + chi[K]
+        + beta * vmv_d2
+        + beta_inv * com
+        + alpha * c_plus
+        + alpha_inv * c_minus;
+    let d1_next = alpha * d1_left + d1_right + alpha * beta * delta_1l[K] + beta * delta_1r[K];
+    let d2_next = alpha_inv * d2_left
+        + d2_right
+        + alpha_inv * beta_inv * delta_1l[K]
+        + beta_inv * delta_2r[K];
+    let e1_next = vmv_e1 + e1_beta * beta + e1_plus * alpha + e1_minus * alpha_inv;
+    let e2_next = e2_0 + e2_beta * beta_inv + e2_plus * alpha + e2_minus * alpha_inv;
+    let y_t = col_pt[K - 1];
+    let x_t = row_pt[K - 1];
+
+    dory_rounds(
+        w1_l * alpha + w1_r,
+        w2_l * alpha_inv + w2_r,
+        s1_l * alpha + s1_r,
+        s2_l * alpha_inv + s2_r,
+        g1_half,
+        g2_half,
+        c_next,
+        d1_next,
+        d2_next,
+        e1_next,
+        e2_next,
+        alpha * (1 - y_t) + y_t,
+        alpha_inv * (1 - x_t) + x_t,
+        col_pt,
+        row_pt,
+        chi,
+        delta_1l,
+        delta_1r,
+        delta_2r,
+        g1_0,
+        g2_0,
+        h1,
+        h2,
+        ht,
+        vmv_e1,
+        vmv_d2,
+    )
+}

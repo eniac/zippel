@@ -1686,6 +1686,17 @@ impl<C: ArkConfig> Value<C> {
     /// mismatch.
     #[inline]
     pub fn value_dot(&self, other: &mut Self) {
+        // A prepared G2 vector uses its preparation only against G1 vectors
+        // (a multi-pairing); any other dot sees its points.
+        let is_g1_vec = |v: &Self| matches!(v, Value::VecG1(_) | Value::VecG1Affine(_));
+        if let Value::VecG2Prepared(a) = self
+            && !is_g1_vec(other)
+        {
+            return Value::VecG2Affine(a.affine.clone()).value_dot(other);
+        }
+        if matches!(other, Value::VecG2Prepared(_)) && !is_g1_vec(self) {
+            other.into_vec_g2_affine_mut();
+        }
         match (&self, &other) {
             (Value::VecG1(a), Value::VecG2Prepared(b))
             | (Value::VecG2Prepared(b), Value::VecG1(a)) => {
@@ -2239,6 +2250,14 @@ impl<C: ArkConfig> Value<C> {
                 Value::VecG2Affine(b.par_iter().map(|i| a[*i]).collect())
             }
             (Value::VecG2Affine(a), Value::Index(b)) => Value::G2Affine(a[*b]),
+            // Slicing keeps the preparation of the selected points.
+            (Value::VecG2Prepared(a), Value::VecIndex(b)) => Value::VecG2Prepared(PreparedG2Vec {
+                affine: b.iter().map(|i| a.affine[*i]).collect(),
+                prepared: std::sync::Arc::new(
+                    b.par_iter().map(|i| a.prepared[*i].clone()).collect(),
+                ),
+            }),
+            (Value::VecG2Prepared(a), Value::Index(b)) => Value::G2Affine(a.affine[*b]),
             (Value::Vec(a), Value::VecIndex(b)) => {
                 Value::Vec(b.par_iter().map(|i| a[*i].clone()).collect())
             }

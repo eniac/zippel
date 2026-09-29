@@ -59,6 +59,8 @@ blake2 = "0.10"
 
 merlin = "3"
 rayon = "1"
+# CPU pinning of the timed threads in bench_all (sched_setaffinity).
+libc = "0.2"
 
 rand = { version = "0.8", features = ["std"] }
 clap = { version = "4", features = ["derive"] }

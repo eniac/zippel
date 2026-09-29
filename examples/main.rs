@@ -27,6 +27,8 @@ mod cp;
 mod dekart;
 #[path = "dory/main.rs"]
 mod dory;
+#[path = "dory_pcs/main.rs"]
+mod dory_pcs;
 #[path = "groth16/main.rs"]
 mod groth16;
 #[path = "hadamard/main.rs"]
@@ -98,6 +100,7 @@ const EXAMPLES: &[(&str, Runner)] = &[
     ("cp", cp::run),
     ("dekart", dekart::run),
     ("dory", dory::run),
+    ("dory_pcs", dory_pcs::run),
     ("groth16", groth16::run),
     ("hadamard", hadamard::run),
     ("hyperplonk", hyperplonk::run),
