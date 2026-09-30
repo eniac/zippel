@@ -309,7 +309,7 @@ static PROTOCOLS: &[ProtocolConfig] = &[
     ProtocolConfig {
         name: "kzh",
         path: "examples/kzh/kzh.zippel",
-        sizes: &[("NX", 1), ("NY", 1)],
+        sizes: &[("NX", 2), ("NY", 1)],
     },
     ProtocolConfig {
         name: "dekart",
