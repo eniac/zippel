@@ -10,7 +10,6 @@ expression: value
 - ck_N[3]*h_gen - ck_N[2]*h_gen + alpha_H[0]*g_gen
 - g_gen + ck_N[3] + ck_N[2] + ck_N[1] + ck_N[0]
 __zippel::node::44 - 1
-__zippel::node::70 - 1
 __zippel::node::73[0] - 1
 __zippel::node::73[1] - 1
 __zippel::node::73[2] - 1
@@ -23,4 +22,3 @@ g_gen*__zippel::node::55 - ck_N[3] - ck_N[2]
 g_gen*__zippel::node::56 - ck_N[3] - ck_N[1]
 h_gen*__zippel::node::55 - alpha_H[0]
 h_gen*__zippel::node::56 - alpha_H[1]
-p[3]*z[0]*z[1] - p[2]*z[0]*z[1] - p[1]*z[0]*z[1] + p[0]*z[0]*z[1] + p[1]*z[1] - p[0]*z[1] + p[2]*z[0] - p[0]*z[0] - y + p[0]
