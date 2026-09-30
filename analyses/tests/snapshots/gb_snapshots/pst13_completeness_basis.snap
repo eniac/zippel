@@ -2,6 +2,10 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+checks:
+h_gen*z[1]*pi_last - alpha_H[1]*pi_last + h_gen*z[0]*pi_curr - alpha_H[0]*pi_curr + h_gen*c_p - g_gen*h_gen*y
+discharged before the basis: 0 of 1
+basis:
 - alpha_H[0]*__zippel::node::56 + alpha_H[1]*__zippel::node::55
 - ck_N[3]*g_gen + ck_N[3]^2 + ck_N[2]*ck_N[3] + ck_N[1]*ck_N[3] + ck_N[1]*ck_N[2]
 - ck_N[3]*h_gen + alpha_H[0]*ck_N[3] + alpha_H[0]*ck_N[1]

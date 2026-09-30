@@ -31,6 +31,14 @@ pub struct CompletenessInputs<F: ark_ff::PrimeField> {
     /// Verifier polynomials to reduce against the basis in `run()`, minus
     /// those already in `generating_set` (members by construction).
     pub verifier: Vec<Polynomial<F>>,
+    /// What each `verify` checks, as `lhs − rhs` over the verifier's own
+    /// variables, before any substitution. Unlike `verifier`, it does not
+    /// vanish when the substitution discharges a check, so it is what to
+    /// report or snapshot.
+    pub checks: Vec<Polynomial<F>>,
+    /// How many verifier goals the substitution discharged before the Gröbner
+    /// basis; the rest are in `verifier`.
+    pub discharged: usize,
 }
 
 /// Substitute `defs` into every polynomial, dropping those that vanish.
@@ -190,6 +198,12 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         generating_set.extend(verifier_locals.generating_set);
         let mut verifier = verifier_result.generating_set;
 
+        // verifier_locals keeps the `==` node under each `verify`, so its
+        // encoding is already a generator; reducing it again is wasted work.
+        // What is left are the goals, one `b − 1` per checked bool.
+        verifier.retain(|p| !generating_set.contains(p));
+        let goals = verifier.len();
+
         if inline {
             // `inline` kept the prover-message definitions back in `pl`,
             // already resolved down to non-message variables.
@@ -205,13 +219,11 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
                 eliminate_definitions(generating_set, verifier, |v| inputs.contains(&v.reference));
         }
 
-        // verifier_locals keeps the `==` node under each `verify`, so its
-        // encoding is already a generator; reducing it again is wasted work.
-        verifier.retain(|p| !generating_set.contains(p));
-
         CompletenessInputs {
             generating_set,
+            discharged: goals - verifier.len(),
             verifier,
+            checks: verifier_result.checks,
         }
     }
 

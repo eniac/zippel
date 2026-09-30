@@ -2,4 +2,8 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-
+checks:
+g*sr - c1*c - t1
+h*sr + g*sx - c2*c - t2
+discharged before the basis: 2 of 2
+basis:

@@ -2,5 +2,12 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+checks:
+- h_base*t_sigma_A - ck[0]*mat_A[1]*t_s[0] + t_C_A'*gamma + t_C_A - ck[0]*mat_A[0]*x[0]
+- h_base*t_sigma_B - ck[0]*mat_B[1]*t_s[0] + t_C_B'*gamma + t_C_B - ck[0]*mat_B[0]*x[0]
+- h_base*t_sigma_C - ck[0]*mat_C[1]*t_s[0] + t_C_C'*gamma + t_C_C - ck[0]*mat_C[0]*x[0]
+- h_base*t_sigma_o - ck[0]*mat_A[1]*mat_B[1]*t_s[0]^2 - ck[0]*mat_A[0]*mat_B[1]*x[0]*t_s[0] - ck[0]*mat_A[1]*mat_B[0]*x[0]*t_s[0] + t_C_2*gamma^2 + t_C_1*gamma + t_C_C - ck[0]*mat_A[0]*mat_B[0]*x[0]^2
+discharged before the basis: 3 of 4
+basis:
 __zippel::node::117 - 1
 mat_A[0]*mat_B[0]*x[0]^2 + mat_A[0]*mat_B[1]*w[0]*x[0] + mat_A[1]*mat_B[0]*w[0]*x[0] - mat_C[0]*x[0] + mat_A[1]*mat_B[1]*w[0]^2 - mat_C[1]*w[0]

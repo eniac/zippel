@@ -2,6 +2,12 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+checks:
+- final_gamma1*log_g + hash2_l_vec[2]*rho_inv*alpha_inv + log_d2l*alpha_inv + hash2_r_vec[2]*rho_inv*alpha + log_d2r*alpha
+- final_gamma2*log_u + hash1_r_vec[2]*rho*alpha_inv + log_d1r*alpha_inv + hash1_l_vec[2]*rho*alpha + log_d1l*alpha
+- log_u*log_g + log_vr*alpha_inv^2 + log_vl*alpha^2 + hash1_r_vec[1]*rho*alpha_inv*rho_inv + log_d1r*alpha_inv*rho_inv + hash1_l_vec[1]*rho*alpha*rho_inv + log_d1l*alpha*rho_inv + hash2_l_vec[1]*rho_inv*alpha_inv*rho + log_d2l*alpha_inv*rho + hash2_r_vec[1]*rho_inv*alpha*rho + log_d2r*alpha*rho + log_vr*alpha_inv^2 + log_vl*alpha^2 + hash1_r_vec[0]*rho*alpha_inv*rho_inv + log_d1r*alpha_inv*rho_inv + hash1_l_vec[0]*rho*alpha*rho_inv + log_d1l*alpha*rho_inv + hash2_l_vec[0]*rho_inv*alpha_inv*rho + log_d2l*alpha_inv*rho + hash2_r_vec[0]*rho_inv*alpha*rho + log_d2r*alpha*rho + log_vr*alpha_inv^2 + log_vl*alpha^2 + c2*rho_inv + c3*rho + gamma_pair_ipp_vec[2] + gamma_pair_ipp_vec[1] + gamma_pair_ipp_vec[0] + c1
+discharged before the basis: 2 of 3
+basis:
 - __zippel::gb::div_inv::0 + __zippel::gb::div_inv::6
 - __zippel::gb::div_inv::0 + rho_inv
 - __zippel::gb::div_inv::1 + __zippel::gb::div_inv::7

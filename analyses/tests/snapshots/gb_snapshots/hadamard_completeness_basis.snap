@@ -2,6 +2,10 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+checks:
+- right_hand + left_hand
+discharged before the basis: 0 of 1
+basis:
 - __zippel::gb::div_c::0 + __zippel::gb::div_c::2
 - __zippel::gb::div_c::0 + v_H[1]*__zippel::gb::div_inv::0
 - __zippel::gb::div_c::0 + v_H[1]*__zippel::gb::div_inv::2
