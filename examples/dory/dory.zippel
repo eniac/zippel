@@ -5,6 +5,12 @@
 // c2 = <u, gamma2>
 // c3 = <g, gamma1>
 // Where <a, b> represents the inner pairing product (IPP).
+//
+// The generators gamma1, gamma2 (and the halves gamma1_prime, gamma2_prime)
+// are the public proving key, so they are `extra`: only the prover reads
+// them. The verifier instead reads the preprocessed verifier key (the
+// per-level hash and IPP values, plus the final generators), and the `where`
+// clause states how that key is derived from the generators.
 
 // Base Case (n = 1) -> maps to LOG_N=0 in power
 fn dory_reduce<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
@@ -40,11 +46,13 @@ fn dory_reduce<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
     instance final_gamma1: G1,
     instance final_gamma2: G2,
 
+    // Proving key: the public generators, read only by the prover
+    extra gamma1: [G1; 2],
+    extra gamma2: [G2; 2],
+    extra gamma1_prime: [G1; 1],
+    extra gamma2_prime: [G2; 1],
+
     // Prover's witness state
-    witness gamma1: [G1; 2],
-    witness gamma2: [G2; 2],
-    witness gamma1_prime: [G1; 1],
-    witness gamma2_prime: [G2; 1],
     witness u_vec: [G1; 2],
     witness g_vec: [G2; 2],
 ) -> Unit {
@@ -141,11 +149,13 @@ fn dory_reduce<
     instance final_gamma1: G1,
     instance final_gamma2: G2,
 
+    // Proving key: the public generators, read only by the prover
+    extra gamma1: [G1; 2 ^ LOG_N],
+    extra gamma2: [G2; 2 ^ LOG_N],
+    extra gamma1_prime: [G1; 2 ^ (LOG_N - 1)],
+    extra gamma2_prime: [G2; 2 ^ (LOG_N - 1)],
+
     // Prover's witness state
-    witness gamma1: [G1; 2 ^ LOG_N],
-    witness gamma2: [G2; 2 ^ LOG_N],
-    witness gamma1_prime: [G1; 2 ^ (LOG_N - 1)],
-    witness gamma2_prime: [G2; 2 ^ (LOG_N - 1)],
     witness u_vec: [G1; 2 ^ LOG_N],
     witness g_vec: [G2; 2 ^ LOG_N],
 ) -> Unit {
@@ -253,12 +263,83 @@ fn dory_reduce<
     )
 }
 
+// Verifier key: the preprocessed values the verifier reads at each level
+// match the generators. Mirrors dory_reduce's recursion: the next level's
+// gamma is this level's gamma_prime, and its gamma_prime is the first half
+// of this one.
+
+// Last level (LOG_N = 1): two generators per side.
+fn dory_setup_ok<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
+    instance hash1_l_vec: [GT; 1],
+    instance hash1_r_vec: [GT; 1],
+    instance hash2_l_vec: [GT; 1],
+    instance hash2_r_vec: [GT; 1],
+    instance gamma_pair_ipp_vec: [GT; 1],
+    extra gamma1: [G1; 2],
+    extra gamma2: [G2; 2],
+    extra gamma1_prime: [G1; 1],
+    extra gamma2_prime: [G2; 1],
+) -> Bool {
+    hash1_l_vec[0] == pair(gamma1[0], gamma2_prime[0])
+        && hash1_r_vec[0] == pair(gamma1[1], gamma2_prime[0])
+        && hash2_l_vec[0] == pair(gamma1_prime[0], gamma2[0])
+        && hash2_r_vec[0] == pair(gamma1_prime[0], gamma2[1])
+        && gamma_pair_ipp_vec[0] == pair(gamma1[0], gamma2[0]) + pair(gamma1[1], gamma2[1])
+}
+
+// Level LOG_N >= 2: check this level, then the remaining ones.
+fn dory_setup_ok<
+    G1: Group,
+    G2: Group,
+    GT: Pairing<G1, G2>,
+    F: Scalar<G1, G2>,
+    S: Size,
+    LOG_N: 2..S + 1,
+>(
+    instance hash1_l_vec: [GT; LOG_N],
+    instance hash1_r_vec: [GT; LOG_N],
+    instance hash2_l_vec: [GT; LOG_N],
+    instance hash2_r_vec: [GT; LOG_N],
+    instance gamma_pair_ipp_vec: [GT; LOG_N],
+    extra gamma1: [G1; 2 ^ LOG_N],
+    extra gamma2: [G2; 2 ^ LOG_N],
+    extra gamma1_prime: [G1; 2 ^ (LOG_N - 1)],
+    extra gamma2_prime: [G2; 2 ^ (LOG_N - 1)],
+) -> Bool {
+    let gamma1_l = gamma1[0..2 ^ (LOG_N - 1)];
+    let gamma1_r = gamma1[2 ^ (LOG_N - 1)..2 ^ LOG_N];
+    let gamma2_l = gamma2[0..2 ^ (LOG_N - 1)];
+    let gamma2_r = gamma2[2 ^ (LOG_N - 1)..2 ^ LOG_N];
+
+    hash1_l_vec[0] == reduce(+, [pair(gamma1_l[i], gamma2_prime[i]) for i in 0..2 ^ (LOG_N - 1)])
+        && hash1_r_vec[0]
+            == reduce(+, [pair(gamma1_r[i], gamma2_prime[i]) for i in 0..2 ^ (LOG_N - 1)])
+        && hash2_l_vec[0]
+            == reduce(+, [pair(gamma1_prime[i], gamma2_l[i]) for i in 0..2 ^ (LOG_N - 1)])
+        && hash2_r_vec[0]
+            == reduce(+, [pair(gamma1_prime[i], gamma2_r[i]) for i in 0..2 ^ (LOG_N - 1)])
+        && gamma_pair_ipp_vec[0] == reduce(+, [pair(gamma1[i], gamma2[i]) for i in 0..2 ^ LOG_N])
+        && dory_setup_ok(
+            hash1_l_vec[1..LOG_N],
+            hash1_r_vec[1..LOG_N],
+            hash2_l_vec[1..LOG_N],
+            hash2_r_vec[1..LOG_N],
+            gamma_pair_ipp_vec[1..LOG_N],
+            gamma1_prime,
+            gamma2_prime,
+            gamma1_prime[0..2 ^ (LOG_N - 2)],
+            gamma2_prime[0..2 ^ (LOG_N - 2)],
+        )
+}
+
 // Wrapper Protocol for Dory
 proto dory_eval<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, S: Size, LOG_N: S>(
     // Inputs (from the top-level LOG_N)
     instance c1: GT,
     instance c2: GT,
     instance c3: GT,
+
+    // Verifier key, derived from the generators (see dory_setup_ok)
     instance hash1_l_vec: [GT; LOG_N],
     instance hash1_r_vec: [GT; LOG_N],
     instance hash2_l_vec: [GT; LOG_N],
@@ -267,17 +348,33 @@ proto dory_eval<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, S:
     instance final_gamma1: G1,
     instance final_gamma2: G2,
 
+    // Proving key: the public generators, read only by the prover
+    extra gamma1: [G1; 2 ^ LOG_N],
+    extra gamma2: [G2; 2 ^ LOG_N],
+    extra gamma1_prime: [G1; 2 ^ (LOG_N - 1)],
+    extra gamma2_prime: [G2; 2 ^ (LOG_N - 1)],
+
     // Prover's witness secrets
-    witness gamma1: [G1; 2 ^ LOG_N],
-    witness gamma2: [G2; 2 ^ LOG_N],
-    witness gamma1_prime: [G1; 2 ^ (LOG_N - 1)],
-    witness gamma2_prime: [G2; 2 ^ (LOG_N - 1)],
     witness u_vec: [G1; 2 ^ LOG_N],
     witness g_vec: [G2; 2 ^ LOG_N],
 ) where
     c1 == reduce(+, [pair(u_vec[i], g_vec[i]) for i in 0..2 ^ LOG_N])
         && c2 == reduce(+, [pair(u_vec[i], gamma2[i]) for i in 0..2 ^ LOG_N])
         && c3 == reduce(+, [pair(gamma1[i], g_vec[i]) for i in 0..2 ^ LOG_N])
+        && dory_setup_ok(
+            hash1_l_vec,
+            hash1_r_vec,
+            hash2_l_vec,
+            hash2_r_vec,
+            gamma_pair_ipp_vec,
+            gamma1,
+            gamma2,
+            gamma1_prime,
+            gamma2_prime,
+        )
+        // After the last reduction the generators are gamma_prime's first element.
+        && final_gamma1 == gamma1_prime[0]
+        && final_gamma2 == gamma2_prime[0]
 {
     // Start the reduction proof
     dory_reduce(
