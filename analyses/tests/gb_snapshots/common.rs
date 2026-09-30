@@ -85,8 +85,8 @@ pub(crate) fn compile_to_dag(path: &PathBuf, sizes: &[(&str, usize)]) -> Analysi
     QualifierPropagation::from_dag(proto)
 }
 
-/// Normalize a list of polynomials (a GB, or completeness checks) for
-/// deterministic snapshot comparison: sort them by their Display string.
+/// Normalize a GB for deterministic snapshot comparison:
+/// sort polynomials by their Display string.
 pub(crate) fn normalize_basis(polys: &[Polynomial<F>]) -> String {
     let mut rendered: Vec<String> = polys.iter().map(|p| format!("{p}")).collect();
     rendered.sort();

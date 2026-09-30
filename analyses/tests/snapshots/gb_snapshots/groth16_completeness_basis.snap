@@ -2,9 +2,25 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-checks:
-- delta_g2*c_proof + a_proof*b_proof - gamma_abc_g1[0]*gamma_g2*instance_assignment[0] - alpha_g1*beta_g2
-discharged before the basis: 0 of 1
+check: - delta_g2*c_proof + a_proof*b_proof - gamma_abc_g1[0]*gamma_g2*instance_assignment[0] - alpha_g1*beta_g2 == 0
+  a_proof <- delta_g1*r + a_query[1]*witness_assignment[0] + a_query[0]*instance_assignment[0] + alpha_g1
+  b_proof <- delta_g2*s + b_g2_query[1]*witness_assignment[0] + b_g2_query[0]*instance_assignment[0] + beta_g2
+  c_proof <- delta_g1*r*s + a_query[1]*witness_assignment[0]*s + a_query[0]*instance_assignment[0]*s + alpha_g1*s + b_g1_query[1]*witness_assignment[0]*r + b_g1_query[0]*instance_assignment[0]*r + beta_g1*r + l_query[0]*witness_assignment[0] + h_coeffs[0]*h_query[0]
+  alpha_g1 == gen_g1*alpha
+  beta_g1 == gen_g1*beta
+  beta_g2 == gen_g2*beta
+  delta_g1 == gen_g1*delta
+  delta_g2 == gen_g2*delta
+  gamma_g2 == gen_g2*gamma
+  lhs: - b_g1_query[1]*gen_g2*witness_assignment[0]*r*delta + b_g2_query[1]*gen_g1*witness_assignment[0]*r*delta - b_g1_query[0]*gen_g2*instance_assignment[0]*r*delta + b_g2_query[0]*gen_g1*instance_assignment[0]*r*delta - gen_g2*l_query[0]*witness_assignment[0]*delta - gen_g2*h_coeffs[0]*h_query[0]*delta - gamma_abc_g1[0]*gen_g2*instance_assignment[0]*gamma + a_query[1]*gen_g2*witness_assignment[0]*beta + a_query[0]*gen_g2*instance_assignment[0]*beta + b_g2_query[1]*gen_g1*witness_assignment[0]*alpha + b_g2_query[0]*gen_g1*instance_assignment[0]*alpha + a_query[1]*b_g2_query[1]*witness_assignment[0]^2 + a_query[0]*b_g2_query[1]*instance_assignment[0]*witness_assignment[0] + a_query[1]*b_g2_query[0]*instance_assignment[0]*witness_assignment[0] + a_query[0]*b_g2_query[0]*instance_assignment[0]^2
+  rhs: 0
+  equal modulo the basis, using:
+    - gen_g1*t_at_tau + h_query[0]*delta
+    gen_g1*__zippel::node::88 - l_query[0]*delta + a_query[1]*beta + b_g1_query[1]*alpha
+    gen_g1*__zippel::node::87 - gamma_abc_g1[0]*gamma + a_query[0]*beta + b_g1_query[0]*alpha
+    - b_g1_query[1]*gen_g2 + b_g2_query[1]*gen_g1
+    - b_g1_query[0]*gen_g2 + b_g2_query[0]*gen_g1
+    - gen_g1*gen_g2*h_coeffs[0]*t_at_tau - gen_g1*gen_g2*witness_assignment[0]*__zippel::node::88 - gen_g1*gen_g2*instance_assignment[0]*__zippel::node::87 + a_query[1]*b_g2_query[1]*witness_assignment[0]^2 + a_query[0]*b_g2_query[1]*instance_assignment[0]*witness_assignment[0] + a_query[1]*b_g2_query[0]*instance_assignment[0]*witness_assignment[0] + a_query[0]*b_g2_query[0]*instance_assignment[0]^2
 basis:
 - a_query[0]*__zippel::node::82 + a_query[1]*__zippel::node::81
 - a_query[0]*__zippel::node::84 + b_g1_query[0]*__zippel::node::81

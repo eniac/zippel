@@ -13,6 +13,16 @@ use share::{Ctx, Set};
 use crate::Var;
 use crate::frontend::Polynomial;
 
+/// One coefficient slot of what a `verify` checks: `lhs == rhs`, or `b == 1` for
+/// a bool that is not an `==`.
+#[derive(Clone, Debug)]
+pub struct Check<F: ark_ff::Field> {
+    /// The left-hand side.
+    pub lhs: Polynomial<F>,
+    /// The right-hand side.
+    pub rhs: Polynomial<F>,
+}
+
 /// The ideal of building a Gröbner basis — the basis polynomials, their
 /// polynomial definitions (pl), and the vars used in the basis.
 #[derive(Clone)]
@@ -20,9 +30,8 @@ pub struct Ideal<C: ArkConfig> {
     /// The generators of the ideal: every polynomial constrained to vanish on
     /// honest executions of the protocol fragment being analysed.
     pub generating_set: Vec<Polynomial<C::F>>,
-    /// What each `verify` checks, as `lhs − rhs` per coefficient slot (or `b − 1` for a
-    /// bool that is not an `==`). Recorded for reporting only, never a generator.
-    pub checks: Vec<Polynomial<C::F>>,
+    /// What each `verify` checks. Recorded for reporting only, never a generator.
+    pub checks: Vec<Check<C::F>>,
     /// Definitional equations kept out of the generating set: each `Var` maps to
     /// the polynomial it abbreviates, so chains of intermediate DAG nodes can be
     /// substituted away by [`Ideal::inline`] instead of bloating the basis.
@@ -179,10 +188,9 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             *p = new_p;
         }
         self.generating_set.retain(|p| !p.is_zero());
-        // Checks keep their zeros: a check that is trivially true is still a check.
-        for p in self.checks.iter_mut() {
-            let (new_p, _) = p.clone().inline_vars(&self.pl);
-            *p = new_p;
+        for check in self.checks.iter_mut() {
+            check.lhs = check.lhs.clone().inline_vars(&self.pl).0;
+            check.rhs = check.rhs.clone().inline_vars(&self.pl).0;
         }
 
         for (k, v) in saved {

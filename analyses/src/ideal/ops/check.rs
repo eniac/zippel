@@ -8,9 +8,11 @@ use lang::ast::BinOp;
 use crate::Var;
 use crate::frontend::Polynomial;
 
+use crate::ideal::Check;
+
 use super::EncodeCtx;
 use super::PolySource;
-use super::bool::differences;
+use super::bool::sides;
 
 /// Prover-side assertion encoder. Traces `&&` chains through the graph
 /// and asserts each leaf bool individually, avoiding a high-degree
@@ -32,8 +34,8 @@ pub fn verify_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, _pr: &
     }
 }
 
-/// Record what the `verify` leaf `exp` checks in `ideal.checks`: `lhs − rhs` per slot when
-/// it is an `==`, and `b − 1` for any other bool.
+/// Record what the `verify` leaf `exp` checks in `ideal.checks`: `lhs == rhs` per slot when
+/// it is an `==`, and `b == 1` for any other bool.
 fn record_check<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, exp: &HOp<C>) {
     let op = match exp.get() {
         Op::Ref(r, _) => ctx.builder.node_ops.get(r).cloned(),
@@ -42,11 +44,15 @@ fn record_check<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, exp: &H
     if let Some(Op::Bin(BinOp::Equ, a, b, _)) = op {
         let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, &a);
         let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, &b);
-        ctx.ideal.checks.extend(differences(&a_src, &b_src));
+        ctx.ideal.checks.extend(sides(&a_src, &b_src));
     } else {
         let src = PolySource::from_ref_vars(&ctx.ideal.vars, exp);
         let one = Polynomial::lit(&C::FOps::one());
-        ctx.ideal.checks.extend(src.polys.iter().map(|p| p - &one));
+        let checks = src.polys.into_iter().map(|lhs| Check {
+            lhs,
+            rhs: one.clone(),
+        });
+        ctx.ideal.checks.extend(checks);
     }
 }
 

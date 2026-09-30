@@ -1,7 +1,7 @@
 //! Completeness snapshot trials: assert `CompletenessAnalysis::run()`
-//! actually passes, then snapshot the verifier checks, how many the
-//! substitution discharged, and the computed Gröbner basis for regression
-//! detection.
+//! actually passes, then snapshot why each verifier check holds
+//! (`CompletenessAnalysis::explain`) and the computed Gröbner basis for
+//! regression detection.
 
 use crate::common::{assert_named_snapshot, compile_to_dag, normalize_basis};
 use analyses::{CompletenessAnalysis, GbBackendKind};
@@ -265,18 +265,13 @@ fn run_completeness_snapshot(entry: &CompletenessEntry) -> Result<(), Failed> {
         if inputs.checks.is_empty() {
             return Err(Failed::from("the protocol has no verifier checks"));
         }
-        // The checks and how they were discharged, since substitution alone can
-        // discharge them all and leave the basis empty.
-        let checks = normalize_basis(&inputs.checks);
-        let goals = inputs.discharged + inputs.verifier.len();
-        let discharged = format!(
-            "discharged before the basis: {} of {goals}",
-            inputs.discharged
-        );
         let mut ca = CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, backend);
         ca.run().map_err(|e| Failed::from(e.to_string()))?;
+        // Why each check holds, since substitution alone can discharge them all
+        // and leave the basis empty.
+        let explanation = ca.explain();
         let basis = normalize_basis(&ca.basis.polys);
-        Ok::<String, Failed>(format!("checks:\n{checks}\n{discharged}\nbasis:\n{basis}"))
+        Ok::<String, Failed>(format!("{explanation}basis:\n{basis}"))
     })
     .expect("thread panicked")?;
 
