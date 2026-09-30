@@ -190,6 +190,8 @@ pub enum Token<'src> {
     KwSize,
     /// `Unit` — unit type.
     KwUnit,
+    /// `Bool` — boolean type.
+    KwBool,
     /// `Fin` — bounded-range type `Fin<start..end>`.
     KwFin,
     /// `Poly` — general polynomial type constructor.
@@ -293,6 +295,7 @@ impl<'src> Token<'src> {
             Token::KwScalar => Token::KwScalar,
             Token::KwSize => Token::KwSize,
             Token::KwUnit => Token::KwUnit,
+            Token::KwBool => Token::KwBool,
             Token::KwFin => Token::KwFin,
             Token::KwPolyTy => Token::KwPolyTy,
             Token::KwUni => Token::KwUni,
@@ -370,6 +373,7 @@ impl<'src> std::fmt::Display for Token<'src> {
             Token::KwScalar => write!(f, "Scalar"),
             Token::KwSize => write!(f, "Size"),
             Token::KwUnit => write!(f, "Unit"),
+            Token::KwBool => write!(f, "Bool"),
             Token::KwFin => write!(f, "Fin"),
             Token::KwPolyTy => write!(f, "Poly"),
             Token::KwUni => write!(f, "Uni"),
@@ -546,6 +550,7 @@ const KEYWORDS: &[(&str, Token<'static>)] = &[
     ("Scalar", Token::KwScalar),
     ("Size", Token::KwSize),
     ("Unit", Token::KwUnit),
+    ("Bool", Token::KwBool),
     ("Fin", Token::KwFin),
     ("Poly", Token::KwPolyTy),
     ("Uni", Token::KwUni),
@@ -845,7 +850,7 @@ mod tests {
             ],
         );
         assert_tokens(
-            "Field Group Scalar Size Unit",
+            "Field Group Scalar Size Unit Bool",
             &[
                 Token::KwField,
                 Token::Whitespace,
@@ -856,6 +861,8 @@ mod tests {
                 Token::KwSize,
                 Token::Whitespace,
                 Token::KwUnit,
+                Token::Whitespace,
+                Token::KwBool,
             ],
         );
         assert_tokens(

@@ -111,7 +111,10 @@ pub(crate) fn format_typ(
             let gap = cursor.advance_to_token(end, |token| matches!(token, Token::KwUnit));
             (gap, ALLOC.text("Unit"))
         }
-        Typ::Bool => (TriviaGap::default(), ALLOC.text("Bool")),
+        Typ::Bool => {
+            let gap = cursor.advance_to_token(end, |token| matches!(token, Token::KwBool));
+            (gap, ALLOC.text("Bool"))
+        }
         Typ::FieldLiteral => unreachable!("field literals are internal and have no source syntax"),
         Typ::Record(fields) => {
             let open_gap = cursor.advance_to_token(end, |token| matches!(token, Token::LBrace));
