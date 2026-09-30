@@ -2,9 +2,4 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- p[7] - p[6] - p[5] - p[4] - p[3] - p[2] - p[1] - p[0] + claimed_sum
-__zippel::node::11 - 1
-__zippel::node::27 - 1
-__zippel::node::43 - 1
-__zippel::node::51 - 1
-__zippel::node::64 - 1
+

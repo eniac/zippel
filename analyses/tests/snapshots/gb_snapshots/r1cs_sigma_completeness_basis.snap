@@ -2,9 +2,5 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-__zippel::node::106 - 1
 __zippel::node::117 - 1
-__zippel::node::135[0] - 1
-__zippel::node::92 - 1
-__zippel::node::99 - 1
 mat_A[0]*mat_B[0]*x[0]^2 + mat_A[0]*mat_B[1]*w[0]*x[0] + mat_A[1]*mat_B[0]*w[0]*x[0] - mat_C[0]*x[0] + mat_A[1]*mat_B[1]*w[0]^2 - mat_C[1]*w[0]

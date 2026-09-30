@@ -2,9 +2,4 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- g*r2*x + g*r1*x + c1*r2 - c2*r1
-__zippel::node::21 - 1
-__zippel::node::35 - 1
-__zippel::node::39 - 1
-g*x + h*r1 - c1
-g*x + h*r2 - c2
+
