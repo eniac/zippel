@@ -2,9 +2,23 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-checks:
-- h*z2 - g*z1 + big_x*c + alpha
-- h*z4 - g*z3 + big_y*c + beta
-- h*z5 - big_x*z3 + big_z*c + delta
-discharged before the basis: 3 of 3
+check: big_x*c + alpha == h*z2 + g*z1
+  alpha <- h*b2 + g*b1
+  z1 <- x*c + b1
+  z2 <- r_X*c + b2
+  big_x == g*x + h*r_X
+  both sides: g*x*c + h*r_X*c + h*b2 + g*b1
+check: big_y*c + beta == h*z4 + g*z3
+  beta <- h*b4 + g*b3
+  z3 <- y*c + b3
+  z4 <- r_Y*c + b4
+  big_y == g*y + h*r_Y
+  both sides: g*y*c + h*r_Y*c + h*b4 + g*b3
+check: big_z*c + delta == h*z5 + big_x*z3
+  delta <- h*b5 + big_x*b3
+  z3 <- y*c + b3
+  z5 <- - r_X*y*c + r_Z*c + b5
+  big_x == g*x + h*r_X
+  big_z == g*x*y + h*r_Z
+  both sides: g*x*y*c + h*r_Z*c + h*b5 + g*x*b3 + h*r_X*b3
 basis:

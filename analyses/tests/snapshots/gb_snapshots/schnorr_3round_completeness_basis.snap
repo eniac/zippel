@@ -2,9 +2,19 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-checks:
-g*z1 - h*c1 - u1
-g*z2 - h*c2 - u2
-g*z3 - h*c3 - u3
-discharged before the basis: 3 of 3
+check: g*z1 == h*c1 + u1
+  u1 <- g*r1
+  z1 <- x*c1 + r1
+  h == g*x
+  both sides: g*x*c1 + g*r1
+check: g*z2 == h*c2 + u2
+  u2 <- g*r2
+  z2 <- x*c2 + r2
+  h == g*x
+  both sides: g*x*c2 + g*r2
+check: g*z3 == h*c3 + u3
+  u3 <- g*r3
+  z3 <- x*c3 + r3
+  h == g*x
+  both sides: g*x*c3 + g*r3
 basis:

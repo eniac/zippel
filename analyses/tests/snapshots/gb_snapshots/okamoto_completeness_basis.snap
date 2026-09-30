@@ -2,7 +2,10 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-checks:
-h*sr + g*sx - comm*c - t
-discharged before the basis: 1 of 1
+check: h*sr + g*sx == comm*c + t
+  t <- h*rr + g*rx
+  sx <- x*c + rx
+  sr <- r*c + rr
+  comm == g*x + h*r
+  both sides: g*x*c + h*r*c + h*rr + g*rx
 basis:

@@ -2,8 +2,15 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-checks:
-g*sr - c1*c - t1
-h*sr + g*sx - c2*c - t2
-discharged before the basis: 2 of 2
+check: g*sr == c1*c + t1
+  t1 <- g*rr
+  sr <- r*c + rr
+  c1 == g*r
+  both sides: g*r*c + g*rr
+check: h*sr + g*sx == c2*c + t2
+  t2 <- h*rr + g*rx
+  sx <- x*c + rx
+  sr <- r*c + rr
+  c2 == g*x + h*r
+  both sides: g*x*c + h*r*c + h*rr + g*rx
 basis:

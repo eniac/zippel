@@ -120,7 +120,18 @@ pub fn reduce<F: PrimeField>(
     basis_polys: &[Polynomial<F>],
     order: &MonoOrder,
 ) -> Polynomial<F> {
+    reduce_with_divisors(p, basis_polys, order).0
+}
+
+/// [`reduce`], also returning the indices into `basis_polys` of the basis
+/// polynomials the reduction divided by, in increasing order.
+pub fn reduce_with_divisors<F: PrimeField>(
+    p: Polynomial<F>,
+    basis_polys: &[Polynomial<F>],
+    order: &MonoOrder,
+) -> (Polynomial<F>, Vec<usize>) {
     use crate::frontend::Monomial;
+    use std::collections::BTreeSet;
     use std::collections::HashMap;
 
     // Collect all Vars from the input polynomials.
@@ -155,19 +166,21 @@ pub fn reduce<F: PrimeField>(
         key
     };
 
-    // Precompute leading terms of basis polynomials.
-    type Reducer<F> = (F, Monomial, Vec<(Monomial, F)>);
+    // Precompute leading terms of basis polynomials, keeping each one's index.
+    type Reducer<F> = (usize, F, Monomial, Vec<(Monomial, F)>);
     let reducers: Vec<Reducer<F>> = basis_polys
         .iter()
-        .filter(|p| !p.is_zero())
-        .filter_map(|g| {
+        .enumerate()
+        .filter(|(_, p)| !p.is_zero())
+        .filter_map(|(i, g)| {
             let mut terms: Vec<(Monomial, F)> =
                 g.terms.iter().map(|(m, c)| (m.clone(), *c)).collect();
             terms.sort_by_key(|a| sort_key(&a.0));
             let (lt_mono, lt_coeff) = terms.first()?;
-            Some((*lt_coeff, lt_mono.clone(), terms))
+            Some((i, *lt_coeff, lt_mono.clone(), terms))
         })
         .collect();
+    let mut divisors = BTreeSet::new();
 
     // Work set: HashMap for O(1) merge during reduction steps.
     let mut work: HashMap<Monomial, F> =
@@ -185,9 +198,10 @@ pub fn reduce<F: PrimeField>(
 
         let found = reducers
             .iter()
-            .find(|(_, g_lt, _)| lt_mono.is_divided(g_lt));
+            .find(|(_, _, g_lt, _)| lt_mono.is_divided(g_lt));
 
-        if let Some((g_lc, g_lt, g_terms)) = found {
+        if let Some((i, g_lc, g_lt, g_terms)) = found {
+            divisors.insert(*i);
             let multiplier_term = (lt_mono.clone() / g_lt.clone()).expect("divisibility checked");
             let multiplier_scalar = lt_coeff * (*g_lc).inverse().expect("leading coeff nonzero");
             // Subtract multiplier_scalar * multiplier_term * g from work.
@@ -207,7 +221,7 @@ pub fn reduce<F: PrimeField>(
     }
 
     let terms = remainder.into_iter().collect();
-    Polynomial { terms }
+    (Polynomial { terms }, divisors.into_iter().collect())
 }
 
 #[cfg(test)]

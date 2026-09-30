@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use ark_ff::PrimeField;
 use backend::ArkConfig;
@@ -7,11 +7,11 @@ use share::{Ctx, Set};
 
 use crate::TransClos;
 use crate::Var;
-use crate::backend::{GbBackendKind, GbBasis};
+use crate::backend::{GbBackendKind, GbBasis, reduce_with_divisors};
 use crate::error::AnalysisError;
 use crate::extractor::extract_locals;
 use crate::frontend::{MonoOrder, Polynomial};
-use crate::ideal::IdealBuilder;
+use crate::ideal::{Check, IdealBuilder};
 use graph::QDag;
 use graph::Ref;
 
@@ -31,14 +31,112 @@ pub struct CompletenessInputs<F: ark_ff::PrimeField> {
     /// Verifier polynomials to reduce against the basis in `run()`, minus
     /// those already in `generating_set` (members by construction).
     pub verifier: Vec<Polynomial<F>>,
-    /// What each `verify` checks, as `lhs − rhs` over the verifier's own
-    /// variables, before any substitution. Unlike `verifier`, it does not
-    /// vanish when the substitution discharges a check, so it is what to
-    /// report or snapshot.
-    pub checks: Vec<Polynomial<F>>,
-    /// How many verifier goals the substitution discharged before the Gröbner
-    /// basis; the rest are in `verifier`.
-    pub discharged: usize,
+    /// What each `verify` checks, over the verifier's own variables, before
+    /// any substitution. Unlike `verifier`, it does not vanish when the
+    /// substitution discharges a check, so it is what to report or snapshot.
+    pub checks: Vec<Check<F>>,
+    /// The prover messages substituted away, `t <- f`, each resolved down to
+    /// non-message variables.
+    pub messages: Ctx<Var, Polynomial<F>>,
+    /// The variables a generator pinned down and that were substituted away
+    /// after the messages, `x == f`: inputs the `where` clause defines, and
+    /// asserted bools.
+    pub pinned: Ctx<Var, Polynomial<F>>,
+}
+
+/// Polynomials longer than this many terms are explained by their size only,
+/// except for the checks themselves.
+const EXPLAIN_MAX_TERMS: usize = 16;
+
+/// What [`CompletenessAnalysis::explain`] shows for one check.
+struct CheckExplanation<F: PrimeField> {
+    check: Check<F>,
+    /// The prover messages the check mentions.
+    messages: Vec<(Var, Polynomial<F>)>,
+    /// The pinned variables the check mentions once the messages are substituted.
+    pinned: Vec<(Var, Polynomial<F>)>,
+    /// Both sides after substitution.
+    lhs: Polynomial<F>,
+    rhs: Polynomial<F>,
+    /// When the sides differ: the remainder of their difference against the
+    /// basis, and the basis polynomials the reduction divided by.
+    reduction: Option<(Polynomial<F>, Vec<Polynomial<F>>)>,
+}
+
+impl<F: PrimeField> CheckExplanation<F> {
+    /// Every variable the explanation prints.
+    fn vars(&self) -> impl Iterator<Item = Var> + '_ {
+        let defs = self.messages.iter().chain(&self.pinned);
+        let mut polys = vec![&self.check.lhs, &self.check.rhs];
+        polys.extend(defs.clone().map(|(_, value)| value));
+        if let Some((remainder, used)) = &self.reduction {
+            polys.push(remainder);
+            polys.extend(used);
+        }
+        defs.map(|(x, _)| x.clone())
+            .chain(polys.into_iter().flat_map(|p| p.vars()))
+    }
+
+    fn render(&self, names: &HashMap<Var, Var>) -> String {
+        let full = |p: &Polynomial<F>| {
+            p.remap_vars(&|v| names.get(v).unwrap_or(v).clone())
+                .to_string()
+        };
+        let show = |p: &Polynomial<F>| {
+            if p.terms.len() > EXPLAIN_MAX_TERMS {
+                format!("<{} terms>", p.terms.len())
+            } else {
+                full(p)
+            }
+        };
+        let name = |x: &Var| names.get(x).unwrap_or(x).to_string();
+        // The check itself in full: it is what the verifier writes.
+        let mut out = format!(
+            "check: {} == {}\n",
+            full(&self.check.lhs),
+            full(&self.check.rhs)
+        );
+        for (t, value) in &self.messages {
+            out += &format!("  {} <- {}\n", name(t), show(value));
+        }
+        for (x, value) in &self.pinned {
+            out += &format!("  {} == {}\n", name(x), show(value));
+        }
+        match &self.reduction {
+            None => out += &format!("  both sides: {}\n", show(&self.lhs)),
+            Some((remainder, used)) => {
+                out += &format!("  lhs: {}\n  rhs: {}\n", show(&self.lhs), show(&self.rhs));
+                if remainder.is_zero() {
+                    out += "  equal modulo the basis, using:\n";
+                    for g in used {
+                        out += &format!("    {}\n", show(g));
+                    }
+                } else {
+                    out += &format!("  differ by {} modulo the basis\n", show(remainder));
+                }
+            }
+        }
+        out
+    }
+}
+
+/// Distinct variables that print alike, such as a challenge drawn at every
+/// level of a recursion, get `#1`, `#2`, … in `Var` order, which follows the
+/// order the graph creates them in.
+fn disambiguate(vars: impl IntoIterator<Item = Var>) -> HashMap<Var, Var> {
+    let mut by_name: BTreeMap<String, BTreeSet<Var>> = BTreeMap::new();
+    for v in vars {
+        by_name.entry(v.to_string()).or_default().insert(v);
+    }
+    let mut names = HashMap::new();
+    for group in by_name.into_values().filter(|group| group.len() > 1) {
+        for (k, v) in group.into_iter().enumerate() {
+            let mut named = v.clone();
+            named.name = format!("{}#{}", v.name, k + 1);
+            names.insert(v, named);
+        }
+    }
+    names
 }
 
 /// Substitute `defs` into every polynomial, dropping those that vanish.
@@ -85,7 +183,8 @@ fn defined_var<F: PrimeField>(
 }
 
 /// Substitute away every variable that a generator pins down (see
-/// [`defined_var`]), in `generating_set` and `verifier` alike.
+/// [`defined_var`]), in `generating_set` and `verifier` alike, and return
+/// what each was pinned to.
 ///
 /// These come from the `where` clause. Each asserted `a == b` arrives as the
 /// bool encoding `d·β`, `Σ d·ι + β − 1`, `β − 1` with `d = a − b`: the last
@@ -95,16 +194,16 @@ fn defined_var<F: PrimeField>(
 /// of eliminating `a` (Dory at S=3 does not finish). The substitution is exact
 /// for the same reason as for prover messages.
 fn eliminate_definitions<F: PrimeField>(
-    mut generating_set: Vec<Polynomial<F>>,
-    verifier: Vec<Polynomial<F>>,
+    generating_set: &mut Vec<Polynomial<F>>,
+    verifier: &mut Vec<Polynomial<F>>,
     eligible: impl Fn(&Var) -> bool,
-) -> (Vec<Polynomial<F>>, Vec<Polynomial<F>>) {
+) -> Ctx<Var, Polynomial<F>> {
     // Kept resolved: no value mentions a defined variable.
     let mut defs: Ctx<Var, Polynomial<F>> = Ctx::new();
     loop {
         let mut found = false;
         let mut kept = Vec::with_capacity(generating_set.len());
-        for p in generating_set {
+        for p in std::mem::take(generating_set) {
             let p = if p.vars().iter().any(|v| defs.contains(v)) {
                 p.inline_vars(&defs).0
             } else {
@@ -127,14 +226,14 @@ fn eliminate_definitions<F: PrimeField>(
                 None => kept.push(p),
             }
         }
-        generating_set = kept;
+        *generating_set = kept;
         // A pass that defined nothing new left every generator resolved.
         if !found {
             break;
         }
     }
-    let verifier = substitute(verifier, &defs);
-    (generating_set, verifier)
+    *verifier = substitute(std::mem::take(verifier), &defs);
+    defs
 }
 
 /// Perform a completeness analysis using Groebner bases.
@@ -146,6 +245,13 @@ pub struct CompletenessAnalysis<C: ArkConfig> {
     pub basis: GbBasis<C::F>,
     /// Verifier polynomials to reduce against `basis` in `run()`.
     pub verifier: Vec<Polynomial<C::F>>,
+    /// What each `verify` checks; see [`CompletenessInputs::checks`].
+    pub checks: Vec<Check<C::F>>,
+    /// The prover messages substituted away; see [`CompletenessInputs::messages`].
+    pub messages: Ctx<Var, Polynomial<C::F>>,
+    /// The variables pinned down and substituted away; see
+    /// [`CompletenessInputs::pinned`].
+    pub pinned: Ctx<Var, Polynomial<C::F>>,
 }
 
 impl<C: HasOpFactory> CompletenessAnalysis<C> {
@@ -202,8 +308,9 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         // encoding is already a generator; reducing it again is wasted work.
         // What is left are the goals, one `b − 1` per checked bool.
         verifier.retain(|p| !generating_set.contains(p));
-        let goals = verifier.len();
 
+        let mut messages = Ctx::new();
+        let mut pinned = Ctx::new();
         if inline {
             // `inline` kept the prover-message definitions back in `pl`,
             // already resolved down to non-message variables.
@@ -215,15 +322,18 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
             // (an asserted bool), which leaves the verifier's `==` encodings
             // alone.
             let inputs: Set<Ref> = dag.input_args().into_iter().map(Ref::new).collect();
-            (generating_set, verifier) =
-                eliminate_definitions(generating_set, verifier, |v| inputs.contains(&v.reference));
+            pinned = eliminate_definitions(&mut generating_set, &mut verifier, |v| {
+                inputs.contains(&v.reference)
+            });
+            messages = prover_result.pl;
         }
 
         CompletenessInputs {
             generating_set,
-            discharged: goals - verifier.len(),
             verifier,
             checks: verifier_result.checks,
+            messages,
+            pinned,
         }
     }
 
@@ -241,6 +351,71 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         Self {
             basis,
             verifier: inputs.verifier,
+            checks: inputs.checks,
+            messages: inputs.messages,
+            pinned: inputs.pinned,
+        }
+    }
+
+    /// Explain why each `verify` holds, one block per check, sorted:
+    ///
+    /// ```text
+    /// check: g*beta_z == v*c + v_r
+    ///   v_r <- g*beta_r
+    ///   beta_z <- beta*c + beta_r
+    ///   v == beta*g
+    ///   both sides: beta*g*c + g*beta_r
+    /// ```
+    ///
+    /// The check is shown as the verifier writes it, followed by the
+    /// definitions substituted into it: `t <- …` for a prover message and
+    /// `x == …` for a variable a constraint pins down, such as an input the
+    /// `where` clause defines. If both sides then agree, substitution alone
+    /// discharged the check. Otherwise the basis has to prove the rest, and
+    /// the explanation lists the basis polynomials that reduce their
+    /// difference to 0, or the remainder if it is not 0. Polynomials other than
+    /// the checks that are longer than [`EXPLAIN_MAX_TERMS`] are shown by their
+    /// number of terms, and variables that print alike are told apart as in
+    /// [`disambiguate`].
+    pub fn explain(&self) -> String {
+        let explanations: Vec<_> = self.checks.iter().map(|c| self.explain_check(c)).collect();
+        let names = disambiguate(explanations.iter().flat_map(CheckExplanation::vars));
+        let mut blocks: Vec<String> = explanations.iter().map(|e| e.render(&names)).collect();
+        blocks.sort();
+        blocks.concat()
+    }
+
+    fn explain_check(&self, check: &Check<C::F>) -> CheckExplanation<C::F> {
+        let used =
+            |defs: &Ctx<Var, Polynomial<C::F>>, lhs: &Polynomial<C::F>, rhs: &Polynomial<C::F>| {
+                defs.iter()
+                    .filter(|(x, _)| lhs.contains(x) || rhs.contains(x))
+                    .map(|(x, value)| (x.clone(), value.clone()))
+                    .collect::<Vec<_>>()
+            };
+        let messages = used(&self.messages, &check.lhs, &check.rhs);
+        let lhs = check.lhs.clone().inline_vars(&self.messages).0;
+        let rhs = check.rhs.clone().inline_vars(&self.messages).0;
+        let pinned = used(&self.pinned, &lhs, &rhs);
+        let lhs = lhs.inline_vars(&self.pinned).0;
+        let rhs = rhs.inline_vars(&self.pinned).0;
+        let difference = &lhs - &rhs;
+        let reduction = (!difference.is_zero()).then(|| {
+            let (remainder, divisors) =
+                reduce_with_divisors(difference, &self.basis.polys, &self.basis.order);
+            let used = divisors
+                .into_iter()
+                .map(|i| self.basis.polys[i].clone())
+                .collect();
+            (remainder, used)
+        });
+        CheckExplanation {
+            check: check.clone(),
+            messages,
+            pinned,
+            lhs,
+            rhs,
+            reduction,
         }
     }
 
@@ -1296,6 +1471,54 @@ mod tests {
 
         let mut ca = from_input(&g);
         assert!(ca.run().is_err(), "g*z == u + h*c misses the g*y*c term");
+    }
+
+    #[test]
+    fn explain_shows_the_substitution_that_discharges_a_check() {
+        let ex = r#"
+            proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
+                let r = random<F>;
+                u <- g*r;
+                c <- challenge<F>;
+                z <- r + x*c;
+                verify(g*z == u + h*c)
+            }"#;
+
+        let m = parse_and_concretize(ex, &Ctx::new());
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        let mut ca = from_input(&g);
+        assert!(ca.run().is_ok());
+        assert_eq!(
+            ca.explain(),
+            "check: g*z == h*c + u\n  u <- g*r\n  z <- x*c + r\n  h == g*x\n  both sides: g*x*c + g*r\n"
+        );
+    }
+
+    #[test]
+    fn explain_shows_what_is_left_of_an_incomplete_check() {
+        let ex = r#"
+            proto defined<G: Group, F: Scalar<G>>(
+                witness x: F, witness y: F, instance g: G, instance h: G, instance k: G,
+            ) where h == g*x && k == h + g*y {
+                let r = random<F>;
+                u <- g*r;
+                c <- challenge<F>;
+                z <- r + (x + y)*c;
+                verify(g*z == u + h*c)
+            }"#;
+
+        let m = parse_and_concretize(ex, &Ctx::new());
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        let ca = from_input(&g);
+        let explanation = ca.explain();
+        assert!(
+            explanation.contains("differ by g*y*c modulo the basis"),
+            "the missing g*y*c term should be named:\n{explanation}"
+        );
     }
 
     #[test]

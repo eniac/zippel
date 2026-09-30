@@ -2,9 +2,16 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-checks:
-- v[1]*q[1]*r^2 - v[0]*q[1]*r - v[1]*q[0]*r + p[1]*r - v[0]*q[0] + p[0]
-discharged before the basis: 0 of 1
+check: p[1]*r + p[0] == v[1]*q[1]*r^2 + v[0]*q[1]*r + v[1]*q[0]*r + v[0]*q[0]
+  q[0] <- __zippel::gb::div_q::0[0]
+  q[1] <- __zippel::gb::div_q::0[1]
+  p[0] == v[0]*__zippel::gb::div_q::0[0] + __zippel::gb::div_r::0[0]
+  p[1] == v[0]*__zippel::gb::div_q::0[1] + v[1]*__zippel::gb::div_q::0[0]
+  lhs: v[0]*r*__zippel::gb::div_q::0[1] + v[1]*r*__zippel::gb::div_q::0[0] + v[0]*__zippel::gb::div_q::0[0] + __zippel::gb::div_r::0[0]
+  rhs: v[1]*r^2*__zippel::gb::div_q::0[1] + v[0]*r*__zippel::gb::div_q::0[1] + v[1]*r*__zippel::gb::div_q::0[0] + v[0]*__zippel::gb::div_q::0[0]
+  equal modulo the basis, using:
+    __zippel::gb::div_r::0[0]
+    v[1]*__zippel::gb::div_q::0[1]
 basis:
 - __zippel::gb::div_c::0 + __zippel::gb::div_c::2
 - __zippel::gb::div_c::0 + v[1]*__zippel::gb::div_inv::0
