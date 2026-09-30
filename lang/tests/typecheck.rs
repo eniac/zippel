@@ -51,6 +51,25 @@ proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G
     assert!(cmodule.typecheck().is_empty());
 }
 
+/// A helper declared `-> Bool` can be used in a `where` clause. `Bool` used
+/// to parse as a type variable named `Bool`, which never matched the result
+/// of `==`.
+#[test]
+fn bool_returning_helper_in_where_clause() {
+    let src = r"
+fn both_eq<G: Group>(instance a: G, instance b: G, instance c: G) -> Bool {
+    a == b && b == c
+}
+proto t<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G, instance k: G)
+    where h == g * x && both_eq(h, k, g * x) {
+    verify(h == k)
+}
+";
+    let (module, _) = UModule::parse(src);
+    let cmodule = module.unwrap().concretize(&Ctx::new()).unwrap();
+    assert!(cmodule.typecheck().is_empty());
+}
+
 /// A body of higher degree than the declared return type is rejected.
 #[test]
 fn typecheck_return_of_higher_degree() {
