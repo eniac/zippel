@@ -20,6 +20,9 @@ pub struct Ideal<C: ArkConfig> {
     /// The generators of the ideal: every polynomial constrained to vanish on
     /// honest executions of the protocol fragment being analysed.
     pub generating_set: Vec<Polynomial<C::F>>,
+    /// What each `verify` checks, as `lhs − rhs` per coefficient slot (or `b − 1` for a
+    /// bool that is not an `==`). Recorded for reporting only, never a generator.
+    pub checks: Vec<Polynomial<C::F>>,
     /// Definitional equations kept out of the generating set: each `Var` maps to
     /// the polynomial it abbreviates, so chains of intermediate DAG nodes can be
     /// substituted away by [`Ideal::inline`] instead of bloating the basis.
@@ -37,6 +40,7 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
     pub fn new() -> Self {
         Self {
             generating_set: Vec::new(),
+            checks: Vec::new(),
             pl: Ctx::new(),
             vars: HashMap::new(),
             var_order: Vec::new(),
@@ -90,7 +94,7 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         self.pl.retain(|p, _| basis_vars.contains(p));
     }
 
-    /// Inline all `pl` definitions into the basis polynomials.
+    /// Inline all `pl` definitions into the basis polynomials and the checks.
     ///
     /// Topologically sorts `pl` entries, substitutes dependencies into
     /// each other to resolve chains, then substitutes the resolved
@@ -175,6 +179,11 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             *p = new_p;
         }
         self.generating_set.retain(|p| !p.is_zero());
+        // Checks keep their zeros: a check that is trivially true is still a check.
+        for p in self.checks.iter_mut() {
+            let (new_p, _) = p.clone().inline_vars(&self.pl);
+            *p = new_p;
+        }
 
         for (k, v) in saved {
             self.pl.insert(&k, &v);
@@ -189,6 +198,7 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
     pub fn merge(&mut self, other: &Self) {
         self.generating_set
             .extend(other.generating_set.iter().cloned());
+        self.checks.extend(other.checks.iter().cloned());
         for (k, v) in other.pl.iter() {
             self.pl.insert(k, v);
         }

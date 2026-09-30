@@ -2,13 +2,15 @@
 
 use backend::op::HasOpFactory;
 use backend::{ABase, ATyp, ArkConfig, ArkScalarOps};
-use graph::HOp;
+use graph::{HOp, Op};
+use lang::ast::BinOp;
 
 use crate::Var;
 use crate::frontend::Polynomial;
 
 use super::EncodeCtx;
 use super::PolySource;
+use super::bool::differences;
 
 /// Prover-side assertion encoder. Traces `&&` chains through the graph
 /// and asserts each leaf bool individually, avoiding a high-degree
@@ -21,11 +23,30 @@ pub fn assert_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, _pr: &
 }
 
 /// Verifier-side check encoder. The ideal generation is identical for
-/// assert and verify.
+/// assert and verify; verify also records what each leaf checks.
 pub fn verify_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, _pr: &Var, exp: &HOp<C>) {
     let leaves = ctx.builder.collect_and_leaves(exp);
     for leaf in leaves {
+        record_check(ctx, &leaf);
         check_op(ctx, &leaf);
+    }
+}
+
+/// Record what the `verify` leaf `exp` checks in `ideal.checks`: `lhs − rhs` per slot when
+/// it is an `==`, and `b − 1` for any other bool.
+fn record_check<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, exp: &HOp<C>) {
+    let op = match exp.get() {
+        Op::Ref(r, _) => ctx.builder.node_ops.get(r).cloned(),
+        op => Some(op.clone()),
+    };
+    if let Some(Op::Bin(BinOp::Equ, a, b, _)) = op {
+        let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, &a);
+        let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, &b);
+        ctx.ideal.checks.extend(differences(&a_src, &b_src));
+    } else {
+        let src = PolySource::from_ref_vars(&ctx.ideal.vars, exp);
+        let one = Polynomial::lit(&C::FOps::one());
+        ctx.ideal.checks.extend(src.polys.iter().map(|p| p - &one));
     }
 }
 

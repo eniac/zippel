@@ -68,6 +68,23 @@ fn equ_op_inner<C: ArkConfig + HasOpFactory>(
     }
 }
 
+/// `a_j - b_j` for each coefficient slot `j` of the LUB type of `a` and `b`:
+/// the polynomials that vanish exactly when `a == b`.
+pub(super) fn differences<C: ArkConfig + HasOpFactory>(
+    a_src: &PolySource<C>,
+    b_src: &PolySource<C>,
+) -> Vec<Polynomial<C::F>> {
+    let lub = ATyp::lub_equ(a_src.typ(), b_src.typ(), &Nothing).expect("equ_op: lub_equ failed");
+    let a_lifted = a_src.lift_to(&lub);
+    let b_lifted = b_src.lift_to(&lub);
+    a_lifted
+        .polys
+        .iter()
+        .zip(&b_lifted.polys)
+        .map(|(a, b)| a - b)
+        .collect()
+}
+
 /// Emit the standard bool encoding for a single Bool slot `b` comparing
 /// two operands. Each coefficient slot `j` of the LUB type contributes:
 ///   d_j = a_j - b_j          (inlined)
@@ -85,19 +102,9 @@ fn equ_leaf<C: ArkConfig + HasOpFactory>(
     a_src: &PolySource<C>,
     b_src: &PolySource<C>,
 ) {
-    let lub = ATyp::lub_equ(a_src.typ(), b_src.typ(), &Nothing).expect("equ_op: lub_equ failed");
-    let a_lifted = a_src.lift_to(&lub);
-    let b_lifted = b_src.lift_to(&lub);
     let b_poly = Polynomial::var(var);
     let one = Polynomial::lit(&C::FOps::one());
-
-    // d_j = a_j - b_j for each slot
-    let diffs: Vec<Polynomial<C::F>> = a_lifted
-        .polys
-        .iter()
-        .zip(&b_lifted.polys)
-        .map(|(a, b)| a - b)
-        .collect();
+    let diffs = differences(a_src, b_src);
 
     // d_j * b = 0 for each slot (b=1 → all d_j=0)
     for d in &diffs {

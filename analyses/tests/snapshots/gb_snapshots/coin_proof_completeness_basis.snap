@@ -2,6 +2,17 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+checks:
+f*z_r_y + h2*z_x2 + h1*z_x1 - big_y*ch - t_big_y
+g*z_alpha + g*z_x1 - big_s*ch - t_big_s
+g*z_r_beta + g*z_sk_u + g*z_x2 - big_t*ch - t_big_t
+h*z_r_b + g*z_sk_u - big_b*ch - t_big_b
+h*z_r_c + g*z_s - big_c*ch - t_big_c
+h*z_r_c_alpha - g*j*z_alpha - big_c*z_alpha + g*ch - t_h1 + t_g1
+h*z_r_d + g*z_t - big_d*ch - t_big_d
+h*z_r_d_beta - g*j*z_beta - big_d*z_beta + g*ch - t_h2 + t_g2
+discharged before the basis: 6 of 8
+basis:
 - alpha*beta*g*t + alpha*beta*g*s + alpha*h*r_d_beta - alpha*beta*h*r_d - beta*h*r_c_alpha + alpha*beta*h*r_c - beta*g + alpha*g
 __zippel::node::178 - 1
 __zippel::node::188 - 1

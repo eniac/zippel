@@ -2,6 +2,10 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+checks:
+- h_base*z2 - a_vec[0]*g_base*rho*c_inv*z1 - g_vec[0]*c_inv*z1 - a_vec[1]*g_base*rho*c*z1 - g_vec[1]*c*z1 + a_vec[0]*rho*upsilon_1*c_inv^3*c + a_vec[1]*rho*upsilon_1*c*c_inv^2*c + a_vec[0]*rho*upsilon_neg1*c^2*c_inv*c + a_vec[0]*tau*rho^2*c_inv*c + a_vec[0]*xi*rho*c_inv*c + a_vec[1]*rho*upsilon_neg1*c^3*c + a_vec[1]*tau*rho^2*c*c + a_vec[1]*xi*rho*c*c + a_vec[0]*rho*c_inv*beta + a_vec[1]*rho*c*beta + delta
+discharged before the basis: 0 of 1
+basis:
 - __zippel::gb::div_inv::0 + __zippel::gb::div_inv::1
 - __zippel::gb::div_inv::0 + c_inv
 __zippel::node::99 - 1

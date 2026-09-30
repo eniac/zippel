@@ -2,6 +2,10 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+checks:
+- delta_g2*c_proof + a_proof*b_proof - gamma_abc_g1[0]*gamma_g2*instance_assignment[0] - alpha_g1*beta_g2
+discharged before the basis: 0 of 1
+basis:
 - a_query[0]*__zippel::node::82 + a_query[1]*__zippel::node::81
 - a_query[0]*__zippel::node::84 + b_g1_query[0]*__zippel::node::81
 - a_query[0]*__zippel::node::85 + b_g1_query[1]*__zippel::node::81

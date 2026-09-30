@@ -2,6 +2,11 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+checks:
+__zippel::node::59[0]*__zippel::node::59[1] - 1
+__zippel::node::74[0] - 1
+discharged before the basis: 0 of 2
+basis:
 - b[0]*__zippel::gb::interp_inv::0 + __zippel::gb::interp_inv::0 + b[0]*__zippel::gb::interp_inv::2 - __zippel::gb::interp_inv::2
 - b[0]*u_evals[0] + u_evals[0] + b[0]*c_sim[0] - c_sim[0]
 - b[0]*u_points[0] + u_points[0] + b[0]*eval_points[0] - eval_points[0]

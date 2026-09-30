@@ -2,6 +2,10 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+checks:
+- u_aux_base*x_chal*final_a_scalar*final_b_scalar - h_vec[1]*inverse*final_b_scalar - h_vec[0]*x_challenge*final_b_scalar - g_vec[0]*inverse*final_a_scalar - g_vec[1]*x_challenge*final_a_scalar + r_transcript*inverse^2 + l_transcript*x_challenge^2 + ip_val_claimed*u_aux_base*x_chal + p_initial_commitment
+discharged before the basis: 0 of 1
+basis:
 - __zippel::gb::div_inv::0 + __zippel::gb::div_inv::1
 - __zippel::gb::div_inv::0 + inverse
 __zippel::node::67 - 1

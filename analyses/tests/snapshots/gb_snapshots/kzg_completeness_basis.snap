@@ -2,6 +2,10 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+checks:
+srs_g2_s*proof - eval_point*gen_g2*proof - gen_g2*commitment + eval_result*gen_g1*gen_g2
+discharged before the basis: 0 of 1
+basis:
 - srs_g1[0] + gen_g1
 __zippel::node::27 - 1
 __zippel::node::40[0] - 1
