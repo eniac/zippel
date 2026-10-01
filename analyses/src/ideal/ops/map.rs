@@ -99,6 +99,7 @@ fn body_to_poly<C: ArkConfig + HasOpFactory>(
             let name = ctx.builder.ns.next_name("gb_map_body");
             let pf = ctx.sentinel_var(&name, body.typ());
             ctx.ideal.register(&pf);
+            ctx.builder.note_op(&pf, &rebuilt);
             ctx.builder.add_op(pf.clone(), rebuilt, ctx.ideal);
             Some(pf)
         }
@@ -240,16 +241,21 @@ pub(crate) fn map_op<C: ArkConfig + HasOpFactory>(
         Some(e) => e,
         None => super::uncovered_op("map-domain", &var),
     };
+    let mut mapped: Vec<Var> = Vec::with_capacity(elems.len());
     for (i, (elem, elem_val)) in elems.iter().enumerate() {
         let mut loops = parent_loops.to_vec();
         loops.push(elem.clone());
         let mut vals = parent_vals.to_vec();
         vals.push(elem_val.clone());
         match body_to_poly(&mut *ctx, body, &loops, &vals) {
-            Some(vi) => link_to_witness(ctx.ideal, &var.with_index(i).unwrap(), &vi),
+            Some(vi) => {
+                link_to_witness(ctx.ideal, &var.with_index(i).unwrap(), &vi);
+                mapped.push(vi);
+            }
             None => super::uncovered_op("map-body", &var),
         }
     }
+    ctx.builder.note_elements(&var, &mapped);
 }
 
 /// `Op::ReduceMap`: explode the domain, map the body per element, and fold
@@ -282,6 +288,9 @@ pub(crate) fn reduce_map_op<C: ArkConfig + HasOpFactory>(
             Some(vi) => mapped.push(vi),
             None => super::uncovered_op("reduce-map-body", &var),
         }
+    }
+    if rop == BinOp::And {
+        ctx.builder.note_elements(&var, &mapped);
     }
     if n == 1 {
         link_to_witness(ctx.ideal, &var, &mapped[0]);

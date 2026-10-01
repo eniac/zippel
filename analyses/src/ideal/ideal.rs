@@ -23,6 +23,40 @@ pub struct Check<F: ark_ff::Field> {
     pub rhs: Polynomial<F>,
 }
 
+/// Which part of the protocol a generator was encoded from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Stage {
+    /// The prover's computation.
+    Prover,
+    /// The `assert` the graph wraps around the `where` clause.
+    RelationAssert,
+    /// A node under the `where` clause: `conjunct` is the index of the one
+    /// top-level conjunct whose computation it belongs to, or `None` when it
+    /// is shared by several.
+    Relation {
+        /// Index of the top-level `&&` leaf of the `where` clause.
+        conjunct: Option<usize>,
+    },
+    /// A verifier computation other than the encoding of a checked equality.
+    VerifierLocal,
+    /// The encoding of a node a `verify` checks, such as its `==`.
+    CheckBookkeeping,
+    /// Not yet attributed by the caller.
+    Unknown,
+}
+
+/// Where a generator came from: the DAG node whose encoding emitted it.
+/// Diagnostic metadata only; it never affects the ideal.
+#[derive(Clone, Debug)]
+pub struct Origin {
+    /// The part of the protocol the node belongs to.
+    pub stage: Stage,
+    /// The node's variable.
+    pub node: Var,
+    /// The node's operation, e.g. `==` or `reduce(*)`.
+    pub op: &'static str,
+}
+
 /// The ideal of building a Gröbner basis — the basis polynomials, their
 /// polynomial definitions (pl), and the vars used in the basis.
 #[derive(Clone)]
@@ -30,6 +64,11 @@ pub struct Ideal<C: ArkConfig> {
     /// The generators of the ideal: every polynomial constrained to vanish on
     /// honest executions of the protocol fragment being analysed.
     pub generating_set: Vec<Polynomial<C::F>>,
+    /// Where each generator came from, index-aligned with `generating_set`.
+    /// Empty once lost: code that pushes generators without an origin leaves
+    /// the two lengths different, and the next operation that keeps them in
+    /// step drops the origins instead.
+    pub origins: Vec<Origin>,
     /// What each `verify` checks. Recorded for reporting only, never a generator.
     pub checks: Vec<Check<C::F>>,
     /// Definitional equations kept out of the generating set: each `Var` maps to
@@ -49,6 +88,7 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
     pub fn new() -> Self {
         Self {
             generating_set: Vec::new(),
+            origins: Vec::new(),
             checks: Vec::new(),
             pl: Ctx::new(),
             vars: HashMap::new(),
@@ -86,10 +126,38 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         vars
     }
 
+    /// Whether `origins` still describes `generating_set`.
+    pub fn origins_aligned(&self) -> bool {
+        self.origins.len() == self.generating_set.len()
+    }
+
+    /// Attribute every generator to `stage`.
+    pub fn set_stage(&mut self, stage: Stage) {
+        for origin in &mut self.origins {
+            origin.stage = stage;
+        }
+    }
+
+    /// Keep the generators `keep` accepts, and their origins with them.
+    fn retain_generators(&mut self, mut keep: impl FnMut(&Polynomial<C::F>) -> bool) {
+        if !self.origins_aligned() {
+            self.origins.clear();
+            self.generating_set.retain(keep);
+            return;
+        }
+        let generators = std::mem::take(&mut self.generating_set);
+        let origins = std::mem::take(&mut self.origins);
+        for (p, origin) in generators.into_iter().zip(origins) {
+            if keep(&p) {
+                self.generating_set.push(p);
+                self.origins.push(origin);
+            }
+        }
+    }
+
     /// Filter out variables that satisfy the predicate
     pub fn eliminate_var<F: Fn(&Var) -> bool>(&mut self, f: &F) {
-        self.generating_set
-            .retain(|p| p.vars().iter().all(|v| !f(v)));
+        self.retain_generators(|p| p.vars().iter().all(|v| !f(v)));
         self.pl.retain(|p, _| !f(p));
     }
 
@@ -97,8 +165,7 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
     /// prune `pl` down to the definitions still reachable from the surviving
     /// generators.
     pub fn eliminate_monomial<F: Fn(&crate::frontend::Monomial) -> bool>(&mut self, f: &F) {
-        self.generating_set
-            .retain(|p| p.terms.keys().any(|t| !f(t)));
+        self.retain_generators(|p| p.terms.keys().any(|t| !f(t)));
         let basis_vars: Set<Var> = self.generating_set.iter().flat_map(|p| p.vars()).collect();
         self.pl.retain(|p, _| basis_vars.contains(p));
     }
@@ -187,7 +254,7 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             let (new_p, _) = p.clone().inline_vars(&self.pl);
             *p = new_p;
         }
-        self.generating_set.retain(|p| !p.is_zero());
+        self.retain_generators(|p| !p.is_zero());
         for check in self.checks.iter_mut() {
             check.lhs = check.lhs.clone().inline_vars(&self.pl).0;
             check.rhs = check.rhs.clone().inline_vars(&self.pl).0;
@@ -204,6 +271,11 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
 
     /// Merge another ideal's basis and polynomial definitions into this ideal.
     pub fn merge(&mut self, other: &Self) {
+        if self.origins_aligned() && other.origins_aligned() {
+            self.origins.extend(other.origins.iter().cloned());
+        } else {
+            self.origins.clear();
+        }
         self.generating_set
             .extend(other.generating_set.iter().cloned());
         self.checks.extend(other.checks.iter().cloned());
