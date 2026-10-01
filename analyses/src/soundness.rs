@@ -31,6 +31,30 @@ pub enum SoundnessModel {
     /// result holds under the binding/AGM assumption for the detected
     /// basis, named by `assumptions`.
     SymbolicGroup,
+    /// [`SymbolicGroup`](Self::SymbolicGroup), plus the prover's response
+    /// equations are added to the **search** ideal only, as extra
+    /// candidate-generation facts (the responses that connect a witness to
+    /// the transcript, e.g. `t_s = w + γ·r`). This is sound without any
+    /// added assumption: the search phase is a heuristic, and the
+    /// (unchanged) validity ideal — `{copies ∪ D ∪ E ∪ I_R}`, never the
+    /// prover equations — remains the sole trust anchor. The extractor
+    /// visibility check still forces every candidate to be a function of
+    /// verifier-visible values alone. See the module docs and
+    /// `search_only_prover_responses_keep_validity_ideal` test.
+    SymbolicGroupResponses,
+}
+
+impl SoundnessModel {
+    /// Whether group equations are split per generator basis.
+    fn uses_symbolic_group(self) -> bool {
+        matches!(self, Self::SymbolicGroup | Self::SymbolicGroupResponses)
+    }
+
+    /// Whether the prover's response equations are added to the search
+    /// ideal (candidate generation only; never the validity ideal).
+    fn uses_prover_responses(self) -> bool {
+        matches!(self, Self::SymbolicGroupResponses)
+    }
 }
 
 /// Inputs to the soundness search Gröbner basis computation: the
@@ -242,6 +266,14 @@ fn eliminate_pinned<F: PrimeField>(
     defs
 }
 
+/// A pending copy in the special-soundness worklist: its prefix path, the
+/// verifier closure, and (option 2) the aligned prover closure.
+type WorkItem<C> = (Vec<usize>, TransClos<C>, Option<TransClos<C>>);
+
+/// One built copy before the d-equation pass: verifier closure, optional
+/// prover closure, and the copy's remapped challenge variables.
+type CopyWithChallenges<C> = (TransClos<C>, Option<TransClos<C>>, Vec<Var>);
+
 impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
     /// Build the inputs to the search Gröbner basis computation:
     /// construct all d-equations, copy TCs, and relation polys, build the
@@ -330,7 +362,17 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             split_reductions: true,
             relation_asserts: None,
         });
-        let mut worklist: Vec<(Vec<usize>, TransClos<C>)> = vec![(vec![], verifier_tc.clone())];
+        // Option 2 (SymbolicGroupResponses): carry the prover closure
+        // alongside the verifier closure, remapped identically per copy, and
+        // merge it into the *search* ideal only. `build_round_map`'s forward
+        // BFS from each challenge means pre-challenge nodes (the witness, the
+        // blinding, the first messages) are shared across copies while the
+        // post-challenge responses are per-copy — exactly the rewinding
+        // model, so the same remap applies verbatim to the prover closure.
+        let prover_tc = model
+            .uses_prover_responses()
+            .then(|| TransClos::prover(dag));
+        let mut worklist: Vec<WorkItem<C>> = vec![(vec![], verifier_tc.clone(), prover_tc)];
         let mut all_d_equations: Vec<Polynomial<C::F>> = Vec::new();
         let mut all_d_vars: Vec<Var> = Vec::new();
         let mut grev_search = Ideal::<C>::new();
@@ -339,17 +381,18 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         for (round_idx, &li) in l_vec.iter().enumerate() {
             let mut new_worklist = Vec::new();
 
-            for (prefix, tc) in worklist {
-                let mut copies_with_challenges: Vec<(TransClos<C>, Vec<Var>)> = Vec::new();
+            for (prefix, tc, ptc) in worklist {
+                let mut copies_with_challenges: Vec<CopyWithChallenges<C>> = Vec::new();
 
                 for j in 0..li {
                     let suffix = format_suffix(&prefix, j);
                     let mut copy_tc = tc.clone();
+                    let mut copy_ptc = ptc.clone();
 
                     let round_map_ref = &round_map;
                     let suffix_owned = suffix.clone();
 
-                    copy_tc.remap(&|var: &Var| {
+                    let remap = |var: &Var| {
                         let key = (var.reference, var.index.clone());
                         let in_round = round_map_ref
                             .get(&key)
@@ -364,7 +407,11 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                         } else {
                             var.clone()
                         }
-                    });
+                    };
+                    copy_tc.remap(&remap);
+                    if let Some(p) = copy_ptc.as_mut() {
+                        p.remap(&remap);
+                    }
 
                     let remapped_challenges: Vec<Var> = challenge_vars_per_round[round_idx]
                         .iter()
@@ -385,13 +432,13 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                         })
                         .collect();
 
-                    copies_with_challenges.push((copy_tc, remapped_challenges));
+                    copies_with_challenges.push((copy_tc, copy_ptc, remapped_challenges));
                 }
 
                 for m in 0..li {
                     for n in (m + 1)..li {
-                        let cm_vars = &copies_with_challenges[m].1;
-                        let cn_vars = &copies_with_challenges[n].1;
+                        let cm_vars = &copies_with_challenges[m].2;
+                        let cn_vars = &copies_with_challenges[n].2;
                         let mut product = Polynomial::<C::F>::lit(&C::F::one());
                         for (k, (cm_ref, cn_ref)) in cm_vars.iter().zip(cn_vars.iter()).enumerate()
                         {
@@ -415,10 +462,10 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                     }
                 }
 
-                for (j, (copy_tc, _)) in copies_with_challenges.into_iter().enumerate() {
+                for (j, (copy_tc, copy_ptc, _)) in copies_with_challenges.into_iter().enumerate() {
                     let mut new_prefix = prefix.clone();
                     new_prefix.push(j);
-                    new_worklist.push((new_prefix, copy_tc));
+                    new_worklist.push((new_prefix, copy_tc, copy_ptc));
                 }
             }
 
@@ -437,7 +484,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             verifier_visible.insert(d.clone());
         }
 
-        for (_prefix, tc) in worklist {
+        for (_prefix, tc, ptc) in worklist {
             for (var, _) in tc.clos.iter() {
                 verifier_visible.insert(var.clone());
             }
@@ -454,6 +501,19 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             let copy_result = grev_builder.build(tc);
             grev_search.merge(&copy_result);
             grev_validity.merge(&copy_result);
+
+            // Option 2: the prover's response equations join the SEARCH
+            // ideal only — never `grev_validity`, which stays the trust
+            // anchor. Its prover-internal variables (blinding, commitment
+            // openings) are not verifier-visible, so the extractor
+            // visibility check still rejects any candidate that mentions
+            // them; they only help the search eliminate down to a
+            // visible-only extractor (e.g. recover `w` from the responses
+            // `t_s = w + γ·r` across copies).
+            if let Some(ptc) = ptc {
+                let prover_result = grev_builder.build(ptc);
+                grev_search.merge(&prover_result);
+            }
         }
 
         let rel_tc = TransClos::relation(dag);
@@ -518,7 +578,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                 pinned.insert(k, v);
             }
 
-            if model == SoundnessModel::SymbolicGroup {
+            if model.uses_symbolic_group() {
                 let arg_slots: Vec<Var> = crate::var::dag_args(dag)
                     .into_iter()
                     .flat_map(|a| a.slots())
@@ -1298,6 +1358,156 @@ mod tests {
         assert!(
             result.is_ok(),
             "y = x + 1 should chain through x: {result:?}"
+        );
+    }
+
+    /// Option 2 (SymbolicGroupResponses) adds the prover's response
+    /// equations to the SEARCH ideal only. This test is the soundness
+    /// guarantee: the validity ideal — assumptions, goals, and I_R — is
+    /// byte-identical to the plain symbolic path, so the (unchanged)
+    /// validity check remains the sole trust anchor; only the search
+    /// generating set grows.
+    #[test]
+    fn search_only_prover_responses_keep_validity_ideal() {
+        let proto = r#"
+            proto okamoto<G: Group, F: Scalar<G>>(
+                witness x: F, witness r: F, instance g: G, instance h: G, instance comm: G,
+            ) where comm == g * x + h * r {
+                let rx = random<F>;
+                let rr = random<F>;
+                t <- g * rx + h * rr;
+                c <- challenge<F*>;
+                sx <- rx + x * c;
+                sr <- rr + r * c;
+                verify(g * sx + h * sr == t + comm * c)
+            }
+        "#;
+        let m = parse_and_concretize(proto, &Ctx::new());
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        let sorted = |polys: &[crate::frontend::Polynomial<ark_bls12_381::Fr>]| {
+            let mut v: Vec<String> = polys.iter().map(|p| p.to_string()).collect();
+            v.sort();
+            v
+        };
+
+        let base = SpecialSoundnessAnalysis::<ArkBls12_381>::build_inputs_with_model(
+            &g,
+            vec![2],
+            true,
+            super::SoundnessModel::SymbolicGroup,
+        )
+        .unwrap();
+        let resp = SpecialSoundnessAnalysis::<ArkBls12_381>::build_inputs_with_model(
+            &g,
+            vec![2],
+            true,
+            super::SoundnessModel::SymbolicGroupResponses,
+        )
+        .unwrap();
+
+        // Validity ideal, goals, and I_R definitions are identical.
+        assert_eq!(
+            sorted(&base.grev_validity.generating_set),
+            sorted(&resp.grev_validity.generating_set),
+            "option 2 must not change the validity assumptions"
+        );
+        assert_eq!(
+            sorted(&base.rel_goals),
+            sorted(&resp.rel_goals),
+            "goals unchanged"
+        );
+        let il_defs = |inp: &super::SoundnessInputs<ArkBls12_381>| {
+            let mut v: Vec<String> = inp
+                .rel_locals
+                .pl
+                .iter()
+                .map(|(k, val)| format!("{k} := {val}"))
+                .collect();
+            v.sort();
+            v
+        };
+        assert_eq!(il_defs(&base), il_defs(&resp), "I_R definitions unchanged");
+
+        // The search ideal grows (prover responses added).
+        assert!(
+            resp.generating_set.len() > base.generating_set.len(),
+            "option 2 should add prover response generators to the search ideal"
+        );
+    }
+
+    /// Analyze `proto` in an explicit model, returning the run result.
+    fn analyze_model(
+        proto: &str,
+        l_vec: Vec<usize>,
+        model: super::SoundnessModel,
+    ) -> Result<(), AnalysisError<ArkBls12_381>> {
+        let m = parse_and_concretize(proto, &Ctx::new());
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let inputs = SpecialSoundnessAnalysis::build_inputs_with_model(&g, l_vec, true, model)?;
+        let mut sa = SpecialSoundnessAnalysis::from_inputs(inputs, GbBackendKind::default(), true)?;
+        sa.run()
+    }
+
+    /// Soundness under option 2: adding the prover's response equations to
+    /// the search ideal must not let a non-knowledge-sound protocol pass,
+    /// because the validity ideal is unchanged. The copy/echo attack —
+    /// where the prover reveals nothing — must still be rejected, now even
+    /// though the (honest-prover) response `t <- comm` is available to the
+    /// search.
+    #[test]
+    fn responses_copy_attack_still_rejected() {
+        let proto = r#"
+            proto echo<G: Group, F: Scalar<G>>(
+                witness x: F, instance g: G, instance comm: G,
+            ) where comm == g * x {
+                t <- comm;
+                c <- challenge<F*>;
+                z <- x * c - x * c;
+                verify(t == comm && g * z == g * z)
+            }
+        "#;
+        let r = analyze_model(
+            proto,
+            vec![2],
+            super::SoundnessModel::SymbolicGroupResponses,
+        );
+        assert!(
+            r.is_err(),
+            "echo proves no knowledge even with responses in search"
+        );
+    }
+
+    /// Soundness under option 2: an unbound committed witness stays
+    /// unextractable even though its response `t_s`-style equation is now in
+    /// the search ideal — validity still has no accepting-transcript
+    /// constraint that pins it.
+    #[test]
+    fn responses_unbound_witness_still_rejected() {
+        let proto = r#"
+            proto unbound<G: Group, F: Scalar<G>>(
+                witness x: F, witness r: F, witness s: F,
+                instance g: G, instance h: G, instance comm: G, instance pub_s: G,
+            ) where comm == g * x + h * r && pub_s == g * s {
+                let ks = random<F>;
+                t <- g * ks;
+                c <- challenge<F*>;
+                zx <- x;
+                zr <- r;
+                zs <- ks + s * c;
+                verify(g * zs == t + pub_s * c)
+            }
+        "#;
+        let r = analyze_model(
+            proto,
+            vec![2],
+            super::SoundnessModel::SymbolicGroupResponses,
+        );
+        assert!(
+            r.is_err(),
+            "x,r committed but never checked: unextractable even with their responses in search"
         );
     }
 
