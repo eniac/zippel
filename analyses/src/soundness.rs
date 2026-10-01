@@ -6,7 +6,7 @@ use crate::backend::{GbBackendKind, GbBasis};
 use crate::error::{AnalysisError, ExtractorRejection};
 use crate::extractor::{extract_locals, valid_extractor};
 use crate::frontend::{MonoOrder, Polynomial};
-use crate::ideal::{Ideal, IdealBuilder};
+use crate::ideal::{EncodeOptions, Ideal, IdealBuilder};
 use ark_ff::One;
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
@@ -202,7 +202,31 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             .collect();
 
         // Phase 1: Construct (order-free).
-        let mut grev_builder: IdealBuilder<C> = IdealBuilder::new();
+        //
+        // Split `reduce(&&, …)` in asserts and verifies into one constraint
+        // per element, as the completeness analysis does. Here the verifier's
+        // checks are assumptions ("given ℓ accepting transcripts"), and
+        // acceptance means the whole conjunction evaluated to true at
+        // runtime, hence every element did — so the per-element constraints
+        // hold on every accepting transcript. On the goal side, the
+        // relation's conjunction becomes one goal per element, which is a
+        // stronger statement to prove (each conjunct in the validity ideal,
+        // rather than their product).
+        //
+        // Unlike completeness, `relation_asserts` stays `None`: an `assert`
+        // in a protocol body keeps its encoding. On this side that is a
+        // free assumption — a failing assert aborts the run, so an accepting
+        // transcript implies every reached assert passed.
+        //
+        // The builder's per-node bookkeeping (`node_ops`, element tables) is
+        // keyed by graph `Ref`, which the ℓ copies share; each copy's
+        // `build` re-records it and resolves its own `verify` splits through
+        // that copy's renamed variables before the next copy overwrites it,
+        // so the splits never mix copies.
+        let mut grev_builder: IdealBuilder<C> = IdealBuilder::with_options(EncodeOptions {
+            split_reductions: true,
+            relation_asserts: None,
+        });
         let mut worklist: Vec<(Vec<usize>, TransClos<C>)> = vec![(vec![], verifier_tc.clone())];
         let mut all_d_equations: Vec<Polynomial<C::F>> = Vec::new();
         let mut all_d_vars: Vec<Var> = Vec::new();
@@ -749,6 +773,79 @@ mod tests {
             Ok(()) => {}
             Err(e) => panic!("analyze() failed: {:?}", e),
         }
+    }
+
+    /// The verifier binds `z` to `v`, not `h`, so the extracted witness
+    /// satisfies `g*x == v` while the relation needs `g*x == h`: the validity
+    /// check must reject the extractor. Guards the split `reduce(&&)`/`&&`
+    /// encoding against ever weakening the relation goals.
+    #[test]
+    fn validity_rejects_witness_that_misses_the_relation() {
+        let proto = r#"
+        proto unsound<G: Group, F: Scalar<G>>(
+            witness x: F, instance g: G, instance h: G, instance v: G,
+        ) where h == g*x {
+            let r = random<F>;
+            u <- g*r;
+            c <- challenge<F*>;
+            z <- r + x*c;
+            verify(g*z == u + v*c)
+        }
+    "#;
+        let result = analyze_soundness(proto, vec![2]);
+        assert!(
+            result.is_err(),
+            "extracted witness satisfies g*x == v, not the relation's g*x == h; got {result:?}"
+        );
+    }
+
+    /// A two-slot Schnorr whose single `verify(reduce(&&, …))` splits into
+    /// one constraint per element in each transcript copy: extractors must
+    /// still be found for both witness slots and validate against the
+    /// relation's own split conjunction.
+    #[test]
+    fn vector_verify_reduce_and_soundness() {
+        let proto = r#"
+        proto vschnorr<G: Group, F: Scalar<G>>(
+            witness x: [F; 2], instance g: G, instance h: [G; 2],
+        ) where reduce(&&, h == [g*x[i] for i in 0..2]) {
+            let r0 = random<F>;
+            let r1 = random<F>;
+            u <- [g*r0, g*r1];
+            c <- challenge<F*>;
+            z <- [r0 + x[0]*c, r1 + x[1]*c];
+            verify(reduce(&&, [g*z[i] for i in 0..2] == [u[i] + h[i]*c for i in 0..2]))
+        }
+    "#;
+        let result = analyze_soundness(proto, vec![2]);
+        assert!(
+            result.is_ok(),
+            "split reduce(&&) soundness failed: {result:?}"
+        );
+    }
+
+    /// Same shape, but both verifier equations bind to `h[0]`: the extracted
+    /// `x[1]` satisfies `g*x[1] == h[0]`, not the relation's `g*x[1] == h[1]`,
+    /// so the split relation goals must reject it.
+    #[test]
+    fn vector_verify_reduce_and_unsound_slot_rejected() {
+        let proto = r#"
+        proto vschnorr<G: Group, F: Scalar<G>>(
+            witness x: [F; 2], instance g: G, instance h: [G; 2],
+        ) where reduce(&&, h == [g*x[i] for i in 0..2]) {
+            let r0 = random<F>;
+            let r1 = random<F>;
+            u <- [g*r0, g*r1];
+            c <- challenge<F*>;
+            z <- [r0 + x[0]*c, r1 + x[1]*c];
+            verify(reduce(&&, [g*z[i] for i in 0..2] == [u[i] + h[0]*c for i in 0..2]))
+        }
+    "#;
+        let result = analyze_soundness(proto, vec![2]);
+        assert!(
+            result.is_err(),
+            "x[1] extracts to a witness for h[0], which misses the relation; got {result:?}"
+        );
     }
 
     #[test]

@@ -82,6 +82,16 @@ pub(crate) static SOUNDNESS_ENTRIES: LazyLock<Vec<SoundnessEntry>> = LazyLock::n
             ignored: true,
         },
         SoundnessEntry {
+            name: "r1cs_sigma",
+            zippel_path: "examples/r1cs_sigma/r1cs_sigma.zippel",
+            sizes: &[("N", 2), ("n", 1), ("m", 1)],
+            // gamma appears quadratically, so three transcripts.
+            l_vec: &[3],
+            // Known: "No valid extractor for witness w[0]: NoExtractor"
+            // (~210s, ~4.7 GB in the lex search GB before failing).
+            ignored: true,
+        },
+        SoundnessEntry {
             name: "coin_proof",
             zippel_path: "examples/coin_proof/coin_proof.zippel",
             sizes: &[],
