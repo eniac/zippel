@@ -6,32 +6,12 @@ check: h_gen*z[1]*pi_last - alpha_H[1]*pi_last + h_gen*z[0]*pi_curr - alpha_H[0]
   c_p <- ck_N[3]*p[3] + ck_N[2]*p[2] + ck_N[1]*p[1] + ck_N[0]*p[0]
   pi_curr <- ck_N[3]*p[3] + ck_N[1]*p[3] + ck_N[2]*p[2] + ck_N[0]*p[2] - ck_N[3]*p[1] - ck_N[1]*p[1] - ck_N[2]*p[0] - ck_N[0]*p[0]
   pi_last <- <24 terms>
+  alpha_H[0] == h_gen*__zippel::node::55
+  alpha_H[1] == h_gen*__zippel::node::56
+  ck_N[0] == g_gen*__zippel::node::55*__zippel::node::56 - g_gen*__zippel::node::56 - g_gen*__zippel::node::55 + g_gen
+  ck_N[1] == - g_gen*__zippel::node::55*__zippel::node::56 + g_gen*__zippel::node::56
+  ck_N[2] == - g_gen*__zippel::node::55*__zippel::node::56 + g_gen*__zippel::node::55
+  ck_N[3] == g_gen*__zippel::node::55*__zippel::node::56
   y == p[3]*z[0]*z[1] - p[2]*z[0]*z[1] - p[1]*z[0]*z[1] + p[0]*z[0]*z[1] + p[1]*z[1] - p[0]*z[1] + p[2]*z[0] - p[0]*z[0] + p[0]
-  lhs: <77 terms>
-  rhs: 0
-  equal modulo the basis, using:
-    - g_gen + ck_N[3] + ck_N[2] + ck_N[1] + ck_N[0]
-    - ck_N[3]*h_gen - ck_N[1]*h_gen + alpha_H[1]*g_gen
-    - ck_N[3]*h_gen - ck_N[2]*h_gen + alpha_H[0]*g_gen
-    - ck_N[3]*h_gen + alpha_H[0]*ck_N[3] + alpha_H[0]*ck_N[1]
+  both sides: 0
 basis:
-- alpha_H[0]*__zippel::node::56 + alpha_H[1]*__zippel::node::55
-- ck_N[3]*g_gen + ck_N[3]^2 + ck_N[2]*ck_N[3] + ck_N[1]*ck_N[3] + ck_N[1]*ck_N[2]
-- ck_N[3]*h_gen + alpha_H[0]*ck_N[3] + alpha_H[0]*ck_N[1]
-- ck_N[3]*h_gen + alpha_H[1]*ck_N[3] + alpha_H[1]*ck_N[2]
-- ck_N[3]*h_gen - ck_N[1]*h_gen + alpha_H[1]*g_gen
-- ck_N[3]*h_gen - ck_N[2]*h_gen + alpha_H[0]*g_gen
-- g_gen + ck_N[3] + ck_N[2] + ck_N[1] + ck_N[0]
-__zippel::node::44 - 1
-__zippel::node::73[0] - 1
-__zippel::node::73[1] - 1
-__zippel::node::73[2] - 1
-__zippel::node::73[3] - 1
-__zippel::node::78[0] - 1
-__zippel::node::78[1] - 1
-ck_N[3]*__zippel::node::55 + ck_N[1]*__zippel::node::55 - ck_N[3]
-ck_N[3]*__zippel::node::56 + ck_N[2]*__zippel::node::56 - ck_N[3]
-g_gen*__zippel::node::55 - ck_N[3] - ck_N[2]
-g_gen*__zippel::node::56 - ck_N[3] - ck_N[1]
-h_gen*__zippel::node::55 - alpha_H[0]
-h_gen*__zippel::node::56 - alpha_H[1]

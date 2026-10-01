@@ -2,40 +2,52 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-check: __zippel::node::59[0]*__zippel::node::59[1] == 1
-  lhs: __zippel::node::59[0]*__zippel::node::59[1]
-  rhs: 1
+check: c_transcript[1] == eval_points[1]*s*__zippel::gb::interp_inv::2 - eval_points[0]*s*__zippel::gb::interp_inv::2 + eval_points[1]*c_transcript[0]*__zippel::gb::interp_inv::3
+  c_transcript[0] <- - u_points[0]*s*__zippel::gb::interp_inv::0 + eval_points[0]*s*__zippel::gb::interp_inv::0 + eval_points[0]*u_evals[0]*__zippel::gb::interp_inv::1
+  c_transcript[1] <- - u_points[0]*s*__zippel::gb::interp_inv::0 + eval_points[1]*s*__zippel::gb::interp_inv::0 + eval_points[1]*u_evals[0]*__zippel::gb::interp_inv::1
+  lhs: - u_points[0]*s*__zippel::gb::interp_inv::0 + eval_points[1]*s*__zippel::gb::interp_inv::0 + eval_points[1]*u_evals[0]*__zippel::gb::interp_inv::1
+  rhs: - eval_points[1]*u_points[0]*s*__zippel::gb::interp_inv::3*__zippel::gb::interp_inv::0 + eval_points[0]*eval_points[1]*s*__zippel::gb::interp_inv::3*__zippel::gb::interp_inv::0 + eval_points[0]*eval_points[1]*u_evals[0]*__zippel::gb::interp_inv::3*__zippel::gb::interp_inv::1 + eval_points[1]*s*__zippel::gb::interp_inv::2 - eval_points[0]*s*__zippel::gb::interp_inv::2
   equal modulo the basis, using:
-    __zippel::node::59[1] - 1
-    __zippel::node::59[0] - 1
-check: __zippel::node::74[0] == 1
-  lhs: __zippel::node::74[0]
-  rhs: 1
+    __zippel::gb::interp_inv::0 + __zippel::gb::interp_inv::1
+    __zippel::gb::interp_inv::2 + __zippel::gb::interp_inv::3
+    u_points[0]*__zippel::gb::interp_inv::0 + 1
+    eval_points[0]*__zippel::gb::interp_inv::2 + 1
+check: g*m2_transcript[0] == keys[0]*c_transcript[0] + m1_transcript[0]
+  m1_transcript[0] <- b[0]*g*r[0] - b[0]*g*m2_sim[0] + g*m2_sim[0] + b[0]*c_sim[0]*keys[0] - c_sim[0]*keys[0]
+  c_transcript[0] <- - u_points[0]*s*__zippel::gb::interp_inv::0 + eval_points[0]*s*__zippel::gb::interp_inv::0 + eval_points[0]*u_evals[0]*__zippel::gb::interp_inv::1
+  m2_transcript[0] <- - b[0]*u_points[0]*w[0]*s*__zippel::gb::interp_inv::0 + b[0]*eval_points[0]*w[0]*s*__zippel::gb::interp_inv::0 + b[0]*eval_points[0]*u_evals[0]*w[0]*__zippel::gb::interp_inv::1 + b[0]*r[0] - b[0]*m2_sim[0] + m2_sim[0]
+  keys[0] == g*w[0]
+  lhs: - b[0]*g*u_points[0]*w[0]*s*__zippel::gb::interp_inv::0 + b[0]*eval_points[0]*g*w[0]*s*__zippel::gb::interp_inv::0 + b[0]*eval_points[0]*g*u_evals[0]*w[0]*__zippel::gb::interp_inv::1 + b[0]*g*r[0] - b[0]*g*m2_sim[0] + g*m2_sim[0]
+  rhs: - g*u_points[0]*w[0]*s*__zippel::gb::interp_inv::0 + eval_points[0]*g*w[0]*s*__zippel::gb::interp_inv::0 + eval_points[0]*g*u_evals[0]*w[0]*__zippel::gb::interp_inv::1 + b[0]*c_sim[0]*g*w[0] - c_sim[0]*g*w[0] + b[0]*g*r[0] - b[0]*g*m2_sim[0] + g*m2_sim[0]
   equal modulo the basis, using:
-    __zippel::node::74[0] - 1
+    __zippel::gb::interp_inv::0 + __zippel::gb::interp_inv::1
+    u_points[0]*__zippel::gb::interp_inv::0 + 1
+    - b[0]*u_points[0] + u_points[0] + b[0]*eval_points[0] - eval_points[0]
+    - b[0]*u_evals[0] + u_evals[0] + b[0]*c_sim[0] - c_sim[0]
+check: g*m2_transcript[1] == keys[1]*c_transcript[1] + m1_transcript[1]
+  m1_transcript[1] <- b[1]*g*r[1] - b[1]*g*m2_sim[1] + g*m2_sim[1] + b[1]*c_sim[1]*keys[1] - c_sim[1]*keys[1]
+  c_transcript[1] <- - u_points[0]*s*__zippel::gb::interp_inv::0 + eval_points[1]*s*__zippel::gb::interp_inv::0 + eval_points[1]*u_evals[0]*__zippel::gb::interp_inv::1
+  m2_transcript[1] <- - b[1]*u_points[0]*w[1]*s*__zippel::gb::interp_inv::0 + b[1]*eval_points[1]*w[1]*s*__zippel::gb::interp_inv::0 + b[1]*eval_points[1]*u_evals[0]*w[1]*__zippel::gb::interp_inv::1 + b[1]*r[1] - b[1]*m2_sim[1] + m2_sim[1]
+  keys[1] == g*w[1]
+  lhs: - b[1]*g*u_points[0]*w[1]*s*__zippel::gb::interp_inv::0 + b[1]*eval_points[1]*g*w[1]*s*__zippel::gb::interp_inv::0 + b[1]*eval_points[1]*g*u_evals[0]*w[1]*__zippel::gb::interp_inv::1 + b[1]*g*r[1] - b[1]*g*m2_sim[1] + g*m2_sim[1]
+  rhs: - g*u_points[0]*w[1]*s*__zippel::gb::interp_inv::0 + eval_points[1]*g*w[1]*s*__zippel::gb::interp_inv::0 + eval_points[1]*g*u_evals[0]*w[1]*__zippel::gb::interp_inv::1 + b[1]*c_sim[1]*g*w[1] - c_sim[1]*g*w[1] + b[1]*g*r[1] - b[1]*g*m2_sim[1] + g*m2_sim[1]
+  equal modulo the basis, using:
+    __zippel::gb::interp_inv::0 + __zippel::gb::interp_inv::1
+    u_points[0]*__zippel::gb::interp_inv::0 + 1
+    - b[1]*u_points[0] + u_points[0] + b[1]*eval_points[1] - eval_points[1]
+    - b[1]*u_evals[0] + u_evals[0] + b[1]*c_sim[1] - c_sim[1]
 basis:
 - b[0]*__zippel::gb::interp_inv::0 + __zippel::gb::interp_inv::0 + b[0]*__zippel::gb::interp_inv::2 - __zippel::gb::interp_inv::2
 - b[0]*u_evals[0] + u_evals[0] + b[0]*c_sim[0] - c_sim[0]
 - b[0]*u_points[0] + u_points[0] + b[0]*eval_points[0] - eval_points[0]
 - b[1]*u_evals[0] + u_evals[0] + b[1]*c_sim[1] - c_sim[1]
 - b[1]*u_points[0] + u_points[0] + b[1]*eval_points[1] - eval_points[1]
-- keys[0]*w[1] + keys[1]*w[0]
 __zippel::gb::interp_inv::0 + __zippel::gb::interp_inv::1
 __zippel::gb::interp_inv::2 + __zippel::gb::interp_inv::3
-__zippel::node::100[0] - 1
-__zippel::node::100[1] - 1
-__zippel::node::105[0] - 1
-__zippel::node::105[1] - 1
 __zippel::node::59[0] - 1
 __zippel::node::59[1] - 1
 __zippel::node::74[0] - 1
-__zippel::node::91[0] - 1
-__zippel::node::91[1] - 1
-__zippel::node::95[0] - 1
-__zippel::node::95[1] - 1
 b[0]^2 - b[0]
 b[1]^2 - b[1]
 eval_points[0]*__zippel::gb::interp_inv::2 + 1
-g*w[0] - keys[0]
-g*w[1] - keys[1]
 u_points[0]*__zippel::gb::interp_inv::0 + 1
