@@ -190,7 +190,7 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
             name: "hyperplonk_productcheck",
             zippel_path: "examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel",
             sizes: &[("S", 3)],
-            ignored: true,
+            ignored: false,
         },
         CompletenessEntry {
             name: "hyperplonk_multiset",
