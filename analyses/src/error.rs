@@ -69,6 +69,10 @@ pub enum AnalysisError<C: ArkConfig> {
     #[error("Special soundness requires l_vec non-empty and each li >= 2")]
     InvalidSoundnessParameter,
 
+    /// Symbolic group mode cannot model this protocol yet.
+    #[error("Symbolic group mode: {0}")]
+    UnsupportedSymbolicGroup(String),
+
     /// Special soundness requires at least one challenge.
     #[error("Special soundness requires at least one challenge")]
     NoChallenge,

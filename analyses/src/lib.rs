@@ -35,6 +35,8 @@ pub mod knowledge;
 pub mod qualifier;
 /// Special-soundness analysis over `2n+1`-move protocols.
 pub mod soundness;
+
+pub mod symbolic_group;
 /// Uniformity propagation: distributions and ancestor sets per node.
 pub mod uniform;
 /// [`Var`], the scalar-slot variable every analysis polynomial ranges over.

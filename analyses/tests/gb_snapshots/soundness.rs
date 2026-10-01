@@ -3,6 +3,7 @@
 //! detection.
 
 use crate::common::{assert_named_snapshot, compile_to_dag, normalize_basis};
+use analyses::soundness::SoundnessModel;
 use analyses::{GbBackendKind, SpecialSoundnessAnalysis};
 use libtest_mimic::{Failed, Trial};
 use std::path::PathBuf;
@@ -16,6 +17,8 @@ pub(crate) struct SoundnessEntry {
     pub(crate) sizes: &'static [(&'static str, usize)],
     /// Special-soundness round parameters, one per challenge round.
     pub(crate) l_vec: &'static [usize],
+    /// The polynomial model to analyze in; `SymbolicGroup` for arguments.
+    pub(crate) model: SoundnessModel,
     pub(crate) ignored: bool,
 }
 
@@ -26,6 +29,7 @@ pub(crate) static SOUNDNESS_ENTRIES: LazyLock<Vec<SoundnessEntry>> = LazyLock::n
             zippel_path: "examples/schnorr/schnorr.zippel",
             sizes: &[],
             l_vec: &[2],
+            model: SoundnessModel::Plain,
             ignored: false,
         },
         SoundnessEntry {
@@ -33,6 +37,7 @@ pub(crate) static SOUNDNESS_ENTRIES: LazyLock<Vec<SoundnessEntry>> = LazyLock::n
             zippel_path: "examples/schnorr_3round/schnorr_3round.zippel",
             sizes: &[],
             l_vec: &[2, 2, 2],
+            model: SoundnessModel::Plain,
             ignored: false,
         },
         SoundnessEntry {
@@ -40,6 +45,7 @@ pub(crate) static SOUNDNESS_ENTRIES: LazyLock<Vec<SoundnessEntry>> = LazyLock::n
             zippel_path: "examples/cp/cp.zippel",
             sizes: &[],
             l_vec: &[2],
+            model: SoundnessModel::Plain,
             ignored: false,
         },
         SoundnessEntry {
@@ -47,14 +53,16 @@ pub(crate) static SOUNDNESS_ENTRIES: LazyLock<Vec<SoundnessEntry>> = LazyLock::n
             zippel_path: "examples/okamoto/okamoto.zippel",
             sizes: &[],
             l_vec: &[2],
-            // Known: "No valid extractor for witness r: NoExtractor".
-            ignored: true,
+            // Argument: extracts under binding w.r.t. {g, h}.
+            model: SoundnessModel::SymbolicGroup,
+            ignored: false,
         },
         SoundnessEntry {
             name: "okamoto_elgamal",
             zippel_path: "examples/okamoto_elgamal/okamoto_elgamal.zippel",
             sizes: &[],
             l_vec: &[2],
+            model: SoundnessModel::Plain,
             ignored: false,
         },
         SoundnessEntry {
@@ -62,7 +70,10 @@ pub(crate) static SOUNDNESS_ENTRIES: LazyLock<Vec<SoundnessEntry>> = LazyLock::n
             zippel_path: "examples/commitment_equality/commitment_equality.zippel",
             sizes: &[],
             l_vec: &[2],
-            // Known: "No valid extractor for witness r1: NoExtractor".
+            model: SoundnessModel::SymbolicGroup,
+            // Correctly unextractable even under binding: the protocol only
+            // proves knowledge of r1 − r2 (a Schnorr on c1 − c2 = h·(r1−r2)),
+            // so the declared witness x is genuinely not special-sound here.
             ignored: true,
         },
         SoundnessEntry {
@@ -70,8 +81,10 @@ pub(crate) static SOUNDNESS_ENTRIES: LazyLock<Vec<SoundnessEntry>> = LazyLock::n
             zippel_path: "examples/pedersen_eq/pedersen_eq.zippel",
             sizes: &[],
             l_vec: &[2],
-            // Known: "No valid extractor for witness m1:
-            // NotVisible(- m2 + m1)".
+            model: SoundnessModel::SymbolicGroup,
+            // Correctly unextractable even under binding: like
+            // commitment_equality, it only proves knowledge of r1 − r2, so
+            // the declared message witnesses m1/m2 are not special-sound.
             ignored: true,
         },
         SoundnessEntry {
@@ -79,6 +92,9 @@ pub(crate) static SOUNDNESS_ENTRIES: LazyLock<Vec<SoundnessEntry>> = LazyLock::n
             zippel_path: "examples/cds/cds.zippel",
             sizes: &[],
             l_vec: &[2],
+            // Unit search ideal, independent of model — a separate modeling
+            // issue (pre-existing, out of scope for symbolic group mode).
+            model: SoundnessModel::SymbolicGroup,
             ignored: true,
         },
         SoundnessEntry {
@@ -87,8 +103,13 @@ pub(crate) static SOUNDNESS_ENTRIES: LazyLock<Vec<SoundnessEntry>> = LazyLock::n
             sizes: &[("N", 2), ("n", 1), ("m", 1)],
             // gamma appears quadratically, so three transcripts.
             l_vec: &[3],
-            // Known: "No valid extractor for witness w[0]: NoExtractor"
-            // (~210s, ~4.7 GB in the lex search GB before failing).
+            // Even in symbolic mode (binding w.r.t. {ck, h_base}, clean
+            // 29-generator split) w[0] is unextractable: it is reachable
+            // only through the masked responses, whose inversion needs
+            // interpolation across the three transcripts — a capability
+            // beyond per-generator splitting.
+            model: SoundnessModel::SymbolicGroup,
+            // Known: "No valid extractor for witness w[0]: NoExtractor".
             ignored: true,
         },
         SoundnessEntry {
@@ -96,7 +117,10 @@ pub(crate) static SOUNDNESS_ENTRIES: LazyLock<Vec<SoundnessEntry>> = LazyLock::n
             zippel_path: "examples/coin_proof/coin_proof.zippel",
             sizes: &[],
             l_vec: &[2],
-            ignored: true,
+            // Argument: extracts under binding w.r.t. {f, g, h, h1, h2}.
+            // Plain mode exhausted memory; the split brings it well under.
+            model: SoundnessModel::SymbolicGroup,
+            ignored: false,
         },
     ]
 });
@@ -110,10 +134,11 @@ fn run_soundness_snapshot(entry: &SoundnessEntry) -> Result<(), Failed> {
         .join(entry.zippel_path);
     let sizes = entry.sizes.to_vec();
     let l_vec = entry.l_vec.to_vec();
+    let model = entry.model;
 
     let normalized = share::thread::run("gb-soundness", move || {
         let dag = compile_to_dag(&path, &sizes);
-        let inputs = SpecialSoundnessAnalysis::build_inputs(&dag, l_vec, true)
+        let inputs = SpecialSoundnessAnalysis::build_inputs_with_model(&dag, l_vec, true, model)
             .map_err(|e| Failed::from(e.to_string()))?;
         let mut sa = SpecialSoundnessAnalysis::from_inputs(inputs, backend, true)
             .map_err(|e| Failed::from(e.to_string()))?;

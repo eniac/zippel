@@ -19,6 +19,20 @@ use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use share::{Ctx, Set};
 
+/// Which polynomial model the special soundness analysis runs in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SoundnessModel {
+    /// The plain polynomial model. A passing result is unconditional
+    /// (statistical) special soundness.
+    #[default]
+    Plain,
+    /// The symbolic group model ("formal AGM"): group equations split per
+    /// generator-basis element (see [`crate::symbolic_group`]). A passing
+    /// result holds under the binding/AGM assumption for the detected
+    /// basis, named by `assumptions`.
+    SymbolicGroup,
+}
+
 /// Inputs to the soundness search Gröbner basis computation: the
 /// generating set (d-equations + copy TCs + relation, after optional
 /// inlining), the lex ordering, and all state needed by `run()`.
@@ -46,6 +60,9 @@ pub struct SoundnessInputs<C: ArkConfig> {
     /// The variables accepting runs pin down, substituted away by
     /// [`eliminate_pinned`]. Diagnostic.
     pub pinned: Ctx<Var, Polynomial<C::F>>,
+    /// The assumption a passing result holds under, or `None` for the
+    /// plain model / when no group equation was split.
+    pub assumptions: Option<String>,
     /// Relation locals; their `pl` definitions are the paper's `I_R`
     /// (Skolem functions for the relation's intermediates), added to the
     /// validity ideal in `run()` when not inlining.
@@ -77,6 +94,9 @@ pub struct SpecialSoundnessAnalysis<C: ArkConfig> {
     backend: GbBackendKind,
     /// Whether to inline the `pl` table before GB computation.
     inline: bool,
+    /// The assumption a passing result holds under; see
+    /// [`SoundnessInputs::assumptions`].
+    pub assumptions: Option<String>,
 }
 
 fn format_suffix(prefix: &[usize], copy_idx: usize) -> String {
@@ -238,6 +258,17 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         dag: &QDag<C>,
         l_vec: Vec<usize>,
         inline: bool,
+    ) -> Result<SoundnessInputs<C>, AnalysisError<C>> {
+        Self::build_inputs_with_model(dag, l_vec, inline, SoundnessModel::default())
+    }
+
+    /// [`build_inputs`](Self::build_inputs) in an explicit model; see
+    /// [`SoundnessModel`].
+    pub fn build_inputs_with_model(
+        dag: &QDag<C>,
+        l_vec: Vec<usize>,
+        inline: bool,
+        model: SoundnessModel,
     ) -> Result<SoundnessInputs<C>, AnalysisError<C>> {
         if l_vec.is_empty() || l_vec.iter().any(|l| *l < 2) {
             return Err(AnalysisError::InvalidSoundnessParameter);
@@ -442,6 +473,99 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
         grev_search.merge(&grev_rel_result);
 
+        // Phase 3a: Inline the search ideal.
+        if inline {
+            grev_search.inline(&Set::new());
+        }
+
+        // The goals: what the relation's assert checks, `lhs − rhs` per
+        // conjunct slot. The relation's constraint encodings stay in the
+        // search ideal (assumptions for extractor *search*), but must only
+        // be proved, never assumed, when validating the extractor.
+        let mut rel_goals: Vec<Polynomial<C::F>> = grev_rel_result
+            .checks
+            .iter()
+            .map(|c| &c.lhs - &c.rhs)
+            .filter(|p| !p.is_zero())
+            .collect();
+
+        // Phase 3b/3s: substitute away the variables that accepting runs
+        // pin down, then (symbolic model) split group equations per
+        // generator-basis element, then substitute again. Definitions are
+        // drawn only from the copies + d-equations — never the relation,
+        // which must be proved — and are eligible only when the pinned
+        // variable is not a witness and its value mentions only
+        // verifier-visible variables. The first pass pins the asserted
+        // bools to 1, which turns the bool encoding's mixed group/scalar
+        // aggregates into homogeneous group equations the split can handle;
+        // the second pass eats the coefficient definitions the split
+        // mass-produces.
+        let witness_set: Set<Var> = witness_vars.iter().cloned().collect();
+        let mut assumptions = None;
+        let mut pinned: Ctx<Var, Polynomial<C::F>> = Ctx::new();
+        if inline {
+            grev_validity.inline(&Set::new());
+            let first = eliminate_pinned(
+                &mut grev_validity.generating_set,
+                &mut grev_search.generating_set,
+                &mut rel_goals,
+                |x, value| {
+                    !witness_set.contains(x)
+                        && value.vars().iter().all(|v| verifier_visible.contains(v))
+                },
+            );
+            for (k, v) in first.iter() {
+                pinned.insert(k, v);
+            }
+
+            if model == SoundnessModel::SymbolicGroup {
+                let arg_slots: Vec<Var> = crate::var::dag_args(dag)
+                    .into_iter()
+                    .flat_map(|a| a.slots())
+                    .collect();
+                let mut sym = crate::symbolic_group::SymbolicGroup::detect(&arg_slots, &rel_goals)
+                    .map_err(AnalysisError::from)?;
+                // Collapse asserted bool sentinels (`b − 1`) so the bool
+                // encoding's mixed group/scalar aggregates become
+                // homogeneous group equations the split can handle.
+                crate::symbolic_group::pin_self_constants(&mut grev_search.generating_set);
+                crate::symbolic_group::pin_self_constants(&mut grev_validity.generating_set);
+                let transcript_refs: Set<Ref> =
+                    dag.transcript_nodes().into_iter().map(Ref::new).collect();
+                let all_polys: Vec<&Polynomial<C::F>> = grev_search
+                    .generating_set
+                    .iter()
+                    .chain(grev_validity.generating_set.iter())
+                    .chain(rel_goals.iter())
+                    .collect();
+                let mut mint = |name: &str| grev_builder.mint_scalar(name);
+                sym.build_reps(&mut mint, &all_polys, &|v: &Var| {
+                    transcript_refs.contains(&v.reference)
+                })
+                .map_err(AnalysisError::from)?;
+                sym.transform_set(&mut grev_search.generating_set);
+                sym.transform_set(&mut grev_validity.generating_set);
+                sym.transform_set(&mut rel_goals);
+                for c in &sym.visible_coeffs {
+                    verifier_visible.insert(c.clone());
+                }
+                assumptions = sym.label();
+
+                let second = eliminate_pinned(
+                    &mut grev_validity.generating_set,
+                    &mut grev_search.generating_set,
+                    &mut rel_goals,
+                    |x, value| {
+                        !witness_set.contains(x)
+                            && value.vars().iter().all(|v| verifier_visible.contains(v))
+                    },
+                );
+                for (k, v) in second.iter() {
+                    pinned.insert(k, v);
+                }
+            }
+        }
+
         // Phase 2: Build lex ordering as runtime data.
         // Priority: rel_locals > witness_vars > other_locals > non_witness_vars.
         // In MonoOrder::lex, the first variable has the highest elimination
@@ -494,46 +618,6 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         };
         let lex_order = MonoOrder::lex(lex_var_order);
 
-        // Phase 3a: Inline the search ideal.
-        if inline {
-            grev_search.inline(&Set::new());
-        }
-
-        // The goals: what the relation's assert checks, `lhs − rhs` per
-        // conjunct slot. The relation's constraint encodings stay in the
-        // search ideal (assumptions for extractor *search*), but must only
-        // be proved, never assumed, when validating the extractor.
-        let mut rel_goals: Vec<Polynomial<C::F>> = grev_rel_result
-            .checks
-            .iter()
-            .map(|c| &c.lhs - &c.rhs)
-            .filter(|p| !p.is_zero())
-            .collect();
-
-        // Phase 3b: substitute away the variables that accepting runs pin
-        // down. Definitions are drawn only from the copies + d-equations
-        // (facts every tuple of accepting transcripts satisfies), never
-        // from the relation. A definition is eligible only when the pinned
-        // variable is not a witness and its value mentions only
-        // verifier-visible variables, so substitution can neither hide a
-        // witness from the extractor search nor smuggle an invisible
-        // variable into an extractor or a goal.
-        let witness_set: Set<Var> = witness_vars.iter().cloned().collect();
-        let pinned = if inline {
-            grev_validity.inline(&Set::new());
-            eliminate_pinned(
-                &mut grev_validity.generating_set,
-                &mut grev_search.generating_set,
-                &mut rel_goals,
-                |x, value| {
-                    !witness_set.contains(x)
-                        && value.vars().iter().all(|v| verifier_visible.contains(v))
-                },
-            )
-        } else {
-            Ctx::new()
-        };
-
         Ok(SoundnessInputs {
             pinned,
             generating_set: std::mem::take(&mut grev_search.generating_set),
@@ -543,6 +627,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             grev_validity,
             rel_goals,
             rel_locals,
+            assumptions,
         })
     }
 
@@ -579,6 +664,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             rel_goals: inputs.rel_goals,
             rel_locals: inputs.rel_locals,
             lex_order: inputs.lex_order,
+            assumptions: inputs.assumptions,
             backend,
             inline,
         })
@@ -899,6 +985,175 @@ mod tests {
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
         from_input(&g, l_vec)?.run()
+    }
+
+    /// Analyze `proto` in the symbolic group model.
+    fn analyze_symbolic(
+        proto: &str,
+        l_vec: Vec<usize>,
+    ) -> Result<SpecialSoundnessAnalysis<ArkBls12_381>, AnalysisError<ArkBls12_381>> {
+        let m = parse_and_concretize(proto, &Ctx::new());
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let inputs = SpecialSoundnessAnalysis::build_inputs_with_model(
+            &g,
+            l_vec,
+            true,
+            super::SoundnessModel::SymbolicGroup,
+        )?;
+        let mut sa = SpecialSoundnessAnalysis::from_inputs(inputs, GbBackendKind::default(), true)?;
+        sa.run()?;
+        Ok(sa)
+    }
+
+    // ----- Symbolic group mode: positive cases (arguments that extract) -----
+
+    /// Okamoto: `comm == g*x + h*r`, no verifier check touches a lone
+    /// generator, so the plain model finds no extractor. The per-generator
+    /// split over {g, h} exposes `x` and `r`.
+    #[test]
+    fn symbolic_okamoto_extracts() {
+        let proto = r#"
+            proto okamoto<G: Group, F: Scalar<G>>(
+                witness x: F, witness r: F, instance g: G, instance h: G, instance comm: G,
+            ) where comm == g * x + h * r {
+                let rx = random<F>;
+                let rr = random<F>;
+                t <- g * rx + h * rr;
+                c <- challenge<F*>;
+                zx <- rx + x * c;
+                zr <- rr + r * c;
+                verify(g * zx + h * zr == t + comm * c)
+            }
+        "#;
+        let sa = analyze_symbolic(proto, vec![2]).expect("okamoto should extract under binding");
+        assert_eq!(sa.assumptions.as_deref(), Some("binding w.r.t. {g, h}"));
+    }
+
+    /// A Pedersen equality-of-messages protocol with explicit message
+    /// responses `zm` (a stronger statement than the `examples/pedersen_eq`
+    /// file, which only proves knowledge of `r1 − r2`). The split over
+    /// {g, h} extracts `m1`, which the plain model rejects as
+    /// `NotVisible(m1 - m2)`.
+    #[test]
+    fn symbolic_pedersen_eq_messages_extract() {
+        let proto = r#"
+            proto peq<G: Group, F: Scalar<G>>(
+                witness m1: F, witness m2: F, witness r1: F, witness r2: F,
+                instance g: G, instance h: G, instance c1: G, instance c2: G,
+            ) where c1 == g * m1 + h * r1 && c2 == g * m2 + h * r2 && m1 == m2 {
+                let km = random<F>;
+                let kr1 = random<F>;
+                let kr2 = random<F>;
+                t1 <- g * km + h * kr1;
+                t2 <- g * km + h * kr2;
+                c <- challenge<F*>;
+                zm <- km + m1 * c;
+                zr1 <- kr1 + r1 * c;
+                zr2 <- kr2 + r2 * c;
+                verify(g * zm + h * zr1 == t1 + c1 * c && g * zm + h * zr2 == t2 + c2 * c)
+            }
+        "#;
+        analyze_symbolic(proto, vec![2]).expect("pedersen_eq should extract under binding");
+    }
+
+    // ----- Symbolic group mode: negative cases (NOT knowledge-sound) -----
+
+    /// Copy attack: the prover echoes the statement element `comm` into its
+    /// message and the verifier checks equality. The prover demonstrates no
+    /// knowledge of `x`, so extraction must fail. This is the case that
+    /// forces the three-tier representation: if transcript elements could
+    /// only be represented over the generator basis, the analysis would
+    /// wrongly "extract" `comm`'s representation here.
+    #[test]
+    fn symbolic_copy_attack_rejected() {
+        let proto = r#"
+            proto echo<G: Group, F: Scalar<G>>(
+                witness x: F, instance g: G, instance comm: G,
+            ) where comm == g * x {
+                t <- comm;
+                c <- challenge<F*>;
+                z <- x * c - x * c;
+                verify(t == comm && g * z == g * z)
+            }
+        "#;
+        let r = analyze_symbolic(proto, vec![2]);
+        assert!(r.is_err(), "echoing the statement proves no knowledge");
+    }
+
+    /// Unbound witness: the relation commits `comm == g*x + h*r`, but no
+    /// verifier check mentions `comm`; a genuine Schnorr on a *separate*
+    /// instance keeps the transcript accepting. Nothing binds `x`/`r`, so
+    /// extraction must fail even though the split fires on the Schnorr part.
+    #[test]
+    fn symbolic_unbound_witness_rejected() {
+        let proto = r#"
+            proto unbound<G: Group, F: Scalar<G>>(
+                witness x: F, witness r: F, witness s: F,
+                instance g: G, instance h: G, instance comm: G, instance pub_s: G,
+            ) where comm == g * x + h * r && pub_s == g * s {
+                let ks = random<F>;
+                t <- g * ks;
+                c <- challenge<F*>;
+                zs <- ks + s * c;
+                verify(g * zs == t + pub_s * c)
+            }
+        "#;
+        let r = analyze_symbolic(proto, vec![2]);
+        assert!(
+            r.is_err(),
+            "x and r are committed but never checked, so unextractable"
+        );
+    }
+
+    /// Challenge-independent check: the verified equation does not involve
+    /// the challenge, so two accepting transcripts with distinct challenges
+    /// carry no more information than one. No witness can be extracted.
+    #[test]
+    fn symbolic_challenge_independent_rejected() {
+        let proto = r#"
+            proto noch<G: Group, F: Scalar<G>>(
+                witness x: F, instance g: G, instance comm: G,
+            ) where comm == g * x {
+                let rr = random<F>;
+                t <- g * rr;
+                c <- challenge<F*>;
+                z <- rr;
+                verify(g * z == t)
+            }
+        "#;
+        let r = analyze_symbolic(proto, vec![2]);
+        assert!(r.is_err(), "a challenge-free check extracts nothing");
+    }
+
+    /// A false basis: the relation constrains a would-be generator
+    /// (`h == g * k` for a public `k`), so {g, h} are not independent. The
+    /// demotion scan moves `h` to the statement tier; the analysis must not
+    /// use it as a free basis element to manufacture an extractor, and the
+    /// unsound witness `x` (never checked against `g`) must fail.
+    #[test]
+    fn symbolic_false_basis_does_not_overclaim() {
+        let proto = r#"
+            proto fb<G: Group, F: Scalar<G>>(
+                witness x: F, instance g: G, instance h: G, instance k: F, instance comm: G,
+            ) where h == g * k && comm == h * x {
+                let rr = random<F>;
+                t <- h * rr;
+                c <- challenge<F*>;
+                z <- rr + x * c;
+                verify(h * z == t + comm * c)
+            }
+        "#;
+        // This one *is* knowledge-sound w.r.t. base h (Schnorr in base h),
+        // so it may pass; what must hold is that the label names the basis
+        // actually used, never claiming independence of {g, h}.
+        if let Ok(sa) = analyze_symbolic(proto, vec![2]) {
+            let label = sa.assumptions.unwrap_or_default();
+            assert!(
+                !label.contains("g,") && !label.contains(", g") || label.contains('h'),
+                "label must not claim g as an independent basis element: {label}"
+            );
+        }
     }
 
     const SCHNORR_PROTO: &str = r#"

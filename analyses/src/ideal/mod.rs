@@ -190,6 +190,12 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         ideal
     }
 
+    /// Allocate a fresh scalar sentinel, for callers that only need the
+    /// variable (symbolic group coefficients).
+    pub(crate) fn mint_scalar(&mut self, name: &str) -> Var {
+        self.ns.sentinel_var(name, ATyp::scalar())
+    }
+
     pub(crate) fn sentinel_var(&mut self, name: &str, typ: ATyp, ideal: &mut Ideal<C>) -> Var {
         let var = self.ns.sentinel_var(name, typ);
         ideal.var_order.push(var.clone());
