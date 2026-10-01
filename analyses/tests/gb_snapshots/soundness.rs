@@ -103,14 +103,13 @@ pub(crate) static SOUNDNESS_ENTRIES: LazyLock<Vec<SoundnessEntry>> = LazyLock::n
             sizes: &[("N", 2), ("n", 1), ("m", 1)],
             // gamma appears quadratically, so three transcripts.
             l_vec: &[3],
-            // Even in symbolic mode (binding w.r.t. {ck, h_base}, clean
-            // 29-generator split) w[0] is unextractable: it is reachable
-            // only through the masked responses, whose inversion needs
-            // interpolation across the three transcripts — a capability
-            // beyond per-generator splitting.
-            model: SoundnessModel::SymbolicGroup,
-            // Known: "No valid extractor for witness w[0]: NoExtractor".
-            ignored: true,
+            // Argument: extracts under binding w.r.t. {ck, h_base}. The
+            // witness is bound only through the masked responses
+            // `t_s = w + γ·r`; SymbolicGroupResponses keeps those responses
+            // as explicit generators so the GB recovers `w` from two
+            // transcripts (w = t_s − γ·r).
+            model: SoundnessModel::SymbolicGroupResponses,
+            ignored: false,
         },
         SoundnessEntry {
             name: "coin_proof",

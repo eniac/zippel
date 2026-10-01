@@ -394,9 +394,20 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
                     let remap = |var: &Var| {
                         let key = (var.reference, var.index.clone());
+                        // `round_map` is keyed per slot. A whole-vector var
+                        // (empty index, e.g. a `Vec<F>` response like
+                        // `t_s = [w + γ·r]`) matches none of its slot keys
+                        // directly, so also check whether any slot of this
+                        // reference lands in this round — otherwise vector
+                        // responses would not be remapped per copy.
                         let in_round = round_map_ref
                             .get(&key)
-                            .is_some_and(|&highest| highest == round_idx);
+                            .is_some_and(|&highest| highest == round_idx)
+                            || (model.uses_prover_responses()
+                                && var.index.is_empty()
+                                && round_map_ref.iter().any(|((r, _), &highest)| {
+                                    *r == var.reference && highest == round_idx
+                                }));
 
                         if in_round {
                             let orig = var.name();
@@ -533,9 +544,64 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
         grev_search.merge(&grev_rel_result);
 
-        // Phase 3a: Inline the search ideal.
+        // Phase 3a: Inline the search ideal. Under option 2, protect the
+        // sigma-protocol *responses* from inlining so they survive as
+        // explicit generators the GB can invert across copies, instead of
+        // being folded into the verifier's (quadratic) checks. A response is
+        // a transcript message whose definition is linear in the witnesses
+        // AND depends on a challenge (`z = mask + witness·challenge`);
+        // first-message commitments are witness-linear too but
+        // challenge-independent, so they inline and do not flood the ideal.
+        // Validity is built from the verifier copies only, so its inline is
+        // unaffected and stays byte-identical to the plain path.
         if inline {
-            grev_search.inline(&Set::new());
+            if model.uses_prover_responses() {
+                let transcript_refs: Set<Ref> = dag
+                    .transcript_nodes()
+                    .into_iter()
+                    .map(|n| dag.find_ref(n))
+                    .collect();
+                let challenge_dependent: Set<Ref> = round_map.keys().map(|(r, _)| *r).collect();
+                let witness_set: Set<Var> = witness_vars.iter().cloned().collect();
+                let witness_degree = |p: &Polynomial<C::F>| -> usize {
+                    p.terms
+                        .keys()
+                        .map(|m| {
+                            m.vars()
+                                .iter()
+                                .zip(m.powers())
+                                .filter(|(v, _)| witness_set.contains(v))
+                                .map(|(_, e)| e)
+                                .sum::<usize>()
+                        })
+                        .max()
+                        .unwrap_or(0)
+                };
+                let responses: Set<Ref> = transcript_refs
+                    .iter()
+                    .filter(|r| challenge_dependent.contains(r))
+                    .filter(|r| {
+                        grev_search
+                            .pl
+                            .iter()
+                            .filter(|(k, _)| k.reference == **r)
+                            .all(|(_, def)| witness_degree(def) <= 1)
+                    })
+                    .cloned()
+                    .collect();
+                grev_search.inline(&responses);
+                // The preserved responses are transcript messages the
+                // verifier receives, so they are verifier-visible — the
+                // extractor may use them (that is the whole point of keeping
+                // them). Register every surviving transcript-message var.
+                for v in grev_search.vars() {
+                    if transcript_refs.contains(&v.reference) {
+                        verifier_visible.insert(v);
+                    }
+                }
+            } else {
+                grev_search.inline(&Set::new());
+            }
         }
 
         // The goals: what the relation's assert checks, `lhs − rhs` per
@@ -627,7 +693,6 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         }
 
         // Phase 2: Build lex ordering as runtime data.
-        // Priority: rel_locals > witness_vars > other_locals > non_witness_vars.
         // In MonoOrder::lex, the first variable has the highest elimination
         // priority. Within each group, sort by Var::Ord for determinism.
         let lex_var_order: Vec<Var> = {
@@ -636,45 +701,56 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             let non_witness_set: Set<Var> = non_witness_vars.iter().cloned().collect();
 
             let all_vars: Set<Var> = grev_search.vars();
+            let sorted = |f: &dyn Fn(&Var) -> bool| {
+                let mut v: Vec<Var> = all_vars.iter().filter(|x| f(x)).cloned().collect();
+                v.sort();
+                v
+            };
 
-            let mut rel: Vec<Var> = all_vars
-                .iter()
-                .filter(|v| rel_locals_set.contains(v))
-                .cloned()
-                .collect();
-            rel.sort();
-            let mut witness_v: Vec<Var> = all_vars
-                .iter()
-                .filter(|v| witness_set.contains(v) && !rel_locals_set.contains(v))
-                .cloned()
-                .collect();
-            witness_v.sort();
-            let mut non_witness_v: Vec<Var> = all_vars
-                .iter()
-                .filter(|v| {
+            let rel = sorted(&|v| rel_locals_set.contains(v));
+            let witness_v = sorted(&|v| witness_set.contains(v) && !rel_locals_set.contains(v));
+
+            if model.uses_prover_responses() {
+                // Extraction-first order: eliminate everything that is
+                // neither a witness nor verifier-visible — relation
+                // intermediates, the prover's blinding and internal
+                // sentinels — *before* the witnesses, so the GB expresses
+                // each witness in verifier-visible values (recovering `w`
+                // from the preserved responses `t_s = w + γ·r` across copies)
+                // rather than in a prover secret. Visible values kept lowest.
+                let hidden = sorted(&|v| {
+                    !rel_locals_set.contains(v)
+                        && !witness_set.contains(v)
+                        && !verifier_visible.contains(v)
+                });
+                let visible = sorted(&|v| {
+                    !rel_locals_set.contains(v)
+                        && !witness_set.contains(v)
+                        && verifier_visible.contains(v)
+                });
+                rel.into_iter()
+                    .chain(hidden)
+                    .chain(witness_v)
+                    .chain(visible)
+                    .collect()
+            } else {
+                // rel_locals > witness > other > non_witness.
+                let non_witness_v = sorted(&|v| {
                     non_witness_set.contains(v)
                         && !rel_locals_set.contains(v)
                         && !witness_set.contains(v)
-                })
-                .cloned()
-                .collect();
-            non_witness_v.sort();
-            let mut other: Vec<Var> = all_vars
-                .iter()
-                .filter(|v| {
+                });
+                let other = sorted(&|v| {
                     !rel_locals_set.contains(v)
                         && !witness_set.contains(v)
                         && !non_witness_set.contains(v)
-                })
-                .cloned()
-                .collect();
-            other.sort();
-
-            rel.into_iter()
-                .chain(witness_v)
-                .chain(other)
-                .chain(non_witness_v)
-                .collect()
+                });
+                rel.into_iter()
+                    .chain(witness_v)
+                    .chain(other)
+                    .chain(non_witness_v)
+                    .collect()
+            }
         };
         let lex_order = MonoOrder::lex(lex_var_order);
 
