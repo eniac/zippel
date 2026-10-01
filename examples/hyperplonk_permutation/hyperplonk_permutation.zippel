@@ -146,7 +146,13 @@ proto hyperplonk_permutation<F: Field, S: Size, N: 2 ^ S>(
     // which is the form of the relation the proto attests to.
     let f_shift = [r + s_id_evs[i] + r2 * f_evs[i] for i in 0..N];
     let g_shift = [r + s_sigma_evs[i] + r2 * g_evs[i] for i in 0..N];
-    reduce(*, f_shift) == reduce(*, g_shift)
+    // The grand-product identity, stated through the root of the product
+    // tree: the leaf and tree conjuncts below give
+    // v[N - 1] · Π g_shift == Π f_shift, and the inverses make Π g_shift
+    // nonzero, so together with them
+    //   v_evs[N - 1] == 1  iff  reduce(*, f_shift) == reduce(*, g_shift).
+    // The root form spares the analyses from expanding both products.
+    v_evs[N - 1] == 1
         // r + ĝ[i] is nonzero, witnessed by its inverse.
         && reduce(&&, [g_shift[i] * g_shift_inv[i] for i in 0..N] == [1 for _ in 0..N])
         // v_evs is the honest rational product tree: leaves f_shift/g_shift,
