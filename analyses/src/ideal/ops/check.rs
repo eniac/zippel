@@ -29,12 +29,13 @@ pub fn assert_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, pr: &V
     }
     let leaves = ctx.builder.collect_and_leaves(exp);
     for leaf in leaves {
+        record_check(ctx, &leaf);
         check_op(ctx, &leaf);
     }
 }
 
 /// Verifier-side check encoder. The ideal generation is identical for
-/// assert and verify; verify also records what each leaf checks.
+/// assert and verify; both record what each leaf checks.
 pub fn verify_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, _pr: &Var, exp: &HOp<C>) {
     let leaves = ctx.builder.collect_and_leaves(exp);
     for leaf in leaves {

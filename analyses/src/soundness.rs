@@ -3,11 +3,12 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::TransClos;
 use crate::Var;
 use crate::backend::{GbBackendKind, GbBasis};
+use crate::completeness::defined_var;
 use crate::error::{AnalysisError, ExtractorRejection};
 use crate::extractor::{extract_locals, valid_extractor};
 use crate::frontend::{MonoOrder, Polynomial};
 use crate::ideal::{EncodeOptions, Ideal, IdealBuilder};
-use ark_ff::One;
+use ark_ff::{One, PrimeField};
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
 use graph::{QDag, Ref};
@@ -16,7 +17,7 @@ use log::{info, warn};
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
-use share::Set;
+use share::{Ctx, Set};
 
 /// Inputs to the soundness search Gröbner basis computation: the
 /// generating set (d-equations + copy TCs + relation, after optional
@@ -39,10 +40,15 @@ pub struct SoundnessInputs<C: ArkConfig> {
     /// Validity ideal: d-equations + copy TCs. Extractors are added in
     /// `run()` before computing the validity GB.
     pub grev_validity: Ideal<C>,
-    /// Relation ideal (inlined). Relation polys are reduced against the
-    /// validity GB in `run()`.
-    pub grev_rel_result: Ideal<C>,
-    /// Relation locals (merged into validity ideal in `run()`).
+    /// The goals: what the relation's assert checks, one `lhs − rhs` per
+    /// conjunct slot, reduced against the validity GB in `run()`.
+    pub rel_goals: Vec<Polynomial<C::F>>,
+    /// The variables accepting runs pin down, substituted away by
+    /// [`eliminate_pinned`]. Diagnostic.
+    pub pinned: Ctx<Var, Polynomial<C::F>>,
+    /// Relation locals; their `pl` definitions are the paper's `I_R`
+    /// (Skolem functions for the relation's intermediates), added to the
+    /// validity ideal in `run()` when not inlining.
     pub rel_locals: Ideal<C>,
 }
 
@@ -59,10 +65,11 @@ pub struct SpecialSoundnessAnalysis<C: ArkConfig> {
     /// Validity ideal: d-equations + copy TCs. Extractors are added in
     /// `run()` before computing the validity GB.
     grev_validity: Ideal<C>,
-    /// Relation ideal (inlined). Relation polys are reduced against the
-    /// validity GB in `run()`.
-    grev_rel_result: Ideal<C>,
-    /// Relation locals (merged into validity ideal in `run()`).
+    /// The goals: what the relation's assert checks, one `lhs − rhs` per
+    /// conjunct slot, reduced against the validity GB in `run()`.
+    rel_goals: Vec<Polynomial<C::F>>,
+    /// Relation locals; their `pl` definitions are the paper's `I_R`,
+    /// added to the validity ideal in `run()` when not inlining.
     rel_locals: Ideal<C>,
     /// Lex ordering used for both search and validity GBs.
     lex_order: MonoOrder,
@@ -148,6 +155,71 @@ fn validate_2n_plus_1<C: ArkConfig>(
     }
 
     Ok(challenge_rounds)
+}
+
+/// Substitute away every variable a `defining` generator pins down (see
+/// [`defined_var`]) where an eligible definition exists, applying the
+/// substitution to `defining`, `also`, and `goals` alike, and dropping the
+/// generators of `defining` that vanish. Returns what each variable was
+/// pinned to.
+///
+/// Exact for the same reason as in the completeness analysis: each
+/// definition `x − f` lies in the ideal of `defining` (the copies +
+/// d-equations), which is contained in both the search ideal and the
+/// validity assumptions — so a substituted goal lies in the substituted
+/// ideal iff the original goal lies in the original one. Definitions are
+/// never drawn from `goals` (the relation), which the validity phase must
+/// prove, not assume.
+fn eliminate_pinned<F: PrimeField>(
+    defining: &mut Vec<Polynomial<F>>,
+    also: &mut Vec<Polynomial<F>>,
+    goals: &mut Vec<Polynomial<F>>,
+    eligible: impl Fn(&Var, &Polynomial<F>) -> bool,
+) -> Ctx<Var, Polynomial<F>> {
+    // Kept resolved: no value mentions a defined variable.
+    let mut defs: Ctx<Var, Polynomial<F>> = Ctx::new();
+    loop {
+        let mut found = false;
+        let mut kept = Vec::with_capacity(defining.len());
+        for p in std::mem::take(defining) {
+            let p = if p.vars().iter().any(|v| defs.contains(v)) {
+                p.inline_vars(&defs).0
+            } else {
+                p
+            };
+            if p.is_zero() {
+                continue;
+            }
+            match defined_var(&p, &eligible) {
+                Some((x, value)) => {
+                    let def = Ctx::singleton(x.clone(), value.clone());
+                    defs.modify(|_, v| {
+                        if v.contains(&x) {
+                            *v = v.clone().inline_vars(&def).0;
+                        }
+                    });
+                    defs.insert(&x, &value);
+                    found = true;
+                }
+                None => kept.push(p),
+            }
+        }
+        *defining = kept;
+        // A pass that defined nothing new left every generator resolved.
+        if !found {
+            break;
+        }
+    }
+    let substitute = |polys: &mut Vec<Polynomial<F>>| {
+        *polys = std::mem::take(polys)
+            .into_iter()
+            .map(|p| p.inline_vars(&defs).0)
+            .filter(|p| !p.is_zero())
+            .collect();
+    };
+    substitute(also);
+    substitute(goals);
+    defs
 }
 
 impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
@@ -427,13 +499,49 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             grev_search.inline(&Set::new());
         }
 
+        // The goals: what the relation's assert checks, `lhs − rhs` per
+        // conjunct slot. The relation's constraint encodings stay in the
+        // search ideal (assumptions for extractor *search*), but must only
+        // be proved, never assumed, when validating the extractor.
+        let mut rel_goals: Vec<Polynomial<C::F>> = grev_rel_result
+            .checks
+            .iter()
+            .map(|c| &c.lhs - &c.rhs)
+            .filter(|p| !p.is_zero())
+            .collect();
+
+        // Phase 3b: substitute away the variables that accepting runs pin
+        // down. Definitions are drawn only from the copies + d-equations
+        // (facts every tuple of accepting transcripts satisfies), never
+        // from the relation. A definition is eligible only when the pinned
+        // variable is not a witness and its value mentions only
+        // verifier-visible variables, so substitution can neither hide a
+        // witness from the extractor search nor smuggle an invisible
+        // variable into an extractor or a goal.
+        let witness_set: Set<Var> = witness_vars.iter().cloned().collect();
+        let pinned = if inline {
+            grev_validity.inline(&Set::new());
+            eliminate_pinned(
+                &mut grev_validity.generating_set,
+                &mut grev_search.generating_set,
+                &mut rel_goals,
+                |x, value| {
+                    !witness_set.contains(x)
+                        && value.vars().iter().all(|v| verifier_visible.contains(v))
+                },
+            )
+        } else {
+            Ctx::new()
+        };
+
         Ok(SoundnessInputs {
+            pinned,
             generating_set: std::mem::take(&mut grev_search.generating_set),
             lex_order,
             witness_slots,
             verifier_visible,
             grev_validity,
-            grev_rel_result,
+            rel_goals,
             rel_locals,
         })
     }
@@ -468,7 +576,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             witness_slots: inputs.witness_slots,
             verifier_visible: inputs.verifier_visible,
             grev_validity: inputs.grev_validity,
-            grev_rel_result: inputs.grev_rel_result,
+            rel_goals: inputs.rel_goals,
             rel_locals: inputs.rel_locals,
             lex_order: inputs.lex_order,
             backend,
@@ -485,68 +593,97 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
     /// 5. **Build validity GB** (also under lex) and verify that all relation
     ///    polys reduce to zero.
     pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
-        // Phase 4: Extract witnesses.
+        // Phase 4: Extract witnesses. Passes run until nothing new is
+        // extracted: a candidate may mention witnesses extracted in an
+        // earlier iteration (chained extraction, e.g. first `x`, then
+        // `alpha` from a polynomial in `x` and transcript values). The
+        // extracted set only grows, so the chains are acyclic and resolve
+        // to functions of verifier-visible variables by substitution.
         let mut search_polys = self.search_gb.polys.clone();
         factor_group_gcd(&mut search_polys);
 
         let mut extractors: Vec<(Var, Polynomial<C::F>)> = Vec::new();
+        let mut extracted: Set<Var> = Set::new();
+        let mut remaining: Vec<Var> = self.witness_slots.clone();
+        let mut rejections: Vec<(Var, ExtractorRejection<C>)> = Vec::new();
 
-        for w in &self.witness_slots {
-            let mut found_extractor = None;
-            let mut rejection: Option<ExtractorRejection<C>> = None;
+        loop {
+            let mut progress = false;
+            rejections.clear();
+            let mut still_remaining = Vec::new();
 
-            'poly: for poly in search_polys.iter() {
-                for term in poly.terms.keys() {
-                    let tv = term.vars();
-                    let tp = term.powers();
-                    let is_witness_term = tv.len() == 1 && tv[0] == *w && tp[0] == 1;
-                    if !is_witness_term {
-                        continue;
-                    }
+            for w in remaining {
+                let mut found_extractor = None;
+                let mut rejection: Option<ExtractorRejection<C>> = None;
 
-                    let other_vars: Set<Var> = poly
-                        .terms
-                        .iter()
-                        .filter(|(t, _)| {
-                            let tvars = t.vars();
-                            let tpows = t.powers();
-                            !(tvars.len() == 1 && tvars[0] == *w && tpows[0] == 1)
-                        })
-                        .flat_map(|(t, _)| t.vars())
-                        .collect();
-
-                    let all_visible = other_vars.iter().all(|v| self.verifier_visible.contains(v));
-                    if !all_visible {
-                        rejection = Some(ExtractorRejection::NotVisible(poly.clone()));
-                        continue;
-                    }
-                    if !valid_extractor::<C>(&w.typ, poly) {
-                        if w.typ.is_scalar() {
-                            rejection = Some(ExtractorRejection::FieldDependsOnGroup(poly.clone()));
-                        } else {
-                            rejection = Some(ExtractorRejection::MultiGroupTerm(poly.clone()));
+                'poly: for poly in search_polys.iter() {
+                    for term in poly.terms.keys() {
+                        let tv = term.vars();
+                        let tp = term.powers();
+                        let is_witness_term = tv.len() == 1 && tv[0] == w && tp[0] == 1;
+                        if !is_witness_term {
+                            continue;
                         }
-                        continue;
+
+                        let other_vars: Set<Var> = poly
+                            .terms
+                            .iter()
+                            .filter(|(t, _)| {
+                                let tvars = t.vars();
+                                let tpows = t.powers();
+                                !(tvars.len() == 1 && tvars[0] == w && tpows[0] == 1)
+                            })
+                            .flat_map(|(t, _)| t.vars())
+                            .collect();
+
+                        let usable = other_vars
+                            .iter()
+                            .all(|v| self.verifier_visible.contains(v) || extracted.contains(v));
+                        if !usable {
+                            rejection = Some(ExtractorRejection::NotVisible(poly.clone()));
+                            continue;
+                        }
+                        if !valid_extractor::<C>(&w.typ, poly) {
+                            if w.typ.is_scalar() {
+                                rejection =
+                                    Some(ExtractorRejection::FieldDependsOnGroup(poly.clone()));
+                            } else {
+                                rejection = Some(ExtractorRejection::MultiGroupTerm(poly.clone()));
+                            }
+                            continue;
+                        }
+                        found_extractor = Some(poly.clone());
+                        break 'poly;
                     }
-                    found_extractor = Some(poly.clone());
-                    break 'poly;
+                }
+
+                match found_extractor {
+                    Some(poly) => {
+                        info!("Found extractor for {:?}", w);
+                        extracted.insert(w.clone());
+                        extractors.push((w, poly));
+                        progress = true;
+                    }
+                    None => {
+                        let reason = rejection.unwrap_or(ExtractorRejection::NoExtractor);
+                        rejections.push((w.clone(), reason));
+                        still_remaining.push(w);
+                    }
                 }
             }
 
-            match found_extractor {
-                Some(poly) => {
-                    info!("Found extractor for {:?}", w);
-                    extractors.push((w.clone(), poly));
-                }
-                None => {
-                    let reason = rejection.unwrap_or(ExtractorRejection::NoExtractor);
-                    warn!("No valid extractor for witness {:?}", w);
-                    return Err(AnalysisError::NoValidExtractor {
-                        witness: w.clone(),
-                        reason: Box::new(reason),
-                    });
-                }
+            remaining = still_remaining;
+            if remaining.is_empty() || !progress {
+                break;
             }
+        }
+
+        if let Some((witness, reason)) = rejections.into_iter().next() {
+            warn!("No valid extractor for witness {:?}", witness);
+            return Err(AnalysisError::NoValidExtractor {
+                witness,
+                reason: Box::new(reason),
+            });
         }
 
         info!(
@@ -560,7 +697,19 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             self.grev_validity.generating_set.push(ext_poly.clone());
         }
 
-        self.grev_validity.merge(&self.rel_locals);
+        // I_R: Skolem definitions for the relation's intermediates. Only
+        // definitions — assuming the relation's own constraints (as
+        // `merge(&rel_locals)` used to) made the final reduction vacuous:
+        // every goal was literally an assumption. With inlining the goals
+        // are already resolved down to arguments, so there is nothing to
+        // add.
+        if !self.inline {
+            for (t, f) in self.rel_locals.pl.iter() {
+                self.grev_validity
+                    .generating_set
+                    .push(&Polynomial::var(t) - f);
+            }
+        }
         if self.inline {
             self.grev_validity.inline(&Set::new());
         }
@@ -579,7 +728,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             });
         }
 
-        for r in self.grev_rel_result.generating_set.iter() {
+        for r in self.rel_goals.iter() {
             if r.is_zero() {
                 continue;
             }
@@ -845,6 +994,55 @@ mod tests {
         assert!(
             result.is_err(),
             "x[1] extracts to a witness for h[0], which misses the relation; got {result:?}"
+        );
+    }
+
+    /// The relation also demands `k == g*(x+1)`, which no verifier check
+    /// touches: transcripts accept for any `k`, so no extractor can promise
+    /// it, and the validity phase must reject. Before the goals were
+    /// separated from the assumptions, the relation's own constraints were
+    /// merged into the validity ideal and this passed vacuously.
+    #[test]
+    fn validity_rejects_relation_conjunct_the_verifier_ignores() {
+        let proto = r#"
+        proto gap<G: Group, F: Scalar<G>>(
+            witness x: F, instance g: G, instance h: G, instance k: G,
+        ) where h == g*x && k == g*(x + 1) {
+            let r = random<F>;
+            u <- g*r;
+            c <- challenge<F*>;
+            z <- r + x*c;
+            verify(g*z == u + h*c)
+        }
+    "#;
+        let result = analyze_soundness(proto, vec![2]);
+        assert!(
+            matches!(result, Err(AnalysisError::ExtractorInvalid(_))),
+            "the k-conjunct is unenforced, so validity must fail; got {result:?}"
+        );
+    }
+
+    /// `y` is only reachable through `x`: its best polynomial is `y − x − 1`,
+    /// which mentions the witness `x`. The pass-wise search extracts `x` from
+    /// the transcripts first, then admits `y` through the already-extracted
+    /// `x` (chained extraction).
+    #[test]
+    fn chained_extraction_through_an_earlier_witness() {
+        let proto = r#"
+        proto chain<G: Group, F: Scalar<G>>(
+            witness x: F, witness y: F, instance g: G, instance h: G,
+        ) where h == g*x && y == x + 1 {
+            let r = random<F>;
+            u <- g*r;
+            c <- challenge<F*>;
+            z <- r + x*c;
+            verify(g*z == u + h*c)
+        }
+    "#;
+        let result = analyze_soundness(proto, vec![2]);
+        assert!(
+            result.is_ok(),
+            "y = x + 1 should chain through x: {result:?}"
         );
     }
 

@@ -368,12 +368,12 @@ fn substitute<F: PrimeField>(
 }
 
 /// If `p` pins a variable down, i.e. `p = c·x + r` with `c` constant and
-/// `x ∉ r`, return `x` and its value `−r/c`. Any `x` qualifies when `r` is
-/// constant; otherwise `x` must satisfy `eligible`. Ties go to the least
-/// `Var`, so the choice does not depend on hash order.
-fn defined_var<F: PrimeField>(
+/// `x ∉ r`, return `x` and its value `−r/c`. The pair must satisfy
+/// `eligible`. Ties go to the least `Var`, so the choice does not depend
+/// on hash order.
+pub(crate) fn defined_var<F: PrimeField>(
     p: &Polynomial<F>,
-    eligible: &impl Fn(&Var) -> bool,
+    eligible: &impl Fn(&Var, &Polynomial<F>) -> bool,
 ) -> Option<(Var, Polynomial<F>)> {
     // The number of terms each variable occurs in.
     let mut occurrences: HashMap<Var, usize> = HashMap::new();
@@ -382,20 +382,21 @@ fn defined_var<F: PrimeField>(
             *occurrences.entry(v).or_default() += 1;
         }
     }
-    let rest_constant = p.terms.keys().filter(|m| !m.is_constant()).count() == 1;
-    let (x, c) = p
-        .terms
+    p.terms
         .iter()
         .filter(|(mono, _)| mono.degree() == 1)
         .filter_map(|(mono, c)| {
             let x = mono.vars().pop()?;
-            (occurrences[&x] == 1 && (rest_constant || eligible(&x))).then_some((x, *c))
+            if occurrences[&x] != 1 {
+                return None;
+            }
+            // x = (c·x − p) / c
+            let cx = &Polynomial::lit(c) * &Polynomial::var(&x);
+            let inv = Polynomial::lit(&c.inverse().expect("terms have nonzero coefficients"));
+            let value = &(&cx - p) * &inv;
+            eligible(&x, &value).then_some((x, value))
         })
-        .min_by(|(a, _), (b, _)| a.cmp(b))?;
-    // x = (c·x − p) / c
-    let cx = &Polynomial::lit(&c) * &Polynomial::var(&x);
-    let inv = Polynomial::lit(&c.inverse().expect("terms have nonzero coefficients"));
-    Some((x, &(&cx - p) * &inv))
+        .min_by(|(a, _), (b, _)| a.cmp(b))
 }
 
 /// Substitute away every variable that a generator pins down (see
@@ -413,7 +414,7 @@ fn eliminate_definitions<F: PrimeField>(
     generating_set: &mut Vec<Polynomial<F>>,
     origins: &mut Vec<Origin>,
     verifier: &mut Vec<Polynomial<F>>,
-    eligible: impl Fn(&Var) -> bool,
+    eligible: impl Fn(&Var, &Polynomial<F>) -> bool,
 ) -> Ctx<Var, Polynomial<F>> {
     // Kept resolved: no value mentions a defined variable.
     let mut defs: Ctx<Var, Polynomial<F>> = Ctx::new();
@@ -590,9 +591,12 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
             // (an asserted bool), which leaves the verifier's `==` encodings
             // alone.
             let inputs: Set<Ref> = dag.input_args().into_iter().map(Ref::new).collect();
-            pinned = eliminate_definitions(&mut generating_set, &mut origins, &mut verifier, |v| {
-                inputs.contains(&v.reference)
-            });
+            pinned = eliminate_definitions(
+                &mut generating_set,
+                &mut origins,
+                &mut verifier,
+                |v, value| value.vars().is_empty() || inputs.contains(&v.reference),
+            );
             messages = prover_result.pl;
         }
 
