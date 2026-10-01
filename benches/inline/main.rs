@@ -2,10 +2,21 @@
 //!
 //! Usage:
 //!   inline [--no-inline] [--backend singular|default]
-//!          [--memory-limit-mb MB] <`protocol_name`>
+//!          [--memory-limit-mb MB] [--path FILE] [--size NAME=VALUE]...
+//!          [--dump FILE] [--build-only] <`protocol_name`>
 //!
 //! Prints JSON to stdout with timing and basis size. Status is one of `ok`,
-//! `incomplete`, `crashed` (a real bug/panic), or `oom`.
+//! `incomplete`, `crashed` (a real bug/panic), `oom`, or `built` (with
+//! `--build-only`).
+//!
+//! - `--path FILE` analyses `FILE` instead of the protocol's registered
+//!   source; the name then need not be registered.
+//! - `--size NAME=VALUE` sets one size, replacing the registered value.
+//! - `--dump FILE` writes the generating set grouped by origin
+//!   (`CompletenessInputs::describe`) to `FILE` before the Gröbner basis
+//!   computation, and appends `CompletenessAnalysis::explain` if it finishes.
+//! - `--build-only` stops after building the ideal, without running the GB
+//!   backend.
 //!
 //! `--memory-limit-mb` caps virtual address space (`RLIMIT_AS`, unix only)
 //! around `build_inputs` (ideal construction) and the GB backend call —
@@ -18,7 +29,9 @@
 
 #![feature(alloc_error_hook)]
 
+use std::fs::OpenOptions;
 use std::io::Write as _;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
@@ -327,41 +340,69 @@ fn find_protocol(name: &str) -> Option<&'static ProtocolConfig> {
     PROTOCOLS.iter().find(|p| p.name == name)
 }
 
-fn build_sizes_ctx(sizes: &[(&str, usize)]) -> Ctx<Tid, usize> {
+fn build_sizes_ctx(sizes: &[(String, usize)]) -> Ctx<Tid, usize> {
     let mut ctx = Ctx::new();
-    for &(name, value) in sizes {
-        ctx.insert(&Tid::new(name), &value);
+    for (name, value) in sizes {
+        ctx.insert(&Tid::new(name), value);
     }
     ctx
 }
 
+/// What to analyse: a registered protocol, or a file given with `--path`,
+/// with any `--size` overrides applied.
+struct Target {
+    name: String,
+    path: PathBuf,
+    sizes: Vec<(String, usize)>,
+}
+
+/// Options that only affect what the run reports or how far it goes.
+struct Diagnostics {
+    dump: Option<PathBuf>,
+    build_only: bool,
+}
+
+/// Write `text` to the dump file, appending after the first write. Failures
+/// are reported on stderr and otherwise ignored: the dump is a side channel.
+fn write_dump(path: &Path, text: &str, append: bool) {
+    let result = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(append)
+        .truncate(!append)
+        .open(path)
+        .and_then(|mut f| f.write_all(text.as_bytes()));
+    if let Err(e) = result {
+        eprintln!("warning: failed to write dump {}: {e}", path.display());
+    }
+}
+
 fn run_bench(
-    protocol: &ProtocolConfig,
+    target: &Target,
     no_inline: bool,
     backend: GbBackendKind,
     memory_limit_mb: Option<u64>,
+    diagnostics: &Diagnostics,
 ) -> String {
-    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let path = manifest.join(protocol.path);
-
-    let source = match std::fs::read_to_string(&path) {
+    let name = target.name.as_str();
+    let source = match std::fs::read_to_string(&target.path) {
         Ok(s) => s,
-        Err(e) => return json_error(protocol.name, no_inline, &format!("read failed: {e}")),
+        Err(e) => return json_error(name, no_inline, &format!("read failed: {e}")),
     };
 
     let (module, diags) = UModule::parse(&source);
     let has_errors = diags.iter().any(|d| d.severity == Severity::Error);
     if has_errors {
-        return json_error(protocol.name, no_inline, "parse errors");
+        return json_error(name, no_inline, "parse errors");
     }
     let Some(module) = module else {
-        return json_error(protocol.name, no_inline, "no module");
+        return json_error(name, no_inline, "no module");
     };
 
-    let ctx = build_sizes_ctx(protocol.sizes);
+    let ctx = build_sizes_ctx(&target.sizes);
     let concrete = match module.concretize(&ctx) {
         Ok(c) => c,
-        Err(e) => return json_error(protocol.name, no_inline, &format!("concretize failed: {e}")),
+        Err(e) => return json_error(name, no_inline, &format!("concretize failed: {e}")),
     };
 
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(concrete));
@@ -377,7 +418,7 @@ fn run_bench(
 
     // Stage 1: Emit graph_size — available before any analysis.
     emit(&BenchOutput {
-        protocol: protocol.name.to_string(),
+        protocol: name.to_string(),
         inline: i32::from(inline),
         status: "running".to_string(),
         graph_size: Some(graph_size),
@@ -388,7 +429,7 @@ fn run_bench(
     let mut previous_memory_limit: Option<u64> = None;
     if let Some(limit_mb) = memory_limit_mb {
         let oom_line = serde_json::to_string(&BenchOutput {
-            protocol: protocol.name.to_string(),
+            protocol: name.to_string(),
             inline: i32::from(inline),
             status: "oom".to_string(),
             ..Default::default()
@@ -423,7 +464,7 @@ fn run_bench(
         .len();
 
     emit(&BenchOutput {
-        protocol: protocol.name.to_string(),
+        protocol: name.to_string(),
         inline: i32::from(inline),
         status: "running".to_string(),
         build_ms: Some(build_ms),
@@ -433,6 +474,36 @@ fn run_bench(
         gen_set_num_vars: Some(gen_set_num_vars),
         ..Default::default()
     });
+
+    // Written before the GB call, so it survives a timeout.
+    if let Some(dump) = &diagnostics.dump {
+        let header = format!(
+            "{name} inline={} sizes={:?}\n{}\n",
+            i32::from(inline),
+            target.sizes,
+            target.path.display()
+        );
+        write_dump(dump, &(header + &inputs.describe()), false);
+    }
+
+    if diagnostics.build_only {
+        if let Some(previous) = previous_memory_limit {
+            restore_memory_limit(previous);
+            LIMIT_ACTIVE.store(false, Ordering::SeqCst);
+        }
+        return serde_json::to_string(&BenchOutput {
+            protocol: name.to_string(),
+            inline: i32::from(inline),
+            status: "built".to_string(),
+            build_ms: Some(build_ms),
+            graph_size: Some(graph_size),
+            gen_set_size: Some(gen_set_size),
+            gen_set_max_degree: Some(gen_set_max_degree),
+            gen_set_num_vars: Some(gen_set_num_vars),
+            ..Default::default()
+        })
+        .unwrap();
+    }
 
     // Stage 3: Compute GB (expensive — may hang).
     let gb_start = Instant::now();
@@ -457,7 +528,7 @@ fn run_bench(
 
     // Emit post-GB metrics before run() — survives if run() hangs or is killed.
     emit(&BenchOutput {
-        protocol: protocol.name.to_string(),
+        protocol: name.to_string(),
         inline: i32::from(inline),
         status: "running".to_string(),
         build_ms: Some(build_ms),
@@ -481,8 +552,17 @@ fn run_bench(
         Err(e) => ("incomplete", Some(format!("{e}"))),
     };
 
+    if let Some(dump) = &diagnostics.dump {
+        let text = format!(
+            "\n---- result: {status} ----\n{}\n---- explain ----\n{}",
+            error.as_deref().unwrap_or(""),
+            ca.explain()
+        );
+        write_dump(dump, &text, true);
+    }
+
     serde_json::to_string(&BenchOutput {
-        protocol: protocol.name.to_string(),
+        protocol: name.to_string(),
         inline: i32::from(inline),
         status: status.to_string(),
         build_ms: Some(build_ms),
@@ -523,10 +603,39 @@ fn main() {
     let mut backend = GbBackendKind::default();
     let mut memory_limit_mb: Option<u64> = None;
     let mut protocol_name: Option<&str> = None;
+    let mut path: Option<PathBuf> = None;
+    let mut size_overrides: Vec<(String, usize)> = Vec::new();
+    let mut diagnostics = Diagnostics {
+        dump: None,
+        build_only: false,
+    };
+
+    // The value following the flag at `args[*i]`, advancing `i` past it.
+    let value = |i: &mut usize, flag: &str, what: &str| -> String {
+        *i += 1;
+        args.get(*i).cloned().unwrap_or_else(|| {
+            eprintln!("{flag} requires a value ({what})");
+            std::process::exit(2);
+        })
+    };
 
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--path" => path = Some(PathBuf::from(value(&mut i, "--path", "a file"))),
+            "--size" => {
+                let spec = value(&mut i, "--size", "NAME=VALUE");
+                let parsed = spec
+                    .split_once('=')
+                    .and_then(|(n, v)| Some((n.trim().to_string(), v.trim().parse().ok()?)));
+                let Some(size) = parsed else {
+                    eprintln!("invalid --size value: {spec} (expected NAME=VALUE)");
+                    std::process::exit(2);
+                };
+                size_overrides.push(size);
+            }
+            "--dump" => diagnostics.dump = Some(PathBuf::from(value(&mut i, "--dump", "a file"))),
+            "--build-only" => diagnostics.build_only = true,
             "--no-inline" => no_inline = true,
             "--backend" => {
                 i += 1;
@@ -566,7 +675,8 @@ fn main() {
     let Some(protocol_name) = protocol_name else {
         eprintln!(
             "usage: inline [--no-inline] [--backend singular|default] \
-             [--memory-limit-mb MB] <protocol_name>"
+             [--memory-limit-mb MB] [--path FILE] [--size NAME=VALUE]... \
+             [--dump FILE] [--build-only] <protocol_name>"
         );
         eprintln!();
         eprintln!("available protocols:");
@@ -576,17 +686,39 @@ fn main() {
         std::process::exit(2);
     };
 
-    let Some(protocol) = find_protocol(protocol_name) else {
-        eprintln!("unknown protocol: {protocol_name}");
-        std::process::exit(2);
+    // A registered protocol supplies the source and sizes; `--path` replaces
+    // the source and `--size` the sizes it names.
+    let registered = find_protocol(protocol_name);
+    let mut sizes: Vec<(String, usize)> = registered
+        .map(|p| p.sizes.iter().map(|&(n, v)| (n.to_string(), v)).collect())
+        .unwrap_or_default();
+    for (n, v) in size_overrides {
+        match sizes.iter_mut().find(|(m, _)| *m == n) {
+            Some(slot) => slot.1 = v,
+            None => sizes.push((n, v)),
+        }
+    }
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let path = match (path, registered) {
+        (Some(p), _) => p,
+        (None, Some(p)) => manifest.join(p.path),
+        (None, None) => {
+            eprintln!("unknown protocol: {protocol_name} (pass --path to analyse a file)");
+            std::process::exit(2);
+        }
+    };
+    let target = Target {
+        name: protocol_name.to_string(),
+        path,
+        sizes,
     };
 
     std::alloc::set_alloc_error_hook(oom_alloc_error_hook);
 
     // Run in a thread with a large stack to avoid stack overflow.
-    let protocol_clone = protocol.name;
+    let protocol_clone = target.name.clone();
     let result = share::thread::run("inline-bench", move || {
-        run_bench(protocol, no_inline, backend, memory_limit_mb)
+        run_bench(&target, no_inline, backend, memory_limit_mb, &diagnostics)
     })
     .unwrap_or_else(|payload| {
         let message = payload
@@ -601,7 +733,7 @@ fn main() {
             "crashed"
         };
         serde_json::to_string(&BenchOutput {
-            protocol: protocol_clone.to_string(),
+            protocol: protocol_clone,
             inline: i32::from(!no_inline),
             status: status.to_string(),
             error: Some(message),
