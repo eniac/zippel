@@ -28,7 +28,6 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use std::time::Instant;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     /// A compiled Hyrax instance together with the fixed, seeded inputs it is
@@ -40,7 +39,7 @@ pub mod zippel_side {
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
         inputs: Ctx<Vid, Value<ArkBls12_381>>,
-        compile_time: std::time::Duration,
+        compile_time: Vec<std::time::Duration>,
     }
 
     impl Setup {
@@ -112,14 +111,15 @@ pub mod zippel_side {
             // Excludes runtime scheduling (which is per-call cheap
             // graph→TDag work the runtime does) and excludes the actual
             // prove/verify execution.
-            let compile_start = Instant::now();
-            let args = ZippelArgs::new(zippel_path);
-            let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-            let mut sizes = Ctx::new();
-            sizes.insert(&Tid::new("L"), &l);
-            sizes.insert(&Tid::new("M"), &m);
-            handler.compile(&sizes);
-            let compile_time = compile_start.elapsed();
+            let (handler, compile_time) = crate::sample_compile(|| {
+                let args = ZippelArgs::new(zippel_path.clone());
+                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+                let mut sizes = Ctx::new();
+                sizes.insert(&Tid::new("L"), &l);
+                sizes.insert(&Tid::new("M"), &m);
+                handler.compile(&sizes);
+                handler
+            });
 
             Setup {
                 handler,
@@ -130,8 +130,8 @@ pub mod zippel_side {
 
         /// Wall-time spent parsing, type checking, and building the prover and
         /// verifier graphs. Excludes scheduling and execution.
-        pub fn compile_time(&self) -> std::time::Duration {
-            self.compile_time
+        pub fn compile_time(&self) -> Vec<std::time::Duration> {
+            self.compile_time.clone()
         }
 
         /// Runs the compiled prover and verifier on the stored instance and
@@ -141,12 +141,12 @@ pub mod zippel_side {
         /// Panics if the prover or verifier graph fails to execute, or if the
         /// verifier rejects the honestly generated proof.
         pub fn time_protocol(&mut self) -> Timing {
-            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+            let (prove, prove_peak, proof) = crate::sample(|| {
                 self.handler
                     .run_prover(&self.inputs)
                     .expect("zippel hyrax prover failed")
             });
-            let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+            let (verify, verify_peak, result) = crate::sample(|| {
                 self.handler
                     .run_verifier(&proof, &self.inputs)
                     .expect("zippel hyrax verifier failed")
@@ -277,14 +277,14 @@ pub mod native_side {
             let point = &self.point;
             let _ = self.value;
 
-            let (prove, prove_peak, (com, proof)) = crate::sample(*crate::PROVER_SAMPLES, || {
+            let (prove, prove_peak, (com, proof)) = crate::sample(|| {
                 let (com, state) = hyrax_upstream::commit(&self.ck, &self.poly);
                 let mut sponge = test_sponge::<Fr>();
                 let proof = hyrax_upstream::open(&self.ck, &com, point, &mut sponge, &state);
                 (com, proof)
             });
             let (verify, verify_peak, ok) =
-                crate::sample_with(crate::VERIFY_SAMPLES, test_sponge::<Fr>, |mut sponge_v| {
+                crate::sample_with(test_sponge::<Fr>, |mut sponge_v| {
                     hyrax_upstream::check(&self.vk, &com, point, &proof, &mut sponge_v)
                 });
             assert!(ok, "vendored Hyrax verification FAILED");

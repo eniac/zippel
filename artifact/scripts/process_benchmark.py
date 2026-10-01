@@ -18,7 +18,8 @@ check it against.
 Usage:
     artifact/scripts/process_benchmark.py [CSV_PATH]
 
-CSV_PATH defaults to artifact/output/bench_results.csv.
+CSV_PATH defaults to artifact/output/bench_results.csv. The CSV holds one
+row per sample; the tables use each measurement's mean over its samples.
 """
 
 import csv
@@ -31,6 +32,24 @@ DEFAULT_CSV = "artifact/output/bench_results.csv"
 def load_rows(path):
     with open(path, newline="") as f:
         return list(csv.DictReader(f))
+
+
+def mean_over_samples(rows):
+    """One row per (system, baseline, threads, log_size): the mean of every
+    *_ms and *_mib column over that point's samples."""
+    groups = {}
+    for r in rows:
+        key = (r["system"], r["baseline"], r["threads"], r["log_size"])
+        groups.setdefault(key, []).append(r)
+    out = []
+    for group in groups.values():
+        row = dict(group[0])
+        for col in row:
+            if col.endswith("_ms") or col.endswith("_mib"):
+                row[col] = str(sum(float(g[col]) for g in group) / len(group))
+        row.pop("sample", None)
+        out.append(row)
+    return out
 
 
 def instance_size_label(log_size):
@@ -105,11 +124,12 @@ def render_performance_table(rows):
 
 def main():
     csv_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CSV
-    rows = load_rows(csv_path)
-    if not rows:
+    samples = load_rows(csv_path)
+    if not samples:
         sys.exit(f"no rows in {csv_path}")
+    rows = mean_over_samples(samples)
 
-    print(f"Source: {csv_path} ({len(rows)} rows)")
+    print(f"Source: {csv_path} ({len(samples)} samples, {len(rows)} points)")
     print()
     print("## Graph-size table (supplementary, not in the submitted paper)")
     print()

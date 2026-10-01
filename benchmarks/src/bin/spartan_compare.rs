@@ -129,15 +129,15 @@ fn main() {
         let split_lbl = format!("L={l}, M_h={m_h}");
         println!(
             " {m:>2} | {num_cons:>8} | {split_lbl:>12} | {:>11.2?}  {:>13.2?} | {:>11.2?}  {:>7.2?}  {:>12.2?}  {:>13.2?} | {:>10.2}x  {:>16.2}x  {:>11.2}x | {zpf:>7}B  {npf:>7}B",
-            z.prove,
-            z.verify,
+            z.timing.prove_mean(),
+            z.timing.verify_mean(),
             n_prove,
             n_matvec,
             n_prove_adj,
             n_verify,
-            ratio(z.prove, n_prove),
-            ratio(z.prove, n_prove_adj),
-            ratio(z.verify, n_verify),
+            ratio(z.timing.prove_mean(), n_prove),
+            ratio(z.timing.prove_mean(), n_prove_adj),
+            ratio(z.timing.verify_mean(), n_verify),
             zpf = z.proof_bytes,
             npf = native_proof_bytes,
         );

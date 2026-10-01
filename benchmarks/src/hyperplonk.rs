@@ -95,13 +95,12 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use std::time::Instant;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
         inputs: Ctx<Vid, Value<ArkBls12_381>>,
-        compile_time: std::time::Duration,
+        compile_time: Vec<std::time::Duration>,
     }
 
     impl Setup {
@@ -116,13 +115,14 @@ pub mod zippel_side {
         /// copy that echoes the challenges).
         pub fn with_proto(sh: &shared::Shared, proto: PathBuf) -> Self {
             let nv = sh.nv;
-            let compile_start = Instant::now();
-            let mut handler: ZippelHandler<ArkBls12_381> =
-                ZippelHandler::new(ZippelArgs::new(proto));
-            let mut sizes = Ctx::new();
-            sizes.insert(&Tid::new("S"), &nv);
-            handler.compile(&sizes);
-            let compile_time = compile_start.elapsed();
+            let (handler, compile_time) = crate::sample_compile(|| {
+                let mut handler: ZippelHandler<ArkBls12_381> =
+                    ZippelHandler::new(ZippelArgs::new(proto.clone()));
+                let mut sizes = Ctx::new();
+                sizes.insert(&Tid::new("S"), &nv);
+                handler.compile(&sizes);
+                handler
+            });
 
             let (pk, vk) = (&sh.pk, &sh.vk);
             let col = |v: &Vec<_>| Value::VecScalar(v.clone());
@@ -185,8 +185,8 @@ pub mod zippel_side {
                 .expect("run_prover failed")
         }
 
-        pub fn compile_time(&self) -> std::time::Duration {
-            self.compile_time
+        pub fn compile_time(&self) -> Vec<std::time::Duration> {
+            self.compile_time.clone()
         }
 
         /// (prover graph node count, verifier graph node count).
@@ -200,12 +200,12 @@ pub mod zippel_side {
         /// # Panics
         /// Panics if either graph fails to execute or the verifier rejects.
         pub fn time_protocol(&mut self) -> Timing {
-            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+            let (prove, prove_peak, proof) = crate::sample(|| {
                 self.handler
                     .run_prover(&self.inputs)
                     .expect("run_prover failed")
             });
-            let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+            let (verify, verify_peak, result) = crate::sample(|| {
                 self.handler
                     .run_verifier(&proof, &self.inputs)
                     .expect("run_verifier failed")
@@ -241,7 +241,7 @@ pub mod native_side {
         /// Panics if the native prover fails or the verifier rejects.
         pub fn time_protocol(&self) -> Timing {
             let sh = self.sh;
-            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+            let (prove, prove_peak, proof) = crate::sample(|| {
                 prove(
                     &sh.pk,
                     &sh.public_inputs,
@@ -250,7 +250,7 @@ pub mod native_side {
                 )
                 .expect("native HyperPlonk prove")
             });
-            let (verify, verify_peak, ok) = crate::sample(crate::VERIFY_SAMPLES, || {
+            let (verify, verify_peak, ok) = crate::sample(|| {
                 verify(
                     &sh.vk,
                     &sh.public_inputs,

@@ -22,14 +22,13 @@ pub mod zippel_side {
     use lang::id::Vid;
     use share::Ctx;
     use std::path::PathBuf;
-    use std::time::Instant;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     /// The compiled Schnorr protocol. It takes no size parameters, so the only
     /// per-instance state is the handler and the measured compile time.
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        compile_time: std::time::Duration,
+        compile_time: Vec<std::time::Duration>,
     }
 
     impl Setup {
@@ -43,11 +42,12 @@ pub mod zippel_side {
             let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("..")
                 .join("examples/schnorr/schnorr.zippel");
-            let compile_start = Instant::now();
-            let args = ZippelArgs::new(zippel_file);
-            let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-            handler.compile(&Ctx::new());
-            let compile_time = compile_start.elapsed();
+            let (handler, compile_time) = crate::sample_compile(|| {
+                let args = ZippelArgs::new(zippel_file.clone());
+                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+                handler.compile(&Ctx::new());
+                handler
+            });
             Setup {
                 handler,
                 compile_time,
@@ -56,8 +56,8 @@ pub mod zippel_side {
 
         /// Wall-time spent parsing, type checking, and building the prover and
         /// verifier graphs.
-        pub fn compile_time(&self) -> std::time::Duration {
-            self.compile_time
+        pub fn compile_time(&self) -> Vec<std::time::Duration> {
+            self.compile_time.clone()
         }
 
         /// (prover graph node count, verifier graph node count).
@@ -70,10 +70,6 @@ pub mod zippel_side {
 
         /// Samples a witness `x` and bases `g`, `h = g*x`, then times the
         /// compiled prover and verifier.
-        ///
-        /// The prover is averaged over `VERIFY_SAMPLES` (not
-        /// `PROVER_SAMPLES`) runs because a single Schnorr proof takes ~0.1 ms
-        /// and is jitter-dominated.
         ///
         /// # Panics
         /// Panics if the prover or verifier graph fails to execute, or if the
@@ -94,13 +90,9 @@ pub mod zippel_side {
                 (Vid("h".to_string()), Value::G1Affine(h)),
             ]);
 
-            // Average the prover over VERIFY_SAMPLES samples too.
-            // Schnorr's sign is ~0.1ms — single-shot is dominated by
-            // jitter — so we sample at the same rate as the verifier.
-            let (prove, prove_peak, proof) = crate::sample(crate::VERIFY_SAMPLES, || {
-                self.handler.run_prover(&inputs).expect("run_prover failed")
-            });
-            let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+            let (prove, prove_peak, proof) =
+                crate::sample(|| self.handler.run_prover(&inputs).expect("run_prover failed"));
+            let (verify, verify_peak, result) = crate::sample(|| {
                 self.handler
                     .run_verifier(&proof, &inputs)
                     .expect("run_verifier failed")
@@ -167,8 +159,8 @@ pub mod native_side {
             }
         }
 
-        /// Times `sign` as the prover and `verify` as the verifier, both
-        /// averaged over `VERIFY_SAMPLES` runs.
+        /// Times `sign` as the prover and `verify` as the verifier,
+        /// [`crate::SAMPLES`] runs each.
         ///
         /// Each signature uses fresh randomness, mirroring the `random<F>`
         /// nonce on the zippel side; the last one is what gets verified.
@@ -179,17 +171,14 @@ pub mod native_side {
         pub fn time_protocol(&self) -> Timing {
             let mut rng = ark_std::test_rng();
 
-            // Average the prover over VERIFY_SAMPLES samples — schnorr's
-            // sign is ~0.1ms so single-shot is jitter-dominated; we sample
-            // at the same rate as the verifier for symmetry. Sign uses
-            // fresh randomness per call (and so does the zippel side, via
+            // Sign uses fresh randomness per call (and so does the zippel side, via
             // `random<F>` in the proto), so each sample is an independent
             // signature; the last one is what we verify against.
-            let (prove, prove_peak, sig) = crate::sample(crate::VERIFY_SAMPLES, || {
+            let (prove, prove_peak, sig) = crate::sample(|| {
                 SchnorrSig::sign(&self.params, &self.sk, &self.message, &mut rng)
                     .expect("schnorr sign")
             });
-            let (verify, verify_peak, ok) = crate::sample(crate::VERIFY_SAMPLES, || {
+            let (verify, verify_peak, ok) = crate::sample(|| {
                 SchnorrSig::verify(&self.params, &self.pk, &self.message, &sig)
                     .expect("schnorr verify")
             });

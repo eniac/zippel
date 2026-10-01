@@ -11,12 +11,15 @@ Systems benched: `schnorr`, `sumcheck`, `ipa`, `kzg`, `pari`, `groth16`,
 For every (system, log_size, threads) point the bench measures, for the
 zippel side and the native baseline:
 
-- prover and verifier wall-clock (mean over the sample count)
+- prover and verifier wall-clock
 - prover and verifier peak heap (see *Peak memory* below)
 - non-comment source lines of each side
 - zippel compile time (source → executable graph) and graph sizes
 
-Times are in milliseconds and memory in MiB, one CSV row per baseline.
+Every wall-clock, peak heap and compile time is taken `BENCH_SAMPLES` times
+(default 10) and every sample is kept: one CSV row per sample, so means,
+variances and intervals are computed afterwards. Times are in milliseconds
+and memory in MiB.
 
 ## Quick start
 
@@ -33,7 +36,7 @@ expect tens of minutes per system per thread count.
 For iteration, narrow the sweep with environment variables:
 
 ```sh
-SYSTEMS=hyrax THREADS=1,4,8 OUT=hyrax.csv PROVER_SAMPLES=3 benchmarks/run_all.sh
+SYSTEMS=hyrax THREADS=1,4,8 OUT=hyrax.csv BENCH_SAMPLES=3 benchmarks/run_all.sh
 ```
 
 When `RAYON_NUM_THREADS=T` is set (as `run_all.sh` does), `bench_all` pins
@@ -57,7 +60,7 @@ benchmarks/
 ├── run_sweep_safe.sh      older orchestrator with crash-recovery
 ├── README.md              this file
 ├── src/
-│   ├── lib.rs             public surface: re-exports each system + Timing + PROVER_SAMPLES
+│   ├── lib.rs             public surface: re-exports each system + Timing + SAMPLES
 │   ├── cache.rs           on-disk SRS cache (artifacts/*.bin); skips long keygens on re-run
 │   │
 │   ├── schnorr.rs         each *.rs file holds two pub mods:
@@ -120,12 +123,11 @@ Environment variables:
 | `OUT` | `bench_results.csv` | output CSV path |
 | `SYSTEMS` | (all) | comma-separated subset, e.g. `hyrax,pst13` |
 | `QUICK` | `0` | set `1` for a smaller log_size grid (iteration mode) |
-| `PROVER_SAMPLES` | `1` | how many prover samples to average per measurement |
+| `BENCH_SAMPLES` | `10` | samples per measurement, each kept as its own CSV row |
 
-`PROVER_SAMPLES > 1` is recommended at low thread counts to average over
-server jitter — single-sample t=1 timings can vary 20-50% on a loaded box.
-Each measurement runs the prover `PROVER_SAMPLES` times back-to-back and
-records the mean.
+Each measurement runs the prover `BENCH_SAMPLES` times back-to-back under
+the timer, then `BENCH_SAMPLES` more times with the heap counter on; the
+verifier and the zippel compile are sampled the same way.
 
 ## Driver internals: `bench_all` binary
 
@@ -159,8 +161,15 @@ others — they're independent of `bench_all` and don't share CSV output.
 ## CSV format
 
 ```
-system,baseline,threads,log_size,zippel_prover_ms,zippel_verifier_ms,zippel_ncloc,baseline_prover_ms,baseline_verifier_ms,baseline_ncloc,compile_ms,prover_nodes,verifier_nodes,zippel_prover_peak_mib,zippel_verifier_peak_mib,baseline_prover_peak_mib,baseline_verifier_peak_mib
+system,baseline,threads,log_size,sample,zippel_prover_ms,zippel_verifier_ms,zippel_ncloc,baseline_prover_ms,baseline_verifier_ms,baseline_ncloc,compile_ms,prover_nodes,verifier_nodes,zippel_prover_peak_mib,zippel_verifier_peak_mib,baseline_prover_peak_mib,baseline_verifier_peak_mib
 ```
+
+One row per sample: `sample` runs from 0 to `BENCH_SAMPLES − 1` in run
+order. The `*_ms` columns and the `*_peak_mib` columns of one row come from
+different runs (timed runs never count memory), so treat each column as its
+own list of samples rather than pairing them by row. The zippel columns
+repeat across a system's baselines (Spartan has two). `*_ncloc` and
+`*_nodes` are constants repeated on every row.
 
 `log_size` is log₂ of each system's natural complexity parameter (so points
 plot linearly on a log-size x-axis):
@@ -197,16 +206,19 @@ non-comment, non-blank lines.
 ## Peak memory
 
 `bench_all` installs a counting global allocator (`benchmarks::mem`). The
-`*_peak_mib` columns are the most heap live at any moment during one prover
+`*_peak_mib` columns are the most heap live at any moment during a prover
 (or verifier) call, counted from zero at the call's start: every buffer the
 call allocates counts, even one freed before it returns, while memory that
 was already live (the proving key, SRS, witness and other inputs both sides
 hold) does not. For zippel this includes the runtime's own copy of its
 inputs and every intermediate value it keeps during the run.
 
-The counter is off during the timed samples; each measurement adds one
-untimed prover run and one untimed verifier run with counting on, after the
-timed ones. Stack memory is not counted.
+The counter is off during the timed samples; each measurement adds
+`BENCH_SAMPLES` untimed prover runs and as many untimed verifier runs with
+counting on, after the timed ones, and records each run's peak. At one
+thread the peak is essentially deterministic; with more threads it varies
+with how the scheduler interleaves allocations. Stack memory is not
+counted.
 
 ## Output caching
 
@@ -229,9 +241,9 @@ serialization-format changes.
 - **Don't compare across machines.** Apple Silicon and Xeon have different
   per-core characteristics and different rayon overheads; absolute numbers
   vary 5-10× between architectures.
-- **t=1 numbers are noisy.** Single-sample timings at one thread on a
-  loaded server jitter 20-50%. Use `PROVER_SAMPLES=3` (or higher) when t=1
-  matters for your analysis.
+- **Look at the spread, not just the mean.** Timings at one thread on a
+  loaded server jitter 20-50%. The first sample of each measurement runs
+  with cold caches; check whether it is an outlier before averaging it in.
 - **Pinning is on by default.** Without it the scheduler scatters threads
   across sockets and SMT siblings, which adds NUMA crossbar costs and lets
   either side borrow extra cores. Keep the machine otherwise idle during a

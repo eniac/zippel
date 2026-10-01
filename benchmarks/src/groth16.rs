@@ -506,7 +506,6 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use std::time::Instant;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     /// A compiled zippel Groth16 handler plus the size-invariant part of its
@@ -515,7 +514,7 @@ pub mod zippel_side {
         handler: ZippelHandler<ArkBls12_381>,
         inputs_base: Ctx<Vid, Value<ArkBls12_381>>,
         translated: &'a Translated,
-        compile_time: std::time::Duration,
+        compile_time: Vec<std::time::Duration>,
     }
 
     impl<'a> Setup<'a> {
@@ -594,15 +593,16 @@ pub mod zippel_side {
             // be in the verifier's input ctx — absorbing them into FS
             // would dominate verify time at large M+L.
 
-            let compile_start = Instant::now();
-            let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"));
-            let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-            let mut sizes = Ctx::new();
-            sizes.insert(&Tid::new("M"), &translated.m);
-            sizes.insert(&Tid::new("L"), &translated.l);
-            sizes.insert(&Tid::new("H"), &translated.h_size);
-            handler.compile(&sizes);
-            let compile_time = compile_start.elapsed();
+            let (handler, compile_time) = crate::sample_compile(|| {
+                let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"));
+                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+                let mut sizes = Ctx::new();
+                sizes.insert(&Tid::new("M"), &translated.m);
+                sizes.insert(&Tid::new("L"), &translated.l);
+                sizes.insert(&Tid::new("H"), &translated.h_size);
+                handler.compile(&sizes);
+                handler
+            });
 
             Setup {
                 handler,
@@ -614,8 +614,8 @@ pub mod zippel_side {
 
         /// Wall time spent compiling the `.zippel` source into prover and
         /// verifier graphs.
-        pub fn compile_time(&self) -> std::time::Duration {
-            self.compile_time
+        pub fn compile_time(&self) -> Vec<std::time::Duration> {
+            self.compile_time.clone()
         }
 
         /// (prover graph node count, verifier graph node count).
@@ -626,33 +626,32 @@ pub mod zippel_side {
             )
         }
 
-        /// Times prove and verify, averaged over the configured sample counts.
+        /// Times prove and verify, [`crate::SAMPLES`] runs each.
         ///
         /// Each prove sample recomputes `h_coeffs` via [`witness_map`]
         /// inside the timer; verify samples replay the last proof.
         ///
         /// # Panics
-        /// Panics if the prover or verifier graph fails to execute, if the
-        /// sample counts are zero, or if verification does not accept.
+        /// Panics if the prover or verifier graph fails to execute, or if
+        /// verification does not accept.
         pub fn time_protocol(&mut self) -> Timing {
-            let (prove, prove_peak, (proof, inputs)) =
-                crate::sample(*crate::PROVER_SAMPLES, || {
-                    let mut h_coeffs = witness_map(
-                        &self.translated.mat,
-                        self.translated.num_inputs,
-                        self.translated.num_constraints,
-                        &self.translated.full_assignment,
-                    );
-                    h_coeffs.resize(self.translated.h_size, GitFr::zero());
-                    let mut inputs = self.inputs_base.clone();
-                    inputs.insert(&Vid("h_coeffs".to_string()), &Value::VecScalar(h_coeffs));
-                    let proof = self
-                        .handler
-                        .run_prover(&inputs)
-                        .expect("zippel groth16 prover failed");
-                    (proof, inputs)
-                });
-            let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+            let (prove, prove_peak, (proof, inputs)) = crate::sample(|| {
+                let mut h_coeffs = witness_map(
+                    &self.translated.mat,
+                    self.translated.num_inputs,
+                    self.translated.num_constraints,
+                    &self.translated.full_assignment,
+                );
+                h_coeffs.resize(self.translated.h_size, GitFr::zero());
+                let mut inputs = self.inputs_base.clone();
+                inputs.insert(&Vid("h_coeffs".to_string()), &Value::VecScalar(h_coeffs));
+                let proof = self
+                    .handler
+                    .run_prover(&inputs)
+                    .expect("zippel groth16 prover failed");
+                (proof, inputs)
+            });
+            let (verify, verify_peak, result) = crate::sample(|| {
                 self.handler
                     .run_verifier(&proof, &inputs)
                     .expect("zippel groth16 verifier failed")
@@ -753,16 +752,15 @@ pub mod native_side {
             }
         }
 
-        /// Times the vendored prover and verifier, averaged over the
-        /// configured sample counts.
+        /// Times the vendored prover and verifier, [`crate::SAMPLES`] runs
+        /// each.
         ///
         /// Blinding factors `r` and `s` are drawn once so every prove sample
         /// does identical work. The verifier is handed the instance vector
         /// with its leading constant 1 dropped, matching `ark-groth16`.
         ///
         /// # Panics
-        /// Panics if the sample counts are zero or if the final verification
-        /// does not accept.
+        /// Panics if the final verification does not accept.
         pub fn time_protocol(&self) -> Timing {
             let mut rng = ark_std::test_rng();
             let r = GitFr::rand(&mut rng);
@@ -773,7 +771,7 @@ pub mod native_side {
             // explicitly to produce h_coeffs; native prove does it as the
             // first step of `prove(...)`). Subtracting on one side biased
             // the comparison.
-            let (prove_t, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+            let (prove_t, prove_peak, proof) = crate::sample(|| {
                 prove(
                     &self.keys,
                     &self.translated.mat,
@@ -790,9 +788,8 @@ pub mod native_side {
             // Verifier convention: drop the leading constant-1 from the
             // instance-input vector (matches ark-groth16's verify_proof).
             let instance_inputs = &self.translated.instance_assignment[1..];
-            let (verify_t, verify_peak, ok) = crate::sample(crate::VERIFY_SAMPLES, || {
-                verify(&self.keys, &proof, instance_inputs)
-            });
+            let (verify_t, verify_peak, ok) =
+                crate::sample(|| verify(&self.keys, &proof, instance_inputs));
             assert!(ok, "native (vendored) Groth16 verification FAILED");
 
             Timing {

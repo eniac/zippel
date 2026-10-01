@@ -49,12 +49,12 @@ fn main() {
 
         println!(
             " {log_size:>3} | {c:>7} | {m:>3} | {l:>3} | {:>11.2?}  {:>13.2?} | {:>11.2?}  {:>13.2?} | {:>10.2}x  {:>11.2}x",
-            zt.prove,
-            zt.verify,
-            nt.prove,
-            nt.verify,
-            zt.prove.as_secs_f64() / nt.prove.as_secs_f64(),
-            zt.verify.as_secs_f64() / nt.verify.as_secs_f64(),
+            zt.prove_mean(),
+            zt.verify_mean(),
+            nt.prove_mean(),
+            nt.verify_mean(),
+            zt.prove_mean().as_secs_f64() / nt.prove_mean().as_secs_f64(),
+            zt.verify_mean().as_secs_f64() / nt.verify_mean().as_secs_f64(),
             c = num_constraints,
         );
     }

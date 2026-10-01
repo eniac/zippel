@@ -58,22 +58,22 @@ fn main() {
         if args.nodes {
             println!(
                 " {n:>2} | {size:>7} | {:>11.2?}  {:>13.2?} | {:>11.2?}  {:>13.2?} | {:>10.2}x  {:>11.2}x | {pnodes:>12}  {vnodes:>14}",
-                zt.prove,
-                zt.verify,
-                nt.prove,
-                nt.verify,
-                zt.prove.as_secs_f64() / nt.prove.as_secs_f64(),
-                zt.verify.as_secs_f64() / nt.verify.as_secs_f64(),
+                zt.prove_mean(),
+                zt.verify_mean(),
+                nt.prove_mean(),
+                nt.verify_mean(),
+                zt.prove_mean().as_secs_f64() / nt.prove_mean().as_secs_f64(),
+                zt.verify_mean().as_secs_f64() / nt.verify_mean().as_secs_f64(),
             );
         } else {
             println!(
                 " {n:>2} | {size:>7} | {:>11.2?}  {:>13.2?} | {:>11.2?}  {:>13.2?} | {:>10.2}x  {:>11.2}x",
-                zt.prove,
-                zt.verify,
-                nt.prove,
-                nt.verify,
-                zt.prove.as_secs_f64() / nt.prove.as_secs_f64(),
-                zt.verify.as_secs_f64() / nt.verify.as_secs_f64(),
+                zt.prove_mean(),
+                zt.verify_mean(),
+                nt.prove_mean(),
+                nt.verify_mean(),
+                zt.prove_mean().as_secs_f64() / nt.prove_mean().as_secs_f64(),
+                zt.verify_mean().as_secs_f64() / nt.verify_mean().as_secs_f64(),
             );
         }
     }

@@ -31,7 +31,7 @@ fn bench_kzg(c: &mut Criterion) {
             b.iter_custom(|iters| {
                 let mut total = Duration::ZERO;
                 for _ in 0..iters {
-                    total += z.time_protocol().prove;
+                    total += z.time_protocol().prove_mean();
                 }
                 total
             })
@@ -40,7 +40,7 @@ fn bench_kzg(c: &mut Criterion) {
             b.iter_custom(|iters| {
                 let mut total = Duration::ZERO;
                 for _ in 0..iters {
-                    total += z.time_protocol().verify;
+                    total += z.time_protocol().verify_mean();
                 }
                 total
             })
@@ -49,7 +49,7 @@ fn bench_kzg(c: &mut Criterion) {
             b.iter_custom(|iters| {
                 let mut total = Duration::ZERO;
                 for _ in 0..iters {
-                    total += np.time_protocol().prove;
+                    total += np.time_protocol().prove_mean();
                 }
                 total
             })
@@ -61,7 +61,7 @@ fn bench_kzg(c: &mut Criterion) {
                 b.iter_custom(|iters| {
                     let mut total = Duration::ZERO;
                     for _ in 0..iters {
-                        total += np.time_protocol().verify;
+                        total += np.time_protocol().verify_mean();
                     }
                     total
                 })

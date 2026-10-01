@@ -145,7 +145,7 @@ pub mod zippel_side {
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
         inputs: Ctx<Vid, Value<ArkBls12_381>>,
-        compile_time: std::time::Duration,
+        compile_time: Vec<std::time::Duration>,
     }
 
     impl Setup {
@@ -160,15 +160,16 @@ pub mod zippel_side {
             let b = 2usize;
             let h_deg = (b - 1) * n;
 
-            let compile_start = Instant::now();
-            let mut handler: ZippelHandler<ArkBls12_381> =
-                ZippelHandler::new(ZippelArgs::new(proto));
-            let mut sizes = Ctx::new();
-            sizes.insert(&Tid::new("n"), &n);
-            sizes.insert(&Tid::new("b"), &b);
-            sizes.insert(&Tid::new("l_chunk"), &ell);
-            handler.compile(&sizes);
-            let compile_time = compile_start.elapsed();
+            let (handler, compile_time) = crate::sample_compile(|| {
+                let mut handler: ZippelHandler<ArkBls12_381> =
+                    ZippelHandler::new(ZippelArgs::new(proto.clone()));
+                let mut sizes = Ctx::new();
+                sizes.insert(&Tid::new("n"), &n);
+                sizes.insert(&Tid::new("b"), &b);
+                sizes.insert(&Tid::new("l_chunk"), &ell);
+                handler.compile(&sizes);
+                handler
+            });
 
             let g1 = G1Projective::from(G1Affine::generator());
             let g2 = G2Projective::from(G2Affine::generator());
@@ -219,8 +220,8 @@ pub mod zippel_side {
 
         /// Wall-time spent compiling the `.zippel` source into prover and
         /// verifier graphs. Excludes SRS construction and cache I/O.
-        pub fn compile_time(&self) -> std::time::Duration {
-            self.compile_time
+        pub fn compile_time(&self) -> Vec<std::time::Duration> {
+            self.compile_time.clone()
         }
 
         /// (prover graph node count, verifier graph node count).
@@ -248,12 +249,12 @@ pub mod zippel_side {
         /// Panics if the prover or verifier graph fails to execute, or if the
         /// verifier rejects the honestly generated proof.
         pub fn time_protocol(&mut self) -> Timing {
-            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+            let (prove, prove_peak, proof) = crate::sample(|| {
                 self.handler
                     .run_prover(&self.inputs)
                     .expect("run_prover failed")
             });
-            let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+            let (verify, verify_peak, result) = crate::sample(|| {
                 self.handler
                     .run_verifier(&proof, &self.inputs)
                     .expect("run_verifier failed")
@@ -320,14 +321,13 @@ pub mod native_side {
                 comm
             );
 
-            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+            let (prove, prove_peak, proof) = crate::sample(|| {
                 let proof: Proof<Bls12_381> =
                     dk::prove(&self.pk, &self.values, self.ell, &comm, self.rho, &mut rng).into();
                 proof
             });
-            let (verify, verify_peak, ok) = crate::sample(crate::VERIFY_SAMPLES, || {
-                proof.verify(&self.vk, self.n, self.ell, &comm)
-            });
+            let (verify, verify_peak, ok) =
+                crate::sample(|| proof.verify(&self.vk, self.n, self.ell, &comm));
             ok.expect("native DeKART verification FAILED");
             Timing {
                 prove,

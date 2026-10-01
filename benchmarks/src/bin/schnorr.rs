@@ -25,16 +25,18 @@ fn main() {
     println!("                  prove           verify");
     println!(
         "zippel        {:>10.2?}      {:>10.2?}",
-        zt.prove, zt.verify
+        zt.prove_mean(),
+        zt.verify_mean()
     );
     println!(
         "ark-cp        {:>10.2?}      {:>10.2?}",
-        nt.prove, nt.verify
+        nt.prove_mean(),
+        nt.verify_mean()
     );
     println!();
     println!(
         "ratio (zippel / ark-cp)       prove: {:.2}x    verify: {:.2}x",
-        zt.prove.as_secs_f64() / nt.prove.as_secs_f64(),
-        zt.verify.as_secs_f64() / nt.verify.as_secs_f64(),
+        zt.prove_mean().as_secs_f64() / nt.prove_mean().as_secs_f64(),
+        zt.verify_mean().as_secs_f64() / nt.verify_mean().as_secs_f64(),
     );
 }

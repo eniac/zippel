@@ -61,12 +61,12 @@ fn main() {
 
         println!(
             " {m:>2} | {k:>4} | {n:>1} | {kv:>4} | {:>11.2?}  {:>13.2?} | {:>11.2?}  {:>13.2?} | {pb:>4}B | {:>10.2}x  {:>11.2}x",
-            zt.prove,
-            zt.verify,
-            nt.prove,
-            nt.verify,
-            zt.prove.as_secs_f64() / nt.prove.as_secs_f64(),
-            zt.verify.as_secs_f64() / nt.verify.as_secs_f64(),
+            zt.prove_mean(),
+            zt.verify_mean(),
+            nt.prove_mean(),
+            nt.verify_mean(),
+            zt.prove_mean().as_secs_f64() / nt.prove_mean().as_secs_f64(),
+            zt.verify_mean().as_secs_f64() / nt.verify_mean().as_secs_f64(),
             kv = inst.num_vars,
             pb = proof_bytes,
         );

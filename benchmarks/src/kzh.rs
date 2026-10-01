@@ -66,27 +66,27 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use std::time::Instant;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
         inputs: Ctx<Vid, Value<ArkBls12_381>>,
-        compile_time: std::time::Duration,
+        compile_time: Vec<std::time::Duration>,
     }
 
     impl Setup {
         pub fn new(sh: &shared::Shared) -> Self {
             let (nx, ny) = (sh.srs.dimensions[0], sh.srs.dimensions[1]);
 
-            let compile_start = Instant::now();
-            let mut handler: ZippelHandler<ArkBls12_381> =
-                ZippelHandler::new(ZippelArgs::new(PathBuf::from("examples/kzh/kzh.zippel")));
-            let mut sizes = Ctx::new();
-            sizes.insert(&Tid::new("NX"), &nx);
-            sizes.insert(&Tid::new("NY"), &ny);
-            handler.compile(&sizes);
-            let compile_time = compile_start.elapsed();
+            let (handler, compile_time) = crate::sample_compile(|| {
+                let mut handler: ZippelHandler<ArkBls12_381> =
+                    ZippelHandler::new(ZippelArgs::new(PathBuf::from("examples/kzh/kzh.zippel")));
+                let mut sizes = Ctx::new();
+                sizes.insert(&Tid::new("NX"), &nx);
+                sizes.insert(&Tid::new("NY"), &ny);
+                handler.compile(&sizes);
+                handler
+            });
 
             let inputs = Ctx::from_iter(
                 [
@@ -115,8 +115,8 @@ pub mod zippel_side {
             }
         }
 
-        pub fn compile_time(&self) -> std::time::Duration {
-            self.compile_time
+        pub fn compile_time(&self) -> Vec<std::time::Duration> {
+            self.compile_time.clone()
         }
 
         /// (prover graph node count, verifier graph node count).
@@ -130,12 +130,12 @@ pub mod zippel_side {
         /// # Panics
         /// Panics if either graph fails to execute or the verifier rejects.
         pub fn time_protocol(&mut self) -> Timing {
-            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+            let (prove, prove_peak, proof) = crate::sample(|| {
                 self.handler
                     .run_prover(&self.inputs)
                     .expect("run_prover failed")
             });
-            let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+            let (verify, verify_peak, result) = crate::sample(|| {
                 self.handler
                     .run_verifier(&proof, &self.inputs)
                     .expect("run_verifier failed")
@@ -182,16 +182,14 @@ pub mod native_side {
         /// # Panics
         /// Panics if the native verifier rejects the honest proof.
         pub fn time_protocol(&self) -> Timing {
-            let (prove, prove_peak, (com, proof, value)) =
-                crate::sample(*crate::PROVER_SAMPLES, || {
-                    let com = kzh::commit(&self.pp, &self.f);
-                    let (proof, value) = kzh::open(&self.pp, &self.f, &self.point);
-                    (com, proof, value)
-                });
-            assert_eq!(value, self.value);
-            let (verify, verify_peak, ok) = crate::sample(crate::VERIFY_SAMPLES, || {
-                kzh::verify(&self.vp, &com, &self.point, &self.value, &proof)
+            let (prove, prove_peak, (com, proof, value)) = crate::sample(|| {
+                let com = kzh::commit(&self.pp, &self.f);
+                let (proof, value) = kzh::open(&self.pp, &self.f, &self.point);
+                (com, proof, value)
             });
+            assert_eq!(value, self.value);
+            let (verify, verify_peak, ok) =
+                crate::sample(|| kzh::verify(&self.vp, &com, &self.point, &self.value, &proof));
             assert!(ok, "native KZH-2 verification FAILED");
             Timing {
                 prove,

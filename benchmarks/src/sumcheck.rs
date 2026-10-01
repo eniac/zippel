@@ -31,7 +31,6 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use std::time::Instant;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     /// A compiled sumcheck instance, reusable across `time_protocol` calls.
@@ -43,7 +42,7 @@ pub mod zippel_side {
         handler: ZippelHandler<ArkBls12_381>,
         num_vars: usize,
         max_degree: usize,
-        compile_time: std::time::Duration,
+        compile_time: Vec<std::time::Duration>,
     }
 
     impl Setup {
@@ -57,14 +56,15 @@ pub mod zippel_side {
         /// Panics if the `.zippel` source cannot be read, parsed, type
         /// checked, or lowered to a graph for these sizes.
         pub fn new(num_vars: usize, max_degree: usize) -> Self {
-            let compile_start = Instant::now();
-            let args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"));
-            let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-            let mut sizes = Ctx::new();
-            sizes.insert(&Tid::new("NUM_VARS_CONST"), &num_vars);
-            sizes.insert(&Tid::new("MAX_DEGREE_CONST"), &max_degree);
-            handler.compile(&sizes);
-            let compile_time = compile_start.elapsed();
+            let (handler, compile_time) = crate::sample_compile(|| {
+                let args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"));
+                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+                let mut sizes = Ctx::new();
+                sizes.insert(&Tid::new("NUM_VARS_CONST"), &num_vars);
+                sizes.insert(&Tid::new("MAX_DEGREE_CONST"), &max_degree);
+                handler.compile(&sizes);
+                handler
+            });
 
             Setup {
                 handler,
@@ -76,8 +76,8 @@ pub mod zippel_side {
 
         /// Wall-time spent in `ZippelHandler::compile` for this instance:
         /// parsing, type checking, and graph construction only.
-        pub fn compile_time(&self) -> std::time::Duration {
-            self.compile_time
+        pub fn compile_time(&self) -> Vec<std::time::Duration> {
+            self.compile_time.clone()
         }
 
         /// (prover graph node count, verifier graph node count).
@@ -121,10 +121,9 @@ pub mod zippel_side {
                 (Vid("claimed_sum".to_string()), Value::Scalar(claimed_sum)),
                 (Vid("p".to_string()), Value::Poly(full_poly)),
             ]);
-            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
-                self.handler.run_prover(&inputs).expect("run_prover failed")
-            });
-            let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+            let (prove, prove_peak, proof) =
+                crate::sample(|| self.handler.run_prover(&inputs).expect("run_prover failed"));
+            let (verify, verify_peak, result) = crate::sample(|| {
                 self.handler
                     .run_verifier(&proof, &inputs)
                     .expect("run_verifier failed")
@@ -204,7 +203,6 @@ pub mod native_side {
                 .expect("add_mle_list");
 
             let (prove, prove_peak, proof) = crate::sample_with(
-                *crate::PROVER_SAMPLES,
                 <PolyIOP<Fr> as SumCheck<Fr>>::init_transcript,
                 |mut transcript| {
                     <PolyIOP<Fr> as SumCheck<Fr>>::prove(&poly, &mut transcript)
@@ -216,7 +214,6 @@ pub mod native_side {
             // Verify takes &mut transcript; each run gets a fresh one, made
             // outside the timer.
             let (verify, verify_peak, subclaim) = crate::sample_with(
-                crate::VERIFY_SAMPLES,
                 <PolyIOP<Fr> as SumCheck<Fr>>::init_transcript,
                 |mut transcript| {
                     <PolyIOP<Fr> as SumCheck<Fr>>::verify(

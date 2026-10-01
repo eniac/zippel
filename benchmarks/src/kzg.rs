@@ -65,7 +65,6 @@ pub mod zippel_side {
     use share::Ctx;
     use std::io::Write;
     use std::path::PathBuf;
-    use std::time::Instant;
     use tempfile::NamedTempFile;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
@@ -100,7 +99,7 @@ pub mod zippel_side {
         // normal path compiles examples/kzg/kzg.zippel directly with N
         // bound via `sizes.insert`, no per-call source rewriting.
         _source_file: Option<NamedTempFile>,
-        compile_time: std::time::Duration,
+        compile_time: Vec<std::time::Duration>,
     }
 
     impl Setup {
@@ -130,12 +129,13 @@ pub mod zippel_side {
                 )
             };
 
-            let compile_start = Instant::now();
-            let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-            let mut sizes = Ctx::new();
-            sizes.insert(&Tid::new("N"), &n);
-            handler.compile(&sizes);
-            let compile_time = compile_start.elapsed();
+            let (handler, compile_time) = crate::sample_compile(|| {
+                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args.clone());
+                let mut sizes = Ctx::new();
+                sizes.insert(&Tid::new("N"), &n);
+                handler.compile(&sizes);
+                handler
+            });
 
             // Build (or load) SRS here so it runs inside the caller's
             // `setup_pool().install(...)` block — all cores on cache miss,
@@ -174,8 +174,8 @@ pub mod zippel_side {
 
         /// Wall-time spent compiling the `.zippel` source into prover and
         /// verifier graphs. Excludes SRS construction and cache I/O.
-        pub fn compile_time(&self) -> std::time::Duration {
-            self.compile_time
+        pub fn compile_time(&self) -> Vec<std::time::Duration> {
+            self.compile_time.clone()
         }
 
         /// (prover graph node count, verifier graph node count).
@@ -222,10 +222,9 @@ pub mod zippel_side {
                 (Vid("srs_g1".to_string()), ss),
                 (Vid("srs_g2_s".to_string()), h_val),
             ]);
-            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
-                self.handler.run_prover(&inputs).expect("run_prover failed")
-            });
-            let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+            let (prove, prove_peak, proof) =
+                crate::sample(|| self.handler.run_prover(&inputs).expect("run_prover failed"));
+            let (verify, verify_peak, result) = crate::sample(|| {
                 self.handler
                     .run_verifier(&proof, &inputs)
                     .expect("run_verifier failed")
@@ -359,34 +358,32 @@ pub mod native_side {
             // threads ≥ 8 intra-MSM parallelism saturates and the gap
             // closes on its own; this fix matters most at threads = 1–4.
             let powers = self.powers.as_powers();
-            let (prove, prove_peak, (comm_out, proof_out)) =
-                crate::sample(*crate::PROVER_SAMPLES, || {
-                    use ark_poly_commit::PCCommitmentState;
-                    use std::sync::Mutex;
-                    let comm_out: Mutex<Option<_>> = Mutex::new(None);
-                    let proof_out: Mutex<Option<_>> = Mutex::new(None);
-                    let rand =
-                        ark_poly_commit::kzg10::Randomness::<Fr, DensePolynomial<Fr>>::empty();
-                    rayon::scope(|sc| {
-                        sc.spawn(|_| {
-                            let (comm, _r) =
-                                Kzg::commit(&powers, &poly, None, None).expect("kzg commit");
-                            *comm_out.lock().unwrap() = Some(comm);
-                        });
-                        sc.spawn(|_| {
-                            let proof = Kzg::open(&powers, &poly, point, &rand).expect("kzg open");
-                            *proof_out.lock().unwrap() = Some(proof);
-                        });
+            let (prove, prove_peak, (comm_out, proof_out)) = crate::sample(|| {
+                use ark_poly_commit::PCCommitmentState;
+                use std::sync::Mutex;
+                let comm_out: Mutex<Option<_>> = Mutex::new(None);
+                let proof_out: Mutex<Option<_>> = Mutex::new(None);
+                let rand = ark_poly_commit::kzg10::Randomness::<Fr, DensePolynomial<Fr>>::empty();
+                rayon::scope(|sc| {
+                    sc.spawn(|_| {
+                        let (comm, _r) =
+                            Kzg::commit(&powers, &poly, None, None).expect("kzg commit");
+                        *comm_out.lock().unwrap() = Some(comm);
                     });
-                    (
-                        comm_out.into_inner().unwrap().unwrap(),
-                        proof_out.into_inner().unwrap().unwrap(),
-                    )
+                    sc.spawn(|_| {
+                        let proof = Kzg::open(&powers, &poly, point, &rand).expect("kzg open");
+                        *proof_out.lock().unwrap() = Some(proof);
+                    });
                 });
+                (
+                    comm_out.into_inner().unwrap().unwrap(),
+                    proof_out.into_inner().unwrap().unwrap(),
+                )
+            });
 
-            // Average over VERIFY_SAMPLES verifier runs on the same proof.
+            // Every verifier run checks the same proof.
             // Kzg::check borrows everything, so no clone needed in the loop.
-            let (verify, verify_peak, ok) = crate::sample(crate::VERIFY_SAMPLES, || {
+            let (verify, verify_peak, ok) = crate::sample(|| {
                 Kzg::check(&self.vk, &comm_out, point, value, &proof_out).expect("kzg check")
             });
 

@@ -18,7 +18,6 @@ use lang::id::{Tid, Vid};
 use rand::Rng;
 use share::Ctx;
 use std::path::PathBuf;
-use std::time::Instant;
 use zippel::{ZippelArgs, ZippelHandler, check_verification, proof_size_bytes};
 
 /// Default `log_2` of the R1CS constraint count used by the Spartan sweep.
@@ -40,21 +39,15 @@ pub fn hyrax_split(m: usize) -> (usize, usize) {
     (l, m_h)
 }
 
-/// Result of one timed zippel Spartan run: mean prove/verify durations plus
+/// Result of one timed zippel Spartan run: every prove/verify sample plus
 /// the proof size and verification outcome of the last sample.
 pub struct ZippelTiming {
-    /// Mean wall-time of a single prover run.
-    pub prove: std::time::Duration,
-    /// Mean wall-time of a single verifier run on the produced proof.
-    pub verify: std::time::Duration,
+    /// Per-sample wall-times and peak heaps.
+    pub timing: Timing,
     /// Serialized size of the produced proof certificate, in bytes.
     pub proof_bytes: usize,
     /// Whether the verifier graph returned all-`true`, i.e. the proof checked.
     pub passed: bool,
-    /// Peak heap of one prover run (see [`crate::mem`]).
-    pub prove_peak: usize,
-    /// Peak heap of one verifier run.
-    pub verify_peak: usize,
 }
 
 /// Compiled Spartan protocol plus its pre-generated prover inputs, reused
@@ -63,7 +56,7 @@ pub struct Setup {
     m: usize,
     handler: ZippelHandler<ArkCurve25519>,
     inputs: Ctx<Vid, Value<ArkCurve25519>>,
-    compile_time: std::time::Duration,
+    compile_time: Vec<std::time::Duration>,
 }
 
 impl Setup {
@@ -88,13 +81,14 @@ impl Setup {
 
         let inputs = prover_create_inputs(m);
 
-        let compile_start = Instant::now();
-        let args = ZippelArgs::new(zippel_path);
-        let mut handler: ZippelHandler<ArkCurve25519> = ZippelHandler::new(args);
-        let mut sizes = Ctx::new();
-        sizes.insert(&Tid::new("M"), &m);
-        handler.compile(&sizes);
-        let compile_time = compile_start.elapsed();
+        let (handler, compile_time) = crate::sample_compile(|| {
+            let args = ZippelArgs::new(zippel_path.clone());
+            let mut handler: ZippelHandler<ArkCurve25519> = ZippelHandler::new(args);
+            let mut sizes = Ctx::new();
+            sizes.insert(&Tid::new("M"), &m);
+            handler.compile(&sizes);
+            handler
+        });
 
         Setup {
             m,
@@ -105,8 +99,8 @@ impl Setup {
     }
 
     /// Wall-clock time the `.zippel` source took to compile in [`Setup::new`].
-    pub fn compile_time(&self) -> std::time::Duration {
-        self.compile_time
+    pub fn compile_time(&self) -> Vec<std::time::Duration> {
+        self.compile_time.clone()
     }
 
     /// (prover graph node count, verifier graph node count).
@@ -117,21 +111,21 @@ impl Setup {
         )
     }
 
-    /// Runs prover and verifier over the configured sample counts and reports
-    /// the mean durations, the proof size, and whether verification passed.
+    /// Runs prover and verifier [`crate::SAMPLES`] times each and reports
+    /// every sample, the proof size, and whether verification passed.
     ///
     /// # Panics
-    /// Panics if either graph fails to execute or if `PROVER_SAMPLES` is zero.
+    /// Panics if either graph fails to execute.
     /// Unlike the other benches this does not assert on a failed verification;
     /// the outcome is reported in [`ZippelTiming::passed`].
     pub fn time_protocol(&mut self) -> ZippelTiming {
-        let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+        let (prove, prove_peak, proof) = crate::sample(|| {
             self.handler
                 .run_prover(&self.inputs)
                 .expect("zippel spartan prover failed")
         });
         let proof_bytes = proof_size_bytes::<ArkCurve25519>(&proof);
-        let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+        let (verify, verify_peak, result) = crate::sample(|| {
             self.handler
                 .run_verifier(&proof, &self.inputs)
                 .expect("zippel spartan verifier failed")
@@ -139,12 +133,14 @@ impl Setup {
         let passed = check_verification(&result);
 
         ZippelTiming {
-            prove,
-            verify,
+            timing: Timing {
+                prove,
+                verify,
+                prove_peak,
+                verify_peak,
+            },
             proof_bytes,
             passed,
-            prove_peak,
-            verify_peak,
         }
     }
 
@@ -154,13 +150,7 @@ impl Setup {
     /// # Panics
     /// Panics under the same conditions as [`Self::time_protocol`].
     pub fn timing(&mut self) -> Timing {
-        let t = self.time_protocol();
-        Timing {
-            prove: t.prove,
-            verify: t.verify,
-            prove_peak: t.prove_peak,
-            verify_peak: t.verify_peak,
-        }
+        self.time_protocol().timing
     }
 
     /// `log_2` of the constraint count this setup was compiled for.

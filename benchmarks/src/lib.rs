@@ -7,27 +7,48 @@
 
 use std::time::Duration;
 
-/// Mean prover and verifier wall-times for one protocol measurement.
+/// Per-sample prover and verifier wall-times and peak heaps for one
+/// protocol measurement.
 ///
 /// Produced by every `Setup::time_protocol` in this crate, for both the
 /// `zippel_side` and `native_side` halves, so the two are directly
-/// comparable. Neither field includes input generation, key/SRS setup, or
-/// `.zippel` compilation — those happen in `Setup::new`.
-#[derive(Debug, Clone, Copy)]
+/// comparable. Every vector holds [`SAMPLES`] entries, one per run, in run
+/// order (see [`sample_with`]). Nothing includes input generation, key/SRS
+/// setup, or `.zippel` compilation — those happen in `Setup::new`.
+#[derive(Debug, Clone)]
 pub struct Timing {
-    /// Mean wall-time of a single prover run, averaged over
-    /// `PROVER_SAMPLES` (or `VERIFY_SAMPLES`, for the jitter-dominated
-    /// Schnorr prover) invocations on identical inputs.
-    pub prove: Duration,
-    /// Mean wall-time of a single verifier run on one fixed proof,
-    /// averaged over `VERIFY_SAMPLES` invocations. IPA is single-sample
-    /// because its verifier is an O(N) MSM.
-    pub verify: Duration,
-    /// Peak heap of one prover run, in bytes above what was live when it
+    /// Wall-time of each prover run on identical inputs.
+    pub prove: Vec<Duration>,
+    /// Wall-time of each verifier run on one fixed proof.
+    pub verify: Vec<Duration>,
+    /// Peak heap of each prover run, in bytes above what was live when it
     /// started (see [`mem`]).
-    pub prove_peak: usize,
-    /// Peak heap of one verifier run, measured the same way.
-    pub verify_peak: usize,
+    pub prove_peak: Vec<usize>,
+    /// Peak heap of each verifier run, measured the same way.
+    pub verify_peak: Vec<usize>,
+}
+
+impl Timing {
+    /// Mean prover wall-time.
+    #[must_use]
+    pub fn prove_mean(&self) -> Duration {
+        mean(&self.prove)
+    }
+
+    /// Mean verifier wall-time.
+    #[must_use]
+    pub fn verify_mean(&self) -> Duration {
+        mean(&self.verify)
+    }
+}
+
+/// Mean of a non-empty slice of durations.
+///
+/// # Panics
+/// Panics if `ds` is empty or longer than `u32::MAX`.
+#[must_use]
+pub fn mean(ds: &[Duration]) -> Duration {
+    ds.iter().sum::<Duration>() / u32::try_from(ds.len()).expect("sample count fits u32")
 }
 
 /// Peak-heap measurement. The benchmark binaries install
@@ -111,73 +132,79 @@ pub mod mem {
     }
 }
 
-/// Mean wall-time of `f` over `samples` runs, then its peak heap from one
-/// more, untimed run (so counting never touches a timed run). Returns the
-/// mean, the peak, and the last run's output.
-///
-/// # Panics
-/// Panics if `samples` is zero.
-pub fn sample<T>(samples: u32, mut f: impl FnMut() -> T) -> (Duration, usize, T) {
-    sample_with(samples, || (), |()| f())
+/// `SAMPLES` wall-times of `f`, then `SAMPLES` peak heaps from as many
+/// further runs; see [`sample_with`].
+pub fn sample<T>(f: impl FnMut() -> T) -> (Vec<Duration>, Vec<usize>, T) {
+    let mut f = f;
+    sample_with(|| (), |()| f())
 }
 
-/// [`sample`] with a per-run `setup` (e.g. a fresh transcript) that runs
-/// before each call, outside both the timer and the memory count.
-///
-/// # Panics
-/// Panics if `samples` is zero.
+/// Runs `f` [`SAMPLES`] times under a timer, then [`SAMPLES`] more times
+/// with the heap counter on, so counting never touches a timed run.
+/// Returns every run's wall-time and every counted run's peak heap, in run
+/// order, and the last run's output. `setup` (e.g. a fresh transcript)
+/// runs before each call, outside both the timer and the memory count;
+/// each output is dropped outside them too.
 pub fn sample_with<S, T>(
-    samples: u32,
     mut setup: impl FnMut() -> S,
     mut f: impl FnMut(S) -> T,
-) -> (Duration, usize, T) {
-    assert!(samples > 0);
-    let mut total = Duration::ZERO;
-    for _ in 0..samples {
+) -> (Vec<Duration>, Vec<usize>, T) {
+    let n = *SAMPLES;
+    let mut times = Vec::with_capacity(n);
+    for _ in 0..n {
         let state = setup();
         let t = std::time::Instant::now();
         let out = f(state);
-        total += t.elapsed();
+        times.push(t.elapsed());
         drop(out);
     }
-    let state = setup();
-    let (out, peak) = mem::peak_of(|| f(state));
-    (total / samples, peak, out)
+    let mut peaks = Vec::with_capacity(n);
+    let mut last = None;
+    for _ in 0..n {
+        drop(last.take());
+        let state = setup();
+        let (out, peak) = mem::peak_of(|| f(state));
+        peaks.push(peak);
+        last = Some(out);
+    }
+    (times, peaks, last.expect("SAMPLES > 0"))
 }
 
-/// Number of verifier samples to take per `time_protocol` call. Each
-/// `Timing { verify }` returned by a `*_side::Setup::time_protocol(...)`
-/// is the MEAN of this many independent verifier invocations on the same
-/// proof.
-///
-/// IPA is the exception — its verifier is O(N) MSM, ~tens of seconds per
-/// call at S=20, so it stays single-sample. See `ipa::*::time_protocol`.
-pub const VERIFY_SAMPLES: u32 = 100;
+/// Runs a `.zippel` compile [`SAMPLES`] times and returns the last
+/// handler with every run's wall-time. The previous handler is dropped
+/// before each run, outside the timer.
+pub fn sample_compile<H>(mut compile: impl FnMut() -> H) -> (H, Vec<Duration>) {
+    let n = *SAMPLES;
+    let mut times = Vec::with_capacity(n);
+    let mut last = None;
+    for _ in 0..n {
+        drop(last.take());
+        let t = std::time::Instant::now();
+        let h = compile();
+        times.push(t.elapsed());
+        last = Some(h);
+    }
+    (last.expect("SAMPLES > 0"), times)
+}
 
-/// Number of prover samples to take per `time_protocol` call. Each
-/// `Timing { prove }` is the MEAN of this many independent prover
-/// invocations on the same inputs.
+/// Number of runs behind every measurement: each prover and verifier
+/// wall-time, each peak heap, and each compile time is taken this many
+/// times and every sample is kept, so the CSVs carry one row per sample.
 ///
-/// Resolved once at process start from the `PROVER_SAMPLES` environment
-/// variable (must be `> 0`). Default is **1** — single-shot per call —
-/// because each prover run is seconds-to-minutes at log_size=18-20 and
-/// repeatedly sampling multiplies the sweep wall-clock linearly. Override
-/// when running short sizes where jitter dominates:
+/// Resolved once at process start from the `BENCH_SAMPLES` environment
+/// variable (must be `> 0`); the default is 10.
 ///
 /// ```sh
-/// PROVER_SAMPLES=10 cargo run --release --bin bench_all
+/// BENCH_SAMPLES=3 cargo run --release --bin bench_all
 /// ```
 ///
-/// Schnorr is the exception — its prover is ~0.1ms, dominated by jitter,
-/// so it samples at `VERIFY_SAMPLES` rate (100). See `schnorr::*::time_protocol`.
-///
-/// Use as `*PROVER_SAMPLES` (deref `LazyLock<u32>` → `u32`).
-pub static PROVER_SAMPLES: std::sync::LazyLock<u32> = std::sync::LazyLock::new(|| {
-    std::env::var("PROVER_SAMPLES")
+/// Use as `*SAMPLES` (deref `LazyLock<usize>` → `usize`).
+pub static SAMPLES: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+    std::env::var("BENCH_SAMPLES")
         .ok()
-        .and_then(|s| s.parse::<u32>().ok())
+        .and_then(|s| s.parse::<usize>().ok())
         .filter(|&n| n > 0)
-        .unwrap_or(1)
+        .unwrap_or(10)
 });
 
 // The `*_upstream` modules below are vendored third-party code (see each

@@ -30,7 +30,6 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use std::time::Instant;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     // Cached IPA inputs. Bases (g_vec, h_vec, u_aux_base) are Pedersen
@@ -95,7 +94,7 @@ pub mod zippel_side {
         handler: ZippelHandler<ArkSecp256k1>,
         _n: usize,
         inputs: IpaInputs,
-        compile_time: std::time::Duration,
+        compile_time: Vec<std::time::Duration>,
     }
 
     impl Setup {
@@ -111,13 +110,14 @@ pub mod zippel_side {
             let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("..")
                 .join("examples/ipa/ipa.zippel");
-            let compile_start = Instant::now();
-            let args = ZippelArgs::new(zippel_file);
-            let mut handler: ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
-            let mut sizes = Ctx::new();
-            sizes.insert(&Tid::new("S"), &s_const);
-            handler.compile(&sizes);
-            let compile_time = compile_start.elapsed();
+            let (handler, compile_time) = crate::sample_compile(|| {
+                let args = ZippelArgs::new(zippel_file.clone());
+                let mut handler: ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
+                let mut sizes = Ctx::new();
+                sizes.insert(&Tid::new("S"), &s_const);
+                handler.compile(&sizes);
+                handler
+            });
 
             let inputs =
                 crate::cache::load_or_build_canonical("ipa_zippel_inputs", s_const, || {
@@ -134,8 +134,8 @@ pub mod zippel_side {
 
         /// Wall-time spent compiling the `.zippel` source into prover and
         /// verifier graphs. Excludes input generation and cache I/O.
-        pub fn compile_time(&self) -> std::time::Duration {
-            self.compile_time
+        pub fn compile_time(&self) -> Vec<std::time::Duration> {
+            self.compile_time.clone()
         }
 
         /// (prover graph node count, verifier graph node count).
@@ -147,9 +147,6 @@ pub mod zippel_side {
         }
 
         /// Runs the compiled prover and verifier on the cached instance.
-        ///
-        /// The verifier is measured single-shot rather than averaged: it is an
-        /// O(N) MSM per round and takes tens of seconds at `S = 20`.
         ///
         /// # Panics
         /// Panics if the prover or verifier graph fails to execute, or if the
@@ -189,11 +186,9 @@ pub mod zippel_side {
                     Value::VecScalar(self.inputs.sum_vec.clone()),
                 ),
             ]);
-            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
-                self.handler.run_prover(&inputs).expect("run_prover failed")
-            });
-            // Single-shot verifier (see above).
-            let (verify, verify_peak, result) = crate::sample(1, || {
+            let (prove, prove_peak, proof) =
+                crate::sample(|| self.handler.run_prover(&inputs).expect("run_prover failed"));
+            let (verify, verify_peak, result) = crate::sample(|| {
                 self.handler
                     .run_verifier(&proof, &inputs)
                     .expect("run_verifier failed")
@@ -289,9 +284,8 @@ pub mod native_side {
             let g_proj_init: Vec<Projective> = self.g_vec.iter().map(|p| p.into_group()).collect();
             let h_proj_init: Vec<Projective> = self.h_vec.iter().map(|p| p.into_group()).collect();
 
-            // ---- Prover (sampled PROVER_SAMPLES times) ----
+            // ---- Prover ----
             let (prove, prove_peak, (final_a, final_b, proofs)) = crate::sample_with(
-                *crate::PROVER_SAMPLES,
                 || Transcript::new(b"ipa-bench"),
                 |mut prover_transcript| {
                     absorb_point(&mut prover_transcript, b"p_initial", &p_initial);
@@ -355,10 +349,9 @@ pub mod native_side {
             );
 
             // ---- Verifier (naive: fold bases each round, matching upstream) ----
-            // Single-shot, like the zippel side; the bases are cloned outside
-            // the timer because the folding consumes them.
+            // The bases are cloned outside the timer because the folding
+            // consumes them.
             let (verify, verify_peak, ok) = crate::sample_with(
-                1,
                 || {
                     (
                         Transcript::new(b"ipa-bench"),

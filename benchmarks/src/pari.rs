@@ -228,7 +228,6 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use std::time::Instant;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     type C = ArkBls12_381;
@@ -365,7 +364,7 @@ pub mod zippel_side {
         _kmn: usize, // = num_vars - n_pub
         num_vars: usize,
         srs: PariSrs,
-        compile_time: std::time::Duration,
+        compile_time: Vec<std::time::Duration>,
     }
 
     impl Setup {
@@ -380,15 +379,16 @@ pub mod zippel_side {
             let k = 1usize << m_log;
             let num_vars = inst.num_vars;
             let kmn = num_vars - n_pub;
-            let compile_start = Instant::now();
-            let args = ZippelArgs::new(PathBuf::from("examples/pari/pari.zippel"));
-            let mut handler: ZippelHandler<C> = ZippelHandler::new(args);
-            let mut sizes = Ctx::new();
-            sizes.insert(&Tid::new("M"), &m_log);
-            sizes.insert(&Tid::new("N"), &n_pub);
-            sizes.insert(&Tid::new("KMN"), &kmn);
-            handler.compile(&sizes);
-            let compile_time = compile_start.elapsed();
+            let (handler, compile_time) = crate::sample_compile(|| {
+                let args = ZippelArgs::new(PathBuf::from("examples/pari/pari.zippel"));
+                let mut handler: ZippelHandler<C> = ZippelHandler::new(args);
+                let mut sizes = Ctx::new();
+                sizes.insert(&Tid::new("M"), &m_log);
+                sizes.insert(&Tid::new("N"), &n_pub);
+                sizes.insert(&Tid::new("KMN"), &kmn);
+                handler.compile(&sizes);
+                handler
+            });
 
             let srs = crate::cache::load_or_build_canonical("pari_zippel_srs", m_log, || {
                 PariSrs::build(m_log, n_pub, num_vars, inst)
@@ -407,8 +407,8 @@ pub mod zippel_side {
         }
 
         /// Wall-clock time the `.zippel` source took to compile in [`Setup::new`].
-        pub fn compile_time(&self) -> std::time::Duration {
-            self.compile_time
+        pub fn compile_time(&self) -> Vec<std::time::Duration> {
+            self.compile_time.clone()
         }
 
         /// (prover graph node count, verifier graph node count).
@@ -419,8 +419,8 @@ pub mod zippel_side {
             )
         }
 
-        /// Runs the compiled prover and verifier `PROVER_SAMPLES`/`VERIFY_SAMPLES`
-        /// times and returns the mean durations.
+        /// Runs the compiled prover and verifier [`crate::SAMPLES`] times each
+        /// and returns every sample.
         ///
         /// # Panics
         /// Panics if `inst` does not match the shape this `Setup` was compiled
@@ -493,12 +493,12 @@ pub mod zippel_side {
                 (Vid("k_inv".to_string()), Value::Scalar(self.srs.k_inv)),
             ]);
 
-            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+            let (prove, prove_peak, proof) = crate::sample(|| {
                 self.handler
                     .run_prover(&inputs)
                     .expect("zippel pari prover failed")
             });
-            let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+            let (verify, verify_peak, result) = crate::sample(|| {
                 self.handler
                     .run_verifier(&proof, &inputs)
                     .expect("zippel pari verifier failed")
@@ -605,14 +605,14 @@ pub mod native_side {
             }
         }
 
-        /// Times upstream prove/verify over the configured sample counts; the
+        /// Times upstream prove/verify [`crate::SAMPLES`] times each; the
         /// prove timer includes the four sparse matrix-vector products.
         ///
         /// # Panics
         /// Panics if the upstream prover errors or if the resulting proof fails
         /// upstream verification.
         pub fn time_protocol(&self, _inst: &Instance<F>) -> Timing {
-            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+            let (prove, prove_peak, proof) = crate::sample(|| {
                 Pari::<E>::prove_from_sr1cs(
                     &self.a_mat,
                     &self.b_mat,
@@ -622,9 +622,8 @@ pub mod native_side {
                 )
                 .expect("Pari::prove_from_sr1cs failed")
             });
-            let (verify, verify_peak, ok) = crate::sample(crate::VERIFY_SAMPLES, || {
-                Pari::<E>::verify(&proof, &self.vk, &self.instance_inputs)
-            });
+            let (verify, verify_peak, ok) =
+                crate::sample(|| Pari::<E>::verify(&proof, &self.vk, &self.instance_inputs));
             assert!(ok, "upstream PARI verification FAILED");
 
             Timing {

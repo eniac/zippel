@@ -7,7 +7,7 @@
 # fixed for Schnorr -- run_all.sh's own default grid), threads {1,2,4,8}.
 # Maps to Figure 7 of the submitted paper (page 13) -- see ../README.md.
 #
-# Override SYSTEMS/THREADS/PROVER_SAMPLES/OUT/QUICK via environment
+# Override SYSTEMS/THREADS/BENCH_SAMPLES/OUT/QUICK via environment
 # variables (forwarded to run_all.sh, see benchmarks/README.md) to narrow
 # scope, e.g. to smoke-test this script itself without paying for the
 # full sweep:

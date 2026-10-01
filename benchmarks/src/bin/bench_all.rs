@@ -1,12 +1,14 @@
 //! Runs every benchmark (schnorr, sumcheck, ipa, kzg, pari, groth16, pst13, hyrax, spartan) at the rayon
 //! thread count of the current process and writes a single CSV.
 //!
-//! One row per (system, baseline, threads, log_size) — most systems have
-//! one baseline (named after the system itself); spartan has two
+//! One row per (system, baseline, threads, log_size, sample), with
+//! `benchmarks::SAMPLES` samples per point — most systems have one
+//! baseline (named after the system itself); spartan has two
 //! (`spartan`, `ark-spartan`). See `Baseline`/`Row`. Columns: system,
-//! baseline, threads, log_size, zippel_prover_ms, zippel_verifier_ms,
-//! zippel_ncloc, baseline_prover_ms, baseline_verifier_ms,
-//! baseline_ncloc, compile_ms, prover_nodes, verifier_nodes.
+//! baseline, threads, log_size, sample, zippel_prover_ms,
+//! zippel_verifier_ms, zippel_ncloc, baseline_prover_ms,
+//! baseline_verifier_ms, baseline_ncloc, compile_ms, prover_nodes,
+//! verifier_nodes, then the four `*_peak_mib` columns.
 //!
 //! `log_size` is log_2 of the natural complexity parameter (so rows plot
 //! linearly on a log-size x-axis):
@@ -28,8 +30,8 @@
 //! sized by `RAYON_NUM_THREADS` is the reliable path.
 
 use benchmarks::{
-    Timing, dekart, dory, groth16, hyperplonk, hyrax, ipa, kzg, kzh, pari, pst13, schnorr, spartan,
-    sumcheck,
+    Timing, dekart, dory, groth16, hyperplonk, hyrax, ipa, kzg, kzh, mean, pari, pst13, schnorr,
+    spartan, sumcheck,
 };
 use clap::Parser;
 use libspartan::{Instance, NIZK, NIZKGens};
@@ -103,10 +105,11 @@ struct Args {
 struct Baseline {
     name: &'static str,
     ncloc: usize,
-    prove: std::time::Duration,
-    verify: std::time::Duration,
-    prove_peak: usize,
-    verify_peak: usize,
+    /// Per-sample values, as in [`Timing`].
+    prove: Vec<Duration>,
+    verify: Vec<Duration>,
+    prove_peak: Vec<usize>,
+    verify_peak: Vec<usize>,
 }
 
 struct Row {
@@ -118,8 +121,9 @@ struct Row {
     /// graph (parse + type-check + graph construction inside
     /// `ZippelHandler::compile`). Excludes the Rust compiler (which
     /// builds this binary once), excludes runtime scheduling
-    /// (graph→TDag), and excludes prove/verify execution.
-    compile: std::time::Duration,
+    /// (graph→TDag), and excludes prove/verify execution. One entry per
+    /// sample.
+    compile: Vec<Duration>,
     /// See `Baseline`.
     baselines: Vec<Baseline>,
     /// Graph IR node counts (prover graph, verifier graph) at this row's
@@ -130,7 +134,7 @@ struct Row {
     verifier_nodes: usize,
 }
 
-fn ms(t: std::time::Duration) -> f64 {
+fn ms(t: Duration) -> f64 {
     t.as_secs_f64() * 1000.0
 }
 
@@ -364,7 +368,7 @@ fn init_csv(path: &PathBuf, header: bool, append: bool) -> std::io::Result<()> {
     if header {
         writeln!(
             w,
-            "system,baseline,threads,log_size,zippel_prover_ms,zippel_verifier_ms,zippel_ncloc,baseline_prover_ms,baseline_verifier_ms,baseline_ncloc,compile_ms,prover_nodes,verifier_nodes,zippel_prover_peak_mib,zippel_verifier_peak_mib,baseline_prover_peak_mib,baseline_verifier_peak_mib"
+            "system,baseline,threads,log_size,sample,zippel_prover_ms,zippel_verifier_ms,zippel_ncloc,baseline_prover_ms,baseline_verifier_ms,baseline_ncloc,compile_ms,prover_nodes,verifier_nodes,zippel_prover_peak_mib,zippel_verifier_peak_mib,baseline_prover_peak_mib,baseline_verifier_peak_mib"
         )?;
         w.flush()?;
     }
@@ -373,34 +377,45 @@ fn init_csv(path: &PathBuf, header: bool, append: bool) -> std::io::Result<()> {
         .map_err(|_| std::io::Error::other("CSV_WRITER already initialized"))
 }
 
+/// One CSV row per sample. Sample `i`'s wall-times and peak heaps come
+/// from different runs (see `benchmarks::sample_with`), and the zippel
+/// columns repeat across a system's baselines.
 fn write_row(r: &Row, b: &Baseline) {
     let Some(m) = CSV_WRITER.get() else { return };
     let mut w = m.lock().unwrap();
-    writeln!(
-        w,
-        "{},{},{},{},{:.3},{:.3},{},{:.3},{:.3},{},{:.3},{},{},{:.3},{:.3},{:.3},{:.3}",
-        r.system,
-        b.name,
-        r.threads,
-        r.log_size,
-        ms(r.zippel.prove),
-        ms(r.zippel.verify),
-        zippel_ncloc(r.system),
-        ms(b.prove),
-        ms(b.verify),
-        b.ncloc,
-        ms(r.compile),
-        r.prover_nodes,
-        r.verifier_nodes,
-        mib(r.zippel.prove_peak),
-        mib(r.zippel.verify_peak),
-        mib(b.prove_peak),
-        mib(b.verify_peak),
-    )
-    .expect("write csv row");
+    for i in 0..r.compile.len() {
+        writeln!(
+            w,
+            "{},{},{},{},{},{:.3},{:.3},{},{:.3},{:.3},{},{:.3},{},{},{:.3},{:.3},{:.3},{:.3}",
+            r.system,
+            b.name,
+            r.threads,
+            r.log_size,
+            i,
+            ms(r.zippel.prove[i]),
+            ms(r.zippel.verify[i]),
+            zippel_ncloc(r.system),
+            ms(b.prove[i]),
+            ms(b.verify[i]),
+            b.ncloc,
+            ms(r.compile[i]),
+            r.prover_nodes,
+            r.verifier_nodes,
+            mib(r.zippel.prove_peak[i]),
+            mib(r.zippel.verify_peak[i]),
+            mib(b.prove_peak[i]),
+            mib(b.verify_peak[i]),
+        )
+        .expect("write csv row");
+    }
     w.flush().expect("flush csv row");
 }
 
+fn max_mib(peaks: &[usize]) -> f64 {
+    mib(peaks.iter().copied().max().unwrap_or(0))
+}
+
+/// Means over the samples, and the largest peak heap.
 fn print_row(r: &Row) {
     for b in &r.baselines {
         eprintln!(
@@ -408,17 +423,17 @@ fn print_row(r: &Row) {
             r.system,
             r.threads,
             r.log_size,
-            ms(r.zippel.prove),
+            ms(r.zippel.prove_mean()),
             b.name,
-            ms(b.prove),
-            ms(r.zippel.verify),
+            ms(mean(&b.prove)),
+            ms(r.zippel.verify_mean()),
             b.name,
-            ms(b.verify),
-            ms(r.compile),
-            mib(r.zippel.prove_peak),
-            mib(b.prove_peak),
-            mib(r.zippel.verify_peak),
-            mib(b.verify_peak),
+            ms(mean(&b.verify)),
+            ms(mean(&r.compile)),
+            max_mib(&r.zippel.prove_peak),
+            max_mib(&b.prove_peak),
+            max_mib(&r.zippel.verify_peak),
+            max_mib(&b.verify_peak),
         );
         write_row(r, b);
     }
@@ -912,12 +927,11 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                     (inst, vars, inputs, gens, inst_bytes, inputs_bytes, n_matvec)
                 });
 
-            // Prover sampled PROVER_SAMPLES times. Each run gets a fresh
-            // transcript (NIZK::prove takes &mut and consumes it), made
-            // outside the timer; the matrix-vector product libspartan
-            // repeats inside prove is subtracted from the mean.
+            // Each prover run gets a fresh transcript (NIZK::prove takes
+            // &mut and consumes it), made outside the timer; the
+            // matrix-vector product libspartan repeats inside prove is
+            // subtracted from every sample.
             let (native_prove, native_prove_peak, proof) = benchmarks::sample_with(
-                *benchmarks::PROVER_SAMPLES,
                 || Transcript::new(b"bench_all_spartan"),
                 |mut pt| {
                     {
@@ -929,12 +943,14 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                         .install(|| NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt))
                 },
             );
-            let native_prove = native_prove.saturating_sub(n_matvec);
+            let native_prove = native_prove
+                .into_iter()
+                .map(|t| t.saturating_sub(n_matvec))
+                .collect();
 
-            // Verifier sampled VERIFY_SAMPLES times, a fresh transcript
-            // per run (libspartan's verify takes &mut transcript).
+            // A fresh transcript per verifier run (libspartan's verify
+            // takes &mut transcript).
             let (native_verify, native_verify_peak, ()) = benchmarks::sample_with(
-                benchmarks::VERIFY_SAMPLES,
                 || Transcript::new(b"bench_all_spartan"),
                 |mut vt| {
                     {
@@ -975,7 +991,6 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                 });
 
                 let (ark_prove, ark_prove_peak, proof) = benchmarks::sample_with(
-                    *benchmarks::PROVER_SAMPLES,
                     || Transcript::new(b"bench_all_spartan_ark"),
                     |mut pt| {
                         timed_pool().install(|| {
@@ -991,7 +1006,6 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                 );
 
                 let (ark_verify, ark_verify_peak, ()) = benchmarks::sample_with(
-                    benchmarks::VERIFY_SAMPLES,
                     || Transcript::new(b"bench_all_spartan_ark"),
                     |mut vt| {
                         timed_pool()

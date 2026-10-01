@@ -258,10 +258,10 @@ pub mod native_side {
         }
 
         /// Times native commit+open as "prove" and the pairing check as
-        /// "verify", each averaged over the configured sample count.
+        /// "verify", each sampled [`crate::SAMPLES`] times.
         ///
         /// # Panics
-        /// Panics if `PROVER_SAMPLES` is zero or if the produced proof fails
+        /// Panics if the produced proof fails
         /// the native verifier.
         pub fn time_protocol(&self) -> Timing {
             // Re-seed for the per-call poly/point so timing is reproducible.
@@ -296,14 +296,13 @@ pub mod native_side {
             // own the worker pool exclusively; open's internal
             // pipelining (in `pst13_upstream::open`) is preserved and
             // still gives the t=1,2,4 wins.
-            let (prove, prove_peak, (comm, proof)) = crate::sample(*crate::PROVER_SAMPLES, || {
+            let (prove, prove_peak, (comm, proof)) = crate::sample(|| {
                 let comm = Pcs::commit(&self.ck, &poly);
                 let proof = Pcs::open(&self.ck, &poly, &point);
                 (comm, proof)
             });
-            let (verify, verify_peak, ok) = crate::sample(crate::VERIFY_SAMPLES, || {
-                Pcs::check(&self.vk, &comm, &point, value, &proof)
-            });
+            let (verify, verify_peak, ok) =
+                crate::sample(|| Pcs::check(&self.vk, &comm, &point, value, &proof));
             assert!(ok, "ark-poly-commit MultilinearPC verification FAILED");
 
             Timing {
@@ -350,8 +349,8 @@ mod textbook_native_side {
         }
 
         pub fn time_protocol(&self) -> Timing {
-            let (prove, prove_peak, proof) = crate::sample(1, || prove(self.shared));
-            let (verify, verify_peak, ok) = crate::sample(1, || verify(self.shared, &proof));
+            let (prove, prove_peak, proof) = crate::sample(|| prove(self.shared));
+            let (verify, verify_peak, ok) = crate::sample(|| verify(self.shared, &proof));
             assert!(ok, "native PST13 verification FAILED");
 
             Timing {
@@ -476,7 +475,6 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use std::time::Instant;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     /// Compiled PST13 protocol plus the instance/witness context derived from
@@ -486,7 +484,7 @@ pub mod zippel_side {
         inputs_base: Ctx<Vid, Value<ArkBls12_381>>,
         #[allow(dead_code)]
         shared: &'a Shared,
-        compile_time: std::time::Duration,
+        compile_time: Vec<std::time::Duration>,
     }
 
     impl<'a> Setup<'a> {
@@ -515,13 +513,14 @@ pub mod zippel_side {
                 ),
             ]);
 
-            let compile_start = Instant::now();
-            let args = ZippelArgs::new(PathBuf::from("examples/pst13/pst13.zippel"));
-            let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-            let mut sizes = Ctx::new();
-            sizes.insert(&Tid::new("N"), &shared.n);
-            handler.compile(&sizes);
-            let compile_time = compile_start.elapsed();
+            let (handler, compile_time) = crate::sample_compile(|| {
+                let args = ZippelArgs::new(PathBuf::from("examples/pst13/pst13.zippel"));
+                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+                let mut sizes = Ctx::new();
+                sizes.insert(&Tid::new("N"), &shared.n);
+                handler.compile(&sizes);
+                handler
+            });
 
             Setup {
                 handler,
@@ -532,8 +531,8 @@ pub mod zippel_side {
         }
 
         /// Wall-clock time the `.zippel` source took to compile in [`Setup::new`].
-        pub fn compile_time(&self) -> std::time::Duration {
-            self.compile_time
+        pub fn compile_time(&self) -> Vec<std::time::Duration> {
+            self.compile_time.clone()
         }
 
         /// (prover graph node count, verifier graph node count).
@@ -545,18 +544,18 @@ pub mod zippel_side {
         }
 
         /// Runs the compiled prover (commit + open) and verifier over the
-        /// configured sample counts and returns the mean durations.
+        /// [`crate::SAMPLES`] times each and returns every sample.
         ///
         /// # Panics
-        /// Panics if either graph fails to execute, if `PROVER_SAMPLES` is
-        /// zero, or if verification does not pass.
+        /// Panics if either graph fails to execute or if verification does
+        /// not pass.
         pub fn time_protocol(&mut self) -> Timing {
-            let (prove, prove_peak, proof) = crate::sample(*crate::PROVER_SAMPLES, || {
+            let (prove, prove_peak, proof) = crate::sample(|| {
                 self.handler
                     .run_prover(&self.inputs_base)
                     .expect("zippel pst13 prover failed")
             });
-            let (verify, verify_peak, result) = crate::sample(crate::VERIFY_SAMPLES, || {
+            let (verify, verify_peak, result) = crate::sample(|| {
                 self.handler
                     .run_verifier(&proof, &self.inputs_base)
                     .expect("zippel pst13 verifier failed")
