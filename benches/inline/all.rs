@@ -9,6 +9,8 @@
 //!   cargo bench --bench `inline_all` -- [--timeout SECS] [--protocols a,b,...]
 //!                                      [--output PATH] [--log PATH]
 //!                                      [--memory-limit-mb MB] [--inline-only]
+//!                                      [--path FILE] [--size NAME=VALUE]...
+//!                                      [--dump-dir DIR]
 //!
 //! Defaults:
 //!   --timeout           1200   (20 minutes per run)
@@ -17,10 +19,12 @@
 //!   --memory-limit-mb   16384  (16 GiB per run)
 //!   --inline-only       off    (runs both inline and no-inline per protocol)
 //!
-//! `--memory-limit-mb` is forwarded to every `inline` invocation verbatim
-//! (like `--backend`). `inline` decides `ok`/`incomplete`/`crashed`/`oom`
-//! for itself (see its own module docs) — `inline_all` adds only
-//! `timeout`, which it alone can observe.
+//! `--memory-limit-mb`, `--path` and `--size` are forwarded to every `inline`
+//! invocation verbatim (like `--backend`), so `--path` is meant for a single
+//! protocol. `--dump-dir DIR` makes each run write `inline`'s `--dump` to
+//! `DIR/<protocol>_<inline|no_inline>.txt`. `inline` decides
+//! `ok`/`incomplete`/`crashed`/`oom` for itself (see its own module docs) —
+//! `inline_all` adds only `timeout`, which it alone can observe.
 
 use std::env;
 use std::fs::{File, OpenOptions};
@@ -255,6 +259,13 @@ fn build_inline_binary(repo_root: &Path) -> PathBuf {
     std::process::exit(1);
 }
 
+/// Flags passed through to each `inline` run.
+struct Forwarded<'a> {
+    path: Option<&'a str>,
+    sizes: &'a [String],
+    dump_dir: Option<&'a str>,
+}
+
 /// Run one benchmark with timeout. Returns the result and wall time.
 fn run_one(
     bin: &Path,
@@ -263,6 +274,7 @@ fn run_one(
     no_inline: bool,
     timeout_secs: u64,
     memory_limit_mb: Option<u64>,
+    forwarded: &Forwarded<'_>,
 ) -> BenchResult {
     let mut cmd = CommandWrap::with_new(bin, |cmd| {
         cmd.args([protocol, "--backend", "singular"])
@@ -274,6 +286,17 @@ fn run_one(
         }
         if let Some(mb) = memory_limit_mb {
             cmd.args(["--memory-limit-mb", &mb.to_string()]);
+        }
+        if let Some(path) = forwarded.path {
+            cmd.args(["--path", path]);
+        }
+        for size in forwarded.sizes {
+            cmd.args(["--size", size]);
+        }
+        if let Some(dir) = forwarded.dump_dir {
+            let label = if no_inline { "no_inline" } else { "inline" };
+            let file = Path::new(dir).join(format!("{protocol}_{label}.txt"));
+            cmd.arg("--dump").arg(file);
         }
     });
 
@@ -462,6 +485,9 @@ struct Args {
     protocols: Option<Vec<String>>,
     memory_limit_mb: Option<u64>,
     inline_only: bool,
+    path: Option<String>,
+    sizes: Vec<String>,
+    dump_dir: Option<String>,
 }
 
 fn parse_args() -> Args {
@@ -472,10 +498,25 @@ fn parse_args() -> Args {
     let mut protocols: Option<Vec<String>> = None;
     let mut memory_limit_mb = Some(DEFAULT_MEMORY_LIMIT_MB);
     let mut inline_only = false;
+    let mut path = None;
+    let mut sizes = Vec::new();
+    let mut dump_dir = None;
 
     let mut i = 0;
     while i < raw.len() {
         match raw[i].as_str() {
+            "--path" => {
+                i += 1;
+                path = raw.get(i).cloned();
+            }
+            "--size" => {
+                i += 1;
+                sizes.extend(raw.get(i).cloned());
+            }
+            "--dump-dir" => {
+                i += 1;
+                dump_dir = raw.get(i).cloned();
+            }
             "--timeout" => {
                 i += 1;
                 if i < raw.len() {
@@ -520,6 +561,9 @@ fn parse_args() -> Args {
         protocols,
         memory_limit_mb,
         inline_only,
+        path,
+        sizes,
+        dump_dir,
     }
 }
 
@@ -569,6 +613,18 @@ fn main() {
         &[("inline", false), ("no_inline", true)]
     };
 
+    if let Some(dir) = &args.dump_dir
+        && let Err(e) = std::fs::create_dir_all(dir)
+    {
+        eprintln!("ERROR: cannot create --dump-dir {dir}: {e}");
+        std::process::exit(1);
+    }
+    let forwarded = Forwarded {
+        path: args.path.as_deref(),
+        sizes: &args.sizes,
+        dump_dir: args.dump_dir.as_deref(),
+    };
+
     for proto in &protocols {
         for &(label, no_inline) in variants {
             let prefix = format!("[{proto:>30}] {label:>9} ... ");
@@ -579,6 +635,7 @@ fn main() {
                 no_inline,
                 args.timeout,
                 args.memory_limit_mb,
+                &forwarded,
             );
 
             let fmt_ms =
