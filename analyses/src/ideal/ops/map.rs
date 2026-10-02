@@ -154,6 +154,7 @@ fn rebuild_body_op<C: ArkConfig + HasOpFactory>(
         ),
         Op::Poly(a) => Op::Poly(body_child(&mut *ctx, a, loops, loop_vals)?),
         Op::Coef(a) => Op::Coef(body_child(&mut *ctx, a, loops, loop_vals)?),
+        Op::ToScalar(a) => Op::ToScalar(body_child(&mut *ctx, a, loops, loop_vals)?),
         Op::Mle(a) => Op::Mle(body_child(&mut *ctx, a, loops, loop_vals)?),
         Op::Ifft(a) => Op::Ifft(body_child(&mut *ctx, a, loops, loop_vals)?),
         Op::Fft(a) => Op::Fft(body_child(&mut *ctx, a, loops, loop_vals)?),

@@ -421,6 +421,5 @@ fn prover_create_inputs(m: usize) -> Ctx<Vid, Value<ArkCurve25519>> {
             Vid("placeholder_tau".to_string()),
             Value::VecScalar(placeholder_tau),
         ),
-        (Vid("f_one".to_string()), Value::Scalar(one)),
     ])
 }

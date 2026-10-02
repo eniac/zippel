@@ -112,6 +112,7 @@ pub(crate) fn format_typ(
             (gap, ALLOC.text("Unit"))
         }
         Typ::Bool => (TriviaGap::default(), ALLOC.text("Bool")),
+        Typ::FieldLiteral => unreachable!("field literals are internal and have no source syntax"),
         Typ::Record(fields) => {
             let open_gap = cursor.advance_to_token(end, |token| matches!(token, Token::LBrace));
             let mut fields: Vec<_> = fields.iter().collect();
@@ -228,17 +229,15 @@ fn format_poly(
     // converting from Poly to sugar (where skipping an arg would drop
     // its attached comments).
     let (is_uni, is_mle) = match source {
-        SourceForm::Uni if matches!(m, Size::Lit(1)) => (true, false),
-        SourceForm::Mle if matches!(n, Size::Lit(1)) => (false, true),
+        SourceForm::Uni if m.is_lit_one() => (true, false),
+        SourceForm::Mle if n.is_lit_one() => (false, true),
         _ => {
             // Poly→sugar: only if no comments on the skipped arg's gaps.
             // Uni<F, N> skips M, so check gaps around M (comma1_a, comma2_b).
             // Mle<F, N> skips N, so check gaps around N (comma2_a, close).
-            let is_uni =
-                matches!(m, Size::Lit(1)) && !comma1_a.has_comments() && !comma2_b.has_comments();
-            let is_mle = matches!(n, Size::Lit(1))
-                && !comma2_a.has_comments()
-                && !close_comments.has_comments();
+            let is_uni = m.is_lit_one() && !comma1_a.has_comments() && !comma2_b.has_comments();
+            let is_mle =
+                n.is_lit_one() && !comma2_a.has_comments() && !close_comments.has_comments();
             (is_uni, is_mle)
         }
     };

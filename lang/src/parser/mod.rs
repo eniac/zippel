@@ -19,11 +19,13 @@ use chumsky::pratt::{self, Associativity};
 use chumsky::prelude::*;
 use chumsky::span::SimpleSpan;
 
-use crate::ast::Size;
+use num::{BigUint, ToPrimitive};
+
 use crate::ast::arg::Args;
 use crate::ast::decl::{Decl, UDecl};
 use crate::ast::spanned::Spanned;
 use crate::ast::{BinOp, Exps, GArg, UExp};
+use crate::ast::{ExpLiteral, Size};
 use crate::diagnostic::Diagnostic;
 use crate::id::{Tid, Vid};
 use crate::typ::{Distribution, GTyp, Kind, Qualifier, Range, Typ, TypeVar, TypeVars};
@@ -57,12 +59,33 @@ fn tid_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>()
         })
 }
 
-/// Match a positive integer literal, returning its value.
+/// Match a decimal literal, returning its exact value.
 fn positive_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>()
--> impl Parser<'src, I, u32, extra::Err<RichError<'src>>> + Clone {
+-> impl Parser<'src, I, BigUint, extra::Err<RichError<'src>>> + Clone {
     select! { Token::Positive(s) => s }
         .labelled(Terminal::PositiveInteger)
-        .map(|s| s.parse::<u32>().unwrap_or(0))
+        .map(|s| {
+            BigUint::parse_bytes(s.as_bytes(), 10)
+                .expect("the lexer only produces nonempty ASCII digit tokens")
+        })
+}
+
+/// Match a decimal literal in a size position: it must fit in the target `usize`.
+///
+/// An oversized literal is reported at its token as a non-fatal error (so a surrounding
+/// label cannot replace the message) and kept whole, so evaluating it as a size fails too.
+fn positive_size_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>()
+-> impl Parser<'src, I, Spanned<Size>, extra::Err<RichError<'src>>> + Clone {
+    positive_tok().validate(|n, e, emitter| {
+        let span: SimpleSpan = e.span();
+        if n.to_usize().is_none() {
+            emitter.emit(Rich::custom(
+                span,
+                "size literal exceeds target usize range",
+            ));
+        }
+        Spanned::new(Size::Lit(n), span.into_range())
+    })
 }
 
 // ── Size parser (pratt) ────────────────────────────────────────────────
@@ -82,10 +105,7 @@ where
                 .ignored()
                 .ignore_then(size_rec)
                 .then_ignore(just(Token::RParen).ignored()),
-            positive_tok().map_with(|n, e| {
-                let sp: SimpleSpan = e.span();
-                Spanned::new(Size::Lit(n), sp.into_range())
-            }),
+            positive_size_tok(),
             tid_tok().map_with(|t, e| {
                 let sp: SimpleSpan = e.span();
                 Spanned::new(Size::Var(t.node), sp.into_range())
@@ -176,7 +196,8 @@ where
 
 /// Parse a kind (type variable kind annotation).
 /// Mirrors `kind_ty` in the pest grammar:
-///   kind_ty = { field_ty | group_ty | range_ty | pairing_ty | scalar_ty | size_var_ty | size_ref_ty | positive }
+///   kind_ty = { field_ty | group_ty | range_ty | pairing_ty | scalar_ty | size_var_ty | size_ref_ty }
+/// A bare positive literal is a `size_ref_ty`, checked against `usize` like every size literal.
 fn kind_parser<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<RichError<'src>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
@@ -193,15 +214,6 @@ where
             let sp: SimpleSpan = e.span();
             Kind::Range(Range {
                 start: Spanned::new(s.node, sp.into_range()),
-                step: None,
-                end: None,
-            })
-        }),
-        // positive: a bare positive literal → singleton range
-        positive_tok().map_with(|n, e| {
-            let sp: SimpleSpan = e.span();
-            Kind::Range(Range {
-                start: Spanned::new(Size::Lit(n), sp.into_range()),
                 step: None,
                 end: None,
             })
@@ -302,7 +314,7 @@ where
                 .map_with(|(b, n), e| {
                     let sp: SimpleSpan = e.span();
                     Spanned::new(
-                        Typ::Poly(b.node, Spanned::dummy(Size::Lit(1)), n),
+                        Typ::Poly(b.node, Spanned::dummy(Size::lit(1)), n),
                         sp.into_range(),
                     )
                 }),
@@ -316,7 +328,7 @@ where
                 .then_ignore(just(Token::Comma).ignored().or_not())
                 .then_ignore(just(Token::RAngle).ignored())
                 .map_with(|(b, n), e| {
-                    Spanned::new(Typ::Poly(b.node, n, Spanned::dummy(Size::Lit(1))), {
+                    Spanned::new(Typ::Poly(b.node, n, Spanned::dummy(Size::lit(1))), {
                         let sp: SimpleSpan = e.span();
                         sp.into_range()
                     })
@@ -336,7 +348,7 @@ where
                     size_ty_parser().map_with(|s, e| {
                         Spanned::new(
                             Typ::Fin(Range {
-                                start: Spanned::dummy(Size::Lit(0)),
+                                start: Spanned::dummy(Size::lit(0)),
                                 step: None,
                                 end: Some(s),
                             }),

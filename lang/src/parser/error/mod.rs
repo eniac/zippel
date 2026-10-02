@@ -9,7 +9,7 @@
 #[cfg(test)]
 mod tests;
 
-use chumsky::error::RichPattern;
+use chumsky::error::{RichPattern, RichReason};
 
 use super::RichError;
 use super::label::Context;
@@ -19,14 +19,20 @@ use crate::diagnostic::{Diagnostic, Phase, SecondaryLabel};
 ///
 /// Called while the source-backed `Rich` error is still valid (before
 /// `parse_decls` returns), so token formatting borrows from the source.
+/// A custom error (e.g. an out-of-range size literal) keeps its own message.
 pub(super) fn rich_to_diagnostic(e: &RichError<'_>) -> Diagnostic {
     let span = e.span().into_range();
+    let secondary_labels = innermost_context_label(e);
+    if let RichReason::Custom(msg) = e.reason() {
+        return Diagnostic::error(Phase::Parse, span, msg)
+            .primary_label(msg)
+            .secondary_labels(secondary_labels);
+    }
     let found = e
         .found()
         .map(|token| format!("'{token}'"))
         .unwrap_or_else(|| "end of input".to_string());
     let expected = format_expected(&e.expected().map(ToString::to_string).collect::<Vec<_>>());
-    let secondary_labels = innermost_context_label(e);
 
     let summary = format!("expected {expected}, found {found}");
     let primary_label = format!("expected {expected}");

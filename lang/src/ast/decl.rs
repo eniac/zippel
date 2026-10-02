@@ -1,7 +1,9 @@
+use num::BigUint;
 use std::fmt;
 use thiserror::Error;
 
 use crate::ast::Size;
+use crate::ast::exp::{ExpLiteral, ExpTraversal};
 use crate::ast::size::EvalError;
 use crate::ast::spanned::Spanned;
 use crate::ast::{CSig, Exp, FreeVars, GArgs, Sig};
@@ -18,9 +20,9 @@ use share::{Ctx, Set};
 /// Body of Zippel declarations (protocols, functions, and type aliases).
 /// Specs are given either by an explicit relation on inputs (precondition)
 /// or by the return type of the function.
-/// Parametrized by `N` the type of sizes and `T` the type of types.
+/// Parametrized by the literal carrier `N` of its expressions.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Body<N> {
+pub enum Body<N: ExpLiteral> {
     /// A protocol body declaration
     ///
     /// # fields
@@ -56,9 +58,9 @@ pub enum Body<N> {
 
 /// A zippel declaration is either a protocol or a function.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Decl<N> {
+pub struct Decl<N: ExpLiteral> {
     /// Name, size-type variables, arguments, and (for functions) return type.
-    pub sig: Sig<N>,
+    pub sig: Sig<N::Size>,
     /// What the declaration computes: protocol, function, or type alias.
     pub body: Body<N>,
 }
@@ -78,7 +80,7 @@ pub enum DeclError {
     SubstError(#[from] SubstError),
 }
 
-impl<N> Body<N> {
+impl<N: ExpLiteral> Body<N> {
     /// Whether this body is a protocol body (has a relation).
     pub fn is_proto(&self) -> bool {
         matches!(self, Body::Proto { .. })
@@ -131,13 +133,13 @@ impl FreeVars for CBody {
 }
 
 /// Useful constructors
-impl<N> Decl<N> {
+impl<N: ExpLiteral> Decl<N> {
     /// Builds a protocol declaration: a signature with no return type plus a
     /// [`Body::Proto`] holding the `where`-clause relation and optional body.
     pub fn proto(
         name: Spanned<Vid>,
-        typevars: Spanned<TypeVars<N>>,
-        args: Spanned<GArgs<N>>,
+        typevars: Spanned<TypeVars<N::Size>>,
+        args: Spanned<GArgs<N::Size>>,
         relation: Spanned<Exp<N>>,
         body: Option<Spanned<Exp<N>>>,
     ) -> Self {
@@ -154,9 +156,9 @@ impl<N> Decl<N> {
     /// Builds a function declaration from its signature parts and optional body.
     pub fn func(
         name: Spanned<Vid>,
-        typevars: Spanned<TypeVars<N>>,
-        args: Spanned<GArgs<N>>,
-        ret: Option<Spanned<GTyp<N>>>,
+        typevars: Spanned<TypeVars<N::Size>>,
+        args: Spanned<GArgs<N::Size>>,
+        ret: Option<Spanned<GTyp<N::Size>>>,
         body: Option<Spanned<Exp<N>>>,
     ) -> Self {
         let sig = Sig {
@@ -171,7 +173,7 @@ impl<N> Decl<N> {
 
     /// Builds a type-alias declaration; the aliased type is stored as the
     /// signature's return type, with no type variables and no arguments.
-    pub fn type_alias(name: Spanned<Vid>, typ: Spanned<GTyp<N>>) -> Self {
+    pub fn type_alias(name: Spanned<Vid>, typ: Spanned<GTyp<N::Size>>) -> Self {
         use crate::ast::arg::Args;
         let sig = Sig {
             name,
@@ -188,25 +190,25 @@ impl<N> Decl<N> {
 
 /// A collection of declarations
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Decls<N>(pub Vec<Decl<N>>);
+pub struct Decls<N: ExpLiteral>(pub Vec<Decl<N>>);
 
 /// Untyped body with symbolic sizes
 pub type UBody = Body<Size>;
 
-/// Concrete sized body
-pub type CBody = Body<usize>;
+/// Concrete body: full-magnitude literals, machine-sized ranges
+pub type CBody = Body<BigUint>;
 
 /// Untyped decl with symbolic sizes
 pub type UDecl = Decl<Size>;
 
-/// Concrete sized declaration
-pub type CDecl = Decl<usize>;
+/// Concrete declaration: `usize` signature, full-magnitude body literals
+pub type CDecl = Decl<BigUint>;
 
 /// Untyped declarations with symbolic sizes
 pub type UDecls = Decls<Size>;
 
-/// Concrete sized declarations
-pub type CDecls = Decls<usize>;
+/// Concrete declarations
+pub type CDecls = Decls<BigUint>;
 
 impl UDecl {
     /// Each declaration has typevariables that can be concretized to different sizes.
@@ -231,7 +233,10 @@ impl UDecl {
     /// if a resulting `Range` fails its well-formedness check.
     pub fn concretize(&self, substs: &SizeSubsts) -> Result<CDecl, DeclError> {
         let mut csig = self.sig.clone().traverse1(&mut |x| x.eval(&substs.0))?;
-        let cbody = self.body.clone().traverse1(&mut |x| x.eval(&substs.0))?;
+        let cbody = self.body.clone().traverse_exp(
+            &mut |literal| literal.eval_literal(&substs.0),
+            &mut |size| size.eval(&substs.0),
+        )?;
 
         // Remove typevars substituted
         csig.typevars.node = csig
@@ -261,7 +266,7 @@ impl UDecl {
     }
 }
 
-impl<N> IntoIterator for Decls<N> {
+impl<N: ExpLiteral> IntoIterator for Decls<N> {
     type Item = Decl<N>;
     type IntoIter = std::vec::IntoIter<Decl<N>>;
 
@@ -270,7 +275,7 @@ impl<N> IntoIterator for Decls<N> {
     }
 }
 
-impl<N> FromIterator<Decl<N>> for Decls<N> {
+impl<N: ExpLiteral> FromIterator<Decl<N>> for Decls<N> {
     fn from_iter<I: IntoIterator<Item = Decl<N>>>(iter: I) -> Self {
         Decls(iter.into_iter().collect())
     }
@@ -394,17 +399,20 @@ impl CBody {
     }
 }
 
-/// Traversable1 instance for Body (N)
-impl<N: Clone> ToTraversal1<N> for Body<N> {
-    type Output<Z> = Body<Z>;
-    fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Body<Z>, E> {
+impl<N: ExpLiteral> ExpTraversal<N> for Body<N> {
+    type Output<M: ExpLiteral> = Body<M>;
+    fn traverse_exp<M: ExpLiteral, E>(
+        self,
+        literal: &mut dyn FnMut(N) -> Result<M, E>,
+        size: &mut dyn FnMut(N::Size) -> Result<M::Size, E>,
+    ) -> Result<Body<M>, E> {
         match self {
             Body::Proto { relation, body } => Ok(Body::Proto {
-                relation: relation.traverse1(f)?,
-                body: body.map(|b| b.traverse1(f)).transpose()?,
+                relation: relation.traverse_exp(literal, size)?,
+                body: body.map(|b| b.traverse_exp(literal, size)).transpose()?,
             }),
             Body::Func { body } => Ok(Body::Func {
-                body: body.map(|b| b.traverse1(f)).transpose()?,
+                body: body.map(|b| b.traverse_exp(literal, size)).transpose()?,
             }),
             Body::TypeAlias => Ok(Body::TypeAlias),
         }
@@ -430,10 +438,10 @@ impl TidSubst for CBody {
     }
 }
 
-impl<N: Clone> RangeTraversal<N> for Body<N> {
+impl<N: ExpLiteral> RangeTraversal<N::Size> for Body<N> {
     fn range_traverse<E>(
         self,
-        f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>,
+        f: &mut dyn FnMut(Range<N::Size>) -> Result<Range<N::Size>, E>,
     ) -> Result<Self, E> {
         match self {
             Body::Proto { relation, body } => Ok(Body::Proto {
@@ -448,17 +456,17 @@ impl<N: Clone> RangeTraversal<N> for Body<N> {
     }
 }
 
-impl<N: Clone> TypeInline<N> for Body<N> {
-    fn type_inline(self, _ctx: &Ctx<Tid, GTyp<N>>) -> Self {
+impl<N: ExpLiteral> TypeInline<N::Size> for Body<N> {
+    fn type_inline(self, _ctx: &Ctx<Tid, GTyp<N::Size>>) -> Self {
         self
     }
 }
 
-impl<N: Clone> TypeInline<N> for Decl<N>
+impl<N: ExpLiteral> TypeInline<N::Size> for Decl<N>
 where
-    Sig<N>: TypeInline<N>,
+    Sig<N::Size>: TypeInline<N::Size>,
 {
-    fn type_inline(self, ctx: &Ctx<Tid, GTyp<N>>) -> Self {
+    fn type_inline(self, ctx: &Ctx<Tid, GTyp<N::Size>>) -> Self {
         Decl {
             sig: self.sig.type_inline(ctx),
             body: self.body.type_inline(ctx),
@@ -468,7 +476,10 @@ where
 
 /// `where relation { body }` for a protocol, `{ body }` for a function. `{}` prints on one
 /// line; `{:#}` puts the body's statements on their own lines, indented.
-impl<N: fmt::Display> fmt::Display for Body<N> {
+impl<N: ExpLiteral + fmt::Display> fmt::Display for Body<N>
+where
+    N::Size: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let block = |f: &mut fmt::Formatter<'_>, body: &Option<Spanned<Exp<N>>>| match body {
             None => f.write_str("{}"),
@@ -494,14 +505,20 @@ impl<N: fmt::Display> fmt::Display for Body<N> {
 }
 
 /// Source syntax; `{:#}` prints the body on several lines.
-impl<N: fmt::Display> fmt::Display for Decl<N> {
+impl<N: ExpLiteral + fmt::Display> fmt::Display for Decl<N>
+where
+    N::Size: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write_decl(f, &self.sig, &self.body)
     }
 }
 
 /// One declaration per line with `{:#}`; space-separated with `{}`.
-impl<N: fmt::Display> fmt::Display for Decls<N> {
+impl<N: ExpLiteral + fmt::Display> fmt::Display for Decls<N>
+where
+    N::Size: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (i, decl) in self.0.iter().enumerate() {
             if i > 0 {
@@ -514,11 +531,14 @@ impl<N: fmt::Display> fmt::Display for Decls<N> {
 }
 
 /// `proto`/`fn`, the signature, and the body, in `f`'s one-line or multi-line mode.
-pub(crate) fn write_decl<N: fmt::Display>(
+pub(crate) fn write_decl<N: ExpLiteral + fmt::Display>(
     f: &mut fmt::Formatter<'_>,
-    sig: &Sig<N>,
+    sig: &Sig<N::Size>,
     body: &Body<N>,
-) -> fmt::Result {
+) -> fmt::Result
+where
+    N::Size: fmt::Display,
+{
     let keyword = if body.is_proto() { "proto" } else { "fn" };
     if f.alternate() {
         write!(f, "{keyword} {sig} {body:#}")

@@ -1,3 +1,4 @@
+use num::BigUint;
 use share::Ctx;
 use std::fmt;
 use std::ops::Index;
@@ -9,6 +10,23 @@ use crate::ast::range::{Range, RangeTraversal};
 use crate::ast::spanned::Spanned;
 use crate::id::{Tid, TidSubst, Vid};
 use share::Set;
+
+/// The carrier of an [`Exp`]'s numeric literals, paired with the size type of its ranges
+/// and evaluation selectors: symbolic [`Size`] for both before concretization, a
+/// full-magnitude [`BigUint`] literal with machine-sized `usize` ranges afterwards.
+pub trait ExpLiteral: Clone {
+    /// Representation of the sizes in ranges and `eval<range>` selectors.
+    type Size: Clone + Eq + Ord + fmt::Debug;
+    /// The small compiler-synthesized literal `value`.
+    fn lit(value: usize) -> Self;
+}
+
+impl ExpLiteral for BigUint {
+    type Size = usize;
+    fn lit(value: usize) -> Self {
+        value.into()
+    }
+}
 
 /// Represents binary operations in the Zippel language.
 /// Each variant corresponds to a different kind of binary operation that can be performed on arithmetic expressions.
@@ -80,9 +98,9 @@ pub enum BinOp {
 }
 
 /// Represents arithmetic expressions in the Zippel language.
-/// It is parameterized by types `N` representing the sizes of ranges, indices etc
+/// It is parameterized by the literal carrier `N`; ranges and selectors use `N::Size`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Exp<N> {
+pub enum Exp<N: ExpLiteral> {
     ///     Numeric literal
     ///     **Zippel Code:**
     ///     ```zippel
@@ -139,7 +157,7 @@ pub enum Exp<N> {
     /// ```
     Evaluate(
         Box<Spanned<Exp<N>>>,
-        Option<Range<N>>,
+        Option<Range<N::Size>>,
         Option<Box<Spanned<Exp<N>>>>,
     ),
 
@@ -182,7 +200,7 @@ pub enum Exp<N> {
     ///     ```zippel
     ///     let r = 0..5;
     ///     ```
-    Range(Range<N>),
+    Range(Range<N::Size>),
 
     ///     Map comprehension
     ///     **Zippel Code:**
@@ -307,114 +325,152 @@ pub trait FreeVars {
 /// A sequence of expressions: a vector literal's elements, a call's actual
 /// arguments, or a statement block whose value is its last expression.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Exps<N>(pub Vec<Spanned<Exp<N>>>);
+pub struct Exps<N: ExpLiteral>(pub Vec<Spanned<Exp<N>>>);
 
 /// Symbolic sized AST node, as parsed from input
 pub type UExp = Exp<Size>;
 /// Sequence of symbolically sized expressions.
 pub type UExps = Exps<Size>;
 
-/// Concrete size untyped AST node
-pub type CExp = Exp<usize>;
-/// Sequence of concretely sized expressions.
-pub type CExps = Exps<usize>;
+/// Concrete AST node: full-magnitude literals, machine-sized ranges
+pub type CExp = Exp<BigUint>;
+/// Sequence of concrete expressions.
+pub type CExps = Exps<BigUint>;
 
-/// How to traverse the first type parameter `N` for `Exp<N>`
-impl<N: Clone> ToTraversal1<N> for Exp<N> {
-    type Output<Z> = Exp<Z>;
-    fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Exp<Z>, E> {
-        match self {
-            Exp::Lit(x) => Ok(Exp::Lit(f(x)?)),
-            Exp::Unit => Ok(Exp::Unit),
-            Exp::Var(v) => Ok(Exp::Var(v)),
-            Exp::Interpolate(po, deref!(evals)) => Ok(Exp::Interpolate(
-                match po {
-                    None => None,
-                    Some(deref!(p)) => Some(Box::new(p.traverse1(f)?)),
-                },
-                Box::new(evals.traverse1(f)?),
-            )),
-            Exp::Poly(deref!(p)) => Ok(Exp::Poly(Box::new(p.traverse1(f)?))),
-            Exp::Evaluate(deref!(p), selector, ox) => Ok(Exp::Evaluate(
-                Box::new(p.traverse1(f)?),
-                match selector {
-                    None => None,
-                    Some(r) => Some(r.traverse1(f)?),
-                },
-                match ox {
-                    None => None,
-                    Some(deref!(x)) => Some(Box::new(x.traverse1(f)?)),
-                },
-            )),
-            Exp::Coef(deref!(p)) => Ok(Exp::Coef(Box::new(p.traverse1(f)?))),
-            Exp::Mle(deref!(p)) => Ok(Exp::Mle(Box::new(p.traverse1(f)?))),
-            Exp::Pair(deref!(x), deref!(y)) => Ok(Exp::Pair(
-                Box::new(x.traverse1(f)?),
-                Box::new(y.traverse1(f)?),
-            )),
-            Exp::Vec(v) => Ok(Exp::Vec(v.traverse1(f)?)),
-            Exp::App(x, ts) => Ok(Exp::App(x, ts.traverse1(f)?)),
-            Exp::Bin(op, deref!(x), deref!(y)) => Ok(Exp::Bin(
-                op,
-                Box::new(x.traverse1(f)?),
-                Box::new(y.traverse1(f)?),
-            )),
-            Exp::Neg(deref!(x)) => Ok(Exp::Neg(Box::new(x.traverse1(f)?))),
-            Exp::Map(deref!(x), id, deref!(r)) => Ok(Exp::Map(
-                Box::new(x.traverse1(f)?),
-                id,
-                Box::new(r.traverse1(f)?),
-            )),
-            Exp::Reduce(op, deref!(x)) => Ok(Exp::Reduce(op, Box::new(x.traverse1(f)?))),
-            Exp::Challenge(t, b) => Ok(Exp::Challenge(t, b)),
-            Exp::Random(t, b) => Ok(Exp::Random(t, b)),
-            Exp::Range(r) => Ok(Exp::Range(r.traverse1(f)?)),
-            Exp::Ram(deref!(x), deref!(i)) => Ok(Exp::Ram(
-                Box::new(x.traverse1(f)?),
-                Box::new(i.traverse1(f)?),
-            )),
-            Exp::Let(x, deref!(a), b) => {
-                let b = match b {
-                    Some(b) => Some(Box::new((*b).traverse1(f)?)),
-                    None => None,
-                };
-                Ok(Exp::Let(x, Box::new(a.traverse1(f)?), b))
-            }
-            Exp::Log(x, deref!(a), b) => {
-                let b = match b {
-                    Some(b) => Some(Box::new((*b).traverse1(f)?)),
-                    None => None,
-                };
-                Ok(Exp::Log(x, Box::new(a.traverse1(f)?), b))
-            }
-            Exp::Assert(deref!(exp)) => Ok(Exp::Assert(Box::new(exp.traverse1(f)?))),
-            Exp::Verify(deref!(exp)) => Ok(Exp::Verify(Box::new(exp.traverse1(f)?))),
-            Exp::Fun(vars, deref!(body)) => Ok(Exp::Fun(vars, Box::new(body.traverse1(f)?))),
-            Exp::Record(fields) => {
-                let pairs: Vec<_> = fields
-                    .into_iter()
-                    .map(|(name, exp)| exp.traverse1(f).map(|new_exp| (name, new_exp)))
-                    .collect::<Result<_, _>>()?;
-                Ok(Exp::Record(Ctx::from_iter(pairs)))
-            }
-            Exp::Proj(deref!(exp), field) => Ok(Exp::Proj(Box::new(exp.traverse1(f)?), field)),
-            Exp::SetRecord(deref!(record), field, deref!(value)) => Ok(Exp::SetRecord(
-                Box::new(record.traverse1(f)?),
-                field,
-                Box::new(value.traverse1(f)?),
-            )),
-        }
+/// Maps an expression's literal carrier and its size carrier separately: literals with
+/// `literal`, range and selector sizes with `size`.
+pub trait ExpTraversal<N: ExpLiteral>: Sized {
+    /// The same shape over the literal carrier `M`.
+    type Output<M: ExpLiteral>;
+    /// Rebuilds `self` over `M`, short-circuiting on the first error.
+    ///
+    /// # Errors
+    /// Returns the first `E` produced by `literal` or `size`.
+    fn traverse_exp<M: ExpLiteral, E>(
+        self,
+        literal: &mut dyn FnMut(N) -> Result<M, E>,
+        size: &mut dyn FnMut(N::Size) -> Result<M::Size, E>,
+    ) -> Result<Self::Output<M>, E>;
+}
+
+impl<T: ExpTraversal<N>, N: ExpLiteral> ExpTraversal<N> for Spanned<T> {
+    type Output<M: ExpLiteral> = Spanned<T::Output<M>>;
+    fn traverse_exp<M: ExpLiteral, E>(
+        self,
+        literal: &mut dyn FnMut(N) -> Result<M, E>,
+        size: &mut dyn FnMut(N::Size) -> Result<M::Size, E>,
+    ) -> Result<Self::Output<M>, E> {
+        Ok(Spanned::new(
+            self.node.traverse_exp(literal, size)?,
+            self.span,
+        ))
     }
 }
 
-/// How to traverse the first type parameter `N` for `Exps<N>`
-impl<N: Clone> ToTraversal1<N> for Exps<N> {
-    type Output<Z> = Exps<Z>;
-    fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Exps<Z>, E> {
+impl<N: ExpLiteral> ExpTraversal<N> for Exp<N> {
+    type Output<M: ExpLiteral> = Exp<M>;
+    fn traverse_exp<M: ExpLiteral, E>(
+        self,
+        literal: &mut dyn FnMut(N) -> Result<M, E>,
+        size: &mut dyn FnMut(N::Size) -> Result<M::Size, E>,
+    ) -> Result<Exp<M>, E> {
+        macro_rules! go {
+            ($e:expr) => {
+                Box::new((*$e).traverse_exp(literal, size)?)
+            };
+        }
+        Ok(match self {
+            Exp::Lit(x) => Exp::Lit(literal(x)?),
+            Exp::Unit => Exp::Unit,
+            Exp::Var(v) => Exp::Var(v),
+            Exp::Interpolate(po, evals) => {
+                let po = match po {
+                    None => None,
+                    Some(p) => Some(go!(p)),
+                };
+                Exp::Interpolate(po, go!(evals))
+            }
+            Exp::Poly(p) => Exp::Poly(go!(p)),
+            Exp::Evaluate(p, selector, ox) => {
+                let p = go!(p);
+                let selector = selector.map(|r| r.traverse1(size)).transpose()?;
+                let ox = match ox {
+                    None => None,
+                    Some(x) => Some(go!(x)),
+                };
+                Exp::Evaluate(p, selector, ox)
+            }
+            Exp::Coef(p) => Exp::Coef(go!(p)),
+            Exp::Mle(p) => Exp::Mle(go!(p)),
+            Exp::Pair(x, y) => {
+                let x = go!(x);
+                Exp::Pair(x, go!(y))
+            }
+            Exp::Vec(v) => Exp::Vec(v.traverse_exp(literal, size)?),
+            Exp::App(x, ts) => Exp::App(x, ts.traverse_exp(literal, size)?),
+            Exp::Bin(op, x, y) => {
+                let x = go!(x);
+                Exp::Bin(op, x, go!(y))
+            }
+            Exp::Neg(x) => Exp::Neg(go!(x)),
+            Exp::Map(x, id, r) => {
+                let x = go!(x);
+                Exp::Map(x, id, go!(r))
+            }
+            Exp::Reduce(op, x) => Exp::Reduce(op, go!(x)),
+            Exp::Challenge(t, b) => Exp::Challenge(t, b),
+            Exp::Random(t, b) => Exp::Random(t, b),
+            Exp::Range(r) => Exp::Range(r.traverse1(size)?),
+            Exp::Ram(x, i) => {
+                let x = go!(x);
+                Exp::Ram(x, go!(i))
+            }
+            Exp::Let(x, a, b) => {
+                let a = go!(a);
+                let b = match b {
+                    Some(b) => Some(go!(b)),
+                    None => None,
+                };
+                Exp::Let(x, a, b)
+            }
+            Exp::Log(x, a, b) => {
+                let a = go!(a);
+                let b = match b {
+                    Some(b) => Some(go!(b)),
+                    None => None,
+                };
+                Exp::Log(x, a, b)
+            }
+            Exp::Assert(exp) => Exp::Assert(go!(exp)),
+            Exp::Verify(exp) => Exp::Verify(go!(exp)),
+            Exp::Fun(vars, body) => Exp::Fun(vars, go!(body)),
+            Exp::Record(fields) => {
+                let pairs: Vec<_> = fields
+                    .into_iter()
+                    .map(|(name, exp)| exp.traverse_exp(literal, size).map(|e| (name, e)))
+                    .collect::<Result<_, _>>()?;
+                Exp::Record(Ctx::from_iter(pairs))
+            }
+            Exp::Proj(exp, field) => Exp::Proj(go!(exp), field),
+            Exp::SetRecord(record, field, value) => {
+                let record = go!(record);
+                Exp::SetRecord(record, field, go!(value))
+            }
+        })
+    }
+}
+
+impl<N: ExpLiteral> ExpTraversal<N> for Exps<N> {
+    type Output<M: ExpLiteral> = Exps<M>;
+    fn traverse_exp<M: ExpLiteral, E>(
+        self,
+        literal: &mut dyn FnMut(N) -> Result<M, E>,
+        size: &mut dyn FnMut(N::Size) -> Result<M::Size, E>,
+    ) -> Result<Exps<M>, E> {
         Ok(Exps(
             self.0
                 .into_iter()
-                .map(|x| x.traverse1(f))
+                .map(|x| x.traverse_exp(literal, size))
                 .collect::<Result<_, _>>()?,
         ))
     }
@@ -548,10 +604,10 @@ impl FreeVars for CExps {
 }
 
 /// How to traverse [Range] inside an [Exp]
-impl<N: Clone> RangeTraversal<N> for Exp<N> {
+impl<N: ExpLiteral> RangeTraversal<N::Size> for Exp<N> {
     fn range_traverse<E>(
         self,
-        f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>,
+        f: &mut dyn FnMut(Range<N::Size>) -> Result<Range<N::Size>, E>,
     ) -> Result<Self, E> {
         match self {
             Exp::Range(r) => Ok(Exp::Range(f(r)?)),
@@ -633,16 +689,16 @@ impl<N: Clone> RangeTraversal<N> for Exp<N> {
     }
 }
 
-impl<N: Clone> RangeTraversal<N> for Exps<N> {
+impl<N: ExpLiteral> RangeTraversal<N::Size> for Exps<N> {
     fn range_traverse<E>(
         self,
-        f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>,
+        f: &mut dyn FnMut(Range<N::Size>) -> Result<Range<N::Size>, E>,
     ) -> Result<Self, E> {
         Ok(Exps(self.0.traverse1(&mut |x| x.range_traverse(f))?))
     }
 }
 
-impl<N> Exps<N> {
+impl<N: ExpLiteral> Exps<N> {
     /// Borrowing iterator over the spanned elements, in source order.
     pub fn iter(&self) -> std::slice::Iter<'_, Spanned<Exp<N>>> {
         self.0.iter()
@@ -668,7 +724,7 @@ impl<N> Exps<N> {
     }
 }
 
-impl<N> IntoIterator for Exps<N> {
+impl<N: ExpLiteral> IntoIterator for Exps<N> {
     type Item = Spanned<Exp<N>>;
     type IntoIter = std::vec::IntoIter<Spanned<Exp<N>>>;
     fn into_iter(self) -> Self::IntoIter {
@@ -676,19 +732,19 @@ impl<N> IntoIterator for Exps<N> {
     }
 }
 
-impl<N> FromIterator<Spanned<Exp<N>>> for Exps<N> {
+impl<N: ExpLiteral> FromIterator<Spanned<Exp<N>>> for Exps<N> {
     fn from_iter<I: IntoIterator<Item = Spanned<Exp<N>>>>(iter: I) -> Self {
         Exps(iter.into_iter().collect())
     }
 }
 
-impl<const N: usize, T> From<[Spanned<Exp<T>>; N]> for Exps<T> {
+impl<const N: usize, T: ExpLiteral> From<[Spanned<Exp<T>>; N]> for Exps<T> {
     fn from(arr: [Spanned<Exp<T>>; N]) -> Self {
         Exps(arr.into())
     }
 }
 
-impl<T> Index<usize> for Exps<T> {
+impl<T: ExpLiteral> Index<usize> for Exps<T> {
     type Output = Spanned<Exp<T>>;
 
     fn index(&self, index: usize) -> &Self::Output {
@@ -696,7 +752,7 @@ impl<T> Index<usize> for Exps<T> {
     }
 }
 
-impl<N> Exp<N> {
+impl<N: ExpLiteral> Exp<N> {
     /// The direct subexpressions of this expression, in source order.
     pub fn children(&self) -> Vec<&Spanned<Exp<N>>> {
         match self {
@@ -827,7 +883,7 @@ impl BinOp {
     }
 
     /// Whether `lhs` needs parentheses as the left operand of `self` to parse back unchanged.
-    pub fn lhs_needs_paren<N>(&self, lhs: &Exp<N>) -> bool {
+    pub fn lhs_needs_paren<N: ExpLiteral>(&self, lhs: &Exp<N>) -> bool {
         match lhs {
             // `-x op y` parses as `(-x) op y` only when `op` binds looser than prefix minus.
             Exp::Neg(_) => self.precedence() >= NEG_PRECEDENCE,
@@ -841,7 +897,7 @@ impl BinOp {
     }
 
     /// Whether `rhs` needs parentheses as the right operand of `self` to parse back unchanged.
-    pub fn rhs_needs_paren<N>(&self, rhs: &Exp<N>) -> bool {
+    pub fn rhs_needs_paren<N: ExpLiteral>(&self, rhs: &Exp<N>) -> bool {
         match rhs {
             // Prefix minus is allowed in any operand position.
             Exp::Neg(_) => false,
@@ -864,7 +920,7 @@ impl BinOp {
     }
 }
 
-impl<N> Exp<N> {
+impl<N: ExpLiteral> Exp<N> {
     /// Whether `self` must be parenthesized as the operand of prefix `-`: a binary operator
     /// that binds looser than `-` would otherwise take `-` into its left operand.
     pub fn needs_paren_under_neg(&self) -> bool {
@@ -899,7 +955,10 @@ impl fmt::Display for BinOp {
 /// A precision limits the depth for use in messages: `{:.3}` prints three levels of the tree,
 /// writes deeper subexpressions as `…` (variables, literals, and ranges are always printed),
 /// and shortens lists to their first [`MAX_LISTED`] elements followed by `…`.
-impl<N: fmt::Display> fmt::Display for Exp<N> {
+impl<N: ExpLiteral + fmt::Display> fmt::Display for Exp<N>
+where
+    N::Size: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if f.precision() == Some(0) && !self.is_leaf() {
             return f.write_str("…");
@@ -992,7 +1051,7 @@ impl<N: fmt::Display> fmt::Display for Exp<N> {
 /// How many elements of a list a depth-limited [`Exp`] display shows before `…`.
 pub const MAX_LISTED: usize = 4;
 
-impl<N> Exp<N> {
+impl<N: ExpLiteral> Exp<N> {
     /// Whether `self` prints in full at any depth.
     fn is_leaf(&self) -> bool {
         matches!(
@@ -1016,12 +1075,12 @@ struct Mode {
 
 impl Mode {
     /// A child of the expression printed in this mode.
-    fn sub<N>(self, e: &Spanned<Exp<N>>) -> Sub<'_, N> {
+    fn sub<N: ExpLiteral>(self, e: &Spanned<Exp<N>>) -> Sub<'_, N> {
         Sub::new(&e.node, self.alternate, self.precision)
     }
 
     /// A list of children of the expression printed in this mode.
-    fn list<N>(self, exps: &Exps<N>) -> List<'_, N> {
+    fn list<N: ExpLiteral>(self, exps: &Exps<N>) -> List<'_, N> {
         List {
             exps,
             alternate: self.alternate,
@@ -1031,13 +1090,13 @@ impl Mode {
 }
 
 /// A child expression, printed one level shallower than its parent and in its mode.
-struct Sub<'a, N> {
+struct Sub<'a, N: ExpLiteral> {
     exp: &'a Exp<N>,
     alternate: bool,
     precision: Option<usize>,
 }
 
-impl<'a, N> Sub<'a, N> {
+impl<'a, N: ExpLiteral> Sub<'a, N> {
     /// `exp` as a child of a parent printed with `alternate` and depth `precision`.
     fn new(exp: &'a Exp<N>, alternate: bool, precision: Option<usize>) -> Self {
         Sub {
@@ -1048,7 +1107,10 @@ impl<'a, N> Sub<'a, N> {
     }
 }
 
-impl<N: fmt::Display> fmt::Display for Sub<'_, N> {
+impl<N: ExpLiteral + fmt::Display> fmt::Display for Sub<'_, N>
+where
+    N::Size: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match (self.alternate, self.precision) {
             (false, None) => write!(f, "{}", self.exp),
@@ -1060,13 +1122,16 @@ impl<N: fmt::Display> fmt::Display for Sub<'_, N> {
 }
 
 /// Comma-separated child expressions; with a depth limit, the first [`MAX_LISTED`] then `…`.
-struct List<'a, N> {
+struct List<'a, N: ExpLiteral> {
     exps: &'a Exps<N>,
     alternate: bool,
     precision: Option<usize>,
 }
 
-impl<N: fmt::Display> fmt::Display for List<'_, N> {
+impl<N: ExpLiteral + fmt::Display> fmt::Display for List<'_, N>
+where
+    N::Size: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let limit = self.precision.map_or(usize::MAX, |_| MAX_LISTED);
         for (i, e) in self.exps.0.iter().enumerate() {
@@ -1083,10 +1148,13 @@ impl<N: fmt::Display> fmt::Display for List<'_, N> {
 }
 
 /// Prints the statements after the first in a chain.
-fn rest<N: fmt::Display>(
+fn rest<N: ExpLiteral + fmt::Display>(
     f: &mut fmt::Formatter<'_>,
     e: &Option<Box<Spanned<Exp<N>>>>,
-) -> fmt::Result {
+) -> fmt::Result
+where
+    N::Size: fmt::Display,
+{
     let Some(e) = e else { return Ok(()) };
     let sep = if f.alternate() { "\n" } else { " " };
     // The chain continues at the same depth: its statements are siblings, not children.
@@ -1098,7 +1166,10 @@ fn rest<N: fmt::Display>(
     write!(f, "{sep}{next}")
 }
 
-impl<N: fmt::Display> fmt::Display for Exps<N> {
+impl<N: ExpLiteral + fmt::Display> fmt::Display for Exps<N>
+where
+    N::Size: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let list = List {
             exps: self,

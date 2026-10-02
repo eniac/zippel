@@ -1,6 +1,8 @@
+use num::{BigUint, One, ToPrimitive, Zero};
 use std::fmt;
 use thiserror::Error;
 
+use crate::ast::exp::ExpLiteral;
 use crate::ast::spanned::Spanned;
 use crate::id::Tid;
 use share::{Ctx, Set};
@@ -16,8 +18,9 @@ pub enum Size {
     /// A size-type variable, resolved from the substitution context at
     /// concretization time.
     Var(Tid), // N
-    /// A literal size known at parse time.
-    Lit(u32), // 15
+    /// A literal known at parse time. Expression literals keep their full
+    /// magnitude; size positions only admit values that fit in `usize`.
+    Lit(BigUint), // 15
     /// Sum of two sizes.
     Add(Box<Spanned<Size>>, Box<Spanned<Size>>), // A + B
     /// Difference of two sizes; must not underflow when evaluated.
@@ -46,6 +49,22 @@ pub enum EvalError {
     /// A size-type variable is not bound in the substitution context.
     #[error("Variable not found: {0}")]
     VariableNotFound(Tid),
+    /// A literal used as a size does not fit in `usize`.
+    #[error("Size exceeds usize range: {0}")]
+    SizeOutOfRange(Size),
+    /// Size arithmetic overflowed `usize`.
+    #[error("Size arithmetic overflow: {0}")]
+    SizeOverflow(Size),
+    /// An exponent does not fit in `u32`.
+    #[error("Size exponent exceeds u32 range: {0}")]
+    ExponentOutOfRange(Size),
+}
+
+impl ExpLiteral for Size {
+    type Size = Size;
+    fn lit(value: usize) -> Self {
+        Size::Lit(value.into())
+    }
 }
 
 impl Size {
@@ -78,6 +97,11 @@ impl Size {
         child < parent || (child == parent && !self.is_right_assoc())
     }
 
+    /// Whether this is the literal `1`, the implicit dimension of `Uni`/`Mle` sugar.
+    pub fn is_lit_one(&self) -> bool {
+        matches!(self, Size::Lit(n) if n.is_one())
+    }
+
     /// The size-type variables this expression depends on.
     pub fn free_vars(&self) -> Set<Tid> {
         match self {
@@ -92,31 +116,70 @@ impl Size {
     }
 
     /// Evaluates this size expression to a concrete `usize` under the
-    /// size-variable bindings `ctx`.
+    /// size-variable bindings `ctx`, for type shapes and ranges.
     ///
     /// # Errors
     /// Returns `EvalError::VariableNotFound` for an unbound variable,
     /// `EvalError::UnderflowBySubtraction` when a subtraction would go below
-    /// zero, and `EvalError::DivisionByZero` for a zero divisor.
-    ///
-    /// # Panics
-    /// Panics on arithmetic overflow of addition, multiplication, or
-    /// exponentiation when overflow checks are enabled; exponents larger than
-    /// `u32::MAX` are truncated.
+    /// zero, `EvalError::DivisionByZero` for a zero divisor,
+    /// `EvalError::SizeOutOfRange` for a literal above `usize::MAX`,
+    /// `EvalError::SizeOverflow` when arithmetic overflows `usize`, and
+    /// `EvalError::ExponentOutOfRange` for an exponent above `u32::MAX`.
     pub fn eval(&self, ctx: &Ctx<Tid, usize>) -> Result<usize, EvalError> {
+        let overflow = || EvalError::SizeOverflow(self.clone());
         match self {
             Size::Var(id) => ctx
                 .get(id)
                 .map_or(Err(EvalError::VariableNotFound(id.clone())), |x| Ok(*x)),
-            Size::Lit(i) => Ok(*i as usize),
-            Size::Add(a, b) => {
+            Size::Lit(i) => i
+                .to_usize()
+                .ok_or_else(|| EvalError::SizeOutOfRange(self.clone())),
+            Size::Add(a, b) => a
+                .node
+                .eval(ctx)?
+                .checked_add(b.node.eval(ctx)?)
+                .ok_or_else(overflow),
+            Size::Sub(a, b) => a
+                .node
+                .eval(ctx)?
+                .checked_sub(b.node.eval(ctx)?)
+                .ok_or_else(|| EvalError::UnderflowBySubtraction(a.node.clone(), b.node.clone())),
+            Size::Mul(a, b) => a
+                .node
+                .eval(ctx)?
+                .checked_mul(b.node.eval(ctx)?)
+                .ok_or_else(overflow),
+            Size::Div(a, b) => a
+                .node
+                .eval(ctx)?
+                .checked_div(b.node.eval(ctx)?)
+                .ok_or_else(|| EvalError::DivisionByZero(a.node.clone(), b.node.clone())),
+            Size::Pow(a, b) => {
                 let x = a.node.eval(ctx)?;
-                let y = b.node.eval(ctx)?;
-                Ok(x + y)
+                let y = u32::try_from(b.node.eval(ctx)?)
+                    .map_err(|_| EvalError::ExponentOutOfRange(self.clone()))?;
+                x.checked_pow(y).ok_or_else(overflow)
             }
+        }
+    }
+
+    /// Evaluates this size expression exactly, for a numeric expression
+    /// literal: no `usize` bound applies, so the full magnitude survives.
+    ///
+    /// # Errors
+    /// As [`Size::eval`], except that only subtraction underflow, division by
+    /// zero, unbound variables and exponents above `u32::MAX` fail.
+    pub fn eval_literal(&self, ctx: &Ctx<Tid, usize>) -> Result<BigUint, EvalError> {
+        match self {
+            Size::Var(id) => ctx
+                .get(id)
+                .map(|x| BigUint::from(*x))
+                .ok_or_else(|| EvalError::VariableNotFound(id.clone())),
+            Size::Lit(i) => Ok(i.clone()),
+            Size::Add(a, b) => Ok(a.node.eval_literal(ctx)? + b.node.eval_literal(ctx)?),
             Size::Sub(a, b) => {
-                let x = a.node.eval(ctx)?;
-                let y = b.node.eval(ctx)?;
+                let x = a.node.eval_literal(ctx)?;
+                let y = b.node.eval_literal(ctx)?;
                 if x < y {
                     Err(EvalError::UnderflowBySubtraction(
                         a.node.clone(),
@@ -126,21 +189,24 @@ impl Size {
                     Ok(x - y)
                 }
             }
-            Size::Mul(a, b) => {
-                let x = a.node.eval(ctx)?;
-                let y = b.node.eval(ctx)?;
-                Ok(x * y)
-            }
+            Size::Mul(a, b) => Ok(a.node.eval_literal(ctx)? * b.node.eval_literal(ctx)?),
             Size::Div(a, b) => {
-                let x = a.node.eval(ctx)?;
-                let y = b.node.eval(ctx)?;
-                x.checked_div(y)
-                    .ok_or_else(|| EvalError::DivisionByZero(a.node.clone(), b.node.clone()))
+                let x = a.node.eval_literal(ctx)?;
+                let y = b.node.eval_literal(ctx)?;
+                if y.is_zero() {
+                    Err(EvalError::DivisionByZero(a.node.clone(), b.node.clone()))
+                } else {
+                    Ok(x / y)
+                }
             }
             Size::Pow(a, b) => {
-                let x = a.node.eval(ctx)?;
-                let y = b.node.eval(ctx)?;
-                Ok(x.pow(y as u32))
+                let x = a.node.eval_literal(ctx)?;
+                let y = b
+                    .node
+                    .eval_literal(ctx)?
+                    .to_u32()
+                    .ok_or_else(|| EvalError::ExponentOutOfRange(self.clone()))?;
+                Ok(x.pow(y))
             }
         }
     }
@@ -191,7 +257,7 @@ mod tests {
                 let variant = u.int_in_range(0..=max_variant)?;
                 Ok(match variant {
                     0 => Size::Var(u.arbitrary()?),
-                    1 => Size::Lit(u.arbitrary()?),
+                    1 => Size::Lit(u.arbitrary::<u32>()?.into()),
                     2 => Size::Add(
                         Box::new(Spanned::dummy(arb(u, depth + 1)?)),
                         Box::new(Spanned::dummy(arb(u, depth + 1)?)),
@@ -230,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_free_vars_lit() {
-        let size = Size::Lit(42);
+        let size = Size::lit(42);
         let vars = size.free_vars();
         assert!(vars.is_empty());
     }
@@ -252,7 +318,7 @@ mod tests {
         let size = Size::Mul(
             Box::new(Spanned::dummy(Size::Add(
                 Box::new(Spanned::dummy(varstr("N"))),
-                Box::new(Spanned::dummy(Size::Lit(2))),
+                Box::new(Spanned::dummy(Size::lit(2))),
             ))),
             Box::new(Spanned::dummy(Size::Div(
                 Box::new(Spanned::dummy(varstr("M"))),
@@ -269,7 +335,7 @@ mod tests {
     // Test eval
     #[test]
     fn test_eval_lit() {
-        let size = Size::Lit(42);
+        let size = Size::lit(42);
         let ctx = Ctx::new();
         assert_eq!(size.eval(&ctx).unwrap(), 42);
     }
@@ -293,8 +359,8 @@ mod tests {
     #[test]
     fn test_eval_add() {
         let size = Size::Add(
-            Box::new(Spanned::dummy(Size::Lit(5))),
-            Box::new(Spanned::dummy(Size::Lit(10))),
+            Box::new(Spanned::dummy(Size::lit(5))),
+            Box::new(Spanned::dummy(Size::lit(10))),
         );
         let ctx = Ctx::new();
         assert_eq!(size.eval(&ctx).unwrap(), 15);
@@ -303,8 +369,8 @@ mod tests {
     #[test]
     fn test_eval_sub() {
         let size = Size::Sub(
-            Box::new(Spanned::dummy(Size::Lit(10))),
-            Box::new(Spanned::dummy(Size::Lit(3))),
+            Box::new(Spanned::dummy(Size::lit(10))),
+            Box::new(Spanned::dummy(Size::lit(3))),
         );
         let ctx = Ctx::new();
         assert_eq!(size.eval(&ctx).unwrap(), 7);
@@ -313,8 +379,8 @@ mod tests {
     #[test]
     fn test_eval_sub_underflow() {
         let size = Size::Sub(
-            Box::new(Spanned::dummy(Size::Lit(3))),
-            Box::new(Spanned::dummy(Size::Lit(10))),
+            Box::new(Spanned::dummy(Size::lit(3))),
+            Box::new(Spanned::dummy(Size::lit(10))),
         );
         let ctx = Ctx::new();
         let result = size.eval(&ctx);
@@ -327,8 +393,8 @@ mod tests {
     #[test]
     fn test_eval_mul() {
         let size = Size::Mul(
-            Box::new(Spanned::dummy(Size::Lit(5))),
-            Box::new(Spanned::dummy(Size::Lit(10))),
+            Box::new(Spanned::dummy(Size::lit(5))),
+            Box::new(Spanned::dummy(Size::lit(10))),
         );
         let ctx = Ctx::new();
         assert_eq!(size.eval(&ctx).unwrap(), 50);
@@ -337,8 +403,8 @@ mod tests {
     #[test]
     fn test_eval_div() {
         let size = Size::Div(
-            Box::new(Spanned::dummy(Size::Lit(20))),
-            Box::new(Spanned::dummy(Size::Lit(4))),
+            Box::new(Spanned::dummy(Size::lit(20))),
+            Box::new(Spanned::dummy(Size::lit(4))),
         );
         let ctx = Ctx::new();
         assert_eq!(size.eval(&ctx).unwrap(), 5);
@@ -347,8 +413,8 @@ mod tests {
     #[test]
     fn test_eval_div_zero() {
         let size = Size::Div(
-            Box::new(Spanned::dummy(Size::Lit(10))),
-            Box::new(Spanned::dummy(Size::Lit(0))),
+            Box::new(Spanned::dummy(Size::lit(10))),
+            Box::new(Spanned::dummy(Size::lit(0))),
         );
         let ctx = Ctx::new();
         let result = size.eval(&ctx);
@@ -358,8 +424,8 @@ mod tests {
     #[test]
     fn test_eval_pow() {
         let size = Size::Pow(
-            Box::new(Spanned::dummy(Size::Lit(2))),
-            Box::new(Spanned::dummy(Size::Lit(5))),
+            Box::new(Spanned::dummy(Size::lit(2))),
+            Box::new(Spanned::dummy(Size::lit(5))),
         );
         let ctx = Ctx::new();
         assert_eq!(size.eval(&ctx).unwrap(), 32);
@@ -369,13 +435,24 @@ mod tests {
     fn test_eval_complex() {
         let size = Size::Mul(
             Box::new(Spanned::dummy(Size::Pow(
-                Box::new(Spanned::dummy(Size::Lit(2))),
+                Box::new(Spanned::dummy(Size::lit(2))),
                 Box::new(Spanned::dummy(varstr("N"))),
             ))),
-            Box::new(Spanned::dummy(Size::Lit(3))),
+            Box::new(Spanned::dummy(Size::lit(3))),
         );
         let mut ctx = Ctx::new();
         ctx.insert(&Tid::from("N"), &4);
         assert_eq!(size.eval(&ctx).unwrap(), 48); // 2^4 * 3 = 16 * 3 = 48
+    }
+
+    #[test]
+    fn test_eval_add_overflow() {
+        let size = Size::Add(
+            Box::new(Spanned::dummy(varstr("N"))),
+            Box::new(Spanned::dummy(Size::lit(1))),
+        );
+        let mut ctx = Ctx::new();
+        ctx.insert(&Tid::from("N"), &usize::MAX);
+        assert!(matches!(size.eval(&ctx), Err(EvalError::SizeOverflow(_))));
     }
 }

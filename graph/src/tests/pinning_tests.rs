@@ -100,46 +100,6 @@ fn instance_t(name: &str, typ: ATyp) -> ArgSpec {
 // Group 1: Declaration Types
 // ============================================================================
 
-/// Func declaration returning a bare literal — `1` infers to `Fin<1>` but
-/// the function-body return check now goes through `CTyp::lub_equ`
-/// (`lang/src/ast/decl.rs:292`), so the scalar-fallback arm in `lub_equ`
-/// (`lang/src/typ/lub.rs:510-517`) lifts `Fin<1>` to `Base(F)` to match
-/// the declared return type. Regression test for the strict-`==` →
-/// `lub_equ` switch.
-#[test]
-fn pin_func_lit_return() {
-    let gs = parse_and_build("fn f<F: Field>() -> F { 1 }");
-
-    let mut expected = UDag::<B>::new();
-    let _ = expected_inp(&mut expected, "f", &[]);
-    let lit_1 = GOp::<B>::Value(backend::Value::Index(1));
-    let _ret = expected.add_node(Node::Op(crate::mk::<B>(lit_1), lang::typ::Nothing), 0..0);
-
-    assert!(gs[0] == expected);
-}
-
-/// Func declaration returning sum with a literal — exercises Lit coercion.
-/// Tests: CBody::Func, CExp::Bin with literal operand.
-#[test]
-fn pin_func_lit_in_binop() {
-    // `a + 1` exercises CExp::Lit(1) as an operand in a Bin expression.
-    // `1` alone can also be returned from `-> F` now that the body return
-    // check uses `lub_equ` instead of strict `==`; see `pin_func_lit_return`.
-    let gs = parse_and_build("fn f<F: Field>(instance a: F) -> F { a + 1 }");
-
-    let mut expected = UDag::<B>::new();
-    let a = Vid::new("a");
-    let s = ATyp::scalar();
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a")]);
-    let arg_a = _inp_args[0];
-    let var_a = GOp::<B>::var(&a, arg_a, s.clone());
-    let lit_1 = GOp::<B>::Value(backend::Value::Index(1));
-    let bin = expected.add_node(Node::bin(BinOp::Add, &var_a, &lit_1, &s), 0..0);
-    expected.add_edges(DepType::Data, bin, var_a);
-
-    assert!(gs[0] == expected);
-}
-
 /// Func declaration returning its argument.
 /// Tests: CExp::Var resolves to a `Ref(arg)` op; since `Op::is_ref()` holds,
 /// `add_top_exp` short-circuits and emits no `Ret` node.

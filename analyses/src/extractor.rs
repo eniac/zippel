@@ -136,6 +136,7 @@ fn strip_verify_op<C: ArkConfig + HasOpFactory>(op: GOp<C>, result: &Var) -> GOp
         Op::Poly(v) => Op::Poly(mk(strip_verify_op(v.get().clone(), result))),
         Op::Mle(v) => Op::Mle(mk(strip_verify_op(v.get().clone(), result))),
         Op::Coef(v) => Op::Coef(mk(strip_verify_op(v.get().clone(), result))),
+        Op::ToScalar(v) => Op::ToScalar(mk(strip_verify_op(v.get().clone(), result))),
         Op::Ifft(v) => Op::Ifft(mk(strip_verify_op(v.get().clone(), result))),
         Op::Fft(v) => Op::Fft(mk(strip_verify_op(v.get().clone(), result))),
         other => other,

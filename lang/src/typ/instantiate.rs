@@ -231,7 +231,7 @@ impl Instantiation {
                 }
                 Ok(())
             }
-            (CTyp::Base(p), CTyp::Fin(_)) => {
+            (CTyp::Base(p), CTyp::Fin(_) | CTyp::FieldLiteral) => {
                 self.meet_literal(p).then_some(()).ok_or_else(mismatch)
             }
             _ => Err(mismatch()),

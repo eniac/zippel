@@ -284,6 +284,7 @@ impl<T: fmt::Display, N: fmt::Display> fmt::Display for Args<T, N> {
 
 #[test]
 fn arg_traversal() {
+    use crate::ast::ExpLiteral;
     let arg = GArg::new(
         Qualifier::Instance,
         Distribution::Uniform,
@@ -291,12 +292,12 @@ fn arg_traversal() {
         Typ::fin(Range {
             start: Spanned::dummy(Size::Div(
                 Box::new(Spanned::dummy(Size::Var(Tid::from("N")))),
-                Box::new(Spanned::dummy(Size::Lit(2))),
+                Box::new(Spanned::dummy(Size::lit(2))),
             )),
             step: None,
             end: Some(Spanned::dummy(Size::Mul(
                 Box::new(Spanned::dummy(Size::Var(Tid::from("N")))),
-                Box::new(Spanned::dummy(Size::Lit(2))),
+                Box::new(Spanned::dummy(Size::lit(2))),
             ))),
         }),
     );

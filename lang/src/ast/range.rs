@@ -361,12 +361,12 @@ mod tests {
 
     #[test]
     fn range_traversal() {
-        use crate::ast::Size;
+        use crate::ast::{ExpLiteral, Size};
         use crate::id::Tid;
         let r = Range {
             start: Spanned::dummy(Size::Var(Tid::from("N"))),
-            step: Some(Spanned::dummy(Size::Lit(2))),
-            end: Some(Spanned::dummy(Size::Lit(10))),
+            step: Some(Spanned::dummy(Size::lit(2))),
+            end: Some(Spanned::dummy(Size::lit(10))),
         };
         assert_eq!(
             r.traverse1(&mut |x| x.eval(&share::Ctx::singleton("N".into(), 0)))
