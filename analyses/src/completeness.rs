@@ -568,6 +568,7 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         let mut builder = IdealBuilder::with_options(EncodeOptions {
             split_reductions: true,
             relation_asserts: Some(relation_asserts),
+            division_definitions: true,
         });
 
         let prover_tc = TransClos::prover(dag);
@@ -1937,11 +1938,18 @@ mod tests {
     /// The completeness verdict for the first protocol in `src`, with the
     /// basis computed by Singular, or `None` when Singular is not on `PATH`.
     fn singular_verdict(src: &str) -> Option<Result<(), AnalysisError<ArkBls12_381>>> {
+        singular_verdict_with_inlining(src, true)
+    }
+
+    fn singular_verdict_with_inlining(
+        src: &str,
+        inline: bool,
+    ) -> Option<Result<(), AnalysisError<ArkBls12_381>>> {
         if !singular_available() {
             eprintln!("skipping: Singular not on PATH");
             return None;
         }
-        let inputs = CompletenessAnalysis::build_inputs(&dag_of(src), true);
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(src), inline);
         let mut ca = CompletenessAnalysis::from_inputs(inputs, GbBackendKind::Singular);
         Some(ca.run())
     }
@@ -2181,6 +2189,227 @@ mod tests {
         }
     }
 
+    /// `t = a² / b` for instances `a` and `b`, then `verify(check)`. With a
+    /// dividend that is not linear in an input, `a² − b·t` cannot pin one.
+    fn quotient(check: &str) -> String {
+        format!(
+            r#"
+            proto quotient<F: Field>(instance a: F, instance b: F) where a == a {{
+                let t = a * a / b;
+                verify({check})
+            }}"#
+        )
+    }
+
+    #[test]
+    fn division_by_a_variable_is_a_definition() {
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(&quotient("t * b == a * a")), true);
+        let t: Vec<String> = inputs
+            .generating_set
+            .iter()
+            .flat_map(|p| p.vars())
+            .map(|x| x.to_string())
+            .filter(|x| x == "t")
+            .collect();
+        assert!(t.is_empty(), "{:?}", inputs.generating_set);
+    }
+
+    #[test]
+    fn a_reciprocal_keeps_its_constraint() {
+        // `1 − b·t` already has its leading term in `b·t`, and keeping it
+        // keeps `t`'s name in explanations.
+        let ex = r#"
+            proto reciprocal<F: Field>(instance b: F) where b == b {
+                let t = 1 / b;
+                verify(t * b == 1)
+            }"#;
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(ex), true);
+        let checks: Vec<String> = inputs
+            .checks
+            .iter()
+            .map(|c| format!("{} == {}", c.lhs, c.rhs))
+            .collect();
+        assert_eq!(checks, ["b*t == 1"]);
+        if let Some(result) = singular_verdict(ex) {
+            assert!(result.is_ok(), "{result:?}");
+        }
+    }
+
+    #[test]
+    fn division_definitions_keep_the_verdict() {
+        let Some(result) = singular_verdict(&quotient("t * b == a * a")) else {
+            return;
+        };
+        assert!(result.is_ok(), "{result:?}");
+        let Some(result) = singular_verdict(&quotient("t == a * a")) else {
+            return;
+        };
+        assert!(
+            matches!(result, Err(AnalysisError::Incomplete(_))),
+            "a² / b == a² must be incomplete: {result:?}"
+        );
+    }
+
+    #[test]
+    fn division_by_zero_still_gives_the_unit_ideal() {
+        let ex = r#"
+            proto by_zero<F: Field>(instance a: F, instance b: F) where a == a {
+                let zero = a - a;
+                let t = b / zero;
+                verify(t == t)
+            }"#;
+        if let Some(result) = singular_verdict(ex) {
+            assert!(
+                matches!(result, Err(AnalysisError::UnitIdeal { .. })),
+                "{result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn division_in_a_map_body_is_a_definition() {
+        let ex = r#"
+            proto quotients<F: Field>(instance a: [F; 2], instance b: [F; 2]) where a[0] == a[0] {
+                let t = [a[i] * a[i] / b[i] for i in 0..2];
+                verify(t[1] * b[1] == a[1] * a[1])
+            }"#;
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(ex), true);
+        let body: Vec<String> = inputs
+            .generating_set
+            .iter()
+            .chain(&inputs.verifier)
+            .flat_map(|p| p.vars())
+            .map(|x| x.to_string())
+            .filter(|x| x.contains("gb_map_body"))
+            .collect();
+        assert!(body.is_empty(), "{:?}", inputs.generating_set);
+        if let Some(result) = singular_verdict(ex) {
+            assert!(result.is_ok(), "{result:?}");
+        }
+    }
+
+    #[test]
+    fn division_definitions_preserve_polynomial_checks() {
+        // Exercise scalar broadcasting, degree-zero polynomial divisors,
+        // and a dividend mixing constant, variable, and zero coefficients.
+        // Sending the quotient also exercises saved message definitions.
+        for (args, expression, lhs, rhs) in [
+            (
+                "instance p: Uni<F, 2>, instance b: F",
+                "p / b",
+                "t * b",
+                "p",
+            ),
+            (
+                "instance p: Mle<F, 1>, instance b: F",
+                "p / b",
+                "t * b",
+                "p",
+            ),
+            (
+                "instance p: Poly<F, 2, 2>, instance b: F",
+                "p / b",
+                "eval(t, [b - b + 2, b - b + 3]) * b",
+                "eval(p, [b - b + 2, b - b + 3])",
+            ),
+            (
+                "instance p: Uni<F, 2>, instance b: F",
+                "p / poly([b])",
+                "t * b",
+                "p",
+            ),
+            (
+                "instance a: F, instance b: F",
+                "poly([1, a * a, 0]) / b",
+                "t * b",
+                "poly([1, a * a, 0])",
+            ),
+        ] {
+            for offset in ["", " + 1"] {
+                let src = format!(
+                    "proto quotient<F: Field>({args}) where b == b {{
+                        t <- {expression};
+                        verify({lhs} == {rhs}{offset})
+                    }}"
+                );
+                for inline in [false, true] {
+                    let Some(result) = singular_verdict_with_inlining(&src, inline) else {
+                        return;
+                    };
+                    if offset.is_empty() {
+                        assert!(result.is_ok(), "{expression}, inline={inline}: {result:?}");
+                    } else {
+                        assert!(
+                            matches!(result, Err(AnalysisError::Incomplete(_))),
+                            "incorrect quotient check, {expression}, inline={inline}: {result:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn division_definitions_preserve_relation_forced_zero_divisors() {
+        // A zero quotient must not erase the denominator's nonzero
+        // constraint. Here the denominator is only known zero once the
+        // relation is merged, after its inverse has already been allocated.
+        for expression in [
+            "a * a / b",
+            "(a - a) / b",
+            "poly([a, a * a, 0]) / b",
+            "poly([a, a * a, 0]) / poly([b])",
+        ] {
+            let src = format!(
+                "proto by_zero<F: Field>(instance a: F, instance b: F) where b == 0 {{
+                    t <- {expression};
+                    verify(t == t)
+                }}"
+            );
+            for inline in [false, true] {
+                let Some(result) = singular_verdict_with_inlining(&src, inline) else {
+                    return;
+                };
+                assert!(
+                    matches!(result, Err(AnalysisError::UnitIdeal { .. })),
+                    "{expression}, inline={inline}: {result:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn division_definitions_keep_verifier_auxiliary_variables_aligned() {
+        // The first division defines zero, so the second denominator
+        // resolves to 1 and needs no inverse. The third division still
+        // allocates one: verifier locals and the full verifier build must
+        // agree on its identity despite skipping the preceding inverse.
+        for offset in ["", " + 1"] {
+            let src = format!(
+                "proto nested<F: Field>(instance a: F, instance b: F) where a == a {{
+                    let zero = (a - a) / b;
+                    let t = a / (zero + 1);
+                    let u = a * a / (t + 1);
+                    verify(t == a);
+                    verify(u * (t + 1) == a * a{offset})
+                }}"
+            );
+            for inline in [false, true] {
+                let Some(result) = singular_verdict_with_inlining(&src, inline) else {
+                    return;
+                };
+                if offset.is_empty() {
+                    assert!(result.is_ok(), "inline={inline}: {result:?}");
+                } else {
+                    assert!(
+                        matches!(result, Err(AnalysisError::Incomplete(_))),
+                        "incorrect nested quotient check, inline={inline}: {result:?}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn verified_message_is_not_traced_into_the_prover() {
         // `b` is a prover message, an alias of the prover's reduction: the
@@ -2247,7 +2476,7 @@ mod tests {
 
         let mut builder = IdealBuilder::<ArkBls12_381>::with_options(EncodeOptions {
             split_reductions: true,
-            relation_asserts: None,
+            ..EncodeOptions::default()
         });
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let bools = ATyp::Vec(Box::new(ATyp::Base(ABase::Bool)), 0);
@@ -2281,6 +2510,7 @@ mod tests {
                         .map(|n| Ref::new(NodeIndex::new(n)))
                         .collect()
                 }),
+                ..EncodeOptions::default()
             });
             let mut ideal = Ideal::<ArkBls12_381>::new();
             let bool_t = ATyp::Base(ABase::Bool);
