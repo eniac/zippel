@@ -2,13 +2,31 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+check: c_r_transcript*x_inv^2 + c_l_transcript*x_challenge^2 + c_val == a_scalar_transcript*b_scalar_transcript
+  c_l_transcript <- a_vec[0]*b_vec[1]
+  c_r_transcript <- a_vec[1]*b_vec[0]
+  a_scalar_transcript <- a_vec[1]*x_inv + a_vec[0]*x_challenge
+  b_scalar_transcript <- b_vec[0]*x_inv + b_vec[1]*x_challenge
+  c_val == a_vec[1]*b_vec[1] + a_vec[0]*b_vec[0]
+  lhs: a_vec[1]*b_vec[0]*x_inv^2 + a_vec[0]*b_vec[1]*x_challenge^2 + a_vec[1]*b_vec[1] + a_vec[0]*b_vec[0]
+  rhs: a_vec[1]*b_vec[0]*x_inv^2 + a_vec[1]*b_vec[1]*x_challenge*x_inv + a_vec[0]*b_vec[0]*x_challenge*x_inv + a_vec[0]*b_vec[1]*x_challenge^2
+  equal modulo the basis, using:
+    - __zippel::gb::div_inv::0 + x_inv
+    x_challenge*__zippel::gb::div_inv::0 - 1
+check: r_transcript*x_inv^2 + l_transcript*x_challenge^2 + p_commitment == h_vec[1]*x_inv*b_scalar_transcript + h_vec[0]*x_challenge*b_scalar_transcript + g_vec[0]*x_inv*a_scalar_transcript + g_vec[1]*x_challenge*a_scalar_transcript
+  l_transcript <- b_vec[1]*h_vec[0] + a_vec[0]*g_vec[1]
+  r_transcript <- b_vec[0]*h_vec[1] + a_vec[1]*g_vec[0]
+  a_scalar_transcript <- a_vec[1]*x_inv + a_vec[0]*x_challenge
+  b_scalar_transcript <- b_vec[0]*x_inv + b_vec[1]*x_challenge
+  p_commitment == b_vec[1]*h_vec[1] + b_vec[0]*h_vec[0] + a_vec[1]*g_vec[1] + a_vec[0]*g_vec[0]
+  lhs: b_vec[0]*h_vec[1]*x_inv^2 + a_vec[1]*g_vec[0]*x_inv^2 + b_vec[1]*h_vec[0]*x_challenge^2 + a_vec[0]*g_vec[1]*x_challenge^2 + b_vec[1]*h_vec[1] + b_vec[0]*h_vec[0] + a_vec[1]*g_vec[1] + a_vec[0]*g_vec[0]
+  rhs: b_vec[0]*h_vec[1]*x_inv^2 + a_vec[1]*g_vec[0]*x_inv^2 + b_vec[1]*h_vec[1]*x_challenge*x_inv + b_vec[0]*h_vec[0]*x_challenge*x_inv + a_vec[1]*g_vec[1]*x_challenge*x_inv + a_vec[0]*g_vec[0]*x_challenge*x_inv + b_vec[1]*h_vec[0]*x_challenge^2 + a_vec[0]*g_vec[1]*x_challenge^2
+  equal modulo the basis, using:
+    - __zippel::gb::div_inv::0 + x_inv
+    x_challenge*__zippel::gb::div_inv::0 - 1
+basis:
 - __zippel::gb::div_inv::0 + __zippel::gb::div_inv::1
 - __zippel::gb::div_inv::0 + x_inv
-- c_val + a_vec[1]*b_vec[1] + a_vec[0]*b_vec[0]
-- p_commitment + b_vec[1]*h_vec[1] + b_vec[0]*h_vec[0] + a_vec[1]*g_vec[1] + a_vec[0]*g_vec[0]
 __zippel::node::61 - 1
 __zippel::node::63 - 1
-__zippel::node::76 - 1
-__zippel::node::78 - 1
-b_vec[0]*p_commitment - b_vec[0]*b_vec[1]*h_vec[1] - b_vec[0]^2*h_vec[0] - a_vec[1]*b_vec[0]*g_vec[1] - c_val*g_vec[0] + a_vec[1]*b_vec[1]*g_vec[0]
 x_challenge*__zippel::gb::div_inv::0 - 1

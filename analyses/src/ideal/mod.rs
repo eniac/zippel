@@ -1,11 +1,12 @@
 use crate::TransClos;
 use crate::Var;
+use graph::eval::collect_refs;
 use graph::{GOp, HOp, Op, Ref};
 use lang::ast::BinOp;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig};
+use backend::{ABase, ATyp, ArkConfig};
 
 mod combinatorics;
 
@@ -14,13 +15,102 @@ pub use namespace::{GB_GENERATED_NAME_PREFIX, IdealNamespace};
 
 #[allow(clippy::module_inception)]
 mod ideal;
-pub use ideal::Ideal;
+pub use ideal::{Check, Ideal, Origin, Stage};
+
+/// A short name for `op`'s operation, for reporting where generators come from.
+pub fn op_label<C: ArkConfig>(op: &GOp<C>) -> &'static str {
+    match op {
+        Op::Value(_) => "literal",
+        Op::Ref(..) => "alias",
+        Op::Bin(bop, ..) => match bop {
+            BinOp::Add => "+",
+            BinOp::Sub => "-",
+            BinOp::Mul => "*",
+            BinOp::Div => "/",
+            BinOp::Rem => "%",
+            BinOp::Pow => "^",
+            BinOp::Dot => "dot",
+            BinOp::Equ => "==",
+            BinOp::And => "&&",
+            BinOp::Concat => "++",
+        },
+        Op::Ram(..) => "index",
+        Op::Vec(_) => "vec",
+        Op::Record(_) => "record",
+        Op::Random(..) => "random",
+        Op::Pair(..) => "pair",
+        Op::Challenge(..) => "challenge",
+        Op::Ifft(_) => "ifft",
+        Op::Interpolate(..) => "interpolate",
+        Op::Fft(_) => "fft",
+        Op::Poly(_) => "poly",
+        Op::Mle(_) => "mle",
+        Op::Proj(..) => "proj",
+        Op::Coef(_) => "coef",
+        Op::Evaluate(..) => "eval",
+        Op::LoopParam(..) => "loop-param",
+        Op::Map(..) => "map",
+        Op::ReduceMap(bop, ..) | Op::Reduce(bop, _) => match bop {
+            BinOp::Add => "reduce(+)",
+            BinOp::Sub => "reduce(-)",
+            BinOp::Mul => "reduce(*)",
+            BinOp::And => "reduce(&&)",
+            _ => "reduce",
+        },
+        Op::Assert(_) => "assert",
+        Op::Verify(_) => "verify",
+    }
+}
 
 mod poly_source;
 pub(crate) use poly_source::PolySource;
 
 mod ops;
+pub(crate) use ops::div::is_division_witness;
 use ops::{EncodeCtx, link_to_polys};
+
+/// Encoding choices only the completeness analysis makes. The default
+/// reproduces the encoding the soundness and knowledge analyses rely on.
+#[derive(Clone, Debug, Default)]
+pub struct EncodeOptions {
+    /// Split an asserted or verified `reduce(&&, v)` into one constraint per
+    /// element of `v`, as the unrolled chain `v[0] && v[1] && …` would be,
+    /// instead of asserting the product of the elements.
+    pub split_reductions: bool,
+    /// The `assert` nodes that wrap the `where` clause. When set, every other
+    /// `assert` is a runtime check written in a protocol body and encodes to
+    /// nothing: it is neither an assumption nor an obligation.
+    pub relation_asserts: Option<HashSet<Ref>>,
+    /// Encode `t = a / b`, for a divisor `b` that is not a known constant and a
+    /// dividend `a` that is not a nonzero constant, as the definition
+    /// `t := a·ι` next to `b·ι − 1`, instead of the constraint `a − b·t`. Both
+    /// generate the same ideal, but the definition is substituted away, while
+    /// `a − b·t` stays a generator whose leading term usually lies in `a`.
+    pub division_definitions: bool,
+}
+
+/// One bool an `assert` or `verify` requires to hold: a leaf of its `&&`
+/// chain, or with [`EncodeOptions::split_reductions`], an element of a
+/// `reduce(&&, …)` in it.
+#[derive(Clone)]
+pub(crate) struct AndLeaf<C: ArkConfig> {
+    /// A `Bool` expression or, with `index`, a `Vec<Bool>` one.
+    pub exp: HOp<C>,
+    /// The element of `exp` this leaf is.
+    pub index: Option<usize>,
+    /// The outermost `reduce(&&, …)` node this leaf was split out of.
+    pub reduction: Option<Ref>,
+}
+
+impl<C: ArkConfig> AndLeaf<C> {
+    /// The graph nodes the leaf reads, including the reduction it was split
+    /// out of.
+    pub fn refs(&self) -> Vec<Ref> {
+        let mut refs = collect_refs(self.exp.get());
+        refs.extend(self.reduction);
+        refs
+    }
+}
 
 /// Constructs `Ideal`s from `TransClos` inputs. Owns a
 /// `IdealNamespace` for division-witness and sentinel allocation
@@ -34,6 +124,12 @@ pub struct IdealBuilder<C: ArkConfig> {
     /// Map from Ref to the GOp that produced it, for tracing `&&` chains
     /// in assert/verify operands back to their leaf bools.
     node_ops: HashMap<Ref, GOp<C>>,
+    /// Encoding choices; see [`EncodeOptions`].
+    options: EncodeOptions,
+    /// With [`EncodeOptions::split_reductions`]: the variable bound to each
+    /// element of a `Map` or `ReduceMap(&&)` result, keyed by the result.
+    /// Those exist only inside the encoding, as sentinels.
+    elements: HashMap<Ref, Vec<Var>>,
 }
 
 impl<C: ArkConfig + HasOpFactory> Default for IdealBuilder<C> {
@@ -46,10 +142,22 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     /// Creates a builder with an empty namespace and no recorded node
     /// operations.
     pub fn new() -> Self {
+        Self::with_options(EncodeOptions::default())
+    }
+
+    /// Creates a builder like [`Self::new`] that encodes as `options` says.
+    pub fn with_options(options: EncodeOptions) -> Self {
         Self {
             ns: IdealNamespace::new(),
             node_ops: HashMap::new(),
+            options,
+            elements: HashMap::new(),
         }
+    }
+
+    /// The encoding choices this builder makes.
+    pub fn options(&self) -> &EncodeOptions {
+        &self.options
     }
 
     /// Build a `Ideal` from a `TransClos`. Each call returns a
@@ -70,7 +178,20 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         }
 
         for (var, op) in tc.clos.into_iter() {
+            // Every generator this node's encoding emits came from it.
+            let before = ideal.generating_set.len();
+            let aligned = ideal.origins_aligned();
+            let label = op_label(&op);
             self.add_op(var.clone(), op, &mut ideal);
+            if aligned {
+                let origin = Origin {
+                    stage: Stage::Unknown,
+                    node: var.clone(),
+                    op: label,
+                };
+                let emitted = ideal.generating_set.len() - before;
+                ideal.origins.extend(std::iter::repeat_n(origin, emitted));
+            }
             ideal.var_order.push(var);
         }
         ideal
@@ -87,39 +208,122 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     /// `BinOp::And` node, recursively traces both sides. Non-`And` operands
     /// are collected as leaves.
     ///
+    /// With [`EncodeOptions::split_reductions`], `reduce(&&, v)` over a
+    /// `Vec<Bool>` contributes one leaf per element of `v`, as the unrolled
+    /// chain `v[0] && v[1] && …` would; an element that is itself such a
+    /// chain is split further. This relies on bools being 0 or 1, as
+    /// splitting `&&` already does. The elements of a `Map` or `ReduceMap(&&)`
+    /// result are the variables its encoding recorded, so that node must have
+    /// been encoded first.
+    ///
+    /// Aliases are not traced. The graph only makes them for `t <- …` of a
+    /// value already computed, and a check of `t` is a check of the message:
+    /// what computed it belongs to the prover's encoding, a separate build.
+    ///
     /// TODO(egg): This is a manual, ad-hoc peeling of `&&` chains to avoid
     /// high-degree product polynomials in the GB generating set. Once the
     /// planned `egg`-based optimization layer is in place (see upstream PR),
     /// this should be replaced by a proper e-graph rewrite that flattens
     /// `assert(a && b && ...)` into `assert(a); assert(b); ...` as a
     /// canonicalization rule, rather than special-casing it here.
-    pub(crate) fn collect_and_leaves(&self, exp: &HOp<C>) -> Vec<HOp<C>> {
-        fn collect<C: ArkConfig + HasOpFactory>(
-            builder: &IdealBuilder<C>,
-            exp: &HOp<C>,
-            out: &mut Vec<HOp<C>>,
-        ) {
-            match exp.get() {
-                Op::Bin(BinOp::And, a, b, _) => {
-                    collect(builder, a, out);
-                    collect(builder, b, out);
+    pub(crate) fn collect_and_leaves(&self, exp: &HOp<C>) -> Vec<AndLeaf<C>> {
+        let mut out = Vec::new();
+        self.collect_leaves(exp, None, &mut out);
+        out
+    }
+
+    fn collect_leaves(&self, exp: &HOp<C>, reduction: Option<Ref>, out: &mut Vec<AndLeaf<C>>) {
+        let split = self.options.split_reductions;
+        let traced = |op: &GOp<C>| backend::op::mk::<C>(op.clone());
+        match exp.get() {
+            Op::Bin(BinOp::And, a, b, _) => {
+                self.collect_leaves(a, reduction, out);
+                self.collect_leaves(b, reduction, out);
+            }
+            Op::Ref(r, _) => match self.node_ops.get(r) {
+                Some(op @ Op::Bin(BinOp::And, ..)) => {
+                    self.collect_leaves(&traced(op), reduction, out);
                 }
-                Op::Ref(r, _) => {
-                    if let Some(op) = builder.node_ops.get(r)
-                        && matches!(op, Op::Bin(BinOp::And, ..))
-                    {
-                        let hop = backend::op::mk::<C>(op.clone());
-                        collect(builder, &hop, out);
-                        return;
+                Some(Op::Reduce(BinOp::And, v)) if split => {
+                    if let ATyp::Vec(deref!(ATyp::Base(ABase::Bool)), n) = v.typ() {
+                        for i in 0..n {
+                            self.collect_element(v, i, reduction.or(Some(*r)), out);
+                        }
+                    } else {
+                        out.push(AndLeaf::whole(exp, reduction));
                     }
-                    out.push(exp.clone());
                 }
-                _ => out.push(exp.clone()),
+                Some(Op::ReduceMap(BinOp::And, ..)) if split && self.elements.contains_key(r) => {
+                    for element in &self.elements[r] {
+                        let element = Op::Ref(element.reference, element.typ.clone());
+                        self.collect_leaves(&traced(&element), reduction.or(Some(*r)), out);
+                    }
+                }
+                _ => out.push(AndLeaf::whole(exp, reduction)),
+            },
+            _ => out.push(AndLeaf::whole(exp, reduction)),
+        }
+    }
+
+    /// Collect the leaves of element `i` of the `Vec<Bool>` expression `v`:
+    /// from the element's own expression or variable when there is one, and
+    /// otherwise as that element of `v`.
+    fn collect_element(
+        &self,
+        v: &HOp<C>,
+        i: usize,
+        reduction: Option<Ref>,
+        out: &mut Vec<AndLeaf<C>>,
+    ) {
+        if let Op::Ref(r, _) = v.get() {
+            let element = match self.node_ops.get(r) {
+                Some(Op::Vec(elements)) => elements
+                    .get(i)
+                    .filter(|e| matches!(e.get(), Op::Ref(..)))
+                    .cloned(),
+                _ => self
+                    .elements
+                    .get(r)
+                    .and_then(|es| es.get(i))
+                    .map(|e| backend::op::mk::<C>(Op::Ref(e.reference, e.typ.clone()))),
+            };
+            if let Some(element) = element {
+                self.collect_leaves(&element, reduction, out);
+                return;
             }
         }
-        let mut out = Vec::new();
-        collect(self, exp, &mut out);
-        out
+        out.push(AndLeaf {
+            exp: v.clone(),
+            index: Some(i),
+            reduction,
+        });
+    }
+
+    /// With [`EncodeOptions::split_reductions`], remember the operation
+    /// bound to `var`, so that an `&&` chain or `==` an encoding materializes
+    /// into a sentinel can be traced like a graph node.
+    pub(crate) fn note_op(&mut self, var: &Var, op: &GOp<C>) {
+        if self.options.split_reductions {
+            self.node_ops.insert(var.reference, op.clone());
+        }
+    }
+
+    /// With [`EncodeOptions::split_reductions`], remember the variable bound
+    /// to each element of the result `var`.
+    pub(crate) fn note_elements(&mut self, var: &Var, elements: &[Var]) {
+        if self.options.split_reductions {
+            self.elements.insert(var.reference, elements.to_vec());
+        }
+    }
+}
+
+impl<C: ArkConfig> AndLeaf<C> {
+    fn whole(exp: &HOp<C>, reduction: Option<Ref>) -> Self {
+        Self {
+            exp: exp.clone(),
+            index: None,
+            reduction,
+        }
     }
 }
 

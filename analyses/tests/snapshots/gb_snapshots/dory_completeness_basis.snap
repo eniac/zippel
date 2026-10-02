@@ -1,0 +1,86 @@
+---
+source: analyses/tests/gb_snapshots/common.rs
+expression: value
+---
+check: hash1_r_vec[2]*rho#3*alpha_inv#3 + log_d1r#3*alpha_inv#3 + hash1_l_vec[2]*rho#3*alpha#3 + log_d1l#3*alpha#3 == final_gamma2*log_u
+  log_d1l#3 <- gamma1_prime[2]*gamma2_prime[0]*rho#2*alpha_inv#2 + gamma1[6]*gamma2_prime[0]*rho#1*alpha_inv#1*alpha_inv#2 + gamma2_prime[0]*u_vec[6]*alpha_inv#1*alpha_inv#2 + gamma1[2]*gamma2_prime[0]*rho#1*alpha#1*alpha_inv#2 + gamma2_prime[0]*u_vec[2]*alpha#1*alpha_inv#2 + gamma1_prime[0]*gamma2_prime[0]*rho#2*alpha#2 + gamma1[4]*gamma2_prime[0]*rho#1*alpha_inv#1*alpha#2 + gamma2_prime[0]*u_vec[4]*alpha_inv#1*alpha#2 + gamma1[0]*gamma2_prime[0]*rho#1*alpha#1*alpha#2 + gamma2_prime[0]*u_vec[0]*alpha#1*alpha#2
+  log_d1r#3 <- gamma1_prime[3]*gamma2_prime[0]*rho#2*alpha_inv#2 + gamma1[7]*gamma2_prime[0]*rho#1*alpha_inv#1*alpha_inv#2 + gamma2_prime[0]*u_vec[7]*alpha_inv#1*alpha_inv#2 + gamma1[3]*gamma2_prime[0]*rho#1*alpha#1*alpha_inv#2 + gamma2_prime[0]*u_vec[3]*alpha#1*alpha_inv#2 + gamma1_prime[1]*gamma2_prime[0]*rho#2*alpha#2 + gamma1[5]*gamma2_prime[0]*rho#1*alpha_inv#1*alpha#2 + gamma2_prime[0]*u_vec[5]*alpha_inv#1*alpha#2 + gamma1[1]*gamma2_prime[0]*rho#1*alpha#1*alpha#2 + gamma2_prime[0]*u_vec[1]*alpha#1*alpha#2
+  log_u <- <22 terms>
+  final_gamma2 == gamma2_prime[0]
+  hash1_l_vec[2] == gamma1_prime[0]*gamma2_prime[0]
+  hash1_r_vec[2] == gamma1_prime[1]*gamma2_prime[0]
+  both sides: <22 terms>
+check: hash2_l_vec[2]*rho_inv#3*alpha_inv#3 + log_d2l#3*alpha_inv#3 + hash2_r_vec[2]*rho_inv#3*alpha#3 + log_d2r#3*alpha#3 == final_gamma1*log_g
+  log_d2l#3 <- gamma1_prime[0]*gamma2_prime[0]*rho_inv#2*alpha_inv#2 + gamma1_prime[0]*gamma2[0]*rho_inv#1*alpha_inv#1*alpha_inv#2 + g_vec[0]*gamma1_prime[0]*alpha_inv#1*alpha_inv#2 + gamma1_prime[0]*gamma2[4]*rho_inv#1*alpha#1*alpha_inv#2 + g_vec[4]*gamma1_prime[0]*alpha#1*alpha_inv#2 + gamma1_prime[0]*gamma2_prime[2]*rho_inv#2*alpha#2 + gamma1_prime[0]*gamma2[2]*rho_inv#1*alpha_inv#1*alpha#2 + g_vec[2]*gamma1_prime[0]*alpha_inv#1*alpha#2 + gamma1_prime[0]*gamma2[6]*rho_inv#1*alpha#1*alpha#2 + g_vec[6]*gamma1_prime[0]*alpha#1*alpha#2
+  log_d2r#3 <- gamma1_prime[0]*gamma2_prime[1]*rho_inv#2*alpha_inv#2 + gamma1_prime[0]*gamma2[1]*rho_inv#1*alpha_inv#1*alpha_inv#2 + g_vec[1]*gamma1_prime[0]*alpha_inv#1*alpha_inv#2 + gamma1_prime[0]*gamma2[5]*rho_inv#1*alpha#1*alpha_inv#2 + g_vec[5]*gamma1_prime[0]*alpha#1*alpha_inv#2 + gamma1_prime[0]*gamma2_prime[3]*rho_inv#2*alpha#2 + gamma1_prime[0]*gamma2[3]*rho_inv#1*alpha_inv#1*alpha#2 + g_vec[3]*gamma1_prime[0]*alpha_inv#1*alpha#2 + gamma1_prime[0]*gamma2[7]*rho_inv#1*alpha#1*alpha#2 + g_vec[7]*gamma1_prime[0]*alpha#1*alpha#2
+  log_g <- <22 terms>
+  final_gamma1 == gamma1_prime[0]
+  hash2_l_vec[2] == gamma1_prime[0]*gamma2_prime[0]
+  hash2_r_vec[2] == gamma1_prime[0]*gamma2_prime[1]
+  both sides: <22 terms>
+check: log_vr#3*alpha_inv#3^2 + log_vl#3*alpha#3^2 + hash1_r_vec[1]*rho#2*alpha_inv#2*rho_inv#3 + log_d1r#2*alpha_inv#2*rho_inv#3 + hash1_l_vec[1]*rho#2*alpha#2*rho_inv#3 + log_d1l#2*alpha#2*rho_inv#3 + hash2_l_vec[1]*rho_inv#2*alpha_inv#2*rho#3 + log_d2l#2*alpha_inv#2*rho#3 + hash2_r_vec[1]*rho_inv#2*alpha#2*rho#3 + log_d2r#2*alpha#2*rho#3 + log_vr#2*alpha_inv#2^2 + log_vl#2*alpha#2^2 + hash1_r_vec[0]*rho#1*alpha_inv#1*rho_inv#2 + log_d1r#1*alpha_inv#1*rho_inv#2 + hash1_l_vec[0]*rho#1*alpha#1*rho_inv#2 + log_d1l#1*alpha#1*rho_inv#2 + hash2_l_vec[0]*rho_inv#1*alpha_inv#1*rho#2 + log_d2l#1*alpha_inv#1*rho#2 + hash2_r_vec[0]*rho_inv#1*alpha#1*rho#2 + log_d2r#1*alpha#1*rho#2 + log_vr#1*alpha_inv#1^2 + log_vl#1*alpha#1^2 + c2*rho_inv#1 + c3*rho#1 + gamma_pair_ipp_vec[2] + gamma_pair_ipp_vec[1] + gamma_pair_ipp_vec[0] + c1 == log_u*log_g
+  log_d1l#1 <- gamma2_prime[3]*u_vec[3] + gamma2_prime[2]*u_vec[2] + gamma2_prime[1]*u_vec[1] + gamma2_prime[0]*u_vec[0]
+  log_d1r#1 <- gamma2_prime[3]*u_vec[7] + gamma2_prime[2]*u_vec[6] + gamma2_prime[1]*u_vec[5] + gamma2_prime[0]*u_vec[4]
+  log_d2l#1 <- g_vec[3]*gamma1_prime[3] + g_vec[2]*gamma1_prime[2] + g_vec[1]*gamma1_prime[1] + g_vec[0]*gamma1_prime[0]
+  log_d2r#1 <- g_vec[7]*gamma1_prime[3] + g_vec[6]*gamma1_prime[2] + g_vec[5]*gamma1_prime[1] + g_vec[4]*gamma1_prime[0]
+  log_vl#1 <- gamma1[3]*gamma2[7]*rho#1*rho_inv#1 + gamma1[2]*gamma2[6]*rho#1*rho_inv#1 + gamma1[1]*gamma2[5]*rho#1*rho_inv#1 + gamma1[0]*gamma2[4]*rho#1*rho_inv#1 + gamma2[7]*u_vec[3]*rho_inv#1 + gamma2[6]*u_vec[2]*rho_inv#1 + gamma2[5]*u_vec[1]*rho_inv#1 + gamma2[4]*u_vec[0]*rho_inv#1 + g_vec[7]*gamma1[3]*rho#1 + g_vec[6]*gamma1[2]*rho#1 + g_vec[5]*gamma1[1]*rho#1 + g_vec[4]*gamma1[0]*rho#1 + g_vec[7]*u_vec[3] + g_vec[6]*u_vec[2] + g_vec[5]*u_vec[1] + g_vec[4]*u_vec[0]
+  log_vr#1 <- gamma1[7]*gamma2[3]*rho#1*rho_inv#1 + gamma1[6]*gamma2[2]*rho#1*rho_inv#1 + gamma1[5]*gamma2[1]*rho#1*rho_inv#1 + gamma1[4]*gamma2[0]*rho#1*rho_inv#1 + gamma2[3]*u_vec[7]*rho_inv#1 + gamma2[2]*u_vec[6]*rho_inv#1 + gamma2[1]*u_vec[5]*rho_inv#1 + gamma2[0]*u_vec[4]*rho_inv#1 + g_vec[3]*gamma1[7]*rho#1 + g_vec[2]*gamma1[6]*rho#1 + g_vec[1]*gamma1[5]*rho#1 + g_vec[0]*gamma1[4]*rho#1 + g_vec[3]*u_vec[7] + g_vec[2]*u_vec[6] + g_vec[1]*u_vec[5] + g_vec[0]*u_vec[4]
+  log_d1l#2 <- gamma1[5]*gamma2_prime[1]*rho#1*alpha_inv#1 + gamma1[4]*gamma2_prime[0]*rho#1*alpha_inv#1 + gamma2_prime[1]*u_vec[5]*alpha_inv#1 + gamma2_prime[0]*u_vec[4]*alpha_inv#1 + gamma1[1]*gamma2_prime[1]*rho#1*alpha#1 + gamma1[0]*gamma2_prime[0]*rho#1*alpha#1 + gamma2_prime[1]*u_vec[1]*alpha#1 + gamma2_prime[0]*u_vec[0]*alpha#1
+  log_d1r#2 <- gamma1[7]*gamma2_prime[1]*rho#1*alpha_inv#1 + gamma1[6]*gamma2_prime[0]*rho#1*alpha_inv#1 + gamma2_prime[1]*u_vec[7]*alpha_inv#1 + gamma2_prime[0]*u_vec[6]*alpha_inv#1 + gamma1[3]*gamma2_prime[1]*rho#1*alpha#1 + gamma1[2]*gamma2_prime[0]*rho#1*alpha#1 + gamma2_prime[1]*u_vec[3]*alpha#1 + gamma2_prime[0]*u_vec[2]*alpha#1
+  log_d2l#2 <- gamma1_prime[1]*gamma2[1]*rho_inv#1*alpha_inv#1 + gamma1_prime[0]*gamma2[0]*rho_inv#1*alpha_inv#1 + g_vec[1]*gamma1_prime[1]*alpha_inv#1 + g_vec[0]*gamma1_prime[0]*alpha_inv#1 + gamma1_prime[1]*gamma2[5]*rho_inv#1*alpha#1 + gamma1_prime[0]*gamma2[4]*rho_inv#1*alpha#1 + g_vec[5]*gamma1_prime[1]*alpha#1 + g_vec[4]*gamma1_prime[0]*alpha#1
+  log_d2r#2 <- gamma1_prime[1]*gamma2[3]*rho_inv#1*alpha_inv#1 + gamma1_prime[0]*gamma2[2]*rho_inv#1*alpha_inv#1 + g_vec[3]*gamma1_prime[1]*alpha_inv#1 + g_vec[2]*gamma1_prime[0]*alpha_inv#1 + gamma1_prime[1]*gamma2[7]*rho_inv#1*alpha#1 + gamma1_prime[0]*gamma2[6]*rho_inv#1*alpha#1 + g_vec[7]*gamma1_prime[1]*alpha#1 + g_vec[6]*gamma1_prime[0]*alpha#1
+  log_vl#2 <- <50 terms>
+  log_vr#2 <- <50 terms>
+  log_vl#3 <- <121 terms>
+  log_vr#3 <- <121 terms>
+  log_u <- <22 terms>
+  log_g <- <22 terms>
+  c1 == g_vec[7]*u_vec[7] + g_vec[6]*u_vec[6] + g_vec[5]*u_vec[5] + g_vec[4]*u_vec[4] + g_vec[3]*u_vec[3] + g_vec[2]*u_vec[2] + g_vec[1]*u_vec[1] + g_vec[0]*u_vec[0]
+  c2 == gamma2[7]*u_vec[7] + gamma2[6]*u_vec[6] + gamma2[5]*u_vec[5] + gamma2[4]*u_vec[4] + gamma2[3]*u_vec[3] + gamma2[2]*u_vec[2] + gamma2[1]*u_vec[1] + gamma2[0]*u_vec[0]
+  c3 == g_vec[7]*gamma1[7] + g_vec[6]*gamma1[6] + g_vec[5]*gamma1[5] + g_vec[4]*gamma1[4] + g_vec[3]*gamma1[3] + g_vec[2]*gamma1[2] + g_vec[1]*gamma1[1] + g_vec[0]*gamma1[0]
+  gamma_pair_ipp_vec[0] == gamma1[7]*gamma2[7] + gamma1[6]*gamma2[6] + gamma1[5]*gamma2[5] + gamma1[4]*gamma2[4] + gamma1[3]*gamma2[3] + gamma1[2]*gamma2[2] + gamma1[1]*gamma2[1] + gamma1[0]*gamma2[0]
+  gamma_pair_ipp_vec[1] == gamma1_prime[3]*gamma2_prime[3] + gamma1_prime[2]*gamma2_prime[2] + gamma1_prime[1]*gamma2_prime[1] + gamma1_prime[0]*gamma2_prime[0]
+  gamma_pair_ipp_vec[2] == gamma1_prime[1]*gamma2_prime[1] + gamma1_prime[0]*gamma2_prime[0]
+  hash1_l_vec[0] == gamma1[3]*gamma2_prime[3] + gamma1[2]*gamma2_prime[2] + gamma1[1]*gamma2_prime[1] + gamma1[0]*gamma2_prime[0]
+  hash1_l_vec[1] == gamma1_prime[1]*gamma2_prime[1] + gamma1_prime[0]*gamma2_prime[0]
+  hash1_r_vec[0] == gamma1[7]*gamma2_prime[3] + gamma1[6]*gamma2_prime[2] + gamma1[5]*gamma2_prime[1] + gamma1[4]*gamma2_prime[0]
+  hash1_r_vec[1] == gamma1_prime[3]*gamma2_prime[1] + gamma1_prime[2]*gamma2_prime[0]
+  hash2_l_vec[0] == gamma1_prime[3]*gamma2[3] + gamma1_prime[2]*gamma2[2] + gamma1_prime[1]*gamma2[1] + gamma1_prime[0]*gamma2[0]
+  hash2_l_vec[1] == gamma1_prime[1]*gamma2_prime[1] + gamma1_prime[0]*gamma2_prime[0]
+  hash2_r_vec[0] == gamma1_prime[3]*gamma2[7] + gamma1_prime[2]*gamma2[6] + gamma1_prime[1]*gamma2[5] + gamma1_prime[0]*gamma2[4]
+  hash2_r_vec[1] == gamma1_prime[1]*gamma2_prime[3] + gamma1_prime[0]*gamma2_prime[2]
+  lhs: <482 terms>
+  rhs: <484 terms>
+  equal modulo the basis, using:
+    - __zippel::gb::div_inv::5 + alpha_inv#3
+    - __zippel::gb::div_inv::4 + rho_inv#3
+    - __zippel::gb::div_inv::3 + alpha_inv#2
+    - __zippel::gb::div_inv::2 + rho_inv#2
+    - __zippel::gb::div_inv::1 + alpha_inv#1
+    - __zippel::gb::div_inv::0 + rho_inv#1
+    rho#1*__zippel::gb::div_inv::0 - 1
+    alpha#1*__zippel::gb::div_inv::1 - 1
+    rho#2*__zippel::gb::div_inv::2 - 1
+    alpha#2*__zippel::gb::div_inv::3 - 1
+    rho#3*__zippel::gb::div_inv::4 - 1
+    alpha#3*__zippel::gb::div_inv::5 - 1
+basis:
+- __zippel::gb::div_inv::0 + __zippel::gb::div_inv::6
+- __zippel::gb::div_inv::0 + rho_inv
+- __zippel::gb::div_inv::1 + __zippel::gb::div_inv::7
+- __zippel::gb::div_inv::1 + alpha_inv
+- __zippel::gb::div_inv::2 + __zippel::gb::div_inv::8
+- __zippel::gb::div_inv::2 + rho_inv
+- __zippel::gb::div_inv::3 + __zippel::gb::div_inv::9
+- __zippel::gb::div_inv::3 + alpha_inv
+- __zippel::gb::div_inv::4 + __zippel::gb::div_inv::10
+- __zippel::gb::div_inv::4 + rho_inv
+- __zippel::gb::div_inv::5 + __zippel::gb::div_inv::11
+- __zippel::gb::div_inv::5 + alpha_inv
+__zippel::node::396 - 1
+alpha*__zippel::gb::div_inv::1 - 1
+alpha*__zippel::gb::div_inv::3 - 1
+alpha*__zippel::gb::div_inv::5 - 1
+rho*__zippel::gb::div_inv::0 - 1
+rho*__zippel::gb::div_inv::2 - 1
+rho*__zippel::gb::div_inv::4 - 1

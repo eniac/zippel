@@ -2,28 +2,18 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- __zippel::gb::div_q::0[0] + p_val[1]
-- __zippel::gb::div_q::1[0] + __zippel::node::11
-- gs[0] + gamma_g
-- gs[0]*h_val + gs[1]*h
-- gs[0]*ss[1] + gs[1]*ss[0]
-- h*ss[1] + h_val*ss[0]
-- ss[0] + g
-__zippel::gb::div_q::0[1]
-__zippel::gb::div_q::1[1]
-__zippel::gb::div_r::0[0]
-__zippel::gb::div_r::1[0]
-__zippel::node::47 - 1
-__zippel::node::63[0] - 1
-__zippel::node::63[1] - 1
-__zippel::node::66[0] - 1
-__zippel::node::66[1] - 1
-__zippel::node::70 - 1
-__zippel::node::73 - 1
-__zippel::node::76 - 1
-gs[0]*tau - gs[1]
-h*tau - h_val
-ss[0]*gamma - gs[0]
-ss[0]*tau - ss[1]
-ss[1]*gamma - gs[1]
-z*__zippel::gb::div_q::0[0] - y + p_val[0]
+check: - h*z*pi + h_val*pi == - gamma_g*h*r_z_sent + h*c - g*h*y
+  c <- gs[1]*__zippel::node::11 + gs[0]*__zippel::node::10 + p_val[1]*ss[1] + p_val[0]*ss[0]
+  pi <- ss[0]*__zippel::gb::div_q::0[0] + gs[0]*__zippel::gb::div_q::1[0]
+  r_z_sent <- z*__zippel::node::11 + __zippel::node::10
+  g == ss[0]
+  gamma_g == ss[0]*gamma
+  gs[0] == ss[0]*gamma
+  gs[1] == ss[0]*tau*gamma
+  h_val == h*tau
+  p_val[0] == - p_val[1]*z + y
+  ss[1] == ss[0]*tau
+  __zippel::gb::div_q::1[0] == __zippel::node::11
+  __zippel::gb::div_q::0[0] == p_val[1]
+  both sides: h*ss[0]*__zippel::node::11*tau*gamma - h*ss[0]*z*__zippel::node::11*gamma + h*p_val[1]*ss[0]*tau - h*p_val[1]*ss[0]*z
+basis:

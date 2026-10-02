@@ -150,10 +150,9 @@ impl MulAssign for Monomial {
 
 impl Mul for Monomial {
     type Output = Self;
-    fn mul(self, other: Self) -> Self {
-        let mut result = self.clone();
-        result *= other;
-        result
+    fn mul(mut self, other: Self) -> Self {
+        self *= other;
+        self
     }
 }
 

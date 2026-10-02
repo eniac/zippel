@@ -2,6 +2,10 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-__zippel::node::24 - 1
-__zippel::node::36 - 1
-g*x + h*r - comm
+check: h*sr + g*sx == comm*c + t
+  t <- h*rr + g*rx
+  sx <- x*c + rx
+  sr <- r*c + rr
+  comm == g*x + h*r
+  both sides: g*x*c + h*r*c + h*rr + g*rx
+basis:

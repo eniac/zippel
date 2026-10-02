@@ -1,17 +1,21 @@
+use std::collections::hash_map::Entry;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+
 use ark_ff::PrimeField;
 use backend::ArkConfig;
-use backend::op::HasOpFactory;
+use backend::op::{GOp, HasOpFactory};
 use share::{Ctx, Set};
 
 use crate::TransClos;
 use crate::Var;
-use crate::backend::{GbBackendKind, GbBasis};
+use crate::backend::{GbBackendKind, GbBasis, reduce_with_divisors};
 use crate::error::AnalysisError;
 use crate::extractor::extract_locals;
 use crate::frontend::{MonoOrder, Polynomial};
-use crate::ideal::IdealBuilder;
-use graph::QDag;
+use crate::ideal::{Check, EncodeOptions, Ideal, IdealBuilder, Origin, Stage, is_division_witness};
 use graph::Ref;
+use graph::eval::collect_refs;
+use graph::{Op, QDag};
 
 /// Inputs to the Gröbner basis computation: the generating set (prover ∪
 /// relation ∪ verifier-locals, after optional inlining) and the verifier
@@ -24,11 +28,333 @@ use graph::Ref;
 pub struct CompletenessInputs<F: ark_ff::PrimeField> {
     /// The generating set for the Gröbner basis (prover ∪ relation ∪
     /// verifier-locals). When inlining, every definition is substituted away,
-    /// prover messages included.
+    /// prover messages and inputs the relation pins down included.
     pub generating_set: Vec<Polynomial<F>>,
     /// Verifier polynomials to reduce against the basis in `run()`, minus
     /// those already in `generating_set` (members by construction).
     pub verifier: Vec<Polynomial<F>>,
+    /// What each `verify` checks, over the verifier's own variables, before
+    /// any substitution. Unlike `verifier`, it does not vanish when the
+    /// substitution discharges a check, so it is what to report or snapshot.
+    pub checks: Vec<Check<F>>,
+    /// The prover messages substituted away, `t <- f`, each resolved down to
+    /// non-message variables.
+    pub messages: Ctx<Var, Polynomial<F>>,
+    /// The variables a generator pinned down and that were substituted away
+    /// after the messages, `x == f`: inputs the `where` clause defines, the
+    /// quotient and remainder witnesses of polynomial division, and asserted
+    /// bools.
+    pub pinned: Ctx<Var, Polynomial<F>>,
+    /// Where each generator came from, index-aligned with `generating_set`, or
+    /// empty if that was lost. Diagnostic only; see [`Self::describe`].
+    pub origins: Vec<Origin>,
+    /// How many `assert`s written in the protocol body (not the one wrapping
+    /// the `where` clause) the prover and verifier closures reach.
+    pub body_asserts: usize,
+}
+
+impl<F: PrimeField> CompletenessInputs<F> {
+    /// The generating set grouped by where each generator came from, with each
+    /// generator's degree, number of terms and number of variables, preceded by
+    /// a summary. Polynomials longer than [`EXPLAIN_MAX_TERMS`] terms are shown
+    /// by their size only.
+    pub fn describe(&self) -> String {
+        let vars: Set<Var> = self.generating_set.iter().flat_map(|p| p.vars()).collect();
+        let max_degree = self
+            .generating_set
+            .iter()
+            .map(Polynomial::degree)
+            .max()
+            .unwrap_or(0);
+        let names = disambiguate(
+            vars.iter()
+                .cloned()
+                .chain(self.pinned.keys())
+                .chain(self.origins.iter().map(|o| o.node.clone())),
+        );
+        let name = |x: &Var| names.get(x).unwrap_or(x).to_string();
+        let show = |p: &Polynomial<F>| {
+            if p.terms.len() > EXPLAIN_MAX_TERMS {
+                format!("<{} terms>", p.terms.len())
+            } else {
+                p.remap_vars(&|v| names.get(v).unwrap_or(v).clone())
+                    .to_string()
+            }
+        };
+
+        let mut out = format!(
+            "generating set: {} polynomials, max degree {max_degree}, {} variables\n",
+            self.generating_set.len(),
+            vars.len()
+        );
+        out += &format!(
+            "goals: {}, checks: {}, prover messages substituted: {}\n",
+            self.verifier.len(),
+            self.checks.len(),
+            self.messages.len()
+        );
+        out += &format!(
+            "body asserts reaching the analysis: {}\n",
+            self.body_asserts
+        );
+        let mut pinned: Vec<(String, usize)> = self
+            .pinned
+            .iter()
+            .map(|(x, value)| (name(x), value.terms.len()))
+            .collect();
+        pinned.sort();
+        out += &format!("pinned and substituted away ({}):", pinned.len());
+        for (x, terms) in &pinned {
+            out += &format!(" {x} ({terms} terms)");
+        }
+        out += "\n";
+
+        if self.origins.len() != self.generating_set.len() {
+            out += "\n[origins lost]\n";
+            for p in &self.generating_set {
+                out += &format!("  {}  {}\n", stats(p), show(p));
+            }
+            return out;
+        }
+        let mut groups: BTreeMap<Stage, Vec<usize>> = BTreeMap::new();
+        for (i, origin) in self.origins.iter().enumerate() {
+            groups.entry(origin.stage).or_default().push(i);
+        }
+        for (stage, members) in groups {
+            let degree = members
+                .iter()
+                .map(|&i| self.generating_set[i].degree())
+                .max()
+                .unwrap_or(0);
+            out += &format!(
+                "\n[{}] {} generators, max degree {degree}\n",
+                stage_label(stage),
+                members.len()
+            );
+            for i in members {
+                let (p, origin) = (&self.generating_set[i], &self.origins[i]);
+                out += &format!(
+                    "  {}  from {} `{}`: {}\n",
+                    stats(p),
+                    origin.op,
+                    name(&origin.node),
+                    show(p)
+                );
+            }
+        }
+        out
+    }
+}
+
+/// `deg D, T terms, V vars` for `p`.
+fn stats<F: PrimeField>(p: &Polynomial<F>) -> String {
+    format!(
+        "deg {}, {} terms, {} vars",
+        p.degree(),
+        p.terms.len(),
+        p.vars().len()
+    )
+}
+
+fn stage_label(stage: Stage) -> String {
+    match stage {
+        Stage::Prover => "prover".to_string(),
+        Stage::RelationAssert => "where: the assert around it".to_string(),
+        Stage::Relation { conjunct: Some(k) } => format!("where: conjunct {k}"),
+        Stage::Relation { conjunct: None } => "where: shared by several conjuncts".to_string(),
+        Stage::VerifierLocal => "verifier local".to_string(),
+        Stage::CheckBookkeeping => "check bookkeeping".to_string(),
+        Stage::Unknown => "unattributed".to_string(),
+    }
+}
+
+/// How many `assert` nodes `tc` contains.
+fn count_asserts<C: ArkConfig>(tc: &TransClos<C>) -> usize {
+    tc.clos
+        .iter()
+        .filter(|(_, op)| matches!(op, Op::Assert(_)))
+        .count()
+}
+
+/// Attribute the generators of the relation ideal: those of the `assert`
+/// wrapping the `where` clause to [`Stage::RelationAssert`], and every other one
+/// to the top-level conjunct whose computation its node belongs to. `clos` is
+/// the relation closure, already built by `builder`.
+fn attribute_relation<C: ArkConfig + HasOpFactory>(
+    builder: &IdealBuilder<C>,
+    clos: &[(Var, GOp<C>)],
+    ideal: &mut Ideal<C>,
+) {
+    let deps: HashMap<Ref, Vec<Ref>> = clos
+        .iter()
+        .map(|(v, op)| (v.reference, collect_refs(op)))
+        .collect();
+    let mut conjunct_of: HashMap<Ref, Option<usize>> = HashMap::new();
+    let asserted = clos.iter().find_map(|(_, op)| match op {
+        Op::Assert(exp) => Some(exp.clone()),
+        _ => None,
+    });
+    if let Some(exp) = asserted {
+        // The elements split out of one `reduce(&&, …)` form one conjunct.
+        let mut numbered: HashMap<Ref, usize> = HashMap::new();
+        let mut conjuncts = 0;
+        for leaf in builder.collect_and_leaves(&exp) {
+            let mut next = || {
+                conjuncts += 1;
+                conjuncts - 1
+            };
+            let k = match leaf.reduction {
+                Some(r) => *numbered.entry(r).or_insert_with(next),
+                None => next(),
+            };
+            let mut stack = leaf.refs();
+            let mut seen = HashSet::new();
+            while let Some(r) = stack.pop() {
+                if !seen.insert(r) {
+                    continue;
+                }
+                match conjunct_of.entry(r) {
+                    Entry::Vacant(e) => {
+                        e.insert(Some(k));
+                    }
+                    Entry::Occupied(mut e) => {
+                        if *e.get() != Some(k) {
+                            e.insert(None);
+                        }
+                    }
+                }
+                if let Some(ds) = deps.get(&r) {
+                    stack.extend(ds.iter().copied());
+                }
+            }
+        }
+    }
+    for origin in &mut ideal.origins {
+        origin.stage = if origin.op == "assert" {
+            Stage::RelationAssert
+        } else {
+            Stage::Relation {
+                conjunct: conjunct_of.get(&origin.node.reference).copied().flatten(),
+            }
+        };
+    }
+}
+
+/// Substitute `defs` into every generator, dropping those that vanish together
+/// with their origins. `origins` ends up empty if it did not describe `polys`.
+fn substitute_generators<F: PrimeField>(
+    polys: Vec<Polynomial<F>>,
+    origins: &mut Vec<Origin>,
+    defs: &Ctx<Var, Polynomial<F>>,
+) -> Vec<Polynomial<F>> {
+    let aligned = origins.len() == polys.len();
+    let mut old = std::mem::take(origins).into_iter();
+    let mut out = Vec::with_capacity(polys.len());
+    for p in polys {
+        let origin = if aligned { old.next() } else { None };
+        let p = p.inline_vars(defs).0;
+        if !p.is_zero() {
+            out.push(p);
+            origins.extend(origin);
+        }
+    }
+    out
+}
+
+/// Polynomials longer than this many terms are explained by their size only,
+/// except for the checks themselves.
+const EXPLAIN_MAX_TERMS: usize = 16;
+
+/// What [`CompletenessAnalysis::explain`] shows for one check.
+struct CheckExplanation<F: PrimeField> {
+    check: Check<F>,
+    /// The prover messages the check mentions.
+    messages: Vec<(Var, Polynomial<F>)>,
+    /// The pinned variables the check mentions once the messages are
+    /// substituted, if the messages alone leave the sides different.
+    pinned: Vec<(Var, Polynomial<F>)>,
+    /// Both sides after substitution.
+    lhs: Polynomial<F>,
+    rhs: Polynomial<F>,
+    /// When the sides differ: the remainder of their difference against the
+    /// basis, and the basis polynomials the reduction divided by.
+    reduction: Option<(Polynomial<F>, Vec<Polynomial<F>>)>,
+}
+
+impl<F: PrimeField> CheckExplanation<F> {
+    /// Every variable the explanation prints.
+    fn vars(&self) -> impl Iterator<Item = Var> + '_ {
+        let defs = self.messages.iter().chain(&self.pinned);
+        let mut polys = vec![&self.check.lhs, &self.check.rhs];
+        polys.extend(defs.clone().map(|(_, value)| value));
+        if let Some((remainder, used)) = &self.reduction {
+            polys.push(remainder);
+            polys.extend(used);
+        }
+        defs.map(|(x, _)| x.clone())
+            .chain(polys.into_iter().flat_map(|p| p.vars()))
+    }
+
+    fn render(&self, names: &HashMap<Var, Var>) -> String {
+        let full = |p: &Polynomial<F>| {
+            p.remap_vars(&|v| names.get(v).unwrap_or(v).clone())
+                .to_string()
+        };
+        let show = |p: &Polynomial<F>| {
+            if p.terms.len() > EXPLAIN_MAX_TERMS {
+                format!("<{} terms>", p.terms.len())
+            } else {
+                full(p)
+            }
+        };
+        let name = |x: &Var| names.get(x).unwrap_or(x).to_string();
+        // The check itself in full: it is what the verifier writes.
+        let mut out = format!(
+            "check: {} == {}\n",
+            full(&self.check.lhs),
+            full(&self.check.rhs)
+        );
+        for (t, value) in &self.messages {
+            out += &format!("  {} <- {}\n", name(t), show(value));
+        }
+        for (x, value) in &self.pinned {
+            out += &format!("  {} == {}\n", name(x), show(value));
+        }
+        match &self.reduction {
+            None => out += &format!("  both sides: {}\n", show(&self.lhs)),
+            Some((remainder, used)) => {
+                out += &format!("  lhs: {}\n  rhs: {}\n", show(&self.lhs), show(&self.rhs));
+                if remainder.is_zero() {
+                    out += "  equal modulo the basis, using:\n";
+                    for g in used {
+                        out += &format!("    {}\n", show(g));
+                    }
+                } else {
+                    out += &format!("  differ by {} modulo the basis\n", show(remainder));
+                }
+            }
+        }
+        out
+    }
+}
+
+/// Distinct variables that print alike, such as a challenge drawn at every
+/// level of a recursion, get `#1`, `#2`, … in `Var` order, which follows the
+/// order the graph creates them in.
+fn disambiguate(vars: impl IntoIterator<Item = Var>) -> HashMap<Var, Var> {
+    let mut by_name: BTreeMap<String, BTreeSet<Var>> = BTreeMap::new();
+    for v in vars {
+        by_name.entry(v.to_string()).or_default().insert(v);
+    }
+    let mut names = HashMap::new();
+    for group in by_name.into_values().filter(|group| group.len() > 1) {
+        for (k, v) in group.into_iter().enumerate() {
+            let mut named = v.clone();
+            named.name = format!("{}#{}", v.name, k + 1);
+            names.insert(v, named);
+        }
+    }
+    names
 }
 
 /// Substitute `defs` into every polynomial, dropping those that vanish.
@@ -43,6 +369,155 @@ fn substitute<F: PrimeField>(
         .collect()
 }
 
+/// How readily [`eliminate_definitions`] pins a variable, most readily first.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum PinClass {
+    /// Any variable that its generator pins to a constant.
+    Constant,
+    /// A quotient or remainder slot of a polynomial division.
+    DivisionWitness,
+    /// Any other variable `eligible` accepts, such as an input.
+    Other,
+}
+
+impl PinClass {
+    /// The class after this one, if any.
+    const fn next(self) -> Option<Self> {
+        match self {
+            Self::Constant => Some(Self::DivisionWitness),
+            Self::DivisionWitness => Some(Self::Other),
+            Self::Other => None,
+        }
+    }
+}
+
+/// If `p` pins a variable down, i.e. `p = c·x + r` with `c` constant and
+/// `x ∉ r`, return `x` and its value `−r/c`. Any `x` qualifies when `r` is
+/// constant; otherwise `x` must satisfy `eligible`. Only candidates of class
+/// `max_class` or earlier count, and ties go to the earliest class, then to
+/// the least `Var`, so the choice does not depend on hash order.
+fn defined_var<F: PrimeField>(
+    p: &Polynomial<F>,
+    eligible: &impl Fn(&Var) -> bool,
+    max_class: PinClass,
+) -> Option<(Var, Polynomial<F>)> {
+    // The number of terms each variable occurs in.
+    let mut occurrences: HashMap<Var, usize> = HashMap::new();
+    for mono in p.terms.keys() {
+        for v in mono.vars() {
+            *occurrences.entry(v).or_default() += 1;
+        }
+    }
+    let rest_constant = p.terms.keys().filter(|m| !m.is_constant()).count() == 1;
+    let class = |x: &Var| {
+        if rest_constant {
+            Some(PinClass::Constant)
+        } else if !eligible(x) {
+            None
+        } else if is_division_witness(x) {
+            Some(PinClass::DivisionWitness)
+        } else {
+            Some(PinClass::Other)
+        }
+    };
+    let (_, x, c) = p
+        .terms
+        .iter()
+        .filter(|(mono, _)| mono.degree() == 1)
+        .filter_map(|(mono, c)| {
+            let x = mono.vars().pop()?;
+            let k = class(&x).filter(|&k| occurrences[&x] == 1 && k <= max_class)?;
+            Some((k, x, *c))
+        })
+        .min_by(|(ka, a, _), (kb, b, _)| (ka, a).cmp(&(kb, b)))?;
+    // x = (c·x − p) / c
+    let cx = &Polynomial::lit(&c) * &Polynomial::var(&x);
+    let inv = Polynomial::lit(&c.inverse().expect("terms have nonzero coefficients"));
+    Some((x, &(&cx - p) * &inv))
+}
+
+/// Substitute away every variable that a generator pins down (see
+/// [`defined_var`]), in `generating_set` and `verifier` alike, and return
+/// what each was pinned to.
+///
+/// These come from the `where` clause. Each asserted `a == b` arrives as the
+/// bool encoding `d·β`, `Σ d·ι + β − 1`, `β − 1` with `d = a − b`: the last
+/// pins `β := 1`, which turns the first into `d`, and `d` pins `a` whenever
+/// `a` is an input that `b` does not mention. Left to Buchberger, the grevlex
+/// leading term of `a − b` lies in `b`, so it rewrites `b`'s monomials instead
+/// of eliminating `a`. The substitution is exact for the same reason as for prover messages.
+///
+/// Polynomial division leaves the same shape behind: `a = b·q + r` is one
+/// generator per coefficient, linear in the witnesses. Once `b`'s leading
+/// coefficient is a constant, the top ones define `q`'s coefficients from the
+/// top down and the rest define `r`'s, so the witnesses are eligible too.
+///
+/// Which variable a generator pins matters, though every choice is exact.
+/// `a`'s coefficients are often linear in inputs too, and an input is the
+/// least `Var`, so a row would pin the input through the quotient instead of
+/// defining the quotient, rewriting the relation over quotients and
+/// challenges. And `b`'s leading coefficient may be an input that the `where`
+/// clause pins to a constant, as in `one == 1`, in a generator read after the
+/// division's: until then the quotient appears multiplied by it, and no
+/// witness qualifies. So each pass only pins up to a [`PinClass`], starting
+/// with constants. The class rises after a pass that pinned nothing, and
+/// falls back to constants after one that pinned something.
+fn eliminate_definitions<F: PrimeField>(
+    generating_set: &mut Vec<Polynomial<F>>,
+    origins: &mut Vec<Origin>,
+    verifier: &mut Vec<Polynomial<F>>,
+    eligible: impl Fn(&Var) -> bool,
+) -> Ctx<Var, Polynomial<F>> {
+    // Kept resolved: no value mentions a defined variable.
+    let mut defs: Ctx<Var, Polynomial<F>> = Ctx::new();
+    let mut max_class = PinClass::Constant;
+    loop {
+        let mut found = false;
+        let mut kept = Vec::with_capacity(generating_set.len());
+        let aligned = origins.len() == generating_set.len();
+        let mut old_origins = std::mem::take(origins).into_iter();
+        for p in std::mem::take(generating_set) {
+            let origin = if aligned { old_origins.next() } else { None };
+            let p = if p.vars().iter().any(|v| defs.contains(v)) {
+                p.inline_vars(&defs).0
+            } else {
+                p
+            };
+            if p.is_zero() {
+                continue;
+            }
+            match defined_var(&p, &eligible, max_class) {
+                Some((x, value)) => {
+                    let def = Ctx::singleton(x.clone(), value.clone());
+                    defs.modify(|_, v| {
+                        if v.contains(&x) {
+                            *v = v.clone().inline_vars(&def).0;
+                        }
+                    });
+                    defs.insert(&x, &value);
+                    found = true;
+                }
+                None => {
+                    kept.push(p);
+                    origins.extend(origin);
+                }
+            }
+        }
+        *generating_set = kept;
+        if found {
+            max_class = PinClass::Constant;
+        } else if let Some(next) = max_class.next() {
+            max_class = next;
+        } else {
+            // A pass that defined nothing new, of any class, left every
+            // generator resolved.
+            break;
+        }
+    }
+    *verifier = substitute(std::mem::take(verifier), &defs);
+    defs
+}
+
 /// Perform a completeness analysis using Groebner bases.
 /// This analysis checks if the relation is included in the implementation.
 /// One shared namespace is used for prover, relation, and verifier.
@@ -52,6 +527,13 @@ pub struct CompletenessAnalysis<C: ArkConfig> {
     pub basis: GbBasis<C::F>,
     /// Verifier polynomials to reduce against `basis` in `run()`.
     pub verifier: Vec<Polynomial<C::F>>,
+    /// What each `verify` checks; see [`CompletenessInputs::checks`].
+    pub checks: Vec<Check<C::F>>,
+    /// The prover messages substituted away; see [`CompletenessInputs::messages`].
+    pub messages: Ctx<Var, Polynomial<C::F>>,
+    /// The variables pinned down and substituted away; see
+    /// [`CompletenessInputs::pinned`].
+    pub pinned: Ctx<Var, Polynomial<C::F>>,
 }
 
 impl<C: HasOpFactory> CompletenessAnalysis<C> {
@@ -67,16 +549,36 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
     /// `t − f ∈ I` for every definition, so `p ∈ I` iff `p[t ↦ f]` lies in
     /// the ideal generated by the substituted generators.
     ///
+    /// The same holds for an input the `where` clause defines, as in
+    /// `x == f(…)` with `x ∉ f`, and those are substituted too (see
+    /// [`eliminate_definitions`]).
+    ///
     /// This is the cheap phase — no GB computation. Call
     /// [`from_inputs`](Self::from_inputs) to compute the basis, or inspect
     /// the generating set for pre-GB metrics.
     pub fn build_inputs(dag: &QDag<C>, inline: bool) -> CompletenessInputs<C::F> {
-        let mut builder = IdealBuilder::new();
+        let rel_tc = TransClos::relation(dag);
+        let rel_clos = rel_tc.clos.clone();
+        // The `assert` wrapping the `where` clause; any other is a runtime
+        // check written in a protocol body.
+        let relation_asserts = rel_clos
+            .iter()
+            .filter(|(_, op)| matches!(op, Op::Assert(_)))
+            .map(|(v, _)| v.reference)
+            .collect();
+        let mut builder = IdealBuilder::with_options(EncodeOptions {
+            split_reductions: true,
+            relation_asserts: Some(relation_asserts),
+            division_definitions: true,
+        });
 
         let prover_tc = TransClos::prover(dag);
+        let mut body_asserts = count_asserts(&prover_tc);
         let mut prover_result = builder.build(prover_tc);
+        prover_result.set_stage(Stage::Prover);
 
-        let rel_result = builder.build(TransClos::relation(dag));
+        let mut rel_result = builder.build(rel_tc);
+        attribute_relation(&builder, &rel_clos, &mut rel_result);
         prover_result.merge(&rel_result);
 
         let transcript_refs: Set<Ref> = dag.transcript_nodes().into_iter().map(Ref::new).collect();
@@ -85,7 +587,17 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         }
 
         let verifier_tc = TransClos::verifier(dag);
+        body_asserts += count_asserts(&verifier_tc);
+        let verified: Vec<_> = verifier_tc
+            .clos
+            .iter()
+            .filter_map(|(_, op)| match op {
+                Op::Verify(exp) => Some(exp.clone()),
+                _ => None,
+            })
+            .collect();
         let mut verifier_locals = extract_locals(&builder, &verifier_tc);
+        verifier_locals.set_stage(Stage::VerifierLocal);
         if inline {
             verifier_locals.inline(&Set::new());
         }
@@ -95,25 +607,64 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
             verifier_result.inline(&Set::new());
         }
 
+        // The nodes each `verify` checks, now that `builder` knows the
+        // verifier's `&&` chains.
+        let checked: HashSet<Ref> = verified
+            .iter()
+            .flat_map(|exp| builder.collect_and_leaves(exp))
+            .flat_map(|leaf| leaf.refs())
+            .collect();
+        for origin in &mut verifier_locals.origins {
+            if checked.contains(&origin.node.reference) {
+                origin.stage = Stage::CheckBookkeeping;
+            }
+        }
+
         // Merge verifier_locals into prover generating set.
+        let mut origins = if prover_result.origins_aligned() && verifier_locals.origins_aligned() {
+            let mut origins = prover_result.origins;
+            origins.extend(verifier_locals.origins);
+            origins
+        } else {
+            Vec::new()
+        };
         let mut generating_set = prover_result.generating_set;
         generating_set.extend(verifier_locals.generating_set);
         let mut verifier = verifier_result.generating_set;
 
+        // verifier_locals keeps the `==` node under each `verify`, so its
+        // encoding is already a generator; reducing it again is wasted work.
+        // What is left are the goals, one `b − 1` per checked bool.
+        verifier.retain(|p| !generating_set.contains(p));
+
+        let mut messages = Ctx::new();
+        let mut pinned = Ctx::new();
         if inline {
             // `inline` kept the prover-message definitions back in `pl`,
             // already resolved down to non-message variables.
-            generating_set = substitute(generating_set, &prover_result.pl);
+            generating_set = substitute_generators(generating_set, &mut origins, &prover_result.pl);
             verifier = substitute(verifier, &prover_result.pl);
-        }
 
-        // verifier_locals keeps the `==` node under each `verify`, so its
-        // encoding is already a generator; reducing it again is wasted work.
-        verifier.retain(|p| !generating_set.contains(p));
+            // Then every input a generator pins down, e.g. one the `where`
+            // clause defines, and every quotient and remainder coefficient of
+            // a polynomial division. Other variables only when pinned to a
+            // constant (an asserted bool), which leaves the verifier's `==`
+            // encodings alone.
+            let inputs: Set<Ref> = dag.input_args().into_iter().map(Ref::new).collect();
+            pinned = eliminate_definitions(&mut generating_set, &mut origins, &mut verifier, |v| {
+                inputs.contains(&v.reference) || is_division_witness(v)
+            });
+            messages = prover_result.pl;
+        }
 
         CompletenessInputs {
             generating_set,
             verifier,
+            checks: verifier_result.checks,
+            messages,
+            pinned,
+            origins,
+            body_asserts,
         }
     }
 
@@ -131,6 +682,77 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         Self {
             basis,
             verifier: inputs.verifier,
+            checks: inputs.checks,
+            messages: inputs.messages,
+            pinned: inputs.pinned,
+        }
+    }
+
+    /// Explain why each `verify` holds, one block per check, sorted:
+    ///
+    /// ```text
+    /// check: g*beta_z == v*c + v_r
+    ///   v_r <- g*beta_r
+    ///   beta_z <- beta*c + beta_r
+    ///   v == beta*g
+    ///   both sides: beta*g*c + g*beta_r
+    /// ```
+    ///
+    /// The check is shown as the verifier writes it, followed by the
+    /// definitions substituted into it: `t <- …` for a prover message and
+    /// `x == …` for a variable a constraint pins down, such as an input the
+    /// `where` clause defines. Pinned variables are substituted only when the
+    /// messages alone leave the sides different: a pin replaces the same
+    /// variable on both sides, so it cannot make equal sides differ, and on
+    /// a large check it can multiply the size of each side. If both sides
+    /// then agree, substitution alone discharged the check. Otherwise the basis has to prove the rest, and
+    /// the explanation lists the basis polynomials that reduce their
+    /// difference to 0, or the remainder if it is not 0. Polynomials other than
+    /// the checks that are longer than [`EXPLAIN_MAX_TERMS`] are shown by their
+    /// number of terms, and variables that print alike are told apart as in
+    /// [`disambiguate`].
+    pub fn explain(&self) -> String {
+        let explanations: Vec<_> = self.checks.iter().map(|c| self.explain_check(c)).collect();
+        let names = disambiguate(explanations.iter().flat_map(CheckExplanation::vars));
+        let mut blocks: Vec<String> = explanations.iter().map(|e| e.render(&names)).collect();
+        blocks.sort();
+        blocks.concat()
+    }
+
+    fn explain_check(&self, check: &Check<C::F>) -> CheckExplanation<C::F> {
+        let used =
+            |defs: &Ctx<Var, Polynomial<C::F>>, lhs: &Polynomial<C::F>, rhs: &Polynomial<C::F>| {
+                defs.iter()
+                    .filter(|(x, _)| lhs.contains(x) || rhs.contains(x))
+                    .map(|(x, value)| (x.clone(), value.clone()))
+                    .collect::<Vec<_>>()
+            };
+        let messages = used(&self.messages, &check.lhs, &check.rhs);
+        let mut lhs = check.lhs.clone().inline_vars(&self.messages).0;
+        let mut rhs = check.rhs.clone().inline_vars(&self.messages).0;
+        let mut pinned = Vec::new();
+        if lhs != rhs {
+            pinned = used(&self.pinned, &lhs, &rhs);
+            lhs = lhs.inline_vars(&self.pinned).0;
+            rhs = rhs.inline_vars(&self.pinned).0;
+        }
+        let difference = &lhs - &rhs;
+        let reduction = (!difference.is_zero()).then(|| {
+            let (remainder, divisors) =
+                reduce_with_divisors(difference, &self.basis.polys, &self.basis.order);
+            let used = divisors
+                .into_iter()
+                .map(|i| self.basis.polys[i].clone())
+                .collect();
+            (remainder, used)
+        });
+        CheckExplanation {
+            check: check.clone(),
+            messages,
+            pinned,
+            lhs,
+            rhs,
+            reduction,
         }
     }
 
@@ -174,6 +796,7 @@ mod tests {
     use crate::backend::GbBackendKind;
     use crate::error::AnalysisError;
     use crate::frontend::Polynomial;
+    use crate::ideal::Stage;
     use crate::tests::parse_and_concretize;
     use backend::ArkBls12_381;
     use graph::UDags;
@@ -1131,6 +1754,143 @@ mod tests {
     }
 
     #[test]
+    fn relation_defined_input_completeness() {
+        // The `where` clause defines `h`, and `k` through `h`; both must be
+        // substituted away.
+        let ex = r#"
+            proto defined<G: Group, F: Scalar<G>>(
+                witness x: F, witness y: F, instance g: G, instance h: G, instance k: G,
+            ) where h == g*x && k == h + g*y {
+                let r = random<F>;
+                u <- g*r;
+                c <- challenge<F>;
+                z <- r + (x + y)*c;
+                verify(g*z == u + k*c)
+            }"#;
+
+        let m = parse_and_concretize(ex, &Ctx::new());
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        let inputs = CompletenessAnalysis::build_inputs(&g, true);
+        let leftover: Vec<_> = inputs
+            .generating_set
+            .iter()
+            .chain(&inputs.verifier)
+            .flat_map(|p| p.vars())
+            .filter(|v| ["h", "k"].contains(&v.name.as_str()))
+            .collect();
+        assert!(
+            leftover.is_empty(),
+            "inputs the relation defines should be substituted away, found {leftover:?}"
+        );
+
+        let mut ca =
+            CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, GbBackendKind::default());
+        assert!(ca.run().is_ok(), "k = g*(x + y), so g*z == u + k*c holds");
+    }
+
+    #[test]
+    fn relation_defined_input_incomplete() {
+        let ex = r#"
+            proto defined<G: Group, F: Scalar<G>>(
+                witness x: F, witness y: F, instance g: G, instance h: G, instance k: G,
+            ) where h == g*x && k == h + g*y {
+                let r = random<F>;
+                u <- g*r;
+                c <- challenge<F>;
+                z <- r + (x + y)*c;
+                verify(g*z == u + h*c)
+            }"#;
+
+        let m = parse_and_concretize(ex, &Ctx::new());
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        let mut ca = from_input(&g);
+        assert!(ca.run().is_err(), "g*z == u + h*c misses the g*y*c term");
+    }
+
+    #[test]
+    fn explain_shows_the_substitution_that_discharges_a_check() {
+        let ex = r#"
+            proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
+                let r = random<F>;
+                u <- g*r;
+                c <- challenge<F>;
+                z <- r + x*c;
+                verify(g*z == u + h*c)
+            }"#;
+
+        let m = parse_and_concretize(ex, &Ctx::new());
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        let mut ca = from_input(&g);
+        assert!(ca.run().is_ok());
+        assert_eq!(
+            ca.explain(),
+            "check: g*z == h*c + u\n  u <- g*r\n  z <- x*c + r\n  h == g*x\n  both sides: g*x*c + g*r\n"
+        );
+    }
+
+    #[test]
+    fn explain_shows_what_is_left_of_an_incomplete_check() {
+        let ex = r#"
+            proto defined<G: Group, F: Scalar<G>>(
+                witness x: F, witness y: F, instance g: G, instance h: G, instance k: G,
+            ) where h == g*x && k == h + g*y {
+                let r = random<F>;
+                u <- g*r;
+                c <- challenge<F>;
+                z <- r + (x + y)*c;
+                verify(g*z == u + h*c)
+            }"#;
+
+        let m = parse_and_concretize(ex, &Ctx::new());
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        let ca = from_input(&g);
+        let explanation = ca.explain();
+        assert!(
+            explanation.contains("differ by g*y*c modulo the basis"),
+            "the missing g*y*c term should be named:\n{explanation}"
+        );
+    }
+
+    #[test]
+    fn origins_follow_the_generating_set() {
+        let ex = r#"
+            proto inv<F: Field>(witness x: F, witness y: F) where x * y == 1 && x == x {
+                c <- challenge<F>;
+                t <- x * c;
+                u <- y * c;
+                verify(t * u == c * c)
+            }"#;
+
+        let m = parse_and_concretize(ex, &Ctx::new());
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        let inputs = CompletenessAnalysis::build_inputs(&g, true);
+        assert_eq!(inputs.origins.len(), inputs.generating_set.len());
+        let stages: Vec<Stage> = inputs.origins.iter().map(|o| o.stage).collect();
+        assert!(
+            stages.contains(&Stage::Relation { conjunct: Some(0) }),
+            "x * y - 1 should come from the first conjunct: {stages:?}"
+        );
+        assert!(
+            stages.contains(&Stage::CheckBookkeeping),
+            "the verified == should be check bookkeeping: {stages:?}"
+        );
+        assert_eq!(inputs.body_asserts, 0);
+        let description = inputs.describe();
+        assert!(description.contains("[where: conjunct 0]"), "{description}");
+        assert!(description.contains("[check bookkeeping]"), "{description}");
+    }
+
+    #[test]
     fn unit_ideal_detection_smoke() {
         let ex = r#"
             proto contradiction<F: Field>(instance x: F) where x == x + 1 {
@@ -1157,5 +1917,870 @@ mod tests {
         );
         // The basis is the unit ideal (contains 1).
         assert!(ca.basis.is_unit(), "basis should be the unit ideal");
+    }
+
+    // -----------------------------------------------------------------
+    // Splitting an asserted or verified `reduce(&&, …)` like `&&`
+    // -----------------------------------------------------------------
+
+    fn dag_of(src: &str) -> graph::QDag<ArkBls12_381> {
+        let m = parse_and_concretize(src, &Ctx::new());
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        QualifierPropagation::from_dag(&gs[0])
+    }
+
+    /// Whether `Singular` is on `PATH`.
+    fn singular_available() -> bool {
+        std::process::Command::new("Singular")
+            .arg("-q")
+            .arg("-c")
+            .arg("ring r = (integer, 7), (x(1)), dp;")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok()
+    }
+
+    /// The completeness verdict for the first protocol in `src`, with the
+    /// basis computed by Singular, or `None` when Singular is not on `PATH`.
+    fn singular_verdict(src: &str) -> Option<Result<(), AnalysisError<ArkBls12_381>>> {
+        singular_verdict_with_inlining(src, true)
+    }
+
+    fn singular_verdict_with_inlining(
+        src: &str,
+        inline: bool,
+    ) -> Option<Result<(), AnalysisError<ArkBls12_381>>> {
+        if !singular_available() {
+            eprintln!("skipping: Singular not on PATH");
+            return None;
+        }
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(src), inline);
+        let mut ca = CompletenessAnalysis::from_inputs(inputs, GbBackendKind::Singular);
+        Some(ca.run())
+    }
+
+    /// The names of the variables `build_inputs` pinned down for `src`.
+    fn pinned_names(src: &str) -> Vec<String> {
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(src), true);
+        inputs.pinned.iter().map(|(x, _)| x.to_string()).collect()
+    }
+
+    /// Whether, for every `i < n`, `x[i]` or `y[i]` was pinned down, which
+    /// takes the `i`-th equality on its own: their product pins nothing.
+    fn pins_every_element(pinned: &[String], n: usize) -> bool {
+        (0..n).all(|i| pinned.contains(&format!("x[{i}]")) || pinned.contains(&format!("y[{i}]")))
+    }
+
+    #[test]
+    fn and_chain_of_bools_stays_complete() {
+        let ex = r#"
+            proto and_chain<F: Field>(instance a: Bool, instance b: Bool) where a && b {
+                verify(a)
+            }"#;
+        if let Some(result) = singular_verdict(ex) {
+            assert!(result.is_ok(), "a && b gives a: {result:?}");
+        }
+    }
+
+    #[test]
+    fn reduce_and_of_bools_is_complete() {
+        let ex = r#"
+            proto reduce_bools<F: Field>(instance a: Bool, instance b: Bool) where reduce(&&, [a, b]) {
+                verify(a)
+            }"#;
+        if let Some(result) = singular_verdict(ex) {
+            assert!(result.is_ok(), "reduce(&&, [a, b]) gives a: {result:?}");
+        }
+    }
+
+    #[test]
+    fn asserted_reduce_and_splits_per_element() {
+        let ex = r#"
+            proto split<F: Field>(instance x: [F; 3], instance y: [F; 3]) where reduce(&&, x == y) {
+                verify(x[2] == y[2])
+            }"#;
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(ex), true);
+        let pinned: Vec<String> = inputs.pinned.iter().map(|(x, _)| x.to_string()).collect();
+        assert!(pins_every_element(&pinned, 3), "pinned: {pinned:?}");
+        // No product of the equalities' bools is left over, nor anything else.
+        assert!(
+            inputs.generating_set.is_empty(),
+            "{:?}",
+            inputs.generating_set
+        );
+        assert!(inputs.verifier.is_empty(), "{:?}", inputs.verifier);
+    }
+
+    #[test]
+    fn mapped_reduce_and_splits_per_element() {
+        let ex = r#"
+            proto mapped<F: Field>(instance x: [F; 3], instance y: [F; 3]) where reduce(&&, [x[i] == y[i] for i in 0..3]) {
+                verify(x[2] == y[2])
+            }"#;
+        let pinned = pinned_names(ex);
+        assert!(pins_every_element(&pinned, 3), "pinned: {pinned:?}");
+    }
+
+    #[test]
+    fn reduce_and_through_a_function_splits_per_element() {
+        let ex = r#"
+            fn all_equal<F: Field>(instance x: [F; 3], instance y: [F; 3]) -> Bool {
+                let same = reduce(&&, x == y);
+                same
+            }
+
+            proto aliased<F: Field>(instance x: [F; 3], instance y: [F; 3]) where all_equal(x, y) {
+                verify(x[2] == y[2])
+            }"#;
+        let pinned = pinned_names(ex);
+        assert!(pins_every_element(&pinned, 3), "pinned: {pinned:?}");
+    }
+
+    #[test]
+    fn a_definition_reading_a_message_resolves_through_it() {
+        // `a` aliases the product `x * x`, and `t` reads `a`. Resolving `t`
+        // through `a`'s raw value used to leave the product's variable in `t`
+        // after its own definition was substituted away, so the check kept a
+        // leftover `c * (x^2 - e)` around instead of vanishing.
+        let ex = r#"
+            proto reads_message<F: Field>(witness x: F, instance y: F) where y == x * x {
+                a <- x * x;
+                c <- challenge<F>;
+                let t = a * c;
+                u <- t;
+                verify(u == y * c)
+            }"#;
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(ex), true);
+        assert!(
+            inputs.generating_set.is_empty(),
+            "{:?}",
+            inputs.generating_set
+        );
+        assert!(inputs.verifier.is_empty(), "{:?}", inputs.verifier);
+    }
+
+    #[test]
+    fn division_witnesses_are_substituted() {
+        // The dividend is computed, so only the quotient and remainder
+        // coefficients occur linearly in the division's generators.
+        // For p(X) = a + bX, q(z) = 2b * p(z), where
+        // q(X) = (p(X)^2 - p(z)^2) / (X - z).
+        let ex = r#"
+            proto quotient<F: Field>(witness p: Uni<F, 1>) where p == p {
+                z <- challenge<F>;
+                let s = p * p;
+                let q = (s - s(z)) / poly([-z, 1]);
+                let pc = coef(p);
+                t <- q(z);
+                expected <- 2 * pc[1] * p(z);
+                verify(t == expected)
+            }"#;
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(ex), true);
+        // A coefficient above the quotient's degree is pinned to 0 either way;
+        // the others are pinned only as division witnesses.
+        let defined: Vec<String> = inputs
+            .pinned
+            .iter()
+            .filter(|(x, value)| {
+                x.name.starts_with("__zippel::gb::div_q") && !value.vars().is_empty()
+            })
+            .map(|(x, _)| x.to_string())
+            .collect();
+        assert!(!defined.is_empty(), "pinned: {:?}", inputs.pinned);
+
+        let mut ca =
+            CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, GbBackendKind::default());
+        let result = ca.run();
+        assert!(result.is_ok(), "quotient evaluation identity: {result:?}");
+    }
+
+    #[test]
+    fn division_witness_substitution_rejects_incorrect_quotient() {
+        // The same quotient identity, offset by 1, must remain an unproved
+        // obligation after substituting its division witnesses.
+        let ex = r#"
+            proto incorrect_quotient<F: Field>(witness p: Uni<F, 1>) where p == p {
+                z <- challenge<F>;
+                let s = p * p;
+                let q = (s - s(z)) / poly([-z, 1]);
+                let pc = coef(p);
+                t <- q(z);
+                expected <- 2 * pc[1] * p(z);
+                verify(t == expected + 1)
+            }"#;
+        let mut ca = from_input(&dag_of(ex));
+        let result = ca.run();
+        assert!(
+            matches!(result, Err(AnalysisError::Incomplete(_))),
+            "incorrect quotient identity must be incomplete: {result:?}"
+        );
+    }
+
+    /// For `p(X) = a + bX`, the opening quotient `(p − p(z)) / (X − z)` is
+    /// the constant `b`, divided by `poly([-z, lead])`.
+    fn opening(lead: &str, offset: &str) -> String {
+        format!(
+            r#"
+            proto opening<F: Field>(witness p: Uni<F, 1>, instance f_one: F) where f_one == 1 {{
+                z <- challenge<F>;
+                let q = (p - p(z)) / poly([-z, {lead}]);
+                t <- q(z);
+                let pc = coef(p);
+                b <- pc[1];
+                verify(t == b{offset})
+            }}"#
+        )
+    }
+
+    /// The pinned variables of `src` that are slots of `p`, and the quotient
+    /// and remainder slots it left unpinned.
+    fn division_pins(src: &str) -> (Vec<String>, Vec<String>) {
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(src), true);
+        let dividend = inputs
+            .pinned
+            .iter()
+            .map(|(x, _)| x.to_string())
+            .filter(|x| x.starts_with("p["))
+            .collect();
+        let unpinned = inputs
+            .generating_set
+            .iter()
+            .flat_map(|p| p.vars())
+            .filter(super::is_division_witness)
+            .map(|x| x.to_string())
+            .collect();
+        (dividend, unpinned)
+    }
+
+    #[test]
+    fn division_defines_its_witnesses_before_inputs() {
+        // The row for `X^1` reads `p[1] − q[0] + z·q[1]`: both `p[1]` and
+        // `q[0]` occur linearly, and the division defines `q[0]`.
+        let (dividend, unpinned) = division_pins(&opening("1", ""));
+        assert!(dividend.is_empty(), "dividend pinned: {dividend:?}");
+        assert!(unpinned.is_empty(), "witnesses left: {unpinned:?}");
+    }
+
+    #[test]
+    fn division_waits_for_a_leading_coefficient_the_relation_fixes() {
+        // Until `f_one := 1` is substituted, the quotient appears only as
+        // `f_one·q`, and the `where` clause's generator comes after the
+        // division's.
+        let (dividend, unpinned) = division_pins(&opening("f_one", ""));
+        assert!(dividend.is_empty(), "dividend pinned: {dividend:?}");
+        assert!(unpinned.is_empty(), "witnesses left: {unpinned:?}");
+    }
+
+    #[test]
+    fn pinning_witnesses_first_keeps_the_verdict() {
+        for lead in ["1", "f_one"] {
+            let Some(result) = singular_verdict(&opening(lead, "")) else {
+                return;
+            };
+            assert!(result.is_ok(), "divisor lead {lead}: {result:?}");
+        }
+    }
+
+    #[test]
+    fn pinning_witnesses_first_keeps_an_incorrect_quotient_incomplete() {
+        for lead in ["1", "f_one"] {
+            let Some(result) = singular_verdict(&opening(lead, " + 1")) else {
+                return;
+            };
+            assert!(
+                matches!(result, Err(AnalysisError::Incomplete(_))),
+                "divisor lead {lead}: {result:?}"
+            );
+        }
+    }
+
+    /// `t = a² / b` for instances `a` and `b`, then `verify(check)`. With a
+    /// dividend that is not linear in an input, `a² − b·t` cannot pin one.
+    fn quotient(check: &str) -> String {
+        format!(
+            r#"
+            proto quotient<F: Field>(instance a: F, instance b: F) where a == a {{
+                let t = a * a / b;
+                verify({check})
+            }}"#
+        )
+    }
+
+    #[test]
+    fn division_by_a_variable_is_a_definition() {
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(&quotient("t * b == a * a")), true);
+        let t: Vec<String> = inputs
+            .generating_set
+            .iter()
+            .flat_map(|p| p.vars())
+            .map(|x| x.to_string())
+            .filter(|x| x == "t")
+            .collect();
+        assert!(t.is_empty(), "{:?}", inputs.generating_set);
+    }
+
+    #[test]
+    fn a_reciprocal_keeps_its_constraint() {
+        // `1 − b·t` already has its leading term in `b·t`, and keeping it
+        // keeps `t`'s name in explanations.
+        let ex = r#"
+            proto reciprocal<F: Field>(instance b: F) where b == b {
+                let t = 1 / b;
+                verify(t * b == 1)
+            }"#;
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(ex), true);
+        let checks: Vec<String> = inputs
+            .checks
+            .iter()
+            .map(|c| format!("{} == {}", c.lhs, c.rhs))
+            .collect();
+        assert_eq!(checks, ["b*t == 1"]);
+        if let Some(result) = singular_verdict(ex) {
+            assert!(result.is_ok(), "{result:?}");
+        }
+    }
+
+    #[test]
+    fn division_definitions_keep_the_verdict() {
+        let Some(result) = singular_verdict(&quotient("t * b == a * a")) else {
+            return;
+        };
+        assert!(result.is_ok(), "{result:?}");
+        let Some(result) = singular_verdict(&quotient("t == a * a")) else {
+            return;
+        };
+        assert!(
+            matches!(result, Err(AnalysisError::Incomplete(_))),
+            "a² / b == a² must be incomplete: {result:?}"
+        );
+    }
+
+    #[test]
+    fn division_by_zero_still_gives_the_unit_ideal() {
+        let ex = r#"
+            proto by_zero<F: Field>(instance a: F, instance b: F) where a == a {
+                let zero = a - a;
+                let t = b / zero;
+                verify(t == t)
+            }"#;
+        if let Some(result) = singular_verdict(ex) {
+            assert!(
+                matches!(result, Err(AnalysisError::UnitIdeal { .. })),
+                "{result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn division_in_a_map_body_is_a_definition() {
+        let ex = r#"
+            proto quotients<F: Field>(instance a: [F; 2], instance b: [F; 2]) where a[0] == a[0] {
+                let t = [a[i] * a[i] / b[i] for i in 0..2];
+                verify(t[1] * b[1] == a[1] * a[1])
+            }"#;
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(ex), true);
+        let body: Vec<String> = inputs
+            .generating_set
+            .iter()
+            .chain(&inputs.verifier)
+            .flat_map(|p| p.vars())
+            .map(|x| x.to_string())
+            .filter(|x| x.contains("gb_map_body"))
+            .collect();
+        assert!(body.is_empty(), "{:?}", inputs.generating_set);
+        if let Some(result) = singular_verdict(ex) {
+            assert!(result.is_ok(), "{result:?}");
+        }
+    }
+
+    #[test]
+    fn division_definitions_preserve_polynomial_checks() {
+        // Exercise scalar broadcasting, degree-zero polynomial divisors,
+        // and a dividend mixing constant, variable, and zero coefficients.
+        // Sending the quotient also exercises saved message definitions.
+        for (args, expression, lhs, rhs) in [
+            (
+                "instance p: Uni<F, 2>, instance b: F",
+                "p / b",
+                "t * b",
+                "p",
+            ),
+            (
+                "instance p: Mle<F, 1>, instance b: F",
+                "p / b",
+                "t * b",
+                "p",
+            ),
+            (
+                "instance p: Poly<F, 2, 2>, instance b: F",
+                "p / b",
+                "eval(t, [b - b + 2, b - b + 3]) * b",
+                "eval(p, [b - b + 2, b - b + 3])",
+            ),
+            (
+                "instance p: Uni<F, 2>, instance b: F",
+                "p / poly([b])",
+                "t * b",
+                "p",
+            ),
+            (
+                "instance a: F, instance b: F",
+                "poly([1, a * a, 0]) / b",
+                "t * b",
+                "poly([1, a * a, 0])",
+            ),
+        ] {
+            for offset in ["", " + 1"] {
+                let src = format!(
+                    "proto quotient<F: Field>({args}) where b == b {{
+                        t <- {expression};
+                        verify({lhs} == {rhs}{offset})
+                    }}"
+                );
+                for inline in [false, true] {
+                    let Some(result) = singular_verdict_with_inlining(&src, inline) else {
+                        return;
+                    };
+                    if offset.is_empty() {
+                        assert!(result.is_ok(), "{expression}, inline={inline}: {result:?}");
+                    } else {
+                        assert!(
+                            matches!(result, Err(AnalysisError::Incomplete(_))),
+                            "incorrect quotient check, {expression}, inline={inline}: {result:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn division_definitions_preserve_relation_forced_zero_divisors() {
+        // A zero quotient must not erase the denominator's nonzero
+        // constraint. Here the denominator is only known zero once the
+        // relation is merged, after its inverse has already been allocated.
+        for expression in [
+            "a * a / b",
+            "(a - a) / b",
+            "poly([a, a * a, 0]) / b",
+            "poly([a, a * a, 0]) / poly([b])",
+        ] {
+            let src = format!(
+                "proto by_zero<F: Field>(instance a: F, instance b: F) where b == 0 {{
+                    t <- {expression};
+                    verify(t == t)
+                }}"
+            );
+            for inline in [false, true] {
+                let Some(result) = singular_verdict_with_inlining(&src, inline) else {
+                    return;
+                };
+                assert!(
+                    matches!(result, Err(AnalysisError::UnitIdeal { .. })),
+                    "{expression}, inline={inline}: {result:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn division_definitions_keep_verifier_auxiliary_variables_aligned() {
+        // The first division defines zero, so the second denominator
+        // resolves to 1 and needs no inverse. The third division still
+        // allocates one: verifier locals and the full verifier build must
+        // agree on its identity despite skipping the preceding inverse.
+        for offset in ["", " + 1"] {
+            let src = format!(
+                "proto nested<F: Field>(instance a: F, instance b: F) where a == a {{
+                    let zero = (a - a) / b;
+                    let t = a / (zero + 1);
+                    let u = a * a / (t + 1);
+                    verify(t == a);
+                    verify(u * (t + 1) == a * a{offset})
+                }}"
+            );
+            for inline in [false, true] {
+                let Some(result) = singular_verdict_with_inlining(&src, inline) else {
+                    return;
+                };
+                if offset.is_empty() {
+                    assert!(result.is_ok(), "inline={inline}: {result:?}");
+                } else {
+                    assert!(
+                        matches!(result, Err(AnalysisError::Incomplete(_))),
+                        "incorrect nested quotient check, inline={inline}: {result:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn verified_message_is_not_traced_into_the_prover() {
+        // `b` is a prover message, an alias of the prover's reduction: the
+        // verifier checks the message as sent, not how it was computed.
+        let ex = r#"
+            proto message<F: Field>(instance x: [F; 3], instance y: [F; 3]) where reduce(&&, x == y) {
+                b <- reduce(&&, x == y);
+                verify(b)
+            }"#;
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(ex), true);
+        let checks: Vec<String> = inputs
+            .checks
+            .iter()
+            .map(|c| format!("{} == {}", c.lhs, c.rhs))
+            .collect();
+        assert_eq!(checks, ["b == 1"]);
+        if let Some(result) = singular_verdict(ex) {
+            assert!(result.is_ok(), "{result:?}");
+        }
+    }
+
+    #[test]
+    fn verified_reduce_and_checks_each_element() {
+        let ex = r#"
+            proto checks<F: Field>(instance x: [F; 3], instance y: [F; 3]) where reduce(&&, x == y) {
+                verify(reduce(&&, x == y))
+            }"#;
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(ex), true);
+        let checks: Vec<String> = inputs
+            .checks
+            .iter()
+            .map(|c| format!("{} == {}", c.lhs, c.rhs))
+            .collect();
+        assert_eq!(checks, ["x[0] == y[0]", "x[1] == y[1]", "x[2] == y[2]"]);
+        assert!(inputs.verifier.is_empty(), "{:?}", inputs.verifier);
+    }
+
+    #[test]
+    fn computed_reduce_and_is_not_split() {
+        // `c` may be false, so the relation says nothing about x and y.
+        let ex = r#"
+            proto computed<F: Field>(instance x: [F; 2], instance y: [F; 2], instance c: Bool) where c == reduce(&&, x == y) {
+                verify(x[0] == y[0])
+            }"#;
+        let pinned = pinned_names(ex);
+        assert!(!pins_every_element(&pinned, 1), "pinned: {pinned:?}");
+        if let Some(result) = singular_verdict(ex) {
+            assert!(
+                matches!(result, Err(AnalysisError::Incomplete(_))),
+                "c == reduce(&&, x == y) does not give x == y: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "reduce-map-empty")]
+    fn empty_mapped_reduce_and_is_still_rejected() {
+        use crate::ideal::{EncodeOptions, Ideal, IdealBuilder};
+        use backend::{ABase, ATyp};
+        use graph::{Op, Ref};
+        use lang::ast::BinOp;
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = IdealBuilder::<ArkBls12_381>::with_options(EncodeOptions {
+            split_reductions: true,
+            ..EncodeOptions::default()
+        });
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+        let bools = ATyp::Vec(Box::new(ATyp::Base(ABase::Bool)), 0);
+        let v = Var::from_node(NodeIndex::new(0), bools.clone(), Qualifier::Instance);
+        ideal.register(&v);
+        let all = Var::from_node(
+            NodeIndex::new(1),
+            ATyp::Base(ABase::Bool),
+            Qualifier::Instance,
+        );
+        ideal.register(&all);
+        let domain = backend::op::mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), bools));
+        let body = backend::op::mk::<ArkBls12_381>(Op::LoopParam(0, ATyp::Base(ABase::Bool)));
+        builder.add_op(all, Op::ReduceMap(BinOp::And, domain, body), &mut ideal);
+    }
+
+    #[test]
+    fn body_asserts_encode_to_nothing() {
+        use crate::ideal::{EncodeOptions, Ideal, IdealBuilder};
+        use backend::{ABase, ATyp};
+        use graph::{Op, Ref};
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        // `assert(b)` on node 1, with `b` on node 0.
+        let generators = |relation_asserts: Option<Vec<usize>>| {
+            let mut builder = IdealBuilder::<ArkBls12_381>::with_options(EncodeOptions {
+                split_reductions: true,
+                relation_asserts: relation_asserts.map(|ns| {
+                    ns.into_iter()
+                        .map(|n| Ref::new(NodeIndex::new(n)))
+                        .collect()
+                }),
+                ..EncodeOptions::default()
+            });
+            let mut ideal = Ideal::<ArkBls12_381>::new();
+            let bool_t = ATyp::Base(ABase::Bool);
+            let b = Var::from_node(NodeIndex::new(0), bool_t.clone(), Qualifier::Instance);
+            ideal.register(&b);
+            let assert = Var::from_node(
+                NodeIndex::new(1),
+                ATyp::Base(ABase::Unit),
+                Qualifier::Instance,
+            );
+            ideal.register(&assert);
+            let exp = backend::op::mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), bool_t));
+            builder.add_op(assert, Op::Assert(exp), &mut ideal);
+            ideal.generating_set.len()
+        };
+        assert_eq!(
+            generators(None),
+            1,
+            "without the rule, assert(b) gives b - 1"
+        );
+        assert_eq!(generators(Some(vec![1])), 1, "the relation's assert stays");
+        assert_eq!(
+            generators(Some(vec![])),
+            0,
+            "a body assert encodes to nothing"
+        );
+    }
+
+    /// How many `interp_inv` sentinels `src` gets before inlining: one per
+    /// pair of interpolation points whose difference is not a constant.
+    fn interpolation_inverses(src: &str) -> usize {
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(src), false);
+        inputs
+            .generating_set
+            .iter()
+            .flat_map(|p| p.vars())
+            .map(|x| x.to_string())
+            .filter(|x| x.contains("interp_inv"))
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+    }
+
+    /// The line through `(points[0], a)` and `(points[1], b)`.
+    fn line_through(points: &str) -> String {
+        format!(
+            r#"
+            proto line<F: Field>(instance a: F, instance b: F) where a == a {{
+                let one = a - a + 1;
+                let zero = a - a;
+                let pts = {points};
+                let evs = [a, b];
+                let g = interpolate(pts, evs);
+                verify(g(one) == b)
+            }}"#
+        )
+    }
+
+    #[test]
+    fn interpolation_points_that_fold_to_constants_need_no_inverses() {
+        // `one` is `n + 1` with `n := a - a`, a constant only through `pl`.
+        assert_eq!(interpolation_inverses(&line_through("[zero, one]")), 0);
+        assert_ne!(interpolation_inverses(&line_through("[zero, a]")), 0);
+        if let Some(result) = singular_verdict(&line_through("[zero, one]")) {
+            assert!(result.is_ok(), "{result:?}");
+        }
+    }
+
+    #[test]
+    fn evaluating_at_a_folded_vertex_reads_one_slot() {
+        let ex = r#"
+            proto vertex<F: Field>(instance p: Mle<F, 2>, instance a: F) where a == a {
+                let one = a - a + 1;
+                let zero = a - a;
+                v <- eval(p, [one, zero]);
+                verify(v == eval(p, [one, zero]))
+            }"#;
+        // At a symbolic point, each evaluation would sum `p[b]` against
+        // products of `x_j` and `1 - x_j` over all four vertices.
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(ex), false);
+        let widest = inputs
+            .generating_set
+            .iter()
+            .filter(|g| g.vars().iter().any(|x| x.to_string().starts_with("p[")))
+            .map(|g| g.terms.len())
+            .max();
+        assert_eq!(widest, Some(2), "{:?}", inputs.generating_set);
+        if let Some(result) = singular_verdict(ex) {
+            assert!(result.is_ok(), "{result:?}");
+        }
+    }
+
+    #[test]
+    fn folded_points_preserve_full_partial_and_selected_evaluations() {
+        // The independent expressions use the four MLE entries in little-
+        // endian order; using the wrong vertex or free variable changes them.
+        let cases = [
+            ("v <- eval(p, [one, zero]);", "b"),
+            ("let q = eval(p, [one]); v <- q(t);", "b + (d - b) * t"),
+            ("let q = eval<0>(p, [one]); v <- q(t);", "c + (d - c) * t"),
+            ("let q = eval<1>(p, [one]); v <- q(t);", "b + (d - b) * t"),
+        ];
+        for (evaluation, expected) in cases {
+            for offset in ["", " + 1"] {
+                let src = format!(
+                    r#"
+                    proto folded<F: Field>(
+                        instance a: F, instance b: F, instance c: F, instance d: F
+                    ) where a == a {{
+                        let one = a - a + 1;
+                        let zero = a - a;
+                        let p = mle([a, b, c, d]);
+                        t <- challenge<F>;
+                        {evaluation}
+                        verify(v == {expected}{offset})
+                    }}"#
+                );
+                for inline in [false, true] {
+                    if let Some(result) = singular_verdict_with_inlining(&src, inline) {
+                        if offset.is_empty() {
+                            assert!(result.is_ok(), "{evaluation}, inline={inline}: {result:?}");
+                        } else {
+                            assert!(
+                                matches!(result, Err(AnalysisError::Incomplete(_))),
+                                "{evaluation}, inline={inline}: {result:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn folded_interpolation_points_preserve_wrong_checks_and_undefined_traces() {
+        let template = r#"
+            proto interpolation<F: Field>(instance a: F, instance b: F, instance c: F)
+            where a == a {
+                let one = a - a + 1;
+                let zero = a - a;
+                let p = interpolate([zero, one, a], [b, c, a]);
+                v <- p(a);
+                verify(v == a)
+            }"#;
+        let wrong = template.replace("verify(v == a)", "verify(v == a + 1)");
+        // The point a still needs inverse guards. With a == 0, it collides
+        // with zero and no defined interpolation trace remains.
+        let undefined = template.replace("where a == a", "where a == 0");
+        for inline in [false, true] {
+            if let Some(result) = singular_verdict_with_inlining(template, inline) {
+                assert!(result.is_ok(), "inline={inline}: {result:?}");
+            }
+            if let Some(result) = singular_verdict_with_inlining(&wrong, inline) {
+                assert!(
+                    matches!(result, Err(AnalysisError::Incomplete(_))),
+                    "inline={inline}: {result:?}"
+                );
+            }
+            if let Some(result) = singular_verdict_with_inlining(&undefined, inline) {
+                assert!(
+                    matches!(result, Err(AnalysisError::UnitIdeal { .. })),
+                    "inline={inline}: {result:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn folding_a_point_does_not_replace_unconstrained_inputs() {
+        let ex = r#"
+            proto symbolic<F: Field>(instance a: F, instance b: F) where a == a {
+                let point = a - a + b;
+                let p = mle([0, 1]);
+                v <- p(point);
+                verify(v == 1)
+            }"#;
+        for inline in [false, true] {
+            if let Some(result) = singular_verdict_with_inlining(ex, inline) {
+                assert!(
+                    matches!(result, Err(AnalysisError::Incomplete(_))),
+                    "inline={inline}: {result:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn spartan_matrix_product_matches_the_harness_layout() {
+        if !singular_available() {
+            eprintln!("skipping: Singular not on PATH");
+            return;
+        }
+        let helpers = include_str!("../../examples/spartan/spartan.zippel")
+            .split("proto spartan")
+            .next()
+            .unwrap();
+        let src = format!(
+            r#"{helpers}
+            proto matrix<G: Group, F: Scalar<G>, M: Size>(
+                instance a: [F; 16], instance z: [F; 4]
+            ) where a[0] == a[0] {{
+                let out = mat_vec(mle(a), z);
+                let expected = [
+                    reduce(+, [a[i + 4 * c] * z[c] for c in 0..4])
+                    for i in 0..4
+                ];
+                verify(out[1] == expected[1])
+            }}"#
+        );
+        let mut sizes = Ctx::new();
+        sizes.insert(&lang::id::Tid::new("M"), &2);
+        for transpose in [false, true] {
+            let src = if transpose {
+                src.replace("a[i + 4 * c]", "a[4 * i + c]")
+            } else {
+                src.clone()
+            };
+            let m = parse_and_concretize(&src, &sizes);
+            let gs = UDags::<ArkBls12_381>::from_module(m).unwrap();
+            let g = QualifierPropagation::from_dag(gs.protocols()[0]);
+            let inputs = CompletenessAnalysis::build_inputs(&g, true);
+            let mut ca =
+                CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, GbBackendKind::Singular);
+            let result = ca.run();
+            if transpose {
+                assert!(
+                    matches!(result, Err(AnalysisError::Incomplete(_))),
+                    "{result:?}"
+                );
+            } else {
+                assert!(result.is_ok(), "{result:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn explain_substitutes_pins_only_where_the_messages_leave_a_difference() {
+        if !singular_available() {
+            eprintln!("skipping: Singular not on PATH");
+            return;
+        }
+        let ex = r#"
+            proto pins<F: Field>(witness s: F, instance v: F) where v == s * s {
+                c <- challenge<F>;
+                t <- v * c;
+                u <- s * s;
+                verify(t == v * c && u == v)
+            }"#;
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(ex), true);
+        let mut ca =
+            CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, GbBackendKind::Singular);
+        assert!(ca.run().is_ok());
+        let explanation = ca.explain();
+        let block = |check: &str| {
+            explanation
+                .split_inclusive('\n')
+                .skip_while(|line| *line != format!("check: {check}\n"))
+                .take_while(|line| *line == format!("check: {check}\n") || line.starts_with("  "))
+                .collect::<String>()
+        };
+        let by_messages = block("t == v*c");
+        assert!(!by_messages.contains("v =="), "{explanation}");
+        assert!(by_messages.contains("both sides: v*c"), "{explanation}");
+        let by_pin = block("u == v");
+        assert!(by_pin.contains("v == s^2"), "{explanation}");
     }
 }

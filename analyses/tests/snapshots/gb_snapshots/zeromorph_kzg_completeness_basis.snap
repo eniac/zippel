@@ -2,24 +2,16 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- __zippel::gb::div_q::0[0] + p_poly[1]
-- srs_g1[0] + gen_g1
-- srs_g1[0]*srs_g2[0] + gen_g2*srs_g1[1]
-- srs_g1[0]*srs_g2[1] + gen_g2*srs_g1[2]
-- srs_g1[1]*srs_g2[1] + srs_g1[2]*srs_g2[0]
-- srs_g1[1]*xi + srs_g1[2]*tau
-- srs_g2[0]*xi + srs_g2[1]*tau
-__zippel::gb::div_q::0[1]
-__zippel::gb::div_r::0[0]
-__zippel::node::50 - 1
-__zippel::node::67[0] - 1
-__zippel::node::67[1] - 1
-__zippel::node::67[2] - 1
-__zippel::node::72[0] - 1
-__zippel::node::72[1] - 1
-__zippel::node::76 - 1
-gen_g2*tau - srs_g2[0]
-gen_g2*xi - srs_g2[1]
-srs_g1[0]*tau - srs_g1[1]
-srs_g1[0]*xi - srs_g1[2]
-u*__zippel::gb::div_q::0[0] - v + p_poly[0]
+check: gen_g2*c - gen_g1*gen_g2*v == srs_g2[1]*delta - gen_g2*u*pi + srs_g2[0]*pi
+  c <- srs_g1[2]*r + p_poly[1]*srs_g1[1] + p_poly[0]*srs_g1[0]
+  pi <- srs_g1[0]*__zippel::gb::div_q::0[0] + srs_g1[2]*s
+  delta <- srs_g1[0]*u*s - srs_g1[1]*s + srs_g1[0]*r
+  gen_g1 == srs_g1[0]
+  p_poly[0] == v - p_poly[1]*u
+  srs_g1[1] == srs_g1[0]*tau
+  srs_g1[2] == srs_g1[0]*xi
+  srs_g2[0] == gen_g2*tau
+  srs_g2[1] == gen_g2*xi
+  __zippel::gb::div_q::0[0] == p_poly[1]
+  both sides: gen_g2*srs_g1[0]*r*xi + gen_g2*p_poly[1]*srs_g1[0]*tau - gen_g2*p_poly[1]*srs_g1[0]*u
+basis:

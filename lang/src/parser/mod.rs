@@ -267,7 +267,7 @@ where
 
 /// Parse a type.
 /// Mirrors `typ` in the pest grammar:
-///   typ = _{ poly_ty | uni_ty | mle_ty | vec_ty | fin_ty | unit_ty | base_ty | record_ty }
+///   typ = _{ poly_ty | uni_ty | mle_ty | vec_ty | fin_ty | unit_ty | bool_ty | base_ty | record_ty }
 fn typ_parser<'src, I>()
 -> impl Parser<'src, I, Spanned<GTyp<Size>>, extra::Err<RichError<'src>>> + Clone
 where
@@ -352,6 +352,13 @@ where
             // Unit
             just(Token::KwUnit).ignored().map_with(|_, e| {
                 Spanned::new(Typ::Unit, {
+                    let sp: SimpleSpan = e.span();
+                    sp.into_range()
+                })
+            }),
+            // Bool
+            just(Token::KwBool).ignored().map_with(|_, e| {
+                Spanned::new(Typ::Bool, {
                     let sp: SimpleSpan = e.span();
                     sp.into_range()
                 })

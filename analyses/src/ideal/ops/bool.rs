@@ -8,6 +8,7 @@ use lang::typ::lub::Lub;
 
 use crate::Var;
 use crate::frontend::Polynomial;
+use crate::ideal::Check;
 
 use super::EncodeCtx;
 use super::PolySource;
@@ -68,6 +69,23 @@ fn equ_op_inner<C: ArkConfig + HasOpFactory>(
     }
 }
 
+/// The two sides `a_j == b_j` of each coefficient slot `j` of the LUB type of
+/// `a` and `b`: `a == b` holds exactly when every slot's sides are equal.
+pub(super) fn sides<C: ArkConfig + HasOpFactory>(
+    a_src: &PolySource<C>,
+    b_src: &PolySource<C>,
+) -> Vec<Check<C::F>> {
+    let lub = ATyp::lub_equ(a_src.typ(), b_src.typ(), &Nothing).expect("equ_op: lub_equ failed");
+    let a_lifted = a_src.lift_to(&lub);
+    let b_lifted = b_src.lift_to(&lub);
+    a_lifted
+        .polys
+        .into_iter()
+        .zip(b_lifted.polys)
+        .map(|(lhs, rhs)| Check { lhs, rhs })
+        .collect()
+}
+
 /// Emit the standard bool encoding for a single Bool slot `b` comparing
 /// two operands. Each coefficient slot `j` of the LUB type contributes:
 ///   d_j = a_j - b_j          (inlined)
@@ -85,18 +103,12 @@ fn equ_leaf<C: ArkConfig + HasOpFactory>(
     a_src: &PolySource<C>,
     b_src: &PolySource<C>,
 ) {
-    let lub = ATyp::lub_equ(a_src.typ(), b_src.typ(), &Nothing).expect("equ_op: lub_equ failed");
-    let a_lifted = a_src.lift_to(&lub);
-    let b_lifted = b_src.lift_to(&lub);
     let b_poly = Polynomial::var(var);
     let one = Polynomial::lit(&C::FOps::one());
-
     // d_j = a_j - b_j for each slot
-    let diffs: Vec<Polynomial<C::F>> = a_lifted
-        .polys
+    let diffs: Vec<Polynomial<C::F>> = sides(a_src, b_src)
         .iter()
-        .zip(&b_lifted.polys)
-        .map(|(a, b)| a - b)
+        .map(|s| &s.lhs - &s.rhs)
         .collect();
 
     // d_j * b = 0 for each slot (b=1 → all d_j=0)

@@ -2,9 +2,34 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-__zippel::node::106 - 1
+check: t_C_2*gamma^2 + t_C_1*gamma + t_C_C == h_base*t_sigma_o + ck[0]*mat_A[1]*mat_B[1]*t_s[0]^2 + ck[0]*mat_A[0]*mat_B[1]*x[0]*t_s[0] + ck[0]*mat_A[1]*mat_B[0]*x[0]*t_s[0] + ck[0]*mat_A[0]*mat_B[0]*x[0]^2
+  t_C_C <- h_base*omega_C + ck[0]*mat_C[0]*x[0] + ck[0]*mat_C[1]*w[0]
+  t_C_1 <- h_base*omega_1 + ck[0]*mat_A[0]*mat_B[1]*x[0]*r + ck[0]*mat_A[1]*mat_B[0]*x[0]*r + 2*ck[0]*mat_A[1]*mat_B[1]*w[0]*r
+  t_C_2 <- h_base*omega_2 + ck[0]*mat_A[1]*mat_B[1]*r^2
+  t_s[0] <- r*gamma + w[0]
+  t_sigma_o <- omega_2*gamma^2 + omega_1*gamma + omega_C
+  lhs: h_base*omega_2*gamma^2 + ck[0]*mat_A[1]*mat_B[1]*r^2*gamma^2 + h_base*omega_1*gamma + ck[0]*mat_A[0]*mat_B[1]*x[0]*r*gamma + ck[0]*mat_A[1]*mat_B[0]*x[0]*r*gamma + 2*ck[0]*mat_A[1]*mat_B[1]*w[0]*r*gamma + h_base*omega_C + ck[0]*mat_C[0]*x[0] + ck[0]*mat_C[1]*w[0]
+  rhs: h_base*omega_2*gamma^2 + ck[0]*mat_A[1]*mat_B[1]*r^2*gamma^2 + h_base*omega_1*gamma + ck[0]*mat_A[0]*mat_B[1]*x[0]*r*gamma + ck[0]*mat_A[1]*mat_B[0]*x[0]*r*gamma + 2*ck[0]*mat_A[1]*mat_B[1]*w[0]*r*gamma + h_base*omega_C + ck[0]*mat_A[0]*mat_B[0]*x[0]^2 + ck[0]*mat_A[0]*mat_B[1]*w[0]*x[0] + ck[0]*mat_A[1]*mat_B[0]*w[0]*x[0] + ck[0]*mat_A[1]*mat_B[1]*w[0]^2
+  equal modulo the basis, using:
+    mat_A[0]*mat_B[0]*x[0]^2 + mat_A[0]*mat_B[1]*w[0]*x[0] + mat_A[1]*mat_B[0]*w[0]*x[0] - mat_C[0]*x[0] + mat_A[1]*mat_B[1]*w[0]^2 - mat_C[1]*w[0]
+check: t_C_A'*gamma + t_C_A == h_base*t_sigma_A + ck[0]*mat_A[1]*t_s[0] + ck[0]*mat_A[0]*x[0]
+  t_C_A <- h_base*omega_A + ck[0]*mat_A[0]*x[0] + ck[0]*mat_A[1]*w[0]
+  t_C_A' <- h_base*omega_A' + ck[0]*mat_A[1]*r
+  t_s[0] <- r*gamma + w[0]
+  t_sigma_A <- omega_A'*gamma + omega_A
+  both sides: h_base*omega_A'*gamma + ck[0]*mat_A[1]*r*gamma + h_base*omega_A + ck[0]*mat_A[0]*x[0] + ck[0]*mat_A[1]*w[0]
+check: t_C_B'*gamma + t_C_B == h_base*t_sigma_B + ck[0]*mat_B[1]*t_s[0] + ck[0]*mat_B[0]*x[0]
+  t_C_B <- h_base*omega_B + ck[0]*mat_B[0]*x[0] + ck[0]*mat_B[1]*w[0]
+  t_C_B' <- h_base*omega_B' + ck[0]*mat_B[1]*r
+  t_s[0] <- r*gamma + w[0]
+  t_sigma_B <- omega_B'*gamma + omega_B
+  both sides: h_base*omega_B'*gamma + ck[0]*mat_B[1]*r*gamma + h_base*omega_B + ck[0]*mat_B[0]*x[0] + ck[0]*mat_B[1]*w[0]
+check: t_C_C'*gamma + t_C_C == h_base*t_sigma_C + ck[0]*mat_C[1]*t_s[0] + ck[0]*mat_C[0]*x[0]
+  t_C_C <- h_base*omega_C + ck[0]*mat_C[0]*x[0] + ck[0]*mat_C[1]*w[0]
+  t_C_C' <- h_base*omega_C' + ck[0]*mat_C[1]*r
+  t_s[0] <- r*gamma + w[0]
+  t_sigma_C <- omega_C'*gamma + omega_C
+  both sides: h_base*omega_C'*gamma + ck[0]*mat_C[1]*r*gamma + h_base*omega_C + ck[0]*mat_C[0]*x[0] + ck[0]*mat_C[1]*w[0]
+basis:
 __zippel::node::117 - 1
-__zippel::node::135[0] - 1
-__zippel::node::92 - 1
-__zippel::node::99 - 1
 mat_A[0]*mat_B[0]*x[0]^2 + mat_A[0]*mat_B[1]*w[0]*x[0] + mat_A[1]*mat_B[0]*w[0]*x[0] - mat_C[0]*x[0] + mat_A[1]*mat_B[1]*w[0]^2 - mat_C[1]*w[0]

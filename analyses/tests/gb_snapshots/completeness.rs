@@ -1,5 +1,6 @@
 //! Completeness snapshot trials: assert `CompletenessAnalysis::run()`
-//! actually passes, then snapshot the computed Gröbner basis for
+//! actually passes, then snapshot why each verifier check holds
+//! (`CompletenessAnalysis::explain`) and the computed Gröbner basis for
 //! regression detection.
 
 use crate::common::{assert_named_snapshot, compile_to_dag, normalize_basis};
@@ -189,7 +190,7 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
             name: "hyperplonk_productcheck",
             zippel_path: "examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel",
             sizes: &[("S", 3)],
-            ignored: true,
+            ignored: false,
         },
         CompletenessEntry {
             name: "hyperplonk_multiset",
@@ -212,8 +213,8 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
         CompletenessEntry {
             name: "dory",
             zippel_path: "examples/dory/dory.zippel",
-            sizes: &[("S", 2)],
-            ignored: true,
+            sizes: &[("S", 3)],
+            ignored: false,
         },
         CompletenessEntry {
             name: "groth16",
@@ -237,13 +238,13 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
             name: "pari",
             zippel_path: "examples/pari/pari.zippel",
             sizes: &[("M", 2), ("N", 1), ("KMN", 3)],
-            ignored: true,
+            ignored: false,
         },
         CompletenessEntry {
             name: "spartan",
             zippel_path: "examples/spartan/spartan.zippel",
             sizes: &[("M", 3)],
-            ignored: true,
+            ignored: false,
         },
     ]
 });
@@ -260,9 +261,17 @@ fn run_completeness_snapshot(entry: &CompletenessEntry) -> Result<(), Failed> {
     let normalized = share::thread::run("gb-completeness", move || {
         let dag = compile_to_dag(&path, &sizes);
         let inputs = CompletenessAnalysis::<ArkBls12_381>::build_inputs(&dag, true);
+        // Without a check, `run()` passes vacuously.
+        if inputs.checks.is_empty() {
+            return Err(Failed::from("the protocol has no verifier checks"));
+        }
         let mut ca = CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, backend);
         ca.run().map_err(|e| Failed::from(e.to_string()))?;
-        Ok::<String, Failed>(normalize_basis(&ca.basis.polys))
+        // Why each check holds, since substitution alone can discharge them all
+        // and leave the basis empty.
+        let explanation = ca.explain();
+        let basis = normalize_basis(&ca.basis.polys);
+        Ok::<String, Failed>(format!("{explanation}basis:\n{basis}"))
     })
     .expect("thread panicked")?;
 
