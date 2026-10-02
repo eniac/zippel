@@ -214,6 +214,21 @@ fn validate_2n_plus_1<C: ArkConfig>(
 /// ideal iff the original goal lies in the original one. Definitions are
 /// never drawn from `goals` (the relation), which the validity phase must
 /// prove, not assume.
+/// Whether a definition `x = value` discovered during elimination may be
+/// substituted: `x` must not be a witness (witnesses are what extraction
+/// solves for, never substitutes away) and `value` must mention only
+/// verifier-visible variables (so substitution cannot push a prover secret
+/// into an extractor candidate or a goal). This is the eligibility rule both
+/// [`eliminate_pinned`] passes use.
+fn pin_eligible<F: PrimeField>(
+    witness_set: &Set<Var>,
+    verifier_visible: &Set<Var>,
+    x: &Var,
+    value: &Polynomial<F>,
+) -> bool {
+    !witness_set.contains(x) && value.vars().iter().all(|v| verifier_visible.contains(v))
+}
+
 fn eliminate_pinned<F: PrimeField>(
     defining: &mut Vec<Polynomial<F>>,
     also: &mut Vec<Polynomial<F>>,
@@ -544,25 +559,30 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
         grev_search.merge(&grev_rel_result);
 
-        // Phase 3a: Inline the search ideal. Under option 2, protect the
-        // sigma-protocol *responses* from inlining so they survive as
-        // explicit generators the GB can invert across copies, instead of
-        // being folded into the verifier's (quadratic) checks. A response is
-        // a transcript message whose definition is linear in the witnesses
-        // AND depends on a challenge (`z = mask + witness·challenge`);
-        // first-message commitments are witness-linear too but
-        // challenge-independent, so they inline and do not flood the ideal.
-        // Validity is built from the verifier copies only, so its inline is
-        // unaffected and stays byte-identical to the plain path.
+        // Variable sets used across the remaining phases. `witness_set` is the
+        // witnesses to solve for; `transcript_refs` are the messages the
+        // verifier receives (keyed the same way as `var.reference`, i.e. via
+        // `find_ref`, so membership tests against variables are correct).
+        let witness_set: Set<Var> = witness_vars.iter().cloned().collect();
+        let transcript_refs: Set<Ref> = dag
+            .transcript_nodes()
+            .into_iter()
+            .map(|n| dag.find_ref(n))
+            .collect();
+
+        // Phase 2: Inline definitions into the search ideal. Under option 2,
+        // protect the sigma-protocol *responses* from inlining so they survive
+        // as explicit generators the GB can invert across copies, instead of
+        // being folded into the verifier's (quadratic) checks. A response is a
+        // transcript message whose definition is linear in the witnesses AND
+        // depends on a challenge (`z = mask + witness·challenge`); first-message
+        // commitments are witness-linear too but challenge-independent, so they
+        // inline and do not flood the ideal. Validity is inlined separately
+        // (Phase 3) from the verifier copies only, so it stays byte-identical
+        // to the plain path.
         if inline {
             if model.uses_prover_responses() {
-                let transcript_refs: Set<Ref> = dag
-                    .transcript_nodes()
-                    .into_iter()
-                    .map(|n| dag.find_ref(n))
-                    .collect();
                 let challenge_dependent: Set<Ref> = round_map.keys().map(|(r, _)| *r).collect();
-                let witness_set: Set<Var> = witness_vars.iter().cloned().collect();
                 let witness_degree = |p: &Polynomial<C::F>| -> usize {
                     p.terms
                         .keys()
@@ -602,6 +622,10 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             } else {
                 grev_search.inline(&Set::new());
             }
+            // Validity is always inlined from the verifier copies with
+            // nothing protected — it never carries prover responses, which is
+            // what keeps it byte-identical to the plain path.
+            grev_validity.inline(&Set::new());
         }
 
         // The goals: what the relation's assert checks, `lhs − rhs` per
@@ -615,30 +639,25 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             .filter(|p| !p.is_zero())
             .collect();
 
-        // Phase 3b/3s: substitute away the variables that accepting runs
-        // pin down, then (symbolic model) split group equations per
-        // generator-basis element, then substitute again. Definitions are
-        // drawn only from the copies + d-equations — never the relation,
-        // which must be proved — and are eligible only when the pinned
-        // variable is not a witness and its value mentions only
-        // verifier-visible variables. The first pass pins the asserted
-        // bools to 1, which turns the bool encoding's mixed group/scalar
-        // aggregates into homogeneous group equations the split can handle;
-        // the second pass eats the coefficient definitions the split
-        // mass-produces.
-        let witness_set: Set<Var> = witness_vars.iter().cloned().collect();
+        // Phase 3: Substitute away variables that accepting runs pin down,
+        // then (symbolic model) split group equations per generator-basis
+        // element and substitute again. Substituted definitions are drawn
+        // only from the copies + d-equations (`defining`), never the relation
+        // goals, and are gated by `pin_eligible`. The first pass runs over the
+        // verifier copies, which also sets their asserted bools to 1. The
+        // relation's own bool sentinels live only in the search ideal, so
+        // `pin_self_constants` collapses those before the split — otherwise
+        // the bool encoding's mixed group/scalar aggregates would not be the
+        // homogeneous group equations the per-generator split requires. The
+        // second pass eats the coefficient definitions the split produces.
         let mut assumptions = None;
         let mut pinned: Ctx<Var, Polynomial<C::F>> = Ctx::new();
         if inline {
-            grev_validity.inline(&Set::new());
             let first = eliminate_pinned(
                 &mut grev_validity.generating_set,
                 &mut grev_search.generating_set,
                 &mut rel_goals,
-                |x, value| {
-                    !witness_set.contains(x)
-                        && value.vars().iter().all(|v| verifier_visible.contains(v))
-                },
+                |x, value| pin_eligible(&witness_set, &verifier_visible, x, value),
             );
             for (k, v) in first.iter() {
                 pinned.insert(k, v);
@@ -651,13 +670,10 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                     .collect();
                 let mut sym = crate::symbolic_group::SymbolicGroup::detect(&arg_slots, &rel_goals)
                     .map_err(AnalysisError::from)?;
-                // Collapse asserted bool sentinels (`b − 1`) so the bool
-                // encoding's mixed group/scalar aggregates become
-                // homogeneous group equations the split can handle.
+                // Collapse the relation's bool sentinels (`b − 1`), which live
+                // only in the search ideal, so the split sees homogeneous
+                // group equations.
                 crate::symbolic_group::pin_self_constants(&mut grev_search.generating_set);
-                crate::symbolic_group::pin_self_constants(&mut grev_validity.generating_set);
-                let transcript_refs: Set<Ref> =
-                    dag.transcript_nodes().into_iter().map(Ref::new).collect();
                 let all_polys: Vec<&Polynomial<C::F>> = grev_search
                     .generating_set
                     .iter()
@@ -681,10 +697,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                     &mut grev_validity.generating_set,
                     &mut grev_search.generating_set,
                     &mut rel_goals,
-                    |x, value| {
-                        !witness_set.contains(x)
-                            && value.vars().iter().all(|v| verifier_visible.contains(v))
-                    },
+                    |x, value| pin_eligible(&witness_set, &verifier_visible, x, value),
                 );
                 for (k, v) in second.iter() {
                     pinned.insert(k, v);
@@ -692,12 +705,11 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             }
         }
 
-        // Phase 2: Build lex ordering as runtime data.
+        // Phase 4: Build the lex elimination order as runtime data.
         // In MonoOrder::lex, the first variable has the highest elimination
         // priority. Within each group, sort by Var::Ord for determinism.
         let lex_var_order: Vec<Var> = {
             let rel_locals_set: Set<Var> = grev_rel_result.var_order.iter().cloned().collect();
-            let witness_set: Set<Var> = witness_vars.iter().cloned().collect();
             let non_witness_set: Set<Var> = non_witness_vars.iter().cloned().collect();
 
             let all_vars: Set<Var> = grev_search.vars();
@@ -811,11 +823,11 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
     ///
     /// # Phases
     ///
-    /// 4. **Extract witnesses** from the search basis.
-    /// 5. **Build validity GB** (also under lex) and verify that all relation
+    /// 5. **Extract witnesses** from the search basis.
+    /// 6. **Build validity GB** (also under lex) and verify that all relation
     ///    polys reduce to zero.
     pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
-        // Phase 4: Extract witnesses. Passes run until nothing new is
+        // Phase 5: Extract witnesses. Passes run until nothing new is
         // extracted: a candidate may mention witnesses extracted in an
         // earlier iteration (chained extraction, e.g. first `x`, then
         // `alpha` from a polynomial in `x` and transcript values). The
@@ -914,7 +926,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             self.witness_slots.len()
         );
 
-        // Phase 5: Build validity GB and verify.
+        // Phase 6: Build validity GB and verify.
         for (_, ext_poly) in &extractors {
             self.grev_validity.generating_set.push(ext_poly.clone());
         }

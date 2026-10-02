@@ -48,12 +48,9 @@ use crate::frontend::{Monomial, Polynomial};
 /// The classification and coefficient table of one transform; see the
 /// module docs.
 pub struct SymbolicGroup<F: PrimeField> {
-    /// The basis `B`, in `Var` order.
-    pub basis: Vec<Var>,
-    /// The statement elements `S`, in `Var` order.
-    pub statement: Vec<Var>,
-    /// The transcript elements `T` encountered, in first-seen order.
-    pub transcript: Vec<Var>,
+    /// The basis `B`, in `Var` order. Names the binding assumption in
+    /// [`Self::label`] and bounds each representation's coordinates.
+    basis: Vec<Var>,
     /// The basis representation of every non-basis group variable:
     /// `v -> [(b, coefficient polynomial)]`.
     rep: HashMap<Var, Vec<(Var, Polynomial<F>)>>,
@@ -176,13 +173,9 @@ impl<F: PrimeField> SymbolicGroup<F> {
             .cloned()
             .collect();
         basis.sort();
-        let mut statement: Vec<Var> = demoted.iter().cloned().collect();
-        statement.sort();
 
         Ok(SymbolicGroup {
             basis,
-            statement,
-            transcript: Vec::new(),
             rep: HashMap::new(),
             visible_coeffs: Vec::new(),
             fired: false,
@@ -267,7 +260,6 @@ impl<F: PrimeField> SymbolicGroup<F> {
                         (b.clone(), poly)
                     })
                     .collect();
-                self.transcript.push(v.clone());
                 self.rep.insert(v, rep);
             } else {
                 // S (and leftovers): invisible coefficients over B.
@@ -279,9 +271,6 @@ impl<F: PrimeField> SymbolicGroup<F> {
                     .iter()
                     .map(|(b, c)| (b.clone(), Polynomial::var(c)))
                     .collect();
-                if !self.statement.contains(&v) {
-                    self.statement.push(v.clone());
-                }
                 statement_coeffs.push((v.clone(), coeffs));
                 self.rep.insert(v, rep);
             }
