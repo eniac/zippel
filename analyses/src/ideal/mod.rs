@@ -66,6 +66,7 @@ mod poly_source;
 pub(crate) use poly_source::PolySource;
 
 mod ops;
+pub(crate) use ops::div::is_division_witness;
 use ops::{EncodeCtx, link_to_polys};
 
 /// Encoding choices only the completeness analysis makes. The default

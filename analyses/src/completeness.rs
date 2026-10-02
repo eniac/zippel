@@ -12,7 +12,7 @@ use crate::backend::{GbBackendKind, GbBasis, reduce_with_divisors};
 use crate::error::AnalysisError;
 use crate::extractor::extract_locals;
 use crate::frontend::{MonoOrder, Polynomial};
-use crate::ideal::{Check, EncodeOptions, Ideal, IdealBuilder, Origin, Stage};
+use crate::ideal::{Check, EncodeOptions, Ideal, IdealBuilder, Origin, Stage, is_division_witness};
 use graph::Ref;
 use graph::eval::collect_refs;
 use graph::{Op, QDag};
@@ -41,8 +41,9 @@ pub struct CompletenessInputs<F: ark_ff::PrimeField> {
     /// non-message variables.
     pub messages: Ctx<Var, Polynomial<F>>,
     /// The variables a generator pinned down and that were substituted away
-    /// after the messages, `x == f`: inputs the `where` clause defines, and
-    /// asserted bools.
+    /// after the messages, `x == f`: inputs the `where` clause defines, the
+    /// quotient and remainder witnesses of polynomial division, and asserted
+    /// bools.
     pub pinned: Ctx<Var, Polynomial<F>>,
     /// Where each generator came from, index-aligned with `generating_set`, or
     /// empty if that was lost. Diagnostic only; see [`Self::describe`].
@@ -407,8 +408,12 @@ fn defined_var<F: PrimeField>(
 /// pins `β := 1`, which turns the first into `d`, and `d` pins `a` whenever
 /// `a` is an input that `b` does not mention. Left to Buchberger, the grevlex
 /// leading term of `a − b` lies in `b`, so it rewrites `b`'s monomials instead
-/// of eliminating `a` (Dory at S=3 does not finish). The substitution is exact
-/// for the same reason as for prover messages.
+/// of eliminating `a`. The substitution is exact for the same reason as for prover messages.
+///
+/// Polynomial division leaves the same shape behind: `a = b·q + r` is one
+/// generator per coefficient, linear in the witnesses. Once `b`'s leading
+/// coefficient is a constant, the top ones define `q`'s coefficients from the
+/// top down and the rest define `r`'s, so the witnesses are eligible too.
 fn eliminate_definitions<F: PrimeField>(
     generating_set: &mut Vec<Polynomial<F>>,
     origins: &mut Vec<Origin>,
@@ -586,12 +591,13 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
             verifier = substitute(verifier, &prover_result.pl);
 
             // Then every input a generator pins down, e.g. one the `where`
-            // clause defines. Other variables only when pinned to a constant
-            // (an asserted bool), which leaves the verifier's `==` encodings
-            // alone.
+            // clause defines, and every quotient and remainder coefficient of
+            // a polynomial division. Other variables only when pinned to a
+            // constant (an asserted bool), which leaves the verifier's `==`
+            // encodings alone.
             let inputs: Set<Ref> = dag.input_args().into_iter().map(Ref::new).collect();
             pinned = eliminate_definitions(&mut generating_set, &mut origins, &mut verifier, |v| {
-                inputs.contains(&v.reference)
+                inputs.contains(&v.reference) || is_division_witness(v)
             });
             messages = prover_result.pl;
         }
@@ -1962,6 +1968,86 @@ mod tests {
             }"#;
         let pinned = pinned_names(ex);
         assert!(pins_every_element(&pinned, 3), "pinned: {pinned:?}");
+    }
+
+    #[test]
+    fn a_definition_reading_a_message_resolves_through_it() {
+        // `a` aliases the product `x * x`, and `t` reads `a`. Resolving `t`
+        // through `a`'s raw value used to leave the product's variable in `t`
+        // after its own definition was substituted away, so the check kept a
+        // leftover `c * (x^2 - e)` around instead of vanishing.
+        let ex = r#"
+            proto reads_message<F: Field>(witness x: F, instance y: F) where y == x * x {
+                a <- x * x;
+                c <- challenge<F>;
+                let t = a * c;
+                u <- t;
+                verify(u == y * c)
+            }"#;
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(ex), true);
+        assert!(
+            inputs.generating_set.is_empty(),
+            "{:?}",
+            inputs.generating_set
+        );
+        assert!(inputs.verifier.is_empty(), "{:?}", inputs.verifier);
+    }
+
+    #[test]
+    fn division_witnesses_are_substituted() {
+        // The dividend is computed, so only the quotient and remainder
+        // coefficients occur linearly in the division's generators.
+        // For p(X) = a + bX, q(z) = 2b * p(z), where
+        // q(X) = (p(X)^2 - p(z)^2) / (X - z).
+        let ex = r#"
+            proto quotient<F: Field>(witness p: Uni<F, 1>) where p == p {
+                z <- challenge<F>;
+                let s = p * p;
+                let q = (s - s(z)) / poly([-z, 1]);
+                let pc = coef(p);
+                t <- q(z);
+                expected <- 2 * pc[1] * p(z);
+                verify(t == expected)
+            }"#;
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(ex), true);
+        // A coefficient above the quotient's degree is pinned to 0 either way;
+        // the others are pinned only as division witnesses.
+        let defined: Vec<String> = inputs
+            .pinned
+            .iter()
+            .filter(|(x, value)| {
+                x.name.starts_with("__zippel::gb::div_q") && !value.vars().is_empty()
+            })
+            .map(|(x, _)| x.to_string())
+            .collect();
+        assert!(!defined.is_empty(), "pinned: {:?}", inputs.pinned);
+
+        let mut ca =
+            CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, GbBackendKind::default());
+        let result = ca.run();
+        assert!(result.is_ok(), "quotient evaluation identity: {result:?}");
+    }
+
+    #[test]
+    fn division_witness_substitution_rejects_incorrect_quotient() {
+        // The same quotient identity, offset by 1, must remain an unproved
+        // obligation after substituting its division witnesses.
+        let ex = r#"
+            proto incorrect_quotient<F: Field>(witness p: Uni<F, 1>) where p == p {
+                z <- challenge<F>;
+                let s = p * p;
+                let q = (s - s(z)) / poly([-z, 1]);
+                let pc = coef(p);
+                t <- q(z);
+                expected <- 2 * pc[1] * p(z);
+                verify(t == expected + 1)
+            }"#;
+        let mut ca = from_input(&dag_of(ex));
+        let result = ca.run();
+        assert!(
+            matches!(result, Err(AnalysisError::Incomplete(_))),
+            "incorrect quotient identity must be incomplete: {result:?}"
+        );
     }
 
     #[test]

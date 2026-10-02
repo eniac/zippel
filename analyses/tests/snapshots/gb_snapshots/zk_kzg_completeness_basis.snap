@@ -14,11 +14,6 @@ check: - h*z*pi + h_val*pi == - gamma_g*h*r_z_sent + h*c - g*h*y
   p_val[0] == - z*__zippel::gb::div_q::0[0] + y
   p_val[1] == __zippel::gb::div_q::0[0]
   ss[1] == ss[0]*tau
-  lhs: h*ss[0]*tau*__zippel::gb::div_q::0[0] - h*ss[0]*z*__zippel::gb::div_q::0[0] + h*ss[0]*tau*gamma*__zippel::gb::div_q::1[0] - h*ss[0]*z*gamma*__zippel::gb::div_q::1[0]
-  rhs: h*ss[0]*tau*__zippel::gb::div_q::0[0] - h*ss[0]*z*__zippel::gb::div_q::0[0] + h*ss[0]*__zippel::node::11*tau*gamma - h*ss[0]*z*__zippel::node::11*gamma
-  equal modulo the basis, using:
-    - __zippel::gb::div_q::1[0] + __zippel::node::11
+  __zippel::gb::div_q::1[0] == __zippel::node::11
+  both sides: h*ss[0]*tau*__zippel::gb::div_q::0[0] - h*ss[0]*z*__zippel::gb::div_q::0[0] + h*ss[0]*__zippel::node::11*tau*gamma - h*ss[0]*z*__zippel::node::11*gamma
 basis:
-- __zippel::gb::div_q::1[0] + __zippel::node::11
-__zippel::gb::div_r::1[0]
-__zippel::node::47 - 1
