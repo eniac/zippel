@@ -11,9 +11,9 @@ check: - h*z*pi + h_val*pi == - gamma_g*h*r_z_sent + h*c - g*h*y
   gs[0] == ss[0]*gamma
   gs[1] == ss[0]*tau*gamma
   h_val == h*tau
-  p_val[0] == - z*__zippel::gb::div_q::0[0] + y
-  p_val[1] == __zippel::gb::div_q::0[0]
+  p_val[0] == - p_val[1]*z + y
   ss[1] == ss[0]*tau
   __zippel::gb::div_q::1[0] == __zippel::node::11
-  both sides: h*ss[0]*tau*__zippel::gb::div_q::0[0] - h*ss[0]*z*__zippel::gb::div_q::0[0] + h*ss[0]*__zippel::node::11*tau*gamma - h*ss[0]*z*__zippel::node::11*gamma
+  __zippel::gb::div_q::0[0] == p_val[1]
+  both sides: h*ss[0]*__zippel::node::11*tau*gamma - h*ss[0]*z*__zippel::node::11*gamma + h*p_val[1]*ss[0]*tau - h*p_val[1]*ss[0]*z
 basis:
