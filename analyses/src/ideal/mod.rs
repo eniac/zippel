@@ -81,6 +81,12 @@ pub struct EncodeOptions {
     /// `assert` is a runtime check written in a protocol body and encodes to
     /// nothing: it is neither an assumption nor an obligation.
     pub relation_asserts: Option<HashSet<Ref>>,
+    /// Encode `t = a / b`, for a divisor `b` that is not a known constant and a
+    /// dividend `a` that is not a nonzero constant, as the definition
+    /// `t := a·ι` next to `b·ι − 1`, instead of the constraint `a − b·t`. Both
+    /// generate the same ideal, but the definition is substituted away, while
+    /// `a − b·t` stays a generator whose leading term usually lies in `a`.
+    pub division_definitions: bool,
 }
 
 /// One bool an `assert` or `verify` requires to hold: a leaf of its `&&`
