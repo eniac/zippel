@@ -5,12 +5,12 @@ expression: value
 check: left_hand == right_hand
   left_hand <- p_A[1]*p_B[1]*r^2 - p_C[1]*r + p_A[0]*p_B[1]*r + p_A[1]*p_B[0]*r - p_C[0] + p_A[0]*p_B[0]
   right_hand <- v_H[1]*r^3*__zippel::gb::div_q::0[2] + v_H[0]*r^2*__zippel::gb::div_q::0[2] + v_H[1]*r^2*__zippel::gb::div_q::0[1] + v_H[0]*r*__zippel::gb::div_q::0[1] + v_H[1]*r*__zippel::gb::div_q::0[0] + v_H[0]*__zippel::gb::div_q::0[0]
-  p_C[0] == - v_H[0]*__zippel::gb::div_q::0[0] - __zippel::gb::div_r::0[0] + p_A[0]*p_B[0]
+  p_C[0] == - v_H[0]*__zippel::gb::div_q::1[0] + p_A[0]*p_B[0]
   p_C[1] == - v_H[0]*__zippel::gb::div_q::0[1] - v_H[1]*__zippel::gb::div_q::0[0] + p_A[0]*p_B[1] + p_A[1]*p_B[0]
-  lhs: v_H[0]*r*__zippel::gb::div_q::0[1] + v_H[1]*r*__zippel::gb::div_q::0[0] + v_H[0]*__zippel::gb::div_q::0[0] + __zippel::gb::div_r::0[0] + p_A[1]*p_B[1]*r^2
+  lhs: v_H[0]*r*__zippel::gb::div_q::0[1] + v_H[1]*r*__zippel::gb::div_q::0[0] + v_H[0]*__zippel::gb::div_q::1[0] + p_A[1]*p_B[1]*r^2
   rhs: v_H[1]*r^3*__zippel::gb::div_q::0[2] + v_H[0]*r^2*__zippel::gb::div_q::0[2] + v_H[1]*r^2*__zippel::gb::div_q::0[1] + v_H[0]*r*__zippel::gb::div_q::0[1] + v_H[1]*r*__zippel::gb::div_q::0[0] + v_H[0]*__zippel::gb::div_q::0[0]
   equal modulo the basis, using:
-    __zippel::gb::div_r::0[0]
+    - __zippel::gb::div_q::0[0] + __zippel::gb::div_q::1[0]
     v_H[1]*__zippel::gb::div_q::0[2]
     - v_H[0]*__zippel::gb::div_q::0[2] - v_H[1]*__zippel::gb::div_q::0[1] + p_A[1]*p_B[1]
 basis:
@@ -35,7 +35,6 @@ __zippel::gb::div_c::1*__zippel::gb::div_c::0 - __zippel::gb::div_c::0 - __zippe
 __zippel::gb::div_c::1*__zippel::gb::div_q::0[2] - __zippel::gb::div_q::0[2]
 __zippel::gb::div_c::1^2 - __zippel::gb::div_c::1
 __zippel::gb::div_inv::1*__zippel::gb::div_inv::0 - __zippel::gb::div_inv::3*__zippel::gb::div_inv::0 - __zippel::gb::div_inv::2*__zippel::gb::div_inv::1 + __zippel::gb::div_inv::3*__zippel::gb::div_inv::2
-__zippel::gb::div_r::0[0]
 __zippel::node::19 - 1
 v_H[0]*__zippel::gb::div_c::1 - v_H[0]
 v_H[1]*__zippel::gb::div_c::0 - v_H[1]

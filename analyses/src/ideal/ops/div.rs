@@ -10,9 +10,26 @@ use ark_ff::Zero;
 use crate::Var;
 use crate::frontend::Polynomial;
 
+use super::super::GB_GENERATED_NAME_PREFIX;
 use super::Ideal;
 use super::PolySource;
 use super::{EncodeCtx, link_to_witness};
+
+/// Name keys of a polynomial division's quotient and remainder witnesses.
+const QUOTIENT_KEY: &str = "div_q";
+const REMAINDER_KEY: &str = "div_r";
+
+/// Whether `var` is a slot of a polynomial division's quotient or remainder
+/// witness.
+pub(crate) fn is_division_witness(var: &Var) -> bool {
+    let Some(rest) = var.name.strip_prefix(GB_GENERATED_NAME_PREFIX) else {
+        return false;
+    };
+    [QUOTIENT_KEY, REMAINDER_KEY].iter().any(|key| {
+        rest.strip_prefix(key)
+            .is_some_and(|counter| counter.starts_with("::"))
+    })
+}
 
 /// Allocate quotient/remainder witness sentinels without registering
 /// opaque operations.
@@ -21,8 +38,8 @@ fn alloc_div_witness_pair<C: ArkConfig + HasOpFactory>(
     quotient_typ: ATyp,
     remainder_typ: ATyp,
 ) -> (Var, Var) {
-    let q_name = ctx.builder.ns.next_name("div_q");
-    let r_name = ctx.builder.ns.next_name("div_r");
+    let q_name = ctx.builder.ns.next_name(QUOTIENT_KEY);
+    let r_name = ctx.builder.ns.next_name(REMAINDER_KEY);
     let q_wit = ctx.builder.sentinel_var(&q_name, quotient_typ, ctx.ideal);
     let r_wit = ctx.builder.sentinel_var(&r_name, remainder_typ, ctx.ideal);
     (q_wit, r_wit)

@@ -174,7 +174,14 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
     ///
     /// Topologically sorts `pl` entries, substitutes dependencies into
     /// each other to resolve chains, then substitutes the resolved
-    /// definitions into all basis polynomials. Clears `pl` afterwards.
+    /// definitions into all basis polynomials. Clears `pl` afterwards,
+    /// except for the definitions of `transcript_refs`, which it keeps,
+    /// resolved, instead of substituting.
+    ///
+    /// Those are resolved in the same order as the rest: a definition that
+    /// reads one gets its resolved value. Its raw value can name a variable
+    /// whose own definition is substituted away, which would leave that
+    /// variable behind, undefined.
     pub fn inline(&mut self, transcript_refs: &Set<Ref>) {
         if self.pl.is_empty() {
             return;
@@ -183,16 +190,14 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         let pl_keys: Set<Var> = self.pl.keys();
         let mut order: Vec<Var> = Vec::with_capacity(pl_keys.len());
         let mut resolved: Set<Var> = Set::new();
-        let mut inlineable: Set<Var> = pl_keys.clone();
-        inlineable.retain(|k| !transcript_refs.contains(&k.reference));
-        let mut remaining: Vec<(Var, usize)> = inlineable
+        let mut remaining: Vec<(Var, usize)> = pl_keys
             .iter()
             .map(|k| {
                 let deps = self.pl[k]
                     .terms
                     .keys()
                     .flat_map(|t| t.vars())
-                    .filter(|v| inlineable.contains(v))
+                    .filter(|v| pl_keys.contains(v))
                     .count();
                 (k.clone(), deps)
             })
@@ -211,7 +216,7 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
                         .terms
                         .keys()
                         .flat_map(|t| t.vars())
-                        .filter(|v| inlineable.contains(v) && !resolved.contains(v))
+                        .filter(|v| pl_keys.contains(v) && !resolved.contains(v))
                         .count();
                     if new_deps < deps {
                         made_progress = true;
@@ -260,12 +265,12 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             check.rhs = check.rhs.clone().inline_vars(&self.pl).0;
         }
 
-        for (k, v) in saved {
-            self.pl.insert(&k, &v);
-        }
-
         for k in &order {
             self.pl.remove(k);
+        }
+
+        for (k, v) in saved {
+            self.pl.insert(&k, &v);
         }
     }
 
