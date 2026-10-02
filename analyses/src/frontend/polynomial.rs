@@ -5,6 +5,7 @@
 //! to the backend when a Gröbner basis or reduction is needed.
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::fmt;
 use std::iter::Sum;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
@@ -31,56 +32,63 @@ pub struct Polynomial<F: Field> {
 // Arithmetic
 // -----------------------------------------------------------------------
 
+/// Add `coeff·term` to `terms`, dropping the entry if it cancels.
+///
+/// Only the touched entry is checked, so accumulating into a large polynomial
+/// costs the size of what is added, not of the accumulator.
+fn add_term<F: Field>(terms: &mut HashMap<Monomial, F>, term: Monomial, coeff: F) {
+    match terms.entry(term) {
+        Entry::Occupied(mut entry) => {
+            *entry.get_mut() += coeff;
+            if entry.get().is_zero() {
+                entry.remove();
+            }
+        }
+        Entry::Vacant(entry) => {
+            if !coeff.is_zero() {
+                entry.insert(coeff);
+            }
+        }
+    }
+}
+
 impl<F: Field> AddAssign for Polynomial<F> {
     fn add_assign(&mut self, other: Self) {
-        for (term, coef) in other.terms {
-            *self.terms.entry(term).or_insert(F::zero()) += coef;
+        for (term, coeff) in other.terms {
+            add_term(&mut self.terms, term, coeff);
         }
-        self.terms.retain(|_, c| !c.is_zero());
     }
 }
 
 impl<F: Field> SubAssign for Polynomial<F> {
     fn sub_assign(&mut self, other: Self) {
-        for (term, coef) in other.terms {
-            *self.terms.entry(term).or_insert(F::zero()) -= coef;
+        for (term, coeff) in other.terms {
+            add_term(&mut self.terms, term, -coeff);
         }
-        self.terms.retain(|_, c| !c.is_zero());
     }
 }
 
 impl<F: Field> Neg for Polynomial<F> {
     type Output = Self;
-    fn neg(self) -> Self {
-        let mut result = self.clone();
-        for coeff in result.terms.values_mut() {
+    fn neg(mut self) -> Self {
+        for coeff in self.terms.values_mut() {
             *coeff = (*coeff).neg();
         }
-        result
+        self
     }
 }
 
 impl<F: Field> MulAssign for Polynomial<F> {
     fn mul_assign(&mut self, other: Self) {
-        let mut new_terms: HashMap<Monomial, F> = HashMap::new();
-        for (term1, coeff1) in &self.terms {
-            for (term2, coeff2) in &other.terms {
-                let new_term = term1.clone() * term2.clone();
-                let new_coeff = *coeff1 * *coeff2;
-                *new_terms.entry(new_term).or_insert(F::zero()) += new_coeff;
-            }
-        }
-        self.terms = new_terms;
-        self.terms.retain(|_, c| !c.is_zero());
+        *self = self.product(&other);
     }
 }
 
 impl<F: Field> Add for Polynomial<F> {
     type Output = Self;
-    fn add(self, other: Self) -> Self {
-        let mut result = self.clone();
-        result += other;
-        result
+    fn add(mut self, other: Self) -> Self {
+        self += other;
+        self
     }
 }
 
@@ -88,17 +96,18 @@ impl<F: Field> Add for &Polynomial<F> {
     type Output = Polynomial<F>;
     fn add(self, other: Self) -> Polynomial<F> {
         let mut result = self.clone();
-        result += other.clone();
+        for (term, coeff) in &other.terms {
+            add_term(&mut result.terms, term.clone(), *coeff);
+        }
         result
     }
 }
 
 impl<F: Field> Sub for Polynomial<F> {
     type Output = Self;
-    fn sub(self, other: Self) -> Self {
-        let mut result = self.clone();
-        result -= other;
-        result
+    fn sub(mut self, other: Self) -> Self {
+        self -= other;
+        self
     }
 }
 
@@ -106,7 +115,9 @@ impl<F: Field> Sub for &Polynomial<F> {
     type Output = Polynomial<F>;
     fn sub(self, other: Self) -> Polynomial<F> {
         let mut result = self.clone();
-        result -= other.clone();
+        for (term, coeff) in &other.terms {
+            add_term(&mut result.terms, term.clone(), -*coeff);
+        }
         result
     }
 }
@@ -114,16 +125,14 @@ impl<F: Field> Sub for &Polynomial<F> {
 impl<F: Field> Mul for Polynomial<F> {
     type Output = Self;
     fn mul(self, other: Self) -> Self {
-        let mut result = self.clone();
-        result *= other;
-        result
+        self.product(&other)
     }
 }
 
 impl<F: Field> Mul for &Polynomial<F> {
     type Output = Polynomial<F>;
     fn mul(self, other: Self) -> Polynomial<F> {
-        self.clone() * other.clone()
+        self.product(other)
     }
 }
 
@@ -202,6 +211,9 @@ impl<F: Field> Polynomial<F> {
 
     /// The constant polynomial `f`, stored as `f` times the empty monomial.
     pub fn lit(f: &F) -> Self {
+        if f.is_zero() {
+            return Self::zero();
+        }
         let mut terms = HashMap::new();
         terms.insert(Monomial::default(), *f);
         Polynomial { terms }
@@ -247,9 +259,40 @@ impl<F: Field> Polynomial<F> {
         self.terms.keys().flat_map(|t| t.vars()).collect()
     }
 
+    /// The product `self · other`, without consuming or copying either
+    /// operand. A one-term factor, the common case when substituting a
+    /// definition into a monomial, shifts and scales the other factor term
+    /// by term instead of going through the general double loop.
+    pub fn product(&self, other: &Self) -> Self {
+        let (small, large) = if self.terms.len() <= other.terms.len() {
+            (self, other)
+        } else {
+            (other, self)
+        };
+        if let (1, Some((monomial, coeff))) = (small.terms.len(), small.terms.iter().next()) {
+            let terms = large
+                .terms
+                .iter()
+                .map(|(term, c)| (term.clone() * monomial.clone(), *c * *coeff))
+                .filter(|(_, c)| !c.is_zero())
+                .collect();
+            return Polynomial { terms };
+        }
+        let mut terms: HashMap<Monomial, F> = HashMap::new();
+        for (term1, coeff1) in &small.terms {
+            for (term2, coeff2) in &large.terms {
+                *terms
+                    .entry(term1.clone() * term2.clone())
+                    .or_insert(F::zero()) += *coeff1 * *coeff2;
+            }
+        }
+        terms.retain(|_, c| !c.is_zero());
+        Polynomial { terms }
+    }
+
     /// Square in place (`self *= self`).
     pub fn square(&mut self) {
-        *self *= self.clone();
+        *self = self.product(self);
     }
 
     /// Raise to the power `exp` in place, by repeated squaring on the trailing
@@ -273,7 +316,7 @@ impl<F: Field> Polynomial<F> {
         let mul = self.clone();
         i -= 1;
         while i > 0 {
-            *self *= mul.clone();
+            *self = self.product(&mul);
             i -= 1;
         }
     }
@@ -299,21 +342,37 @@ impl<F: Field> Polynomial<F> {
 
     /// Inline variables from `substitutions` into this polynomial.
     /// Returns `(result, did_change)`.
+    ///
+    /// A term without a substituted variable is carried over as is. In the
+    /// others, the variables that stay form one monomial, which is then
+    /// multiplied by each substitution raised to its exponent.
     pub fn inline_vars(self, substitutions: &Ctx<Var, Polynomial<F>>) -> (Self, bool) {
         let mut new_poly = Polynomial::zero();
         let mut did_change = false;
-        for (term, coeff) in self.terms.into_iter() {
-            let mut new_mono = Polynomial::lit(&coeff);
-            for (var, power) in term.vars().into_iter().zip(term.powers()) {
-                if let Some(sub) = substitutions.get(&var) {
-                    did_change = true;
-                    let mut p = sub.clone();
-                    p.pow(power);
-                    new_mono *= p;
+        for (term, coeff) in self.terms {
+            if !term.iter().any(|(var, _)| substitutions.get(var).is_some()) {
+                add_term(&mut new_poly.terms, term, coeff);
+                continue;
+            }
+            did_change = true;
+            let mut kept = Vec::new();
+            let mut factors = Vec::new();
+            for (var, &power) in term.iter() {
+                match substitutions.get(var) {
+                    Some(sub) => factors.push((sub, power)),
+                    None => kept.push((var.clone(), power)),
+                }
+            }
+            let mut new_mono = Polynomial {
+                terms: HashMap::from([(Monomial::from(kept), coeff)]),
+            };
+            for (sub, power) in factors {
+                if power == 1 {
+                    new_mono = new_mono.product(sub);
                 } else {
-                    let mut p = Polynomial::var(&var);
-                    p.pow(power);
-                    new_mono *= p;
+                    let mut factor = sub.clone();
+                    factor.pow(power);
+                    new_mono = new_mono.product(&factor);
                 }
             }
             new_poly += new_mono;
@@ -336,5 +395,128 @@ impl<F: Field> Polynomial<F> {
         }
         new_poly.terms.retain(|_, c| !c.is_zero());
         new_poly
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Monomial, Polynomial};
+    use crate::Var;
+    use ark_bls12_381::Fr;
+    use backend::ATyp;
+    use lang::typ::Qualifier;
+    use petgraph::graph::NodeIndex;
+    use share::Ctx;
+
+    fn var(i: usize) -> Var {
+        Var::from_node(NodeIndex::new(i), ATyp::scalar(), Qualifier::Witness)
+    }
+
+    fn x(i: usize) -> Polynomial<Fr> {
+        Polynomial::var(&var(i))
+    }
+
+    fn lit(n: u64) -> Polynomial<Fr> {
+        Polynomial::lit(&Fr::from(n))
+    }
+
+    /// `Σ c·Π x_i^e` from `(c, [(i, e), …])`, built without arithmetic.
+    fn poly(terms: &[(u64, &[(usize, usize)])]) -> Polynomial<Fr> {
+        let monomials: Vec<(Monomial, Fr)> = terms
+            .iter()
+            .map(|(c, powers)| {
+                let powers: Vec<(Var, usize)> = powers.iter().map(|&(i, e)| (var(i), e)).collect();
+                (Monomial::from(powers), Fr::from(*c))
+            })
+            .collect();
+        Polynomial::from(monomials.iter().map(|(m, c)| (m, *c)).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn cancelled_terms_leave_no_entries() {
+        let p = &(x(0) + x(1)) - &x(1);
+        assert_eq!(p, x(0));
+
+        let mut q = x(0) * x(1);
+        q -= x(1) * x(0);
+        assert!(q.is_zero());
+
+        let mut r = x(2);
+        r += -x(2);
+        assert!(r.is_zero());
+    }
+
+    #[test]
+    fn cancellation_after_a_literal_zero_is_canonical() {
+        let zero = lit(0);
+        assert!(zero.is_zero());
+        assert_eq!(zero, Polynomial::zero());
+
+        let p = &(&zero + &x(0)) - &x(0);
+        assert!(p.is_zero(), "zero coefficient survived: {p:?}");
+        assert_eq!(p, Polynomial::zero());
+
+        let p = (zero.clone() + x(0)) - x(0);
+        assert_eq!(p, Polynomial::zero());
+
+        let p = (zero - x(0)) + x(0);
+        assert_eq!(p, Polynomial::zero());
+    }
+
+    #[test]
+    fn products_by_one_term_and_by_several_agree() {
+        let a = x(0) + x(1) + lit(2);
+        let b = lit(3) * x(0);
+        let expected = poly(&[(3, &[(0, 2)]), (3, &[(0, 1), (1, 1)]), (6, &[(0, 1)])]);
+        assert_eq!(&a * &b, expected);
+        assert_eq!(&b * &a, expected);
+
+        let minus_one = -lit(1);
+        let difference = x(0) + &x(1) * &minus_one;
+        let squares = poly(&[(1, &[(0, 2)])]) - poly(&[(1, &[(1, 2)])]);
+        assert_eq!(&(x(0) + x(1)) * &difference, squares);
+
+        assert!((&a * &Polynomial::zero()).is_zero());
+    }
+
+    #[test]
+    fn inline_vars_substitutes_only_defined_variables() {
+        let mut defs = Ctx::new();
+        defs.insert(&var(1), &(x(2) + lit(1)));
+
+        // x0·x1² + x0 with x1 := x2 + 1 is x0·x2² + 2·x0·x2 + 2·x0.
+        let p = poly(&[(1, &[(0, 1), (1, 2)]), (1, &[(0, 1)])]);
+        let (q, changed) = p.inline_vars(&defs);
+        assert!(changed);
+        let expected = poly(&[
+            (1, &[(0, 1), (2, 2)]),
+            (2, &[(0, 1), (2, 1)]),
+            (2, &[(0, 1)]),
+        ]);
+        assert_eq!(q, expected);
+
+        let (same, changed) = x(0).inline_vars(&defs);
+        assert!(!changed);
+        assert_eq!(same, x(0));
+    }
+
+    #[test]
+    fn inline_vars_preserves_large_exponents() {
+        let mut defs = Ctx::new();
+        defs.insert(&var(0), &poly(&[(1, &[(1, 2)])]));
+        let p = poly(&[(1, &[(0, 65_536)])]);
+        let (q, changed) = p.inline_vars(&defs);
+        assert!(changed);
+        assert_eq!(q, poly(&[(1, &[(1, 131_072)])]));
+    }
+
+    #[test]
+    fn variables_on_the_same_slot_stay_distinct() {
+        // `Var` hashes only its slot, so these collide; `Eq` still tells
+        // them apart.
+        let mut other = var(0);
+        other.name = "other".to_string();
+        let p = x(0) + Polynomial::var(&other);
+        assert_eq!(p.terms.len(), 2);
     }
 }

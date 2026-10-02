@@ -13,7 +13,7 @@ use crate::frontend::Polynomial;
 use super::super::GB_GENERATED_NAME_PREFIX;
 use super::Ideal;
 use super::PolySource;
-use super::{EncodeCtx, link_to_witness};
+use super::{EncodeCtx, link_to_witness, resolved_constant};
 
 /// Name keys of a polynomial division's quotient and remainder witnesses.
 const QUOTIENT_KEY: &str = "div_q";
@@ -300,26 +300,6 @@ fn div_rem_poly<C: ArkConfig + HasOpFactory>(
 
     let wit = if is_rem { &r_wit } else { &q_wit };
     link_to_witness(ctx.ideal, target, wit);
-}
-
-fn resolved_constant<C: ArkConfig>(
-    ctx: &EncodeCtx<'_, C>,
-    poly: &Polynomial<C::F>,
-) -> Option<C::F> {
-    if poly.is_constant() {
-        return Some(poly.constant_coeff());
-    }
-    let mut current = poly.clone();
-    loop {
-        let (next, did_change) = current.inline_vars(&ctx.ideal.pl);
-        if !did_change {
-            return None;
-        }
-        if next.is_constant() {
-            return Some(next.constant_coeff());
-        }
-        current = next;
-    }
 }
 
 /// Restrict division constraints to defined program traces by requiring the

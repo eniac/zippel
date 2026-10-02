@@ -270,7 +270,8 @@ struct CheckExplanation<F: PrimeField> {
     check: Check<F>,
     /// The prover messages the check mentions.
     messages: Vec<(Var, Polynomial<F>)>,
-    /// The pinned variables the check mentions once the messages are substituted.
+    /// The pinned variables the check mentions once the messages are
+    /// substituted, if the messages alone leave the sides different.
     pinned: Vec<(Var, Polynomial<F>)>,
     /// Both sides after substitution.
     lhs: Polynomial<F>,
@@ -700,8 +701,11 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
     /// The check is shown as the verifier writes it, followed by the
     /// definitions substituted into it: `t <- …` for a prover message and
     /// `x == …` for a variable a constraint pins down, such as an input the
-    /// `where` clause defines. If both sides then agree, substitution alone
-    /// discharged the check. Otherwise the basis has to prove the rest, and
+    /// `where` clause defines. Pinned variables are substituted only when the
+    /// messages alone leave the sides different: a pin replaces the same
+    /// variable on both sides, so it cannot make equal sides differ, and on
+    /// a large check it can multiply the size of each side. If both sides
+    /// then agree, substitution alone discharged the check. Otherwise the basis has to prove the rest, and
     /// the explanation lists the basis polynomials that reduce their
     /// difference to 0, or the remainder if it is not 0. Polynomials other than
     /// the checks that are longer than [`EXPLAIN_MAX_TERMS`] are shown by their
@@ -724,11 +728,14 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
                     .collect::<Vec<_>>()
             };
         let messages = used(&self.messages, &check.lhs, &check.rhs);
-        let lhs = check.lhs.clone().inline_vars(&self.messages).0;
-        let rhs = check.rhs.clone().inline_vars(&self.messages).0;
-        let pinned = used(&self.pinned, &lhs, &rhs);
-        let lhs = lhs.inline_vars(&self.pinned).0;
-        let rhs = rhs.inline_vars(&self.pinned).0;
+        let mut lhs = check.lhs.clone().inline_vars(&self.messages).0;
+        let mut rhs = check.rhs.clone().inline_vars(&self.messages).0;
+        let mut pinned = Vec::new();
+        if lhs != rhs {
+            pinned = used(&self.pinned, &lhs, &rhs);
+            lhs = lhs.inline_vars(&self.pinned).0;
+            rhs = rhs.inline_vars(&self.pinned).0;
+        }
         let difference = &lhs - &rhs;
         let reduction = (!difference.is_zero()).then(|| {
             let (remainder, divisors) =
@@ -2537,5 +2544,243 @@ mod tests {
             0,
             "a body assert encodes to nothing"
         );
+    }
+
+    /// How many `interp_inv` sentinels `src` gets before inlining: one per
+    /// pair of interpolation points whose difference is not a constant.
+    fn interpolation_inverses(src: &str) -> usize {
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(src), false);
+        inputs
+            .generating_set
+            .iter()
+            .flat_map(|p| p.vars())
+            .map(|x| x.to_string())
+            .filter(|x| x.contains("interp_inv"))
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+    }
+
+    /// The line through `(points[0], a)` and `(points[1], b)`.
+    fn line_through(points: &str) -> String {
+        format!(
+            r#"
+            proto line<F: Field>(instance a: F, instance b: F) where a == a {{
+                let one = a - a + 1;
+                let zero = a - a;
+                let pts = {points};
+                let evs = [a, b];
+                let g = interpolate(pts, evs);
+                verify(g(one) == b)
+            }}"#
+        )
+    }
+
+    #[test]
+    fn interpolation_points_that_fold_to_constants_need_no_inverses() {
+        // `one` is `n + 1` with `n := a - a`, a constant only through `pl`.
+        assert_eq!(interpolation_inverses(&line_through("[zero, one]")), 0);
+        assert_ne!(interpolation_inverses(&line_through("[zero, a]")), 0);
+        if let Some(result) = singular_verdict(&line_through("[zero, one]")) {
+            assert!(result.is_ok(), "{result:?}");
+        }
+    }
+
+    #[test]
+    fn evaluating_at_a_folded_vertex_reads_one_slot() {
+        let ex = r#"
+            proto vertex<F: Field>(instance p: Mle<F, 2>, instance a: F) where a == a {
+                let one = a - a + 1;
+                let zero = a - a;
+                v <- eval(p, [one, zero]);
+                verify(v == eval(p, [one, zero]))
+            }"#;
+        // At a symbolic point, each evaluation would sum `p[b]` against
+        // products of `x_j` and `1 - x_j` over all four vertices.
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(ex), false);
+        let widest = inputs
+            .generating_set
+            .iter()
+            .filter(|g| g.vars().iter().any(|x| x.to_string().starts_with("p[")))
+            .map(|g| g.terms.len())
+            .max();
+        assert_eq!(widest, Some(2), "{:?}", inputs.generating_set);
+        if let Some(result) = singular_verdict(ex) {
+            assert!(result.is_ok(), "{result:?}");
+        }
+    }
+
+    #[test]
+    fn folded_points_preserve_full_partial_and_selected_evaluations() {
+        // The independent expressions use the four MLE entries in little-
+        // endian order; using the wrong vertex or free variable changes them.
+        let cases = [
+            ("v <- eval(p, [one, zero]);", "b"),
+            ("let q = eval(p, [one]); v <- q(t);", "b + (d - b) * t"),
+            ("let q = eval<0>(p, [one]); v <- q(t);", "c + (d - c) * t"),
+            ("let q = eval<1>(p, [one]); v <- q(t);", "b + (d - b) * t"),
+        ];
+        for (evaluation, expected) in cases {
+            for offset in ["", " + 1"] {
+                let src = format!(
+                    r#"
+                    proto folded<F: Field>(
+                        instance a: F, instance b: F, instance c: F, instance d: F
+                    ) where a == a {{
+                        let one = a - a + 1;
+                        let zero = a - a;
+                        let p = mle([a, b, c, d]);
+                        t <- challenge<F>;
+                        {evaluation}
+                        verify(v == {expected}{offset})
+                    }}"#
+                );
+                for inline in [false, true] {
+                    if let Some(result) = singular_verdict_with_inlining(&src, inline) {
+                        if offset.is_empty() {
+                            assert!(result.is_ok(), "{evaluation}, inline={inline}: {result:?}");
+                        } else {
+                            assert!(
+                                matches!(result, Err(AnalysisError::Incomplete(_))),
+                                "{evaluation}, inline={inline}: {result:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn folded_interpolation_points_preserve_wrong_checks_and_undefined_traces() {
+        let template = r#"
+            proto interpolation<F: Field>(instance a: F, instance b: F, instance c: F)
+            where a == a {
+                let one = a - a + 1;
+                let zero = a - a;
+                let p = interpolate([zero, one, a], [b, c, a]);
+                v <- p(a);
+                verify(v == a)
+            }"#;
+        let wrong = template.replace("verify(v == a)", "verify(v == a + 1)");
+        // The point a still needs inverse guards. With a == 0, it collides
+        // with zero and no defined interpolation trace remains.
+        let undefined = template.replace("where a == a", "where a == 0");
+        for inline in [false, true] {
+            if let Some(result) = singular_verdict_with_inlining(template, inline) {
+                assert!(result.is_ok(), "inline={inline}: {result:?}");
+            }
+            if let Some(result) = singular_verdict_with_inlining(&wrong, inline) {
+                assert!(
+                    matches!(result, Err(AnalysisError::Incomplete(_))),
+                    "inline={inline}: {result:?}"
+                );
+            }
+            if let Some(result) = singular_verdict_with_inlining(&undefined, inline) {
+                assert!(
+                    matches!(result, Err(AnalysisError::UnitIdeal { .. })),
+                    "inline={inline}: {result:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn folding_a_point_does_not_replace_unconstrained_inputs() {
+        let ex = r#"
+            proto symbolic<F: Field>(instance a: F, instance b: F) where a == a {
+                let point = a - a + b;
+                let p = mle([0, 1]);
+                v <- p(point);
+                verify(v == 1)
+            }"#;
+        for inline in [false, true] {
+            if let Some(result) = singular_verdict_with_inlining(ex, inline) {
+                assert!(
+                    matches!(result, Err(AnalysisError::Incomplete(_))),
+                    "inline={inline}: {result:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn spartan_matrix_product_matches_the_harness_layout() {
+        if !singular_available() {
+            eprintln!("skipping: Singular not on PATH");
+            return;
+        }
+        let helpers = include_str!("../../examples/spartan/spartan.zippel")
+            .split("proto spartan")
+            .next()
+            .unwrap();
+        let src = format!(
+            r#"{helpers}
+            proto matrix<G: Group, F: Scalar<G>, M: Size>(
+                instance a: [F; 16], instance z: [F; 4]
+            ) where a[0] == a[0] {{
+                let out = mat_vec(mle(a), z);
+                let expected = [
+                    reduce(+, [a[i + 4 * c] * z[c] for c in 0..4])
+                    for i in 0..4
+                ];
+                verify(out[1] == expected[1])
+            }}"#
+        );
+        let mut sizes = Ctx::new();
+        sizes.insert(&lang::id::Tid::new("M"), &2);
+        for transpose in [false, true] {
+            let src = if transpose {
+                src.replace("a[i + 4 * c]", "a[4 * i + c]")
+            } else {
+                src.clone()
+            };
+            let m = parse_and_concretize(&src, &sizes);
+            let gs = UDags::<ArkBls12_381>::from_module(m).unwrap();
+            let g = QualifierPropagation::from_dag(gs.protocols()[0]);
+            let inputs = CompletenessAnalysis::build_inputs(&g, true);
+            let mut ca =
+                CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, GbBackendKind::Singular);
+            let result = ca.run();
+            if transpose {
+                assert!(
+                    matches!(result, Err(AnalysisError::Incomplete(_))),
+                    "{result:?}"
+                );
+            } else {
+                assert!(result.is_ok(), "{result:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn explain_substitutes_pins_only_where_the_messages_leave_a_difference() {
+        if !singular_available() {
+            eprintln!("skipping: Singular not on PATH");
+            return;
+        }
+        let ex = r#"
+            proto pins<F: Field>(witness s: F, instance v: F) where v == s * s {
+                c <- challenge<F>;
+                t <- v * c;
+                u <- s * s;
+                verify(t == v * c && u == v)
+            }"#;
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(ex), true);
+        let mut ca =
+            CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, GbBackendKind::Singular);
+        assert!(ca.run().is_ok());
+        let explanation = ca.explain();
+        let block = |check: &str| {
+            explanation
+                .split_inclusive('\n')
+                .skip_while(|line| *line != format!("check: {check}\n"))
+                .take_while(|line| *line == format!("check: {check}\n") || line.starts_with("  "))
+                .collect::<String>()
+        };
+        let by_messages = block("t == v*c");
+        assert!(!by_messages.contains("v =="), "{explanation}");
+        assert!(by_messages.contains("both sides: v*c"), "{explanation}");
+        let by_pin = block("u == v");
+        assert!(by_pin.contains("v == s^2"), "{explanation}");
     }
 }

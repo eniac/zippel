@@ -34,6 +34,47 @@ impl<'a, C: ArkConfig + HasOpFactory> EncodeCtx<'a, C> {
     }
 }
 
+/// The constant `poly` equals once the `pl` definitions are substituted into
+/// it, or `None` if it is not constant.
+///
+/// `pl` holds each value one step deep, as in `one := n + 1` with `n := 0`,
+/// so a value the program computes from constants is not yet a constant
+/// polynomial when the next op reads it.
+pub fn resolved_constant<C: ArkConfig>(
+    ctx: &EncodeCtx<'_, C>,
+    poly: &Polynomial<C::F>,
+) -> Option<C::F> {
+    if poly.is_constant() {
+        return Some(poly.constant_coeff());
+    }
+    let mut current = poly.clone();
+    loop {
+        let (next, did_change) = current.inline_vars(&ctx.ideal.pl);
+        if !did_change {
+            return None;
+        }
+        if next.is_constant() {
+            return Some(next.constant_coeff());
+        }
+        current = next;
+    }
+}
+
+/// `poly`, replaced by its constant when [`resolved_constant`] finds one.
+///
+/// For an operand whose encoding depends on whether it is constant, such as
+/// the points of an interpolation or an evaluation. The replacement is exact:
+/// `poly − c` lies in the ideal of the `pl` definitions.
+pub fn fold_constant<C: ArkConfig>(
+    ctx: &EncodeCtx<'_, C>,
+    poly: Polynomial<C::F>,
+) -> Polynomial<C::F> {
+    match resolved_constant(ctx, &poly) {
+        Some(c) => Polynomial::lit(&c),
+        None => poly,
+    }
+}
+
 /// Link the user's Var `var` to a witness Var `wit` slot by slot.
 /// Emits `var(var[j]) − var(wit[j]) = 0` for every slot, and
 /// registers `pl[var[j]] = var(wit[j])`.

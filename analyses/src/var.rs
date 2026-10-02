@@ -11,7 +11,7 @@ use std::fmt;
 /// `index` is a logical multi-dimensional path (e.g. `[1, 0]` for the first
 /// element of the second row of a 2D array). It is built up by
 /// `with_index` / `collect_slots` as they recurse into composite types.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Var {
     /// The graph node this `Var` ultimately reads from.
     pub reference: Ref,
@@ -26,6 +26,17 @@ pub struct Var {
     /// argument's `Vid`; for transcript-source Vars it is the log-variable
     /// name; for unnamed Vars it is derived from the node index.
     pub name: String,
+}
+
+/// Hashes the slot a `Var` names, `reference` and `index`, and not its
+/// metadata. Equal `Var`s agree on every field, so this is consistent with
+/// `Eq`. Every polynomial operation hashes the variables of each monomial it
+/// touches, and the name and type would otherwise dominate the cost.
+impl std::hash::Hash for Var {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.reference.hash(state);
+        self.index.hash(state);
+    }
 }
 
 impl Var {
