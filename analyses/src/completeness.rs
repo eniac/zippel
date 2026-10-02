@@ -368,13 +368,37 @@ fn substitute<F: PrimeField>(
         .collect()
 }
 
+/// How readily [`eliminate_definitions`] pins a variable, most readily first.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum PinClass {
+    /// Any variable that its generator pins to a constant.
+    Constant,
+    /// A quotient or remainder slot of a polynomial division.
+    DivisionWitness,
+    /// Any other variable `eligible` accepts, such as an input.
+    Other,
+}
+
+impl PinClass {
+    /// The class after this one, if any.
+    const fn next(self) -> Option<Self> {
+        match self {
+            Self::Constant => Some(Self::DivisionWitness),
+            Self::DivisionWitness => Some(Self::Other),
+            Self::Other => None,
+        }
+    }
+}
+
 /// If `p` pins a variable down, i.e. `p = c·x + r` with `c` constant and
 /// `x ∉ r`, return `x` and its value `−r/c`. Any `x` qualifies when `r` is
-/// constant; otherwise `x` must satisfy `eligible`. Ties go to the least
-/// `Var`, so the choice does not depend on hash order.
+/// constant; otherwise `x` must satisfy `eligible`. Only candidates of class
+/// `max_class` or earlier count, and ties go to the earliest class, then to
+/// the least `Var`, so the choice does not depend on hash order.
 fn defined_var<F: PrimeField>(
     p: &Polynomial<F>,
     eligible: &impl Fn(&Var) -> bool,
+    max_class: PinClass,
 ) -> Option<(Var, Polynomial<F>)> {
     // The number of terms each variable occurs in.
     let mut occurrences: HashMap<Var, usize> = HashMap::new();
@@ -384,15 +408,27 @@ fn defined_var<F: PrimeField>(
         }
     }
     let rest_constant = p.terms.keys().filter(|m| !m.is_constant()).count() == 1;
-    let (x, c) = p
+    let class = |x: &Var| {
+        if rest_constant {
+            Some(PinClass::Constant)
+        } else if !eligible(x) {
+            None
+        } else if is_division_witness(x) {
+            Some(PinClass::DivisionWitness)
+        } else {
+            Some(PinClass::Other)
+        }
+    };
+    let (_, x, c) = p
         .terms
         .iter()
         .filter(|(mono, _)| mono.degree() == 1)
         .filter_map(|(mono, c)| {
             let x = mono.vars().pop()?;
-            (occurrences[&x] == 1 && (rest_constant || eligible(&x))).then_some((x, *c))
+            let k = class(&x).filter(|&k| occurrences[&x] == 1 && k <= max_class)?;
+            Some((k, x, *c))
         })
-        .min_by(|(a, _), (b, _)| a.cmp(b))?;
+        .min_by(|(ka, a, _), (kb, b, _)| (ka, a).cmp(&(kb, b)))?;
     // x = (c·x − p) / c
     let cx = &Polynomial::lit(&c) * &Polynomial::var(&x);
     let inv = Polynomial::lit(&c.inverse().expect("terms have nonzero coefficients"));
@@ -414,6 +450,17 @@ fn defined_var<F: PrimeField>(
 /// generator per coefficient, linear in the witnesses. Once `b`'s leading
 /// coefficient is a constant, the top ones define `q`'s coefficients from the
 /// top down and the rest define `r`'s, so the witnesses are eligible too.
+///
+/// Which variable a generator pins matters, though every choice is exact.
+/// `a`'s coefficients are often linear in inputs too, and an input is the
+/// least `Var`, so a row would pin the input through the quotient instead of
+/// defining the quotient, rewriting the relation over quotients and
+/// challenges. And `b`'s leading coefficient may be an input that the `where`
+/// clause pins to a constant, as in `one == 1`, in a generator read after the
+/// division's: until then the quotient appears multiplied by it, and no
+/// witness qualifies. So each pass only pins up to a [`PinClass`], starting
+/// with constants. The class rises after a pass that pinned nothing, and
+/// falls back to constants after one that pinned something.
 fn eliminate_definitions<F: PrimeField>(
     generating_set: &mut Vec<Polynomial<F>>,
     origins: &mut Vec<Origin>,
@@ -422,6 +469,7 @@ fn eliminate_definitions<F: PrimeField>(
 ) -> Ctx<Var, Polynomial<F>> {
     // Kept resolved: no value mentions a defined variable.
     let mut defs: Ctx<Var, Polynomial<F>> = Ctx::new();
+    let mut max_class = PinClass::Constant;
     loop {
         let mut found = false;
         let mut kept = Vec::with_capacity(generating_set.len());
@@ -437,7 +485,7 @@ fn eliminate_definitions<F: PrimeField>(
             if p.is_zero() {
                 continue;
             }
-            match defined_var(&p, &eligible) {
+            match defined_var(&p, &eligible, max_class) {
                 Some((x, value)) => {
                     let def = Ctx::singleton(x.clone(), value.clone());
                     defs.modify(|_, v| {
@@ -455,8 +503,13 @@ fn eliminate_definitions<F: PrimeField>(
             }
         }
         *generating_set = kept;
-        // A pass that defined nothing new left every generator resolved.
-        if !found {
+        if found {
+            max_class = PinClass::Constant;
+        } else if let Some(next) = max_class.next() {
+            max_class = next;
+        } else {
+            // A pass that defined nothing new, of any class, left every
+            // generator resolved.
             break;
         }
     }
@@ -2048,6 +2101,84 @@ mod tests {
             matches!(result, Err(AnalysisError::Incomplete(_))),
             "incorrect quotient identity must be incomplete: {result:?}"
         );
+    }
+
+    /// For `p(X) = a + bX`, the opening quotient `(p − p(z)) / (X − z)` is
+    /// the constant `b`, divided by `poly([-z, lead])`.
+    fn opening(lead: &str, offset: &str) -> String {
+        format!(
+            r#"
+            proto opening<F: Field>(witness p: Uni<F, 1>, instance f_one: F) where f_one == 1 {{
+                z <- challenge<F>;
+                let q = (p - p(z)) / poly([-z, {lead}]);
+                t <- q(z);
+                let pc = coef(p);
+                b <- pc[1];
+                verify(t == b{offset})
+            }}"#
+        )
+    }
+
+    /// The pinned variables of `src` that are slots of `p`, and the quotient
+    /// and remainder slots it left unpinned.
+    fn division_pins(src: &str) -> (Vec<String>, Vec<String>) {
+        let inputs = CompletenessAnalysis::build_inputs(&dag_of(src), true);
+        let dividend = inputs
+            .pinned
+            .iter()
+            .map(|(x, _)| x.to_string())
+            .filter(|x| x.starts_with("p["))
+            .collect();
+        let unpinned = inputs
+            .generating_set
+            .iter()
+            .flat_map(|p| p.vars())
+            .filter(super::is_division_witness)
+            .map(|x| x.to_string())
+            .collect();
+        (dividend, unpinned)
+    }
+
+    #[test]
+    fn division_defines_its_witnesses_before_inputs() {
+        // The row for `X^1` reads `p[1] − q[0] + z·q[1]`: both `p[1]` and
+        // `q[0]` occur linearly, and the division defines `q[0]`.
+        let (dividend, unpinned) = division_pins(&opening("1", ""));
+        assert!(dividend.is_empty(), "dividend pinned: {dividend:?}");
+        assert!(unpinned.is_empty(), "witnesses left: {unpinned:?}");
+    }
+
+    #[test]
+    fn division_waits_for_a_leading_coefficient_the_relation_fixes() {
+        // Until `f_one := 1` is substituted, the quotient appears only as
+        // `f_one·q`, and the `where` clause's generator comes after the
+        // division's.
+        let (dividend, unpinned) = division_pins(&opening("f_one", ""));
+        assert!(dividend.is_empty(), "dividend pinned: {dividend:?}");
+        assert!(unpinned.is_empty(), "witnesses left: {unpinned:?}");
+    }
+
+    #[test]
+    fn pinning_witnesses_first_keeps_the_verdict() {
+        for lead in ["1", "f_one"] {
+            let Some(result) = singular_verdict(&opening(lead, "")) else {
+                return;
+            };
+            assert!(result.is_ok(), "divisor lead {lead}: {result:?}");
+        }
+    }
+
+    #[test]
+    fn pinning_witnesses_first_keeps_an_incorrect_quotient_incomplete() {
+        for lead in ["1", "f_one"] {
+            let Some(result) = singular_verdict(&opening(lead, " + 1")) else {
+                return;
+            };
+            assert!(
+                matches!(result, Err(AnalysisError::Incomplete(_))),
+                "divisor lead {lead}: {result:?}"
+            );
+        }
     }
 
     #[test]

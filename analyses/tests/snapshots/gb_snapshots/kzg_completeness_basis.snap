@@ -5,10 +5,10 @@ expression: value
 check: srs_g2_s*proof - eval_point*gen_g2*proof == gen_g2*commitment - eval_result*gen_g1*gen_g2
   commitment <- poly_x[1]*srs_g1[1] + poly_x[0]*srs_g1[0]
   proof <- srs_g1[0]*__zippel::gb::div_q::0[0]
-  eval_result == eval_point*__zippel::gb::div_q::0[0] + poly_x[0]
+  eval_result == eval_point*poly_x[1] + poly_x[0]
   gen_g1 == srs_g1[0]
-  poly_x[1] == __zippel::gb::div_q::0[0]
   srs_g1[1] == srs_g1[0]*tau
   srs_g2_s == gen_g2*tau
-  both sides: gen_g2*srs_g1[0]*tau*__zippel::gb::div_q::0[0] - eval_point*gen_g2*srs_g1[0]*__zippel::gb::div_q::0[0]
+  __zippel::gb::div_q::0[0] == poly_x[1]
+  both sides: gen_g2*poly_x[1]*srs_g1[0]*tau - eval_point*gen_g2*poly_x[1]*srs_g1[0]
 basis:

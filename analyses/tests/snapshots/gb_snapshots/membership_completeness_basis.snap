@@ -6,10 +6,10 @@ check: - gen_g2*alpha*proof_f + srs_g2_s*proof_f == - gen_g1*gen_g2*f_eval + gen
   com_f <- f_coeffs[1]*srs_g1[1] + f_coeffs[0]*srs_g1[0]
   f_eval <- f_coeffs[1]*alpha + f_coeffs[0]
   proof_f <- srs_g1[0]*__zippel::gb::div_q::2[0]
-  f_coeffs[1] == __zippel::gb::div_q::2[0]
   gen_g1 == srs_g1[0]
-  lhs: - gen_g2*srs_g1[0]*alpha*__zippel::gb::div_q::2[0] + srs_g1[0]*srs_g2_s*__zippel::gb::div_q::2[0]
-  rhs: - gen_g2*srs_g1[0]*alpha*__zippel::gb::div_q::2[0] + gen_g2*srs_g1[1]*__zippel::gb::div_q::2[0]
+  __zippel::gb::div_q::2[0] == f_coeffs[1]
+  lhs: - f_coeffs[1]*gen_g2*srs_g1[0]*alpha + f_coeffs[1]*srs_g1[0]*srs_g2_s
+  rhs: - f_coeffs[1]*gen_g2*srs_g1[0]*alpha + f_coeffs[1]*gen_g2*srs_g1[1]
   equal modulo the basis, using:
     - srs_g1[0]*srs_g2_s + gen_g2*srs_g1[1]
 check: - gen_g2*alpha*proof_h + srs_g2_s*proof_h == - gen_g1*gen_g2*h_eval + gen_g2*com_h
@@ -17,21 +17,20 @@ check: - gen_g2*alpha*proof_h + srs_g2_s*proof_h == - gen_g1*gen_g2*h_eval + gen
   h_eval <- alpha*__zippel::gb::div_q::0[1] + __zippel::gb::div_q::0[0]
   proof_h <- srs_g1[0]*__zippel::gb::div_q::1[0]
   gen_g1 == srs_g1[0]
-  __zippel::gb::div_q::1[0] == __zippel::gb::div_q::2[0]^2
-  __zippel::gb::div_q::0[0] == - s[1]*__zippel::gb::div_q::2[0] - s[0]*__zippel::gb::div_q::2[0] + 2*f_coeffs[0]*__zippel::gb::div_q::2[0]
-  __zippel::gb::div_q::0[1] == __zippel::gb::div_q::2[0]^2
-  lhs: - gen_g2*srs_g1[0]*alpha*__zippel::gb::div_q::2[0]^2 + srs_g1[0]*srs_g2_s*__zippel::gb::div_q::2[0]^2
-  rhs: - gen_g2*srs_g1[0]*alpha*__zippel::gb::div_q::2[0]^2 + gen_g2*srs_g1[1]*__zippel::gb::div_q::2[0]^2
+  __zippel::gb::div_q::1[0] == f_coeffs[1]^2
+  __zippel::gb::div_q::0[0] == - f_coeffs[1]*s[1] - f_coeffs[1]*s[0] + 2*f_coeffs[0]*f_coeffs[1]
+  __zippel::gb::div_q::0[1] == f_coeffs[1]^2
+  lhs: - f_coeffs[1]^2*gen_g2*srs_g1[0]*alpha + f_coeffs[1]^2*srs_g1[0]*srs_g2_s
+  rhs: - f_coeffs[1]^2*gen_g2*srs_g1[0]*alpha + f_coeffs[1]^2*gen_g2*srs_g1[1]
   equal modulo the basis, using:
     - srs_g1[0]*srs_g2_s + gen_g2*srs_g1[1]
 check: f_eval^2 - s[1]*f_eval - s[0]*f_eval + s[0]*s[1] == alpha*h_eval
   f_eval <- f_coeffs[1]*alpha + f_coeffs[0]
   h_eval <- alpha*__zippel::gb::div_q::0[1] + __zippel::gb::div_q::0[0]
-  f_coeffs[1] == __zippel::gb::div_q::2[0]
-  __zippel::gb::div_q::0[0] == - s[1]*__zippel::gb::div_q::2[0] - s[0]*__zippel::gb::div_q::2[0] + 2*f_coeffs[0]*__zippel::gb::div_q::2[0]
-  __zippel::gb::div_q::0[1] == __zippel::gb::div_q::2[0]^2
-  lhs: alpha^2*__zippel::gb::div_q::2[0]^2 - s[1]*alpha*__zippel::gb::div_q::2[0] - s[0]*alpha*__zippel::gb::div_q::2[0] + 2*f_coeffs[0]*alpha*__zippel::gb::div_q::2[0] + s[0]*s[1] - f_coeffs[0]*s[1] - f_coeffs[0]*s[0] + f_coeffs[0]^2
-  rhs: alpha^2*__zippel::gb::div_q::2[0]^2 - s[1]*alpha*__zippel::gb::div_q::2[0] - s[0]*alpha*__zippel::gb::div_q::2[0] + 2*f_coeffs[0]*alpha*__zippel::gb::div_q::2[0]
+  __zippel::gb::div_q::0[0] == - f_coeffs[1]*s[1] - f_coeffs[1]*s[0] + 2*f_coeffs[0]*f_coeffs[1]
+  __zippel::gb::div_q::0[1] == f_coeffs[1]^2
+  lhs: f_coeffs[1]^2*alpha^2 - f_coeffs[1]*s[1]*alpha - f_coeffs[1]*s[0]*alpha + 2*f_coeffs[0]*f_coeffs[1]*alpha + s[0]*s[1] - f_coeffs[0]*s[1] - f_coeffs[0]*s[0] + f_coeffs[0]^2
+  rhs: f_coeffs[1]^2*alpha^2 - f_coeffs[1]*s[1]*alpha - f_coeffs[1]*s[0]*alpha + 2*f_coeffs[0]*f_coeffs[1]*alpha
   equal modulo the basis, using:
     s[0]*s[1] - f_coeffs[0]*s[1] - f_coeffs[0]*s[0] + f_coeffs[0]^2
 basis:
