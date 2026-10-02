@@ -50,7 +50,7 @@ pub fn run(_args: &[String]) {
         let analysis_args = ZippelArgs::new(PathBuf::from("examples/dory/dory.zippel"));
         let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
         let mut analysis_sizes = Ctx::new();
-        analysis_sizes.insert(&Tid::new("S"), &LOG_N);
+        analysis_sizes.insert(&Tid::new("S"), &3usize);
         analysis_handler.compile(&analysis_sizes);
 
         let completeness_start = Instant::now();
