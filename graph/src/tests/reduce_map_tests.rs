@@ -48,6 +48,7 @@ fn op_has_loop_param(op: &GOp<B>, level: usize) -> bool {
         Op::Assert(a) | Op::Verify(a) => op_has_loop_param(a.get(), level),
         Op::Poly(a)
         | Op::Coef(a)
+        | Op::ToScalar(a)
         | Op::Mle(a)
         | Op::Ifft(a)
         | Op::Fft(a)

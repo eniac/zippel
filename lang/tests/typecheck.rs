@@ -302,3 +302,69 @@ proto p<G: Group, F: Scalar<G>>(witness x: F, instance g: G) where g == g {
     assert_eq!(rendered.matches("error:").count(), 2, "{rendered}");
     assert_snap!(SNAP_DIR, "errors_in_several_declarations", rendered);
 }
+
+/// Type-check `src` (no size parameters) and return every diagnostic.
+fn type_diagnostics(src: &str) -> Vec<lang::diagnostic::Diagnostic> {
+    let (module, diags) = UModule::parse(src);
+    assert!(
+        diags.iter().all(|d| d.severity == Severity::Warning),
+        "expected no parse/semantic errors: {diags:?}"
+    );
+    module.unwrap().concretize(&Ctx::new()).unwrap().typecheck()
+}
+
+/// An integer is a vector index only within the finite-index range; beyond it, or negated,
+/// it is a field element, rejected as an index at the index itself and accepted where the
+/// field is pinned by a typed operand.
+#[test]
+fn numeric_literal_finite_index_boundary() {
+    const BIG: &str = "34545435435435435435435";
+    let max = usize::MAX.to_string();
+
+    let ok = |src: &str| {
+        let diags = type_diagnostics(src);
+        assert!(diags.is_empty(), "`{src}`: {diags:?}");
+    };
+    ok("proto p<F: Field>(instance xs: [F; 2]) where xs[1] == xs[1] {}");
+    for index in [BIG, max.as_str(), "-1"] {
+        let src = format!("proto p<F: Field>(instance xs: [F; 2]) where xs[{index}] == xs[0] {{}}");
+        let diags = type_diagnostics(&src);
+        let start = src.find(&format!("[{index}]")).unwrap() + 1;
+        assert!(
+            diags.iter().any(|d| d.span == (start..start + index.len())
+                && d.summary == "An integer outside the finite-index range cannot index a vector"),
+            "`{src}`: {diags:?}"
+        );
+    }
+
+    // A big or negated literal is a field element of the declared return type.
+    ok(&format!(
+        "fn big<F: Field>() -> F {{ {BIG} }}
+         fn neg<F: Field>() -> F {{ -1 }}
+         proto p<F: Field>(instance a: F) where a == a {{}}"
+    ));
+
+    // A typed argument pins a generic field parameter; two literals cannot choose between
+    // the caller's fields.
+    let first = "fn first<X: Field>(instance x: X, instance y: X) -> X { x }
+                 proto p<F: Field>(instance a: F) where a == a {}";
+    ok(&format!(
+        "{first} fn g<F: Field, K: Field>(instance a: F) -> F {{ first(a, {BIG}) }}"
+    ));
+    let diags = type_diagnostics(&format!(
+        "{first} fn g<F: Field, K: Field>(instance a: F) -> F {{ first({BIG}, 1) }}"
+    ));
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.summary == "Cannot infer type parameter `X` of `first`"),
+        "two literals cannot choose between F and K: {diags:?}"
+    );
+
+    // A polynomial pins the field of its points even with two scalar fields in scope.
+    ok(&format!(
+        "proto t<G: Group, H: Group, F: Scalar<G>, K: Scalar<H>>(
+             instance p: Uni<F, 1>, instance m: Mle<F, 2>, instance y: F,
+         ) where p({BIG}) == y && eval(m, [{BIG}, 0]) == y {{}}"
+    ));
+}

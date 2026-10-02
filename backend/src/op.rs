@@ -103,6 +103,10 @@ pub enum Op<C: ArkConfig, R> {
 
     /// Reduce a vector with a binary operation
     Reduce(BinOp, HOp<C>),
+
+    /// One-way embedding of a finite index (`Fin`) or a flat `Vec<Fin; n>` into the
+    /// scalar field (`Scalar` / `Vec<Scalar; n>`). There is no field-to-index inverse.
+    ToScalar(HOp<C>),
 }
 
 /// Graph operation (raw)
@@ -222,6 +226,7 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Reduce(_, _) => 27,
             Op::Proj(_, _, _) => 28,
             Op::Ifft(_) => 29,
+            Op::ToScalar(_) => 35,
         }
     }
 
@@ -411,6 +416,15 @@ impl<C: ArkConfig, R> Op<C, R> {
                 ),
             },
             Op::Proj(_, _, typ) => typ.clone(),
+            // Op::ToScalar(v): Fin → Scalar, Vec<Fin; n> → Vec<Scalar; n>.
+            Op::ToScalar(op) => match op.typ() {
+                ATyp::Base(ABase::Fin(_)) => ATyp::scalar(),
+                ATyp::Vec(ATyp::Base(ABase::Fin(_)), n) => ATyp::vec_scalar(n),
+                t => panic!(
+                    "UncaughtError: Op::ToScalar operand must be Fin or Vec<Fin>, found {}",
+                    t
+                ),
+            },
         }
     }
 
@@ -614,9 +628,9 @@ impl<C: HasOpFactory> GOp<C> {
     /// elementwise arms destructure `typ` with `into_vec`.
     pub fn add(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
-            // v + 0 = 0 + v = v
-            (Op::Value(a), Op::Value(b)) if a.is_zero() => Op::Value(b),
-            (Op::Value(a), Op::Value(b)) if b.is_zero() => Op::Value(a),
+            // v + 0 = 0 + v = v, only when `v` already has the result type.
+            (Op::Value(a), Op::Value(b)) if a.is_zero() && b.typ() == typ => Op::Value(b),
+            (Op::Value(a), Op::Value(b)) if b.is_zero() && a.typ() == typ => Op::Value(a),
             // v1 + v2
             (Op::Value(a), Op::Value(b)) => Op::Value(a + b),
             // e + v = v + e
@@ -666,8 +680,8 @@ impl<C: HasOpFactory> GOp<C> {
     /// Panics if `typ` is not a vector type while either operand is a vector.
     pub fn sub(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
-            // v - 0
-            (Op::Value(a), Op::Value(b)) if b.is_zero() => Op::Value(a),
+            // v - 0 = v, only when `v` already has the result type.
+            (Op::Value(a), Op::Value(b)) if b.is_zero() && a.typ() == typ => Op::Value(a),
             // v1 - v2
             (Op::Value(a), Op::Value(b)) => Op::Value(a - b),
             // e - v = v - e
@@ -719,8 +733,8 @@ impl<C: HasOpFactory> GOp<C> {
         match (v1, v2) {
             // 0 * v = v * 0 = 0
             (Op::Value(a), _) | (_, Op::Value(a)) if a.is_zero() => Op::zero(&typ),
-            // 1 * v = v * 1 = v
-            (Op::Value(a), b) | (b, Op::Value(a)) if a.is_one() => b,
+            // 1 * v = v * 1 = v, only when `v` already has the result type.
+            (Op::Value(a), b) | (b, Op::Value(a)) if a.is_one() && b.typ() == typ => b,
             // v1 * v2 = v1.mul(v2)
             (Op::Value(a), Op::Value(b)) => Op::Value(a * b),
             // [e0, ..., en] * v = [e0 * v0, e1 * v1, ..., en * vn]
@@ -768,7 +782,8 @@ impl<C: HasOpFactory> GOp<C> {
         match (v1, v2) {
             (_, Op::Value(b)) if b.is_zero() => panic!("UncaughtError: Division by zero"),
             (Op::Value(a), _) if a.is_zero() => Op::zero(&typ),
-            (a, Op::Value(b)) if b.is_one() => a,
+            // v / 1 = v, only when `v` already has the result type.
+            (a, Op::Value(b)) if b.is_one() && a.typ() == typ => a,
             // v1 / v2
             (Op::Value(a), Op::Value(b)) => Op::Value(a / b),
             // [e0, ..., en] / v = [e0 / v0, e1 / v1, ..., en / vn]
@@ -932,6 +947,34 @@ impl<C: HasOpFactory> GOp<C> {
         Op::Coef(mk::<C>(op))
     }
 
+    /// Embeds a finite index (`Fin`) or flat `Vec<Fin; n>` into the scalar field.
+    ///
+    /// Constants fold (`Index` → `Scalar`, `VecIndex` → `VecScalar`), literal vectors
+    /// convert elementwise without an outer node, and already-scalar operands are
+    /// returned unchanged. Any other operand is wrapped in `Op::ToScalar`, whose `typ()`
+    /// rejects shapes other than `Fin`/`Vec<Fin>`. Never converts a field to an index.
+    pub fn to_scalar(child: Self) -> Self {
+        match child {
+            Op::Value(Value::Index(i)) => Op::Value(Value::scalar_from_usize(i)),
+            Op::Value(mut v @ Value::VecIndex(_)) => {
+                v.into_vec_scalar_mut();
+                Op::Value(v)
+            }
+            child => match (child.typ(), child) {
+                (ATyp::Base(ABase::Scalar) | ATyp::Vec(ATyp::Base(ABase::Scalar), _), child) => {
+                    child
+                }
+                (ATyp::Vec(ATyp::Base(ABase::Fin(_)), _), Op::Vec(elems)) => Op::Vec(
+                    elems
+                        .iter()
+                        .map(|e| mk::<C>(Self::to_scalar(e.get().clone())))
+                        .collect(),
+                ),
+                (_, child) => Op::ToScalar(mk::<C>(child)),
+            },
+        }
+    }
+
     /// Builds `Op::Mle`, reading `op` as the evaluation table of a multilinear extension
     /// over the boolean hypercube.
     pub fn mle(op: Self) -> GOp<C> {
@@ -1064,7 +1107,8 @@ impl<C: ArkConfig> GOp<C> {
             | Op::Coef(v)
             | Op::Reduce(_, v)
             | Op::Ifft(v)
-            | Op::Fft(v) => v.references(),
+            | Op::Fft(v)
+            | Op::ToScalar(v) => v.references(),
             Op::Proj(v, _, _) => v.references(),
             Op::Value(_) | Op::Random(_, _) | Op::Challenge(_, _) => vec![],
         }
@@ -1130,6 +1174,7 @@ impl<C: HasOpFactory> GOp<C> {
                 Op::Proj(mk::<C>(op.map_node_indices(f)), field.clone(), typ.clone())
             }
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.map_node_indices(f))),
+            Op::ToScalar(op) => Op::ToScalar(mk::<C>(op.map_node_indices(f))),
             _ => self.clone(),
         }
     }
@@ -1181,6 +1226,7 @@ impl<C: HasOpFactory> GOp<C> {
                 Op::Proj(mk::<C>(op.map_refs(f)), field.clone(), typ.clone())
             }
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.map_refs(f))),
+            Op::ToScalar(op) => Op::ToScalar(mk::<C>(op.map_refs(f))),
         }
     }
 
@@ -1235,6 +1281,7 @@ impl<C: HasOpFactory> GOp<C> {
                 Op::Proj(mk::<C>(v.inline(vars, except)), field.clone(), typ.clone())
             }
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.inline(vars, except))),
+            Op::ToScalar(v) => Op::to_scalar(v.inline(vars, except)),
             Op::Evaluate(p, range, points) => Op::Evaluate(
                 mk::<C>(p.inline(vars, except)),
                 range.clone(),
@@ -1380,6 +1427,7 @@ impl<C: ArkConfig, R: fmt::Display> fmt::Display for Op<C, R> {
             Op::Ifft(v) => write!(f, "(ifft {})", v.get()),
             Op::Poly(v) => write!(f, "(poly {})", v.get()),
             Op::Coef(v) => write!(f, "(coef {})", v.get()),
+            Op::ToScalar(v) => write!(f, "(to_scalar {})", v.get()),
             Op::Evaluate(p, None, None) => write!(f, "(eval {})", p.get()),
             Op::Evaluate(p, None, Some(x)) => write!(f, "(eval {}, {})", p.get(), x.get()),
             Op::Evaluate(p, Some(range), Some(fixed)) => {

@@ -1378,6 +1378,7 @@ dependencies = [
  "insta",
  "lang",
  "log",
+ "num",
  "petgraph",
  "rand 0.8.6",
  "rayon",

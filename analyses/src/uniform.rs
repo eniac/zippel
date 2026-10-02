@@ -44,6 +44,7 @@ fn op_ancestors_of_loops<C: ArkConfig>(
         Op::Assert(a) | Op::Verify(a) => op_ancestors_of_loops(a, ancestors, loops),
         Op::Poly(op) => op_ancestors_of_loops(op, ancestors, loops),
         Op::Coef(op) => op_ancestors_of_loops(op, ancestors, loops),
+        Op::ToScalar(op) => op_ancestors_of_loops(op, ancestors, loops),
         Op::Reduce(_, v) => op_ancestors_of_loops(v, ancestors, loops),
         Op::LoopParam(i, _) => loops.get(*i).cloned().unwrap_or_default(),
         Op::Map(d, b) => {
@@ -131,6 +132,9 @@ fn compute_distribution_loops<C: ArkConfig>(
         Op::Coef(op) => {
             compute_distribution_loops(op, ancestors, distributions, dist_loops, anc_loops)
         }
+        // Embedding a finite index into the field never yields a value uniform over F,
+        // even when the index itself was sampled uniformly from its range.
+        Op::ToScalar(_) => Some(Distribution::Nonuniform),
         Op::LoopParam(i, _) => Some(
             dist_loops
                 .get(*i)

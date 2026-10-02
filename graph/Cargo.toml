@@ -16,6 +16,7 @@ ark-bls12-381 = { version = "0.6" }
 ark-std = { version = "0.6.0", features = ["parallel"] }
 log = "0.4.27"
 rand = { version = "0.8", features = ["std"] }
+num = "0.4.3"
 spongefish = { version = "0.7", features = [
     "ark-ff",
     "ark-ec",

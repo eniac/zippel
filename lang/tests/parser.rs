@@ -101,3 +101,48 @@ fn parse_error_type_alias_missing_semi() {
     let rendered = render_all("type MyAlias = F");
     assert_snap!(SNAP_DIR, "parse_error_type_alias_missing_semi", rendered);
 }
+
+// ── Numeric literal domains ─────────────────────────────────────────────
+
+/// Expression literals keep every digit; size positions take exactly the values that fit in
+/// `usize` and report an error located at the literal beyond it.
+#[test]
+fn numeric_literal_domain_boundaries() {
+    use lang::diagnostic::Phase;
+    use lang::parser::parse_decls;
+    use num::BigUint;
+
+    let parses = |src: &str| {
+        let (decls, diags) = parse_decls(src);
+        assert!(
+            diags.is_empty(),
+            "unexpected diagnostics for `{src}`: {diags:?}"
+        );
+        decls
+    };
+    for digits in ["34545435435435435435435", "4294967296"] {
+        let decls = parses(&format!("fn f<F: Field>() -> F {{ {digits} }}"));
+        let shown = decls[0].node.to_string();
+        assert!(shown.contains(&format!("{{ {digits} }}")), "{shown}");
+    }
+    // A size above `u32::MAX` is still a valid 64-bit shape.
+    if usize::BITS == 64 {
+        parses("fn f<F: Field>(instance xs: [F; 4294967296]) -> F { xs[0] }");
+    }
+    parses("fn f<K: 7, F: Field>() -> F { 1 }");
+
+    let too_big = (BigUint::from(usize::MAX) + 1u8).to_string();
+    for src in [
+        format!("fn f<F: Field>(instance xs: [F; {too_big}]) -> F {{ xs[0] }}"),
+        format!("fn f<K: {too_big}, F: Field>() -> F {{ 1 }}"),
+    ] {
+        let (_, diags) = parse_decls(&src);
+        let start = src.find(&too_big).unwrap();
+        assert!(
+            diags.iter().any(|d| d.phase == Phase::Parse
+                && d.span == (start..start + too_big.len())
+                && d.summary == "size literal exceeds target usize range"),
+            "`{src}`: {diags:?}"
+        );
+    }
+}

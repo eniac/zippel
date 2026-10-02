@@ -222,6 +222,11 @@ pub enum TypeError {
         Spanned<CTyp>,
     ),
 
+    /// A vector index is an integer outside the finite-index range; it is never reduced
+    /// modulo a field prime to make it fit.
+    #[error("An integer outside the finite-index range cannot index a vector")]
+    FiniteIndexOverflow(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
+
     /// Several signatures fit the call's argument types and none is at least as specific as
     /// all the others; carries the ones no other is more specific than.
     #[error("Call to `{2}` is ambiguous: several definitions accept arguments of type {}", kinded_list(.3, .0))]
@@ -832,6 +837,7 @@ fn primary_label(cause: &TypeError) -> String {
         }
         E::Call(_, _, e) => e.to_string(),
         E::Unify(_) | E::Lub(_) => "types do not match here".to_string(),
+        E::FiniteIndexOverflow(..) => "exceeds the finite-index range".to_string(),
         // Labelled by `decorate`, which knows the parts of the expression.
         E::Bin(..)
         | E::Vec(..)
@@ -999,6 +1005,7 @@ fn candidates<'a>(sigs: impl Iterator<Item = &'a CSig>) -> Vec<String> {
 fn kinded(t: &CTyp, kctx: &Ctx<Tid, CKind>) -> String {
     match t {
         CTyp::Fin(_) => "an integer".to_string(),
+        CTyp::FieldLiteral => "a field-only integer".to_string(),
         CTyp::Base(tid) => kctx
             .get(tid)
             .map_or_else(|| t.to_string(), |k| format!("{t} ({k})")),
@@ -1033,7 +1040,7 @@ fn type_vars(t: &CTyp, out: &mut Vec<Tid>) {
                 type_vars(t, out);
             }
         }
-        CTyp::Fin(_) | CTyp::Unit | CTyp::Bool => {}
+        CTyp::Fin(_) | CTyp::Unit | CTyp::Bool | CTyp::FieldLiteral => {}
     }
 }
 

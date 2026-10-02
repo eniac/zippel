@@ -35,15 +35,17 @@ pub use dep::{Dep, DepType};
 use log::debug;
 pub use node::{ArgKind, Node};
 
+use ark_ff::PrimeField;
 use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePolynomial};
-use backend::{ATyp, ArkConfig, PolyVariant, Value, VirtualPolynomial};
+use backend::{ABase, ATyp, ArkConfig, PolyVariant, Value, VirtualPolynomial};
 use lang::ast::range::CRange;
 use lang::ast::spanned::Spanned;
-use lang::ast::{BinOp, CBody, CExp, CModule, CSig, Exp, Exps};
+use lang::ast::{BinOp, CBody, CExp, CModule, CSig, Exp, ExpLiteral, Exps};
 use lang::diagnostic::{Diagnostic, Phase};
 use lang::id::{Fresh, Tid, Vid};
 use lang::typ::infer::{TypeError, Typeable};
 use lang::typ::{CKind, CTyp, CTyps, Distribution, Nothing, Qualifier};
+use num::{BigUint, ToPrimitive};
 use share::{Ctx, Set, traversal::ToTraversal1};
 
 use petgraph::{
@@ -249,6 +251,111 @@ fn unique_name(name: &Vid, taken: &mut HashSet<Vid>) -> Vid {
     }
     taken.insert(candidate.clone());
     candidate
+}
+
+/// The literal `n` in the field `C::F`, reduced modulo its prime from the complete magnitude.
+fn field_from_literal<C: ArkConfig>(n: &BigUint) -> C::F {
+    match n.to_u64() {
+        Some(v) => C::F::from(v),
+        None => C::F::from_le_bytes_mod_order(&n.to_bytes_le()),
+    }
+}
+
+/// The constant for literal `n` of inferred type `typ`: a field element when `typ` is a
+/// field-only literal or `field` asks for one, otherwise the finite index `n`.
+fn literal_value<C: ArkConfig>(n: &BigUint, typ: &CTyp, field: bool) -> Value<C> {
+    match typ {
+        CTyp::Fin(r) if !field => Value::Index(r.start()),
+        _ => Value::Scalar(field_from_literal::<C>(n)),
+    }
+}
+
+/// Whether `t` is a finite index or a flat vector of them, the shapes `Op::ToScalar` embeds.
+fn is_fin_shaped(t: &ATyp) -> bool {
+    match t {
+        ATyp::Base(ABase::Fin(_)) => true,
+        ATyp::Vec(deref!(e), _) => e.is_fin(),
+        _ => false,
+    }
+}
+
+/// `op` with every finite-index leaf that `target` declares a field element embedded into
+/// the field, folding constants. The caller has checked that the source type fits `target`;
+/// any other difference (a wider index range, a lower polynomial degree) is left as is.
+/// Compound vectors are converted with an `Op::Map` whose loop parameter has level
+/// `loop_depth`, the number of enclosing loop binders.
+///
+/// # Panics
+/// Panics if a vector's length differs from the target's, which source typing rules out.
+fn coerce_field_op<C: HasOpFactory>(op: GOp<C>, target: &ATyp, loop_depth: usize) -> GOp<C> {
+    let source = op.typ();
+    if &source == target {
+        return op;
+    }
+    match (&source, target) {
+        (ATyp::Base(ABase::Fin(_)), ATyp::Base(ABase::Scalar)) => GOp::to_scalar(op),
+        (ATyp::Vec(deref!(src), n), ATyp::Vec(deref!(tgt), m)) => {
+            assert_eq!(n, m, "coerce_field_op: vector length mismatch");
+            if src.is_fin() && tgt.is_scalar() {
+                return GOp::to_scalar(op);
+            }
+            match op {
+                Op::Vec(elems) => GOp::vec(
+                    elems
+                        .iter()
+                        .map(|e| coerce_field_op(e.get().clone(), tgt, loop_depth))
+                        .collect(),
+                ),
+                op => {
+                    let elem = GOp::loop_param(loop_depth, src.clone());
+                    let body = coerce_field_op(elem.clone(), tgt, loop_depth + 1);
+                    if body == elem { op } else { GOp::map(op, body) }
+                }
+            }
+        }
+        (ATyp::Record(src_fields), ATyp::Record(tgt_fields)) => {
+            let mut fields: Ctx<String, HOp<C>> = Ctx::new();
+            for (name, tgt) in tgt_fields.iter() {
+                let field = match &op {
+                    Op::Record(ops) => ops[name].get().clone(),
+                    op => GOp::proj(op.clone(), name.clone(), src_fields[name].clone()),
+                };
+                fields.insert(name, &mk::<C>(coerce_field_op(field, tgt, loop_depth)));
+            }
+            Op::Record(fields)
+        }
+        _ => op,
+    }
+}
+
+/// Embeds a constant finite operand of an arithmetic or concatenation operator into the
+/// field when the operator's `result` is not finite, so that `GOp::bin` folds field values
+/// (and appends field elements to a field vector). A dynamic
+/// operand is left to the runtime's mixed index/field arithmetic.
+fn field_operand<C: HasOpFactory>(op: GOp<C>, result: &ATyp) -> GOp<C> {
+    if matches!(op, Op::Value(_) | Op::Vec(_))
+        && is_fin_shaped(&op.typ())
+        && !result.into_inner().is_fin()
+    {
+        GOp::to_scalar(op)
+    } else {
+        op
+    }
+}
+
+/// `GOp::bin(op, a, b, result)` with constant finite operands embedded into the field
+/// first; a finite exponent stays an index.
+fn field_bin<C: HasOpFactory>(op: BinOp, a: GOp<C>, b: GOp<C>, result: ATyp) -> GOp<C> {
+    match op {
+        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Dot | BinOp::Concat => GOp::bin(
+            op,
+            field_operand(a, &result),
+            field_operand(b, &result),
+            result,
+        ),
+        BinOp::Pow => GOp::bin(op, field_operand(a, &result), b, result),
+        _ => GOp::bin(op, a, b, result),
+    }
 }
 
 /// A trait for writing a graph to a PDF file
@@ -1467,7 +1574,28 @@ impl<C: HasOpFactory> UDag<C> {
         }
     }
 
-    /// Add a new top-level expression to the graph
+    /// Adds `bop`, a `GOp::bin` result of type `atyp`: a `Node::bin` when it stayed a
+    /// binary operation, otherwise the materialized folded operation.
+    fn add_bin(
+        &mut self,
+        bop: GOp<C>,
+        edge_type: DepType,
+        atyp: ATyp,
+        span: std::ops::Range<usize>,
+    ) -> GOp<C> {
+        if let GOp::Bin(op, vl, vr, atyp) = bop {
+            let nbin = self.add_node(Node::bin(op, &vl, &vr, &atyp), span);
+            self.add_edges(edge_type, nbin, (*vl).clone());
+            self.add_edges(edge_type, nbin, (*vr).clone());
+            GOp::underscore(nbin, atyp)
+        } else {
+            self.materialize(bop, edge_type, atyp, span)
+        }
+    }
+
+    /// Add a new top-level expression to the graph; `expected` is the declared type its
+    /// value must take (a function's return type), if any.
+    #[allow(clippy::too_many_arguments)]
     fn add_top_exp(
         &mut self,
         exp: Spanned<CExp>,
@@ -1476,10 +1604,11 @@ impl<C: HasOpFactory> UDag<C> {
         fctx: &Ctx<CSig, CBody>,
         vctx: &Ctx<Vid, CTyp>,
         vars: &Ctx<Vid, GOp<C>>,
+        expected: Option<ATyp>,
     ) -> Result<(), GraphError> {
         debug!("Adding top-level expression: {:?}", exp);
         let span = exp.span.clone();
-        let op = self.add_exp(exp, start, DepType::Data, kctx, fctx, vctx, vars)?;
+        let op = self.add_exp(exp, start, DepType::Data, kctx, fctx, vctx, vars, expected)?;
         if !op.is_ref() {
             let nr = self.add_node(Node::ret(&op), span);
             self.add_edges(DepType::Data, nr, op);
@@ -1579,7 +1708,7 @@ impl<C: HasOpFactory> UDag<C> {
                     }
                 }
                 if let Some(body) = body {
-                    self.add_top_exp(body, &mut start, &kctx, fctx, &vctx, &vars)?;
+                    self.add_top_exp(body, &mut start, &kctx, fctx, &vctx, &vars, None)?;
                 }
                 // Relation start: its own per-arg `Node::Arg` children so
                 // walking the relation does not pull in the protocol body
@@ -1627,6 +1756,7 @@ impl<C: HasOpFactory> UDag<C> {
                     fctx,
                     &vctx,
                     &vars,
+                    None,
                 )?;
                 let nassert = self.add_node(Node::assert(&rel_op), where_span);
                 self.add_edges(DepType::Data, nassert, rel_op);
@@ -1664,7 +1794,12 @@ impl<C: HasOpFactory> UDag<C> {
                     }
                 }
                 if let Some(body) = body {
-                    self.add_top_exp(body, &mut start, &kctx, fctx, &vctx, &vars)?;
+                    // The body's value takes the declared return type.
+                    let ret = sig
+                        .ret
+                        .as_ref()
+                        .and_then(|ret| ATyp::from_ctyp(&ret.node, &kctx));
+                    self.add_top_exp(body, &mut start, &kctx, fctx, &vctx, &vars, ret)?;
                 }
             }
             CBody::TypeAlias => {
@@ -1693,11 +1828,25 @@ impl<C: HasOpFactory> UDag<C> {
         use ark_ff::{One, Zero};
 
         let non_poly = |msg: String| GraphError::NonPolynomialFun(msg, exp.span.clone());
+        // Evaluation-table length of a multilinear fun over `vars`.
+        let table_len = || {
+            u32::try_from(vars.len())
+                .ok()
+                .and_then(|n| 1usize.checked_shl(n))
+                .ok_or_else(|| non_poly("too many variables in a multilinear fun".to_string()))
+        };
         match &exp.node {
             CExp::Lit(n) => {
-                // Scalar constant
-                let scalar = C::F::from(*n as u64);
-                Ok(PolyVariant::from_scalar(scalar))
+                // Field constant, in the shape of the fun's other leaves.
+                let scalar = field_from_literal::<C>(n);
+                if vars.len() < 2 {
+                    Ok(PolyVariant::from_scalar(scalar))
+                } else {
+                    let evals = vec![scalar; table_len()?];
+                    Ok(PolyVariant::DenseMle(
+                        DenseMultilinearExtension::from_evaluations_vec(vars.len(), evals),
+                    ))
+                }
             }
             CExp::Var(vid) => {
                 // Check if this is a bound variable
@@ -1711,9 +1860,9 @@ impl<C: HasOpFactory> UDag<C> {
                     } else {
                         // Multilinear: create a basis polynomial
                         let num_vars = vars.len();
-                        let mut evals = vec![C::F::zero(); 1 << num_vars];
+                        let mut evals = vec![C::F::zero(); table_len()?];
                         // Set evaluation at the point corresponding to this variable
-                        for (i, e) in evals.iter_mut().enumerate().take(1 << num_vars) {
+                        for (i, e) in evals.iter_mut().enumerate() {
                             if (i >> var_idx) & 1 == 1 {
                                 *e = C::F::one();
                             }
@@ -1741,21 +1890,42 @@ impl<C: HasOpFactory> UDag<C> {
                     .map_err(|e| non_poly(format!("Sub failed: {}", e)))
             }
             CExp::Bin(BinOp::Mul, deref!(a), deref!(b)) => {
+                // A constant factor scales the other one, whatever its encoding.
+                if let Some(s) = Self::scalar_constant_in_fun(a) {
+                    return Ok(Self::exp_to_poly_variant(b, vars, var_map)?.poly_mul_scalar(s));
+                }
+                if let Some(s) = Self::scalar_constant_in_fun(b) {
+                    return Ok(Self::exp_to_poly_variant(a, vars, var_map)?.poly_mul_scalar(s));
+                }
                 let pa = Self::exp_to_poly_variant(a, vars, var_map)?;
                 let pb = Self::exp_to_poly_variant(b, vars, var_map)?;
                 pa.poly_mul(&pb)
                     .map_err(|e| non_poly(format!("Mul failed: {}", e)))
             }
-            CExp::Neg(deref!(a)) => {
-                let p = Self::exp_to_poly_variant(a, vars, var_map)?;
-                PolyVariant::from_scalar(C::F::zero())
-                    .poly_sub(&p)
-                    .map_err(|e| non_poly(format!("Neg failed: {}", e)))
-            }
+            CExp::Neg(deref!(a)) => Ok(Self::exp_to_poly_variant(a, vars, var_map)?.poly_neg()),
             _ => Err(non_poly(format!(
                 "`{}` is not an addition, subtraction, multiplication, or negation",
                 exp.node
             ))),
+        }
+    }
+
+    /// The field value of a variable-free fun subexpression built from literals with `-`,
+    /// `+`, `-` and `*`; `None` for anything else.
+    fn scalar_constant_in_fun(exp: &Spanned<CExp>) -> Option<C::F> {
+        match &exp.node {
+            CExp::Lit(n) => Some(field_from_literal::<C>(n)),
+            CExp::Neg(a) => Self::scalar_constant_in_fun(a).map(|c| -c),
+            CExp::Bin(BinOp::Add, a, b) => {
+                Some(Self::scalar_constant_in_fun(a)? + Self::scalar_constant_in_fun(b)?)
+            }
+            CExp::Bin(BinOp::Sub, a, b) => {
+                Some(Self::scalar_constant_in_fun(a)? - Self::scalar_constant_in_fun(b)?)
+            }
+            CExp::Bin(BinOp::Mul, a, b) => {
+                Some(Self::scalar_constant_in_fun(a)? * Self::scalar_constant_in_fun(b)?)
+            }
+            _ => None,
         }
     }
 
@@ -1772,6 +1942,9 @@ impl<C: HasOpFactory> UDag<C> {
     /// and `find_assert` (which only inspect top-level node ops) and the
     /// runtime's `check_results` map (keyed by `NodeIndex`) always find every
     /// Assert/Verify.
+    ///
+    /// `expected` is the type the body's value must take, if any: finite-index leaves it
+    /// declares field elements are embedded into the field (see [`coerce_field_op`]).
     #[allow(clippy::too_many_arguments)]
     fn lower_loop_body_template(
         &mut self,
@@ -1781,9 +1954,40 @@ impl<C: HasOpFactory> UDag<C> {
         fctx: &Ctx<CSig, CBody>,
         vctx: &Ctx<Vid, CTyp>,
         vars: &Ctx<Vid, GOp<C>>,
+        expected: Option<&ATyp>,
     ) -> Result<Option<GOp<C>>, GraphError> {
+        let op =
+            self.lower_loop_body_template_raw(exp, binders, kctx, fctx, vctx, vars, expected)?;
+        Ok(match expected {
+            Some(target) => op.map(|op| coerce_field_op(op, target, binders.len())),
+            None => op,
+        })
+    }
+
+    /// [`Self::lower_loop_body_template`] before the final coercion to `expected`, which
+    /// only steers literals and the elements of vectors, records and map outputs.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_loop_body_template_raw(
+        &mut self,
+        exp: &CExp,
+        binders: &[(Vid, ATyp)],
+        kctx: &Ctx<Tid, CKind>,
+        fctx: &Ctx<CSig, CBody>,
+        vctx: &Ctx<Vid, CTyp>,
+        vars: &Ctx<Vid, GOp<C>>,
+        expected: Option<&ATyp>,
+    ) -> Result<Option<GOp<C>>, GraphError> {
+        // The element type the expectation declares for a vector's entries.
+        let expected_elem = match expected {
+            Some(ATyp::Vec(deref!(elem), _)) => Some(elem),
+            _ => None,
+        };
         match exp {
-            CExp::Lit(n) => Ok(Some(GOp::Value(Value::Index(*n)))),
+            CExp::Lit(n) => {
+                let typ = exp.infer(kctx, &fctx.keys(), vctx)?;
+                let field = expected.is_some_and(ATyp::is_scalar);
+                Ok(Some(GOp::Value(literal_value::<C>(n, &typ, field))))
+            }
             CExp::Unit => Ok(Some(GOp::Value(Value::Unit))),
             CExp::Range(r) => Ok(Some(GOp::range(r.clone()))),
             CExp::Var(id) => {
@@ -1794,11 +1998,13 @@ impl<C: HasOpFactory> UDag<C> {
                 }
             }
             CExp::Bin(op, a, b) => {
-                let Some(la) = self.lower_loop_body_template(a, binders, kctx, fctx, vctx, vars)?
+                let Some(la) =
+                    self.lower_loop_body_template(a, binders, kctx, fctx, vctx, vars, None)?
                 else {
                     return Ok(None);
                 };
-                let Some(lb) = self.lower_loop_body_template(b, binders, kctx, fctx, vctx, vars)?
+                let Some(lb) =
+                    self.lower_loop_body_template(b, binders, kctx, fctx, vctx, vars, None)?
                 else {
                     return Ok(None);
                 };
@@ -1806,14 +2012,16 @@ impl<C: HasOpFactory> UDag<C> {
                 let Some(atyp) = ATyp::from_ctyp(&ctyp, kctx) else {
                     return Ok(None);
                 };
-                Ok(Some(GOp::bin(*op, la, lb, atyp)))
+                Ok(Some(field_bin(*op, la, lb, atyp)))
             }
             CExp::Ram(a, b) => {
-                let Some(la) = self.lower_loop_body_template(a, binders, kctx, fctx, vctx, vars)?
+                let Some(la) =
+                    self.lower_loop_body_template(a, binders, kctx, fctx, vctx, vars, None)?
                 else {
                     return Ok(None);
                 };
-                let Some(lb) = self.lower_loop_body_template(b, binders, kctx, fctx, vctx, vars)?
+                let Some(lb) =
+                    self.lower_loop_body_template(b, binders, kctx, fctx, vctx, vars, None)?
                 else {
                     return Ok(None);
                 };
@@ -1822,8 +2030,15 @@ impl<C: HasOpFactory> UDag<C> {
             CExp::Vec(xs) => {
                 let mut out = Vec::with_capacity(xs.0.len());
                 for e in xs.0.iter() {
-                    let Some(le) =
-                        self.lower_loop_body_template(e, binders, kctx, fctx, vctx, vars)?
+                    let Some(le) = self.lower_loop_body_template(
+                        e,
+                        binders,
+                        kctx,
+                        fctx,
+                        vctx,
+                        vars,
+                        expected_elem,
+                    )?
                     else {
                         return Ok(None);
                     };
@@ -1832,23 +2047,25 @@ impl<C: HasOpFactory> UDag<C> {
                 Ok(Some(GOp::vec(out)))
             }
             CExp::Evaluate(p, selector, opt_points) => {
-                let Some(lp) = self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars)?
+                let Some(lp) =
+                    self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars, None)?
                 else {
                     return Ok(None);
                 };
                 match (selector, opt_points) {
                     (None, None) => Ok(Some(GOp::evaluate_grid(lp))),
                     (None, Some(x)) => {
-                        let Some(lx) =
-                            self.lower_loop_body_template(x, binders, kctx, fctx, vctx, vars)?
+                        let Some(lx) = self
+                            .lower_loop_body_template(x, binders, kctx, fctx, vctx, vars, None)?
                         else {
                             return Ok(None);
                         };
                         Ok(Some(GOp::evaluate(lp, lx)))
                     }
                     (Some(range), Some(fixed)) => {
-                        let Some(lfixed) =
-                            self.lower_loop_body_template(fixed, binders, kctx, fctx, vctx, vars)?
+                        let Some(lfixed) = self.lower_loop_body_template(
+                            fixed, binders, kctx, fctx, vctx, vars, None,
+                        )?
                         else {
                             return Ok(None);
                         };
@@ -1858,21 +2075,24 @@ impl<C: HasOpFactory> UDag<C> {
                 }
             }
             CExp::Poly(p) => {
-                let Some(lp) = self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars)?
+                let Some(lp) =
+                    self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars, None)?
                 else {
                     return Ok(None);
                 };
                 Ok(Some(Op::Poly(mk::<C>(lp))))
             }
             CExp::Coef(p) => {
-                let Some(lp) = self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars)?
+                let Some(lp) =
+                    self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars, None)?
                 else {
                     return Ok(None);
                 };
                 Ok(Some(Op::Coef(mk::<C>(lp))))
             }
             CExp::Mle(p) => {
-                let Some(lp) = self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars)?
+                let Some(lp) =
+                    self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars, None)?
                 else {
                     return Ok(None);
                 };
@@ -1880,15 +2100,15 @@ impl<C: HasOpFactory> UDag<C> {
             }
             CExp::Interpolate(points_opt, evals) => {
                 let Some(levals) =
-                    self.lower_loop_body_template(evals, binders, kctx, fctx, vctx, vars)?
+                    self.lower_loop_body_template(evals, binders, kctx, fctx, vctx, vars, None)?
                 else {
                     return Ok(None);
                 };
                 match points_opt {
                     None => Ok(Some(Op::Ifft(mk::<C>(levals)))),
                     Some(p) => {
-                        let Some(lp) =
-                            self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars)?
+                        let Some(lp) = self
+                            .lower_loop_body_template(p, binders, kctx, fctx, vctx, vars, None)?
                         else {
                             return Ok(None);
                         };
@@ -1897,7 +2117,8 @@ impl<C: HasOpFactory> UDag<C> {
                 }
             }
             CExp::Proj(r, field) => {
-                let Some(lr) = self.lower_loop_body_template(r, binders, kctx, fctx, vctx, vars)?
+                let Some(lr) =
+                    self.lower_loop_body_template(r, binders, kctx, fctx, vctx, vars, None)?
                 else {
                     return Ok(None);
                 };
@@ -1910,8 +2131,19 @@ impl<C: HasOpFactory> UDag<C> {
             CExp::Record(fields) => {
                 let mut out: Ctx<String, HOp<C>> = Ctx::new();
                 for (k, v) in fields.iter() {
-                    let Some(lv) =
-                        self.lower_loop_body_template(v, binders, kctx, fctx, vctx, vars)?
+                    let field_target = match expected {
+                        Some(ATyp::Record(targets)) => targets.get(&k.node),
+                        _ => None,
+                    };
+                    let Some(lv) = self.lower_loop_body_template(
+                        v,
+                        binders,
+                        kctx,
+                        fctx,
+                        vctx,
+                        vars,
+                        field_target,
+                    )?
                     else {
                         return Ok(None);
                     };
@@ -1929,7 +2161,7 @@ impl<C: HasOpFactory> UDag<C> {
                     return Ok(None);
                 };
                 let Some(ld) =
-                    self.lower_loop_body_template(domain, binders, kctx, fctx, vctx, vars)?
+                    self.lower_loop_body_template(domain, binders, kctx, fctx, vctx, vars, None)?
                 else {
                     return Ok(None);
                 };
@@ -1944,6 +2176,7 @@ impl<C: HasOpFactory> UDag<C> {
                     fctx,
                     &inner_vctx,
                     vars,
+                    expected_elem,
                 )?
                 else {
                     return Ok(None);
@@ -2150,7 +2383,7 @@ impl<C: HasOpFactory> UDag<C> {
             return Ok(None);
         };
         let Some(domain_op) =
-            self.lower_loop_body_template(&domain, binders, kctx, fctx, vctx, vars)?
+            self.lower_loop_body_template(&domain, binders, kctx, fctx, vctx, vars, None)?
         else {
             return Ok(None);
         };
@@ -2158,8 +2391,15 @@ impl<C: HasOpFactory> UDag<C> {
         body_binders.push((binder.clone(), binder_atyp));
         let mut body_vctx = vctx.clone();
         body_vctx.insert(&binder, &elem_ctyp);
-        let Some(body_op) =
-            self.lower_loop_body_template(&body, &body_binders, kctx, fctx, &body_vctx, vars)?
+        let Some(body_op) = self.lower_loop_body_template(
+            &body,
+            &body_binders,
+            kctx,
+            fctx,
+            &body_vctx,
+            vars,
+            None,
+        )?
         else {
             return Ok(None);
         };
@@ -2243,6 +2483,12 @@ impl<C: HasOpFactory> UDag<C> {
     /// Downstream consumers (notably `trans_clos_op` and `ref_vars` in the
     /// Groebner analysis) rely on this invariant: every top-level result from
     /// `add_exp` can be assumed to be a `Ref` or `Value`.
+    ///
+    /// `expected` is the declared type the value must take, if known (a function's return
+    /// type, a formal argument, a record field): finite-index leaves it declares field
+    /// elements are embedded into the field, before materializing (see
+    /// [`coerce_field_op`]). Inlining a call adopts the callee's return type when the
+    /// caller has no expectation.
     #[allow(clippy::too_many_arguments)]
     fn add_exp(
         &mut self,
@@ -2253,6 +2499,43 @@ impl<C: HasOpFactory> UDag<C> {
         fctx: &Ctx<CSig, CBody>,
         vctx: &Ctx<Vid, CTyp>,
         vars: &Ctx<Vid, GOp<C>>,
+        expected: Option<ATyp>,
+    ) -> Result<GOp<C>, GraphError> {
+        let span = initial_exp.span.clone();
+        let mut expected = expected;
+        let op = self.add_exp_raw(
+            initial_exp,
+            transcr,
+            edge_type,
+            kctx,
+            fctx,
+            vctx,
+            vars,
+            &mut expected,
+        )?;
+        Ok(match expected {
+            Some(target) if op.typ() != target => {
+                let op = coerce_field_op(op, &target, 0);
+                let atyp = op.typ();
+                self.materialize(op, edge_type, atyp, span)
+            }
+            _ => op,
+        })
+    }
+
+    /// [`Self::add_exp`] before the final coercion to `expected`, which only steers
+    /// literals, the elements of vectors, records and map outputs, and inlined calls.
+    #[allow(clippy::too_many_arguments)]
+    fn add_exp_raw(
+        &mut self,
+        initial_exp: Spanned<CExp>,
+        transcr: &mut NodeIndex,
+        edge_type: DepType,
+        kctx: &Ctx<Tid, CKind>,
+        fctx: &Ctx<CSig, CBody>,
+        vctx: &Ctx<Vid, CTyp>,
+        vars: &Ctx<Vid, GOp<C>>,
+        expected: &mut Option<ATyp>,
     ) -> Result<GOp<C>, GraphError> {
         // Own mutable copies for trampoline loop
         let mut exp = initial_exp;
@@ -2265,8 +2548,11 @@ impl<C: HasOpFactory> UDag<C> {
             let span = exp.span.clone();
             // Convert [CExp] to [Op] while creating the graph
             match exp.node.clone() {
-                // Literals get appended to the last node [self.it]
-                CExp::Lit(n) => return Ok(GOp::Value(Value::Index(n))),
+                // A literal is an index unless it is field-only or a field element is expected
+                CExp::Lit(n) => {
+                    let field = expected.as_ref().is_some_and(ATyp::is_scalar);
+                    return Ok(GOp::Value(literal_value::<C>(&n, &typ, field)));
+                }
 
                 // Unit value — no-op
                 CExp::Unit => return Ok(GOp::Value(Value::Unit)),
@@ -2275,8 +2561,16 @@ impl<C: HasOpFactory> UDag<C> {
                 CExp::Var(id) => return Self::op_from_var(&id, &vars),
 
                 CExp::Evaluate(deref!(p), selector, opt_points) => {
-                    let vp =
-                        self.add_exp(p.clone(), transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let vp = self.add_exp(
+                        p.clone(),
+                        transcr,
+                        edge_type,
+                        kctx,
+                        fctx,
+                        &vctx,
+                        &vars,
+                        None,
+                    )?;
                     match (selector, opt_points) {
                         // Unary form: eval(p) -> materialized merged Op::Evaluate(p, None, None).
                         // This preserves the old Node::fft sharing behavior for reusable bindings.
@@ -2292,8 +2586,8 @@ impl<C: HasOpFactory> UDag<C> {
                         }
                         // Binary form: eval(p, points) -> Op::Evaluate(p, None, Some(points)).
                         (None, Some(deref!(x))) => {
-                            let vx =
-                                self.add_exp(x, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                            let vx = self
+                                .add_exp(x, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
                             let atyp = ATyp::from_ctyp(&typ, kctx)
                                 .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
                             return Ok(self.materialize(
@@ -2305,8 +2599,9 @@ impl<C: HasOpFactory> UDag<C> {
                         }
                         // Selected form: eval<range>(p, fixed).
                         (Some(range), Some(deref!(fixed))) => {
-                            let vfixed =
-                                self.add_exp(fixed, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                            let vfixed = self.add_exp(
+                                fixed, transcr, edge_type, kctx, fctx, &vctx, &vars, None,
+                            )?;
                             let atyp = ATyp::from_ctyp(&typ, kctx)
                                 .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
                             return Ok(self.materialize(
@@ -2327,7 +2622,8 @@ impl<C: HasOpFactory> UDag<C> {
                 }
 
                 CExp::Poly(deref!(v)) => {
-                    let child = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let child =
+                        self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
 
                     let npoly = self.add_node(Node::poly(&child), span.clone());
 
@@ -2341,7 +2637,8 @@ impl<C: HasOpFactory> UDag<C> {
                 }
 
                 CExp::Coef(deref!(v)) => {
-                    let child = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let child =
+                        self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
 
                     let npoly = self.add_node(Node::coef(&child), span.clone());
 
@@ -2358,7 +2655,7 @@ impl<C: HasOpFactory> UDag<C> {
                 // or Op::Interpolate (binary) — monomorphic per variant.
                 CExp::Interpolate(points_opt, deref!(evals)) => {
                     let evals_op =
-                        self.add_exp(evals, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                        self.add_exp(evals, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
                     match points_opt {
                         // Unary: interpolate(evs) → Op::Ifft(evs)  (FFT-grid interpolation)
                         None => {
@@ -2373,8 +2670,8 @@ impl<C: HasOpFactory> UDag<C> {
                         }
                         // Binary: interpolate(pts, evs) → Op::Interpolate(pts, evs)
                         Some(deref!(p)) => {
-                            let points_op =
-                                self.add_exp(p, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                            let points_op = self
+                                .add_exp(p, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
                             let ninterp = self
                                 .add_node(Node::interpolate(&points_op, &evals_op), span.clone());
                             self.add_edges(edge_type, ninterp, points_op);
@@ -2388,20 +2685,36 @@ impl<C: HasOpFactory> UDag<C> {
                         }
                     }
                 }
-                // Create a new [vec] value
+                // Create a new [vec] value; elements take the expected element type, else
+                // the vector's own, so integers in a field vector become field elements.
                 CExp::Vec(vs) => {
-                    let vec_op = GOp::vec(vs.0.traverse1(&mut |v| {
-                        self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)
-                    })?);
                     let atyp = ATyp::from_ctyp(&typ, kctx)
                         .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
+                    let elem = match expected.as_ref().unwrap_or(&atyp) {
+                        ATyp::Vec(deref!(elem), _) => Some(elem.clone()),
+                        _ => None,
+                    };
+                    let vec_op = GOp::vec(vs.0.traverse1(&mut |v| {
+                        self.add_exp(
+                            v,
+                            transcr,
+                            edge_type,
+                            kctx,
+                            fctx,
+                            &vctx,
+                            &vars,
+                            elem.clone(),
+                        )
+                    })?);
+                    let atyp = vec_op.typ();
                     return Ok(self.materialize(vec_op, edge_type, atyp, span.clone()));
                 }
 
                 // MLE is a noop?
                 // CExp::Mle(deref!(inner)) => self.add_exp(inner, transcr, edge_type, kctx, fctx, &vctx, &vars),
                 CExp::Mle(deref!(v)) => {
-                    let child = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let child =
+                        self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
 
                     let nmle = self.add_node(Node::mle(&child), span.clone());
 
@@ -2416,8 +2729,8 @@ impl<C: HasOpFactory> UDag<C> {
 
                 // Billinear pairing
                 CExp::Pair(deref!(a), deref!(b)) => {
-                    let va = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
-                    let vb = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let va = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
+                    let vb = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
 
                     let atyp = ATyp::from_ctyp(&typ, kctx)
                         .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
@@ -2429,39 +2742,47 @@ impl<C: HasOpFactory> UDag<C> {
                         span.clone(),
                     ));
                 }
-                // Create a new [bin] node
-                // Unary negation: lower as 0 - x
+                // Unary negation of a field element (including a negated integer literal):
+                // `0 - x` in the field, with a finite `x` embedded first. Re-inferring a
+                // rewritten `0 - 1` would subtract indices instead.
+                CExp::Neg(deref!(a))
+                    if ATyp::from_ctyp(&typ, kctx).is_some_and(|t| t.is_scalar()) =>
+                {
+                    let child = self.add_exp(
+                        a,
+                        transcr,
+                        edge_type,
+                        kctx,
+                        fctx,
+                        &vctx,
+                        &vars,
+                        Some(ATyp::scalar()),
+                    )?;
+                    let zero = GOp::Value(Value::Scalar(C::F::from(0u64)));
+                    let bop = GOp::bin(BinOp::Sub, zero, child, ATyp::scalar());
+                    return Ok(self.add_bin(bop, edge_type, ATyp::scalar(), span.clone()));
+                }
+                // Any other unary negation: lower as 0 - x
                 CExp::Neg(deref!(a)) => {
                     exp = Spanned::dummy(Exp::Bin(
                         BinOp::Sub,
-                        Box::new(Spanned::dummy(Exp::Lit(0))),
+                        Box::new(Spanned::dummy(Exp::Lit(<BigUint as ExpLiteral>::lit(0)))),
                         Box::new(a),
                     ));
                     continue;
                 }
+                // Create a new [bin] node
                 CExp::Bin(op, deref!(a), deref!(b)) => {
                     // Add children first
-                    let vl = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
-                    let vr = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let vl = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
+                    let vr = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
 
                     // Convert type [typ] to [ATyp]
                     let atyp = ATyp::from_ctyp(&typ, kctx)
                         .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
 
-                    let bop = GOp::bin(op, vl.clone(), vr.clone(), atyp.clone());
-
-                    // Maybe there will be no node
-                    if let GOp::Bin(op, vl, vr, atyp) = bop {
-                        // Add new node
-                        let nbin = self.add_node(Node::bin(op, &vl, &vr, &atyp), span.clone());
-
-                        // Add edges from [nbin] to [vl] and [vr]
-                        self.add_edges(edge_type, nbin, (*vl).clone());
-                        self.add_edges(edge_type, nbin, (*vr).clone());
-                        return Ok(GOp::underscore(nbin, atyp));
-                    } else {
-                        return Ok(self.materialize(bop, edge_type, atyp, span.clone()));
-                    }
+                    let bop = field_bin(op, vl, vr, atyp.clone());
+                    return Ok(self.add_bin(bop, edge_type, atyp, span.clone()));
                 }
 
                 // Create a [range] value, no new nodes added
@@ -2470,6 +2791,11 @@ impl<C: HasOpFactory> UDag<C> {
                 CExp::Map(deref!(l), x, deref!(e)) => {
                     let map_atyp = ATyp::from_ctyp(&typ, kctx)
                         .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
+                    // The output body takes the expected element type; the domain stays finite.
+                    let elem_target = match expected.as_ref() {
+                        Some(ATyp::Vec(deref!(elem), _)) => Some(elem.clone()),
+                        _ => None,
+                    };
                     // Fast path: lower to a persistent `Op::Map` when the body
                     // and domain are pure. Falls back to the unroll otherwise.
                     if let Some(map_op) = self.lower_loop_body_template(
@@ -2479,19 +2805,22 @@ impl<C: HasOpFactory> UDag<C> {
                         fctx,
                         &vctx,
                         &vars,
+                        expected.as_ref(),
                     )? {
-                        return Ok(self.materialize(map_op, edge_type, map_atyp, span.clone()));
+                        let atyp = if expected.is_some() {
+                            map_op.typ()
+                        } else {
+                            map_atyp
+                        };
+                        return Ok(self.materialize(map_op, edge_type, atyp, span.clone()));
                     }
 
                     let te = e.infer(kctx, &fctx.keys(), &vctx)?;
 
                     // Op for [e]
-                    let oe = self.add_exp(e, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let oe = self.add_exp(e, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
 
                     let (ie, n) = te.into_vec();
-
-                    let atyp = ATyp::from_ctyp(&typ, kctx)
-                        .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
 
                     let input_element_typ = ATyp::from_ctyp(&ie, kctx)
                         .ok_or_else(|| ark_error(kctx, &vctx, &exp, &ie))?;
@@ -2520,10 +2849,17 @@ impl<C: HasOpFactory> UDag<C> {
                             fctx,
                             &local_vctx,
                             &local_vars,
+                            elem_target.clone(),
                         )?;
                         res.push(ol);
                     }
-                    return Ok(self.materialize(GOp::vec(res), edge_type, atyp, span.clone()));
+                    let vec_op = GOp::vec(res);
+                    let atyp = if expected.is_some() {
+                        vec_op.typ()
+                    } else {
+                        map_atyp
+                    };
+                    return Ok(self.materialize(vec_op, edge_type, atyp, span.clone()));
                 }
 
                 CExp::Reduce(op, deref!(v)) => {
@@ -2548,7 +2884,7 @@ impl<C: HasOpFactory> UDag<C> {
                             .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
                         return Ok(self.materialize(rm, edge_type, atyp, span.clone()));
                     }
-                    let ov = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let ov = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
                     let atyp = ATyp::from_ctyp(&typ, kctx)
                         .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
                     return Ok(self.materialize(
@@ -2560,8 +2896,8 @@ impl<C: HasOpFactory> UDag<C> {
                 }
                 CExp::Ram(deref!(a), deref!(b)) => {
                     // Add children
-                    let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
-                    let ob = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
+                    let ob = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
                     let atyp = ATyp::from_ctyp(&typ, kctx)
                         .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
                     return Ok(self.materialize(GOp::ram(oa, ob), edge_type, atyp, span.clone()));
@@ -2695,13 +3031,26 @@ impl<C: HasOpFactory> UDag<C> {
                             inst.apply(&mut body)
                                 .expect("a resolved signature declares every parameter");
 
-                            // First add the arguments to the graph
+                            // First add the arguments to the graph, each taking its formal's
+                            // type (integers passed for field formals become field elements)
                             let oparams: Vec<GOp<C>> = params
                                 .into_iter()
-                                .map(|p| {
-                                    self.add_exp(p, transcr, edge_type, kctx, fctx, &vctx, &vars)
+                                .zip(sig.args.iter())
+                                .map(|(p, arg)| {
+                                    let formal = ATyp::from_ctyp(&arg.typ, kctx);
+                                    self.add_exp(
+                                        p, transcr, edge_type, kctx, fctx, &vctx, &vars, formal,
+                                    )
                                 })
                                 .collect::<Result<_, _>>()?;
+                            // The inlined body's value takes the caller's expected type, else
+                            // the callee's declared return type.
+                            if expected.is_none() {
+                                *expected = sig
+                                    .ret
+                                    .as_ref()
+                                    .and_then(|r| ATyp::from_ctyp(&r.node, kctx));
+                            }
 
                             // Trampoline: replace context and continue with body
                             let mut next_vctx = vctx.clone();
@@ -2734,7 +3083,7 @@ impl<C: HasOpFactory> UDag<C> {
                     // Infer the type of [l]
                     let tl = l.infer(kctx, &fctx.keys(), &vctx)?;
                     // Add left-hand side as node
-                    let nl = self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let nl = self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
                     if let GOp::Ref(r, _) = &nl {
                         self.bind(r.node(), &id);
                         self.transcript_vars.insert(&r.node(), &false);
@@ -2752,7 +3101,7 @@ impl<C: HasOpFactory> UDag<C> {
                     }
                 }
                 CExp::Let(None, deref!(l), r) => {
-                    self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
                     // Trampoline: continue loop with r
                     match r {
                         Some(deref!(r)) => {
@@ -2768,7 +3117,7 @@ impl<C: HasOpFactory> UDag<C> {
                     // Infer the type of [l]
                     let tl = l.infer(kctx, &fctx.keys(), &vctx)?;
                     // Add left-hand side as node
-                    let ol = self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let ol = self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
                     // Record transcript interaction
                     let transcr_op = match &ol {
                         GOp::Ref(r, _)
@@ -2820,7 +3169,8 @@ impl<C: HasOpFactory> UDag<C> {
                     }
                 }
                 CExp::Assert(deref!(exp)) => {
-                    let oa = self.add_exp(exp, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let oa =
+                        self.add_exp(exp, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
                     // Add new node
                     let nassert = self.add_node(Node::assert(&oa), span.clone());
                     // Add edges
@@ -2830,7 +3180,8 @@ impl<C: HasOpFactory> UDag<C> {
                     return Ok(GOp::Value(backend::Value::Unit));
                 }
                 CExp::Verify(deref!(exp)) => {
-                    let oa = self.add_exp(exp, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let oa =
+                        self.add_exp(exp, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
                     // Add new node
                     let nverify = self.add_node(Node::verify(&oa), span.clone());
                     self.add_edges(edge_type, nverify, oa);
@@ -2856,6 +3207,12 @@ impl<C: HasOpFactory> UDag<C> {
                     return Ok(GOp::Value(poly_value));
                 }
                 CExp::Record(fields) => {
+                    let atyp = ATyp::from_ctyp(&typ, kctx)
+                        .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
+                    // Fields take the expected field types, else the record's own.
+                    let ATyp::Record(targets) = expected.as_ref().unwrap_or(&atyp).clone() else {
+                        unreachable!("a record expression has a record type")
+                    };
                     let mut field_ops: Ctx<String, HOp<C>> = Ctx::new();
 
                     for (field_name, field_exp) in fields.iter() {
@@ -2867,19 +3224,19 @@ impl<C: HasOpFactory> UDag<C> {
                             fctx,
                             &vctx,
                             &vars,
+                            targets.get(&field_name.node).cloned(),
                         )?;
                         let hop = mk::<C>(field_op);
                         field_ops.insert(field_name, &hop);
                     }
 
-                    let atyp = ATyp::from_ctyp(&typ, kctx)
-                        .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
-                    return Ok(self.materialize(
-                        GOp::Record(field_ops),
-                        edge_type,
-                        atyp,
-                        span.clone(),
-                    ));
+                    let record_op = GOp::Record(field_ops);
+                    let atyp = if expected.is_some() {
+                        record_op.typ()
+                    } else {
+                        atyp
+                    };
+                    return Ok(self.materialize(record_op, edge_type, atyp, span.clone()));
                 }
                 CExp::Proj(deref!(record_exp), field_name) => {
                     // For projection, we need to extract the field from the record
@@ -2904,6 +3261,7 @@ impl<C: HasOpFactory> UDag<C> {
                                 fctx,
                                 &vctx,
                                 &vars,
+                                None,
                             )
                         }
                         CExp::Var(id) => {
@@ -3033,29 +3391,51 @@ impl<C: HasOpFactory> UDag<C> {
                     };
                 }
                 CExp::SetRecord(deref!(record_exp), field_name, deref!(value_exp)) => {
-                    // Build new record as expression: all fields from record_exp, with field_name replaced by value_exp
+                    // The new record keeps the original record's type: every field is taken
+                    // from `record_exp` except `field_name`, whose value takes the field's
+                    // declared type (an integer stored into a field element is embedded).
                     let record_typ = record_exp.infer(kctx, &fctx.keys(), &vctx)?;
-                    let CTyp::Record(typ_fields) = &record_typ else {
+                    if !matches!(record_typ, CTyp::Record(_)) {
                         return Err(GraphError::from(TypeError::not_a_record(
                             kctx,
                             &vctx,
                             &record_exp,
                             &record_typ,
                         )));
+                    }
+                    let record_atyp = ATyp::from_ctyp(&record_typ, kctx)
+                        .ok_or_else(|| ark_error(kctx, &vctx, &record_exp, &record_typ))?;
+                    let ATyp::Record(field_atyps) = &record_atyp else {
+                        unreachable!("a record type converts to a record ATyp")
                     };
-                    let mut new_record_fields = Ctx::new();
-                    for (fname, _) in typ_fields.iter() {
-                        let field_exp = if fname == &field_name {
+                    let mut field_ops: Ctx<String, HOp<C>> = Ctx::new();
+                    for (fname, fatyp) in field_atyps.iter() {
+                        let field_exp = if *fname == field_name.node {
                             value_exp.clone()
                         } else {
-                            Spanned::dummy(CExp::Proj(Box::new(record_exp.clone()), fname.clone()))
+                            Spanned::dummy(CExp::Proj(
+                                Box::new(record_exp.clone()),
+                                Spanned::dummy(fname.clone()),
+                            ))
                         };
-                        new_record_fields.insert(fname, &field_exp);
+                        let field_op = self.add_exp(
+                            field_exp,
+                            transcr,
+                            edge_type,
+                            kctx,
+                            fctx,
+                            &vctx,
+                            &vars,
+                            Some(fatyp.clone()),
+                        )?;
+                        field_ops.insert(fname, &mk::<C>(field_op));
                     }
-                    let new_record_exp = CExp::Record(new_record_fields);
-                    // Trampoline
-                    exp = Spanned::dummy(new_record_exp);
-                    continue;
+                    return Ok(self.materialize(
+                        GOp::Record(field_ops),
+                        edge_type,
+                        record_atyp,
+                        span.clone(),
+                    ));
                 }
             }
         } // end loop

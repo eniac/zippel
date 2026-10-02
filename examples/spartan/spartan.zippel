@@ -272,11 +272,7 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     instance g_evs_d2: [G; 3],
     instance h_evs: G,
     instance placeholder_tau: [F; M],
-    instance f_one: F,
 ) where reduce(&&, az * bz == cz) {
-    let one = f_one;
-    let zero = f_one - f_one;
-
     let r_rows = [random<F> for _ in 0..2 ^ ((M - 1) / 2)];
     c_rows <- [
         h_base_w * r_rows[i]
@@ -287,7 +283,7 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
         for i in 0..2 ^ ((M - 1) / 2)
     ];
 
-    let z = w ++ io ++ [one];
+    let z = w ++ io ++ [1];
 
     let f_a = mle(az);
     let f_b = mle(bz);
@@ -297,11 +293,10 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     let eq_tau_evs = eq_weights(tau_vec);
     let eq_tau = mle(eq_tau_evs);
 
-    let neg_one = zero - one;
-    let g_sub = f_a * f_b + f_c * neg_one;
+    let g_sub = f_a * f_b + f_c * -1;
     let g_poly = g_sub * eq_tau;
 
-    let pts3 = [zero, one, one + one, one + one + one];
+    let pts3 = [0, 1, 2, 3];
     let round_poly1_0 = reduce(
         +,
         [
@@ -311,7 +306,7 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     );
     let evs1_0_local = [round_poly1_0(t) for t in pts3];
     evs1_0 <- evs1_0_local;
-    verify(zero == evs1_0[0] + evs1_0[1]);
+    verify(0 == evs1_0[0] + evs1_0[1]);
     let g1_r1 = interpolate(pts3, evs1_0);
     rx0 <- challenge<F>;
     let prev1 = g1_r1(rx0);
@@ -391,7 +386,7 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     let z_mle = mle(z);
     let m_poly = l_mle * z_mle;
 
-    let pts2 = [zero, one, one + one];
+    let pts2 = [0, 1, 2];
     let round_poly2_0 = reduce(
         +,
         [
@@ -470,10 +465,10 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     let lhs_ipa = (upsilon_combined * c_ipa + beta_ipa) * a_hat + delta_ipa;
     let rhs_ipa = (g_hat + g_base_w * a_hat) * z1_ipa + h_base_w * z2_ipa;
 
-    let io_block = io ++ [one];
+    let io_block = io ++ [1];
     let v_io = dot(ly_lo, io_block);
     let ry_top = ry[M - 1];
-    let v_z = (one - ry_top) * sent_v_w + ry_top * v_io;
+    let v_z = (1 - ry_top) * sent_v_w + ry_top * v_io;
 
     let v1 = eval(partial_a, ry);
     let v2 = eval(partial_b, ry);

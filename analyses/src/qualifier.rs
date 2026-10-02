@@ -31,6 +31,7 @@ impl QualifierPropagation {
             Op::Poly(a) => self.from_op_loops(a, loops),
             Op::Mle(a) => self.from_op_loops(a, loops),
             Op::Coef(a) => self.from_op_loops(a, loops),
+            Op::ToScalar(a) => self.from_op_loops(a, loops),
             Op::Reduce(_, v) => self.from_op_loops(v, loops),
             Op::LoopParam(i, _) => loops.get(*i).cloned(),
             Op::Map(d, b) => {

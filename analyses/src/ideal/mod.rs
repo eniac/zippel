@@ -183,19 +183,24 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             Op::Fft(ref a) => {
                 ops::fft::fft_op(&mut ctx, &var, a);
             }
-            // Op::Poly / Op::Mle / Op::Coef: bind the i-th Var slot of `var`
-            // to the i-th scalar poly read from `inner` by `ref_vars`. These
-            // three share identity semantics on coefficients / evaluations —
-            // only the slot-count / enumeration of `var.typ` differs, and that
-            // is driven entirely by the input's shape (ref_vars already returns
-            // the right number of polys). Basis-change between coefficient
-            // and evaluation form happens in later phases (Eval / Bin on
-            // mixed polynomial types).
-            Op::Poly(ref inner) | Op::Mle(ref inner) | Op::Coef(ref inner) => {
+            // Op::Poly / Op::Mle / Op::Coef / Op::ToScalar: bind the i-th Var
+            // slot of `var` to the i-th scalar poly read from `inner` by
+            // `ref_vars`. These share identity semantics on coefficients /
+            // evaluations — only the slot-count / enumeration of `var.typ`
+            // differs, and that is driven entirely by the input's shape
+            // (ref_vars already returns the right number of polys). ToScalar
+            // is the Fin → Scalar embedding: `ref_vars` already encodes finite
+            // indices as scalar polynomials and the slot count is unchanged.
+            // Basis-change between coefficient and evaluation form happens in
+            // later phases (Eval / Bin on mixed polynomial types).
+            Op::Poly(ref inner)
+            | Op::Mle(ref inner)
+            | Op::Coef(ref inner)
+            | Op::ToScalar(ref inner) => {
                 let polys = PolySource::ref_vars(inner, &ctx.ideal.vars);
                 debug_assert!(
                     !polys.is_empty(),
-                    "Op::Poly/Mle/Coef produced zero polys for {:?}",
+                    "Op::Poly/Mle/Coef/ToScalar produced zero polys for {:?}",
                     var.typ
                 );
                 link_to_polys(ctx.ideal, &var, polys);

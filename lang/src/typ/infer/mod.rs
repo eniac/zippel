@@ -6,6 +6,8 @@ mod tests;
 
 pub use error::TypeError;
 
+use num::ToPrimitive;
+
 use crate::ast::range::Range;
 use crate::ast::sig::{CSig, SigError};
 use crate::ast::spanned::Spanned;
@@ -71,8 +73,12 @@ impl Typeable for CExp {
         vctx: &Self::Context,
     ) -> Result<CTyp, TypeError> {
         match self {
-            // Infer the type of a literal [n] as a Fin<n> type
-            CExp::Lit(n) => Ok(CTyp::fin(Range::singleton(*n))),
+            // A literal that is a valid finite index has the singleton type `Fin<n>`; a larger
+            // one is only meaningful in a field, so its full value is kept for lowering.
+            CExp::Lit(n) => Ok(match n.to_usize() {
+                Some(v) if v.checked_add(1).is_some() => CTyp::fin(Range::singleton(v)),
+                _ => CTyp::FieldLiteral,
+            }),
 
             // Unit value
             CExp::Unit => Ok(CTyp::Unit),
@@ -115,13 +121,20 @@ impl Typeable for CExp {
                                 if ne.node == 0 {
                                     return Err(TypeError::interpolate(kctx, vctx, self));
                                 }
-                                let ip = bp
-                                    .to_scalar(kctx)
+                                // A side typed by a scalar field pins the field; otherwise
+                                // integer points/evaluations need a unique scalar in scope.
+                                let named = |t: &CTyp| match t {
+                                    CTyp::Base(b) if kctx.get(b).is_some_and(CKind::is_scalar) => {
+                                        Some(b.clone())
+                                    }
+                                    _ => None,
+                                };
+                                let ie = named(&be.node)
+                                    .or_else(|| named(&bp.node))
+                                    .or_else(|| be.to_scalar(kctx))
                                     .ok_or(TypeError::interpolate(kctx, vctx, self))?;
-                                let ie = be
-                                    .to_scalar(kctx)
-                                    .ok_or(TypeError::interpolate(kctx, vctx, self))?;
-                                if ip != ie {
+                                let field = CTyp::Base(ie.clone());
+                                if !bp.node.fits(&field, kctx) || !be.node.fits(&field, kctx) {
                                     return Err(TypeError::interpolate(kctx, vctx, self));
                                 }
                                 // Lagrange interpolation at ne distinct points
@@ -262,6 +275,17 @@ impl Typeable for CExp {
                                 }
                                 Ok(CTyp::Base(i))
                             }
+                            // An integer point embeds into the polynomial's own field.
+                            (CTyp::Poly(i, m, _n), CTyp::Fin(_) | CTyp::FieldLiteral)
+                                if m.node == 1 =>
+                            {
+                                let k =
+                                    kctx.get(&i).ok_or(TypeError::evaluate(kctx, vctx, p, x))?;
+                                if !k.is_scalar() {
+                                    return Err(TypeError::evaluate(kctx, vctx, p, x));
+                                }
+                                Ok(CTyp::Base(i))
+                            }
                             // Univariate polynomial evaluated at a vector of points is a
                             // hard type error: evaluate at a single scalar via `p(x)`, or
                             // write `[p(x) for x in points]` to evaluate at many points.
@@ -270,8 +294,8 @@ impl Typeable for CExp {
                             }
                             // Multivariate polynomial (MLE, virtual, etc.): n > 1.
                             (CTyp::Poly(i_poly, n, d), CTyp::Vec(b, len_vec)) if n.node > 1 => {
-                                // Scalar-castable points evaluate the MLE generically.
-                                if b.to_scalar(kctx).as_ref() != Some(&i_poly) {
+                                // Points must fit the polynomial's field (integers embed).
+                                if !b.node.fits(&CTyp::Base(i_poly.clone()), kctx) {
                                     return Err(TypeError::evaluate(kctx, vctx, p, x));
                                 }
                                 if len_vec == n {
@@ -302,9 +326,8 @@ impl Typeable for CExp {
 
                         match (p_typ, fixed_typ) {
                             (CTyp::Poly(poly_tid, n, d), CTyp::Vec(fixed_elem, fixed_len)) => {
-                                let fixed_tid = fixed_elem.to_scalar(kctx).ok_or_else(fail)?;
                                 let range_len = range.len();
-                                if fixed_tid != poly_tid
+                                if !fixed_elem.node.fits(&CTyp::Base(poly_tid.clone()), kctx)
                                     || range.end() > n.node
                                     || fixed_len.node
                                         != n.node.checked_sub(range_len).ok_or_else(fail)?
@@ -526,10 +549,17 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))
             }
 
-            // Handle unary negation: same type as operand
-            CExp::Neg(a) => a
-                .infer(kctx, fctx, vctx)
-                .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e)),
+            // Unary negation: a negated integer is only meaningful in a field; every other
+            // operand keeps its type.
+            CExp::Neg(a) => {
+                let t = a
+                    .infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                Ok(match t {
+                    CTyp::Fin(_) | CTyp::FieldLiteral => CTyp::FieldLiteral,
+                    t => t,
+                })
+            }
 
             // Range expression
             CExp::Range(r) => {
@@ -652,6 +682,11 @@ impl Typeable for CExp {
                 // Non-Fin indices (e.g. Scalar-typed runtime values) are rejected
                 // because the GB analysis cannot resolve dynamic RAM reads.
                 match (&ta, &tb) {
+                    // An integer beyond the finite-index range is never reduced to an index.
+                    (_, CTyp::FieldLiteral) => Err(TypeError::located(
+                        &b.span,
+                        TypeError::FiniteIndexOverflow(kctx.clone(), vctx.clone(), self.clone()),
+                    )),
                     (CTyp::Vec(typ, n), CTyp::Fin(r)) => {
                         if r.end() <= n.node {
                             Ok(typ.node.clone())
@@ -694,14 +729,9 @@ impl Typeable for CExp {
                             return Err(TypeError::uni(kctx, vctx, &id.node, params, &param_types));
                         }
 
-                        // The argument must be a field and the same as the polynomial
-                        if let Some(tb) = param_types.0[0].clone().to_scalar(kctx) {
-                            if &tb == tbase {
-                                // The polynomial is a field
-                                Ok(CTyp::base(tbase))
-                            } else {
-                                Err(TypeError::uni(kctx, vctx, &id.node, params, &param_types))
-                            }
+                        // The argument must fit the polynomial's field (integers embed)
+                        if param_types.0[0].node.fits(&CTyp::Base(tbase.clone()), kctx) {
+                            Ok(CTyp::base(tbase))
                         } else {
                             Err(TypeError::uni(kctx, vctx, &id.node, params, &param_types))
                         }
@@ -725,7 +755,7 @@ impl Typeable for CExp {
 
                         // The argument must be a field and the same as the MLE
                         match &param_types.0[0].node {
-                            CTyp::Fin(_) if n.node > 0 => {
+                            CTyp::Fin(_) | CTyp::FieldLiteral if n.node > 0 => {
                                 let rem = n.checked_sub(1).ok_or_else(|| {
                                     TypeError::mle_app(kctx, vctx, &id.node, params, &param_types)
                                 })?;
@@ -740,8 +770,10 @@ impl Typeable for CExp {
                             CTyp::Vec(CTyp::Base(tb), m) if tb == tbase && n.node == m.node => {
                                 Ok(CTyp::base(tbase))
                             }
-                            CTyp::Vec(CTyp::Fin(_), m) if n.node == m.node => Ok(CTyp::base(tbase)),
-                            CTyp::Vec(CTyp::Fin(_), m) if n.node > m.node => {
+                            CTyp::Vec(CTyp::Fin(_) | CTyp::FieldLiteral, m) if n.node == m.node => {
+                                Ok(CTyp::base(tbase))
+                            }
+                            CTyp::Vec(CTyp::Fin(_) | CTyp::FieldLiteral, m) if n.node > m.node => {
                                 let rem = n.checked_sub(m.node).ok_or_else(|| {
                                     TypeError::mle_app(kctx, vctx, &id.node, params, &param_types)
                                 })?;
@@ -867,6 +899,14 @@ impl Typeable for CExp {
                     match body_type {
                         CTyp::Poly(tid, m, degree) if m.node == 1 => Ok(CTyp::Poly(tid, m, degree)),
                         CTyp::Base(tid) => Ok(CTyp::uni(&tid, 0)), // Constant polynomial
+                        // An integer constant is a constant polynomial over the unique field.
+                        t @ (CTyp::Fin(_) | CTyp::FieldLiteral) => match t.to_scalar(kctx) {
+                            Some(tid) => Ok(CTyp::uni(&tid, 0)),
+                            None => Err(TypeError::located(
+                                &body.span,
+                                TypeError::fun_body(kctx, vctx, self, vars.len(), &t),
+                            )),
+                        },
                         t => Err(TypeError::located(
                             &body.span,
                             TypeError::fun_body(kctx, vctx, self, vars.len(), &t),
@@ -886,6 +926,12 @@ impl Typeable for CExp {
                         {
                             // For multilinear, we just return Mle with the number of variables
                             // Backend validation will catch if it's not actually multilinear
+                            Ok(CTyp::mle(&tid, vars.len()))
+                        }
+                        // An integer constant is a constant over the unique field.
+                        ref t @ (CTyp::Fin(_) | CTyp::FieldLiteral)
+                            if let Some(tid) = t.to_scalar(kctx) =>
+                        {
                             Ok(CTyp::mle(&tid, vars.len()))
                         }
                         t => Err(TypeError::located(

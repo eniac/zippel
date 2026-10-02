@@ -60,6 +60,10 @@ pub enum Typ<T, N> {
     Bool,
     /// Record type with named fields
     Record(Ctx<Spanned<String>, Spanned<Typ<T, N>>>),
+    /// Internal type of an integer literal outside the finite-index range (or negated):
+    /// it embeds into whichever scalar field the context selects, modulo its prime, and is
+    /// never an index. No source syntax produces it.
+    FieldLiteral,
 }
 
 /// Many types
@@ -96,7 +100,7 @@ impl<N: Clone> TidSubst for GTyp<N> {
                     field_typ.node.map_tids(f);
                 });
             }
-            Typ::Fin(_) | Typ::Unit | Typ::Bool => {}
+            Typ::Fin(_) | Typ::Unit | Typ::Bool | Typ::FieldLiteral => {}
         }
     }
 }
@@ -181,8 +185,8 @@ impl<N> GTyp<N> {
     /// Resolves this type to the scalar-kinded [`Tid`] it can be treated as, if any.
     ///
     /// A [`Typ::Base`] resolves to itself when its kind in `ctx` is scalar-shaped. An integer
-    /// [`Typ::Fin`] has no base tag of its own, so it resolves to the unique `Field` in `ctx`, or
-    /// — when no field is present — to the unique `Scalar` kind. Ambiguity (several candidates) and
+    /// [`Typ::Fin`] or [`Typ::FieldLiteral`] has no base tag of its own, so it resolves to the
+    /// unique `Field` in `ctx`, or — when no field is present — to the unique `Scalar` kind. Ambiguity (several candidates) and
     /// any other type shape yield `None`.
     pub fn to_scalar<M>(&self, ctx: &Ctx<Tid, Kind<M>>) -> Option<Tid> {
         match self {
@@ -190,7 +194,7 @@ impl<N> GTyp<N> {
                 let k = ctx.get(b)?;
                 if k.is_scalar() { Some(b.clone()) } else { None }
             }
-            Typ::Fin(_) => {
+            Typ::Fin(_) | Typ::FieldLiteral => {
                 let fields: Vec<_> = ctx
                     .iter()
                     .filter(|(_, k)| matches!(k, Kind::Field))
@@ -246,6 +250,7 @@ impl<T: Clone, N: Clone> ToTraversal1<T> for Typ<T, N> {
             Typ::Fin(r) => Ok(Typ::Fin(r)),
             Typ::Unit => Ok(Typ::Unit),
             Typ::Bool => Ok(Typ::Bool),
+            Typ::FieldLiteral => Ok(Typ::FieldLiteral),
             Typ::Record(fields) => {
                 let pairs: Vec<_> = fields
                     .into_iter()
@@ -277,6 +282,7 @@ impl<T: Clone, N: Clone> ToTraversal2<N> for Typ<T, N> {
             Typ::Fin(r) => Ok(Typ::Fin(r.traverse1(f)?)),
             Typ::Unit => Ok(Typ::Unit),
             Typ::Bool => Ok(Typ::Bool),
+            Typ::FieldLiteral => Ok(Typ::FieldLiteral),
             Typ::Record(fields) => {
                 let pairs: Vec<_> = fields
                     .into_iter()
@@ -374,6 +380,7 @@ impl<N: Clone> TypeInline<N> for GTyp<N> {
             Typ::Fin(r) => Typ::Fin(r),
             Typ::Unit => Typ::Unit,
             Typ::Bool => Typ::Bool,
+            Typ::FieldLiteral => Typ::FieldLiteral,
             Typ::Record(fields) => Typ::Record(Ctx::from_iter(
                 fields.into_iter().map(|(k, v)| (k, v.type_inline(ctx))),
             )),
@@ -397,6 +404,7 @@ impl<T: fmt::Display, N: fmt::Display> fmt::Display for Typ<T, N> {
             Typ::Fin(r) => write!(f, "Fin<{r}>"),
             Typ::Unit => f.write_str("Unit"),
             Typ::Bool => f.write_str("Bool"),
+            Typ::FieldLiteral => f.write_str("field literal"),
             Typ::Record(fields) => {
                 f.write_str("{")?;
                 for (i, (name, typ)) in fields.iter().enumerate() {

@@ -338,6 +338,8 @@ impl ATyp {
             CTyp::Poly(_, n, d) if d.node == 1 && n.node >= 2 => Some(ATyp::Mle(n.node)),
             CTyp::Poly(_, m, n) => Some(ATyp::VPoly(m.node, m.node.checked_mul(n.node)?)),
             CTyp::Fin(r) => Some(ATyp::fin(r.clone())),
+            // A field-only integer is a field element of the configured field, not an index.
+            CTyp::FieldLiteral => Some(ATyp::scalar()),
             CTyp::Unit => Some(ATyp::unit()),
             CTyp::Bool => Some(ATyp::bool()),
             CTyp::Record(fields) => {

@@ -597,4 +597,185 @@ mod op_integration {
             "Zero simplifications should work in complex expressions"
         );
     }
+
+    // ── Numeric literals in a field ─────────────────────────────────────
+
+    /// A literal above `u64::MAX` and both test moduli.
+    const BIG: &str = "34545435435435435435435";
+
+    /// Lowers `src` and runs its function `name` on `inputs`.
+    fn run<B: crate::HasOpFactory>(
+        src: &str,
+        name: &str,
+        inputs: share::Ctx<lang::id::Vid, Value<B>>,
+    ) -> Value<B> {
+        let module = parse_and_concretize(src, &share::Ctx::new());
+        let dags = crate::UDags::<B>::from_module(module).unwrap();
+        let dag = dags
+            .functions()
+            .into_iter()
+            .find(|dag| dag.name() == lang::id::Vid::from(name))
+            .unwrap_or_else(|| panic!("no function `{name}`"));
+        execute_graph(dag, inputs).unwrap()
+    }
+
+    /// `n` in the field of `B`.
+    fn f<B: backend::ArkConfig>(n: u64) -> <B as backend::ArkConfig>::F {
+        n.into()
+    }
+
+    /// `got` is the field element `expected` (not an index of the same value).
+    #[track_caller]
+    fn assert_field<B: backend::ArkConfig>(got: &Value<B>, expected: <B as backend::ArkConfig>::F) {
+        assert!(
+            matches!(got, Value::Scalar(x) if *x == expected),
+            "expected Scalar({expected}), got {got}"
+        );
+    }
+
+    /// `got` is the field vector `expected`.
+    #[track_caller]
+    fn assert_fields<B: backend::ArkConfig>(got: &Value<B>, expected: &[u64]) {
+        let expected: Vec<_> = expected.iter().map(|&n| f::<B>(n)).collect();
+        assert!(
+            matches!(got, Value::VecScalar(xs) if *xs == expected),
+            "expected VecScalar({expected:?}), got {got}"
+        );
+    }
+
+    fn literal_modulo_field<B: crate::HasOpFactory>(residue: u64) {
+        let src = format!("fn f<F: Field>() -> F {{ {BIG} }}");
+        assert_field::<B>(&run::<B>(&src, "f", share::Ctx::new()), f::<B>(residue));
+    }
+
+    #[test]
+    fn numeric_literal_modulo_field() {
+        literal_modulo_field::<backend::ArkField17>(14);
+        literal_modulo_field::<backend::ArkField65537>(55512);
+        // A finite literal returned as a field element is reduced, not an index.
+        type B = backend::ArkField17;
+        let got = run::<B>("fn f<F: Field>() -> F { 18 }", "f", share::Ctx::new());
+        assert_field::<B>(&got, f::<B>(1));
+    }
+
+    #[test]
+    fn numeric_literal_field_uses() {
+        type B = backend::ArkField17;
+        let none = share::Ctx::new;
+        let scalar_of = |src: &str| run::<B>(src, "f", none());
+
+        assert_field::<B>(
+            &scalar_of("fn f<F: Field>() -> F { let one = 1; one }"),
+            f::<B>(1),
+        );
+        assert_fields::<B>(&scalar_of("fn f<F: Field>() -> [F; 2] { [1, 2] }"), &[1, 2]);
+        assert_field::<B>(
+            &scalar_of(
+                "fn g<F: Field>(instance x: F) -> F { x }
+                 fn f<F: Field>() -> F { g(1) }",
+            ),
+            f::<B>(1),
+        );
+        assert_field::<B>(&scalar_of("fn f<F: Field>() -> F { -1 }"), -f::<B>(1));
+        // 19 exceeds the modulus 17: field uses reduce it to 2.
+        assert_field::<B>(&scalar_of("fn f<F: Field>() -> F { -19 }"), f::<B>(15));
+        assert_fields::<B>(
+            &scalar_of("fn f<F: Field>() -> [F; 2] { [19 for i in 0..2] }"),
+            &[2, 2],
+        );
+        assert_field::<B>(
+            &scalar_of(
+                "fn f<F: Field>() -> F {
+                     let pts = [0, 1, 2];
+                     let p = interpolate(pts, [1, 2, 3]);
+                     p(1)
+                 }",
+            ),
+            f::<B>(2),
+        );
+
+        // A finite index still selects; an uppercase size is a literal, not a shape.
+        let mut xs = share::Ctx::new();
+        xs.insert(
+            &lang::id::Vid::from("xs"),
+            &Value::VecScalar(vec![f::<B>(5), f::<B>(7)]),
+        );
+        let got = run::<B>(
+            "fn f<F: Field>(instance xs: [F; 2]) -> F { xs[1] }",
+            "f",
+            xs,
+        );
+        assert_field::<B>(&got, f::<B>(7));
+        let mut xs = share::Ctx::new();
+        let mut elems = vec![f::<B>(0); 7];
+        elems[0] = f::<B>(3);
+        xs.insert(&lang::id::Vid::from("xs"), &Value::VecScalar(elems));
+        let got = run::<B>(
+            "fn f<N: 7, F: Field>(instance xs: [F; N]) -> F { xs[0] + N }",
+            "f",
+            xs,
+        );
+        assert_field::<B>(&got, f::<B>(10));
+
+        // Literals in `fun` bodies are field constants in the fun's own encoding.
+        let fun_at = |fun: &str, point: &str| {
+            scalar_of(&format!(
+                "fn f<F: Field>() -> F {{ let p = ({fun}); eval(p, {point}) }}"
+            ))
+        };
+        assert_field::<B>(&fun_at("fun(x) => 19 + x", "0"), f::<B>(2));
+        assert_field::<B>(&fun_at("fun(x, y) => 19", "[0, 0]"), f::<B>(2));
+        assert_field::<B>(&fun_at("fun(x, y) => -1", "[0, 0]"), f::<B>(16));
+        assert_field::<B>(&fun_at("fun(x, y) => 19 * 2", "[0, 0]"), f::<B>(4));
+        assert_field::<B>(&fun_at("fun(x, y) => 19 * x", "[1, 0]"), f::<B>(2));
+        assert_field::<B>(&fun_at("fun(x, y) => (19 + 1) * x", "[1, 0]"), f::<B>(3));
+        let module = parse_and_concretize(
+            "fn f<F: Field>() -> F { let p = (fun(x, y) => x * x); eval(p, [0, 0]) }",
+            &share::Ctx::new(),
+        );
+        assert!(matches!(
+            crate::UDags::<B>::from_module(module),
+            Err(crate::GraphError::NonPolynomialFun(..))
+        ));
+
+        // A polynomial plus a literal keeps its polynomial type even when the sum folds.
+        assert_field::<B>(
+            &scalar_of("fn f<F: Field>() -> F { let p = (fun(x) => 0); let q = p + 17; q(0) }"),
+            f::<B>(0),
+        );
+    }
+
+    /// An integer stored into a field of a record becomes a field element of that field.
+    #[test]
+    fn numeric_literal_record_update() {
+        type B = backend::ArkField17;
+        let src = "proto p<F: Field>(instance r: {a: F}) where r.a == r.a {
+                       s <- r.set(a, 18);
+                       verify(s.a == 1)
+                   }";
+        let module = parse_and_concretize(src, &share::Ctx::new());
+        let dags = crate::UDags::<B>::from_module(module).unwrap();
+        let dag = dags.protocols()[0];
+        let mut inputs = share::Ctx::new();
+        inputs.insert(
+            &lang::id::Vid::from("r"),
+            &Value::Record(share::Ctx::from_iter([(
+                "a".to_string(),
+                Value::Scalar(f::<B>(9)),
+            )])),
+        );
+        let values = execute_graph_all(dag, inputs);
+        let s = values
+            .iter()
+            .find(|(n, _)| {
+                dag.binding(**n)
+                    .is_some_and(|b| b.node == lang::id::Vid::from("s"))
+            })
+            .map(|(_, v)| v)
+            .expect("`s` is logged");
+        let Value::Record(fields) = s else {
+            panic!("`s` is a record, got {s}")
+        };
+        assert_field::<B>(&fields[&"a".to_string()], f::<B>(1));
+    }
 }

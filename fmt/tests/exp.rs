@@ -578,3 +578,20 @@ fn f<F: Field>(instance a: F) -> F {
 ",
     );
 }
+
+// ══════════════════════════════════════════════════════════════════
+// Section: Numeric literals
+// ══════════════════════════════════════════════════════════════════
+
+#[test]
+fn numeric_literal_format() {
+    // A literal beyond u64 keeps all of its digits through formatting.
+    assert_ok(
+        "fn f<F: Field>() -> F { 34545435435435435435435 }",
+        "\
+fn f<F: Field>() -> F {
+    34545435435435435435435
+}
+",
+    );
+}

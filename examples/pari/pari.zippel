@@ -161,9 +161,8 @@ proto pari<
         //     v_K(X) = X^K - 1.
         && reduce(&&, coef(v_k_poly) == [0 - f_one] ++ [0 * f_one for _ in 0..K - 1] ++ [f_one])
 {
-    // === Constant scalars derived from f_one ===
-    let f_zero = 0;
-    let f_neg_one = f_zero - f_one;
+    // === Constant scalar derived from f_one ===
+    let f_neg_one = 0 - f_one;
 
     // === Prover: T_AB — batched commitment to ŵ_A and ŵ_B ===
     // T_AB := Σ_{i=n+1..k} w_i · Σ[i] (paper line 6).
@@ -208,7 +207,7 @@ proto pari<
     let v_b_p = w_b_poly(r);
 
     // === Prover: opening proof U ===
-    let r_neg = f_zero - r;
+    let r_neg = 0 - r;
     let x_minus_r = poly([r_neg, f_one]);
 
     let w_a_witness = (w_a_poly - v_a_p) / x_minus_r;
@@ -251,11 +250,10 @@ proto pari<
     let v_k_at_r = r ^ K - f_one;
     let lagrange_sum = reduce(+, [omegas[i] * x[i] / (r - omegas[i]) for i in 0..N]);
     let x_a_at_r = v_k_at_r * k_inv * lagrange_sum;
-    let x_b_at_r = f_zero;
 
     // === Verifier: v_q := ((v_a + x̂_A(r))^2 - (v_b + x̂_B(r))) / v_K(r) ===
     let lhs_a = va_proof + x_a_at_r;
-    let lhs_b = vb_proof + x_b_at_r;
+    let lhs_b = vb_proof + 0;
     let v_q = (lhs_a * lhs_a - lhs_b) / v_k_at_r;
 
     // === Verifier: pairing check ===
@@ -274,7 +272,7 @@ proto pari<
     // `msm_bigint_wnaf(&[α, β, G, −U], &[v_a, v_b, v_q, r])` call). Without
     // this, each of the 4 group-scalar muls dispatches as a separate graph
     // node, losing Pippenger bucketing AND paying per-node scheduling cost.
-    let neg_r = f_zero - r;
+    let neg_r = 0 - r;
     let inner = dot([va_proof, vb_proof, v_q, neg_r], [alpha_g, beta_g, g_g1, u_proof]);
 
     let result = dot([t_proof, u_proof, inner], [delta2_h, tau_h, h_g2]);

@@ -385,6 +385,9 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             Op::Poly(v) => Op::Poly(mk::<C>(self.trans_clos_op(dag, v.get().clone(), seen))),
             Op::Mle(v) => Op::Mle(mk::<C>(self.trans_clos_op(dag, v.get().clone(), seen))),
             Op::Coef(v) => Op::Coef(mk::<C>(self.trans_clos_op(dag, v.get().clone(), seen))),
+            Op::ToScalar(v) => {
+                Op::ToScalar(mk::<C>(self.trans_clos_op(dag, v.get().clone(), seen)))
+            }
             Op::Record(fields) => Op::Record(
                 fields
                     .into_iter()

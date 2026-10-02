@@ -77,7 +77,7 @@ pub fn op_has_loop_param<C: ArkConfig>(op: &GOp<C>, target_level: usize) -> bool
         Op::Poly(a) => op_has_loop_param(a.get(), target_level),
         Op::Mle(a) => op_has_loop_param(a.get(), target_level),
         Op::Proj(a, _, _) => op_has_loop_param(a.get(), target_level),
-        Op::Coef(a) => op_has_loop_param(a.get(), target_level),
+        Op::Coef(a) | Op::ToScalar(a) => op_has_loop_param(a.get(), target_level),
         Op::Evaluate(a, _, b) => {
             op_has_loop_param(a.get(), target_level)
                 || b.as_ref()
@@ -823,6 +823,22 @@ where
             };
             Ok(Arc::new(r.get(field_name).cloned().unwrap()))
         }
+        // One-way Fin → Scalar embedding; only finite-index values are admitted.
+        Op::ToScalar(a) => {
+            let av = eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?;
+            match &*av {
+                Value::Index(i) => Ok(Arc::new(Value::scalar_from_usize(*i))),
+                Value::VecIndex(_) => {
+                    let mut v = Arc::unwrap_or_clone(av);
+                    v.into_vec_scalar_mut();
+                    Ok(Arc::new(v))
+                }
+                other => Err(EvalError::TypeMismatch {
+                    expected: "Fin or Vec<Fin> value".to_string(),
+                    got: format!("{}", other),
+                }),
+            }
+        }
     }
 }
 
@@ -892,6 +908,7 @@ fn collect_refs_into<C: ArkConfig>(op: &GOp<C>, acc: &mut Vec<Ref>) {
             collect_refs_into(a, acc);
         }
         Op::Coef(a)
+        | Op::ToScalar(a)
         | Op::Poly(a)
         | Op::Ifft(a)
         | Op::Fft(a)

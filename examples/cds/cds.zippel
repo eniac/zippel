@@ -37,11 +37,10 @@ proto cds<G: Group, F: Scalar<G>, N: 2, K: 1>(
 
     // Step 2: Verifier Challenge
     s <- challenge<F>;
-    let zero_f = 0;
 
     // Step 3: Prover Share Completion
     // Interpolate polynomial p using (0, s) and the K points given by u_points
-    let pts = [zero_f] ++ u_points;
+    let pts = [0] ++ u_points;
     let evals = [s] ++ u_evals;
     let p = interpolate(pts, evals);
 

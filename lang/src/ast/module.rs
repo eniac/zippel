@@ -1,4 +1,5 @@
 use crate::ast::decl::{CDecl, DeclError, UDecl};
+use crate::ast::exp::{ExpLiteral, ExpTraversal};
 use crate::ast::range::Range;
 use crate::ast::spanned::Spanned;
 use crate::ast::{Body, CSig, Sig};
@@ -9,6 +10,7 @@ use crate::semantic::{
     check_scope, check_size_binding, check_type_alias_cycles, check_typevars,
 };
 
+use num::BigUint;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use thiserror::Error;
@@ -19,60 +21,35 @@ use share::traversal::ToTraversal1;
 use share::{Ctx, Set};
 
 /// Polymorphic Module, a collection of declarations indexed by their typevars and signature
-pub struct Module<N>(pub Ctx<Sig<N>, Body<N>>);
+pub struct Module<N: ExpLiteral>(pub Ctx<Sig<N::Size>, Body<N>>);
 
-impl<N: Clone> Clone for Module<N>
-where
-    Sig<N>: Clone,
-    Body<N>: Clone,
-{
+impl<N: ExpLiteral> Clone for Module<N> {
     fn clone(&self) -> Self {
         Module(self.0.clone())
     }
 }
 
-impl<N: Ord + Clone> PartialEq for Module<N>
-where
-    Sig<N>: Ord + PartialEq,
-    Body<N>: PartialEq + Clone,
-{
+impl<N: ExpLiteral + PartialEq> PartialEq for Module<N> {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
 
-impl<N: Ord + Clone> Eq for Module<N>
-where
-    Sig<N>: Ord + Eq,
-    Body<N>: Eq + Clone,
-{
-}
+impl<N: ExpLiteral + Eq> Eq for Module<N> {}
 
-impl<N: Ord + Clone> PartialOrd for Module<N>
-where
-    Sig<N>: Ord + PartialOrd + Clone,
-    Body<N>: PartialOrd + Clone,
-{
+impl<N: ExpLiteral + Ord> PartialOrd for Module<N> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<N: Ord + Clone> Ord for Module<N>
-where
-    Sig<N>: Ord + Clone,
-    Body<N>: Ord + Clone,
-{
+impl<N: ExpLiteral + Ord> Ord for Module<N> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.0.cmp(&other.0)
     }
 }
 
-impl<N: Ord + Clone> fmt::Debug for Module<N>
-where
-    Sig<N>: Ord + fmt::Debug,
-    Body<N>: fmt::Debug + Clone,
-{
+impl<N: ExpLiteral + fmt::Debug> fmt::Debug for Module<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Module").field(&self.0).finish()
     }
@@ -161,10 +138,10 @@ impl From<ModuleError> for Diagnostic {
 /// Polymorphic module with symbolic sizes
 pub type UModule = Module<Size>;
 
-/// Polymorphic module with concrete sizes
-pub type CModule = Module<usize>;
+/// Module with concrete signatures and full-magnitude body literals
+pub type CModule = Module<BigUint>;
 
-impl<N: Ord> Module<N> {
+impl<N: ExpLiteral> Module<N> {
     /// Number of declarations in the module.
     pub fn len(&self) -> usize {
         self.0.len()
@@ -174,7 +151,7 @@ impl<N: Ord> Module<N> {
         self.0.is_empty()
     }
     /// Iterate over `(signature, body)` pairs in declaration order.
-    pub fn iter(&self) -> impl DoubleEndedIterator<Item = (&Sig<N>, &Body<N>)> {
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = (&Sig<N::Size>, &Body<N>)> {
         self.0.iter()
     }
     /// Names of all declarations, including each overload separately.
@@ -462,31 +439,26 @@ impl UModule {
     }
 }
 
-impl<N: Ord + Clone> IntoIterator for Module<N>
-where
-    Sig<N>: Ord + Clone,
-    Body<N>: Clone,
-{
-    type Item = (Sig<N>, Body<N>);
-    type IntoIter = share::CtxConsumingIter<(Sig<N>, Body<N>)>;
+impl<N: ExpLiteral> IntoIterator for Module<N> {
+    type Item = (Sig<N::Size>, Body<N>);
+    type IntoIter = share::CtxConsumingIter<(Sig<N::Size>, Body<N>)>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-impl<N: Ord + Clone> FromIterator<(Sig<N>, Body<N>)> for Module<N>
-where
-    Sig<N>: Ord + Clone,
-    Body<N>: Clone,
-{
-    fn from_iter<I: IntoIterator<Item = (Sig<N>, Body<N>)>>(iter: I) -> Self {
+impl<N: ExpLiteral> FromIterator<(Sig<N::Size>, Body<N>)> for Module<N> {
+    fn from_iter<I: IntoIterator<Item = (Sig<N::Size>, Body<N>)>>(iter: I) -> Self {
         Module(iter.into_iter().collect())
     }
 }
 
 /// Source syntax: declarations separated by blank lines with `{:#}` (bodies on several
 /// lines), by spaces with `{}`.
-impl<N: Ord + fmt::Display> fmt::Display for Module<N> {
+impl<N: ExpLiteral + fmt::Display> fmt::Display for Module<N>
+where
+    N::Size: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (i, (sig, body)) in self.0.iter().enumerate() {
             if i > 0 {
@@ -505,8 +477,10 @@ struct SizeConstraints {
     /// Singleton range variables (`L: (N - 1) * M`) and their definitions, each over the
     /// parameters and the derived sizes before it.
     derived: Vec<(Tid, Size)>,
-    /// Size expressions, which must evaluate.
+    /// Size expressions in signatures, ranges and selectors, which must evaluate to `usize`.
     exprs: Vec<Size>,
+    /// Expression literals, which must evaluate exactly but need not fit in `usize`.
+    literals: Vec<Size>,
     /// Ranges, which must be non-empty.
     ranges: Vec<Range<Size>>,
     /// The unset `Size` parameters these depend on.
@@ -549,10 +523,19 @@ impl SizeConstraints {
             exprs.push(s.clone());
             Ok::<_, ()>(s)
         });
-        let _ = body.clone().traverse1(&mut |s: Size| {
-            exprs.push(s.clone());
-            Ok::<_, ()>(s)
-        });
+        let mut literals = Vec::new();
+        let mut body_sizes = Vec::new();
+        let _ = body.clone().traverse_exp(
+            &mut |s: Size| {
+                literals.push(s.clone());
+                Ok::<_, ()>(s)
+            },
+            &mut |s: Size| {
+                body_sizes.push(s.clone());
+                Ok(s)
+            },
+        );
+        exprs.extend(body_sizes);
         let mut ranges = Vec::new();
         let _ = sig.clone().range_traverse(&mut |r: Range<Size>| {
             ranges.push(r.clone());
@@ -572,10 +555,12 @@ impl SizeConstraints {
             _ => false,
         };
         exprs.retain(|s| checkable(s.free_vars()));
+        literals.retain(|s| checkable(s.free_vars()));
         ranges.retain(|r| checkable(range_free_vars(r)));
         SizeConstraints {
             derived,
             exprs,
+            literals,
             ranges,
             mentioned,
         }
@@ -591,6 +576,7 @@ impl SizeConstraints {
             };
         }
         self.exprs.iter().all(|s| s.eval(&ctx).is_ok())
+            && self.literals.iter().all(|s| s.eval_literal(&ctx).is_ok())
             && self.ranges.iter().all(|r| {
                 r.clone()
                     .traverse1(&mut |s| s.eval(&ctx))

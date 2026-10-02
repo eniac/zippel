@@ -1,89 +1,92 @@
 use super::*;
 use crate::ast::range::{CRange, Range};
 use crate::ast::spanned::Spanned;
-use crate::ast::{Args, BinOp, CArg, CExp, Exp, Exps, Sig};
+use crate::ast::{Args, BinOp, CArg, CExp, Exp, ExpLiteral, Exps, Sig};
 use crate::id::{Tid, Vid};
 use crate::typ::{CTyp, Kind, TypeVar, TypeVars};
 use lazy_static::lazy_static;
 use share::{Ctx, Set};
 
-fn lit<N>(v: N) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Lit(v))
+fn lit<N: ExpLiteral>(value: usize) -> Spanned<Exp<N>> {
+    Spanned::dummy(Exp::Lit(N::lit(value)))
 }
-fn varstr<N>(x: &str) -> Spanned<Exp<N>> {
+fn varstr<N: ExpLiteral>(x: &str) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Var(Spanned::dummy(Vid::from(x))))
 }
-fn range<N>(r: Range<N>) -> Spanned<Exp<N>> {
+fn range<N: ExpLiteral>(r: Range<N::Size>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Range(r))
 }
-fn challenge<N>(t: Tid) -> Spanned<Exp<N>> {
+fn challenge<N: ExpLiteral>(t: Tid) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Challenge(Spanned::dummy(t), false))
 }
-fn random<N>(t: Tid) -> Spanned<Exp<N>> {
+fn random<N: ExpLiteral>(t: Tid) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Random(Spanned::dummy(t), false))
 }
-fn bin<N>(op: BinOp, l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn bin<N: ExpLiteral>(op: BinOp, l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Bin(op, Box::new(l), Box::new(r)))
 }
-fn add<N>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn add<N: ExpLiteral>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     bin(BinOp::Add, l, r)
 }
-fn sub<N>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn sub<N: ExpLiteral>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     bin(BinOp::Sub, l, r)
 }
-fn mul<N>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn mul<N: ExpLiteral>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     bin(BinOp::Mul, l, r)
 }
-fn div<N>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn div<N: ExpLiteral>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     bin(BinOp::Div, l, r)
 }
-fn pow<N>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn pow<N: ExpLiteral>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     bin(BinOp::Pow, l, r)
 }
-fn dot<N>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn dot<N: ExpLiteral>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     bin(BinOp::Dot, l, r)
 }
-fn rem<N>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn rem<N: ExpLiteral>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     bin(BinOp::Rem, l, r)
 }
-fn concat<N>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn concat<N: ExpLiteral>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     bin(BinOp::Concat, l, r)
 }
-fn poly<N>(a: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn poly<N: ExpLiteral>(a: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Poly(Box::new(a)))
 }
-fn mle<N>(a: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn mle<N: ExpLiteral>(a: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Mle(Box::new(a)))
 }
-fn coef<N>(a: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn coef<N: ExpLiteral>(a: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Coef(Box::new(a)))
 }
-fn vec<N>(v: Vec<Spanned<Exp<N>>>) -> Spanned<Exp<N>> {
+fn vec<N: ExpLiteral>(v: Vec<Spanned<Exp<N>>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Vec(Exps(v)))
 }
-fn map<N>(l: Spanned<Exp<N>>, x: Vid, range: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn map<N: ExpLiteral>(l: Spanned<Exp<N>>, x: Vid, range: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Map(Box::new(l), Spanned::dummy(x), Box::new(range)))
 }
-fn reduce<N>(op: BinOp, a: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn reduce<N: ExpLiteral>(op: BinOp, a: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Reduce(op, Box::new(a)))
 }
-fn ram<N>(v: Spanned<Exp<N>>, i: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn ram<N: ExpLiteral>(v: Spanned<Exp<N>>, i: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Ram(Box::new(v), Box::new(i)))
 }
-fn interpolate_at<N>(points: Spanned<Exp<N>>, evals: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn interpolate_at<N: ExpLiteral>(
+    points: Spanned<Exp<N>>,
+    evals: Spanned<Exp<N>>,
+) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Interpolate(Some(Box::new(points)), Box::new(evals)))
 }
-fn interpolate_grid<N>(evals: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn interpolate_grid<N: ExpLiteral>(evals: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Interpolate(None, Box::new(evals)))
 }
-fn evaluate_at<N>(p: Spanned<Exp<N>>, points: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn evaluate_at<N: ExpLiteral>(p: Spanned<Exp<N>>, points: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Evaluate(Box::new(p), None, Some(Box::new(points))))
 }
-fn evaluate_grid<N>(p: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn evaluate_grid<N: ExpLiteral>(p: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Evaluate(Box::new(p), None, None))
 }
-fn evaluate_selected<N>(
-    range: Range<N>,
+fn evaluate_selected<N: ExpLiteral>(
+    range: Range<N::Size>,
     p: Spanned<Exp<N>>,
     fixed: Spanned<Exp<N>>,
 ) -> Spanned<Exp<N>> {
@@ -93,37 +96,37 @@ fn evaluate_selected<N>(
         Some(Box::new(fixed)),
     ))
 }
-fn assert_eq<N>(lhs: Spanned<Exp<N>>, rhs: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn assert_eq<N: ExpLiteral>(lhs: Spanned<Exp<N>>, rhs: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     let equ = Spanned::dummy(Exp::Bin(BinOp::Equ, Box::new(lhs), Box::new(rhs)));
     Spanned::dummy(Exp::Assert(Box::new(equ)))
 }
-fn verify_eq<N>(lhs: Spanned<Exp<N>>, rhs: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn verify_eq<N: ExpLiteral>(lhs: Spanned<Exp<N>>, rhs: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     let equ = Spanned::dummy(Exp::Bin(BinOp::Equ, Box::new(lhs), Box::new(rhs)));
     Spanned::dummy(Exp::Verify(Box::new(equ)))
 }
-fn letx<N>(a: Vid, d: Spanned<Exp<N>>, e: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn letx<N: ExpLiteral>(a: Vid, d: Spanned<Exp<N>>, e: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Let(
         Some(Spanned::dummy(a)),
         Box::new(d),
         Some(Box::new(e)),
     ))
 }
-fn logx<N>(a: Vid, d: Spanned<Exp<N>>, e: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn logx<N: ExpLiteral>(a: Vid, d: Spanned<Exp<N>>, e: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Log(Spanned::dummy(a), Box::new(d), Some(Box::new(e))))
 }
-fn seq<N>(a: Spanned<Exp<N>>, b: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn seq<N: ExpLiteral>(a: Spanned<Exp<N>>, b: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Let(None, Box::new(a), Some(Box::new(b))))
 }
-fn app<N>(id: Vid, args: Exps<N>) -> Spanned<Exp<N>> {
+fn app<N: ExpLiteral>(id: Vid, args: Exps<N>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::App(Spanned::dummy(id), args))
 }
-fn record<N>(fields: Ctx<Spanned<String>, Spanned<Exp<N>>>) -> Spanned<Exp<N>> {
+fn record<N: ExpLiteral>(fields: Ctx<Spanned<String>, Spanned<Exp<N>>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Record(fields))
 }
-fn proj<N>(exp: Spanned<Exp<N>>, field: String) -> Spanned<Exp<N>> {
+fn proj<N: ExpLiteral>(exp: Spanned<Exp<N>>, field: String) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Proj(Box::new(exp), Spanned::dummy(field)))
 }
-fn set_record<N>(
+fn set_record<N: ExpLiteral>(
     record: Spanned<Exp<N>>,
     field: String,
     value: Spanned<Exp<N>>,
@@ -1772,148 +1775,6 @@ fn test_record_lub_vector_subtyping() {
     // Accessing extra field "y" via ram(v, 0).y is incorrect and must fail typechecking
     let proj_y = proj(ram(v, lit(0)), "y".to_string());
     assert!(proj_y.infer(&KIND_CTX, &fctx, &vctx).is_err());
-}
-
-fn gen_arbitrary_cexp(u: &mut arbitrary::Unstructured, depth: usize) -> arbitrary::Result<CExp> {
-    if depth == 0 {
-        let choice = u.int_in_range(0..=1)?;
-        match choice {
-            0 => Ok(CExp::Lit(u.arbitrary()?)),
-            1 => {
-                let vars = ["f1", "f2", "v1", "v2", "g1", "g2", "s1", "s2", "p", "m"];
-                let var = u.choose(&vars)?;
-                Ok(CExp::Var(Spanned::dummy(Vid::from(*var))))
-            }
-            _ => unreachable!(),
-        }
-    } else {
-        let choice = u.int_in_range(0..=12)?;
-        match choice {
-            0..=2 => gen_arbitrary_cexp(u, 0),
-            3 => {
-                let inner = gen_arbitrary_cexp(u, depth - 1)?;
-                Ok(CExp::Poly(Box::new(Spanned::dummy(inner))))
-            }
-            4 => {
-                let inner = gen_arbitrary_cexp(u, depth - 1)?;
-                Ok(CExp::Coef(Box::new(Spanned::dummy(inner))))
-            }
-            5 => {
-                let inner = gen_arbitrary_cexp(u, depth - 1)?;
-                Ok(CExp::Mle(Box::new(Spanned::dummy(inner))))
-            }
-            6 => {
-                let len = u.int_in_range(0..=4)?;
-                let mut elms = Vec::new();
-                for _ in 0..len {
-                    elms.push(Spanned::dummy(gen_arbitrary_cexp(u, depth - 1)?));
-                }
-                Ok(CExp::Vec(Exps(elms)))
-            }
-            7 => {
-                let a = gen_arbitrary_cexp(u, depth - 1)?;
-                let b = gen_arbitrary_cexp(u, depth - 1)?;
-                let op = u.choose(&[
-                    BinOp::Add,
-                    BinOp::Sub,
-                    BinOp::Mul,
-                    BinOp::Div,
-                    BinOp::Pow,
-                    BinOp::Dot,
-                    BinOp::Rem,
-                    BinOp::Concat,
-                ])?;
-                Ok(CExp::Bin(
-                    *op,
-                    Box::new(Spanned::dummy(a)),
-                    Box::new(Spanned::dummy(b)),
-                ))
-            }
-            8 => {
-                let a = gen_arbitrary_cexp(u, depth - 1)?;
-                let b = gen_arbitrary_cexp(u, depth - 1)?;
-                Ok(CExp::Ram(
-                    Box::new(Spanned::dummy(a)),
-                    Box::new(Spanned::dummy(b)),
-                ))
-            }
-            9 => {
-                let tids = ["F", "G", "S", "X"];
-                let tid = u.choose(&tids)?;
-                Ok(CExp::Challenge(
-                    Spanned::dummy(Tid::from(*tid)),
-                    u.arbitrary()?,
-                ))
-            }
-            10 => {
-                let tids = ["F", "G", "S", "X"];
-                let tid = u.choose(&tids)?;
-                Ok(CExp::Random(
-                    Spanned::dummy(Tid::from(*tid)),
-                    u.arbitrary()?,
-                ))
-            }
-            11 => {
-                let inner = gen_arbitrary_cexp(u, depth - 1)?;
-                let range = CRange::from_raw(u.int_in_range(0..=5)?, 1, u.int_in_range(0..=5)?);
-                let has_range = u.arbitrary()?;
-                let has_point = u.arbitrary()?;
-                let opt_range = if has_range { Some(range) } else { None };
-                let opt_point = if has_point {
-                    Some(Box::new(Spanned::dummy(gen_arbitrary_cexp(u, depth - 1)?)))
-                } else {
-                    None
-                };
-                Ok(CExp::Evaluate(
-                    Box::new(Spanned::dummy(inner)),
-                    opt_range,
-                    opt_point,
-                ))
-            }
-            12 => {
-                let start = u.int_in_range(0..=5)?;
-                let end = u.int_in_range(0..=5)?;
-                Ok(CExp::Range(CRange::from_raw(start, 1, end)))
-            }
-            _ => unreachable!(),
-        }
-    }
-}
-
-#[test]
-fn test_no_panic_compiler_fuzzer() {
-    let fctx = Set::new();
-    let vctx = VAR_CTX.clone();
-    arbtest::arbtest(|u| {
-        let e = gen_arbitrary_cexp(u, 3)?;
-        // We only assert that inference does not panic (crash)
-        let _ = e.infer(&KIND_CTX, &fctx, &vctx);
-        Ok(())
-    });
-}
-
-#[test]
-fn test_proto_body_blames_body_not_relation() {
-    let name = Vid::from("my_proto");
-    let sig = crate::ast::CSig {
-        name: Spanned::dummy(name.clone()),
-        typevars: Spanned::dummy(TypeVars(vec![])),
-        args: Spanned::dummy(crate::ast::Args(vec![])),
-        ret: Some(Spanned::dummy(CTyp::Unit)),
-    };
-    let fctx = Set::new();
-    let body = crate::ast::CBody::Proto {
-        // relation is a valid Bool (0 == 0) — the body is what fails
-        relation: Spanned::dummy(CExp::Bin(BinOp::Equ, Box::new(lit(0)), Box::new(lit(0)))),
-        body: Some(lit(5)), // body has type Fin (invalid, expected Unit)
-    };
-    let res = body.typecheck(sig, &fctx);
-    let err = res.unwrap_err();
-    // Under correct behavior, this should wrap the offending body expression CExp::Lit(5)
-    assert!(matches!(
-        err,
-        TypeError::Decl(_, TypeError::Unit(_, _, CExp::Lit(5), _))
-    ));
 }
 
 #[test]

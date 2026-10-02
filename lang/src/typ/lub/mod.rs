@@ -478,8 +478,12 @@ impl Lub for CTyp {
                 }
                 Ok(CTyp::Record(result_fields))
             }
+            // A field-only integer absorbs integers; the field is chosen later
+            (CTyp::FieldLiteral, CTyp::FieldLiteral | CTyp::Fin(_))
+            | (CTyp::Fin(_), CTyp::FieldLiteral) => Ok(CTyp::FieldLiteral),
             // Target-driven equality for Base and Fin
-            (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
+            (CTyp::Base(a), CTyp::Fin(_) | CTyp::FieldLiteral)
+            | (CTyp::Fin(_) | CTyp::FieldLiteral, CTyp::Base(a)) => {
                 let ka = ctx.get(a).ok_or(LubError::equ(&x, &y))?;
                 if ka.is_scalar() {
                     Ok(CTyp::Base(a.clone()))
@@ -508,6 +512,8 @@ impl Lub for CTyp {
                 Range::lub_add(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::add(&x, &y), e))?,
             )),
+            (CTyp::FieldLiteral, CTyp::FieldLiteral | CTyp::Fin(_))
+            | (CTyp::Fin(_), CTyp::FieldLiteral) => Ok(CTyp::FieldLiteral),
             // Uni<A> + Uni<B> = Uni<max(A, B)>
             (CTyp::Poly(a, na, n), CTyp::Poly(b, nb, m)) if na.node == 1 && nb.node == 1 => {
                 let t = Tid::lub_add(a, b, ctx)
@@ -544,7 +550,8 @@ impl Lub for CTyp {
             // and (Vec, Poly) arms previously here implicitly reinterpreted
             // a Vec as a coefficient list — semantically opaque, removed.
             // Indices can act like finite fields
-            (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
+            (CTyp::Base(a), CTyp::Fin(_) | CTyp::FieldLiteral)
+            | (CTyp::Fin(_) | CTyp::FieldLiteral, CTyp::Base(a)) => {
                 let ka = ctx.get(a).ok_or(LubError::next(
                     LubError::add(&x, &y),
                     LubError::kind_not_found(a),
@@ -564,7 +571,8 @@ impl Lub for CTyp {
                 Ok(CTyp::uni(&t, n.node))
             }
             // Indices can act like univariate polynomials
-            (CTyp::Fin(_), CTyp::Poly(b, d, n)) | (CTyp::Poly(b, d, n), CTyp::Fin(_))
+            (CTyp::Fin(_) | CTyp::FieldLiteral, CTyp::Poly(b, d, n))
+            | (CTyp::Poly(b, d, n), CTyp::Fin(_) | CTyp::FieldLiteral)
                 if d.node == 1 =>
             {
                 Ok(CTyp::uni(b, n.node))
@@ -576,7 +584,8 @@ impl Lub for CTyp {
                     .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
                 Ok(CTyp::mle(&t, n.node))
             }
-            (CTyp::Poly(a, n, d), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Poly(a, n, d))
+            (CTyp::Poly(a, n, d), CTyp::Fin(_) | CTyp::FieldLiteral)
+            | (CTyp::Fin(_) | CTyp::FieldLiteral, CTyp::Poly(a, n, d))
                 if d.node == 1 =>
             {
                 Ok(CTyp::mle(a, n.node))
@@ -594,6 +603,8 @@ impl Lub for CTyp {
                 Range::lub_sub(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?,
             )),
+            (CTyp::FieldLiteral, CTyp::FieldLiteral | CTyp::Fin(_))
+            | (CTyp::Fin(_), CTyp::FieldLiteral) => Ok(CTyp::FieldLiteral),
             // Uni<A> - Uni<B> = Uni<max(A, B)>
             (CTyp::Poly(a, na, n), CTyp::Poly(b, nb, m)) if na.node == 1 && nb.node == 1 => {
                 let t = Tid::lub_sub(a, b, ctx)
@@ -626,7 +637,8 @@ impl Lub for CTyp {
             }
             // Phase B: polynomial ↔ Vec is now a type error (see lub_add).
             // Indices can act like finite fields
-            (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
+            (CTyp::Base(a), CTyp::Fin(_) | CTyp::FieldLiteral)
+            | (CTyp::Fin(_) | CTyp::FieldLiteral, CTyp::Base(a)) => {
                 let ka = ctx.get(a).ok_or(LubError::next(
                     LubError::sub(&x, &y),
                     LubError::kind_not_found(a),
@@ -646,7 +658,8 @@ impl Lub for CTyp {
                 Ok(CTyp::uni(&t, n.node))
             }
             // Indices can act like univariate polynomials
-            (CTyp::Fin(_), CTyp::Poly(b, d, n)) | (CTyp::Poly(b, d, n), CTyp::Fin(_))
+            (CTyp::Fin(_) | CTyp::FieldLiteral, CTyp::Poly(b, d, n))
+            | (CTyp::Poly(b, d, n), CTyp::Fin(_) | CTyp::FieldLiteral)
                 if d.node == 1 =>
             {
                 Ok(CTyp::uni(b, n.node))
@@ -658,7 +671,8 @@ impl Lub for CTyp {
                     .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;
                 Ok(CTyp::mle(&t, n.node))
             }
-            (CTyp::Poly(a, n, d), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Poly(a, n, d))
+            (CTyp::Poly(a, n, d), CTyp::Fin(_) | CTyp::FieldLiteral)
+            | (CTyp::Fin(_) | CTyp::FieldLiteral, CTyp::Poly(a, n, d))
                 if d.node == 1 =>
             {
                 Ok(CTyp::mle(a, n.node))
@@ -676,6 +690,8 @@ impl Lub for CTyp {
                 Range::lub_mul(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?,
             )),
+            (CTyp::FieldLiteral, CTyp::FieldLiteral | CTyp::Fin(_))
+            | (CTyp::Fin(_), CTyp::FieldLiteral) => Ok(CTyp::FieldLiteral),
             // General rule: Poly(F, n, m) * Poly(F, n', m') = Poly(F, max(n,n'), m+m')
             // (N is the max total degree per Typ::Poly docs; degrees add under multiplication)
             (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, mb)) => {
@@ -727,16 +743,33 @@ impl Lub for CTyp {
                     Err(LubError::mul(&x, &y))
                 }
             }
-            // Indices can act like finite fields
-            (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
+            // Indices can act like finite fields; beside a group, the group's unique scalar
+            // field multiplies it.
+            (CTyp::Base(a), CTyp::Fin(_) | CTyp::FieldLiteral)
+            | (CTyp::Fin(_) | CTyp::FieldLiteral, CTyp::Base(a)) => {
                 let ka = ctx.get(a).ok_or(LubError::next(
                     LubError::mul(&x, &y),
                     LubError::kind_not_found(a),
                 ))?;
                 if ka.is_scalar() {
-                    Ok(CTyp::base(a))
-                } else {
-                    Err(LubError::mul(&x, &y))
+                    return Ok(CTyp::base(a));
+                }
+                if !matches!(ka, Kind::Group) {
+                    return Err(LubError::mul(&x, &y));
+                }
+                let scalars: Vec<&Tid> = ctx
+                    .iter()
+                    .filter(
+                        |(_, k)| matches!(k, Kind::Scalar(gs) if gs.iter().any(|g| &g.node == a)),
+                    )
+                    .map(|(s, _)| s)
+                    .collect();
+                match scalars[..] {
+                    [s] => Ok(CTyp::Base(
+                        Tid::lub_mul(s, a, ctx)
+                            .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?,
+                    )),
+                    _ => Err(LubError::mul(&x, &y)),
                 }
             }
             (_, _) => Err(LubError::mul(&x, &y)),
@@ -779,6 +812,8 @@ impl Lub for CTyp {
                 Range::lub_div(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::div(&x, &y), e))?,
             )),
+            (CTyp::FieldLiteral, CTyp::FieldLiteral | CTyp::Fin(_))
+            | (CTyp::Fin(_), CTyp::FieldLiteral) => Ok(CTyp::FieldLiteral),
             // Polynomial-by-polynomial division is supported only for
             // univariate operands. Multivariate division requires a term order.
             // Both indices are degree *upper bounds*, not exact degrees, so the
@@ -822,7 +857,8 @@ impl Lub for CTyp {
                 }
             }
             // Indices can act like finite fields
-            (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => Ok(CTyp::base(a)),
+            (CTyp::Base(a), CTyp::Fin(_) | CTyp::FieldLiteral)
+            | (CTyp::Fin(_) | CTyp::FieldLiteral, CTyp::Base(a)) => Ok(CTyp::base(a)),
             (_, _) => Err(LubError::div(&x, &y)),
         }
     }
@@ -877,6 +913,8 @@ impl Lub for CTyp {
                 Range::lub_pow(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::pow(&x, &y), e))?,
             )),
+            // A field-only base raised to an integer stays field-only.
+            (CTyp::FieldLiteral, CTyp::Fin(_)) => Ok(CTyp::FieldLiteral),
             (CTyp::Base(a), CTyp::Fin(_)) => {
                 let ka = ctx.get(a).ok_or(LubError::next(
                     LubError::pow(&x, &y),
@@ -1002,6 +1040,7 @@ impl CTyp {
     /// is one-way:
     /// - a polynomial fits one with at least as many variables and as high a degree;
     /// - an integer (`Fin`) fits a wider integer range, and a scalar;
+    /// - a field-only integer fits a scalar, never an integer range or a group;
     /// - vectors need equal lengths, records every expected field;
     /// - base types must be equal (up to kinds, as in [`Lub::lub_equ`]).
     pub fn fits(&self, expected: &Self, ctx: &Ctx<Tid, CKind>) -> bool {
@@ -1009,7 +1048,9 @@ impl CTyp {
             (CTyp::Unit, CTyp::Unit) | (CTyp::Bool, CTyp::Bool) => true,
             (CTyp::Base(a), CTyp::Base(b)) => Tid::lub_equ(a, b, ctx).is_ok(),
             (CTyp::Fin(a), CTyp::Fin(b)) => a.is_subset_of(b),
-            (CTyp::Fin(_), CTyp::Base(b)) => ctx.get(b).is_some_and(CKind::is_scalar),
+            (CTyp::Fin(_) | CTyp::FieldLiteral, CTyp::Base(b)) => {
+                ctx.get(b).is_some_and(CKind::is_scalar)
+            }
             (CTyp::Poly(a, an, ad), CTyp::Poly(b, bn, bd)) => {
                 an.node <= bn.node && ad.node <= bd.node && Tid::lub_equ(a, b, ctx).is_ok()
             }
