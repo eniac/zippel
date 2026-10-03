@@ -27,7 +27,7 @@ any, it corresponds to.
 | `share/` | Shared utilities (`Ctx`, `Set`, etc.) used across crates |
 | `fmt/` | `zippel-fmt` formatter; keeps `examples/*.zippel` in the canonical style |
 | `examples/` | 30+ `.zippel` protocol implementations and their Rust harnesses |
-| `benches/inline/` | Completeness analysis (Experiment 3) |
+| `benches/analysis/` | Completeness and soundness analysis benches (Experiment 3 runs completeness) |
 | `benchmarks/` | Zippel vs. native performance comparison (Experiment 1) |
 | `analyses/tests/gb_snapshots/` | Special-soundness analysis (Experiment 2) |
 | `artifact/` | This package: `Dockerfile` and `scripts/` |
@@ -64,7 +64,7 @@ docker run --rm zippel-ae bash artifact/scripts/smoke_test.sh
 ```
 
 This builds and runs three example protocols, one completeness trial
-through Singular, and one `inline`-bench check. It is not one of the
+through Singular, and one `analysis`-bench check. It is not one of the
 three experiments; it only verifies that the toolchain and Singular
 integration function correctly. It completes in well under a minute and
 ends with:
@@ -243,8 +243,8 @@ under 15s, so a much tighter 1-minute timeout is used here to keep the
 full run fast.
 
 **What to expect, and why it differs from the paper.** Completeness 
-verifies **22 of 30** protocols, 2 more than what we had in the paper.
-This is because we improved our inlining optimization and fixed some bugs that we found 
+verifies **28 of 30** protocols, 8 more than what we had in the paper.
+This is because we introduced many optimizations and fixed some bugs that we found 
 after submission.
 
 **Runtime**: a full run takes approximately 15 minutes.
