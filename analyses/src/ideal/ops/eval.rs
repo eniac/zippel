@@ -14,20 +14,20 @@ use crate::frontend::Polynomial;
 use super::EncodeCtx;
 use super::PolySource;
 use super::fft::fft_op;
+use super::fold_constant;
 use super::link_to_polys;
 use super::{hypercube, multi_indices};
 
 /// Shared helper for `Op::Evaluate(p, xs)` — computes the ideal
-/// polynomials for evaluating `p` at `xs`. Panics on unsupported
-/// (p.typ(), |xs|) combinations; the type checker guarantees these
-/// are not expected.
+/// polynomials for evaluating `p` at the point polynomials `xs_polys`.
+/// Panics on unsupported (p.typ(), |xs|) combinations; the type checker
+/// guarantees these are not expected.
 pub fn eval_to_poly<C: ArkConfig>(
     p: &GOp<C>,
-    xs: &GOp<C>,
+    xs_polys: &[Polynomial<C::F>],
     vars: &HashMap<Ref, Var>,
 ) -> Vec<Polynomial<C::F>> {
     let p_typ = p.typ();
-    let xs_polys = PolySource::ref_vars(xs, vars);
     let k = xs_polys.len();
     match &p_typ {
         ATyp::Uni(_) | ATyp::VPoly(1, _) => {
@@ -74,7 +74,7 @@ pub fn eval_to_poly<C: ArkConfig>(
             if k == *n {
                 let mut acc = Polynomial::<C::F>::zero();
                 for (idx, ki) in all_k.iter().enumerate() {
-                    acc = &acc + &(&p_polys[idx] * &mono(ki, &xs_polys));
+                    acc = &acc + &(&p_polys[idx] * &mono(ki, xs_polys));
                 }
                 vec![acc]
             } else {
@@ -88,7 +88,7 @@ pub fn eval_to_poly<C: ArkConfig>(
                             if ki[k..] != kp[..] {
                                 continue;
                             }
-                            acc = &acc + &(&p_polys[idx] * &mono(&ki[..k], &xs_polys));
+                            acc = &acc + &(&p_polys[idx] * &mono(&ki[..k], xs_polys));
                         }
                         acc
                     })
@@ -117,7 +117,7 @@ pub fn eval_to_poly<C: ArkConfig>(
             if k == *n {
                 let mut acc = Polynomial::<C::F>::zero();
                 for (idx, b) in all_b.iter().enumerate() {
-                    acc = &acc + &(&p_polys[idx] * &eq_prod(b, &xs_polys));
+                    acc = &acc + &(&p_polys[idx] * &eq_prod(b, xs_polys));
                 }
                 vec![acc]
             } else {
@@ -131,7 +131,7 @@ pub fn eval_to_poly<C: ArkConfig>(
                             if b[k..] != bp[..] {
                                 continue;
                             }
-                            acc = &acc + &(&p_polys[idx] * &eq_prod(&b[..k], &xs_polys));
+                            acc = &acc + &(&p_polys[idx] * &eq_prod(&b[..k], xs_polys));
                         }
                         acc
                     })
@@ -147,13 +147,13 @@ pub fn eval_to_poly<C: ArkConfig>(
 
 pub fn eval_to_poly_as<C: ArkConfig>(
     p: &GOp<C>,
-    xs: &GOp<C>,
+    xs_polys: &[Polynomial<C::F>],
     target_typ: &ATyp,
     vars: &HashMap<Ref, Var>,
 ) -> Vec<Polynomial<C::F>> {
-    let polys = eval_to_poly(p, xs, vars);
+    let polys = eval_to_poly(p, xs_polys, vars);
     let raw_typ = {
-        let k = PolySource::ref_vars(xs, vars).len();
+        let k = xs_polys.len();
         match p.typ() {
             ATyp::Mle(n) if k < n => ATyp::Mle(n - k),
             ATyp::Mle(n) if k == n => ATyp::scalar(),
@@ -175,19 +175,18 @@ pub fn eval_to_poly_as<C: ArkConfig>(
 }
 
 /// Selected evaluation: keep variable `range.start` free and substitute
-/// `fixed` for the remaining variables. Returns the residual univariate
-/// coefficient polys, or `None` for unsupported shapes.
+/// `fixed_polys` for the remaining variables. Returns the residual
+/// univariate coefficient polys, or `None` for unsupported shapes.
 pub fn selected_eval_to_poly<C: ArkConfig>(
     p: &GOp<C>,
     range: &lang::ast::CRange,
-    fixed: &GOp<C>,
+    fixed_polys: &[Polynomial<C::F>],
     vars: &HashMap<Ref, Var>,
 ) -> Option<Vec<Polynomial<C::F>>> {
     if range.step() != 1 || range.len() != 1 {
         return None;
     }
 
-    let fixed_polys = PolySource::ref_vars(fixed, vars);
     match p.typ() {
         ATyp::VPoly(n, d) if range.end() <= n && fixed_polys.len() == n.saturating_sub(1) => {
             let p_polys = PolySource::ref_vars(p, vars);
@@ -258,6 +257,11 @@ pub fn selected_eval_to_poly<C: ArkConfig>(
 /// 3. `(p, None, None)` — full-grid DFT.
 ///
 /// `(p, Some(_), None)` is unsupported and panics.
+///
+/// Point coordinates are folded to constants where their `pl` definitions
+/// allow (see [`fold_constant`]). At a constant point, the basis weights are
+/// constants, so evaluating an MLE at a hypercube vertex is a single slot
+/// instead of a product of `x_j` and `1 − x_j` over symbolic coordinates.
 pub fn eval_op<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
@@ -265,13 +269,21 @@ pub fn eval_op<C: ArkConfig + HasOpFactory>(
     range: Option<lang::ast::CRange>,
     pts: Option<&GOp<C>>,
 ) {
+    let points = |ctx: &EncodeCtx<'_, C>, xs: &GOp<C>| -> Vec<Polynomial<C::F>> {
+        PolySource::ref_vars(xs, &ctx.ideal.vars)
+            .into_iter()
+            .map(|x| fold_constant(ctx, x))
+            .collect()
+    };
     match (range, pts) {
         (None, Some(xs)) => {
-            let polys = eval_to_poly_as(p, xs, &var.typ, &ctx.ideal.vars);
+            let xs_polys = points(ctx, xs);
+            let polys = eval_to_poly_as(p, &xs_polys, &var.typ, &ctx.ideal.vars);
             link_to_polys(ctx.ideal, var, polys);
         }
         (Some(range), Some(fixed)) => {
-            match selected_eval_to_poly(p, &range, fixed, &ctx.ideal.vars) {
+            let fixed_polys = points(ctx, fixed);
+            match selected_eval_to_poly(p, &range, &fixed_polys, &ctx.ideal.vars) {
                 Some(polys) => {
                     link_to_polys(ctx.ideal, var, polys);
                 }

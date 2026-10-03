@@ -11,17 +11,18 @@ use crate::frontend::Polynomial;
 
 use super::EncodeCtx;
 use super::PolySource;
+use super::fold_constant;
 use super::lagrange_basis;
 use super::link_to_polys;
 
 /// `Op::Interpolate(points, evals)`: bind `var` to the Lagrange
 /// interpolation polynomial through `(points[i], evals[i])`.
 ///
-/// Constant points use precomputed Lagrange basis coefficients.
+/// Constant points use precomputed Lagrange basis coefficients. A point
+/// counts as constant when its `pl` definitions fold to one (see
+/// [`fold_constant`]), as `[0, one, one + one]` does for `one := x - x + 1`.
 /// Symbolic points introduce fresh inverse sentinels for non-constant
 /// denominators.
-///
-/// Falls back to opaque if the point values aren't all constant.
 pub fn interpolate_op<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     var: Var,
@@ -56,6 +57,11 @@ pub fn interpolate_op<C: ArkConfig + HasOpFactory>(
             )
         }
     };
+
+    let xs_polys: Vec<Polynomial<C::F>> = xs_polys
+        .into_iter()
+        .map(|x| fold_constant(ctx, x))
+        .collect();
 
     assert_eq!(
         n,
