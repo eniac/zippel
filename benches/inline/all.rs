@@ -1,14 +1,13 @@
-//! Batch benchmark: run completeness analysis across all protocols,
-//! with and without pl-table inlining.
+//! Batch benchmark: run completeness analysis across all protocols.
 //!
-//! Spawns the `inline` bench binary as a subprocess for each protocol ×
-//! mode, with per-run timeout. Writes incremental JSON results and a
-//! summary table.
+//! Spawns the `inline` bench binary as a subprocess for each protocol,
+//! with per-run timeout. Writes incremental JSON results and a summary
+//! table.
 //!
 //! Usage (via cargo):
 //!   cargo bench --bench `inline_all` -- [--timeout SECS] [--protocols a,b,...]
 //!                                      [--output PATH] [--log PATH]
-//!                                      [--memory-limit-mb MB] [--inline-only]
+//!                                      [--memory-limit-mb MB]
 //!                                      [--path FILE] [--size NAME=VALUE]...
 //!                                      [--dump-dir DIR]
 //!
@@ -17,12 +16,11 @@
 //!   --output            `inline_results.json`
 //!   --log               `inline_all.log`
 //!   --memory-limit-mb   16384  (16 GiB per run)
-//!   --inline-only       off    (runs both inline and no-inline per protocol)
 //!
 //! `--memory-limit-mb`, `--path` and `--size` are forwarded to every `inline`
 //! invocation verbatim (like `--backend`), so `--path` is meant for a single
 //! protocol. `--dump-dir DIR` makes each run write `inline`'s `--dump` to
-//! `DIR/<protocol>_<inline|no_inline>.txt`. `inline` decides
+//! `DIR/<protocol>.txt`. `inline` decides
 //! `ok`/`incomplete`/`crashed`/`oom` for itself (see its own module docs) —
 //! `inline_all` adds only `timeout`, which it alone can observe.
 
@@ -85,8 +83,6 @@ const PROTOCOLS: &[&str] = &[
 struct BenchResult {
     protocol: String,
     #[serde(default)]
-    inline: i32,
-    #[serde(default)]
     status: String,
     #[serde(skip_deserializing, default)]
     wall_s: f64,
@@ -145,9 +141,6 @@ impl BenchResult {
         if !other.protocol.is_empty() {
             self.protocol.clone_from(&other.protocol);
         }
-        if other.inline != 0 || !other.status.is_empty() {
-            self.inline = other.inline;
-        }
         if !other.status.is_empty() {
             self.status.clone_from(&other.status);
         }
@@ -171,10 +164,9 @@ impl BenchResult {
         self.build_ms.unwrap_or(0.0) + self.gb_ms.unwrap_or(0.0) + self.run_ms.unwrap_or(0.0)
     }
 
-    fn failed(protocol: &str, inline: i32, wall_s: f64, status: &str, msg: &str) -> Self {
+    fn failed(protocol: &str, wall_s: f64, status: &str, msg: &str) -> Self {
         Self {
             protocol: protocol.to_string(),
-            inline,
             status: status.to_string(),
             wall_s,
             error: Some(msg.to_string()),
@@ -271,7 +263,6 @@ fn run_one(
     bin: &Path,
     cwd: &Path,
     protocol: &str,
-    no_inline: bool,
     timeout_secs: u64,
     memory_limit_mb: Option<u64>,
     forwarded: &Forwarded<'_>,
@@ -281,9 +272,6 @@ fn run_one(
             .current_dir(cwd)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if no_inline {
-            cmd.arg("--no-inline");
-        }
         if let Some(mb) = memory_limit_mb {
             cmd.args(["--memory-limit-mb", &mb.to_string()]);
         }
@@ -294,8 +282,7 @@ fn run_one(
             cmd.args(["--size", size]);
         }
         if let Some(dir) = forwarded.dump_dir {
-            let label = if no_inline { "no_inline" } else { "inline" };
-            let file = Path::new(dir).join(format!("{protocol}_{label}.txt"));
+            let file = Path::new(dir).join(format!("{protocol}.txt"));
             cmd.arg("--dump").arg(file);
         }
     });
@@ -311,18 +298,10 @@ fn run_one(
         cmd.wrap(JobObject);
     }
 
-    let inline_flag = i32::from(!no_inline);
-
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
-            return BenchResult::failed(
-                protocol,
-                inline_flag,
-                0.0,
-                "crashed",
-                &format!("spawn failed: {e}"),
-            );
+            return BenchResult::failed(protocol, 0.0, "crashed", &format!("spawn failed: {e}"));
         }
     };
 
@@ -373,7 +352,6 @@ fn run_one(
                 let code = status.code().unwrap_or(-1);
                 return BenchResult::failed(
                     protocol,
-                    inline_flag,
                     wall,
                     "crashed",
                     &format!("exit code {code}, stderr: {}", truncate(&stderr, 500)),
@@ -396,7 +374,6 @@ fn run_one(
                     }
                     return BenchResult::failed(
                         protocol,
-                        inline_flag,
                         wall,
                         "timeout",
                         &format!("exceeded {timeout_secs}s timeout"),
@@ -405,13 +382,7 @@ fn run_one(
                 std::thread::sleep(Duration::from_millis(100));
             }
             Err(e) => {
-                return BenchResult::failed(
-                    protocol,
-                    inline_flag,
-                    0.0,
-                    "crashed",
-                    &format!("wait failed: {e}"),
-                );
+                return BenchResult::failed(protocol, 0.0, "crashed", &format!("wait failed: {e}"));
             }
         }
     }
@@ -460,31 +431,12 @@ fn fmt_time(r: &BenchResult) -> String {
     format!("{:.1}ms", r.total_ms())
 }
 
-/// Format the speedup column.
-fn fmt_speedup(inline: &BenchResult, noinline: &BenchResult) -> String {
-    if inline.status == "ok" && noinline.status == "ok" {
-        let a = inline.total_ms();
-        let b = noinline.total_ms();
-        if a > 0.0 {
-            return format!("{:.2}x", b / a);
-        }
-    }
-    if inline.status == "ok" && noinline.status != "ok" {
-        return "N/A (baseline failed)".to_string();
-    }
-    if inline.status != "ok" && noinline.status == "ok" {
-        return "N/A (inline failed)".to_string();
-    }
-    "N/A".to_string()
-}
-
 struct Args {
     timeout: u64,
     output: String,
     log: String,
     protocols: Option<Vec<String>>,
     memory_limit_mb: Option<u64>,
-    inline_only: bool,
     path: Option<String>,
     sizes: Vec<String>,
     dump_dir: Option<String>,
@@ -497,7 +449,6 @@ fn parse_args() -> Args {
     let mut log = "inline_all.log".to_string();
     let mut protocols: Option<Vec<String>> = None;
     let mut memory_limit_mb = Some(DEFAULT_MEMORY_LIMIT_MB);
-    let mut inline_only = false;
     let mut path = None;
     let mut sizes = Vec::new();
     let mut dump_dir = None;
@@ -547,9 +498,6 @@ fn parse_args() -> Args {
                     memory_limit_mb = raw[i].parse().ok();
                 }
             }
-            "--inline-only" => {
-                inline_only = true;
-            }
             _ => {}
         }
         i += 1;
@@ -560,7 +508,6 @@ fn parse_args() -> Args {
         log,
         protocols,
         memory_limit_mb,
-        inline_only,
         path,
         sizes,
         dump_dir,
@@ -607,12 +554,6 @@ fn main() {
 
     let mut results: Vec<BenchResult> = Vec::new();
 
-    let variants: &[(&str, bool)] = if args.inline_only {
-        &[("inline", false)]
-    } else {
-        &[("inline", false), ("no_inline", true)]
-    };
-
     if let Some(dir) = &args.dump_dir
         && let Err(e) = std::fs::create_dir_all(dir)
     {
@@ -626,87 +567,71 @@ fn main() {
     };
 
     for proto in &protocols {
-        for &(label, no_inline) in variants {
-            let prefix = format!("[{proto:>30}] {label:>9} ... ");
-            let result = run_one(
-                &inline_bin,
-                &repo_root,
-                proto,
-                no_inline,
-                args.timeout,
-                args.memory_limit_mb,
-                &forwarded,
-            );
+        let prefix = format!("[{proto:>30}] ... ");
+        let result = run_one(
+            &inline_bin,
+            &repo_root,
+            proto,
+            args.timeout,
+            args.memory_limit_mb,
+            &forwarded,
+        );
 
-            let fmt_ms =
-                |ms: Option<f64>| ms.map_or_else(|| "-".to_string(), |v| format!("{:.1}ms", v));
-            let fmt_usize = |v: Option<usize>| v.map_or_else(|| "-".to_string(), |n| n.to_string());
-            let total =
-                if result.build_ms.is_some() && result.gb_ms.is_some() && result.run_ms.is_some() {
-                    format!("{:.1}ms", result.total_ms())
-                } else {
-                    "-".to_string()
-                };
+        let fmt_ms =
+            |ms: Option<f64>| ms.map_or_else(|| "-".to_string(), |v| format!("{:.1}ms", v));
+        let fmt_usize = |v: Option<usize>| v.map_or_else(|| "-".to_string(), |n| n.to_string());
+        let total =
+            if result.build_ms.is_some() && result.gb_ms.is_some() && result.run_ms.is_some() {
+                format!("{:.1}ms", result.total_ms())
+            } else {
+                "-".to_string()
+            };
 
-            let line = format!(
-                "{prefix}{:>12}  build={}  gb={}  run={}  total={}  basis={}  max_deg={}  vars={}  nodes={}  gen={}  gen_deg={}  gen_vars={}",
-                result.status,
-                fmt_ms(result.build_ms),
-                fmt_ms(result.gb_ms),
-                fmt_ms(result.run_ms),
-                total,
-                fmt_usize(result.basis_size),
-                fmt_usize(result.max_degree),
-                fmt_usize(result.num_vars),
-                fmt_usize(result.graph_size),
-                fmt_usize(result.gen_set_size),
-                fmt_usize(result.gen_set_max_degree),
-                fmt_usize(result.gen_set_num_vars),
-            );
-            tee(&mut log, &line);
+        let line = format!(
+            "{prefix}{:>12}  build={}  gb={}  run={}  total={}  basis={}  max_deg={}  vars={}  nodes={}  gen={}  gen_deg={}  gen_vars={}",
+            result.status,
+            fmt_ms(result.build_ms),
+            fmt_ms(result.gb_ms),
+            fmt_ms(result.run_ms),
+            total,
+            fmt_usize(result.basis_size),
+            fmt_usize(result.max_degree),
+            fmt_usize(result.num_vars),
+            fmt_usize(result.graph_size),
+            fmt_usize(result.gen_set_size),
+            fmt_usize(result.gen_set_max_degree),
+            fmt_usize(result.gen_set_num_vars),
+        );
+        tee(&mut log, &line);
 
-            results.push(result);
-            write_results(
-                Path::new(&args.output),
-                args.timeout,
-                args.memory_limit_mb,
-                &results,
-            );
-        }
+        results.push(result);
+        write_results(
+            Path::new(&args.output),
+            args.timeout,
+            args.memory_limit_mb,
+            &results,
+        );
     }
 
     // Summary table.
     tee(&mut log, "");
-    let sep = "=".repeat(116);
-    let dash = "-".repeat(116);
+    let sep = "=".repeat(60);
+    let dash = "-".repeat(60);
     tee(&mut log, &sep);
     tee(
         &mut log,
-        &format!(
-            "{:>30} | {:>14} | {:>12} | {:>16} | {:>14} | {:>8}",
-            "Protocol",
-            "inline status",
-            "inline time",
-            "no-inline status",
-            "no-inline time",
-            "speedup"
-        ),
+        &format!("{:>30} | {:>12} | {:>12}", "Protocol", "status", "time"),
     );
     tee(&mut log, &dash);
 
-    for chunk in results.chunks(2) {
-        let inline_r = &chunk[0];
-        let noinline_r = chunk.get(1).unwrap_or(inline_r);
+    for r in &results {
         tee(
             &mut log,
             &format!(
-                "{:>30} | {:>14} | {:>12} | {:>16} | {:>14} | {:>8}",
-                inline_r.protocol,
-                inline_r.status,
-                fmt_time(inline_r),
-                noinline_r.status,
-                fmt_time(noinline_r),
-                fmt_speedup(inline_r, noinline_r),
+                "{:>30} | {:>12} | {:>12}",
+                r.protocol,
+                r.status,
+                fmt_time(r)
             ),
         );
     }

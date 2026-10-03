@@ -260,7 +260,7 @@ fn run_completeness_snapshot(entry: &CompletenessEntry) -> Result<(), Failed> {
 
     let normalized = share::thread::run("gb-completeness", move || {
         let dag = compile_to_dag(&path, &sizes);
-        let inputs = CompletenessAnalysis::<ArkBls12_381>::build_inputs(&dag, true);
+        let inputs = CompletenessAnalysis::<ArkBls12_381>::build_inputs(&dag);
         // Without a check, `run()` passes vacuously.
         if inputs.checks.is_empty() {
             return Err(Failed::from("the protocol has no verifier checks"));

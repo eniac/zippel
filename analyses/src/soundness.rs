@@ -19,8 +19,8 @@ use petgraph::visit::EdgeRef;
 use share::Set;
 
 /// Inputs to the soundness search Gröbner basis computation: the
-/// generating set (d-equations + copy TCs + relation, after optional
-/// inlining), the lex ordering, and all state needed by `run()`.
+/// generating set (d-equations + copy TCs + relation, after inlining),
+/// the lex ordering, and all state needed by `run()`.
 ///
 /// Produced by [`SpecialSoundnessAnalysis::build_inputs`]; consumed by
 /// [`SpecialSoundnessAnalysis::from_inputs`]. Splitting construction
@@ -28,7 +28,7 @@ use share::Set;
 /// expensive step.
 pub struct SoundnessInputs<C: ArkConfig> {
     /// The generating set for the search GB (d-equations + copy TCs +
-    /// relation, inlined if requested).
+    /// relation, inlined).
     pub generating_set: Vec<Polynomial<C::F>>,
     /// Lex elimination ordering for the search GB.
     pub lex_order: MonoOrder,
@@ -68,8 +68,6 @@ pub struct SpecialSoundnessAnalysis<C: ArkConfig> {
     lex_order: MonoOrder,
     /// Backend for the validity GB computation in `run()`.
     backend: GbBackendKind,
-    /// Whether to inline the `pl` table before GB computation.
-    inline: bool,
 }
 
 fn format_suffix(prefix: &[usize], copy_idx: usize) -> String {
@@ -153,7 +151,7 @@ fn validate_2n_plus_1<C: ArkConfig>(
 impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
     /// Build the inputs to the search Gröbner basis computation:
     /// construct all d-equations, copy TCs, and relation polys, build the
-    /// lex elimination ordering, and inline the `pl` table if requested.
+    /// lex elimination ordering, and inline the `pl` table.
     ///
     /// This is the cheap phase — no GB computation. Call
     /// [`from_inputs`](Self::from_inputs) to compute the basis, or inspect
@@ -165,7 +163,6 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
     pub fn build_inputs(
         dag: &QDag<C>,
         l_vec: Vec<usize>,
-        inline: bool,
     ) -> Result<SoundnessInputs<C>, AnalysisError<C>> {
         if l_vec.is_empty() || l_vec.iter().any(|l| *l < 2) {
             return Err(AnalysisError::InvalidSoundnessParameter);
@@ -339,10 +336,8 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         }
         let mut rel_locals = extract_locals(&grev_builder, &rel_tc);
         let mut grev_rel_result = grev_builder.build(rel_tc.clone());
-        if inline {
-            rel_locals.inline(&Set::new());
-            grev_rel_result.inline(&Set::new());
-        }
+        rel_locals.inline(&Set::new());
+        grev_rel_result.inline(&Set::new());
 
         grev_search.merge(&grev_rel_result);
 
@@ -399,9 +394,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         let lex_order = MonoOrder::lex(lex_var_order);
 
         // Phase 3a: Inline the search ideal.
-        if inline {
-            grev_search.inline(&Set::new());
-        }
+        grev_search.inline(&Set::new());
 
         Ok(SoundnessInputs {
             generating_set: std::mem::take(&mut grev_search.generating_set),
@@ -426,7 +419,6 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
     pub fn from_inputs(
         inputs: SoundnessInputs<C>,
         backend: GbBackendKind,
-        inline: bool,
     ) -> Result<Self, AnalysisError<C>> {
         let gb = backend.build::<C::F>();
         let search_gb = gb
@@ -448,7 +440,6 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             rel_locals: inputs.rel_locals,
             lex_order: inputs.lex_order,
             backend,
-            inline,
         })
     }
 
@@ -537,9 +528,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         }
 
         self.grev_validity.merge(&self.rel_locals);
-        if self.inline {
-            self.grev_validity.inline(&Set::new());
-        }
+        self.grev_validity.inline(&Set::new());
 
         let backend = self.backend.build::<C::F>();
         let validity_gb = backend
@@ -713,8 +702,8 @@ mod tests {
         dag: &graph::QDag<ArkBls12_381>,
         l_vec: Vec<usize>,
     ) -> Result<SpecialSoundnessAnalysis<ArkBls12_381>, AnalysisError<ArkBls12_381>> {
-        let inputs = SpecialSoundnessAnalysis::build_inputs(dag, l_vec, true)?;
-        SpecialSoundnessAnalysis::from_inputs(inputs, GbBackendKind::default(), true)
+        let inputs = SpecialSoundnessAnalysis::build_inputs(dag, l_vec)?;
+        SpecialSoundnessAnalysis::from_inputs(inputs, GbBackendKind::default())
     }
 
     fn analyze_soundness(
