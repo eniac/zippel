@@ -99,6 +99,9 @@ struct PlonkishInstance<F> {
     v_a: Vec<F>,
     v_b: Vec<F>,
     v_c: Vec<F>,
+    g_shift_a_inv: Vec<F>,
+    g_shift_b_inv: Vec<F>,
+    g_shift_c_inv: Vec<F>,
 }
 
 fn build_v_tree<F: Field + Zero>(leaves: &[F]) -> Vec<F> {
@@ -196,19 +199,28 @@ where
     let r2 = F::rand(rng);
     let r = F::rand(rng);
 
-    // Per-column rational leaves and their grand-product trees.
-    let build_leaves = |s_id: &[F], s_sigma: &[F], w: &[F]| -> Vec<F> {
+    // Per-column inverses of the leaf denominators r + s_sigma + r2*w, the
+    // rational leaves, and their grand-product trees.
+    let shift_inverses = |s_sigma: &[F], w: &[F]| -> Vec<F> {
         (0..num_gates)
             .map(|i| {
-                let num = r + s_id[i] + r2 * w[i];
-                let den = r + s_sigma[i] + r2 * w[i];
-                num * den.inverse().expect("r + s_sigma + r2*w nonzero")
+                (r + s_sigma[i] + r2 * w[i])
+                    .inverse()
+                    .expect("r + s_sigma + r2*w nonzero")
             })
             .collect()
     };
-    let leaves_a = build_leaves(&s_id_a, &s_sigma_a, &a);
-    let leaves_b = build_leaves(&s_id_b, &s_sigma_b, &b);
-    let leaves_c = build_leaves(&s_id_c, &s_sigma_c, &c);
+    let build_leaves = |s_id: &[F], g_shift_inv: &[F], w: &[F]| -> Vec<F> {
+        (0..num_gates)
+            .map(|i| (r + s_id[i] + r2 * w[i]) * g_shift_inv[i])
+            .collect()
+    };
+    let g_shift_a_inv = shift_inverses(&s_sigma_a, &a);
+    let g_shift_b_inv = shift_inverses(&s_sigma_b, &b);
+    let g_shift_c_inv = shift_inverses(&s_sigma_c, &c);
+    let leaves_a = build_leaves(&s_id_a, &g_shift_a_inv, &a);
+    let leaves_b = build_leaves(&s_id_b, &g_shift_b_inv, &b);
+    let leaves_c = build_leaves(&s_id_c, &g_shift_c_inv, &c);
     let v_a = build_v_tree(&leaves_a);
     let v_b = build_v_tree(&leaves_b);
     let v_c = build_v_tree(&leaves_c);
@@ -241,6 +253,9 @@ where
         v_a,
         v_b,
         v_c,
+        g_shift_a_inv,
+        g_shift_b_inv,
+        g_shift_c_inv,
     }
 }
 
@@ -289,5 +304,17 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("v_a_evs".to_string()), Value::VecScalar(inst.v_a)),
         (Vid("v_b_evs".to_string()), Value::VecScalar(inst.v_b)),
         (Vid("v_c_evs".to_string()), Value::VecScalar(inst.v_c)),
+        (
+            Vid("g_shift_a_inv".to_string()),
+            Value::VecScalar(inst.g_shift_a_inv),
+        ),
+        (
+            Vid("g_shift_b_inv".to_string()),
+            Value::VecScalar(inst.g_shift_b_inv),
+        ),
+        (
+            Vid("g_shift_c_inv".to_string()),
+            Value::VecScalar(inst.g_shift_c_inv),
+        ),
     ])
 }
