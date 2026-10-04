@@ -71,6 +71,11 @@ pub struct Ideal<C: ArkConfig> {
     pub origins: Vec<Origin>,
     /// What each `verify` checks. Recorded for reporting only, never a generator.
     pub checks: Vec<Check<C::F>>,
+    /// What each `verify` requires, `b − 1` per checked bool, kept out of the
+    /// generating set. Only filled with
+    /// [`EncodeOptions::separate_goals`](crate::ideal::EncodeOptions); otherwise
+    /// these are generators.
+    pub goals: Vec<Polynomial<C::F>>,
     /// Definitional equations kept out of the generating set: each `Var` maps to
     /// the polynomial it abbreviates, so chains of intermediate DAG nodes can be
     /// substituted away by [`Ideal::inline`] instead of bloating the basis.
@@ -90,6 +95,7 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             generating_set: Vec::new(),
             origins: Vec::new(),
             checks: Vec::new(),
+            goals: Vec::new(),
             pl: Ctx::new(),
             vars: HashMap::new(),
             var_order: Vec::new(),
@@ -170,7 +176,8 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         self.pl.retain(|p, _| basis_vars.contains(p));
     }
 
-    /// Inline all `pl` definitions into the basis polynomials and the checks.
+    /// Inline all `pl` definitions into the basis polynomials, the goals and
+    /// the checks.
     ///
     /// Topologically sorts `pl` entries, substitutes dependencies into
     /// each other to resolve chains, then substitutes the resolved
@@ -182,6 +189,13 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
     /// reads one gets its resolved value. Its raw value can name a variable
     /// whose own definition is substituted away, which would leave that
     /// variable behind, undefined.
+    ///
+    /// A generator that restates a definition, `def − x` for `x := def` as
+    /// `link_to_polys` emits next to each one, is dropped first instead of
+    /// being expanded only to cancel: `x` is substituted by `def` everywhere,
+    /// or, for a transcript variable, its definition stays in `pl`. This is
+    /// only done when the definitions have no cycle, since a cyclic one is
+    /// not substituted away.
     pub fn inline(&mut self, transcript_refs: &Set<Ref>) {
         if self.pl.is_empty() {
             return;
@@ -203,6 +217,7 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             })
             .collect();
 
+        let mut acyclic = true;
         loop {
             let mut next_remaining = Vec::new();
             let mut made_progress = false;
@@ -229,11 +244,18 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
                 for (k, _) in remaining {
                     order.push(k);
                 }
+                acyclic = false;
                 break;
             }
             if remaining.is_empty() {
                 break;
             }
+        }
+
+        if acyclic {
+            // An O(1) copy: `Ctx` shares structure.
+            let pl = self.pl.clone();
+            self.retain_generators(|p| !restates_definition(p, &pl));
         }
 
         for k in &order {
@@ -260,6 +282,10 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             *p = new_p;
         }
         self.retain_generators(|p| !p.is_zero());
+        for goal in self.goals.iter_mut() {
+            *goal = goal.clone().inline_vars(&self.pl).0;
+        }
+        self.goals.retain(|g| !g.is_zero());
         for check in self.checks.iter_mut() {
             check.lhs = check.lhs.clone().inline_vars(&self.pl).0;
             check.rhs = check.rhs.clone().inline_vars(&self.pl).0;
@@ -283,6 +309,7 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         }
         self.generating_set
             .extend(other.generating_set.iter().cloned());
+        self.goals.extend(other.goals.iter().cloned());
         self.checks.extend(other.checks.iter().cloned());
         for (k, v) in other.pl.iter() {
             self.pl.insert(k, v);
@@ -292,6 +319,25 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             self.vars.entry(*k).or_insert_with(|| v.clone());
         }
     }
+}
+
+/// Whether `p` is `def − x` for the definition `x := def` in `defs`.
+fn restates_definition<F: ark_ff::Field>(
+    p: &Polynomial<F>,
+    defs: &Ctx<Var, Polynomial<F>>,
+) -> bool {
+    let minus_one = -F::one();
+    p.terms.iter().any(|(mono, c)| {
+        if *c != minus_one || mono.degree() != 1 {
+            return false;
+        }
+        let Some(x) = mono.vars().pop() else {
+            return false;
+        };
+        defs.get(&x).is_some_and(|def| {
+            def.terms.len() + 1 == p.terms.len() && &(def - &Polynomial::var(&x)) == p
+        })
+    })
 }
 
 impl<C: ArkConfig + HasOpFactory> Default for Ideal<C> {
@@ -354,5 +400,55 @@ mod tests {
             basis_ref
         );
         assert_eq!(vars.len(), 2, "vars() should have exactly 2 elements");
+    }
+
+    /// A scalar instance variable named `name` on node `n`.
+    fn scalar(n: usize, name: &str) -> Var {
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        Var::from_var(name, NodeIndex::new(n), ATyp::scalar(), Qualifier::Instance)
+    }
+
+    #[test]
+    fn inline_drops_a_generator_that_restates_a_kept_definition() {
+        use ark_bls12_381::Fr;
+
+        // `t := a + b` for a transcript variable `t`: `inline` keeps the
+        // definition, so `a + b − t`, which restates it, is dropped instead of
+        // staying behind as a generator.
+        let (a, b, t) = (scalar(0, "a"), scalar(1, "b"), scalar(2, "t"));
+        let def = &Polynomial::<Fr>::var(&a) + &Polynomial::var(&b);
+        let uses_t = &(&Polynomial::<Fr>::var(&t) * &Polynomial::var(&a))
+            - &Polynomial::lit(&Fr::from(1u64));
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+        ideal.pl.insert(&t, &def);
+        ideal.generating_set.push(&def - &Polynomial::var(&t));
+        ideal.generating_set.push(uses_t.clone());
+        let mut transcript = Set::new();
+        transcript.insert(t.reference);
+        ideal.inline(&transcript);
+        assert_eq!(ideal.generating_set, vec![uses_t]);
+        assert_eq!(ideal.pl.get(&t), Some(&def));
+    }
+
+    #[test]
+    fn inline_keeps_a_generator_that_differs_from_the_definition() {
+        use ark_bls12_381::Fr;
+
+        // `x := a + b` next to `a + c − x`, which is not a restatement: it
+        // says `b == c`.
+        let (a, b, c, x) = (
+            scalar(0, "a"),
+            scalar(1, "b"),
+            scalar(2, "c"),
+            scalar(3, "x"),
+        );
+        let var = Polynomial::<Fr>::var;
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+        ideal.pl.insert(&x, &(&var(&a) + &var(&b)));
+        ideal.generating_set.push(&(&var(&a) + &var(&c)) - &var(&x));
+        ideal.inline(&Set::new());
+        assert_eq!(ideal.generating_set, vec![&var(&c) - &var(&b)]);
     }
 }

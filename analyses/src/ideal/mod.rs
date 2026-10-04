@@ -88,6 +88,10 @@ pub struct EncodeOptions {
     /// generate the same ideal, but the definition is substituted away, while
     /// `a − b·t` stays a generator whose leading term usually lies in `a`.
     pub division_definitions: bool,
+    /// Put what each `verify` requires, `b − 1` per checked bool, in
+    /// [`Ideal::goals`] instead of the generating set, so that one build of
+    /// the verifier yields both its computation and what it checks.
+    pub separate_goals: bool,
 }
 
 /// One bool an `assert` or `verify` requires to hold: a leaf of its `&&`

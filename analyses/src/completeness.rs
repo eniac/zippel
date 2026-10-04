@@ -10,7 +10,6 @@ use crate::TransClos;
 use crate::Var;
 use crate::backend::{GbBackendKind, GbBasis, reduce_with_divisors};
 use crate::error::AnalysisError;
-use crate::extractor::extract_locals;
 use crate::frontend::{MonoOrder, Polynomial};
 use crate::ideal::{Check, EncodeOptions, Ideal, IdealBuilder, Origin, Stage, is_division_witness};
 use graph::Ref;
@@ -259,6 +258,44 @@ fn substitute_generators<F: PrimeField>(
         }
     }
     out
+}
+
+/// `goals` without those that are also generators. Linear in the
+/// generators: only those with as many terms as some goal are hashed, and
+/// only those with the same hash are compared.
+fn without_generators<F: PrimeField>(
+    goals: Vec<Polynomial<F>>,
+    generators: &[Polynomial<F>],
+) -> Vec<Polynomial<F>> {
+    let lengths: HashSet<usize> = goals.iter().map(|g| g.terms.len()).collect();
+    let mut buckets: HashMap<(usize, u64), Vec<&Polynomial<F>>> = HashMap::new();
+    for p in generators
+        .iter()
+        .filter(|p| lengths.contains(&p.terms.len()))
+    {
+        buckets
+            .entry((p.terms.len(), fingerprint(p)))
+            .or_default()
+            .push(p);
+    }
+    goals
+        .into_iter()
+        .filter(|g| {
+            buckets
+                .get(&(g.terms.len(), fingerprint(g)))
+                .is_none_or(|ps| !ps.contains(&g))
+        })
+        .collect()
+}
+
+/// A hash of `p` that does not depend on the order of its terms.
+fn fingerprint<F: PrimeField>(p: &Polynomial<F>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    p.terms.iter().fold(0, |acc: u64, term| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        term.hash(&mut hasher);
+        acc.wrapping_add(hasher.finish())
+    })
 }
 
 /// Polynomials longer than this many terms are explained by their size only,
@@ -570,6 +607,7 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
             split_reductions: true,
             relation_asserts: Some(relation_asserts),
             division_definitions: true,
+            separate_goals: true,
         });
 
         let prover_tc = TransClos::prover(dag);
@@ -594,11 +632,10 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
                 _ => None,
             })
             .collect();
-        let mut verifier_locals = extract_locals(&builder, &verifier_tc);
-        verifier_locals.set_stage(Stage::VerifierLocal);
-        verifier_locals.inline(&Set::new());
-
+        // One build gives both: the verifier's computation as generators, and
+        // what its `verify`s require, one `b − 1` per checked bool, as goals.
         let mut verifier_result = builder.build(verifier_tc);
+        verifier_result.set_stage(Stage::VerifierLocal);
         verifier_result.inline(&Set::new());
 
         // The nodes each `verify` checks, now that `builder` knows the
@@ -608,28 +645,25 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
             .flat_map(|exp| builder.collect_and_leaves(exp))
             .flat_map(|leaf| leaf.refs())
             .collect();
-        for origin in &mut verifier_locals.origins {
+        for origin in &mut verifier_result.origins {
             if checked.contains(&origin.node.reference) {
                 origin.stage = Stage::CheckBookkeeping;
             }
         }
 
-        // Merge verifier_locals into prover generating set.
-        let mut origins = if prover_result.origins_aligned() && verifier_locals.origins_aligned() {
+        // Merge the verifier's generators into the prover's.
+        let mut origins = if prover_result.origins_aligned() && verifier_result.origins_aligned() {
             let mut origins = prover_result.origins;
-            origins.extend(verifier_locals.origins);
+            origins.extend(verifier_result.origins);
             origins
         } else {
             Vec::new()
         };
         let mut generating_set = prover_result.generating_set;
-        generating_set.extend(verifier_locals.generating_set);
-        let mut verifier = verifier_result.generating_set;
+        generating_set.extend(verifier_result.generating_set);
 
-        // verifier_locals keeps the `==` node under each `verify`, so its
-        // encoding is already a generator; reducing it again is wasted work.
-        // What is left are the goals, one `b − 1` per checked bool.
-        verifier.retain(|p| !generating_set.contains(p));
+        // A goal that is already a generator holds; reducing it is wasted work.
+        let mut verifier = without_generators(verifier_result.goals, &generating_set);
 
         // `inline` kept the prover-message definitions back in `pl`, already
         // resolved down to non-message variables.
@@ -2765,5 +2799,65 @@ mod tests {
         assert!(by_messages.contains("both sides: v*c"), "{explanation}");
         let by_pin = block("u == v");
         assert!(by_pin.contains("v == s^2"), "{explanation}");
+    }
+
+    #[test]
+    fn separate_goals_moves_what_verify_requires_out_of_the_generators() {
+        use crate::TransClos;
+        use crate::ideal::{EncodeOptions, IdealBuilder};
+
+        let ex = r#"
+            proto two_checks<F: Field>(witness a: F, witness b: F) where a == b {
+                let r = random<F>;
+                x <- a * r;
+                y <- b * r;
+                verify(x == y && x * y == y * x)
+            }"#;
+        let dag = dag_of(ex);
+        let build = |separate_goals| {
+            IdealBuilder::<ArkBls12_381>::with_options(EncodeOptions {
+                split_reductions: true,
+                separate_goals,
+                ..EncodeOptions::default()
+            })
+            .build(TransClos::verifier(&dag))
+        };
+        let together = build(false);
+        let apart = build(true);
+        assert!(together.goals.is_empty());
+        assert_eq!(apart.goals.len(), 2, "one `b − 1` per checked bool");
+        let sorted = |ps: &[Polynomial<ark_bls12_381::Fr>]| {
+            let mut v: Vec<String> = ps.iter().map(ToString::to_string).collect();
+            v.sort();
+            v
+        };
+        let both = [apart.generating_set.clone(), apart.goals.clone()].concat();
+        assert_eq!(sorted(&together.generating_set), sorted(&both));
+    }
+
+    #[test]
+    fn goals_that_are_generators_are_dropped() {
+        use ark_bls12_381::Fr;
+        use backend::ATyp;
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        let var = |n, name| {
+            Polynomial::<Fr>::var(&Var::from_var(
+                name,
+                NodeIndex::new(n),
+                ATyp::scalar(),
+                Qualifier::Instance,
+            ))
+        };
+        let one = Polynomial::lit(&Fr::from(1u64));
+        let (b, c) = (var(0, "b"), var(1, "c"));
+        // `c + 1` has as many terms as `c − 1` but is a different polynomial.
+        let generators = [&b - &one, &c + &one];
+        let goals = vec![&b - &one, &c - &one];
+        assert_eq!(
+            super::without_generators(goals, &generators),
+            vec![&c - &one]
+        );
     }
 }
