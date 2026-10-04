@@ -256,6 +256,17 @@ fn bullet_collect<G: Group, F: Scalar<G>, M: Size, N: 2..M - 1 - (M - 1) / 2 + 1
     |}
 }
 
+// The product of an R1CS matrix with z, for the `where` clause. The matrix
+// MLE takes the row bits first, so entry (i, c) is its evaluation at
+// bits(i) ++ bits(c), least significant bit first.
+fn mat_vec<G: Group, F: Scalar<G>, M: Size>(
+    instance mat: Mle<F, 2 * M>,
+    instance z: [F; 2 ^ M],
+) -> [F; 2 ^ M] {
+    let bits = [[k / 2 ^ j % 2 for j in 0..M] for k in 0..2 ^ M];
+    [reduce(+, [eval(mat, bits[i] ++ bits[c]) * z[c] for c in 0..2 ^ M]) for i in 0..2 ^ M]
+}
+
 proto spartan<G: Group, F: Scalar<G>, M: Size>(
     instance mat_a_t: Mle<F, 2 * M>,
     instance mat_b_t: Mle<F, 2 * M>,
@@ -272,7 +283,15 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     instance g_evs_d2: [G; 3],
     instance h_evs: G,
     instance placeholder_tau: [F; M],
-) where reduce(&&, az * bz == cz) {
+) where
+    // R1CS: (A·z) ∘ (B·z) == C·z for z = w ++ io ++ [1], with az, bz, cz the
+    // three products.
+    let z = w ++ io ++ [1];
+    reduce(&&, az * bz == cz)
+        && reduce(&&, az == mat_vec(mat_a_t, z))
+        && reduce(&&, bz == mat_vec(mat_b_t, z))
+        && reduce(&&, cz == mat_vec(mat_c_t, z))
+{
     let r_rows = [random<F> for _ in 0..2 ^ ((M - 1) / 2)];
     c_rows <- [
         h_base_w * r_rows[i]
