@@ -1,8 +1,7 @@
-//! Single-protocol completeness benchmark with and without pl-table inlining.
+//! Single-protocol completeness benchmark.
 //!
 //! Usage:
-//!   inline [--no-inline] [--backend singular|default]
-//!          [--memory-limit-mb MB] <`protocol_name`>
+//!   inline [--backend singular|default] [--memory-limit-mb MB] <`protocol_name`>
 //!
 //! Prints JSON to stdout with timing and basis size. Status is one of `ok`,
 //! `incomplete`, `crashed` (a real bug/panic), or `oom`.
@@ -133,7 +132,6 @@ fn restore_memory_limit(_previous_soft: u64) {}
 #[derive(Serialize, Default)]
 struct BenchOutput {
     protocol: String,
-    inline: i32,
     status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     build_ms: Option<f64>,
@@ -337,7 +335,6 @@ fn build_sizes_ctx(sizes: &[(&str, usize)]) -> Ctx<Tid, usize> {
 
 fn run_bench(
     protocol: &ProtocolConfig,
-    no_inline: bool,
     backend: GbBackendKind,
     memory_limit_mb: Option<u64>,
 ) -> String {
@@ -346,22 +343,22 @@ fn run_bench(
 
     let source = match std::fs::read_to_string(&path) {
         Ok(s) => s,
-        Err(e) => return json_error(protocol.name, no_inline, &format!("read failed: {e}")),
+        Err(e) => return json_error(protocol.name, &format!("read failed: {e}")),
     };
 
     let (module, diags) = UModule::parse(&source);
     let has_errors = diags.iter().any(|d| d.severity == Severity::Error);
     if has_errors {
-        return json_error(protocol.name, no_inline, "parse errors");
+        return json_error(protocol.name, "parse errors");
     }
     let Some(module) = module else {
-        return json_error(protocol.name, no_inline, "no module");
+        return json_error(protocol.name, "no module");
     };
 
     let ctx = build_sizes_ctx(protocol.sizes);
     let concrete = match module.concretize(&ctx) {
         Ok(c) => c,
-        Err(e) => return json_error(protocol.name, no_inline, &format!("concretize failed: {e}")),
+        Err(e) => return json_error(protocol.name, &format!("concretize failed: {e}")),
     };
 
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(concrete));
@@ -372,13 +369,11 @@ fn run_bench(
         .expect("no protocol found");
     let dag = QualifierPropagation::from_dag(proto);
 
-    let inline = !no_inline;
     let graph_size = dag.node_count();
 
     // Stage 1: Emit graph_size — available before any analysis.
     emit(&BenchOutput {
         protocol: protocol.name.to_string(),
-        inline: i32::from(inline),
         status: "running".to_string(),
         graph_size: Some(graph_size),
         ..Default::default()
@@ -389,7 +384,6 @@ fn run_bench(
     if let Some(limit_mb) = memory_limit_mb {
         let oom_line = serde_json::to_string(&BenchOutput {
             protocol: protocol.name.to_string(),
-            inline: i32::from(inline),
             status: "oom".to_string(),
             ..Default::default()
         })
@@ -405,7 +399,7 @@ fn run_bench(
 
     // Stage 2: Build inputs, compute pre-GB metrics, emit.
     let build_start = Instant::now();
-    let inputs = CompletenessAnalysis::<ArkBls12_381>::build_inputs(&dag, inline);
+    let inputs = CompletenessAnalysis::<ArkBls12_381>::build_inputs(&dag);
     let build_ms = build_start.elapsed().as_secs_f64() * 1000.0;
 
     let gen_set_size = inputs.generating_set.len();
@@ -424,7 +418,6 @@ fn run_bench(
 
     emit(&BenchOutput {
         protocol: protocol.name.to_string(),
-        inline: i32::from(inline),
         status: "running".to_string(),
         build_ms: Some(build_ms),
         graph_size: Some(graph_size),
@@ -458,7 +451,6 @@ fn run_bench(
     // Emit post-GB metrics before run() — survives if run() hangs or is killed.
     emit(&BenchOutput {
         protocol: protocol.name.to_string(),
-        inline: i32::from(inline),
         status: "running".to_string(),
         build_ms: Some(build_ms),
         gb_ms: Some(gb_ms),
@@ -483,7 +475,6 @@ fn run_bench(
 
     serde_json::to_string(&BenchOutput {
         protocol: protocol.name.to_string(),
-        inline: i32::from(inline),
         status: status.to_string(),
         build_ms: Some(build_ms),
         gb_ms: Some(gb_ms),
@@ -500,10 +491,9 @@ fn run_bench(
     .unwrap()
 }
 
-fn json_error(name: &str, no_inline: bool, error: &str) -> String {
+fn json_error(name: &str, error: &str) -> String {
     serde_json::to_string(&BenchOutput {
         protocol: name.to_string(),
-        inline: i32::from(!no_inline),
         status: "crashed".to_string(),
         error: Some(error.to_string()),
         ..Default::default()
@@ -519,7 +509,6 @@ fn main() {
         .filter(|a| a != "--bench")
         .collect();
 
-    let mut no_inline = false;
     let mut backend = GbBackendKind::default();
     let mut memory_limit_mb: Option<u64> = None;
     let mut protocol_name: Option<&str> = None;
@@ -527,7 +516,6 @@ fn main() {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "--no-inline" => no_inline = true,
             "--backend" => {
                 i += 1;
                 if i >= args.len() {
@@ -565,8 +553,7 @@ fn main() {
 
     let Some(protocol_name) = protocol_name else {
         eprintln!(
-            "usage: inline [--no-inline] [--backend singular|default] \
-             [--memory-limit-mb MB] <protocol_name>"
+            "usage: inline [--backend singular|default] [--memory-limit-mb MB] <protocol_name>"
         );
         eprintln!();
         eprintln!("available protocols:");
@@ -586,7 +573,7 @@ fn main() {
     // Run in a thread with a large stack to avoid stack overflow.
     let protocol_clone = protocol.name;
     let result = share::thread::run("inline-bench", move || {
-        run_bench(protocol, no_inline, backend, memory_limit_mb)
+        run_bench(protocol, backend, memory_limit_mb)
     })
     .unwrap_or_else(|payload| {
         let message = payload
@@ -602,7 +589,6 @@ fn main() {
         };
         serde_json::to_string(&BenchOutput {
             protocol: protocol_clone.to_string(),
-            inline: i32::from(!no_inline),
             status: status.to_string(),
             error: Some(message),
             ..Default::default()

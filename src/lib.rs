@@ -495,7 +495,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         let g = self.analyze_graph();
         let name = g.name();
         let mut completeness = CompletenessAnalysis::from_inputs(
-            CompletenessAnalysis::build_inputs(&*g, true),
+            CompletenessAnalysis::build_inputs(&*g),
             analyses::GbBackendKind::default(),
         );
         let result = completeness.run();
@@ -530,9 +530,8 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     ) -> Result<(), analyses::AnalysisError<C>> {
         use analyses::SpecialSoundnessAnalysis;
         let g = self.analyze_graph();
-        let inputs = SpecialSoundnessAnalysis::build_inputs(&*g, l_vec, true)?;
-        SpecialSoundnessAnalysis::from_inputs(inputs, analyses::GbBackendKind::default(), true)?
-            .run()
+        let inputs = SpecialSoundnessAnalysis::build_inputs(&*g, l_vec)?;
+        SpecialSoundnessAnalysis::from_inputs(inputs, analyses::GbBackendKind::default())?.run()
     }
 }
 
