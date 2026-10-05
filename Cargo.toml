@@ -87,13 +87,13 @@ test = false
 harness = false
 
 [[bench]]
-name = "inline"
-path = "benches/inline/main.rs"
+name = "analysis"
+path = "benches/analysis/main.rs"
 test = false
 harness = false
 
 [[bench]]
-name = "inline_all"
-path = "benches/inline/all.rs"
+name = "analysis_all"
+path = "benches/analysis/all.rs"
 test = false
 harness = false

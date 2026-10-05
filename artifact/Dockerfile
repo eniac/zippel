@@ -49,8 +49,8 @@ USER zippel
 # workspace (including the benchmarks crate, a workspace member but not a
 # default-member). `--all-targets` is required for this to touch what the
 # scripts run at all: plain `cargo build` only builds lib/bin targets, not
-# the examples, test harnesses (e.g. `gb_snapshots`), or benches (`inline`,
-# `inline_all`) that the three experiments and smoke_test.sh actually
+# the examples, test harnesses (e.g. `gb_snapshots`), or benches (`analysis`,
+# `analysis_all`) that the three experiments and smoke_test.sh actually
 # invoke. This does NOT eliminate compile time on every `docker run`
 # though: `cargo test -p <crate>` and `cargo bench` each still trigger
 # their own partial recompile the first time that specific command runs

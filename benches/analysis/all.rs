@@ -1,24 +1,31 @@
-//! Batch benchmark: run completeness analysis across all protocols.
+//! Batch benchmark: run one analysis, completeness or special soundness,
+//! across all the protocols registered for it (`analysis --list`).
 //!
-//! Spawns the `inline` bench binary as a subprocess for each protocol,
+//! Spawns the `analysis` bench binary as a subprocess for each protocol,
 //! with per-run timeout. Writes incremental JSON results and a summary
 //! table.
 //!
 //! Usage (via cargo):
-//!   cargo bench --bench `inline_all` -- [--timeout SECS] [--protocols a,b,...]
-//!                                      [--output PATH] [--log PATH]
-//!                                      [--memory-limit-mb MB]
+//!   cargo bench --bench `analysis_all` -- [--analysis completeness|soundness]
+//!                                        [--timeout SECS] [--protocols a,b,...]
+//!                                        [--output PATH] [--log PATH]
+//!                                        [--memory-limit-mb MB]
+//!                                        [--path FILE] [--size NAME=VALUE]...
+//!                                        [--l-vec L1,L2,...]
 //!
 //! Defaults:
+//!   --analysis          `completeness`
 //!   --timeout           1200   (20 minutes per run)
-//!   --output            `inline_results.json`
-//!   --log               `inline_all.log`
+//!   --output            `<analysis>_results.json`
+//!   --log               `<analysis>_all.log`
 //!   --memory-limit-mb   16384  (16 GiB per run)
 //!
-//! `--memory-limit-mb` is forwarded to every `inline` invocation verbatim
-//! (like `--backend`). `inline` decides `ok`/`incomplete`/`crashed`/`oom`
-//! for itself (see its own module docs) — `inline_all` adds only
-//! `timeout`, which it alone can observe.
+//! `--analysis`, `--memory-limit-mb`, `--path`, `--size` and `--l-vec` are
+//! forwarded to every `analysis` invocation verbatim (like `--backend`), so
+//! `--path` and `--l-vec` are meant for a single protocol. `analysis`
+//! decides `ok`/`incomplete`/`failed`/`crashed`/`oom` for itself
+//! (see its own module docs) — `analysis_all` adds only `timeout`, which it
+//! alone can observe.
 
 use std::env;
 use std::fs::{File, OpenOptions};
@@ -38,42 +45,9 @@ use serde::{Deserialize, Serialize};
 /// instead of letting it swap the machine to a halt.
 const DEFAULT_MEMORY_LIMIT_MB: u64 = 16 * 1024;
 
-const PROTOCOLS: &[&str] = &[
-    "sumcheck",
-    "schnorr",
-    "schnorr_3round",
-    "okamoto",
-    "cp",
-    "cds",
-    "hadamard",
-    "coin_proof",
-    "kzg",
-    "mle_sumcheck",
-    "pst13",
-    "bccgp",
-    "groth16",
-    "ipa",
-    "hyrax_podp",
-    "hyrax_pop",
-    "hyrax",
-    "membership",
-    "spartan",
-    "dory",
-    "r1cs_sigma",
-    "hyperplonk_multiset",
-    "hyperplonk_permutation",
-    "hyperplonk_zerocheck",
-    "hyperplonk_productcheck",
-    "hyperplonk",
-    "zk_kzg",
-    "kzh",
-    "dekart",
-    "pari",
-];
-
-/// One benchmark result row. Deserialized from `inline` stdout (which
+/// One benchmark result row. Deserialized from `analysis` stdout (which
 /// may emit multiple partial JSON lines) and serialized to the results
-/// file. `wall_s` is added by `inline_all` (not present in `inline`
+/// file. `wall_s` is added by `analysis_all` (not present in `analysis`
 /// output).
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct BenchResult {
@@ -102,6 +76,20 @@ struct BenchResult {
     gen_set_max_degree: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     gen_set_num_vars: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gen_set_terms: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gen_set_max_terms: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    goals: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    goal_max_degree: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    goal_max_terms: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    peak_rss_mib: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    singular_peak_rss_mib: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
@@ -150,6 +138,13 @@ impl BenchResult {
         take!(gen_set_size);
         take!(gen_set_max_degree);
         take!(gen_set_num_vars);
+        take!(gen_set_terms);
+        take!(gen_set_max_terms);
+        take!(goals);
+        take!(goal_max_degree);
+        take!(goal_max_terms);
+        take!(peak_rss_mib);
+        take!(singular_peak_rss_mib);
         if other.error.is_some() {
             self.error.clone_from(&other.error);
         }
@@ -173,7 +168,8 @@ impl BenchResult {
 
 /// Wrapper for the results JSON file.
 #[derive(Serialize)]
-struct ResultsFile {
+struct ResultsFile<'a> {
+    analysis: &'a str,
     timeout_s: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     memory_limit_mb: Option<u64>,
@@ -193,20 +189,20 @@ fn singular_available() -> bool {
         .is_ok()
 }
 
-/// Build the `inline` bench binary and return its path.
+/// Build the `analysis` bench binary and return its path.
 ///
 /// Uses `cargo bench --no-run --message-format=json` to get the exact
 /// artifact path from the compiler-artifact message. This lets `run_one`
 /// invoke the binary directly instead of going through `cargo bench`,
 /// so killing the child on timeout kills the actual process (not just a
 /// `cargo` wrapper that leaves the bench binary orphaned).
-fn build_inline_binary(repo_root: &Path) -> PathBuf {
-    println!("Building inline (release)...");
+fn build_analysis_binary(repo_root: &Path) -> PathBuf {
+    println!("Building analysis (release)...");
     let output = Command::new("cargo")
         .args([
             "bench",
             "--bench",
-            "inline",
+            "analysis",
             "--no-run",
             "--message-format=json",
         ])
@@ -221,7 +217,7 @@ fn build_inline_binary(repo_root: &Path) -> PathBuf {
     }
 
     // Parse JSON lines to find the compiler-artifact message with the
-    // inline bench executable path.
+    // `analysis` bench executable path.
     let stdout = String::from_utf8_lossy(&output.stdout);
     for line in stdout.lines() {
         if let Ok(msg) = serde_json::from_str::<serde_json::Value>(line)
@@ -230,12 +226,12 @@ fn build_inline_binary(repo_root: &Path) -> PathBuf {
                 .get("target")
                 .and_then(|t| t.get("name"))
                 .and_then(|v| v.as_str())
-                == Some("inline")
+                == Some("analysis")
             && msg
                 .get("target")
                 .and_then(|t| t.get("src_path"))
                 .and_then(|v| v.as_str())
-                .is_some_and(|p| p.ends_with("benches/inline/main.rs"))
+                .is_some_and(|p| p.ends_with("benches/analysis/main.rs"))
             && let Some(exe) = msg.get("executable").and_then(|v| v.as_str())
         {
             let path = PathBuf::from(exe);
@@ -243,8 +239,33 @@ fn build_inline_binary(repo_root: &Path) -> PathBuf {
             return path;
         }
     }
-    eprintln!("ERROR: could not find inline bench binary path in cargo output");
+    eprintln!("ERROR: could not find analysis bench binary path in cargo output");
     std::process::exit(1);
+}
+
+/// The protocols `analysis --list` registers for `analysis`. Exits if the
+/// binary rejects `analysis`.
+fn registered_protocols(bin: &Path, analysis: &str) -> Vec<String> {
+    let output = Command::new(bin)
+        .args(["--analysis", analysis, "--list"])
+        .output()
+        .expect("failed to run the analysis bench binary");
+    if !output.status.success() {
+        eprint!("{}", String::from_utf8_lossy(&output.stderr));
+        std::process::exit(2);
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// Flags passed through to each `analysis` run.
+struct Forwarded<'a> {
+    analysis: &'a str,
+    path: Option<&'a str>,
+    sizes: &'a [String],
+    l_vec: Option<&'a str>,
 }
 
 /// Run one benchmark with timeout. Returns the result and wall time.
@@ -254,14 +275,25 @@ fn run_one(
     protocol: &str,
     timeout_secs: u64,
     memory_limit_mb: Option<u64>,
+    forwarded: &Forwarded<'_>,
 ) -> BenchResult {
     let mut cmd = CommandWrap::with_new(bin, |cmd| {
         cmd.args([protocol, "--backend", "singular"])
+            .args(["--analysis", forwarded.analysis])
             .current_dir(cwd)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         if let Some(mb) = memory_limit_mb {
             cmd.args(["--memory-limit-mb", &mb.to_string()]);
+        }
+        if let Some(path) = forwarded.path {
+            cmd.args(["--path", path]);
+        }
+        for size in forwarded.sizes {
+            cmd.args(["--size", size]);
+        }
+        if let Some(l_vec) = forwarded.l_vec {
+            cmd.args(["--l-vec", l_vec]);
         }
     });
 
@@ -285,9 +317,9 @@ fn run_one(
 
     // ProcessGroup::leader() makes this child the leader of its own new
     // group, so its PGID equals its own PID — record it so a SIGINT/SIGTERM
-    // to inline_all can clean it (and Singular) up too, instead of Ctrl-C
-    // only killing inline_all and orphaning the rest. Dropped (and thus
-    // cleared) automatically on every exit path below.
+    // to `analysis_all` can clean it (and Singular) up too, instead of
+    // Ctrl-C only killing `analysis_all` and orphaning the rest. Dropped
+    // (and thus cleared) automatically on every exit path below.
     #[cfg(unix)]
     let _pgid_guard = {
         CURRENT_CHILD_PGID.store(child.id().cast_signed(), Ordering::SeqCst);
@@ -305,15 +337,15 @@ fn run_one(
                 let stdout = read_stdout(&mut child);
                 if !stdout.is_empty() {
                     let mut result = BenchResult::from_stdout(&stdout, wall);
-                    // inline reports its own status (including "oom") in
-                    // its final JSON line whenever it can. If it couldn't —
+                    // `analysis` reports its own status (including "oom")
+                    // in its final JSON line whenever it can. If it couldn't —
                     // killed by something other than its own reporting path
                     // (e.g. SIGSEGV from an actual bug) — it died before
                     // emitting a final line, leaving only "running" stages
                     // in stdout. Override to "crashed" so "running" doesn't
                     // leak; this is deliberately not reclassified as "oom"
-                    // here — inline is the one that knows whether the limit
-                    // was active when it died, not inline_all.
+                    // here — `analysis` is the one that knows whether the
+                    // limit was active when it died, not `analysis_all`.
                     if !status.success() && result.status == "running" {
                         let stderr = read_stderr(&mut child);
                         result.status = "crashed".to_string();
@@ -391,8 +423,15 @@ fn truncate(s: &str, max: usize) -> String {
 }
 
 /// Write results to JSON file.
-fn write_results(path: &Path, timeout: u64, memory_limit_mb: Option<u64>, results: &[BenchResult]) {
+fn write_results(
+    path: &Path,
+    analysis: &str,
+    timeout: u64,
+    memory_limit_mb: Option<u64>,
+    results: &[BenchResult],
+) {
     let file = ResultsFile {
+        analysis,
         timeout_s: timeout,
         memory_limit_mb,
         results: results.to_vec(),
@@ -410,24 +449,48 @@ fn fmt_time(r: &BenchResult) -> String {
 }
 
 struct Args {
+    analysis: String,
     timeout: u64,
     output: String,
     log: String,
     protocols: Option<Vec<String>>,
     memory_limit_mb: Option<u64>,
+    path: Option<String>,
+    sizes: Vec<String>,
+    l_vec: Option<String>,
 }
 
 fn parse_args() -> Args {
     let raw: Vec<String> = env::args().skip(1).collect();
+    let mut analysis = "completeness".to_string();
     let mut timeout = 1200u64;
-    let mut output = "inline_results.json".to_string();
-    let mut log = "inline_all.log".to_string();
+    let mut output = None;
+    let mut log = None;
     let mut protocols: Option<Vec<String>> = None;
     let mut memory_limit_mb = Some(DEFAULT_MEMORY_LIMIT_MB);
+    let mut path = None;
+    let mut sizes = Vec::new();
+    let mut l_vec = None;
 
     let mut i = 0;
     while i < raw.len() {
         match raw[i].as_str() {
+            "--analysis" => {
+                i += 1;
+                analysis = raw.get(i).cloned().unwrap_or_default();
+            }
+            "--l-vec" => {
+                i += 1;
+                l_vec = raw.get(i).cloned();
+            }
+            "--path" => {
+                i += 1;
+                path = raw.get(i).cloned();
+            }
+            "--size" => {
+                i += 1;
+                sizes.extend(raw.get(i).cloned());
+            }
             "--timeout" => {
                 i += 1;
                 if i < raw.len() {
@@ -436,15 +499,11 @@ fn parse_args() -> Args {
             }
             "--output" => {
                 i += 1;
-                if i < raw.len() {
-                    output.clone_from(&raw[i]);
-                }
+                output = raw.get(i).cloned();
             }
             "--log" => {
                 i += 1;
-                if i < raw.len() {
-                    log.clone_from(&raw[i]);
-                }
+                log = raw.get(i).cloned();
             }
             "--protocols" => {
                 i += 1;
@@ -463,11 +522,15 @@ fn parse_args() -> Args {
         i += 1;
     }
     Args {
+        output: output.unwrap_or_else(|| format!("{analysis}_results.json")),
+        log: log.unwrap_or_else(|| format!("{analysis}_all.log")),
+        analysis,
         timeout,
-        output,
-        log,
         protocols,
         memory_limit_mb,
+        path,
+        sizes,
+        l_vec,
     }
 }
 
@@ -477,15 +540,20 @@ fn main() {
     let args = parse_args();
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
-    // inline_all uses the Singular backend for every benchmark. Fail fast
+    // analysis_all uses the Singular backend for every benchmark. Fail fast
     // with a clear message if it's not installed.
     if !singular_available() {
         eprintln!(
-            "ERROR: Singular is not on PATH. inline_all uses the Singular \
+            "ERROR: Singular is not on PATH. analysis_all uses the Singular \
              GB backend for all benchmarks. Install Singular to run."
         );
         std::process::exit(1);
     }
+
+    let analysis_bin = build_analysis_binary(&repo_root);
+    // Also checks `--analysis`, before anything is written.
+    let registered = registered_protocols(&analysis_bin, &args.analysis);
+    let protocols = args.protocols.clone().unwrap_or(registered);
 
     // Open log file and tee output.
     let log_file = OpenOptions::new()
@@ -502,28 +570,30 @@ fn main() {
         let _ = log.flush();
     };
 
-    let inline_bin = build_inline_binary(&repo_root);
-
-    let protocols: Vec<&str> = args.protocols.as_ref().map_or_else(
-        || PROTOCOLS.to_vec(),
-        |list| list.iter().map(String::as_str).collect(),
-    );
-
     let mut results: Vec<BenchResult> = Vec::new();
+
+    let forwarded = Forwarded {
+        analysis: &args.analysis,
+        path: args.path.as_deref(),
+        sizes: &args.sizes,
+        l_vec: args.l_vec.as_deref(),
+    };
 
     for proto in &protocols {
         let prefix = format!("[{proto:>30}] ... ");
         let result = run_one(
-            &inline_bin,
+            &analysis_bin,
             &repo_root,
             proto,
             args.timeout,
             args.memory_limit_mb,
+            &forwarded,
         );
 
         let fmt_ms =
             |ms: Option<f64>| ms.map_or_else(|| "-".to_string(), |v| format!("{:.1}ms", v));
         let fmt_usize = |v: Option<usize>| v.map_or_else(|| "-".to_string(), |n| n.to_string());
+        let fmt_mib = |v: Option<u64>| v.map_or_else(|| "-".to_string(), |n| format!("{n}MiB"));
         let total =
             if result.build_ms.is_some() && result.gb_ms.is_some() && result.run_ms.is_some() {
                 format!("{:.1}ms", result.total_ms())
@@ -532,7 +602,7 @@ fn main() {
             };
 
         let line = format!(
-            "{prefix}{:>12}  build={}  gb={}  run={}  total={}  basis={}  max_deg={}  vars={}  nodes={}  gen={}  gen_deg={}  gen_vars={}",
+            "{prefix}{:>12}  build={}  gb={}  run={}  total={}  basis={}  max_deg={}  vars={}  nodes={}  gen={}  gen_deg={}  gen_vars={}  gen_terms={}  gen_max_terms={}  goals={}  goal_deg={}  goal_max_terms={}  rss={}  singular_rss={}",
             result.status,
             fmt_ms(result.build_ms),
             fmt_ms(result.gb_ms),
@@ -545,12 +615,20 @@ fn main() {
             fmt_usize(result.gen_set_size),
             fmt_usize(result.gen_set_max_degree),
             fmt_usize(result.gen_set_num_vars),
+            fmt_usize(result.gen_set_terms),
+            fmt_usize(result.gen_set_max_terms),
+            fmt_usize(result.goals),
+            fmt_usize(result.goal_max_degree),
+            fmt_usize(result.goal_max_terms),
+            fmt_mib(result.peak_rss_mib),
+            fmt_mib(result.singular_peak_rss_mib),
         );
         tee(&mut log, &line);
 
         results.push(result);
         write_results(
             Path::new(&args.output),
+            &args.analysis,
             args.timeout,
             args.memory_limit_mb,
             &results,
@@ -588,16 +666,16 @@ fn main() {
 // ---------------------------------------------------------------------
 // Ctrl-C / SIGTERM cleanup.
 //
-// `run_one` puts each `inline` child in its own new process group (see
+// `run_one` puts each `analysis` child in its own new process group (see
 // `ProcessGroup::leader()`) so a timeout can `killpg` just that child (and
-// the Singular subprocess it spawns) without also killing `inline_all`.
+// the Singular subprocess it spawns) without also killing `analysis_all`.
 // That isolation has a side effect: the terminal's Ctrl-C delivers
-// `SIGINT` only to `inline_all`'s own (different) process group, never
-// reaching the child — so without the handler below, `inline_all` would
-// just die and leave `inline`/Singular running, orphaned.
+// `SIGINT` only to `analysis_all`'s own (different) process group, never
+// reaching the child — so without the handler below, `analysis_all` would
+// just die and leave `analysis`/Singular running, orphaned.
 // ---------------------------------------------------------------------
 
-/// PGID of whichever `inline` invocation is currently running, or `0` if
+/// PGID of whichever `analysis` invocation is currently running, or `0` if
 /// none. Read/written only via `Ordering::SeqCst` so the signal handler
 /// (which may run on any thread, at any point) always sees an up-to-date
 /// value.
@@ -605,7 +683,7 @@ fn main() {
 static CURRENT_CHILD_PGID: AtomicI32 = AtomicI32::new(0);
 
 /// Signal handler for `SIGINT`/`SIGTERM`: kill the current child's process
-/// group (if any) before exiting, so Ctrl-C actually cleans up `inline`
+/// group (if any) before exiting, so Ctrl-C actually cleans up `analysis`
 /// and Singular instead of orphaning them. Must only call
 /// async-signal-safe functions — `AtomicI32::load`, `killpg`, and `_exit`
 /// all qualify; nothing here allocates or takes a lock.
