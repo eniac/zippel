@@ -860,6 +860,33 @@ mod tests {
         }
     }
 
+    /// The validity check must establish the relation, not assume it. The
+    /// verifier below checks nothing about `s` or `t`, so it accepts instances
+    /// with `t != s*s`, for which no witness satisfies the `where` clause.
+    /// With only `s == x`, every instance has a witness and the protocol is
+    /// special sound.
+    #[test]
+    fn validity_does_not_assume_the_relation() {
+        let proto = |relation: &str| {
+            format!(
+                r#"
+                proto scope<F: Field>(witness x: F, instance s: F, instance t: F) where {relation} {{
+                    a <- x;
+                    c <- challenge<F>;
+                    z <- a + c;
+                    verify(z == a + c)
+                }}
+            "#
+            )
+        };
+        assert!(analyze_soundness(&proto("s == x"), vec![2]).is_ok());
+        let result = analyze_soundness(&proto("s == x && t == x*x"), vec![2]);
+        assert!(
+            matches!(result, Err(AnalysisError::ExtractorInvalid(_))),
+            "expected ExtractorInvalid, got: {result:?}"
+        );
+    }
+
     #[test]
     fn chaum_pedersen_special_soundness_l2() {
         assert!(analyze_soundness(CHAUM_PEDERSEN_PROTO, vec![2]).is_ok());
