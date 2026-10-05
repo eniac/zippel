@@ -39,7 +39,7 @@ For iteration, narrow the sweep with environment variables:
 SYSTEMS=hyrax THREADS=1,4,8 OUT=hyrax.csv BENCH_SAMPLES=3 benchmarks/run_all.sh
 ```
 
-When `RAYON_NUM_THREADS=T` is set (as `run_all.sh` does), `bench_all` pins
+On Linux, when `RAYON_NUM_THREADS=T` is set (as `run_all.sh` does), `bench_all` pins
 every timed thread (both rayon pools and the main thread, which computes
 zippel's transcript messages) to the first T physical cores, one SMT
 sibling each, and prints the core list in its header. Both sides therefore
@@ -49,6 +49,13 @@ disable pinning, e.g. to pin externally:
 ```sh
 SYSTEMS=hyrax THREADS=1,2,4,8 OUT=hyrax.csv BENCH_NO_PIN=1 numactl --cpunodebind=0 --membind=0 benchmarks/run_all.sh
 ```
+
+On macOS and other non-Linux platforms, `bench_all` automatically runs
+without CPU pinning and reports that pinning is unsupported in its header.
+`RAYON_NUM_THREADS=T` still sets the Rayon worker count, but Zippel's main
+thread can compute concurrently with those workers, so T is not a strict
+CPU budget. To use the same unpinned execution policy on Linux, set
+`BENCH_NO_PIN=1` there too.
 
 ## Folder layout
 
@@ -244,7 +251,8 @@ serialization-format changes.
 - **Look at the spread, not just the mean.** Timings at one thread on a
   loaded server jitter 20-50%. The first sample of each measurement runs
   with cold caches; check whether it is an outlier before averaging it in.
-- **Pinning is on by default.** Without it the scheduler scatters threads
+- **Pinning is on by default on Linux when `RAYON_NUM_THREADS` is set.**
+  Without it the scheduler scatters threads
   across sockets and SMT siblings, which adds NUMA crossbar costs and lets
   either side borrow extra cores. Keep the machine otherwise idle during a
   sweep: other load on the pinned cores skews both sides.

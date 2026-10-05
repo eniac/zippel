@@ -59,8 +59,6 @@ blake2 = "0.10"
 
 merlin = "3"
 rayon = "1"
-# CPU pinning of the timed threads in bench_all (sched_setaffinity).
-libc = "0.2"
 
 rand = { version = "0.8", features = ["std"] }
 clap = { version = "4", features = ["derive"] }
@@ -117,6 +115,10 @@ ark-poly-commit = { version = "0.6", default-features = false, features = ["para
 ark-groth16 = { version = "0.6", default-features = false, features = ["parallel"] }
 ark-crypto-primitives = { version = "0.6", default-features = false, features = ["sponge", "signature", "parallel"] }
 ark-secp256k1 = { version = "0.6", default-features = false }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# CPU pinning of the timed threads in bench_all (sched_setaffinity).
+libc = "0.2"
 
 [dev-dependencies]
 criterion = "0.5"

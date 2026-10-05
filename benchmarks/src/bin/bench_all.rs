@@ -1095,6 +1095,7 @@ fn timed_pool() -> &'static rayon::ThreadPool {
 
 /// One logical CPU per physical core (the lowest-numbered SMT sibling),
 /// in ascending order, read from sysfs; `0..n` if sysfs is unavailable.
+#[cfg(target_os = "linux")]
 fn physical_cpus() -> Vec<usize> {
     let n = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
     let cpus: Vec<usize> = (0..n)
@@ -1115,6 +1116,7 @@ fn physical_cpus() -> Vec<usize> {
 }
 
 /// Restricts the calling thread to `cpus`.
+#[cfg(target_os = "linux")]
 fn pin_current_thread(cpus: &[usize]) {
     // SAFETY: `set` is a plain bitmask initialised by CPU_ZERO/CPU_SET and
     // passed with its own size; pid 0 is the calling thread.
@@ -1128,6 +1130,10 @@ fn pin_current_thread(cpus: &[usize]) {
     }
 }
 
+/// CPU pinning is unavailable on non-Linux platforms.
+#[cfg(not(target_os = "linux"))]
+fn pin_current_thread(_cpus: &[usize]) {}
+
 /// The CPUs the timed threads run on when `RAYON_NUM_THREADS = T` is set:
 /// T distinct physical cores. `None` (no pinning) when T is unset or
 /// `BENCH_NO_PIN` is set.
@@ -1136,6 +1142,7 @@ fn pin_current_thread(cpus: &[usize]) {
 /// and the main thread (which computes zippel's transcript messages) are
 /// all confined to these cores, so both sides get exactly T cores; the
 /// untimed setup pool keeps every core.
+#[cfg(target_os = "linux")]
 fn pin_timed_threads(num_threads: usize) -> Option<Vec<usize>> {
     if num_threads == 0 || std::env::var_os("BENCH_NO_PIN").is_some() {
         return None;
@@ -1147,6 +1154,13 @@ fn pin_timed_threads(num_threads: usize) -> Option<Vec<usize>> {
         cpus.len()
     );
     Some(cpus[..num_threads].to_vec())
+}
+
+/// Runs without CPU pinning on non-Linux platforms; Rayon still honors
+/// the requested worker count.
+#[cfg(not(target_os = "linux"))]
+fn pin_timed_threads(_num_threads: usize) -> Option<Vec<usize>> {
+    None
 }
 
 fn main() {
@@ -1211,8 +1225,8 @@ fn main() {
         .build()
         .expect("init rayon timed pool");
     // The main thread runs the zippel runtime's transcript loop, which
-    // computes prover messages: it shares the same T cores. (It only
-    // blocks while `setup_pool().install` runs setup on the other pool.)
+    // computes prover messages: when pinned, it shares the same T cores.
+    // It only blocks while `setup_pool().install` runs setup on the other pool.
     if let Some(cpus) = &pinned {
         pin_current_thread(cpus);
     }
@@ -1325,6 +1339,9 @@ fn main() {
     eprintln!("threads : {} (RAYON_NUM_THREADS or default)", threads);
     match &pinned {
         Some(cpus) => eprintln!("pinned  : timed threads on physical cores {cpus:?}"),
+        None if !cfg!(target_os = "linux") => {
+            eprintln!("pinned  : no (CPU pinning unsupported on this platform)");
+        }
         None => eprintln!("pinned  : no (RAYON_NUM_THREADS unset or BENCH_NO_PIN set)"),
     }
     eprintln!("out     : {}", args.out.display());
