@@ -6,7 +6,8 @@ use backend::ArkConfig;
 use backend::op::HasOpFactory;
 use graph::{GOp, Node, Op, QDag, Ref, mk};
 use petgraph::graph::NodeIndex;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::fmt;
 
 fn named_var(
@@ -70,6 +71,12 @@ fn collect_reachable_backward<C: ArkConfig>(
     done.into_iter().filter(|&n| dag[n].is_op()).collect()
 }
 
+/// `nodes` in topological order: of the nodes whose dependencies in `nodes`
+/// are all placed, the one with the least `NodeIndex` comes next.
+///
+/// The order depends only on the graph, not on hashing, so the closure, the
+/// generators encoded from it and the auxiliary variables they mint are the
+/// same on every run.
 fn topo_sort_nodes<C: ArkConfig>(dag: &QDag<C>, nodes: &HashSet<NodeIndex>) -> Vec<NodeIndex> {
     let mut in_degree: HashMap<NodeIndex, usize> = HashMap::with_capacity(nodes.len());
     for &node in nodes {
@@ -77,20 +84,20 @@ fn topo_sort_nodes<C: ArkConfig>(dag: &QDag<C>, nodes: &HashSet<NodeIndex>) -> V
         in_degree.insert(node, deg);
     }
 
-    let mut queue: VecDeque<NodeIndex> = in_degree
+    let mut ready: BinaryHeap<Reverse<NodeIndex>> = in_degree
         .iter()
         .filter(|&(_, &deg)| deg == 0)
-        .map(|(&node, _)| node)
+        .map(|(&node, _)| Reverse(node))
         .collect();
 
     let mut result = Vec::with_capacity(nodes.len());
-    while let Some(node) = queue.pop_front() {
+    while let Some(Reverse(node)) = ready.pop() {
         result.push(node);
         for dependent in dag.nodes_from(node) {
             if let Some(deg) = in_degree.get_mut(&dependent) {
                 *deg -= 1;
                 if *deg == 0 {
-                    queue.push_back(dependent);
+                    ready.push(Reverse(dependent));
                 }
             }
         }
@@ -834,5 +841,30 @@ mod tests {
 
         let tc = TransClos::relation(&g);
         verify_topo_order(&tc);
+    }
+
+    /// Independent nodes come in the order the graph creates them, not in
+    /// hash order, so every build gives the same closure.
+    #[test]
+    fn trans_clos_orders_independent_nodes_by_creation() {
+        let g = make_qualified_dag(
+            r#"
+            proto order<F: Field>(witness a: F, witness b: F, witness c: F) where a == a {
+                let x = c * c;
+                let y = b * b;
+                let z = a * a;
+                t <- x + y + z;
+                verify(t == t)
+            }"#,
+        );
+
+        let names = |tc: TransClos<ArkBls12_381>| -> Vec<String> {
+            tc.clos.into_iter().map(|(v, _)| v.name).collect()
+        };
+        let first = names(TransClos::prover(&g));
+        assert_eq!(first[..3], ["x", "y", "z"], "closure: {first:?}");
+        for _ in 0..10 {
+            assert_eq!(names(TransClos::prover(&g)), first);
+        }
     }
 }
