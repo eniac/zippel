@@ -191,7 +191,6 @@ impl CModule {
             diags.push(d);
         }
         // TODO: Checks that follow calls belong here, after inference, not in `UModule::parse`:
-        //   - check_relation_assertion (proto relation has assert, direct or transitive)
         //   - check_proto_verify (E0013: proto body has verify, direct or transitive);
         //     `semantic::verify` implements it but resolves calls by name, ignoring overloads,
         //     so it is not enabled.

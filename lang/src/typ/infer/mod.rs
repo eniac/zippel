@@ -837,7 +837,7 @@ impl Typeable for CExp {
                 }
             }
 
-            CExp::Assert(exp) | CExp::Verify(exp) => {
+            CExp::Verify(exp) => {
                 let t = exp
                     .infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;

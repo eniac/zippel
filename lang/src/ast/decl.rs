@@ -291,8 +291,8 @@ impl CBody {
     ///
     /// # Errors
     /// Returns a `TypeError` if inference of the relation or body fails; if a
-    /// protocol relation is not relation-pure (mentions `Challenge`, `Log`,
-    /// `Verify`, or `Assert`); if the relation does not infer to `Bool`; if a
+    /// protocol relation is not relation-pure (mentions `Challenge`, `Log`, or
+    /// `Verify`); if the relation does not infer to `Bool`; if a
     /// protocol body does not infer to `Unit`; or if a function body's type has
     /// no least upper bound with the declared return type.
     pub fn typecheck(&self, sig: CSig, fctx: &Set<CSig>) -> Result<(), TypeError> {
@@ -310,7 +310,7 @@ impl CBody {
         }
         match self {
             Body::Proto { body, relation } => {
-                // Relation must be relation-pure (no Challenge/Log/Verify/Assert)
+                // Relation must be relation-pure (no Challenge/Log/Verify)
                 if !relation.node.is_relation_pure() {
                     return Err(TypeError::decl(
                         &sig.name,

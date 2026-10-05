@@ -228,7 +228,7 @@ fn visit<'a>(
         }
 
         // ── Binary sub-expressions ──────────────────────────────────────
-        Exp::Assert(a) | Exp::Verify(a) => {
+        Exp::Verify(a) => {
             stack.push(Work::Expr(a));
         }
         Exp::Bin(_, a, b) => {
@@ -305,11 +305,9 @@ fn is_pure_no_app(exp: &Spanned<UExp>) -> bool {
         match &e.node {
             Exp::App(_, _) => return false,
             // Impure constructs
-            Exp::Log(_, _, _)
-            | Exp::Challenge(_, _)
-            | Exp::Random(_, _)
-            | Exp::Assert(_)
-            | Exp::Verify(_) => return false,
+            Exp::Log(_, _, _) | Exp::Challenge(_, _) | Exp::Random(_, _) | Exp::Verify(_) => {
+                return false;
+            }
             // Pure leaves
             Exp::Lit(_) | Exp::Unit | Exp::Var(_) | Exp::Range(_) => {}
             // Unary

@@ -14,7 +14,7 @@ use lang::typ::{Distribution, Nothing, Qualifier};
 use petgraph::graph::NodeIndex;
 use rand::rngs::ThreadRng;
 use share::Ctx;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// Type alias for test configuration (BLS12-381 curve)
@@ -122,7 +122,8 @@ pub fn execute_graph_all<C: ArkConfig>(
 ///
 /// Pre-populates the `Ref` → `Value<C>` env with input bindings for each
 /// `Node::Arg`, then walks the DAG in topological order and calls
-/// `eval_op` on every Op/Transcr node, inserting each result into the env
+/// `eval_op` on every Op/Transcr node outside the `where` clause's relation
+/// (see [`relation_nodes`]), inserting each result into the env
 /// keyed by `Ref(node_idx)`. Returns both the populated NodeIndex→Value
 /// map (used by `execute_graph_all`) and the last computed value (used by
 /// `execute_graph`).
@@ -147,11 +148,15 @@ fn execute_graph_inner<C: ArkConfig>(
         }
     }
 
+    let relation = relation_nodes(dag);
     let mut rng = ThreadRng::default();
     let mut topo = Topo::new(graph);
     let mut last_op_value = None;
 
     while let Some(node_idx) = topo.next(graph) {
+        if relation.contains(&node_idx) {
+            continue;
+        }
         match &dag[node_idx] {
             Node::Inp(_) | Node::Rel(_) | Node::Arg(_, _, _, _, _) => {}
             Node::Op(op, _) | Node::Transcr(op, _) => {
@@ -166,6 +171,24 @@ fn execute_graph_inner<C: ArkConfig>(
     }
 
     (computed, last_op_value)
+}
+
+/// The `where` clause's relation: its `Assert` and everything that `Assert`
+/// depends on. The relation is lowered into nodes of its own, so the walk
+/// never reaches the body. Only the static analyses read it, so the executor
+/// skips it.
+fn relation_nodes<C: ArkConfig>(dag: &UDag<C>) -> HashSet<NodeIndex> {
+    let mut seen = HashSet::new();
+    let mut worklist: Vec<NodeIndex> = dag
+        .node_indices()
+        .filter(|&n| matches!(&dag[n], Node::Op(op, _) if matches!(&**op, Op::Assert(_))))
+        .collect();
+    while let Some(n) = worklist.pop() {
+        if seen.insert(n) {
+            worklist.extend(dag.nodes_to(n));
+        }
+    }
+    seen
 }
 
 /// Create a scalar field value for testing

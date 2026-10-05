@@ -20,10 +20,10 @@ use super::PolySource;
 ///   d_j * inv_j + b_j - 1 = 0    (inv_j is a fresh sentinel var)
 ///   d_j * b_j = 0
 ///
-/// This connects `b` to `x` and `y` in the ideal, so that `assert(b)`
-/// (which adds `b - 1 = 0`) lets the GB solver reduce back to
-/// `x_j - y_j = 0` via:
-///   b_j = 1  (from assert)
+/// This connects `b` to `x` and `y` in the ideal, so that asserting `b`
+/// (the `where` clause or a `verify`, which adds `b - 1 = 0`) lets the GB
+/// solver reduce back to `x_j - y_j = 0` via:
+///   b_j = 1  (asserted)
 ///   d_j * b_j = 0  →  d_j = 0  →  x_j - y_j = 0
 ///
 /// For `Vec<Bool, N>` results, the encoding is applied element-wise.
