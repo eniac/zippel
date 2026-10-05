@@ -58,10 +58,10 @@ pub(crate) fn valid_extractor<C: ArkConfig>(witness_typ: &ATyp, poly: &Polynomia
 /// arguments and other witnesses, collectively serving as Skolem function
 /// for the existentially quantified intermediates.
 ///
-/// ## Replacing Verify nodes
+/// ## Replacing Verify and Assert nodes
 ///
-/// `Op::Verify(exp)` entries represent verifier checks,
-/// not definitions. They are neutralised to `Op::Ref(var)` — an identity
+/// `Op::Verify(exp)` and `Op::Assert(exp)` entries are checks, not
+/// definitions. They are neutralised to `Op::Ref(var)` — an identity
 /// operation that defines the result Var without emitting any assertion
 /// polynomial. The `Op::Assert` node is left untouched — it is the `where`
 /// clause, not a verifier check.
@@ -93,9 +93,11 @@ fn strip_verify<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> TransClos<C> 
     tc_no_verify
 }
 
+/// `op` with every `Verify` and `Assert` in it replaced by an identity on
+/// `result`.
 fn strip_verify_op<C: ArkConfig + HasOpFactory>(op: GOp<C>, result: &Var) -> GOp<C> {
     match op {
-        Op::Verify(_) => Op::Ref(
+        Op::Verify(_) | Op::Assert(_) => Op::Ref(
             backend::op::Ref(result.reference.node()),
             result.typ.clone(),
         ),
