@@ -95,8 +95,9 @@ pub enum Op<C: ArkConfig, R> {
     /// Explicit-domain reduce-map: `reduce(op, [body for x in domain])`.
     ReduceMap(BinOp, HOp<C>, HOp<C>),
 
-    /// Prover-side assertion: asserts that the operand is true at proving time.
-    /// If the assertion fails, the prover aborts with `AssertionFailed`.
+    /// The `where` clause: the relation the protocol proves, which the graph
+    /// wraps in this node. The static analyses read it; nothing executes it.
+    /// `assert` is not part of the language, so this is the only `Assert`.
     Assert(HOp<C>),
     /// Verifier-side check: verifies that the operand is true at verification time.
     Verify(HOp<C>),
@@ -1035,8 +1036,7 @@ impl<C: HasOpFactory> GOp<C> {
         Op::Vec(vs.into_iter().map(mk::<C>).collect())
     }
 
-    /// Builds a prover-side assertion; the operand must evaluate to `Bool` at proving
-    /// time or the prover aborts.
+    /// Builds the `Assert` that wraps a protocol's `where` clause; see [`Op::Assert`].
     pub fn assert(op: GOp<C>) -> GOp<C> {
         Op::Assert(mk::<C>(op))
     }

@@ -760,8 +760,8 @@ impl<C: ArkConfig, A> Dag<C, A> {
             .collect()
     }
 
-    /// Get all verifier checks: `Verify` nodes with no outgoing edges.
-    /// `Assert` nodes are prover-side and excluded.
+    /// Get all verifier checks: `Verify` nodes with no outgoing edges. The
+    /// `where` clause's `Assert` is not a check and is excluded.
     pub fn find_verify(&self) -> Vec<NodeIndex> {
         self.node_indices()
             .filter(|&n| match &self[n] {
@@ -773,66 +773,12 @@ impl<C: ArkConfig, A> Dag<C, A> {
             .collect()
     }
 
-    /// Get all prover assertions: `Assert` nodes with no outgoing edges.
-    /// `Verify` nodes are verifier-side and excluded.
-    fn find_assert(&self) -> Vec<NodeIndex> {
-        self.node_indices()
-            .filter(|&n| match &self[n] {
-                Node::Op(op, _) | Node::Transcr(op, _) => {
-                    matches!(&**op, Op::Assert(_)) && self.nodes_from(n).count() == 0
-                }
-                _ => false,
-            })
-            .collect()
-    }
-
-    /// Every node belonging to the specification relation: the `Node::Rel`
-    /// markers and everything forward-reachable from them.
-    ///
-    /// The `where` clause is lowered with its own `ArgKind::Relation`
-    /// argument nodes (see the `CBody::Proto` arm of `add_top_exp`) precisely
-    /// so that walking it never crosses into the protocol body — which is
-    /// what makes this set disjoint from the body's nodes.
-    fn relation_nodes(&self) -> HashSet<NodeIndex> {
-        let mut seen: HashSet<NodeIndex> = HashSet::new();
-        let mut worklist: Vec<NodeIndex> = self
-            .node_indices()
-            .filter(|&n| self[n].is_relation())
-            .collect();
-        while let Some(n) = worklist.pop() {
-            if seen.insert(n) {
-                worklist.extend(self.nodes_from(n));
-            }
-        }
-        seen
-    }
-
     /// Seeds for the prover projection — the nodes whose values the prover
-    /// is actually obliged to produce:
-    ///
-    /// - transcript nodes, which carry the proof values, and
-    /// - terminal `Assert` nodes written in the protocol *body*, which are
-    ///   prover-side runtime checks.
-    ///
-    /// The `where` clause is deliberately not a seed. It is the protocol's
-    /// *specification*: it is auto-wrapped in an `Assert` (see the
-    /// `CBody::Proto` arm of `add_top_exp`) but quantifies over trusted-setup
-    /// trapdoors the prover does not hold (`random<F>`), so it is neither
-    /// checkable nor meaningful at proving time. Seeding from it pulled the
-    /// entire relation into every `run_prover` call — pst13's `2^N`-wide
-    /// `eq_alpha` product, groth16's `2^M` SRS scalar mults — for a result
-    /// nothing reads. The static analyses run on the full protocol DAG
-    /// (`ZippelHandler::analyze_graph`), not on this projection, so they
-    /// still see the relation.
+    /// is obliged to produce: the transcript nodes, which carry the proof
+    /// values. The `where` clause's `Assert` is not a seed; only the static
+    /// analyses, which run on the full DAG, read it.
     fn prover_roots(&self) -> Vec<NodeIndex> {
-        let relation = self.relation_nodes();
-        let mut roots = self.transcript_nodes();
-        roots.extend(
-            self.find_assert()
-                .into_iter()
-                .filter(|n| !relation.contains(n)),
-        );
-        roots
+        self.transcript_nodes()
     }
 
     /// Successors of `n`: the nodes that consume it or follow it in the
@@ -983,8 +929,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
 
     /// Get the prover graph, by reachability analysis starting from the transcript nodes
     ///
-    /// Seeds are `prover_roots` — the transcript nodes plus terminal
-    /// `Assert` nodes outside the relation — and the walk runs backwards along
+    /// Seeds are `prover_roots` and the walk runs backwards along
     /// incoming edges. The input marker and its `Arg` nodes are replicated
     /// first so the projection keeps index 0 as its input and the same argument
     /// structure. Returns the projected DAG together with the map from source
@@ -1745,9 +1690,10 @@ impl<C: HasOpFactory> UDag<C> {
                     }
                 }
                 // Lower the relation as a single Bool expression and wrap it
-                // in an Assert node. The `where` clause infers to Bool; the
-                // graph auto-wraps it so users write `where x == y && z == w`
-                // without explicit `assert(...)`.
+                // in an Assert node. The `where` clause infers to Bool, and
+                // this is the only Assert in the graph: `assert` is not part
+                // of the language, so the analyses never meet a condition the
+                // developer states.
                 let rel_op = self.add_exp(
                     relation,
                     &mut start,
@@ -1934,14 +1880,13 @@ impl<C: HasOpFactory> UDag<C> {
     /// level); `vctx` is already extended with their CTyps. `Ok(None)` means
     /// the template declines and the caller falls back to the unroll lowerer.
     ///
-    /// `CExp::Assert` and `CExp::Verify` are intentionally not handled here —
-    /// the catch-all `_ => Ok(None)` declines them, forcing the unroll path
-    /// which creates top-level `Node::assert`/`Node::verify` graph nodes (one
-    /// per element). This ensures `Op::Assert`/`Op::Verify` never appears
-    /// nested inside an `Op::Map` or `Op::ReduceMap` op tree, so `find_verify`
-    /// and `find_assert` (which only inspect top-level node ops) and the
-    /// runtime's `check_results` map (keyed by `NodeIndex`) always find every
-    /// Assert/Verify.
+    /// `CExp::Verify` is intentionally not handled here — the catch-all
+    /// `_ => Ok(None)` declines it, forcing the unroll path which creates
+    /// top-level `Node::verify` graph nodes (one per element). This ensures
+    /// `Op::Verify` never appears nested inside an `Op::Map` or
+    /// `Op::ReduceMap` op tree, so `find_verify` (which only inspects
+    /// top-level node ops) and the runtime's `check_results` map (keyed by
+    /// `NodeIndex`) always find every Verify.
     ///
     /// `expected` is the type the body's value must take, if any: finite-index leaves it
     /// declares field elements are embedded into the field (see [`coerce_field_op`]).
@@ -2428,7 +2373,7 @@ impl<C: HasOpFactory> UDag<C> {
             | CExp::Reduce(_, p)
             | CExp::Proj(p, _)
             | CExp::Neg(p) => Self::exp_mentions_free_var(p, target),
-            CExp::Assert(exp) | CExp::Verify(exp) => Self::exp_mentions_free_var(exp, target),
+            CExp::Verify(exp) => Self::exp_mentions_free_var(exp, target),
             CExp::Vec(xs) | CExp::App(_, xs) => {
                 xs.0.iter().any(|x| Self::exp_mentions_free_var(x, target))
             }
@@ -2911,7 +2856,6 @@ impl<C: HasOpFactory> UDag<C> {
                     // Update transcript node
                     *transcr = nchallenge;
 
-                    // If the challenge is non-zero, add a prover assertion
                     return Ok(GOp::underscore(nchallenge, at));
                 }
                 CExp::Random(_, non_zero) => {
@@ -3168,17 +3112,6 @@ impl<C: HasOpFactory> UDag<C> {
                         None => return Ok(GOp::Value(backend::Value::Unit)),
                     }
                 }
-                CExp::Assert(deref!(exp)) => {
-                    let oa =
-                        self.add_exp(exp, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
-                    // Add new node
-                    let nassert = self.add_node(Node::assert(&oa), span.clone());
-                    // Add edges
-                    self.add_edges(edge_type, nassert, oa);
-                    // Assert is prover-side — no transcript edge.
-                    // Returns Unit value; sequencing via Let(None, ...) discards it.
-                    return Ok(GOp::Value(backend::Value::Unit));
-                }
                 CExp::Verify(deref!(exp)) => {
                     let oa =
                         self.add_exp(exp, transcr, edge_type, kctx, fctx, &vctx, &vars, None)?;
@@ -3186,7 +3119,7 @@ impl<C: HasOpFactory> UDag<C> {
                     let nverify = self.add_node(Node::verify(&oa), span.clone());
                     self.add_edges(edge_type, nverify, oa);
                     // No transcript edge — the Op::Verify variant itself
-                    // distinguishes verifier checks from prover assertions.
+                    // marks the node as a verifier check.
                     // Returns Unit value; sequencing via Let(None, ...) discards it.
                     return Ok(GOp::Value(backend::Value::Unit));
                 }

@@ -90,8 +90,8 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     /// TODO(egg): This is a manual, ad-hoc peeling of `&&` chains to avoid
     /// high-degree product polynomials in the GB generating set. Once the
     /// planned `egg`-based optimization layer is in place (see upstream PR),
-    /// this should be replaced by a proper e-graph rewrite that flattens
-    /// `assert(a && b && ...)` into `assert(a); assert(b); ...` as a
+    /// this should be replaced by a proper e-graph rewrite that flattens an
+    /// asserted `a && b && ...` into one assertion per conjunct as a
     /// canonicalization rule, rather than special-casing it here.
     pub(crate) fn collect_and_leaves(&self, exp: &HOp<C>) -> Vec<HOp<C>> {
         fn collect<C: ArkConfig + HasOpFactory>(

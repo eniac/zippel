@@ -45,7 +45,7 @@ pub enum Context {
     RangeBound,
     /// Arguments inside `(...)` of a comma-separated function call or builtin
     /// operator (e.g. `dot(a, b)`, `poly(a)`, `f(a, b)`). Not used for
-    /// `assert`/`verify` which use `==` between their two arguments.
+    /// `verify`, which uses `==` between its two operands.
     CallArgs,
 }
 

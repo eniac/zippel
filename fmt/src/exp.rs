@@ -339,14 +339,6 @@ fn format_exp(
                 .group();
             (gap, doc)
         }
-        Exp::Assert(exp) => format_assertion(
-            "assert",
-            |t| matches!(t, Token::KwAssert),
-            exp,
-            cursor,
-            end,
-            style,
-        ),
         Exp::Verify(exp) => format_assertion(
             "verify",
             |t| matches!(t, Token::KwVerify),

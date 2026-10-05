@@ -96,10 +96,6 @@ fn evaluate_selected<N: ExpLiteral>(
         Some(Box::new(fixed)),
     ))
 }
-fn assert_eq<N: ExpLiteral>(lhs: Spanned<Exp<N>>, rhs: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
-    let equ = Spanned::dummy(Exp::Bin(BinOp::Equ, Box::new(lhs), Box::new(rhs)));
-    Spanned::dummy(Exp::Assert(Box::new(equ)))
-}
 fn verify_eq<N: ExpLiteral>(lhs: Spanned<Exp<N>>, rhs: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     let equ = Spanned::dummy(Exp::Bin(BinOp::Equ, Box::new(lhs), Box::new(rhs)));
     Spanned::dummy(Exp::Verify(Box::new(equ)))
@@ -1297,28 +1293,6 @@ fn test_log_inference() {
 
     assert_eq!(
         log_exp.infer(&KIND_CTX, &fctx, &vctx),
-        Ok(CTyp::Base(Tid::from("F")))
-    );
-}
-
-#[test]
-fn test_assert_inference() {
-    let fctx = Set::new();
-    let vctx = VAR_CTX.clone();
-
-    // assert_eq returns Unit
-    let assert_exp = assert_eq(varstr("f1"), varstr("f2"));
-
-    assert_eq!(assert_exp.infer(&KIND_CTX, &fctx, &vctx), Ok(CTyp::Unit));
-
-    // assert_eq with mismatched operand types should fail
-    let assert_bad = assert_eq(varstr("f1"), varstr("g1"));
-    assert!(assert_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
-
-    // seq(assert, cont) returns cont's type
-    let seq_exp = seq(assert_eq(varstr("f1"), varstr("f2")), varstr("f1"));
-    assert_eq!(
-        seq_exp.infer(&KIND_CTX, &fctx, &vctx),
         Ok(CTyp::Base(Tid::from("F")))
     );
 }

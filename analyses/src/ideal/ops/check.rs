@@ -10,9 +10,10 @@ use crate::frontend::Polynomial;
 use super::EncodeCtx;
 use super::PolySource;
 
-/// Prover-side assertion encoder. Traces `&&` chains through the graph
-/// and asserts each leaf bool individually, avoiding a high-degree
-/// product polynomial in the GB generating set.
+/// Encoder for the `where` clause's `Assert`, the only one in the graph.
+/// Traces `&&` chains through the graph and asserts each leaf bool
+/// individually, avoiding a high-degree product polynomial in the GB
+/// generating set.
 pub fn assert_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, _pr: &Var, exp: &HOp<C>) {
     let leaves = ctx.builder.collect_and_leaves(exp);
     for leaf in leaves {
@@ -20,8 +21,8 @@ pub fn assert_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, _pr: &
     }
 }
 
-/// Verifier-side check encoder. The ideal generation is identical for
-/// assert and verify.
+/// Verifier-side check encoder. The ideal generation is identical to the
+/// relation's.
 pub fn verify_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, _pr: &Var, exp: &HOp<C>) {
     let leaves = ctx.builder.collect_and_leaves(exp);
     for leaf in leaves {

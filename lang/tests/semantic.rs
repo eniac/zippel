@@ -489,12 +489,12 @@ fn w0001_dead_computation() {
 }
 
 #[test]
-fn w0001_dead_computation_assert_ok() {
-    let src = "fn f<F: Field>(instance a: F) -> F { assert(a == a); a }";
+fn w0001_dead_computation_verify_ok() {
+    let src = "fn f<F: Field>(instance a: F) -> F { verify(a == a); a }";
     let warns = warnings(src);
     assert!(
         !warns.iter().any(|w| w.contains("unused computation")),
-        "assert has side effects, got: {:?}",
+        "verify has side effects, got: {:?}",
         warns
     );
 }

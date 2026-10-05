@@ -210,6 +210,38 @@ proto p<F: Field>(instance a: F) where a == a {
     assert_snap!(SNAP_DIR, "unknown_function", render_type_errors(src, &[]));
 }
 
+/// `assert` is not part of the language, and not a keyword either:
+/// `assert(…)` is an ordinary call. An undeclared one is an unknown function,
+/// and a function may be named `assert` like any other.
+#[test]
+fn assert_is_an_ordinary_name() {
+    let undeclared = r"
+proto p<F: Field>(instance a: F) where a == a {
+    assert(a == a);
+    verify(a == a)
+}
+";
+    let rendered = render_type_errors(undeclared, &[]);
+    assert!(
+        rendered.contains("No function named `assert`"),
+        "{rendered}"
+    );
+
+    let declared = r"
+fn assert<F: Field>(instance x: F, instance y: F) -> Bool { x == y }
+proto p<F: Field>(instance a: F) where assert(a, a) {
+    verify(assert(a, a))
+}
+";
+    let (module, diags) = UModule::parse(declared);
+    assert!(
+        diags.iter().all(|d| d.severity == Severity::Warning),
+        "{diags:?}"
+    );
+    let cmodule = module.unwrap().concretize(&Ctx::new()).unwrap();
+    assert!(cmodule.typecheck().is_empty());
+}
+
 #[test]
 fn typecheck_call_with_wrong_argument_types() {
     let src = r"

@@ -54,7 +54,7 @@ pub enum Typ<T, N> {
     Base(T),
     /// Fin within range
     Fin(Range<N>),
-    /// Unit type (assert/verify/protocol return)
+    /// Unit type (verify/protocol return)
     Unit,
     /// Boolean type (result of `==`)
     Bool,
@@ -146,7 +146,7 @@ impl<T, N> Typ<T, N> {
     pub fn fin(range: Range<N>) -> Self {
         Typ::Fin(range)
     }
-    /// The unit type, returned by `assert` / `verify` / protocol bodies.
+    /// The unit type, returned by `verify` / protocol bodies.
     pub fn unit() -> Self {
         Typ::Unit
     }

@@ -7,7 +7,7 @@
 use super::test_helpers::parse_and_concretize;
 use crate::node::ArgKind;
 use crate::{
-    Dep, DepType, GOp, GraphError, HOp, Node, Nothing, PrivateValue, Ref, UDag, UDags, mk,
+    Dep, DepType, GOp, GraphError, HOp, Node, Nothing, Op, PrivateValue, Ref, UDag, UDags, mk,
 };
 use backend::{ATyp, ArkBls12_381};
 use lang::ast::BinOp;
@@ -389,43 +389,7 @@ fn pin_let_anon() {
     assert!(gs[0] == expected);
 }
 
-/// Assert expression.
-#[test]
-fn pin_assert() {
-    let src = r#"
-        fn f<F: Field>(instance a: F, instance b: F) -> Unit {
-            assert(a == b)
-        }
-    "#;
-    let gs = parse_and_build(src);
-
-    let mut expected = UDag::<B>::new();
-    let a = Vid::new("a");
-    let b = Vid::new("b");
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a"), instance_s("b")]);
-    let arg_a = _inp_args[0];
-    let arg_b = _inp_args[1];
-    let var_a = GOp::<B>::var(&a, arg_a, ATyp::scalar());
-    let var_b = GOp::<B>::var(&b, arg_b, ATyp::scalar());
-
-    // assert(a == b) → Equ(var_a, var_b) node, then Assert(equ_ref) node
-    // Assert is prover-side — no transcript edge.
-    let equ = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_b, &ATyp::bool()), 0..0);
-    expected.add_edges(DepType::Data, equ, var_a);
-    expected.add_edges(DepType::Data, equ, var_b);
-    let equ_ref = GOp::<B>::underscore(equ, ATyp::bool());
-    let check = expected.add_node(Node::assert(&equ_ref), 0..0);
-    expected.add_edges(DepType::Data, check, equ_ref);
-
-    // Continuation Lit(0) → Ret(Value::Unit)
-    let unit = GOp::<B>::Value(backend::Value::Unit);
-    let ret = expected.add_node(Node::ret(&unit), 0..0);
-    expected.add_edges(DepType::Data, ret, unit);
-
-    assert!(gs[0] == expected);
-}
-
-/// Verify expression (same structure as assert).
+/// Verify expression.
 /// Tests: CExp::Verify, Node::verify.
 #[test]
 fn pin_verify() {
@@ -2245,6 +2209,45 @@ fn pin_get_prover_scattered_checks() {
         prover.find_verify().is_empty(),
         "Prover should not have any check nodes, even with scattered verify statements"
     );
+}
+
+/// The `where` clause's `Assert` stays in the full DAG for the analyses and
+/// reaches neither projection, even when the relation shares inputs and
+/// operations with the body.
+#[test]
+fn pin_projections_exclude_where_assert() {
+    let src = r#"
+        proto rel<F: Field>(witness s: F, instance v: F) where v == s * s {
+            a <- s * s;
+            verify(a == v)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+    let has_assert = |d: &UDag<B>| {
+        d.node_indices().any(|n| match &d[n] {
+            Node::Op(op, _) | Node::Transcr(op, _) => matches!(&**op, Op::Assert(_)),
+            _ => false,
+        })
+    };
+    assert!(
+        has_assert(dag),
+        "the full DAG should keep the where-clause Assert"
+    );
+
+    let (prover, _) = dag.get_prover();
+    assert!(
+        !has_assert(&prover),
+        "prover graph contains the where-clause Assert"
+    );
+    assert!(prover.relation_node().is_none());
+
+    let verifier = dag.get_verifier().unwrap();
+    assert!(
+        !has_assert(&verifier),
+        "verifier graph contains the where-clause Assert"
+    );
+    assert!(verifier.relation_node().is_none());
 }
 
 /// Dags::protocols() and Dags::functions() correctly classify protocols with multiple

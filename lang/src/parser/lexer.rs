@@ -161,8 +161,6 @@ pub enum Token<'src> {
     KwRandom,
     /// `challenge` — draw a verifier challenge from the transcript.
     KwChallenge,
-    /// `assert` — prover-side assertion.
-    KwAssert,
     /// `verify` — verifier-side check contributing to the verification result.
     KwVerify,
     /// `pair` — bilinear pairing application.
@@ -281,7 +279,6 @@ impl<'src> Token<'src> {
             Token::KwReduce => Token::KwReduce,
             Token::KwRandom => Token::KwRandom,
             Token::KwChallenge => Token::KwChallenge,
-            Token::KwAssert => Token::KwAssert,
             Token::KwVerify => Token::KwVerify,
             Token::KwPair => Token::KwPair,
             Token::KwWhere => Token::KwWhere,
@@ -359,7 +356,6 @@ impl<'src> std::fmt::Display for Token<'src> {
             Token::KwReduce => write!(f, "reduce"),
             Token::KwRandom => write!(f, "random"),
             Token::KwChallenge => write!(f, "challenge"),
-            Token::KwAssert => write!(f, "assert"),
             Token::KwVerify => write!(f, "verify"),
             Token::KwPair => write!(f, "pair"),
             Token::KwWhere => write!(f, "where"),
@@ -534,7 +530,6 @@ const KEYWORDS: &[(&str, Token<'static>)] = &[
     ("reduce", Token::KwReduce),
     ("random", Token::KwRandom),
     ("challenge", Token::KwChallenge),
-    ("assert", Token::KwAssert),
     ("verify", Token::KwVerify),
     ("pair", Token::KwPair),
     ("where", Token::KwWhere),
@@ -866,13 +861,11 @@ mod tests {
             ],
         );
         assert_tokens(
-            "random challenge assert verify",
+            "random challenge verify",
             &[
                 Token::KwRandom,
                 Token::Whitespace,
                 Token::KwChallenge,
-                Token::Whitespace,
-                Token::KwAssert,
                 Token::Whitespace,
                 Token::KwVerify,
             ],

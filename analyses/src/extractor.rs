@@ -63,10 +63,8 @@ pub(crate) fn valid_extractor<C: ArkConfig>(witness_typ: &ATyp, poly: &Polynomia
 /// `Op::Verify(exp)` and `Op::Assert(exp)` entries are checks, not
 /// definitions. They are neutralised to `Op::Ref(var)` — an identity
 /// operation that defines the result Var without emitting any assertion
-/// polynomial. For a relation closure this matters: its `Assert` is the
-/// `where` clause itself, and the soundness validity check, which merges
-/// these locals into its hypotheses, must establish the relation rather than
-/// assume it.
+/// polynomial. The `Op::Assert` node is left untouched — it is the `where`
+/// clause, not a verifier check.
 ///
 /// ## Shared builder and Var alignment
 ///

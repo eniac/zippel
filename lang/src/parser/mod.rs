@@ -789,19 +789,6 @@ where
                     sp.into_range()
                 })
             }),
-        // assert(exp) — single bool expression
-        just(Token::KwAssert)
-            .ignored()
-            .ignore_then(just(Token::LParen).ignored())
-            .ignore_then(exp_no_seq.clone())
-            .then_ignore(just(Token::Comma).or_not().ignored())
-            .then_ignore(just(Token::RParen).ignored())
-            .map_with(|exp, e| {
-                Spanned::new(UExp::Assert(Box::new(exp)), {
-                    let sp: SimpleSpan = e.span();
-                    sp.into_range()
-                })
-            }),
         // verify(exp) — single bool expression
         just(Token::KwVerify)
             .ignored()

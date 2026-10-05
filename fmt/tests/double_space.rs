@@ -1096,49 +1096,49 @@ fn f<F: Field>(instance a: F) -> F {
 // comments in those positions within set-record expressions.
 
 // ══════════════════════════════════════════════════════════════════
-// Section Z: Comments around assert/verify `assert(a == b)`
+// Section Z: Comments around verify `verify(a == b)`
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn comments_around_assert() {
+fn comments_around_verify() {
     for (src, expected) in [
         (
-            "fn f<F: Field>(instance a: F) -> F { assert /* c */ (a == a) }",
+            "fn f<F: Field>(instance a: F) -> F { verify /* c */ (a == a) }",
             "\
 fn f<F: Field>(instance a: F) -> F {
-    assert /* c */ (a == a)
+    verify /* c */ (a == a)
 }
 ",
         ),
         (
-            "fn f<F: Field>(instance a: F) -> F { assert( /* c */ a == a) }",
+            "fn f<F: Field>(instance a: F) -> F { verify( /* c */ a == a) }",
             "\
 fn f<F: Field>(instance a: F) -> F {
-    assert(/* c */ a == a)
+    verify(/* c */ a == a)
 }
 ",
         ),
         (
-            "fn f<F: Field>(instance a: F) -> F { assert(a /* c */ == a) }",
+            "fn f<F: Field>(instance a: F) -> F { verify(a /* c */ == a) }",
             "\
 fn f<F: Field>(instance a: F) -> F {
-    assert(a /* c */ == a)
+    verify(a /* c */ == a)
 }
 ",
         ),
         (
-            "fn f<F: Field>(instance a: F) -> F { assert(a == /* c */ a) }",
+            "fn f<F: Field>(instance a: F) -> F { verify(a == /* c */ a) }",
             "\
 fn f<F: Field>(instance a: F) -> F {
-    assert(a == /* c */ a)
+    verify(a == /* c */ a)
 }
 ",
         ),
         (
-            "fn f<F: Field>(instance a: F) -> F { assert(a == a /* c */) }",
+            "fn f<F: Field>(instance a: F) -> F { verify(a == a /* c */) }",
             "\
 fn f<F: Field>(instance a: F) -> F {
-    assert(a == a /* c */)
+    verify(a == a /* c */)
 }
 ",
         ),
@@ -1887,15 +1887,15 @@ fn f<F: Field>(instance a: F) -> F {
 }
 
 #[test]
-fn blank_lines_around_eqeq_in_assert() {
+fn blank_lines_around_eqeq_in_verify() {
     assert_ok(
         "\
-fn f<F: Field>(instance a: F) -> F { assert(a
+fn f<F: Field>(instance a: F) -> F { verify(a
 
 == a) }",
         "\
 fn f<F: Field>(instance a: F) -> F {
-    assert(a == a)
+    verify(a == a)
 }
 ",
     );
