@@ -8,5 +8,5 @@ error: impure construct `verify` in proto relation
    │                                                            ───────┬──────  
    │                                                                   ╰──────── `verify` is not allowed in a proto relation
    │                                                                   │        
-   │                                                                   ╰──────── note: proto relations must be relation-pure (no challenge, log, verify, or assert)
+   │                                                                   ╰──────── note: proto relations must be relation-pure (no challenge, log, or verify)
 ───╯

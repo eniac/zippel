@@ -50,17 +50,6 @@ pub enum RuntimeError {
         /// Keys present in the `inputs` map at the time of the lookup.
         provided: Vec<String>,
     },
-
-    /// During prover execution, one or more `assert` conditions evaluated
-    /// to `false`. The prover aborts rather than delivering a proof whose
-    /// own preconditions do not hold.
-    #[error("prover assertion failed: {failed_count} of {total_count} assert(s) did not hold")]
-    AssertionFailed {
-        /// Number of `assert` nodes that evaluated to `false`.
-        failed_count: usize,
-        /// Total number of `assert` nodes in the executed graph.
-        total_count: usize,
-    },
 }
 
 impl RuntimeError {

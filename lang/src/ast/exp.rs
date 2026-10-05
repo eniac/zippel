@@ -249,7 +249,7 @@ pub enum Exp<N: ExpLiteral> {
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let x = 5 + 3;
-    ///     assert(5 == 3);
+    ///     verify(x == 8);
     ///     ```
     Let(
         Option<Spanned<Vid>>,
@@ -268,14 +268,6 @@ pub enum Exp<N: ExpLiteral> {
         Box<Spanned<Exp<N>>>,
         Option<Box<Spanned<Exp<N>>>>,
     ),
-
-    ///     Prover assertion: asserts that the expression is true.
-    ///     The expression must be `Bool` or `Vec<Bool, N>`.
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     assert(1 == 1)
-    ///     ```
-    Assert(Box<Spanned<Exp<N>>>),
 
     ///     Verifier check: verifies that the expression is true.
     ///     The expression must be `Bool` or `Vec<Bool, N>`.
@@ -441,7 +433,6 @@ impl<N: ExpLiteral> ExpTraversal<N> for Exp<N> {
                 };
                 Exp::Log(x, a, b)
             }
-            Exp::Assert(exp) => Exp::Assert(go!(exp)),
             Exp::Verify(exp) => Exp::Verify(go!(exp)),
             Exp::Fun(vars, body) => Exp::Fun(vars, go!(body)),
             Exp::Record(fields) => {
@@ -498,7 +489,7 @@ impl TidSubst for CExp {
             Exp::Mle(p) | Exp::Poly(p) | Exp::Reduce(_, p) | Exp::Coef(p) | Exp::Neg(p) => {
                 p.map_tids(f)
             }
-            Exp::Assert(exp) | Exp::Verify(exp) => {
+            Exp::Verify(exp) => {
                 exp.map_tids(f);
             }
             Exp::Vec(v) | Exp::App(_, v) => v.map_tids(f),
@@ -558,7 +549,7 @@ impl FreeVars for CExp {
             Exp::Mle(p) | Exp::Poly(p) | Exp::Reduce(_, p) | Exp::Coef(p) | Exp::Neg(p) => {
                 p.freevars()
             }
-            Exp::Assert(exp) | Exp::Verify(exp) => exp.freevars(),
+            Exp::Verify(exp) => exp.freevars(),
             Exp::Vec(v) | Exp::App(_, v) => v.freevars(),
             Exp::Bin(_, a, b) | Exp::Pair(a, b) | Exp::Ram(a, b) | Exp::Map(a, _, b) => {
                 a.freevars().union(b.freevars())
@@ -667,7 +658,6 @@ impl<N: ExpLiteral> RangeTraversal<N::Size> for Exp<N> {
                 Box::new(t.range_traverse(f)?),
                 Box::new(e.range_traverse(f)?),
             )),
-            Exp::Assert(exp) => Ok(Exp::Assert(Box::new(exp.range_traverse(f)?))),
             Exp::Verify(exp) => Ok(Exp::Verify(Box::new(exp.range_traverse(f)?))),
             Exp::App(x, ts) => Ok(Exp::App(x, ts.range_traverse(f)?)),
             Exp::Fun(vars, body) => Ok(Exp::Fun(vars, Box::new(body.range_traverse(f)?))),
@@ -779,7 +769,6 @@ impl<N: ExpLiteral> Exp<N> {
             | Exp::Poly(a)
             | Exp::Mle(a)
             | Exp::Reduce(_, a)
-            | Exp::Assert(a)
             | Exp::Verify(a)
             | Exp::Fun(_, a)
             | Exp::Proj(a, _) => vec![a],
@@ -789,7 +778,7 @@ impl<N: ExpLiteral> Exp<N> {
 
     /// Whether evaluating this expression has no protocol-visible effect:
     /// no transcript logging (`log`), no oracle `challenge`, no `random`
-    /// sampling and no `assert`/`verify`. Purity is what lets the graph
+    /// sampling and no `verify`. Purity is what lets the graph
     /// builder duplicate, hoist or drop a subexpression freely.
     pub fn is_pure(&self) -> bool {
         match self {
@@ -811,7 +800,7 @@ impl<N: ExpLiteral> Exp<N> {
             Exp::Log(_, _, _) => false,
             Exp::Challenge(_, _) | Exp::Random(_, _) => false,
             Exp::App(_, args) => args.iter().all(|e| e.node.is_pure()),
-            Exp::Assert(_) | Exp::Verify(_) => false,
+            Exp::Verify(_) => false,
             Exp::Fun(_, body) => body.is_pure(),
             Exp::Record(fields) => fields.iter().all(|(_, e)| e.node.is_pure()),
             Exp::Proj(exp, _) => exp.is_pure(),
@@ -823,12 +812,11 @@ impl<N: ExpLiteral> Exp<N> {
     ///
     /// Allows: `Let`, `Random`, and all pure expressions.
     /// Rejects: `Challenge` (verifier oracle), `Log` (transcript),
-    /// `Verify` (verifier-side check), `Assert` (returns `Unit`, not
-    /// `Bool` — the relation IS the assertion, auto-wrapped by the graph).
+    /// `Verify` (verifier-side check).
     pub fn is_relation_pure(&self) -> bool {
         match self {
-            // Reject: verifier-only constructs and Assert (returns Unit)
-            Exp::Challenge(_, _) | Exp::Log(_, _, _) | Exp::Verify(_) | Exp::Assert(_) => false,
+            // Reject: verifier-only constructs
+            Exp::Challenge(_, _) | Exp::Log(_, _, _) | Exp::Verify(_) => false,
             // Allow: Random (trusted-setup trapdoors, etc.)
             Exp::Random(_, _) => true,
             Exp::Let(_, val, cont) => {
@@ -1018,7 +1006,6 @@ where
                 write!(f, "{x} <- {};", m.sub(t))?;
                 rest(f, e)
             }
-            Exp::Assert(e) => write!(f, "assert({})", m.sub(e)),
             Exp::Verify(e) => write!(f, "verify({})", m.sub(e)),
             Exp::Fun(vars, body) => {
                 f.write_str("fun ")?;

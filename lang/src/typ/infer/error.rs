@@ -66,8 +66,8 @@ pub enum TypeError {
         LubError,
     ),
 
-    /// The condition of a `verify` or `assert` is not a boolean.
-    #[error("`{}` expects a boolean condition, but this has type {}", condition_keyword(.2), kinded(.3, .0))]
+    /// The condition of a `verify` is not a boolean.
+    #[error("`verify` expects a boolean condition, but this has type {}", kinded(.3, .0))]
     Condition(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp),
 
     /// The body of a `fun` has a type its variables cannot make into a polynomial; carries the
@@ -376,7 +376,7 @@ impl TypeError {
         )
     }
 
-    /// Reports that the condition of the `verify`/`assert` statement `e` has type `t`, not
+    /// Reports that the condition of the `verify` statement `e` has type `t`, not
     /// `Bool`.
     pub fn condition(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, t: &CTyp) -> Self {
         TypeError::Condition(kctx.clone(), vctx.clone(), e.clone(), t.clone())
@@ -1050,15 +1050,6 @@ fn kinded_list(ts: &CTyps, kctx: &Ctx<Tid, CKind>) -> String {
         .map(|t| kinded(t, kctx))
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-/// The statement keyword of a `verify`/`assert` condition error.
-fn condition_keyword(e: &CExp) -> &'static str {
-    if matches!(e, CExp::Assert(_)) {
-        "assert"
-    } else {
-        "verify"
-    }
 }
 
 /// Message for a `fun` over `vars` variables whose body has type `t`.

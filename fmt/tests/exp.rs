@@ -1,7 +1,7 @@
 //! Expression formatting tests.
 //!
 //! Tests for expression layout: parenthesization, line breaking,
-//! comprehensions, asserts, reduces, records, and ranges.
+//! comprehensions, verify, reduces, records, and ranges.
 
 mod common;
 
@@ -277,20 +277,20 @@ fn f<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F, insta
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Section: Assert
+// Section: Verify
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn short_assert_stays_on_one_line() {
+fn short_verify_stays_on_one_line() {
     assert_ok(
         "\
 fn f<F: Field>(instance a: F) -> F {
-    assert(a == a);
+    verify(a == a);
     a
 }",
         "\
 fn f<F: Field>(instance a: F) -> F {
-    assert(a == a);
+    verify(a == a);
     a
 }
 ",
@@ -298,17 +298,17 @@ fn f<F: Field>(instance a: F) -> F {
 }
 
 #[test]
-fn long_assert_breaks_before_eq() {
-    // The == inside assert(...) breaks, putting RHS on a new indented line.
+fn long_verify_breaks_before_eq() {
+    // The == inside verify(...) breaks, putting RHS on a new indented line.
     assert_ok(
         "\
 fn f<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F, instance e: F) -> F {
-    assert(gate_identity_function(a, b, c, d, e, a, b) == gate_identity_function2(a, b, c, d, e, a, b));
+    verify(gate_identity_function(a, b, c, d, e, a, b) == gate_identity_function2(a, b, c, d, e, a, b));
     a
 }",
         "\
 fn f<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F, instance e: F) -> F {
-    assert(
+    verify(
         gate_identity_function(a, b, c, d, e, a, b) == gate_identity_function2(a, b, c, d, e, a, b),
     );
     a
@@ -318,7 +318,7 @@ fn f<F: Field>(instance a: F, instance b: F, instance c: F, instance d: F, insta
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Section: Assert in where clause
+// Section: Where clause
 // ══════════════════════════════════════════════════════════════════
 
 #[test]

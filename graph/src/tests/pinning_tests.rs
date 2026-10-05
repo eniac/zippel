@@ -389,43 +389,7 @@ fn pin_let_anon() {
     assert!(gs[0] == expected);
 }
 
-/// Assert expression.
-#[test]
-fn pin_assert() {
-    let src = r#"
-        fn f<F: Field>(instance a: F, instance b: F) -> Unit {
-            assert(a == b)
-        }
-    "#;
-    let gs = parse_and_build(src);
-
-    let mut expected = UDag::<B>::new();
-    let a = Vid::new("a");
-    let b = Vid::new("b");
-    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a"), instance_s("b")]);
-    let arg_a = _inp_args[0];
-    let arg_b = _inp_args[1];
-    let var_a = GOp::<B>::var(&a, arg_a, ATyp::scalar());
-    let var_b = GOp::<B>::var(&b, arg_b, ATyp::scalar());
-
-    // assert(a == b) → Equ(var_a, var_b) node, then Assert(equ_ref) node
-    // Assert is prover-side — no transcript edge.
-    let equ = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_b, &ATyp::bool()), 0..0);
-    expected.add_edges(DepType::Data, equ, var_a);
-    expected.add_edges(DepType::Data, equ, var_b);
-    let equ_ref = GOp::<B>::underscore(equ, ATyp::bool());
-    let check = expected.add_node(Node::assert(&equ_ref), 0..0);
-    expected.add_edges(DepType::Data, check, equ_ref);
-
-    // Continuation Lit(0) → Ret(Value::Unit)
-    let unit = GOp::<B>::Value(backend::Value::Unit);
-    let ret = expected.add_node(Node::ret(&unit), 0..0);
-    expected.add_edges(DepType::Data, ret, unit);
-
-    assert!(gs[0] == expected);
-}
-
-/// Verify expression (same structure as assert).
+/// Verify expression.
 /// Tests: CExp::Verify, Node::verify.
 #[test]
 fn pin_verify() {

@@ -356,7 +356,7 @@ impl<C: HasOpFactory> Node<C, Nothing> {
     pub fn transcr(op: &GOp<C>) -> Self {
         Node::Transcr(mk::<C>(op.clone()), Nothing)
     }
-    /// Builds a node asserting that `op` holds, a prover-side consistency check.
+    /// Builds the node that wraps a `where` clause: the relation `op` states.
     pub fn assert(op: &GOp<C>) -> Self {
         Node::Op(mk::<C>(GOp::assert(op.clone())), Nothing)
     }
