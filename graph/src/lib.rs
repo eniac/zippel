@@ -774,19 +774,9 @@ impl<C: ArkConfig, A> Dag<C, A> {
     }
 
     /// Seeds for the prover projection — the nodes whose values the prover
-    /// is actually obliged to produce: the transcript nodes, which carry the
-    /// proof values.
-    ///
-    /// The `where` clause is deliberately not a seed. It is the protocol's
-    /// *specification*: it is auto-wrapped in an `Assert` (see the
-    /// `CBody::Proto` arm of `add_top_exp`) but quantifies over trusted-setup
-    /// trapdoors the prover does not hold (`random<F>`), so it is neither
-    /// checkable nor meaningful at proving time. Seeding from it pulled the
-    /// entire relation into every `run_prover` call — pst13's `2^N`-wide
-    /// `eq_alpha` product, groth16's `2^M` SRS scalar mults — for a result
-    /// nothing reads. The static analyses run on the full protocol DAG
-    /// (`ZippelHandler::analyze_graph`), not on this projection, so they
-    /// still see the relation.
+    /// is obliged to produce: the transcript nodes, which carry the proof
+    /// values. The `where` clause's `Assert` is not a seed; only the static
+    /// analyses, which run on the full DAG, read it.
     fn prover_roots(&self) -> Vec<NodeIndex> {
         self.transcript_nodes()
     }
@@ -939,7 +929,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
 
     /// Get the prover graph, by reachability analysis starting from the transcript nodes
     ///
-    /// Seeds are `prover_roots` — the transcript nodes — and the walk runs backwards along
+    /// Seeds are `prover_roots` and the walk runs backwards along
     /// incoming edges. The input marker and its `Arg` nodes are replicated
     /// first so the projection keeps index 0 as its input and the same argument
     /// structure. Returns the projected DAG together with the map from source
@@ -3129,7 +3119,7 @@ impl<C: HasOpFactory> UDag<C> {
                     let nverify = self.add_node(Node::verify(&oa), span.clone());
                     self.add_edges(edge_type, nverify, oa);
                     // No transcript edge — the Op::Verify variant itself
-                    // distinguishes verifier checks from prover assertions.
+                    // marks the node as a verifier check.
                     // Returns Unit value; sequencing via Let(None, ...) discards it.
                     return Ok(GOp::Value(backend::Value::Unit));
                 }

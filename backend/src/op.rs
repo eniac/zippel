@@ -1036,8 +1036,7 @@ impl<C: HasOpFactory> GOp<C> {
         Op::Vec(vs.into_iter().map(mk::<C>).collect())
     }
 
-    /// Builds a prover-side assertion; the operand must evaluate to `Bool` at proving
-    /// time or the prover aborts.
+    /// Builds the `Assert` that wraps a protocol's `where` clause; see [`Op::Assert`].
     pub fn assert(op: GOp<C>) -> GOp<C> {
         Op::Assert(mk::<C>(op))
     }

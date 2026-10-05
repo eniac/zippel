@@ -503,14 +503,18 @@ fn is_vector_value<C: ArkConfig>(v: &Value<C>) -> bool {
 ///
 /// Thin wrapper over [`eval_op_with_loop_params`] with an empty loop-parameter
 /// stack, so `Op::LoopParam` leaves outside a `Map`/`ReduceMap` body fail.
-/// `check_sink` collects the boolean outcome of every `Op::Assert` /
-/// `Op::Verify` encountered during the walk.
+/// `check_sink` collects the boolean outcome of every `Op::Verify`
+/// encountered during the walk.
 ///
 /// # Errors
 /// Returns `EvalError::UndefinedRef` when an `Op::Ref` leaf is absent from
 /// `env`, `EvalError::TypeMismatch` or `EvalError::ValueError` when a
 /// runtime value has a shape the operation cannot accept, and
 /// `EvalError::LoopParam` when an `Op::LoopParam` names an unbound level.
+///
+/// # Panics
+/// Panics on an `Op::Assert`: it is the `where` clause, which only the static
+/// analyses read, and no projection contains it.
 pub fn eval_op<C, R>(
     op: &GOp<C>,
     env: &HashMap<Ref, Arc<Value<C>>>,
@@ -640,11 +644,15 @@ where
             let idx_val = eval_op_with_loop_params(idx, env, rng, loop_params, check_sink)?;
             Ok(Arc::new(v_val.ram_ref(&*idx_val)))
         }
-        Op::Assert(op) | Op::Verify(op) => {
+        Op::Assert(_) => panic!(
+            "cannot evaluate `Op::Assert`: it is the `where` clause, which only the static \
+             analyses read; a prover or verifier graph never contains it"
+        ),
+        Op::Verify(op) => {
             let val = eval_op_with_loop_params(op, env, rng, loop_params, check_sink)?;
             let pass = match &*val {
                 Value::Bool(b) => *b,
-                _ => panic!("Assert/Verify operand must be Bool, found {val}"),
+                _ => panic!("Verify operand must be Bool, found {val}"),
             };
             check_sink.push(pass);
             Ok(Arc::new(Value::Unit))

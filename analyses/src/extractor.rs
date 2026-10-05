@@ -63,8 +63,8 @@ pub(crate) fn valid_extractor<C: ArkConfig>(witness_typ: &ATyp, poly: &Polynomia
 /// `Op::Verify(exp)` entries represent verifier checks,
 /// not definitions. They are neutralised to `Op::Ref(var)` — an identity
 /// operation that defines the result Var without emitting any assertion
-/// polynomial. `Op::Assert` nodes are left untouched — they are prover-side
-/// and not the verifier's concern.
+/// polynomial. The `Op::Assert` node is left untouched — it is the `where`
+/// clause, not a verifier check.
 ///
 /// ## Shared builder and Var alignment
 ///
