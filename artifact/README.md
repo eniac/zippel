@@ -224,7 +224,7 @@ Section 9.3 (and adds a supplementary per-protocol timing table).
 ```sh
 mkdir -p artifact/output
 docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
-  bash -c "artifact/scripts/run_completeness.sh --inline-only --timeout 60 && python3 artifact/scripts/process_completeness.py"
+  bash -c "artifact/scripts/run_completeness.sh --timeout 60 && python3 artifact/scripts/process_completeness.py"
 ```
 
 Runs all 30 protocols from the paper through the completeness analysis,
@@ -234,7 +234,7 @@ To sanity-check a small subset of protocols instead of all 30:
 
 ```sh
 docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
-  bash -c "artifact/scripts/run_completeness.sh --inline-only --timeout 60 --protocols schnorr,groth16,ipa,hyperplonk && python3 artifact/scripts/process_completeness.py"
+  bash -c "artifact/scripts/run_completeness.sh --timeout 60 --protocols schnorr,groth16,ipa,hyperplonk && python3 artifact/scripts/process_completeness.py"
 ```
 
 **Note on the timeout.** The paper's own methodology budgets 20 minutes

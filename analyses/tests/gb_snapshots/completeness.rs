@@ -259,7 +259,7 @@ fn run_completeness_snapshot(entry: &CompletenessEntry) -> Result<(), Failed> {
 
     let normalized = share::thread::run("gb-completeness", move || {
         let dag = compile_to_dag(&path, &sizes);
-        let inputs = CompletenessAnalysis::<ArkBls12_381>::build_inputs(&dag, true);
+        let inputs = CompletenessAnalysis::<ArkBls12_381>::build_inputs(&dag);
         let mut ca = CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, backend);
         ca.run().map_err(|e| Failed::from(e.to_string()))?;
         Ok::<String, Failed>(normalize_basis(&ca.basis.polys))

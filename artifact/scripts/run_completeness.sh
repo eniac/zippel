@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Experiment 3: completeness analysis across all 30 protocols (Singular
-# backend, 20-minute per-run timeout, 16GiB memory limit, both inline
-# and no-inline variants per protocol, by default -- inline_all's own
-# defaults).
+# backend, 20-minute per-run timeout, 16GiB memory limit, by default --
+# inline_all's own defaults).
 #
 # Produces a supplementary table not present in the submitted paper (see
 # ../README.md) and maps to Section 9.3 of the submitted paper's
@@ -13,12 +12,11 @@
 #   artifact/scripts/run_completeness.sh [extra cargo-bench-inline_all args...]
 #
 # Any extra arguments are forwarded to `cargo bench --bench inline_all --`
-# verbatim (it already accepts --timeout/--protocols/--memory-limit-mb/
-# --inline-only). ../README.md's Experiment 3 uses
-# `--inline-only --timeout 60`, since every protocol that completes does
-# so in well under 60s and the no-inline variant is not part of the
-# paper's claim; to smoke-test this script itself on a few protocols:
-#   artifact/scripts/run_completeness.sh --inline-only --timeout 60 --protocols schnorr,groth16
+# verbatim (it already accepts --timeout/--protocols/--memory-limit-mb).
+# ../README.md's Experiment 3 uses `--timeout 60`, since every protocol
+# that completes does so in well under 60s; to smoke-test this script
+# itself on a few protocols:
+#   artifact/scripts/run_completeness.sh --timeout 60 --protocols schnorr,groth16
 
 set -euo pipefail
 

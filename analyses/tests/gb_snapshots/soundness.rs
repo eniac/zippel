@@ -103,9 +103,9 @@ fn run_soundness_snapshot(entry: &SoundnessEntry) -> Result<(), Failed> {
 
     let normalized = share::thread::run("gb-soundness", move || {
         let dag = compile_to_dag(&path, &sizes);
-        let inputs = SpecialSoundnessAnalysis::build_inputs(&dag, l_vec, true)
+        let inputs = SpecialSoundnessAnalysis::build_inputs(&dag, l_vec)
             .map_err(|e| Failed::from(e.to_string()))?;
-        let mut sa = SpecialSoundnessAnalysis::from_inputs(inputs, backend, true)
+        let mut sa = SpecialSoundnessAnalysis::from_inputs(inputs, backend)
             .map_err(|e| Failed::from(e.to_string()))?;
         sa.run().map_err(|e| Failed::from(e.to_string()))?;
         Ok::<String, Failed>(normalize_basis(&sa.search_gb.polys))
