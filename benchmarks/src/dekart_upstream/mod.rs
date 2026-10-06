@@ -578,7 +578,7 @@ impl<E: Pairing> From<ProofProjective<E>> for Proof<E> {
 #[allow(non_snake_case)]
 pub struct ProverKey<E: Pairing> {
     pub vk: VerificationKey<E>,
-    pub ck_S: hkzg::CommitmentKey<E>,
+    pub ck_s: hkzg::CommitmentKey<E>,
     pub max_n: usize,
     powers_of_two: Vec<E::ScalarField>,
     h_denom_eval: Vec<E::ScalarField>,
@@ -626,19 +626,19 @@ pub fn setup_for_testing<E: Pairing>(
     assert!(num_omegas.is_power_of_two());
     let g1 = E::G1Affine::generator();
     let g2 = E::G2Affine::generator();
-    let (vk_hkzg, ck_S) = hkzg::setup_with_trapdoor::<E>(num_omegas, g1, g2, xi, tau, lagr_g1);
-    let h_denom_eval = compute_h_denom_eval::<E>(&ck_S.roots_of_unity_in_eval_dom);
+    let (vk_hkzg, ck_s) = hkzg::setup_with_trapdoor::<E>(num_omegas, g1, g2, xi, tau, lagr_g1);
+    let h_denom_eval = compute_h_denom_eval::<E>(&ck_s.roots_of_unity_in_eval_dom);
     let powers_of_two = powers_of_two::<E::ScalarField>(max_ell);
     let vk = VerificationKey {
-        xi_1: ck_S.xi_1,
-        lagr_0: ck_S.lagr_g1[0],
+        xi_1: ck_s.xi_1,
+        lagr_0: ck_s.lagr_g1[0],
         vk_hkzg,
         powers_of_two: powers_of_two.clone(),
-        roots_of_unity: ck_S.roots_of_unity_in_eval_dom.clone(),
+        roots_of_unity: ck_s.roots_of_unity_in_eval_dom.clone(),
     };
     let pk = ProverKey {
         vk: vk.clone(),
-        ck_S,
+        ck_s,
         max_n,
         powers_of_two,
         h_denom_eval,
@@ -648,13 +648,13 @@ pub fn setup_for_testing<E: Pairing>(
 
 /// Commits to `[0, values...]` in the Lagrange basis with hiding randomness `rho`.
 pub fn commit_with_randomness<E: Pairing>(
-    ck_S: &hkzg::CommitmentKey<E>,
+    ck_s: &hkzg::CommitmentKey<E>,
     values: &[E::ScalarField],
     rho: E::ScalarField,
 ) -> E::G1 {
     let mut values_shifted = vec![E::ScalarField::ZERO];
     values_shifted.extend(values);
-    hkzg::commit_with_randomness(ck_S, &values_shifted, rho)
+    hkzg::commit_with_randomness(ck_s, &values_shifted, rho)
 }
 
 #[allow(non_snake_case)]
@@ -672,7 +672,7 @@ pub fn prove<E: Pairing, R: RngCore + CryptoRng>(
     // Step 1a
     let ProverKey {
         vk,
-        ck_S,
+        ck_s,
         max_n,
         powers_of_two,
         h_denom_eval,
@@ -694,7 +694,7 @@ pub fn prove<E: Pairing, R: RngCore + CryptoRng>(
         eval_dom,
         m_inv: num_omegas_inv,
         ..
-    } = ck_S;
+    } = ck_s;
 
     // Step 1b
     fiat_shamir::append_initial_data(&mut fs_t, vk, n, ell, comm);
@@ -822,11 +822,11 @@ pub fn prove<E: Pairing, R: RngCore + CryptoRng>(
 
     // Step 7
     let rho_h: E::ScalarField = sample_field_element(rng);
-    let D = hkzg::commit_with_randomness(ck_S, &h_evals, rho_h).into_affine();
+    let D = hkzg::commit_with_randomness(ck_s, &h_evals, rho_h).into_affine();
     fiat_shamir::append_h_commitment::<E>(&mut fs_t, &D);
 
     // Step 8
-    let gamma = fiat_shamir::get_gamma_challenge::<E>(&mut fs_t, &ck_S.roots_of_unity_in_eval_dom);
+    let gamma = fiat_shamir::get_gamma_challenge::<E>(&mut fs_t, &ck_s.roots_of_unity_in_eval_dom);
 
     // Step 9a
     let a = ark_poly::univariate::DensePolynomial {
@@ -835,7 +835,7 @@ pub fn prove<E: Pairing, R: RngCore + CryptoRng>(
     .evaluate(&gamma);
     let a_h = polynomials::barycentric_eval(
         &h_evals,
-        &ck_S.roots_of_unity_in_eval_dom,
+        &ck_s.roots_of_unity_in_eval_dom,
         gamma,
         *num_omegas_inv,
     );
@@ -874,11 +874,11 @@ pub fn prove<E: Pairing, R: RngCore + CryptoRng>(
             .sum::<E::ScalarField>();
     let u_val = polynomials::barycentric_eval(
         &u_values,
-        &ck_S.roots_of_unity_in_eval_dom,
+        &ck_s.roots_of_unity_in_eval_dom,
         gamma,
         *num_omegas_inv,
     );
-    let pi_gamma = hkzg::open(ck_S, u_values, rho_u, gamma, u_val, s);
+    let pi_gamma = hkzg::open(ck_s, u_values, rho_u, gamma, u_val, s);
 
     ProofProjective {
         hat_C,
@@ -1028,7 +1028,7 @@ mod tests {
             .map(|_| Fr::from(rng.next_u64() >> (64 - ell)))
             .collect();
         let rho: Fr = sample_field_element(&mut rng);
-        let comm = commit_with_randomness(&pk.ck_S, &values, rho).into_affine();
+        let comm = commit_with_randomness(&pk.ck_s, &values, rho).into_affine();
         let proof: Proof<Bls12_381> = prove(&pk, &values, ell, &comm, rho, &mut rng).into();
         proof
             .verify(&vk, n, ell, &comm)
@@ -1037,7 +1037,7 @@ mod tests {
         // Out-of-range value must be rejected.
         let mut bad = values.clone();
         bad[0] = Fr::from(1u64 << ell);
-        let comm_bad = commit_with_randomness(&pk.ck_S, &bad, rho).into_affine();
+        let comm_bad = commit_with_randomness(&pk.ck_s, &bad, rho).into_affine();
         let proof_bad: Proof<Bls12_381> = prove(&pk, &bad, ell, &comm_bad, rho, &mut rng).into();
         assert!(proof_bad.verify(&vk, n, ell, &comm_bad).is_err());
 

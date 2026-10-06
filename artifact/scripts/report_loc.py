@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Report non-comment source line counts (NCLOC) for the 30+ protocols the
 paper implements (its Figure 6, the "List of proof systems implemented
-in Zippel" table). This is broader than run_benchmark.sh's LoC columns,
+in Zippel" table), plus the HyperPlonk SNARK benchmark variant.
+This is broader than run_benchmark.sh's LoC columns,
 which only cover the systems that also have a native baseline to compare
 against (the paper's Figure 7).
 
@@ -26,7 +27,7 @@ Run from the repo root:
 
 The protocol/path list below must be kept in sync with the `PROTOCOLS`
 entries marked `completeness: true` in benches/analysis/protocols.rs (the
-canonical list of the paper's protocols).
+canonical list of the paper's protocols), plus hyperplonk_snark.
 """
 
 from pathlib import Path
@@ -68,6 +69,7 @@ PROTOCOLS = [
         "examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel",
     ),
     ("hyperplonk_piop", "examples/hyperplonk_piop/hyperplonk_piop.zippel"),
+    ("hyperplonk_snark", "examples/hyperplonk_snark/hyperplonk_snark.zippel"),
     ("zk_kzg", "examples/zk_kzg/zk_kzg.zippel"),
     ("kzh", "examples/kzh/kzh.zippel"),
     ("dekart", "examples/dekart/dekart.zippel"),

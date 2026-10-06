@@ -1,68 +1,101 @@
 #!/usr/bin/env python3
-"""Render run_soundness.sh's test log into a markdown table of per-trial
+"""Render run_soundness.sh's JSON into a markdown table of per-protocol
 results (supplementary; the submitted paper's special-soundness claim in
 Section 9.3 is prose-only).
 
 Columns:
-    Trial | Pass
+    Protocol | Pass | Time | Status | Reason
 
-Pass is a check mark for a passing trial, a cross for a failing one, or
-"ignored" for a trial marked `#[ignore]` (expected -- see ../README.md
-for which trials these are and why).
+Pass indicates whether the analysis established special soundness; a
+cross is expected for five candidates. Time is the benchmark's wall_s,
+including protocol loading. Exit nonzero if any reported protocol has
+an unexpected outcome. E-Cash Coin may time out under the configured
+budget; other timeouts, crashes and out-of-memory results are unexpected.
 
 Usage:
-    artifact/scripts/process_soundness.py [LOG_PATH]
+    artifact/scripts/process_soundness.py [JSON_PATH]
 
-LOG_PATH defaults to artifact/output/soundness_results.log.
+JSON_PATH defaults to artifact/output/soundness_results.json.
 """
 
-import re
+import json
 import sys
 
-DEFAULT_LOG = "artifact/output/soundness_results.log"
+DEFAULT_JSON = "artifact/output/soundness_results.json"
 
 PASS_MARK = "✓"  # ✓
 FAIL_MARK = "✗"  # ✗
 
-LINE_RE = re.compile(r"^test (soundness::\S+)\s+\.\.\.\s+(ok|ignored|FAILED)$")
+# Expected coverage, not a claim that the unsuccessful candidates are
+# unsound. These are limitations of the current analysis (see ../README.md).
+EXPECTED_STATUSES = {
+    "schnorr": ("ok",),
+    "schnorr_3round": ("ok",),
+    "cp": ("ok",),
+    "okamoto": ("failed",),
+    "cds": ("failed",),
+    "coin_proof": ("failed", "timeout"),
+    "okamoto_elgamal": ("ok",),
+    "commitment_equality": ("failed",),
+    "pedersen_eq": ("failed",),
+}
 
 
-def parse_log(path):
-    trials = []
-    with open(path) as f:
-        for line in f:
-            m = LINE_RE.match(line.strip())
-            if m:
-                trials.append((m.group(1), m.group(2)))
-    return trials
+def markdown_cell(value):
+    return " ".join(str(value).splitlines()).replace("|", "\\|")
 
 
-def fmt_result(status):
-    if status == "ok":
-        return PASS_MARK
-    if status == "FAILED":
-        return FAIL_MARK
-    return "ignored"
+def fmt_time(result):
+    seconds = result.get("wall_s")
+    if seconds is None:
+        return "?"
+    return f"{seconds * 1000:.1f}ms" if seconds < 1 else f"{seconds:.1f}s"
 
 
 def main():
-    log_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_LOG
-    trials = parse_log(log_path)
-    if not trials:
-        sys.exit(f"no soundness trials found in {log_path}")
+    json_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_JSON
+    with open(json_path) as f:
+        data = json.load(f)
+    if data.get("analysis") != "soundness":
+        sys.exit(f"expected soundness results in {json_path}")
+    results = data["results"]
+    if not results:
+        sys.exit(f"no soundness results found in {json_path}")
 
-    print(f"Source: {log_path} ({len(trials)} trials)")
+    print(f"Source: {json_path} ({len(results)} rows, timeout={data.get('timeout_s')}s, "
+          f"memory_limit_mb={data.get('memory_limit_mb')})")
     print()
-    print("| Trial | Pass |")
-    print("|---|---|")
-    for name, status in trials:
-        print(f"| {name} | {fmt_result(status)} |")
+    print("| Protocol | Pass | Time | Status | Reason |")
+    print("|---|---|---|---|---|")
+    unexpected = []
+    seen = set()
+    for result in results:
+        name = result["protocol"]
+        status = result.get("status", "?")
+        mark = PASS_MARK if status == "ok" else FAIL_MARK
+        reason = markdown_cell(result.get("error") or "")
+        print(f"| {markdown_cell(name)} | {mark} | {fmt_time(result)} | "
+              f"{markdown_cell(status)} | {reason} |")
+        expected = EXPECTED_STATUSES.get(name)
+        if expected is None:
+            unexpected.append(f"{name}: no expected outcome registered")
+        elif status not in expected:
+            unexpected.append(f"{name}: expected {' or '.join(expected)}, got {status}")
+        if name in seen:
+            unexpected.append(f"{name}: duplicate result")
+        seen.add(name)
 
-    pass_count = sum(1 for _, s in trials if s == "ok")
-    ignored_count = sum(1 for _, s in trials if s == "ignored")
-    failed_count = sum(1 for _, s in trials if s == "FAILED")
+    pass_count = sum(1 for r in results if r.get("status") == "ok")
+    failed_count = sum(1 for r in results if r.get("status") == "failed")
+    timeout_count = sum(1 for r in results if r.get("status") == "timeout")
     print()
-    print(f"soundness pass={pass_count} ignored={ignored_count} failed={failed_count}")
+    print(f"soundness pass={pass_count} failed={failed_count} timeout={timeout_count} "
+          f"unexpected={len(unexpected)}")
+    if unexpected:
+        print()
+        for message in unexpected:
+            print(message)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

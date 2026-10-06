@@ -49,7 +49,7 @@ pub mod shared {
         pub xi: Fr,
         /// [τ^i]_1 for i in 0..=n — zippel's `srs_g1_h`.
         pub powers_g1: Vec<G1Affine>,
-        /// [ℓ_i(τ)]_1 over the size-(n+1) domain — native's `ck_S.lagr_g1`,
+        /// [ℓ_i(τ)]_1 over the size-(n+1) domain — native's `ck_s.lagr_g1`,
         /// zippel's `srs_g1_lagr`.
         pub lagr_g1: Vec<G1Affine>,
     }
@@ -317,7 +317,7 @@ pub mod native_side {
             let mut rng = StdRng::seed_from_u64(7);
             let comm = self.com_f;
             debug_assert_eq!(
-                dk::commit_with_randomness(&self.pk.ck_S, &self.values, self.rho).into_affine(),
+                dk::commit_with_randomness(&self.pk.ck_s, &self.values, self.rho).into_affine(),
                 comm
             );
 

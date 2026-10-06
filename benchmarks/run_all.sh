@@ -50,12 +50,27 @@ for T in "${THREAD_LIST[@]}"; do
         EXTRA+=(--no-header --append)
     fi
     echo ">>> threads=${T}" >&2
-    RAYON_NUM_THREADS="${T}" "${BIN}" \
+    if RAYON_NUM_THREADS="${T}" "${BIN}" \
         --out "${OUT}" \
         --threads-label "${T}" \
         ${CHILD_ARGS[@]+"${CHILD_ARGS[@]}"} \
-        ${EXTRA[@]+"${EXTRA[@]}"}
-    HEADER_DONE=1
+        ${EXTRA[@]+"${EXTRA[@]}"}; then
+        HEADER_DONE=1
+    else
+        STATUS=$?
+        if [[ "${STATUS}" == "137" ]]; then
+            echo "Benchmark was killed by SIGKILL (exit 137); check for memory exhaustion." >&2
+            echo "THREADS controls timed runs; setup uses all available CPUs." >&2
+            for STAT in memory.events memory.max memory.peak; do
+                if [[ -r "/sys/fs/cgroup/${STAT}" ]]; then
+                    echo "${STAT}:" >&2
+                    cat "/sys/fs/cgroup/${STAT}" >&2
+                fi
+            done
+        fi
+        echo "Completed benchmark rows remain in ${OUT}." >&2
+        exit "${STATUS}"
+    fi
 done
 
 ROWS=$(($(wc -l < "${OUT}") - 1))

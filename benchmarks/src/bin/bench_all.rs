@@ -744,16 +744,20 @@ fn run_hyrax(threads: usize, ns: &[usize]) -> Vec<Row> {
 fn run_dekart(threads: usize, ls: &[usize], ell: usize) -> Vec<Row> {
     ls.iter()
         .map(|&l| {
+            eprintln!("  [dekart log_size={l}] generating/loading shared SRS and inputs");
             let sh = setup_pool().install(|| dekart::shared::build(l, ell));
             let (mut z, np) = setup_pool().install(|| {
-                (
-                    dekart::zippel_side::Setup::new(&sh),
-                    dekart::native_side::Setup::new(&sh),
-                )
+                eprintln!("  [dekart log_size={l}] compiling Zippel protocol and preparing inputs");
+                let z = dekart::zippel_side::Setup::new(&sh);
+                eprintln!("  [dekart log_size={l}] preparing native prover/verifier keys");
+                let np = dekart::native_side::Setup::new(&sh);
+                (z, np)
             });
             let compile = z.compile_time();
             let (prover_nodes, verifier_nodes) = z.graph_sizes();
+            eprintln!("  [dekart log_size={l}] measuring Zippel prover/verifier");
             let zippel = z.time_protocol();
+            eprintln!("  [dekart log_size={l}] measuring native prover/verifier");
             let native = timed_pool().install(|| np.time_protocol());
             // log_size = L: domain 2^L, n = 2^L - 1 values in [0, 2^ell).
             let r = Row {
