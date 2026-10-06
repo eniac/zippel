@@ -189,13 +189,13 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
             name: "hyperplonk_productcheck",
             zippel_path: "examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel",
             sizes: &[("S", 3)],
-            ignored: true,
+            ignored: false,
         },
         CompletenessEntry {
             name: "hyperplonk_multiset",
             zippel_path: "examples/hyperplonk_multiset/hyperplonk_multiset.zippel",
             sizes: &[("S", 3)],
-            ignored: true,
+            ignored: false,
         },
         CompletenessEntry {
             name: "hyperplonk_permutation",
@@ -213,7 +213,7 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
             name: "dory",
             zippel_path: "examples/dory/dory.zippel",
             sizes: &[("S", 2)],
-            ignored: true,
+            ignored: false,
         },
         CompletenessEntry {
             name: "groth16",
@@ -231,7 +231,7 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
             name: "hyrax",
             zippel_path: "examples/hyrax/hyrax.zippel",
             sizes: &[("L", 2), ("M", 2)],
-            ignored: true,
+            ignored: false,
         },
         CompletenessEntry {
             name: "pari",
