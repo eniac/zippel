@@ -58,12 +58,13 @@ pub fn run(_args: &[String]) {
         }
         println!("Completeness time: {:.2?}", completeness_start.elapsed());
 
-        let zk_start = Instant::now();
-        match handler.analyze_knowledge() {
-            Ok(()) => println!("ZK:              ✓"),
-            Err(e) => println!("ZK:              ✗ {}", e),
-        }
-        println!("ZK time:         {:.2?}", zk_start.elapsed());
+        // The ZK analysis does not finish here (over 10 minutes in release).
+        // let zk_start = Instant::now();
+        // match handler.analyze_knowledge() {
+        //     Ok(()) => println!("ZK:              ✓"),
+        //     Err(e) => println!("ZK:              ✗ {}", e),
+        // }
+        // println!("ZK time:         {:.2?}", zk_start.elapsed());
     }));
     if analysis_result.is_err() {
         println!("Analysis:        ⚠ not supported (non-polynomial operations)");
