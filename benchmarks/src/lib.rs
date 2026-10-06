@@ -56,14 +56,22 @@ pub fn mean(ds: &[Duration]) -> Duration {
 /// [`mem::peak_of`] switches it on, so timed runs pay one relaxed atomic
 /// load per allocation.
 pub mod mem {
-    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::alloc::{GlobalAlloc, Layout};
     use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering::Relaxed};
 
     static ON: AtomicBool = AtomicBool::new(false);
     static LIVE: AtomicIsize = AtomicIsize::new(0);
     static PEAK: AtomicIsize = AtomicIsize::new(0);
 
-    /// The system allocator, counting live bytes while measurement is on.
+    /// The allocator [`Counting`] forwards to: the system allocator, or
+    /// dhat's under the `dhat` feature so [`crate::sample_with`] can
+    /// heap-profile a run.
+    #[cfg(not(feature = "dhat"))]
+    static INNER: std::alloc::System = std::alloc::System;
+    #[cfg(feature = "dhat")]
+    static INNER: dhat::Alloc = dhat::Alloc;
+
+    /// The inner allocator, counting live bytes while measurement is on.
     pub struct Counting;
 
     #[allow(clippy::cast_possible_wrap)]
@@ -77,11 +85,11 @@ pub mod mem {
         LIVE.fetch_sub(bytes as isize, Relaxed);
     }
 
-    // SAFETY: every call forwards to `System` unchanged; the counters have
+    // SAFETY: every call forwards to `INNER` unchanged; the counters have
     // no effect on the returned memory.
     unsafe impl GlobalAlloc for Counting {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            let p = unsafe { System.alloc(layout) };
+            let p = unsafe { INNER.alloc(layout) };
             if !p.is_null() && ON.load(Relaxed) {
                 grow(layout.size());
             }
@@ -89,7 +97,7 @@ pub mod mem {
         }
 
         unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-            let p = unsafe { System.alloc_zeroed(layout) };
+            let p = unsafe { INNER.alloc_zeroed(layout) };
             if !p.is_null() && ON.load(Relaxed) {
                 grow(layout.size());
             }
@@ -97,14 +105,14 @@ pub mod mem {
         }
 
         unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-            unsafe { System.dealloc(ptr, layout) };
+            unsafe { INNER.dealloc(ptr, layout) };
             if ON.load(Relaxed) {
                 shrink(layout.size());
             }
         }
 
         unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-            let p = unsafe { System.realloc(ptr, layout, new_size) };
+            let p = unsafe { INNER.realloc(ptr, layout, new_size) };
             if !p.is_null() && ON.load(Relaxed) {
                 if new_size > layout.size() {
                     grow(new_size - layout.size());
@@ -134,6 +142,7 @@ pub mod mem {
 
 /// `SAMPLES` wall-times of `f`, then `SAMPLES` peak heaps from as many
 /// further runs; see [`sample_with`].
+#[track_caller]
 pub fn sample<T>(f: impl FnMut() -> T) -> (Vec<Duration>, Vec<usize>, T) {
     let mut f = f;
     sample_with(|| (), |()| f())
@@ -145,11 +154,14 @@ pub fn sample<T>(f: impl FnMut() -> T) -> (Vec<Duration>, Vec<usize>, T) {
 /// order, and the last run's output. `setup` (e.g. a fresh transcript)
 /// runs before each call, outside both the timer and the memory count;
 /// each output is dropped outside them too.
+#[track_caller]
 pub fn sample_with<S, T>(
     mut setup: impl FnMut() -> S,
     mut f: impl FnMut(S) -> T,
 ) -> (Vec<Duration>, Vec<usize>, T) {
     let n = *SAMPLES;
+    #[cfg(feature = "dhat")]
+    let caller = std::panic::Location::caller();
     let mut times = Vec::with_capacity(n);
     for _ in 0..n {
         let state = setup();
@@ -163,11 +175,40 @@ pub fn sample_with<S, T>(
     for _ in 0..n {
         drop(last.take());
         let state = setup();
+        #[cfg(feature = "dhat")]
+        let profiler = peaks.is_empty().then(|| dhat_profiler(caller));
         let (out, peak) = mem::peak_of(|| f(state));
+        #[cfg(feature = "dhat")]
+        drop(profiler);
         peaks.push(peak);
         last = Some(out);
     }
     (times, peaks, last.expect("SAMPLES > 0"))
+}
+
+/// Starts dhat for the first counted run of a measurement. Each profile is
+/// written to `$DHAT_DIR` (default `dhat/`) as `<n>-<file>_<line>.json`,
+/// `<n>` counting measurements in run order and `<file>_<line>` the
+/// `sample`/`sample_with` call site that took it. `$DHAT_FRAMES` (default
+/// 32) caps the backtrace depth.
+#[cfg(feature = "dhat")]
+fn dhat_profiler(caller: &std::panic::Location<'_>) -> dhat::Profiler {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::var("DHAT_DIR").unwrap_or_else(|_| "dhat".into());
+    std::fs::create_dir_all(&dir).expect("create DHAT_DIR");
+    let file = std::path::Path::new(caller.file())
+        .file_stem()
+        .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+    let frames = std::env::var("DHAT_FRAMES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(32);
+    dhat::Profiler::builder()
+        .file_name(format!("{dir}/{n:02}-{file}_{}.json", caller.line()))
+        .trim_backtraces(Some(frames))
+        .build()
 }
 
 /// Runs a `.zippel` compile [`SAMPLES`] times and returns the last
