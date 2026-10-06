@@ -16,12 +16,7 @@ pub struct Protocol {
     pub name: &'static str,
     pub path: &'static str,
     pub sizes: &'static [(&'static str, usize)],
-    /// Whether the completeness sweep runs it: the paper's protocols, plus
-    /// `okamoto_elgamal` and `pedersen_eq`.
     pub completeness: bool,
-    /// The special-soundness round parameters, one per challenge round, for
-    /// the protocols the soundness sweep runs: the paper's 6 special-sound
-    /// candidates and 3 more Sigma protocols.
     pub soundness: Option<&'static [usize]>,
 }
 
