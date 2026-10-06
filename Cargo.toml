@@ -67,7 +67,20 @@ serde_json = "1"
 clap = { version = "4", features = ["derive"] }
 process-wrap = { version = "10", default-features = false, features = ["std", "process-group", "job-object"] }
 
-# [patch.crates-io]
+# arkworks 0.6.0 with one fix: its WNAF MSM ran every chunk on a freshly
+# built thread pool, outside the caller's, so concurrent MSMs each brought
+# their own threads (RAYON_NUM_THREADS bounded neither zippel nor the native
+# baselines) and a worker waiting on one stole and nested graph nodes. On
+# `msm-in-caller-pool` the chunks run in the caller's pool. Every algebra
+# crate comes from the branch, so there is one copy of the field types.
+[patch.crates-io]
+ark-ff = { git = "https://github.com/arkworks-rs/algebra.git", branch = "msm-in-caller-pool" }
+ark-ff-asm = { git = "https://github.com/arkworks-rs/algebra.git", branch = "msm-in-caller-pool" }
+ark-ff-macros = { git = "https://github.com/arkworks-rs/algebra.git", branch = "msm-in-caller-pool" }
+ark-ec = { git = "https://github.com/arkworks-rs/algebra.git", branch = "msm-in-caller-pool" }
+ark-poly = { git = "https://github.com/arkworks-rs/algebra.git", branch = "msm-in-caller-pool" }
+ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git", branch = "msm-in-caller-pool" }
+ark-serialize-derive = { git = "https://github.com/arkworks-rs/algebra.git", branch = "msm-in-caller-pool" }
 # ark-crypto-primitives = { git = "https://github.com/arkworks-rs/crypto-primitives.git", branch = "release/0.6.0" }
 # ark-r1cs-std = { git = "https://github.com/arkworks-rs/r1cs-std.git", branch = "release/0.6.0" }
 # ark-snark = { git = "https://github.com/arkworks-rs/snark.git", branch = "release/0.6.0" }

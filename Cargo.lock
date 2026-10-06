@@ -260,8 +260,7 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8352a2b2aedf6ba2cc38f7520fc51191d518dde96175c729af19f2d059f191c4"
+source = "git+https://github.com/arkworks-rs/algebra.git?branch=msm-in-caller-pool#d1789c3015125a65a1b40a447ef122725330b7f8"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -294,8 +293,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7a806ac6c8307b929df4645776290a50ee2aac754ad09d8bdf73391309e43af"
+source = "git+https://github.com/arkworks-rs/algebra.git?branch=msm-in-caller-pool#d1789c3015125a65a1b40a447ef122725330b7f8"
 dependencies = [
  "ark-ff-asm",
  "ark-ff-macros",
@@ -312,8 +310,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1479009684adc073dff49a1025d3a7065b317a9ead25aaaca38cdc70058ba8a2"
+source = "git+https://github.com/arkworks-rs/algebra.git?branch=msm-in-caller-pool#d1789c3015125a65a1b40a447ef122725330b7f8"
 dependencies = [
  "quote",
  "syn 2.0.117",
@@ -322,8 +319,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a0691ed21ef00ef89c1e9bda832eba493dda3ec2f8d892fb25b705f73f06bb8"
+source = "git+https://github.com/arkworks-rs/algebra.git?branch=msm-in-caller-pool#d1789c3015125a65a1b40a447ef122725330b7f8"
 dependencies = [
  "num-bigint 0.4.8",
  "num-traits",
@@ -382,8 +378,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75f55af10b672002b8d953e230282c51206842e20e5791a94432219b4201de5c"
+source = "git+https://github.com/arkworks-rs/algebra.git?branch=msm-in-caller-pool#d1789c3015125a65a1b40a447ef122725330b7f8"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -468,8 +463,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a74dd304fd536fb95d0a328e72be759209cc496a9da094c5bc56e5fea4f9e86b"
+source = "git+https://github.com/arkworks-rs/algebra.git?branch=msm-in-caller-pool#d1789c3015125a65a1b40a447ef122725330b7f8"
 dependencies = [
  "ark-serialize-derive",
  "ark-std",
@@ -482,8 +476,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f153690697a2b91e5e1251ff98411ee5371500a111a0fd317a70e588eb300f9"
+source = "git+https://github.com/arkworks-rs/algebra.git?branch=msm-in-caller-pool#d1789c3015125a65a1b40a447ef122725330b7f8"
 dependencies = [
  "proc-macro2",
  "quote",
