@@ -31,7 +31,7 @@ zrunr = "run --release --example zippel --"
 
 # Run every compile-time check on .zippel files without a harness or inputs.
 #   cargo zcheck examples/kzg/kzg.zippel
-#   cargo zcheck --size N=2 examples/zk_kzg/zk_kzg.zippel
+#   cargo zcheck --size N=2 examples/marlin_kzg/marlin_kzg.zippel
 zcheck = "run -q -p check --bin zippel-check --"
 
 # Format .zippel files.

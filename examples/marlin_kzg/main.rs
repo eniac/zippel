@@ -9,8 +9,8 @@ use zippel::*;
 use crate::common;
 
 pub fn run(_args: &[String]) {
-    println!("=== ZK-KZG (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/zk_kzg/zk_kzg.zippel"));
+    println!("=== Marlin-KZG (ArkBls12_381) ===");
+    let args = ZippelArgs::new(PathBuf::from("examples/marlin_kzg/marlin_kzg.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("N"), &2);

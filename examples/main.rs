@@ -61,6 +61,8 @@ mod ipa_weighted;
 mod kzg;
 #[path = "kzh/main.rs"]
 mod kzh;
+#[path = "marlin_kzg/main.rs"]
+mod marlin_kzg;
 #[path = "membership/main.rs"]
 mod membership;
 #[path = "mle_sumcheck/main.rs"]
@@ -89,8 +91,6 @@ mod sumcheck;
 mod zerocheck;
 #[path = "zeromorph_kzg/main.rs"]
 mod zeromorph_kzg;
-#[path = "zk_kzg/main.rs"]
-mod zk_kzg;
 
 type Runner = fn(&[String]);
 
@@ -119,6 +119,7 @@ const EXAMPLES: &[(&str, Runner)] = &[
     ("ipa_weighted", ipa_weighted::run),
     ("kzg", kzg::run),
     ("kzh", kzh::run),
+    ("marlin_kzg", marlin_kzg::run),
     ("membership", membership::run),
     ("mle_sumcheck", mle_sumcheck::run),
     ("okamoto", okamoto::run),
@@ -133,7 +134,6 @@ const EXAMPLES: &[(&str, Runner)] = &[
     ("sumcheck", sumcheck::run),
     ("zerocheck", zerocheck::run),
     ("zeromorph_kzg", zeromorph_kzg::run),
-    ("zk_kzg", zk_kzg::run),
 ];
 
 fn usage() {
