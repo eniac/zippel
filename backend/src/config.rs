@@ -128,7 +128,7 @@ pub trait ArkScalarOps<F: PrimeField> {
     ///
     /// Runs in parallel via `rayon`; only the first `min(len)` entries are touched.
     #[inline]
-    fn vec_add(f1: &Vec<F>, f2: &mut Vec<F>) {
+    fn vec_add(f1: &[F], f2: &mut Vec<F>) {
         f2.par_iter_mut()
             .zip(f1.par_iter())
             .for_each(|(a, b)| *a += b);
@@ -144,14 +144,14 @@ pub trait ArkScalarOps<F: PrimeField> {
 
     /// Pointwise vector subtraction, saving the result in `f2`.
     #[inline]
-    fn vec_sub(f1: &Vec<F>, f2: &mut Vec<F>) {
+    fn vec_sub(f1: &[F], f2: &mut Vec<F>) {
         Self::vec_neg(f2);
         Self::vec_add(f1, f2);
     }
 
     /// Pointwise (Hadamard) vector multiplication, saving the result in `f2`.
     #[inline]
-    fn vec_mul(f1: &Vec<F>, f2: &mut Vec<F>) {
+    fn vec_mul(f1: &[F], f2: &mut Vec<F>) {
         f2.par_iter_mut()
             .zip(f1.par_iter())
             .for_each(|(a, b)| *a *= b);
@@ -159,7 +159,7 @@ pub trait ArkScalarOps<F: PrimeField> {
 
     /// Inner product of two scalar vectors, computed as a parallel sum of products.
     #[inline]
-    fn vec_dot(f1: &Vec<F>, f2: &Vec<F>) -> F {
+    fn vec_dot(f1: &[F], f2: &[F]) -> F {
         f1.par_iter()
             .zip(f2.par_iter())
             .map(|(a, b)| *a * *b)
@@ -177,7 +177,7 @@ pub trait ArkScalarOps<F: PrimeField> {
     /// Computes `f2 := f1 / f2` via a single batch inversion, mirroring the
     /// scalar [`div`](ArkScalarOps::div) contract.
     #[inline]
-    fn vec_div(f1: &Vec<F>, f2: &mut Vec<F>) {
+    fn vec_div(f1: &[F], f2: &mut Vec<F>) {
         Self::vec_inv(f2);
         Self::vec_mul(f1, f2);
     }
@@ -428,7 +428,7 @@ pub trait ArkPairingOps<P: Pairing> {
     ///
     /// Unlike `billinear_vec_dot` this keeps the pairs separate instead of summing.
     #[inline]
-    fn billinear_vec_mul(g1: &Vec<P::G1>, g2: &Vec<P::G2>) -> Vec<PairingOutput<P>> {
+    fn billinear_vec_mul(g1: &[P::G1], g2: &[P::G2]) -> Vec<PairingOutput<P>> {
         g1.par_iter()
             .zip(g2.par_iter())
             .map(|(g1, g2)| Self::billinear_map(g1, g2))

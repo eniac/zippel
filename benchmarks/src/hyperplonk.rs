@@ -314,7 +314,7 @@ mod cross_tests {
     }
     fn frs(v: &Value<ArkBls12_381>) -> Vec<Fr> {
         match v {
-            Value::VecScalar(f) => f.clone(),
+            Value::VecScalar(f) => f.to_vec(),
             _ => panic!("expected scalars, got {v}"),
         }
     }
