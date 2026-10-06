@@ -209,11 +209,13 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
             sizes: &[("n", 3), ("b", 2), ("l_chunk", 1)],
             ignored: true,
         },
+        // S=3 is the smallest size at which one recursive step calls
+        // another; it does not finish yet.
         CompletenessEntry {
             name: "dory_ipa",
             zippel_path: "examples/dory_ipa/dory_ipa.zippel",
-            sizes: &[("S", 2)],
-            ignored: false,
+            sizes: &[("S", 3)],
+            ignored: true,
         },
         CompletenessEntry {
             name: "dory_pcs",

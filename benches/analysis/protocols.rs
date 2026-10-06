@@ -176,7 +176,9 @@ pub static PROTOCOLS: &[Protocol] = &[
     Protocol {
         name: "dory_ipa",
         path: "examples/dory_ipa/dory_ipa.zippel",
-        sizes: &[("S", 2)],
+        // S=3 is the smallest size at which one recursive dory_reduce (and
+        // dory_setup_ok) step calls another, not only the LOG_N=1 step.
+        sizes: &[("S", 3)],
         completeness: true,
         soundness: None,
     },

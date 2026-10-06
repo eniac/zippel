@@ -257,13 +257,13 @@ our machine), so a much tighter 2-minute timeout is used here to keep
 the full run fast.
 
 **What to expect, and why it differs from the paper.** Completeness
-verifies every protocol except five (`spartan`, `hyperplonk_permutation`,
-`hyperplonk_piop`, `dekart` and `pari`), which reach the timeout. The
-submitted paper verified 20 of its 30. This is because we improved our
+verifies every protocol except six (`spartan`, `dory_ipa`,
+`hyperplonk_permutation`, `hyperplonk_piop`, `dekart` and `pari`), which
+reach the timeout. The submitted paper verified 20 of its 30. This is because we improved our
 inlining optimization and fixed some bugs that we found after submission.
 
-**Runtime**: a full run takes approximately 12 minutes, 10 of them spent
-on the five protocols that reach the timeout.
+**Runtime**: a full run takes approximately 14 minutes, 12 of them spent
+on the six protocols that reach the timeout.
 
 ---
 
