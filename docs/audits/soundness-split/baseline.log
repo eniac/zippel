@@ -1,0 +1,28 @@
+   Compiling analyses v0.1.0 (/private/tmp/zippel-audit-main/analyses)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.21s
+     Running tests/branch_audit.rs (/Users/mithrandir/Code/zippel/target/debug/build/analyses/0fc6730dcda10600/out/branch_audit-0fc6730dcda10600)
+
+running 3 tests
+
+thread 'body_assert_completeness_probe' (45841712) panicked at analyses/tests/branch_audit.rs:53:5:
+aborting prover called complete: Ok(())
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test body_assert_completeness_probe ... FAILED
+baseline model=Plain, inline=true
+baseline model=Plain, inline=true
+
+thread 'vector_response_must_be_fresh_in_plain_mode' (45841714) panicked at analyses/tests/branch_audit.rs:70:5:
+unchecked h == 0 accepted: Ok(())
+test vector_response_must_be_fresh_in_plain_mode ... FAILED
+baseline model=Plain, inline=false
+test scalar_bool_relation_without_inline ... ok
+
+failures:
+
+failures:
+    body_assert_completeness_probe
+    vector_response_must_be_fresh_in_plain_mode
+
+test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+error: test failed, to rerun pass `-p analyses --test branch_audit`

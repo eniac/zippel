@@ -69,12 +69,17 @@ pub struct Ideal<C: ArkConfig> {
     /// the two lengths different, and the next operation that keeps them in
     /// step drops the origins instead.
     pub origins: Vec<Origin>,
-    /// What each `verify` checks. Recorded for reporting only, never a generator.
+    /// What each `assert` or `verify` checks. Callers choose which checks are
+    /// assumptions and which are proof obligations.
     pub checks: Vec<Check<C::F>>,
     /// Definitional equations kept out of the generating set: each `Var` maps to
     /// the polynomial it abbreviates, so chains of intermediate DAG nodes can be
     /// substituted away by [`Ideal::inline`] instead of bloating the basis.
     pub pl: Ctx<Var, Polynomial<C::F>>,
+    /// Total Boolean definitions that cannot be represented by `pl`: each
+    /// equality result and its defining equations (including inverse witnesses).
+    /// These define the result for every input; they do not assert it is true.
+    pub(crate) boolean_definitions: HashMap<Var, Vec<Polynomial<C::F>>>,
     /// Namespace mapping each DAG node reference to the `Var` that stands for its
     /// value, so repeated visits to the same node reuse one variable.
     pub vars: HashMap<Ref, Var>,
@@ -91,6 +96,7 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             origins: Vec::new(),
             checks: Vec::new(),
             pl: Ctx::new(),
+            boolean_definitions: HashMap::new(),
             vars: HashMap::new(),
             var_order: Vec::new(),
         }
@@ -159,6 +165,7 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
     pub fn eliminate_var<F: Fn(&Var) -> bool>(&mut self, f: &F) {
         self.retain_generators(|p| p.vars().iter().all(|v| !f(v)));
         self.pl.retain(|p, _| !f(p));
+        self.boolean_definitions.retain(|p, _| !f(p));
     }
 
     /// Drop every generator all of whose monomials satisfy the predicate, then
@@ -168,6 +175,8 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         self.retain_generators(|p| p.terms.keys().any(|t| !f(t)));
         let basis_vars: Set<Var> = self.generating_set.iter().flat_map(|p| p.vars()).collect();
         self.pl.retain(|p, _| basis_vars.contains(p));
+        self.boolean_definitions
+            .retain(|p, _| basis_vars.contains(p));
     }
 
     /// Inline all `pl` definitions into the basis polynomials and the checks.
@@ -259,6 +268,11 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             check.lhs = check.lhs.clone().inline_vars(&self.pl).0;
             check.rhs = check.rhs.clone().inline_vars(&self.pl).0;
         }
+        for definitions in self.boolean_definitions.values_mut() {
+            for p in definitions {
+                *p = p.clone().inline_vars(&self.pl).0;
+            }
+        }
 
         for (k, v) in saved {
             self.pl.insert(&k, &v);
@@ -279,6 +293,8 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         self.generating_set
             .extend(other.generating_set.iter().cloned());
         self.checks.extend(other.checks.iter().cloned());
+        self.boolean_definitions
+            .extend(other.boolean_definitions.clone());
         for (k, v) in other.pl.iter() {
             self.pl.insert(k, v);
         }

@@ -208,12 +208,12 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
 
     /// Transitive closure of the prover view.
     ///
-    /// Walks backward from transcript nodes to input args and processes
-    /// every node encountered. Prefs are all input args (both instance and
-    /// witness).
+    /// Walks backward from transcript nodes and runtime prover assertions,
+    /// using the same roots as projection. Relation assertions are excluded.
+    /// Prefs are all input args (both instance and witness).
     pub fn prover(dag: &QDag<C>) -> Self {
         let vars = Self::vars_from_marker(dag, dag.input_node());
-        let transcripts_vec = dag.transcript_nodes();
+        let roots = dag.prover_roots();
 
         let arg_refs = vars.iter().map(|v| v.reference).collect();
         let mut tc = Self {
@@ -222,7 +222,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             arg_refs,
         };
 
-        let reachable = collect_reachable_backward(dag, &transcripts_vec, None);
+        let reachable = collect_reachable_backward(dag, &roots, None);
         let topo = topo_sort_nodes(dag, &reachable);
 
         let mut seen: HashMap<NodeIndex, Var> = HashMap::new();

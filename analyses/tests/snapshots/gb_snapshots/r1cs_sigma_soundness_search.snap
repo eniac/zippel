@@ -2,37 +2,37 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+- gamma::0*t_C_C'~h_base + gamma::2*t_C_1~h_base + gamma::2^2*t_C_2~h_base - t_sigma_o::2 + __zippel::node::73::0
 - gamma::1*__zippel::soundness::d::0::1::0 + gamma::0*__zippel::soundness::d::0::1::0 - 1
+- gamma::1*t_C_C'~h_base + gamma::2*t_C_1~h_base + gamma::2^2*t_C_2~h_base - t_sigma_o::2 + __zippel::node::73::1
 - gamma::2*__zippel::soundness::d::0::2::0 + gamma::0*__zippel::soundness::d::0::2::0 - 1
 - gamma::2*__zippel::soundness::d::0::2::0*__zippel::soundness::d::0::1::0 + gamma::1*__zippel::soundness::d::0::2::0*__zippel::soundness::d::0::1::0 - __zippel::soundness::d::0::1::0 + __zippel::soundness::d::0::2::0
 - gamma::2*__zippel::soundness::d::1::2::0 + gamma::1*__zippel::soundness::d::1::2::0 - 1
+- gamma::2*t_C_C'~h_base + gamma::2*t_C_1~h_base + gamma::2^2*t_C_2~h_base - t_sigma_o::2 + __zippel::node::73::2
 - gamma::2*t_s::2[0]*__zippel::soundness::d::1::2::0 + gamma::2*t_s::1[0]*__zippel::soundness::d::1::2::0 - t_s::2[0] + w[0]
 - t_C_1~h_base + omega_1
 - t_C_2~h_base + omega_2
 - t_C_A'~h_base + omega_A'
-- t_C_A~h_base + omega_A
-- t_C_A~h_base - gamma::0*t_C_A'~h_base + __zippel::node::67::0
-- t_C_A~h_base - gamma::1*t_C_A'~h_base + __zippel::node::67::1
-- t_C_A~h_base - gamma::2*t_C_A'~h_base + __zippel::node::67::2
 - t_C_B'~h_base + omega_B'
-- t_C_B~h_base + omega_B
-- t_C_B~h_base - gamma::0*t_C_B'~h_base + __zippel::node::70::0
-- t_C_B~h_base - gamma::1*t_C_B'~h_base + __zippel::node::70::1
-- t_C_B~h_base - gamma::2*t_C_B'~h_base + __zippel::node::70::2
 - t_C_C'~h_base + omega_C'
-- t_C_C~h_base + omega_C
-- t_C_C~h_base - gamma::0*t_C_1~h_base - gamma::0^2*t_C_2~h_base + __zippel::node::79::0
-- t_C_C~h_base - gamma::0*t_C_C'~h_base + __zippel::node::73::0
-- t_C_C~h_base - gamma::1*t_C_1~h_base - gamma::1^2*t_C_2~h_base + __zippel::node::79::1
-- t_C_C~h_base - gamma::1*t_C_C'~h_base + __zippel::node::73::1
-- t_C_C~h_base - gamma::2*t_C_1~h_base - gamma::2^2*t_C_2~h_base + __zippel::node::79::2
-- t_C_C~h_base - gamma::2*t_C_C'~h_base + __zippel::node::73::2
 - t_s::0[0] + __zippel::node::64::0[0]
 - t_s::1[0] + __zippel::node::64::1[0]
 - t_s::1[0]*__zippel::soundness::d::0::1::0 + t_s::0[0]*__zippel::soundness::d::0::1::0 + t_s::2[0]*__zippel::soundness::d::1::2::0 - t_s::1[0]*__zippel::soundness::d::1::2::0
 - t_s::2[0] + __zippel::node::64::2[0]
 - t_s::2[0]*__zippel::soundness::d::0::2::0 + t_s::0[0]*__zippel::soundness::d::0::2::0 + t_s::2[0]*__zippel::soundness::d::1::2::0 - t_s::1[0]*__zippel::soundness::d::1::2::0
+- t_sigma_A::2 + __zippel::node::67::2
+- t_sigma_B::2 + __zippel::node::70::2
+- t_sigma_o::2 + __zippel::node::79::2
 __zippel::soundness::d::0::2::0*__zippel::soundness::d::0::1::0 - __zippel::soundness::d::1::2::0*__zippel::soundness::d::0::1::0 + __zippel::soundness::d::1::2::0*__zippel::soundness::d::0::2::0
 gamma::1*t_s::2[0] - gamma::0*t_s::2[0] - gamma::2*t_s::1[0] + gamma::0*t_s::1[0] + gamma::2*t_s::0[0] - gamma::1*t_s::0[0]
+gamma::2*t_C_1~h_base + gamma::2^2*t_C_2~h_base - t_sigma_o::2 + omega_C
+gamma::2*t_C_1~h_base - gamma::0*t_C_1~h_base + gamma::2^2*t_C_2~h_base - gamma::0^2*t_C_2~h_base - t_sigma_o::2 + __zippel::node::79::0
+gamma::2*t_C_1~h_base - gamma::1*t_C_1~h_base + gamma::2^2*t_C_2~h_base - gamma::1^2*t_C_2~h_base - t_sigma_o::2 + __zippel::node::79::1
+gamma::2*t_C_A'~h_base - gamma::0*t_C_A'~h_base - t_sigma_A::2 + __zippel::node::67::0
+gamma::2*t_C_A'~h_base - gamma::1*t_C_A'~h_base - t_sigma_A::2 + __zippel::node::67::1
+gamma::2*t_C_A'~h_base - t_sigma_A::2 + omega_A
+gamma::2*t_C_B'~h_base - gamma::0*t_C_B'~h_base - t_sigma_B::2 + __zippel::node::70::0
+gamma::2*t_C_B'~h_base - gamma::1*t_C_B'~h_base - t_sigma_B::2 + __zippel::node::70::1
+gamma::2*t_C_B'~h_base - t_sigma_B::2 + omega_B
 mat_A[1]*mat_B[1]*gamma::2^2*t_s::2[0]^2*__zippel::soundness::d::1::2::0^2 + 52435875175126190479447740508185965837690552500527637822603658699938581184511*mat_A[1]*mat_B[1]*gamma::2^2*t_s::1[0]*t_s::2[0]*__zippel::soundness::d::1::2::0^2 + mat_A[1]*mat_B[1]*gamma::2^2*t_s::1[0]^2*__zippel::soundness::d::1::2::0^2 + 2*mat_A[1]*mat_B[1]*gamma::2*t_s::2[0]^2*__zippel::soundness::d::1::2::0 + 52435875175126190479447740508185965837690552500527637822603658699938581184511*mat_A[1]*mat_B[1]*gamma::2*t_s::1[0]*t_s::2[0]*__zippel::soundness::d::1::2::0 + mat_A[0]*mat_B[1]*x[0]*gamma::2*t_s::2[0]*__zippel::soundness::d::1::2::0 + mat_A[1]*mat_B[0]*x[0]*gamma::2*t_s::2[0]*__zippel::soundness::d::1::2::0 - mat_C[1]*gamma::2*t_s::2[0]*__zippel::soundness::d::1::2::0 - mat_A[0]*mat_B[1]*x[0]*gamma::2*t_s::1[0]*__zippel::soundness::d::1::2::0 - mat_A[1]*mat_B[0]*x[0]*gamma::2*t_s::1[0]*__zippel::soundness::d::1::2::0 + mat_C[1]*gamma::2*t_s::1[0]*__zippel::soundness::d::1::2::0 + mat_A[1]*mat_B[1]*t_s::2[0]^2 + mat_A[0]*mat_B[1]*x[0]*t_s::2[0] + mat_A[1]*mat_B[0]*x[0]*t_s::2[0] - mat_C[1]*t_s::2[0] + mat_A[0]*mat_B[0]*x[0]^2 - mat_C[0]*x[0]
 t_s::2[0]*__zippel::soundness::d::1::2::0 - t_s::1[0]*__zippel::soundness::d::1::2::0 + r

@@ -1,0 +1,49 @@
+   Compiling analyses v0.1.0 (/Users/mithrandir/Code/zippel/analyses)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.58s
+     Running tests/branch_audit.rs (target/debug/build/analyses/0fc6730dcda10600/out/branch_audit-0fc6730dcda10600)
+
+running 6 tests
+body assertions: 0
+
+thread 'body_assert_completeness_probe' (45850417) panicked at analyses/tests/branch_audit.rs:108:5:
+aborting prover called complete: Ok(())
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test body_assert_completeness_probe ... FAILED
+test completeness_boolean_transcript_is_opaque_to_verifier ... ok
+model=Plain, inline=true, assumptions=None, goals=1
+model=Plain, inline=true, assumptions=None, goals=3
+model=Plain, inline=true, assumptions=None, goals=2
+model=Plain, inline=true, assumptions=None, goals=1
+
+thread 'vector_response_must_be_fresh_in_plain_mode' (45850422) panicked at analyses/tests/branch_audit.rs:128:5:
+unchecked h == 0 accepted: Ok(())
+test vector_response_must_be_fresh_in_plain_mode ... FAILED
+model=Plain, inline=false, assumptions=None, goals=1
+model=SymbolicGroup, inline=true, assumptions=None, goals=1
+model=SymbolicGroup, inline=true, assumptions=Some("binding w.r.t. {}"), goals=1
+
+thread 'symbolic_constant_witness_can_be_extracted' (45850421) panicked at analyses/tests/branch_audit.rs:143:5:
+constant witness should be extractable: Err("No valid extractor for witness x: NoExtractor")
+test symbolic_constant_witness_can_be_extracted ... FAILED
+
+thread 'scalar_bool_relation_requires_local_semantics' (45850420) panicked at analyses/tests/branch_audit.rs:88:5:
+valid bool relation rejected: [(true, Err("Extractor invalid; relation remainder: - __zippel::node::17 + __zippel::node::16")), (false, Err("Extractor invalid; relation remainder: - __zippel::node::17 + __zippel::node::16"))]
+test scalar_bool_relation_requires_local_semantics ... FAILED
+model=SymbolicGroupResponses, inline=true, assumptions=Some("binding w.r.t. {}"), goals=1
+
+thread 'empty_group_basis_must_not_erase_goals' (45850419) panicked at analyses/tests/branch_audit.rs:68:5:
+invalid protocol accepted: [(SymbolicGroup, Ok(())), (SymbolicGroupResponses, Ok(()))]
+test empty_group_basis_must_not_erase_goals ... FAILED
+
+failures:
+
+failures:
+    body_assert_completeness_probe
+    empty_group_basis_must_not_erase_goals
+    scalar_bool_relation_requires_local_semantics
+    symbolic_constant_witness_can_be_extracted
+    vector_response_must_be_fresh_in_plain_mode
+
+test result: FAILED. 1 passed; 5 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+error: test failed, to rerun pass `-p analyses --test branch_audit`

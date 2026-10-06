@@ -19,18 +19,21 @@ use super::bool::sides;
 /// product polynomial in the GB generating set.
 ///
 /// With [`EncodeOptions::relation_asserts`](crate::ideal::EncodeOptions)
-/// set, an `assert` outside it, written in a protocol body, encodes to
-/// nothing.
+/// set, an `assert` outside it is recorded as a completeness obligation
+/// in `checks`, without adding its truth as an assumption to the ideal.
 pub fn assert_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, pr: &Var, exp: &HOp<C>) {
-    if let Some(relation) = &ctx.builder.options().relation_asserts
-        && !relation.contains(&pr.reference)
-    {
-        return;
-    }
+    let assume = ctx
+        .builder
+        .options()
+        .relation_asserts
+        .as_ref()
+        .is_none_or(|relation| relation.contains(&pr.reference));
     let leaves = ctx.builder.collect_and_leaves(exp);
     for leaf in leaves {
         record_check(ctx, &leaf);
-        check_op(ctx, &leaf);
+        if assume {
+            check_op(ctx, &leaf);
+        }
     }
 }
 

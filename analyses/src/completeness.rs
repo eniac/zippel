@@ -30,11 +30,12 @@ pub struct CompletenessInputs<F: ark_ff::PrimeField> {
     /// verifier-locals). When inlining, every definition is substituted away,
     /// prover messages and inputs the relation pins down included.
     pub generating_set: Vec<Polynomial<F>>,
-    /// Verifier polynomials to reduce against the basis in `run()`, minus
+    /// Verifier and prover-assertion polynomials to reduce in `run()`, minus
     /// those already in `generating_set` (members by construction).
     pub verifier: Vec<Polynomial<F>>,
-    /// What each `verify` checks, over the verifier's own variables, before
-    /// any substitution. Unlike `verifier`, it does not vanish when the
+    /// What each body `assert` and `verify` checks. Prover-local definitions
+    /// are inlined when requested; verifier checks retain their own variables.
+    /// Unlike `verifier`, this does not vanish when the
     /// substitution discharges a check, so it is what to report or snapshot.
     pub checks: Vec<Check<F>>,
     /// The prover messages substituted away, `t <- f`, each resolved down to
@@ -467,9 +468,9 @@ pub struct CompletenessAnalysis<C: ArkConfig> {
     /// Gröbner basis of (prover ∪ relation ∪ verifier-locals) under grevlex.
     /// Computed in `from_inputs`.
     pub basis: GbBasis<C::F>,
-    /// Verifier polynomials to reduce against `basis` in `run()`.
+    /// Verifier and prover-assertion polynomials to reduce against `basis`.
     pub verifier: Vec<Polynomial<C::F>>,
-    /// What each `verify` checks; see [`CompletenessInputs::checks`].
+    /// What each body `assert` and `verify` checks; see [`CompletenessInputs::checks`].
     pub checks: Vec<Check<C::F>>,
     /// The prover messages substituted away; see [`CompletenessInputs::messages`].
     pub messages: Ctx<Var, Polynomial<C::F>>,
@@ -516,6 +517,7 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         let prover_tc = TransClos::prover(dag);
         let mut body_asserts = count_asserts(&prover_tc);
         let mut prover_result = builder.build(prover_tc);
+        let body_check_count = prover_result.checks.len();
         prover_result.set_stage(Stage::Prover);
 
         let mut rel_result = builder.build(rel_tc);
@@ -526,6 +528,9 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         if inline {
             prover_result.inline(&transcript_refs);
         }
+        // Body assertions are obligations on honest runs, not assumptions.
+        // Their computations have now been inlined alongside the messages.
+        let mut checks: Vec<_> = prover_result.checks.drain(..body_check_count).collect();
 
         let verifier_tc = TransClos::verifier(dag);
         body_asserts += count_asserts(&verifier_tc);
@@ -572,6 +577,8 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         let mut generating_set = prover_result.generating_set;
         generating_set.extend(verifier_locals.generating_set);
         let mut verifier = verifier_result.generating_set;
+        verifier.extend(checks.iter().map(|c| &c.lhs - &c.rhs));
+        checks.extend(verifier_result.checks);
 
         // verifier_locals keeps the `==` node under each `verify`, so its
         // encoding is already a generator; reducing it again is wasted work.
@@ -603,7 +610,7 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         CompletenessInputs {
             generating_set,
             verifier,
-            checks: verifier_result.checks,
+            checks,
             messages,
             pinned,
             origins,
@@ -631,7 +638,7 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         }
     }
 
-    /// Explain why each `verify` holds, one block per check, sorted:
+    /// Explain why each body `assert` and `verify` holds, one block per check:
     ///
     /// ```text
     /// check: g*beta_z == v*c + v_r
@@ -693,10 +700,9 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         }
     }
 
-    /// Reduces every verifier polynomial not already in the generating set
-    /// against the prover/relation Gröbner basis; a zero remainder means the
-    /// verifier equation is implied by the prover's computation, i.e. the
-    /// protocol is complete.
+    /// Reduces every verifier or prover-assertion obligation not already in
+    /// the generating set against the prover/relation Gröbner basis. A zero
+    /// remainder means the obligation follows from the honest computation.
     ///
     /// # Errors
     /// Returns [`AnalysisError::UnitIdeal`] if the basis degenerated to the
@@ -1866,6 +1872,74 @@ mod tests {
         QualifierPropagation::from_dag(&gs[0])
     }
 
+    #[test]
+    fn regression_prover_assertions_are_completeness_obligations() {
+        // The assert is disconnected from the transcript, and even sits
+        // after verify. It still runs in the projected prover graph.
+        let invalid = r#"
+            proto bad<F: Field>(witness x: F) where x == 0 {
+                t <- x;
+                verify(t == 0);
+                assert(x == 1)
+            }
+        "#;
+        for inline in [true, false] {
+            for (src, complete) in [
+                (invalid.to_string(), false),
+                (invalid.replace("assert(x == 1)", "assert(x == 0)"), true),
+            ] {
+                let inputs = CompletenessAnalysis::build_inputs(&dag_of(&src), inline);
+                assert_eq!(inputs.body_asserts, 1);
+                assert_eq!(inputs.checks.len(), 2);
+                let result = CompletenessAnalysis::<ArkBls12_381>::from_inputs(
+                    inputs,
+                    GbBackendKind::default(),
+                )
+                .run();
+                if complete {
+                    assert!(result.is_ok(), "inline={inline}: {result:?}");
+                } else {
+                    assert!(
+                        matches!(result, Err(AnalysisError::Incomplete(_))),
+                        "inline={inline}: {result:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn prover_assertions_include_untransmitted_computations() {
+        let proto = r#"
+            proto check<F: Field>(witness x: F) where x == 0 {
+                let local = x * x + 1;
+                assert(local == 1);
+                t <- x;
+                verify(t == 0)
+            }
+        "#;
+        for inline in [true, false] {
+            let inputs = CompletenessAnalysis::build_inputs(&dag_of(proto), inline);
+            assert_eq!(inputs.body_asserts, 1);
+            let result =
+                CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, GbBackendKind::default())
+                    .run();
+            assert!(result.is_ok(), "inline={inline}: {result:?}");
+
+            // Randomness used only by an assertion still belongs to the prover
+            // computation; assuming that assertion would hide honest aborts.
+            let invalid = proto.replace("x * x + 1", "random<F>");
+            let inputs = CompletenessAnalysis::build_inputs(&dag_of(&invalid), inline);
+            let result =
+                CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, GbBackendKind::default())
+                    .run();
+            assert!(
+                matches!(result, Err(AnalysisError::Incomplete(_))),
+                "inline={inline}: {result:?}"
+            );
+        }
+    }
+
     /// Whether `Singular` is on `PATH`.
     fn singular_available() -> bool {
         std::process::Command::new("Singular")
@@ -2052,7 +2126,7 @@ mod tests {
     }
 
     #[test]
-    fn body_asserts_encode_to_nothing() {
+    fn body_asserts_record_obligations_without_assuming_them() {
         use crate::ideal::{EncodeOptions, Ideal, IdealBuilder};
         use backend::{ABase, ATyp};
         use graph::{Op, Ref};
@@ -2081,6 +2155,11 @@ mod tests {
             ideal.register(&assert);
             let exp = backend::op::mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), bool_t));
             builder.add_op(assert, Op::Assert(exp), &mut ideal);
+            assert_eq!(
+                ideal.checks.len(),
+                1,
+                "every assertion records its obligation"
+            );
             ideal.generating_set.len()
         };
         assert_eq!(
@@ -2092,7 +2171,7 @@ mod tests {
         assert_eq!(
             generators(Some(vec![])),
             0,
-            "a body assert encodes to nothing"
+            "a body assert adds no assumption"
         );
     }
 }

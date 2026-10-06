@@ -53,7 +53,7 @@ impl<C: ArkConfig> Clone for ExtractorRejection<C> {
 #[derive(Error, Debug)]
 #[allow(clippy::result_large_err)]
 pub enum AnalysisError<C: ArkConfig> {
-    /// A verifier equation that cannot be derived from the prover's Gröbner basis.
+    /// A verifier check or prover assertion not implied by the honest computation.
     #[error("Incomplete protocol: {0}")]
     Incomplete(Polynomial<C::F>),
 

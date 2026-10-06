@@ -67,6 +67,8 @@ pub enum Unsupported {
     Pairing(Var),
     /// Group-typed witnesses need coefficient witness slots (M3).
     GroupWitness(Var),
+    /// A group variable has no generator of its group in the detected basis.
+    MissingBasis(Var),
 }
 
 impl std::fmt::Display for Unsupported {
@@ -75,6 +77,9 @@ impl std::fmt::Display for Unsupported {
             Unsupported::Pairing(v) => write!(f, "GT variable {v} needs the pairing basis (M3)"),
             Unsupported::GroupWitness(v) => {
                 write!(f, "group-typed witness {v} needs coefficient slots (M3)")
+            }
+            Unsupported::MissingBasis(v) => {
+                write!(f, "no generator basis for {} variable {v}", v.typ)
             }
         }
     }
@@ -113,13 +118,13 @@ fn zero_poly<F: PrimeField>() -> Polynomial<F> {
 /// the bool encoding's asserted sentinels (`b − 1`) — which turns the mixed
 /// group/scalar aggregates `Σ dⱼ·invⱼ + b − 1` into homogeneous group
 /// equations the per-basis split can handle. Scalar-only; never touches a
-/// group variable.
-pub fn pin_self_constants<F: PrimeField>(polys: &mut Vec<Polynomial<F>>) {
+/// group variable or witness. Witness definitions must survive for extraction.
+pub fn pin_self_constants<F: PrimeField>(polys: &mut Vec<Polynomial<F>>, witnesses: &Set<Var>) {
     loop {
         let mut def: Option<(Var, Polynomial<F>)> = None;
         for p in polys.iter() {
             if let Some((x, value)) = defined_var(p, &|x: &Var, value: &Polynomial<F>| {
-                !x.typ.is_group() && value.vars().is_empty()
+                !x.typ.is_group() && !witnesses.contains(x) && value.vars().is_empty()
             }) {
                 def = Some((x, value));
                 break;
@@ -223,6 +228,11 @@ impl<F: PrimeField> SymbolicGroup<F> {
                 .filter(|b| b.typ == v.typ)
                 .cloned()
                 .collect();
+            if bases.is_empty() {
+                // An empty representation would identify an arbitrary group
+                // input with zero and erase every obligation involving it.
+                return Err(Unsupported::MissingBasis(v));
+            }
             let coeff_var =
                 |mint: &mut dyn FnMut(&str) -> Var, of: &Var| mint(&format!("{v}~{of}"));
             if transcript_vars(&v) {

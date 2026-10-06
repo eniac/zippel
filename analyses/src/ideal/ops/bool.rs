@@ -112,9 +112,7 @@ fn equ_leaf<C: ArkConfig + HasOpFactory>(
         .collect();
 
     // d_j * b = 0 for each slot (b=1 → all d_j=0)
-    for d in &diffs {
-        ctx.ideal.generating_set.push(d * &b_poly);
-    }
+    let mut definitions: Vec<_> = diffs.iter().map(|d| d * &b_poly).collect();
 
     // Σ_j d_j * inv_j + b - 1 = 0 (all d_j=0 → b=1; some d_j≠0 → b=0)
     let mut aggregate = &b_poly - &one;
@@ -124,7 +122,11 @@ fn equ_leaf<C: ArkConfig + HasOpFactory>(
         let inv_poly = Polynomial::var(&inv_var);
         aggregate = &aggregate + &(d * &inv_poly);
     }
-    ctx.ideal.generating_set.push(aggregate);
+    definitions.push(aggregate);
+    ctx.ideal.generating_set.extend(definitions.iter().cloned());
+    ctx.ideal
+        .boolean_definitions
+        .insert(var.clone(), definitions);
 }
 
 #[cfg(test)]

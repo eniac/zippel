@@ -717,7 +717,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
     /// nothing reads. The static analyses run on the full protocol DAG
     /// (`ZippelHandler::analyze_graph`), not on this projection, so they
     /// still see the relation.
-    fn prover_roots(&self) -> Vec<NodeIndex> {
+    pub fn prover_roots(&self) -> Vec<NodeIndex> {
         let relation = self.relation_nodes();
         let mut roots = self.transcript_nodes();
         roots.extend(

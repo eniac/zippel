@@ -75,7 +75,7 @@ pub struct SoundnessInputs<C: ArkConfig> {
     pub witness_slots: Vec<Var>,
     /// Variables visible to the verifier (used for extractor validation).
     pub verifier_visible: Set<Var>,
-    /// Validity ideal: d-equations + copy TCs. Extractors are added in
+    /// Validity ideal: d-equations + copy TCs + required relation definitions. Extractors are added in
     /// `run()` before computing the validity GB.
     pub grev_validity: Ideal<C>,
     /// The goals: what the relation's assert checks, one `lhs − rhs` per
@@ -87,9 +87,9 @@ pub struct SoundnessInputs<C: ArkConfig> {
     /// The assumption a passing result holds under, or `None` for the
     /// plain model / when no group equation was split.
     pub assumptions: Option<String>,
-    /// Relation locals; their `pl` definitions are the paper's `I_R`
-    /// (Skolem functions for the relation's intermediates), added to the
-    /// validity ideal in `run()` when not inlining.
+    /// Relation locals retained for inspection. Only the polynomial and total
+    /// Boolean definitions needed by the goals are added to validity during
+    /// construction; the relation's assertions are never assumptions.
     pub rel_locals: Ideal<C>,
 }
 
@@ -103,15 +103,12 @@ pub struct SpecialSoundnessAnalysis<C: ArkConfig> {
     witness_slots: Vec<Var>,
     /// Variables visible to the verifier (used for extractor validation).
     verifier_visible: Set<Var>,
-    /// Validity ideal: d-equations + copy TCs. Extractors are added in
+    /// Validity ideal: d-equations + copy TCs + required relation definitions. Extractors are added in
     /// `run()` before computing the validity GB.
     grev_validity: Ideal<C>,
     /// The goals: what the relation's assert checks, one `lhs − rhs` per
     /// conjunct slot, reduced against the validity GB in `run()`.
     rel_goals: Vec<Polynomial<C::F>>,
-    /// Relation locals; their `pl` definitions are the paper's `I_R`,
-    /// added to the validity ideal in `run()` when not inlining.
-    rel_locals: Ideal<C>,
     /// Lex ordering used for both search and validity GBs.
     lex_order: MonoOrder,
     /// Backend for the validity GB computation in `run()`.
@@ -208,8 +205,8 @@ fn validate_2n_plus_1<C: ArkConfig>(
 /// pinned to.
 ///
 /// Exact for the same reason as in the completeness analysis: each
-/// definition `x − f` lies in the ideal of `defining` (the copies +
-/// d-equations), which is contained in both the search ideal and the
+/// definition `x − f` lies in the ideal of `defining` (the copies,
+/// d-equations and required local definitions), which is contained in both the search ideal and the
 /// validity assumptions — so a substituted goal lies in the substituted
 /// ideal iff the original goal lies in the original one. Definitions are
 /// never drawn from `goals` (the relation), which the validity phase must
@@ -281,6 +278,39 @@ fn eliminate_pinned<F: PrimeField>(
     defs
 }
 
+/// The relation's local definitions needed to evaluate `goals`. Following
+/// definitions by their result variable keeps unrelated equality bookkeeping
+/// out of validity, especially before the symbolic group transform.
+///
+/// Unlike the entire relation ideal, these equations are total definitions:
+/// polynomial assignments and equality-result Booleans. Neither assertions
+/// nor partial-operation constraints (such as divisor invertibility) can be
+/// imported as assumptions about the extracted witness.
+fn relation_definitions<C: ArkConfig>(
+    locals: &Ideal<C>,
+    goals: &[Polynomial<C::F>],
+) -> Vec<Polynomial<C::F>> {
+    let mut pending: Vec<Var> = goals.iter().flat_map(Polynomial::vars).collect();
+    let mut seen = HashSet::new();
+    let mut definitions = Vec::new();
+    while let Some(v) = pending.pop() {
+        if !seen.insert(v.clone()) {
+            continue;
+        }
+        if let Some(value) = locals.pl.get(&v) {
+            pending.extend(value.vars());
+            definitions.push(&Polynomial::var(&v) - value);
+        }
+        if let Some(polys) = locals.boolean_definitions.get(&v) {
+            for p in polys {
+                pending.extend(p.vars());
+                definitions.push(p.clone());
+            }
+        }
+    }
+    definitions
+}
+
 /// A pending copy in the special-soundness worklist: its prefix path, the
 /// verifier closure, and (option 2) the aligned prover closure.
 type WorkItem<C> = (Vec<usize>, TransClos<C>, Option<TransClos<C>>);
@@ -344,7 +374,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                             .vars
                             .iter()
                             .filter(|p| p.reference == r)
-                            .cloned()
+                            .flat_map(Var::slots)
                             .collect::<Vec<_>>()
                     })
                     .collect()
@@ -418,8 +448,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                         let in_round = round_map_ref
                             .get(&key)
                             .is_some_and(|&highest| highest == round_idx)
-                            || (model.uses_prover_responses()
-                                && var.index.is_empty()
+                            || (var.index.is_empty()
                                 && round_map_ref.iter().any(|((r, _), &highest)| {
                                     *r == var.reference && highest == round_idx
                                 }));
@@ -512,10 +541,14 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
         for (_prefix, tc, ptc) in worklist {
             for (var, _) in tc.clos.iter() {
-                verifier_visible.insert(var.clone());
+                for slot in var.slots() {
+                    verifier_visible.insert(slot);
+                }
             }
             for var in tc.vars.iter() {
-                verifier_visible.insert(var.clone());
+                for slot in var.slots() {
+                    verifier_visible.insert(slot);
+                }
             }
             for var in tc.vars.iter() {
                 if var.qualifier.is_witness() {
@@ -563,7 +596,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         // witnesses to solve for; `transcript_refs` are the messages the
         // verifier receives (keyed the same way as `var.reference`, i.e. via
         // `find_ref`, so membership tests against variables are correct).
-        let witness_set: Set<Var> = witness_vars.iter().cloned().collect();
+        let witness_set: Set<Var> = witness_vars.iter().flat_map(Var::slots).collect();
         let transcript_refs: Set<Ref> = dag
             .transcript_nodes()
             .into_iter()
@@ -639,10 +672,20 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             .filter(|p| !p.is_zero())
             .collect();
 
+        // I_R includes total Boolean definitions as well as polynomial
+        // assignments. Equality-result Booleans survive `inline` because
+        // their definitions are equations, not polynomial substitutions.
+        // Add these before pinning/splitting so definitions and goals undergo
+        // exactly the same transforms, without assuming any relation assert.
+        grev_validity
+            .generating_set
+            .extend(relation_definitions(&rel_locals, &rel_goals));
+
         // Phase 3: Substitute away variables that accepting runs pin down,
         // then (symbolic model) split group equations per generator-basis
         // element and substitute again. Substituted definitions are drawn
-        // only from the copies + d-equations (`defining`), never the relation
+        // only from validity's copies, d-equations and total local definitions,
+        // never the relation
         // goals, and are gated by `pin_eligible`. The first pass runs over the
         // verifier copies, which also sets their asserted bools to 1. The
         // relation's own bool sentinels live only in the search ideal, so
@@ -673,7 +716,10 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                 // Collapse the relation's bool sentinels (`b − 1`), which live
                 // only in the search ideal, so the split sees homogeneous
                 // group equations.
-                crate::symbolic_group::pin_self_constants(&mut grev_search.generating_set);
+                crate::symbolic_group::pin_self_constants(
+                    &mut grev_search.generating_set,
+                    &witness_set,
+                );
                 let all_polys: Vec<&Polynomial<C::F>> = grev_search
                     .generating_set
                     .iter()
@@ -710,7 +756,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         // priority. Within each group, sort by Var::Ord for determinism.
         let lex_var_order: Vec<Var> = {
             let rel_locals_set: Set<Var> = grev_rel_result.var_order.iter().cloned().collect();
-            let non_witness_set: Set<Var> = non_witness_vars.iter().cloned().collect();
+            let non_witness_set: Set<Var> = non_witness_vars.iter().flat_map(Var::slots).collect();
 
             let all_vars: Set<Var> = grev_search.vars();
             let sorted = |f: &dyn Fn(&Var) -> bool| {
@@ -810,7 +856,6 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             verifier_visible: inputs.verifier_visible,
             grev_validity: inputs.grev_validity,
             rel_goals: inputs.rel_goals,
-            rel_locals: inputs.rel_locals,
             lex_order: inputs.lex_order,
             assumptions: inputs.assumptions,
             backend,
@@ -931,19 +976,8 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             self.grev_validity.generating_set.push(ext_poly.clone());
         }
 
-        // I_R: Skolem definitions for the relation's intermediates. Only
-        // definitions — assuming the relation's own constraints (as
-        // `merge(&rel_locals)` used to) made the final reduction vacuous:
-        // every goal was literally an assumption. With inlining the goals
-        // are already resolved down to arguments, so there is nothing to
-        // add.
-        if !self.inline {
-            for (t, f) in self.rel_locals.pl.iter() {
-                self.grev_validity
-                    .generating_set
-                    .push(&Polynomial::var(t) - f);
-            }
-        }
+        // The needed I_R definitions were added during construction, before
+        // the substitutions and model transform shared with the goals.
         if self.inline {
             self.grev_validity.inline(&Set::new());
         }
@@ -1103,7 +1137,7 @@ fn factor_group_gcd<F: ark_ff::Field>(polys: &mut Vec<Polynomial<F>>) {
 
 #[cfg(test)]
 mod tests {
-    use super::SpecialSoundnessAnalysis;
+    use super::{SoundnessModel, SpecialSoundnessAnalysis};
     use crate::QualifierPropagation;
     use crate::Var;
     use crate::backend::GbBackendKind;
@@ -1133,6 +1167,158 @@ mod tests {
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
         from_input(&g, l_vec)?.run()
+    }
+
+    fn regression_verdict(
+        proto: &str,
+        model: SoundnessModel,
+        inline: bool,
+    ) -> Result<(), AnalysisError<ArkBls12_381>> {
+        let m = parse_and_concretize(proto, &Ctx::new());
+        assert!(m.typecheck().is_empty(), "{:?}", m.typecheck());
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let inputs = SpecialSoundnessAnalysis::build_inputs_with_model(&g, vec![2], inline, model)?;
+        SpecialSoundnessAnalysis::from_inputs(inputs, GbBackendKind::default(), inline)?.run()
+    }
+
+    #[test]
+    fn regression_empty_group_basis_rejects_instead_of_erasing_goals() {
+        let proto = r#"
+            proto bad<G: Group, F: Scalar<G>>(
+                witness x: F, instance g: G, instance h: G, instance y: F,
+            ) where g == h && h == g * x && x == y {
+                t <- g;
+                c <- challenge<F>;
+                z <- x + c - c;
+                verify(z == y)
+            }
+        "#;
+        for model in [
+            SoundnessModel::SymbolicGroup,
+            SoundnessModel::SymbolicGroupResponses,
+        ] {
+            // A basis in another group must not hide the missing basis here.
+            let other_group = proto
+                .replace("G: Group, F:", "G: Group, H: Group, GT: Pairing<G, H>, F:")
+                .replace("instance y: F", "instance y: F, instance other: H");
+            for src in [proto, other_group.as_str()] {
+                let result = regression_verdict(src, model, true);
+                assert!(
+                    matches!(result, Err(AnalysisError::UnsupportedSymbolicGroup(_))),
+                    "{model:?}: {result:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn regression_relation_boolean_semantics_are_preserved() {
+        let proto = r#"
+            proto valid<F: Field>(witness x: F, instance y: F)
+            where (x == y) == (y == y) {
+                t <- x;
+                c <- challenge<F>;
+                z <- x + c;
+                verify(t == y && z == y + c)
+            }
+        "#;
+        for inline in [true, false] {
+            let result = regression_verdict(proto, SoundnessModel::Plain, inline);
+            assert!(result.is_ok(), "inline={inline}: {result:?}");
+            // Defining the inner Booleans must not assume the outer equality.
+            let invalid = proto
+                .replace("instance y: F", "instance y: F, instance k: F")
+                .replace(
+                    "where (x == y) == (y == y)",
+                    "where (x == y) == (y == y) && (y == k) == (y == y)",
+                );
+            let result = regression_verdict(&invalid, SoundnessModel::Plain, inline);
+            assert!(
+                matches!(result, Err(AnalysisError::ExtractorInvalid(_))),
+                "inline={inline}: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn regression_constant_witness_survives_symbolic_substitution() {
+        let proto = r#"
+            proto valid<F: Field>(witness x: F) where x == 0 {
+                t <- x;
+                c <- challenge<F>;
+                z <- x + c;
+                verify(t == 0 && z == c)
+            }
+        "#;
+        let vector = r#"
+            proto valid<F: Field>(witness x: [F; 2]) where x[0] == 0 && x[1] == 0 {
+                t <- x;
+                c <- challenge<F>;
+                z <- x[0] + x[1] + c;
+                verify(t[0] == 0 && t[1] == 0 && z == c)
+            }
+        "#;
+        for model in [
+            SoundnessModel::Plain,
+            SoundnessModel::SymbolicGroup,
+            SoundnessModel::SymbolicGroupResponses,
+        ] {
+            for src in [proto, vector] {
+                let result = regression_verdict(src, model, true);
+                assert!(result.is_ok(), "{model:?}: {result:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn relation_local_definitions_do_not_assume_divisor_invertibility() {
+        let proto = r#"
+            proto bad<F: Field>(witness x: F, instance y: F)
+            where x == y && (x / y == 1) == (y == y) {
+                t <- x;
+                c <- challenge<F>;
+                z <- x + c;
+                verify(t == y && z == y + c)
+            }
+        "#;
+        // At y=0 the verifier accepts, but the relation's division is undefined.
+        // Importing all relation-local generators would silently assume y != 0.
+        for inline in [true, false] {
+            let result = regression_verdict(proto, SoundnessModel::Plain, inline);
+            assert!(result.is_err(), "inline={inline}: {result:?}");
+        }
+    }
+
+    #[test]
+    fn regression_vector_responses_are_fresh_in_every_model() {
+        let proto = r#"
+            proto bad<G: Group, F: Scalar<G>>(
+                witness x: F, instance g: G, instance h: G,
+            ) where h == g * x && h == (g - g) {
+                let r = random<F>;
+                t <- g * r;
+                c <- challenge<F>;
+                z <- [r + x * c];
+                verify(g * z[0] == t + h * c)
+            }
+        "#;
+        for model in [
+            SoundnessModel::Plain,
+            SoundnessModel::SymbolicGroup,
+            SoundnessModel::SymbolicGroupResponses,
+        ] {
+            for inline in [true, false] {
+                let result = regression_verdict(proto, model, inline);
+                assert!(
+                    result.is_err(),
+                    "{model:?}, inline={inline}: unchecked h == 0 accepted"
+                );
+                let valid = proto.replace(" && h == (g - g)", "");
+                let result = regression_verdict(&valid, model, inline);
+                assert!(result.is_ok(), "{model:?}, inline={inline}: {result:?}");
+            }
+        }
     }
 
     /// Analyze `proto` in the symbolic group model.

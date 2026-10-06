@@ -68,8 +68,7 @@ pub(crate) use poly_source::PolySource;
 mod ops;
 use ops::{EncodeCtx, link_to_polys};
 
-/// Encoding choices only the completeness analysis makes. The default
-/// reproduces the encoding the soundness and knowledge analyses rely on.
+/// Choices for encoding assertions and Boolean reductions.
 #[derive(Clone, Debug, Default)]
 pub struct EncodeOptions {
     /// Split an asserted or verified `reduce(&&, v)` into one constraint per
@@ -77,8 +76,8 @@ pub struct EncodeOptions {
     /// instead of asserting the product of the elements.
     pub split_reductions: bool,
     /// The `assert` nodes that wrap the `where` clause. When set, every other
-    /// `assert` is a runtime check written in a protocol body and encodes to
-    /// nothing: it is neither an assumption nor an obligation.
+    /// `assert` is recorded in `checks` as a runtime obligation, without
+    /// adding a generator that assumes it passed.
     pub relation_asserts: Option<HashSet<Ref>>,
 }
 
