@@ -1,6 +1,6 @@
-//! Completeness snapshot trials: assert `CompletenessAnalysis::run()`
-//! actually passes, then snapshot the computed Gröbner basis for
-//! regression detection.
+//! Completeness snapshot trials: assert that the protocol has a verifier
+//! check and that `CompletenessAnalysis::run()` actually passes, then
+//! snapshot the computed Gröbner basis for regression detection.
 
 use crate::common::{assert_named_snapshot, compile_to_dag, normalize_basis};
 use analyses::{CompletenessAnalysis, GbBackendKind};
@@ -268,6 +268,10 @@ fn run_completeness_snapshot(entry: &CompletenessEntry) -> Result<(), Failed> {
     let normalized = share::thread::run("gb-completeness", move || {
         let dag = compile_to_dag(&path, &sizes);
         let inputs = CompletenessAnalysis::<ArkBls12_381>::build_inputs(&dag);
+        // Without a check, `run()` passes vacuously.
+        if inputs.checks.is_empty() {
+            return Err(Failed::from("the protocol has no verifier checks"));
+        }
         let mut ca = CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, backend);
         ca.run().map_err(|e| Failed::from(e.to_string()))?;
         Ok::<String, Failed>(normalize_basis(&ca.basis.polys))

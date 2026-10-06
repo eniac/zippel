@@ -13,6 +13,16 @@ use share::{Ctx, Set};
 use crate::Var;
 use crate::frontend::Polynomial;
 
+/// One coefficient slot of what a `verify` checks: `lhs == rhs`, or `b == 1` for
+/// a bool that is not an `==`.
+#[derive(Clone, Debug)]
+pub struct Check<F: ark_ff::Field> {
+    /// The left-hand side.
+    pub lhs: Polynomial<F>,
+    /// The right-hand side.
+    pub rhs: Polynomial<F>,
+}
+
 /// The ideal of building a Gröbner basis — the basis polynomials, their
 /// polynomial definitions (pl), and the vars used in the basis.
 #[derive(Clone)]
@@ -20,6 +30,8 @@ pub struct Ideal<C: ArkConfig> {
     /// The generators of the ideal: every polynomial constrained to vanish on
     /// honest executions of the protocol fragment being analysed.
     pub generating_set: Vec<Polynomial<C::F>>,
+    /// What each `verify` checks. Recorded for reporting only, never a generator.
+    pub checks: Vec<Check<C::F>>,
     /// Definitional equations kept out of the generating set: each `Var` maps to
     /// the polynomial it abbreviates, so chains of intermediate DAG nodes can be
     /// substituted away by [`Ideal::inline`] instead of bloating the basis.
@@ -37,6 +49,7 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
     pub fn new() -> Self {
         Self {
             generating_set: Vec::new(),
+            checks: Vec::new(),
             pl: Ctx::new(),
             vars: HashMap::new(),
             var_order: Vec::new(),
@@ -73,28 +86,12 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         vars
     }
 
-    /// Filter out variables that satisfy the predicate
-    pub fn eliminate_var<F: Fn(&Var) -> bool>(&mut self, f: &F) {
-        self.generating_set
-            .retain(|p| p.vars().iter().all(|v| !f(v)));
-        self.pl.retain(|p, _| !f(p));
-    }
-
-    /// Drop every generator all of whose monomials satisfy the predicate, then
-    /// prune `pl` down to the definitions still reachable from the surviving
-    /// generators.
-    pub fn eliminate_monomial<F: Fn(&crate::frontend::Monomial) -> bool>(&mut self, f: &F) {
-        self.generating_set
-            .retain(|p| p.terms.keys().any(|t| !f(t)));
-        let basis_vars: Set<Var> = self.generating_set.iter().flat_map(|p| p.vars()).collect();
-        self.pl.retain(|p, _| basis_vars.contains(p));
-    }
-
-    /// Inline all `pl` definitions into the basis polynomials.
+    /// Inline all `pl` definitions into the basis polynomials and the checks.
     ///
     /// Topologically sorts `pl` entries, substitutes dependencies into
     /// each other to resolve chains, then substitutes the resolved
-    /// definitions into all basis polynomials. Clears `pl` afterwards.
+    /// definitions into all basis polynomials and both sides of every check.
+    /// Clears `pl` afterwards.
     pub fn inline(&mut self, transcript_refs: &Set<Ref>) {
         if self.pl.is_empty() {
             return;
@@ -175,6 +172,11 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             *p = new_p;
         }
         self.generating_set.retain(|p| !p.is_zero());
+        // Checks keep their sides even when equal: a check that holds is still a check.
+        for check in &mut self.checks {
+            check.lhs = check.lhs.clone().inline_vars(&self.pl).0;
+            check.rhs = check.rhs.clone().inline_vars(&self.pl).0;
+        }
 
         for (k, v) in saved {
             self.pl.insert(&k, &v);
@@ -185,10 +187,11 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         }
     }
 
-    /// Merge another ideal's basis and polynomial definitions into this ideal.
+    /// Merge another ideal's basis, checks and polynomial definitions into this ideal.
     pub fn merge(&mut self, other: &Self) {
         self.generating_set
             .extend(other.generating_set.iter().cloned());
+        self.checks.extend(other.checks.iter().cloned());
         for (k, v) in other.pl.iter() {
             self.pl.insert(k, v);
         }
@@ -259,5 +262,50 @@ mod tests {
             basis_ref
         );
         assert_eq!(vars.len(), 2, "vars() should have exactly 2 elements");
+    }
+
+    #[test]
+    fn inline_substitutes_into_checks_but_not_messages() {
+        use ark_bls12_381::Fr;
+        use ark_ff::One;
+
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        let var = |name: &str, node: usize| {
+            Var::from_var(
+                name,
+                NodeIndex::new(node),
+                ATyp::scalar(),
+                Qualifier::Instance,
+            )
+        };
+        let (a, s, t) = (var("a", 0), var("s", 1), var("t", 2));
+        let a_plus_1 = &Polynomial::<Fr>::var(&a) + &Polynomial::lit(&Fr::one());
+
+        // `s := a + 1` is a local definition, `t := a*a` a message.
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+        ideal.pl.insert(&s, &a_plus_1);
+        ideal
+            .pl
+            .insert(&t, &(&Polynomial::var(&a) * &Polynomial::var(&a)));
+        ideal.checks.push(Check {
+            lhs: Polynomial::var(&s),
+            rhs: Polynomial::var(&t),
+        });
+        ideal.checks.push(Check {
+            lhs: Polynomial::var(&s),
+            rhs: a_plus_1.clone(),
+        });
+
+        let mut messages = Set::new();
+        messages.insert(t.reference);
+        ideal.inline(&messages);
+
+        assert_eq!(ideal.checks.len(), 2, "a check that holds is still a check");
+        assert_eq!(ideal.checks[0].lhs, a_plus_1);
+        assert_eq!(ideal.checks[0].rhs, Polynomial::var(&t));
+        assert_eq!(ideal.checks[1].lhs, a_plus_1);
+        assert_eq!(ideal.checks[1].rhs, a_plus_1);
     }
 }
