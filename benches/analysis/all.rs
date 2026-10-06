@@ -8,7 +8,7 @@
 //! Run with `cargo bench --bench analysis_all -- --help` for the options.
 //!
 //! `--analysis`, `--memory-limit-mb`, `--path`, `--size` and `--l-vec` are
-//! forwarded to every `analysis` invocation verbatim (like `--backend`).
+//! forwarded to every `analysis` invocation verbatim.
 //! `--path` and `--l-vec` need exactly one protocol in `--protocols`. `analysis`
 //! decides `ok`/`failed`/`crashed`/`oom` for itself
 //! (see `output::Status`) — `analysis_all` adds only `timeout`, which it

@@ -4,7 +4,7 @@
 //! Prints JSON lines to stdout with timings, the shape of the generators,
 //! goals and basis, and peak memory (see `output.rs`); the last line has the
 //! final status (`output::Status`). `--memory-limit-mb` bounds only the
-//! ideal construction and GB computation (see `memory.rs`).
+//! analysis, not parsing or lowering (see `memory.rs`).
 //!
 //! For batch runs across all protocols with timeout handling, use
 //! `analysis_all` instead.
@@ -45,8 +45,7 @@ struct Cli {
     analysis: Analysis,
     #[arg(long, value_enum, default_value_t = Backend::Default)]
     backend: Backend,
-    /// Caps virtual address space while the ideal is built and its bases
-    /// computed (unix only).
+    /// Caps virtual address space while the analysis runs (unix only).
     #[arg(long, value_name = "MB")]
     memory_limit_mb: Option<u64>,
     /// Analyses FILE instead of the protocol's registered source.
@@ -203,12 +202,12 @@ fn run_bench(target: &Target) -> String {
     let mut out = BenchOutput::new(name, dag.node_count());
     out.emit();
 
-    // Completeness closes the window itself, after its only GB call;
-    // soundness's last GB call is in `run`, so it stays open until here.
+    // Closed explicitly, not on drop: unwinding from a panic would clear
+    // `LIMIT_ACTIVE` before `main` reads it.
     let oom_line = BenchOutput::line(name, Status::Oom, None);
     let mut window = MemoryWindow::open(target.memory_limit_mb, oom_line);
     let result = match target.analysis {
-        Analysis::Completeness => run_completeness(&dag, target, &mut out, &mut window),
+        Analysis::Completeness => run_completeness(&dag, target, &mut out),
         Analysis::Soundness => run_soundness(&dag, target, &mut out),
     };
     window.close();
@@ -226,7 +225,6 @@ fn run_completeness(
     dag: &QDag<ArkBls12_381>,
     target: &Target,
     out: &mut BenchOutput,
-    window: &mut MemoryWindow,
 ) -> Result<Status, String> {
     // Stage 2: Build inputs, compute pre-GB metrics, emit.
     let start = Instant::now();
@@ -242,7 +240,6 @@ fn run_completeness(
     let start = Instant::now();
     let mut ca = CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, target.backend);
     out.gb_ms = Some(elapsed_ms(start));
-    window.close();
 
     // Emit post-GB metrics before run() — survives if run() hangs or is killed.
     out.record_basis(&ca.basis.polys);

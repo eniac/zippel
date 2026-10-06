@@ -1,27 +1,19 @@
-//! The `--memory-limit-mb` window and peak-memory measurement.
-//!
-//! `--memory-limit-mb` caps virtual address space (`RLIMIT_AS`, unix only)
-//! around `build_inputs` (ideal construction) and the GB backend calls —
-//! not the whole process. See `LIMIT_ACTIVE` for the exact boundary and
-//! why it's there, and `docs/DECISIONS.md` for a traced example of
-//! `build_inputs` alone blowing up memory (a `where`-clause grand product).
+//! The `--memory-limit-mb` window (see `LIMIT_ACTIVE`) and peak-memory
+//! measurement.
 
 use std::io::Write as _;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// True from right before `build_inputs` (ideal construction) to right
-/// after the last GB backend call returns — the memory-constrained window.
-/// That call is `from_inputs` for completeness, and `run` for soundness,
-/// which computes a second (validity) basis. Parsing/concretizing/DAG
-/// construction before it, and completeness's verifier-polynomial `run()`
-/// after it, are unbounded: a failure there is unambiguously a real bug.
-/// Read by `main`'s panic catch to decide `"crashed"` (panic outside this
-/// window) vs `"oom"` (inside it). Under the limit, running out of memory
-/// can also surface as a panic, e.g. a Singular that cannot start or dies
-/// trips the backend's `expect`, so the window's panics are all `"oom"`.
-/// For soundness that includes the extractor search between its two GB
-/// calls.
+/// True while the analysis runs under a memory limit — the
+/// memory-constrained window, from `build_inputs` (ideal construction,
+/// which alone can exhaust memory, e.g. a `where`-clause grand product)
+/// through `run`. Parsing, concretizing and DAG construction before it are
+/// unbounded: a failure there is unambiguously a real bug. Read by `main`'s
+/// panic catch to decide `"crashed"` (panic outside this window) vs
+/// `"oom"` (inside it). Under the limit, running out of memory can also
+/// surface as a panic, e.g. a Singular that cannot start or dies trips the
+/// backend's `expect`, so the window's panics are all `"oom"`.
 static LIMIT_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// The final JSON line to print on a hard allocator abort, pre-built (while
@@ -119,8 +111,8 @@ fn restore_memory_limit(previous_soft: u64) {
 #[cfg(not(unix))]
 fn restore_memory_limit(_previous_soft: u64) {}
 
-/// The memory-constrained window (see `LIMIT_ACTIVE`): opened before
-/// `build_inputs`, closed after the last GB backend call.
+/// The memory-constrained window (see `LIMIT_ACTIVE`), open while the
+/// analysis runs.
 pub struct MemoryWindow {
     /// The soft limit to restore on close, if a limit was applied.
     previous: Option<u64>,
@@ -142,7 +134,7 @@ impl MemoryWindow {
         Self { previous }
     }
 
-    /// Restores the previous limit. Closing twice is a no-op.
+    /// Restores the previous limit.
     pub fn close(&mut self) {
         if let Some(previous) = self.previous.take() {
             restore_memory_limit(previous);

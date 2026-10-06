@@ -14,9 +14,7 @@
 # Any extra arguments are forwarded to
 # `cargo bench --bench analysis_all -- --analysis completeness` verbatim
 # (it already accepts --timeout/--protocols/--memory-limit-mb).
-# ../README.md's Experiment 3 uses `--timeout 60`, since every protocol
-# that completes does so in well under 60s; to smoke-test this script
-# itself on a few protocols:
+# To smoke-test this script itself on a few protocols:
 #   artifact/scripts/run_completeness.sh --timeout 60 --protocols schnorr,groth16
 
 set -euo pipefail

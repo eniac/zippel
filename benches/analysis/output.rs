@@ -2,11 +2,9 @@
 //!
 //! The goals are what the analysis checks against its basis: the verifier
 //! polynomials for completeness, the relation polynomials for soundness.
-//! `peak_rss_mib` is this process's peak resident memory, and
-//! `singular_peak_rss_mib` that of its largest finished Singular run, absent
-//! until one finishes (both `getrusage`'s `ru_maxrss`, unix only). Every JSON
-//! line reports them as of that line, so a run killed at a timeout keeps its
-//! last values.
+//! Every line reports peak memory as of that line (see
+//! `memory::peak_rss_mib`), so a run killed at a timeout keeps its last
+//! values.
 
 use std::io::Write as _;
 
@@ -43,7 +41,7 @@ pub enum Status {
 
 /// JSON output emitted by the `analysis` bench. Partial lines (status
 /// `"running"`) omit fields that aren't available yet. The final line
-/// has the definitive status and all metrics.
+/// has the final status.
 #[derive(Serialize, Default)]
 pub struct BenchOutput {
     protocol: String,
@@ -99,8 +97,8 @@ impl BenchOutput {
         }
     }
 
-    /// A line with only a protocol, a status and an error, for a run that
-    /// ended before it measured anything.
+    /// A line with only a protocol, a status and an error. It carries no
+    /// metrics; `analysis_all` merges in those from earlier lines.
     pub fn line(protocol: &str, status: Status, error: Option<String>) -> String {
         serde_json::to_string(&Self {
             protocol: protocol.to_string(),
