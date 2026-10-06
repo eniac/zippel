@@ -90,15 +90,15 @@ fn prover_create_inputs(n_size: usize, m_size: usize) -> Ctx<Vid, Value<ArkBls12
     let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
 
     // SRS G1 up to size S
-    let ss_g: Value<ArkBls12_381> = Value::VecG1((0..s_size).map(|_| g_input).collect());
-    let ss_index = Value::VecScalar((0..s_size).map(|i| tau_input.pow([i as u64])).collect());
+    let ss_g: Value<ArkBls12_381> = Value::vec_g1((0..s_size).map(|_| g_input).collect());
+    let ss_index = Value::vec_scalar((0..s_size).map(|i| tau_input.pow([i as u64])).collect());
     let ss = ss_g * ss_index;
 
     // SRS G2_s
     let h_val: Value<ArkBls12_381> = Value::G2(h_input * tau_input);
 
     // Set S of size M (choose 0, 1, 2, ..., M-1)
-    let s_val = Value::VecScalar(
+    let s_val = Value::vec_scalar(
         (0..m_size)
             .map(|i| <ArkBls12_381 as ArkConfig>::F::from(i as u64))
             .collect(),
@@ -109,7 +109,7 @@ fn prover_create_inputs(n_size: usize, m_size: usize) -> Ctx<Vid, Value<ArkBls12
     for _ in 1..n_size {
         f_coeffs_vec.push(<ArkBls12_381 as ArkConfig>::F::rand(&mut rng));
     }
-    let f_coeffs = Value::VecScalar(f_coeffs_vec);
+    let f_coeffs = Value::vec_scalar(f_coeffs_vec);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("f_coeffs".to_string()), f_coeffs),

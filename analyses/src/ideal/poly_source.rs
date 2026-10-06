@@ -461,7 +461,7 @@ mod tests {
         use ark_bls12_381::Fr;
         use backend::Value;
 
-        let val = Value::VecScalar(vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]);
+        let val = Value::vec_scalar(vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]);
         let poly = PolySource::<ArkBls12_381>::to_poly_value(&val);
         assert_eq!(poly.len(), 3);
     }

@@ -103,14 +103,14 @@ pub mod zippel_side {
             let nv = 1usize << k;
             let inputs = Inputs::from_iter(
                 [
-                    ("m", Value::VecScalar(sh.coeffs.clone())),
+                    ("m", Value::vec_scalar(sh.coeffs.clone())),
                     // upstream point = columns (sigma) then rows (nu)
-                    ("col_pt", Value::VecScalar(sh.point[..k].to_vec())),
-                    ("row_pt", Value::VecScalar(sh.point[k..].to_vec())),
+                    ("col_pt", Value::vec_scalar(sh.point[..k].to_vec())),
+                    ("row_pt", Value::vec_scalar(sh.point[k..].to_vec())),
                     ("y", Value::Scalar(sh.y)),
                     (
                         "g1_vec",
-                        Value::VecG1Affine(ark_bls12_381::G1Projective::normalize_batch(
+                        Value::vec_g1_affine(ark_bls12_381::G1Projective::normalize_batch(
                             &s.g1_vec[..nv],
                         )),
                     ),
@@ -126,10 +126,10 @@ pub mod zippel_side {
                     ("h1", Value::G1(v.h1)),
                     ("h2", Value::G2(v.h2)),
                     ("ht", Value::GT(v.ht)),
-                    ("chi", Value::VecGT(v.chi[..=k].to_vec())),
-                    ("delta_1l", Value::VecGT(v.delta_1l[..=k].to_vec())),
-                    ("delta_1r", Value::VecGT(v.delta_1r[..=k].to_vec())),
-                    ("delta_2r", Value::VecGT(v.delta_2r[..=k].to_vec())),
+                    ("chi", Value::vec_gt(v.chi[..=k].to_vec())),
+                    ("delta_1l", Value::vec_gt(v.delta_1l[..=k].to_vec())),
+                    ("delta_1r", Value::vec_gt(v.delta_1r[..=k].to_vec())),
+                    ("delta_2r", Value::vec_gt(v.delta_2r[..=k].to_vec())),
                 ]
                 .into_iter()
                 .map(|(k, v)| (Vid(k.to_string()), v)),

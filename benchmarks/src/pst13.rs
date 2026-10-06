@@ -498,18 +498,18 @@ pub mod zippel_side {
             // Pre-affinize ck — same fix as the Groth16 bench (avoids per-prove
             // `normalize_batch`). ck_affine is already computed in `Shared`.
             let inputs_base = Inputs::<ArkBls12_381>::from_iter([
-                (Vid("p".to_string()), Value::VecScalar(shared.p.clone())),
-                (Vid("z".to_string()), Value::VecScalar(shared.z.clone())),
+                (Vid("p".to_string()), Value::vec_scalar(shared.p.clone())),
+                (Vid("z".to_string()), Value::vec_scalar(shared.z.clone())),
                 (Vid("y".to_string()), Value::Scalar(shared.y)),
                 (
                     Vid("ck_N".to_string()),
-                    Value::VecG1Affine(shared.ck_affine.clone()),
+                    Value::vec_g1_affine(shared.ck_affine.clone()),
                 ),
                 (Vid("g_gen".to_string()), Value::G1(shared.g_gen)),
                 (Vid("h_gen".to_string()), Value::G2(shared.h_gen)),
                 (
                     Vid("alpha_H".to_string()),
-                    Value::VecG2(shared.alpha_h.clone()),
+                    Value::vec_g2(shared.alpha_h.clone()),
                 ),
             ]);
 
@@ -606,18 +606,18 @@ mod cross_tests {
 
     fn zip_inputs(shared: &Shared) -> Inputs<ArkBls12_381> {
         Inputs::<ArkBls12_381>::from_iter([
-            (Vid("p".to_string()), Value::VecScalar(shared.p.clone())),
-            (Vid("z".to_string()), Value::VecScalar(shared.z.clone())),
+            (Vid("p".to_string()), Value::vec_scalar(shared.p.clone())),
+            (Vid("z".to_string()), Value::vec_scalar(shared.z.clone())),
             (Vid("y".to_string()), Value::Scalar(shared.y)),
             (
                 Vid("ck_N".to_string()),
-                Value::VecG1Affine(shared.ck_affine.clone()),
+                Value::vec_g1_affine(shared.ck_affine.clone()),
             ),
             (Vid("g_gen".to_string()), Value::G1(shared.g_gen)),
             (Vid("h_gen".to_string()), Value::G2(shared.h_gen)),
             (
                 Vid("alpha_H".to_string()),
-                Value::VecG2(shared.alpha_h.clone()),
+                Value::vec_g2(shared.alpha_h.clone()),
             ),
         ])
     }

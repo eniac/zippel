@@ -271,7 +271,7 @@ mod mle_differential_tests {
         let e0 = v0 + (v2 - v0) * x_scalar;
         let e1 = v1 + (v3 - v1) * x_scalar;
 
-        let expected_result = Value::VecScalar(vec![e0, e1]);
+        let expected_result = Value::vec_scalar(vec![e0, e1]);
 
         let mut inputs = test_inputs();
         inputs.insert(&Vid::from("p"), &p_val);

@@ -162,19 +162,19 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let inst = random_permutation::<F, _>(&mut rng, NUM_POINTS);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("f_evs".to_string()), Value::VecScalar(inst.f)),
-        (Vid("g_evs".to_string()), Value::VecScalar(inst.g)),
+        (Vid("f_evs".to_string()), Value::vec_scalar(inst.f)),
+        (Vid("g_evs".to_string()), Value::vec_scalar(inst.g)),
         (
             Vid("s_sigma_evs".to_string()),
-            Value::VecScalar(inst.s_sigma),
+            Value::vec_scalar(inst.s_sigma),
         ),
-        (Vid("s_id_evs".to_string()), Value::VecScalar(inst.s_id)),
+        (Vid("s_id_evs".to_string()), Value::vec_scalar(inst.s_id)),
         (Vid("r2".to_string()), Value::Scalar(inst.r2)),
         (Vid("r".to_string()), Value::Scalar(inst.r)),
-        (Vid("v_evs".to_string()), Value::VecScalar(inst.v_evs)),
+        (Vid("v_evs".to_string()), Value::vec_scalar(inst.v_evs)),
         (
             Vid("g_shift_inv".to_string()),
-            Value::VecScalar(inst.g_shift_inv),
+            Value::vec_scalar(inst.g_shift_inv),
         ),
     ])
 }

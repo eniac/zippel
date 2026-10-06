@@ -698,7 +698,7 @@ mod op_integration {
         let mut xs = share::Ctx::new();
         xs.insert(
             &lang::id::Vid::from("xs"),
-            &Value::VecScalar(vec![f::<B>(5), f::<B>(7)]),
+            &Value::vec_scalar(vec![f::<B>(5), f::<B>(7)]),
         );
         let got = run::<B>(
             "fn f<F: Field>(instance xs: [F; 2]) -> F { xs[1] }",
@@ -709,7 +709,7 @@ mod op_integration {
         let mut xs = share::Ctx::new();
         let mut elems = vec![f::<B>(0); 7];
         elems[0] = f::<B>(3);
-        xs.insert(&lang::id::Vid::from("xs"), &Value::VecScalar(elems));
+        xs.insert(&lang::id::Vid::from("xs"), &Value::vec_scalar(elems));
         let got = run::<B>(
             "fn f<N: 7, F: Field>(instance xs: [F; N]) -> F { xs[0] + N }",
             "f",

@@ -84,21 +84,21 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter(
         [
-            ("m", Value::VecScalar(m)),
-            ("col_pt", Value::VecScalar(col_pt)),
-            ("row_pt", Value::VecScalar(row_pt)),
+            ("m", Value::vec_scalar(m)),
+            ("col_pt", Value::vec_scalar(col_pt)),
+            ("row_pt", Value::vec_scalar(row_pt)),
             ("y", Value::Scalar(y)),
             ("g1_0", Value::G1(g1_vec[0])),
             ("g2_0", Value::G2(g2_vec[0])),
-            ("g1_vec", Value::VecG1(g1_vec)),
-            ("g2_vec", Value::VecG2(g2_vec)),
+            ("g1_vec", Value::vec_g1(g1_vec)),
+            ("g2_vec", Value::vec_g2(g2_vec)),
             ("h1", Value::G1(h1)),
             ("h2", Value::G2(h2)),
             ("ht", Value::GT(ht)),
-            ("chi", Value::VecGT(chi)),
-            ("delta_1l", Value::VecGT(delta_1l)),
-            ("delta_1r", Value::VecGT(delta_1r)),
-            ("delta_2r", Value::VecGT(delta_2r)),
+            ("chi", Value::vec_gt(chi)),
+            ("delta_1l", Value::vec_gt(delta_1l)),
+            ("delta_1r", Value::vec_gt(delta_1r)),
+            ("delta_2r", Value::vec_gt(delta_2r)),
         ]
         .into_iter()
         .map(|(k, v)| (Vid(k.to_string()), v)),

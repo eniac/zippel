@@ -414,37 +414,37 @@ fn main() {
         (Vid("delta_g2".to_string()), Value::G2(t.keys.delta_g2)),
         (
             Vid("gamma_abc_g1".to_string()),
-            Value::VecG1(t.keys.gamma_abc_g1.clone()),
+            Value::vec_g1(t.keys.gamma_abc_g1.clone()),
         ),
         (Vid("beta_g1".to_string()), Value::G1(t.keys.beta_g1)),
         (Vid("delta_g1".to_string()), Value::G1(t.keys.delta_g1)),
         (
             Vid("a_query".to_string()),
-            Value::VecG1(t.keys.a_query.clone()),
+            Value::vec_g1(t.keys.a_query.clone()),
         ),
         (
             Vid("b_g1_query".to_string()),
-            Value::VecG1(t.keys.b_g1_query.clone()),
+            Value::vec_g1(t.keys.b_g1_query.clone()),
         ),
         (
             Vid("b_g2_query".to_string()),
-            Value::VecG2(t.keys.b_g2_query.clone()),
+            Value::vec_g2(t.keys.b_g2_query.clone()),
         ),
         (
             Vid("h_query".to_string()),
-            Value::VecG1(t.keys.h_query.clone()),
+            Value::vec_g1(t.keys.h_query.clone()),
         ),
         (
             Vid("l_query".to_string()),
-            Value::VecG1(t.keys.l_query.clone()),
+            Value::vec_g1(t.keys.l_query.clone()),
         ),
         (
             Vid("instance_assignment".to_string()),
-            Value::VecScalar(t.instance_assignment.clone()),
+            Value::vec_scalar(t.instance_assignment.clone()),
         ),
         (
             Vid("witness_assignment".to_string()),
-            Value::VecScalar(t.witness_assignment.clone()),
+            Value::vec_scalar(t.witness_assignment.clone()),
         ),
     ]);
 
@@ -453,12 +453,12 @@ fn main() {
         bridge::witness_map(&t.mat, t.num_inputs, t.num_constraints, &t.full_assignment);
     h_coeffs.resize(t.h_size, GitFr::zero());
     let mut inputs = inputs_base.clone();
-    inputs.insert("h_coeffs", Value::VecScalar(h_coeffs));
+    inputs.insert("h_coeffs", Value::vec_scalar(h_coeffs));
     // Relation-only QAP witnesses (zeros fine — analyses skipped).
     let n_total = t.m + t.l;
-    inputs.insert("a_evs", Value::VecScalar(vec![GitFr::zero(); n_total]));
-    inputs.insert("b_evs", Value::VecScalar(vec![GitFr::zero(); n_total]));
-    inputs.insert("c_evs", Value::VecScalar(vec![GitFr::zero(); n_total]));
+    inputs.insert("a_evs", Value::vec_scalar(vec![GitFr::zero(); n_total]));
+    inputs.insert("b_evs", Value::vec_scalar(vec![GitFr::zero(); n_total]));
+    inputs.insert("c_evs", Value::vec_scalar(vec![GitFr::zero(); n_total]));
     inputs.insert("t_at_tau", Value::Scalar(GitFr::zero()));
     eprintln!("  witness_map + input clone:      {:>9.2?}", tic.elapsed());
     let tic = Instant::now();

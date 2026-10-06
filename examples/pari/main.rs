@@ -243,7 +243,7 @@ fn build_inputs() -> Ctx<Vid, Value<C>> {
     let mut v_k_coeffs_vec = vec![F::zero(); K + 1];
     v_k_coeffs_vec[0] = -F::one();
     v_k_coeffs_vec[K] = F::one();
-    let v_k_poly_value = Value::VecScalar(v_k_coeffs_vec).value_poly();
+    let v_k_poly_value = Value::vec_scalar(v_k_coeffs_vec).value_poly();
 
     // Lagrange shortcut inputs: x = (z[0], z[1], ..., z[N-1]),
     //                          omegas[i] = ω^{K-N+i}
@@ -255,20 +255,20 @@ fn build_inputs() -> Ctx<Vid, Value<C>> {
 
     let w_vec: Vec<F> = z[N_PUB..].to_vec();
 
-    let z_a_value = Value::VecScalar(az);
-    let z_b_value = Value::VecScalar(bz);
-    let w_a_value = Value::VecScalar(w_a_evals);
-    let w_b_value = Value::VecScalar(w_b_evals);
-    let w_value = Value::VecScalar(w_vec);
-    let x_value = Value::VecScalar(x_vec);
-    let omegas_value = Value::VecScalar(omegas_vec);
+    let z_a_value = Value::vec_scalar(az);
+    let z_b_value = Value::vec_scalar(bz);
+    let w_a_value = Value::vec_scalar(w_a_evals);
+    let w_b_value = Value::vec_scalar(w_b_evals);
+    let w_value = Value::vec_scalar(w_vec);
+    let x_value = Value::vec_scalar(x_vec);
+    let omegas_value = Value::vec_scalar(omegas_vec);
     let v_k_coeffs_value = v_k_poly_value;
 
-    let sigma_w_value = Value::VecG1(sigma_w_vec);
-    let sigma_q_value = Value::VecG1(sigma_q_vec);
-    let sigma_a_value = Value::VecG1(sigma_a_vec);
-    let sigma_b_value = Value::VecG1(sigma_b_vec);
-    let sigma_q_prime_value = Value::VecG1(sigma_q_prime_vec);
+    let sigma_w_value = Value::vec_g1(sigma_w_vec);
+    let sigma_q_value = Value::vec_g1(sigma_q_vec);
+    let sigma_a_value = Value::vec_g1(sigma_a_vec);
+    let sigma_b_value = Value::vec_g1(sigma_b_vec);
+    let sigma_q_prime_value = Value::vec_g1(sigma_q_prime_vec);
 
     let alpha_g_value = Value::G1(alpha_g_val);
     let beta_g_value = Value::G1(beta_g_val);

@@ -155,11 +155,11 @@ pub mod zippel_side {
             let inputs = Inputs::<ArkSecp256k1>::from_iter([
                 (
                     Vid("g_vec".to_string()),
-                    Value::VecG1(self.inputs.g_vec.clone()),
+                    Value::vec_g1(self.inputs.g_vec.clone()),
                 ),
                 (
                     Vid("h_vec".to_string()),
-                    Value::VecG1(self.inputs.h_vec.clone()),
+                    Value::vec_g1(self.inputs.h_vec.clone()),
                 ),
                 (
                     Vid("p_initial_commitment".to_string()),
@@ -175,15 +175,15 @@ pub mod zippel_side {
                 ),
                 (
                     Vid("a_vec_witness".to_string()),
-                    Value::VecScalar(self.inputs.a_vec.clone()),
+                    Value::vec_scalar(self.inputs.a_vec.clone()),
                 ),
                 (
                     Vid("b_vec_witness".to_string()),
-                    Value::VecScalar(self.inputs.b_vec.clone()),
+                    Value::vec_scalar(self.inputs.b_vec.clone()),
                 ),
                 (
                     Vid("sum_vec".to_string()),
-                    Value::VecScalar(self.inputs.sum_vec.clone()),
+                    Value::vec_scalar(self.inputs.sum_vec.clone()),
                 ),
             ]);
             let (prove, prove_peak, proof) =

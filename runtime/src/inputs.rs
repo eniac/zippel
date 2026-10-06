@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn clones_share_values() {
-        let inputs: I = [("v", Value::VecScalar(vec![Default::default(); 4]))]
+        let inputs: I = [("v", Value::vec_scalar(vec![Default::default(); 4]))]
             .into_iter()
             .collect();
         let copy = inputs.clone();

@@ -47,8 +47,8 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
     // Powers of tau: tau^i * g and tau^i * gamma * g.
     let powers = |base| {
-        Value::VecG1((0..n_size).map(|_| base).collect())
-            * Value::VecScalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect())
+        Value::vec_g1((0..n_size).map(|_| base).collect())
+            * Value::vec_scalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect())
     };
     let ss: Value<ArkBls12_381> = powers(g_input);
     let gs: Value<ArkBls12_381> = powers(gamma_g_input);
