@@ -174,8 +174,8 @@ pub static PROTOCOLS: &[Protocol] = &[
         soundness: None,
     },
     Protocol {
-        name: "dory",
-        path: "examples/dory/dory.zippel",
+        name: "dory_ipa",
+        path: "examples/dory_ipa/dory_ipa.zippel",
         sizes: &[("S", 2)],
         completeness: true,
         soundness: None,
@@ -216,8 +216,8 @@ pub static PROTOCOLS: &[Protocol] = &[
         soundness: None,
     },
     Protocol {
-        name: "hyperplonk",
-        path: "examples/hyperplonk/hyperplonk.zippel",
+        name: "hyperplonk_piop",
+        path: "examples/hyperplonk_piop/hyperplonk_piop.zippel",
         sizes: &[("S", 3)],
         completeness: true,
         soundness: None,

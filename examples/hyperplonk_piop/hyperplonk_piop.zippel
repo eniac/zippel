@@ -317,7 +317,7 @@ fn product_tree<F: Field, S: Size, N: 2 ^ S>(
         && v[2 * N - 1] == 0
 }
 
-proto hyperplonk<F: Field, S: Size, N: 2 ^ S>(
+proto hyperplonk_piop<F: Field, S: Size, N: 2 ^ S>(
     instance a_evs: [F; N],
     instance b_evs: [F; N],
     instance c_evs: [F; N],

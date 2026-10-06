@@ -85,7 +85,7 @@ cargo test                        # default members only
 cargo test --workspace            # everything, incl. benchmarks (needs gcc/m4/pkg-config)
 cargo zrun                        # list example protocols
 cargo zrun kzg                    # run one, e.g. kzg, schnorr, spartan, ...
-cargo zrunr hyperplonk            # same, release build
+cargo zrunr hyperplonk_piop       # same, release build
 
 # run every compile-time check without a harness; unset Size params get minimal defaults
 cargo zcheck [--size N=2]... FILE...

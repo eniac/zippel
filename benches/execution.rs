@@ -500,11 +500,12 @@ fn dory_inputs(log_n: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
 const DORY_LOG_N: usize = 10;
 
 fn bench_dory_prover(c: &mut Criterion) {
-    let mut group = c.benchmark_group("dory");
+    let mut group = c.benchmark_group("dory_ipa");
     group.sample_size(10);
 
-    let mut handler: ZippelHandler<ArkBls12_381> =
-        ZippelHandler::new(ZippelArgs::new(PathBuf::from("examples/dory/dory.zippel")));
+    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(ZippelArgs::new(
+        PathBuf::from("examples/dory_ipa/dory_ipa.zippel"),
+    ));
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &DORY_LOG_N);
     handler.compile(&sizes);
@@ -518,11 +519,12 @@ fn bench_dory_prover(c: &mut Criterion) {
 }
 
 fn bench_dory_verifier(c: &mut Criterion) {
-    let mut group = c.benchmark_group("dory");
+    let mut group = c.benchmark_group("dory_ipa");
     group.sample_size(10);
 
-    let mut handler: ZippelHandler<ArkBls12_381> =
-        ZippelHandler::new(ZippelArgs::new(PathBuf::from("examples/dory/dory.zippel")));
+    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(ZippelArgs::new(
+        PathBuf::from("examples/dory_ipa/dory_ipa.zippel"),
+    ));
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &DORY_LOG_N);
     handler.compile(&sizes);

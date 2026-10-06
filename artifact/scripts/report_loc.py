@@ -51,7 +51,7 @@ PROTOCOLS = [
     ("hyrax", "examples/hyrax_ipa/hyrax_ipa.zippel"),
     ("membership", "examples/membership/membership.zippel"),
     ("spartan", "examples/spartan/spartan.zippel"),
-    ("dory", "examples/dory/dory.zippel"),
+    ("dory_ipa", "examples/dory_ipa/dory_ipa.zippel"),
     ("r1cs_sigma", "examples/r1cs_sigma/r1cs_sigma.zippel"),
     ("hyperplonk_multiset", "examples/hyperplonk_multiset/hyperplonk_multiset.zippel"),
     (
@@ -66,7 +66,7 @@ PROTOCOLS = [
         "hyperplonk_productcheck",
         "examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel",
     ),
-    ("hyperplonk", "examples/hyperplonk/hyperplonk.zippel"),
+    ("hyperplonk_piop", "examples/hyperplonk_piop/hyperplonk_piop.zippel"),
     ("zk_kzg", "examples/zk_kzg/zk_kzg.zippel"),
     ("kzh", "examples/kzh/kzh.zippel"),
     ("dekart", "examples/dekart/dekart.zippel"),

@@ -25,20 +25,20 @@ mod commitment_equality;
 mod cp;
 #[path = "dekart/main.rs"]
 mod dekart;
-#[path = "dory/main.rs"]
-mod dory;
+#[path = "dory_ipa/main.rs"]
+mod dory_ipa;
 #[path = "dory_pcs/main.rs"]
 mod dory_pcs;
 #[path = "groth16/main.rs"]
 mod groth16;
 #[path = "hadamard/main.rs"]
 mod hadamard;
-#[path = "hyperplonk/main.rs"]
-mod hyperplonk;
 #[path = "hyperplonk_multiset/main.rs"]
 mod hyperplonk_multiset;
 #[path = "hyperplonk_permutation/main.rs"]
 mod hyperplonk_permutation;
+#[path = "hyperplonk_piop/main.rs"]
+mod hyperplonk_piop;
 #[path = "hyperplonk_productcheck/main.rs"]
 mod hyperplonk_productcheck;
 #[path = "hyperplonk_snark/main.rs"]
@@ -101,11 +101,11 @@ const EXAMPLES: &[(&str, Runner)] = &[
     ("commitment_equality", commitment_equality::run),
     ("cp", cp::run),
     ("dekart", dekart::run),
-    ("dory", dory::run),
+    ("dory_ipa", dory_ipa::run),
     ("dory_pcs", dory_pcs::run),
     ("groth16", groth16::run),
     ("hadamard", hadamard::run),
-    ("hyperplonk", hyperplonk::run),
+    ("hyperplonk_piop", hyperplonk_piop::run),
     ("hyperplonk_multiset", hyperplonk_multiset::run),
     ("hyperplonk_permutation", hyperplonk_permutation::run),
     ("hyperplonk_productcheck", hyperplonk_productcheck::run),

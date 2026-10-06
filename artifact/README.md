@@ -234,7 +234,7 @@ To sanity-check a small subset of protocols instead of all 30:
 
 ```sh
 docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
-  bash -c "artifact/scripts/run_completeness.sh --timeout 120 --protocols schnorr,groth16,ipa,hyperplonk && python3 artifact/scripts/process_completeness.py"
+  bash -c "artifact/scripts/run_completeness.sh --timeout 120 --protocols schnorr,groth16,ipa,hyperplonk_piop && python3 artifact/scripts/process_completeness.py"
 ```
 
 **Note on the timeout.** The paper's own methodology budgets 20 minutes
@@ -247,7 +247,7 @@ the full run fast.
 verifies **25 of 30** protocols, 5 more than what we had in the paper.
 This is because we improved our inlining optimization and fixed some bugs that we found
 after submission. The other five (`spartan`, `hyperplonk_permutation`,
-`hyperplonk`, `dekart` and `pari`) reach the timeout.
+`hyperplonk_piop`, `dekart` and `pari`) reach the timeout.
 
 **Runtime**: a full run takes approximately 12 minutes, 10 of them spent
 on the five protocols that reach the timeout.

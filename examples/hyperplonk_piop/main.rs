@@ -14,8 +14,8 @@ const S: usize = 3;
 const NUM_GATES: usize = 1 << S;
 
 pub fn run(_args: &[String]) {
-    let zippel_file =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/hyperplonk/hyperplonk.zippel");
+    let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples/hyperplonk_piop/hyperplonk_piop.zippel");
 
     println!("=== HyperPlonk (gate identity + 3-wire wiring) ===");
     println!("num_gates = {NUM_GATES}, s = log num_gates = {S}");
