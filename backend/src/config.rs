@@ -9,10 +9,10 @@ use ark_ec::VariableBaseMSM;
 use ark_ec::bls12::Bls12;
 use ark_ec::mnt4::MNT4;
 use ark_ec::models::bn::Bn;
-use ark_ec::pairing::{Pairing, PairingOutput};
+use ark_ec::pairing::{MillerLoopOutput, Pairing, PairingOutput};
 use ark_ec::scalar_mul::ScalarMul;
 use ark_ec::{AffineRepr, CurveGroup, PrimeGroup};
-use ark_ff::{AdditiveGroup, Fp64, MontBackend, MontConfig, PrimeField};
+use ark_ff::{AdditiveGroup, Fp64, MontBackend, MontConfig, One, PrimeField};
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_std::UniformRand;
 
@@ -460,14 +460,21 @@ pub trait ArkPairingOps<P: Pairing> {
 
     /// [`Self::billinear_vec_dot`] with the second-group side already
     /// prepared, as a verifier key stores it.
+    ///
+    /// arkworks' Miller loop consumes its preparations, and stored ones can
+    /// only be cloned, so the pairs go through it a chunk at a time: the
+    /// clones never exceed one chunk, and one final exponentiation of the
+    /// product of the chunks' Miller loops is exactly `multi_pairing`.
     #[inline]
     fn billinear_vec_dot_prepared(g1: &[P::G1], g2: &[P::G2Prepared]) -> PairingOutput<P> {
-        let g1: Vec<P::G1Prepared> = P::G1::normalize_batch(g1)
-            .into_par_iter()
-            .map(P::G1Prepared::from)
-            .collect();
-        let g2: Vec<P::G2Prepared> = g2.par_iter().cloned().collect();
-        P::multi_pairing(g1, g2)
+        const CHUNK: usize = 32;
+        let g1 = P::G1::normalize_batch(g1);
+        let f = g1
+            .par_chunks(CHUNK)
+            .zip(g2.par_chunks(CHUNK))
+            .map(|(a, b)| P::multi_miller_loop(a.iter().copied(), b.iter().cloned()).0)
+            .reduce(P::TargetField::one, |x, y| x * y);
+        P::final_exponentiation(MillerLoopOutput(f)).expect("final exponentiation of a Miller loop")
     }
 }
 
