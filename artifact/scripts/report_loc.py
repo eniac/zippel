@@ -25,9 +25,10 @@ Run from the repo root:
 
     python3 artifact/scripts/report_loc.py
 
-The protocol/path list below must be kept in sync with the `PROTOCOLS`
-entries marked `completeness: true` in benches/analysis/protocols.rs (the
-canonical list of the paper's protocols), plus hyperplonk_snark.
+The protocol/path list below is the paper's protocols, plus
+hyperplonk_snark. Keep it in sync with the `PROTOCOLS` entries marked
+`completeness: true` in benches/analysis/protocols.rs, which also sweeps
+okamoto_elgamal and pedersen_eq.
 """
 
 from pathlib import Path
@@ -71,6 +72,7 @@ PROTOCOLS = [
     ("hyperplonk_piop", "examples/hyperplonk_piop/hyperplonk_piop.zippel"),
     ("hyperplonk_snark", "examples/hyperplonk_snark/hyperplonk_snark.zippel"),
     ("zk_kzg", "examples/zk_kzg/zk_kzg.zippel"),
+    ("zeromorph_kzg", "examples/zeromorph_kzg/zeromorph_kzg.zippel"),
     ("kzh", "examples/kzh/kzh.zippel"),
     ("dekart", "examples/dekart/dekart.zippel"),
     ("pari", "examples/pari/pari.zippel"),
