@@ -9,11 +9,13 @@ use share::Ctx;
 use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
+use crate::common;
+
 // Edit S to scale; num_gates = 2^S follows.
 const S: usize = 3;
 const NUM_GATES: usize = 1 << S;
 
-pub fn run(_args: &[String]) {
+pub fn run(_args: &[String], opts: &common::RunOptions) {
     let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples/hyperplonk_piop/hyperplonk_piop.zippel");
 
@@ -51,6 +53,9 @@ pub fn run(_args: &[String]) {
         std::process::exit(1);
     }
 
+    if !opts.analyses {
+        return;
+    }
     let analysis_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         println!("\n--- Static Analysis ---");
         let analysis_args = ZippelArgs::new(zippel_file.clone());

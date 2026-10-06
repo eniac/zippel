@@ -11,13 +11,15 @@ use share::Ctx;
 use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
+use crate::common;
+
 // ZeroCheck dimension. The proto is parametric over s = log2(num_points);
 // here we instantiate s = 2 by passing S = 2 into the compile context, and
 // num_points = 2^S = 4 follows. Bump S to scale up the example.
 const S: usize = 3;
 const NUM_POINTS: usize = 1 << S; // |B_s| = 2^S
 
-pub fn run(_args: &[String]) {
+pub fn run(_args: &[String], opts: &common::RunOptions) {
     let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples/hyperplonk_zerocheck/hyperplonk_zerocheck.zippel");
 
@@ -54,6 +56,9 @@ pub fn run(_args: &[String]) {
         std::process::exit(1);
     }
 
+    if !opts.analyses {
+        return;
+    }
     let analysis_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         println!("\n--- Static Analysis ---");
 

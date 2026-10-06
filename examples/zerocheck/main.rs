@@ -7,7 +7,7 @@ use zippel::*;
 
 use crate::common;
 
-pub fn run(_args: &[String]) {
+pub fn run(_args: &[String], opts: &common::RunOptions) {
     println!("=== Zerocheck (ArkSecp256k1) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/zerocheck/zerocheck.zippel"));
     let mut handler: zippel::ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
@@ -18,6 +18,9 @@ pub fn run(_args: &[String]) {
     let inputs = prover_create_inputs();
     common::run_prover_and_verify(&mut handler, &inputs);
 
+    if !opts.analyses {
+        return;
+    }
     println!("\n--- Static Analysis ---");
     let analysis_args = ZippelArgs::new(PathBuf::from("examples/zerocheck/zerocheck.zippel"));
     let mut analysis_handler: ZippelHandler<ArkSecp256k1> = ZippelHandler::new(analysis_args);

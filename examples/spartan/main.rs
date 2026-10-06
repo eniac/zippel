@@ -12,6 +12,8 @@ use std::{
 };
 use zippel::*;
 
+use crate::common;
+
 #[derive(Clone, Debug)]
 struct RunOpts {
     sweep: Vec<usize>,
@@ -87,7 +89,7 @@ struct RunResult {
     passed: bool,
 }
 
-pub fn run(args: &[String]) {
+pub fn run(args: &[String], _opts: &common::RunOptions) {
     let opts = parse_args(args);
 
     println!("=== Spartan-NIZK (PIOP + Hyrax PCS, ArkCurve25519) ===");

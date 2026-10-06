@@ -6,6 +6,8 @@ use share::Ctx;
 use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
+use crate::common;
+
 const L: usize = 2;
 const M: usize = 2;
 const NROWS: usize = 1 << L;
@@ -22,7 +24,7 @@ fn build_sizes_ctx() -> Ctx<Tid, usize> {
     ctx
 }
 
-pub fn run(_args: &[String]) {
+pub fn run(_args: &[String], opts: &common::RunOptions) {
     println!("=== Hyrax PCS (ArkBls12_381) — L={L}, M={M}, NTOT={NTOT} ===");
     let args = ZippelArgs::new(PathBuf::from("examples/hyrax_pcs/hyrax_pcs.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
@@ -48,6 +50,9 @@ pub fn run(_args: &[String]) {
         std::process::exit(1);
     }
 
+    if !opts.analyses {
+        return;
+    }
     let analysis_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         println!("\n--- Static Analysis ---");
 

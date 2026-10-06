@@ -10,7 +10,7 @@ use crate::common;
 
 const DEFAULT_N: usize = 2;
 
-pub fn run(args: &[String]) {
+pub fn run(args: &[String], opts: &common::RunOptions) {
     let n: usize = args
         .first()
         .and_then(|s| s.parse().ok())
@@ -30,6 +30,9 @@ pub fn run(args: &[String]) {
     let inputs = prover_create_inputs(n);
     common::run_prover_and_verify(&mut handler, &inputs);
 
+    if !opts.analyses {
+        return;
+    }
     println!("\n--- Static Analysis ---");
     common::time_analysis!("Completeness", handler.analyze_completeness());
     common::time_analysis!("ZK", handler.analyze_knowledge());
