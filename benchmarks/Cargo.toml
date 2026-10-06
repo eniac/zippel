@@ -192,6 +192,12 @@ name = "msm_batch_ceiling"
 path = "src/bin/msm_batch_ceiling.rs"
 
 [[bin]]
+# One MSM and three independent MSMs: native arkworks against zippel's
+# backend call and a zippel protocol, under RAYON_NUM_THREADS.
+name = "msm_micro"
+path = "src/bin/msm_micro.rs"
+
+[[bin]]
 # Same-binary head-to-head of zippel's c_rows loop vs ark-spartan's
 # DensePolynomial::commit — re-attribution of the M=17->18 "MSM cliff".
 name = "commit_head_to_head"
