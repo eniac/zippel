@@ -327,7 +327,7 @@ impl<C: ArkConfig> MutexGraph<C> {
         );
         let env = info.inbox.take_all();
         let mut check_sink = Vec::new();
-        let value = graph::eval::eval_op(op, &env, &mut ThreadRng::default(), &mut check_sink)
+        let value = graph::eval::eval_op_owned(op, env, &mut ThreadRng::default(), &mut check_sink)
             .expect("runtime invariant violation: eval_op failed on a scheduled node");
         // Each node has at most one top-level Check, so the sink has 0 or 1
         // elements.
