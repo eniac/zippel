@@ -97,8 +97,9 @@ This does not undermine the paper's conciseness claim. The native
 baseline side of each comparison is unaffected, since that code is
 vendored and neither formatted nor edited by this project; all of the
 movement above occurs on the Zippel side. Zippel remains substantially
-shorter than its native baseline for every one of the nine systems that
-Experiment 1 benchmarks:
+shorter than its native baseline for every system that Experiment 1
+benchmarks. DeKART, KZH, Dory PCS and HyperPlonk SNARK were added after
+submission, so they have no submitted count:
 
 | System | LoC Zippel (submitted to now) | LoC Native | Native/Zippel (submitted to now) |
 |---|---|---|---|
@@ -111,6 +112,10 @@ Experiment 1 benchmarks:
 | PST13 | 54 to 82 | 250 | 4.6x to 3.0x |
 | Hyrax | 47 to 49 | 277 | 5.9x to 5.7x |
 | Spartan | 461 to 419 | 1867 | 4.0x to 4.5x |
+| DeKART | — to 130 | 847 | — to 6.5x |
+| KZH | — to 53 | 221 | — to 4.2x |
+| Dory PCS | — to 304 | 766 | — to 2.5x |
+| HyperPlonk SNARK | — to 441 | 2813 | — to 6.4x |
 
 Groth16 changed the most, yet remains 5.2x shorter than its native
 baseline. Every other system changed less, and Spartan's line count
@@ -137,11 +142,15 @@ docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
   bash -c "artifact/scripts/run_benchmark.sh && python3 artifact/scripts/process_benchmark.py"
 ```
 
-Runs all nine systems benchmarked in the paper (Schnorr, Sumcheck,
-Bulletproofs IPA, KZG, Pari, Groth16, PST13, Hyrax, Spartan) at each
-system's paper-reported instance size (`2^18`, fixed for Schnorr) across
-thread counts `{1, 2, 4, 8}`, then renders two markdown tables from the
-resulting CSV. To run a smaller subset instead of the full run:
+Runs every system the benchmark compares against a native baseline: the
+paper's (Schnorr, Sumcheck, Bulletproofs IPA, KZG, Pari, Groth16, PST13,
+Hyrax, Spartan) and those added since (DeKART, KZH, Dory PCS, HyperPlonk
+SNARK). Each runs at `2^18` (fixed for Schnorr) across thread counts
+`{1, 2, 4, 8}`, with one sample per measurement, and the script then
+renders two markdown tables from the resulting CSV. The pinned results in
+`benchmarks/*_results.csv` use ten samples; set `-e BENCH_SAMPLES=10` to
+match them, at roughly ten times the runtime. To run a smaller subset
+instead of the full run:
 
 ```sh
 docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" -e SYSTEMS=schnorr,kzg -e THREADS=1,2 zippel-ae \
@@ -154,6 +163,8 @@ docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" -e SYSTEMS=s
   the Zippel protocol and its native baseline, the ratio of native
   baseline time to Zippel time at each thread count, and the
   single-thread verifier ratio.
+  - Rows for the systems added since submission have no counterpart in
+    the submitted paper's Figure 7.
   - **Hyrax**: the submitted paper's prose claimed a prover speedup up
     to 6.05x at one thread; this was corrected during review to 1.11x.
     This is expected and has already been discussed with the paper's
@@ -162,8 +173,10 @@ docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" -e SYSTEMS=s
   included in the submitted paper; added in response to reviewer
   feedback.
 
-**Runtime**: a full run across all nine systems and all four thread
-counts takes approximately 40 minutes.
+**Runtime**: a full run across all systems and all four thread counts
+takes an estimated 2.5 hours, over an hour of it compiling the Zippel
+DeKART protocol at `2^18`. This is estimated from the pinned results,
+scaled to one sample, and does not include setup.
 
 ---
 
