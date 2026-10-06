@@ -157,7 +157,7 @@ fn zippel_proof_to_ark(proof: &[Value<ArkBls12_381>]) -> ark_groth16::Proof<E> {
 fn run_and_verify(
     zippel_path: &str,
     sizes: &Ctx<Tid, usize>,
-    inputs: &Ctx<Vid, Value<ArkBls12_381>>,
+    inputs: &Inputs<ArkBls12_381>,
     vk: &ark_groth16::VerifyingKey<E>,
     instance_assignment: &[F],
 ) {
@@ -227,7 +227,7 @@ fn run_groth16(
         Value::VecScalar(h_coeffs_padded),
     ));
 
-    let inputs: Ctx<Vid, Value<ArkBls12_381>> = Ctx::from_iter(entries);
+    let inputs: Inputs<ArkBls12_381> = entries.into_iter().collect();
 
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("M"), &m);

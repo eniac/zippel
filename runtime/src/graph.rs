@@ -1,11 +1,9 @@
 use backend::{ArkConfig, Value, value_to_bytes};
 use graph::{ArgKind, Dag, GOp, Node, Op, UDag};
-use lang::id::Vid;
 use log::debug;
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
 use rand::rngs::ThreadRng;
-use share::Ctx;
 use spongefish::{DuplexSpongeInterface, ProverState};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -13,6 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::error::RuntimeError;
 use crate::inbox::Inbox;
+use crate::inputs::Inputs;
 use crate::queue::{SyncMessage, SyncSender, sync_channel};
 
 /// Size threshold (in bytes of serialized form) above which an instance
@@ -187,7 +186,7 @@ fn is_sync_node<C: ArkConfig>(g: &MutexGraph<C>, node_idx: NodeIndex) -> bool {
 #[derive(Clone)]
 struct Run<C: ArkConfig> {
     graph: Arc<MutexGraph<C>>,
-    inputs: Arc<HashMap<Vid, Arc<Value<C>>>>,
+    inputs: Arc<Inputs<C>>,
     errors: ErrorSlot,
 }
 
@@ -213,7 +212,7 @@ impl<C: ArkConfig> Run<C> {
                     Some(input) => self.release_successors(successor, Some(input), tx),
                     None => record_error(
                         &self.errors,
-                        RuntimeError::missing_arg(vid, self.inputs.keys()),
+                        RuntimeError::missing_arg(vid, self.inputs.names()),
                     ),
                 },
                 Node::Inp(_) | Node::Rel(_) => {
@@ -388,19 +387,13 @@ impl<C: ArkConfig> MutexGraph<C> {
     /// channel, or if the error/check mutexes are poisoned.
     pub fn run_graph<H: DuplexSpongeInterface<U = u8>>(
         g: Arc<MutexGraph<C>>,
-        inputs: Arc<Ctx<Vid, Value<C>>>,
+        inputs: &Inputs<C>,
         prover_state: &mut ProverState<H>,
         result_kind: ResultKind,
     ) -> Result<RunResult<C>, RuntimeError> {
-        // Build an Arc-wrapped inputs map once. Each `Arg` node then delivers
-        // a clone of the Arc (cheap) instead of the inner `Value` (which may
-        // be a 500 MB matrix vector). This is a one-time clone per input.
-        let inputs: Arc<HashMap<Vid, Arc<Value<C>>>> = Arc::new(
-            inputs
-                .iter()
-                .map(|(k, v)| (k.clone(), Arc::new(v.clone())))
-                .collect(),
-        );
+        // Sharing the caller's values: each `Arg` node delivers a clone of
+        // its input's `Arc`, never of the `Value` itself.
+        let inputs = Arc::new(inputs.clone());
         // Rayon workers and the main loop record failures in `run.errors`;
         // the main loop bails after the sync channel closes.
         let run = Run {
@@ -542,7 +535,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                             let value = match inputs.get(&vid) {
                                 Some(v) => v,
                                 None => {
-                                    let err = RuntimeError::missing_arg(&vid, inputs.keys());
+                                    let err = RuntimeError::missing_arg(&vid, inputs.names());
                                     record_error(&run.errors, err.clone());
                                     // Drop tx and bail; in-flight workers
                                     // will see the slot set and short-circuit.

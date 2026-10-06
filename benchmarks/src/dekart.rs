@@ -140,11 +140,11 @@ pub mod zippel_side {
     use share::Ctx;
     use std::path::PathBuf;
     use std::time::Instant;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs: Ctx<Vid, Value<ArkBls12_381>>,
+        inputs: Inputs<ArkBls12_381>,
         compile_time: Vec<std::time::Duration>,
     }
 
@@ -184,7 +184,7 @@ pub mod zippel_side {
                 .collect();
             let b_pow = (0..ell).map(|j| Fr::from(1u64 << j)).collect::<Vec<_>>();
 
-            let inputs = Ctx::from_iter(
+            let inputs = Inputs::from_iter(
                 [
                     // witness
                     ("f_evals", Value::VecScalar(f_evals)),

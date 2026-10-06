@@ -22,7 +22,7 @@ pub mod zippel_side {
     use lang::id::Vid;
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
 
     /// The compiled Schnorr protocol. It takes no size parameters, so the only
     /// per-instance state is the handler and the measured compile time.
@@ -84,7 +84,7 @@ pub mod zippel_side {
             let g = G1::rand(&mut rng);
             let h_affines = G1Ops::vec_mul(&g, &[x]);
             let h = h_affines.into_iter().next().unwrap();
-            let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+            let inputs = Inputs::<ArkBls12_381>::from_iter([
                 (Vid("x".to_string()), Value::Scalar(x)),
                 (Vid("g".to_string()), Value::G1(g)),
                 (Vid("h".to_string()), Value::G1Affine(h)),

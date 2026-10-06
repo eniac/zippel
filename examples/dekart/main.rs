@@ -29,7 +29,7 @@ pub fn run(opts: &common::RunOptions) {
     sizes.insert(&Tid::new("l_chunk"), &l_chunk);
     handler.compile(&sizes);
 
-    let inputs = build_inputs(n_size, b_size, l_chunk, h_deg);
+    let inputs: Inputs<_> = build_inputs(n_size, b_size, l_chunk, h_deg).into();
     let prover_start = Instant::now();
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();

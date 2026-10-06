@@ -31,7 +31,7 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
 
     /// A compiled sumcheck instance, reusable across `time_protocol` calls.
     ///
@@ -117,7 +117,7 @@ pub mod zippel_side {
             for _ in 1..md {
                 full_poly = full_poly.poly_mul(&base).expect("poly_mul");
             }
-            let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+            let inputs = Inputs::<ArkBls12_381>::from_iter([
                 (Vid("claimed_sum".to_string()), Value::Scalar(claimed_sum)),
                 (Vid("p".to_string()), Value::Poly(full_poly)),
             ]);

@@ -228,7 +228,7 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
 
     type C = ArkBls12_381;
     type F = <C as ArkConfig>::F;
@@ -442,7 +442,7 @@ pub mod zippel_side {
                 .map(|i| inst.z_b_evals[i] - inst.x_b_evals[i])
                 .collect();
 
-            let inputs = Ctx::<Vid, Value<C>>::from_iter([
+            let inputs = Inputs::<C>::from_iter([
                 (
                     Vid("z_a_evals".to_string()),
                     Value::VecScalar(inst.z_a_evals.clone()),

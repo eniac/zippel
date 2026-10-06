@@ -475,13 +475,13 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
 
     /// Compiled PST13 protocol plus the instance/witness context derived from
     /// the shared SRS; borrows the [`Shared`] data it was built from.
     pub struct Setup<'a> {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs_base: Ctx<Vid, Value<ArkBls12_381>>,
+        inputs_base: Inputs<ArkBls12_381>,
         #[allow(dead_code)]
         shared: &'a Shared,
         compile_time: Vec<std::time::Duration>,
@@ -497,7 +497,7 @@ pub mod zippel_side {
         pub fn new(shared: &'a Shared) -> Self {
             // Pre-affinize ck — same fix as the Groth16 bench (avoids per-prove
             // `normalize_batch`). ck_affine is already computed in `Shared`.
-            let inputs_base = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+            let inputs_base = Inputs::<ArkBls12_381>::from_iter([
                 (Vid("p".to_string()), Value::VecScalar(shared.p.clone())),
                 (Vid("z".to_string()), Value::VecScalar(shared.z.clone())),
                 (Vid("y".to_string()), Value::Scalar(shared.y)),
@@ -588,7 +588,7 @@ mod cross_tests {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
 
     const N_SWEEP: &[usize] = &[1, 2, 4, 6];
 
@@ -604,8 +604,8 @@ mod cross_tests {
         handler
     }
 
-    fn zip_inputs(shared: &Shared) -> Ctx<Vid, Value<ArkBls12_381>> {
-        Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+    fn zip_inputs(shared: &Shared) -> Inputs<ArkBls12_381> {
+        Inputs::<ArkBls12_381>::from_iter([
             (Vid("p".to_string()), Value::VecScalar(shared.p.clone())),
             (Vid("z".to_string()), Value::VecScalar(shared.z.clone())),
             (Vid("y".to_string()), Value::Scalar(shared.y)),

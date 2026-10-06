@@ -73,11 +73,11 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs: Ctx<Vid, Value<ArkBls12_381>>,
+        inputs: Inputs<ArkBls12_381>,
         compile_time: Vec<std::time::Duration>,
     }
 
@@ -101,7 +101,7 @@ pub mod zippel_side {
 
             let (s, v) = (&sh.setup, &sh.vsetup);
             let nv = 1usize << k;
-            let inputs = Ctx::from_iter(
+            let inputs = Inputs::from_iter(
                 [
                     ("m", Value::VecScalar(sh.coeffs.clone())),
                     // upstream point = columns (sigma) then rows (nu)
