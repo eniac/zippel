@@ -96,24 +96,26 @@ baseline side of each comparison is unaffected, since that code is
 vendored and neither formatted nor edited by this project; all of the
 movement above occurs on the Zippel side. Zippel remains substantially
 shorter than its native baseline for every system that Experiment 1
-benchmarks. DeKART, KZH, Dory PCS and HyperPlonk SNARK were added after
-submission, so they have no submitted count:
+benchmarks. DeKART, KZH, Dory PCS, HyperPlonk SNARK and the ark-spartan
+baseline were added after submission, so they have no submitted count.
+`cargo run -q -p benchmarks --bin bench_all -- --ncloc-only` prints the current counts:
 
-| System | LoC Zippel (submitted to now) | LoC Native | Native/Zippel (submitted to now) |
+| System | LoC Zippel (submitted to now) | LoC Native (submitted to now) | Native/Zippel (submitted to now) |
 |---|---|---|---|
 | Schnorr | 7 to 7 | 186 | 26.6x to 26.6x |
-| Sumcheck | 58 to 90 | 1544 | 26.6x to 17.2x |
-| Bulletproofs | 79 to 77 | 166 | 2.1x to 2.1x |
+| Sumcheck | 58 to 87 | 1544 to 1559 | 26.6x to 17.9x |
+| Bulletproofs | 79 to 77 | 166 to 170 | 2.1x to 2.2x |
 | KZG | 14 to 24 | 527 | 37.6x to 22.0x |
-| Pari | 79 to 101 | 1141 | 14.4x to 11.3x |
+| Pari | 79 to 119 | 1141 | 14.4x to 9.6x |
 | Groth16 | 36 to 88 | 458 | 12.7x to 5.2x |
-| PST13 | 54 to 82 | 250 | 4.6x to 3.0x |
+| PST13 | 54 to 78 | 250 | 4.6x to 3.2x |
 | Hyrax | 47 to 49 | 277 | 5.9x to 5.7x |
-| Spartan | 461 to 419 | 1867 | 4.0x to 4.5x |
-| DeKART | — to 130 | 847 | — to 6.5x |
+| Spartan (Microsoft) | 461 to 422 | 1867 | 4.0x to 4.4x |
+| Spartan (ark) | — to 422 | 2037 | — to 4.8x |
+| DeKART | — to 130 | 846 | — to 6.5x |
 | KZH | — to 53 | 221 | — to 4.2x |
 | Dory PCS | — to 304 | 766 | — to 2.5x |
-| HyperPlonk SNARK | — to 441 | 2813 | — to 6.4x |
+| HyperPlonk SNARK | — to 441 | 2828 | — to 6.4x |
 
 Groth16 changed the most, yet remains 5.2x shorter than its native
 baseline. Every other system changed less, and Spartan's line count

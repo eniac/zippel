@@ -229,6 +229,7 @@ pub mod ipa;
 pub mod kzg;
 pub mod kzh;
 pub mod kzh_upstream;
+pub mod ncloc;
 pub mod pari;
 #[allow(warnings)]
 pub mod pari_upstream;

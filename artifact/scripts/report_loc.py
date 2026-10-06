@@ -25,10 +25,8 @@ Run from the repo root:
 
     python3 artifact/scripts/report_loc.py
 
-The protocol/path list below is the paper's protocols, plus
-hyperplonk_snark. Keep it in sync with the `PROTOCOLS` entries marked
-`completeness: true` in benches/analysis/protocols.rs, which also sweeps
-okamoto_elgamal and pedersen_eq.
+The protocol/path list below is exactly the paper's Figure 6 rows, in
+order; keep it in sync with the paper.
 """
 
 from pathlib import Path
@@ -38,6 +36,7 @@ PROTOCOLS = [
     ("schnorr", "examples/schnorr/schnorr.zippel"),
     ("schnorr_3round", "examples/schnorr_3round/schnorr_3round.zippel"),
     ("okamoto", "examples/okamoto/okamoto.zippel"),
+    ("okamoto_elgamal", "examples/okamoto_elgamal/okamoto_elgamal.zippel"),
     ("cp", "examples/cp/cp.zippel"),
     ("cds", "examples/cds/cds.zippel"),
     ("hadamard", "examples/hadamard/hadamard.zippel"),
@@ -71,7 +70,6 @@ PROTOCOLS = [
         "hyperplonk_productcheck",
         "examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel",
     ),
-    ("hyperplonk_piop", "examples/hyperplonk_piop/hyperplonk_piop.zippel"),
     ("hyperplonk_snark", "examples/hyperplonk_snark/hyperplonk_snark.zippel"),
     ("zeromorph_kzg", "examples/zeromorph_kzg/zeromorph_kzg.zippel"),
     ("kzh", "examples/kzh/kzh.zippel"),
