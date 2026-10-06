@@ -218,6 +218,7 @@ pub mod inst_gen {
 /// the matching SRS, and times prove/verify through `ZippelHandler`.
 pub mod zippel_side {
     use super::*;
+    use ark_ec::CurveGroup;
     use ark_ff::{Field, One, UniformRand, Zero};
     use ark_poly::{
         DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain, Polynomial,
@@ -442,6 +443,8 @@ pub mod zippel_side {
                 .map(|i| inst.z_b_evals[i] - inst.x_b_evals[i])
                 .collect();
 
+            // The SRS goes in affine, as the native PARI keeps it: MSMs and
+            // slices then work on 96-byte points, with no conversion first.
             let inputs = Inputs::<C>::from_iter([
                 (
                     Vid("z_a_evals".to_string()),
@@ -461,23 +464,23 @@ pub mod zippel_side {
                 ),
                 (
                     Vid("sigma_w".to_string()),
-                    Value::VecG1(self.srs.sigma_w.clone()),
+                    Value::VecG1Affine(G1::normalize_batch(&self.srs.sigma_w)),
                 ),
                 (
                     Vid("sigma_q".to_string()),
-                    Value::VecG1(self.srs.sigma_q.clone()),
+                    Value::VecG1Affine(G1::normalize_batch(&self.srs.sigma_q)),
                 ),
                 (
                     Vid("sigma_a".to_string()),
-                    Value::VecG1(self.srs.sigma_a.clone()),
+                    Value::VecG1Affine(G1::normalize_batch(&self.srs.sigma_a)),
                 ),
                 (
                     Vid("sigma_b".to_string()),
-                    Value::VecG1(self.srs.sigma_b.clone()),
+                    Value::VecG1Affine(G1::normalize_batch(&self.srs.sigma_b)),
                 ),
                 (
                     Vid("sigma_q_prime".to_string()),
-                    Value::VecG1(self.srs.sigma_q_prime.clone()),
+                    Value::VecG1Affine(G1::normalize_batch(&self.srs.sigma_q_prime)),
                 ),
                 (Vid("alpha_g".to_string()), Value::G1(self.srs.alpha_g)),
                 (Vid("beta_g".to_string()), Value::G1(self.srs.beta_g)),
