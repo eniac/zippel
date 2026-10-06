@@ -209,10 +209,18 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
             sizes: &[("n", 3), ("b", 2), ("l_chunk", 1)],
             ignored: true,
         },
+        // S=3 is the smallest size at which one recursive step calls
+        // another; it does not finish yet.
         CompletenessEntry {
-            name: "dory",
-            zippel_path: "examples/dory/dory.zippel",
-            sizes: &[("S", 2)],
+            name: "dory_ipa",
+            zippel_path: "examples/dory_ipa/dory_ipa.zippel",
+            sizes: &[("S", 3)],
+            ignored: true,
+        },
+        CompletenessEntry {
+            name: "dory_pcs",
+            zippel_path: "examples/dory_pcs/dory_pcs.zippel",
+            sizes: &[("K", 3)],
             ignored: false,
         },
         CompletenessEntry {
@@ -222,8 +230,8 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
             ignored: false,
         },
         CompletenessEntry {
-            name: "hyperplonk",
-            zippel_path: "examples/hyperplonk/hyperplonk.zippel",
+            name: "hyperplonk_piop",
+            zippel_path: "examples/hyperplonk_piop/hyperplonk_piop.zippel",
             sizes: &[("S", 3)],
             ignored: true,
         },

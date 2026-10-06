@@ -10,7 +10,7 @@ the paper's evaluation section.
 6 and 7 (pages 12-13) and the completeness and special-soundness claims
 of Section 9.3. It additionally produces two supplementary tables not
 included in the submitted paper (a per-protocol Graph IR node-count
-table and a 30-protocol completeness-timing table), added in response
+table and a per-protocol completeness-timing table), added in response
 to reviewer feedback. The submitted paper therefore has no corresponding
 table for these two. Each experiment below identifies which figure, if
 any, it corresponds to.
@@ -27,21 +27,19 @@ any, it corresponds to.
 | `share/` | Shared utilities (`Ctx`, `Set`, etc.) used across crates |
 | `fmt/` | `zippel-fmt` formatter; keeps `examples/*.zippel` in the canonical style |
 | `examples/` | 30+ `.zippel` protocol implementations and their Rust harnesses |
-| `benches/analysis/` | Completeness and soundness analysis benches (Experiment 3 runs completeness) |
+| `benches/analysis/` | Soundness (Experiment 2) and completeness (Experiment 3) analysis benches |
 | `benchmarks/` | Zippel vs. native performance comparison (Experiment 1) |
-| `analyses/tests/gb_snapshots/` | Special-soundness analysis (Experiment 2) |
+| `analyses/tests/gb_snapshots/` | Analysis correctness and Gröbner-basis regression tests |
 | `artifact/` | This package: `Dockerfile` and `scripts/` |
 
 ## Setup
 
 Requires [Docker](https://www.docker.com/) already installed. Docker
-should have at least 8 CPU threads and 16 GiB of free memory available
-to containers (20 GiB recommended). Experiment 1 runs thread counts up
-to 8, and Experiment 3 runs each completeness check under a 16 GiB
-memory limit.
+should have at least 8 CPU threads and 64 GB of RAM.
 
-- On macOS, open Docker Desktop, go to Settings > Resources, raise the
-  CPUs and Memory sliders to meet the above, then Apply & restart.
+- On macOS, open Docker Desktop, go to Settings > Resources to configure
+  CPUs and Memory, then Apply & restart. The available memory is shared
+  with other containers.
 
 Build the image from the repository root, not from `artifact/`. The
 image builds and runs as a non-root user matching your own UID/GID, so
@@ -73,11 +71,11 @@ ends with:
 Smoke test passed.
 ```
 
-## Line counts for all 30 protocols (Figure 6)
+## Line counts for the 30+ protocols (Figure 6)
 
 This command reproduces the submitted paper's Figure 6 line-count table
-by counting non-comment source lines directly from each of the 30
-protocols' `.zippel` files:
+by counting non-comment source lines directly from each protocol's
+`.zippel` file:
 
 ```sh
 docker run --rm zippel-ae python3 artifact/scripts/report_loc.py
@@ -97,8 +95,9 @@ This does not undermine the paper's conciseness claim. The native
 baseline side of each comparison is unaffected, since that code is
 vendored and neither formatted nor edited by this project; all of the
 movement above occurs on the Zippel side. Zippel remains substantially
-shorter than its native baseline for every one of the nine systems that
-Experiment 1 benchmarks:
+shorter than its native baseline for every system that Experiment 1
+benchmarks. DeKART, KZH, Dory PCS and HyperPlonk SNARK were added after
+submission, so they have no submitted count:
 
 | System | LoC Zippel (submitted to now) | LoC Native | Native/Zippel (submitted to now) |
 |---|---|---|---|
@@ -111,6 +110,10 @@ Experiment 1 benchmarks:
 | PST13 | 54 to 82 | 250 | 4.6x to 3.0x |
 | Hyrax | 47 to 49 | 277 | 5.9x to 5.7x |
 | Spartan | 461 to 419 | 1867 | 4.0x to 4.5x |
+| DeKART | — to 130 | 847 | — to 6.5x |
+| KZH | — to 53 | 221 | — to 4.2x |
+| Dory PCS | — to 304 | 766 | — to 2.5x |
+| HyperPlonk SNARK | — to 441 | 2813 | — to 6.4x |
 
 Groth16 changed the most, yet remains 5.2x shorter than its native
 baseline. Every other system changed less, and Spartan's line count
@@ -121,8 +124,8 @@ decreased.
 | # | Script | Produces | Paper reference |
 |---|---|---|---|
 | 1 | `run_benchmark.sh` + `process_benchmark.py` | Zippel-vs-native speedup table; Graph IR node-count table | Figure 7 (p.13); the node-count table is supplementary |
-| 2 | `run_soundness.sh` + `process_soundness.py` | Per-trial pass/fail table for special soundness | §9.3 prose |
-| 3 | `run_completeness.sh` + `process_completeness.py` | 30-protocol completeness table | §9.3 prose; the table itself is supplementary |
+| 2 | `run_soundness.sh` + `process_soundness.py` | Per-protocol special-soundness results, timings and failure reasons | §9.3 prose |
+| 3 | `run_completeness.sh` + `process_completeness.py` | Per-protocol completeness table | §9.3 prose; the table itself is supplementary |
 
 ---
 
@@ -137,11 +140,15 @@ docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
   bash -c "artifact/scripts/run_benchmark.sh && python3 artifact/scripts/process_benchmark.py"
 ```
 
-Runs all nine systems benchmarked in the paper (Schnorr, Sumcheck,
-Bulletproofs IPA, KZG, Pari, Groth16, PST13, Hyrax, Spartan) at each
-system's paper-reported instance size (`2^18`, fixed for Schnorr) across
-thread counts `{1, 2, 4, 8}`, then renders two markdown tables from the
-resulting CSV. To run a smaller subset instead of the full run:
+It runs every system the benchmark compares against a native baseline: the
+original submissions' (Schnorr, Sumcheck, Bulletproofs IPA, KZG, Pari, Groth16, PST13,
+Hyrax, Spartan) and those added since (DeKART, KZH, Dory PCS, HyperPlonk
+SNARK). Each runs at `2^18` (except for Schnorr) across thread counts
+`{1, 2, 4, 8}`, with one sample per measurement. The script will then print two markdown tables from the resulting CSV. The pinned results in
+`benchmarks/*_results.csv` use ten runs and averages the result.
+If you want to reproduce them, then set `-e BENCH_SAMPLES=10` to match them (the default we use is 1). Note that if you use 10 runs it will take a very long time.
+
+Separately, you also have the option to run a smaller subset of the protocols instead of the full run by specifying which systems to run:
 
 ```sh
 docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" -e SYSTEMS=schnorr,kzg -e THREADS=1,2 zippel-ae \
@@ -154,16 +161,23 @@ docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" -e SYSTEMS=s
   the Zippel protocol and its native baseline, the ratio of native
   baseline time to Zippel time at each thread count, and the
   single-thread verifier ratio.
+  - Rows for the systems added since submission have no counterpart in
+    the submitted paper's Figure 7.
   - **Hyrax**: the submitted paper's prose claimed a prover speedup up
     to 6.05x at one thread; this was corrected during review to 1.11x.
-    This is expected and has already been discussed with the paper's
-    reviewers.
+    This is expected and has already been discussed with the paper's reviewers.
 - **Graph-size table** (prover and verifier Graph IR node counts): not
   included in the submitted paper; added in response to reviewer
   feedback.
 
-**Runtime**: a full run across all nine systems and all four thread
-counts takes approximately 40 minutes.
+**Runtime**: a full run across all systems and all four thread counts
+takes an estimated 2.5 hours.
+
+To reproduce only the submitted paper's nine systems, omitting the
+additional DeKART, KZH, Dory PCS and HyperPlonk SNARK benchmarks, set
+`-e SYSTEMS=schnorr,sumcheck,ipa,kzg,pari,groth16,pst13,hyrax,spartan`.
+For retries, `-e BENCH_ARTIFACTS_DIR=artifact/output/cache` keeps SRS
+caches in the mounted output directory after the container is removed.
 
 ---
 
@@ -175,44 +189,50 @@ in Section 9.3.
 ```sh
 mkdir -p artifact/output
 docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
-  bash -c "artifact/scripts/run_soundness.sh && python3 artifact/scripts/process_soundness.py"
+  bash -c "artifact/scripts/run_soundness.sh --timeout 120 && python3 artifact/scripts/process_soundness.py"
 ```
 
-Runs the `soundness::*` trials in `analyses/tests/gb_snapshots` (the
-same test binary also contains `completeness::*` and `knowledge::*`
-trials unrelated to this claim), which assert that the special-soundness
-analysis succeeds, then renders a per-trial pass/fail table. The run
-completes in a few seconds.
+Runs `cargo bench --bench analysis_all -- --analysis soundness` over
+all nine registered candidates using Singular, with a 2-minute timeout
+and a 16 GiB memory limit per protocol. Results and metrics are
+written to `artifact/output/soundness_results.json`, with the raw log in
+`artifact/output/soundness_all.log`. The processor renders a table with
+analysis outcomes, wall times (including protocol loading), and failure
+reasons.
+
+To run a subset:
+
+```sh
+docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
+  bash -c "artifact/scripts/run_soundness.sh --timeout 120 --protocols schnorr,okamoto && python3 artifact/scripts/process_soundness.py"
+```
 
 **What to expect:**
 
 ```
-running 9 tests
+| Protocol | Pass | Time | Status | Reason |
+|---|---|---|---|---|
+| schnorr | ✓ | ... | ok | |
+| okamoto | ✗ | ... | failed | No valid extractor for witness r: NoExtractor |
+| coin_proof | ✗ | 120.0s | timeout | |
 ...
-test result: ok. 4 passed; 0 failed; 5 ignored; ...
 
-== Summary ==
-soundness pass=4   ignored=5   failed=0
-
-| Trial | Pass |
-|---|---|
-| soundness::schnorr | ✓ |
-| soundness::okamoto | ignored |
-...
+soundness pass=4 failed=4 timeout=1 unexpected=0
 ```
 
-This suite covers all 6 of the paper's special-sound candidates
-(Schnorr, Multi-Schnorr, Chaum-Pedersen, Okamoto, CDS,
-E-Cash Coin) plus 3 protocols not discussed in the paper
-(`okamoto_elgamal`, `commitment_equality`, `pedersen_eq`). 4 pass
-(Schnorr, Multi-Schnorr, Chaum-Pedersen, `okamoto_elgamal`) and 5 are
-marked ignored (Okamoto, CDS, E-Cash Coin,
-`commitment_equality`, `pedersen_eq`).
+The sweep covers the paper's six special-sound candidates (Schnorr,
+Multi-Schnorr, Chaum-Pedersen, Okamoto, CDS, E-Cash Coin) plus three it
+does not discuss (`okamoto_elgamal`, `commitment_equality`,
+`pedersen_eq`). Four pass: Schnorr, Multi-Schnorr, Chaum-Pedersen and
+`okamoto_elgamal`. Okamoto, CDS, `commitment_equality` and `pedersen_eq`
+fail with a reason, and E-Cash Coin reaches the timeout. The run
+reproduces the paper if it reports `unexpected=0`; E-Cash Coin may
+report `failed` instead of `timeout`, depending on `--timeout`. A cross
+means the analysis could not establish special soundness, not that the
+protocol is unsound.
 
-A pass requires 0 crosses in the table (equivalently, `0 failed` in the
-summary line); `ignored` is expected. Among the paper's 6 candidates,
-Okamoto, CDS, and E-Cash Coin fail for the reasons given in its
-Section 9.3, matching its result exactly.
+**Runtime**: our validation run took about 2 minutes, primarily spent on
+the E-Cash Coin timeout, excluding compilation.
 
 ---
 
@@ -227,14 +247,14 @@ docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
   bash -c "artifact/scripts/run_completeness.sh --timeout 120 && python3 artifact/scripts/process_completeness.py"
 ```
 
-Runs all 30 protocols from the paper through the completeness analysis,
+Runs all the paper's protocols through the completeness analysis,
 with a 2-minute timeout and a 16 GiB memory limit per run.
 
-To sanity-check a small subset of protocols instead of all 30:
+To sanity-check a small subset of protocols instead of all of them:
 
 ```sh
 docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
-  bash -c "artifact/scripts/run_completeness.sh --timeout 120 --protocols schnorr,groth16,ipa,hyperplonk && python3 artifact/scripts/process_completeness.py"
+  bash -c "artifact/scripts/run_completeness.sh --timeout 120 --protocols schnorr,groth16,ipa,hyperplonk_piop && python3 artifact/scripts/process_completeness.py"
 ```
 
 **Note on the timeout.** The paper's own methodology budgets 20 minutes
@@ -244,13 +264,14 @@ our machine), so a much tighter 2-minute timeout is used here to keep
 the full run fast.
 
 **What to expect, and why it differs from the paper.** Completeness
-verifies **25 of 30** protocols, 5 more than what we had in the paper.
-This is because we improved our inlining optimization and fixed some bugs that we found
-after submission. The other five (`spartan`, `hyperplonk_permutation`,
-`hyperplonk`, `dekart` and `pari`) reach the timeout.
+verifies every protocol except six (`spartan`, `dory_ipa`,
+`hyperplonk_permutation`, `hyperplonk_piop`, `dekart` and `pari`), which
+reach the timeout. The submitted paper verified 20 of its 30: since
+submission we have fixed `where` clauses that were incomplete, which had
+kept the analysis from proving those protocols complete.
 
-**Runtime**: a full run takes approximately 12 minutes, 10 of them spent
-on the five protocols that reach the timeout.
+**Runtime**: a full run takes approximately 15 minutes, most of them spent
+on the six protocols that reach the timeout.
 
 ---
 

@@ -43,11 +43,11 @@ inside the repository.
 ### Running examples
 
 ```bash
-cargo zrun ipa          # run the IPA example
-cargo zrun schnorr      # run the Schnorr protocol
-cargo zrun kzg          # run the KZG commitment scheme
-cargo zrun              # list every available example
-cargo zrunr hyperplonk  # run in release mode
+cargo zrun ipa               # run the IPA example
+cargo zrun schnorr           # run the Schnorr protocol
+cargo zrun kzg               # run the KZG commitment scheme
+cargo zrun                   # list every available example
+cargo zrunr hyperplonk_piop  # run in release mode
 ```
 
 See [`examples/`](examples) for 30+ more protocols implemented in

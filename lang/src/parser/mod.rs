@@ -1842,12 +1842,12 @@ fn eq_weights<G: Group, F: Scalar<G>, EK: 2..21>(instance x: [F; EK]) -> [F; 2^E
     );
     golden_test!(golden_cp, "../examples/cp/cp.zippel");
     golden_test!(golden_dekart, "../examples/dekart/dekart.zippel");
-    golden_test!(golden_dory, "../examples/dory/dory.zippel");
+    golden_test!(golden_dory_ipa, "../examples/dory_ipa/dory_ipa.zippel");
     golden_test!(golden_groth16, "../examples/groth16/groth16.zippel");
     golden_test!(golden_hadamard, "../examples/hadamard/hadamard.zippel");
     golden_test!(
-        golden_hyperplonk,
-        "../examples/hyperplonk/hyperplonk.zippel"
+        golden_hyperplonk_piop,
+        "../examples/hyperplonk_piop/hyperplonk_piop.zippel"
     );
     golden_test!(
         golden_hyperplonk_multiset,

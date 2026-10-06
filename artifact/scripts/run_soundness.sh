@@ -1,21 +1,18 @@
 #!/usr/bin/env bash
-# Experiment 2: special-soundness correctness suite
-# (analyses/tests/gb_snapshots, Singular backend).
+# Experiment 2: special-soundness analysis across all nine candidates
+# (analysis_all, Singular backend, 16 GiB memory limit per run).
 #
-# This reproduces the submitted paper's special-soundness claim (§9.3):
-# it asserts that the special-soundness analysis actually succeeds, not
-# merely that the code compiles, and snapshots the computed Groebner
-# basis for regression detection. See ../README.md for the full mapping.
+# Runs every candidate, including the five the analysis cannot verify,
+# and records statuses, failure reasons, timings and memory metrics.
+# See ../README.md for the mapping to the paper's claim (§9.3).
 #
 # Usage:
-#   artifact/scripts/run_soundness.sh [FILTER]
+#   artifact/scripts/run_soundness.sh [extra cargo-bench-analysis_all args...]
 #
-# Defaults to the `soundness::*` trials. FILTER (optional) is forwarded
-# as libtest-mimic's substring test-name filter and overrides this, e.g.
-# `soundness::okamoto` to run a single trial. The summary below always
-# reports soundness counts. Also writes the raw test log to
-# artifact/output/soundness_results.log for process_soundness.py to
-# render into a per-trial pass/fail table.
+# Extra arguments are forwarded to analysis_all, e.g.
+#   artifact/scripts/run_soundness.sh --protocols schnorr,okamoto
+# analysis_all defaults to a 20-minute timeout; --timeout overrides it.
+# process_soundness.py renders the JSON and checks expected outcomes.
 
 set -euo pipefail
 
@@ -23,23 +20,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "${SCRIPT_DIR}")/.."
 cd "${ROOT}"
 
-FILTER="${1:-soundness::}"
-
 OUT_DIR="artifact/output"
 mkdir -p "${OUT_DIR}"
-LOG="${OUT_DIR}/soundness_results.log"
 
-echo "== Special-soundness correctness suite (analyses/tests/gb_snapshots) =="
-set +e
-cargo test -p analyses --test gb_snapshots --release -- "${FILTER}" 2>&1 | tee "${LOG}"
-STATUS="${PIPESTATUS[0]}"
-set -e
-
-echo
-echo "== Summary =="
-pass=$(grep -c "^test soundness::.* \.\.\. ok$" "${LOG}" || true)
-ignored=$(grep -c "^test soundness::.* \.\.\. ignored$" "${LOG}" || true)
-failed=$(grep -c "^test soundness::.* \.\.\. FAILED$" "${LOG}" || true)
-printf "soundness pass=%-3s ignored=%-3s failed=%-3s\n" "${pass}" "${ignored}" "${failed}"
-
-exit "${STATUS}"
+echo "== Special-soundness analysis =="
+cargo bench --bench analysis_all -- --analysis soundness \
+    --output "${OUT_DIR}/soundness_results.json" \
+    --log "${OUT_DIR}/soundness_all.log" \
+    "$@"

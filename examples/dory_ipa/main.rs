@@ -8,7 +8,7 @@ pub fn run(_args: &[String]) {
     const LOG_N: usize = 8;
     env_logger::init();
     println!("=== Dory Evaluation Proof (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/dory/dory.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/dory_ipa/dory_ipa.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     println!("Compiling Zippel files...");
     let mut sizes: Ctx<Tid, usize> = Ctx::new();
@@ -47,7 +47,7 @@ pub fn run(_args: &[String]) {
 
     let analysis_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         println!("\n--- Static Analysis ---");
-        let analysis_args = ZippelArgs::new(PathBuf::from("examples/dory/dory.zippel"));
+        let analysis_args = ZippelArgs::new(PathBuf::from("examples/dory_ipa/dory_ipa.zippel"));
         let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
         let mut analysis_sizes = Ctx::new();
         analysis_sizes.insert(&Tid::new("S"), &LOG_N);

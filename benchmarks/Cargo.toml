@@ -4,6 +4,11 @@ version = "0.1.0"
 edition.workspace = true
 publish = false
 
+[lints.cargo]
+# Binary names match their Rust source files and existing scripts.
+# Cargo 1.100 enables this naming lint by default.
+non_kebab_case_bins = "allow"
+
 [lints.clippy]
 # Explicit `for i in a..b { ...v[i]... }` reads more plainly than the
 # iterator-adapter chains clippy suggests here, especially once a loop

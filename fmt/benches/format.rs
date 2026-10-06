@@ -2,7 +2,7 @@
 //! pretty-print round trip of the `zippel-fmt` formatter.
 //!
 //! Three real `.zippel` sources from `examples/` stand in for the size range
-//! the formatter sees in practice: `schnorr` (7 lines), `dory` (301), and
+//! the formatter sees in practice: `schnorr` (7 lines), `dory_ipa` (301), and
 //! `spartan` (590). They are embedded with `include_str!`, so file I/O never
 //! enters a measured number.
 
@@ -16,7 +16,7 @@ use fmt::format_source;
 
 fn bench_format(c: &mut Criterion) {
     let small = include_str!("../../examples/schnorr/schnorr.zippel");
-    let medium = include_str!("../../examples/dory/dory.zippel");
+    let medium = include_str!("../../examples/dory_ipa/dory_ipa.zippel");
     let large = include_str!("../../examples/spartan/spartan.zippel");
 
     c.bench_function("small_7lines", |b| b.iter(|| format_source(small).unwrap()));
