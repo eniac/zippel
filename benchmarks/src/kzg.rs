@@ -66,7 +66,7 @@ pub mod zippel_side {
     use std::io::Write;
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
 
     type F = <ArkBls12_381 as ArkConfig>::F;
     type G1 = <ArkBls12_381 as ArkConfig>::G1;
@@ -213,7 +213,7 @@ pub mod zippel_side {
             // Uni<F, N-1>` (a univariate in coefficient form), not the
             // old `poly_coeffs: [F; N]` vector this harness predates —
             // promote the sampled coefficient vector to a Uni value.
-            let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+            let inputs = Inputs::<ArkBls12_381>::from_iter([
                 (Vid("poly_x".to_string()), p.value_poly()),
                 (Vid("gen_g1".to_string()), g),
                 (Vid("gen_g2".to_string()), h),

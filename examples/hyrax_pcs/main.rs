@@ -31,7 +31,7 @@ pub fn run(_args: &[String], opts: &common::RunOptions) {
     let sizes = build_sizes_ctx();
     handler.compile(&sizes);
 
-    let inputs = prover_create_inputs();
+    let inputs: Inputs<_> = prover_create_inputs().into();
     let t = Instant::now();
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
     println!("Prover time:    {:.2?}", t.elapsed());

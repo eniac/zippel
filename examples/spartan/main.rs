@@ -159,6 +159,7 @@ fn run_one(m: usize, invalid: bool, manual_zippel: Option<&str>) -> RunResult {
             inputs.insert(&Vid("az".to_string()), &Value::VecScalar(a));
         }
     }
+    let inputs: Inputs<_> = inputs.into();
     let prover_start = Instant::now();
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();

@@ -14,7 +14,7 @@ pub fn run(_args: &[String], opts: &common::RunOptions) {
     let mut handler: zippel::ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
     handler.compile(&Ctx::new());
 
-    let inputs = prover_create_inputs();
+    let inputs: Inputs<_> = prover_create_inputs().into();
     common::run_prover_and_verify(&mut handler, &inputs);
 
     if !opts.analyses {

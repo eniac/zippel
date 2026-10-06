@@ -28,7 +28,7 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
 
     /// A compiled Hyrax instance together with the fixed, seeded inputs it is
     /// timed on.
@@ -38,7 +38,7 @@ pub mod zippel_side {
     /// `time_protocol` calls measure the same instance.
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs: Ctx<Vid, Value<ArkBls12_381>>,
+        inputs: Inputs<ArkBls12_381>,
         compile_time: Vec<std::time::Duration>,
     }
 
@@ -96,7 +96,7 @@ pub mod zippel_side {
             let g_base = G1Projective::rand(&mut rng);
             let h_base = G1Projective::rand(&mut rng);
 
-            let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+            let inputs = Inputs::<ArkBls12_381>::from_iter([
                 (Vid("p".to_string()), Value::VecScalar(p)),
                 (Vid("z_row".to_string()), Value::VecScalar(z_row)),
                 (Vid("z_col".to_string()), Value::VecScalar(z_col)),

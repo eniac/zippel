@@ -25,7 +25,7 @@ use lang::id::{Tid, Vid};
 use share::Ctx;
 use std::path::PathBuf;
 use std::time::Instant;
-use zippel::{ZippelArgs, ZippelHandler};
+use zippel::{Inputs, ZippelArgs, ZippelHandler};
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -399,7 +399,7 @@ fn main() {
     sizes.insert(&Tid::new("H"), &t.h_size);
     handler.compile(&sizes);
 
-    let inputs_base = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+    let inputs_base = Inputs::<ArkBls12_381>::from_iter([
         (
             Vid("gen_g1".to_string()),
             Value::G1(ark_bls12_381::G1Projective::generator()),
@@ -453,22 +453,13 @@ fn main() {
         bridge::witness_map(&t.mat, t.num_inputs, t.num_constraints, &t.full_assignment);
     h_coeffs.resize(t.h_size, GitFr::zero());
     let mut inputs = inputs_base.clone();
-    inputs.insert(&Vid("h_coeffs".to_string()), &Value::VecScalar(h_coeffs));
+    inputs.insert("h_coeffs", Value::VecScalar(h_coeffs));
     // Relation-only QAP witnesses (zeros fine — analyses skipped).
     let n_total = t.m + t.l;
-    inputs.insert(
-        &Vid("a_evs".to_string()),
-        &Value::VecScalar(vec![GitFr::zero(); n_total]),
-    );
-    inputs.insert(
-        &Vid("b_evs".to_string()),
-        &Value::VecScalar(vec![GitFr::zero(); n_total]),
-    );
-    inputs.insert(
-        &Vid("c_evs".to_string()),
-        &Value::VecScalar(vec![GitFr::zero(); n_total]),
-    );
-    inputs.insert(&Vid("t_at_tau".to_string()), &Value::Scalar(GitFr::zero()));
+    inputs.insert("a_evs", Value::VecScalar(vec![GitFr::zero(); n_total]));
+    inputs.insert("b_evs", Value::VecScalar(vec![GitFr::zero(); n_total]));
+    inputs.insert("c_evs", Value::VecScalar(vec![GitFr::zero(); n_total]));
+    inputs.insert("t_at_tau", Value::Scalar(GitFr::zero()));
     eprintln!("  witness_map + input clone:      {:>9.2?}", tic.elapsed());
     let tic = Instant::now();
     let _proof = handler.run_prover(&inputs).expect("zippel prove");

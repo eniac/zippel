@@ -18,7 +18,7 @@ pub fn run(_args: &[String], opts: &common::RunOptions) {
     handler.compile(&sizes);
     println!("Compilation successful.");
 
-    let inputs = prover_create_inputs();
+    let inputs: Inputs<_> = prover_create_inputs().into();
     println!("Generating default schedule for prover...");
     println!("Running prover...");
     let prover_start = Instant::now();

@@ -47,7 +47,7 @@ fn bench_schnorr_prover(c: &mut Criterion) {
         PathBuf::from("examples/schnorr/schnorr.zippel"),
     ));
     handler.compile(&Ctx::new());
-    let inputs = schnorr_inputs();
+    let inputs: Inputs<_> = schnorr_inputs().into();
 
     group.bench_function("prover", |b| {
         b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
@@ -65,7 +65,7 @@ fn bench_schnorr_verifier(c: &mut Criterion) {
         PathBuf::from("examples/schnorr/schnorr.zippel"),
     ));
     handler.compile(&Ctx::new());
-    let inputs = schnorr_inputs();
+    let inputs: Inputs<_> = schnorr_inputs().into();
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
     group.bench_function("verifier", |b| {
@@ -136,7 +136,7 @@ fn bench_hadamard_prover(c: &mut Criterion) {
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &4usize);
     handler.compile(&sizes);
-    let inputs = hadamard_inputs();
+    let inputs: Inputs<_> = hadamard_inputs().into();
 
     group.bench_function("prover", |b| {
         b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
@@ -156,7 +156,7 @@ fn bench_hadamard_verifier(c: &mut Criterion) {
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &4usize);
     handler.compile(&sizes);
-    let inputs = hadamard_inputs();
+    let inputs: Inputs<_> = hadamard_inputs().into();
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
     group.bench_function("verifier", |b| {
@@ -207,7 +207,7 @@ fn bench_pedersen_eq_prover(c: &mut Criterion) {
         PathBuf::from("examples/commitment_equality/commitment_equality.zippel"),
     ));
     handler.compile(&Ctx::new());
-    let inputs = pedersen_eq_inputs();
+    let inputs: Inputs<_> = pedersen_eq_inputs().into();
 
     group.bench_function("prover", |b| {
         b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
@@ -224,7 +224,7 @@ fn bench_pedersen_eq_verifier(c: &mut Criterion) {
         PathBuf::from("examples/commitment_equality/commitment_equality.zippel"),
     ));
     handler.compile(&Ctx::new());
-    let inputs = pedersen_eq_inputs();
+    let inputs: Inputs<_> = pedersen_eq_inputs().into();
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
     group.bench_function("verifier", |b| {
@@ -289,7 +289,7 @@ fn bench_ipa_prover(c: &mut Criterion) {
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &IPA_S);
     handler.compile(&sizes);
-    let inputs = ipa_inputs(IPA_S);
+    let inputs: Inputs<_> = ipa_inputs(IPA_S).into();
 
     group.bench_function(format!("prover/S={}", IPA_S).as_str(), |b| {
         b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
@@ -307,7 +307,7 @@ fn bench_ipa_verifier(c: &mut Criterion) {
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &IPA_S);
     handler.compile(&sizes);
-    let inputs = ipa_inputs(IPA_S);
+    let inputs: Inputs<_> = ipa_inputs(IPA_S).into();
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
     group.bench_function(format!("verifier/S={}", IPA_S).as_str(), |b| {
@@ -378,7 +378,7 @@ fn bench_hyrax_ipa_prover(c: &mut Criterion) {
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &HYRAX_IPA_S);
     handler.compile(&sizes);
-    let inputs = hyrax_ipa_inputs(HYRAX_IPA_S);
+    let inputs: Inputs<_> = hyrax_ipa_inputs(HYRAX_IPA_S).into();
 
     group.bench_function(format!("prover/S={}", HYRAX_IPA_S).as_str(), |b| {
         b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
@@ -397,7 +397,7 @@ fn bench_hyrax_ipa_verifier(c: &mut Criterion) {
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &HYRAX_IPA_S);
     handler.compile(&sizes);
-    let inputs = hyrax_ipa_inputs(HYRAX_IPA_S);
+    let inputs: Inputs<_> = hyrax_ipa_inputs(HYRAX_IPA_S).into();
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
     group.bench_function(format!("verifier/S={}", HYRAX_IPA_S).as_str(), |b| {
@@ -509,7 +509,7 @@ fn bench_dory_prover(c: &mut Criterion) {
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &DORY_LOG_N);
     handler.compile(&sizes);
-    let inputs = dory_inputs(DORY_LOG_N);
+    let inputs: Inputs<_> = dory_inputs(DORY_LOG_N).into();
 
     group.bench_function(format!("prover/S={}", DORY_LOG_N).as_str(), |b| {
         b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
@@ -528,7 +528,7 @@ fn bench_dory_verifier(c: &mut Criterion) {
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &DORY_LOG_N);
     handler.compile(&sizes);
-    let inputs = dory_inputs(DORY_LOG_N);
+    let inputs: Inputs<_> = dory_inputs(DORY_LOG_N).into();
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
     group.bench_function(format!("verifier/S={}", DORY_LOG_N).as_str(), |b| {
@@ -590,7 +590,7 @@ fn bench_kzg_prover(c: &mut Criterion) {
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("N"), &2usize);
     handler.compile(&sizes);
-    let inputs = kzg_inputs();
+    let inputs: Inputs<_> = kzg_inputs().into();
 
     group.bench_function("prover", |b| {
         b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
@@ -608,7 +608,7 @@ fn bench_kzg_verifier(c: &mut Criterion) {
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("N"), &2usize);
     handler.compile(&sizes);
-    let inputs = kzg_inputs();
+    let inputs: Inputs<_> = kzg_inputs().into();
 
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
