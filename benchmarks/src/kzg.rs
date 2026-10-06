@@ -199,7 +199,7 @@ pub mod zippel_side {
 
             let g = Value::G1(self.srs.g_input);
             let h = Value::G2(self.srs.h_input);
-            let ss = Value::VecG1Affine(self.srs.srs_affine.clone());
+            let ss = Value::vec_g1_affine(self.srs.srs_affine.clone());
             let h_val = Value::G2(self.srs.h_val);
 
             let p = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n));

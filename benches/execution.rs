@@ -475,22 +475,22 @@ fn dory_inputs(log_n: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("c1".to_string()), Value::GT(c1)),
         (Vid("c2".to_string()), Value::GT(c2)),
         (Vid("c3".to_string()), Value::GT(c3)),
-        (Vid("hash1_l_vec".to_string()), Value::VecGT(hash1_l_vec)),
-        (Vid("hash1_r_vec".to_string()), Value::VecGT(hash1_r_vec)),
-        (Vid("hash2_l_vec".to_string()), Value::VecGT(hash2_l_vec)),
-        (Vid("hash2_r_vec".to_string()), Value::VecGT(hash2_r_vec)),
+        (Vid("hash1_l_vec".to_string()), Value::vec_gt(hash1_l_vec)),
+        (Vid("hash1_r_vec".to_string()), Value::vec_gt(hash1_r_vec)),
+        (Vid("hash2_l_vec".to_string()), Value::vec_gt(hash2_l_vec)),
+        (Vid("hash2_r_vec".to_string()), Value::vec_gt(hash2_r_vec)),
         (
             Vid("gamma_pair_ipp_vec".to_string()),
-            Value::VecGT(gamma_pair_ipp_vec),
+            Value::vec_gt(gamma_pair_ipp_vec),
         ),
         (Vid("final_gamma1".to_string()), Value::G1(final_gamma1)),
         (Vid("final_gamma2".to_string()), Value::G2(final_gamma2)),
-        (Vid("gamma1".to_string()), Value::VecG1(gamma1)),
-        (Vid("gamma2".to_string()), Value::VecG2(gamma2)),
-        (Vid("gamma1_prime".to_string()), Value::VecG1(gamma1_prime)),
-        (Vid("gamma2_prime".to_string()), Value::VecG2(gamma2_prime)),
-        (Vid("u_vec".to_string()), Value::VecG1(u_vec)),
-        (Vid("g_vec".to_string()), Value::VecG2(g_vec)),
+        (Vid("gamma1".to_string()), Value::vec_g1(gamma1)),
+        (Vid("gamma2".to_string()), Value::vec_g2(gamma2)),
+        (Vid("gamma1_prime".to_string()), Value::vec_g1(gamma1_prime)),
+        (Vid("gamma2_prime".to_string()), Value::vec_g2(gamma2_prime)),
+        (Vid("u_vec".to_string()), Value::vec_g1(u_vec)),
+        (Vid("g_vec".to_string()), Value::vec_g2(g_vec)),
     ])
 }
 
@@ -560,8 +560,8 @@ fn kzg_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let eval_point: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
     let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
 
-    let srs_g1: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|_| gen_g1_input).collect())
-        * Value::VecScalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect());
+    let srs_g1: Value<ArkBls12_381> = Value::vec_g1((0..n_size).map(|_| gen_g1_input).collect())
+        * Value::vec_scalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect());
 
     let eval_result: Value<ArkBls12_381> = poly_x.clone().value_eval(eval_point.clone());
 

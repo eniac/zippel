@@ -168,8 +168,8 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let inst = random_productcheck::<F, _>(&mut rng, NUM_LEAVES);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("f_evs".to_string()), Value::VecScalar(inst.f)),
-        (Vid("v_evs".to_string()), Value::VecScalar(inst.v)),
+        (Vid("f_evs".to_string()), Value::vec_scalar(inst.f)),
+        (Vid("v_evs".to_string()), Value::vec_scalar(inst.v)),
         (Vid("claimed".to_string()), Value::Scalar(inst.claimed)),
     ])
 }

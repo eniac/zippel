@@ -125,7 +125,7 @@ pub mod zippel_side {
             });
 
             let (pk, vk) = (&sh.pk, &sh.vk);
-            let col = |v: &Vec<_>| Value::VecScalar(v.clone());
+            let col = |v: &Vec<_>| Value::vec_scalar(v.clone());
             let ck: Vec<_> = pk
                 .pcs_param
                 .powers_of_g
@@ -139,19 +139,19 @@ pub mod zippel_side {
                 ("w2", col(&sh.witnesses[2])),
                 (
                     "sel_comms",
-                    Value::VecG1Affine(vk.selector_commitments.iter().map(|c| c.0).collect()),
+                    Value::vec_g1_affine(vk.selector_commitments.iter().map(|c| c.0).collect()),
                 ),
                 (
                     "perm_comms",
-                    Value::VecG1Affine(vk.perm_commitments.iter().map(|c| c.0).collect()),
+                    Value::vec_g1_affine(vk.perm_commitments.iter().map(|c| c.0).collect()),
                 ),
                 ("pub_input", col(&sh.public_inputs)),
-                ("ck", Value::VecG1Affine(ck)),
+                ("ck", Value::vec_g1_affine(ck)),
                 ("g", Value::G1(vk.pcs_param.g.into())),
                 ("h", Value::G2(vk.pcs_param.h.into())),
                 (
                     "h_mask",
-                    Value::VecG2(
+                    Value::vec_g2(
                         vk.pcs_param
                             .h_mask
                             .iter()

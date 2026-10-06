@@ -280,45 +280,54 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     }
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("a_evs".to_string()), Value::VecScalar(inst.a)),
-        (Vid("b_evs".to_string()), Value::VecScalar(inst.b)),
-        (Vid("c_evs".to_string()), Value::VecScalar(inst.c)),
-        (Vid("q_l_evs".to_string()), Value::VecScalar(inst.q_l)),
-        (Vid("q_r_evs".to_string()), Value::VecScalar(inst.q_r)),
-        (Vid("q_o_evs".to_string()), Value::VecScalar(inst.q_o)),
-        (Vid("q_m_evs".to_string()), Value::VecScalar(inst.q_m)),
-        (Vid("q_c_evs".to_string()), Value::VecScalar(inst.q_c)),
-        (Vid("s_id_a_evs".to_string()), Value::VecScalar(inst.s_id_a)),
-        (Vid("s_id_b_evs".to_string()), Value::VecScalar(inst.s_id_b)),
-        (Vid("s_id_c_evs".to_string()), Value::VecScalar(inst.s_id_c)),
+        (Vid("a_evs".to_string()), Value::vec_scalar(inst.a)),
+        (Vid("b_evs".to_string()), Value::vec_scalar(inst.b)),
+        (Vid("c_evs".to_string()), Value::vec_scalar(inst.c)),
+        (Vid("q_l_evs".to_string()), Value::vec_scalar(inst.q_l)),
+        (Vid("q_r_evs".to_string()), Value::vec_scalar(inst.q_r)),
+        (Vid("q_o_evs".to_string()), Value::vec_scalar(inst.q_o)),
+        (Vid("q_m_evs".to_string()), Value::vec_scalar(inst.q_m)),
+        (Vid("q_c_evs".to_string()), Value::vec_scalar(inst.q_c)),
+        (
+            Vid("s_id_a_evs".to_string()),
+            Value::vec_scalar(inst.s_id_a),
+        ),
+        (
+            Vid("s_id_b_evs".to_string()),
+            Value::vec_scalar(inst.s_id_b),
+        ),
+        (
+            Vid("s_id_c_evs".to_string()),
+            Value::vec_scalar(inst.s_id_c),
+        ),
         (
             Vid("s_sigma_a_evs".to_string()),
-            Value::VecScalar(inst.s_sigma_a),
+            Value::vec_scalar(inst.s_sigma_a),
         ),
         (
             Vid("s_sigma_b_evs".to_string()),
-            Value::VecScalar(inst.s_sigma_b),
+            Value::vec_scalar(inst.s_sigma_b),
         ),
         (
             Vid("s_sigma_c_evs".to_string()),
-            Value::VecScalar(inst.s_sigma_c),
+            Value::vec_scalar(inst.s_sigma_c),
         ),
         (Vid("r2".to_string()), Value::Scalar(inst.r2)),
         (Vid("r".to_string()), Value::Scalar(inst.r)),
-        (Vid("v_a_evs".to_string()), Value::VecScalar(inst.v_a)),
-        (Vid("v_b_evs".to_string()), Value::VecScalar(inst.v_b)),
-        (Vid("v_c_evs".to_string()), Value::VecScalar(inst.v_c)),
+        (Vid("v_a_evs".to_string()), Value::vec_scalar(inst.v_a)),
+        (Vid("v_b_evs".to_string()), Value::vec_scalar(inst.v_b)),
+        (Vid("v_c_evs".to_string()), Value::vec_scalar(inst.v_c)),
         (
             Vid("g_shift_a_inv".to_string()),
-            Value::VecScalar(inst.g_shift_a_inv),
+            Value::vec_scalar(inst.g_shift_a_inv),
         ),
         (
             Vid("g_shift_b_inv".to_string()),
-            Value::VecScalar(inst.g_shift_b_inv),
+            Value::vec_scalar(inst.g_shift_b_inv),
         ),
         (
             Vid("g_shift_c_inv".to_string()),
-            Value::VecScalar(inst.g_shift_c_inv),
+            Value::vec_scalar(inst.g_shift_c_inv),
         ),
     ])
 }

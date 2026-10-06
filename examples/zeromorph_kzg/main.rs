@@ -45,11 +45,11 @@ fn prover_create_inputs(n_size: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
         srs_g1_vec.push(g_input * tau_input.pow([i as u64]));
     }
     srs_g1_vec.push(g_input * xi_input);
-    let srs_g1 = Value::VecG1(srs_g1_vec);
+    let srs_g1 = Value::vec_g1(srs_g1_vec);
 
     let tau_g2 = h_input * tau_input;
     let xi_g2 = h_input * xi_input;
-    let srs_g2 = Value::VecG2(vec![tau_g2, xi_g2]);
+    let srs_g2 = Value::vec_g2(vec![tau_g2, xi_g2]);
 
     let p_poly_val = Value::<ArkBls12_381>::random(&mut rng, &ATyp::uni(n_size - 1));
 

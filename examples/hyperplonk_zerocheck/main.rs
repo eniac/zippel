@@ -117,8 +117,8 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let inst = random_zerocheck::<F, _>(&mut rng, NUM_POINTS);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("a_evs".to_string()), Value::VecScalar(inst.a)),
-        (Vid("b_evs".to_string()), Value::VecScalar(inst.b)),
-        (Vid("c_evs".to_string()), Value::VecScalar(inst.c)),
+        (Vid("a_evs".to_string()), Value::vec_scalar(inst.a)),
+        (Vid("b_evs".to_string()), Value::vec_scalar(inst.b)),
+        (Vid("c_evs".to_string()), Value::vec_scalar(inst.c)),
     ])
 }

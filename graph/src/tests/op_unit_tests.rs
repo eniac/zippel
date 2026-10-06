@@ -414,8 +414,8 @@ mod op_additional_tests {
     #[test]
     fn test_op_dot_values() {
         use ark_bls12_381::Fr;
-        let a = GOp::<C>::Value(Value::VecScalar(vec![Fr::from(1u64), Fr::from(2u64)]));
-        let b = GOp::<C>::Value(Value::VecScalar(vec![Fr::from(3u64), Fr::from(4u64)]));
+        let a = GOp::<C>::Value(Value::vec_scalar(vec![Fr::from(1u64), Fr::from(2u64)]));
+        let b = GOp::<C>::Value(Value::vec_scalar(vec![Fr::from(3u64), Fr::from(4u64)]));
         let typ = ATyp::scalar();
         let result = Op::dot(a, b, typ);
 

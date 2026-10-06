@@ -724,7 +724,7 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_hypercube_domain_with_
 
     // Construct a non-canonical coordinate domain: [[1, 1], [1, 1], [1, 1], [1, 1]]
     let one = <B as backend::ArkConfig>::F::one();
-    let sub_vec = Value::VecScalar(vec![one, one]);
+    let sub_vec = Value::vec_scalar(vec![one, one]);
     let domain_val = Value::Vec(vec![
         sub_vec.clone(),
         sub_vec.clone(),

@@ -157,13 +157,13 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let inst = random_multiset::<F, _>(&mut rng, NUM_POINTS);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("f_evs".to_string()), Value::VecScalar(inst.f)),
-        (Vid("g_evs".to_string()), Value::VecScalar(inst.g)),
+        (Vid("f_evs".to_string()), Value::vec_scalar(inst.f)),
+        (Vid("g_evs".to_string()), Value::vec_scalar(inst.g)),
         (Vid("r".to_string()), Value::Scalar(inst.r)),
-        (Vid("v_evs".to_string()), Value::VecScalar(inst.v_evs)),
+        (Vid("v_evs".to_string()), Value::vec_scalar(inst.v_evs)),
         (
             Vid("g_shift_inv".to_string()),
-            Value::VecScalar(inst.g_shift_inv),
+            Value::vec_scalar(inst.g_shift_inv),
         ),
     ])
 }

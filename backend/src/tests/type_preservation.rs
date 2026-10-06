@@ -739,10 +739,10 @@ mod cross_layer {
         use ark_ff::Zero;
 
         let c = Fr::from(7u64);
-        let constant: V = Value::VecScalar(vec![c]).value_poly();
+        let constant: V = Value::vec_scalar(vec![c]).value_poly();
         assert_eq!(
             constant.value_coef_typed(&ATyp::uni(4)),
-            Value::VecScalar(vec![c, Fr::zero(), Fr::zero(), Fr::zero(), Fr::zero()]),
+            Value::vec_scalar(vec![c, Fr::zero(), Fr::zero(), Fr::zero(), Fr::zero()]),
             "coef at declared Uni(4) must produce exactly five slots"
         );
     }
@@ -754,7 +754,7 @@ mod cross_layer {
     fn value_coef_typed_rejects_out_of_bound_univariate() {
         use ark_bls12_381::Fr;
 
-        let wide: V = Value::VecScalar(vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]);
+        let wide: V = Value::vec_scalar(vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]);
         let _ = wide.value_coef_typed(&ATyp::uni(1));
     }
 

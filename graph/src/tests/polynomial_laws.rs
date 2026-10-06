@@ -359,7 +359,7 @@ fn polynomial_division_coef_preserves_declared_bound() {
     .unwrap();
     assert_eq!(
         *result,
-        TestValue::VecScalar(vec![
+        TestValue::vec_scalar(vec![
             Fr::from(0u64),
             Fr::from(0u64),
             Fr::from(0u64),
@@ -386,7 +386,7 @@ fn polynomial_division_coef_preserves_declared_bound() {
     .unwrap();
     assert_eq!(
         *result_self,
-        TestValue::VecScalar(vec![
+        TestValue::vec_scalar(vec![
             Fr::from(1u64),
             Fr::from(0u64),
             Fr::from(0u64),
