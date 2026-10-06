@@ -21,8 +21,8 @@
 //!   --memory-limit-mb   16384  (16 GiB per run)
 //!
 //! `--analysis`, `--memory-limit-mb`, `--path`, `--size` and `--l-vec` are
-//! forwarded to every `analysis` invocation verbatim (like `--backend`), so
-//! `--path` and `--l-vec` are meant for a single protocol. `analysis`
+//! forwarded to every `analysis` invocation verbatim (like `--backend`).
+//! `--path` and `--l-vec` need exactly one protocol in `--protocols`. `analysis`
 //! decides `ok`/`incomplete`/`failed`/`crashed`/`oom` for itself
 //! (see its own module docs) — `analysis_all` adds only `timeout`, which it
 //! alone can observe.
@@ -520,6 +520,11 @@ fn parse_args() -> Args {
             _ => {}
         }
         i += 1;
+    }
+    // A file or round parameters describe one protocol, not a sweep.
+    if (path.is_some() || l_vec.is_some()) && protocols.as_ref().is_none_or(|p| p.len() != 1) {
+        eprintln!("--path and --l-vec need exactly one protocol in --protocols");
+        std::process::exit(2);
     }
     Args {
         output: output.unwrap_or_else(|| format!("{analysis}_results.json")),
