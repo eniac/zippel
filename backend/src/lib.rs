@@ -28,6 +28,8 @@ pub mod optimization;
 /// Concrete polynomial encodings (dense/sparse univariate, multilinear,
 /// sparse multivariate) and the arithmetic defined over them.
 pub mod poly_variant;
+/// Vectors that share their storage: O(1) clones and slices, copy-on-write.
+pub mod shared;
 /// The IR type level: `ATyp`/`ABase` and conversion from source-level `CTyp`.
 pub mod types;
 /// Runtime values `Value<C>` and the evaluation of each `Op` over them.
@@ -44,6 +46,7 @@ pub use nothing::{NoCurve, NoField, NoPairing};
 pub use op::{GOp, HasOpFactory, Op, Ref};
 pub use optimization::{OptimizationStats, optimization_stats_snapshot, reset_optimization_stats};
 pub use poly_variant::{PolyError, PolyVariant};
+pub use shared::Shared;
 pub use types::{ABase, ATyp, binomial};
 pub use values::{PreparedG2Vec, Value, value_to_bytes};
 pub use virtual_polynomial::{SelectedEvalShape, VirtualPolynomial};

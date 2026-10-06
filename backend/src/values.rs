@@ -3,6 +3,7 @@ use crate::optimization::{
     record_reduce_univariate_post_materialization, record_selected_eval_term_materialized,
 };
 use crate::poly_variant::PolyVariant;
+use crate::shared::Shared;
 use crate::types::Lub;
 use crate::virtual_polynomial::{
     SelectedEvalShape, VirtualPolynomial, add_coeffs_assign, trim_trailing_zero_coeffs,
@@ -50,7 +51,7 @@ pub enum Value<C: ArkConfig> {
     VecIndex(Vec<usize>),
     /// A flat vector of scalar-field elements; the dense carrier for a
     /// source-level `Vec(F, n)`.
-    VecScalar(Vec<C::F>),
+    VecScalar(Shared<C::F>),
     /// Groups
     G1(C::G1),
     /// A projective point of the second pairing source group.
@@ -59,20 +60,20 @@ pub enum Value<C: ArkConfig> {
     GT(PairingOutput<C::P>),
     /// A flat vector of projective first-source-group points, kept flat so
     /// dot products lower to a single multi-scalar multiplication.
-    VecG1(Vec<C::G1>),
+    VecG1(Shared<C::G1>),
     /// A flat vector of projective second-source-group points.
-    VecG2(Vec<C::G2>),
+    VecG2(Shared<C::G2>),
     /// A flat vector of pairing target group elements.
-    VecGT(Vec<PairingOutput<C::P>>),
+    VecGT(Shared<PairingOutput<C::P>>),
     /// Affine group elements
     G1Affine(C::G1Affine),
     /// An affine point of the second pairing source group.
     G2Affine(C::G2Affine),
     /// A flat vector of affine first-source-group points, the form the
     /// batched `arkworks` MSM routines consume directly.
-    VecG1Affine(Vec<C::G1Affine>),
+    VecG1Affine(Shared<C::G1Affine>),
     /// A flat vector of affine second-source-group points.
-    VecG2Affine(Vec<C::G2Affine>),
+    VecG2Affine(Shared<C::G2Affine>),
     /// A second-source-group vector with its pairing preparation precomputed,
     /// the form a pairing verifier key keeps. Only pairings use the prepared
     /// half; every other operation sees the affine points.
@@ -339,37 +340,37 @@ impl<C: ArkConfig> Value<C> {
     /// A vector of scalar-field elements.
     #[must_use]
     pub fn vec_scalar(xs: Vec<C::F>) -> Self {
-        Value::VecScalar(xs)
+        Value::VecScalar(xs.into())
     }
 
     /// A vector of projective first-source-group points.
     #[must_use]
     pub fn vec_g1(xs: Vec<C::G1>) -> Self {
-        Value::VecG1(xs)
+        Value::VecG1(xs.into())
     }
 
     /// A vector of projective second-source-group points.
     #[must_use]
     pub fn vec_g2(xs: Vec<C::G2>) -> Self {
-        Value::VecG2(xs)
+        Value::VecG2(xs.into())
     }
 
     /// A vector of pairing target group elements.
     #[must_use]
     pub fn vec_gt(xs: Vec<PairingOutput<C::P>>) -> Self {
-        Value::VecGT(xs)
+        Value::VecGT(xs.into())
     }
 
     /// A vector of affine first-source-group points.
     #[must_use]
     pub fn vec_g1_affine(xs: Vec<C::G1Affine>) -> Self {
-        Value::VecG1Affine(xs)
+        Value::VecG1Affine(xs.into())
     }
 
     /// A vector of affine second-source-group points.
     #[must_use]
     pub fn vec_g2_affine(xs: Vec<C::G2Affine>) -> Self {
-        Value::VecG2Affine(xs)
+        Value::VecG2Affine(xs.into())
     }
 
     /// Returns an integer representing the constructor order.
@@ -738,38 +739,38 @@ impl<C: ArkConfig> Value<C> {
             }
             (Value::VecG1Affine(a), Value::VecG2Affine(b)) => {
                 *other = Value::vec_gt(C::POps::billinear_vec_mul(
-                    &a.iter().map(|a| (*a).into()).collect(),
-                    &b.iter().map(|b| (*b).into()).collect(),
+                    &a.iter().map(|a| (*a).into()).collect::<Vec<_>>(),
+                    &b.iter().map(|b| (*b).into()).collect::<Vec<_>>(),
                 ))
             }
             (Value::VecG2Affine(a), Value::VecG1Affine(b)) => {
                 *other = Value::vec_gt(C::POps::billinear_vec_mul(
-                    &b.iter().map(|b| (*b).into()).collect(),
-                    &a.iter().map(|a| (*a).into()).collect(),
+                    &b.iter().map(|b| (*b).into()).collect::<Vec<_>>(),
+                    &a.iter().map(|a| (*a).into()).collect::<Vec<_>>(),
                 ))
             }
             (Value::VecG1(a), Value::VecG2Affine(b)) => {
                 *other = Value::vec_gt(C::POps::billinear_vec_mul(
                     a,
-                    &b.iter().map(|b| (*b).into()).collect(),
+                    &b.iter().map(|b| (*b).into()).collect::<Vec<_>>(),
                 ))
             }
             (Value::VecG2(a), Value::VecG1Affine(b)) => {
                 *other = Value::vec_gt(C::POps::billinear_vec_mul(
-                    &b.iter().map(|b| (*b).into()).collect(),
+                    &b.iter().map(|b| (*b).into()).collect::<Vec<_>>(),
                     a,
                 ))
             }
             (Value::VecG1Affine(a), Value::VecG2(b)) => {
                 *other = Value::vec_gt(C::POps::billinear_vec_mul(
-                    &a.iter().map(|a| (*a).into()).collect(),
+                    &a.iter().map(|a| (*a).into()).collect::<Vec<_>>(),
                     b,
                 ))
             }
             (Value::VecG2Affine(a), Value::VecG1(b)) => {
                 *other = Value::vec_gt(C::POps::billinear_vec_mul(
                     b,
-                    &a.iter().map(|b| (*b).into()).collect(),
+                    &a.iter().map(|b| (*b).into()).collect::<Vec<_>>(),
                 ))
             }
             (Value::Record(_), _) | (_, Value::Record(_)) => {
@@ -1146,7 +1147,7 @@ impl<C: ArkConfig> Value<C> {
                 // Vec<Group1> * Vec<Index>
                 Value::VecIndex(_) | Value::VecScalar(_) => {
                     let vl = &*other.into_vec_scalar_mut();
-                    let mut vr = v.clone();
+                    let mut vr = v.to_vec();
                     vl.par_iter()
                         .zip(vr.par_iter_mut())
                         .for_each(|(a, b)| C::G1Ops::mul(a, b));
@@ -1191,7 +1192,7 @@ impl<C: ArkConfig> Value<C> {
                 // Vec<G2> * Vec<Index>
                 Value::VecIndex(_) | Value::VecScalar(_) => {
                     let vl = &*other.into_vec_scalar_mut();
-                    let mut vr = v.clone();
+                    let mut vr = v.to_vec();
                     vl.par_iter()
                         .zip(vr.par_iter_mut())
                         .for_each(|(a, b)| C::G2Ops::mul(a, b));
@@ -1245,7 +1246,7 @@ impl<C: ArkConfig> Value<C> {
                 Value::VecIndex(_) | Value::VecScalar(_) => {
                     // TODO: There has to be a better way to do this...
                     let vl = &*other.into_vec_scalar_mut();
-                    let mut vr = v.clone();
+                    let mut vr = v.to_vec();
                     vl.par_iter()
                         .zip(vr.par_iter_mut())
                         .for_each(|(a, b)| C::POps::mul(a, b));
@@ -1503,7 +1504,7 @@ impl<C: ArkConfig> Value<C> {
                     // TODO: There has to be a better way to do this...
                     let vl = other.into_vec_scalar_mut();
                     C::FOps::vec_inv(vl);
-                    let mut vr = v.clone();
+                    let mut vr = v.to_vec();
                     (*vl)
                         .par_iter()
                         .zip(vr.par_iter_mut())
@@ -1540,7 +1541,7 @@ impl<C: ArkConfig> Value<C> {
                     // TODO: There has to be a better way to do this...
                     let vl = other.into_vec_scalar_mut();
                     C::FOps::vec_inv(vl);
-                    let mut vr = v.clone();
+                    let mut vr = v.to_vec();
                     (*vl)
                         .par_iter()
                         .zip(vr.par_iter_mut())
@@ -1586,7 +1587,7 @@ impl<C: ArkConfig> Value<C> {
                     // TODO: There has to be a better way to do this...
                     let vl = other.into_vec_scalar_mut();
                     C::FOps::vec_inv(vl);
-                    let mut vr = v.clone();
+                    let mut vr = v.to_vec();
                     (*vl)
                         .par_iter()
                         .zip(vr.par_iter_mut())
@@ -1693,7 +1694,7 @@ impl<C: ArkConfig> Value<C> {
             }
             // Vec<Scalar> ^ Index
             (Value::VecScalar(vs), Value::Index(i)) => {
-                let mut vs = vs.clone();
+                let mut vs = vs.to_vec();
                 vs.par_iter_mut().for_each(|v| C::FOps::pow(v, *i as u64));
                 *other = Value::vec_scalar(vs);
             }
@@ -2421,7 +2422,7 @@ impl<C: ArkConfig> Value<C> {
                 Value::G2(a) => vec![(*a).into()],
                 Value::G2Affine(a) => vec![*a],
                 Value::VecG2(a) => C::G2::normalize_batch(a),
-                Value::VecG2Affine(a) => a.clone(),
+                Value::VecG2Affine(a) => a.to_vec(),
                 Value::VecG2Prepared(a) => a.affine.clone(),
                 _ => panic!("Cannot concat {} with a G2 vector", self),
             };
@@ -2439,37 +2440,37 @@ impl<C: ArkConfig> Value<C> {
         match &self {
             Value::VecScalar(a) => {
                 r.promote_to_vec();
-                let mut a = a.clone();
+                let mut a = a.to_vec();
                 a.append(r.into_vec_scalar_mut());
                 *r = Value::vec_scalar(a);
             }
             Value::VecG1(a) => {
                 r.promote_to_vec();
-                let mut a = a.clone();
+                let mut a = a.to_vec();
                 a.append(r.into_vec_g1_mut());
                 *r = Value::vec_g1(a);
             }
             Value::VecG2(a) => {
                 r.promote_to_vec();
-                let mut a = a.clone();
+                let mut a = a.to_vec();
                 a.append(r.into_vec_g2_mut());
                 *r = Value::vec_g2(a);
             }
             Value::VecGT(a) => {
                 r.promote_to_vec();
-                let mut a = a.clone();
+                let mut a = a.to_vec();
                 a.append(r.into_vec_gt_mut());
                 *r = Value::vec_gt(a);
             }
             Value::VecG1Affine(a) => {
                 r.promote_to_vec();
-                let mut a = a.clone();
+                let mut a = a.to_vec();
                 a.append(r.into_vec_g1_affine_mut());
                 *r = Value::vec_g1_affine(a);
             }
             Value::VecG2Affine(a) => {
                 r.promote_to_vec();
-                let mut a = a.clone();
+                let mut a = a.to_vec();
                 a.append(r.into_vec_g2_affine_mut());
                 *r = Value::vec_g2_affine(a);
             }
@@ -2868,7 +2869,7 @@ impl<C: ArkConfig> Value<C> {
     #[inline]
     pub fn into_vec_scalar_mut(&mut self) -> &mut Vec<C::F> {
         match self {
-            Value::VecScalar(v) => v,
+            Value::VecScalar(v) => v.to_mut(),
             Value::VecIndex(v) => {
                 *self = Value::vec_scalar(v.par_iter().map(|i| C::FOps::from_usize(*i)).collect());
                 self.into_vec_scalar_mut()
@@ -2930,7 +2931,7 @@ impl<C: ArkConfig> Value<C> {
     /// first-source-group point.
     pub fn into_vec_g1_mut(&mut self) -> &mut Vec<C::G1> {
         match self {
-            Value::VecG1(v) => v,
+            Value::VecG1(v) => v.to_mut(),
             Value::VecG1Affine(v) => {
                 *self = Value::vec_g1(v.par_iter().map(|i| (*i).into()).collect());
                 self.into_vec_g1_mut()
@@ -2958,7 +2959,7 @@ impl<C: ArkConfig> Value<C> {
     /// second-source-group point.
     pub fn into_vec_g2_mut(&mut self) -> &mut Vec<C::G2> {
         match self {
-            Value::VecG2(v) => v,
+            Value::VecG2(v) => v.to_mut(),
             Value::VecG2Affine(v) => {
                 *self = Value::vec_g2(v.par_iter().map(|i| (*i).into()).collect());
                 self.into_vec_g2_mut()
@@ -2990,7 +2991,7 @@ impl<C: ArkConfig> Value<C> {
     /// target group element.
     pub fn into_vec_gt_mut(&mut self) -> &mut Vec<PairingOutput<C::P>> {
         match self {
-            Value::VecGT(v) => v,
+            Value::VecGT(v) => v.to_mut(),
             Value::Vec(v) => {
                 *self = Value::vec_gt(
                     v.iter()
@@ -3012,7 +3013,7 @@ impl<C: ArkConfig> Value<C> {
     /// Panics if this value is not a first-source-group vector.
     pub fn into_vec_g1_affine_mut(&mut self) -> &mut Vec<C::G1Affine> {
         match self {
-            Value::VecG1Affine(v) => v,
+            Value::VecG1Affine(v) => v.to_mut(),
             Value::VecG1(v) => {
                 *self = Value::vec_g1_affine(v.par_iter().map(|i| (*i).into()).collect());
                 self.into_vec_g1_affine_mut()
@@ -3027,7 +3028,7 @@ impl<C: ArkConfig> Value<C> {
     /// Panics if this value is not a second-source-group vector.
     pub fn into_vec_g2_affine_mut(&mut self) -> &mut Vec<C::G2Affine> {
         match self {
-            Value::VecG2Affine(v) => v,
+            Value::VecG2Affine(v) => v.to_mut(),
             Value::VecG2(v) => {
                 *self = Value::vec_g2_affine(v.par_iter().map(|i| (*i).into()).collect());
                 self.into_vec_g2_affine_mut()
@@ -3213,7 +3214,7 @@ impl<C: ArkConfig> Value<C> {
                 Value::vec_scalar(coeffs)
             }
             // `Uni` values are often represented directly as coefficient vectors already.
-            Value::VecScalar(v) => Value::vec_scalar(v.clone()),
+            Value::VecScalar(v) => Value::VecScalar(v.clone()),
             Value::VecIndex(v) => {
                 Value::vec_scalar(v.iter().map(|i| C::FOps::from_usize(*i)).collect())
             }
@@ -3247,8 +3248,8 @@ impl<C: ArkConfig> Value<C> {
                     m,
                     expected
                 );
-                v.resize(expected, C::F::zero());
-                Value::vec_scalar(v)
+                v.to_mut().resize(expected, C::F::zero());
+                Value::VecScalar(v)
             }
             _ => coefs,
         }
@@ -3265,7 +3266,7 @@ impl<C: ArkConfig> Value<C> {
     pub fn value_poly(&self) -> Self {
         match self {
             Value::VecScalar(v) => Value::Poly(VirtualPolynomial::from_poly(
-                PolyVariant::from_coeffs(v.clone()),
+                PolyVariant::from_coeffs(v.to_vec()),
             )),
             Value::VecIndex(v) => {
                 let coeffs = v.iter().map(|i| C::FOps::from_usize(*i)).collect();
@@ -3289,7 +3290,7 @@ impl<C: ArkConfig> Value<C> {
     pub fn value_mle(&self) -> Self {
         match self {
             Value::VecScalar(v) => {
-                let mle = v.clone();
+                let mle = v.to_vec();
                 let size = log2(mle.len()) as usize;
                 Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
                     DenseMultilinearExtension::<C::F>::from_evaluations_vec(size, mle),
@@ -3319,7 +3320,7 @@ impl<C: ArkConfig> Value<C> {
             Value::VecScalar(v) => {
                 let size = log2(v.len()) as usize;
                 Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-                    DenseMultilinearExtension::<C::F>::from_evaluations_vec(size, v),
+                    DenseMultilinearExtension::<C::F>::from_evaluations_vec(size, v.into_vec()),
                 )))
             }
             Value::VecIndex(v) => {
@@ -3464,13 +3465,13 @@ impl<C: ArkConfig> Value<C> {
     /// Convert a vector Value into a Vec of element Values.
     pub fn into_elements(self) -> Vec<Value<C>> {
         match self {
-            Value::VecScalar(v) => v.into_iter().map(Value::Scalar).collect(),
+            Value::VecScalar(v) => v.into_vec().into_iter().map(Value::Scalar).collect(),
             Value::VecIndex(v) => v.into_iter().map(Value::Index).collect(),
-            Value::VecG1(v) => v.into_iter().map(Value::G1).collect(),
-            Value::VecG2(v) => v.into_iter().map(Value::G2).collect(),
-            Value::VecGT(v) => v.into_iter().map(Value::GT).collect(),
-            Value::VecG1Affine(v) => v.into_iter().map(Value::G1Affine).collect(),
-            Value::VecG2Affine(v) => v.into_iter().map(Value::G2Affine).collect(),
+            Value::VecG1(v) => v.into_vec().into_iter().map(Value::G1).collect(),
+            Value::VecG2(v) => v.into_vec().into_iter().map(Value::G2).collect(),
+            Value::VecGT(v) => v.into_vec().into_iter().map(Value::GT).collect(),
+            Value::VecG1Affine(v) => v.into_vec().into_iter().map(Value::G1Affine).collect(),
+            Value::VecG2Affine(v) => v.into_vec().into_iter().map(Value::G2Affine).collect(),
             Value::Vec(v) => v,
             _ => panic!("Expected vector, found {}", self),
         }
@@ -3743,7 +3744,7 @@ pub(crate) fn round_univariate_from_marginalize_evals<F: PrimeField>(
 
 fn value_as_scalar_vec<C: ArkConfig>(v: &Value<C>) -> Vec<C::F> {
     match v {
-        Value::VecScalar(xs) => xs.clone(),
+        Value::VecScalar(xs) => xs.to_vec(),
         Value::VecIndex(xs) => xs.iter().map(|i| C::FOps::from_usize(*i)).collect(),
         _ => panic!("Expected scalar vector, found {}", v),
     }
@@ -4170,7 +4171,7 @@ impl<C: ArkConfig> fmt::Display for Value<C> {
                 }
                 write!(f, "]")
             }
-            Value::VecG2Prepared(v) => Value::<C>::VecG2Affine(v.affine.clone()).fmt(f),
+            Value::VecG2Prepared(v) => Value::<C>::vec_g2_affine(v.affine.clone()).fmt(f),
             Value::VecGT(v) => {
                 write!(f, "[")?;
                 for i in v {

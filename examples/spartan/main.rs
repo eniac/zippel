@@ -153,8 +153,9 @@ fn run_one(m: usize, invalid: bool, manual_zippel: Option<&str>) -> RunResult {
     if invalid {
         type F = <ArkCurve25519 as ArkConfig>::F;
         if let Some(v) = inputs.get(&Vid("az".to_string()))
-            && let Value::VecScalar(mut a) = v.clone()
+            && let Value::VecScalar(a) = v
         {
+            let mut a = a.to_vec();
             a[0] += F::from(7u64);
             inputs.insert(&Vid("az".to_string()), &Value::vec_scalar(a));
         }

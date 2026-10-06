@@ -49,16 +49,16 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
         p_b_coeffs.push(b_i.into_scalar());
         p_c_coeffs.push(c_i.into_scalar());
     }
-    let p_A = Value::<ArkSecp256k1>::VecScalar(p_a_coeffs).value_poly();
-    let p_B = Value::<ArkSecp256k1>::VecScalar(p_b_coeffs).value_poly();
-    let p_C = Value::<ArkSecp256k1>::VecScalar(p_c_coeffs).value_poly();
+    let p_A = Value::<ArkSecp256k1>::vec_scalar(p_a_coeffs).value_poly();
+    let p_B = Value::<ArkSecp256k1>::vec_scalar(p_b_coeffs).value_poly();
+    let p_C = Value::<ArkSecp256k1>::vec_scalar(p_c_coeffs).value_poly();
 
     let zero = <ArkSecp256k1 as ArkConfig>::F::zero();
     let one = <ArkSecp256k1 as ArkConfig>::F::one();
     let mut v_h_coeffs = Vec::with_capacity(n_val_const);
     v_h_coeffs.push(one);
     v_h_coeffs.extend(std::iter::repeat_n(zero, n_val_const));
-    let v_H = Value::<ArkSecp256k1>::VecScalar(v_h_coeffs).value_poly();
+    let v_H = Value::<ArkSecp256k1>::vec_scalar(v_h_coeffs).value_poly();
 
     Ctx::<Vid, Value<ArkSecp256k1>>::from_iter([
         (Vid("p_A".to_string()), p_A),
