@@ -145,8 +145,8 @@ original submissions' (Schnorr, Sumcheck, Bulletproofs IPA, KZG, Pari, Groth16, 
 Hyrax, Spartan) and those added since (DeKART, KZH, Dory PCS, HyperPlonk
 SNARK). Each runs at `2^18` (except for Schnorr) across thread counts
 `{1, 2, 4, 8}`, with one sample per measurement. The script will then print two markdown tables from the resulting CSV. The pinned results in
-`benchmarks/*_results.csv` use ten runs and averages the result. 
-If you want to reproduce them, then set `-e BENCH_SAMPLES=10` to match them (the default we use is 1). Note that if you use 10 runs it will take a very long time. 
+`benchmarks/*_results.csv` use ten runs and averages the result.
+If you want to reproduce them, then set `-e BENCH_SAMPLES=10` to match them (the default we use is 1). Note that if you use 10 runs it will take a very long time.
 
 Separately, you also have the option to run a smaller subset of the protocols instead of the full run by specifying which systems to run:
 
@@ -194,12 +194,11 @@ docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
 
 Runs `cargo bench --bench analysis_all -- --analysis soundness` over
 all nine registered candidates using Singular, with a 2-minute timeout
-and a 16 GiB memory limit per protocol. Every candidate is executed,
-including the five previously ignored by the snapshot tests. Results
-and metrics are written to `artifact/output/soundness_results.json`,
-with the raw log in `artifact/output/soundness_all.log`. The processor
-renders a table with analysis outcomes, wall times (including protocol
-loading), and failure reasons.
+and a 16 GiB memory limit per protocol. Results and metrics are
+written to `artifact/output/soundness_results.json`, with the raw log in
+`artifact/output/soundness_all.log`. The processor renders a table with
+analysis outcomes, wall times (including protocol loading), and failure
+reasons.
 
 To run a subset:
 
@@ -221,23 +220,16 @@ docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
 soundness pass=4 failed=4 timeout=1 unexpected=0
 ```
 
-This sweep covers all 6 of the paper's special-sound candidates
-(Schnorr, Multi-Schnorr, Chaum-Pedersen, Okamoto, CDS,
-E-Cash Coin) plus 3 protocols not discussed in the paper
-(`okamoto_elgamal`, `commitment_equality`, `pedersen_eq`). 4 pass
-(Schnorr, Multi-Schnorr, Chaum-Pedersen, `okamoto_elgamal`). Okamoto,
-CDS, `commitment_equality`, and `pedersen_eq` report `failed` with a
-reason; E-Cash Coin reaches the 120-second timeout in our validation run.
-
-A full reproduction requires all 9 rows with the expected 4 verified
-and 5 unverified candidates, and `unexpected=0`. A cross means the analysis
-could not establish special soundness; it does not establish that the
-protocol is unsound. The processor exits nonzero for an unexpected
-outcome, including a crash, out-of-memory result, or timeout on any
-candidate other than E-Cash Coin. For E-Cash Coin, either an analysis
-failure or a timeout is accepted, since the available time depends on
-`--timeout`. For subset runs the processor checks the expected outcomes
-of the protocols present.
+The sweep covers the paper's six special-sound candidates (Schnorr,
+Multi-Schnorr, Chaum-Pedersen, Okamoto, CDS, E-Cash Coin) plus three it
+does not discuss (`okamoto_elgamal`, `commitment_equality`,
+`pedersen_eq`). Four pass: Schnorr, Multi-Schnorr, Chaum-Pedersen and
+`okamoto_elgamal`. Okamoto, CDS, `commitment_equality` and `pedersen_eq`
+fail with a reason, and E-Cash Coin reaches the timeout. The run
+reproduces the paper if it reports `unexpected=0`; E-Cash Coin may
+report `failed` instead of `timeout`, depending on `--timeout`. A cross
+means the analysis could not establish special soundness, not that the
+protocol is unsound.
 
 **Runtime**: our validation run took about 2 minutes, primarily spent on
 the E-Cash Coin timeout, excluding compilation.
@@ -274,8 +266,9 @@ the full run fast.
 **What to expect, and why it differs from the paper.** Completeness
 verifies every protocol except six (`spartan`, `dory_ipa`,
 `hyperplonk_permutation`, `hyperplonk_piop`, `dekart` and `pari`), which
-reach the timeout. The submitted paper verified 20 of its 30. This is because we fixed
-some of the where clauses which were not complete and hence the GB analyses could not prove the protocols complete at the time of submission.
+reach the timeout. The submitted paper verified 20 of its 30: since
+submission we have fixed `where` clauses that were incomplete, which had
+kept the analysis from proving those protocols complete.
 
 **Runtime**: a full run takes approximately 15 minutes, most of them spent
 on the six protocols that reach the timeout.

@@ -575,7 +575,6 @@ impl<E: Pairing> From<ProofProjective<E>> for Proof<E> {
     }
 }
 
-#[allow(non_snake_case)]
 pub struct ProverKey<E: Pairing> {
     pub vk: VerificationKey<E>,
     pub ck_s: hkzg::CommitmentKey<E>,
