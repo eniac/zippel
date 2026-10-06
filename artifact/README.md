@@ -224,30 +224,33 @@ Section 9.3 (and adds a supplementary per-protocol timing table).
 ```sh
 mkdir -p artifact/output
 docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
-  bash -c "artifact/scripts/run_completeness.sh --timeout 60 && python3 artifact/scripts/process_completeness.py"
+  bash -c "artifact/scripts/run_completeness.sh --timeout 120 && python3 artifact/scripts/process_completeness.py"
 ```
 
 Runs all 30 protocols from the paper through the completeness analysis,
-with a 1-minute timeout and a 16 GiB memory limit per run.
+with a 2-minute timeout and a 16 GiB memory limit per run.
 
 To sanity-check a small subset of protocols instead of all 30:
 
 ```sh
 docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
-  bash -c "artifact/scripts/run_completeness.sh --timeout 60 --protocols schnorr,groth16,ipa,hyperplonk && python3 artifact/scripts/process_completeness.py"
+  bash -c "artifact/scripts/run_completeness.sh --timeout 120 --protocols schnorr,groth16,ipa,hyperplonk && python3 artifact/scripts/process_completeness.py"
 ```
 
 **Note on the timeout.** The paper's own methodology budgets 20 minutes
 per protocol; every protocol that completes in practice finishes in
-under 15s, so a much tighter 1-minute timeout is used here to keep the
-full run fast.
+under a minute (the slowest, `hyperplonk_multiset`, takes about 47s on
+our machine), so a much tighter 2-minute timeout is used here to keep
+the full run fast.
 
-**What to expect, and why it differs from the paper.** Completeness 
-verifies **22 of 30** protocols, 2 more than what we had in the paper.
-This is because we improved our inlining optimization and fixed some bugs that we found 
-after submission.
+**What to expect, and why it differs from the paper.** Completeness
+verifies **25 of 30** protocols, 5 more than what we had in the paper.
+This is because we improved our inlining optimization and fixed some bugs that we found
+after submission. The other five (`spartan`, `hyperplonk_permutation`,
+`hyperplonk`, `dekart` and `pari`) reach the timeout.
 
-**Runtime**: a full run takes approximately 15 minutes.
+**Runtime**: a full run takes approximately 12 minutes, 10 of them spent
+on the five protocols that reach the timeout.
 
 ---
 
