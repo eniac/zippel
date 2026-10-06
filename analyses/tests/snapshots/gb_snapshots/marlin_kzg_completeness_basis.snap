@@ -2,6 +2,21 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+check: - h*z*pi + h_val*pi == - gamma_g*h*r_z_sent + h*c - g*h*y
+  c <- gs[1]*__zippel::node::11 + gs[0]*__zippel::node::10 + p_val[1]*ss[1] + p_val[0]*ss[0]
+  pi <- ss[0]*__zippel::gb::div_q::0[0] + gs[0]*__zippel::gb::div_q::1[0]
+  r_z_sent <- z*__zippel::node::11 + __zippel::node::10
+  lhs: - h*ss[0]*z*__zippel::gb::div_q::0[0] + h_val*ss[0]*__zippel::gb::div_q::0[0] - gs[0]*h*z*__zippel::gb::div_q::1[0] + gs[0]*h_val*__zippel::gb::div_q::1[0]
+  rhs: - gamma_g*h*z*__zippel::node::11 + gs[1]*h*__zippel::node::11 + gs[0]*h*__zippel::node::10 - gamma_g*h*__zippel::node::10 - g*h*y + h*p_val[1]*ss[1] + h*p_val[0]*ss[0]
+  equal modulo the basis, using:
+    - __zippel::gb::div_q::1[0] + __zippel::node::11
+    - __zippel::gb::div_q::0[0] + p_val[1]
+    - gs[0] + gamma_g
+    - ss[0] + g
+    z*__zippel::gb::div_q::0[0] - y + p_val[0]
+    - h*ss[1] + h_val*ss[0]
+    - gs[0]*h_val + gs[1]*h
+basis:
 - __zippel::gb::div_q::0[0] + p_val[1]
 - __zippel::gb::div_q::1[0] + __zippel::node::11
 - gs[0] + gamma_g

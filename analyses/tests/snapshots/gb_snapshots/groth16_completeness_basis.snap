@@ -2,6 +2,18 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+check: - delta_g2*c_proof + a_proof*b_proof - gamma_abc_g1[0]*gamma_g2*instance_assignment[0] - alpha_g1*beta_g2 == 0
+  a_proof <- delta_g1*r + a_query[1]*witness_assignment[0] + a_query[0]*instance_assignment[0] + alpha_g1
+  b_proof <- delta_g2*s + b_g2_query[1]*witness_assignment[0] + b_g2_query[0]*instance_assignment[0] + beta_g2
+  c_proof <- delta_g1*r*s + a_query[1]*witness_assignment[0]*s + a_query[0]*instance_assignment[0]*s + alpha_g1*s + b_g1_query[1]*witness_assignment[0]*r + b_g1_query[0]*instance_assignment[0]*r + beta_g1*r + l_query[0]*witness_assignment[0] + h_coeffs[0]*h_query[0]
+  lhs: <17 terms>
+  rhs: 0
+  equal modulo the basis, using:
+    - beta_g1*delta_g2 + beta_g2*delta_g1
+    - b_g1_query[1]*delta_g2 + b_g2_query[1]*delta_g1
+    - b_g1_query[0]*delta_g2 + b_g2_query[0]*delta_g1
+    a_query[1]*b_g2_query[1]*witness_assignment[0]^2 - delta_g2*l_query[0]*witness_assignment[0] + a_query[0]*b_g2_query[1]*instance_assignment[0]*witness_assignment[0] + a_query[1]*b_g2_query[0]*instance_assignment[0]*witness_assignment[0] + a_query[1]*beta_g2*witness_assignment[0] + alpha_g1*b_g2_query[1]*witness_assignment[0] + a_query[0]*b_g2_query[0]*instance_assignment[0]^2 - gamma_abc_g1[0]*gamma_g2*instance_assignment[0] + a_query[0]*beta_g2*instance_assignment[0] + alpha_g1*b_g2_query[0]*instance_assignment[0] - delta_g2*h_coeffs[0]*h_query[0]
+basis:
 - a_query[0]*__zippel::node::82 + a_query[1]*__zippel::node::81
 - a_query[0]*__zippel::node::84 + b_g1_query[0]*__zippel::node::81
 - a_query[0]*__zippel::node::85 + b_g1_query[1]*__zippel::node::81

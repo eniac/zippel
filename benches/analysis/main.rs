@@ -16,7 +16,10 @@ mod output;
 mod protocols;
 
 use std::any::Any;
-use std::path::PathBuf;
+use std::fmt::Write as _;
+use std::fs::OpenOptions;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use analyses::{
@@ -31,7 +34,7 @@ use lang::id::Tid;
 use share::unwrap;
 
 use memory::MemoryWindow;
-use output::{BenchOutput, Status};
+use output::{BenchOutput, Poly, Status};
 use protocols::{Analysis, PROTOCOLS};
 
 /// Analyses one protocol and prints JSON lines with what it measured.
@@ -62,6 +65,13 @@ struct Cli {
     /// Stops after building the ideal, without running the GB backend.
     #[arg(long)]
     build_only: bool,
+    /// Completeness only: writes the generating set and the goals to FILE
+    /// before the GB backend runs, and appends the result and why each check
+    /// holds (`CompletenessAnalysis::explain`) after it. Explaining reduces
+    /// every check, so a run with `--dump` can take longer and use more
+    /// memory than one without.
+    #[arg(long, value_name = "FILE")]
+    dump: Option<PathBuf>,
     /// Prints the protocols registered for the analysis, one per line, and
     /// exits; `analysis_all` sweeps those.
     #[arg(long)]
@@ -97,6 +107,7 @@ struct Target {
     backend: GbBackendKind,
     memory_limit_mb: Option<u64>,
     build_only: bool,
+    dump: Option<PathBuf>,
 }
 
 impl Target {
@@ -126,6 +137,10 @@ impl Target {
             eprintln!("{name} has no registered soundness round parameters; pass --l-vec");
             std::process::exit(2);
         }
+        if cli.analysis == Analysis::Soundness && cli.dump.is_some() {
+            eprintln!("--dump is only supported for completeness");
+            std::process::exit(2);
+        }
 
         let path = match (cli.path, registered) {
             (Some(p), _) => p,
@@ -148,8 +163,43 @@ impl Target {
             },
             memory_limit_mb: cli.memory_limit_mb,
             build_only: cli.build_only,
+            dump: cli.dump,
         }
     }
+}
+
+/// Writes `text` to the dump file `path`, truncating it first unless
+/// `append`. A failure is reported on stderr and otherwise ignored: the dump
+/// is a side channel, not part of the measurement.
+fn write_dump(path: &Path, text: &str, append: bool) {
+    let result = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(append)
+        .truncate(!append)
+        .open(path)
+        .and_then(|mut f| f.write_all(text.as_bytes()));
+    if let Err(e) = result {
+        eprintln!("warning: failed to write dump {}: {e}", path.display());
+    }
+}
+
+/// What a dump starts with: the protocol, its sizes and its source, then
+/// each of `sections`, a title and its polynomials, one per line.
+fn dump_inputs(target: &Target, sections: &[(&str, &[Poly])]) -> String {
+    let mut text = format!(
+        "{} sizes={:?}\n{}\n",
+        target.name,
+        target.sizes,
+        target.path.display()
+    );
+    for (title, polys) in sections {
+        let _ = writeln!(text, "\n{title} ({}):", polys.len());
+        for p in *polys {
+            let _ = writeln!(text, "  {p}");
+        }
+    }
+    text
 }
 
 /// Parses, concretizes and lowers the target's source to its first
@@ -232,6 +282,14 @@ fn run_completeness(
     out.build_ms = Some(elapsed_ms(start));
     out.record_inputs(&inputs.generating_set, &inputs.verifier);
     out.emit();
+    // Written before the GB call, so it survives a timeout.
+    if let Some(dump) = &target.dump {
+        let sections = [
+            ("generating set", inputs.generating_set.as_slice()),
+            ("goals", inputs.verifier.as_slice()),
+        ];
+        write_dump(dump, &dump_inputs(target, &sections), false);
+    }
     if target.build_only {
         return Ok(Status::Built);
     }
@@ -247,9 +305,15 @@ fn run_completeness(
 
     // Stage 4: Reduce the verifier's checks.
     let start = Instant::now();
-    let result = ca.run();
+    let result = ca.run().map_err(|e| e.to_string());
     out.run_ms = Some(elapsed_ms(start));
-    result.map_err(|e| e.to_string())?;
+
+    if let Some(dump) = &target.dump {
+        let verdict = result.as_ref().err().map_or("complete", String::as_str);
+        let text = format!("\nresult: {verdict}\n\nexplain:\n{}", ca.explain());
+        write_dump(dump, &text, true);
+    }
+    result?;
     Ok(Status::Ok)
 }
 

@@ -2,6 +2,21 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+check: g*beta_z == v*c + v_r
+  v_r <- g*beta_r
+  beta_z <- beta*c + beta_r
+  lhs: beta*g*c + g*beta_r
+  rhs: v*c + g*beta_r
+  equal modulo the basis, using:
+    - v + beta*g
+check: u*beta_z == w*c + w_r
+  w_r <- u*beta_r
+  beta_z <- beta*c + beta_r
+  lhs: beta*u*c + u*beta_r
+  rhs: w*c + u*beta_r
+  equal modulo the basis, using:
+    - w + beta*u
+basis:
 - g*w + u*v
 - v + beta*g
 - w + beta*u

@@ -2,6 +2,14 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+check: h*z == - c2*c + c1*c + t
+  t <- h*k
+  z <- - r2*c + r1*c + k
+  lhs: - h*r2*c + h*r1*c + h*k
+  rhs: - c2*c + c1*c + h*k
+  equal modulo the basis, using:
+    - h*r2 + h*r1 + c2 - c1
+basis:
 - h*r2 + h*r1 + c2 - c1
 - m2 + m1
 __zippel::node::22 - 1

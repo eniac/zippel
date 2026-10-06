@@ -2,6 +2,22 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+check: g*sr == c1*c + t1
+  t1 <- g*rr
+  sr <- r*c + rr
+  lhs: g*r*c + g*rr
+  rhs: c1*c + g*rr
+  equal modulo the basis, using:
+    g*r - c1
+check: h*sr + g*sx == c2*c + t2
+  t2 <- h*rr + g*rx
+  sx <- x*c + rx
+  sr <- r*c + rr
+  lhs: g*x*c + h*r*c + h*rr + g*rx
+  rhs: c2*c + h*rr + g*rx
+  equal modulo the basis, using:
+    g*x + h*r - c2
+basis:
 __zippel::node::25 - 1
 __zippel::node::32 - 1
 __zippel::node::43 - 1

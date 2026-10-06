@@ -2,6 +2,76 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+check: f*z_r_y + h2*z_x2 + h1*z_x1 == big_y*ch + t_big_y
+  t_big_y <- f*k_r_y + h2*k_x2 + h1*k_x1
+  z_x1 <- x1*ch + k_x1
+  z_x2 <- x2*ch + k_x2
+  z_r_y <- r_y*ch + k_r_y
+  lhs: h2*x2*ch + h1*x1*ch + f*r_y*ch + f*k_r_y + h2*k_x2 + h1*k_x1
+  rhs: big_y*ch + f*k_r_y + h2*k_x2 + h1*k_x1
+  equal modulo the basis, using:
+    h2*x2 + h1*x1 + f*r_y - big_y
+check: g*z_alpha + g*z_x1 == big_s*ch + t_big_s
+  t_big_s <- g*k_alpha + g*k_x1
+  z_x1 <- x1*ch + k_x1
+  z_alpha <- alpha*ch + k_alpha
+  lhs: g*x1*ch + alpha*g*ch + g*k_alpha + g*k_x1
+  rhs: big_s*ch + g*k_alpha + g*k_x1
+  equal modulo the basis, using:
+    g*x1 + alpha*g - big_s
+check: g*z_r_beta + g*z_sk_u + g*z_x2 == big_t*ch + t_big_t
+  t_big_t <- g*k_r_beta + g*k_sk_u + g*k_x2
+  z_x2 <- x2*ch + k_x2
+  z_sk_u <- sk_u*ch + k_sk_u
+  z_r_beta <- r_beta*ch + k_r_beta
+  lhs: g*x2*ch + g*sk_u*ch + g*r_beta*ch + g*k_r_beta + g*k_sk_u + g*k_x2
+  rhs: big_t*ch + g*k_r_beta + g*k_sk_u + g*k_x2
+  equal modulo the basis, using:
+    g*x2 + g*sk_u + g*r_beta - big_t
+check: h*z_r_b + g*z_sk_u == big_b*ch + t_big_b
+  t_big_b <- h*k_r_b + g*k_sk_u
+  z_sk_u <- sk_u*ch + k_sk_u
+  z_r_b <- r_b*ch + k_r_b
+  lhs: g*sk_u*ch + h*r_b*ch + h*k_r_b + g*k_sk_u
+  rhs: big_b*ch + h*k_r_b + g*k_sk_u
+  equal modulo the basis, using:
+    g*sk_u + h*r_b - big_b
+check: h*z_r_c + g*z_s == big_c*ch + t_big_c
+  t_big_c <- h*k_r_c + g*k_s
+  z_s <- s*ch + k_s
+  z_r_c <- r_c*ch + k_r_c
+  lhs: g*s*ch + h*r_c*ch + h*k_r_c + g*k_s
+  rhs: big_c*ch + h*k_r_c + g*k_s
+  equal modulo the basis, using:
+    g*s + h*r_c - big_c
+check: h*z_r_c_alpha + g*ch + t_g1 == g*j*z_alpha + big_c*z_alpha + t_h1
+  t_g1 <- g*j*k_alpha + big_c*k_alpha
+  t_h1 <- h*k_r_c_alpha
+  z_alpha <- alpha*ch + k_alpha
+  z_r_c_alpha <- r_c_alpha*ch + k_r_c_alpha
+  lhs: h*r_c_alpha*ch + g*ch + h*k_r_c_alpha + g*j*k_alpha + big_c*k_alpha
+  rhs: alpha*g*j*ch + alpha*big_c*ch + h*k_r_c_alpha + g*j*k_alpha + big_c*k_alpha
+  equal modulo the basis, using:
+    g*x1 + alpha*g - big_s
+    g*j*x1 + h*r_c_alpha - big_s*j + g - alpha*big_c
+check: h*z_r_d + g*z_t == big_d*ch + t_big_d
+  t_big_d <- h*k_r_d + g*k_t
+  z_t <- t*ch + k_t
+  z_r_d <- r_d*ch + k_r_d
+  lhs: g*t*ch + h*r_d*ch + h*k_r_d + g*k_t
+  rhs: big_d*ch + h*k_r_d + g*k_t
+  equal modulo the basis, using:
+    g*t + h*r_d - big_d
+check: h*z_r_d_beta + g*ch + t_g2 == g*j*z_beta + big_d*z_beta + t_h2
+  t_g2 <- g*j*k_beta + big_d*k_beta
+  t_h2 <- h*k_r_d_beta
+  z_beta <- beta*ch + k_beta
+  z_r_d_beta <- r_d_beta*ch + k_r_d_beta
+  lhs: h*r_d_beta*ch + g*ch + h*k_r_d_beta + g*j*k_beta + big_d*k_beta
+  rhs: beta*g*j*ch + beta*big_d*ch + h*k_r_d_beta + g*j*k_beta + big_d*k_beta
+  equal modulo the basis, using:
+    - h*r_d_beta + beta*g*j - g + beta*big_d
+basis:
 - beta*big_b*r_c*t + beta*big_c*r_b*t + big_c*r_d_beta*sk_u - beta*big_c*r_d*sk_u - big_b*r_d_beta*s + beta*big_b*r_d*s - beta*big_b*j*r_c + big_b*r_c + beta*big_c*j*r_b - big_c*r_b
 - big_b*big_s*r_c*t*x2 + big_c*big_s*r_d*sk_u*x2 + big_c*big_t*r_b*t*x1 - big_c*big_t*r_d*sk_u*x1 - big_b*big_t*j*r_d*x1 + big_d*big_t*j*r_b*x1 + big_s*big_t*r_c*sk_u*t - big_b*big_s*r_c*sk_u*t - big_s*big_t*r_b*s*t + big_b*big_t*r_c_alpha*t - big_b*big_s*r_beta*r_c*t - big_s*big_t*j*r_b*t + big_c*big_s*r_d*sk_u^2 + big_c*big_s*r_beta*r_d*sk_u + big_s*big_t*j*r_d*sk_u - big_d*big_t*r_c_alpha*sk_u - big_b*big_t*r_d + big_d*big_t*r_b
 - big_b*g*r_d_beta*t*x1 + big_d*g*r_d_beta*sk_u*x1 + big_b*g*r_d*x1 - beta*big_b*big_d*r_d*x1 + beta*big_b*big_c*r_d*x1 - big_d*g*r_b*x1 + beta*big_d^2*r_b*x1 - beta*big_c*big_d*r_b*x1 + big_b*big_s*r_d_beta*t - beta*big_b*g*r_c_alpha*t - beta*big_d*big_s*r_b*t + beta*big_c*big_s*r_b*t - big_d*big_s*r_d_beta*sk_u + beta*big_d*big_s*r_d*sk_u - beta*big_c*big_s*r_d*sk_u + beta*big_d*g*r_c_alpha*sk_u + beta*big_b*g*r_d - big_b*big_s*r_d - beta*big_d*g*r_b + big_d*big_s*r_b

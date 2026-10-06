@@ -65,6 +65,41 @@ mod backend_tests {
     }
 
     #[test]
+    fn reduce_with_divisors_reports_the_basis_polynomials_it_divides_by() {
+        use crate::backend::reduce_with_divisors;
+
+        let x = mk_var("x", 0);
+        let y = mk_var("y", 1);
+        let z = mk_var("z", 2);
+        let var_poly = |p: &Var| Polynomial::<Fr>::var(p);
+        let lit = |n: u64| Polynomial::<Fr>::lit(&Fr::from(n));
+        let basis = [
+            var_poly(&x) - lit(2),
+            var_poly(&y) - lit(3),
+            var_poly(&z) - lit(5),
+        ];
+
+        // x*y - 6 uses x - 2 and y - 3, never z - 5.
+        let p = var_poly(&x) * var_poly(&y) - lit(6);
+        let (remainder, divisors) = reduce_with_divisors(p, &basis, &MonoOrder::grevlex());
+        assert!(remainder.is_zero(), "x*y - 6 should reduce to 0");
+        assert_eq!(divisors, [0, 1]);
+
+        // x*y reduces to 6, still through both.
+        let (remainder, divisors) =
+            reduce_with_divisors(var_poly(&x) * var_poly(&y), &basis, &MonoOrder::grevlex());
+        assert_eq!(remainder, lit(6));
+        assert_eq!(divisors, [0, 1]);
+
+        // A polynomial no leading term divides is its own remainder.
+        let w = mk_var("w", 3);
+        let (remainder, divisors) =
+            reduce_with_divisors(var_poly(&w), &basis, &MonoOrder::grevlex());
+        assert_eq!(remainder, var_poly(&w));
+        assert!(divisors.is_empty());
+    }
+
+    #[test]
     fn unsupported_order_returns_err() {
         use crate::frontend::{Block, BlockKind};
         let x = mk_var("x", 0);

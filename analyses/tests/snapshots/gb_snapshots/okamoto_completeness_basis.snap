@@ -2,6 +2,15 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+check: h*sr + g*sx == comm*c + t
+  t <- h*rr + g*rx
+  sx <- x*c + rx
+  sr <- r*c + rr
+  lhs: g*x*c + h*r*c + h*rr + g*rx
+  rhs: comm*c + h*rr + g*rx
+  equal modulo the basis, using:
+    g*x + h*r - comm
+basis:
 __zippel::node::24 - 1
 __zippel::node::36 - 1
 g*x + h*r - comm

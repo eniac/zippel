@@ -2,6 +2,31 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+check: tau*c + beta == h_base*z_beta + g_base*z_col[0]*z_col[1]*z_vec[3] - g_base*z_col[0]*z_col[1]*z_vec[2] + g_base*z_col[1]*z_vec[2] - g_base*z_col[0]*z_col[1]*z_vec[1] + g_base*z_col[0]*z_vec[1] + g_base*z_col[0]*z_col[1]*z_vec[0] - g_base*z_col[1]*z_vec[0] - g_base*z_col[0]*z_vec[0] + g_base*z_vec[0]
+  tau <- h_base*r_tau + g_base*y
+  beta <- h_base*r_beta + g_base*z_col[0]*z_col[1]*__zippel::node::42 - g_base*z_col[0]*z_col[1]*__zippel::node::41 + g_base*z_col[1]*__zippel::node::41 - g_base*z_col[0]*z_col[1]*__zippel::node::40 + g_base*z_col[0]*__zippel::node::40 + g_base*z_col[0]*z_col[1]*__zippel::node::39 - g_base*z_col[1]*__zippel::node::39 - g_base*z_col[0]*__zippel::node::39 + g_base*__zippel::node::39
+  z_vec[0] <- p[12]*z_row[0]*z_row[1]*c - p[8]*z_row[0]*z_row[1]*c - p[4]*z_row[0]*z_row[1]*c + p[0]*z_row[0]*z_row[1]*c + p[8]*z_row[1]*c - p[0]*z_row[1]*c + p[4]*z_row[0]*c - p[0]*z_row[0]*c + p[0]*c + __zippel::node::39
+  z_vec[1] <- p[13]*z_row[0]*z_row[1]*c - p[9]*z_row[0]*z_row[1]*c - p[5]*z_row[0]*z_row[1]*c + p[1]*z_row[0]*z_row[1]*c + p[9]*z_row[1]*c - p[1]*z_row[1]*c + p[5]*z_row[0]*c - p[1]*z_row[0]*c + p[1]*c + __zippel::node::40
+  z_vec[2] <- p[14]*z_row[0]*z_row[1]*c - p[10]*z_row[0]*z_row[1]*c - p[6]*z_row[0]*z_row[1]*c + p[2]*z_row[0]*z_row[1]*c + p[10]*z_row[1]*c - p[2]*z_row[1]*c + p[6]*z_row[0]*c - p[2]*z_row[0]*c + p[2]*c + __zippel::node::41
+  z_vec[3] <- p[15]*z_row[0]*z_row[1]*c - p[11]*z_row[0]*z_row[1]*c - p[7]*z_row[0]*z_row[1]*c + p[3]*z_row[0]*z_row[1]*c + p[11]*z_row[1]*c - p[3]*z_row[1]*c + p[7]*z_row[0]*c - p[3]*z_row[0]*c + p[3]*c + __zippel::node::42
+  z_beta <- r_tau*c + r_beta
+  lhs: h_base*r_tau*c + g_base*y*c + h_base*r_beta + g_base*z_col[0]*z_col[1]*__zippel::node::42 - g_base*z_col[0]*z_col[1]*__zippel::node::41 + g_base*z_col[1]*__zippel::node::41 - g_base*z_col[0]*z_col[1]*__zippel::node::40 + g_base*z_col[0]*__zippel::node::40 + g_base*z_col[0]*z_col[1]*__zippel::node::39 - g_base*z_col[1]*__zippel::node::39 - g_base*z_col[0]*__zippel::node::39 + g_base*__zippel::node::39
+  rhs: <92 terms>
+  equal modulo the basis, using:
+    <82 terms>
+check: z_row[0]*z_row[1]*c_rows[3]*c - z_row[0]*z_row[1]*c_rows[2]*c + z_row[1]*c_rows[2]*c - z_row[0]*z_row[1]*c_rows[1]*c + z_row[0]*c_rows[1]*c + z_row[0]*z_row[1]*c_rows[0]*c - z_row[1]*c_rows[0]*c - z_row[0]*c_rows[0]*c + c_rows[0]*c + delta == h_base*z_delta + g_vec[3]*z_vec[3] + g_vec[2]*z_vec[2] + g_vec[1]*z_vec[1] + g_vec[0]*z_vec[0]
+  c_rows[0] <- h_base*__zippel::node::8 + g_vec[3]*p[3] + g_vec[2]*p[2] + g_vec[1]*p[1] + g_vec[0]*p[0]
+  c_rows[1] <- h_base*__zippel::node::9 + g_vec[3]*p[7] + g_vec[2]*p[6] + g_vec[1]*p[5] + g_vec[0]*p[4]
+  c_rows[2] <- h_base*__zippel::node::10 + g_vec[3]*p[11] + g_vec[2]*p[10] + g_vec[1]*p[9] + g_vec[0]*p[8]
+  c_rows[3] <- h_base*__zippel::node::11 + g_vec[3]*p[15] + g_vec[2]*p[14] + g_vec[1]*p[13] + g_vec[0]*p[12]
+  delta <- h_base*r_delta + g_vec[3]*__zippel::node::42 + g_vec[2]*__zippel::node::41 + g_vec[1]*__zippel::node::40 + g_vec[0]*__zippel::node::39
+  z_vec[0] <- p[12]*z_row[0]*z_row[1]*c - p[8]*z_row[0]*z_row[1]*c - p[4]*z_row[0]*z_row[1]*c + p[0]*z_row[0]*z_row[1]*c + p[8]*z_row[1]*c - p[0]*z_row[1]*c + p[4]*z_row[0]*c - p[0]*z_row[0]*c + p[0]*c + __zippel::node::39
+  z_vec[1] <- p[13]*z_row[0]*z_row[1]*c - p[9]*z_row[0]*z_row[1]*c - p[5]*z_row[0]*z_row[1]*c + p[1]*z_row[0]*z_row[1]*c + p[9]*z_row[1]*c - p[1]*z_row[1]*c + p[5]*z_row[0]*c - p[1]*z_row[0]*c + p[1]*c + __zippel::node::40
+  z_vec[2] <- p[14]*z_row[0]*z_row[1]*c - p[10]*z_row[0]*z_row[1]*c - p[6]*z_row[0]*z_row[1]*c + p[2]*z_row[0]*z_row[1]*c + p[10]*z_row[1]*c - p[2]*z_row[1]*c + p[6]*z_row[0]*c - p[2]*z_row[0]*c + p[2]*c + __zippel::node::41
+  z_vec[3] <- p[15]*z_row[0]*z_row[1]*c - p[11]*z_row[0]*z_row[1]*c - p[7]*z_row[0]*z_row[1]*c + p[3]*z_row[0]*z_row[1]*c + p[11]*z_row[1]*c - p[3]*z_row[1]*c + p[7]*z_row[0]*c - p[3]*z_row[0]*c + p[3]*c + __zippel::node::42
+  z_delta <- z_row[0]*z_row[1]*__zippel::node::11*c - z_row[0]*z_row[1]*__zippel::node::10*c + z_row[1]*__zippel::node::10*c - z_row[0]*z_row[1]*__zippel::node::9*c + z_row[0]*__zippel::node::9*c + z_row[0]*z_row[1]*__zippel::node::8*c - z_row[1]*__zippel::node::8*c - z_row[0]*__zippel::node::8*c + __zippel::node::8*c + r_delta
+  both sides: <50 terms>
+basis:
 - g_vec[0]*__zippel::node::116 + g_vec[1]*__zippel::node::115
 - g_vec[0]*__zippel::node::117 + g_vec[2]*__zippel::node::115
 - g_vec[0]*__zippel::node::118 + g_vec[3]*__zippel::node::115

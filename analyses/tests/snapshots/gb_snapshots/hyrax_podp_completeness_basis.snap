@@ -2,6 +2,24 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+check: tau*c + beta == h*z_beta + a_vec[0]*g*z_vec[0]
+  beta <- h*r_beta + a_vec[0]*g*__zippel::node::11
+  z_vec[0] <- x_vec[0]*c + __zippel::node::11
+  z_beta <- r_tau*c + r_beta
+  lhs: tau*c + h*r_beta + a_vec[0]*g*__zippel::node::11
+  rhs: a_vec[0]*g*x_vec[0]*c + h*r_tau*c + h*r_beta + a_vec[0]*g*__zippel::node::11
+  equal modulo the basis, using:
+    - y + a_vec[0]*x_vec[0]
+    g*y - tau + h*r_tau
+check: xi*c + delta == h*z_delta + g_vec[0]*z_vec[0]
+  delta <- h*r_delta + g_vec[0]*__zippel::node::11
+  z_vec[0] <- x_vec[0]*c + __zippel::node::11
+  z_delta <- r_xi*c + r_delta
+  lhs: xi*c + h*r_delta + g_vec[0]*__zippel::node::11
+  rhs: g_vec[0]*x_vec[0]*c + h*r_xi*c + h*r_delta + g_vec[0]*__zippel::node::11
+  equal modulo the basis, using:
+    - xi + g_vec[0]*x_vec[0] + h*r_xi
+basis:
 - g*r_xi*y - r_tau*xi + g_vec[0]*r_tau*x_vec[0] + r_xi*tau
 - xi + g_vec[0]*x_vec[0] + h*r_xi
 - y + a_vec[0]*x_vec[0]

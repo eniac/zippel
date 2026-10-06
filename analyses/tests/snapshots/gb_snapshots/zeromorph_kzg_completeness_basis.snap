@@ -2,6 +2,20 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+check: gen_g2*c - gen_g1*gen_g2*v == srs_g2[1]*delta - gen_g2*u*pi + srs_g2[0]*pi
+  c <- srs_g1[2]*r + p_poly[1]*srs_g1[1] + p_poly[0]*srs_g1[0]
+  pi <- srs_g1[0]*__zippel::gb::div_q::0[0] + srs_g1[2]*s
+  delta <- srs_g1[0]*u*s - srs_g1[1]*s + srs_g1[0]*r
+  lhs: gen_g2*srs_g1[2]*r - gen_g1*gen_g2*v + gen_g2*p_poly[1]*srs_g1[1] + gen_g2*p_poly[0]*srs_g1[0]
+  rhs: - gen_g2*srs_g1[0]*u*__zippel::gb::div_q::0[0] + srs_g1[0]*srs_g2[0]*__zippel::gb::div_q::0[0] + srs_g1[0]*srs_g2[1]*u*s - gen_g2*srs_g1[2]*u*s - srs_g1[1]*srs_g2[1]*s + srs_g1[2]*srs_g2[0]*s + srs_g1[0]*srs_g2[1]*r
+  equal modulo the basis, using:
+    - __zippel::gb::div_q::0[0] + p_poly[1]
+    - srs_g1[0] + gen_g1
+    u*__zippel::gb::div_q::0[0] - v + p_poly[0]
+    - srs_g1[1]*srs_g2[1] + srs_g1[2]*srs_g2[0]
+    - srs_g1[0]*srs_g2[1] + gen_g2*srs_g1[2]
+    - srs_g1[0]*srs_g2[0] + gen_g2*srs_g1[1]
+basis:
 - __zippel::gb::div_q::0[0] + p_poly[1]
 - srs_g1[0] + gen_g1
 - srs_g1[0]*srs_g2[0] + gen_g2*srs_g1[1]

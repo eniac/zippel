@@ -2,6 +2,18 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+check: __zippel::node::59[0]*__zippel::node::59[1] == 1
+  lhs: __zippel::node::59[0]*__zippel::node::59[1]
+  rhs: 1
+  equal modulo the basis, using:
+    __zippel::node::59[1] - 1
+    __zippel::node::59[0] - 1
+check: __zippel::node::74[0] == 1
+  lhs: __zippel::node::74[0]
+  rhs: 1
+  equal modulo the basis, using:
+    __zippel::node::74[0] - 1
+basis:
 - b[0]*__zippel::gb::interp_inv::0 + __zippel::gb::interp_inv::0 + b[0]*__zippel::gb::interp_inv::2 - __zippel::gb::interp_inv::2
 - b[0]*u_evals[0] + u_evals[0] + b[0]*c_sim[0] - c_sim[0]
 - b[0]*u_points[0] + u_points[0] + b[0]*eval_points[0] - eval_points[0]

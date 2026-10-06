@@ -2,6 +2,32 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+check: big_x*c + alpha == h*z2 + g*z1
+  alpha <- h*b2 + g*b1
+  z1 <- x*c + b1
+  z2 <- r_X*c + b2
+  lhs: big_x*c + h*b2 + g*b1
+  rhs: g*x*c + h*r_X*c + h*b2 + g*b1
+  equal modulo the basis, using:
+    g*x + h*r_X - big_x
+check: big_y*c + beta == h*z4 + g*z3
+  beta <- h*b4 + g*b3
+  z3 <- y*c + b3
+  z4 <- r_Y*c + b4
+  lhs: big_y*c + h*b4 + g*b3
+  rhs: g*y*c + h*r_Y*c + h*b4 + g*b3
+  equal modulo the basis, using:
+    g*y + h*r_Y - big_y
+check: big_z*c + delta == h*z5 + big_x*z3
+  delta <- h*b5 + big_x*b3
+  z3 <- y*c + b3
+  z5 <- - r_X*y*c + r_Z*c + b5
+  lhs: big_z*c + h*b5 + big_x*b3
+  rhs: - h*r_X*y*c + big_x*y*c + h*r_Z*c + h*b5 + big_x*b3
+  equal modulo the basis, using:
+    g*x + h*r_X - big_x
+    g*x*y + h*r_Z - big_z
+basis:
 - big_x*r_Y*x*y + big_y*r_X*x*y + big_x*r_Z*y - big_z*r_X*y - big_y*r_Z*x + big_z*r_Y*x
 - g*r_X*y + g*r_Y*x - big_x*r_Y + big_y*r_X
 __zippel::node::51 - 1
