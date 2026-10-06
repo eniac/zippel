@@ -1,11 +1,14 @@
 /// `EvalError`, the failure type raised while interpreting a DAG node.
 pub mod error;
+/// The operand values one evaluation reads, moved out at their last use.
+pub mod operands;
 
 use crate::{GOp, HOp, Op, Ref};
 use ark_ff::{One, Zero};
 use backend::{ATyp, ArkConfig, SelectedEvalShape, Value};
 use error::EvalError;
 use lang::ast::BinOp;
+pub use operands::Operands;
 use rand::RngCore;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -263,7 +266,7 @@ fn verify_domain_is_canonical_coordinates<C: ArkConfig>(
 
 fn try_match_canonical_hypercube_ast<C: ArkConfig>(
     fixed: &HOp<C>,
-    env: &HashMap<Ref, Arc<Value<C>>>,
+    env: &Operands<C>,
     rng: &mut impl rand::RngCore,
     loop_params: &[Arc<Value<C>>],
     check_sink: &mut Vec<bool>,
@@ -312,7 +315,7 @@ fn try_match_canonical_hypercube_ast<C: ArkConfig>(
 #[allow(clippy::too_many_arguments)]
 fn verify_hypercube_coordinates<C: ArkConfig, R: RngCore>(
     fixed: &HOp<C>,
-    env: &HashMap<Ref, Arc<Value<C>>>,
+    env: &Operands<C>,
     rng: &mut R,
     loop_params: &[Arc<Value<C>>],
     check_sink: &mut Vec<bool>,
@@ -365,7 +368,7 @@ fn try_eval_reduce_map_fused_hypercube<C, R>(
     op: BinOp,
     domain: &HOp<C>,
     body: &HOp<C>,
-    env: &HashMap<Ref, Arc<Value<C>>>,
+    env: &Operands<C>,
     rng: &mut R,
     loop_params: &[Arc<Value<C>>],
     check_sink: &mut Vec<bool>,
@@ -525,7 +528,27 @@ where
     C: ArkConfig,
     R: RngCore,
 {
-    eval_op_with_loop_params(op, env, rng, &[], check_sink)
+    eval_op_with_loop_params(op, &Operands::borrowed(env), rng, &[], check_sink)
+}
+
+/// [`eval_op`] taking ownership of `env`: each operand is handed over at its
+/// last use in `op` instead of cloned, so an operation holding the only
+/// reference to a value reuses its buffer. The runtime evaluates each node
+/// this way; its operands are delivered for this one evaluation.
+///
+/// # Errors
+/// As [`eval_op`].
+pub fn eval_op_owned<C, R>(
+    op: &GOp<C>,
+    env: HashMap<Ref, Arc<Value<C>>>,
+    rng: &mut R,
+    check_sink: &mut Vec<bool>,
+) -> Result<Arc<Value<C>>, EvalError>
+where
+    C: ArkConfig,
+    R: RngCore,
+{
+    eval_op_with_loop_params(op, &Operands::owned(op, env), rng, &[], check_sink)
 }
 
 /// Internal evaluator threading a de Bruijn loop-parameter stack for
@@ -533,7 +556,7 @@ where
 /// `Op::LoopParam(level, _)`; the public `eval_op` calls this with `&[]`.
 pub fn eval_op_with_loop_params<C, R>(
     op: &GOp<C>,
-    env: &HashMap<Ref, Arc<Value<C>>>,
+    env: &Operands<C>,
     rng: &mut R,
     loop_params: &[Arc<Value<C>>],
     check_sink: &mut Vec<bool>,
@@ -544,7 +567,7 @@ where
 {
     match op {
         Op::Value(v) => Ok(Arc::new(v.clone())),
-        Op::Ref(r, _) => env.get(r).cloned().ok_or(EvalError::UndefinedRef(*r)),
+        Op::Ref(r, _) => env.get(*r).ok_or(EvalError::UndefinedRef(*r)),
         Op::Bin(binop, a, b, _) => {
             let av = eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?;
             let bv = eval_op_with_loop_params(b, env, rng, loop_params, check_sink)?;
@@ -772,16 +795,31 @@ where
                 .value_coef_typed(&a.typ()),
         )),
         Op::Poly(a) => Ok(Arc::new(
-            (*eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?).value_poly(),
+            Arc::unwrap_or_clone(eval_op_with_loop_params(
+                a,
+                env,
+                rng,
+                loop_params,
+                check_sink,
+            )?)
+            .value_poly_owned(),
         )),
         Op::Interpolate(points, evals) => {
             let points_val = eval_op_with_loop_params(points, env, rng, loop_params, check_sink)?;
             let evals_val = eval_op_with_loop_params(evals, env, rng, loop_params, check_sink)?;
-            Ok(Arc::new((*evals_val).value_interpolate(Some(&*points_val))))
+            Ok(Arc::new(
+                Arc::unwrap_or_clone(evals_val).value_interpolate_owned(Some(&*points_val)),
+            ))
         }
         Op::Ifft(a) => Ok(Arc::new(
-            (*eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?)
-                .value_interpolate(None),
+            Arc::unwrap_or_clone(eval_op_with_loop_params(
+                a,
+                env,
+                rng,
+                loop_params,
+                check_sink,
+            )?)
+            .value_interpolate_owned(None),
         )),
         Op::Fft(a) => Ok(Arc::new(
             (*eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?).value_fft(),
@@ -841,7 +879,7 @@ where
 /// the per-task rng is a throwaway; rayon parallelizes across elements.
 fn eval_loop_body_each<C: ArkConfig>(
     body: &HOp<C>,
-    env: &HashMap<Ref, Arc<Value<C>>>,
+    env: &Operands<C>,
     elems: Vec<Value<C>>,
     loop_params: &[Arc<Value<C>>],
 ) -> Result<Vec<Value<C>>, EvalError> {
