@@ -104,7 +104,7 @@ fn coef_eval_test() {
 
 #[test]
 fn interpolate_with_points_uses_general_interpolation() {
-    let coeffs = Value::<TestConfig>::VecScalar(vec![
+    let coeffs = Value::<TestConfig>::vec_scalar(vec![
         Fr::from(3u64),
         Fr::from(2u64),
         Fr::from(5u64),
@@ -117,11 +117,11 @@ fn interpolate_with_points_uses_general_interpolation() {
         Fr::from(4u64),
         Fr::from(8u64),
     ];
-    let points = Value::<TestConfig>::VecScalar(point_scalars.to_vec());
+    let points = Value::<TestConfig>::vec_scalar(point_scalars.to_vec());
     // Evaluate the univariate poly at each point individually (post-ban form:
     // batched eval(Uni, vector) is no longer supported; univariate evaluation
     // is single-scalar via the (Poly, Scalar) arm).
-    let evals = Value::<TestConfig>::VecScalar(
+    let evals = Value::<TestConfig>::vec_scalar(
         point_scalars
             .iter()
             .map(
@@ -538,8 +538,8 @@ fn test_mul_assign() {
 
 #[test]
 fn test_add_vectors() {
-    let v1 = Value::<TestConfig>::VecScalar(vec![Fr::from(1u32), Fr::from(2u32)]);
-    let v2 = Value::<TestConfig>::VecScalar(vec![Fr::from(10u32), Fr::from(20u32)]);
+    let v1 = Value::<TestConfig>::vec_scalar(vec![Fr::from(1u32), Fr::from(2u32)]);
+    let v2 = Value::<TestConfig>::vec_scalar(vec![Fr::from(10u32), Fr::from(20u32)]);
     let result = v1 + v2;
     match &result {
         Value::VecScalar(v) => {
@@ -553,8 +553,8 @@ fn test_add_vectors() {
 
 #[test]
 fn test_value_concat() {
-    let v1 = Value::<TestConfig>::VecScalar(vec![Fr::from(1u32)]);
-    let v2 = Value::<TestConfig>::VecScalar(vec![Fr::from(2u32)]);
+    let v1 = Value::<TestConfig>::vec_scalar(vec![Fr::from(1u32)]);
+    let v2 = Value::<TestConfig>::vec_scalar(vec![Fr::from(2u32)]);
     let result = v1.value_concat(v2);
     match &result {
         Value::VecScalar(v) => {
@@ -845,8 +845,8 @@ fn test_value_dot() {
 
 #[test]
 fn test_value_concat_extended() {
-    let a = Value::<TestConfig>::VecScalar(vec![Fr::from(1u64), Fr::from(2u64)]);
-    let b = Value::<TestConfig>::VecScalar(vec![Fr::from(3u64), Fr::from(4u64)]);
+    let a = Value::<TestConfig>::vec_scalar(vec![Fr::from(1u64), Fr::from(2u64)]);
+    let b = Value::<TestConfig>::vec_scalar(vec![Fr::from(3u64), Fr::from(4u64)]);
     let c = a.value_concat(b);
     match c {
         Value::VecScalar(v) => assert_eq!(v.len(), 4),
@@ -973,7 +973,7 @@ fn test_value_eval() {
 #[test]
 fn test_ram_operation() {
     let arr =
-        Value::<TestConfig>::VecScalar(vec![Fr::from(10u64), Fr::from(20u64), Fr::from(30u64)]);
+        Value::<TestConfig>::vec_scalar(vec![Fr::from(10u64), Fr::from(20u64), Fr::from(30u64)]);
     let idx = Value::<TestConfig>::Index(1);
     let result = arr.ram(idx);
     assert_deq!(result, Value::<TestConfig>::Scalar(Fr::from(20u64)));
@@ -1418,13 +1418,13 @@ fn test_value_concat_pbt() {
         let value_elements = |val: Value<TestConfig>| -> Vec<Value<TestConfig>> {
             match val {
                 Value::Scalar(s) => vec![Value::Scalar(s)],
-                Value::VecScalar(v) => v.into_iter().map(Value::Scalar).collect(),
+                Value::VecScalar(v) => v.into_vec().into_iter().map(Value::Scalar).collect(),
                 Value::G1(g) => vec![Value::G1(g)],
-                Value::VecG1(v) => v.into_iter().map(Value::G1).collect(),
+                Value::VecG1(v) => v.into_vec().into_iter().map(Value::G1).collect(),
                 Value::G2(g) => vec![Value::G2(g)],
-                Value::VecG2(v) => v.into_iter().map(Value::G2).collect(),
+                Value::VecG2(v) => v.into_vec().into_iter().map(Value::G2).collect(),
                 Value::GT(g) => vec![Value::GT(g)],
-                Value::VecGT(v) => v.into_iter().map(Value::GT).collect(),
+                Value::VecGT(v) => v.into_vec().into_iter().map(Value::GT).collect(),
                 Value::Vec(v) => v,
                 _ => panic!("Unexpected value type in concat test: {:?}", val),
             }
