@@ -121,7 +121,9 @@ pub fn reduce<F: PrimeField>(
     order: &MonoOrder,
 ) -> Polynomial<F> {
     use crate::frontend::Monomial;
-    use std::collections::HashMap;
+    use std::cmp::Reverse;
+    use std::collections::hash_map::Entry;
+    use std::collections::{BinaryHeap, HashMap};
 
     // Collect all Vars from the input polynomials.
     let all_vars: Vec<Var> = {
@@ -169,19 +171,24 @@ pub fn reduce<F: PrimeField>(
         })
         .collect();
 
-    // Work set: HashMap for O(1) merge during reduction steps.
+    // Work set: HashMap for O(1) merge during reduction steps, and a heap of
+    // its monomials by sort key, so that the leading term, the smallest key,
+    // is found without scanning the work set. A step only adds terms below
+    // the leading term it cancels, so a monomial never returns to the work
+    // set once it has left the heap; entries for monomials that have since
+    // cancelled are skipped.
     let mut work: HashMap<Monomial, F> =
         p.terms.into_iter().filter(|(_, c)| !c.is_zero()).collect();
+    let mut heap: BinaryHeap<Reverse<(Vec<i64>, Monomial)>> = work
+        .keys()
+        .map(|m| Reverse((sort_key(m), m.clone())))
+        .collect();
     let mut remainder: Vec<(Monomial, F)> = Vec::new();
 
-    while !work.is_empty() {
-        // Find the leading term: the monomial with the smallest sort key.
-        let (lt_mono, lt_coeff) = work
-            .iter()
-            .min_by_key(|(m, _)| sort_key(m))
-            .expect("work is non-empty");
-        let lt_mono = lt_mono.clone();
-        let lt_coeff = *lt_coeff;
+    while let Some(Reverse((_, lt_mono))) = heap.pop() {
+        let Some(&lt_coeff) = work.get(&lt_mono) else {
+            continue;
+        };
 
         let found = reducers
             .iter()
@@ -191,14 +198,23 @@ pub fn reduce<F: PrimeField>(
             let multiplier_term = (lt_mono.clone() / g_lt.clone()).expect("divisibility checked");
             let multiplier_scalar = lt_coeff * (*g_lc).inverse().expect("leading coeff nonzero");
             // Subtract multiplier_scalar * multiplier_term * g from work.
-            // The reducer's LT term cancels our LT to 0 (removed by retain).
+            // The reducer's LT term cancels our LT to 0.
             for (g_term, g_coeff) in g_terms {
                 let new_term = g_term.clone() * multiplier_term.clone();
                 let new_coeff = *g_coeff * multiplier_scalar;
-                let entry = work.entry(new_term).or_insert(F::zero());
-                *entry -= new_coeff;
+                match work.entry(new_term) {
+                    Entry::Occupied(mut entry) => {
+                        *entry.get_mut() -= new_coeff;
+                        if entry.get().is_zero() {
+                            entry.remove();
+                        }
+                    }
+                    Entry::Vacant(entry) => {
+                        heap.push(Reverse((sort_key(entry.key()), entry.key().clone())));
+                        entry.insert(-new_coeff);
+                    }
+                }
             }
-            work.retain(|_, c| !c.is_zero());
         } else {
             // No division: move LT to remainder.
             work.remove(&lt_mono);
