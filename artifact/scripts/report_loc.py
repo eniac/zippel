@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Report non-comment source line counts (NCLOC) for the 30+ protocols the
 paper implements (its Figure 6, the "List of proof systems implemented
-in Zippel" table), plus the HyperPlonk SNARK benchmark variant.
+in Zippel" table).
 This is broader than run_benchmark.sh's LoC columns,
 which only cover the systems that also have a native baseline to compare
 against (the paper's Figure 7).

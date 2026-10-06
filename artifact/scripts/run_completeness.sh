@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Experiment 3: completeness analysis across all the paper's protocols, plus
-# okamoto_elgamal and pedersen_eq (Singular backend, 20-minute per-run timeout,
+# Experiment 3: completeness analysis across all the paper's protocols 
+# (Singular backend, 20-minute per-run timeout,
 # 16GiB memory limit, by default -- analysis_all's own defaults).
 #
 # Produces a supplementary table not present in the submitted paper (see
