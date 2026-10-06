@@ -1524,3 +1524,26 @@ fn ram_ref_slice_matches_the_gathered_copy() {
         );
     }
 }
+
+// Slicing a prepared G2 vector is a view of both its points and their
+// preparations, equal (and serialized identically) to the gathered copy.
+#[test]
+fn ram_ref_slice_of_prepared_g2_matches_the_copy() {
+    use crate::values::{PreparedG2Vec, value_to_bytes};
+    use ark_std::UniformRand;
+    type G2 = <TestConfig as ArkConfig>::G2;
+    let mut rng = test_rng();
+    let points: Vec<_> = (0..6).map(|_| G2::rand(&mut rng).into_affine()).collect();
+    let v = Value::<TestConfig>::VecG2Prepared(PreparedG2Vec::new(points.clone()));
+    let view = v.ram_ref(&Value::VecIndex((1..4).collect()));
+    let copy = Value::<TestConfig>::VecG2Prepared(PreparedG2Vec::new(points[1..4].to_vec()));
+    assert_eq!(view, copy);
+    assert_eq!(
+        value_to_bytes(&view).unwrap(),
+        value_to_bytes(&copy).unwrap()
+    );
+    let Value::VecG2Prepared(p) = &view else {
+        unreachable!()
+    };
+    assert_eq!(p.prepared.len(), 3);
+}

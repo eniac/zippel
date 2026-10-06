@@ -95,9 +95,9 @@ pub enum Value<C: ArkConfig> {
 #[derive(Debug, Clone)]
 pub struct PreparedG2Vec<C: ArkConfig> {
     /// The points.
-    pub affine: Vec<C::G2Affine>,
+    pub affine: Shared<C::G2Affine>,
     /// `affine[i]` prepared for the Miller loop.
-    pub prepared: std::sync::Arc<Vec<<C::P as Pairing>::G2Prepared>>,
+    pub prepared: Shared<<C::P as Pairing>::G2Prepared>,
 }
 
 impl<C: ArkConfig> PreparedG2Vec<C> {
@@ -108,8 +108,8 @@ impl<C: ArkConfig> PreparedG2Vec<C> {
             .map(|g| <C::P as Pairing>::G2Prepared::from(g.into_group()))
             .collect();
         Self {
-            affine,
-            prepared: std::sync::Arc::new(prepared),
+            affine: affine.into(),
+            prepared: Vec::into(prepared),
         }
     }
 }
@@ -480,7 +480,7 @@ impl<C: ArkConfig> Value<C> {
     pub fn value_add(&self, other: &mut Self) {
         // A prepared G2 vector takes part in arithmetic through its points.
         if let Value::VecG2Prepared(v) = self {
-            return Value::vec_g2_affine(v.affine.clone()).value_add(other);
+            return Value::VecG2Affine(v.affine.clone()).value_add(other);
         }
         if let Value::VecG2Prepared(_) = other {
             other.into_vec_g2_affine_mut();
@@ -596,7 +596,7 @@ impl<C: ArkConfig> Value<C> {
     pub fn value_sub(&self, other: &mut Self) {
         // A prepared G2 vector takes part in arithmetic through its points.
         if let Value::VecG2Prepared(v) = self {
-            return Value::vec_g2_affine(v.affine.clone()).value_sub(other);
+            return Value::VecG2Affine(v.affine.clone()).value_sub(other);
         }
         if let Value::VecG2Prepared(_) = other {
             other.into_vec_g2_affine_mut();
@@ -785,7 +785,7 @@ impl<C: ArkConfig> Value<C> {
     pub fn value_mul(&self, other: &mut Self) {
         // A prepared G2 vector takes part in arithmetic through its points.
         if let Value::VecG2Prepared(v) = self {
-            return Value::vec_g2_affine(v.affine.clone()).value_mul(other);
+            return Value::VecG2Affine(v.affine.clone()).value_mul(other);
         }
         if let Value::VecG2Prepared(_) = other {
             other.into_vec_g2_affine_mut();
@@ -1277,7 +1277,7 @@ impl<C: ArkConfig> Value<C> {
     pub fn value_div(&self, other: &mut Self) {
         // A prepared G2 vector takes part in arithmetic through its points.
         if let Value::VecG2Prepared(v) = self {
-            return Value::vec_g2_affine(v.affine.clone()).value_div(other);
+            return Value::VecG2Affine(v.affine.clone()).value_div(other);
         }
         if let Value::VecG2Prepared(_) = other {
             other.into_vec_g2_affine_mut();
@@ -1729,7 +1729,7 @@ impl<C: ArkConfig> Value<C> {
         if let Value::VecG2Prepared(a) = self
             && !is_g1_vec(other)
         {
-            return Value::vec_g2_affine(a.affine.clone()).value_dot(other);
+            return Value::VecG2Affine(a.affine.clone()).value_dot(other);
         }
         if matches!(other, Value::VecG2Prepared(_)) && !is_g1_vec(self) {
             other.into_vec_g2_affine_mut();
@@ -2280,10 +2280,8 @@ impl<C: ArkConfig> Value<C> {
             (Value::VecG2Affine(a), Value::Index(b)) => Value::G2Affine(a[*b]),
             // Slicing keeps the preparation of the selected points.
             (Value::VecG2Prepared(a), Value::VecIndex(b)) => Value::VecG2Prepared(PreparedG2Vec {
-                affine: b.iter().map(|i| a.affine[*i]).collect(),
-                prepared: std::sync::Arc::new(
-                    b.par_iter().map(|i| a.prepared[*i].clone()).collect(),
-                ),
+                affine: a.affine.select(b),
+                prepared: a.prepared.select(b),
             }),
             (Value::VecG2Prepared(a), Value::Index(b)) => Value::G2Affine(a.affine[*b]),
             (Value::Vec(a), Value::VecIndex(b)) => {
@@ -2409,24 +2407,28 @@ impl<C: ArkConfig> Value<C> {
     /// rule), or if `r` cannot be re-shaped to match `self`.
     pub fn concat(self, r: &mut Self) {
         if let Value::VecG2Prepared(b) = &r {
-            let left: Vec<C::G2Affine> = match &self {
-                Value::G2(a) => vec![(*a).into()],
-                Value::G2Affine(a) => vec![*a],
-                Value::VecG2(a) => C::G2::normalize_batch(a),
-                Value::VecG2Affine(a) => a.to_vec(),
-                Value::VecG2Prepared(a) => a.affine.clone(),
+            // A prepared left side keeps its preparation; any other is
+            // prepared here.
+            let left = match self {
+                Value::VecG2Prepared(a) => a,
+                Value::G2(a) => PreparedG2Vec::new(vec![a.into()]),
+                Value::G2Affine(a) => PreparedG2Vec::new(vec![a]),
+                Value::VecG2(a) => PreparedG2Vec::new(C::G2::normalize_batch(&a)),
+                Value::VecG2Affine(a) => PreparedG2Vec::new(a.into_vec()),
                 _ => panic!("Cannot concat {} with a G2 vector", self),
             };
-            let mut left = PreparedG2Vec::<C>::new(left);
-            left.affine.extend_from_slice(&b.affine);
-            let mut prepared = std::sync::Arc::unwrap_or_clone(left.prepared);
-            prepared.extend(b.prepared.iter().cloned());
-            left.prepared = std::sync::Arc::new(prepared);
-            *r = Value::VecG2Prepared(left);
+            let mut affine = left.affine.into_vec();
+            affine.extend_from_slice(&b.affine);
+            let mut prepared = left.prepared.into_vec();
+            prepared.extend_from_slice(&b.prepared);
+            *r = Value::VecG2Prepared(PreparedG2Vec {
+                affine: affine.into(),
+                prepared: prepared.into(),
+            });
             return;
         }
         if let Value::VecG2Prepared(a) = self {
-            return Value::vec_g2_affine(a.affine).concat(r);
+            return Value::VecG2Affine(a.affine).concat(r);
         }
         match &self {
             Value::VecScalar(a) => {
@@ -3025,7 +3027,7 @@ impl<C: ArkConfig> Value<C> {
                 self.into_vec_g2_affine_mut()
             }
             Value::VecG2Prepared(v) => {
-                *self = Value::vec_g2_affine(std::mem::take(&mut v.affine));
+                *self = Value::VecG2Affine(v.affine.clone());
                 self.into_vec_g2_affine_mut()
             }
             _ => panic!("Expected mut vec group2, found {}", self),
@@ -4162,7 +4164,7 @@ impl<C: ArkConfig> fmt::Display for Value<C> {
                 }
                 write!(f, "]")
             }
-            Value::VecG2Prepared(v) => Value::<C>::vec_g2_affine(v.affine.clone()).fmt(f),
+            Value::VecG2Prepared(v) => Value::<C>::VecG2Affine(v.affine.clone()).fmt(f),
             Value::VecGT(v) => {
                 write!(f, "[")?;
                 for i in v {
