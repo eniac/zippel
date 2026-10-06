@@ -14,3 +14,4 @@ artifacts/
 bench_results*.csv
 results_*.csv
 artifact/output/
+dhat/

@@ -227,6 +227,36 @@ thread the peak is essentially deterministic; with more threads it varies
 with how the scheduler interleaves allocations. Stack memory is not
 counted.
 
+## Heap profiling
+
+The peak columns say how much heap a run used; to see *what* used it, build
+with the `dhat` feature. Every measurement's first counted run is then
+profiled by [dhat](https://docs.rs/dhat), and the profile is written to
+`$DHAT_DIR` (default `dhat/`) as `<n>-<file>_<line>.json`, where
+`<file>_<line>` is the `sample`/`sample_with` call site that took it (e.g.
+`hyperplonk_203` is HyperPlonk's zippel prover). Profile one thread, so the
+peak is deterministic, and keep line tables so frames carry `file:line`:
+
+```sh
+CARGO_PROFILE_RELEASE_DEBUG=line-tables-only \
+  cargo build --release -p benchmarks --bin bench_all --features dhat
+RAYON_NUM_THREADS=1 BENCH_SAMPLES=1 DHAT_FRAMES=64 \
+  target/release/bench_all --systems hyperplonk --sizes 16 --threads-label 1 --out /tmp/x.csv
+benchmarks/dhat_top.py dhat/00-hyperplonk_203.json        # what is live at the peak
+benchmarks/dhat_top.py -n 30 -d 3 dhat/00-*.json          # more sites, more context
+```
+
+`dhat_top.py` groups the bytes live at the peak (dhat's *t-gmax*) by the
+innermost frame in our own code, so an arkworks buffer allocated from
+`backend/src/values.rs` is charged to that line. The JSON also opens in
+dhat's viewer (`dh_view.html`) for full stacks. `DHAT_FRAMES` (default 32)
+caps backtrace depth; rayon stacks are deep, so raise it if many sites come
+out unattributed.
+
+dhat's own bookkeeping goes through the counting allocator, so the profiled
+sample's `*_peak_mib` is slightly high and its wall-time much higher: don't
+take timings from a `dhat` build.
+
 ## Output caching
 
 Setup-phase artifacts (SRS, universal params, large preprocessed data) are
