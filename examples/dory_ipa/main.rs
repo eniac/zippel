@@ -4,7 +4,9 @@ use share::Ctx;
 use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
-pub fn run(_args: &[String]) {
+use crate::common;
+
+pub fn run(_args: &[String], opts: &common::RunOptions) {
     const LOG_N: usize = 8;
     env_logger::init();
     println!("=== Dory Evaluation Proof (ArkBls12_381) ===");
@@ -45,6 +47,9 @@ pub fn run(_args: &[String]) {
         std::process::exit(1);
     }
 
+    if !opts.analyses {
+        return;
+    }
     let analysis_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         println!("\n--- Static Analysis ---");
         let analysis_args = ZippelArgs::new(PathBuf::from("examples/dory_ipa/dory_ipa.zippel"));

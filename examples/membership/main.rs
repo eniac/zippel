@@ -6,7 +6,9 @@ use share::Ctx;
 use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
-pub fn run(_args: &[String]) {
+use crate::common;
+
+pub fn run(_args: &[String], opts: &common::RunOptions) {
     println!("=== Membership ===");
     let n_size = 2;
     let m_size = 2;
@@ -53,6 +55,9 @@ pub fn run(_args: &[String]) {
         std::process::exit(1);
     }
 
+    if !opts.analyses {
+        return;
+    }
     println!("\n--- Static Analysis ---");
     let completeness_start = Instant::now();
     match handler.analyze_completeness() {

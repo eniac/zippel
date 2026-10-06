@@ -7,6 +7,7 @@
 //!
 //! ```text
 //! cargo run --example zippel -- <name> [example args...]
+//! cargo run --example zippel -- <name> --no-analysis   # prover and verifier only
 //! cargo run --example zippel                 # list available examples
 //! ```
 
@@ -92,7 +93,7 @@ mod zerocheck;
 #[path = "zeromorph_kzg/main.rs"]
 mod zeromorph_kzg;
 
-type Runner = fn(&[String]);
+type Runner = fn(&[String], &common::RunOptions);
 
 const EXAMPLES: &[(&str, Runner)] = &[
     ("bccgp", bccgp::run),
@@ -136,8 +137,11 @@ const EXAMPLES: &[(&str, Runner)] = &[
     ("zeromorph_kzg", zeromorph_kzg::run),
 ];
 
+/// Runs only the prover and verifier, skipping the static analyses.
+const NO_ANALYSIS: &str = "--no-analysis";
+
 fn usage() {
-    eprintln!("usage: cargo run --example zippel -- <name> [example args...]");
+    eprintln!("usage: cargo run --example zippel -- <name> [--no-analysis] [example args...]");
     eprintln!("available examples:");
     for (name, _) in EXAMPLES {
         eprintln!("  {name}");
@@ -145,7 +149,9 @@ fn usage() {
 }
 
 fn main() {
-    let argv: Vec<String> = std::env::args().collect();
+    let mut argv: Vec<String> = std::env::args().collect();
+    let no_analysis = argv.iter().any(|a| a == NO_ANALYSIS);
+    argv.retain(|a| a != NO_ANALYSIS);
     let Some(name) = argv.get(1) else {
         usage();
         std::process::exit(2);
@@ -155,5 +161,11 @@ fn main() {
         usage();
         std::process::exit(2);
     };
-    run(&argv[2..]);
+    if no_analysis {
+        println!("(static analyses skipped: {NO_ANALYSIS})");
+    }
+    let opts = common::RunOptions {
+        analyses: !no_analysis,
+    };
+    run(&argv[2..], &opts);
 }

@@ -13,7 +13,7 @@ use crate::common;
 
 const NUM_VARS: usize = 10;
 
-pub fn run(_args: &[String]) {
+pub fn run(_args: &[String], opts: &common::RunOptions) {
     let zippel_file =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/mle_sumcheck/mle_sumcheck.zippel");
     let num_vars = NUM_VARS;
@@ -30,6 +30,9 @@ pub fn run(_args: &[String]) {
     let inputs = prover_create_inputs(num_vars);
     common::run_prover_and_verify(&mut handler, &inputs);
 
+    if !opts.analyses {
+        return;
+    }
     println!("\n--- Static Analysis ---");
     let analysis_args = ZippelArgs::new(zippel_file);
     let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);

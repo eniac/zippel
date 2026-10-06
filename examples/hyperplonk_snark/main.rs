@@ -15,7 +15,7 @@ type G2 = <ArkBls12_381 as ArkConfig>::G2;
 /// Number of variables: 2^S gates.
 const S: usize = 2;
 
-pub fn run(_args: &[String]) {
+pub fn run(_args: &[String], opts: &common::RunOptions) {
     println!(
         "=== HyperPlonk SNARK (ArkBls12_381, S={S}, {} gates) ===",
         1 << S
@@ -31,6 +31,9 @@ pub fn run(_args: &[String]) {
     let inputs = prover_create_inputs();
     common::run_prover_and_verify(&mut handler, &inputs);
 
+    if !opts.analyses {
+        return;
+    }
     println!("\n--- Static Analysis ---");
     common::time_analysis!("Completeness", handler.analyze_completeness());
     common::time_analysis!("ZK", handler.analyze_knowledge());

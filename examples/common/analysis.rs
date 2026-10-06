@@ -4,6 +4,14 @@ use share::Ctx;
 use std::time::Instant;
 use zippel::{ZippelHandler, check_verification, proof_size_bytes};
 
+/// How the harness runs an example, from its own flags; the example's own
+/// arguments are passed separately.
+pub struct RunOptions {
+    /// Run the static analyses after the prover and verifier. They come
+    /// last in each example's `run`, guarded by `if !opts.analyses`.
+    pub analyses: bool,
+}
+
 /// Run a named analysis pass, print the result immediately, and report timing.
 ///
 /// Usage:

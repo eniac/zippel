@@ -48,6 +48,7 @@ cargo zrun schnorr           # run the Schnorr protocol
 cargo zrun kzg               # run the KZG commitment scheme
 cargo zrun                   # list every available example
 cargo zrunr hyperplonk_piop  # run in release mode
+cargo zrunr hyperplonk_piop --no-analysis  # prover and verifier only
 ```
 
 See [`examples/`](examples) for 30+ more protocols implemented in

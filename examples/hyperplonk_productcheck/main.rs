@@ -12,11 +12,13 @@ use share::Ctx;
 use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
+use crate::common;
+
 // ProductCheck dimension. Edit S to scale; num_leaves = 2^S follows.
 const S: usize = 3;
 const NUM_LEAVES: usize = 1 << S; // = 2^S
 
-pub fn run(_args: &[String]) {
+pub fn run(_args: &[String], opts: &common::RunOptions) {
     let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel");
 
@@ -53,6 +55,9 @@ pub fn run(_args: &[String]) {
         std::process::exit(1);
     }
 
+    if !opts.analyses {
+        return;
+    }
     let analysis_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         println!("\n--- Static Analysis ---");
 

@@ -8,7 +8,7 @@ use zippel::*;
 
 use crate::common;
 
-pub fn run(_args: &[String]) {
+pub fn run(_args: &[String], opts: &common::RunOptions) {
     println!("=== KZG (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
@@ -22,6 +22,9 @@ pub fn run(_args: &[String]) {
     // Analyze completeness/ZK at the same (small) N the prover demonstrates.
     // kzg's `where` clause contains `for i in 0..N-1`, which is empty (and
     // ill-typed) at the auto-minimized N=1, so analyze at the compiled N=2.
+    if !opts.analyses {
+        return;
+    }
     println!("\n--- Static Analysis ---");
     common::time_analysis!("Completeness", handler.analyze_completeness());
     common::time_analysis!("ZK", handler.analyze_knowledge());
