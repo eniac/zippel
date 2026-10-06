@@ -86,23 +86,6 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         vars
     }
 
-    /// Filter out variables that satisfy the predicate
-    pub fn eliminate_var<F: Fn(&Var) -> bool>(&mut self, f: &F) {
-        self.generating_set
-            .retain(|p| p.vars().iter().all(|v| !f(v)));
-        self.pl.retain(|p, _| !f(p));
-    }
-
-    /// Drop every generator all of whose monomials satisfy the predicate, then
-    /// prune `pl` down to the definitions still reachable from the surviving
-    /// generators.
-    pub fn eliminate_monomial<F: Fn(&crate::frontend::Monomial) -> bool>(&mut self, f: &F) {
-        self.generating_set
-            .retain(|p| p.terms.keys().any(|t| !f(t)));
-        let basis_vars: Set<Var> = self.generating_set.iter().flat_map(|p| p.vars()).collect();
-        self.pl.retain(|p, _| basis_vars.contains(p));
-    }
-
     /// Inline all `pl` definitions into the basis polynomials and the checks.
     ///
     /// Topologically sorts `pl` entries, substitutes dependencies into
