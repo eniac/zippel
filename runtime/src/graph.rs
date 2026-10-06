@@ -8,10 +8,11 @@ use rand::rngs::ThreadRng;
 use share::Ctx;
 use spongefish::{DuplexSpongeInterface, ProverState};
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::error::RuntimeError;
+use crate::inbox::Inbox;
 use crate::queue::{SyncMessage, SyncSender, sync_channel};
 
 /// Size threshold (in bytes of serialized form) above which an instance
@@ -106,41 +107,42 @@ pub enum RunResult<C: ArkConfig> {
 
 /// Runtime information attached to each Op/Transcr node in the DAG.
 ///
+/// A node never stores its own value: when it finishes, it delivers the
+/// value into the [`Inbox`] of each successor that reads it, and the value
+/// is freed once the last of them has run.
+///
 /// `remaining_deps` uses atomic operations for lock-free counter-based
 /// readiness tracking: when a node's dependencies finish, they decrement
 /// its counter; when the counter reaches zero, the node is ready to execute.
 pub struct RuntimeInformation<C: ArkConfig> {
-    /// Computed value of this node, set after execution.
-    ///
-    /// Wrapped in `Arc` so that successors can cheaply share access without
-    /// cloning the inner `Value` (which may be a 500 MB matrix vector).
-    ///
-    /// Stored in a `OnceLock` rather than `Mutex<Option<…>>` because every
-    /// node is written exactly once (when its handler completes) and read
-    /// many times (by each successor's `get_value`). `OnceLock::get` is a
-    /// lock-free atomic load — much cheaper than `Mutex::lock` on the hot
-    /// path. Both have identical happy-path semantics for our use.
-    return_value: OnceLock<Arc<Value<C>>>,
+    /// Operands delivered by the nodes this one reads; taken when it runs.
+    inbox: Inbox<Value<C>>,
+    /// Set when the node runs, to catch a scheduler running it twice.
+    executed: AtomicBool,
     /// Number of unfinished dependencies. Atomically decremented;
     /// when it reaches zero, this node is ready to execute.
     pub remaining_deps: AtomicUsize,
 }
 
-impl<C: ArkConfig> Default for RuntimeInformation<C> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl<C: ArkConfig> RuntimeInformation<C> {
-    /// Create runtime state for a not-yet-executed node: no value computed
-    /// and a zero dependency counter that `run_graph` overwrites with the
-    /// node's unique-predecessor count during initialization.
-    pub fn new() -> Self {
+    /// Runtime state for a not-yet-executed node computing `op`: an empty
+    /// inbox for the nodes `op` reads, and a zero dependency counter that
+    /// `run_graph` sets to the node's unique-predecessor count.
+    pub fn new(op: &GOp<C>) -> Self {
         RuntimeInformation {
-            return_value: OnceLock::new(),
+            inbox: Inbox::new(op.references()),
+            executed: AtomicBool::new(false),
             remaining_deps: AtomicUsize::new(0),
         }
+    }
+
+    /// Records that the predecessor `from` has finished, taking its value if
+    /// it produced one, and returns whether this node is now ready to run.
+    fn receive(&self, from: NodeIndex, value: Option<&Arc<Value<C>>>) -> bool {
+        if let Some(value) = value {
+            self.inbox.deliver(graph::Ref(from), value);
+        }
+        self.remaining_deps.fetch_sub(1, Ordering::SeqCst) == 1
     }
 }
 
@@ -148,7 +150,7 @@ impl<C: ArkConfig> RuntimeInformation<C> {
 /// used to execute it.
 ///
 /// This is the final stage of the pipeline: a scheduled DAG wrapped with
-/// enough interior mutability (`OnceLock` values, atomic dependency counters,
+/// enough interior mutability (operand inboxes, atomic dependency counters,
 /// a mutex-guarded check map) that `rayon` workers and the sponge-owning main
 /// thread can drive it concurrently.
 pub struct MutexGraph<C: ArkConfig> {
@@ -180,99 +182,71 @@ fn is_sync_node<C: ArkConfig>(g: &MutexGraph<C>, node_idx: NodeIndex) -> bool {
     }
 }
 
-/// Update successors of a finished node. For each unique successor,
-/// atomically decrement its `remaining_deps`. If a successor reaches
-/// zero, submit it to the pool manager (non-sync) or return (sync).
-fn update_successors<C: ArkConfig>(
-    g: &Arc<MutexGraph<C>>,
-    inputs: &Arc<HashMap<Vid, Arc<Value<C>>>>,
-    tx: SyncSender,
-    node_idx: NodeIndex,
-    error_slot: &ErrorSlot,
-) {
-    // Deduplicate successors: remaining_deps is initialized from unique
-    // predecessors, so we must only decrement once per (predecessor, successor)
-    // pair regardless of how many parallel edges exist between them.
-    let successors: HashSet<NodeIndex> = g
-        .mutex_graph
-        .neighbors_directed(node_idx, Direction::Outgoing)
-        .collect();
+/// One execution of a graph: what every scheduled task needs. Cheap to
+/// clone, since every field is shared.
+#[derive(Clone)]
+struct Run<C: ArkConfig> {
+    graph: Arc<MutexGraph<C>>,
+    inputs: Arc<HashMap<Vid, Arc<Value<C>>>>,
+    errors: ErrorSlot,
+}
 
-    for dependent in successors {
-        match &g.mutex_graph[dependent] {
-            Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
-                let prev = annotation.remaining_deps.fetch_sub(1, Ordering::SeqCst);
-                debug!(
-                    "[update_successors] node {:?} -> dependent {:?}, prev={}, is_sync={}",
-                    node_idx,
-                    dependent,
-                    prev,
-                    is_sync_node(g, dependent)
-                );
-                if prev == 1 {
-                    if is_sync_node(g, dependent) {
-                        debug!(
-                            "[update_successors] node {:?} -> sync {:?} ready, pushing",
-                            node_idx, dependent
-                        );
-                        tx.push(dependent);
-                        continue;
+impl<C: ArkConfig> Run<C> {
+    /// Hands the finished `node`'s `value` (if it has one) to each successor
+    /// and schedules the successors that are now ready. An `Arg` successor
+    /// is passed through: it finishes at once with its input value.
+    fn release_successors(&self, node: NodeIndex, value: Option<&Arc<Value<C>>>, tx: &SyncSender) {
+        // A successor joined by parallel edges still counts `node` once.
+        let successors: HashSet<NodeIndex> = self
+            .graph
+            .mutex_graph
+            .neighbors_directed(node, Direction::Outgoing)
+            .collect();
+        for successor in successors {
+            match &self.graph.mutex_graph[successor] {
+                Node::Op(_, info) | Node::Transcr(_, info) => {
+                    if info.receive(node, value) {
+                        self.schedule(successor, tx);
                     }
-
-                    let g_clone = Arc::clone(g);
-                    let inputs_clone = Arc::clone(inputs);
-                    let dep_idx = dependent;
-                    let tx = tx.clone();
-                    let error_slot = Arc::clone(error_slot);
-                    debug!(
-                        "[update_successors] node {:?} -> non-sync {:?} ready, spawning",
-                        node_idx, dependent
-                    );
-                    rayon::spawn(move || {
-                        // Bail out early if another worker has already
-                        // recorded a failure; dropping `tx` here lets the
-                        // sync channel close so the main loop can exit.
-                        if error_slot.lock().unwrap().is_some() {
-                            return;
-                        }
-                        match g_clone.handle_node(dep_idx, &inputs_clone) {
-                            Ok(()) => {
-                                update_successors(&g_clone, &inputs_clone, tx, dep_idx, &error_slot)
-                            }
-                            Err(e) => record_error(&error_slot, e),
-                        }
-                    });
                 }
-            }
-            // Inp/Rel markers and Arg nodes have no compute and no
-            // remaining_deps counter. They appear as successors of one
-            // another (Inp → Arg) and as successors of compute paths is
-            // never expected. Pass through Args by recursively notifying
-            // *their* successors so downstream Ops can decrement properly.
-            Node::Inp(_) | Node::Rel(_) => {
-                unreachable!("Inp/Rel marker {:?} on sync channel", node_idx)
-            }
-            Node::Arg(_, _, _, _, _) => {
-                update_successors(g, inputs, tx.clone(), dependent, error_slot);
+                Node::Arg(vid, _, _, _, _) => match self.inputs.get(vid) {
+                    Some(input) => self.release_successors(successor, Some(input), tx),
+                    None => record_error(
+                        &self.errors,
+                        RuntimeError::missing_arg(vid, self.inputs.keys()),
+                    ),
+                },
+                Node::Inp(_) | Node::Rel(_) => {
+                    unreachable!("Inp/Rel marker {:?} follows node {:?}", successor, node)
+                }
             }
         }
     }
-}
 
-/// Global counter of detected double-execute attempts. Incremented by
-/// `log_double_execute` whenever `handle_node` is reached for an Op/Transcr
-/// whose `return_value` is already populated (or whose `set` lost the race).
-/// `run_graph` snapshots and prints this after the main loop so the user
-/// can see whether the run was clean.
-pub static DOUBLE_EXECUTE_COUNT: AtomicUsize = AtomicUsize::new(0);
+    /// Queues a ready `node`: sync nodes go to the main loop, the rest run
+    /// on the pool.
+    fn schedule(&self, node: NodeIndex, tx: &SyncSender) {
+        if is_sync_node(&self.graph, node) {
+            tx.push(node);
+        } else {
+            self.spawn(node, tx.clone());
+        }
+    }
 
-fn log_double_execute(kind: &str, node: NodeIndex, op_disc: usize) {
-    DOUBLE_EXECUTE_COUNT.fetch_add(1, Ordering::SeqCst);
-    let bt = std::backtrace::Backtrace::capture();
-    eprintln!(
-        "[RUNTIME-RACE] {} node {:?} double-execute attempt; op discriminant = {}\n{}",
-        kind, node, op_disc, bt,
-    );
+    /// Runs the compute `node` on the pool, then releases its successors.
+    /// Holding `tx` keeps the sync channel open until the task is done.
+    fn spawn(&self, node: NodeIndex, tx: SyncSender) {
+        let run = self.clone();
+        rayon::spawn(move || {
+            // Once a task has failed the run is abandoned; dropping `tx`
+            // lets the sync channel close so the main loop can exit.
+            if run.errors.lock().unwrap().is_some() {
+                return;
+            }
+            let value = run.graph.handle_node(node);
+            run.release_successors(node, Some(&value), &tx);
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -283,10 +257,36 @@ impl<C: ArkConfig> MutexGraph<C> {
     /// Wrap a scheduled DAG for execution, replacing every node annotation
     /// with fresh [`RuntimeInformation`] and starting with an empty
     /// assert/verify result map.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a node reads a node it has no dependency edge from: its
+    /// operand would never be delivered.
     pub fn new(dag: UDag<C>) -> Self {
-        MutexGraph {
-            mutex_graph: dag.map_annotations(&|_, _| Arc::new(RuntimeInformation::<C>::new())),
+        let g = MutexGraph {
+            mutex_graph: dag.map_annotations(&|op, _| Arc::new(RuntimeInformation::new(op))),
             check_results: Mutex::new(HashMap::new()),
+        };
+        for node in g.mutex_graph.node_indices() {
+            if let Some(info) = g.info(node) {
+                for source in info.inbox.sources() {
+                    assert!(
+                        g.mutex_graph
+                            .neighbors_directed(node, Direction::Incoming)
+                            .any(|p| p == source.0),
+                        "node {node:?} reads {source:?} without a dependency edge from it"
+                    );
+                }
+            }
+        }
+        g
+    }
+
+    /// The runtime state of a compute (`Op`/`Transcr`) node.
+    fn info(&self, node: NodeIndex) -> Option<&RuntimeInformation<C>> {
+        match &self.mutex_graph[node] {
+            Node::Op(_, info) | Node::Transcr(_, info) => Some(info),
+            Node::Inp(_) | Node::Rel(_) | Node::Arg(_, _, _, _, _) => None,
         }
     }
 
@@ -303,153 +303,42 @@ impl<C: ArkConfig> MutexGraph<C> {
         }
     }
 
-    /// Resolve the value a `graph::Ref` points at: either a previously
-    /// computed node value or, for an `Arg` node, the caller-supplied input.
+    /// Execute one compute node: evaluate its op on the operands in its
+    /// inbox, record any `Verify` outcome into the check map, and return the
+    /// value for the caller to deliver to its successors.
     ///
-    /// # Errors
-    ///
-    /// Returns [`RuntimeError::MissingArg`] when the reference resolves to an
-    /// `Arg` node whose `Vid` is absent from `inputs`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the referenced `Op`/`Transcr` node has not been executed yet
-    /// (a scheduling/readiness-counter bug), or if the reference points at an
-    /// `Inp`/`Rel` marker node, which carries no value.
-    pub fn get_value(
-        &self,
-        r: graph::Ref,
-        inputs: &HashMap<Vid, Arc<Value<C>>>,
-    ) -> Result<Arc<Value<C>>, RuntimeError> {
-        let node = r.node();
-
-        match &self.mutex_graph[node] {
-            Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
-                match annotation.return_value.get() {
-                    Some(val) => Ok(Arc::clone(val)),
-                    None => panic!("Value should exist for node {:?}", node),
-                }
-            }
-            Node::Inp(_) | Node::Rel(_) => {
-                // Should not be referenced directly in Phase B; values
-                // come from Arg nodes.
-                panic!("get_value on Inp/Rel marker node {:?}", node)
-            }
-            Node::Arg(vid, _, _, _, _) => match inputs.get(vid) {
-                Some(v) => Ok(Arc::clone(v)),
-                None => Err(RuntimeError::missing_arg(vid, inputs.keys())),
-            },
-        }
-    }
-
-    /// Compute a node's value by snapshotting the values of every `Op::Ref`
-    /// reachable from `operation` (via [`MutexGraph::get_value`]) and routing
-    /// the actual dispatch through the canonical [`graph::eval::eval_op`].
-    ///
-    /// This keeps the runtime's per-node semantics in lockstep with the test
-    /// executors and the unit-level `eval_op` callers — there is no separate
-    /// runtime-only dispatch table.
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`RuntimeError::MissingArg`] from [`MutexGraph::get_value`]
-    /// when a referenced argument is not present in `inputs`.
+    /// Evaluation goes through the canonical [`graph::eval::eval_op`], so the
+    /// runtime's per-node semantics stay in lockstep with the test executors
+    /// and the unit-level `eval_op` callers.
     ///
     /// # Panics
     ///
-    /// Panics if `eval_op` fails on a scheduled node: every shape and type
-    /// precondition is established by the `lang` type checker and the
-    /// scheduler, so a failure here is a compiler invariant violation.
-    pub fn handle_op(
-        &self,
-        operation: &GOp<C>,
-        inputs: &HashMap<Vid, Arc<Value<C>>>,
-    ) -> Result<(Arc<Value<C>>, Vec<bool>), RuntimeError> {
-        let refs = graph::eval::collect_refs(operation);
-        // Pre-size the env so insertions don't trigger rehash/resize. Most
-        // Op trees have ≤ 4 distinct refs; sizing to `refs.len()` slightly
-        // over-allocates for duplicates but avoids the 0→1→2→4→… resize
-        // sequence HashMap pays when starting empty.
-        let mut env: HashMap<graph::Ref, Arc<Value<C>>> = HashMap::with_capacity(refs.len());
-        for r in refs {
-            if let std::collections::hash_map::Entry::Vacant(e) = env.entry(r) {
-                e.insert(self.get_value(r, inputs)?);
-            }
-        }
-        let mut rng = ThreadRng::default();
+    /// Panics if `node` is not an `Op`/`Transcr` node, if it has already
+    /// run or an operand was not delivered (scheduling bugs), if the
+    /// check-results mutex is poisoned, or if `eval_op` fails: every shape
+    /// and type precondition is established by the `lang` type checker and
+    /// the scheduler, so a failure is a compiler invariant violation.
+    pub fn handle_node(&self, node: NodeIndex) -> Arc<Value<C>> {
+        let (Node::Op(op, info) | Node::Transcr(op, info)) = &self.mutex_graph[node] else {
+            unreachable!("marker node {node:?} has nothing to compute")
+        };
+        assert!(
+            !info.executed.swap(true, Ordering::SeqCst),
+            "runtime invariant violation: node {node:?} executed twice"
+        );
+        let env = info.inbox.take_all();
         let mut check_sink = Vec::new();
-        let value = graph::eval::eval_op(operation, &env, &mut rng, &mut check_sink)
+        let value = graph::eval::eval_op(op, &env, &mut ThreadRng::default(), &mut check_sink)
             .expect("runtime invariant violation: eval_op failed on a scheduled node");
-        Ok((value, check_sink))
-    }
-
-    /// Execute one node: compute its value, record any `Verify` outcome into
-    /// the check map, and publish the value for its successors.
-    ///
-    /// `Inp`, `Rel`, and `Arg` nodes are pure markers and do nothing here.
-    /// Re-entry on an already-evaluated node is tolerated: it is counted in
-    /// [`DOUBLE_EXECUTE_COUNT`] and skipped rather than recomputed.
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`RuntimeError::MissingArg`] from the operand lookup.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the check-results mutex is poisoned, or if `eval_op`
-    /// violates a runtime invariant (see [`MutexGraph::handle_op`]).
-    pub fn handle_node(
-        &self,
-        node_curr: NodeIndex,
-        inputs: &HashMap<Vid, Arc<Value<C>>>,
-    ) -> Result<(), RuntimeError> {
-        let node = &self.mutex_graph[node_curr];
-
-        match node {
-            Node::Op(operation, annotation) => {
-                if annotation.return_value.get().is_some() {
-                    log_double_execute("Op", node_curr, operation.discriminant_order());
-                    return Ok(());
-                }
-                let (return_val, check_sink) = self.handle_op(&**operation, inputs)?;
-                // Store check results from the sink into the auxiliary map.
-                // Each node has at most one top-level Check, so the sink
-                // has 0 or 1 elements.
-                if !check_sink.is_empty() {
-                    let mut results = self.check_results.lock().unwrap();
-                    for passed in check_sink {
-                        results.insert(node_curr, passed);
-                    }
-                }
-                if annotation.return_value.set(return_val).is_err() {
-                    log_double_execute("Op (set-race)", node_curr, operation.discriminant_order());
-                }
+        // Each node has at most one top-level Check, so the sink has 0 or 1
+        // elements.
+        if !check_sink.is_empty() {
+            let mut results = self.check_results.lock().unwrap();
+            for passed in check_sink {
+                results.insert(node, passed);
             }
-            Node::Transcr(operation, annotation) => {
-                if annotation.return_value.get().is_some() {
-                    log_double_execute("Transcr", node_curr, operation.discriminant_order());
-                    return Ok(());
-                }
-                let (return_val, check_sink) = self.handle_op(&**operation, inputs)?;
-                if !check_sink.is_empty() {
-                    let mut results = self.check_results.lock().unwrap();
-                    for passed in check_sink {
-                        results.insert(node_curr, passed);
-                    }
-                }
-                if annotation.return_value.set(return_val).is_err() {
-                    log_double_execute(
-                        "Transcr (set-race)",
-                        node_curr,
-                        operation.discriminant_order(),
-                    );
-                }
-            }
-            Node::Inp(_) => {}
-            Node::Rel(_) => {}
-            Node::Arg(_, _, _, _, _) => {}
         }
-        Ok(())
+        value
     }
 
     /// Execute all nodes in the DAG using counter-based readiness tracking
@@ -459,10 +348,12 @@ impl<C: ArkConfig> MutexGraph<C> {
     ///
     /// Each Op/Transcr node carries an atomic `remaining_deps` counter
     /// initialized to its number of unique predecessors. When a node
-    /// finishes execution, it atomically decrements the counters of all
-    /// its unique successors. When a successor's counter reaches zero,
-    /// it is spawned onto Rayon (for compute nodes) or pushes to the sync
-    /// channel (for sponge-requiring nodes).
+    /// finishes execution, it delivers its value into the inbox of each
+    /// unique successor that reads it and decrements that successor's
+    /// counter. When a successor's counter reaches zero, it is spawned onto
+    /// Rayon (for compute nodes) or pushed to the sync channel (for
+    /// sponge-requiring nodes). A value is freed once every node reading it
+    /// has run.
     ///
     /// # Sponge synchronization
     ///
@@ -491,30 +382,32 @@ impl<C: ArkConfig> MutexGraph<C> {
     ///
     /// # Panics
     ///
-    /// Panics if a node is executed twice (`Challenge` set-race), if a
-    /// `Transcr` value is missing after `handle_node`, if a transcript value
-    /// cannot be serialized for the sponge, if a non-sync node reaches the
-    /// sync channel, or if the error/check mutexes are poisoned.
+    /// Panics if a node is executed twice or runs without an operand (see
+    /// [`MutexGraph::handle_node`]), if a transcript value cannot be
+    /// serialized for the sponge, if a non-sync node reaches the sync
+    /// channel, or if the error/check mutexes are poisoned.
     pub fn run_graph<H: DuplexSpongeInterface<U = u8>>(
         g: Arc<MutexGraph<C>>,
         inputs: Arc<Ctx<Vid, Value<C>>>,
         prover_state: &mut ProverState<H>,
         result_kind: ResultKind,
     ) -> Result<RunResult<C>, RuntimeError> {
-        let race_count_at_start = DOUBLE_EXECUTE_COUNT.load(Ordering::SeqCst);
-        // Build an Arc-wrapped inputs map once. Subsequent per-handle_op
-        // accesses clone the Arc (cheap) instead of the inner `Value`
-        // (which may be a 500 MB matrix vector). This is a one-time clone
-        // per input — the price we pay to avoid per-op clones forever after.
+        // Build an Arc-wrapped inputs map once. Each `Arg` node then delivers
+        // a clone of the Arc (cheap) instead of the inner `Value` (which may
+        // be a 500 MB matrix vector). This is a one-time clone per input.
         let inputs: Arc<HashMap<Vid, Arc<Value<C>>>> = Arc::new(
             inputs
                 .iter()
                 .map(|(k, v)| (k.clone(), Arc::new(v.clone())))
                 .collect(),
         );
-        // Shared first-error slot. Rayon workers and the main loop record
-        // failures here; the main loop bails after the sync channel closes.
-        let error_slot: ErrorSlot = Arc::new(Mutex::new(None));
+        // Rayon workers and the main loop record failures in `run.errors`;
+        // the main loop bails after the sync channel closes.
+        let run = Run {
+            graph: Arc::clone(&g),
+            inputs: Arc::clone(&inputs),
+            errors: Arc::new(Mutex::new(None)),
+        };
         // Phase 1: Initialization.
         //
         // Set remaining_deps counters, collect result indices, and
@@ -586,8 +479,8 @@ impl<C: ArkConfig> MutexGraph<C> {
         // }
 
         // Push the Inp markers first (any iteration order is fine; Args don't
-        // appear here as roots — they're notified via the Arg-passthrough in
-        // update_successors when their Inp parent is processed).
+        // appear here as roots — `release_successors` passes through them
+        // when their Inp parent is processed).
         for ni in g.mutex_graph.node_indices() {
             if matches!(&g.mutex_graph[ni], Node::Inp(_)) {
                 debug!("[run_graph] pushing initial sync node {:?}", ni);
@@ -597,28 +490,11 @@ impl<C: ArkConfig> MutexGraph<C> {
         // Spawn/push only the topological roots gathered in Loop 1. Reading
         // `remaining_deps` here would race with workers spawned earlier in
         // this same loop: a non-root node whose counter just hit 0 via
-        // `update_successors` would be visible as `rd == 0` and would be
+        // `release_successors` would be visible as `rd == 0` and would be
         // spawned a SECOND time, causing the runtime invariant violation.
         for ni in initial_roots {
-            if is_sync_node(&g, ni) {
-                debug!("[run_graph] init: pushing sync root node {:?}", ni);
-                tx.push(ni);
-            } else {
-                let g_clone = Arc::clone(&g);
-                let inputs_clone = Arc::clone(&inputs);
-                let tx = tx.clone();
-                let error_slot = Arc::clone(&error_slot);
-                debug!("[run_graph] init: spawning non-sync root node {:?}", ni);
-                rayon::spawn(move || {
-                    if error_slot.lock().unwrap().is_some() {
-                        return;
-                    }
-                    match g_clone.handle_node(ni, &inputs_clone) {
-                        Ok(()) => update_successors(&g_clone, &inputs_clone, tx, ni, &error_slot),
-                        Err(e) => record_error(&error_slot, e),
-                    }
-                });
-            }
+            debug!("[run_graph] init: scheduling root node {:?}", ni);
+            run.schedule(ni, &tx);
         }
 
         drop(tx);
@@ -633,6 +509,8 @@ impl<C: ArkConfig> MutexGraph<C> {
         // values after the last challenge (every value, in a protocol with
         // no challenges) never need serializing.
         let mut pending: Vec<PendingAbsorb<C>> = Vec::new();
+        // Prover messages by node, for the proof (prover only).
+        let mut messages: HashMap<NodeIndex, Arc<Value<C>>> = HashMap::new();
         while let Some(SyncMessage { node_idx, tx }) = rx.pop() {
             loop_count += 1;
 
@@ -641,7 +519,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                 loop_count, node_idx
             );
 
-            match &g.mutex_graph[node_idx] {
+            let value = match &g.mutex_graph[node_idx] {
                 Node::Inp(_) => {
                     // Walk Arg children to send instance values through the sponge.
                     let mut arg_children: Vec<NodeIndex> = g
@@ -665,7 +543,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                                 Some(v) => v,
                                 None => {
                                     let err = RuntimeError::missing_arg(&vid, inputs.keys());
-                                    record_error(&error_slot, err.clone());
+                                    record_error(&run.errors, err.clone());
                                     // Drop tx and bail; in-flight workers
                                     // will see the slot set and short-circuit.
                                     return Err(err);
@@ -674,8 +552,9 @@ impl<C: ArkConfig> MutexGraph<C> {
                             pending.push(PendingAbsorb::Instance(Arc::clone(value)));
                         }
                     }
+                    None
                 }
-                Node::Transcr(op, annotation) => {
+                Node::Transcr(op, _) => {
                     if matches!(**op, Op::Challenge(_, _)) {
                         debug!("[run_graph] node {:?} is Challenge", node_idx);
                         // Challenge node: absorb what is queued, then squeeze.
@@ -690,25 +569,17 @@ impl<C: ArkConfig> MutexGraph<C> {
                                 }
                             }
                         }
-                        let return_val = Value::<C>::challenge(prover_state);
-                        annotation
-                            .return_value
-                            .set(Arc::new(return_val))
-                            .map_err(|_| ())
-                            .expect("runtime invariant violation: Challenge node executed twice");
+                        Some(Arc::new(Value::<C>::challenge(prover_state)))
                     } else {
                         debug!("[run_graph] node {:?} is Transcript", node_idx);
                         // Proof transcript node: compute value and send
                         // through the sponge.
-                        if let Err(e) = g.handle_node(node_idx, &inputs) {
-                            record_error(&error_slot, e.clone());
-                            return Err(e);
+                        let value = g.handle_node(node_idx);
+                        pending.push(PendingAbsorb::Message(Arc::clone(&value)));
+                        if matches!(result_kind, ResultKind::Prover) {
+                            messages.insert(node_idx, Arc::clone(&value));
                         }
-                        let arc_val = annotation
-                            .return_value
-                            .get()
-                            .expect("Transcr node return_value should be set after handle_node");
-                        pending.push(PendingAbsorb::Message(Arc::clone(arc_val)));
+                        Some(value)
                     }
                 }
                 Node::Op(_, _) | Node::Rel(_) | Node::Arg(_, _, _, _, _) => {
@@ -718,44 +589,39 @@ impl<C: ArkConfig> MutexGraph<C> {
                 }
             };
 
-            // Update successors — pushes ready sync nodes to the sync queue
+            // Deliver the value — pushes ready sync nodes to the sync queue
             // and spawns non-sync nodes onto shared worker threads.
-            debug!(
-                "[run_graph] calling update_successors for node {:?}",
-                node_idx
-            );
-            update_successors(&g, &inputs, tx, node_idx, &error_slot);
+            debug!("[run_graph] releasing successors of node {:?}", node_idx);
+            run.release_successors(node_idx, value.as_ref(), &tx);
         }
+        drop(pending);
 
         debug!(
             "[run_graph] main loop completed after {} iterations",
             loop_count
         );
 
-        let race_count = DOUBLE_EXECUTE_COUNT.load(Ordering::SeqCst) - race_count_at_start;
-        if race_count > 0 {
-            eprintln!(
-                "[RUNTIME-RACE] run_graph completed with {} double-execute attempt(s) (see [RUNTIME-RACE] lines above)",
-                race_count,
-            );
-        }
-
         // A worker may have recorded an error; surface it before collecting.
-        if let Some(err) = error_slot.lock().unwrap().take() {
+        if let Some(err) = run.errors.lock().unwrap().take() {
             return Err(err);
         }
+        debug_assert!(
+            g.mutex_graph
+                .node_indices()
+                .filter_map(|n| g.info(n))
+                .all(|info| info.inbox.is_empty()),
+            "a delivered value was never taken"
+        );
 
         // Phase 3: Collect results from pre-collected indices.
         Ok(match result_kind {
             ResultKind::Prover => {
+                // Every reader of a message has run, so each is usually
+                // held only here and moves into the proof without a copy.
                 let transcript: Vec<Value<C>> = result_indices
                     .into_iter()
-                    .filter_map(|n| match &g.mutex_graph[n] {
-                        Node::Transcr(op, annotation) if !matches!(**op, Op::Challenge(_, _)) => {
-                            annotation.return_value.get().map(|arc| (**arc).clone())
-                        }
-                        _ => None,
-                    })
+                    .filter_map(|n| messages.remove(&n))
+                    .map(Arc::unwrap_or_clone)
                     .collect();
                 RunResult::Prover(transcript)
             }
