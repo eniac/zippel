@@ -93,22 +93,22 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let perm_comms: Vec<G1> = s.iter().map(|c| msm(&ck[..n], c)).collect();
 
     let mut named = vec![
-        ("sel_comms", Value::VecG1(sel_comms)),
-        ("perm_comms", Value::VecG1(perm_comms)),
-        ("pub_input", Value::VecScalar(w[0][..4].to_vec())),
-        ("ck", Value::VecG1(ck)),
+        ("sel_comms", Value::vec_g1(sel_comms)),
+        ("perm_comms", Value::vec_g1(perm_comms)),
+        ("pub_input", Value::vec_scalar(w[0][..4].to_vec())),
+        ("ck", Value::vec_g1(ck)),
         ("g", Value::G1(g)),
         ("h", Value::G2(h)),
-        ("h_mask", Value::VecG2(h_mask)),
+        ("h_mask", Value::vec_g2(h_mask)),
     ];
     for (name, c) in ["w0", "w1", "w2"].into_iter().zip(w) {
-        named.push((name, Value::VecScalar(c)));
+        named.push((name, Value::vec_scalar(c)));
     }
     for (name, c) in ["q0", "q1", "q2", "q3", "q4"].into_iter().zip(q) {
-        named.push((name, Value::VecScalar(c)));
+        named.push((name, Value::vec_scalar(c)));
     }
     for (name, c) in ["s0", "s1", "s2"].into_iter().zip(s) {
-        named.push((name, Value::VecScalar(c)));
+        named.push((name, Value::vec_scalar(c)));
     }
     Ctx::from_iter(named.into_iter().map(|(k, v)| (Vid(k.to_string()), v)))
 }

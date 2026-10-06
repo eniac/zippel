@@ -1662,7 +1662,7 @@ mod tests {
         let coeff_value = Value::<ArkBls12_381>::Poly(product.clone())
             .value_eval_selected(
                 CRange::singleton(0),
-                Value::VecScalar(fixed_tail.clone()),
+                Value::vec_scalar(fixed_tail.clone()),
                 SelectedEvalShape::new(3, 1, 2),
             )
             .value_coef();
@@ -1695,7 +1695,7 @@ mod tests {
 
         let selected_value = Value::<ArkBls12_381>::Poly(product.clone()).value_eval_selected(
             CRange::singleton(0),
-            Value::VecScalar(fixed_tail.clone()),
+            Value::vec_scalar(fixed_tail.clone()),
             SelectedEvalShape::new(3, 1, 2),
         );
 
@@ -2006,7 +2006,7 @@ mod tests {
         let zero = VirtualPolynomial::<Fr>::zero_with_num_vars(3);
         let selected_value = Value::<ArkBls12_381>::Poly(zero).value_eval_selected(
             CRange::singleton(0),
-            Value::VecScalar(vec![Fr::from(2u64), Fr::from(3u64)]),
+            Value::vec_scalar(vec![Fr::from(2u64), Fr::from(3u64)]),
             SelectedEvalShape::new(3, 1, degree),
         );
 
@@ -2030,7 +2030,7 @@ mod tests {
         let constant = VirtualPolynomial::<Fr>::constant_with_num_vars(scalar, 3);
         let selected_value = Value::<ArkBls12_381>::Poly(constant).value_eval_selected(
             CRange::singleton(0),
-            Value::VecScalar(vec![Fr::from(2u64), Fr::from(3u64)]),
+            Value::vec_scalar(vec![Fr::from(2u64), Fr::from(3u64)]),
             SelectedEvalShape::new(3, 1, degree),
         );
 

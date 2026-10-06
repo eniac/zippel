@@ -448,39 +448,39 @@ pub mod zippel_side {
             let inputs = Inputs::<C>::from_iter([
                 (
                     Vid("z_a_evals".to_string()),
-                    Value::VecScalar(inst.z_a_evals.clone()),
+                    Value::vec_scalar(inst.z_a_evals.clone()),
                 ),
                 (
                     Vid("z_b_evals".to_string()),
-                    Value::VecScalar(inst.z_b_evals.clone()),
+                    Value::vec_scalar(inst.z_b_evals.clone()),
                 ),
-                (Vid("w_a_evals".to_string()), Value::VecScalar(w_a_evals)),
-                (Vid("w_b_evals".to_string()), Value::VecScalar(w_b_evals)),
-                (Vid("w".to_string()), Value::VecScalar(w_vec)),
-                (Vid("x".to_string()), Value::VecScalar(x_vec.clone())),
+                (Vid("w_a_evals".to_string()), Value::vec_scalar(w_a_evals)),
+                (Vid("w_b_evals".to_string()), Value::vec_scalar(w_b_evals)),
+                (Vid("w".to_string()), Value::vec_scalar(w_vec)),
+                (Vid("x".to_string()), Value::vec_scalar(x_vec.clone())),
                 (
                     Vid("omegas".to_string()),
-                    Value::VecScalar(self.srs.omegas.clone()),
+                    Value::vec_scalar(self.srs.omegas.clone()),
                 ),
                 (
                     Vid("sigma_w".to_string()),
-                    Value::VecG1Affine(G1::normalize_batch(&self.srs.sigma_w)),
+                    Value::vec_g1_affine(G1::normalize_batch(&self.srs.sigma_w)),
                 ),
                 (
                     Vid("sigma_q".to_string()),
-                    Value::VecG1Affine(G1::normalize_batch(&self.srs.sigma_q)),
+                    Value::vec_g1_affine(G1::normalize_batch(&self.srs.sigma_q)),
                 ),
                 (
                     Vid("sigma_a".to_string()),
-                    Value::VecG1Affine(G1::normalize_batch(&self.srs.sigma_a)),
+                    Value::vec_g1_affine(G1::normalize_batch(&self.srs.sigma_a)),
                 ),
                 (
                     Vid("sigma_b".to_string()),
-                    Value::VecG1Affine(G1::normalize_batch(&self.srs.sigma_b)),
+                    Value::vec_g1_affine(G1::normalize_batch(&self.srs.sigma_b)),
                 ),
                 (
                     Vid("sigma_q_prime".to_string()),
-                    Value::VecG1Affine(G1::normalize_batch(&self.srs.sigma_q_prime)),
+                    Value::vec_g1_affine(G1::normalize_batch(&self.srs.sigma_q_prime)),
                 ),
                 (Vid("alpha_g".to_string()), Value::G1(self.srs.alpha_g)),
                 (Vid("beta_g".to_string()), Value::G1(self.srs.beta_g)),
@@ -490,7 +490,7 @@ pub mod zippel_side {
                 (Vid("h_g2".to_string()), Value::G2(self.srs.h_g2)),
                 (
                     Vid("v_k_poly".to_string()),
-                    Value::VecScalar(self.srs.v_k_coeffs.clone()).value_poly(),
+                    Value::vec_scalar(self.srs.v_k_coeffs.clone()).value_poly(),
                 ),
                 (Vid("f_one".to_string()), Value::Scalar(F::one())),
                 (Vid("k_inv".to_string()), Value::Scalar(self.srs.k_inv)),

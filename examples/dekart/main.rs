@@ -141,7 +141,7 @@ fn build_inputs(n_size: usize, b_size: usize, l_chunk: usize, h_deg: usize) -> C
                 F::from((z / (b_size as u64).pow(u32::try_from(j).unwrap())) % (b_size as u64))
             })
             .collect();
-        chunks_bits.push(Value::VecScalar(digits));
+        chunks_bits.push(Value::vec_scalar(digits));
     }
 
     // Commitment randomness of the statement
@@ -166,11 +166,11 @@ fn build_inputs(n_size: usize, b_size: usize, l_chunk: usize, h_deg: usize) -> C
     }
 
     Ctx::<Vid, Value<C>>::from_iter([
-        (Vid("f_evals".to_string()), Value::VecScalar(f_evals)),
+        (Vid("f_evals".to_string()), Value::vec_scalar(f_evals)),
         (Vid("chunks_bits".to_string()), Value::Vec(chunks_bits)),
         (Vid("rho".to_string()), Value::Scalar(rho)),
         (Vid("com_f".to_string()), Value::G1(com_f)),
-        (Vid("b_pow".to_string()), Value::VecScalar(b_pow.clone())),
+        (Vid("b_pow".to_string()), Value::vec_scalar(b_pow.clone())),
         (Vid("gen_g1".to_string()), Value::G1(gen_g1)),
         (Vid("gen_g2".to_string()), Value::G2(gen_g2)),
         (Vid("srs_g2_tau".to_string()), Value::G2(srs_g2_tau)),
@@ -179,12 +179,12 @@ fn build_inputs(n_size: usize, b_size: usize, l_chunk: usize, h_deg: usize) -> C
         (Vid("s0_commit".to_string()), Value::G1(s0_commit)),
         (
             Vid("srs_g1_lagr".to_string()),
-            Value::VecG1(srs_g1_lagr_vec),
+            Value::vec_g1(srs_g1_lagr_vec),
         ),
-        (Vid("srs_g1_h".to_string()), Value::VecG1(srs_g1_h_vec)),
+        (Vid("srs_g1_h".to_string()), Value::vec_g1(srs_g1_h_vec)),
         (
             Vid("v_star".to_string()),
-            Value::VecScalar(vec![F::one(); n_size + 1]),
+            Value::vec_scalar(vec![F::one(); n_size + 1]),
         ),
     ])
 }

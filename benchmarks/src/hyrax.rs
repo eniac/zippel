@@ -97,11 +97,11 @@ pub mod zippel_side {
             let h_base = G1Projective::rand(&mut rng);
 
             let inputs = Inputs::<ArkBls12_381>::from_iter([
-                (Vid("p".to_string()), Value::VecScalar(p)),
-                (Vid("z_row".to_string()), Value::VecScalar(z_row)),
-                (Vid("z_col".to_string()), Value::VecScalar(z_col)),
+                (Vid("p".to_string()), Value::vec_scalar(p)),
+                (Vid("z_row".to_string()), Value::vec_scalar(z_row)),
+                (Vid("z_col".to_string()), Value::vec_scalar(z_col)),
                 (Vid("y".to_string()), Value::Scalar(y)),
-                (Vid("g_vec".to_string()), Value::VecG1Affine(g_vec_aff)),
+                (Vid("g_vec".to_string()), Value::vec_g1_affine(g_vec_aff)),
                 (Vid("g_base".to_string()), Value::G1(g_base)),
                 (Vid("h_base".to_string()), Value::G1(h_base)),
             ]);

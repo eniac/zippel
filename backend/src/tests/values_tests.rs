@@ -1341,14 +1341,14 @@ fn test_value_concat_pbt() {
                 0 => {
                     if elems.is_empty() {
                         match ty {
-                            0 => Value::VecScalar(vec![]),
-                            1 => Value::VecG1(vec![]),
-                            2 => Value::VecG2(vec![]),
-                            _ => Value::VecGT(vec![]),
+                            0 => Value::vec_scalar(vec![]),
+                            1 => Value::vec_g1(vec![]),
+                            2 => Value::vec_g2(vec![]),
+                            _ => Value::vec_gt(vec![]),
                         }
                     } else {
                         match ty {
-                            0 => Value::VecScalar(
+                            0 => Value::vec_scalar(
                                 elems
                                     .iter()
                                     .map(|e| match e {
@@ -1357,7 +1357,7 @@ fn test_value_concat_pbt() {
                                     })
                                     .collect(),
                             ),
-                            1 => Value::VecG1(
+                            1 => Value::vec_g1(
                                 elems
                                     .iter()
                                     .map(|e| match e {
@@ -1366,7 +1366,7 @@ fn test_value_concat_pbt() {
                                     })
                                     .collect(),
                             ),
-                            2 => Value::VecG2(
+                            2 => Value::vec_g2(
                                 elems
                                     .iter()
                                     .map(|e| match e {
@@ -1375,7 +1375,7 @@ fn test_value_concat_pbt() {
                                     })
                                     .collect(),
                             ),
-                            _ => Value::VecGT(
+                            _ => Value::vec_gt(
                                 elems
                                     .iter()
                                     .map(|e| match e {

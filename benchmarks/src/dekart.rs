@@ -179,7 +179,7 @@ pub mod zippel_side {
             f_evals.extend(sh.values.iter().map(|&z| Fr::from(z)));
             let chunks_bits = (0..ell)
                 .map(|j| {
-                    Value::VecScalar(sh.values.iter().map(|&z| Fr::from((z >> j) & 1)).collect())
+                    Value::vec_scalar(sh.values.iter().map(|&z| Fr::from((z >> j) & 1)).collect())
                 })
                 .collect();
             let b_pow = (0..ell).map(|j| Fr::from(1u64 << j)).collect::<Vec<_>>();
@@ -187,12 +187,12 @@ pub mod zippel_side {
             let inputs = Inputs::from_iter(
                 [
                     // witness
-                    ("f_evals", Value::VecScalar(f_evals)),
+                    ("f_evals", Value::vec_scalar(f_evals)),
                     ("chunks_bits", Value::Vec(chunks_bits)),
                     ("rho", Value::Scalar(sh.rho)),
                     // statement + public parameters
                     ("com_f", Value::G1(sh.com_f.into_group())),
-                    ("b_pow", Value::VecScalar(b_pow)),
+                    ("b_pow", Value::vec_scalar(b_pow)),
                     ("gen_g1", Value::G1(g1)),
                     ("gen_g2", Value::G2(g2)),
                     ("srs_g2_tau", Value::G2(g2 * tau)),
@@ -200,12 +200,12 @@ pub mod zippel_side {
                     ("xi_g1", Value::G1(g1 * xi)),
                     // s0 = Lagrange poly with s0(ω^0)=1, zero elsewhere on the domain.
                     ("s0_commit", Value::G1(sh.srs.lagr_g1[0].into_group())),
-                    ("srs_g1_lagr", Value::VecG1Affine(sh.srs.lagr_g1.clone())),
+                    ("srs_g1_lagr", Value::vec_g1_affine(sh.srs.lagr_g1.clone())),
                     (
                         "srs_g1_h",
-                        Value::VecG1Affine(sh.srs.powers_g1[..=h_deg].to_vec()),
+                        Value::vec_g1_affine(sh.srs.powers_g1[..=h_deg].to_vec()),
                     ),
-                    ("v_star", Value::VecScalar(vec![Fr::one(); n + 1])),
+                    ("v_star", Value::vec_scalar(vec![Fr::one(); n + 1])),
                 ]
                 .into_iter()
                 .map(|(k, v)| (Vid(k.to_string()), v)),

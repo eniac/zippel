@@ -45,8 +45,8 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let eval_point: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
     let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
 
-    let srs_g1: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|_| gen_g1_input).collect())
-        * Value::VecScalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect());
+    let srs_g1: Value<ArkBls12_381> = Value::vec_g1((0..n_size).map(|_| gen_g1_input).collect())
+        * Value::vec_scalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect());
 
     let eval_result: Value<ArkBls12_381> = poly_x.clone().value_eval(eval_point.clone());
 

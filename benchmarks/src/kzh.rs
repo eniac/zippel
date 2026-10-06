@@ -90,12 +90,12 @@ pub mod zippel_side {
 
             let inputs = Inputs::from_iter(
                 [
-                    ("f", Value::VecScalar(sh.f.clone())),
-                    ("x0", Value::VecScalar(sh.point[..nx].to_vec())),
-                    ("y0", Value::VecScalar(sh.point[nx..].to_vec())),
+                    ("f", Value::vec_scalar(sh.f.clone())),
+                    ("x0", Value::vec_scalar(sh.point[..nx].to_vec())),
+                    ("y0", Value::vec_scalar(sh.point[nx..].to_vec())),
                     ("z0", Value::Scalar(sh.value)),
-                    ("h1", Value::VecG1Affine(sh.srs.h_tensors[0].clone())),
-                    ("h2", Value::VecG1Affine(sh.srs.h_tensors[1].clone())),
+                    ("h1", Value::vec_g1_affine(sh.srs.h_tensors[0].clone())),
+                    ("h2", Value::vec_g1_affine(sh.srs.h_tensors[1].clone())),
                     // Prepared once here, as native's verifier key stores V1.
                     (
                         "v1",

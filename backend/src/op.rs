@@ -888,7 +888,7 @@ impl<C: HasOpFactory> GOp<C> {
             ATyp::Base(ABase::Fin(r)) if r.contains(1) => Op::Value(Value::Index(1)),
             ATyp::Base(ABase::Scalar) => Op::Value(Value::Scalar(C::FOps::one())),
             ATyp::Vec(ATyp::Base(ABase::Scalar), n) => {
-                Op::Value(Value::VecScalar(vec![C::FOps::one(); *n]))
+                Op::Value(Value::vec_scalar(vec![C::FOps::one(); *n]))
             }
             ATyp::Vec(ATyp::Base(ABase::Fin(r)), n) if r.contains(1) => {
                 Op::Value(Value::VecIndex(vec![1; *n]))

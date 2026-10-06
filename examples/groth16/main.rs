@@ -101,37 +101,37 @@ impl Groth16Params {
             (Vid("delta_g2".to_string()), Value::G2(self.delta_g2)),
             (
                 Vid("gamma_abc_g1".to_string()),
-                Value::VecG1(self.gamma_abc_g1.clone()),
+                Value::vec_g1(self.gamma_abc_g1.clone()),
             ),
             (Vid("beta_g1".to_string()), Value::G1(self.beta_g1)),
             (Vid("delta_g1".to_string()), Value::G1(self.delta_g1)),
             (
                 Vid("a_query".to_string()),
-                Value::VecG1(self.a_query.clone()),
+                Value::vec_g1(self.a_query.clone()),
             ),
             (
                 Vid("b_g1_query".to_string()),
-                Value::VecG1(self.b_g1_query.clone()),
+                Value::vec_g1(self.b_g1_query.clone()),
             ),
             (
                 Vid("b_g2_query".to_string()),
-                Value::VecG2(self.b_g2_query.clone()),
+                Value::vec_g2(self.b_g2_query.clone()),
             ),
             (
                 Vid("h_query".to_string()),
-                Value::VecG1(self.h_query.clone()),
+                Value::vec_g1(self.h_query.clone()),
             ),
             (
                 Vid("l_query".to_string()),
-                Value::VecG1(self.l_query.clone()),
+                Value::vec_g1(self.l_query.clone()),
             ),
             (
                 Vid("instance_assignment".to_string()),
-                Value::VecScalar(instance_assignment.to_vec()),
+                Value::vec_scalar(instance_assignment.to_vec()),
             ),
             (
                 Vid("witness_assignment".to_string()),
-                Value::VecScalar(witness_assignment.to_vec()),
+                Value::vec_scalar(witness_assignment.to_vec()),
             ),
         ]
     }
@@ -224,7 +224,7 @@ fn run_groth16(
     let mut entries = params.common_inputs(instance_assignment, witness_assignment);
     entries.push((
         Vid("h_coeffs".to_string()),
-        Value::VecScalar(h_coeffs_padded),
+        Value::vec_scalar(h_coeffs_padded),
     ));
 
     let inputs: Inputs<ArkBls12_381> = entries.into_iter().collect();

@@ -560,28 +560,37 @@ pub mod zippel_side {
                 (Vid("delta_g2".to_string()), Value::G2(keys.delta_g2)),
                 (
                     Vid("gamma_abc_g1".to_string()),
-                    Value::VecG1Affine(gamma_abc_aff),
+                    Value::vec_g1_affine(gamma_abc_aff),
                 ),
                 (Vid("beta_g1".to_string()), Value::G1(keys.beta_g1)),
                 (Vid("delta_g1".to_string()), Value::G1(keys.delta_g1)),
-                (Vid("a_query".to_string()), Value::VecG1Affine(a_query_aff)),
+                (
+                    Vid("a_query".to_string()),
+                    Value::vec_g1_affine(a_query_aff),
+                ),
                 (
                     Vid("b_g1_query".to_string()),
-                    Value::VecG1Affine(b_g1_query_aff),
+                    Value::vec_g1_affine(b_g1_query_aff),
                 ),
                 (
                     Vid("b_g2_query".to_string()),
-                    Value::VecG2Affine(b_g2_query_aff),
+                    Value::vec_g2_affine(b_g2_query_aff),
                 ),
-                (Vid("h_query".to_string()), Value::VecG1Affine(h_query_aff)),
-                (Vid("l_query".to_string()), Value::VecG1Affine(l_query_aff)),
+                (
+                    Vid("h_query".to_string()),
+                    Value::vec_g1_affine(h_query_aff),
+                ),
+                (
+                    Vid("l_query".to_string()),
+                    Value::vec_g1_affine(l_query_aff),
+                ),
                 (
                     Vid("instance_assignment".to_string()),
-                    Value::VecScalar(translated.instance_assignment.clone()),
+                    Value::vec_scalar(translated.instance_assignment.clone()),
                 ),
                 (
                     Vid("witness_assignment".to_string()),
-                    Value::VecScalar(translated.witness_assignment.clone()),
+                    Value::vec_scalar(translated.witness_assignment.clone()),
                 ),
             ]);
 
@@ -644,7 +653,7 @@ pub mod zippel_side {
                 );
                 h_coeffs.resize(self.translated.h_size, GitFr::zero());
                 let mut inputs = self.inputs_base.clone();
-                inputs.insert("h_coeffs", Value::VecScalar(h_coeffs));
+                inputs.insert("h_coeffs", Value::vec_scalar(h_coeffs));
                 let proof = self
                     .handler
                     .run_prover(&inputs)
@@ -1056,39 +1065,39 @@ mod cross_tests {
             (Vid("delta_g2".to_string()), Value::G2(t.keys.delta_g2)),
             (
                 Vid("gamma_abc_g1".to_string()),
-                Value::VecG1(t.keys.gamma_abc_g1.clone()),
+                Value::vec_g1(t.keys.gamma_abc_g1.clone()),
             ),
             (Vid("beta_g1".to_string()), Value::G1(t.keys.beta_g1)),
             (Vid("delta_g1".to_string()), Value::G1(t.keys.delta_g1)),
             (
                 Vid("a_query".to_string()),
-                Value::VecG1(t.keys.a_query.clone()),
+                Value::vec_g1(t.keys.a_query.clone()),
             ),
             (
                 Vid("b_g1_query".to_string()),
-                Value::VecG1(t.keys.b_g1_query.clone()),
+                Value::vec_g1(t.keys.b_g1_query.clone()),
             ),
             (
                 Vid("b_g2_query".to_string()),
-                Value::VecG2(t.keys.b_g2_query.clone()),
+                Value::vec_g2(t.keys.b_g2_query.clone()),
             ),
             (
                 Vid("h_query".to_string()),
-                Value::VecG1(t.keys.h_query.clone()),
+                Value::vec_g1(t.keys.h_query.clone()),
             ),
             (
                 Vid("l_query".to_string()),
-                Value::VecG1(t.keys.l_query.clone()),
+                Value::vec_g1(t.keys.l_query.clone()),
             ),
             (
                 Vid("instance_assignment".to_string()),
-                Value::VecScalar(t.instance_assignment.clone()),
+                Value::vec_scalar(t.instance_assignment.clone()),
             ),
             (
                 Vid("witness_assignment".to_string()),
-                Value::VecScalar(t.witness_assignment.clone()),
+                Value::vec_scalar(t.witness_assignment.clone()),
             ),
-            (Vid("h_coeffs".to_string()), Value::VecScalar(h_coeffs)),
+            (Vid("h_coeffs".to_string()), Value::vec_scalar(h_coeffs)),
         ])
     }
 

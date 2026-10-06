@@ -204,7 +204,7 @@ mod tests {
         ideal.register(&var_evals);
 
         let points: GOp<ArkBls12_381> =
-            Op::Value(Value::VecScalar(vec![Fr::from(0u64), Fr::from(1u64)]));
+            Op::Value(Value::vec_scalar(vec![Fr::from(0u64), Fr::from(1u64)]));
         let evals: GOp<ArkBls12_381> =
             Op::Ref(graph::Ref::new(NodeIndex::new(0)), evals_typ.clone());
 
@@ -272,7 +272,7 @@ mod tests {
         let var_evals = Var::from_node(NodeIndex::new(0), evals_typ.clone(), Qualifier::Witness);
         ideal.register(&var_evals);
 
-        let points: GOp<ArkBls12_381> = Op::Value(Value::VecScalar(
+        let points: GOp<ArkBls12_381> = Op::Value(Value::vec_scalar(
             [1u64, 2, 3].iter().map(|&x| Fr::from(x)).collect(),
         ));
         let evals: GOp<ArkBls12_381> =
