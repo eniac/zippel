@@ -16,7 +16,8 @@ pub struct Protocol {
     pub name: &'static str,
     pub path: &'static str,
     pub sizes: &'static [(&'static str, usize)],
-    /// Whether the completeness sweep runs it: the paper's protocols.
+    /// Whether the completeness sweep runs it: the paper's protocols, plus
+    /// `okamoto_elgamal` and `pedersen_eq`.
     pub completeness: bool,
     /// The special-soundness round parameters, one per challenge round, for
     /// the protocols the soundness sweep runs: the paper's 6 special-sound
@@ -153,6 +154,13 @@ pub static PROTOCOLS: &[Protocol] = &[
         soundness: None,
     },
     Protocol {
+        name: "hyrax_ipa",
+        path: "examples/hyrax_ipa/hyrax_ipa.zippel",
+        sizes: &[("S", 1)],
+        completeness: true,
+        soundness: None,
+    },
+    Protocol {
         name: "hyrax",
         path: "examples/hyrax/hyrax.zippel",
         sizes: &[("L", 2), ("M", 2)],
@@ -229,9 +237,25 @@ pub static PROTOCOLS: &[Protocol] = &[
         completeness: true,
         soundness: None,
     },
+    // Not swept: at S=2 its ideal does not even finish building in a minute.
+    // `analysis hyperplonk_snark` still runs it.
+    Protocol {
+        name: "hyperplonk_snark",
+        path: "examples/hyperplonk_snark/hyperplonk_snark.zippel",
+        sizes: &[("S", 2)],
+        completeness: false,
+        soundness: None,
+    },
     Protocol {
         name: "zk_kzg",
         path: "examples/zk_kzg/zk_kzg.zippel",
+        sizes: &[("N", 2)],
+        completeness: true,
+        soundness: None,
+    },
+    Protocol {
+        name: "zeromorph_kzg",
+        path: "examples/zeromorph_kzg/zeromorph_kzg.zippel",
         sizes: &[("N", 2)],
         completeness: true,
         soundness: None,
@@ -261,7 +285,7 @@ pub static PROTOCOLS: &[Protocol] = &[
         name: "okamoto_elgamal",
         path: "examples/okamoto_elgamal/okamoto_elgamal.zippel",
         sizes: &[],
-        completeness: false,
+        completeness: true,
         soundness: Some(&[2]),
     },
     Protocol {
@@ -275,7 +299,7 @@ pub static PROTOCOLS: &[Protocol] = &[
         name: "pedersen_eq",
         path: "examples/pedersen_eq/pedersen_eq.zippel",
         sizes: &[],
-        completeness: false,
+        completeness: true,
         soundness: Some(&[2]),
     },
 ];

@@ -247,8 +247,9 @@ docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
   bash -c "artifact/scripts/run_completeness.sh --timeout 120 && python3 artifact/scripts/process_completeness.py"
 ```
 
-Runs all the paper's protocols through the completeness analysis,
-with a 2-minute timeout and a 16 GiB memory limit per run.
+Runs all the paper's protocols, plus `okamoto_elgamal` and
+`pedersen_eq`, through the completeness analysis, with a 2-minute
+timeout and a 16 GiB memory limit per run.
 
 To sanity-check a small subset of protocols instead of all of them:
 
