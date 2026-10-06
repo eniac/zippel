@@ -27,7 +27,7 @@ fn main() {
 
     println!("=== Hyrax: zippel vs. hand-written native (BLS12-381) ===");
     println!("statement: prove p̃(z) = y for multilinear p with 2^N coefficients");
-    println!("zippel side    = templated `examples/hyrax/hyrax.zippel`");
+    println!("zippel side    = templated `examples/hyrax_pcs/hyrax_pcs.zippel`");
     println!("native side    = hand-rolled (arkworks BLS12-381 + Blake2b FS)");
     println!("prove timer    = commit + open (Pedersen row commits + Schnorr-style PoDP)");
     println!("verify timer   = verify (T reconstruction + 2 group equalities)");

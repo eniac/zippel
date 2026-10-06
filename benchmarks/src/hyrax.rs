@@ -15,7 +15,7 @@ use crate::Timing;
 /// split evenly into `L` row bits and `M` column bits.
 pub const DEFAULT_N: usize = 10;
 
-/// Zippel half: compiles `examples/hyrax/hyrax.zippel` and times its
+/// Zippel half: compiles `examples/hyrax_pcs/hyrax_pcs.zippel` and times its
 /// generated prover and verifier.
 pub mod zippel_side {
     use super::Timing;
@@ -66,11 +66,11 @@ pub mod zippel_side {
 
             let zippel_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("..")
-                .join("examples/hyrax/hyrax.zippel");
+                .join("examples/hyrax_pcs/hyrax_pcs.zippel");
             let zippel_path = if zippel_path.exists() {
                 zippel_path
             } else {
-                PathBuf::from("examples/hyrax/hyrax.zippel")
+                PathBuf::from("examples/hyrax_pcs/hyrax_pcs.zippel")
             };
 
             let mut seed_bytes = [0u8; 32];

@@ -1865,8 +1865,8 @@ fn eq_weights<G: Group, F: Scalar<G>, EK: 2..21>(instance x: [F; EK]) -> [F; 2^E
         golden_hyperplonk_zerocheck,
         "../examples/hyperplonk_zerocheck/hyperplonk_zerocheck.zippel"
     );
-    golden_test!(golden_hyrax, "../examples/hyrax/hyrax.zippel");
     golden_test!(golden_hyrax_ipa, "../examples/hyrax_ipa/hyrax_ipa.zippel");
+    golden_test!(golden_hyrax_pcs, "../examples/hyrax_pcs/hyrax_pcs.zippel");
     golden_test!(
         golden_hyrax_podp,
         "../examples/hyrax_podp/hyrax_podp.zippel"
