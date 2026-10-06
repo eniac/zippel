@@ -24,7 +24,7 @@ fn build_sizes_ctx() -> Ctx<Tid, usize> {
 
 pub fn run(_args: &[String]) {
     println!("=== Hyrax PCS (ArkBls12_381) — L={L}, M={M}, NTOT={NTOT} ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/hyrax/hyrax.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/hyrax_pcs/hyrax_pcs.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let sizes = build_sizes_ctx();
     handler.compile(&sizes);

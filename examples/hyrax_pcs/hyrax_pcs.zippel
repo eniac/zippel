@@ -9,7 +9,7 @@ fn eq_weights<G: Group, F: Scalar<G>, K: 2..21>(instance x: [F; K]) -> [F; 2 ^ K
     (prev * (1 - a)) ++ (prev * a)
 }
 
-proto hyrax<G: Group, F: Scalar<G>, L: Size, M: Size, NR: 2 ^ L, NC: 2 ^ M, NT: 2 ^ (L + M)>(
+proto hyrax_pcs<G: Group, F: Scalar<G>, L: Size, M: Size, NR: 2 ^ L, NC: 2 ^ M, NT: 2 ^ (L + M)>(
     witness p: [F; NT],
     instance z_row: [F; L],
     instance z_col: [F; M],

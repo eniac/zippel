@@ -45,10 +45,10 @@ mod hyperplonk_productcheck;
 mod hyperplonk_snark;
 #[path = "hyperplonk_zerocheck/main.rs"]
 mod hyperplonk_zerocheck;
-#[path = "hyrax/main.rs"]
-mod hyrax;
 #[path = "hyrax_ipa/main.rs"]
 mod hyrax_ipa;
+#[path = "hyrax_pcs/main.rs"]
+mod hyrax_pcs;
 #[path = "hyrax_podp/main.rs"]
 mod hyrax_podp;
 #[path = "hyrax_pop/main.rs"]
@@ -111,8 +111,8 @@ const EXAMPLES: &[(&str, Runner)] = &[
     ("hyperplonk_productcheck", hyperplonk_productcheck::run),
     ("hyperplonk_snark", hyperplonk_snark::run),
     ("hyperplonk_zerocheck", hyperplonk_zerocheck::run),
-    ("hyrax", hyrax::run),
     ("hyrax_ipa", hyrax_ipa::run),
+    ("hyrax_pcs", hyrax_pcs::run),
     ("hyrax_podp", hyrax_podp::run),
     ("hyrax_pop", hyrax_pop::run),
     ("ipa", ipa::run),

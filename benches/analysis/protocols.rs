@@ -161,8 +161,8 @@ pub static PROTOCOLS: &[Protocol] = &[
         soundness: None,
     },
     Protocol {
-        name: "hyrax",
-        path: "examples/hyrax/hyrax.zippel",
+        name: "hyrax_pcs",
+        path: "examples/hyrax_pcs/hyrax_pcs.zippel",
         sizes: &[("L", 2), ("M", 2)],
         completeness: true,
         soundness: None,
