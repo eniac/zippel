@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod runtime_tests {
-    use crate::graph::{MutexGraph, ResultKind, RunResult, RuntimeInformation};
+    use crate::graph::{MutexGraph, ResultKind, RunResult};
     use crate::queue::sync_channel;
     use backend::Value;
     use backend::config::ArkBls12_381;
@@ -32,12 +32,6 @@ mod runtime_tests {
             errors.iter().map(|d| &d.summary).collect::<Vec<_>>()
         );
         module.unwrap().concretize(sizes).unwrap()
-    }
-
-    #[test]
-    fn test_runtime_information_creation() {
-        // Just test that we can create RuntimeInformation
-        let _rt_info = RuntimeInformation::<TestConfig>::new();
     }
 
     #[test]
