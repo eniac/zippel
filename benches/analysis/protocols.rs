@@ -190,6 +190,16 @@ pub static PROTOCOLS: &[Protocol] = &[
         completeness: true,
         soundness: None,
     },
+    // Dory IPA at a smaller instance: one recursive step, so not every code
+    // path (S=3 is the smallest where one step calls another). The analysis
+    // verifies this one; it backs Figure 6's "~" for Dory IPA.
+    Protocol {
+        name: "dory_ipa_s2",
+        path: "examples/dory_ipa/dory_ipa.zippel",
+        sizes: &[("S", 2)],
+        completeness: true,
+        soundness: None,
+    },
     Protocol {
         name: "dory_pcs",
         path: "examples/dory_pcs/dory_pcs.zippel",
@@ -239,13 +249,11 @@ pub static PROTOCOLS: &[Protocol] = &[
         completeness: true,
         soundness: None,
     },
-    // Not swept: at S=2 its ideal does not even finish building in a minute.
-    // `analysis hyperplonk_snark` still runs it.
     Protocol {
         name: "hyperplonk_snark",
         path: "examples/hyperplonk_snark/hyperplonk_snark.zippel",
         sizes: &[("S", 2)],
-        completeness: false,
+        completeness: true,
         soundness: None,
     },
     Protocol {
@@ -287,7 +295,7 @@ pub static PROTOCOLS: &[Protocol] = &[
         name: "commitment_equality",
         path: "examples/commitment_equality/commitment_equality.zippel",
         sizes: &[],
-        completeness: false,
+        completeness: true,
         soundness: Some(&[2]),
     },
     Protocol {

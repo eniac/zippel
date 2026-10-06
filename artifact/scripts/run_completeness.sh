@@ -27,7 +27,14 @@ OUT_DIR="artifact/output"
 mkdir -p "${OUT_DIR}"
 
 echo "== Completeness analysis =="
+# The paper's protocols (artifact/scripts/paper.py), unless the caller
+# picks its own with --protocols.
+PROTOCOLS=(--protocols "$(python3 "${SCRIPT_DIR}/paper.py" completeness)")
+for arg in "$@"; do
+    case "${arg}" in --protocols | --protocols=*) PROTOCOLS=() ;; esac
+done
+
 cargo bench --bench analysis_all -- --analysis completeness \
     --output "${OUT_DIR}/completeness_results.json" \
     --log "${OUT_DIR}/completeness_all.log" \
-    "$@"
+    "${PROTOCOLS[@]}" "$@"

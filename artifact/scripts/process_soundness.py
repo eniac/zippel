@@ -6,11 +6,15 @@ Section 9.3 is prose-only).
 Columns:
     Protocol | Pass | Time | Status | Reason
 
-Pass indicates whether the analysis established special soundness; a
-cross is expected for five candidates. Time is the benchmark's wall_s,
-including protocol loading. Exit nonzero if any reported protocol has
-an unexpected outcome. E-Cash Coin may time out under the configured
-budget; other timeouts, crashes and out-of-memory results are unexpected.
+Rows are the paper's Figure 6 soundness candidates (paper.py) present in
+the run. Pass indicates whether the analysis established special
+soundness; Figure 6's Sound. column gives the expected mark. A cross
+expects the analysis to fail or time out (E-Cash Coin may time out under
+the configured budget); crashes and out-of-memory results are always
+unexpected. Time is total_ms (build+gb+run), as in process_completeness.py,
+or "-" when the analysis stopped before reporting it. Below the table:
+the minimum, maximum and median time over the verified runs.
+Exit nonzero if any protocol has an unexpected outcome.
 
 Usage:
     artifact/scripts/process_soundness.py [JSON_PATH]
@@ -21,6 +25,9 @@ JSON_PATH defaults to artifact/output/soundness_results.json.
 import json
 import sys
 
+from paper import OK, rows
+from process_completeness import fmt_ms, timing_summary, total_ms
+
 DEFAULT_JSON = "artifact/output/soundness_results.json"
 
 PASS_MARK = "✓"  # ✓
@@ -28,17 +35,11 @@ FAIL_MARK = "✗"  # ✗
 
 # Expected coverage, not a claim that the unsuccessful candidates are
 # unsound. These are limitations of the current analysis (see ../README.md).
-EXPECTED_STATUSES = {
-    "schnorr": ("ok",),
-    "schnorr_3round": ("ok",),
-    "cp": ("ok",),
-    "okamoto": ("failed",),
-    "cds": ("failed",),
-    "coin_proof": ("failed", "timeout"),
-    "okamoto_elgamal": ("ok",),
-    "commitment_equality": ("failed",),
-    "pedersen_eq": ("failed",),
+EXPECTED = {
+    protocol: ("ok",) if mark == OK else ("failed", "timeout")
+    for _, protocol, mark in rows("soundness")
 }
+LABELS = {protocol: label for label, protocol, _ in rows("soundness")}
 
 
 def markdown_cell(value):
@@ -46,10 +47,8 @@ def markdown_cell(value):
 
 
 def fmt_time(result):
-    seconds = result.get("wall_s")
-    if seconds is None:
-        return "?"
-    return f"{seconds * 1000:.1f}ms" if seconds < 1 else f"{seconds:.1f}s"
+    ms = total_ms(result)
+    return "-" if ms is None else fmt_ms(ms)
 
 
 def main():
@@ -74,11 +73,11 @@ def main():
         status = result.get("status", "?")
         mark = PASS_MARK if status == "ok" else FAIL_MARK
         reason = markdown_cell(result.get("error") or "")
-        print(f"| {markdown_cell(name)} | {mark} | {fmt_time(result)} | "
+        print(f"| {markdown_cell(LABELS.get(name, name))} | {mark} | {fmt_time(result)} | "
               f"{markdown_cell(status)} | {reason} |")
-        expected = EXPECTED_STATUSES.get(name)
+        expected = EXPECTED.get(name)
         if expected is None:
-            unexpected.append(f"{name}: no expected outcome registered")
+            unexpected.append(f"{name}: not a soundness candidate in the paper's Figure 6")
         elif status not in expected:
             unexpected.append(f"{name}: expected {' or '.join(expected)}, got {status}")
         if name in seen:
@@ -91,6 +90,10 @@ def main():
     print()
     print(f"soundness pass={pass_count} failed={failed_count} timeout={timeout_count} "
           f"unexpected={len(unexpected)}")
+    verified = [(total_ms(r), LABELS.get(r["protocol"], r["protocol"])) for r in results
+                if r.get("status") == "ok" and total_ms(r) is not None]
+    if verified:
+        print(timing_summary(verified))
     if unexpected:
         print()
         for message in unexpected:

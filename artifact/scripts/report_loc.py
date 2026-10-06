@@ -25,57 +25,12 @@ Run from the repo root:
 
     python3 artifact/scripts/report_loc.py
 
-The protocol/path list below is exactly the paper's Figure 6 rows, in
-order; keep it in sync with the paper.
+The protocols are the paper's Figure 6 rows, in order, from paper.py.
 """
 
 from pathlib import Path
 
-PROTOCOLS = [
-    ("sumcheck", "examples/sumcheck/sumcheck.zippel"),
-    ("schnorr", "examples/schnorr/schnorr.zippel"),
-    ("schnorr_3round", "examples/schnorr_3round/schnorr_3round.zippel"),
-    ("okamoto", "examples/okamoto/okamoto.zippel"),
-    ("okamoto_elgamal", "examples/okamoto_elgamal/okamoto_elgamal.zippel"),
-    ("cp", "examples/cp/cp.zippel"),
-    ("cds", "examples/cds/cds.zippel"),
-    ("hadamard", "examples/hadamard/hadamard.zippel"),
-    ("coin_proof", "examples/coin_proof/coin_proof.zippel"),
-    ("kzg", "examples/kzg/kzg.zippel"),
-    ("mle_sumcheck", "examples/mle_sumcheck/mle_sumcheck.zippel"),
-    ("pst13", "examples/pst13/pst13.zippel"),
-    ("bccgp", "examples/bccgp/bccgp.zippel"),
-    ("groth16", "examples/groth16/groth16.zippel"),
-    ("ipa", "examples/ipa/ipa.zippel"),
-    ("hyrax_podp", "examples/hyrax_podp/hyrax_podp.zippel"),
-    ("hyrax_pop", "examples/hyrax_pop/hyrax_pop.zippel"),
-    ("hyrax_ipa", "examples/hyrax_ipa/hyrax_ipa.zippel"),
-    ("hyrax_pcs", "examples/hyrax_pcs/hyrax_pcs.zippel"),
-    ("membership", "examples/membership/membership.zippel"),
-    ("spartan", "examples/spartan/spartan.zippel"),
-    ("marlin_kzg", "examples/marlin_kzg/marlin_kzg.zippel"),
-    ("dory_ipa", "examples/dory_ipa/dory_ipa.zippel"),
-    ("dory_pcs", "examples/dory_pcs/dory_pcs.zippel"),
-    ("r1cs_sigma", "examples/r1cs_sigma/r1cs_sigma.zippel"),
-    ("hyperplonk_multiset", "examples/hyperplonk_multiset/hyperplonk_multiset.zippel"),
-    (
-        "hyperplonk_permutation",
-        "examples/hyperplonk_permutation/hyperplonk_permutation.zippel",
-    ),
-    (
-        "hyperplonk_zerocheck",
-        "examples/hyperplonk_zerocheck/hyperplonk_zerocheck.zippel",
-    ),
-    (
-        "hyperplonk_productcheck",
-        "examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel",
-    ),
-    ("hyperplonk_snark", "examples/hyperplonk_snark/hyperplonk_snark.zippel"),
-    ("zeromorph_kzg", "examples/zeromorph_kzg/zeromorph_kzg.zippel"),
-    ("kzh", "examples/kzh/kzh.zippel"),
-    ("dekart", "examples/dekart/dekart.zippel"),
-    ("pari", "examples/pari/pari.zippel"),
-]
+from paper import FIGURE_6
 
 
 def ncloc(path: Path) -> int:
@@ -89,15 +44,15 @@ def ncloc(path: Path) -> int:
 
 def main():
     repo_root = Path(__file__).resolve().parents[2]
-    print("| Protocol | LoC |")
+    print("| Proof System | LoC |")
     print("|---|---|")
     total = 0
-    for name, rel_path in PROTOCOLS:
-        loc = ncloc(repo_root / rel_path)
+    for _, label, example, *_ in FIGURE_6:
+        loc = ncloc(repo_root / "examples" / example / f"{example}.zippel")
         total += loc
-        print(f"| {name} | {loc} |")
+        print(f"| {label} | {loc} |")
     print()
-    print(f"{len(PROTOCOLS)} protocols, {total} lines total.")
+    print(f"{len(FIGURE_6)} protocols, {total} lines total.")
 
 
 if __name__ == "__main__":

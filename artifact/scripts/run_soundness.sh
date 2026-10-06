@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Experiment 2: special-soundness analysis across all nine candidates
-# (analysis_all, Singular backend, 16 GiB memory limit per run).
+# Experiment 2: special-soundness analysis across the paper's seven
+# candidates, Figure 6's Sound. column (analysis_all, Singular backend,
+# 16 GiB memory limit per run).
 #
-# Runs every candidate, including the five the analysis cannot verify,
+# Runs every candidate, including the three the analysis cannot verify,
 # and records statuses, failure reasons, timings and memory metrics.
 # See ../README.md for the mapping to the paper's claim (§9.3).
 #
@@ -24,7 +25,14 @@ OUT_DIR="artifact/output"
 mkdir -p "${OUT_DIR}"
 
 echo "== Special-soundness analysis =="
+# The paper's protocols (artifact/scripts/paper.py), unless the caller
+# picks its own with --protocols.
+PROTOCOLS=(--protocols "$(python3 "${SCRIPT_DIR}/paper.py" soundness)")
+for arg in "$@"; do
+    case "${arg}" in --protocols | --protocols=*) PROTOCOLS=() ;; esac
+done
+
 cargo bench --bench analysis_all -- --analysis soundness \
     --output "${OUT_DIR}/soundness_results.json" \
     --log "${OUT_DIR}/soundness_all.log" \
-    "$@"
+    "${PROTOCOLS[@]}" "$@"

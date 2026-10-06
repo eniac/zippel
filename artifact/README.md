@@ -92,9 +92,10 @@ Second, several protocols' `where`-clause constraints were revised after
 submission (see the completeness-count accounting under Experiment 3).
 
 This does not undermine the paper's conciseness claim. The native
-baseline side of each comparison is unaffected, since that code is
-vendored and neither formatted nor edited by this project; all of the
-movement above occurs on the Zippel side. Zippel remains substantially
+baseline side of each comparison is not reformatted by this project;
+only two native counts moved, slightly (Sumcheck 1544 to 1559,
+Bulletproofs 166 to 170), and the rest of the movement above occurs on
+the Zippel side. Zippel remains substantially
 shorter than its native baseline for every system that Experiment 1
 benchmarks. DeKART, KZH, Dory PCS, HyperPlonk SNARK and the ark-spartan
 baseline were added after submission, so they have no submitted count.
@@ -195,12 +196,15 @@ docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
 ```
 
 Runs `cargo bench --bench analysis_all -- --analysis soundness` over
-all nine registered candidates using Singular, with a 2-minute timeout
-and a 16 GiB memory limit per protocol. Results and metrics are
+the paper's seven special-soundness candidates (the protocols with a
+mark in Figure 6's Sound. column, listed in `artifact/scripts/paper.py`)
+using Singular, with a 2-minute timeout and a 16 GiB memory limit per
+protocol. Results and metrics are
 written to `artifact/output/soundness_results.json`, with the raw log in
 `artifact/output/soundness_all.log`. The processor renders a table with
-analysis outcomes, wall times (including protocol loading), and failure
-reasons.
+analysis outcomes, analysis times (ideal construction, Gröbner basis and
+check, as in Experiment 3), and failure reasons, then the minimum,
+maximum and median time over the verified runs.
 
 To run a subset:
 
@@ -214,22 +218,19 @@ docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
 ```
 | Protocol | Pass | Time | Status | Reason |
 |---|---|---|---|---|
-| schnorr | ✓ | ... | ok | |
-| okamoto | ✗ | ... | failed | No valid extractor for witness r: NoExtractor |
-| coin_proof | ✗ | 120.0s | timeout | |
+| Schnorr | ✓ | ... | ok | |
+| Okamoto | ✗ | ... | failed | No valid extractor for witness r: NoExtractor |
+| E-Cash Coin | ✗ | 120.0s | timeout | |
 ...
 
-soundness pass=4 failed=4 timeout=1 unexpected=0
+soundness pass=4 failed=2 timeout=1 unexpected=0
 ```
 
-The sweep covers the paper's six special-sound candidates (Schnorr,
-Multi-Schnorr, Chaum-Pedersen, Okamoto, CDS, E-Cash Coin) plus three it
-does not discuss (`okamoto_elgamal`, `commitment_equality`,
-`pedersen_eq`). Four pass: Schnorr, Multi-Schnorr, Chaum-Pedersen and
-`okamoto_elgamal`. Okamoto, CDS, `commitment_equality` and `pedersen_eq`
-fail with a reason, and E-Cash Coin reaches the timeout. The run
-reproduces the paper if it reports `unexpected=0`; E-Cash Coin may
-report `failed` instead of `timeout`, depending on `--timeout`. A cross
+Four pass, matching Figure 6's check marks: Schnorr, Multi-Schnorr,
+Okamoto-ElGamal and Chaum-Pedersen. Okamoto and CDS fail with a reason,
+and E-Cash Coin reaches the timeout. The run reproduces the paper if it
+reports `unexpected=0`; E-Cash Coin may report `failed` instead of
+`timeout`, depending on `--timeout`. A cross
 means the analysis could not establish special soundness, not that the
 protocol is unsound.
 
@@ -246,33 +247,37 @@ Section 9.3 (and adds a supplementary per-protocol timing table).
 ```sh
 mkdir -p artifact/output
 docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
-  bash -c "artifact/scripts/run_completeness.sh --timeout 120 && python3 artifact/scripts/process_completeness.py"
+  bash -c "artifact/scripts/run_completeness.sh --timeout 300 && python3 artifact/scripts/process_completeness.py"
 ```
 
-Runs all the paper's protocols through the completeness analysis, with a 2-minute timeout and a 16 GiB memory limit per run.
+Runs the paper's 34 Figure 6 protocols (listed in
+`artifact/scripts/paper.py`) through the completeness analysis, with a
+5-minute timeout and a 16 GiB memory limit per run.
 
 To sanity-check a small subset of protocols instead of all of them:
 
 ```sh
 docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
-  bash -c "artifact/scripts/run_completeness.sh --timeout 120 --protocols schnorr,groth16,ipa,hyperplonk_piop && python3 artifact/scripts/process_completeness.py"
+  bash -c "artifact/scripts/run_completeness.sh --timeout 300 --protocols schnorr,groth16,ipa,hyperplonk_snark && python3 artifact/scripts/process_completeness.py"
 ```
 
 **Note on the timeout.** The paper's own methodology budgets 20 minutes
-per protocol; every protocol that completes in practice finishes in
-under a minute (the slowest, `hyperplonk_multiset`, takes about 47s on
-our machine), so a much tighter 2-minute timeout is used here to keep
+per protocol. Every protocol that completes takes far less: the slowest,
+Multiset, takes about a minute on our machine and about 140 seconds on
+an older server (a 2016 Xeon), so a 5-minute timeout is used here to keep
 the full run fast.
 
 **What to expect, and why it differs from the paper.** Completeness
-verifies every protocol except six (`spartan`, `dory_ipa`,
-`hyperplonk_permutation`, `hyperplonk_piop`, `dekart` and `pari`), which
-reach the timeout. The submitted paper verified 20 of its 30: since
-submission we have fixed `where` clauses that were incomplete, which had
-kept the analysis from proving those protocols complete.
+verifies 29 of the 34 protocols, every one Figure 6 marks with a check
+or "~", and the run reproduces the paper if it reports
+`Unexpected outcomes: 0`. The other five are Figure 6's crosses:
+Spartan, Permutation, Dekart and Pari reach the timeout, and HyperPlonk
+exceeds the memory limit. The submitted paper verified 20 of its 30:
+since submission we have fixed `where` clauses that were incomplete,
+which had kept the analysis from proving those protocols complete.
 
-**Runtime**: a full run takes approximately 15 minutes, most of them spent
-on the six protocols that reach the timeout.
+**Runtime**: a full run takes roughly 25 minutes, most of it spent on
+the four protocols that reach the timeout.
 
 ---
 
