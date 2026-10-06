@@ -2258,34 +2258,25 @@ impl<C: ArkConfig> Value<C> {
     /// not by index), if the operand pair has no indexing rule, or if any index is
     /// out of bounds for `self`.
     pub fn ram_ref(&self, r: &Self) -> Self {
+        // Field and group vectors select through `Shared::select`: a slice
+        // `v[a..b]` (a contiguous index run) is a view of `v`'s buffer, any
+        // other index list a copy.
         match (self, r) {
             (Value::VecIndex(a), Value::VecIndex(b)) => {
                 Value::VecIndex(b.par_iter().map(|i| a[*i]).collect())
             }
             (Value::VecIndex(a), Value::Index(b)) => Value::Index(a[*b]),
-            (Value::VecScalar(a), Value::VecIndex(b)) => {
-                Value::vec_scalar(b.par_iter().map(|i| a[*i]).collect())
-            }
+            (Value::VecScalar(a), Value::VecIndex(b)) => Value::VecScalar(a.select(b)),
             (Value::VecScalar(a), Value::Index(b)) => Value::Scalar(a[*b]),
-            (Value::VecG1(a), Value::VecIndex(b)) => {
-                Value::vec_g1(b.par_iter().map(|i| a[*i]).collect())
-            }
+            (Value::VecG1(a), Value::VecIndex(b)) => Value::VecG1(a.select(b)),
             (Value::VecG1(a), Value::Index(b)) => Value::G1(a[*b]),
-            (Value::VecG2(a), Value::VecIndex(b)) => {
-                Value::vec_g2(b.par_iter().map(|i| a[*i]).collect())
-            }
+            (Value::VecG2(a), Value::VecIndex(b)) => Value::VecG2(a.select(b)),
             (Value::VecG2(a), Value::Index(b)) => Value::G2(a[*b]),
-            (Value::VecGT(a), Value::VecIndex(b)) => {
-                Value::vec_gt(b.par_iter().map(|i| a[*i]).collect())
-            }
+            (Value::VecGT(a), Value::VecIndex(b)) => Value::VecGT(a.select(b)),
             (Value::VecGT(a), Value::Index(b)) => Value::GT(a[*b]),
-            (Value::VecG1Affine(a), Value::VecIndex(b)) => {
-                Value::vec_g1_affine(b.par_iter().map(|i| a[*i]).collect())
-            }
+            (Value::VecG1Affine(a), Value::VecIndex(b)) => Value::VecG1Affine(a.select(b)),
             (Value::VecG1Affine(a), Value::Index(b)) => Value::G1Affine(a[*b]),
-            (Value::VecG2Affine(a), Value::VecIndex(b)) => {
-                Value::vec_g2_affine(b.par_iter().map(|i| a[*i]).collect())
-            }
+            (Value::VecG2Affine(a), Value::VecIndex(b)) => Value::VecG2Affine(a.select(b)),
             (Value::VecG2Affine(a), Value::Index(b)) => Value::G2Affine(a[*b]),
             // Slicing keeps the preparation of the selected points.
             (Value::VecG2Prepared(a), Value::VecIndex(b)) => Value::VecG2Prepared(PreparedG2Vec {

@@ -1,6 +1,7 @@
 //! Vectors that share their storage.
 
 use ark_serialize::{CanonicalSerialize, Compress, SerializationError, Write};
+use rayon::prelude::*;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::{Deref, Range};
@@ -36,6 +37,37 @@ impl<T> Shared<T> {
             range: (absolute != (0..self.buf.len())).then_some(absolute),
         }
     }
+}
+
+impl<T: Clone + Send + Sync> Shared<T> {
+    /// The elements at `indices`, in order. A contiguous ascending run, which
+    /// is what a slice `v[a..b]` lowers to, gives a view sharing this buffer;
+    /// any other index list gathers a copy.
+    ///
+    /// # Panics
+    /// Panics if an index is out of bounds.
+    #[must_use]
+    pub fn select(&self, indices: &[usize]) -> Self {
+        match contiguous_run(indices) {
+            Some(run) => self.slice(run),
+            None => Shared::from(
+                indices
+                    .par_iter()
+                    .map(|&i| self[i].clone())
+                    .collect::<Vec<_>>(),
+            ),
+        }
+    }
+}
+
+/// `start..end` when `indices` is `start, start + 1, …, end - 1` (an empty list
+/// is the empty run `0..0`); `None` otherwise.
+fn contiguous_run(indices: &[usize]) -> Option<Range<usize>> {
+    let Some(&start) = indices.first() else {
+        return Some(0..0);
+    };
+    let consecutive = indices.windows(2).all(|w| w[1] == w[0] + 1);
+    consecutive.then(|| start..start + indices.len())
 }
 
 impl<T: Clone> Shared<T> {
@@ -197,6 +229,66 @@ mod tests {
         let p = v.as_ptr();
         let out = v.into_vec();
         assert_eq!(out.as_ptr(), p);
+    }
+
+    #[test]
+    fn select_views_a_contiguous_run() {
+        let v = Shared::from(vec![10u64, 11, 12, 13, 14]);
+        let s = v.select(&[1, 2, 3]);
+        assert!(std::ptr::eq(&v[1], &s[0]), "a run is a view, not a copy");
+        assert_eq!(&*s, &[11, 12, 13]);
+        assert_eq!(s.len(), 3);
+        assert_eq!(s.to_vec(), vec![11, 12, 13]);
+        assert_eq!(s.clone().into_vec(), vec![11, 12, 13]);
+    }
+
+    #[test]
+    fn select_copies_other_index_lists() {
+        let v = Shared::from(vec![10u64, 11, 12, 13]);
+        for idx in [&[3, 2][..], &[0, 2], &[1, 1]] {
+            let s = v.select(idx);
+            let expected: Vec<u64> = idx.iter().map(|&i| v[i]).collect();
+            assert_eq!(s, expected);
+            assert!(s.range.is_none(), "{idx:?} is gathered into its own buffer");
+        }
+    }
+
+    #[test]
+    fn select_of_nothing_is_empty() {
+        let v = Shared::from(vec![1u64, 2]);
+        assert!(v.select(&[]).is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "out of bounds")]
+    fn select_rejects_a_run_past_the_end() {
+        let _ = Shared::from(vec![1u64, 2]).select(&[1, 2]);
+    }
+
+    #[test]
+    fn writing_a_selected_view_leaves_the_parent() {
+        let v = Shared::from(vec![1u64, 2, 3, 4]);
+        let mut s = v.select(&[2, 3]);
+        s.to_mut()[0] = 99;
+        assert_eq!(&*s, &[99, 4]);
+        assert_eq!(&*v, &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn a_view_serializes_as_a_vec_of_its_elements() {
+        let v = Shared::from(vec![1u64, 2, 3, 4, 5]);
+        let s = v.select(&[1, 2, 3]);
+        let bytes = |x: &dyn Fn(&mut Vec<u8>)| {
+            let mut out = Vec::new();
+            x(&mut out);
+            out
+        };
+        for compress in [Compress::Yes, Compress::No] {
+            let view = bytes(&|o| s.serialize_with_mode(o, compress).unwrap());
+            let plain = bytes(&|o| vec![2u64, 3, 4].serialize_with_mode(o, compress).unwrap());
+            assert_eq!(view, plain);
+            assert_eq!(s.serialized_size(compress), plain.len());
+        }
     }
 
     #[test]

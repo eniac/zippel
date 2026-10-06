@@ -1491,3 +1491,36 @@ fn test_value_concat_pbt() {
         Ok(())
     });
 }
+
+// A slice `v[a..b]` lowers to `ram_ref` with a contiguous index run and is a
+// view of `v`; it must be indistinguishable from the gathered copy it replaces:
+// equal, and with the same transcript bytes.
+#[test]
+fn ram_ref_slice_matches_the_gathered_copy() {
+    use crate::values::value_to_bytes;
+    use ark_std::UniformRand;
+    type G1Affine = <TestConfig as ArkConfig>::G1Affine;
+    let mut rng = test_rng();
+    let points: Vec<G1Affine> = (0..8)
+        .map(|_| <TestConfig as ArkConfig>::G1::rand(&mut rng).into_affine())
+        .collect();
+    let scalars: Vec<Fr> = (0..8u64).map(Fr::from).collect();
+    let run = Value::<TestConfig>::VecIndex((2..6).collect());
+    for (v, copy) in [
+        (
+            Value::<TestConfig>::vec_g1_affine(points.clone()),
+            Value::<TestConfig>::vec_g1_affine(points[2..6].to_vec()),
+        ),
+        (
+            Value::<TestConfig>::vec_scalar(scalars.clone()),
+            Value::<TestConfig>::vec_scalar(scalars[2..6].to_vec()),
+        ),
+    ] {
+        let view = v.ram_ref(&run);
+        assert_eq!(view, copy);
+        assert_eq!(
+            value_to_bytes(&view).unwrap(),
+            value_to_bytes(&copy).unwrap()
+        );
+    }
+}
