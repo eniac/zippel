@@ -11,7 +11,7 @@
 //! forwarded to every `analysis` invocation verbatim (like `--backend`).
 //! `--path` and `--l-vec` need exactly one protocol in `--protocols`. `analysis`
 //! decides `ok`/`failed`/`crashed`/`oom` for itself
-//! (see its own module docs) — `analysis_all` adds only `timeout`, which it
+//! (see `output::Status`) — `analysis_all` adds only `timeout`, which it
 //! alone can observe.
 
 use std::fs::{File, OpenOptions};
