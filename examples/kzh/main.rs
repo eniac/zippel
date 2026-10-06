@@ -28,7 +28,7 @@ pub fn run(opts: &common::RunOptions) {
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile(&build_sizes_ctx());
 
-    let inputs = prover_create_inputs();
+    let inputs: Inputs<_> = prover_create_inputs().into();
     common::run_prover_and_verify(&mut handler, &inputs);
 
     if !opts.analyses {

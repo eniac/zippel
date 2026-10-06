@@ -506,13 +506,13 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
 
     /// A compiled zippel Groth16 handler plus the size-invariant part of its
     /// input context, ready to be timed at one circuit size.
     pub struct Setup<'a> {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs_base: Ctx<Vid, Value<ArkBls12_381>>,
+        inputs_base: Inputs<ArkBls12_381>,
         translated: &'a Translated,
         compile_time: Vec<std::time::Duration>,
     }
@@ -545,7 +545,7 @@ pub mod zippel_side {
             let l_query_aff = G1Projective::normalize_batch(&keys.l_query);
             let gamma_abc_aff = G1Projective::normalize_batch(&keys.gamma_abc_g1);
 
-            let inputs_base = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+            let inputs_base = Inputs::<ArkBls12_381>::from_iter([
                 (
                     Vid("gen_g1".to_string()),
                     Value::G1(G1Projective::generator()),
@@ -644,7 +644,7 @@ pub mod zippel_side {
                 );
                 h_coeffs.resize(self.translated.h_size, GitFr::zero());
                 let mut inputs = self.inputs_base.clone();
-                inputs.insert(&Vid("h_coeffs".to_string()), &Value::VecScalar(h_coeffs));
+                inputs.insert("h_coeffs", Value::VecScalar(h_coeffs));
                 let proof = self
                     .handler
                     .run_prover(&inputs)
@@ -1006,7 +1006,7 @@ mod cross_tests {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
 
     /// Sweep used by both cross-tests. Capped at log_2 num_constraints = 6
     /// (= 64 constraints, M ≈ 65 inputs, L ≈ 128 witnesses) so each test
@@ -1034,14 +1034,14 @@ mod cross_tests {
     /// Build the zippel-side input context from a `Translated`. Mirrors
     /// the construction in `zippel_side::Setup::new` but inlined so this
     /// test module doesn't reach into Setup's private fields.
-    fn zip_inputs_from_translated(t: &Translated) -> Ctx<Vid, Value<ArkBls12_381>> {
+    fn zip_inputs_from_translated(t: &Translated) -> Inputs<ArkBls12_381> {
         // h_coeffs is the QAP witness-map output, computed in Rust on the
         // zippel side too (since zippel can't express the QAP reduction
         // inside the proto). Match the zippel bench's behavior.
         let mut h_coeffs = witness_map(&t.mat, t.num_inputs, t.num_constraints, &t.full_assignment);
         h_coeffs.resize(t.h_size, GitFr::zero());
 
-        Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+        Inputs::<ArkBls12_381>::from_iter([
             (
                 Vid("gen_g1".to_string()),
                 Value::G1(ark_bls12_381::G1Projective::generator()),

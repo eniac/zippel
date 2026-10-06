@@ -45,7 +45,7 @@ pub fn run(opts: &common::RunOptions) {
     sizes.insert(&Tid::new("KMN"), &KMN);
     handler.compile(&sizes);
 
-    let inputs = build_inputs();
+    let inputs: Inputs<_> = build_inputs().into();
     let prover_start = Instant::now();
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();

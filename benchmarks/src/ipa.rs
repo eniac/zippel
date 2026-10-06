@@ -30,7 +30,7 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
 
     // Cached IPA inputs. Bases (g_vec, h_vec, u_aux_base) are Pedersen
     // setup. (a_vec, b_vec, sum_vec) would normally be the per-call
@@ -152,7 +152,7 @@ pub mod zippel_side {
         /// Panics if the prover or verifier graph fails to execute, or if the
         /// verifier rejects the honestly generated proof.
         pub fn time_protocol(&mut self) -> Timing {
-            let inputs = Ctx::<Vid, Value<ArkSecp256k1>>::from_iter([
+            let inputs = Inputs::<ArkSecp256k1>::from_iter([
                 (
                     Vid("g_vec".to_string()),
                     Value::VecG1(self.inputs.g_vec.clone()),

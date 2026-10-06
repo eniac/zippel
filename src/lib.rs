@@ -43,6 +43,7 @@ pub use backend;
 pub use graph;
 pub use lang;
 pub use runtime;
+pub use runtime::Inputs;
 pub use share;
 
 /// Arguments for the Zippel handler
@@ -362,17 +363,15 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         self.output_pdf(&combined, "combined_graph");
     }
 
-    /// Run prover, takes inputs and returns proof
+    /// Run prover, takes inputs and returns proof. The run shares the
+    /// caller's input values, so `inputs` can be reused across runs.
     ///
     /// # Errors
     /// Returns `RuntimeError` if expected inputs are missing.
     ///
     /// # Panics
     /// If `compile()` has not been called first.
-    pub fn run_prover(
-        &mut self,
-        inputs: &Ctx<Vid, Value<C>>,
-    ) -> Result<Vec<Value<C>>, RuntimeError> {
+    pub fn run_prover(&mut self, inputs: &Inputs<C>) -> Result<Vec<Value<C>>, RuntimeError> {
         let prover = self.prover_graph.as_ref().unwrap();
 
         // Collect arg info from the prover dag directly.
@@ -408,7 +407,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             return Err(RuntimeError::missing_inputs(
                 missing.iter().copied(),
                 expected_args.iter(),
-                inputs.iter().map(|(k, _)| k),
+                inputs.names(),
             ));
         }
 
@@ -421,7 +420,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         let mut prover_state = prover_seperator.std_prover();
         let result = MutexGraph::run_graph(
             Arc::new(MutexGraph::new(prover.clone())),
-            Arc::new(inputs.clone()),
+            inputs,
             &mut prover_state,
             ResultKind::Prover,
         )?;
@@ -433,7 +432,8 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         }
     }
 
-    /// Run verifier, takes proof and inputs and returns result
+    /// Run verifier, takes proof and inputs and returns result. Instance
+    /// inputs are shared with the caller; proof values are copied once.
     ///
     /// # Errors
     /// Returns `RuntimeError` if verification fails.
@@ -443,7 +443,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     pub fn run_verifier(
         &mut self,
         proof: &[Value<C>],
-        inputs: &Ctx<Vid, Value<C>>,
+        inputs: &Inputs<C>,
     ) -> Result<Vec<bool>, RuntimeError> {
         let verifier = self.verifier_graph.as_ref().unwrap();
 
@@ -458,11 +458,9 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
                 _ => None,
             })
             .collect();
-        let instance_inputs: Ctx<Vid, Value<C>> = inputs
+        let instance_inputs = instance_args
             .iter()
-            .filter(|(vid, _)| instance_args.contains(vid))
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+            .filter_map(|vid| inputs.get(vid).map(|v| (vid.clone(), Arc::clone(v))));
 
         // Transcript inputs: identify by ArgKind::TranscriptInput, zip with proof.
         let transcript_args: Vec<Vid> = verifier
@@ -473,15 +471,12 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
                 _ => None,
             })
             .collect();
-        let transcript_inputs: Ctx<Vid, Value<C>> = transcript_args
+        let transcript_inputs = transcript_args
             .iter()
-            .zip(proof.iter())
-            .map(|(name, val)| (name.clone(), val.clone()))
-            .collect();
+            .zip(proof)
+            .map(|(name, val)| (name.clone(), Arc::new(val.clone())));
 
-        // Combine instance + transcript inputs.
-        let mut all_inputs = instance_inputs;
-        all_inputs.append(&transcript_inputs);
+        let all_inputs: Inputs<C> = instance_inputs.chain(transcript_inputs).collect();
 
         let domain_separator_session = self.args.domain_separator_session();
         let verifier_seperator = ZippelDomainSeparator::new_zippel_domain_seperator(
@@ -493,7 +488,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         let mut verifier_state = verifier_seperator.std_prover();
         let result = MutexGraph::run_graph(
             Arc::new(MutexGraph::new(verifier.clone())),
-            Arc::new(all_inputs),
+            &all_inputs,
             &mut verifier_state,
             ResultKind::Verifier,
         )?;
@@ -615,14 +610,14 @@ proto eq_proof<F: Field>(witness a: F, witness b: F) where a == b {
         let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
         handler.compile(&Ctx::new());
 
-        let mut inputs = Ctx::<Vid, Value<ArkBls12_381>>::new();
+        let mut inputs = Inputs::<ArkBls12_381>::new();
         inputs.insert(
-            &Vid::new("a"),
-            &Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
+            "a",
+            Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
         );
         inputs.insert(
-            &Vid::new("b"),
-            &Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
+            "b",
+            Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
         );
 
         let proof = handler.run_prover(&inputs).expect("run_prover failed");
@@ -658,10 +653,10 @@ proto repro<F: Field>(witness s: F) where s == s {
         let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
         handler.compile(&Ctx::new());
 
-        let mut inputs = Ctx::<Vid, Value<ArkBls12_381>>::new();
+        let mut inputs = Inputs::<ArkBls12_381>::new();
         inputs.insert(
-            &Vid::new("s"),
-            &Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
+            "s",
+            Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
         );
 
         let proof = handler.run_prover(&inputs).expect("run_prover failed");
@@ -701,18 +696,18 @@ proto bad_check<F: Field>(witness a: F, witness b: F, instance c: F) where a == 
         let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
         handler.compile(&Ctx::new());
 
-        let mut inputs = Ctx::<Vid, Value<ArkBls12_381>>::new();
+        let mut inputs = Inputs::<ArkBls12_381>::new();
         inputs.insert(
-            &Vid::new("a"),
-            &Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
+            "a",
+            Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
         );
         inputs.insert(
-            &Vid::new("b"),
-            &Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
+            "b",
+            Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
         );
         inputs.insert(
-            &Vid::new("c"),
-            &Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(42u64)),
+            "c",
+            Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(42u64)),
         );
 
         let proof = handler.run_prover(&inputs).expect("run_prover failed");

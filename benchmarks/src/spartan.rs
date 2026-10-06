@@ -18,7 +18,7 @@ use lang::id::{Tid, Vid};
 use rand::Rng;
 use share::Ctx;
 use std::path::PathBuf;
-use zippel::{ZippelArgs, ZippelHandler, check_verification, proof_size_bytes};
+use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification, proof_size_bytes};
 
 /// Default `log_2` of the R1CS constraint count used by the Spartan sweep.
 pub const DEFAULT_M: usize = 8;
@@ -55,7 +55,7 @@ pub struct ZippelTiming {
 pub struct Setup {
     m: usize,
     handler: ZippelHandler<ArkCurve25519>,
-    inputs: Ctx<Vid, Value<ArkCurve25519>>,
+    inputs: Inputs<ArkCurve25519>,
     compile_time: Vec<std::time::Duration>,
 }
 
@@ -253,7 +253,7 @@ where
     }
 }
 
-fn prover_create_inputs(m: usize) -> Ctx<Vid, Value<ArkCurve25519>> {
+fn prover_create_inputs(m: usize) -> Inputs<ArkCurve25519> {
     let num_cons = 1usize << m;
     let witness_len = 1usize << (m - 1);
     let io_len = witness_len - 1;
@@ -326,7 +326,7 @@ fn prover_create_inputs(m: usize) -> Ctx<Vid, Value<ArkCurve25519>> {
 
     let placeholder_tau: Vec<Fr> = vec![Fr::from(0u64); m];
 
-    Ctx::<Vid, Value<ArkCurve25519>>::from_iter([
+    Inputs::<ArkCurve25519>::from_iter([
         (Vid("mat_a_t".to_string()), mat_a_t),
         (Vid("mat_b_t".to_string()), mat_b_t),
         (Vid("mat_c_t".to_string()), mat_c_t),

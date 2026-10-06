@@ -1,8 +1,6 @@
-use backend::{ArkConfig, HasOpFactory, Value};
-use lang::id::Vid;
-use share::Ctx;
+use backend::{ArkConfig, HasOpFactory};
 use std::time::Instant;
-use zippel::{ZippelHandler, check_verification, proof_size_bytes};
+use zippel::{Inputs, ZippelHandler, check_verification, proof_size_bytes};
 
 /// Shared harness options; the example's parsed Clap arguments are passed
 /// separately.
@@ -43,7 +41,7 @@ pub(crate) use time_analysis;
 /// `handler` must already be compiled. `inputs` is the prover witness context.
 pub fn run_prover_and_verify<C: ArkConfig + HasOpFactory>(
     handler: &mut ZippelHandler<C>,
-    inputs: &Ctx<Vid, Value<C>>,
+    inputs: &Inputs<C>,
 ) {
     let prover_start = Instant::now();
     let proof = handler.run_prover(inputs).expect("run_prover failed");

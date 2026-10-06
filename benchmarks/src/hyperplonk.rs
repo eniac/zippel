@@ -95,11 +95,11 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs: Ctx<Vid, Value<ArkBls12_381>>,
+        inputs: Inputs<ArkBls12_381>,
         compile_time: Vec<std::time::Duration>,
     }
 
@@ -166,7 +166,7 @@ pub mod zippel_side {
             for (i, name) in ["s0", "s1", "s2"].into_iter().enumerate() {
                 named.push((name, col(&pk.permutation_oracles[i].evaluations)));
             }
-            let inputs = Ctx::from_iter(named.into_iter().map(|(k, v)| (Vid(k.to_string()), v)));
+            let inputs = Inputs::from_iter(named.into_iter().map(|(k, v)| (Vid(k.to_string()), v)));
 
             Setup {
                 handler,

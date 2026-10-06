@@ -27,7 +27,7 @@ pub fn run(opts: &common::RunOptions) {
     sizes.insert(&Tid::new("S"), &S);
     handler.compile(&sizes);
 
-    let inputs = prover_create_inputs();
+    let inputs: Inputs<_> = prover_create_inputs().into();
     let prover_start = Instant::now();
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
