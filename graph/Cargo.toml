@@ -21,6 +21,7 @@ spongefish = { version = "0.7", features = [
     "ark-ff",
     "ark-ec",
 ] }
+arc-swap = "1"
 
 [dev-dependencies]
 arbitrary = { version = "1.4.1", features = ["derive"] }

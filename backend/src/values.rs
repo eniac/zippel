@@ -2430,40 +2430,41 @@ impl<C: ArkConfig> Value<C> {
         if let Value::VecG2Prepared(a) = self {
             return Value::VecG2Affine(a.affine).concat(r);
         }
-        match &self {
+        // A vector left side is moved out: no copy when this is its only owner.
+        match self {
             Value::VecScalar(a) => {
                 r.promote_to_vec();
-                let mut a = a.to_vec();
+                let mut a = a.into_vec();
                 a.append(r.into_vec_scalar_mut());
                 *r = Value::vec_scalar(a);
             }
             Value::VecG1(a) => {
                 r.promote_to_vec();
-                let mut a = a.to_vec();
+                let mut a = a.into_vec();
                 a.append(r.into_vec_g1_mut());
                 *r = Value::vec_g1(a);
             }
             Value::VecG2(a) => {
                 r.promote_to_vec();
-                let mut a = a.to_vec();
+                let mut a = a.into_vec();
                 a.append(r.into_vec_g2_mut());
                 *r = Value::vec_g2(a);
             }
             Value::VecGT(a) => {
                 r.promote_to_vec();
-                let mut a = a.to_vec();
+                let mut a = a.into_vec();
                 a.append(r.into_vec_gt_mut());
                 *r = Value::vec_gt(a);
             }
             Value::VecG1Affine(a) => {
                 r.promote_to_vec();
-                let mut a = a.to_vec();
+                let mut a = a.into_vec();
                 a.append(r.into_vec_g1_affine_mut());
                 *r = Value::vec_g1_affine(a);
             }
             Value::VecG2Affine(a) => {
                 r.promote_to_vec();
-                let mut a = a.to_vec();
+                let mut a = a.into_vec();
                 a.append(r.into_vec_g2_affine_mut());
                 *r = Value::vec_g2_affine(a);
             }
@@ -2501,91 +2502,91 @@ impl<C: ArkConfig> Value<C> {
             },
             Value::Scalar(a) => {
                 r.promote_to_vec();
-                let mut a = vec![*a];
+                let mut a = vec![a];
                 a.append(r.into_vec_scalar_mut());
                 *r = Value::vec_scalar(a);
             }
             Value::G1(a) => {
                 r.promote_to_vec();
-                let mut a = vec![*a];
+                let mut a = vec![a];
                 a.append(r.into_vec_g1_mut());
                 *r = Value::vec_g1(a);
             }
             Value::G2(a) => {
                 r.promote_to_vec();
-                let mut a = vec![*a];
+                let mut a = vec![a];
                 a.append(r.into_vec_g2_mut());
                 *r = Value::vec_g2(a);
             }
             Value::GT(a) => {
                 r.promote_to_vec();
-                let mut a = vec![*a];
+                let mut a = vec![a];
                 a.append(r.into_vec_gt_mut());
                 *r = Value::vec_gt(a);
             }
             Value::G1Affine(a) => {
                 r.promote_to_vec();
-                let mut a = vec![*a];
+                let mut a = vec![a];
                 a.append(r.into_vec_g1_affine_mut());
                 *r = Value::vec_g1_affine(a);
             }
             Value::G2Affine(a) => {
                 r.promote_to_vec();
-                let mut a = vec![*a];
+                let mut a = vec![a];
                 a.append(r.into_vec_g2_affine_mut());
                 *r = Value::vec_g2_affine(a);
             }
             Value::Index(a) => {
                 r.promote_to_vec();
-                let mut a = vec![*a];
+                let mut a = vec![a];
                 a.append(r.into_vec_index_mut());
                 *r = Value::VecIndex(a);
             }
             Value::Vec(a) => match &r {
                 Value::Vec(_) => {
-                    let mut a = a.clone();
+                    let mut a = a;
                     a.append(r.into_vec_mut());
                     *r = Value::Vec(a);
                 }
                 Value::VecScalar(_) => {
-                    let mut slf = self.clone();
+                    let mut slf = Value::Vec(a);
                     slf.into_vec_scalar_mut().append(r.into_vec_scalar_mut());
                     *r = slf;
                 }
                 Value::VecG1(_) => {
-                    let mut slf = self.clone();
+                    let mut slf = Value::Vec(a);
                     slf.into_vec_g1_mut().append(r.into_vec_g1_mut());
                     *r = slf;
                 }
                 Value::VecG2(_) => {
-                    let mut slf = self.clone();
+                    let mut slf = Value::Vec(a);
                     slf.into_vec_g2_mut().append(r.into_vec_g2_mut());
                     *r = slf;
                 }
                 Value::VecGT(_) => {
-                    let mut slf = self.clone();
+                    let mut slf = Value::Vec(a);
                     slf.into_vec_gt_mut().append(r.into_vec_gt_mut());
                     *r = slf;
                 }
                 Value::VecG1Affine(_) => {
-                    let mut slf = self.clone();
+                    let mut slf = Value::Vec(a);
                     slf.into_vec_g1_affine_mut()
                         .append(r.into_vec_g1_affine_mut());
                     *r = slf;
                 }
                 Value::VecG2Affine(_) => {
-                    let mut slf = self.clone();
+                    let mut slf = Value::Vec(a);
                     slf.into_vec_g2_affine_mut()
                         .append(r.into_vec_g2_affine_mut());
                     *r = slf;
                 }
                 Value::VecIndex(_) => {
-                    let mut slf = self.clone();
+                    let mut slf = Value::Vec(a);
                     slf.into_vec_index_mut().append(r.into_vec_index_mut());
                     *r = slf;
                 }
                 _ => {
-                    let mut a = a.clone();
+                    let mut a = a;
                     a.push(r.clone());
                     *r = Value::Vec(a);
                 }
@@ -3257,9 +3258,18 @@ impl<C: ArkConfig> Value<C> {
     /// # Panics
     /// Panics if this value is not a scalar or index vector.
     pub fn value_poly(&self) -> Self {
+        self.clone().value_poly_owned()
+    }
+
+    /// [`Self::value_poly`] consuming the vector: when this is its only owner,
+    /// it becomes the coefficients without a copy.
+    ///
+    /// # Panics
+    /// As [`Self::value_poly`].
+    pub fn value_poly_owned(self) -> Self {
         match self {
             Value::VecScalar(v) => Value::Poly(VirtualPolynomial::from_poly(
-                PolyVariant::from_coeffs(v.to_vec()),
+                PolyVariant::from_coeffs(v.into_vec()),
             )),
             Value::VecIndex(v) => {
                 let coeffs = v.iter().map(|i| C::FOps::from_usize(*i)).collect();
@@ -3340,7 +3350,16 @@ impl<C: ArkConfig> Value<C> {
     /// Panics if the evaluations are empty, if `points` and evaluations have
     /// different lengths, or if either operand is not a scalar/index vector.
     pub fn value_interpolate(&self, points: Option<&Self>) -> Self {
-        let evals = value_as_scalar_vec::<C>(self);
+        self.clone().value_interpolate_owned(points)
+    }
+
+    /// [`Self::value_interpolate`] consuming the evaluations: when this is
+    /// their only owner, they become the coefficients in place.
+    ///
+    /// # Panics
+    /// As [`Self::value_interpolate`].
+    pub fn value_interpolate_owned(self, points: Option<&Self>) -> Self {
+        let evals = value_into_scalar_vec::<C>(self);
         assert!(
             !evals.is_empty(),
             "interpolate expects non-empty evaluations"
@@ -3355,7 +3374,7 @@ impl<C: ArkConfig> Value<C> {
                 )))
             }
             Some(points) => {
-                let xs = value_as_scalar_vec::<C>(points);
+                let xs = value_scalars::<C>(points);
                 assert_eq!(
                     xs.len(),
                     evals.len(),
@@ -3735,9 +3754,21 @@ pub(crate) fn round_univariate_from_marginalize_evals<F: PrimeField>(
     ))
 }
 
-fn value_as_scalar_vec<C: ArkConfig>(v: &Value<C>) -> Vec<C::F> {
+/// The scalars of a scalar or index vector, borrowed when they are stored as
+/// scalars.
+fn value_scalars<C: ArkConfig>(v: &Value<C>) -> std::borrow::Cow<'_, [C::F]> {
     match v {
-        Value::VecScalar(xs) => xs.to_vec(),
+        Value::VecScalar(xs) => std::borrow::Cow::Borrowed(xs),
+        Value::VecIndex(xs) => xs.iter().map(|i| C::FOps::from_usize(*i)).collect(),
+        _ => panic!("Expected scalar vector, found {}", v),
+    }
+}
+
+/// The scalars of a scalar or index vector, moved out when `v` is their only
+/// owner.
+fn value_into_scalar_vec<C: ArkConfig>(v: Value<C>) -> Vec<C::F> {
+    match v {
+        Value::VecScalar(xs) => xs.into_vec(),
         Value::VecIndex(xs) => xs.iter().map(|i| C::FOps::from_usize(*i)).collect(),
         _ => panic!("Expected scalar vector, found {}", v),
     }
