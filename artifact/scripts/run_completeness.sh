@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Experiment 3: completeness analysis across all 30 protocols (Singular
+# Experiment 3: completeness analysis across all the paper's protocols (Singular
 # backend, 20-minute per-run timeout, 16GiB memory limit, by default --
 # analysis_all's own defaults).
 #

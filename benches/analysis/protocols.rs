@@ -16,7 +16,7 @@ pub struct Protocol {
     pub name: &'static str,
     pub path: &'static str,
     pub sizes: &'static [(&'static str, usize)],
-    /// Whether the completeness sweep runs it: the paper's 30 protocols.
+    /// Whether the completeness sweep runs it: the paper's protocols.
     pub completeness: bool,
     /// The special-soundness round parameters, one per challenge round, for
     /// the protocols the soundness sweep runs: the paper's 6 special-sound
@@ -177,6 +177,15 @@ pub static PROTOCOLS: &[Protocol] = &[
         name: "dory_ipa",
         path: "examples/dory_ipa/dory_ipa.zippel",
         sizes: &[("S", 2)],
+        completeness: true,
+        soundness: None,
+    },
+    // K=3 is the smallest size at which one reduce-and-fold round recurses
+    // into another, not only into the final fold.
+    Protocol {
+        name: "dory_pcs",
+        path: "examples/dory_pcs/dory_pcs.zippel",
+        sizes: &[("K", 3)],
         completeness: true,
         soundness: None,
     },

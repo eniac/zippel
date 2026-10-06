@@ -10,7 +10,7 @@ the paper's evaluation section.
 6 and 7 (pages 12-13) and the completeness and special-soundness claims
 of Section 9.3. It additionally produces two supplementary tables not
 included in the submitted paper (a per-protocol Graph IR node-count
-table and a 30-protocol completeness-timing table), added in response
+table and a per-protocol completeness-timing table), added in response
 to reviewer feedback. The submitted paper therefore has no corresponding
 table for these two. Each experiment below identifies which figure, if
 any, it corresponds to.
@@ -73,11 +73,11 @@ ends with:
 Smoke test passed.
 ```
 
-## Line counts for all 30 protocols (Figure 6)
+## Line counts for the 30+ protocols (Figure 6)
 
 This command reproduces the submitted paper's Figure 6 line-count table
-by counting non-comment source lines directly from each of the 30
-protocols' `.zippel` files:
+by counting non-comment source lines directly from each protocol's
+`.zippel` file:
 
 ```sh
 docker run --rm zippel-ae python3 artifact/scripts/report_loc.py
@@ -122,7 +122,7 @@ decreased.
 |---|---|---|---|
 | 1 | `run_benchmark.sh` + `process_benchmark.py` | Zippel-vs-native speedup table; Graph IR node-count table | Figure 7 (p.13); the node-count table is supplementary |
 | 2 | `run_soundness.sh` + `process_soundness.py` | Per-trial pass/fail table for special soundness | §9.3 prose |
-| 3 | `run_completeness.sh` + `process_completeness.py` | 30-protocol completeness table | §9.3 prose; the table itself is supplementary |
+| 3 | `run_completeness.sh` + `process_completeness.py` | Per-protocol completeness table | §9.3 prose; the table itself is supplementary |
 
 ---
 
@@ -227,10 +227,10 @@ docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
   bash -c "artifact/scripts/run_completeness.sh --timeout 120 && python3 artifact/scripts/process_completeness.py"
 ```
 
-Runs all 30 protocols from the paper through the completeness analysis,
+Runs all the paper's protocols through the completeness analysis,
 with a 2-minute timeout and a 16 GiB memory limit per run.
 
-To sanity-check a small subset of protocols instead of all 30:
+To sanity-check a small subset of protocols instead of all of them:
 
 ```sh
 docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
@@ -244,10 +244,10 @@ our machine), so a much tighter 2-minute timeout is used here to keep
 the full run fast.
 
 **What to expect, and why it differs from the paper.** Completeness
-verifies **25 of 30** protocols, 5 more than what we had in the paper.
-This is because we improved our inlining optimization and fixed some bugs that we found
-after submission. The other five (`spartan`, `hyperplonk_permutation`,
-`hyperplonk_piop`, `dekart` and `pari`) reach the timeout.
+verifies every protocol except five (`spartan`, `hyperplonk_permutation`,
+`hyperplonk_piop`, `dekart` and `pari`), which reach the timeout. The
+submitted paper verified 20 of its 30. This is because we improved our
+inlining optimization and fixed some bugs that we found after submission.
 
 **Runtime**: a full run takes approximately 12 minutes, 10 of them spent
 on the five protocols that reach the timeout.

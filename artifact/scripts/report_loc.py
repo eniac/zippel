@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Report non-comment source line counts (NCLOC) for all 30 protocols the
+"""Report non-comment source line counts (NCLOC) for the 30+ protocols the
 paper implements (its Figure 6, the "List of proof systems implemented
 in Zippel" table). This is broader than run_benchmark.sh's LoC columns,
-which only cover the 9 systems that also have a native baseline to
-compare against (the paper's Figure 7).
+which only cover the systems that also have a native baseline to compare
+against (the paper's Figure 7).
 
 NCLOC rule matches benchmarks/src/bin/bench_all.rs's
 `count_ncloc_line_comments`: a line counts if it is non-empty after
@@ -26,7 +26,7 @@ Run from the repo root:
 
 The protocol/path list below must be kept in sync with the `PROTOCOLS`
 entries marked `completeness: true` in benches/analysis/protocols.rs (the
-canonical list of the paper's 30 protocols).
+canonical list of the paper's protocols).
 """
 
 from pathlib import Path
@@ -52,6 +52,7 @@ PROTOCOLS = [
     ("membership", "examples/membership/membership.zippel"),
     ("spartan", "examples/spartan/spartan.zippel"),
     ("dory_ipa", "examples/dory_ipa/dory_ipa.zippel"),
+    ("dory_pcs", "examples/dory_pcs/dory_pcs.zippel"),
     ("r1cs_sigma", "examples/r1cs_sigma/r1cs_sigma.zippel"),
     ("hyperplonk_multiset", "examples/hyperplonk_multiset/hyperplonk_multiset.zippel"),
     (
