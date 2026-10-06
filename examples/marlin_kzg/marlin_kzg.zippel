@@ -1,4 +1,4 @@
-// Zero-knowledge KZG: PolyCommit_Ped (Kate, Zaverucha, Goldberg 2010, §3.3; Marlin, App. B.2.1).
+// Marlin-KZG, zero-knowledge KZG: PolyCommit_Ped (Kate, Zaverucha, Goldberg 2010, §3.3; Marlin, App. B.2.1).
 //
 // Plain KZG leaks p(x): its commitment is deterministic. Here the prover also commits to a random
 // polynomial r(x) of the same degree, under a second generator gamma * g whose discrete log is
@@ -11,7 +11,7 @@
 // The SRS is two parallel vectors of N powers of tau: ss for g, gs for gamma * g.
 // The `where` clause specifies the trusted setup directly.
 
-proto zk_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>(
+proto marlin_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>(
     witness p_val: Uni<F, N - 1>,
     instance z: F,
     instance y: F,

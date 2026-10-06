@@ -182,6 +182,13 @@ pub static PROTOCOLS: &[Protocol] = &[
         soundness: None,
     },
     Protocol {
+        name: "marlin_kzg",
+        path: "examples/marlin_kzg/marlin_kzg.zippel",
+        sizes: &[("N", 2)],
+        completeness: true,
+        soundness: None,
+    },
+    Protocol {
         name: "dory_ipa",
         path: "examples/dory_ipa/dory_ipa.zippel",
         sizes: &[("S", 3)],
@@ -244,13 +251,6 @@ pub static PROTOCOLS: &[Protocol] = &[
         path: "examples/hyperplonk_snark/hyperplonk_snark.zippel",
         sizes: &[("S", 2)],
         completeness: false,
-        soundness: None,
-    },
-    Protocol {
-        name: "zk_kzg",
-        path: "examples/zk_kzg/zk_kzg.zippel",
-        sizes: &[("N", 2)],
-        completeness: true,
         soundness: None,
     },
     Protocol {

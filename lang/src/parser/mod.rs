@@ -1880,6 +1880,10 @@ fn eq_weights<G: Group, F: Scalar<G>, EK: 2..21>(instance x: [F; EK]) -> [F; 2^E
     golden_test!(golden_kzg, "../examples/kzg/kzg.zippel");
     golden_test!(golden_kzh, "../examples/kzh/kzh.zippel");
     golden_test!(
+        golden_marlin_kzg,
+        "../examples/marlin_kzg/marlin_kzg.zippel"
+    );
+    golden_test!(
         golden_membership,
         "../examples/membership/membership.zippel"
     );
@@ -1918,7 +1922,6 @@ fn eq_weights<G: Group, F: Scalar<G>, EK: 2..21>(instance x: [F; EK]) -> [F; 2^E
         golden_zeromorph_kzg,
         "../examples/zeromorph_kzg/zeromorph_kzg.zippel"
     );
-    golden_test!(golden_zk_kzg, "../examples/zk_kzg/zk_kzg.zippel");
 
     // ── Span correctness tests ──────────────────────────────────────────
 

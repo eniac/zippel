@@ -64,7 +64,7 @@ sizes. Some examples:
 
 ```bash
 cargo zcheck examples/kzg/kzg.zippel
-cargo zcheck --size N=2 examples/zk_kzg/zk_kzg.zippel
+cargo zcheck --size N=2 examples/marlin_kzg/marlin_kzg.zippel
 ```
 
 Pass `--size NAME=VALUE` for the sizes you care about; unset `Size` parameters default to the smallest
