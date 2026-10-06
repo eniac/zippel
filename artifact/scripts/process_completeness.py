@@ -9,18 +9,18 @@ Columns:
 
 Pass is a check mark when the analysis verified completeness, a cross
 otherwise. Time is total_ms (build+gb+run) formatted as ms/s when status
-is "ok", else the status string itself (timeout/crashed/failed/incomplete/oom).
+is "ok", else the status string itself (timeout/crashed/failed/oom).
 
 Usage:
     artifact/scripts/process_completeness.py [JSON_PATH]
 
-JSON_PATH defaults to artifact/output/inline_results.json.
+JSON_PATH defaults to artifact/output/completeness_results.json.
 """
 
 import json
 import sys
 
-DEFAULT_JSON = "artifact/output/inline_results.json"
+DEFAULT_JSON = "artifact/output/completeness_results.json"
 
 PASS_MARK = "✓"  # ✓
 FAIL_MARK = "✗"  # ✗

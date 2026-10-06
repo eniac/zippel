@@ -25,8 +25,8 @@ Run from the repo root:
     python3 artifact/scripts/report_loc.py
 
 The protocol/path list below must be kept in sync with the `PROTOCOLS`
-array in benches/inline/main.rs (the canonical list of the paper's 30
-protocols).
+entries marked `completeness: true` in benches/analysis/protocols.rs (the
+canonical list of the paper's 30 protocols).
 """
 
 from pathlib import Path

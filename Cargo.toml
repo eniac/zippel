@@ -64,6 +64,7 @@ ark-relations = { version = "0.6" }
 petgraph = "0.7.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+clap = { version = "4", features = ["derive"] }
 process-wrap = { version = "10", default-features = false, features = ["std", "process-group", "job-object"] }
 
 # [patch.crates-io]
@@ -87,13 +88,13 @@ test = false
 harness = false
 
 [[bench]]
-name = "inline"
-path = "benches/inline/main.rs"
+name = "analysis"
+path = "benches/analysis/main.rs"
 test = false
 harness = false
 
 [[bench]]
-name = "inline_all"
-path = "benches/inline/all.rs"
+name = "analysis_all"
+path = "benches/analysis/all.rs"
 test = false
 harness = false
