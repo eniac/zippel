@@ -1,34 +1,22 @@
 //! Single-protocol analysis benchmark: completeness or special soundness.
-//!
-//! Usage:
-//!   analysis [--analysis completeness|soundness] [--backend singular|default]
-//!            [--memory-limit-mb MB] [--path FILE] [--size NAME=VALUE]...
-//!            [--l-vec L1,L2,...] [--build-only] <`protocol_name`>
-//!   analysis [--analysis completeness|soundness] --list
+//! Run with `--help` for the options.
 //!
 //! Prints JSON to stdout with timings, the shape of the generators, goals
-//! and basis, and peak memory. Status is one of `ok`, `incomplete`
-//! (completeness), `failed` (soundness: no extractor, a unit ideal, or a
-//! protocol that is not 2n+1-move for its round parameters), `crashed` (a
-//! real bug/panic), `oom`, or `built` (with `--build-only`).
-//!
-//! - `--analysis` defaults to `completeness`.
-//! - `--list` prints the protocols registered for the analysis, one per
-//!   line, and exits; `analysis_all` sweeps those.
-//! - `--path FILE` analyses `FILE` instead of the protocol's registered
-//!   source; the name then need not be registered.
-//! - `--size NAME=VALUE` sets one size, replacing the registered value.
-//! - `--l-vec L1,L2,...` sets the special-soundness round parameters, one
-//!   per challenge round, replacing the registered ones (see `protocols.rs`).
-//! - `--build-only` stops after building the ideal, without running the GB
-//!   backend.
+//! and basis, and peak memory. Status is one of `ok`, `failed` (the
+//! analysis did not establish the property, with the reason in `error`:
+//! for completeness a verifier check that does not reduce to zero; for
+//! soundness no extractor, a unit ideal, an extractor that does not
+//! establish the relation, or a protocol that is not 2n+1-move for its
+//! round parameters), `crashed` (a real bug/panic), `oom`, or `built` (with
+//! `--build-only`).
 //!
 //! The goals are what the analysis checks against its basis: the verifier
 //! polynomials for completeness, the relation polynomials for soundness.
 //! `peak_rss_mib` is this process's peak resident memory, and
-//! `singular_peak_rss_mib` that of its largest finished Singular run (both
-//! `getrusage`'s `ru_maxrss`, unix only). Every JSON line reports them as of
-//! that line, so a run killed at a timeout keeps its last values.
+//! `singular_peak_rss_mib` that of its largest finished Singular run, absent
+//! until one finishes (both `getrusage`'s `ru_maxrss`, unix only). Every JSON
+//! line reports them as of that line, so a run killed at a timeout keeps its
+//! last values.
 //!
 //! `--memory-limit-mb` caps virtual address space (`RLIMIT_AS`, unix only)
 //! around `build_inputs` (ideal construction) and the GB backend calls —
@@ -54,6 +42,7 @@ use analyses::{
     CompletenessAnalysis, GbBackendKind, QualifierPropagation, SpecialSoundnessAnalysis,
 };
 use backend::{ArkBls12_381, ArkConfig};
+use clap::{Parser, ValueEnum};
 use graph::{QDag, UDags};
 use lang::ast::UModule;
 use lang::diagnostic::Severity;
@@ -73,7 +62,11 @@ type Poly = Polynomial<<ArkBls12_381 as ArkConfig>::F>;
 /// construction before it, and completeness's verifier-polynomial `run()`
 /// after it, are unbounded: a failure there is unambiguously a real bug.
 /// Read by `main`'s panic catch to decide `"crashed"` (panic outside this
-/// window) vs `"oom"` (inside it).
+/// window) vs `"oom"` (inside it). Under the limit, running out of memory
+/// can also surface as a panic, e.g. a Singular that cannot start or dies
+/// trips the backend's `expect`, so the window's panics are all `"oom"`.
+/// For soundness that includes the extractor search between its two GB
+/// calls.
 static LIMIT_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// The final JSON line to print on a hard allocator abort, pre-built (while
@@ -202,7 +195,7 @@ impl MemoryWindow {
 
 /// Peak resident memory in MiB, from `getrusage`'s `ru_maxrss`: of this
 /// process, or with `children` of its largest finished child (a Singular
-/// run).
+/// run), `None` while no child has finished.
 #[cfg(unix)]
 fn peak_rss_mib(children: bool) -> Option<u64> {
     let who = if children {
@@ -215,6 +208,9 @@ fn peak_rss_mib(children: bool) -> Option<u64> {
         return None;
     }
     let maxrss = u64::try_from(usage.ru_maxrss).ok()?;
+    if children && maxrss == 0 {
+        return None;
+    }
     // `ru_maxrss` is in bytes on macOS and in KiB elsewhere.
     let bytes = if cfg!(target_os = "macos") {
         maxrss
@@ -313,7 +309,8 @@ impl BenchOutput {
     }
 }
 
-/// Size measures of a list of polynomials.
+/// Size measures of a list of polynomials, leaving out zero ones: they add
+/// nothing to an ideal, and both analyses skip zero goals.
 struct Shape {
     size: usize,
     max_degree: usize,
@@ -324,9 +321,10 @@ struct Shape {
 
 impl Shape {
     fn of(polys: &[Poly]) -> Self {
+        let polys: Vec<&Poly> = polys.iter().filter(|p| !p.is_zero()).collect();
         Self {
             size: polys.len(),
-            max_degree: polys.iter().map(Poly::degree).max().unwrap_or(0),
+            max_degree: polys.iter().map(|p| p.degree()).max().unwrap_or(0),
             num_vars: polys
                 .iter()
                 .flat_map(|p| p.vars().into_iter())
@@ -389,6 +387,13 @@ fn run_bench(
     let Some(module) = module else {
         return json_error(name, "no module");
     };
+
+    let params = module.size_params();
+    for (n, _) in &target.sizes {
+        if !params.contains(&Tid::new(n)) {
+            eprintln!("warning: {name} has no size parameter {n}; ignoring it");
+        }
+    }
 
     let ctx = build_sizes_ctx(&target.sizes);
     let concrete = match module.concretize(&ctx) {
@@ -469,7 +474,7 @@ fn run_completeness(
     out.run_ms = Some(elapsed_ms(start));
     match result {
         Ok(()) => out.finish("ok", None),
-        Err(e) => out.finish("incomplete", Some(format!("{e}"))),
+        Err(e) => out.finish("failed", Some(format!("{e}"))),
     }
 }
 
@@ -543,127 +548,73 @@ fn json_error(name: &str, error: &str) -> String {
     .unwrap()
 }
 
-/// Parses a comma-separated list of round parameters, e.g. `2,2,2`.
-fn parse_l_vec(spec: &str) -> Option<Vec<usize>> {
-    spec.split(',').map(|l| l.trim().parse().ok()).collect()
+/// Analyses one protocol and prints JSON lines with what it measured.
+#[derive(Parser)]
+#[command(name = "analysis", bin_name = "analysis")]
+struct Cli {
+    /// The protocol: a registered name, or any name with `--path`.
+    #[arg(required_unless_present = "list")]
+    protocol: Option<String>,
+    #[arg(long, value_enum, default_value_t = Analysis::Completeness)]
+    analysis: Analysis,
+    #[arg(long, value_enum, default_value_t = Backend::Default)]
+    backend: Backend,
+    /// Caps virtual address space while the ideal is built and its bases
+    /// computed (unix only).
+    #[arg(long, value_name = "MB")]
+    memory_limit_mb: Option<u64>,
+    /// Analyses FILE instead of the protocol's registered source.
+    #[arg(long, value_name = "FILE")]
+    path: Option<PathBuf>,
+    /// Sets one size, replacing the registered value. A name the protocol
+    /// has no size parameter for is ignored, with a warning.
+    #[arg(long = "size", value_name = "NAME=VALUE", value_parser = parse_size)]
+    sizes: Vec<(String, usize)>,
+    /// The special-soundness round parameters, one per challenge round,
+    /// replacing the registered ones.
+    #[arg(long, value_name = "L1,L2,...", value_delimiter = ',')]
+    l_vec: Option<Vec<usize>>,
+    /// Stops after building the ideal, without running the GB backend.
+    #[arg(long)]
+    build_only: bool,
+    /// Prints the protocols registered for the analysis, one per line, and
+    /// exits; `analysis_all` sweeps those.
+    #[arg(long)]
+    list: bool,
+    /// Added by `cargo bench`, even with `harness = false`.
+    #[arg(long = "bench", hide = true)]
+    _bench: bool,
+}
+
+/// The value of `--backend`.
+#[derive(Clone, Copy, ValueEnum)]
+enum Backend {
+    #[value(alias = "Singular")]
+    Singular,
+    Default,
+}
+
+/// Parses a `--size` value, `NAME=VALUE`.
+fn parse_size(spec: &str) -> Result<(String, usize), String> {
+    let (name, value) = spec.split_once('=').ok_or("expected NAME=VALUE")?;
+    let value = value.trim().parse().map_err(|e| format!("{e}"))?;
+    Ok((name.trim().to_string(), value))
 }
 
 fn main() {
-    // cargo bench always injects `--bench` into the args (even with
-    // harness = false). Filter it out.
-    let args: Vec<String> = std::env::args()
-        .skip(1)
-        .filter(|a| a != "--bench")
-        .collect();
+    let cli = Cli::parse();
+    let analysis = cli.analysis;
 
-    let mut analysis = Analysis::Completeness;
-    let mut backend = GbBackendKind::default();
-    let mut memory_limit_mb: Option<u64> = None;
-    let mut protocol_name: Option<&str> = None;
-    let mut path: Option<PathBuf> = None;
-    let mut size_overrides: Vec<(String, usize)> = Vec::new();
-    let mut l_vec_override: Option<Vec<usize>> = None;
-    let mut list = false;
-    let mut build_only = false;
-
-    // The value following the flag at `args[*i]`, advancing `i` past it.
-    let value = |i: &mut usize, flag: &str, what: &str| -> String {
-        *i += 1;
-        args.get(*i).cloned().unwrap_or_else(|| {
-            eprintln!("{flag} requires a value ({what})");
-            std::process::exit(2);
-        })
-    };
-
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--analysis" => {
-                let name = value(&mut i, "--analysis", "completeness|soundness");
-                analysis = Analysis::parse(&name).unwrap_or_else(|| {
-                    eprintln!("unknown analysis: {name} (expected completeness|soundness)");
-                    std::process::exit(2);
-                });
-            }
-            "--path" => path = Some(PathBuf::from(value(&mut i, "--path", "a file"))),
-            "--size" => {
-                let spec = value(&mut i, "--size", "NAME=VALUE");
-                let parsed = spec
-                    .split_once('=')
-                    .and_then(|(n, v)| Some((n.trim().to_string(), v.trim().parse().ok()?)));
-                let Some(size) = parsed else {
-                    eprintln!("invalid --size value: {spec} (expected NAME=VALUE)");
-                    std::process::exit(2);
-                };
-                size_overrides.push(size);
-            }
-            "--l-vec" => {
-                let spec = value(&mut i, "--l-vec", "L1,L2,...");
-                let Some(l_vec) = parse_l_vec(&spec) else {
-                    eprintln!("invalid --l-vec value: {spec} (expected L1,L2,...)");
-                    std::process::exit(2);
-                };
-                l_vec_override = Some(l_vec);
-            }
-            "--build-only" => build_only = true,
-            "--list" => list = true,
-            "--backend" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("--backend requires a value (singular|default)");
-                    std::process::exit(2);
-                }
-                backend = match args[i].as_str() {
-                    "singular" | "Singular" => GbBackendKind::Singular,
-                    "default" => GbBackendKind::default(),
-                    other => {
-                        eprintln!("unknown backend: {other}");
-                        std::process::exit(2);
-                    }
-                };
-            }
-            "--memory-limit-mb" => {
-                i += 1;
-                if i >= args.len() {
-                    eprintln!("--memory-limit-mb requires a value (megabytes)");
-                    std::process::exit(2);
-                }
-                memory_limit_mb = Some(args[i].parse().unwrap_or_else(|_| {
-                    eprintln!("invalid --memory-limit-mb value: {}", args[i]);
-                    std::process::exit(2);
-                }));
-            }
-            other if protocol_name.is_none() => protocol_name = Some(other),
-            other => {
-                eprintln!("unexpected argument: {other}");
-                std::process::exit(2);
-            }
-        }
-        i += 1;
-    }
-
-    let registered_for = || PROTOCOLS.iter().filter(move |p| p.runs(analysis));
-    if list {
-        for p in registered_for() {
+    if cli.list {
+        for p in PROTOCOLS.iter().filter(|p| p.runs(analysis)) {
             println!("{}", p.name);
         }
         return;
     }
-
-    let Some(protocol_name) = protocol_name else {
-        eprintln!(
-            "usage: analysis [--analysis completeness|soundness] [--backend singular|default] \
-             [--memory-limit-mb MB] [--path FILE] [--size NAME=VALUE]... \
-             [--l-vec L1,L2,...] [--build-only] <protocol_name>"
-        );
-        eprintln!("       analysis [--analysis completeness|soundness] --list");
-        eprintln!();
-        eprintln!("protocols registered for {}:", analysis.name());
-        for p in registered_for() {
-            eprintln!("  {}", p.name);
-        }
-        std::process::exit(2);
-    };
+    let protocol_name = cli
+        .protocol
+        .as_deref()
+        .expect("clap requires a protocol without --list");
 
     // A registered protocol supplies the source, sizes and round parameters;
     // `--path`, `--size` and `--l-vec` replace what they name.
@@ -671,20 +622,21 @@ fn main() {
     let mut sizes: Vec<(String, usize)> = registered
         .map(|p| p.sizes.iter().map(|&(n, v)| (n.to_string(), v)).collect())
         .unwrap_or_default();
-    for (n, v) in size_overrides {
+    for (n, v) in cli.sizes {
         match sizes.iter_mut().find(|(m, _)| *m == n) {
             Some(slot) => slot.1 = v,
             None => sizes.push((n, v)),
         }
     }
-    let l_vec =
-        l_vec_override.or_else(|| registered.and_then(|p| p.soundness.map(<[usize]>::to_vec)));
+    let l_vec = cli
+        .l_vec
+        .or_else(|| registered.and_then(|p| p.soundness.map(<[usize]>::to_vec)));
     if analysis == Analysis::Soundness && l_vec.is_none() {
         eprintln!("{protocol_name} has no registered soundness round parameters; pass --l-vec");
         std::process::exit(2);
     }
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let path = match (path, registered) {
+    let path = match (cli.path, registered) {
         (Some(p), _) => p,
         (None, Some(p)) => manifest.join(p.path),
         (None, None) => {
@@ -703,6 +655,11 @@ fn main() {
 
     // Run in a thread with a large stack to avoid stack overflow.
     let protocol_clone = target.name.clone();
+    let backend = match cli.backend {
+        Backend::Singular => GbBackendKind::Singular,
+        Backend::Default => GbBackendKind::default(),
+    };
+    let (memory_limit_mb, build_only) = (cli.memory_limit_mb, cli.build_only);
     let result = share::thread::run("analysis-bench", move || {
         run_bench(&target, analysis, backend, memory_limit_mb, build_only)
     })

@@ -2,31 +2,12 @@
 //! it sweeps from `analysis --list`.
 
 /// Which analysis a run performs.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Analysis {
     /// `CompletenessAnalysis`.
     Completeness,
     /// `SpecialSoundnessAnalysis`.
     Soundness,
-}
-
-impl Analysis {
-    /// Parses the value of `--analysis`.
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "completeness" => Some(Self::Completeness),
-            "soundness" => Some(Self::Soundness),
-            _ => None,
-        }
-    }
-
-    /// The name `--analysis` takes, also used in default output file names.
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Completeness => "completeness",
-            Self::Soundness => "soundness",
-        }
-    }
 }
 
 /// A registered protocol: its source, its sizes, and the analyses the sweep

@@ -5,29 +5,15 @@
 //! with per-run timeout. Writes incremental JSON results and a summary
 //! table.
 //!
-//! Usage (via cargo):
-//!   cargo bench --bench `analysis_all` -- [--analysis completeness|soundness]
-//!                                        [--timeout SECS] [--protocols a,b,...]
-//!                                        [--output PATH] [--log PATH]
-//!                                        [--memory-limit-mb MB]
-//!                                        [--path FILE] [--size NAME=VALUE]...
-//!                                        [--l-vec L1,L2,...]
-//!
-//! Defaults:
-//!   --analysis          `completeness`
-//!   --timeout           1200   (20 minutes per run)
-//!   --output            `<analysis>_results.json`
-//!   --log               `<analysis>_all.log`
-//!   --memory-limit-mb   16384  (16 GiB per run)
+//! Run with `cargo bench --bench analysis_all -- --help` for the options.
 //!
 //! `--analysis`, `--memory-limit-mb`, `--path`, `--size` and `--l-vec` are
 //! forwarded to every `analysis` invocation verbatim (like `--backend`).
 //! `--path` and `--l-vec` need exactly one protocol in `--protocols`. `analysis`
-//! decides `ok`/`incomplete`/`failed`/`crashed`/`oom` for itself
+//! decides `ok`/`failed`/`crashed`/`oom` for itself
 //! (see its own module docs) — `analysis_all` adds only `timeout`, which it
 //! alone can observe.
 
-use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -36,6 +22,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
+use clap::Parser;
 use process_wrap::std::*;
 
 use serde::{Deserialize, Serialize};
@@ -448,101 +435,61 @@ fn fmt_time(r: &BenchResult) -> String {
     format!("{:.1}ms", r.total_ms())
 }
 
+/// Runs one analysis across all the protocols registered for it.
+#[derive(Parser)]
+#[command(name = "analysis_all", bin_name = "analysis_all")]
 struct Args {
+    /// `completeness` or `soundness`; `analysis --list` checks it.
+    #[arg(long, default_value = "completeness")]
     analysis: String,
+    /// Per-run timeout.
+    #[arg(long, value_name = "SECS", default_value_t = 1200)]
     timeout: u64,
-    output: String,
-    log: String,
+    /// [default: `<analysis>_results.json`]
+    #[arg(long, value_name = "PATH")]
+    output: Option<String>,
+    /// [default: `<analysis>_all.log`]
+    #[arg(long, value_name = "PATH")]
+    log: Option<String>,
+    /// The protocols to run, instead of all registered ones.
+    #[arg(long, value_delimiter = ',')]
     protocols: Option<Vec<String>>,
-    memory_limit_mb: Option<u64>,
+    /// Per-run memory limit.
+    #[arg(long, value_name = "MB", default_value_t = DEFAULT_MEMORY_LIMIT_MB)]
+    memory_limit_mb: u64,
+    /// Forwarded; needs exactly one protocol in `--protocols`.
+    #[arg(long, value_name = "FILE")]
     path: Option<String>,
+    /// Forwarded.
+    #[arg(long = "size", value_name = "NAME=VALUE")]
     sizes: Vec<String>,
+    /// Forwarded; needs exactly one protocol in `--protocols`.
+    #[arg(long, value_name = "L1,L2,...")]
     l_vec: Option<String>,
-}
-
-fn parse_args() -> Args {
-    let raw: Vec<String> = env::args().skip(1).collect();
-    let mut analysis = "completeness".to_string();
-    let mut timeout = 1200u64;
-    let mut output = None;
-    let mut log = None;
-    let mut protocols: Option<Vec<String>> = None;
-    let mut memory_limit_mb = Some(DEFAULT_MEMORY_LIMIT_MB);
-    let mut path = None;
-    let mut sizes = Vec::new();
-    let mut l_vec = None;
-
-    let mut i = 0;
-    while i < raw.len() {
-        match raw[i].as_str() {
-            "--analysis" => {
-                i += 1;
-                analysis = raw.get(i).cloned().unwrap_or_default();
-            }
-            "--l-vec" => {
-                i += 1;
-                l_vec = raw.get(i).cloned();
-            }
-            "--path" => {
-                i += 1;
-                path = raw.get(i).cloned();
-            }
-            "--size" => {
-                i += 1;
-                sizes.extend(raw.get(i).cloned());
-            }
-            "--timeout" => {
-                i += 1;
-                if i < raw.len() {
-                    timeout = raw[i].parse().unwrap_or(1200);
-                }
-            }
-            "--output" => {
-                i += 1;
-                output = raw.get(i).cloned();
-            }
-            "--log" => {
-                i += 1;
-                log = raw.get(i).cloned();
-            }
-            "--protocols" => {
-                i += 1;
-                if i < raw.len() {
-                    protocols = Some(raw[i].split(',').map(|s| s.trim().to_string()).collect());
-                }
-            }
-            "--memory-limit-mb" => {
-                i += 1;
-                if i < raw.len() {
-                    memory_limit_mb = raw[i].parse().ok();
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    // A file or round parameters describe one protocol, not a sweep.
-    if (path.is_some() || l_vec.is_some()) && protocols.as_ref().is_none_or(|p| p.len() != 1) {
-        eprintln!("--path and --l-vec need exactly one protocol in --protocols");
-        std::process::exit(2);
-    }
-    Args {
-        output: output.unwrap_or_else(|| format!("{analysis}_results.json")),
-        log: log.unwrap_or_else(|| format!("{analysis}_all.log")),
-        analysis,
-        timeout,
-        protocols,
-        memory_limit_mb,
-        path,
-        sizes,
-        l_vec,
-    }
+    /// Added by `cargo bench`, even with `harness = false`.
+    #[arg(long = "bench", hide = true)]
+    _bench: bool,
 }
 
 fn main() {
     install_signal_handlers();
 
-    let args = parse_args();
+    let args = Args::parse();
+    // A file or round parameters describe one protocol, not a sweep.
+    if (args.path.is_some() || args.l_vec.is_some())
+        && args.protocols.as_ref().is_none_or(|p| p.len() != 1)
+    {
+        eprintln!("--path and --l-vec need exactly one protocol in --protocols");
+        std::process::exit(2);
+    }
+    let output = args
+        .output
+        .clone()
+        .unwrap_or_else(|| format!("{}_results.json", args.analysis));
+    let log_path = args
+        .log
+        .clone()
+        .unwrap_or_else(|| format!("{}_all.log", args.analysis));
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     // analysis_all uses the Singular backend for every benchmark. Fail fast
@@ -565,7 +512,7 @@ fn main() {
         .create(true)
         .write(true)
         .truncate(true)
-        .open(&args.log)
+        .open(&log_path)
         .expect("failed to open log file");
     let mut log = BufWriter::new(log_file);
 
@@ -591,7 +538,7 @@ fn main() {
             &repo_root,
             proto,
             args.timeout,
-            args.memory_limit_mb,
+            Some(args.memory_limit_mb),
             &forwarded,
         );
 
@@ -632,10 +579,10 @@ fn main() {
 
         results.push(result);
         write_results(
-            Path::new(&args.output),
+            Path::new(&output),
             &args.analysis,
             args.timeout,
-            args.memory_limit_mb,
+            Some(args.memory_limit_mb),
             &results,
         );
     }
@@ -664,8 +611,8 @@ fn main() {
     }
 
     tee(&mut log, &sep);
-    tee(&mut log, &format!("\nResults written to {}", args.output));
-    tee(&mut log, &format!("Log written to {}", args.log));
+    tee(&mut log, &format!("\nResults written to {output}"));
+    tee(&mut log, &format!("Log written to {log_path}"));
 }
 
 // ---------------------------------------------------------------------
