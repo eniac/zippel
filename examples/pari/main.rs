@@ -18,6 +18,8 @@ use share::Ctx;
 use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
+use crate::common;
+
 type C = ArkBls12_381;
 type F = <C as ArkConfig>::F;
 type G1 = <C as ArkConfig>::G1;
@@ -32,7 +34,7 @@ const M_WIT: usize = 1; // "real" witness variables
 const K_VARS: usize = 2 * N_PUB + M_WIT;
 const KMN: usize = K_VARS - N_PUB; // length of `w` passed to zippel
 
-pub fn run(_args: &[String]) {
+pub fn run(_args: &[String], opts: &common::RunOptions) {
     println!("=== PARI (Square R1CS, K={K}, N={N_PUB}, K_VARS={K_VARS}, KMN={KMN}) ===");
 
     let args = ZippelArgs::new(PathBuf::from("examples/pari/pari.zippel"));
@@ -80,6 +82,9 @@ pub fn run(_args: &[String]) {
         std::process::exit(1);
     }
 
+    if !opts.analyses {
+        return;
+    }
     let analysis_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         println!("\n--- Static Analysis ---");
         let analysis_args = ZippelArgs::new(PathBuf::from("examples/pari/pari.zippel"));

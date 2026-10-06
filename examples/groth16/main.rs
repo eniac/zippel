@@ -14,6 +14,8 @@ use share::Ctx;
 use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
+use crate::common;
+
 type E = Bls12_381;
 type F = Fr;
 
@@ -241,7 +243,7 @@ fn run_groth16(
     );
 }
 
-pub fn run(_args: &[String]) {
+pub fn run(_args: &[String], _opts: &common::RunOptions) {
     type D<FF> = GeneralEvaluationDomain<FF>;
     println!("=== Groth16 (ArkBls12_381) — constraints: {CONSTRAINT_SIZE} ===");
 

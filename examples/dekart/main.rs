@@ -7,12 +7,14 @@ use share::Ctx;
 use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
+use crate::common;
+
 type C = ArkBls12_381;
 type F = <C as ArkConfig>::F;
 type G1 = <C as ArkConfig>::G1;
 type G2 = <C as ArkConfig>::G2;
 
-pub fn run(_args: &[String]) {
+pub fn run(_args: &[String], opts: &common::RunOptions) {
     println!("=== DeKART Range Proof ===");
     let n_size = 3;
     let b_size = 2;
@@ -58,6 +60,9 @@ pub fn run(_args: &[String]) {
         std::process::exit(1);
     }
 
+    if !opts.analyses {
+        return;
+    }
     let analysis_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         println!("\n--- Static Analysis ---");
 

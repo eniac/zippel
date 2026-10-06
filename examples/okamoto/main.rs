@@ -7,7 +7,7 @@ use zippel::*;
 
 use crate::common;
 
-pub fn run(_args: &[String]) {
+pub fn run(_args: &[String], opts: &common::RunOptions) {
     println!("=== Okamoto (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/okamoto/okamoto.zippel"));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
@@ -16,6 +16,9 @@ pub fn run(_args: &[String]) {
     let inputs = prover_create_inputs();
     common::run_prover_and_verify(&mut handler, &inputs);
 
+    if !opts.analyses {
+        return;
+    }
     println!("\n--- Static Analysis ---");
     common::time_analysis!("Completeness", handler.analyze_completeness());
     common::time_analysis!("ZK", handler.analyze_knowledge());
