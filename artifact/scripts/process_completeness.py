@@ -13,8 +13,7 @@ instance the paper confirms it at. Pass is a check mark when the analysis verifi
 Dory IPA, verified only at the smaller instance), a cross otherwise. Time is total_ms (build+gb+run) formatted as ms/s when
 status is "ok", else the status string itself (timeout/crashed/failed/oom).
 
-Below the table: how many verified, and the minimum, maximum and median
-time over the verified runs. Exit nonzero if any protocol's outcome
+Below the table: how many verified. Exit nonzero if any protocol's outcome
 differs from its Figure 6 Comp. mark.
 
 Usage:
@@ -24,7 +23,6 @@ JSON_PATH defaults to artifact/output/completeness_results.json.
 """
 
 import json
-import statistics
 import sys
 
 from paper import NO, PARTIAL, rows
@@ -44,15 +42,6 @@ def total_ms(r):
 
 def fmt_ms(ms):
     return f"{ms:.1f}ms" if ms < 1000 else f"{ms / 1000:.1f}s"
-
-
-def timing_summary(verified):
-    """One line with the min, max and median of `verified`, a list of
-    (total_ms, label) pairs."""
-    times = sorted(verified)
-    median = statistics.median(ms for ms, _ in times)
-    return (f"Analysis time over verified runs: min {fmt_ms(times[0][0])} ({times[0][1]}), "
-            f"max {fmt_ms(times[-1][0])} ({times[-1][1]}), median {fmt_ms(median)}.")
 
 
 def fmt_pass(r, mark):
@@ -94,13 +83,10 @@ def main():
     for protocol in results.keys() - {protocol for _, protocol, _ in paper}:
         unexpected.append(f"{protocol}: not one of the Figure 6 protocols in paper.py")
 
-    verified = [(total_ms(r), label) for label, r, _ in present
-                if r.get("status") == "ok" and total_ms(r) is not None]
+    verified = sum(1 for _, r, _ in present if r.get("status") == "ok")
     print()
-    print(f"Automatically verified complete: {len(verified)} of {len(present)} "
+    print(f"Automatically verified complete: {verified} of {len(present)} "
           f"Figure 6 protocols present in this run.")
-    if verified:
-        print(timing_summary(verified))
     print(f"Unexpected outcomes: {len(unexpected)}")
     if unexpected:
         print()

@@ -12,9 +12,7 @@ soundness; Figure 6's Sound. column gives the expected mark. A cross
 expects the analysis to fail or time out (E-Cash Coin may time out under
 the configured budget); crashes and out-of-memory results are always
 unexpected. Time is total_ms (build+gb+run), as in process_completeness.py,
-or "-" when the analysis stopped before reporting it. Below the table:
-the minimum, maximum and median time over the verified runs.
-Exit nonzero if any protocol has an unexpected outcome.
+or "-" when the analysis stopped before reporting it. Exit nonzero if any protocol has an unexpected outcome.
 
 Usage:
     artifact/scripts/process_soundness.py [JSON_PATH]
@@ -26,7 +24,7 @@ import json
 import sys
 
 from paper import OK, rows
-from process_completeness import fmt_ms, timing_summary, total_ms
+from process_completeness import fmt_ms, total_ms
 
 DEFAULT_JSON = "artifact/output/soundness_results.json"
 
@@ -90,10 +88,6 @@ def main():
     print()
     print(f"soundness pass={pass_count} failed={failed_count} timeout={timeout_count} "
           f"unexpected={len(unexpected)}")
-    verified = [(total_ms(r), LABELS.get(r["protocol"], r["protocol"])) for r in results
-                if r.get("status") == "ok" and total_ms(r) is not None]
-    if verified:
-        print(timing_summary(verified))
     if unexpected:
         print()
         for message in unexpected:

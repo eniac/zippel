@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""The paper's Figure 6 ("List of proof systems implemented in Zippel"):
-the single list of protocols the artifact reports on. benches/ registers
-every implemented protocol; the artifact scripts only run and report the
-ones below.
+"""The paper's Figure 6 ("List of proof systems implemented in Zippel")
+and Figure 7 (comparison with existing implementations): the protocols
+the artifact reports on. benches/ and benchmarks/ cover every
+implemented protocol; the artifact scripts only run and report the ones
+below.
 
-Each row: year, label, example, analysis protocol, Comp. mark, Sound. mark.
+FIGURE_7 rows: label, bench_all system, bench_all baseline.
+
+FIGURE_6 rows: year, label, example, analysis protocol, Comp. mark, Sound. mark.
 `example` names examples/<example>/<example>.zippel (its line count is the
 LoC column). `analysis` is the protocol name registered in
 benches/analysis/protocols.rs; Dory IPA's "~" mark means the analysis
@@ -26,7 +29,7 @@ FIGURE_6 = [
     (1991, "Schnorr", "schnorr", "schnorr", OK, OK),
     (1991, "Multi-Schnorr", "schnorr_3round", "schnorr_3round", OK, OK),
     (1992, "Okamoto", "okamoto", "okamoto", OK, NO),
-    (1992, "Okamoto-ElGamal", "okamoto_elgamal", "okamoto_elgamal", OK, OK),
+    (1992, "ElGamal", "okamoto_elgamal", "okamoto_elgamal", OK, OK),
     (1993, "Chaum-Pedersen", "cp", "cp", OK, OK),
     (1994, "CDS Disjunction", "cds", "cds", OK, NO),
     (2009, "Hadamard", "hadamard", "hadamard", OK, None),
@@ -59,6 +62,25 @@ FIGURE_6 = [
 ]
 
 COLUMNS = {"completeness": 4, "soundness": 5}
+
+# The paper's Figure 7 (comparison with existing implementations), in its
+# row order: label, bench_all system, bench_all baseline.
+FIGURE_7 = [
+    ("Sumcheck", "sumcheck", "sumcheck"),
+    ("Schnorr", "schnorr", "schnorr"),
+    ("KZG", "kzg", "kzg"),
+    ("PST13", "pst13", "pst13"),
+    ("Groth16", "groth16", "groth16"),
+    ("Bulletproofs", "ipa", "ipa"),
+    ("Hyrax", "hyrax", "hyrax"),
+    ("Spartan (Arkworks)", "spartan", "ark-spartan"),
+    ("Spartan (Microsoft)", "spartan", "spartan"),
+    ("Dory PCS", "dory", "dory"),
+    ("HyperPlonk", "hyperplonk", "hyperplonk"),
+    ("KZH", "kzh", "kzh"),
+    ("DeKART", "dekart", "dekart"),
+    ("Pari", "pari", "pari"),
+]
 
 
 def rows(column):

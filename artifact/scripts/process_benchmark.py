@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """Render run_benchmark.sh's CSV into markdown tables:
 
-1. Graph-size table (supplementary, not present in the submitted paper):
-   per-system Graph IR node counts (prover graph, verifier graph).
-   Thread-independent, one row per system, taken from whichever row
-   happens to be first for that system.
+1. Figure 7 (comparison with existing implementations): per row, LoC of
+   Zippel and the baseline, Graph IR node counts (prover, verifier),
+   prover speedup (baseline/zippel) at each thread count present in the
+   CSV, verifier speedup at threads=1, and prover peak memory ratio
+   (baseline/zippel prover peak heap at threads=1, where the peak is
+   deterministic; see benchmarks/README.md). Rows and labels are the
+   paper's, from paper.py; a row missing from the CSV is left out.
 
-2. Performance table (the submitted paper's Figure 7, page 13):
-   per-system LoC, prover speedup (baseline/zippel) at each thread count
-   present in the CSV, and verifier speedup at threads=1 (matches the
-   paper's methodology: "we evaluate the prover with 1-8 threads and the
-   verifier with 1 thread").
+2. Zippel compile time per system, then its minimum, maximum and
+   median (reported in the text of the paper's §9.1, Compilation
+   Performance, not in a figure).
 
-See ../README.md for more on why the first table has no paper figure to
-check it against.
+Each system is reported at its largest instance size in the CSV (2^18
+for every system but Schnorr in a default run).
 
 Usage:
     artifact/scripts/process_benchmark.py [CSV_PATH]
@@ -23,8 +24,10 @@ row per sample; the tables use each measurement's mean over its samples.
 """
 
 import csv
+import statistics
 import sys
-from collections import defaultdict
+
+from paper import FIGURE_7
 
 DEFAULT_CSV = "artifact/output/bench_results.csv"
 
@@ -57,68 +60,84 @@ def instance_size_label(log_size):
     return "fixed" if log_size == 0 else f"2^{log_size}"
 
 
-def render_graph_size_table(rows):
-    seen = {}
-    for r in rows:
-        seen.setdefault(r["system"], r)
+def fmt_ms(ms):
+    return f"{ms:.1f}ms" if ms < 1000 else f"{ms / 1000:.1f}s"
 
-    lines = [
-        "| Proof System | Instance size | Prover (nodes) | Verifier (nodes) |",
-        "|---|---|---|---|",
-    ]
-    for system, r in seen.items():
-        lines.append(
-            f"| {system} | {instance_size_label(r['log_size'])} "
-            f"| {r['prover_nodes']} | {r['verifier_nodes']} |"
-        )
+
+def ratio(baseline, zippel):
+    baseline, zippel = float(baseline), float(zippel)
+    if zippel <= 0:
+        return "N/A"
+    r = baseline / zippel
+    # The CSV rounds to 0.001; a tiny baseline peak (Schnorr) can be 0.
+    return "<0.01x" if r < 0.01 else f"{r:.2f}x"
+
+
+def largest_size(rows):
+    """(system, baseline) -> {threads: row}, keeping each system's largest
+    log_size."""
+    top = {}
+    for r in rows:
+        top[r["system"]] = max(top.get(r["system"], 0), int(r["log_size"]))
+    out = {}
+    for r in rows:
+        if int(r["log_size"]) == top[r["system"]]:
+            out.setdefault((r["system"], r["baseline"]), {})[int(r["threads"])] = r
+    return out
+
+
+def render_performance_table(points, all_threads):
+    header = (
+        "| Proof System | LoC Zippel | LoC Baseline | Prover (nodes) | Verifier (nodes) | "
+        + " | ".join(f"P Speedup ({t})" for t in all_threads)
+        + " | V Speedup | Prover Peak Memory Ratio |"
+    )
+    lines = [header, "|---" * (7 + len(all_threads)) + "|"]
+    for label, system, baseline in FIGURE_7:
+        by_thread = points.get((system, baseline))
+        if by_thread is None:
+            continue
+        any_row = next(iter(by_thread.values()))
+        cells = [label, any_row["zippel_ncloc"], any_row["baseline_ncloc"],
+                 any_row["prover_nodes"], any_row["verifier_nodes"]]
+        for t in all_threads:
+            r = by_thread.get(t)
+            cells.append("N/A" if r is None else ratio(r["baseline_prover_ms"], r["zippel_prover_ms"]))
+        # Verifier and peak memory at threads=1, per the paper's methodology.
+        r1 = by_thread.get(1)
+        if r1 is None:
+            cells += ["N/A", "N/A"]
+        else:
+            cells.append(ratio(r1["baseline_verifier_ms"], r1["zippel_verifier_ms"]))
+            cells.append(ratio(r1["baseline_prover_peak_mib"], r1["zippel_prover_peak_mib"]))
+        lines.append("| " + " | ".join(str(c) for c in cells) + " |")
     return "\n".join(lines)
 
 
-def render_performance_table(rows):
-    # system -> baseline -> {threads: row}, plus first-seen order per
-    # system so the paper-matching baseline (whichever appears first in
-    # the CSV) renders unlabeled and any later ones get a "(name)" suffix.
-    by_system_baseline = defaultdict(lambda: defaultdict(dict))
-    baseline_order = defaultdict(list)
-    for r in rows:
-        system, baseline = r["system"], r["baseline"]
-        if baseline not in by_system_baseline[system]:
-            baseline_order[system].append(baseline)
-        by_system_baseline[system][baseline][int(r["threads"])] = r
-
-    all_threads = sorted({int(r["threads"]) for r in rows})
-
-    header = (
-        "| Proof System | LoC Zippel | LoC Base | "
-        + " | ".join(f"P Speedup ({t})" for t in all_threads)
-        + " | V Speedup |"
-    )
-    sep = "|---|---|---|" + "---|" * len(all_threads) + "---|"
-    lines = [header, sep]
-
-    for system, baselines in by_system_baseline.items():
-        for i, baseline in enumerate(baseline_order[system]):
-            by_thread = baselines[baseline]
-            any_row = next(iter(by_thread.values()))
-            label = system if i == 0 else f"{system} ({baseline})"
-            cells = [label, any_row["zippel_ncloc"], any_row["baseline_ncloc"]]
-            for t in all_threads:
-                r = by_thread.get(t)
-                if r is None:
-                    cells.append("N/A")
-                    continue
-                zippel_ms = float(r["zippel_prover_ms"])
-                baseline_ms = float(r["baseline_prover_ms"])
-                cells.append(f"{baseline_ms / zippel_ms:.2f}x" if zippel_ms > 0 else "N/A")
-            # Verifier speedup at threads=1, per the paper's methodology.
-            r1 = by_thread.get(1)
-            if r1 is not None and float(r1["zippel_verifier_ms"]) > 0:
-                v_speedup = float(r1["baseline_verifier_ms"]) / float(r1["zippel_verifier_ms"])
-                cells.append(f"{v_speedup:.2f}x")
-            else:
-                cells.append("N/A")
-            lines.append("| " + " | ".join(str(c) for c in cells) + " |")
-
+def render_compile_table(points):
+    """Compile time does not depend on threads or baseline, so this takes
+    each system's mean over all its rows at that size."""
+    lines = ["| Proof System | Instance size | Compile time |", "|---|---|---|"]
+    times = []
+    seen = set()
+    for label, system, baseline in FIGURE_7:
+        if system in seen:
+            continue
+        rows = [r for (s, _), by_thread in points.items() if s == system
+                for r in by_thread.values()]
+        if not rows:
+            continue
+        seen.add(system)
+        ms = statistics.mean(float(r["compile_ms"]) for r in rows)
+        label = label.split(" (")[0]
+        times.append((ms, label))
+        lines.append(f"| {label} | {instance_size_label(rows[0]['log_size'])} | {fmt_ms(ms)} |")
+    if times:
+        times.sort()
+        median = statistics.median(ms for ms, _ in times)
+        lines.append("")
+        lines.append(f"Compile time: min {fmt_ms(times[0][0])} ({times[0][1]}), "
+                     f"max {fmt_ms(times[-1][0])} ({times[-1][1]}), median {fmt_ms(median)}.")
     return "\n".join(lines)
 
 
@@ -128,16 +147,18 @@ def main():
     if not samples:
         sys.exit(f"no rows in {csv_path}")
     rows = mean_over_samples(samples)
+    points = largest_size(rows)
+    all_threads = sorted({int(r["threads"]) for r in rows})
 
     print(f"Source: {csv_path} ({len(samples)} samples, {len(rows)} points)")
     print()
-    print("## Graph-size table (supplementary, not in the submitted paper)")
+    print("## Performance table (Figure 7)")
     print()
-    print(render_graph_size_table(rows))
+    print(render_performance_table(points, all_threads))
     print()
-    print("## Performance table (Figure 7, page 13)")
+    print("## Compile time (§9.1)")
     print()
-    print(render_performance_table(rows))
+    print(render_compile_table(points))
 
 
 if __name__ == "__main__":

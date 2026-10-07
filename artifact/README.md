@@ -1,19 +1,25 @@
 # Zippel: IEEE S&P 2027 Artifact
 
 Zippel is a language, compiler, and runtime for cryptographic proof
-systems, with Gröbner-basis-based static analyses that check completeness
-and special soundness directly from a protocol's source. This artifact
-builds the system in Docker and runs the three experiments described in
-the paper's evaluation section.
+systems, with Gröbner-basis-based static analyses that check
+completeness and special soundness directly from a protocol's source.
+This artifact builds the system in Docker and reproduces the results of
+the paper's evaluation (Section 9).
 
-**Note on scope.** This artifact reproduces the submitted paper's Figures
-6 and 7 (pages 12-13) and the completeness and special-soundness claims
-of Section 9.3. It additionally produces two supplementary tables not
-included in the submitted paper (a per-protocol Graph IR node-count
-table and a per-protocol completeness-timing table), added in response
-to reviewer feedback. The submitted paper therefore has no corresponding
-table for these two. Each experiment below identifies which figure, if
-any, it corresponds to.
+**What it reproduces.**
+
+| Paper | Contents | Reproduced by |
+|---|---|---|
+| Figure 6 | Each protocol's LoC | `report_loc.py` |
+| Figure 6, Complete column | Completeness marks and analysis times (§9.3) | Experiment 3 |
+| Figure 6, Spec. Sound column | Special-soundness marks and analysis times (§9.3) | Experiment 2 |
+| Figure 7 | LoC, Graph IR sizes, prover/verifier speedups and prover peak memory against existing implementations (§9.2) | Experiment 1 |
+| §9.1 | Compile times | Experiment 1 |
+
+The protocols the artifact reports on are exactly the paper's: the rows
+of Figures 6 and 7, listed in `artifact/scripts/paper.py`. Differences
+from the submitted paper are explained where they arise below and
+collected in [`index.html`](index.html).
 
 ## Repository layout
 
@@ -27,19 +33,20 @@ any, it corresponds to.
 | `share/` | Shared utilities (`Ctx`, `Set`, etc.) used across crates |
 | `fmt/` | `zippel-fmt` formatter; keeps `examples/*.zippel` in the canonical style |
 | `examples/` | 30+ `.zippel` protocol implementations and their Rust harnesses |
-| `benches/analysis/` | Soundness (Experiment 2) and completeness (Experiment 3) analysis benches |
+| `benches/analysis/` | Analysis benches behind Experiments 2 and 3 |
 | `benchmarks/` | Zippel vs. native performance comparison (Experiment 1) |
 | `analyses/tests/gb_snapshots/` | Analysis correctness and Gröbner-basis regression tests |
 | `artifact/` | This package: `Dockerfile` and `scripts/` |
 
 ## Setup
 
-Requires [Docker](https://www.docker.com/) already installed. Docker
-should have at least 8 CPU threads and 64 GB of RAM.
+Requires [Docker](https://www.docker.com/). Give Docker at least 8 CPU
+threads and 64 GB of RAM; the paper's numbers come from an AWS
+`m4.4xlarge` instance (16 vCPUs, 64 GB).
 
-- On macOS, open Docker Desktop, go to Settings > Resources to configure
-  CPUs and Memory, then Apply & restart. The available memory is shared
-  with other containers.
+- On macOS, open Docker Desktop, go to Settings > Resources to
+  configure CPUs and Memory, then Apply & restart. The available memory
+  is shared with other containers.
 
 Build the image from the repository root, not from `artifact/`. The
 image builds and runs as a non-root user matching your own UID/GID, so
@@ -50,10 +57,11 @@ docker build -f artifact/Dockerfile -t zippel-ae \
   --build-arg UID=$(id -u) --build-arg GID=$(id -g) .
 ```
 
-This installs the nightly Rust toolchain pinned by `rust-toolchain.toml`,
-`gcc` and Singular via apt, and prebuilds the workspace in release mode.
-The build takes approximately 10 minutes, produces a roughly 6GB image,
-and requires network access to pull the base image and fetch crates.
+This installs the nightly Rust toolchain pinned by
+`rust-toolchain.toml`, `gcc` and Singular via apt, and prebuilds the
+workspace in release mode. The build takes about 10 minutes, produces a
+roughly 6 GB image, and needs network access to pull the base image and
+fetch crates.
 
 To verify the environment:
 
@@ -63,221 +71,230 @@ docker run --rm zippel-ae bash artifact/scripts/smoke_test.sh
 
 This builds and runs three example protocols, one completeness trial
 through Singular, and one `analysis`-bench check. It is not one of the
-three experiments; it only verifies that the toolchain and Singular
-integration function correctly. It completes in well under a minute and
-ends with:
+experiments; it only checks that the toolchain and the Singular
+integration work. It finishes in well under a minute and ends with:
 
 ```
 Smoke test passed.
 ```
 
-## Line counts for the 30+ protocols (Figure 6)
+All experiment commands below write their results to
+`artifact/output/`, mounted into the container. Create it once:
 
-This command reproduces the submitted paper's Figure 6 line-count table
-by counting non-comment source lines directly from each protocol's
-`.zippel` file:
+```sh
+mkdir -p artifact/output
+```
+
+## Line counts (Figures 6 and 7)
+
+Figure 6's LoC column counts each protocol's non-comment source lines
+directly from its `.zippel` file:
 
 ```sh
 docker run --rm zippel-ae python3 artifact/scripts/report_loc.py
 ```
 
-**What to expect:**
+Figure 7's two LoC columns (Zippel and the existing implementation)
+come from Experiment 1's table. To print them alone, without running
+any benchmark:
 
-These figures will not match the submitted paper's Figure 6 for most
-protocols. Two changes account for this. First, `zippel-fmt` (see the
-repository layout above) did not exist at submission time, so the
-example files were not yet written in its canonical style; reformatting
-them afterward altered line counts independently of any semantic change.
-Second, several protocols' `where`-clause constraints were revised after
-submission (see the completeness-count accounting under Experiment 3).
+```sh
+docker run --rm zippel-ae \
+  cargo run -q --release -p benchmarks --bin bench_all -- --ncloc-only
+```
 
-This does not undermine the paper's conciseness claim. The native
-baseline side of each comparison is not reformatted by this project;
-only two native counts moved, slightly (Sumcheck 1544 to 1559,
-Bulletproofs 166 to 170), and the rest of the movement above occurs on
-the Zippel side. Zippel remains substantially
-shorter than its native baseline for every system that Experiment 1
-benchmarks. DeKART, KZH, Dory PCS, HyperPlonk SNARK and the ark-spartan
-baseline were added after submission, so they have no submitted count.
-`cargo run -q -p benchmarks --bin bench_all -- --ncloc-only` prints the current counts:
+**Difference from the submitted paper.** Most Zippel counts differ from
+the submitted paper's. Two changes account for this:
 
-| System | LoC Zippel (submitted to now) | LoC Native (submitted to now) | Native/Zippel (submitted to now) |
+1. `zippel-fmt` did not exist at submission time, so the example files
+   were not yet in its canonical style; reformatting them changed line
+   counts without changing any semantics.
+2. Several protocols' `where`-clause constraints were revised after
+   submission (see Experiment 3).
+
+This does not affect the conciseness claim. Only two native counts
+moved, slightly (Sumcheck 1544 to 1559, Bulletproofs 166 to 170); the
+rest of the movement is on the Zippel side, and Zippel stays
+substantially shorter than every existing implementation in Figure 7:
+
+| System | LoC Zippel | LoC Native | Native / Zippel |
 |---|---|---|---|
-| Schnorr | 7 to 7 | 186 | 26.6x to 26.6x |
-| Sumcheck | 58 to 87 | 1544 to 1559 | 26.6x to 17.9x |
-| Bulletproofs | 79 to 77 | 166 to 170 | 2.1x to 2.2x |
-| KZG | 14 to 24 | 527 | 37.6x to 22.0x |
-| Pari | 79 to 119 | 1141 | 14.4x to 9.6x |
-| Groth16 | 36 to 88 | 458 | 12.7x to 5.2x |
-| PST13 | 54 to 81 | 250 | 4.6x to 3.1x |
-| Hyrax | 47 to 49 | 277 | 5.9x to 5.7x |
-| Spartan (Microsoft) | 461 to 422 | 1867 | 4.0x to 4.4x |
-| Spartan (ark) | — to 422 | 2037 | — to 4.8x |
-| DeKART | — to 130 | 846 | — to 6.5x |
-| KZH | — to 53 | 221 | — to 4.2x |
-| Dory PCS | — to 304 | 766 | — to 2.5x |
-| HyperPlonk SNARK | — to 441 | 2828 | — to 6.4x |
+| Sumcheck | 58 → 87 | 1544 → 1559 | 26.6x → 17.9x |
+| Schnorr | 7 → 7 | 186 | 26.6x → 26.6x |
+| KZG | 14 → 24 | 527 | 37.6x → 22.0x |
+| PST13 | 54 → 81 | 250 | 4.6x → 3.1x |
+| Groth16 | 36 → 88 | 458 | 12.7x → 5.2x |
+| Bulletproofs | 79 → 77 | 166 → 170 | 2.1x → 2.2x |
+| Hyrax | 47 → 49 | 277 | 5.9x → 5.7x |
+| Spartan (Arkworks) | — → 422 | 2037 | — → 4.8x |
+| Spartan (Microsoft) | 461 → 422 | 1867 | 4.0x → 4.4x |
+| Dory PCS | — → 304 | 766 | — → 2.5x |
+| HyperPlonk | — → 441 | 2828 | — → 6.4x |
+| KZH | — → 53 | 221 | — → 4.2x |
+| DeKART | — → 130 | 846 | — → 6.5x |
+| Pari | 79 → 119 | 1141 | 14.4x → 9.6x |
 
-Groth16 changed the most, yet remains 5.2x shorter than its native
-baseline. Every other system changed less, and Spartan's line count
-decreased.
+Each cell reads "submitted → now"; "—" marks a row added to Figure 7
+after submission. Groth16 changed the most, yet remains 5.2x shorter
+than its native baseline; Spartan's line count decreased.
 
 ## Experiments
 
-| # | Script | Produces | Paper reference |
+| # | Scripts | Produces | Paper |
 |---|---|---|---|
-| 1 | `run_benchmark.sh` + `process_benchmark.py` | Zippel-vs-native speedup table; Graph IR node-count table | Figure 7 (p.13); the node-count table is supplementary |
-| 2 | `run_soundness.sh` + `process_soundness.py` | Per-protocol special-soundness results, timings and failure reasons | §9.3 prose |
-| 3 | `run_completeness.sh` + `process_completeness.py` | Per-protocol completeness table | §9.3 prose; the table itself is supplementary |
+| 1 | `run_benchmark.sh`, `process_benchmark.py` | Comparison with existing implementations; compile times | Figure 7; §9.1 |
+| 2 | `run_soundness.sh`, `process_soundness.py` | Special-soundness marks and analysis times | Figure 6 (Spec. Sound); §9.3 |
+| 3 | `run_completeness.sh`, `process_completeness.py` | Completeness marks and analysis times | Figure 6 (Complete); §9.3 |
 
 ---
 
-### Experiment 1: performance benchmark and graph sizes (Figure 7)
-
-This experiment reproduces the submitted paper's Figure 7 performance
-comparison (and adds a supplementary graph-size table).
+### Experiment 1: performance and compile time (Figure 7, §9.1)
 
 ```sh
-mkdir -p artifact/output
-docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
-  bash -c "artifact/scripts/run_benchmark.sh && python3 artifact/scripts/process_benchmark.py"
+docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" \
+  zippel-ae bash -c '
+    artifact/scripts/run_benchmark.sh &&
+    python3 artifact/scripts/process_benchmark.py'
 ```
 
-It runs every system the benchmark compares against a native baseline: the
-original submissions' (Schnorr, Sumcheck, Bulletproofs IPA, KZG, Pari, Groth16, PST13,
-Hyrax, Spartan) and those added since (DeKART, KZH, Dory PCS, HyperPlonk
-SNARK). Each runs at `2^18` (except for Schnorr) across thread counts
-`{1, 2, 4, 8}`, with one sample per measurement. The script will then print two markdown tables from the resulting CSV. The pinned results in
-`benchmarks/*_results.csv` use ten runs and averages the result.
-If you want to reproduce them, then set `-e BENCH_SAMPLES=10` to match them (the default we use is 1). Note that if you use 10 runs it will take a very long time.
+This runs every Figure 7 row at instance size `2^18` (Schnorr has no
+size parameter), with the prover at 1, 2, 4 and 8 threads and the
+verifier at 1 thread. By default each measurement is taken once; the
+paper reports the mean of 10 runs, which you can match with
+`-e BENCH_SAMPLES=10` at roughly ten times the runtime. The pinned
+results in `benchmarks/*_results.csv` use 10 runs.
 
-Separately, you also have the option to run a smaller subset of the protocols instead of the full run by specifying which systems to run:
+To run a subset, pick systems and thread counts:
 
 ```sh
-docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" -e SYSTEMS=schnorr,kzg -e THREADS=1,2 zippel-ae \
-  bash -c "artifact/scripts/run_benchmark.sh && python3 artifact/scripts/process_benchmark.py"
+docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" \
+  -e SYSTEMS=schnorr,kzg -e THREADS=1,2 \
+  zippel-ae bash -c '
+    artifact/scripts/run_benchmark.sh &&
+    python3 artifact/scripts/process_benchmark.py'
 ```
 
-**What to expect:**
+For retries, `-e BENCH_ARTIFACTS_DIR=artifact/output/cache` keeps the
+SRS caches in the mounted output directory after the container exits.
 
-- **Performance table** (Figure 7, page 13): non-comment line counts for
-  the Zippel protocol and its native baseline, the ratio of native
-  baseline time to Zippel time at each thread count, and the
-  single-thread verifier ratio.
-  - Rows for the systems added since submission have no counterpart in
-    the submitted paper's Figure 7.
-  - **Hyrax**: the submitted paper's prose claimed a prover speedup up
-    to 6.05x at one thread; this was corrected during review to 1.11x.
-    This is expected and has already been discussed with the paper's reviewers.
-- **Graph-size table** (prover and verifier Graph IR node counts): not
-  included in the submitted paper; added in response to reviewer
-  feedback.
+**What to expect.** The processor prints two tables:
 
-**Runtime**: a full run across all systems and all four thread counts
-takes an estimated 2.5 hours.
+- **Figure 7**, one row per Figure 7 row and in its order:
+  - LoC of the Zippel protocol and of the existing implementation;
+  - Zippel's prover and verifier Graph IR node counts;
+  - prover speedup (existing implementation's time / Zippel's time) at
+    each thread count, and verifier speedup at 1 thread;
+  - prover peak memory ratio: existing implementation / Zippel prover
+    peak heap at 1 thread, where it is deterministic (see
+    `benchmarks/README.md`).
+- **Compile time** (§9.1): each system's Zippel compile time at the
+  benchmark size (parsing, size concretization, type checking, and
+  Graph IR construction and projection), then the minimum, maximum and
+  median.
 
-To reproduce only the submitted paper's nine systems, omitting the
-additional DeKART, KZH, Dory PCS and HyperPlonk SNARK benchmarks, set
-`-e SYSTEMS=schnorr,sumcheck,ipa,kzg,pari,groth16,pst13,hyrax,spartan`.
-For retries, `-e BENCH_ARTIFACTS_DIR=artifact/output/cache` keeps SRS
-caches in the mounted output directory after the container is removed.
+Differences from the submitted paper:
+
+- Spartan (Arkworks), Dory PCS, HyperPlonk, KZH and DeKART were added to
+  the comparison after submission, as were the Graph IR sizes (in
+  response to reviewer feedback) and the prover peak memory ratio.
+- **Hyrax**: the submitted paper claimed a prover speedup of up to 6.05x
+  at one thread; this was corrected to 1.11x during review, as already
+  discussed with the reviewers.
+
+**Runtime**: about 2.5 hours for all systems and all four thread
+counts.
 
 ---
 
-### Experiment 2: special-soundness analysis (§9.3)
-
-This experiment reproduces the submitted paper's special-soundness claim
-in Section 9.3.
+### Experiment 2: special soundness (Figure 6, §9.3)
 
 ```sh
-mkdir -p artifact/output
-docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
-  bash -c "artifact/scripts/run_soundness.sh --timeout 120 && python3 artifact/scripts/process_soundness.py"
+docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" \
+  zippel-ae bash -c '
+    artifact/scripts/run_soundness.sh --timeout 120 &&
+    python3 artifact/scripts/process_soundness.py'
 ```
 
-Runs `cargo bench --bench analysis_all -- --analysis soundness` over
-the paper's seven special-soundness candidates (the protocols with a
-mark in Figure 6's Sound. column, listed in `artifact/scripts/paper.py`)
-using Singular, with a 2-minute timeout and a 16 GiB memory limit per
-protocol. Results and metrics are
-written to `artifact/output/soundness_results.json`, with the raw log in
-`artifact/output/soundness_all.log`. The processor renders a table with
-analysis outcomes, analysis times (ideal construction, Gröbner basis and
-check, as in Experiment 3), and failure reasons, then the minimum,
-maximum and median time over the verified runs.
+This analyzes Figure 6's seven special-soundness candidates (the rows
+with a mark in its Spec. Sound column) with Singular, a 2-minute
+timeout and a 16 GiB memory limit per protocol. Results go to
+`artifact/output/soundness_results.json` and the raw log to
+`artifact/output/soundness_all.log`. To run a subset, add for example
+`--protocols schnorr,okamoto` after `--timeout 120`.
 
-To run a subset:
-
-```sh
-docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
-  bash -c "artifact/scripts/run_soundness.sh --timeout 120 --protocols schnorr,okamoto && python3 artifact/scripts/process_soundness.py"
-```
-
-**What to expect:**
+**What to expect.** A table of outcomes, analysis times (ideal
+construction, Gröbner basis and check) and failure reasons, then a
+summary line:
 
 ```
 | Protocol | Pass | Time | Status | Reason |
 |---|---|---|---|---|
-| Schnorr | ✓ | ... | ok | |
+| Schnorr | ✓ | ... | ok |  |
+| Multi-Schnorr | ✓ | ... | ok |  |
 | Okamoto | ✗ | ... | failed | No valid extractor for witness r: NoExtractor |
-| E-Cash Coin | ✗ | 120.0s | timeout | |
 ...
 
 soundness pass=4 failed=2 timeout=1 unexpected=0
 ```
 
-Four pass, matching Figure 6's check marks: Schnorr, Multi-Schnorr,
-Okamoto-ElGamal and Chaum-Pedersen. Okamoto and CDS fail with a reason,
-and E-Cash Coin reaches the timeout. The run reproduces the paper if it
-reports `unexpected=0`; E-Cash Coin may report `failed` instead of
-`timeout`, depending on `--timeout`. A cross
-means the analysis could not establish special soundness, not that the
-protocol is unsound.
+Schnorr, Multi-Schnorr, ElGamal and Chaum-Pedersen pass, matching
+Figure 6's check marks. Okamoto and CDS fail with a reason, and E-Cash
+Coin reaches the timeout (it may report `failed` instead, depending on
+`--timeout`). The run reproduces the paper if it reports
+`unexpected=0`. A cross means the analysis could not establish special
+soundness, not that the protocol is unsound.
 
-**Runtime**: our validation run took about 2 minutes, primarily spent on
-the E-Cash Coin timeout, excluding compilation.
+**Runtime**: about 3 minutes, mostly the E-Cash Coin timeout.
 
 ---
 
-### Experiment 3: completeness analysis (§9.3)
-
-This experiment reproduces the submitted paper's completeness claim in
-Section 9.3 (and adds a supplementary per-protocol timing table).
+### Experiment 3: completeness (Figure 6, §9.3)
 
 ```sh
-mkdir -p artifact/output
-docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
-  bash -c "artifact/scripts/run_completeness.sh --timeout 300 && python3 artifact/scripts/process_completeness.py"
+docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" \
+  zippel-ae bash -c '
+    artifact/scripts/run_completeness.sh --timeout 300 &&
+    python3 artifact/scripts/process_completeness.py'
 ```
 
-Runs the paper's 34 Figure 6 protocols (listed in
-`artifact/scripts/paper.py`) through the completeness analysis, with a
-5-minute timeout and a 16 GiB memory limit per run.
+This analyzes all 34 Figure 6 protocols with a 5-minute timeout and a
+16 GiB memory limit per run. Dory IPA, marked "~" in Figure 6, runs at
+the smaller instance the paper confirms it at (`dory_ipa_s2`: one
+recursive step, so not every code path). To run a subset, add for
+example `--protocols schnorr,groth16,ipa` after `--timeout 300`.
 
-To sanity-check a small subset of protocols instead of all of them:
+**Note on the timeout.** §9.3 budgets 20 minutes per protocol. Every
+protocol that completes takes far less (the slowest, Multiset, takes
+133 seconds on the paper's testbed), so a 5-minute timeout keeps the
+full run short.
 
-```sh
-docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" zippel-ae \
-  bash -c "artifact/scripts/run_completeness.sh --timeout 300 --protocols schnorr,groth16,ipa,hyperplonk_snark && python3 artifact/scripts/process_completeness.py"
+**What to expect.** A table of outcomes and analysis times in Figure 6
+order, then a summary:
+
+```
+| Protocol | Pass | Time |
+|---|---|---|
+| Sumcheck | ✓ | ... |
+| Schnorr | ✓ | ... |
+...
+
+Automatically verified complete: 29 of 34 Figure 6 protocols present in this run.
+Unexpected outcomes: 0
 ```
 
-**Note on the timeout.** The paper's own methodology budgets 20 minutes
-per protocol. Every protocol that completes takes far less: the slowest,
-Multiset, takes about a minute on our machine and about 140 seconds on
-an older server (a 2016 Xeon), so a 5-minute timeout is used here to keep
-the full run fast.
+The analysis verifies the 29 protocols Figure 6 marks with a check or
+"~". The other five are Figure 6's crosses: Spartan, Permutation,
+Dekart and Pari reach the timeout, and HyperPlonk exceeds the memory
+limit. The run reproduces the paper if it reports
+`Unexpected outcomes: 0`.
 
-**What to expect, and why it differs from the paper.** Completeness
-verifies 29 of the 34 protocols, every one Figure 6 marks with a check
-or "~", and the run reproduces the paper if it reports
-`Unexpected outcomes: 0`. The other five are Figure 6's crosses:
-Spartan, Permutation, Dekart and Pari reach the timeout, and HyperPlonk
-exceeds the memory limit. The submitted paper verified 20 of its 30:
-since submission we have fixed `where` clauses that were incomplete,
-which had kept the analysis from proving those protocols complete.
+**Difference from the submitted paper.** The submitted paper verified
+20 of its 30 protocols. Since submission we fixed `where` clauses that
+were incomplete and had kept the analysis from proving those protocols
+complete.
 
-**Runtime**: a full run takes roughly 25 minutes, most of it spent on
-the four protocols that reach the timeout.
+**Runtime**: about 25 minutes, mostly the four protocols that reach the
+timeout.
 
 ---
 
@@ -285,15 +302,13 @@ the four protocols that reach the timeout.
 
 [`artifact/index.html`](index.html) maps each central claim in the
 paper to the source declaration that backs it, and lists every known
-delta from the submitted paper (completeness count, LoC drift, the
-Hyrax speedup correction above) in one place.
-
----
+difference from the submitted paper (completeness count, LoC drift, the
+Hyrax speedup correction) in one place.
 
 ## Writing your own protocol
 
-This artifact only reproduces the paper's evaluation. If you'd like to
-create your own protocol and try Zippel yourself, see
+This artifact only reproduces the paper's evaluation. To create your
+own protocol and try Zippel, see
 [`docs/library-usage.md`](../docs/library-usage.md); it also links to
 [`CONTRIBUTING.md`](../CONTRIBUTING.md#creating-a-new-protocol-with-zippel)
-if you'd rather add your protocol to this repository's own `examples/`.
+for adding a protocol to this repository's own `examples/`.
