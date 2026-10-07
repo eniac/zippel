@@ -7,7 +7,7 @@ use zippel::*;
 
 use crate::common;
 
-pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
+pub fn run(opts: &common::RunOptions) {
     println!("=== Hyrax Log of Dot Product (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/hyrax_ipa/hyrax_ipa.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);

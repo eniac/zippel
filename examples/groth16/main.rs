@@ -243,7 +243,7 @@ fn run_groth16(
     );
 }
 
-pub fn run(_args: &clap::ArgMatches, _opts: &common::RunOptions) {
+pub fn run(_opts: &common::RunOptions) {
     type D<FF> = GeneralEvaluationDomain<FF>;
     println!("=== Groth16 (ArkBls12_381) — constraints: {CONSTRAINT_SIZE} ===");
 

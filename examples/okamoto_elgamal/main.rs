@@ -7,7 +7,7 @@ use zippel::*;
 
 use crate::common;
 
-pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
+pub fn run(opts: &common::RunOptions) {
     println!("=== Okamoto ElGamal (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from(
         "examples/okamoto_elgamal/okamoto_elgamal.zippel",

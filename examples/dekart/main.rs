@@ -14,7 +14,7 @@ type F = <C as ArkConfig>::F;
 type G1 = <C as ArkConfig>::G1;
 type G2 = <C as ArkConfig>::G2;
 
-pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
+pub fn run(opts: &common::RunOptions) {
     println!("=== DeKART Range Proof ===");
     let n_size = 3;
     let b_size = 2;

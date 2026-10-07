@@ -75,7 +75,7 @@ Every example lives in its own `examples/<name>/` directory holding a
 
 ### 2. Wire it into `examples/main.rs`
 
-Add a `#[path]` module declaration and an `EXAMPLES` row:
+Add a `#[path]` module declaration and an entry in the `examples!` list:
 
 ```rust
 #[path = "schnorr4/main.rs"]
@@ -83,19 +83,23 @@ mod schnorr4;
 ```
 
 ```rust
-("schnorr4", schnorr4::run, cli::no_args),
+examples! {
+    // ...
+    schnorr4,
+    // ...
+}
 ```
 
-`EXAMPLES` maps a name to that module's
-`run(&clap::ArgMatches, &common::RunOptions)` and to a function that adds
-the example's own arguments to its Clap subcommand. The dispatcher uses
-Clap to select the example, parse its arguments, and handle shared options
-such as `--no-analysis`. Every registered example appears in
-`cargo zrun --help`. If your example takes arguments, define them in a
-`pub fn args(clap::Command) -> clap::Command` in your own module (see
-`examples/pst13/main.rs`), register it in place of `cli::no_args`, and read
-their parsed values from `ArgMatches` in `run`. Keep protocol-specific
-arguments out of `examples/common/`.
+`examples!` makes each entry a Clap subcommand that calls that module's
+`run(&common::RunOptions)`. The dispatcher uses Clap to select the example,
+parse its arguments, and handle shared options such as `--no-analysis`.
+Every registered example appears in `cargo zrun --help`, in list order, so
+keep the list alphabetical. If your example takes arguments, define them as
+a `#[derive(clap::Args)] pub struct Args` in your own module (see
+`examples/pst13/main.rs`), register it as `schnorr4(args)`, and take them
+as `run(&Args, &common::RunOptions)`. The struct's doc comment becomes the
+example's description in `--help`. Keep protocol-specific arguments out of
+`examples/common/`.
 
 ### 3. Define the protocol
 
@@ -153,7 +157,7 @@ use zippel::*;
 
 use crate::common;
 
-pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
+pub fn run(opts: &common::RunOptions) {
     println!("=== Schnorr4 (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/schnorr4/schnorr4.zippel"));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);

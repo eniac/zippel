@@ -15,7 +15,7 @@ type G2 = <ArkBls12_381 as ArkConfig>::G2;
 /// Number of variables: 2^S gates.
 const S: usize = 2;
 
-pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
+pub fn run(opts: &common::RunOptions) {
     println!(
         "=== HyperPlonk SNARK (ArkBls12_381, S={S}, {} gates) ===",
         1 << S
