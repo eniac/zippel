@@ -2,7 +2,6 @@
 mod runtime_tests {
     use crate::graph::{MutexGraph, ResultKind, RunResult};
     use crate::inputs::Inputs;
-    use crate::queue::sync_channel;
     use backend::Value;
     use backend::config::ArkBls12_381;
     use graph::UDags;
@@ -10,8 +9,6 @@ mod runtime_tests {
     use lang::id::Tid;
     use share::Ctx;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::thread;
 
     type TestConfig = ArkBls12_381;
 
@@ -181,49 +178,5 @@ mod runtime_tests {
             result.unwrap_err(),
             crate::RuntimeError::MissingArg { .. }
         ));
-    }
-
-    #[test]
-    fn test_sync_queue_concurrency() {
-        use std::sync::Barrier;
-
-        let num_workers: usize = 30;
-        let (tx, rx) = sync_channel(1);
-        let processed_count = Arc::new(AtomicUsize::new(0));
-        let mut handles = vec![];
-
-        let barrier = Arc::new(Barrier::new(num_workers + 1));
-
-        for i in 0..num_workers {
-            let tx_clone = tx.clone();
-            let barrier_clone = Arc::clone(&barrier);
-            let handle = thread::spawn(move || {
-                barrier_clone.wait();
-                tx_clone.push(petgraph::graph::node_index(i));
-            });
-            handles.push(handle);
-        }
-
-        drop(tx);
-
-        let processed_clone = Arc::clone(&processed_count);
-        let main_handle = thread::spawn(move || {
-            let mut count = 0;
-            while let Some(msg) = rx.pop() {
-                count += 1;
-                thread::sleep(std::time::Duration::from_millis(1));
-                drop(msg);
-            }
-            processed_clone.store(count, Ordering::SeqCst);
-        });
-
-        barrier.wait();
-
-        for h in handles {
-            h.join().unwrap();
-        }
-        main_handle.join().unwrap();
-
-        assert_eq!(processed_count.load(Ordering::SeqCst), num_workers);
     }
 }

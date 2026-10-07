@@ -40,9 +40,8 @@ SYSTEMS=hyrax THREADS=1,4,8 OUT=hyrax.csv BENCH_SAMPLES=3 benchmarks/run_all.sh
 ```
 
 On Linux, when `RAYON_NUM_THREADS=T` is set (as `run_all.sh` does), `bench_all` pins
-every timed thread (both rayon pools and the main thread, which computes
-zippel's transcript messages) to the first T physical cores, one SMT
-sibling each, and prints the core list in its header. Both sides therefore
+every timed thread (both rayon pools and the main thread) to the first T
+physical cores, one SMT sibling each, and prints the core list in its header. Both sides therefore
 get exactly T cores. The setup pool stays unpinned. Set `BENCH_NO_PIN=1` to
 disable pinning, e.g. to pin externally:
 
@@ -52,10 +51,12 @@ SYSTEMS=hyrax THREADS=1,2,4,8 OUT=hyrax.csv BENCH_NO_PIN=1 numactl --cpunodebind
 
 On macOS and other non-Linux platforms, `bench_all` automatically runs
 without CPU pinning and reports that pinning is unsupported in its header.
-`RAYON_NUM_THREADS=T` still sets the Rayon worker count, but Zippel's main
-thread can compute concurrently with those workers, so T is not a strict
-CPU budget. To use the same unpinned execution policy on Linux, set
-`BENCH_NO_PIN=1` there too.
+`RAYON_NUM_THREADS=T` still bounds both sides to T compute threads: Zippel's
+runtime runs every node inside its rayon pool, and the patched arkworks (see
+the workspace `Cargo.toml`) keeps MSMs inside the caller's pool. Without
+pinning, though, threads may share a physical core and timings vary more. To
+use the same unpinned execution policy on Linux, set `BENCH_NO_PIN=1` there
+too.
 
 ## Folder layout
 
