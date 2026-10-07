@@ -20,14 +20,14 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../Cargo.lock");
 
+    // Without `--filter-platform`, `cargo metadata` needs every package in
+    // `Cargo.lock`, including other platforms' (e.g. Android-only) crates
+    // that this build never downloads, so `--offline` fails on a cold cache.
     let output = Command::new(env::var("CARGO").unwrap())
-        .args([
-            "metadata",
-            "--format-version",
-            "1",
-            "--offline",
-            "--manifest-path",
-        ])
+        .args(["metadata", "--format-version", "1", "--offline"])
+        .arg("--filter-platform")
+        .arg(env::var("TARGET").unwrap())
+        .arg("--manifest-path")
         .arg(Path::new(&manifest_dir).join("Cargo.toml"))
         .output()
         .expect("failed to run `cargo metadata`");
