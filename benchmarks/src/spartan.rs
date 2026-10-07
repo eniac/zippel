@@ -145,12 +145,16 @@ impl Setup {
     }
 
     /// [`Self::time_protocol`] reduced to the crate-wide [`Timing`] shape,
-    /// dropping the proof size and the pass flag.
+    /// dropping the proof size, for a caller that requires the proof to
+    /// verify, as every other bench does.
     ///
     /// # Panics
-    /// Panics under the same conditions as [`Self::time_protocol`].
+    /// Panics under the same conditions as [`Self::time_protocol`], and if
+    /// the proof fails verification.
     pub fn timing(&mut self) -> Timing {
-        self.time_protocol().timing
+        let t = self.time_protocol();
+        assert!(t.passed, "zippel spartan proof failed verification");
+        t.timing
     }
 
     /// `log_2` of the constraint count this setup was compiled for.
