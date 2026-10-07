@@ -1742,9 +1742,9 @@ impl<C: ArkConfig> Value<C> {
     /// `Value::Vec` operands recurse element-wise.
     ///
     /// # Panics
-    /// Panics if the operand pair has no dot-product rule. Note that zipped
-    /// iteration truncates to the shorter operand rather than failing on a length
-    /// mismatch.
+    /// Panics if the operand pair has no dot-product rule, and on a length
+    /// mismatch in the group arms (MSMs and pairings). The scalar arm's zipped
+    /// iteration truncates to the shorter operand instead.
     #[inline]
     pub fn value_dot(&self, other: &mut Self) {
         // A prepared G2 vector uses its preparation only against G1 vectors
