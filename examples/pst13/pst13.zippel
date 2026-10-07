@@ -31,7 +31,7 @@ fn eq_mle<F: Field>(instance z: [F; 1]) -> [F; 2] {
     [1 - z[0], z[0]]
 }
 
-fn eq_mle<F: Field, K: 2..21>(instance z: [F; K]) -> [F; 2 ^ K] {
+fn eq_mle<F: Field, N: Size, K: 2..N + 1>(instance z: [F; K]) -> [F; 2 ^ K] {
     let a = z[0]; // first variable = MSB (peeled first)
     let rest = z[1..K];
     let prev = eq_mle(rest); // [F; 2^(K-1)] over the K-1 low-bit variables
@@ -39,12 +39,12 @@ fn eq_mle<F: Field, K: 2..21>(instance z: [F; K]) -> [F; 2 ^ K] {
 }
 
 // =============================================================================
-// PST.Commit  (generic over M = number of variables)
+// PST.Commit  (generic over N = number of variables)
 //   C_p = dot(p, ck_N) = p(alpha) * G
 // =============================================================================
-fn pst13_commit<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: 1..21>(
-    witness p: [F; 2 ^ M],
-    instance ck_N: [G1; 2 ^ M],
+fn pst13_commit<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>(
+    witness p: [F; 2 ^ N],
+    instance ck_N: [G1; 2 ^ N],
 ) -> G1 {
     dot(p, ck_N)
 }
@@ -73,11 +73,14 @@ fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2
 // Logs π for this round, folds p at z_curr[0], recurses on K-1 variables.
 // Returns the full list of π's collected across rounds.
 // =============================================================================
-fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 2..21>(
-    witness p_curr: [F; 2 ^ K],
-    instance ck_curr: [G1; 2 ^ K],
-    instance z_curr: [F; K],
-) -> [G1; K] {
+fn pst13_open_rounds<
+    G1: Group,
+    G2: Group,
+    GT: Pairing<G1, G2>,
+    F: Scalar<G1, G2>,
+    N: Size,
+    K: 2..N + 1,
+>(witness p_curr: [F; 2 ^ K], instance ck_curr: [G1; 2 ^ K], instance z_curr: [F; K]) -> [G1; K] {
     // ck_{K-1}[i] = ck_curr[i] + ck_curr[i + 2^(K-1)] (Lagrange-basis split).
     let ck_lo = ck_curr[0..2 ^ (K - 1)];
     let ck_hi = ck_curr[2 ^ (K - 1)..2 ^ K];
@@ -95,7 +98,7 @@ fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2
 }
 
 // =============================================================================
-// PST13 proto (generic over N: number of variables, 1 ≤ N ≤ 20)
+// PST13 proto (generic over N ≥ 1: number of variables)
 //
 //   Prover  →  c_p, π_1, ..., π_N
 //   Verifier checks ONE fused multi_pairing:

@@ -4,63 +4,17 @@ use backend::{ArkConfig, ArkCurve25519, PolyVariant, Value, VirtualPolynomial};
 use lang::id::{Tid, Vid};
 use rand::Rng;
 use share::Ctx;
-use std::{
-    fs::OpenOptions,
-    io::Write,
-    path::{Path, PathBuf},
-    time::{Duration, Instant},
-};
+use std::path::PathBuf;
 use zippel::*;
 
 use crate::common;
 
-#[derive(Clone, Debug)]
-struct RunOpts {
-    sweep: Vec<usize>,
-    invalid: bool,
-    csv_path: Option<String>,
-    manual_zippel: Option<String>,
-}
-
-/// Spartan's command-line arguments, read back by `parse_args`.
-pub fn args(command: clap::Command) -> clap::Command {
-    use clap::{Arg, ArgAction};
-    command
-        .arg(
-            Arg::new("m")
-                .long("m")
-                .value_name("M")
-                .action(ArgAction::Append)
-                .value_parser(parse_m)
-                .help("Run with 2^M constraints (M >= 3); repeat for multiple sizes"),
-        )
-        .arg(
-            Arg::new("sweep")
-                .long("sweep")
-                .value_names(["LO", "HI"])
-                .num_args(2)
-                .action(ArgAction::Append)
-                .value_parser(parse_m)
-                .help("Run every M in LO..=HI (3 <= LO <= HI)"),
-        )
-        .arg(
-            Arg::new("invalid")
-                .long("invalid")
-                .action(ArgAction::SetTrue)
-                .help("Use an invalid witness and expect verification to fail"),
-        )
-        .arg(
-            Arg::new("csv")
-                .long("csv")
-                .value_name("PATH")
-                .help("Append results to a CSV file"),
-        )
-        .arg(
-            Arg::new("manual_zippel")
-                .long("manual-zippel")
-                .value_name("PATH")
-                .help("Compile this protocol file instead of the default"),
-        )
+/// Spartan-NIZK with 2^M R1CS constraints
+#[derive(clap::Args)]
+pub struct Args {
+    /// Log2 of the number of constraints (M >= 3)
+    #[arg(value_name = "M", default_value_t = 3, value_parser = parse_m)]
+    m: usize,
 }
 
 fn parse_m(value: &str) -> Result<usize, String> {
@@ -71,85 +25,17 @@ fn parse_m(value: &str) -> Result<usize, String> {
     Ok(m)
 }
 
-fn parse_args(args: &clap::ArgMatches) -> RunOpts {
-    // Keep --m and --sweep runs in command-line order, including repetitions.
-    let mut ranges = Vec::new();
-    if let (Some(indices), Some(values)) = (args.indices_of("m"), args.get_many::<usize>("m")) {
-        ranges.extend(indices.zip(values).map(|(i, &m)| (i, m..=m)));
-    }
-    if let (Some(indices), Some(values)) =
-        (args.indices_of("sweep"), args.get_many::<usize>("sweep"))
-    {
-        let values: Vec<_> = values.copied().collect();
-        for (i, bounds) in indices.step_by(2).zip(values.chunks_exact(2)) {
-            let (lo, hi) = (bounds[0], bounds[1]);
-            if lo > hi {
-                clap::Error::raw(
-                    clap::error::ErrorKind::ValueValidation,
-                    format!("--sweep {lo} {hi} is empty: LO must be <= HI\n"),
-                )
-                .exit();
-            }
-            ranges.push((i, lo..=hi));
-        }
-    }
-    ranges.sort_unstable_by_key(|(i, _)| *i);
-    let mut sweep: Vec<_> = ranges.into_iter().flat_map(|(_, range)| range).collect();
-    if sweep.is_empty() {
-        sweep.push(3);
-    }
+pub fn run(args: &Args, _opts: &common::RunOptions) {
+    let m = args.m;
+    println!("=== Spartan-NIZK (PIOP + Hyrax PCS, ArkCurve25519, M={m}) ===");
+    let zippel_args = ZippelArgs::new(PathBuf::from("examples/spartan/spartan.zippel"));
+    let mut handler: ZippelHandler<ArkCurve25519> = ZippelHandler::new(zippel_args);
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::new("M"), &m);
+    handler.compile(&sizes);
 
-    RunOpts {
-        sweep,
-        invalid: args.get_flag("invalid"),
-        csv_path: args.get_one::<String>("csv").cloned(),
-        manual_zippel: args.get_one::<String>("manual_zippel").cloned(),
-    }
-}
-
-#[derive(Clone, Debug)]
-struct RunResult {
-    m: usize,
-    prover: Duration,
-    verifier: Duration,
-    proof_bytes: usize,
-    passed: bool,
-}
-
-pub fn run(args: &clap::ArgMatches, _opts: &common::RunOptions) {
-    let opts = parse_args(args);
-
-    println!("=== Spartan-NIZK (PIOP + Hyrax PCS, ArkCurve25519) ===");
-    println!(
-        "sweep: {:?}{}",
-        opts.sweep,
-        if opts.invalid {
-            "    [mode: --invalid → expect Verification FAILED]"
-        } else {
-            ""
-        }
-    );
-
-    let mut results: Vec<RunResult> = Vec::new();
-    for &m in &opts.sweep {
-        let r = run_one(m, opts.invalid, opts.manual_zippel.as_deref());
-        results.push(r.clone());
-        let (l, m_h) = hyrax_split(m);
-        println!(
-            "M={m:>2}  num_cons={n:>8}  |w|={w:>8}  |io|={io:>8}  hyrax=(L={l},M_h={m_h})  prover={prover:>10.2?}  verifier={verifier:>10.2?}  proof={bytes:>7}B  verdict={verdict}",
-            n = 1usize << m,
-            w = 1usize << (m - 1),
-            io = (1usize << (m - 1)) - 1,
-            prover = r.prover,
-            verifier = r.verifier,
-            bytes = r.proof_bytes,
-            verdict = if r.passed { "PASS" } else { "FAIL" },
-        );
-    }
-
-    if let Some(path) = opts.csv_path {
-        emit_csv(&path, &results);
-    }
+    let inputs = prover_create_inputs(m);
+    common::run_prover_and_verify(&mut handler, &inputs);
 }
 
 const fn hyrax_split(m: usize) -> (usize, usize) {
@@ -157,103 +43,6 @@ const fn hyrax_split(m: usize) -> (usize, usize) {
     let l = nw / 2;
     let m_h = nw - l;
     (l, m_h)
-}
-
-fn run_one(m: usize, invalid: bool, manual_zippel: Option<&str>) -> RunResult {
-    assert!(
-        m >= 3,
-        "M must be >= 3 (Hyrax needs NW = M-1 >= 2 to split L,M_h both >= 1)"
-    );
-
-    let zippel_path = manual_zippel.map_or_else(
-        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/spartan/spartan.zippel"),
-        std::path::PathBuf::from,
-    );
-
-    let args = ZippelArgs::new(zippel_path);
-    let mut handler: ZippelHandler<ArkCurve25519> = ZippelHandler::new(args);
-    let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("M"), &m);
-    handler.compile(&sizes);
-
-    let mut inputs = prover_create_inputs(m);
-    if invalid {
-        type F = <ArkCurve25519 as ArkConfig>::F;
-        if let Some(v) = inputs.get(&Vid("az".to_string()))
-            && let Value::VecScalar(mut a) = v.clone()
-        {
-            a[0] += F::from(7u64);
-            inputs.insert(&Vid("az".to_string()), &Value::VecScalar(a));
-        }
-    }
-    let prover_start = Instant::now();
-    let proof = handler.run_prover(&inputs).expect("run_prover failed");
-    let prover_elapsed = prover_start.elapsed();
-    let proof_bytes = proof_size_bytes::<ArkCurve25519>(&proof);
-    let verifier_start = Instant::now();
-    let verifier_result = handler
-        .run_verifier(&proof, &inputs)
-        .expect("run_verifier failed");
-    let verifier_elapsed = verifier_start.elapsed();
-    if std::env::var("SPARTAN_DEBUG_VERIFIES").is_ok() {
-        for (i, v) in verifier_result.iter().enumerate() {
-            eprintln!("  verify[{i}] = {v}");
-        }
-    }
-    let passed = check_verification(&verifier_result);
-
-    RunResult {
-        m,
-        prover: prover_elapsed,
-        verifier: verifier_elapsed,
-        proof_bytes,
-        passed,
-    }
-}
-
-fn emit_csv(path: &str, results: &[RunResult]) {
-    let header = "m,num_constraints,witness_len,io_len,prover_ms,verifier_ms,proof_bytes,passed\n";
-    if path == "-" {
-        print!("{header}");
-        for r in results {
-            println!(
-                "{m},{n},{w},{io},{p:.3},{v:.3},{b},{ok}",
-                m = r.m,
-                n = 1usize << r.m,
-                w = 1usize << (r.m - 1),
-                io = (1usize << (r.m - 1)) - 1,
-                p = r.prover.as_secs_f64() * 1000.0,
-                v = r.verifier.as_secs_f64() * 1000.0,
-                b = r.proof_bytes,
-                ok = r.passed,
-            );
-        }
-    } else {
-        let need_header = !Path::new(path).exists();
-        let mut f = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .expect("opening csv");
-        if need_header {
-            f.write_all(header.as_bytes()).expect("write header");
-        }
-        for r in results {
-            writeln!(
-                f,
-                "{m},{n},{w},{io},{p:.3},{v:.3},{b},{ok}",
-                m = r.m,
-                n = 1usize << r.m,
-                w = 1usize << (r.m - 1),
-                io = (1usize << (r.m - 1)) - 1,
-                p = r.prover.as_secs_f64() * 1000.0,
-                v = r.verifier.as_secs_f64() * 1000.0,
-                b = r.proof_bytes,
-                ok = r.passed,
-            )
-            .expect("write row");
-        }
-    }
 }
 
 struct R1csInstance<F> {

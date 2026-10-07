@@ -15,7 +15,7 @@ use crate::common;
 const S: usize = 3;
 const NUM_POINTS: usize = 1 << S;
 
-pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
+pub fn run(opts: &common::RunOptions) {
     let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples/hyperplonk_multiset/hyperplonk_multiset.zippel");
 

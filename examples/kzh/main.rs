@@ -22,7 +22,7 @@ fn build_sizes_ctx() -> Ctx<Tid, usize> {
     ctx
 }
 
-pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
+pub fn run(opts: &common::RunOptions) {
     println!("=== KZH-2 (ArkBls12_381, NX={}, NY={}) ===", NX, NY);
     let args = ZippelArgs::new(PathBuf::from("examples/kzh/kzh.zippel"));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);

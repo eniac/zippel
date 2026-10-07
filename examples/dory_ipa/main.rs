@@ -6,7 +6,7 @@ use zippel::*;
 
 use crate::common;
 
-pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
+pub fn run(opts: &common::RunOptions) {
     const LOG_N: usize = 8;
     env_logger::init();
     println!("=== Dory Evaluation Proof (ArkBls12_381) ===");

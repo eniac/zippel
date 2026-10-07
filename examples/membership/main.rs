@@ -8,7 +8,7 @@ use zippel::*;
 
 use crate::common;
 
-pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
+pub fn run(opts: &common::RunOptions) {
     println!("=== Membership ===");
     let n_size = 2;
     let m_size = 2;

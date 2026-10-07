@@ -8,27 +8,24 @@ use zippel::*;
 
 use crate::common;
 
-/// PST13's command-line arguments.
-pub fn args(command: clap::Command) -> clap::Command {
-    command.arg(
-        clap::Arg::new("n")
-            .value_name("N")
-            .default_value("2")
-            .value_parser(parse_n)
-            .help("Number of variables (1..=20)"),
-    )
+/// PST13 multilinear polynomial commitment with N variables
+#[derive(clap::Args)]
+pub struct Args {
+    /// Number of variables (N >= 1)
+    #[arg(value_name = "N", default_value_t = 2, value_parser = parse_n)]
+    n: usize,
 }
 
 fn parse_n(value: &str) -> Result<usize, String> {
     let n = value.parse().map_err(|_| "N must be an integer")?;
-    if !(1..=20).contains(&n) {
-        return Err("N must be in 1..=20 (pst13.zippel helpers cap at K=20)".into());
+    if n == 0 {
+        return Err("N must be >= 1".into());
     }
     Ok(n)
 }
 
-pub fn run(args: &clap::ArgMatches, opts: &common::RunOptions) {
-    let n = *args.get_one::<usize>("n").expect("Clap defaults N to 2");
+pub fn run(args: &Args, opts: &common::RunOptions) {
+    let n = args.n;
 
     println!("=== PST13 Multilinear PCS (ArkBls12_381, N={n}) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/pst13/pst13.zippel"));

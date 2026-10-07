@@ -14,7 +14,7 @@ use crate::common;
 const NUM_VARS: usize = 10;
 const MAX_DEGREE: usize = 10;
 
-pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
+pub fn run(opts: &common::RunOptions) {
     let zippel_file =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/sumcheck/sumcheck.zippel");
     let num_vars = NUM_VARS;
