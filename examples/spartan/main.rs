@@ -22,6 +22,55 @@ struct RunOpts {
     manual_zippel: Option<String>,
 }
 
+/// Spartan's command-line arguments, read back by `parse_args`.
+pub fn args(command: clap::Command) -> clap::Command {
+    use clap::{Arg, ArgAction};
+    command
+        .arg(
+            Arg::new("m")
+                .long("m")
+                .value_name("M")
+                .action(ArgAction::Append)
+                .value_parser(parse_m)
+                .help("Run with 2^M constraints (M >= 3); repeat for multiple sizes"),
+        )
+        .arg(
+            Arg::new("sweep")
+                .long("sweep")
+                .value_names(["LO", "HI"])
+                .num_args(2)
+                .action(ArgAction::Append)
+                .value_parser(parse_m)
+                .help("Run every M in LO..=HI (3 <= LO <= HI)"),
+        )
+        .arg(
+            Arg::new("invalid")
+                .long("invalid")
+                .action(ArgAction::SetTrue)
+                .help("Use an invalid witness and expect verification to fail"),
+        )
+        .arg(
+            Arg::new("csv")
+                .long("csv")
+                .value_name("PATH")
+                .help("Append results to a CSV file"),
+        )
+        .arg(
+            Arg::new("manual_zippel")
+                .long("manual-zippel")
+                .value_name("PATH")
+                .help("Compile this protocol file instead of the default"),
+        )
+}
+
+fn parse_m(value: &str) -> Result<usize, String> {
+    let m = value.parse().map_err(|_| "M must be an integer")?;
+    if m < 3 {
+        return Err("M must be >= 3 (Hyrax needs M-1 >= 2 to split L,M_h both >= 1)".into());
+    }
+    Ok(m)
+}
+
 fn parse_args(args: &clap::ArgMatches) -> RunOpts {
     // Keep --m and --sweep runs in command-line order, including repetitions.
     let mut ranges = Vec::new();
@@ -32,12 +81,17 @@ fn parse_args(args: &clap::ArgMatches) -> RunOpts {
         (args.indices_of("sweep"), args.get_many::<usize>("sweep"))
     {
         let values: Vec<_> = values.copied().collect();
-        ranges.extend(
-            indices
-                .step_by(2)
-                .zip(values.chunks_exact(2))
-                .map(|(i, bounds)| (i, bounds[0]..=bounds[1])),
-        );
+        for (i, bounds) in indices.step_by(2).zip(values.chunks_exact(2)) {
+            let (lo, hi) = (bounds[0], bounds[1]);
+            if lo > hi {
+                clap::Error::raw(
+                    clap::error::ErrorKind::ValueValidation,
+                    format!("--sweep {lo} {hi} is empty: LO must be <= HI\n"),
+                )
+                .exit();
+            }
+            ranges.push((i, lo..=hi));
+        }
     }
     ranges.sort_unstable_by_key(|(i, _)| *i);
     let mut sweep: Vec<_> = ranges.into_iter().flat_map(|(_, range)| range).collect();

@@ -16,10 +16,10 @@ pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
     let inputs = prover_create_inputs();
     common::run_prover_and_verify(&mut handler, &inputs);
 
-    // Static analysis (completeness, ZK, & soundness)
     if !opts.analyses {
         return;
     }
+    // Static analysis (completeness, ZK, & soundness)
     println!("\n--- Static Analysis ---");
     common::time_analysis!("Completeness", handler.analyze_completeness());
     common::time_analysis!("ZK", handler.analyze_knowledge());
