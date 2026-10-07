@@ -83,15 +83,19 @@ mod schnorr4;
 ```
 
 ```rust
-("schnorr4", schnorr4::run),
+("schnorr4", schnorr4::run, cli::no_args),
 ```
 
 `EXAMPLES` maps a name to that module's
-`run(&clap::ArgMatches, &common::RunOptions)`. The dispatcher uses Clap to
-select the example, parse its arguments, and handle shared options such
-as `--no-analysis`. Every registered example appears in `cargo zrun --help`.
-If your example takes arguments, define them in `examples/common/cli.rs`
-and read their parsed values from `ArgMatches` in `run`.
+`run(&clap::ArgMatches, &common::RunOptions)` and to a function that adds
+the example's own arguments to its Clap subcommand. The dispatcher uses
+Clap to select the example, parse its arguments, and handle shared options
+such as `--no-analysis`. Every registered example appears in
+`cargo zrun --help`. If your example takes arguments, define them in a
+`pub fn args(clap::Command) -> clap::Command` in your own module (see
+`examples/pst13/main.rs`), register it in place of `cli::no_args`, and read
+their parsed values from `ArgMatches` in `run`. Keep protocol-specific
+arguments out of `examples/common/`.
 
 ### 3. Define the protocol
 

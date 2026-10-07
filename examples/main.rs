@@ -1,9 +1,10 @@
 //! Single entry point for every Zippel protocol example.
 //!
-//! Each `examples/<name>/main.rs` exposes `run(&clap::ArgMatches, &common::RunOptions)`;
-//! this binary uses Clap to select a protocol and parse its arguments. One Cargo
-//! target means one link product and one debug-info file for all protocols
-//! instead of one per protocol.
+//! Each `examples/<name>/main.rs` exposes `run(&clap::ArgMatches, &common::RunOptions)`
+//! and, if it takes arguments, an `args` function that defines them; `EXAMPLES`
+//! registers both, and this binary uses Clap to select a protocol and parse
+//! its arguments. One Cargo target means one link product and one debug-info
+//! file for all protocols instead of one per protocol.
 //!
 //! ```text
 //! cargo run --example zippel -- <name> [example args...]
@@ -96,55 +97,80 @@ mod zerocheck;
 mod zeromorph_kzg;
 
 type Runner = fn(&clap::ArgMatches, &common::RunOptions);
+/// Adds an example's own arguments to its subcommand.
+type Args = fn(clap::Command) -> clap::Command;
 
-const EXAMPLES: &[(&str, Runner)] = &[
-    ("bccgp", bccgp::run),
-    ("cds", cds::run),
-    ("coin_proof", coin_proof::run),
-    ("commitment_equality", commitment_equality::run),
-    ("cp", cp::run),
-    ("dekart", dekart::run),
-    ("dory_ipa", dory_ipa::run),
-    ("dory_pcs", dory_pcs::run),
-    ("groth16", groth16::run),
-    ("hadamard", hadamard::run),
-    ("hyperplonk_piop", hyperplonk_piop::run),
-    ("hyperplonk_multiset", hyperplonk_multiset::run),
-    ("hyperplonk_permutation", hyperplonk_permutation::run),
-    ("hyperplonk_productcheck", hyperplonk_productcheck::run),
-    ("hyperplonk_snark", hyperplonk_snark::run),
-    ("hyperplonk_zerocheck", hyperplonk_zerocheck::run),
-    ("hyrax_ipa", hyrax_ipa::run),
-    ("hyrax_pcs", hyrax_pcs::run),
-    ("hyrax_podp", hyrax_podp::run),
-    ("hyrax_pop", hyrax_pop::run),
-    ("ipa", ipa::run),
-    ("ipa_weighted", ipa_weighted::run),
-    ("kzg", kzg::run),
-    ("kzh", kzh::run),
-    ("marlin_kzg", marlin_kzg::run),
-    ("membership", membership::run),
-    ("mle_sumcheck", mle_sumcheck::run),
-    ("okamoto", okamoto::run),
-    ("okamoto_elgamal", okamoto_elgamal::run),
-    ("pari", pari::run),
-    ("pedersen_eq", pedersen_eq::run),
-    ("pst13", pst13::run),
-    ("r1cs_sigma", r1cs_sigma::run),
-    ("schnorr", schnorr::run),
-    ("schnorr_3round", schnorr_3round::run),
-    ("spartan", spartan::run),
-    ("sumcheck", sumcheck::run),
-    ("zerocheck", zerocheck::run),
-    ("zeromorph_kzg", zeromorph_kzg::run),
+const EXAMPLES: &[(&str, Runner, Args)] = &[
+    ("bccgp", bccgp::run, cli::no_args),
+    ("cds", cds::run, cli::no_args),
+    ("coin_proof", coin_proof::run, cli::no_args),
+    (
+        "commitment_equality",
+        commitment_equality::run,
+        cli::no_args,
+    ),
+    ("cp", cp::run, cli::no_args),
+    ("dekart", dekart::run, cli::no_args),
+    ("dory_ipa", dory_ipa::run, cli::no_args),
+    ("dory_pcs", dory_pcs::run, cli::no_args),
+    ("groth16", groth16::run, cli::no_args),
+    ("hadamard", hadamard::run, cli::no_args),
+    ("hyperplonk_piop", hyperplonk_piop::run, cli::no_args),
+    (
+        "hyperplonk_multiset",
+        hyperplonk_multiset::run,
+        cli::no_args,
+    ),
+    (
+        "hyperplonk_permutation",
+        hyperplonk_permutation::run,
+        cli::no_args,
+    ),
+    (
+        "hyperplonk_productcheck",
+        hyperplonk_productcheck::run,
+        cli::no_args,
+    ),
+    ("hyperplonk_snark", hyperplonk_snark::run, cli::no_args),
+    (
+        "hyperplonk_zerocheck",
+        hyperplonk_zerocheck::run,
+        cli::no_args,
+    ),
+    ("hyrax_ipa", hyrax_ipa::run, cli::no_args),
+    ("hyrax_pcs", hyrax_pcs::run, cli::no_args),
+    ("hyrax_podp", hyrax_podp::run, cli::no_args),
+    ("hyrax_pop", hyrax_pop::run, cli::no_args),
+    ("ipa", ipa::run, cli::no_args),
+    ("ipa_weighted", ipa_weighted::run, cli::no_args),
+    ("kzg", kzg::run, cli::no_args),
+    ("kzh", kzh::run, cli::no_args),
+    ("marlin_kzg", marlin_kzg::run, cli::no_args),
+    ("membership", membership::run, cli::no_args),
+    ("mle_sumcheck", mle_sumcheck::run, cli::no_args),
+    ("okamoto", okamoto::run, cli::no_args),
+    ("okamoto_elgamal", okamoto_elgamal::run, cli::no_args),
+    ("pari", pari::run, cli::no_args),
+    ("pedersen_eq", pedersen_eq::run, cli::no_args),
+    ("pst13", pst13::run, pst13::args),
+    ("r1cs_sigma", r1cs_sigma::run, cli::no_args),
+    ("schnorr", schnorr::run, cli::no_args),
+    ("schnorr_3round", schnorr_3round::run, cli::no_args),
+    ("spartan", spartan::run, spartan::args),
+    ("sumcheck", sumcheck::run, cli::no_args),
+    ("zerocheck", zerocheck::run, cli::no_args),
+    ("zeromorph_kzg", zeromorph_kzg::run, cli::no_args),
 ];
 
 fn main() {
-    let matches = cli::command(EXAMPLES.iter().map(|&(name, _)| name)).get_matches();
-    let (name, args) = matches.subcommand().expect("Clap requires an example");
-    let (_, run) = EXAMPLES
+    let examples = EXAMPLES
         .iter()
-        .find(|&&(n, _)| n == name)
+        .map(|&(name, _, args)| args(clap::Command::new(name)));
+    let matches = cli::command(examples).get_matches();
+    let (name, args) = matches.subcommand().expect("Clap requires an example");
+    let (_, run, _) = EXAMPLES
+        .iter()
+        .find(|&&(n, _, _)| n == name)
         .expect("Clap only accepts registered examples");
     let no_analysis = matches.get_flag("no_analysis");
     if no_analysis {

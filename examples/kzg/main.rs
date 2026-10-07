@@ -19,12 +19,12 @@ pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
     let inputs = prover_create_inputs();
     common::run_prover_and_verify(&mut handler, &inputs);
 
-    // Analyze completeness/ZK at the same (small) N the prover demonstrates.
-    // kzg's `where` clause contains `for i in 0..N-1`, which is empty (and
-    // ill-typed) at the auto-minimized N=1, so analyze at the compiled N=2.
     if !opts.analyses {
         return;
     }
+    // Analyze completeness/ZK at the same (small) N the prover demonstrates.
+    // kzg's `where` clause contains `for i in 0..N-1`, which is empty (and
+    // ill-typed) at the auto-minimized N=1, so analyze at the compiled N=2.
     println!("\n--- Static Analysis ---");
     common::time_analysis!("Completeness", handler.analyze_completeness());
     common::time_analysis!("ZK", handler.analyze_knowledge());

@@ -8,6 +8,25 @@ use zippel::*;
 
 use crate::common;
 
+/// PST13's command-line arguments.
+pub fn args(command: clap::Command) -> clap::Command {
+    command.arg(
+        clap::Arg::new("n")
+            .value_name("N")
+            .default_value("2")
+            .value_parser(parse_n)
+            .help("Number of variables (1..=20)"),
+    )
+}
+
+fn parse_n(value: &str) -> Result<usize, String> {
+    let n = value.parse().map_err(|_| "N must be an integer")?;
+    if !(1..=20).contains(&n) {
+        return Err("N must be in 1..=20 (pst13.zippel helpers cap at K=20)".into());
+    }
+    Ok(n)
+}
+
 pub fn run(args: &clap::ArgMatches, opts: &common::RunOptions) {
     let n = *args.get_one::<usize>("n").expect("Clap defaults N to 2");
 
