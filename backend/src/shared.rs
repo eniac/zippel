@@ -11,7 +11,8 @@ use std::sync::Arc;
 ///
 /// Cloning or slicing shares the buffer instead of copying it; reads see a
 /// plain slice (`Deref<Target = [T]>`). A write goes through [`Shared::to_mut`],
-/// which copies the viewed elements first only if the buffer is shared.
+/// which first copies the viewed elements into a buffer of their own unless
+/// this is the only owner of a whole buffer.
 pub struct Shared<T> {
     buf: Arc<Vec<T>>,
     /// The viewed part of `buf`; `None` is all of it.
