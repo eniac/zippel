@@ -336,11 +336,15 @@ impl<C: ArkConfig> MutexGraph<C> {
         };
         for node in g.mutex_graph.node_indices() {
             if let Some(info) = g.info(node) {
+                // Collected once per node: scanning the incoming edges for
+                // each operand is quadratic in a node's operand count.
+                let predecessors: HashSet<NodeIndex> = g
+                    .mutex_graph
+                    .neighbors_directed(node, Direction::Incoming)
+                    .collect();
                 for source in info.inbox.sources() {
                     assert!(
-                        g.mutex_graph
-                            .neighbors_directed(node, Direction::Incoming)
-                            .any(|p| p == source.0),
+                        predecessors.contains(&source.0),
                         "node {node:?} reads {source:?} without a dependency edge from it"
                     );
                 }
