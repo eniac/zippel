@@ -61,9 +61,8 @@ prover and verifier.
 use ark_std::UniformRand;
 use std::path::PathBuf;
 use zippel::backend::{ArkBls12_381, ArkConfig, ArkGroupOps, Value};
-use zippel::lang::id::Vid;
 use zippel::share::Ctx;
-use zippel::{check_verification, proof_size_bytes, ZippelArgs, ZippelHandler};
+use zippel::{check_verification, proof_size_bytes, Inputs, ZippelArgs, ZippelHandler};
 
 fn main() {
     let args = ZippelArgs::new(PathBuf::from("schnorr.zippel"));
@@ -96,7 +95,7 @@ fn main() {
     }
 }
 
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
+fn prover_create_inputs() -> Inputs<ArkBls12_381> {
     let mut rng = rand::rngs::OsRng;
     let x = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
     let g = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
@@ -104,10 +103,10 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         .into_iter()
         .next()
         .unwrap();
-    Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("x".to_string()), Value::Scalar(x)),
-        (Vid("g".to_string()), Value::G1(g)),
-        (Vid("h".to_string()), Value::G1Affine(h)),
+    Inputs::from_iter([
+        ("x", Value::Scalar(x)),
+        ("g", Value::G1(g)),
+        ("h", Value::G1Affine(h)),
     ])
 }
 ```
@@ -115,9 +114,12 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 - `ZippelHandler<C>` drives compiling, running, and analyzing a
   protocol for one concrete curve `C`.
 - `ZippelArgs` points a handler at a `.zippel` file.
-- `Ctx<Vid, Value<C>>` maps each protocol parameter name to a value;
-  its keys must match the `.zippel` file's parameter names exactly
-  (`x`, `g`, `h` above).
+- `Inputs<C>` maps each protocol parameter name to a value; its names
+  must match the `.zippel` file's parameter names exactly (`x`, `g`, `h`
+  above). It holds each value behind an `Arc`, so `run_prover` and
+  `run_verifier` share the inputs instead of copying them: build them once
+  and pass the same `Inputs` to every run.
+- `compile` takes a `Ctx` of size parameters; this protocol has none.
 - `analyze_completeness()` returns `Result<(),
   analyses::AnalysisError<C>>`; `Ok(())` means the protocol is
   complete.
