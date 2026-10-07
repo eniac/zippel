@@ -6,7 +6,7 @@ use zippel::*;
 
 use crate::common;
 
-pub fn run(_args: &[String], opts: &common::RunOptions) {
+pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
     println!("=== IPA (ArkSecp256k1) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/ipa/ipa.zippel"));
     let mut handler: zippel::ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);

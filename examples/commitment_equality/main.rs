@@ -8,7 +8,7 @@ use zippel::*;
 
 use crate::common;
 
-pub fn run(_args: &[String], opts: &common::RunOptions) {
+pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
     println!("=== Prove Commitment Equality (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from(
         "examples/commitment_equality/commitment_equality.zippel",
