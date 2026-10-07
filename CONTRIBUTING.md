@@ -86,8 +86,9 @@ mod schnorr4;
 ("schnorr4", schnorr4::run),
 ```
 
-`EXAMPLES` maps a name to that module's `run(&[String])`; `main()` looks
-up `argv[1]` in it and forwards `argv[2..]`.
+`EXAMPLES` maps a name to that module's `run(&[String], &RunOptions)`;
+`main()` looks up `argv[1]` in it, strips the runner's own flags (such as
+`--no-analysis`) into `RunOptions`, and forwards the rest of `argv[2..]`.
 
 ### 3. Define the protocol
 
@@ -138,14 +139,13 @@ witness/instance values, and runs the prover and verifier.
 ```rust
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, ArkGroupOps, Value};
-use lang::id::Vid;
 use share::Ctx;
 use std::path::PathBuf;
 use zippel::*;
 
 use crate::common;
 
-pub fn run(_args: &[String]) {
+pub fn run(_args: &[String], opts: &common::RunOptions) {
     println!("=== Schnorr4 (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/schnorr4/schnorr4.zippel"));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
@@ -155,6 +155,9 @@ pub fn run(_args: &[String]) {
     common::run_prover_and_verify(&mut handler, &inputs);
 
     // Static analysis (completeness, ZK, and soundness)
+    if !opts.analyses {
+        return;
+    }
     println!("\n--- Static Analysis ---");
 
     common::time_analysis!("Completeness", handler.analyze_completeness());
@@ -165,7 +168,7 @@ pub fn run(_args: &[String]) {
     );
 }
 
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
+fn prover_create_inputs() -> Inputs<ArkBls12_381> {
     let mut rng = rand::rngs::OsRng;
     let x = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
     let g = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
@@ -173,18 +176,20 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         .into_iter()
         .next()
         .unwrap();
-    Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("x".to_string()), Value::Scalar(x)),
-        (Vid("g".to_string()), Value::G1(g)),
-        (Vid("h".to_string()), Value::G1Affine(h)),
+    Inputs::from_iter([
+        ("x", Value::Scalar(x)),
+        ("g", Value::G1(g)),
+        ("h", Value::G1Affine(h)),
     ])
 }
 ```
 
 - `ZippelHandler<ArkBls12_381>` fixes the concrete curve.
-- `Ctx<Vid, Value<...>>` maps each `.zippel` parameter name to a
-  value; its keys must match the protocol's parameter names exactly
-  (`x`, `g`, `h` above).
+- `Inputs<...>` maps each `.zippel` parameter name to a value; its
+  names must match the protocol's parameter names exactly (`x`, `g`, `h`
+  above). Values are shared, not copied, by every prover and verifier run.
+- `--no-analysis` (`cargo zrun schnorr4 --no-analysis`) sets
+  `opts.analyses` to false; return before the analyses when it is.
 - `common::run_prover_and_verify`/`common::time_analysis!` are shared
   by every example; reuse them in your own harness.
 - `analyze_completeness()` and `analyze_knowledge()` (the
