@@ -109,7 +109,7 @@ baseline were added after submission, so they have no submitted count.
 | KZG | 14 to 24 | 527 | 37.6x to 22.0x |
 | Pari | 79 to 119 | 1141 | 14.4x to 9.6x |
 | Groth16 | 36 to 88 | 458 | 12.7x to 5.2x |
-| PST13 | 54 to 78 | 250 | 4.6x to 3.2x |
+| PST13 | 54 to 81 | 250 | 4.6x to 3.1x |
 | Hyrax | 47 to 49 | 277 | 5.9x to 5.7x |
 | Spartan (Microsoft) | 461 to 422 | 1867 | 4.0x to 4.4x |
 | Spartan (ark) | — to 422 | 2037 | — to 4.8x |

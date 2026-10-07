@@ -57,7 +57,7 @@ The entry point is `ZippelHandler<C: ArkConfig>` in `src/lib.rs`. It is paramete
 
 Examples live in `examples/<name>/main.rs`, each exposing `pub fn run(opts: &common::RunOptions)` (or `pub fn run(args: &Args, opts: &common::RunOptions)` with a `#[derive(clap::Args)] pub struct Args` if it takes its own arguments) and reading a `.zippel` file from `examples/`. All of them are linked into the single `zippel` example target via the `#[path] mod` declarations and the `examples!` list in `examples/main.rs`, and are invoked as `cargo run --example zippel -- <name>`. **Adding a new example means editing `examples/main.rs`, not `Cargo.toml`** — `autoexamples = false` disables glob discovery, and one example target keeps `target/` to one link product for all protocols.
 
-Integration tests live under each crate's `tests/` directory (e.g. `analyses/tests/gb_snapshots.rs` for Gröbner-basis snapshot tests, plus `lang/tests/` and `fmt/tests/`). The top-level crate's `tests/example_cli.rs` checks the example argument parser. Criterion benchmarks live under `benches/` (`execution`, `compilation`, `analysis`, `analysis_all`).
+Integration tests live under each crate's `tests/` directory (e.g. `analyses/tests/gb_snapshots.rs` for Gröbner-basis snapshot tests, plus `lang/tests/` and `fmt/tests/`). The top-level crate's `tests/example_cli.rs` checks the example argument parser. Criterion benchmarks live under `benches/` (`execution`, `analysis`, `analysis_all`).
 
 The formal language definition is in `docs/grammar.ott` (Ott source) and built to `docs/grammar.pdf` via `docs/Makefile` — consult it when reasoning about Zippel surface syntax or typing rules.
 
