@@ -386,7 +386,7 @@ pub mod zippel_side {
                 sizes.insert(&Tid::new("M"), &m_log);
                 sizes.insert(&Tid::new("N"), &n_pub);
                 sizes.insert(&Tid::new("KMN"), &kmn);
-                handler.compile(&sizes);
+                handler.compile_for_execution(&sizes);
                 handler
             });
 

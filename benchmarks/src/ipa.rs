@@ -115,7 +115,7 @@ pub mod zippel_side {
                 let mut handler: ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("S"), &s_const);
-                handler.compile(&sizes);
+                handler.compile_for_execution(&sizes);
                 handler
             });
 

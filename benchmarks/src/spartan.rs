@@ -86,7 +86,7 @@ impl Setup {
             let mut handler: ZippelHandler<ArkCurve25519> = ZippelHandler::new(args);
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("M"), &m);
-            handler.compile(&sizes);
+            handler.compile_for_execution(&sizes);
             handler
         });
 

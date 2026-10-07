@@ -84,7 +84,7 @@ pub mod zippel_side {
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("NX"), &nx);
                 sizes.insert(&Tid::new("NY"), &ny);
-                handler.compile(&sizes);
+                handler.compile_for_execution(&sizes);
                 handler
             });
 

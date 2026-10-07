@@ -600,7 +600,7 @@ pub mod zippel_side {
                 sizes.insert(&Tid::new("M"), &translated.m);
                 sizes.insert(&Tid::new("L"), &translated.l);
                 sizes.insert(&Tid::new("H"), &translated.h_size);
-                handler.compile(&sizes);
+                handler.compile_for_execution(&sizes);
                 handler
             });
 
@@ -1027,7 +1027,7 @@ mod cross_tests {
         sizes.insert(&Tid::new("M"), &t.m);
         sizes.insert(&Tid::new("L"), &t.l);
         sizes.insert(&Tid::new("H"), &t.h_size);
-        handler.compile(&sizes);
+        handler.compile_for_execution(&sizes);
         handler
     }
 

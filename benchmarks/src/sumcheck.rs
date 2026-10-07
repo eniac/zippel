@@ -62,7 +62,7 @@ pub mod zippel_side {
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("NUM_VARS_CONST"), &num_vars);
                 sizes.insert(&Tid::new("MAX_DEGREE_CONST"), &max_degree);
-                handler.compile(&sizes);
+                handler.compile_for_execution(&sizes);
                 handler
             });
 

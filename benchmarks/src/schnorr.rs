@@ -45,7 +45,7 @@ pub mod zippel_side {
             let (handler, compile_time) = crate::sample_compile(|| {
                 let args = ZippelArgs::new(zippel_file.clone());
                 let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-                handler.compile(&Ctx::new());
+                handler.compile_for_execution(&Ctx::new());
                 handler
             });
             Setup {

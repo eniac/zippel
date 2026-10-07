@@ -1472,6 +1472,26 @@ impl<C: HasOpFactory> UDags<C> {
     /// variable, a `lang`-level type error surfaced during inference, or a
     /// `fun` body outside the polynomial fragment.
     pub fn from_module(m: CModule) -> Result<Self, GraphError> {
+        Self::build(m, true)
+    }
+
+    /// [`Self::from_module`] without lowering any protocol's `where` clause:
+    /// each protocol keeps its `Node::Rel` marker but not the relation
+    /// under it. Enough to project and run the prover and verifier, which
+    /// never read the relation; the static analyses need the full graphs.
+    ///
+    /// A relation can be far larger than its protocol's body (one that
+    /// ranges over every witness element lowers to a node per element), so
+    /// this is what to build when only execution is wanted.
+    ///
+    /// # Errors
+    /// As [`Self::from_module`], except that errors only lowering a relation
+    /// would raise go unreported.
+    pub fn from_module_for_execution(m: CModule) -> Result<Self, GraphError> {
+        Self::build(m, false)
+    }
+
+    fn build(m: CModule, lower_relations: bool) -> Result<Self, GraphError> {
         let mut gs = UDags::new();
 
         let fctx = m
@@ -1483,7 +1503,7 @@ impl<C: HasOpFactory> UDags<C> {
         for (sig, body) in m.into_iter() {
             debug!("Adding declaration: {}", sig);
             let mut g = UDag::new();
-            g.add_decl(sig.clone(), body.clone(), &fctx)
+            g.add_decl(sig.clone(), body.clone(), &fctx, lower_relations)
                 .map_err(|e| e.located(&sig.name.span))?;
             gs.0.push(g);
         }
@@ -1561,12 +1581,15 @@ impl<C: HasOpFactory> UDag<C> {
         Ok(())
     }
 
-    /// Add a new declaration to the graph
+    /// Add a new declaration to the graph. With `lower_relation` unset, a
+    /// protocol's `where` clause is left out: only its `Node::Rel` marker is
+    /// added.
     fn add_decl(
         &mut self,
         sig: CSig,
         body: CBody,
         fctx: &Ctx<CSig, CBody>,
+        lower_relation: bool,
     ) -> Result<(), GraphError> {
         // Kind context
         let kctx = sig.typevars.to_ctx();
@@ -1660,52 +1683,54 @@ impl<C: HasOpFactory> UDag<C> {
                 // through shared `Arg` nodes.
                 let where_span = relation.span.clone();
                 start = self.add_node(Node::rel(sig.name.node.clone()), where_span.clone());
-                let mut vars: Ctx<Vid, GOp<C>> = Ctx::new();
-                for (id, typ) in atyps.iter() {
-                    let (qualifier, distribution) = arg_meta
-                        .get(id)
-                        .copied()
-                        .expect("arg meta must be present for every sig arg");
-                    let arg_node = self.add_node(
-                        Node::arg(
-                            id.clone(),
-                            typ.clone(),
-                            qualifier,
-                            distribution,
-                            ArgKind::Relation,
-                        ),
-                        arg_ids[id].span.clone(),
-                    );
-                    self.graph.add_edge(start, arg_node, Dep::data());
-                    self.bind(arg_node, arg_ids[id]);
-                    vars.insert(id, &GOp::var(id, arg_node, typ.clone()));
-                }
-                for (tid, kind) in kctx.iter() {
-                    if let CKind::Range(r) = kind
-                        && r.step() == 1
-                        && r.end() == r.start() + 1
-                    {
-                        let vid = Vid::new(&tid.0);
-                        vars.insert(&vid, &GOp::Value(Value::Index(r.start())));
+                if lower_relation {
+                    let mut vars: Ctx<Vid, GOp<C>> = Ctx::new();
+                    for (id, typ) in atyps.iter() {
+                        let (qualifier, distribution) = arg_meta
+                            .get(id)
+                            .copied()
+                            .expect("arg meta must be present for every sig arg");
+                        let arg_node = self.add_node(
+                            Node::arg(
+                                id.clone(),
+                                typ.clone(),
+                                qualifier,
+                                distribution,
+                                ArgKind::Relation,
+                            ),
+                            arg_ids[id].span.clone(),
+                        );
+                        self.graph.add_edge(start, arg_node, Dep::data());
+                        self.bind(arg_node, arg_ids[id]);
+                        vars.insert(id, &GOp::var(id, arg_node, typ.clone()));
                     }
+                    for (tid, kind) in kctx.iter() {
+                        if let CKind::Range(r) = kind
+                            && r.step() == 1
+                            && r.end() == r.start() + 1
+                        {
+                            let vid = Vid::new(&tid.0);
+                            vars.insert(&vid, &GOp::Value(Value::Index(r.start())));
+                        }
+                    }
+                    // Lower the relation as a single Bool expression and wrap it
+                    // in an Assert node. The `where` clause infers to Bool, and
+                    // this is the only Assert in the graph: `assert` is not part
+                    // of the language, so the analyses never meet a condition the
+                    // developer states.
+                    let rel_op = self.add_exp(
+                        relation,
+                        &mut start,
+                        DepType::Data,
+                        &kctx,
+                        fctx,
+                        &vctx,
+                        &vars,
+                        None,
+                    )?;
+                    let nassert = self.add_node(Node::assert(&rel_op), where_span);
+                    self.add_edges(DepType::Data, nassert, rel_op);
                 }
-                // Lower the relation as a single Bool expression and wrap it
-                // in an Assert node. The `where` clause infers to Bool, and
-                // this is the only Assert in the graph: `assert` is not part
-                // of the language, so the analyses never meet a condition the
-                // developer states.
-                let rel_op = self.add_exp(
-                    relation,
-                    &mut start,
-                    DepType::Data,
-                    &kctx,
-                    fctx,
-                    &vctx,
-                    &vars,
-                    None,
-                )?;
-                let nassert = self.add_node(Node::assert(&rel_op), where_span);
-                self.add_edges(DepType::Data, nassert, rel_op);
             }
             CBody::Func { body } => {
                 let mut start =

@@ -133,7 +133,7 @@ pub mod zippel_side {
                 let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args.clone());
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("N"), &n);
-                handler.compile(&sizes);
+                handler.compile_for_execution(&sizes);
                 handler
             });
 

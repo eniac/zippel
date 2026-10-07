@@ -167,7 +167,7 @@ pub mod zippel_side {
                 sizes.insert(&Tid::new("n"), &n);
                 sizes.insert(&Tid::new("b"), &b);
                 sizes.insert(&Tid::new("l_chunk"), &ell);
-                handler.compile(&sizes);
+                handler.compile_for_execution(&sizes);
                 handler
             });
 

@@ -120,7 +120,7 @@ pub mod zippel_side {
                     ZippelHandler::new(ZippelArgs::new(proto.clone()));
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("S"), &nv);
-                handler.compile(&sizes);
+                handler.compile_for_execution(&sizes);
                 handler
             });
 

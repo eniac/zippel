@@ -397,7 +397,7 @@ fn main() {
     sizes.insert(&Tid::new("M"), &t.m);
     sizes.insert(&Tid::new("L"), &t.l);
     sizes.insert(&Tid::new("H"), &t.h_size);
-    handler.compile(&sizes);
+    handler.compile_for_execution(&sizes);
 
     let inputs_base = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (

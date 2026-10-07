@@ -287,10 +287,23 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     /// # Panics
     /// If parsing or graph construction fails, or if the compiler thread panics.
     pub fn compile(&mut self, sizes: &Ctx<Tid, usize>) {
-        share::thread::run_or_panic("zippel-compile", || self.compile_inner(sizes));
+        share::thread::run_or_panic("zippel-compile", || self.compile_inner(sizes, true));
     }
 
-    fn compile_inner(&mut self, sizes: &Ctx<Tid, usize>) {
+    /// [`Self::compile`] for callers that only run the prover and verifier:
+    /// the `where` clause is parsed and type-checked but not lowered into
+    /// the protocol graph, which neither projection reads. A relation that
+    /// ranges over every witness element otherwise dominates compile time
+    /// and memory at large sizes. `analyze_*` still work afterwards; they
+    /// build their own full graph on first use.
+    ///
+    /// # Panics
+    /// As [`Self::compile`].
+    pub fn compile_for_execution(&mut self, sizes: &Ctx<Tid, usize>) {
+        share::thread::run_or_panic("zippel-compile", || self.compile_inner(sizes, false));
+    }
+
+    fn compile_inner(&mut self, sizes: &Ctx<Tid, usize>, lower_relations: bool) {
         self.parse();
 
         debug!("Concretizing module type variables");
@@ -306,8 +319,12 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         }
 
         debug!("Creating graphs from module");
-        let gs =
-            UDags::<C>::from_module(cmodule.clone()).unwrap_or_else(|e| self.fail(&[e.into()]));
+        let gs = if lower_relations {
+            UDags::<C>::from_module(cmodule.clone())
+        } else {
+            UDags::<C>::from_module_for_execution(cmodule.clone())
+        }
+        .unwrap_or_else(|e| self.fail(&[e.into()]));
         self.output_pdf(&gs, "symbolic_protocol_graph");
 
         let g = self.get_protocol_subgraph(&gs);
