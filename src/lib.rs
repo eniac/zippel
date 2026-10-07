@@ -13,7 +13,7 @@
 
 use analyses::{CompletenessAnalysis, KnowledgeAnalysis, QualifierPropagation};
 use backend::op::HasOpFactory;
-use backend::{ArkConfig, Value, value_to_bytes};
+use backend::{ATyp, ArkConfig, Value, value_to_bytes};
 use graph::Dag;
 use graph::WritePdf;
 use graph::domain_seperator::ZippelDomainSeparator;
@@ -419,7 +419,12 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     /// inputs are shared with the caller; proof values are copied once.
     ///
     /// # Errors
-    /// Returns `RuntimeError` if verification fails.
+    /// Returns [`RuntimeError::ProofLength`] unless the proof has exactly one
+    /// element per prover message, [`RuntimeError::MalformedProof`] if an
+    /// element is not a value of its message's declared type, and other
+    /// `RuntimeError`s if the run fails (e.g. a missing instance input). A
+    /// proof that runs but fails a check is not an error: see the returned
+    /// results.
     ///
     /// # Panics
     /// If `compile()` has not been called first.
@@ -445,19 +450,36 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             .iter()
             .filter_map(|vid| inputs.get(vid).map(|v| (vid.clone(), Arc::clone(v))));
 
-        // Transcript inputs: identify by ArgKind::TranscriptInput, zip with proof.
-        let transcript_args: Vec<Vid> = verifier
+        // Transcript inputs: the prover messages, one proof element each, in
+        // order. The proof comes from outside, so its shape is checked here:
+        // the graph assumes every value has its declared type.
+        let transcript_args: Vec<(&Vid, &ATyp)> = verifier
             .input_args()
             .into_iter()
             .filter_map(|n| match &verifier[n] {
-                Node::Arg(name, _, _, _, ArgKind::TranscriptInput) => Some(name.clone()),
+                Node::Arg(name, typ, _, _, ArgKind::TranscriptInput) => Some((name, typ)),
                 _ => None,
             })
             .collect();
+        if proof.len() != transcript_args.len() {
+            return Err(RuntimeError::ProofLength {
+                expected: transcript_args.len(),
+                found: proof.len(),
+            });
+        }
+        for (index, ((name, typ), value)) in transcript_args.iter().zip(proof).enumerate() {
+            if !value.conforms_to(typ) {
+                return Err(RuntimeError::MalformedProof {
+                    index,
+                    message: name.to_string(),
+                    expected: typ.to_string(),
+                });
+            }
+        }
         let transcript_inputs = transcript_args
             .iter()
             .zip(proof)
-            .map(|(name, val)| (name.clone(), Arc::new(val.clone())));
+            .map(|((name, _), val)| ((*name).clone(), Arc::new(val.clone())));
 
         let all_inputs: Inputs<C> = instance_inputs.chain(transcript_inputs).collect();
 
@@ -571,6 +593,83 @@ mod tests {
             args.domain_separator_session(),
             "other/logical.zippel".to_string()
         );
+    }
+
+    /// A verifier for a protocol whose prover sends a vector of `N = 4`
+    /// scalars and then a group element, with an honest proof.
+    fn shapes_protocol() -> (
+        ZippelHandler<ArkBls12_381>,
+        Inputs<ArkBls12_381>,
+        Vec<Value<ArkBls12_381>>,
+    ) {
+        let src = r"
+proto shapes<G: Group, F: Scalar<G>, N: Size>(witness v: [F; N], instance g: G) where 1 == 1 {
+    a <- v;
+    b <- g * a[0];
+    verify(b == g * a[0])
+}
+";
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("shapes.zippel");
+        std::fs::write(&file_path, src).unwrap();
+        let mut handler: ZippelHandler<ArkBls12_381> =
+            ZippelHandler::new(ZippelArgs::new(file_path));
+        let mut sizes = Ctx::new();
+        sizes.insert(&Tid::new("N"), &4);
+        handler.compile(&sizes);
+        type F = <ArkBls12_381 as ArkConfig>::F;
+        let mut inputs = Inputs::new();
+        inputs.insert("v", Value::vec_scalar((1..=4).map(F::from).collect()));
+        inputs.insert("g", Value::G1(<ArkBls12_381 as ArkConfig>::G1::default()));
+        let proof = handler.run_prover(&inputs).expect("run_prover failed");
+        (handler, inputs, proof)
+    }
+
+    #[test]
+    fn the_verifier_accepts_an_honest_proof_of_each_shape() {
+        let (mut handler, inputs, proof) = shapes_protocol();
+        assert_eq!(proof.len(), 2);
+        let results = handler
+            .run_verifier(&proof, &inputs)
+            .expect("run_verifier failed");
+        assert!(check_verification(&results));
+    }
+
+    #[test]
+    fn the_verifier_rejects_a_proof_with_extra_or_missing_elements() {
+        let (mut handler, inputs, proof) = shapes_protocol();
+        let mut longer = proof.clone();
+        longer.push(proof[1].clone());
+        for (tampered, found) in [(longer, 3), (proof[..1].to_vec(), 1), (Vec::new(), 0)] {
+            match handler.run_verifier(&tampered, &inputs) {
+                Err(RuntimeError::ProofLength {
+                    expected: 2,
+                    found: f,
+                }) => assert_eq!(f, found),
+                other => panic!("a proof of {found} elements gave {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn the_verifier_rejects_proof_elements_of_the_wrong_shape() {
+        type F = <ArkBls12_381 as ArkConfig>::F;
+        let (mut handler, inputs, proof) = shapes_protocol();
+        let short = Value::vec_scalar(vec![F::from(1u64); 3]);
+        let scalar = Value::Scalar(F::from(1u64));
+        for (index, wrong) in [
+            (0, short),
+            (0, proof[1].clone()),
+            (1, scalar),
+            (1, proof[0].clone()),
+        ] {
+            let mut tampered = proof.clone();
+            tampered[index] = wrong;
+            match handler.run_verifier(&tampered, &inputs) {
+                Err(RuntimeError::MalformedProof { index: i, .. }) => assert_eq!(i, index),
+                other => panic!("element {index} replaced gave {other:?}"),
+            }
+        }
     }
 
     /// Runtime test: protocol with two verify statements, both passing.
