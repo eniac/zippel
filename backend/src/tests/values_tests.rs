@@ -1547,3 +1547,78 @@ fn ram_ref_slice_of_prepared_g2_matches_the_copy() {
     };
     assert_eq!(p.prepared.len(), 3);
 }
+
+#[test]
+fn conforms_to_accepts_every_representation_of_a_type() {
+    use crate::values::PreparedG2Vec;
+    use ark_std::UniformRand;
+    use share::Ctx;
+    type V = Value<TestConfig>;
+    type G1 = <TestConfig as ArkConfig>::G1;
+    type G2 = <TestConfig as ArkConfig>::G2;
+    let mut rng = test_rng();
+    let g1 = G1::rand(&mut rng);
+    let g2 = G2::rand(&mut rng);
+    let evens = CRange::from_raw(0, 2, 8);
+    let vec = |elem: ATyp, n| ATyp::Vec(Box::new(elem), n);
+
+    let accepted: Vec<(V, ATyp)> = vec![
+        (V::Scalar(Fr::from(3u64)), ATyp::scalar()),
+        (V::Index(3), ATyp::scalar()),
+        (V::Index(6), ATyp::fin(evens.clone())),
+        (V::G1(g1), ATyp::g1()),
+        (V::G1Affine(g1.into_affine()), ATyp::g1()),
+        (V::G2Affine(g2.into_affine()), ATyp::g2()),
+        (V::Bool(true), ATyp::bool()),
+        (V::vec_scalar(vec![Fr::from(1u64); 3]), ATyp::vec_scalar(3)),
+        (V::VecIndex(vec![0, 4, 6]), vec(ATyp::fin(evens.clone()), 3)),
+        (V::vec_g1(vec![g1; 2]), ATyp::vec_g1(2)),
+        (V::vec_g1_affine(vec![g1.into_affine(); 2]), ATyp::vec_g1(2)),
+        (
+            V::VecG2Prepared(PreparedG2Vec::new(vec![g2.into_affine(); 2])),
+            ATyp::vec_g2(2),
+        ),
+        (
+            V::Vec(vec![
+                V::vec_scalar(vec![Fr::zero(); 2]),
+                V::vec_scalar(vec![Fr::zero(); 2]),
+            ]),
+            vec(ATyp::vec_scalar(2), 2),
+        ),
+        (
+            V::Record(Ctx::singleton("x".to_string(), V::G1(g1))),
+            ATyp::Record(Ctx::singleton("x".to_string(), ATyp::g1())),
+        ),
+    ];
+    for (value, typ) in &accepted {
+        assert!(value.conforms_to(typ), "{value} should be a {typ}");
+    }
+
+    let rejected: Vec<(V, ATyp)> = vec![
+        (V::G1(g1), ATyp::scalar()),
+        (V::Scalar(Fr::from(3u64)), ATyp::fin(evens.clone())),
+        (V::Index(3), ATyp::fin(evens.clone())),
+        (V::Index(8), ATyp::fin(evens.clone())),
+        (V::G2Affine(g2.into_affine()), ATyp::g1()),
+        (V::vec_scalar(vec![Fr::from(1u64); 3]), ATyp::vec_scalar(4)),
+        (V::vec_scalar(vec![Fr::from(1u64); 3]), ATyp::scalar()),
+        (V::Scalar(Fr::from(1u64)), ATyp::vec_scalar(1)),
+        (V::VecIndex(vec![0, 5]), vec(ATyp::fin(evens.clone()), 2)),
+        (V::vec_g1(vec![g1; 2]), ATyp::vec_g2(2)),
+        (
+            V::Vec(vec![
+                V::vec_scalar(vec![Fr::zero(); 2]),
+                V::vec_scalar(vec![Fr::zero(); 3]),
+            ]),
+            vec(ATyp::vec_scalar(2), 2),
+        ),
+        (V::Vec(Vec::new()), vec(ATyp::scalar(), 1)),
+        (
+            V::Record(Ctx::singleton("y".to_string(), V::G1(g1))),
+            ATyp::Record(Ctx::singleton("x".to_string(), ATyp::g1())),
+        ),
+    ];
+    for (value, typ) in &rejected {
+        assert!(!value.conforms_to(typ), "{value} should not be a {typ}");
+    }
+}

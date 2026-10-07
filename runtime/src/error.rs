@@ -15,7 +15,7 @@ pub enum RuntimeError {
         "missing input value(s) for protocol argument(s): [{missing_str}].\n  \
          expected (from the protocol declaration): [{expected_str}]\n  \
          provided (in the `inputs` map):          [{provided_str}]\n  \
-         hint: the keys in the `inputs` Ctx must match the parameter \
+         hint: the names in `inputs` must match the parameter \
          names in the .zippel `proto`/`fn` signature exactly.",
         missing_str = missing.join(", "),
         expected_str = expected.join(", "),
@@ -49,6 +49,28 @@ pub enum RuntimeError {
         vid: String,
         /// Keys present in the `inputs` map at the time of the lookup.
         provided: Vec<String>,
+    },
+
+    /// The proof passed to `run_verifier` does not have one element per
+    /// prover message of the protocol.
+    #[error("the proof has {found} element(s); the protocol's prover sends {expected} message(s)")]
+    ProofLength {
+        /// The protocol's number of prover messages.
+        expected: usize,
+        /// The proof's number of elements.
+        found: usize,
+    },
+
+    /// A proof element is not a value of the type the protocol declares for
+    /// that prover message.
+    #[error("proof element {index} (message `{message}`) is not a value of type {expected}")]
+    MalformedProof {
+        /// The element's position in the proof.
+        index: usize,
+        /// The prover message it stands for.
+        message: String,
+        /// The message's declared type.
+        expected: String,
     },
 }
 

@@ -413,13 +413,11 @@ impl<C: ArkConfig> MutexGraph<C> {
         let mut check_sink = Vec::new();
         let value = graph::eval::eval_op_owned(op, env, &mut ThreadRng::default(), &mut check_sink)
             .expect("runtime invariant violation: eval_op failed on a scheduled node");
-        // Each node has at most one top-level Check, so the sink has 0 or 1
-        // elements.
+        // A node passes only if every check it evaluated did (today there is
+        // at most one): a later result must not overwrite a failure.
         if !check_sink.is_empty() {
-            let mut results = self.check_results.lock().unwrap();
-            for passed in check_sink {
-                results.insert(node, passed);
-            }
+            let passed = check_sink.iter().all(|&p| p);
+            self.check_results.lock().unwrap().insert(node, passed);
         }
         value
     }
@@ -466,8 +464,9 @@ impl<C: ArkConfig> MutexGraph<C> {
     ///
     /// # Panics
     ///
-    /// Panics if a node is executed twice or runs without an operand (see
-    /// [`MutexGraph::handle_node`]), if a transcript value cannot be
+    /// Panics if a node is executed twice, runs without an operand (see
+    /// [`MutexGraph::handle_node`]) or, in a run without errors, never runs;
+    /// if the graph has more than one input marker; if a transcript value cannot be
     /// serialized for the sponge, or if the error/check mutexes are
     /// poisoned.
     pub fn run_graph<H: DuplexSpongeInterface<U = u8> + Send>(
@@ -561,6 +560,15 @@ impl<C: ArkConfig> MutexGraph<C> {
         if let Some(err) = errors.into_inner().unwrap() {
             return Err(err);
         }
+        // Without an error every node ran. Checked in release builds too: a
+        // verifier check that silently never ran must not read as a pass.
+        assert!(
+            g.mutex_graph
+                .node_indices()
+                .filter_map(|n| g.info(n))
+                .all(|info| info.executed.load(Ordering::SeqCst)),
+            "runtime invariant violation: a node never ran"
+        );
         debug_assert!(
             g.mutex_graph
                 .node_indices()
@@ -593,7 +601,9 @@ impl<C: ArkConfig> MutexGraph<C> {
                 RunResult::Verifier {
                     verify_results: result_indices
                         .into_iter()
-                        .filter_map(|n| check_results.get(&n).copied())
+                        // A check with no result failed (none should be
+                        // missing once every node has run).
+                        .map(|n| check_results.get(&n).copied().unwrap_or(false))
                         .collect(),
                 }
             }

@@ -2765,6 +2765,61 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Whether this value is one of type `typ`: in any of the representations
+    /// a value of that type takes at runtime (projective or affine points, a
+    /// flat vector or a `Value::Vec`), with every length and `Fin` range
+    /// checked. An index is accepted as a scalar, as arithmetic accepts it.
+    ///
+    /// Unlike [`Self::typ`] this never panics, so it can vet a value that
+    /// came from outside, such as a proof. A polynomial is checked only to be
+    /// one, with the type's variable count if multivariate: no degree bound.
+    /// (Polynomials have no transcript encoding, so a proof holds none.)
+    #[must_use]
+    pub fn conforms_to(&self, typ: &ATyp) -> bool {
+        match typ {
+            ATyp::Base(base) => match (base, self) {
+                (ABase::Scalar, Value::Scalar(_) | Value::Index(_))
+                | (ABase::G1, Value::G1(_) | Value::G1Affine(_))
+                | (ABase::G2, Value::G2(_) | Value::G2Affine(_))
+                | (ABase::GT, Value::GT(_))
+                | (ABase::Unit, Value::Unit)
+                | (ABase::Bool, Value::Bool(_)) => true,
+                (ABase::Fin(range), Value::Index(i)) => in_range(range, *i),
+                _ => false,
+            },
+            ATyp::Vec(elem, n) => match (&**elem, self) {
+                (ATyp::Base(ABase::Scalar), Value::VecScalar(v)) => v.len() == *n,
+                (ATyp::Base(ABase::Scalar), Value::VecIndex(v)) => v.len() == *n,
+                (ATyp::Base(ABase::Fin(range)), Value::VecIndex(v)) => {
+                    v.len() == *n && v.iter().all(|i| in_range(range, *i))
+                }
+                (ATyp::Base(ABase::G1), Value::VecG1(v)) => v.len() == *n,
+                (ATyp::Base(ABase::G1), Value::VecG1Affine(v)) => v.len() == *n,
+                (ATyp::Base(ABase::G2), Value::VecG2(v)) => v.len() == *n,
+                (ATyp::Base(ABase::G2), Value::VecG2Affine(v)) => v.len() == *n,
+                (ATyp::Base(ABase::G2), Value::VecG2Prepared(v)) => {
+                    v.affine.len() == *n && v.prepared.len() == *n
+                }
+                (ATyp::Base(ABase::GT), Value::VecGT(v)) => v.len() == *n,
+                (elem, Value::Vec(vs)) => vs.len() == *n && vs.iter().all(|v| v.conforms_to(elem)),
+                _ => false,
+            },
+            ATyp::Record(fields) => match self {
+                Value::Record(values) => {
+                    values.len() == fields.len()
+                        && fields
+                            .iter()
+                            .all(|(name, typ)| values.get(name).is_some_and(|v| v.conforms_to(typ)))
+                }
+                _ => false,
+            },
+            ATyp::Uni(_) => matches!(self, Value::Poly(_)),
+            ATyp::Mle(vars) | ATyp::VPoly(vars, _) => {
+                matches!(self, Value::Poly(p) if p.num_vars() == Some(*vars))
+            }
+        }
+    }
+
     /// Dynamic casts
     #[inline]
     pub fn into_scalar(&self) -> C::F {
@@ -3682,6 +3737,11 @@ fn hypercube_reduce_selected_mle_products<C: ArkConfig>(
     ));
     round.num_variables = Some(1);
     Some(round)
+}
+
+/// Whether `i` is one of the values `range` steps through.
+fn in_range(range: &CRange, i: usize) -> bool {
+    range.start() <= i && i < range.end() && (i - range.start()).is_multiple_of(range.step())
 }
 
 #[cfg(test)]
