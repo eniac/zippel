@@ -337,6 +337,30 @@ pub fn value_to_bytes<C: ArkConfig>(value: &Value<C>) -> Result<Vec<u8>, Seriali
 }
 
 impl<C: ArkConfig> Value<C> {
+    /// This value with every vector in a buffer of its own (see
+    /// [`Shared::compact`]), for a value that outlives the run that computed
+    /// it: a view would keep its whole buffer alive.
+    #[must_use]
+    pub fn compact(self) -> Self {
+        match self {
+            Value::VecScalar(v) => Value::VecScalar(v.compact()),
+            Value::VecG1(v) => Value::VecG1(v.compact()),
+            Value::VecG2(v) => Value::VecG2(v.compact()),
+            Value::VecGT(v) => Value::VecGT(v.compact()),
+            Value::VecG1Affine(v) => Value::VecG1Affine(v.compact()),
+            Value::VecG2Affine(v) => Value::VecG2Affine(v.compact()),
+            Value::VecG2Prepared(v) => Value::VecG2Prepared(PreparedG2Vec {
+                affine: v.affine.compact(),
+                prepared: v.prepared.compact(),
+            }),
+            Value::Vec(vs) => Value::Vec(vs.into_iter().map(Value::compact).collect()),
+            Value::Record(fields) => {
+                Value::Record(fields.into_iter().map(|(k, v)| (k, v.compact())).collect())
+            }
+            other => other,
+        }
+    }
+
     /// A vector of scalar-field elements.
     #[must_use]
     pub fn vec_scalar(xs: Vec<C::F>) -> Self {

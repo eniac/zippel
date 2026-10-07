@@ -558,11 +558,13 @@ impl<C: ArkConfig> MutexGraph<C> {
                     .messages
                     .unwrap_or_default();
                 // Every reader of a message has run, so each is usually
-                // held only here and moves into the proof without a copy.
+                // held only here and moves into the proof without a copy. A
+                // message that views part of a vector is copied out of it:
+                // the proof outlives the run and would keep the whole vector.
                 let transcript: Vec<Value<C>> = result_indices
                     .into_iter()
                     .filter_map(|n| messages.remove(&n))
-                    .map(Arc::unwrap_or_clone)
+                    .map(|m| Arc::unwrap_or_clone(m).compact())
                     .collect();
                 RunResult::Prover(transcript)
             }
