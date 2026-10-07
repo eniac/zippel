@@ -465,9 +465,21 @@ pub trait ArkPairingOps<P: Pairing> {
     /// only be cloned, so the pairs go through it a chunk at a time: the
     /// clones never exceed one chunk, and one final exponentiation of the
     /// product of the chunks' Miller loops is exactly `multi_pairing`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `g1` and `g2` have different lengths, as `multi_pairing`
+    /// does: zipping the chunks alone would drop the longer side's tail.
     #[inline]
     fn billinear_vec_dot_prepared(g1: &[P::G1], g2: &[P::G2Prepared]) -> PairingOutput<P> {
         const CHUNK: usize = 32;
+        assert_eq!(
+            g1.len(),
+            g2.len(),
+            "pairing {} G1 elements with {} G2 elements",
+            g1.len(),
+            g2.len()
+        );
         let g1 = P::G1::normalize_batch(g1);
         let f = g1
             .par_chunks(CHUNK)
