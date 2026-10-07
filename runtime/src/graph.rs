@@ -53,7 +53,8 @@ where
     }
 }
 
-/// A value queued for the Fiat-Shamir sponge (see `run_graph`).
+/// A value queued for the Fiat-Shamir sponge, absorbed before the next
+/// challenge (see [`Transcript`]).
 enum PendingAbsorb<C: ArkConfig> {
     /// An instance input, absorbed with [`absorb_instance_input`].
     Instance(Arc<Value<C>>),
@@ -94,10 +95,10 @@ pub enum ResultKind {
 pub enum RunResult<C: ArkConfig> {
     /// Proof transcript values emitted by the prover, in transcript order.
     Prover(Vec<Value<C>>),
-    /// Outcome of every terminal `Op::Verify` node in the verifier graph.
+    /// Outcome of the verifier graph's checks.
     Verifier {
-        /// One boolean per `Op::Verify` node, in graph-collection order;
-        /// the protocol verifies iff every entry is `true`.
+        /// One boolean per `Op::Verify` op node, in node-index order; the
+        /// protocol verifies iff every entry is `true`.
         verify_results: Vec<bool>,
     },
 }
@@ -148,8 +149,8 @@ impl<C: ArkConfig> RuntimeInformation<C> {
 ///
 /// This is the final stage of the pipeline: a scheduled DAG wrapped with
 /// enough interior mutability (operand inboxes, atomic dependency counters,
-/// a mutex-guarded check map) that `rayon` workers and the sponge-owning main
-/// thread can drive it concurrently.
+/// a mutex-guarded check map) that the jobs of one `rayon::scope` can drive
+/// it concurrently.
 pub struct MutexGraph<C: ArkConfig> {
     mutex_graph: Dag<C, Arc<RuntimeInformation<C>>>,
     /// Auxiliary map storing pass/fail results for `Op::Verify` nodes.
@@ -212,11 +213,25 @@ struct Run<'a, C: ArkConfig, H: DuplexSpongeInterface<U = u8>> {
 
 impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8> + Send> Run<'_, C, H> {
     /// Runs the ready `node`, then releases its successors.
+    ///
+    /// # Panics
+    /// Panics if `node` has already run (a scheduling bug), or as
+    /// [`MutexGraph::handle_node`] does.
     fn run_node<'s>(&'s self, scope: &rayon::Scope<'s>, node: NodeIndex) {
         // Once a task has failed the run is abandoned.
         if self.errors.lock().unwrap().is_some() {
             return;
         }
+        // Every node, challenges included: a challenge run twice would
+        // squeeze the sponge twice.
+        let info = self
+            .graph
+            .info(node)
+            .unwrap_or_else(|| unreachable!("marker {node:?} scheduled as a job"));
+        assert!(
+            !info.executed.swap(true, Ordering::SeqCst),
+            "runtime invariant violation: node {node:?} executed twice"
+        );
         let value = match &self.graph.mutex_graph[node] {
             Node::Op(op, _) if matches!(**op, Op::Challenge(_, _)) => {
                 unreachable!("challenge {node:?} outside the transcript")
@@ -378,25 +393,22 @@ impl<C: ArkConfig> MutexGraph<C> {
     /// inbox, record any `Verify` outcome into the check map, and return the
     /// value for the caller to deliver to its successors.
     ///
-    /// Evaluation goes through the canonical [`graph::eval::eval_op`], so the
-    /// runtime's per-node semantics stay in lockstep with the test executors
-    /// and the unit-level `eval_op` callers.
+    /// Evaluation goes through [`graph::eval::eval_op_owned`], which shares
+    /// its semantics with the borrowing [`graph::eval::eval_op`] the test
+    /// executors use, but moves each operand out on its last use so the op
+    /// can reuse it.
     ///
     /// # Panics
     ///
-    /// Panics if `node` is not an `Op`/`Transcr` node, if it has already
-    /// run or an operand was not delivered (scheduling bugs), if the
-    /// check-results mutex is poisoned, or if `eval_op` fails: every shape
+    /// Panics if `node` is not an `Op`/`Transcr` node, if an operand was not
+    /// delivered (a scheduling bug), if the
+    /// check-results mutex is poisoned, or if `eval_op_owned` fails: every shape
     /// and type precondition is established by the `lang` type checker and
     /// the scheduler, so a failure is a compiler invariant violation.
     pub fn handle_node(&self, node: NodeIndex) -> Arc<Value<C>> {
         let (Node::Op(op, info) | Node::Transcr(op, info)) = &self.mutex_graph[node] else {
             unreachable!("marker node {node:?} has nothing to compute")
         };
-        assert!(
-            !info.executed.swap(true, Ordering::SeqCst),
-            "runtime invariant violation: node {node:?} executed twice"
-        );
         let env = info.inbox.take_all();
         let mut check_sink = Vec::new();
         let value = graph::eval::eval_op_owned(op, env, &mut ThreadRng::default(), &mut check_sink)
@@ -432,8 +444,10 @@ impl<C: ArkConfig> MutexGraph<C> {
     ///
     /// # Sponge synchronization
     ///
-    /// The `Inp` markers run first, in node order: the instance inputs they
-    /// queue begin the transcript. Transcript nodes (messages and
+    /// The `Inp` marker runs first: the instance inputs it queues begin the
+    /// transcript. (A graph has at most one; with two, the first's
+    /// successors could squeeze a challenge before the second's inputs were
+    /// queued.) Transcript nodes (messages and
     /// challenges) then share the sponge through a mutex; the graph chains
     /// them in transcript order, so only one is ever ready, and a message is
     /// computed outside the lock.
@@ -467,7 +481,7 @@ impl<C: ArkConfig> MutexGraph<C> {
         //
         // `result_indices` holds the primary output nodes:
         //   - Prover: transcript nodes (proof values in transcript order)
-        //   - Verifier: terminal Verify nodes (verify pass/fail booleans)
+        //   - Verifier: `Op::Verify` op nodes (pass/fail booleans)
         let mut result_indices: Vec<NodeIndex> = Vec::new();
         // Roots are decided from the graph here, never from `remaining_deps`
         // once jobs run: by then a job may have brought a non-root counter to
@@ -487,8 +501,8 @@ impl<C: ArkConfig> MutexGraph<C> {
                         initial_roots.push(node_idx);
                     }
 
-                    // Collect terminal Verify nodes for the verifier (the
-                    // prover graph has none).
+                    // Collect the verifier's checks (the prover graph has
+                    // none).
                     if let Node::Op(op, _) = &g.mutex_graph[node_idx]
                         && matches!(**op, Op::Verify(_))
                         && matches!(result_kind, ResultKind::Verifier)
@@ -523,6 +537,12 @@ impl<C: ArkConfig> MutexGraph<C> {
                 messages: matches!(result_kind, ResultKind::Prover).then(HashMap::new),
             }),
         };
+        // See "Sponge synchronization" above.
+        assert!(
+            input_markers.len() <= 1,
+            "a graph has at most one input marker, found {}",
+            input_markers.len()
+        );
         let run_ref = &run;
         rayon::scope(|scope| {
             for &marker in &input_markers {
