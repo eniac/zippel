@@ -16,8 +16,7 @@ const S: usize = 3;
 const NUM_POINTS: usize = 1 << S;
 
 pub fn run(opts: &common::RunOptions) {
-    let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("examples/hyperplonk_multiset/hyperplonk_multiset.zippel");
+    let zippel_file = PathBuf::from("examples/hyperplonk_multiset/hyperplonk_multiset.zippel");
 
     println!("=== HyperPlonk MultiSet Check PIOP ===");
     println!("num_points = {NUM_POINTS}, s = log num_points = {S}");

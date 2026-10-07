@@ -19,8 +19,8 @@ const S: usize = 3;
 const NUM_LEAVES: usize = 1 << S; // = 2^S
 
 pub fn run(opts: &common::RunOptions) {
-    let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel");
+    let zippel_file =
+        PathBuf::from("examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel");
 
     println!("=== HyperPlonk ProductCheck PIOP ===");
     println!("num_leaves = {NUM_LEAVES}, s = log num_leaves = {S}");

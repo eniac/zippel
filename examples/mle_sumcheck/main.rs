@@ -14,8 +14,7 @@ use crate::common;
 const NUM_VARS: usize = 10;
 
 pub fn run(opts: &common::RunOptions) {
-    let zippel_file =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/mle_sumcheck/mle_sumcheck.zippel");
+    let zippel_file = PathBuf::from("examples/mle_sumcheck/mle_sumcheck.zippel");
     let num_vars = NUM_VARS;
 
     println!("=== Multilinear Sumcheck (ArkBls12_381) ===");

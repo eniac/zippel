@@ -197,6 +197,8 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 ```
 
 - `ZippelHandler<ArkBls12_381>` fixes the concrete curve.
+- Name the `.zippel` file relative to the repository root, as above; the
+  harness runs every example from there, wherever `cargo zrun` is invoked.
 - `Ctx<Vid, Value<...>>` maps each `.zippel` parameter name to a
   value; its keys must match the protocol's parameter names exactly
   (`x`, `g`, `h` above).
