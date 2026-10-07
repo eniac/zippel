@@ -135,6 +135,53 @@ mod runtime_tests {
         assert!(verify_results[0]);
     }
 
+    // A comprehension with an impure body is unrolled, so the vector it
+    // builds is one node reading every element. A smoke test of such a wide
+    // node end to end; at this size it does not tell a linear operand check
+    // in `MutexGraph::new` from a quadratic one.
+    #[test]
+    fn a_node_reading_thousands_of_operands_runs() {
+        let src = r#"
+            proto wide<F: Field, N: Size>(instance a: [F; N]) where 1 == 1 {
+                let r = [random<F> + a[i] for i in 0..N];
+                s <- dot(r, a);
+                verify(s == s)
+            }
+        "#;
+        let n = 2048;
+        let mut sizes = Ctx::new();
+        sizes.insert(&Tid::from("N"), &n);
+        let m = parse_and_concretize(src, &sizes);
+        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let dag = gs.protocols()[0].clone();
+        let (prover, _) = dag.get_prover();
+        let widest = prover
+            .node_indices()
+            .map(|i| prover[i].references().len())
+            .max()
+            .unwrap();
+        assert!(widest >= n, "expected a node reading all {n} elements");
+
+        let mut inputs = Inputs::new();
+        inputs.insert(
+            "a",
+            Value::vec_scalar(vec![<TestConfig as backend::ArkConfig>::F::from(3u64); n]),
+        );
+        let separator = graph::domain_seperator::ZippelDomainSeparator::new_zippel_domain_seperator(
+            "test_wide",
+            &dag.clone().erase_ann(),
+        );
+        let mut prover_state = separator.std_prover();
+        let mg = Arc::new(MutexGraph::new(prover));
+        let proof = match MutexGraph::run_graph(mg, &inputs, &mut prover_state, ResultKind::Prover)
+            .unwrap()
+        {
+            RunResult::Prover(v) => v,
+            RunResult::Verifier { .. } => unreachable!(),
+        };
+        assert_eq!(proof.len(), 1);
+    }
+
     #[test]
     fn test_runtime_error_propagation() {
         let src = r#"
