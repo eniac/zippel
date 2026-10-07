@@ -86,8 +86,12 @@ mod schnorr4;
 ("schnorr4", schnorr4::run),
 ```
 
-`EXAMPLES` maps a name to that module's `run(&[String])`; `main()` looks
-up `argv[1]` in it and forwards `argv[2..]`.
+`EXAMPLES` maps a name to that module's
+`run(&clap::ArgMatches, &common::RunOptions)`. The dispatcher uses Clap to
+select the example, parse its arguments, and handle shared options such
+as `--no-analysis`. Every registered example appears in `cargo zrun --help`.
+If your example takes arguments, define them in `examples/common/cli.rs`
+and read their parsed values from `ArgMatches` in `run`.
 
 ### 3. Define the protocol
 
@@ -145,7 +149,7 @@ use zippel::*;
 
 use crate::common;
 
-pub fn run(_args: &[String]) {
+pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
     println!("=== Schnorr4 (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/schnorr4/schnorr4.zippel"));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
@@ -154,6 +158,9 @@ pub fn run(_args: &[String]) {
     let inputs = prover_create_inputs();
     common::run_prover_and_verify(&mut handler, &inputs);
 
+    if !opts.analyses {
+        return;
+    }
     // Static analysis (completeness, ZK, and soundness)
     println!("\n--- Static Analysis ---");
 
@@ -187,6 +194,8 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
   (`x`, `g`, `h` above).
 - `common::run_prover_and_verify`/`common::time_analysis!` are shared
   by every example; reuse them in your own harness.
+- Check `opts.analyses` after proof verification and before any analysis
+  setup, so `--no-analysis` skips all static analyses.
 - `analyze_completeness()` and `analyze_knowledge()` (the
   zero-knowledge check) take no arguments.
 - `analyze_special_soundness(l_vec)` takes one `l` per round, the
@@ -198,4 +207,6 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
 ```bash
 cargo zrun schnorr4
+cargo zrun schnorr4 --no-analysis  # prover and verifier only
+cargo zrun schnorr4 --help         # example options
 ```

@@ -10,7 +10,7 @@ use crate::common;
 const N: usize = 2;
 const K: usize = 1;
 
-pub fn run(_args: &[String], opts: &common::RunOptions) {
+pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
     println!("=== CDS Protocol for Proofs of Partial Knowledge (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/cds/cds.zippel"));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);

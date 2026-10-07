@@ -1,7 +1,7 @@
 //! Single entry point for every Zippel protocol example.
 //!
-//! Each `examples/<name>/main.rs` exposes `pub fn run(args: &[String])`; this
-//! binary dispatches on `argv[1]` and forwards `argv[2..]` to it. One Cargo
+//! Each `examples/<name>/main.rs` exposes `run(&clap::ArgMatches, &common::RunOptions)`;
+//! this binary uses Clap to select a protocol and parse its arguments. One Cargo
 //! target means one link product and one debug-info file for all protocols
 //! instead of one per protocol.
 //!
@@ -11,6 +11,8 @@
 //! cargo run --example zippel                 # list available examples
 //! ```
 
+#[path = "common/cli.rs"]
+mod cli;
 #[path = "common/analysis.rs"]
 mod common;
 
@@ -93,7 +95,7 @@ mod zerocheck;
 #[path = "zeromorph_kzg/main.rs"]
 mod zeromorph_kzg;
 
-type Runner = fn(&[String], &common::RunOptions);
+type Runner = fn(&clap::ArgMatches, &common::RunOptions);
 
 const EXAMPLES: &[(&str, Runner)] = &[
     ("bccgp", bccgp::run),
@@ -137,35 +139,19 @@ const EXAMPLES: &[(&str, Runner)] = &[
     ("zeromorph_kzg", zeromorph_kzg::run),
 ];
 
-/// Runs only the prover and verifier, skipping the static analyses.
-const NO_ANALYSIS: &str = "--no-analysis";
-
-fn usage() {
-    eprintln!("usage: cargo run --example zippel -- <name> [--no-analysis] [example args...]");
-    eprintln!("available examples:");
-    for (name, _) in EXAMPLES {
-        eprintln!("  {name}");
-    }
-}
-
 fn main() {
-    let mut argv: Vec<String> = std::env::args().collect();
-    let no_analysis = argv.iter().any(|a| a == NO_ANALYSIS);
-    argv.retain(|a| a != NO_ANALYSIS);
-    let Some(name) = argv.get(1) else {
-        usage();
-        std::process::exit(2);
-    };
-    let Some(&(_, run)) = EXAMPLES.iter().find(|&&(n, _)| n == name.as_str()) else {
-        eprintln!("unknown example: {name}");
-        usage();
-        std::process::exit(2);
-    };
+    let matches = cli::command(EXAMPLES.iter().map(|&(name, _)| name)).get_matches();
+    let (name, args) = matches.subcommand().expect("Clap requires an example");
+    let (_, run) = EXAMPLES
+        .iter()
+        .find(|&&(n, _)| n == name)
+        .expect("Clap only accepts registered examples");
+    let no_analysis = matches.get_flag("no_analysis");
     if no_analysis {
-        println!("(static analyses skipped: {NO_ANALYSIS})");
+        println!("(static analyses skipped: --no-analysis)");
     }
     let opts = common::RunOptions {
         analyses: !no_analysis,
     };
-    run(&argv[2..], &opts);
+    run(args, &opts);
 }

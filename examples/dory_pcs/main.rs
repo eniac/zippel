@@ -18,7 +18,7 @@ type GT = PairingOutput<P>;
 /// nu = sigma = K: a 2^K × 2^K coefficient matrix.
 const K: usize = 1;
 
-pub fn run(_args: &[String], opts: &common::RunOptions) {
+pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
     println!("=== Dory PCS (ArkBls12_381, K={K}) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/dory_pcs/dory_pcs.zippel"));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);

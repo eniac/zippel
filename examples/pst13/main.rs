@@ -8,17 +8,8 @@ use zippel::*;
 
 use crate::common;
 
-const DEFAULT_N: usize = 2;
-
-pub fn run(args: &[String], opts: &common::RunOptions) {
-    let n: usize = args
-        .first()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_N);
-    assert!(
-        (1..=20).contains(&n),
-        "N must be in 1..=20 (pst13.zippel helpers cap at K=20)"
-    );
+pub fn run(args: &clap::ArgMatches, opts: &common::RunOptions) {
+    let n = *args.get_one::<usize>("n").expect("Clap defaults N to 2");
 
     println!("=== PST13 Multilinear PCS (ArkBls12_381, N={n}) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/pst13/pst13.zippel"));

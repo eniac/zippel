@@ -7,7 +7,7 @@ use zippel::*;
 
 use crate::common;
 
-pub fn run(_args: &[String], opts: &common::RunOptions) {
+pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
     println!("=== Zerocheck (ArkSecp256k1) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/zerocheck/zerocheck.zippel"));
     let mut handler: zippel::ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);

@@ -8,7 +8,7 @@ use zippel::*;
 
 use crate::common;
 
-pub fn run(_args: &[String], opts: &common::RunOptions) {
+pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
     println!("=== Zeromorph Hiding KZG ===");
     let args = ZippelArgs::new(PathBuf::from("examples/zeromorph_kzg/zeromorph_kzg.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);

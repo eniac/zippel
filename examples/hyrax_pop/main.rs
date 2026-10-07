@@ -7,7 +7,7 @@ use zippel::*;
 
 use crate::common;
 
-pub fn run(_args: &[String], opts: &common::RunOptions) {
+pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
     println!("=== Hyrax PoP (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/hyrax_pop/hyrax_pop.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);

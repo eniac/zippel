@@ -7,7 +7,7 @@ use zippel::*;
 
 use crate::common;
 
-pub fn run(_args: &[String], opts: &common::RunOptions) {
+pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
     println!("=== Schnorr (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/schnorr/schnorr.zippel"));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);

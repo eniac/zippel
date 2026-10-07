@@ -15,7 +15,7 @@ fn build_sizes_ctx() -> Ctx<Tid, usize> {
     ctx
 }
 
-pub fn run(_args: &[String], opts: &common::RunOptions) {
+pub fn run(_args: &clap::ArgMatches, opts: &common::RunOptions) {
     println!("=== R1CS Sigma (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/r1cs_sigma/r1cs_sigma.zippel"));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);

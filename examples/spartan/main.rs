@@ -22,61 +22,34 @@ struct RunOpts {
     manual_zippel: Option<String>,
 }
 
-fn parse_args(argv: &[String]) -> RunOpts {
-    let mut args = argv.iter().cloned();
-    let mut sweep: Vec<usize> = Vec::new();
-    let mut invalid = false;
-    let mut csv_path: Option<String> = None;
-    let mut manual_zippel: Option<String> = None;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--m" => {
-                let v: usize = args
-                    .next()
-                    .expect("--m expects an integer")
-                    .parse()
-                    .expect("invalid --m");
-                sweep.push(v);
-            }
-            "--sweep" => {
-                let lo: usize = args
-                    .next()
-                    .expect("--sweep expects LO HI")
-                    .parse()
-                    .expect("invalid --sweep LO");
-                let hi: usize = args
-                    .next()
-                    .expect("--sweep expects LO HI")
-                    .parse()
-                    .expect("invalid --sweep HI");
-                sweep.extend(lo..=hi);
-            }
-            "--invalid" => {
-                invalid = true;
-            }
-            "--csv" => {
-                csv_path = Some(args.next().expect("--csv expects PATH"));
-            }
-            "--manual-zippel" => {
-                manual_zippel = Some(args.next().expect("--manual-zippel expects PATH"));
-            }
-            other => {
-                eprintln!("unknown arg: {other}");
-                std::process::exit(2);
-            }
-        }
+fn parse_args(args: &clap::ArgMatches) -> RunOpts {
+    // Keep --m and --sweep runs in command-line order, including repetitions.
+    let mut ranges = Vec::new();
+    if let (Some(indices), Some(values)) = (args.indices_of("m"), args.get_many::<usize>("m")) {
+        ranges.extend(indices.zip(values).map(|(i, &m)| (i, m..=m)));
     }
-
+    if let (Some(indices), Some(values)) =
+        (args.indices_of("sweep"), args.get_many::<usize>("sweep"))
+    {
+        let values: Vec<_> = values.copied().collect();
+        ranges.extend(
+            indices
+                .step_by(2)
+                .zip(values.chunks_exact(2))
+                .map(|(i, bounds)| (i, bounds[0]..=bounds[1])),
+        );
+    }
+    ranges.sort_unstable_by_key(|(i, _)| *i);
+    let mut sweep: Vec<_> = ranges.into_iter().flat_map(|(_, range)| range).collect();
     if sweep.is_empty() {
         sweep.push(3);
     }
 
     RunOpts {
         sweep,
-        invalid,
-        csv_path,
-        manual_zippel,
+        invalid: args.get_flag("invalid"),
+        csv_path: args.get_one::<String>("csv").cloned(),
+        manual_zippel: args.get_one::<String>("manual_zippel").cloned(),
     }
 }
 
@@ -89,7 +62,7 @@ struct RunResult {
     passed: bool,
 }
 
-pub fn run(args: &[String], _opts: &common::RunOptions) {
+pub fn run(args: &clap::ArgMatches, _opts: &common::RunOptions) {
     let opts = parse_args(args);
 
     println!("=== Spartan-NIZK (PIOP + Hyrax PCS, ArkCurve25519) ===");
