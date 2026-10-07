@@ -80,6 +80,17 @@ impl<T: Clone> Shared<T> {
         Arc::get_mut(&mut self.buf).expect("buffer is unshared after the copy")
     }
 
+    /// The elements in a buffer of their own: a view is copied out of the
+    /// buffer it would otherwise keep alive; a whole buffer is kept.
+    #[must_use]
+    pub fn compact(self) -> Self {
+        if self.range.is_some() {
+            Shared::from(self.to_vec())
+        } else {
+            self
+        }
+    }
+
     /// The elements as a `Vec`: moved out if this is the only owner of the
     /// whole buffer, copied otherwise.
     #[must_use]
@@ -198,6 +209,18 @@ mod tests {
     fn a_full_slice_is_the_whole_buffer() {
         let v = Shared::from(vec![1, 2, 3]);
         assert!(v.slice(0..3).range.is_none());
+    }
+
+    #[test]
+    fn compact_copies_a_view_out_of_its_buffer() {
+        let v = Shared::from(vec![7u64; 1 << 10]);
+        let buffer = Arc::downgrade(&v.buf);
+        let one = v.slice(3..4).compact();
+        let whole = v.clone().compact();
+        assert!(std::ptr::eq(&v[0], &whole[0]), "a whole buffer is kept");
+        drop((v, whole));
+        assert!(buffer.upgrade().is_none(), "the view no longer holds it");
+        assert_eq!(&*one, &[7]);
     }
 
     #[test]
