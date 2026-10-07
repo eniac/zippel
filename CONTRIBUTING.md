@@ -150,7 +150,6 @@ witness/instance values, and runs the prover and verifier.
 ```rust
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, ArkGroupOps, Value};
-use lang::id::Vid;
 use share::Ctx;
 use std::path::PathBuf;
 use zippel::*;
@@ -180,7 +179,7 @@ pub fn run(opts: &common::RunOptions) {
     );
 }
 
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
+fn prover_create_inputs() -> Inputs<ArkBls12_381> {
     let mut rng = rand::rngs::OsRng;
     let x = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
     let g = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
@@ -188,10 +187,10 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         .into_iter()
         .next()
         .unwrap();
-    Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("x".to_string()), Value::Scalar(x)),
-        (Vid("g".to_string()), Value::G1(g)),
-        (Vid("h".to_string()), Value::G1Affine(h)),
+    Inputs::from_iter([
+        ("x", Value::Scalar(x)),
+        ("g", Value::G1(g)),
+        ("h", Value::G1Affine(h)),
     ])
 }
 ```
