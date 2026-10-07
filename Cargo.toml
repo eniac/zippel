@@ -67,6 +67,15 @@ serde_json = "1"
 clap = { version = "4", features = ["derive"] }
 process-wrap = { version = "10", default-features = false, features = ["std", "process-group", "job-object"] }
 
+# Workspace-wide (benchmarks and their upstream baselines included): run MSM
+# chunks in the caller's rayon pool. Remove once arkworks-rs/algebra's
+# `msm-in-caller-pool` branch is merged and released.
+[patch.crates-io]
+ark-ff = { git = "https://github.com/arkworks-rs/algebra.git", branch = "msm-in-caller-pool" }
+ark-ec = { git = "https://github.com/arkworks-rs/algebra.git", branch = "msm-in-caller-pool" }
+ark-poly = { git = "https://github.com/arkworks-rs/algebra.git", branch = "msm-in-caller-pool" }
+ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git", branch = "msm-in-caller-pool" }
+
 # [patch.crates-io]
 # ark-crypto-primitives = { git = "https://github.com/arkworks-rs/crypto-primitives.git", branch = "release/0.6.0" }
 # ark-r1cs-std = { git = "https://github.com/arkworks-rs/r1cs-std.git", branch = "release/0.6.0" }
