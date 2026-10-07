@@ -162,6 +162,8 @@ examples! {
 
 fn main() {
     let cli = <cli::Cli<Example> as clap::Parser>::parse();
+    // Examples name their `.zippel` files relative to the repository root.
+    std::env::set_current_dir(env!("CARGO_MANIFEST_DIR")).expect("repository root exists");
     if cli.no_analysis {
         println!("(static analyses skipped: --no-analysis)");
     }

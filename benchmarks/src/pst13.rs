@@ -19,7 +19,7 @@
 //!     rather than hide it; PST13's "real" verifier is O(N) and the gap
 //!     is purely the runtime's FS-absorption model.
 //!
-//! Sweep knob: `n = log_2(poly_size)`. Helpers cap at K = 20.
+//! Sweep knob: `n = log_2(poly_size)`, n >= 1.
 
 use crate::Timing;
 
@@ -94,10 +94,10 @@ pub mod shared {
     ///     `setup_pool().install(...)`.
     ///
     /// # Panics
-    /// Panics if `n` is outside `1..=20`, or if reading/writing the cached
+    /// Panics if `n` is 0, or if reading/writing the cached
     /// artifact under `artifacts/` fails.
     pub fn build(n: usize) -> Shared {
-        assert!((1..=20).contains(&n), "n must be in 1..=20");
+        assert!(n >= 1, "n must be >= 1");
 
         crate::cache::load_or_build_canonical("pst13_shared", n, || build_uncached(n))
     }
