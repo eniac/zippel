@@ -44,10 +44,17 @@ impl<C: ArkConfig> Operands<C> {
         })
     }
 
-    /// Operands that are only ever cloned, for a caller that keeps `values`.
+    /// Operands for evaluating `op`, only ever cloned, for a caller that
+    /// keeps `values`. Takes just the values `op` reads, so `values` may be a
+    /// whole graph's environment.
     #[must_use]
-    pub fn borrowed(values: &HashMap<Ref, Arc<Value<C>>>) -> Self {
-        Self::with_uses(values.clone(), |_| PINNED)
+    pub fn borrowed(op: &GOp<C>, values: &HashMap<Ref, Arc<Value<C>>>) -> Self {
+        let read = op
+            .references()
+            .into_iter()
+            .filter_map(|r| Some((r, Arc::clone(values.get(&r)?))))
+            .collect();
+        Self::with_uses(read, |_| PINNED)
     }
 
     fn with_uses(values: HashMap<Ref, Arc<Value<C>>>, uses: impl Fn(&Ref) -> usize) -> Self {
@@ -192,10 +199,17 @@ mod tests {
     #[test]
     fn borrowed_operands_always_clone() {
         let v = value();
-        let values = HashMap::from([(r(0), Arc::clone(&v))]);
-        let ops = Operands::borrowed(&values);
+        let unread = value();
+        let values = HashMap::from([(r(0), Arc::clone(&v)), (r(1), Arc::clone(&unread))]);
+        let ops = Operands::borrowed(&leaf(0), &values);
         let uses: Vec<_> = (0..3).map(|_| ops.get(r(0)).unwrap()).collect();
         assert_eq!(Arc::strong_count(&v), 6);
+        assert_eq!(
+            Arc::strong_count(&unread),
+            2,
+            "an operand `op` does not read is not taken"
+        );
+        assert!(ops.get(r(1)).is_none());
         drop(uses);
     }
 

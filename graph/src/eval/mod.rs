@@ -528,7 +528,7 @@ where
     C: ArkConfig,
     R: RngCore,
 {
-    eval_op_with_loop_params(op, &Operands::borrowed(env), rng, &[], check_sink)
+    eval_op_with_loop_params(op, &Operands::borrowed(op, env), rng, &[], check_sink)
 }
 
 /// [`eval_op`] taking ownership of `env`: each operand is handed over at its
@@ -840,8 +840,9 @@ where
         )),
         Op::Mle(a) => {
             // Consume the input via `value_mle_owned` to avoid a 500 MB
-            // memcpy when the operand is a fresh or unique `VecScalar`.
-            // When the Arc is shared (env still holds a strong ref), the
+            // memcpy when the operand is a fresh or unique `VecScalar`
+            // (an owned operand at its last use is). When the Arc is still
+            // shared (a borrowed env, a pinned operand, another reader), the
             // unwrap clones once — same cost as `value_mle`.
             let av = Arc::unwrap_or_clone(eval_op_with_loop_params(
                 a,
