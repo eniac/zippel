@@ -1088,10 +1088,9 @@ fn setup_pool() -> &'static rayon::ThreadPool {
 //
 // Applied to every native baseline's timed region (each system's
 // `n.time_protocol()` and spartan's inline libspartan/ark-spartan
-// loops). The zippel side is NOT wrapped: its runtime `rayon::spawn`s
-// onto the global pool. Its main thread also computes transcript
-// messages, though (measured ~1.14 cores at T=1), so the thread count
-// alone does not bound it; see `pin_timed_threads`.
+// loops). The zippel side is NOT wrapped: its runtime runs every node,
+// transcript messages included, as a job of the global pool, so
+// RAYON_NUM_THREADS bounds it; see also `pin_timed_threads`.
 static TIMED_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
 fn timed_pool() -> &'static rayon::ThreadPool {
     TIMED_POOL.get().expect("TIMED_POOL not initialized")
@@ -1143,9 +1142,9 @@ fn pin_current_thread(_cpus: &[usize]) {}
 /// `BENCH_NO_PIN` is set.
 ///
 /// The global pool (zippel's runtime), the timed pool (native baselines)
-/// and the main thread (which computes zippel's transcript messages) are
-/// all confined to these cores, so both sides get exactly T cores; the
-/// untimed setup pool keeps every core.
+/// and the main thread are all confined to these cores, so both sides get
+/// exactly T cores, one per physical core; the untimed setup pool keeps
+/// every core.
 #[cfg(target_os = "linux")]
 fn pin_timed_threads(num_threads: usize) -> Option<Vec<usize>> {
     if num_threads == 0 || std::env::var_os("BENCH_NO_PIN").is_some() {
@@ -1228,9 +1227,9 @@ fn main() {
         })
         .build()
         .expect("init rayon timed pool");
-    // The main thread runs the zippel runtime's transcript loop, which
-    // computes prover messages: when pinned, it shares the same T cores.
-    // It only blocks while `setup_pool().install` runs setup on the other pool.
+    // The main thread only waits while the pools compute (zippel's runtime
+    // runs on the global pool); pinned, anything it does run shares the same
+    // T cores. It also blocks while `setup_pool().install` runs setup.
     if let Some(cpus) = &pinned {
         pin_current_thread(cpus);
     }
