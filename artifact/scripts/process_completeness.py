@@ -8,9 +8,8 @@ Columns:
     Protocol | Pass | Time
 
 Rows are the paper's Figure 6 protocols (paper.py) present in the run,
-in Figure 6 order; Dory IPA ("~" in Figure 6) runs at the smaller
-instance the paper confirms it at. Pass is a check mark when the analysis verified completeness ("~" for
-Dory IPA, verified only at the smaller instance), a cross otherwise. Time is total_ms (build+gb+run) formatted as ms/s when
+in Figure 6 order. Pass is a check mark when the analysis verified
+completeness, a cross otherwise. Time is total_ms (build+gb+run) formatted as ms/s when
 status is "ok", else the status string itself (timeout/crashed/failed/oom).
 
 Below the table: how many verified. Exit nonzero if any protocol's outcome
@@ -25,7 +24,7 @@ JSON_PATH defaults to artifact/output/completeness_results.json.
 import json
 import sys
 
-from paper import NO, PARTIAL, rows
+from paper import NO, rows
 
 DEFAULT_JSON = "artifact/output/completeness_results.json"
 
@@ -44,10 +43,8 @@ def fmt_ms(ms):
     return f"{ms:.1f}ms" if ms < 1000 else f"{ms / 1000:.1f}s"
 
 
-def fmt_pass(r, mark):
-    if r.get("status") != "ok":
-        return FAIL_MARK
-    return PARTIAL if mark == PARTIAL else PASS_MARK
+def fmt_pass(r):
+    return PASS_MARK if r.get("status") == "ok" else FAIL_MARK
 
 
 def fmt_time(r):
@@ -77,7 +74,7 @@ def main():
     print("|---|---|---|")
     unexpected = []
     for label, r, mark in present:
-        print(f"| {label} | {fmt_pass(r, mark)} | {fmt_time(r)} |")
+        print(f"| {label} | {fmt_pass(r)} | {fmt_time(r)} |")
         if (r.get("status") == "ok") == (mark == NO):
             unexpected.append(f"{label}: Figure 6 has {mark}, the analysis returned {r.get('status')}")
     for protocol in results.keys() - {protocol for _, protocol, _ in paper}:

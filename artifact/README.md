@@ -10,6 +10,7 @@ the paper's evaluation (Section 9).
 
 | Paper | Contents | Reproduced by |
 |---|---|---|
+| §8 | Size of Zippel's own Rust code, per component | `report_rust_loc.py` |
 | Figure 6 | Each protocol's LoC | `report_loc.py` |
 | Figure 6, Complete column | Completeness marks and analysis times (§9.3) | Experiment 3 |
 | Figure 6, Spec. Sound column | Special-soundness marks and analysis times (§9.3) | Experiment 2 |
@@ -138,6 +139,22 @@ Each cell reads "submitted → now"; "—" marks a row added to Figure 7
 after submission. Groth16 changed the most, yet remains 5.2x shorter
 than its native baseline; Spartan's line count decreased.
 
+## Size of Zippel's implementation (Section 8)
+
+Section 8 gives the size of Zippel's own Rust code per component. To
+count it:
+
+```sh
+docker run --rm zippel-ae python3 artifact/scripts/report_rust_loc.py
+```
+
+A line counts if it holds code once comments and blank lines are
+removed. Test code (`#[test]` and `#[cfg(test)]` items, and files under
+`tests/`) is reported on its own row rather than in its component, and
+code vendored from other projects as benchmark baselines
+(`benchmarks/src/*_upstream/`) is left out. The script reads the
+sources directly, so it needs no build.
+
 ## Experiments
 
 | # | Scripts | Produces | Paper |
@@ -258,10 +275,8 @@ docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" \
 ```
 
 This analyzes all 34 Figure 6 protocols with a 5-minute timeout and a
-16 GiB memory limit per run. Dory IPA, marked "~" in Figure 6, runs at
-the smaller instance the paper confirms it at (`dory_ipa_s2`: one
-recursive step, so not every code path). To run a subset, add for
-example `--protocols schnorr,groth16,ipa` after `--timeout 300`.
+16 GiB memory limit per run. To run a subset, add for example
+`--protocols schnorr,groth16,ipa` after `--timeout 300`.
 
 **Note on the timeout.** §9.3 budgets 20 minutes per protocol. Every
 protocol that completes takes far less (the slowest, Multiset, takes
@@ -278,12 +293,12 @@ order, then a summary:
 | Schnorr | ✓ | ... |
 ...
 
-Automatically verified complete: 29 of 34 Figure 6 protocols present in this run.
+Automatically verified complete: 28 of 34 Figure 6 protocols present in this run.
 Unexpected outcomes: 0
 ```
 
-The analysis verifies the 29 protocols Figure 6 marks with a check or
-"~". The other five are Figure 6's crosses: Spartan, Permutation,
+The analysis verifies the 28 protocols Figure 6 marks with a check.
+The other six are Figure 6's crosses: Spartan, Dory IPA, Permutation,
 Dekart and Pari reach the timeout, and HyperPlonk exceeds the memory
 limit. The run reproduces the paper if it reports
 `Unexpected outcomes: 0`.
@@ -293,7 +308,7 @@ limit. The run reproduces the paper if it reports
 were incomplete and had kept the analysis from proving those protocols
 complete.
 
-**Runtime**: about 25 minutes, mostly the four protocols that reach the
+**Runtime**: about 30 minutes, mostly the five protocols that reach the
 timeout.
 
 ---

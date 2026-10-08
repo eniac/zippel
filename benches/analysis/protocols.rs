@@ -190,16 +190,6 @@ pub static PROTOCOLS: &[Protocol] = &[
         completeness: true,
         soundness: None,
     },
-    // Dory IPA at a smaller instance: one recursive step, so not every code
-    // path (S=3 is the smallest where one step calls another). The analysis
-    // verifies this one; it backs Figure 6's "~" for Dory IPA.
-    Protocol {
-        name: "dory_ipa_s2",
-        path: "examples/dory_ipa/dory_ipa.zippel",
-        sizes: &[("S", 2)],
-        completeness: true,
-        soundness: None,
-    },
     Protocol {
         name: "dory_pcs",
         path: "examples/dory_pcs/dory_pcs.zippel",

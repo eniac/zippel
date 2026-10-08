@@ -10,9 +10,8 @@ FIGURE_7 rows: label, bench_all system, bench_all baseline.
 FIGURE_6 rows: year, label, example, analysis protocol, Comp. mark, Sound. mark.
 `example` names examples/<example>/<example>.zippel (its line count is the
 LoC column). `analysis` is the protocol name registered in
-benches/analysis/protocols.rs; Dory IPA's "~" mark means the analysis
-confirms it only at a smaller instance, `dory_ipa_s2`. Marks are "✓",
-"✗", "~", or None for a protocol that column does not report on.
+benches/analysis/protocols.rs. Marks are "✓", "✗", or None for a
+protocol that column does not report on.
 
 Usage:
     python3 artifact/scripts/paper.py completeness|soundness
@@ -22,7 +21,7 @@ prints the comma-separated analysis protocols for that column.
 
 import sys
 
-OK, NO, PARTIAL = "✓", "✗", "~"
+OK, NO = "✓", "✗"
 
 FIGURE_6 = [
     (1990, "Sumcheck", "sumcheck", "sumcheck", OK, None),
@@ -47,7 +46,7 @@ FIGURE_6 = [
     (2020, "Membership", "membership", "membership", OK, None),
     (2020, "Marlin-KZG", "marlin_kzg", "marlin_kzg", OK, None),
     (2020, "Spartan", "spartan", "spartan", NO, None),
-    (2021, "Dory IPA", "dory_ipa", "dory_ipa_s2", PARTIAL, None),
+    (2021, "Dory IPA", "dory_ipa", "dory_ipa", NO, None),
     (2021, "Dory PCS", "dory_pcs", "dory_pcs", OK, None),
     (2021, "R1CS Σ", "r1cs_sigma", "r1cs_sigma", OK, None),
     (2023, "Multiset", "hyperplonk_multiset", "hyperplonk_multiset", OK, None),
