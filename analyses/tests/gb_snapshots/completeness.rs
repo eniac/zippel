@@ -1,6 +1,6 @@
 //! Completeness snapshot trials: assert that the protocol has a verifier
 //! check and that `CompletenessAnalysis::run()` actually passes, then
-//! snapshot why each check holds (`CompletenessAnalysis::explain`) and the
+//! snapshot why each check holds (`VerifierChecks::explain`) and the
 //! computed Gröbner basis for regression detection.
 
 use crate::common::{assert_named_snapshot, compile_to_dag, normalize_basis};
@@ -275,15 +275,16 @@ fn run_completeness_snapshot(entry: &CompletenessEntry) -> Result<(), Failed> {
     let normalized = share::thread::run("gb-completeness", move || {
         let dag = compile_to_dag(&path, &sizes);
         let inputs = CompletenessAnalysis::<ArkBls12_381>::build_inputs(&dag);
+        let checks = inputs.checks.clone();
         // Without a check, `run()` passes vacuously.
-        if inputs.checks.is_empty() {
+        if checks.checks.is_empty() {
             return Err(Failed::from("the protocol has no verifier checks"));
         }
         let mut ca = CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, backend);
         ca.run().map_err(|e| Failed::from(e.to_string()))?;
         // Why each check holds, since substitution alone can discharge them
         // all and leave the basis empty.
-        let explanation = ca.explain();
+        let explanation = checks.explain(&ca.basis);
         let basis = normalize_basis(&ca.basis.polys);
         Ok::<String, Failed>(format!("{explanation}basis:\n{basis}"))
     })

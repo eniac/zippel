@@ -75,3 +75,56 @@ fn check_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, exp: &HOp<C
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::test_helpers::trans_clos_from_src;
+    use crate::ideal::IdealBuilder;
+    use backend::ArkBls12_381;
+
+    /// The checks `verify_op` records for the protocol `ex`, as `lhs == rhs`.
+    fn checks_of(ex: &str) -> Vec<String> {
+        IdealBuilder::<ArkBls12_381>::new()
+            .build(trans_clos_from_src(ex))
+            .checks
+            .iter()
+            .map(|c| format!("{} == {}", c.lhs, c.rhs))
+            .collect()
+    }
+
+    #[test]
+    fn checks_record_each_conjunct_of_each_verify() {
+        let ex = r#"
+            proto conjuncts<F: Field>(witness a: F, witness b: F) where a == b {
+                let r = random<F>;
+                x <- a * r;
+                y <- b * r;
+                u <- a * x;
+                v <- b * y;
+                verify(x == y && u == v);
+                verify(u == x)
+            }"#;
+        assert_eq!(checks_of(ex), ["x == y", "u == v", "u == x"]);
+    }
+
+    #[test]
+    fn checks_record_each_coefficient_slot() {
+        let ex = r#"
+            proto slots<F: Field>(instance p: Poly<F, 1, 1>, instance q: Poly<F, 1, 1>) where p == q {
+                verify(p == q)
+            }"#;
+        assert_eq!(checks_of(ex), ["p[0] == q[0]", "p[1] == q[1]"]);
+    }
+
+    #[test]
+    fn a_checked_message_is_checked_against_one() {
+        // `b` is a prover message: the verifier checks it as sent, not the
+        // `==` the prover computed it with.
+        let ex = r#"
+            proto message<F: Field>(instance x: F, instance y: F) where x == y {
+                b <- x == y;
+                verify(b)
+            }"#;
+        assert_eq!(checks_of(ex), ["b == 1"]);
+    }
+}

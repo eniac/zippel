@@ -24,6 +24,8 @@ pub mod backend;
 pub mod completeness;
 /// Error type shared by every analysis in this crate.
 pub mod error;
+/// Explanations of why each verifier check holds modulo a Gröbner basis.
+pub mod explain;
 /// Witness extraction from a Gröbner basis, and its rejection reasons.
 pub mod extractor;
 pub mod frontend;
@@ -42,6 +44,7 @@ pub mod var;
 
 pub use completeness::{CompletenessAnalysis, CompletenessInputs};
 pub use error::AnalysisError;
+pub use explain::VerifierChecks;
 pub use frontend::TransClos;
 pub use ideal::{Ideal, IdealBuilder, IdealNamespace};
 pub use knowledge::KnowledgeAnalysis;

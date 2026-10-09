@@ -1,5 +1,3 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
-
 use ark_ff::PrimeField;
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
@@ -7,11 +5,12 @@ use share::{Ctx, Set};
 
 use crate::TransClos;
 use crate::Var;
-use crate::backend::{GbBackendKind, GbBasis, reduce_with_divisors};
+use crate::backend::{GbBackendKind, GbBasis};
 use crate::error::AnalysisError;
+use crate::explain::VerifierChecks;
 use crate::extractor::extract_locals;
 use crate::frontend::{MonoOrder, Polynomial};
-use crate::ideal::{Check, IdealBuilder};
+use crate::ideal::IdealBuilder;
 use graph::QDag;
 use graph::Ref;
 
@@ -31,105 +30,9 @@ pub struct CompletenessInputs<F: ark_ff::PrimeField> {
     /// Verifier polynomials to reduce against the basis in `run()`, minus
     /// those already in `generating_set` (members by construction).
     pub verifier: Vec<Polynomial<F>>,
-    /// What each `verify` checks, over the verifier's own variables: its
-    /// definitions are substituted, the prover messages are not. Unlike
-    /// `verifier`, a check stays when the substitution discharges it, so it
-    /// is what to report.
-    pub checks: Vec<Check<F>>,
-    /// The prover messages substituted into `generating_set` and `verifier`:
-    /// `t <- f` for each message `t`.
-    pub messages: Ctx<Var, Polynomial<F>>,
-}
-
-/// Polynomials longer than this many terms are explained by their size only,
-/// except for the checks themselves.
-const EXPLAIN_MAX_TERMS: usize = 16;
-
-/// What [`CompletenessAnalysis::explain`] shows for one check.
-struct CheckExplanation<F: PrimeField> {
-    check: Check<F>,
-    /// The prover messages the check mentions.
-    messages: Vec<(Var, Polynomial<F>)>,
-    /// Both sides after substitution.
-    lhs: Polynomial<F>,
-    rhs: Polynomial<F>,
-    /// When the sides differ: the remainder of their difference against the
-    /// basis, and the basis polynomials the reduction divided by.
-    reduction: Option<(Polynomial<F>, Vec<Polynomial<F>>)>,
-}
-
-impl<F: PrimeField> CheckExplanation<F> {
-    /// Every variable the explanation prints.
-    fn vars(&self) -> impl Iterator<Item = Var> + '_ {
-        let mut polys = vec![&self.check.lhs, &self.check.rhs];
-        polys.extend(self.messages.iter().map(|(_, value)| value));
-        if let Some((remainder, used)) = &self.reduction {
-            polys.push(remainder);
-            polys.extend(used);
-        }
-        self.messages
-            .iter()
-            .map(|(t, _)| t.clone())
-            .chain(polys.into_iter().flat_map(|p| p.vars()))
-    }
-
-    fn render(&self, names: &HashMap<Var, Var>) -> String {
-        let full = |p: &Polynomial<F>| {
-            p.remap_vars(&|v| names.get(v).unwrap_or(v).clone())
-                .to_string()
-        };
-        let show = |p: &Polynomial<F>| {
-            if p.terms.len() > EXPLAIN_MAX_TERMS {
-                format!("<{} terms>", p.terms.len())
-            } else {
-                full(p)
-            }
-        };
-        let name = |x: &Var| names.get(x).unwrap_or(x).to_string();
-        // The check itself in full: it is what the verifier writes.
-        let mut out = format!(
-            "check: {} == {}\n",
-            full(&self.check.lhs),
-            full(&self.check.rhs)
-        );
-        for (t, value) in &self.messages {
-            out += &format!("  {} <- {}\n", name(t), show(value));
-        }
-        match &self.reduction {
-            None => out += &format!("  both sides: {}\n", show(&self.lhs)),
-            Some((remainder, used)) => {
-                out += &format!("  lhs: {}\n  rhs: {}\n", show(&self.lhs), show(&self.rhs));
-                if remainder.is_zero() {
-                    out += "  equal modulo the basis, using:\n";
-                    for g in used {
-                        out += &format!("    {}\n", show(g));
-                    }
-                } else {
-                    out += &format!("  differ by {} modulo the basis\n", show(remainder));
-                }
-            }
-        }
-        out
-    }
-}
-
-/// Distinct variables that print alike, such as a challenge drawn at every
-/// level of a recursion, get `#1`, `#2`, … in `Var` order, which follows the
-/// order the graph creates them in.
-fn disambiguate(vars: impl IntoIterator<Item = Var>) -> HashMap<Var, Var> {
-    let mut by_name: BTreeMap<String, BTreeSet<Var>> = BTreeMap::new();
-    for v in vars {
-        by_name.entry(v.to_string()).or_default().insert(v);
-    }
-    let mut names = HashMap::new();
-    for group in by_name.into_values().filter(|group| group.len() > 1) {
-        for (k, v) in group.into_iter().enumerate() {
-            let mut named = v.clone();
-            named.name = format!("{}#{}", v.name, k + 1);
-            names.insert(v, named);
-        }
-    }
-    names
+    /// What each `verify` checks, and the prover messages substituted into
+    /// `generating_set` and `verifier`; see [`VerifierChecks`].
+    pub checks: VerifierChecks<F>,
 }
 
 /// Substitute `defs` into every polynomial, dropping those that vanish.
@@ -153,10 +56,6 @@ pub struct CompletenessAnalysis<C: ArkConfig> {
     pub basis: GbBasis<C::F>,
     /// Verifier polynomials to reduce against `basis` in `run()`.
     pub verifier: Vec<Polynomial<C::F>>,
-    /// What each `verify` checks; see [`CompletenessInputs::checks`].
-    pub checks: Vec<Check<C::F>>,
-    /// The prover messages substituted away; see [`CompletenessInputs::messages`].
-    pub messages: Ctx<Var, Polynomial<C::F>>,
 }
 
 impl<C: HasOpFactory> CompletenessAnalysis<C> {
@@ -202,8 +101,10 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         CompletenessInputs {
             generating_set,
             verifier,
-            checks: verifier_result.checks,
-            messages: prover_result.pl,
+            checks: VerifierChecks {
+                checks: verifier_result.checks,
+                messages: prover_result.pl,
+            },
         }
     }
 
@@ -221,64 +122,6 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         Self {
             basis,
             verifier: inputs.verifier,
-            checks: inputs.checks,
-            messages: inputs.messages,
-        }
-    }
-
-    /// Explain why each `verify` holds, one block per check, sorted:
-    ///
-    /// ```text
-    /// check: g*z == h*c + u
-    ///   u <- g*r
-    ///   z <- x*c + r
-    ///   lhs: g*x*c + g*r
-    ///   rhs: h*c + g*r
-    ///   equal modulo the basis, using:
-    ///     g*x - h
-    /// ```
-    ///
-    /// The check is shown as the verifier writes it, followed by the prover
-    /// messages substituted into it, `t <- …`. If both sides then agree, the
-    /// substitution alone discharged the check. Otherwise the basis has to
-    /// prove the rest, and the explanation lists the basis polynomials that
-    /// reduce their difference to 0, or the remainder if it is not 0.
-    /// Polynomials other than the checks that are longer than
-    /// [`EXPLAIN_MAX_TERMS`] are shown by their number of terms, and variables
-    /// that print alike are told apart as in [`disambiguate`].
-    pub fn explain(&self) -> String {
-        let explanations: Vec<_> = self.checks.iter().map(|c| self.explain_check(c)).collect();
-        let names = disambiguate(explanations.iter().flat_map(CheckExplanation::vars));
-        let mut blocks: Vec<String> = explanations.iter().map(|e| e.render(&names)).collect();
-        blocks.sort();
-        blocks.concat()
-    }
-
-    fn explain_check(&self, check: &Check<C::F>) -> CheckExplanation<C::F> {
-        let messages = self
-            .messages
-            .iter()
-            .filter(|(t, _)| check.lhs.contains(t) || check.rhs.contains(t))
-            .map(|(t, value)| (t.clone(), value.clone()))
-            .collect();
-        let lhs = check.lhs.clone().inline_vars(&self.messages).0;
-        let rhs = check.rhs.clone().inline_vars(&self.messages).0;
-        let difference = &lhs - &rhs;
-        let reduction = (!difference.is_zero()).then(|| {
-            let (remainder, divisors) =
-                reduce_with_divisors(difference, &self.basis.polys, &self.basis.order);
-            let used = divisors
-                .into_iter()
-                .map(|i| self.basis.polys[i].clone())
-                .collect();
-            (remainder, used)
-        });
-        CheckExplanation {
-            check: check.clone(),
-            messages,
-            lhs,
-            rhs,
-            reduction,
         }
     }
 
@@ -342,6 +185,7 @@ mod tests {
         let g = QualifierPropagation::from_dag(&gs[0]);
         CompletenessAnalysis::build_inputs(&g)
             .checks
+            .checks
             .iter()
             .map(|c| format!("{} == {}", c.lhs, c.rhs))
             .collect()
@@ -372,42 +216,6 @@ mod tests {
             }"#;
         // Both sides are equal, and the check is still recorded.
         assert_eq!(checks_of(ex), ["b + a == b + a"]);
-    }
-
-    #[test]
-    fn checks_record_each_conjunct_of_each_verify() {
-        let ex = r#"
-            proto conjuncts<F: Field>(witness a: F, witness b: F) where a == b {
-                let r = random<F>;
-                x <- a * r;
-                y <- b * r;
-                u <- a * x;
-                v <- b * y;
-                verify(x == y && u == v);
-                verify(u == x)
-            }"#;
-        assert_eq!(checks_of(ex), ["x == y", "u == v", "u == x"]);
-    }
-
-    #[test]
-    fn checks_record_each_coefficient_slot() {
-        let ex = r#"
-            proto slots<F: Field>(instance p: Poly<F, 1, 1>, instance q: Poly<F, 1, 1>) where p == q {
-                verify(p == q)
-            }"#;
-        assert_eq!(checks_of(ex), ["p[0] == q[0]", "p[1] == q[1]"]);
-    }
-
-    #[test]
-    fn a_checked_message_is_checked_against_one() {
-        // `b` is a prover message: the verifier checks it as sent, not the
-        // `==` the prover computed it with.
-        let ex = r#"
-            proto message<F: Field>(instance x: F, instance y: F) where x == y {
-                b <- x == y;
-                verify(b)
-            }"#;
-        assert_eq!(checks_of(ex), ["b == 1"]);
     }
 
     #[test]
@@ -1349,91 +1157,6 @@ mod tests {
         assert!(
             ca.run().is_err(),
             "3g*z == v + h*c does not hold for an honest prover"
-        );
-    }
-
-    /// The analysis of the first protocol in `ex`.
-    fn analysis_of(ex: &str) -> CompletenessAnalysis<ArkBls12_381> {
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-        from_input(&QualifierPropagation::from_dag(gs.protocols()[0]))
-    }
-
-    #[test]
-    fn explain_shows_the_messages_that_discharge_a_check() {
-        let ex = r#"
-            proto simple<F: Field>(instance a: F, instance b: F) where a == a {
-                c <- a * b;
-                verify(c == a * b)
-            }"#;
-        let mut ca = analysis_of(ex);
-        assert!(ca.run().is_ok());
-        assert_eq!(
-            ca.explain(),
-            "check: c == a*b\n  c <- a*b\n  both sides: a*b\n"
-        );
-    }
-
-    #[test]
-    fn explain_shows_the_basis_polynomials_that_discharge_a_check() {
-        let ex = r#"
-            proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
-                let r = random<F>;
-                u <- g*r;
-                c <- challenge<F>;
-                z <- r + x*c;
-                verify(g*z == u + h*c)
-            }"#;
-        let mut ca = analysis_of(ex);
-        assert!(ca.run().is_ok());
-        assert_eq!(
-            ca.explain(),
-            "check: g*z == h*c + u\n  u <- g*r\n  z <- x*c + r\n  lhs: g*x*c + g*r\n  \
-             rhs: h*c + g*r\n  equal modulo the basis, using:\n    g*x - h\n"
-        );
-    }
-
-    #[test]
-    fn explain_shows_what_is_left_of_an_incomplete_check() {
-        let ex = r#"
-            proto defined<G: Group, F: Scalar<G>>(
-                witness x: F, witness y: F, instance g: G, instance h: G, instance k: G,
-            ) where h == g*x && k == h + g*y {
-                let r = random<F>;
-                u <- g*r;
-                c <- challenge<F>;
-                z <- r + (x + y)*c;
-                verify(g*z == u + h*c)
-            }"#;
-        let mut ca = analysis_of(ex);
-        assert!(ca.run().is_err(), "g*z == u + h*c misses the g*y*c term");
-        let explanation = ca.explain();
-        assert!(
-            explanation.contains("differ by k*c - h*c modulo the basis"),
-            "the missing g*y*c term should be named:\n{explanation}"
-        );
-    }
-
-    #[test]
-    fn explain_numbers_variables_that_print_alike() {
-        // Each call to `round` sends its own `v` and `t` and draws its own `c`.
-        let ex = r#"
-            fn round<F: Field>(witness w: F) -> Unit {
-                v <- w;
-                c <- challenge<F>;
-                t <- w * c;
-                verify(t == v * c)
-            }
-            proto twice<F: Field>(witness a: F, witness b: F) where a == b {
-                round(a);
-                round(b)
-            }"#;
-        let mut ca = analysis_of(ex);
-        assert!(ca.run().is_ok());
-        assert_eq!(
-            ca.explain(),
-            "check: t#1 == v#1*c#1\n  v#1 <- a\n  t#1 <- a*c#1\n  both sides: a*c#1\n\
-             check: t#2 == v#2*c#2\n  v#2 <- b\n  t#2 <- b*c#2\n  both sides: b*c#2\n"
         );
     }
 
