@@ -37,21 +37,21 @@ use super::PolySource;
 pub fn equ_op<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
-    a: &HOp<C>,
-    b: &HOp<C>,
+    x: &HOp<C>,
+    y: &HOp<C>,
 ) {
     assert!(
         matches!(var.typ, ATyp::Base(ABase::Bool)),
         "equ_op: unexpected result type {} (expected Bool)",
         var.typ
     );
-    let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
-    let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
+    let x_src = PolySource::from_ref_vars(&ctx.ideal.vars, x);
+    let y_src = PolySource::from_ref_vars(&ctx.ideal.vars, y);
     let b_poly = Polynomial::var(var);
     let one = Polynomial::lit(&C::FOps::one());
 
     // d_j = x_j - y_j for each slot
-    let diffs: Vec<Polynomial<C::F>> = sides(&a_src, &b_src)
+    let diffs: Vec<Polynomial<C::F>> = sides(&x_src, &y_src)
         .iter()
         .map(|s| &s.lhs - &s.rhs)
         .collect();
@@ -72,19 +72,19 @@ pub fn equ_op<C: ArkConfig + HasOpFactory>(
     ctx.ideal.generating_set.push(aggregate);
 }
 
-/// The two sides `a_j == b_j` of each coefficient slot `j` of the LUB type of
-/// `a` and `b`: `a == b` holds exactly when every slot's sides are equal.
+/// The two sides `x_j == y_j` of each coefficient slot `j` of the LUB type of
+/// `x` and `y`: `x == y` holds exactly when every slot's sides are equal.
 pub(super) fn sides<C: ArkConfig + HasOpFactory>(
-    a_src: &PolySource<C>,
-    b_src: &PolySource<C>,
+    x_src: &PolySource<C>,
+    y_src: &PolySource<C>,
 ) -> Vec<Check<C::F>> {
-    let lub = ATyp::lub_equ(a_src.typ(), b_src.typ(), &Nothing).expect("equ_op: lub_equ failed");
-    let a_lifted = a_src.lift_to(&lub);
-    let b_lifted = b_src.lift_to(&lub);
-    a_lifted
+    let lub = ATyp::lub_equ(x_src.typ(), y_src.typ(), &Nothing).expect("equ_op: lub_equ failed");
+    let x_lifted = x_src.lift_to(&lub);
+    let y_lifted = y_src.lift_to(&lub);
+    x_lifted
         .polys
         .into_iter()
-        .zip(b_lifted.polys)
+        .zip(y_lifted.polys)
         .map(|(lhs, rhs)| Check { lhs, rhs })
         .collect()
 }
