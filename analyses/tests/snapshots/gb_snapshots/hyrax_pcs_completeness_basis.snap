@@ -2,24 +2,4 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- g_vec[0]*__zippel::node::116 + g_vec[1]*__zippel::node::115
-- g_vec[0]*__zippel::node::117 + g_vec[2]*__zippel::node::115
-- g_vec[0]*__zippel::node::118 + g_vec[3]*__zippel::node::115
-- g_vec[0]*h_trap + h_base*__zippel::node::115
-- g_vec[1]*__zippel::node::117 + g_vec[2]*__zippel::node::116
-- g_vec[1]*__zippel::node::118 + g_vec[3]*__zippel::node::116
-- g_vec[1]*h_trap + h_base*__zippel::node::116
-- g_vec[2]*__zippel::node::118 + g_vec[3]*__zippel::node::117
-- g_vec[2]*h_trap + h_base*__zippel::node::117
-- g_vec[3]*h_trap + h_base*__zippel::node::118
-__zippel::node::123 - 1
-__zippel::node::125 - 1
-__zippel::node::73 - 1
-__zippel::node::81 - 1
-eval_check - 1
-g_base*__zippel::node::115 - g_vec[0]
-g_base*__zippel::node::116 - g_vec[1]
-g_base*__zippel::node::117 - g_vec[2]
-g_base*__zippel::node::118 - g_vec[3]
-g_base*h_trap - h_base
-p[15]*z_col[0]*z_col[1]*z_row[0]*z_row[1] - p[14]*z_col[0]*z_col[1]*z_row[0]*z_row[1] - p[13]*z_col[0]*z_col[1]*z_row[0]*z_row[1] + p[12]*z_col[0]*z_col[1]*z_row[0]*z_row[1] - p[11]*z_col[0]*z_col[1]*z_row[0]*z_row[1] + p[10]*z_col[0]*z_col[1]*z_row[0]*z_row[1] + p[9]*z_col[0]*z_col[1]*z_row[0]*z_row[1] - p[8]*z_col[0]*z_col[1]*z_row[0]*z_row[1] - p[7]*z_col[0]*z_col[1]*z_row[0]*z_row[1] + p[6]*z_col[0]*z_col[1]*z_row[0]*z_row[1] + p[5]*z_col[0]*z_col[1]*z_row[0]*z_row[1] - p[4]*z_col[0]*z_col[1]*z_row[0]*z_row[1] + p[3]*z_col[0]*z_col[1]*z_row[0]*z_row[1] - p[2]*z_col[0]*z_col[1]*z_row[0]*z_row[1] - p[1]*z_col[0]*z_col[1]*z_row[0]*z_row[1] + p[0]*z_col[0]*z_col[1]*z_row[0]*z_row[1] + p[14]*z_col[1]*z_row[0]*z_row[1] - p[12]*z_col[1]*z_row[0]*z_row[1] - p[10]*z_col[1]*z_row[0]*z_row[1] + p[8]*z_col[1]*z_row[0]*z_row[1] - p[6]*z_col[1]*z_row[0]*z_row[1] + p[4]*z_col[1]*z_row[0]*z_row[1] + p[2]*z_col[1]*z_row[0]*z_row[1] - p[0]*z_col[1]*z_row[0]*z_row[1] + p[13]*z_col[0]*z_row[0]*z_row[1] - p[12]*z_col[0]*z_row[0]*z_row[1] - p[9]*z_col[0]*z_row[0]*z_row[1] + p[8]*z_col[0]*z_row[0]*z_row[1] - p[5]*z_col[0]*z_row[0]*z_row[1] + p[4]*z_col[0]*z_row[0]*z_row[1] + p[1]*z_col[0]*z_row[0]*z_row[1] - p[0]*z_col[0]*z_row[0]*z_row[1] + p[12]*z_row[0]*z_row[1] - p[8]*z_row[0]*z_row[1] - p[4]*z_row[0]*z_row[1] + p[0]*z_row[0]*z_row[1] + p[11]*z_col[0]*z_col[1]*z_row[1] - p[10]*z_col[0]*z_col[1]*z_row[1] - p[9]*z_col[0]*z_col[1]*z_row[1] + p[8]*z_col[0]*z_col[1]*z_row[1] - p[3]*z_col[0]*z_col[1]*z_row[1] + p[2]*z_col[0]*z_col[1]*z_row[1] + p[1]*z_col[0]*z_col[1]*z_row[1] - p[0]*z_col[0]*z_col[1]*z_row[1] + p[10]*z_col[1]*z_row[1] - p[8]*z_col[1]*z_row[1] - p[2]*z_col[1]*z_row[1] + p[0]*z_col[1]*z_row[1] + p[9]*z_col[0]*z_row[1] - p[8]*z_col[0]*z_row[1] - p[1]*z_col[0]*z_row[1] + p[0]*z_col[0]*z_row[1] + p[8]*z_row[1] - p[0]*z_row[1] + p[7]*z_col[0]*z_col[1]*z_row[0] - p[6]*z_col[0]*z_col[1]*z_row[0] - p[5]*z_col[0]*z_col[1]*z_row[0] + p[4]*z_col[0]*z_col[1]*z_row[0] - p[3]*z_col[0]*z_col[1]*z_row[0] + p[2]*z_col[0]*z_col[1]*z_row[0] + p[1]*z_col[0]*z_col[1]*z_row[0] - p[0]*z_col[0]*z_col[1]*z_row[0] + p[6]*z_col[1]*z_row[0] - p[4]*z_col[1]*z_row[0] - p[2]*z_col[1]*z_row[0] + p[0]*z_col[1]*z_row[0] + p[5]*z_col[0]*z_row[0] - p[4]*z_col[0]*z_row[0] - p[1]*z_col[0]*z_row[0] + p[0]*z_col[0]*z_row[0] + p[4]*z_row[0] - p[0]*z_row[0] + p[3]*z_col[0]*z_col[1] - p[2]*z_col[0]*z_col[1] - p[1]*z_col[0]*z_col[1] + p[0]*z_col[0]*z_col[1] + p[2]*z_col[1] - p[0]*z_col[1] + p[1]*z_col[0] - p[0]*z_col[0] - y + p[0]
+
