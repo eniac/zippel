@@ -115,7 +115,7 @@ proto pari<
     let w_a_poly = interpolate(w_a_evals);
     let w_b_poly = interpolate(w_b_evals);
     // (1) SR1CS satisfaction on the constraint domain K:
-    //       (A z) ⊙ (A z) == (B z), element-wise.
+    //       (A z) ⊙ (A z) == (B z).
     [z_a_evals[i] * z_a_evals[i] for i in 0..K] == z_b_evals
         //     Az = A(0∥w) + x̂_A and Bz = B(0∥w) under the layout.
         && z_a_evals == [w_a_evals[i] + x_hat_a[i] for i in 0..K]
