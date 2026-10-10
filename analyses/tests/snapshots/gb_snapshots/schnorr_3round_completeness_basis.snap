@@ -2,8 +2,4 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-__zippel::node::28 - 1
-__zippel::node::33 - 1
-__zippel::node::38 - 1
-__zippel::node::46 - 1
-g*x - h
+

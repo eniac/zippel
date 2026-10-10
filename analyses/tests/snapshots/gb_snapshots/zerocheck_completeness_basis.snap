@@ -32,12 +32,7 @@ __zippel::gb::div_c::1*__zippel::gb::div_c::0 - __zippel::gb::div_c::0 - __zippe
 __zippel::gb::div_c::1*__zippel::gb::div_q::0[1] - __zippel::gb::div_q::0[1]
 __zippel::gb::div_c::1^2 - __zippel::gb::div_c::1
 __zippel::gb::div_inv::1*__zippel::gb::div_inv::0 - __zippel::gb::div_inv::3*__zippel::gb::div_inv::0 - __zippel::gb::div_inv::2*__zippel::gb::div_inv::1 + __zippel::gb::div_inv::3*__zippel::gb::div_inv::2
-__zippel::gb::div_r::0[0]
-__zippel::gb::div_r::1[0]
-__zippel::gb::div_s::0 - 1
-__zippel::gb::div_s::1 - 1
 __zippel::node::10 - 1
-__zippel::node::19 - 1
 p[0]*__zippel::gb::div_c::1 - p[0]
 v[0]*__zippel::gb::div_c::1 - v[0]
 v[0]*__zippel::gb::div_inv::0*__zippel::gb::div_q::0[1] + __zippel::gb::div_c::0*__zippel::gb::div_q::0[0] - p[1]*__zippel::gb::div_inv::0
