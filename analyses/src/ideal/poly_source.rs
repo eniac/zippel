@@ -1,7 +1,6 @@
 //! `PolySource`: an owned slice of polynomial variables paired with
 //! their `ATyp`. Provides element-wise access for `Vec` types (via
-//! `at_index`), zero-padding lifts to wider types (via `lift_to`),
-//! all-slot scalar broadcast (via `broadcast_scalar_to`), and
+//! `at_index`), zero-padding lifts to wider types (via `lift_to`), and
 //! representation-aware scalar lifting for additive polynomial
 //! operations.
 
@@ -31,9 +30,8 @@ pub fn has_poly_type(typ: &ATyp) -> bool {
 /// An owned slice of polynomial variables paired with their `ATyp`.
 ///
 /// Provides element-wise access for `Vec` types (via `at_index`),
-/// zero-padding lifts to wider types (via `lift_to`), all-slot scalar
-/// broadcast (via `broadcast_scalar_to`), and representation-aware
-/// scalar lifting for additive polynomial operations.
+/// zero-padding lifts to wider types (via `lift_to`), and
+/// representation-aware scalar lifting for additive polynomial operations.
 pub struct PolySource<C: ArkConfig> {
     pub polys: Vec<Polynomial<C::F>>,
     pub typ: ATyp,
@@ -321,15 +319,6 @@ impl<C: ArkConfig> PolySource<C> {
                     self.typ, target
                 )
             }
-        }
-    }
-
-    pub fn broadcast_scalar_to(&self, poly_typ: &ATyp) -> PolySource<C> {
-        let dst_len = poly_typ.physical_len();
-        let scalar_poly = self.polys[0].clone();
-        PolySource {
-            polys: vec![scalar_poly; dst_len],
-            typ: poly_typ.clone(),
         }
     }
 
@@ -823,25 +812,6 @@ mod tests {
                 "ref lift padded slot {} should be zero",
                 j
             );
-        }
-    }
-
-    // -----------------------------------------------------------------
-    // broadcast_scalar_to
-    // -----------------------------------------------------------------
-
-    #[test]
-    fn test_broadcast_scalar_to_vpoly() {
-        let scalar_poly = Polynomial::<ark_bls12_381::Fr>::var(&Var::from_node(
-            petgraph::graph::NodeIndex::new(0),
-            ATyp::scalar(),
-            lang::typ::Qualifier::Witness,
-        ));
-        let src = PolySource::<ArkBls12_381>::new(vec![scalar_poly.clone()], ATyp::scalar());
-        let broadcast = src.broadcast_scalar_to(&ATyp::VPoly(2, 2));
-        assert_eq!(broadcast.polys.len(), 6);
-        for (i, p) in broadcast.polys.iter().enumerate() {
-            assert_eq!(*p, scalar_poly, "broadcast slot {} should be the scalar", i);
         }
     }
 }
