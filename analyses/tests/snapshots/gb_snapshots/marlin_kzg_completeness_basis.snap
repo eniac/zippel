@@ -14,13 +14,11 @@ __zippel::gb::div_q::1[1]
 __zippel::gb::div_r::0[0]
 __zippel::gb::div_r::1[0]
 __zippel::node::47 - 1
-__zippel::node::63[0] - 1
-__zippel::node::63[1] - 1
-__zippel::node::66[0] - 1
-__zippel::node::66[1] - 1
-__zippel::node::70 - 1
-__zippel::node::73 - 1
-__zippel::node::76 - 1
+__zippel::node::63 - 1
+__zippel::node::65 - 1
+__zippel::node::68 - 1
+__zippel::node::71 - 1
+__zippel::node::74 - 1
 gs[0]*tau - gs[1]
 h*tau - h_val
 ss[0]*gamma - gs[0]

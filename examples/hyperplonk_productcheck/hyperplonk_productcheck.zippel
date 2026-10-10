@@ -140,11 +140,8 @@ proto hyperplonk_productcheck<F: Field, S: Size, N: 2 ^ S>(
     product(f_evs) == claimed
         // v_evs is the honest product tree: leaves f, v[1 + 2y] = v[y]·v[y + N],
         // and v[2N - 1] = 0.
-        && reduce(&&, [v_evs[2 * i] for i in 0..N] == f_evs)
-        && reduce(
-            &&,
-            [v_evs[1 + 2 * y] for y in 0..N - 1] == [v_evs[y] * v_evs[y + N] for y in 0..N - 1],
-        )
+        && [v_evs[2 * i] for i in 0..N] == f_evs
+        && [v_evs[1 + 2 * y] for y in 0..N - 1] == [v_evs[y] * v_evs[y + N] for y in 0..N - 1]
         && v_evs[2 * N - 1] == 0
 {
     let one = f_evs[0] - f_evs[0] + 1;

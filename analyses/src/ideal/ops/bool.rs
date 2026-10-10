@@ -16,57 +16,31 @@ use super::PolySource;
 /// Encode `let b = x == y` as polynomial constraints using the standard
 /// bool encoding.
 ///
-/// For each scalar slot `j` of the LUB type of `x` and `y`:
-///   d_j = x_j - y_j
-///   d_j * inv_j + b_j - 1 = 0    (inv_j is a fresh sentinel var)
-///   d_j * b_j = 0
+/// `b` is a single `Bool` for every operand shape, vectors included, and
+/// each scalar slot `j` of the LUB type of `x` and `y` contributes
+/// `d_j = x_j - y_j` (see [`equ_leaf`]):
+///   d_j * b = 0
+///   Σ_j d_j * inv_j + b - 1 = 0    (inv_j are fresh sentinel vars)
 ///
 /// This connects `b` to `x` and `y` in the ideal, so that asserting `b`
 /// (the `where` clause or a `verify`, which adds `b - 1 = 0`) lets the GB
 /// solver reduce back to `x_j - y_j = 0` via:
-///   b_j = 1  (asserted)
-///   d_j * b_j = 0  →  d_j = 0  →  x_j - y_j = 0
-///
-/// For `Vec<Bool, N>` results, the encoding is applied element-wise.
+///   b = 1  (asserted)
+///   d_j * b = 0  →  d_j = 0  →  x_j - y_j = 0
 pub fn equ_op<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     var: &Var,
     a: &HOp<C>,
     b: &HOp<C>,
 ) {
+    assert!(
+        matches!(var.typ, ATyp::Base(ABase::Bool)),
+        "equ_op: unexpected result type {} (expected Bool)",
+        var.typ
+    );
     let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
     let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
-    equ_op_inner(ctx, var, &a_src, &b_src);
-}
-
-/// Recursively encode `==` as bool constraints. Dispatches on the result
-/// type: `Bool` is the base case (scalar bool encoding), `Vec<Bool, N>`
-/// recurses element-wise (handles nested vectors like `Vec<Vec<Bool, M>, N>`).
-fn equ_op_inner<C: ArkConfig + HasOpFactory>(
-    ctx: &mut EncodeCtx<'_, C>,
-    var: &Var,
-    a_src: &PolySource<C>,
-    b_src: &PolySource<C>,
-) {
-    match &var.typ {
-        ATyp::Base(ABase::Bool) => {
-            equ_leaf(ctx, var, a_src, b_src);
-        }
-        ATyp::Vec(_, n) => {
-            for i in 0..*n {
-                let var_i = var.clone().with_index(i).unwrap();
-                let a_elem = a_src.at_index(i).unwrap();
-                let b_elem = b_src.at_index(i).unwrap();
-                equ_op_inner(ctx, &var_i, &a_elem, &b_elem);
-            }
-        }
-        _ => {
-            panic!(
-                "equ_op: unexpected result type {} (expected Bool or Vec<Bool>)",
-                var.typ
-            );
-        }
-    }
+    equ_leaf(ctx, var, &a_src, &b_src);
 }
 
 /// The two sides `a_j == b_j` of each coefficient slot `j` of the LUB type of
@@ -148,12 +122,17 @@ mod tests {
     /// Build an ideal for `let b = a == c` with the given operand type.
     /// Returns (var_a, var_c, var_b, ideal).
     fn equ_ideal(operand_typ: ATyp) -> (Var, Var, Var, Ideal<ArkBls12_381>) {
+        equ_ideal_mixed(operand_typ.clone(), operand_typ)
+    }
+
+    /// [`equ_ideal`] with separate operand types for `a` and `c`.
+    fn equ_ideal_mixed(a_typ: ATyp, c_typ: ATyp) -> (Var, Var, Var, Ideal<ArkBls12_381>) {
         let mut builder = IdealBuilder::<ArkBls12_381>::new();
         let mut ideal = Ideal::<ArkBls12_381>::new();
 
-        let var_a = Var::from_node(NodeIndex::new(0), operand_typ.clone(), Qualifier::Instance);
+        let var_a = Var::from_node(NodeIndex::new(0), a_typ.clone(), Qualifier::Instance);
         ideal.register(&var_a);
-        let var_c = Var::from_node(NodeIndex::new(1), operand_typ.clone(), Qualifier::Instance);
+        let var_c = Var::from_node(NodeIndex::new(1), c_typ.clone(), Qualifier::Instance);
         ideal.register(&var_c);
 
         let var_b = Var::from_node(
@@ -163,8 +142,8 @@ mod tests {
         );
         ideal.register(&var_b);
 
-        let a_op = mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), operand_typ.clone()));
-        let c_op = mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), operand_typ));
+        let a_op = mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), a_typ));
+        let c_op = mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), c_typ));
         let op: GOp<ArkBls12_381> =
             Op::Bin(BinOp::Equ, a_op, c_op, ATyp::Base(backend::ABase::Bool));
         builder.add_op(var_b.clone(), op, &mut ideal);
@@ -264,6 +243,72 @@ mod tests {
                 &expected_db(&ai, &ci, &var_b),
                 &format!("d_{i}*b (regression: was only d_0*b)"),
             );
+        }
+    }
+
+    #[test]
+    fn test_equ_vec_single_bool() {
+        // Vec(F, 3) == Vec(F, 3): one Bool `b` over 3 slots, so
+        // d_i * b = 0 for each i plus a single aggregate, not 3 bools.
+        let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 3);
+        let (var_a, var_c, var_b, ideal) = equ_ideal(vec_t);
+        assert_eq!(
+            ideal.generating_set.len(),
+            4,
+            "Vec(F,3) equ should produce 3 slot constraints and 1 aggregate"
+        );
+        for i in 0..3 {
+            let ai = var_a.clone().with_index(i).unwrap();
+            let ci = var_c.clone().with_index(i).unwrap();
+            assert_contains(&ideal, &expected_db(&ai, &ci, &var_b), &format!("d_{i}*b"));
+        }
+    }
+
+    #[test]
+    fn test_equ_nested_vec_single_bool() {
+        // Vec(Vec(F, 2), 2) == Vec(Vec(F, 2), 2): 4 slots under one Bool.
+        let row_t = ATyp::Vec(Box::new(ATyp::scalar()), 2);
+        let mat_t = ATyp::Vec(Box::new(row_t), 2);
+        let (var_a, var_c, var_b, ideal) = equ_ideal(mat_t);
+        assert_eq!(ideal.generating_set.len(), 5);
+        for i in 0..2 {
+            for j in 0..2 {
+                let aij = var_a.clone().with_index(i).unwrap().with_index(j).unwrap();
+                let cij = var_c.clone().with_index(i).unwrap().with_index(j).unwrap();
+                assert_contains(
+                    &ideal,
+                    &expected_db(&aij, &cij, &var_b),
+                    &format!("d_{i}{j}*b"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_equ_vec_of_polys_lifts_each_element() {
+        // Vec(Uni(1), 2) == Vec(Uni(2), 2): each element of `a` is zero-padded
+        // to Uni(2), so every element contributes 3 slots and the padded top
+        // coefficient compares 0 against c[i][2].
+        let (var_a, var_c, var_b, ideal) = equ_ideal_mixed(
+            ATyp::Vec(Box::new(ATyp::Uni(1)), 2),
+            ATyp::Vec(Box::new(ATyp::Uni(2)), 2),
+        );
+        assert_eq!(ideal.generating_set.len(), 7);
+        for i in 0..2 {
+            let a_i = var_a.clone().with_index(i).unwrap();
+            let c_i = var_c.clone().with_index(i).unwrap();
+            for j in 0..2 {
+                let aij = a_i.clone().with_index(j).unwrap();
+                let cij = c_i.clone().with_index(j).unwrap();
+                assert_contains(
+                    &ideal,
+                    &expected_db(&aij, &cij, &var_b),
+                    &format!("d_{i}{j}*b"),
+                );
+            }
+            let c_top = c_i.with_index(2).unwrap();
+            let padded = &(&Poly::zero() - &Poly::var(&c_top)) * &Poly::var(&var_b);
+            assert_contains(&ideal, &padded, &format!("d_{i}2*b"));
         }
     }
 }

@@ -22,14 +22,9 @@ __zippel::node::28 - 1
 __zippel::node::32 - 1
 __zippel::node::39 - 1
 __zippel::node::68 - 1
-__zippel::node::71[0] - 1
-__zippel::node::71[1] - 1
-__zippel::node::71[2] - 1
-__zippel::node::71[3] - 1
-__zippel::node::76[0] - 1
-__zippel::node::76[1] - 1
-__zippel::node::81[0] - 1
-__zippel::node::81[1] - 1
+__zippel::node::71 - 1
+__zippel::node::75 - 1
+__zippel::node::79 - 1
 g_gen*__zippel::node::55 - h2[0]
 g_gen*__zippel::node::56 - h2[1]
 h2[0]*__zippel::node::52 - h1[0]

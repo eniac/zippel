@@ -145,14 +145,11 @@ proto hyperplonk_multiset<F: Field, S: Size, N: 2 ^ S>(
     let g_shift = [r + g_evs[i] for i in 0..N];
     reduce(*, f_shift) == reduce(*, g_shift)
         // r + g[i] is nonzero, witnessed by its inverse.
-        && reduce(&&, [g_shift[i] * g_shift_inv[i] for i in 0..N] == [1 for _ in 0..N])
+        && [g_shift[i] * g_shift_inv[i] for i in 0..N] == [1 for _ in 0..N]
         // v_evs is the honest rational product tree: leaves f_shift/g_shift,
         // v[1 + 2y] = v[y]·v[y + N], and v[2N - 1] = 0.
-        && reduce(&&, [v_evs[2 * i] * g_shift[i] for i in 0..N] == f_shift)
-        && reduce(
-            &&,
-            [v_evs[1 + 2 * y] for y in 0..N - 1] == [v_evs[y] * v_evs[y + N] for y in 0..N - 1],
-        )
+        && [v_evs[2 * i] * g_shift[i] for i in 0..N] == f_shift
+        && [v_evs[1 + 2 * y] for y in 0..N - 1] == [v_evs[y] * v_evs[y + N] for y in 0..N - 1]
         && v_evs[2 * N - 1] == 0
 {
     let one = f_evs[0] - f_evs[0] + 1;

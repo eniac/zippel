@@ -52,22 +52,9 @@ __zippel::node::122 - 1
 __zippel::node::161 - 1
 __zippel::node::164 - 1
 __zippel::node::172 - 1
-__zippel::node::174[0] - 1
-__zippel::node::174[1] - 1
-__zippel::node::174[2] - 1
-__zippel::node::174[3] - 1
-__zippel::node::174[4] - 1
-__zippel::node::174[5] - 1
-__zippel::node::174[6] - 1
-__zippel::node::174[7] - 1
-__zippel::node::179[0] - 1
-__zippel::node::179[1] - 1
-__zippel::node::179[2] - 1
-__zippel::node::179[3] - 1
-__zippel::node::179[4] - 1
-__zippel::node::179[5] - 1
-__zippel::node::179[6] - 1
-__zippel::node::183 - 1
+__zippel::node::174 - 1
+__zippel::node::178 - 1
+__zippel::node::181 - 1
 __zippel::node::74 - 1
 v_evs[0]*v_evs[8] - v_evs[1]
 v_evs[15]

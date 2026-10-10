@@ -287,10 +287,10 @@ proto spartan<G: Group, F: Scalar<G>, M: Size>(
     // R1CS: (A·z) ∘ (B·z) == C·z for z = w ++ io ++ [1], with az, bz, cz the
     // three products.
     let z = w ++ io ++ [1];
-    reduce(&&, az * bz == cz)
-        && reduce(&&, az == mat_vec(mat_a_t, z))
-        && reduce(&&, bz == mat_vec(mat_b_t, z))
-        && reduce(&&, cz == mat_vec(mat_c_t, z))
+    az * bz == cz
+        && az == mat_vec(mat_a_t, z)
+        && bz == mat_vec(mat_b_t, z)
+        && cz == mat_vec(mat_c_t, z)
 {
     let r_rows = [random<F> for _ in 0..2 ^ ((M - 1) / 2)];
     c_rows <- [

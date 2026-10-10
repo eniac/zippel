@@ -1319,6 +1319,36 @@ fn test_verify_inference() {
     );
 }
 
+/// `==` on vectors is whole-value equality: one `Bool`, at any nesting depth,
+/// that `verify` accepts directly and `reduce(&&, _)` no longer takes.
+#[test]
+fn test_vector_equality_is_single_bool() {
+    let fctx = Set::new();
+    let mut vctx = VAR_CTX.clone();
+    let f_t = CTyp::Base(Tid::from("F"));
+    let row_t = CTyp::vec(&f_t, 2);
+    vctx.insert(&Vid::from("v"), &CTyp::vec(&f_t, 3));
+    vctx.insert(&Vid::from("w"), &CTyp::vec(&f_t, 3));
+    vctx.insert(&Vid::from("short"), &CTyp::vec(&f_t, 2));
+    vctx.insert(&Vid::from("m1"), &CTyp::vec(&row_t, 3));
+    vctx.insert(&Vid::from("m2"), &CTyp::vec(&row_t, 3));
+
+    let flat = bin(BinOp::Equ, varstr("v"), varstr("w"));
+    assert_eq!(flat.infer(&KIND_CTX, &fctx, &vctx), Ok(CTyp::Bool));
+
+    let nested = bin(BinOp::Equ, varstr("m1"), varstr("m2"));
+    assert_eq!(nested.infer(&KIND_CTX, &fctx, &vctx), Ok(CTyp::Bool));
+
+    let verify_exp = verify_eq(varstr("m1"), varstr("m2"));
+    assert_eq!(verify_exp.infer(&KIND_CTX, &fctx, &vctx), Ok(CTyp::Unit));
+
+    let reduced = reduce(BinOp::And, bin(BinOp::Equ, varstr("v"), varstr("w")));
+    assert!(reduced.infer(&KIND_CTX, &fctx, &vctx).is_err());
+
+    let mismatched = bin(BinOp::Equ, varstr("v"), varstr("short"));
+    assert!(mismatched.infer(&KIND_CTX, &fctx, &vctx).is_err());
+}
+
 #[test]
 fn test_record_nested_inference() {
     let fctx = Set::new();

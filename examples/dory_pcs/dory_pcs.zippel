@@ -258,10 +258,10 @@ proto dory_pcs<
         && g1_0 == g1_vec[0]
         && g2_0 == g2_vec[0]
         && ht == pair(h1, h2)
-        && reduce(&&, chi == chi_vec(g1_vec, g2_vec))
-        && reduce(&&, delta_1l == [chi[0] - chi[0]] ++ chi[0..K])
-        && reduce(&&, delta_1r == delta_1r_vec(g1_vec, g2_vec))
-        && reduce(&&, delta_2r == delta_2r_vec(g1_vec, g2_vec))
+        && chi == chi_vec(g1_vec, g2_vec)
+        && delta_1l == [chi[0] - chi[0]] ++ chi[0..K]
+        && delta_1r == delta_1r_vec(g1_vec, g2_vec)
+        && delta_2r == delta_2r_vec(g1_vec, g2_vec)
 {
     // Commit: row commitments T[i] = <M[i], Γ1>, then C = <T, Γ2>
     let rows = [dot([m[i * NV + j] for j in 0..NV], g1_vec) for i in 0..NV];

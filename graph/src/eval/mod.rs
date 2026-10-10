@@ -593,21 +593,7 @@ where
                     let bv_owned = Arc::unwrap_or_clone(bv);
                     av_owned.value_concat(bv_owned)
                 }
-                BinOp::Equ => {
-                    if is_vector_value(av_ref) && is_vector_value(&bv) {
-                        let a_elems = av_ref.clone().into_elements();
-                        let b_elems = bv.as_ref().clone().into_elements();
-                        Value::value_vec(
-                            a_elems
-                                .into_iter()
-                                .zip(b_elems)
-                                .map(|(a, b)| Value::Bool(Value::equ(&a, &b)))
-                                .collect::<Vec<_>>(),
-                        )
-                    } else {
-                        Value::Bool(Value::equ(av_ref, &bv))
-                    }
-                }
+                BinOp::Equ => Value::Bool(Value::equ(av_ref, &bv)),
                 // && is multiplication in the GB encoding (Bool values are 0/1).
                 // Op::bin() routes And to Mul, so this arm is only reached if
                 // an And op was constructed directly.
@@ -951,5 +937,37 @@ mod tests {
         let mut check_sink = Vec::new();
         let result = eval_op(&op, &env, &mut rng, &mut check_sink).unwrap();
         assert_eq!(*result, TestValue::Scalar(Fr::from(42)));
+    }
+
+    /// `==` on vectors evaluates to one `Bool` over all elements, nested or not.
+    #[test]
+    fn test_eval_vector_equality_is_single_bool() {
+        let scalars = |xs: &[u64]| TestValue::VecScalar(xs.iter().map(|&x| Fr::from(x)).collect());
+        let equ = |a: TestValue, b: TestValue| {
+            let op = mk::<ArkBn254>(Op::Bin(
+                BinOp::Equ,
+                mk::<ArkBn254>(Op::Value(a)),
+                mk::<ArkBn254>(Op::Value(b)),
+                ATyp::bool(),
+            ));
+            let mut check_sink = Vec::new();
+            let env = HashMap::new();
+            Arc::unwrap_or_clone(
+                eval_op(&op, &env, &mut ThreadRng::default(), &mut check_sink).unwrap(),
+            )
+        };
+
+        assert_eq!(
+            equ(scalars(&[1, 2, 3]), scalars(&[1, 2, 3])),
+            TestValue::Bool(true)
+        );
+        assert_eq!(
+            equ(scalars(&[1, 2, 3]), scalars(&[1, 2, 4])),
+            TestValue::Bool(false)
+        );
+
+        let nested = |last: u64| TestValue::Vec(vec![scalars(&[1, 2]), scalars(&[3, last])]);
+        assert_eq!(equ(nested(4), nested(4)), TestValue::Bool(true));
+        assert_eq!(equ(nested(4), nested(5)), TestValue::Bool(false));
     }
 }

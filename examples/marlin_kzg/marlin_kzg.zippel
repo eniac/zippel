@@ -24,8 +24,8 @@ proto marlin_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N
 ) where
     let tau = random<F>;
     let gamma = random<F>;
-    reduce(&&, ss == [tau ^ i * g for i in 0..N])
-        && reduce(&&, gs == [tau ^ i * gamma_g for i in 0..N])
+    ss == [tau ^ i * g for i in 0..N]
+        && gs == [tau ^ i * gamma_g for i in 0..N]
         && gamma_g == gamma * g
         && h_val == tau * h
         && p_val(z) == y
