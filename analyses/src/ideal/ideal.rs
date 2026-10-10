@@ -10,6 +10,7 @@ use backend::op::HasOpFactory;
 use graph::Ref;
 use share::{Ctx, Set};
 
+use super::Substitution;
 use crate::Var;
 use crate::frontend::Polynomial;
 
@@ -86,105 +87,24 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         vars
     }
 
-    /// Inline all `pl` definitions into the basis polynomials and the checks.
+    /// Substitute the `pl` definitions into the generators and both sides of
+    /// every check, and return them resolved.
     ///
-    /// Topologically sorts `pl` entries, substitutes dependencies into
-    /// each other to resolve chains, then substitutes the resolved
-    /// definitions into all basis polynomials and both sides of every check.
-    /// Clears `pl` afterwards.
-    pub fn inline(&mut self, transcript_refs: &Set<Ref>) {
-        if self.pl.is_empty() {
-            return;
-        }
-
-        let pl_keys: Set<Var> = self.pl.keys();
-        let mut order: Vec<Var> = Vec::with_capacity(pl_keys.len());
-        let mut resolved: Set<Var> = Set::new();
-        let mut inlineable: Set<Var> = pl_keys.clone();
-        inlineable.retain(|k| !transcript_refs.contains(&k.reference));
-        let mut remaining: Vec<(Var, usize)> = inlineable
-            .iter()
-            .map(|k| {
-                let deps = self.pl[k]
-                    .terms
-                    .keys()
-                    .flat_map(|t| t.vars())
-                    .filter(|v| inlineable.contains(v))
-                    .count();
-                (k.clone(), deps)
-            })
-            .collect();
-
-        loop {
-            let mut next_remaining = Vec::new();
-            let mut made_progress = false;
-            for (k, deps) in remaining {
-                if deps == 0 {
-                    order.push(k.clone());
-                    resolved.insert(k.clone());
-                    made_progress = true;
-                } else {
-                    let new_deps = self.pl[&k]
-                        .terms
-                        .keys()
-                        .flat_map(|t| t.vars())
-                        .filter(|v| inlineable.contains(v) && !resolved.contains(v))
-                        .count();
-                    if new_deps < deps {
-                        made_progress = true;
-                    }
-                    next_remaining.push((k, new_deps));
-                }
-            }
-            remaining = next_remaining;
-            if !made_progress {
-                for (k, _) in remaining {
-                    order.push(k);
-                }
-                break;
-            }
-            if remaining.is_empty() {
-                break;
-            }
-        }
-
-        for k in &order {
-            if let Some(def) = self.pl.remove(k) {
-                let (new_def, _) = def.inline_vars(&self.pl);
-                self.pl.insert(k, &new_def);
-            }
-        }
-
-        // save transcript vars
-        let mut saved: Vec<(Var, Polynomial<C::F>)> = Vec::new();
-        for k in pl_keys.iter() {
-            if transcript_refs.contains(&k.reference)
-                && let Some(v) = self.pl.remove(k)
-            {
-                let (new_v, _) = v.inline_vars(&self.pl);
-                saved.push((k.clone(), new_v));
-            }
-        }
-
-        // fully inline all non-transcript vars
-        for p in self.generating_set.iter_mut() {
-            let (new_p, _) = p.clone().inline_vars(&self.pl);
-            *p = new_p;
+    /// Empties `pl` and drops the generators that become zero. A definition
+    /// that [`Substitution::resolve`] leaves out stays a variable, which its
+    /// generator `f − x` still defines.
+    pub fn inline(&mut self) -> Substitution<C::F> {
+        let defs = Substitution::resolve(&std::mem::take(&mut self.pl));
+        for p in &mut self.generating_set {
+            *p = defs.apply(p);
         }
         self.generating_set.retain(|p| !p.is_zero());
         // Checks keep their sides even when equal: a check that holds is still a check.
         for check in &mut self.checks {
-            check.lhs = check.lhs.clone().inline_vars(&self.pl).0;
-            check.rhs = check.rhs.clone().inline_vars(&self.pl).0;
+            check.lhs = defs.apply(&check.lhs);
+            check.rhs = defs.apply(&check.rhs);
         }
-
-        for (k, v) in saved {
-            self.pl.insert(&k, &v);
-        }
-
-        for k in &order {
-            self.pl.remove(k);
-        }
+        defs
     }
 
     /// Merge another ideal's basis, checks and polynomial definitions into this ideal.
@@ -265,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn inline_substitutes_into_checks_but_not_messages() {
+    fn inline_substitutes_resolved_definitions_and_returns_them() {
         use ark_bls12_381::Fr;
         use ark_ff::One;
 
@@ -280,31 +200,38 @@ mod tests {
                 Qualifier::Instance,
             )
         };
-        let (a, s, t) = (var("a", 0), var("s", 1), var("t", 2));
-        let a_plus_1 = &Polynomial::<Fr>::var(&a) + &Polynomial::lit(&Fr::one());
+        let (a, b, s, t) = (var("a", 0), var("b", 1), var("s", 2), var("t", 3));
+        let v = |x: &Var| Polynomial::<Fr>::var(x);
+        let a_plus_1 = &v(&a) + &Polynomial::lit(&Fr::one());
+        let t_value = &a_plus_1 * &a_plus_1;
 
-        // `s := a + 1` is a local definition, `t := a*a` a message.
+        // `t := s*s` reads `s := a + 1`.
         let mut ideal = Ideal::<ArkBls12_381>::new();
         ideal.pl.insert(&s, &a_plus_1);
-        ideal
-            .pl
-            .insert(&t, &(&Polynomial::var(&a) * &Polynomial::var(&a)));
+        ideal.pl.insert(&t, &(&v(&s) * &v(&s)));
+        ideal.generating_set.push(&v(&t) - &v(&b));
+        ideal.generating_set.push(&v(&t) - &(&v(&s) * &v(&s)));
         ideal.checks.push(Check {
-            lhs: Polynomial::var(&s),
-            rhs: Polynomial::var(&t),
+            lhs: v(&s),
+            rhs: v(&t),
         });
         ideal.checks.push(Check {
-            lhs: Polynomial::var(&s),
+            lhs: v(&s),
             rhs: a_plus_1.clone(),
         });
 
-        let mut messages = Set::new();
-        messages.insert(t.reference);
-        ideal.inline(&messages);
+        let defs = ideal.inline();
 
+        assert!(ideal.pl.is_empty());
+        assert_eq!(defs.apply(&v(&t)), t_value);
+        assert_eq!(
+            ideal.generating_set,
+            [&t_value - &v(&b)],
+            "a generator that becomes zero is dropped"
+        );
         assert_eq!(ideal.checks.len(), 2, "a check that holds is still a check");
         assert_eq!(ideal.checks[0].lhs, a_plus_1);
-        assert_eq!(ideal.checks[0].rhs, Polynomial::var(&t));
+        assert_eq!(ideal.checks[0].rhs, t_value);
         assert_eq!(ideal.checks[1].lhs, a_plus_1);
         assert_eq!(ideal.checks[1].rhs, a_plus_1);
     }

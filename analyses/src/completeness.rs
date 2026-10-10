@@ -1,17 +1,13 @@
-use ark_ff::PrimeField;
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
-use share::{Ctx, Set};
 
 use crate::TransClos;
-use crate::Var;
 use crate::backend::{GbBackendKind, GbBasis};
 use crate::error::AnalysisError;
 use crate::extractor::extract_locals;
 use crate::frontend::{MonoOrder, Polynomial};
 use crate::ideal::{Check, IdealBuilder};
 use graph::QDag;
-use graph::Ref;
 
 /// Inputs to the Gröbner basis computation: the generating set (prover ∪
 /// relation ∪ verifier-locals, after inlining) and the verifier
@@ -34,18 +30,6 @@ pub struct CompletenessInputs<F: ark_ff::PrimeField> {
     /// `verifier`, a check stays when the substitution discharges it, so it
     /// is what to report.
     pub checks: Vec<Check<F>>,
-}
-
-/// Substitute `defs` into every polynomial, dropping those that vanish.
-fn substitute<F: PrimeField>(
-    polys: Vec<Polynomial<F>>,
-    defs: &Ctx<Var, Polynomial<F>>,
-) -> Vec<Polynomial<F>> {
-    polys
-        .into_iter()
-        .map(|p| p.inline_vars(defs).0)
-        .filter(|p| !p.is_zero())
-        .collect()
 }
 
 /// Perform a completeness analysis using Groebner bases.
@@ -76,28 +60,35 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         let rel_result = builder.build(TransClos::relation(dag));
         prover_result.merge(&rel_result);
 
-        let transcript_refs: Set<Ref> = dag.transcript_nodes().into_iter().map(Ref::new).collect();
-        prover_result.inline(&transcript_refs);
+        // The prover's and the relation's definitions, the prover messages included.
+        let prover_defs = prover_result.inline();
 
         let verifier_tc = TransClos::verifier(dag);
         let mut verifier_locals = extract_locals(&builder, &verifier_tc);
-        verifier_locals.inline(&Set::new());
+        verifier_locals.inline();
 
         let mut verifier_result = builder.build(verifier_tc);
-        verifier_result.inline(&Set::new());
+        verifier_result.inline();
 
-        // Merge verifier_locals into prover generating set.
+        // The verifier reads the prover messages as variables, which the
+        // prover's definitions replace.
         let mut generating_set = prover_result.generating_set;
-        generating_set.extend(verifier_locals.generating_set);
-
-        // `inline` kept the prover-message definitions back in `pl`, already
-        // resolved down to non-message variables.
-        generating_set = substitute(generating_set, &prover_result.pl);
-        let mut verifier = substitute(verifier_result.generating_set, &prover_result.pl);
+        generating_set.extend(
+            verifier_locals
+                .generating_set
+                .iter()
+                .map(|p| prover_defs.apply(p))
+                .filter(|p| !p.is_zero()),
+        );
 
         // verifier_locals keeps the `==` node under each `verify`, so its
         // encoding is already a generator; reducing it again is wasted work.
-        verifier.retain(|p| !generating_set.contains(p));
+        let verifier = verifier_result
+            .generating_set
+            .iter()
+            .map(|p| prover_defs.apply(p))
+            .filter(|p| !p.is_zero() && !generating_set.contains(p))
+            .collect();
 
         CompletenessInputs {
             generating_set,
@@ -1166,6 +1157,32 @@ mod tests {
         assert!(
             ca.run().is_ok(),
             "message defined via an earlier message should be complete"
+        );
+    }
+
+    #[test]
+    fn a_definition_that_reads_a_message_resolves_through_it() {
+        // `z` reads the message `m`, whose definition reads the local `n`.
+        // Resolved all the way down, `z` and `m + n` are the same polynomial,
+        // so the substitution discharges the check.
+        let ex = r#"
+            proto through<F: Field>(instance a: F) where a == a {
+                c <- challenge<F>;
+                let n = a + c;
+                m <- n * c;
+                z <- m + n;
+                verify(z == m + n)
+            }"#;
+
+        let m = parse_and_concretize(ex, &Ctx::new());
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        let inputs = CompletenessAnalysis::build_inputs(&g);
+        assert!(
+            inputs.verifier.is_empty(),
+            "left to reduce: {:?}",
+            inputs.verifier
         );
     }
 
