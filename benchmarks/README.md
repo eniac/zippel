@@ -218,8 +218,33 @@ non-comment, non-blank lines.
 (or verifier) call, counted from zero at the call's start: every buffer the
 call allocates counts, even one freed before it returns, while memory that
 was already live (the proving key, SRS, witness and other inputs both sides
-hold) does not. For zippel this includes the runtime's own copy of its
-inputs and every intermediate value it keeps during the run.
+hold) does not. For zippel this includes every intermediate value it keeps
+during the run.
+
+Both sides keep their inputs. The native provers and verifiers borrow
+theirs; zippel's take inputs by value, so the harness hands each run clones
+of the arguments it reads (and of the proof, for the verifier), made as the
+run collects them. Cloning a vector value shares its buffer, so the harness
+still holds every input and the run frees nothing that was live before it
+started: like the native side, zippel is never credited for freeing its
+witness, SRS or proof. (A deployment that hands its witness to the prover
+without keeping a clone lets the run free it after its last reader; that
+lowers the process's high-water mark by the witness size, but it is a
+property of the by-value API, not of the runtime, and is not measured.)
+
+The rules every measurement follows, on both sides:
+
+- A measured call frees nothing that was live before it started (checked by
+  tracking the counter's minimum, which is 0 for every run).
+- Whatever a call consumes or needs is made inside it: transcripts and
+  sponges, and copies of inputs a call consumes (native IPA's verifier folds
+  a copy of its bases; libspartan's `prove` takes its witness by value).
+- Both sides do the same work inside the call. Where the zippel protocol
+  takes a derived witness as input that the native prover computes itself,
+  the harness computes it inside zippel's measured call: Groth16's
+  `h_coeffs`, PARI's four sparse matrix-vector products, Spartan's
+  `Az`/`Bz`/`Cz`, DeKART's bit decomposition. Nothing is subtracted
+  afterwards.
 
 The counter is off during the timed samples; each measurement adds
 `BENCH_SAMPLES` untimed prover runs and as many untimed verifier runs with

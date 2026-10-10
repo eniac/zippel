@@ -162,8 +162,7 @@ pub fn run(opts: &common::RunOptions) {
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile(&Ctx::new());
 
-    let inputs = prover_create_inputs();
-    common::run_prover_and_verify(&mut handler, &inputs);
+    common::run_prover_and_verify(&mut handler, prover_create_inputs());
 
     if !opts.analyses {
         return;
@@ -179,7 +178,7 @@ pub fn run(opts: &common::RunOptions) {
     );
 }
 
-fn prover_create_inputs() -> Inputs<ArkBls12_381> {
+fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
     let x = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
     let g = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
@@ -187,10 +186,10 @@ fn prover_create_inputs() -> Inputs<ArkBls12_381> {
         .into_iter()
         .next()
         .unwrap();
-    Inputs::from_iter([
-        ("x", Value::Scalar(x)),
-        ("g", Value::G1(g)),
-        ("h", Value::G1Affine(h)),
+    Ctx::from_iter([
+        (Vid::from("x"), Value::Scalar(x)),
+        (Vid::from("g"), Value::G1(g)),
+        (Vid::from("h"), Value::G1Affine(h)),
     ])
 }
 ```

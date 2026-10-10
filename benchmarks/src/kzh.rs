@@ -65,12 +65,13 @@ pub mod zippel_side {
     use backend::{ArkBls12_381, PreparedG2Vec, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
+    use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs: Inputs<ArkBls12_381>,
+        inputs: HashMap<Vid, Value<ArkBls12_381>>,
         compile_time: Vec<std::time::Duration>,
     }
 
@@ -88,7 +89,7 @@ pub mod zippel_side {
                 handler
             });
 
-            let inputs = Inputs::from_iter(
+            let inputs = HashMap::from_iter(
                 [
                     ("f", Value::vec_scalar(sh.f.clone())),
                     ("x0", Value::vec_scalar(sh.point[..nx].to_vec())),
@@ -130,16 +131,10 @@ pub mod zippel_side {
         /// # Panics
         /// Panics if either graph fails to execute or the verifier rejects.
         pub fn time_protocol(&mut self) -> Timing {
-            let (prove, prove_peak, proof) = crate::sample(|| {
-                self.handler
-                    .run_prover(&self.inputs)
-                    .expect("run_prover failed")
-            });
-            let (verify, verify_peak, result) = crate::sample(|| {
-                self.handler
-                    .run_verifier(&proof, &self.inputs)
-                    .expect("run_verifier failed")
-            });
+            let (prove, prove_peak, proof) =
+                crate::sample_zippel_prover(&mut self.handler, &self.inputs);
+            let (verify, verify_peak, result) =
+                crate::sample_zippel_verifier(&mut self.handler, &proof, &self.inputs);
             assert!(
                 check_verification(&result),
                 "zippel KZH-2 verification FAILED"

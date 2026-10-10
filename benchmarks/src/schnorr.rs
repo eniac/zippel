@@ -21,8 +21,9 @@ pub mod zippel_side {
     use backend::{ArkBls12_381, ArkConfig, ArkGroupOps, Value};
     use lang::id::Vid;
     use share::Ctx;
+    use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     /// The compiled Schnorr protocol. It takes no size parameters, so the only
     /// per-instance state is the handler and the measured compile time.
@@ -84,19 +85,16 @@ pub mod zippel_side {
             let g = G1::rand(&mut rng);
             let h_affines = G1Ops::vec_mul(&g, &[x]);
             let h = h_affines.into_iter().next().unwrap();
-            let inputs = Inputs::<ArkBls12_381>::from_iter([
+            let inputs = HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
                 (Vid("x".to_string()), Value::Scalar(x)),
                 (Vid("g".to_string()), Value::G1(g)),
                 (Vid("h".to_string()), Value::G1Affine(h)),
             ]);
 
             let (prove, prove_peak, proof) =
-                crate::sample(|| self.handler.run_prover(&inputs).expect("run_prover failed"));
-            let (verify, verify_peak, result) = crate::sample(|| {
-                self.handler
-                    .run_verifier(&proof, &inputs)
-                    .expect("run_verifier failed")
-            });
+                crate::sample_zippel_prover(&mut self.handler, &inputs);
+            let (verify, verify_peak, result) =
+                crate::sample_zippel_verifier(&mut self.handler, &proof, &inputs);
             assert!(
                 check_verification(&result),
                 "zippel schnorr verification FAILED"

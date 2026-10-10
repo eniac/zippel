@@ -708,65 +708,42 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
             // `produce_synthetic_r1cs` + `NIZKGens::new` are pure setup
             // (libspartan with the multicore feature uses rayon, so the
             // install routes them onto every core).
-            let (inst, vars, inputs, gens, inst_bytes, inputs_bytes, n_matvec) = setup_pool()
-                .install(|| {
-                    let (inst, vars, inputs) =
-                        Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
-                    let n_matvec = {
-                        let mut best = Duration::MAX;
-                        for _ in 0..3 {
-                            let t0 = Instant::now();
-                            let sat = inst.is_sat(&vars, &inputs).expect("is_sat");
-                            let dt = t0.elapsed();
-                            assert!(sat);
-                            if dt < best {
-                                best = dt;
-                            }
-                        }
-                        best
-                    };
-                    let gens = NIZKGens::new(num_cons, num_vars, num_inputs);
-                    let inst_bytes = vec![0u8; 3 * num_cons * 40];
-                    let inputs_bytes = bincode::serialize(&inputs).expect("serialize inputs");
-                    (inst, vars, inputs, gens, inst_bytes, inputs_bytes, n_matvec)
-                });
+            let (inst, vars, inputs, gens, inst_bytes, inputs_bytes) = setup_pool().install(|| {
+                let (inst, vars, inputs) =
+                    Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
+                let gens = NIZKGens::new(num_cons, num_vars, num_inputs);
+                let inst_bytes = vec![0u8; 3 * num_cons * 40];
+                let inputs_bytes = bincode::serialize(&inputs).expect("serialize inputs");
+                (inst, vars, inputs, gens, inst_bytes, inputs_bytes)
+            });
 
-            // Each prover run gets a fresh transcript (NIZK::prove takes
-            // &mut and consumes it), made outside the timer; the
-            // matrix-vector product libspartan repeats inside prove is
-            // subtracted from every sample.
-            let (native_prove, native_prove_peak, proof) = benchmarks::sample_with(
-                || Transcript::new(b"bench_all_spartan"),
-                |mut pt| {
-                    {
-                        let mut bind = Transcript::new(b"matrix_bind");
-                        bind.append_message(b"inst", &inst_bytes);
-                        bind.append_message(b"io", &inputs_bytes);
-                    }
-                    timed_pool()
-                        .install(|| NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt))
-                },
-            );
-            let native_prove = native_prove
-                .into_iter()
-                .map(|t| t.saturating_sub(n_matvec))
-                .collect();
+            // Each run makes its transcript inside the timer and the heap
+            // count, as zippel makes its sponge inside each run. The prover
+            // computes Az, Bz, Cz inside `prove`; zippel's harness computes
+            // them inside its timed call too (see `spartan::Setup`).
+            // `prove` takes the witness by value, so a caller that keeps it
+            // copies it per run, inside the measurement.
+            let (native_prove, native_prove_peak, proof) = benchmarks::sample(|| {
+                let mut pt = Transcript::new(b"bench_all_spartan");
+                {
+                    let mut bind = Transcript::new(b"matrix_bind");
+                    bind.append_message(b"inst", &inst_bytes);
+                    bind.append_message(b"io", &inputs_bytes);
+                }
+                timed_pool().install(|| NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt))
+            });
 
-            // A fresh transcript per verifier run (libspartan's verify
-            // takes &mut transcript).
-            let (native_verify, native_verify_peak, ()) = benchmarks::sample_with(
-                || Transcript::new(b"bench_all_spartan"),
-                |mut vt| {
-                    {
-                        let mut bind = Transcript::new(b"matrix_bind");
-                        bind.append_message(b"inst", &inst_bytes);
-                        bind.append_message(b"io", &inputs_bytes);
-                    }
-                    timed_pool()
-                        .install(|| proof.verify(&inst, &inputs, &mut vt, &gens))
-                        .expect("verify");
-                },
-            );
+            let (native_verify, native_verify_peak, ()) = benchmarks::sample(|| {
+                let mut vt = Transcript::new(b"bench_all_spartan");
+                {
+                    let mut bind = Transcript::new(b"matrix_bind");
+                    bind.append_message(b"inst", &inst_bytes);
+                    bind.append_message(b"io", &inputs_bytes);
+                }
+                timed_pool()
+                    .install(|| proof.verify(&inst, &inputs, &mut vt, &gens))
+                    .expect("verify");
+            });
 
             let native = Timing {
                 prove: native_prove,
@@ -794,29 +771,25 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                     (ark_inst, ark_vars, ark_inputs, ark_gens)
                 });
 
-                let (ark_prove, ark_prove_peak, proof) = benchmarks::sample_with(
-                    || Transcript::new(b"bench_all_spartan_ark"),
-                    |mut pt| {
-                        timed_pool().install(|| {
-                            ArkNIZK::<C25519>::prove(
-                                &ark_inst,
-                                ark_vars.clone(),
-                                &ark_inputs,
-                                &ark_gens,
-                                &mut pt,
-                            )
-                        })
-                    },
-                );
+                let (ark_prove, ark_prove_peak, proof) = benchmarks::sample(|| {
+                    let mut pt = Transcript::new(b"bench_all_spartan_ark");
+                    timed_pool().install(|| {
+                        ArkNIZK::<C25519>::prove(
+                            &ark_inst,
+                            ark_vars.clone(),
+                            &ark_inputs,
+                            &ark_gens,
+                            &mut pt,
+                        )
+                    })
+                });
 
-                let (ark_verify, ark_verify_peak, ()) = benchmarks::sample_with(
-                    || Transcript::new(b"bench_all_spartan_ark"),
-                    |mut vt| {
-                        timed_pool()
-                            .install(|| proof.verify(&ark_inst, &ark_inputs, &mut vt, &ark_gens))
-                            .expect("ark-spartan verify");
-                    },
-                );
+                let (ark_verify, ark_verify_peak, ()) = benchmarks::sample(|| {
+                    let mut vt = Transcript::new(b"bench_all_spartan_ark");
+                    timed_pool()
+                        .install(|| proof.verify(&ark_inst, &ark_inputs, &mut vt, &ark_gens))
+                        .expect("ark-spartan verify");
+                });
 
                 Timing {
                     prove: ark_prove,

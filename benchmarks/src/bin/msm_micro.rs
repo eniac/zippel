@@ -19,13 +19,13 @@ use ark_ec::{CurveGroup, VariableBaseMSM};
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, ArkGroupOps, Value};
 use clap::Parser;
-use lang::id::Tid;
+use lang::id::{Tid, Vid};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use share::Ctx;
 use std::io::Write;
 use std::time::{Duration, Instant};
-use zippel::{Inputs, ZippelArgs, ZippelHandler};
+use zippel::{ZippelArgs, ZippelHandler};
 
 type C = ArkBls12_381;
 
@@ -79,13 +79,16 @@ fn main() {
         })
         .collect();
     let native = |i: usize| G1Projective::msm(&bases[i], &scalars[i]).expect("msm");
-    let inputs = |count: usize| -> Inputs<C> {
+    let inputs = |count: usize| -> Vec<(Vid, Value<C>)> {
         (0..count)
             .flat_map(|i| {
                 [
-                    (format!("s{}", i + 1), Value::vec_scalar(scalars[i].clone())),
                     (
-                        format!("b{}", i + 1),
+                        Vid(format!("s{}", i + 1)),
+                        Value::vec_scalar(scalars[i].clone()),
+                    ),
+                    (
+                        Vid(format!("b{}", i + 1)),
                         Value::vec_g1_affine(bases[i].clone()),
                     ),
                 ]
@@ -108,7 +111,7 @@ fn main() {
         expected
     );
     assert_eq!(
-        handler.run_prover(&one).expect("prover")[0],
+        handler.run_prover(one.clone()).expect("prover")[0],
         Value::G1(expected)
     );
     println!("1 MSM ({})", node_kinds(&handler));
@@ -121,14 +124,16 @@ fn main() {
     );
     report(
         "zippel protocol",
-        median(args.reps, || handler.run_prover(&one).expect("prover")),
+        median(args.reps, || {
+            handler.run_prover(one.clone()).expect("prover")
+        }),
     );
 
     let (mut handler, _source) = compile(THREE_MSMS, n);
     let three = inputs(3);
     let expected = native(0) + native(1) + native(2);
     assert_eq!(
-        handler.run_prover(&three).expect("prover")[0],
+        handler.run_prover(three.clone()).expect("prover")[0],
         Value::G1(expected)
     );
     println!("3 MSMs ({})", node_kinds(&handler));
@@ -138,7 +143,9 @@ fn main() {
     );
     report(
         "zippel protocol",
-        median(args.reps, || handler.run_prover(&three).expect("prover")),
+        median(args.reps, || {
+            handler.run_prover(three.clone()).expect("prover")
+        }),
     );
 }
 

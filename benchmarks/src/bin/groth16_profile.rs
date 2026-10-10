@@ -23,9 +23,10 @@ use benchmarks::groth16::{bridge, build_translated, shared};
 use clap::Parser;
 use lang::id::{Tid, Vid};
 use share::Ctx;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
-use zippel::{Inputs, ZippelArgs, ZippelHandler};
+use zippel::{ZippelArgs, ZippelHandler};
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -399,7 +400,7 @@ fn main() {
     sizes.insert(&Tid::new("H"), &t.h_size);
     handler.compile_for_execution(&sizes);
 
-    let inputs_base = Inputs::<ArkBls12_381>::from_iter([
+    let inputs_base = HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
         (
             Vid("gen_g1".to_string()),
             Value::G1(ark_bls12_381::G1Projective::generator()),
@@ -453,16 +454,25 @@ fn main() {
         bridge::witness_map(&t.mat, t.num_inputs, t.num_constraints, &t.full_assignment);
     h_coeffs.resize(t.h_size, GitFr::zero());
     let mut inputs = inputs_base.clone();
-    inputs.insert("h_coeffs", Value::vec_scalar(h_coeffs));
+    inputs.insert(Vid::from("h_coeffs"), Value::vec_scalar(h_coeffs));
     // Relation-only QAP witnesses (zeros fine — analyses skipped).
     let n_total = t.m + t.l;
-    inputs.insert("a_evs", Value::vec_scalar(vec![GitFr::zero(); n_total]));
-    inputs.insert("b_evs", Value::vec_scalar(vec![GitFr::zero(); n_total]));
-    inputs.insert("c_evs", Value::vec_scalar(vec![GitFr::zero(); n_total]));
-    inputs.insert("t_at_tau", Value::Scalar(GitFr::zero()));
+    inputs.insert(
+        Vid::from("a_evs"),
+        Value::vec_scalar(vec![GitFr::zero(); n_total]),
+    );
+    inputs.insert(
+        Vid::from("b_evs"),
+        Value::vec_scalar(vec![GitFr::zero(); n_total]),
+    );
+    inputs.insert(
+        Vid::from("c_evs"),
+        Value::vec_scalar(vec![GitFr::zero(); n_total]),
+    );
+    inputs.insert(Vid::from("t_at_tau"), Value::Scalar(GitFr::zero()));
     eprintln!("  witness_map + input clone:      {:>9.2?}", tic.elapsed());
     let tic = Instant::now();
-    let _proof = handler.run_prover(&inputs).expect("zippel prove");
+    let _proof = handler.run_prover(inputs).expect("zippel prove");
     eprintln!("  run_prover (all 5 MSMs + arith): {:>9.2?}", tic.elapsed());
 
     // Suppress unused warnings.

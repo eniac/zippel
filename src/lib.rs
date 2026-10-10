@@ -26,6 +26,7 @@ use log::{debug, error, info};
 use runtime::RuntimeError;
 use runtime::graph::ResultKind;
 use share::{Ctx, unwrap};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::process;
@@ -43,7 +44,6 @@ pub use backend;
 pub use graph;
 pub use lang;
 pub use runtime;
-pub use runtime::Inputs;
 pub use share;
 
 /// Arguments for the Zippel handler
@@ -363,15 +363,27 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         self.output_pdf(&combined, "combined_graph");
     }
 
-    /// Run prover, takes inputs and returns proof. The run shares the
-    /// caller's input values, so `inputs` can be reused across runs.
+    /// Run prover, takes inputs by name and returns proof.
+    ///
+    /// The run owns its inputs and frees each after its last reader. Cloning
+    /// a vector value shares its buffer instead of copying it, so a caller
+    /// that reuses an input across runs (an SRS, a proving key) passes a
+    /// clone and keeps the original; an input passed without keeping a
+    /// clone (a witness) is the run's to free.
     ///
     /// # Errors
     /// Returns `RuntimeError` if expected inputs are missing.
     ///
     /// # Panics
     /// If `compile()` has not been called first.
-    pub fn run_prover(&mut self, inputs: &Inputs<C>) -> Result<Vec<Value<C>>, RuntimeError> {
+    pub fn run_prover<K: Into<Vid>>(
+        &mut self,
+        inputs: impl IntoIterator<Item = (K, Value<C>)>,
+    ) -> Result<Vec<Value<C>>, RuntimeError> {
+        let inputs: HashMap<Vid, Arc<Value<C>>> = inputs
+            .into_iter()
+            .map(|(k, v)| (k.into(), Arc::new(v)))
+            .collect();
         let prover = self.prover_graph.as_ref().unwrap();
 
         // Collect arg info from the prover dag directly.
@@ -401,13 +413,13 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             .collect();
         let missing: Vec<&Vid> = expected_args
             .iter()
-            .filter(|v| inputs.get(v).is_none())
+            .filter(|v| !inputs.contains_key(v))
             .collect();
         if !missing.is_empty() {
             return Err(RuntimeError::missing_inputs(
                 missing.iter().copied(),
                 expected_args.iter(),
-                inputs.names(),
+                inputs.keys(),
             ));
         }
 
@@ -432,18 +444,19 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         }
     }
 
-    /// Run verifier, takes proof and inputs and returns result. Instance
-    /// inputs are shared with the caller; proof values are copied once.
+    /// Run verifier, takes proof and inputs by name and returns result.
+    /// Owns both, as [`Self::run_prover`] owns its inputs; inputs that are
+    /// not instance arguments are dropped unread.
     ///
     /// # Errors
     /// Returns `RuntimeError` if verification fails.
     ///
     /// # Panics
     /// If `compile()` has not been called first.
-    pub fn run_verifier(
+    pub fn run_verifier<K: Into<Vid>>(
         &mut self,
-        proof: &[Value<C>],
-        inputs: &Inputs<C>,
+        proof: impl IntoIterator<Item = Value<C>>,
+        inputs: impl IntoIterator<Item = (K, Value<C>)>,
     ) -> Result<Vec<bool>, RuntimeError> {
         let verifier = self.verifier_graph.as_ref().unwrap();
 
@@ -458,25 +471,25 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
                 _ => None,
             })
             .collect();
-        let instance_inputs = instance_args
-            .iter()
-            .filter_map(|vid| inputs.get(vid).map(|v| (vid.clone(), Arc::clone(v))));
+        let instance_inputs = inputs
+            .into_iter()
+            .map(|(k, v)| (k.into(), v))
+            .filter(|(vid, _)| instance_args.contains(vid));
 
         // Transcript inputs: identify by ArgKind::TranscriptInput, zip with proof.
-        let transcript_args: Vec<Vid> = verifier
+        let transcript_inputs = verifier
             .input_args()
             .into_iter()
             .filter_map(|n| match &verifier[n] {
                 Node::Arg(name, _, _, _, ArgKind::TranscriptInput) => Some(name.clone()),
                 _ => None,
             })
-            .collect();
-        let transcript_inputs = transcript_args
-            .iter()
-            .zip(proof)
-            .map(|(name, val)| (name.clone(), Arc::new(val.clone())));
+            .zip(proof);
 
-        let all_inputs: Inputs<C> = instance_inputs.chain(transcript_inputs).collect();
+        let all_inputs: HashMap<Vid, Arc<Value<C>>> = instance_inputs
+            .chain(transcript_inputs)
+            .map(|(k, v)| (k, Arc::new(v)))
+            .collect();
 
         let domain_separator_session = self.args.domain_separator_session();
         let verifier_seperator = ZippelDomainSeparator::new_zippel_domain_seperator(
@@ -488,7 +501,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         let mut verifier_state = verifier_seperator.std_prover();
         let result = MutexGraph::run_graph(
             Arc::new(MutexGraph::new(verifier.clone())),
-            &all_inputs,
+            all_inputs,
             &mut verifier_state,
             ResultKind::Verifier,
         )?;
@@ -610,7 +623,7 @@ proto eq_proof<F: Field>(witness a: F, witness b: F) where a == b {
         let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
         handler.compile(&Ctx::new());
 
-        let mut inputs = Inputs::<ArkBls12_381>::new();
+        let mut inputs = HashMap::<&str, Value<ArkBls12_381>>::new();
         inputs.insert(
             "a",
             Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
@@ -620,9 +633,11 @@ proto eq_proof<F: Field>(witness a: F, witness b: F) where a == b {
             Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
         );
 
-        let proof = handler.run_prover(&inputs).expect("run_prover failed");
+        let proof = handler
+            .run_prover(inputs.clone())
+            .expect("run_prover failed");
         let verifier_result = handler
-            .run_verifier(&proof, &inputs)
+            .run_verifier(proof, inputs)
             .expect("run_verifier failed");
         let passed = check_verification(&verifier_result);
         assert!(passed, "eq_proof with a == b should pass verification");
@@ -653,13 +668,15 @@ proto repro<F: Field>(witness s: F) where s == s {
         let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
         handler.compile(&Ctx::new());
 
-        let mut inputs = Inputs::<ArkBls12_381>::new();
+        let mut inputs = HashMap::<&str, Value<ArkBls12_381>>::new();
         inputs.insert(
             "s",
             Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
         );
 
-        let proof = handler.run_prover(&inputs).expect("run_prover failed");
+        let proof = handler
+            .run_prover(inputs.clone())
+            .expect("run_prover failed");
         assert_eq!(
             proof.len(),
             EXPECTED_PROOF_VALUES,
@@ -667,7 +684,7 @@ proto repro<F: Field>(witness s: F) where s == s {
         );
 
         let verifier_result = handler
-            .run_verifier(&proof, &inputs)
+            .run_verifier(proof, inputs)
             .expect("run_verifier failed");
         let passed = check_verification(&verifier_result);
         assert!(
@@ -696,7 +713,7 @@ proto bad_check<F: Field>(witness a: F, witness b: F, instance c: F) where a == 
         let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
         handler.compile(&Ctx::new());
 
-        let mut inputs = Inputs::<ArkBls12_381>::new();
+        let mut inputs = HashMap::<&str, Value<ArkBls12_381>>::new();
         inputs.insert(
             "a",
             Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
@@ -710,9 +727,11 @@ proto bad_check<F: Field>(witness a: F, witness b: F, instance c: F) where a == 
             Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(42u64)),
         );
 
-        let proof = handler.run_prover(&inputs).expect("run_prover failed");
+        let proof = handler
+            .run_prover(inputs.clone())
+            .expect("run_prover failed");
         let verifier_result = handler
-            .run_verifier(&proof, &inputs)
+            .run_verifier(proof, inputs)
             .expect("run_verifier failed");
         let passed = check_verification(&verifier_result);
         assert!(

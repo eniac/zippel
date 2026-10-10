@@ -17,8 +17,9 @@ use backend::{ArkCurve25519, PolyVariant, Value, VirtualPolynomial};
 use lang::id::{Tid, Vid};
 use rand::Rng;
 use share::Ctx;
+use std::collections::HashMap;
 use std::path::PathBuf;
-use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification, proof_size_bytes};
+use zippel::{ZippelArgs, ZippelHandler, check_verification, proof_size_bytes};
 
 /// Default `log_2` of the R1CS constraint count used by the Spartan sweep.
 pub const DEFAULT_M: usize = 8;
@@ -55,8 +56,31 @@ pub struct ZippelTiming {
 pub struct Setup {
     m: usize,
     handler: ZippelHandler<ArkCurve25519>,
-    inputs: Inputs<ArkCurve25519>,
+    inputs: HashMap<Vid, Value<ArkCurve25519>>,
+    /// What the prover's `az`, `bz`, `cz` inputs are computed from, inside
+    /// each timed run, as libspartan computes them inside `prove`.
+    products: MatVec,
     compile_time: Vec<std::time::Duration>,
+}
+
+/// The R1CS matrices (as `(row, col, value)` triples) and the assignment
+/// `z = (w, io, 1)` they multiply.
+struct MatVec {
+    mats: [Vec<(usize, usize, Fr)>; 3],
+    z: Vec<Fr>,
+}
+
+impl MatVec {
+    /// `[Az, Bz, Cz]`.
+    fn products(&self) -> [Vec<Fr>; 3] {
+        self.mats.each_ref().map(|mat| {
+            let mut out = vec![Fr::from(0u64); self.z.len()];
+            for &(i, c, v) in mat {
+                out[i] += v * self.z[c];
+            }
+            out
+        })
+    }
 }
 
 impl Setup {
@@ -79,7 +103,7 @@ impl Setup {
             PathBuf::from("examples/spartan/spartan.zippel")
         };
 
-        let inputs = prover_create_inputs(m);
+        let (inputs, products) = prover_create_inputs(m);
 
         let (handler, compile_time) = crate::sample_compile(|| {
             let args = ZippelArgs::new(zippel_path.clone());
@@ -94,6 +118,7 @@ impl Setup {
             m,
             handler,
             inputs,
+            products,
             compile_time,
         }
     }
@@ -119,17 +144,20 @@ impl Setup {
     /// Unlike the other benches this does not assert on a failed verification;
     /// the outcome is reported in [`ZippelTiming::passed`].
     pub fn time_protocol(&mut self) -> ZippelTiming {
+        // Az, Bz, Cz are computed inside each run, as libspartan computes
+        // them inside `prove`.
+        let names = crate::prover_args(&self.handler);
         let (prove, prove_peak, proof) = crate::sample(|| {
+            let [az, bz, cz] = self.products.products();
+            let computed = [("az", az), ("bz", bz), ("cz", cz)]
+                .map(|(name, v)| (Vid::from(name), Value::vec_scalar(v)));
             self.handler
-                .run_prover(&self.inputs)
-                .expect("zippel spartan prover failed")
+                .run_prover(crate::shared_inputs(&self.inputs, &names).chain(computed))
+                .expect("run_prover failed")
         });
         let proof_bytes = proof_size_bytes::<ArkCurve25519>(&proof);
-        let (verify, verify_peak, result) = crate::sample(|| {
-            self.handler
-                .run_verifier(&proof, &self.inputs)
-                .expect("zippel spartan verifier failed")
-        });
+        let (verify, verify_peak, result) =
+            crate::sample_zippel_verifier(&mut self.handler, &proof, &self.inputs);
         let passed = check_verification(&result);
 
         ZippelTiming {
@@ -253,7 +281,7 @@ where
     }
 }
 
-fn prover_create_inputs(m: usize) -> Inputs<ArkCurve25519> {
+fn prover_create_inputs(m: usize) -> (HashMap<Vid, Value<ArkCurve25519>>, MatVec) {
     let num_cons = 1usize << m;
     let witness_len = 1usize << (m - 1);
     let io_len = witness_len - 1;
@@ -275,18 +303,11 @@ fn prover_create_inputs(m: usize) -> Inputs<ArkCurve25519> {
     z.extend_from_slice(&instance);
     z.push(one);
 
-    let mut az: Vec<Fr> = vec![Fr::from(0u64); num_cons];
-    let mut bz: Vec<Fr> = vec![Fr::from(0u64); num_cons];
-    let mut cz: Vec<Fr> = vec![Fr::from(0u64); num_cons];
-    for &(i, c, v) in &r1cs.mat_a {
-        az[i] += v * z[c];
-    }
-    for &(i, c, v) in &r1cs.mat_b {
-        bz[i] += v * z[c];
-    }
-    for &(i, c, v) in &r1cs.mat_c {
-        cz[i] += v * z[c];
-    }
+    let products = MatVec {
+        mats: [r1cs.mat_a.clone(), r1cs.mat_b.clone(), r1cs.mat_c.clone()],
+        z,
+    };
+    let [az, bz, cz] = products.products();
     for i in 0..num_cons {
         assert_eq!(
             az[i] * bz[i],
@@ -326,15 +347,12 @@ fn prover_create_inputs(m: usize) -> Inputs<ArkCurve25519> {
 
     let placeholder_tau: Vec<Fr> = vec![Fr::from(0u64); m];
 
-    Inputs::<ArkCurve25519>::from_iter([
+    let inputs = HashMap::<Vid, Value<ArkCurve25519>>::from_iter([
         (Vid("mat_a_t".to_string()), mat_a_t),
         (Vid("mat_b_t".to_string()), mat_b_t),
         (Vid("mat_c_t".to_string()), mat_c_t),
         (Vid("io".to_string()), Value::vec_scalar(r1cs.io)),
         (Vid("w".to_string()), Value::vec_scalar(r1cs.w)),
-        (Vid("az".to_string()), Value::vec_scalar(az)),
-        (Vid("bz".to_string()), Value::vec_scalar(bz)),
-        (Vid("cz".to_string()), Value::vec_scalar(cz)),
         (Vid("g_vec_w".to_string()), Value::vec_g1_affine(g_vec_aff)),
         (Vid("g_base_w".to_string()), Value::G1(g_base_w)),
         (Vid("h_base_w".to_string()), Value::G1(h_base_w)),
@@ -351,5 +369,6 @@ fn prover_create_inputs(m: usize) -> Inputs<ArkCurve25519> {
             Vid("placeholder_tau".to_string()),
             Value::vec_scalar(placeholder_tau),
         ),
-    ])
+    ]);
+    (inputs, products)
 }

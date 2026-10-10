@@ -14,10 +14,12 @@ use backend::{ArkConfig, Value};
 use graph::UDags;
 use lang::ast::UModule;
 use lang::id::Tid;
+use lang::id::Vid;
 use runtime::graph::ResultKind;
-use runtime::{Inputs, MutexGraph, RunResult};
+use runtime::{MutexGraph, RunResult};
 use share::Ctx;
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -74,12 +76,14 @@ fn a_one_element_message_does_not_retain_its_vector() {
     // The graph, the inputs and the sponge are dropped with this block: only
     // the proof outlives the run.
     let proof = {
-        let mut inputs = Inputs::<C>::new();
-        inputs.insert("a", Value::vec_scalar(vec![F::from(3u64); n]));
+        let mut inputs = HashMap::new();
+        inputs.insert(
+            Vid::from("a"),
+            Arc::new(Value::vec_scalar(vec![F::from(3u64); n])),
+        );
         let mut prover_state = separator.std_prover();
         let graph = Arc::new(MutexGraph::new(prover));
-        match MutexGraph::run_graph(graph, &inputs, &mut prover_state, ResultKind::Prover).unwrap()
-        {
+        match MutexGraph::run_graph(graph, inputs, &mut prover_state, ResultKind::Prover).unwrap() {
             RunResult::Prover(proof) => proof,
             RunResult::Verifier { .. } => unreachable!(),
         }

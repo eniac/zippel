@@ -63,10 +63,11 @@ pub mod zippel_side {
     use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
+    use std::collections::HashMap;
     use std::io::Write;
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
-    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     type F = <ArkBls12_381 as ArkConfig>::F;
     type G1 = <ArkBls12_381 as ArkConfig>::G1;
@@ -213,7 +214,7 @@ pub mod zippel_side {
             // Uni<F, N-1>` (a univariate in coefficient form), not the
             // old `poly_coeffs: [F; N]` vector this harness predates —
             // promote the sampled coefficient vector to a Uni value.
-            let inputs = Inputs::<ArkBls12_381>::from_iter([
+            let inputs = HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
                 (Vid("poly_x".to_string()), p.value_poly()),
                 (Vid("gen_g1".to_string()), g),
                 (Vid("gen_g2".to_string()), h),
@@ -223,12 +224,9 @@ pub mod zippel_side {
                 (Vid("srs_g2_s".to_string()), h_val),
             ]);
             let (prove, prove_peak, proof) =
-                crate::sample(|| self.handler.run_prover(&inputs).expect("run_prover failed"));
-            let (verify, verify_peak, result) = crate::sample(|| {
-                self.handler
-                    .run_verifier(&proof, &inputs)
-                    .expect("run_verifier failed")
-            });
+                crate::sample_zippel_prover(&mut self.handler, &inputs);
+            let (verify, verify_peak, result) =
+                crate::sample_zippel_verifier(&mut self.handler, &proof, &inputs);
             assert!(
                 check_verification(&result),
                 "zippel KZG verification FAILED"

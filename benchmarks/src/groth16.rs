@@ -505,14 +505,15 @@ pub mod zippel_side {
     use backend::{ArkBls12_381, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
+    use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     /// A compiled zippel Groth16 handler plus the size-invariant part of its
     /// input context, ready to be timed at one circuit size.
     pub struct Setup<'a> {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs_base: Inputs<ArkBls12_381>,
+        inputs_base: HashMap<Vid, Value<ArkBls12_381>>,
         translated: &'a Translated,
         compile_time: Vec<std::time::Duration>,
     }
@@ -545,7 +546,7 @@ pub mod zippel_side {
             let l_query_aff = G1Projective::normalize_batch(&keys.l_query);
             let gamma_abc_aff = G1Projective::normalize_batch(&keys.gamma_abc_g1);
 
-            let inputs_base = Inputs::<ArkBls12_381>::from_iter([
+            let inputs_base = HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
                 (
                     Vid("gen_g1".to_string()),
                     Value::G1(G1Projective::generator()),
@@ -644,7 +645,8 @@ pub mod zippel_side {
         /// Panics if the prover or verifier graph fails to execute, or if
         /// verification does not accept.
         pub fn time_protocol(&mut self) -> Timing {
-            let (prove, prove_peak, (proof, inputs)) = crate::sample(|| {
+            let names = crate::prover_args(&self.handler);
+            let (prove, prove_peak, proof) = crate::sample(|| {
                 let mut h_coeffs = witness_map(
                     &self.translated.mat,
                     self.translated.num_inputs,
@@ -652,19 +654,13 @@ pub mod zippel_side {
                     &self.translated.full_assignment,
                 );
                 h_coeffs.resize(self.translated.h_size, GitFr::zero());
-                let mut inputs = self.inputs_base.clone();
-                inputs.insert("h_coeffs", Value::vec_scalar(h_coeffs));
-                let proof = self
-                    .handler
-                    .run_prover(&inputs)
-                    .expect("zippel groth16 prover failed");
-                (proof, inputs)
-            });
-            let (verify, verify_peak, result) = crate::sample(|| {
+                let h = (Vid::from("h_coeffs"), Value::vec_scalar(h_coeffs));
                 self.handler
-                    .run_verifier(&proof, &inputs)
-                    .expect("zippel groth16 verifier failed")
+                    .run_prover(crate::shared_inputs(&self.inputs_base, &names).chain([h]))
+                    .expect("zippel groth16 prover failed")
             });
+            let (verify, verify_peak, result) =
+                crate::sample_zippel_verifier(&mut self.handler, &proof, &self.inputs_base);
             assert!(
                 check_verification(&result),
                 "zippel Groth16 verification FAILED"
@@ -1014,8 +1010,9 @@ mod cross_tests {
     use backend::{ArkBls12_381, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
+    use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     /// Sweep used by both cross-tests. Capped at log_2 num_constraints = 6
     /// (= 64 constraints, M ≈ 65 inputs, L ≈ 128 witnesses) so each test
@@ -1043,14 +1040,14 @@ mod cross_tests {
     /// Build the zippel-side input context from a `Translated`. Mirrors
     /// the construction in `zippel_side::Setup::new` but inlined so this
     /// test module doesn't reach into Setup's private fields.
-    fn zip_inputs_from_translated(t: &Translated) -> Inputs<ArkBls12_381> {
+    fn zip_inputs_from_translated(t: &Translated) -> HashMap<Vid, Value<ArkBls12_381>> {
         // h_coeffs is the QAP witness-map output, computed in Rust on the
         // zippel side too (since zippel can't express the QAP reduction
         // inside the proto). Match the zippel bench's behavior.
         let mut h_coeffs = witness_map(&t.mat, t.num_inputs, t.num_constraints, &t.full_assignment);
         h_coeffs.resize(t.h_size, GitFr::zero());
 
-        Inputs::<ArkBls12_381>::from_iter([
+        HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
             (
                 Vid("gen_g1".to_string()),
                 Value::G1(ark_bls12_381::G1Projective::generator()),
@@ -1144,7 +1141,7 @@ mod cross_tests {
         let mut handler = zippel_handler(&t);
         let zip_inputs = zip_inputs_from_translated(&t);
         let _ = handler
-            .run_prover(&zip_inputs)
+            .run_prover(zip_inputs.clone())
             .expect("zippel run_prover (priming handler state)");
 
         // The zippel transcript is [a_proof, b_proof, c_proof] in `<-` order
@@ -1155,7 +1152,7 @@ mod cross_tests {
             Value::G1(proof_n.c),
         ];
         let verifier_result = handler
-            .run_verifier(&cross_proof, &zip_inputs)
+            .run_verifier(cross_proof.clone(), zip_inputs.clone())
             .expect("zippel run_verifier on cross-proof");
         let result = check_verification(&verifier_result);
         assert!(
@@ -1180,8 +1177,9 @@ mod cross_tests {
         // ---- Zippel: run_prover and extract (a, b, c) from the transcript -
         let mut handler = zippel_handler(&t);
         let zip_inputs = zip_inputs_from_translated(&t);
-        let zip_proof: Vec<Value<ArkBls12_381>> =
-            handler.run_prover(&zip_inputs).expect("zippel run_prover");
+        let zip_proof: Vec<Value<ArkBls12_381>> = handler
+            .run_prover(zip_inputs.clone())
+            .expect("zippel run_prover");
 
         assert_eq!(
             zip_proof.len(),

@@ -1,14 +1,11 @@
 /// `EvalError`, the failure type raised while interpreting a DAG node.
 pub mod error;
-/// The operand values one evaluation reads, moved out at their last use.
-pub mod operands;
 
 use crate::{GOp, HOp, Op, Ref};
 use ark_ff::{One, Zero};
 use backend::{ATyp, ArkConfig, SelectedEvalShape, Value};
 use error::EvalError;
 use lang::ast::BinOp;
-pub use operands::Operands;
 use rand::RngCore;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -266,7 +263,7 @@ fn verify_domain_is_canonical_coordinates<C: ArkConfig>(
 
 fn try_match_canonical_hypercube_ast<C: ArkConfig>(
     fixed: &HOp<C>,
-    env: &Operands<C>,
+    env: &HashMap<Ref, Arc<Value<C>>>,
     rng: &mut impl rand::RngCore,
     loop_params: &[Arc<Value<C>>],
     check_sink: &mut Vec<bool>,
@@ -315,7 +312,7 @@ fn try_match_canonical_hypercube_ast<C: ArkConfig>(
 #[allow(clippy::too_many_arguments)]
 fn verify_hypercube_coordinates<C: ArkConfig, R: RngCore>(
     fixed: &HOp<C>,
-    env: &Operands<C>,
+    env: &HashMap<Ref, Arc<Value<C>>>,
     rng: &mut R,
     loop_params: &[Arc<Value<C>>],
     check_sink: &mut Vec<bool>,
@@ -368,7 +365,7 @@ fn try_eval_reduce_map_fused_hypercube<C, R>(
     op: BinOp,
     domain: &HOp<C>,
     body: &HOp<C>,
-    env: &Operands<C>,
+    env: &HashMap<Ref, Arc<Value<C>>>,
     rng: &mut R,
     loop_params: &[Arc<Value<C>>],
     check_sink: &mut Vec<bool>,
@@ -528,27 +525,7 @@ where
     C: ArkConfig,
     R: RngCore,
 {
-    eval_op_with_loop_params(op, &Operands::borrowed(op, env), rng, &[], check_sink)
-}
-
-/// [`eval_op`] taking ownership of `env`: each operand is handed over at its
-/// last use in `op` instead of cloned, so an operation holding the only
-/// reference to a value reuses its buffer. The runtime evaluates each node
-/// this way; its operands are delivered for this one evaluation.
-///
-/// # Errors
-/// As [`eval_op`].
-pub fn eval_op_owned<C, R>(
-    op: &GOp<C>,
-    env: HashMap<Ref, Arc<Value<C>>>,
-    rng: &mut R,
-    check_sink: &mut Vec<bool>,
-) -> Result<Arc<Value<C>>, EvalError>
-where
-    C: ArkConfig,
-    R: RngCore,
-{
-    eval_op_with_loop_params(op, &Operands::owned(op, env), rng, &[], check_sink)
+    eval_op_with_loop_params(op, env, rng, &[], check_sink)
 }
 
 /// Internal evaluator threading a de Bruijn loop-parameter stack for
@@ -556,7 +533,7 @@ where
 /// `Op::LoopParam(level, _)`; the public `eval_op` calls this with `&[]`.
 pub fn eval_op_with_loop_params<C, R>(
     op: &GOp<C>,
-    env: &Operands<C>,
+    env: &HashMap<Ref, Arc<Value<C>>>,
     rng: &mut R,
     loop_params: &[Arc<Value<C>>],
     check_sink: &mut Vec<bool>,
@@ -567,7 +544,7 @@ where
 {
     match op {
         Op::Value(v) => Ok(Arc::new(v.clone())),
-        Op::Ref(r, _) => env.get(*r).ok_or(EvalError::UndefinedRef(*r)),
+        Op::Ref(r, _) => env.get(r).cloned().ok_or(EvalError::UndefinedRef(*r)),
         Op::Bin(binop, a, b, _) => {
             let av = eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?;
             let bv = eval_op_with_loop_params(b, env, rng, loop_params, check_sink)?;
@@ -826,9 +803,8 @@ where
         )),
         Op::Mle(a) => {
             // Consume the input via `value_mle_owned` to avoid a 500 MB
-            // memcpy when the operand is a fresh or unique `VecScalar`
-            // (an owned operand at its last use is). When the Arc is still
-            // shared (a borrowed env, a pinned operand, another reader), the
+            // memcpy when the operand is a fresh or unique `VecScalar`.
+            // When the Arc is shared (env still holds a strong ref), the
             // unwrap clones once — same cost as `value_mle`.
             let av = Arc::unwrap_or_clone(eval_op_with_loop_params(
                 a,
@@ -880,7 +856,7 @@ where
 /// the per-task rng is a throwaway; rayon parallelizes across elements.
 fn eval_loop_body_each<C: ArkConfig>(
     body: &HOp<C>,
-    env: &Operands<C>,
+    env: &HashMap<Ref, Arc<Value<C>>>,
     elems: Vec<Value<C>>,
     loop_params: &[Arc<Value<C>>],
 ) -> Result<Vec<Value<C>>, EvalError> {
@@ -981,7 +957,7 @@ mod tests {
     /// `==` on vectors evaluates to one `Bool` over all elements, nested or not.
     #[test]
     fn test_eval_vector_equality_is_single_bool() {
-        let scalars = |xs: &[u64]| TestValue::VecScalar(xs.iter().map(|&x| Fr::from(x)).collect());
+        let scalars = |xs: &[u64]| TestValue::vec_scalar(xs.iter().map(|&x| Fr::from(x)).collect());
         let equ = |a: TestValue, b: TestValue| {
             let op = mk::<ArkBn254>(Op::Bin(
                 BinOp::Equ,

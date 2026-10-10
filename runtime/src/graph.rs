@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::error::RuntimeError;
 use crate::inbox::Inbox;
-use crate::inputs::Inputs;
+use lang::id::Vid;
 
 /// Size threshold (in bytes of serialized form) above which an instance
 /// input is absorbed into the Fiat-Shamir sponge via a Blake3 digest
@@ -206,7 +206,11 @@ impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8>> Transcript<'_, C, H> {
 /// pool's threads.
 struct Run<'a, C: ArkConfig, H: DuplexSpongeInterface<U = u8>> {
     graph: &'a MutexGraph<C>,
-    inputs: &'a Inputs<C>,
+    /// The run's inputs, each taken out when its `Arg` node delivers it, so
+    /// an input the caller gave up is freed after its last reader.
+    inputs: Mutex<HashMap<Vid, Arc<Value<C>>>>,
+    /// Every supplied input name, for error messages.
+    names: Vec<Vid>,
     errors: ErrorSlot,
     transcript: Mutex<Transcript<'a, C, H>>,
 }
@@ -279,14 +283,12 @@ impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8> + Send> Run<'_, C, H> {
                 && qual.is_instance()
                 && !matches!(kind, ArgKind::TranscriptInput)
             {
-                let Some(value) = self.inputs.get(name) else {
-                    let err = RuntimeError::missing_arg(name, self.inputs.names());
+                let Some(value) = self.inputs.lock().unwrap().get(name).cloned() else {
+                    let err = RuntimeError::missing_arg(name, &self.names);
                     record_error(&self.errors, err.clone());
                     return Err(err);
                 };
-                transcript
-                    .pending
-                    .push(PendingAbsorb::Instance(Arc::clone(value)));
+                transcript.pending.push(PendingAbsorb::Instance(value));
             }
         }
         drop(transcript);
@@ -304,11 +306,16 @@ impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8> + Send> Run<'_, C, H> {
         value: Option<&Arc<Value<C>>>,
     ) {
         // A successor joined by parallel edges still counts `node` once.
-        let successors: HashSet<NodeIndex> = self
+        // Sorted, so a run spawns ready nodes in the same order every time
+        // (a `HashSet`'s order is seeded per process, and the order changes
+        // which values are alive at once, so the peak heap).
+        let mut successors: Vec<NodeIndex> = self
             .graph
             .mutex_graph
             .neighbors_directed(node, Direction::Outgoing)
             .collect();
+        successors.sort_unstable();
+        successors.dedup();
         for successor in successors {
             match &self.graph.mutex_graph[successor] {
                 Node::Op(_, info) | Node::Transcr(_, info) => {
@@ -316,13 +323,16 @@ impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8> + Send> Run<'_, C, H> {
                         scope.spawn(move |scope| self.run_node(scope, successor));
                     }
                 }
-                Node::Arg(vid, _, _, _, _) => match self.inputs.get(vid) {
-                    Some(input) => self.release_successors(scope, successor, Some(input)),
-                    None => record_error(
-                        &self.errors,
-                        RuntimeError::missing_arg(vid, self.inputs.names()),
-                    ),
-                },
+                // Each input feeds one `Arg` node (checked in `run_graph`).
+                Node::Arg(vid, _, _, _, _) => {
+                    let input = self.inputs.lock().unwrap().remove(vid);
+                    match input {
+                        Some(input) => self.release_successors(scope, successor, Some(&input)),
+                        None => {
+                            record_error(&self.errors, RuntimeError::missing_arg(vid, &self.names))
+                        }
+                    }
+                }
                 Node::Inp(_) | Node::Rel(_) => {
                     unreachable!("Inp/Rel marker {:?} follows node {:?}", successor, node)
                 }
@@ -391,18 +401,14 @@ impl<C: ArkConfig> MutexGraph<C> {
 
     /// Execute one compute node: evaluate its op on the operands in its
     /// inbox, record any `Verify` outcome into the check map, and return the
-    /// value for the caller to deliver to its successors.
-    ///
-    /// Evaluation goes through [`graph::eval::eval_op_owned`], which shares
-    /// its semantics with the borrowing [`graph::eval::eval_op`] the test
-    /// executors use, but moves each operand out on its last use so the op
-    /// can reuse it.
+    /// value for the caller to deliver to its successors. The operands are
+    /// dropped once the op has been evaluated.
     ///
     /// # Panics
     ///
     /// Panics if `node` is not an `Op`/`Transcr` node, if an operand was not
     /// delivered (a scheduling bug), if the
-    /// check-results mutex is poisoned, or if `eval_op_owned` fails: every shape
+    /// check-results mutex is poisoned, or if `eval_op` fails: every shape
     /// and type precondition is established by the `lang` type checker and
     /// the scheduler, so a failure is a compiler invariant violation.
     pub fn handle_node(&self, node: NodeIndex) -> Arc<Value<C>> {
@@ -411,7 +417,7 @@ impl<C: ArkConfig> MutexGraph<C> {
         };
         let env = info.inbox.take_all();
         let mut check_sink = Vec::new();
-        let value = graph::eval::eval_op_owned(op, env, &mut ThreadRng::default(), &mut check_sink)
+        let value = graph::eval::eval_op(op, &env, &mut ThreadRng::default(), &mut check_sink)
             .expect("runtime invariant violation: eval_op failed on a scheduled node");
         // Each node has at most one top-level Check, so the sink has 0 or 1
         // elements.
@@ -435,6 +441,14 @@ impl<C: ArkConfig> MutexGraph<C> {
     /// successor that reads it and decrements that successor's counter; a
     /// successor whose counter reaches zero is spawned as a job of the run's
     /// `rayon::scope`. A value is freed once every node reading it has run.
+    ///
+    /// # Inputs
+    ///
+    /// The run owns `inputs`. Each is handed to its `Arg` node's readers and
+    /// dropped from the run, so an input whose buffers the caller does not
+    /// share (a witness passed without keeping a clone) is freed after its
+    /// last reader. A caller that keeps a clone (an SRS reused across runs)
+    /// shares the buffers, which are then never freed or written in place.
     ///
     /// # Execution
     ///
@@ -466,13 +480,14 @@ impl<C: ArkConfig> MutexGraph<C> {
     ///
     /// # Panics
     ///
-    /// Panics if a node is executed twice or runs without an operand (see
+    /// Panics if two `Arg` nodes read the same input, if a node is executed
+    /// twice or runs without an operand (see
     /// [`MutexGraph::handle_node`]), if a transcript value cannot be
     /// serialized for the sponge, or if the error/check mutexes are
     /// poisoned.
     pub fn run_graph<H: DuplexSpongeInterface<U = u8> + Send>(
         g: Arc<MutexGraph<C>>,
-        inputs: &Inputs<C>,
+        inputs: HashMap<Vid, Arc<Value<C>>>,
         prover_state: &mut ProverState<H>,
         result_kind: ResultKind,
     ) -> Result<RunResult<C>, RuntimeError> {
@@ -488,6 +503,7 @@ impl<C: ArkConfig> MutexGraph<C> {
         // zero, and spawning it again would run it twice.
         let mut initial_roots: Vec<NodeIndex> = Vec::new();
         let mut input_markers: Vec<NodeIndex> = Vec::new();
+        let mut arg_names: HashSet<&Vid> = HashSet::new();
         for node_idx in g.mutex_graph.node_indices() {
             match &g.mutex_graph[node_idx] {
                 Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
@@ -512,7 +528,9 @@ impl<C: ArkConfig> MutexGraph<C> {
                 }
                 Node::Inp(_) => input_markers.push(node_idx),
                 Node::Rel(_) => {}
-                Node::Arg(_, _, _, _, _) => {}
+                Node::Arg(name, _, _, _, _) => {
+                    assert!(arg_names.insert(name), "two `Arg` nodes read input {name}")
+                }
             }
         }
 
@@ -529,7 +547,8 @@ impl<C: ArkConfig> MutexGraph<C> {
 
         let run = Run {
             graph: &g,
-            inputs,
+            names: inputs.keys().cloned().collect(),
+            inputs: Mutex::new(inputs),
             errors: Mutex::new(None),
             transcript: Mutex::new(Transcript {
                 sponge: prover_state,
