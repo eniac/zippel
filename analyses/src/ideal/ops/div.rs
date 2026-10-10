@@ -1,19 +1,19 @@
-//! Division and remainder op encoders: `div_rem_op`, `slot_wise_div`,
-//! `link_to_witness`, and witness allocation (`alloc_div_witness_pair`).
+//! Division and remainder op encoders: `div_rem_op`, with slot-wise field
+//! division by a scalar (`slot_wise_div`) and univariate polynomial long
+//! division (`div_rem_poly`).
 
 use backend::op::HasOpFactory;
 use backend::{ABase, ATyp, ArkConfig, ArkScalarOps};
 use graph::HOp;
 
-use ark_ff::Zero;
+use ark_ff::{Field, Zero};
 
 use crate::Var;
 use crate::frontend::Polynomial;
 use crate::ideal::GB_GENERATED_NAME_PREFIX;
 
-use super::Ideal;
 use super::PolySource;
-use super::{EncodeCtx, link_to_witness};
+use super::{EncodeCtx, link_to_polys, link_to_witness};
 
 /// The name key of a polynomial division's quotient witness.
 const QUOTIENT_KEY: &str = "div_q";
@@ -151,9 +151,7 @@ fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
                         b.typ(),
                     );
                 }
-                enforce_nonzero(ctx, &b.polys()[0]);
-                let b_broadcast = b.broadcast_scalar_to(a.typ());
-                slot_wise_div(ctx.ideal, target, a.polys(), b_broadcast.polys());
+                slot_wise_div(ctx, target, a.polys(), &b.polys()[0]);
             }
             _ => super::uncovered_op(&label("mle-unsupported"), target),
         },
@@ -166,9 +164,7 @@ fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
                         b.typ(),
                     );
                 }
-                enforce_nonzero(ctx, &b.polys()[0]);
-                let b_broadcast = b.broadcast_scalar_to(a.typ());
-                slot_wise_div(ctx.ideal, target, a.polys(), b_broadcast.polys());
+                slot_wise_div(ctx, target, a.polys(), &b.polys()[0]);
             }
             ATyp::Uni(_) => {
                 div_rem_poly(ctx, target, a, b, is_rem);
@@ -184,9 +180,7 @@ fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
                         b.typ(),
                     );
                 }
-                enforce_nonzero(ctx, &b.polys()[0]);
-                let b_broadcast = b.broadcast_scalar_to(a.typ());
-                slot_wise_div(ctx.ideal, target, a.polys(), b_broadcast.polys());
+                slot_wise_div(ctx, target, a.polys(), &b.polys()[0]);
             }
             _ => super::uncovered_op(&label("vpoly-unsupported"), target),
         },
@@ -199,8 +193,7 @@ fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
                         b.typ(),
                     );
                 }
-                enforce_nonzero(ctx, &b.polys()[0]);
-                slot_wise_div(ctx.ideal, target, a.polys(), b.polys());
+                slot_wise_div(ctx, target, a.polys(), &b.polys()[0]);
             }
             _ => super::uncovered_op(&label("base-unsupported"), target),
         },
@@ -209,9 +202,10 @@ fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
 }
 
 /// Univariate polynomial long division. Emits the canonical identity
-/// `a = b·q + r` as basis rows, plus a degree chain that enforces
+/// `a = b·q + r` as generators, plus a degree chain that enforces
 /// `deg(r) < deg(b)` for uniqueness, and links the target to `q` (Div)
-/// or `r` (Rem).
+/// or `r` (Rem). A divisor of declared degree 0 divides `a` slot by slot
+/// ([`slot_wise_div`]), with `r = 0`.
 ///
 /// Only `Uni` operands reach this function — `div_rem_leaf` rejects
 /// `VPoly` and `Mle` polynomial division before dispatch.
@@ -251,12 +245,7 @@ fn div_rem_poly<C: ArkConfig + HasOpFactory>(
             ATyp::Uni(0)
         };
         let (q_wit, r_wit) = alloc_div_witness_pair(ctx, ATyp::Uni(ma), r_typ);
-        let b_poly = &b.polys()[0];
-        enforce_nonzero(ctx, b_poly);
-        for k in 0..=ma {
-            let rhs = b_poly * &Polynomial::var(&q_wit.with_index(k).unwrap());
-            ctx.ideal.generating_set.push(&a.polys()[k] - &rhs);
-        }
+        slot_wise_div(ctx, &q_wit, a.polys(), &b.polys()[0]);
         for rf in r_wit.slots() {
             ctx.ideal.generating_set.push(Polynomial::var(&rf));
         }
@@ -322,31 +311,6 @@ fn resolved_constant<C: ArkConfig>(
         }
         current = next;
     }
-}
-
-/// Restrict division constraints to defined program traces by requiring the
-/// denominator to be nonzero. A known zero denominator makes the ideal unit;
-/// a dynamic denominator gets a fresh inverse witness satisfying `d·inv = 1`.
-fn enforce_nonzero<C: ArkConfig + HasOpFactory>(
-    ctx: &mut EncodeCtx<'_, C>,
-    denominator: &Polynomial<C::F>,
-) {
-    if let Some(constant) = resolved_constant(ctx, denominator) {
-        if constant.is_zero() {
-            ctx.ideal
-                .generating_set
-                .push(Polynomial::lit(&C::FOps::one()));
-        }
-        return;
-    }
-
-    let name = ctx.builder.ns.next_name("div_inv");
-    let inverse = ctx.sentinel_var(&name, ATyp::scalar());
-    let inverse_poly = Polynomial::var(&inverse);
-    let one = Polynomial::lit(&C::FOps::one());
-    ctx.ideal
-        .generating_set
-        .push(&(denominator * &inverse_poly) - &one);
 }
 
 /// Check if the divisor's leading coefficient `b[mb]` resolves through the
@@ -459,34 +423,53 @@ fn emit_degree_chain<C: ArkConfig + HasOpFactory>(
         .push(&Polynomial::var(&s_zero) - &one);
 }
 
-/// Slot-wise field division: emit `a[j] - b[j] * var[j] = 0` for each slot.
-/// The caller must first enforce that each logical denominator is nonzero.
-pub fn slot_wise_div<C: ArkConfig>(
-    ideal: &mut Ideal<C>,
+/// Slot-wise field division by the scalar `b`: defines each slot `t` of
+/// `target` as its dividend `a` in `a_polys` times the [`inverse`] of `b`.
+///
+/// Given `b·ι − 1`, the definition `a·ι − t` generates the same ideal as the
+/// constraint `a − b·t`: `a·ι − t = t·(b·ι − 1) − ι·(b·t − a)` and
+/// `a − b·t = b·(a·ι − t) − a·(b·ι − 1)`.
+///
+/// A reciprocal `c / b`, with `c` a nonzero constant, is the constraint
+/// `c − b·t` instead. It needs no `ι`, and it leaves `t` one variable that the
+/// prover and the verifier share, where each of them mints its own `ι`.
+fn slot_wise_div<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
     a_polys: &[Polynomial<C::F>],
-    b_polys: &[Polynomial<C::F>],
+    b: &Polynomial<C::F>,
 ) {
-    let target_slots = target.slots();
-    assert_eq!(
-        target_slots.len(),
-        a_polys.len(),
-        "slot_wise_div: target has {} slots but a_polys has {}",
-        target_slots.len(),
-        a_polys.len(),
-    );
-    assert_eq!(
-        target_slots.len(),
-        b_polys.len(),
-        "slot_wise_div: target has {} slots but b_polys has {}",
-        target_slots.len(),
-        b_polys.len(),
-    );
-    for (j, pf) in target_slots.iter().enumerate() {
-        ideal
+    let slots = target.slots();
+    if let ([t], [c]) = (slots.as_slice(), a_polys)
+        && c.is_constant()
+        && !c.is_zero()
+    {
+        ctx.ideal
             .generating_set
-            .push(a_polys[j].clone() - b_polys[j].clone() * Polynomial::var(pf));
+            .push(c - &(b * &Polynomial::var(t)));
+        return;
     }
+    let b_inv = inverse(ctx, b);
+    let quotients = a_polys.iter().map(|a| a * &b_inv).collect();
+    link_to_polys(ctx.ideal, target, quotients);
+}
+
+/// The inverse of `denominator`: a constant when `denominator` resolves to a
+/// nonzero constant, and otherwise a fresh witness `ι` with the generator
+/// `denominator·ι − 1`, which restricts division to traces with a nonzero
+/// denominator and so makes the ideal unit when `denominator` resolves to zero.
+fn inverse<C: ArkConfig + HasOpFactory>(
+    ctx: &mut EncodeCtx<'_, C>,
+    denominator: &Polynomial<C::F>,
+) -> Polynomial<C::F> {
+    if let Some(inv) = resolved_constant(ctx, denominator).and_then(|c| c.inverse()) {
+        return Polynomial::lit(&inv);
+    }
+    let name = ctx.builder.ns.next_name("div_inv");
+    let inv = Polynomial::var(&ctx.sentinel_var(&name, ATyp::scalar()));
+    let one = Polynomial::lit(&C::FOps::one());
+    ctx.ideal.generating_set.push(&(denominator * &inv) - &one);
+    inv
 }
 
 #[cfg(test)]
@@ -852,7 +835,7 @@ mod tests {
         assert_eq!(
             ideal.generating_set.len() - before,
             6,
-            "constant polynomial division should emit identity, zero remainder, links, and a nonzero-divisor row"
+            "constant polynomial division should emit quotient definitions, zero remainder, links, and a nonzero-divisor row"
         );
         let b0 = var_b.with_index(0).unwrap();
         assert!(
@@ -1019,7 +1002,7 @@ mod tests {
 
     #[test]
     fn test_add_op_div_scalar_fallback() {
-        // Scalar / Scalar → Scalar: slot-wise field division (a - b·var(var) = 0).
+        // Scalar / Scalar → Scalar: slot-wise field division (var := a·inv).
         // Scalar fallback does not allocate polynomial witnesses or degree chain.
         use crate::Var;
         use graph::Ref;
@@ -1051,16 +1034,16 @@ mod tests {
             "scalar fallback emits a nonzero-divisor row and a quotient row"
         );
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
-        let expected = &var_poly(&var_a) - &(&var_poly(&var_b) * &var_poly(&var));
-        assert!(
-            ideal.generating_set.iter().any(|row| row == &expected),
-            "scalar fallback row should be `a - b · var_poly(ideal)`"
-        );
         let inv = Var::from_var(
             "__zippel::gb::div_inv::0",
             NodeIndex::new(usize::MAX),
             ATyp::scalar(),
             Qualifier::Local,
+        );
+        assert_eq!(
+            ideal.pl.get(&var).cloned(),
+            Some(&var_poly(&var_a) * &var_poly(&inv)),
+            "scalar fallback should define the quotient as `a · inv`"
         );
         let expected_nonzero = &(&var_poly(&var_b) * &var_poly(&inv))
             - &Polynomial::lit(&ark_bls12_381::Fr::from(1u64));
@@ -1102,12 +1085,26 @@ mod tests {
         assert_eq!(ideal.generating_set.len() - before, 4);
         let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
         for i in 0..2 {
+            let inv_i = Var::from_var(
+                format!("__zippel::gb::div_inv::{i}"),
+                NodeIndex::new(usize::MAX - i),
+                ATyp::scalar(),
+                Qualifier::Local,
+            );
+            assert_eq!(
+                ideal.pl.get(&var.clone().with_index(i).unwrap()).cloned(),
+                Some(&var_poly(&var_a) * &var_poly(&inv_i)),
+                "scalar/vector div should define element {i} as `a · inv_{i}`"
+            );
             let b_i = var_b.clone().with_index(i).unwrap();
-            let r_i = var.clone().with_index(i).unwrap();
-            let expected = &var_poly(&var_a) - &(&var_poly(&b_i) * &var_poly(&r_i));
+            let expected_nonzero = &(&var_poly(&b_i) * &var_poly(&inv_i))
+                - &Polynomial::lit(&ark_bls12_381::Fr::from(1u64));
             assert!(
-                ideal.generating_set.iter().any(|row| row == &expected),
-                "basis missing scalar/vector div row {i}"
+                ideal
+                    .generating_set
+                    .iter()
+                    .any(|row| row == &expected_nonzero),
+                "inv_{i} should be the inverse of b[{i}]"
             );
         }
     }
@@ -1318,42 +1315,63 @@ mod tests {
         );
     }
 
+    /// A quotient by a scalar is a definition, so inlining removes it, also
+    /// inside a `map` body.
     #[test]
-    fn test_add_op_div_scalar_slot_wise() {
-        use crate::Var;
-        use lang::typ::Qualifier;
-        use petgraph::graph::NodeIndex;
+    fn inlining_removes_a_quotient_by_a_scalar() {
+        let src = r#"
+            proto quotients<F: Field>(instance a: F, instance b: F, instance v: [F; 2]) where a == a {
+                let q = a / b;
+                let qs = [v[i] / b for i in 0..2];
+                verify(q == qs[0])
+            }"#;
+        let mut ideal = IdealBuilder::<ArkBls12_381>::new().build(trans_clos_from_src(src));
+        ideal.inline();
+        let left: Vec<_> = ideal
+            .generating_set
+            .iter()
+            .flat_map(|p| p.vars())
+            .filter(|v| v.name == "q" || v.name.contains("gb_map_body"))
+            .collect();
+        assert!(left.is_empty(), "{left:?}");
+    }
 
-        let mut builder = IdealBuilder::<ArkBls12_381>::new();
-        let mut ideal = Ideal::<ArkBls12_381>::new();
+    /// A reciprocal is the constraint `1 − b·t`, so inlining keeps `t`, and
+    /// it mints no inverse.
+    #[test]
+    fn a_reciprocal_stays_a_variable() {
+        let src = r#"
+            proto reciprocal<F: Field>(instance b: F) where b == b {
+                let t = 1 / b;
+                verify(b * t == 1)
+            }"#;
+        let mut ideal = IdealBuilder::<ArkBls12_381>::new().build(trans_clos_from_src(src));
+        ideal.inline();
+        let names: Vec<_> = ideal
+            .generating_set
+            .iter()
+            .flat_map(|p| p.vars())
+            .map(|v| v.name)
+            .collect();
+        assert!(names.iter().any(|n| n == "t"), "{names:?}");
+        assert!(!names.iter().any(|n| n.contains("div_inv")), "{names:?}");
+    }
 
-        let var_a = Var::from_node(NodeIndex::new(0), ATyp::scalar(), Qualifier::Witness);
-        let var_b = Var::from_node(NodeIndex::new(1), ATyp::scalar(), Qualifier::Witness);
-        ideal.register(&var_a);
-        ideal.register(&var_b);
-
-        let var_ideal = Var::from_node(NodeIndex::new(2), ATyp::scalar(), Qualifier::Witness);
-        ideal.register(&var_ideal);
-
-        let a = Op::Ref(graph::Ref::new(NodeIndex::new(0)), ATyp::scalar());
-        let b = Op::Ref(graph::Ref::new(NodeIndex::new(1)), ATyp::scalar());
-        let op: GOp<ArkBls12_381> = Op::Bin(
-            BinOp::Div,
-            mk::<ArkBls12_381>(a),
-            mk::<ArkBls12_381>(b),
-            ATyp::scalar(),
-        );
-        builder.add_op(var_ideal.clone(), op, &mut ideal);
-
-        let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
-
-        let a_slot = var_a.clone();
-        let b_slot = var_b.clone();
-        let r_slot = var_ideal.clone();
-        let expected = &var_poly(&a_slot) - &(&var_poly(&b_slot) * &var_poly(&r_slot));
+    #[test]
+    fn a_divisor_that_resolves_to_zero_makes_the_ideal_unit() {
+        let src = r#"
+            proto zero<F: Field>(instance a: F) where a == a {
+                let q = a / (a - a);
+                verify(q == a)
+            }"#;
+        let mut ideal = IdealBuilder::<ArkBls12_381>::new().build(trans_clos_from_src(src));
+        ideal.inline();
         assert!(
-            ideal.generating_set.iter().any(|r| r == &expected),
-            "basis should contain a - b*var_poly(var)"
+            ideal
+                .generating_set
+                .iter()
+                .any(|p| p.is_constant() && !p.is_zero()),
+            "no nonzero constant among the generators"
         );
     }
 

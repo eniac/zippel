@@ -1408,6 +1408,33 @@ mod tests {
         );
     }
 
+    /// `verify(check)` over the quotient `c / b`, which is `a` once the
+    /// `where` clause defines `c` as `a·b`.
+    fn quotient(check: &str) -> String {
+        format!(
+            r#"
+            proto quotient<F: Field>(witness a: F, instance b: F, instance c: F) where c == a * b {{
+                t <- a;
+                verify({check})
+            }}"#
+        )
+    }
+
+    #[test]
+    fn a_check_over_a_quotient_by_a_scalar_is_complete() {
+        let result = from_input(&dag_of(&quotient("c / b == t"))).run();
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn a_wrong_check_over_a_quotient_by_a_scalar_stays_incomplete() {
+        let result = from_input(&dag_of(&quotient("c / b == t + 1"))).run();
+        assert!(
+            matches!(result, Err(AnalysisError::Incomplete(_))),
+            "{result:?}"
+        );
+    }
+
     #[test]
     fn a_division_row_pins_its_witness_and_leaves_the_input() {
         use crate::ideal::GB_GENERATED_NAME_PREFIX;

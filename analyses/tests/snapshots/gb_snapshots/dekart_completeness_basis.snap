@@ -2,10 +2,8 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- v_s_at_gamma*__zippel::gb::div_inv::4 + 4*__zippel::gb::div_inv::4 + gamma^2 + 2*gamma + 3*1
 __zippel::node::134 - 1
 chunks_bits[0][0]^2 - chunks_bits[0][0]
 chunks_bits[0][1]^2 - chunks_bits[0][1]
 chunks_bits[0][2]^2 - chunks_bits[0][2]
 gamma*__zippel::gb::div_inv::4 - __zippel::gb::div_inv::4 - 1
-v_s_at_gamma*__zippel::gb::div_inv::4^2 + 52435875175126190479447740508185965837690552500527637822603658699938581184509*__zippel::gb::div_inv::4^2 + 52435875175126190479447740508185965837690552500527637822603658699938581184507*__zippel::gb::div_inv::4 - gamma + 52435875175126190479447740508185965837690552500527637822603658699938581184510*1
