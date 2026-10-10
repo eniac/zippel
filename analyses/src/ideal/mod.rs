@@ -19,6 +19,9 @@ pub use ideal::{Check, Ideal};
 mod poly_source;
 pub(crate) use poly_source::PolySource;
 
+mod substitution;
+pub use substitution::{Refused, Substitution};
+
 mod ops;
 use ops::{EncodeCtx, link_to_polys};
 
