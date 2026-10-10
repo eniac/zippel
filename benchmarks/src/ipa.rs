@@ -221,6 +221,7 @@ pub mod native_side {
     use ark_std::UniformRand;
     use merlin::Transcript;
     use rayon::prelude::*;
+    use std::borrow::Cow;
 
     /// The Pedersen bases `g_vec`, `h_vec` and the binding point `q` for one
     /// instance size, together with the vector length `n = 2^S`.
@@ -291,12 +292,12 @@ pub mod native_side {
                 let q_raised = self.q * x_chal;
                 let p_prime = p_initial + q_raised * ip_val_claimed;
 
-                // Fresh per-iteration state: vectors get consumed by the
-                // recursive folding loop, so clone once per sample.
-                let mut a = a_vec.clone();
-                let mut b = b_vec.clone();
-                let mut g = g_proj_init.clone();
-                let mut h = h_proj_init.clone();
+                // The first round folds straight from the inputs; each later
+                // round owns the halves the previous one built.
+                let mut a: Cow<[Fr]> = Cow::Borrowed(&a_vec);
+                let mut b: Cow<[Fr]> = Cow::Borrowed(&b_vec);
+                let mut g: Cow<[Projective]> = Cow::Borrowed(&g_proj_init);
+                let mut h: Cow<[Projective]> = Cow::Borrowed(&h_proj_init);
                 let mut p_cur = p_prime;
                 let mut proofs: Vec<(Projective, Projective)> = Vec::new();
                 while a.len() > 1 {
@@ -333,10 +334,10 @@ pub mod native_side {
                         .map(|(lo, hi)| *lo * x + *hi * x_inv)
                         .collect();
                     proofs.push((l, r));
-                    a = a_next;
-                    b = b_next;
-                    g = g_next;
-                    h = h_next;
+                    a = Cow::Owned(a_next);
+                    b = Cow::Owned(b_next);
+                    g = Cow::Owned(g_next);
+                    h = Cow::Owned(h_next);
                 }
                 let final_a = a[0];
                 let final_b = b[0];
@@ -345,13 +346,12 @@ pub mod native_side {
             });
 
             // ---- Verifier (naive: fold bases each round, matching upstream) ----
-            // The folding consumes the bases, so each run copies them inside
-            // the timer and the heap count, as the prover does: a verifier
-            // keeps its key, and zippel's verifier pays for its folds too.
+            // The first round folds straight from the bases the verifier
+            // keeps; each later round owns the halves the previous one built.
             let (verify, verify_peak, ok) = crate::sample(|| {
                 let mut verifier_transcript = Transcript::new(b"ipa-bench");
-                let mut g = g_proj_init.clone();
-                let mut h = h_proj_init.clone();
+                let mut g: Cow<[Projective]> = Cow::Borrowed(&g_proj_init);
+                let mut h: Cow<[Projective]> = Cow::Borrowed(&h_proj_init);
                 absorb_point(&mut verifier_transcript, b"p_initial", &p_initial);
                 absorb_scalar(&mut verifier_transcript, b"c", &ip_val_claimed);
                 let x_chal = challenge_scalar(&mut verifier_transcript, b"x_chal");
@@ -366,16 +366,20 @@ pub mod native_side {
                     let x_inv = x.inverse().expect("nonzero challenge");
                     p_cur = *l * x.square() + *r * x_inv.square() + p_cur;
                     let n = g.len() / 2;
-                    g = g[..n]
-                        .par_iter()
-                        .zip(&g[n..])
-                        .map(|(lo, hi)| *lo * x_inv + *hi * x)
-                        .collect();
-                    h = h[..n]
-                        .par_iter()
-                        .zip(&h[n..])
-                        .map(|(lo, hi)| *lo * x + *hi * x_inv)
-                        .collect();
+                    g = Cow::Owned(
+                        g[..n]
+                            .par_iter()
+                            .zip(&g[n..])
+                            .map(|(lo, hi)| *lo * x_inv + *hi * x)
+                            .collect(),
+                    );
+                    h = Cow::Owned(
+                        h[..n]
+                            .par_iter()
+                            .zip(&h[n..])
+                            .map(|(lo, hi)| *lo * x + *hi * x_inv)
+                            .collect(),
+                    );
                 }
                 let expected = g[0] * final_a + h[0] * final_b + q_raised * (final_a * final_b);
                 p_cur == expected

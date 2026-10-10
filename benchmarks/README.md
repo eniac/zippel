@@ -237,8 +237,9 @@ The rules every measurement follows, on both sides:
 - A measured call frees nothing that was live before it started (checked by
   tracking the counter's minimum, which is 0 for every run).
 - Whatever a call consumes or needs is made inside it: transcripts and
-  sponges, and copies of inputs a call consumes (native IPA's verifier folds
-  a copy of its bases; libspartan's `prove` takes its witness by value).
+  sponges, and copies of inputs a call consumes (libspartan's `prove` takes
+  its witness by value). Native IPA folds its first round straight from the
+  borrowed inputs instead of copying them.
 - Both sides do the same work inside the call. Where the zippel protocol
   takes a derived witness as input that the native prover computes itself,
   the harness computes it inside zippel's measured call: Groth16's
