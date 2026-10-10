@@ -27,8 +27,9 @@ pub mod zippel_side {
     use backend::{ArkBls12_381, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
+    use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     /// A compiled Hyrax instance together with the fixed, seeded inputs it is
     /// timed on.
@@ -38,7 +39,7 @@ pub mod zippel_side {
     /// `time_protocol` calls measure the same instance.
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs: Inputs<ArkBls12_381>,
+        inputs: HashMap<Vid, Value<ArkBls12_381>>,
         compile_time: Vec<std::time::Duration>,
     }
 
@@ -96,7 +97,7 @@ pub mod zippel_side {
             let g_base = G1Projective::rand(&mut rng);
             let h_base = G1Projective::rand(&mut rng);
 
-            let inputs = Inputs::<ArkBls12_381>::from_iter([
+            let inputs = HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
                 (Vid("p".to_string()), Value::vec_scalar(p)),
                 (Vid("z_row".to_string()), Value::vec_scalar(z_row)),
                 (Vid("z_col".to_string()), Value::vec_scalar(z_col)),
@@ -141,16 +142,10 @@ pub mod zippel_side {
         /// Panics if the prover or verifier graph fails to execute, or if the
         /// verifier rejects the honestly generated proof.
         pub fn time_protocol(&mut self) -> Timing {
-            let (prove, prove_peak, proof) = crate::sample(|| {
-                self.handler
-                    .run_prover(&self.inputs)
-                    .expect("zippel hyrax prover failed")
-            });
-            let (verify, verify_peak, result) = crate::sample(|| {
-                self.handler
-                    .run_verifier(&proof, &self.inputs)
-                    .expect("zippel hyrax verifier failed")
-            });
+            let (prove, prove_peak, proof) =
+                crate::sample_zippel_prover(&mut self.handler, &self.inputs);
+            let (verify, verify_peak, result) =
+                crate::sample_zippel_verifier(&mut self.handler, &proof, &self.inputs);
             assert!(
                 check_verification(&result),
                 "zippel hyrax verification FAILED"
@@ -283,10 +278,10 @@ pub mod native_side {
                 let proof = hyrax_upstream::open(&self.ck, &com, point, &mut sponge, &state);
                 (com, proof)
             });
-            let (verify, verify_peak, ok) =
-                crate::sample_with(test_sponge::<Fr>, |mut sponge_v| {
-                    hyrax_upstream::check(&self.vk, &com, point, &proof, &mut sponge_v)
-                });
+            let (verify, verify_peak, ok) = crate::sample(|| {
+                let mut sponge_v = test_sponge::<Fr>();
+                hyrax_upstream::check(&self.vk, &com, point, &proof, &mut sponge_v)
+            });
             assert!(ok, "vendored Hyrax verification FAILED");
 
             Timing {

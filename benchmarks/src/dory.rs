@@ -72,12 +72,13 @@ pub mod zippel_side {
     use backend::{ArkBls12_381, PreparedG2Vec, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
+    use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs: Inputs<ArkBls12_381>,
+        inputs: HashMap<Vid, Value<ArkBls12_381>>,
         compile_time: Vec<std::time::Duration>,
     }
 
@@ -101,7 +102,7 @@ pub mod zippel_side {
 
             let (s, v) = (&sh.setup, &sh.vsetup);
             let nv = 1usize << k;
-            let inputs = Inputs::from_iter(
+            let inputs = HashMap::from_iter(
                 [
                     ("m", Value::vec_scalar(sh.coeffs.clone())),
                     // upstream point = columns (sigma) then rows (nu)
@@ -148,7 +149,7 @@ pub mod zippel_side {
         /// Panics if the prover graph fails to execute.
         pub fn prove_once(&mut self) -> Vec<Value<ArkBls12_381>> {
             self.handler
-                .run_prover(&self.inputs)
+                .run_prover(self.inputs.clone())
                 .expect("run_prover failed")
         }
 
@@ -167,16 +168,10 @@ pub mod zippel_side {
         /// # Panics
         /// Panics if either graph fails to execute or the verifier rejects.
         pub fn time_protocol(&mut self) -> Timing {
-            let (prove, prove_peak, proof) = crate::sample(|| {
-                self.handler
-                    .run_prover(&self.inputs)
-                    .expect("run_prover failed")
-            });
-            let (verify, verify_peak, result) = crate::sample(|| {
-                self.handler
-                    .run_verifier(&proof, &self.inputs)
-                    .expect("run_verifier failed")
-            });
+            let (prove, prove_peak, proof) =
+                crate::sample_zippel_prover(&mut self.handler, &self.inputs);
+            let (verify, verify_peak, result) =
+                crate::sample_zippel_verifier(&mut self.handler, &proof, &self.inputs);
             assert!(
                 check_verification(&result),
                 "zippel Dory verification FAILED"

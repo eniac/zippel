@@ -31,14 +31,16 @@ pub fn run(opts: &common::RunOptions) {
     let sizes = build_sizes_ctx();
     handler.compile(&sizes);
 
-    let inputs: Inputs<_> = prover_create_inputs().into();
+    let inputs = prover_create_inputs();
     let t = Instant::now();
-    let proof = handler.run_prover(&inputs).expect("run_prover failed");
+    let proof = handler
+        .run_prover(inputs.clone())
+        .expect("run_prover failed");
     println!("Prover time:    {:.2?}", t.elapsed());
     println!("Proof items:    {}", proof.len());
     let t = Instant::now();
     let verifier_result = handler
-        .run_verifier(&proof, &inputs)
+        .run_verifier(proof, inputs)
         .expect("run_verifier failed");
     println!("Verifier time:  {:.2?}", t.elapsed());
 

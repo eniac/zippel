@@ -62,7 +62,7 @@ use ark_std::UniformRand;
 use std::path::PathBuf;
 use zippel::backend::{ArkBls12_381, ArkConfig, ArkGroupOps, Value};
 use zippel::share::Ctx;
-use zippel::{check_verification, proof_size_bytes, Inputs, ZippelArgs, ZippelHandler};
+use zippel::{check_verification, proof_size_bytes, ZippelArgs, ZippelHandler};
 
 fn main() {
     let args = ZippelArgs::new(PathBuf::from("schnorr.zippel"));
@@ -70,7 +70,9 @@ fn main() {
     handler.compile(&Ctx::new());
 
     let inputs = prover_create_inputs();
-    let proof = handler.run_prover(&inputs).expect("run_prover failed");
+    let proof = handler
+        .run_prover(inputs.clone())
+        .expect("run_prover failed");
     println!(
         "Proof size: {} bytes ({} elements)",
         proof_size_bytes::<ArkBls12_381>(&proof),
@@ -78,7 +80,7 @@ fn main() {
     );
 
     let verifier_result = handler
-        .run_verifier(&proof, &inputs)
+        .run_verifier(proof, inputs)
         .expect("run_verifier failed");
     println!(
         "Verification: {}",
@@ -95,7 +97,7 @@ fn main() {
     }
 }
 
-fn prover_create_inputs() -> Inputs<ArkBls12_381> {
+fn prover_create_inputs() -> Vec<(&'static str, Value<ArkBls12_381>)> {
     let mut rng = rand::rngs::OsRng;
     let x = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
     let g = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
@@ -103,22 +105,26 @@ fn prover_create_inputs() -> Inputs<ArkBls12_381> {
         .into_iter()
         .next()
         .unwrap();
-    Inputs::from_iter([
+    vec![
         ("x", Value::Scalar(x)),
         ("g", Value::G1(g)),
         ("h", Value::G1Affine(h)),
-    ])
+    ]
 }
 ```
 
 - `ZippelHandler<C>` drives compiling, running, and analyzing a
   protocol for one concrete curve `C`.
 - `ZippelArgs` points a handler at a `.zippel` file.
-- `Inputs<C>` maps each protocol parameter name to a value; its names
-  must match the `.zippel` file's parameter names exactly (`x`, `g`, `h`
-  above). It holds each value behind an `Arc`, so `run_prover` and
-  `run_verifier` share the inputs instead of copying them: build them once
-  and pass the same `Inputs` to every run.
+- `run_prover` and `run_verifier` take `(name, value)` pairs (a `Vec`, a
+  `HashMap`, a `Ctx`, ...); the names must match the `.zippel` file's
+  parameter names exactly (`x`, `g`, `h` above). The verifier reads only
+  the instance arguments and drops the rest.
+- A run owns its inputs and frees each after its last use. Cloning a
+  vector value shares its buffer, so to reuse an input across runs (an
+  SRS, a proving key), pass a clone and keep the original, as
+  `inputs.clone()` does above; an input you pass without keeping a clone,
+  such as a fresh witness, is freed during the run.
 - `compile` takes a `Ctx` of size parameters; this protocol has none.
 - `analyze_completeness()` returns `Result<(),
   analyses::AnalysisError<C>>`; `Ok(())` means the protocol is

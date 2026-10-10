@@ -157,7 +157,7 @@ fn zippel_proof_to_ark(proof: &[Value<ArkBls12_381>]) -> ark_groth16::Proof<E> {
 fn run_and_verify(
     zippel_path: &str,
     sizes: &Ctx<Tid, usize>,
-    inputs: &Inputs<ArkBls12_381>,
+    inputs: Vec<(Vid, Value<ArkBls12_381>)>,
     vk: &ark_groth16::VerifyingKey<E>,
     instance_assignment: &[F],
 ) {
@@ -165,7 +165,7 @@ fn run_and_verify(
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile(sizes);
     let prover_start = Instant::now();
-    let proof = handler.run_prover(inputs).unwrap();
+    let proof = handler.run_prover(inputs.clone()).unwrap();
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Zippel prover time:    {prover_elapsed:.2?}");
@@ -178,7 +178,9 @@ fn run_and_verify(
     let mut verifier_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(verifier_args);
     verifier_handler.compile(sizes);
     let verifier_start = Instant::now();
-    let verifier_result = verifier_handler.run_verifier(&proof, inputs).unwrap();
+    let verifier_result = verifier_handler
+        .run_verifier(proof.clone(), inputs)
+        .unwrap();
     let verifier_elapsed = verifier_start.elapsed();
     let passed = check_verification(&verifier_result);
     println!("Zippel verifier time: {verifier_elapsed:.2?}");
@@ -227,8 +229,6 @@ fn run_groth16(
         Value::vec_scalar(h_coeffs_padded),
     ));
 
-    let inputs: Inputs<ArkBls12_381> = entries.into_iter().collect();
-
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("M"), &m);
     sizes.insert(&Tid::new("L"), &l);
@@ -237,7 +237,7 @@ fn run_groth16(
     run_and_verify(
         "examples/groth16/groth16.zippel",
         &sizes,
-        &inputs,
+        entries,
         vk,
         instance_assignment,
     );

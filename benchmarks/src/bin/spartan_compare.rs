@@ -3,9 +3,8 @@
 //!
 //! The Zippel side compiles `examples/spartan/spartan.zippel` through the normal pipeline on the
 //! `ArkCurve25519` backend; the native side runs `libspartan::NIZK` over `curve25519-dalek`.
-//! For each R1CS size `M` the binary prints prover/verifier wall times, a matrix-vector-adjusted
-//! prove ratio (the native prover folds the sparse matvec into `prove`, so it is timed separately
-//! and subtracted), and both proof sizes.
+//! For each R1CS size `M` the binary prints prover/verifier wall times, their ratios, and both
+//! proof sizes. Both provers compute Az, Bz, Cz inside their timer.
 
 use benchmarks::spartan::{DEFAULT_M, Setup as ZippelSetup, hyrax_split};
 use clap::Parser;
@@ -46,10 +45,8 @@ fn main() {
     println!("prove timer    = NIZK::prove (commit + sum-checks + PCS open) + matrix+io FS-bind");
     println!("verify timer   = NIZK::verify + matrix+io FS-bind");
     println!(
-        "matvec timer   = Instance::is_sat — same Az/Bz/Cz that NIZK::prove computes\n\
-                  internally, plus an O(N) equality check. Subtracted from\n\
-                  raw native prove to match zippel (which precomputes Az/Bz/Cz\n\
-                  outside its timer)."
+        "matvec         = Az/Bz/Cz: NIZK::prove computes them internally; the zippel\n\
+                  harness computes them inside its prove timer too."
     );
     println!(
         "matrix-bind    = throwaway merlin transcript absorbing serialized\n\
@@ -62,10 +59,10 @@ fn main() {
     );
     println!();
     println!(
-        "  M | num_cons | hyrax-split  | zippel prove   zippel verify | native prove   matvec  prove-matvec   native verify | prove ratio  prove ratio (adj)  verify ratio | zippel pf  native pf"
+        "  M | num_cons | hyrax-split  | zippel prove   zippel verify | native prove   native verify | prove ratio  verify ratio | zippel pf  native pf"
     );
     println!(
-        "----+----------+--------------+-----------------------------+----------------------------------------------------+----------------------------------------------+---------------------"
+        "----+----------+--------------+-----------------------------+-----------------------------+---------------------------+---------------------"
     );
 
     for &m in &ms {
@@ -83,19 +80,10 @@ fn main() {
         let num_inputs = num_vars - 1;
         let (inst, vars, inputs) = Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
 
-        let n_matvec = {
-            let mut best = Duration::MAX;
-            for _ in 0..3 {
-                let t0 = Instant::now();
-                let sat = inst.is_sat(&vars, &inputs).expect("is_sat");
-                let dt = t0.elapsed();
-                assert!(sat, "synthetic R1CS unsat at M={m}");
-                if dt < best {
-                    best = dt;
-                }
-            }
-            best
-        };
+        assert!(
+            inst.is_sat(&vars, &inputs).expect("is_sat"),
+            "synthetic R1CS unsat at M={m}"
+        );
 
         let gens = NIZKGens::new(num_cons, num_vars, num_inputs);
 
@@ -111,7 +99,6 @@ fn main() {
         }
         let proof = NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt);
         let n_prove = prover_start.elapsed();
-        let n_prove_adj = n_prove.saturating_sub(n_matvec);
         let native_proof_bytes = bincode::serialize(&proof).expect("encode proof").len();
 
         let mut vt = Transcript::new(b"phase3_spartan_compare");
@@ -128,15 +115,12 @@ fn main() {
         let (l, m_h) = hyrax_split(m);
         let split_lbl = format!("L={l}, M_h={m_h}");
         println!(
-            " {m:>2} | {num_cons:>8} | {split_lbl:>12} | {:>11.2?}  {:>13.2?} | {:>11.2?}  {:>7.2?}  {:>12.2?}  {:>13.2?} | {:>10.2}x  {:>16.2}x  {:>11.2}x | {zpf:>7}B  {npf:>7}B",
+            " {m:>2} | {num_cons:>8} | {split_lbl:>12} | {:>11.2?}  {:>13.2?} | {:>11.2?}  {:>13.2?} | {:>10.2}x  {:>11.2}x | {zpf:>7}B  {npf:>7}B",
             z.timing.prove_mean(),
             z.timing.verify_mean(),
             n_prove,
-            n_matvec,
-            n_prove_adj,
             n_verify,
             ratio(z.timing.prove_mean(), n_prove),
-            ratio(z.timing.prove_mean(), n_prove_adj),
             ratio(z.timing.verify_mean(), n_verify),
             zpf = z.proof_bytes,
             npf = native_proof_bytes,

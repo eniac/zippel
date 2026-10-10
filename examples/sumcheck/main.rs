@@ -33,8 +33,7 @@ pub fn run(opts: &common::RunOptions) {
     sizes.insert(&Tid::new("MAX_DEGREE_CONST"), &max_degree);
     handler.compile(&sizes);
 
-    let inputs: Inputs<_> = prover_create_inputs(num_vars, max_degree).into();
-    common::run_prover_and_verify(&mut handler, &inputs);
+    common::run_prover_and_verify(&mut handler, prover_create_inputs(num_vars, max_degree));
 
     if !opts.analyses {
         return;

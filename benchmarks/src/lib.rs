@@ -5,7 +5,12 @@
 //! (`zippel_side` and `native_side`) plus a shared input-generation
 //! helper that seeds both halves identically.
 
+use backend::{ArkConfig, HasOpFactory, Value};
+use lang::id::Vid;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
+use zippel::ZippelHandler;
+use zippel::graph::{ArgKind, Node};
 
 /// Per-sample prover and verifier wall-times and peak heaps for one
 /// protocol measurement.
@@ -209,6 +214,87 @@ fn dhat_profiler(caller: &std::panic::Location<'_>) -> dhat::Profiler {
         .file_name(format!("{dir}/{n:02}-{file}_{}.json", caller.line()))
         .trim_backtraces(Some(frames))
         .build()
+}
+
+/// Samples a zippel prover on the same footing as a native one, which
+/// borrows its inputs: each run is handed clones of the inputs it reads,
+/// made as the run collects them. Cloning a vector value shares its buffer,
+/// so `inputs` keeps every input alive and the run frees nothing that was
+/// live before it started. (Handing it owned copies would let it free them,
+/// and the heap count would credit zippel with memory a native prover keeps.)
+///
+/// # Panics
+/// Panics if the handler is not compiled or a run fails.
+#[track_caller]
+pub fn sample_zippel_prover<C: ArkConfig + HasOpFactory>(
+    handler: &mut ZippelHandler<C>,
+    inputs: &HashMap<Vid, Value<C>>,
+) -> (Vec<Duration>, Vec<usize>, Vec<Value<C>>) {
+    let names = prover_args(handler);
+    sample(|| {
+        handler
+            .run_prover(shared_inputs(inputs, &names))
+            .expect("run_prover failed")
+    })
+}
+
+/// Samples a zippel verifier on `proof`, on the same footing as a native one:
+/// each run is handed clones of `proof` and of the instance arguments, as
+/// [`sample_zippel_prover`] hands its inputs.
+///
+/// # Panics
+/// Panics if the handler is not compiled or a run fails.
+#[track_caller]
+pub fn sample_zippel_verifier<C: ArkConfig + HasOpFactory>(
+    handler: &mut ZippelHandler<C>,
+    proof: &[Value<C>],
+    inputs: &HashMap<Vid, Value<C>>,
+) -> (Vec<Duration>, Vec<usize>, Vec<bool>) {
+    let verifier = handler.verifier_graph.as_ref().expect("compiled handler");
+    let names: HashSet<Vid> = verifier
+        .input_args()
+        .into_iter()
+        .filter_map(|n| match &verifier[n] {
+            Node::Arg(name, _, qual, _, ArgKind::Input) if qual.is_instance() => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    sample(|| {
+        handler
+            .run_verifier(proof.iter().cloned(), shared_inputs(inputs, &names))
+            .expect("run_verifier failed")
+    })
+}
+
+/// The arguments `handler`'s prover reads from its caller.
+///
+/// # Panics
+/// Panics if the handler is not compiled.
+#[must_use]
+pub fn prover_args<C: ArkConfig + HasOpFactory>(handler: &ZippelHandler<C>) -> HashSet<Vid> {
+    let prover = handler.prover_graph.as_ref().expect("compiled handler");
+    prover
+        .input_args()
+        .into_iter()
+        .filter_map(|n| match &prover[n] {
+            Node::Arg(name, _, _, _, ArgKind::Input) => Some(name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Clones of the `inputs` named in `names`, made lazily as a run collects
+/// them. Only what the run reads is passed: an input it dropped unread could
+/// be a deep copy (a polynomial or a nested vector), and freeing that inside
+/// the run would count against its heap.
+pub fn shared_inputs<'a, C: ArkConfig>(
+    inputs: &'a HashMap<Vid, Value<C>>,
+    names: &'a HashSet<Vid>,
+) -> impl Iterator<Item = (Vid, Value<C>)> + 'a {
+    inputs
+        .iter()
+        .filter(|(k, _)| names.contains(*k))
+        .map(|(k, v)| (k.clone(), v.clone()))
 }
 
 /// Runs a `.zippel` compile [`SAMPLES`] times and returns the last

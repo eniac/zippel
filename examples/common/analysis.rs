@@ -1,6 +1,9 @@
+use backend::Value;
 use backend::{ArkConfig, HasOpFactory};
 use std::time::Instant;
-use zippel::{Inputs, ZippelHandler, check_verification, proof_size_bytes};
+use zippel::lang::id::Vid;
+use zippel::share::Ctx;
+use zippel::{ZippelHandler, check_verification, proof_size_bytes};
 
 /// Shared harness options; the example's parsed Clap arguments are passed
 /// separately.
@@ -38,13 +41,17 @@ pub(crate) use time_analysis;
 /// size. Exits with code 1 if verification fails.
 ///
 /// `C` is the backend config type (e.g. `ArkBls12_381`, `ArkSecp256k1`).
-/// `handler` must already be compiled. `inputs` is the prover witness context.
+/// `handler` must already be compiled. `inputs` holds every argument by
+/// name; the prover gets a clone (cheap: vector buffers are shared) and the
+/// verifier the original.
 pub fn run_prover_and_verify<C: ArkConfig + HasOpFactory>(
     handler: &mut ZippelHandler<C>,
-    inputs: &Inputs<C>,
+    inputs: Ctx<Vid, Value<C>>,
 ) {
     let prover_start = Instant::now();
-    let proof = handler.run_prover(inputs).expect("run_prover failed");
+    let proof = handler
+        .run_prover(inputs.clone())
+        .expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<C>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
@@ -55,7 +62,7 @@ pub fn run_prover_and_verify<C: ArkConfig + HasOpFactory>(
 
     let verifier_start = Instant::now();
     let verifier_result = handler
-        .run_verifier(&proof, inputs)
+        .run_verifier(proof, inputs)
         .expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     let passed = check_verification(&verifier_result);

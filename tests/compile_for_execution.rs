@@ -50,13 +50,13 @@ fn projects_the_same_prover_and_verifier_as_compile() {
     // Proofs cross over in both directions, so the two compiles also agree
     // on the Fiat-Shamir transcript.
     let inputs = schnorr_inputs();
-    let proof = exec.run_prover(&inputs).unwrap();
+    let proof = exec.run_prover(inputs.clone()).unwrap();
     assert!(check_verification(
-        &full.run_verifier(&proof, &inputs).unwrap()
+        &full.run_verifier(proof, inputs.clone()).unwrap()
     ));
-    let proof = full.run_prover(&inputs).unwrap();
+    let proof = full.run_prover(inputs.clone()).unwrap();
     assert!(check_verification(
-        &exec.run_verifier(&proof, &inputs).unwrap()
+        &exec.run_verifier(proof, inputs).unwrap()
     ));
 }
 

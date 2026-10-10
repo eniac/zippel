@@ -1401,7 +1401,6 @@ version = "0.1.0"
 dependencies = [
  "arbitrary",
  "arbtest",
- "arc-swap",
  "ark-bls12-381",
  "ark-ff",
  "ark-poly",

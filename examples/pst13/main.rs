@@ -34,8 +34,7 @@ pub fn run(args: &Args, opts: &common::RunOptions) {
     sizes.insert(&Tid::new("N"), &n);
     handler.compile(&sizes);
 
-    let inputs: Inputs<_> = prover_create_inputs(n).into();
-    common::run_prover_and_verify(&mut handler, &inputs);
+    common::run_prover_and_verify(&mut handler, prover_create_inputs(n));
 
     if !opts.analyses {
         return;

@@ -474,14 +474,15 @@ pub mod zippel_side {
     use backend::{ArkBls12_381, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
+    use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     /// Compiled PST13 protocol plus the instance/witness context derived from
     /// the shared SRS; borrows the [`Shared`] data it was built from.
     pub struct Setup<'a> {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs_base: Inputs<ArkBls12_381>,
+        inputs_base: HashMap<Vid, Value<ArkBls12_381>>,
         #[allow(dead_code)]
         shared: &'a Shared,
         compile_time: Vec<std::time::Duration>,
@@ -497,7 +498,7 @@ pub mod zippel_side {
         pub fn new(shared: &'a Shared) -> Self {
             // Pre-affinize ck — same fix as the Groth16 bench (avoids per-prove
             // `normalize_batch`). ck_affine is already computed in `Shared`.
-            let inputs_base = Inputs::<ArkBls12_381>::from_iter([
+            let inputs_base = HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
                 (Vid("p".to_string()), Value::vec_scalar(shared.p.clone())),
                 (Vid("z".to_string()), Value::vec_scalar(shared.z.clone())),
                 (Vid("y".to_string()), Value::Scalar(shared.y)),
@@ -550,16 +551,10 @@ pub mod zippel_side {
         /// Panics if either graph fails to execute or if verification does
         /// not pass.
         pub fn time_protocol(&mut self) -> Timing {
-            let (prove, prove_peak, proof) = crate::sample(|| {
-                self.handler
-                    .run_prover(&self.inputs_base)
-                    .expect("zippel pst13 prover failed")
-            });
-            let (verify, verify_peak, result) = crate::sample(|| {
-                self.handler
-                    .run_verifier(&proof, &self.inputs_base)
-                    .expect("zippel pst13 verifier failed")
-            });
+            let (prove, prove_peak, proof) =
+                crate::sample_zippel_prover(&mut self.handler, &self.inputs_base);
+            let (verify, verify_peak, result) =
+                crate::sample_zippel_verifier(&mut self.handler, &proof, &self.inputs_base);
             assert!(
                 check_verification(&result),
                 "zippel PST13 verification FAILED"
@@ -587,8 +582,9 @@ mod cross_tests {
     use backend::{ArkBls12_381, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
+    use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     const N_SWEEP: &[usize] = &[1, 2, 4, 6];
 
@@ -604,8 +600,8 @@ mod cross_tests {
         handler
     }
 
-    fn zip_inputs(shared: &Shared) -> Inputs<ArkBls12_381> {
-        Inputs::<ArkBls12_381>::from_iter([
+    fn zip_inputs(shared: &Shared) -> HashMap<Vid, Value<ArkBls12_381>> {
+        HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
             (Vid("p".to_string()), Value::vec_scalar(shared.p.clone())),
             (Vid("z".to_string()), Value::vec_scalar(shared.z.clone())),
             (Vid("y".to_string()), Value::Scalar(shared.y)),
@@ -643,7 +639,7 @@ mod cross_tests {
         // Prime zippel handler state by running its prover once.
         let mut handler = zippel_handler(&shared);
         let _ = handler
-            .run_prover(&zip_inputs(&shared))
+            .run_prover(zip_inputs(&shared))
             .expect("zippel run_prover (priming handler state)");
 
         // Pack native proof into the zippel transcript order: [c_p, π_0, ..., π_{n-1}].
@@ -653,7 +649,7 @@ mod cross_tests {
             cross_proof.push(Value::G1(*pi));
         }
         let verifier_result = handler
-            .run_verifier(&cross_proof, &zip_inputs(&shared))
+            .run_verifier(cross_proof.clone(), zip_inputs(&shared))
             .expect("zippel run_verifier on cross-proof");
         let result = check_verification(&verifier_result);
         assert!(
@@ -677,7 +673,7 @@ mod cross_tests {
 
         let mut handler = zippel_handler(&shared);
         let zip_proof: Vec<Value<ArkBls12_381>> = handler
-            .run_prover(&zip_inputs(&shared))
+            .run_prover(zip_inputs(&shared))
             .expect("zippel run_prover");
 
         assert_eq!(

@@ -30,8 +30,9 @@ pub mod zippel_side {
     use backend::{ArkBls12_381, ArkConfig, Value, VirtualPolynomial};
     use lang::id::{Tid, Vid};
     use share::Ctx;
+    use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     /// A compiled sumcheck instance, reusable across `time_protocol` calls.
     ///
@@ -117,17 +118,14 @@ pub mod zippel_side {
             for _ in 1..md {
                 full_poly = full_poly.poly_mul(&base).expect("poly_mul");
             }
-            let inputs = Inputs::<ArkBls12_381>::from_iter([
+            let inputs = HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
                 (Vid("claimed_sum".to_string()), Value::Scalar(claimed_sum)),
                 (Vid("p".to_string()), Value::Poly(full_poly)),
             ]);
             let (prove, prove_peak, proof) =
-                crate::sample(|| self.handler.run_prover(&inputs).expect("run_prover failed"));
-            let (verify, verify_peak, result) = crate::sample(|| {
-                self.handler
-                    .run_verifier(&proof, &inputs)
-                    .expect("run_verifier failed")
-            });
+                crate::sample_zippel_prover(&mut self.handler, &inputs);
+            let (verify, verify_peak, result) =
+                crate::sample_zippel_verifier(&mut self.handler, &proof, &inputs);
             assert!(
                 check_verification(&result),
                 "zippel sumcheck verification FAILED"
@@ -202,29 +200,20 @@ pub mod native_side {
             poly.add_mle_list(vec![mle.clone(); md], Fr::one())
                 .expect("add_mle_list");
 
-            let (prove, prove_peak, proof) = crate::sample_with(
-                <PolyIOP<Fr> as SumCheck<Fr>>::init_transcript,
-                |mut transcript| {
-                    <PolyIOP<Fr> as SumCheck<Fr>>::prove(&poly, &mut transcript)
-                        .expect("hyperplonk prove failed")
-                },
-            );
+            let (prove, prove_peak, proof) = crate::sample(|| {
+                let mut transcript = <PolyIOP<Fr> as SumCheck<Fr>>::init_transcript();
+                <PolyIOP<Fr> as SumCheck<Fr>>::prove(&poly, &mut transcript)
+                    .expect("hyperplonk prove failed")
+            });
 
             let aux = poly.aux_info.clone();
-            // Verify takes &mut transcript; each run gets a fresh one, made
-            // outside the timer.
-            let (verify, verify_peak, subclaim) = crate::sample_with(
-                <PolyIOP<Fr> as SumCheck<Fr>>::init_transcript,
-                |mut transcript| {
-                    <PolyIOP<Fr> as SumCheck<Fr>>::verify(
-                        claimed_sum,
-                        &proof,
-                        &aux,
-                        &mut transcript,
-                    )
+            // Each run makes its own transcript inside the timer, as zippel
+            // makes its sponge inside each run.
+            let (verify, verify_peak, subclaim) = crate::sample(|| {
+                let mut transcript = <PolyIOP<Fr> as SumCheck<Fr>>::init_transcript();
+                <PolyIOP<Fr> as SumCheck<Fr>>::verify(claimed_sum, &proof, &aux, &mut transcript)
                     .expect("hyperplonk verify failed")
-                },
-            );
+            });
 
             // Subclaim opening (the final O(2^NV) poly eval) is
             // deliberately outside the timer — in a real SNARK it would

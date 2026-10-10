@@ -14,11 +14,8 @@ pub mod error;
 pub mod graph;
 
 mod inbox;
-/// A protocol's named inputs, shared rather than copied by each run.
-pub mod inputs;
 pub use error::RuntimeError;
 pub use graph::{MutexGraph, RunResult};
-pub use inputs::Inputs;
 
 #[cfg(test)]
 mod tests;

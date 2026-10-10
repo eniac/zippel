@@ -1,13 +1,14 @@
 #[cfg(test)]
 mod runtime_tests {
     use crate::graph::{MutexGraph, ResultKind, RunResult};
-    use crate::inputs::Inputs;
     use backend::Value;
     use backend::config::ArkBls12_381;
     use graph::UDags;
     use lang::ast::{CModule, UModule};
     use lang::id::Tid;
+    use lang::id::Vid;
     use share::Ctx;
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     type TestConfig = ArkBls12_381;
@@ -54,14 +55,18 @@ mod runtime_tests {
         let verifier = dag.get_verifier().unwrap();
 
         // Prover execution
-        let mut inputs = Inputs::new();
+        let mut inputs = HashMap::new();
         inputs.insert(
-            "a",
-            Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(3u64)),
+            Vid::from("a"),
+            Arc::new(Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(
+                3u64,
+            ))),
         );
         inputs.insert(
-            "b",
-            Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(4u64)),
+            Vid::from("b"),
+            Arc::new(Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(
+                4u64,
+            ))),
         );
 
         let separator = graph::domain_seperator::ZippelDomainSeparator::new_zippel_domain_seperator(
@@ -72,7 +77,7 @@ mod runtime_tests {
 
         let mg_prover = Arc::new(MutexGraph::new(prover));
         let proof =
-            match MutexGraph::run_graph(mg_prover, &inputs, &mut prover_state, ResultKind::Prover)
+            match MutexGraph::run_graph(mg_prover, inputs, &mut prover_state, ResultKind::Prover)
                 .unwrap()
             {
                 RunResult::Prover(v) => v,
@@ -91,14 +96,18 @@ mod runtime_tests {
         );
 
         // Verifier execution
-        let mut verifier_inputs = Inputs::new();
+        let mut verifier_inputs = HashMap::new();
         verifier_inputs.insert(
-            "a",
-            Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(3u64)),
+            Vid::from("a"),
+            Arc::new(Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(
+                3u64,
+            ))),
         );
         verifier_inputs.insert(
-            "b",
-            Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(4u64)),
+            Vid::from("b"),
+            Arc::new(Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(
+                4u64,
+            ))),
         );
 
         let transcript_args: Vec<lang::id::Vid> = verifier
@@ -114,14 +123,14 @@ mod runtime_tests {
 
         assert_eq!(transcript_args.len(), proof.len());
         for (name, val) in transcript_args.iter().zip(proof.iter()) {
-            verifier_inputs.insert(name.clone(), val.clone());
+            verifier_inputs.insert(name.clone(), Arc::new(val.clone()));
         }
 
         let mut verifier_state = separator.std_prover();
         let mg_verifier = Arc::new(MutexGraph::new(verifier.clone()));
         let verify_results = match MutexGraph::run_graph(
             mg_verifier,
-            &verifier_inputs,
+            verifier_inputs,
             &mut verifier_state,
             ResultKind::Verifier,
         )
@@ -162,10 +171,13 @@ mod runtime_tests {
             .unwrap();
         assert!(widest >= n, "expected a node reading all {n} elements");
 
-        let mut inputs = Inputs::new();
+        let mut inputs = HashMap::new();
         inputs.insert(
-            "a",
-            Value::vec_scalar(vec![<TestConfig as backend::ArkConfig>::F::from(3u64); n]),
+            Vid::from("a"),
+            Arc::new(Value::vec_scalar(vec![
+                <TestConfig as backend::ArkConfig>::F::from(3u64);
+                n
+            ])),
         );
         let separator = graph::domain_seperator::ZippelDomainSeparator::new_zippel_domain_seperator(
             "test_wide",
@@ -173,7 +185,7 @@ mod runtime_tests {
         );
         let mut prover_state = separator.std_prover();
         let mg = Arc::new(MutexGraph::new(prover));
-        let proof = match MutexGraph::run_graph(mg, &inputs, &mut prover_state, ResultKind::Prover)
+        let proof = match MutexGraph::run_graph(mg, inputs, &mut prover_state, ResultKind::Prover)
             .unwrap()
         {
             RunResult::Prover(v) => v,
@@ -200,10 +212,12 @@ mod runtime_tests {
         let (prover, _) = dag.get_prover();
 
         // Omit 'b' in inputs to cause a MissingArg runtime error on verify(b == 999)
-        let mut inputs = Inputs::new();
+        let mut inputs = HashMap::new();
         inputs.insert(
-            "a",
-            Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(3u64)),
+            Vid::from("a"),
+            Arc::new(Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(
+                3u64,
+            ))),
         );
 
         let separator = graph::domain_seperator::ZippelDomainSeparator::new_zippel_domain_seperator(
@@ -215,7 +229,7 @@ mod runtime_tests {
         let mg = Arc::new(MutexGraph::new(prover));
         let result = MutexGraph::run_graph(
             mg,
-            &inputs,
+            inputs,
             &mut prover_state,
             crate::graph::ResultKind::Prover,
         );

@@ -19,12 +19,10 @@
 //!     `ConstraintSynthesizer`, no R1CS→SR1CS adapter (which would
 //!     expand the constraint count and add aux variables), no extra
 //!     instance vars beyond the n_pub the zippel side declares.
-//!   - Zippel side feeds `z_a_evals`, `z_b_evals`, `w_a_evals`,
-//!     `w_b_evals` precomputed (no sparse MVM inside the protocol);
-//!     native side runs those 4 sparse MVMs INSIDE its prove timer. This
-//!     is the one asymmetry left — at K = 2^20 with row_density = 3 the
-//!     MVM cost is O(K) = ~1M field multiplies per matrix, small next
-//!     to the 4 IFFTs + quotient division + 5 MSMs that dominate.
+//!   - The protocol takes `z_a_evals`, `z_b_evals`, `w_a_evals`,
+//!     `w_b_evals` as inputs (no sparse MVM inside it); the zippel
+//!     harness computes those 4 sparse MVMs inside each timed, heap-counted
+//!     run, as the native side does inside `prove_from_sr1cs`.
 //!   - Native verifier uses the upstream O(n) Lagrange shortcut; the
 //!     zippel verifier interpolates `x_a_evals` over K (O(K log K)).
 //!     This is the real zippel-side limitation, not a measurement
@@ -201,7 +199,7 @@ pub mod inst_gen {
         }
     }
 
-    fn eval_row<F: Field>(row: &[(F, usize)], z: &[F]) -> F {
+    pub(crate) fn eval_row<F: Field>(row: &[(F, usize)], z: &[F]) -> F {
         let mut acc = F::zero();
         for &(c, j) in row {
             acc += c * z[j];
@@ -228,8 +226,9 @@ pub mod zippel_side {
     use backend::{ArkBls12_381, ArkConfig, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
+    use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{Inputs, ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     type C = ArkBls12_381;
     type F = <C as ArkConfig>::F;
@@ -436,26 +435,10 @@ pub mod zippel_side {
             // in `self.srs`, built once in `Setup::new`.
             let x_vec: Vec<F> = inst.z[..self.n_pub].to_vec();
             let w_vec: Vec<F> = inst.z[self.n_pub..].to_vec();
-            let w_a_evals: Vec<F> = (0..self.k)
-                .map(|i| inst.z_a_evals[i] - inst.x_a_evals[i])
-                .collect();
-            let w_b_evals: Vec<F> = (0..self.k)
-                .map(|i| inst.z_b_evals[i] - inst.x_b_evals[i])
-                .collect();
 
             // The SRS goes in affine, as the native PARI keeps it: MSMs and
             // slices then work on 96-byte points, with no conversion first.
-            let inputs = Inputs::<C>::from_iter([
-                (
-                    Vid("z_a_evals".to_string()),
-                    Value::vec_scalar(inst.z_a_evals.clone()),
-                ),
-                (
-                    Vid("z_b_evals".to_string()),
-                    Value::vec_scalar(inst.z_b_evals.clone()),
-                ),
-                (Vid("w_a_evals".to_string()), Value::vec_scalar(w_a_evals)),
-                (Vid("w_b_evals".to_string()), Value::vec_scalar(w_b_evals)),
+            let inputs = HashMap::<Vid, Value<C>>::from_iter([
                 (Vid("w".to_string()), Value::vec_scalar(w_vec)),
                 (Vid("x".to_string()), Value::vec_scalar(x_vec.clone())),
                 (
@@ -496,16 +479,39 @@ pub mod zippel_side {
                 (Vid("k_inv".to_string()), Value::Scalar(self.srs.k_inv)),
             ]);
 
+            // The four sparse matrix-vector products (Az, Bz and their
+            // instance parts) are computed inside each run, as the native
+            // `prove_from_sr1cs` computes them inside its prover.
+            let names = crate::prover_args(&self.handler);
+            let n_pub = self.n_pub;
             let (prove, prove_peak, proof) = crate::sample(|| {
+                let mvm = |mat: &[Vec<(F, usize)>], v: &[F]| -> Vec<F> {
+                    mat.iter()
+                        .map(|row| super::inst_gen::eval_row(row, v))
+                        .collect()
+                };
+                let mut x_padded = vec![F::zero(); inst.num_vars];
+                x_padded[..n_pub].copy_from_slice(&inst.z[..n_pub]);
+                let z_a = mvm(&inst.a_mat, &inst.z);
+                let z_b = mvm(&inst.b_mat, &inst.z);
+                let x_a = mvm(&inst.a_mat, &x_padded);
+                let x_b = mvm(&inst.b_mat, &x_padded);
+                let minus =
+                    |z: &[F], x: &[F]| -> Vec<F> { z.iter().zip(x).map(|(z, x)| *z - x).collect() };
+                let (w_a, w_b) = (minus(&z_a, &x_a), minus(&z_b, &x_b));
+                let computed = [
+                    ("z_a_evals", z_a),
+                    ("z_b_evals", z_b),
+                    ("w_a_evals", w_a),
+                    ("w_b_evals", w_b),
+                ]
+                .map(|(name, v)| (Vid::from(name), Value::vec_scalar(v)));
                 self.handler
-                    .run_prover(&inputs)
-                    .expect("zippel pari prover failed")
+                    .run_prover(crate::shared_inputs(&inputs, &names).chain(computed))
+                    .expect("run_prover failed")
             });
-            let (verify, verify_peak, result) = crate::sample(|| {
-                self.handler
-                    .run_verifier(&proof, &inputs)
-                    .expect("zippel pari verifier failed")
-            });
+            let (verify, verify_peak, result) =
+                crate::sample_zippel_verifier(&mut self.handler, &proof, &inputs);
             assert!(
                 check_verification(&result),
                 "zippel PARI verification FAILED"

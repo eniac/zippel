@@ -22,8 +22,7 @@ pub fn run(opts: &common::RunOptions) {
     let sizes = build_sizes_ctx();
     handler.compile(&sizes);
 
-    let inputs: Inputs<_> = prover_create_inputs().into();
-    common::run_prover_and_verify(&mut handler, &inputs);
+    common::run_prover_and_verify(&mut handler, prover_create_inputs());
 
     if !opts.analyses {
         return;
