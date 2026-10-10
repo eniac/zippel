@@ -4,10 +4,5 @@ expression: value
 ---
 - __zippel::gb::div_inv::0 + __zippel::gb::div_inv::1
 - __zippel::gb::div_inv::0 + inverse
-- ip_val_claimed + a_vec_witness[1]*b_vec_witness[1] + a_vec_witness[0]*b_vec_witness[0]
-- p_initial_commitment + b_vec_witness[1]*h_factors[1]*h_vec[1] + b_vec_witness[0]*h_factors[0]*h_vec[0] + a_vec_witness[1]*g_factors[1]*g_vec[1] + a_vec_witness[0]*g_factors[0]*g_vec[0]
 __zippel::node::71 - 1
-__zippel::node::89 - 1
-__zippel::node::91 - 1
-b_vec_witness[0]*p_initial_commitment - g_factors[0]*g_vec[0]*ip_val_claimed - b_vec_witness[0]*b_vec_witness[1]*h_factors[1]*h_vec[1] - b_vec_witness[0]^2*h_factors[0]*h_vec[0] - a_vec_witness[1]*b_vec_witness[0]*g_factors[1]*g_vec[1] + a_vec_witness[1]*b_vec_witness[1]*g_factors[0]*g_vec[0]
 x_challenge*__zippel::gb::div_inv::0 - 1

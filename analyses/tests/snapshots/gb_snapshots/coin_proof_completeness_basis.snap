@@ -2,72 +2,8 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- beta*big_b*r_c*t + beta*big_c*r_b*t + big_c*r_d_beta*sk_u - beta*big_c*r_d*sk_u - big_b*r_d_beta*s + beta*big_b*r_d*s - beta*big_b*j*r_c + big_b*r_c + beta*big_c*j*r_b - big_c*r_b
-- big_b*big_s*r_c*t*x2 + big_c*big_s*r_d*sk_u*x2 + big_c*big_t*r_b*t*x1 - big_c*big_t*r_d*sk_u*x1 - big_b*big_t*j*r_d*x1 + big_d*big_t*j*r_b*x1 + big_s*big_t*r_c*sk_u*t - big_b*big_s*r_c*sk_u*t - big_s*big_t*r_b*s*t + big_b*big_t*r_c_alpha*t - big_b*big_s*r_beta*r_c*t - big_s*big_t*j*r_b*t + big_c*big_s*r_d*sk_u^2 + big_c*big_s*r_beta*r_d*sk_u + big_s*big_t*j*r_d*sk_u - big_d*big_t*r_c_alpha*sk_u - big_b*big_t*r_d + big_d*big_t*r_b
-- big_b*g*r_d_beta*t*x1 + big_d*g*r_d_beta*sk_u*x1 + big_b*g*r_d*x1 - beta*big_b*big_d*r_d*x1 + beta*big_b*big_c*r_d*x1 - big_d*g*r_b*x1 + beta*big_d^2*r_b*x1 - beta*big_c*big_d*r_b*x1 + big_b*big_s*r_d_beta*t - beta*big_b*g*r_c_alpha*t - beta*big_d*big_s*r_b*t + beta*big_c*big_s*r_b*t - big_d*big_s*r_d_beta*sk_u + beta*big_d*big_s*r_d*sk_u - beta*big_c*big_s*r_d*sk_u + beta*big_d*g*r_c_alpha*sk_u + beta*big_b*g*r_d - big_b*big_s*r_d - beta*big_d*g*r_b + big_d*big_s*r_b
-- big_b*r_b*r_c*t*x1 + big_c*r_b^2*t*x1 + big_b*r_c*r_d*sk_u*x1 - big_c*r_b*r_d*sk_u*x1 - big_b*j*r_b*r_d*x1 + big_d*j*r_b^2*x1 + big_s*r_b*r_c*sk_u*t - big_s*r_b^2*s*t + big_b*r_b*r_c_alpha*t - alpha*big_b*r_b*r_c*t - big_s*j*r_b^2*t - big_s*r_c*r_d*sk_u^2 + big_s*r_b*r_d*s*sk_u + alpha*big_b*r_c*r_d*sk_u + big_s*j*r_b*r_d*sk_u - big_d*r_b*r_c_alpha*sk_u - big_b*r_b*r_d + big_d*r_b^2
-- big_b*r_c*t*x1 + big_c*r_b*t*x1 - big_b*j*r_d*x1 + big_d*j*r_b*x1 + big_s*r_c*sk_u*t - big_s*r_b*s*t + big_b*r_c_alpha*t - alpha*big_b*r_c*t - big_s*j*r_b*t + big_s*j*r_d*sk_u + alpha*big_c*r_d*sk_u - big_d*r_c_alpha*sk_u - big_b*r_d + big_d*r_b
-- big_b*r_c*x1 + big_c*r_b*x1 + big_s*r_c*sk_u - big_s*r_b*s - alpha*big_b*r_c + alpha*big_c*r_b
-- big_b*r_c*x2 + big_c*r_b*x2 + big_t*r_c*sk_u - big_b*r_c*sk_u + big_c*r_b*sk_u - big_t*r_b*s - big_b*r_beta*r_c + big_c*r_b*r_beta
-- big_b*r_c_alpha*x1 + alpha*big_b*r_c*x1 + big_s*r_c_alpha*sk_u - alpha*big_s*r_c*sk_u + alpha*big_s*r_b*s - alpha*big_b*r_c_alpha + alpha^2*big_b*r_c + alpha*big_s*j*r_b - big_s*r_b
-- big_b*r_d*x1 + big_d*r_b*x1 - big_s*r_b*t + big_s*r_d*sk_u - alpha*big_b*r_d + alpha*big_d*r_b
-- big_b*r_d*x2 + big_d*r_b*x2 - big_t*r_b*t + big_t*r_d*sk_u - big_b*r_d*sk_u + big_d*r_b*sk_u - big_b*r_beta*r_d + big_d*r_b*r_beta
-- big_b*r_d_beta*t + beta*big_d*r_b*t + big_d*r_d_beta*sk_u - beta*big_d*r_d*sk_u - beta*big_b*j*r_d + big_b*r_d + beta*big_d*j*r_b - big_d*r_b
-- big_b*r_d_beta*x1 + beta*big_b*r_d*x1 + beta*big_s*r_b*t + big_s*r_d_beta*sk_u - beta*big_s*r_d*sk_u - alpha*big_b*r_d_beta + alpha*beta*big_b*r_d + beta*big_s*j*r_b - big_s*r_b
-- big_c*big_s*r_c*t*x2 + big_c*big_s*r_d*s*x2 + big_c*big_t*r_c*t*x1 - big_c*big_t*r_d*s*x1 - big_c*big_t*j*r_d*x1 + big_d*big_t*j*r_c*x1 - big_c*big_s*r_c*sk_u*t + big_c*big_t*r_c_alpha*t - big_c*big_s*r_beta*r_c*t - big_s*big_t*j*r_c*t + big_c*big_s*r_d*s*sk_u + big_c*big_s*r_beta*r_d*s + big_s*big_t*j*r_d*s - big_d*big_t*r_c_alpha*s - big_c*big_t*r_d + big_d*big_t*r_c
-- big_c*g*r_d_beta*t*x1 + big_d*g*r_d_beta*s*x1 + big_c*g*r_d*x1 - beta*big_c*big_d*r_d*x1 + beta*big_c^2*r_d*x1 - big_d*g*r_c*x1 + beta*big_d^2*r_c*x1 - beta*big_c*big_d*r_c*x1 + big_c*big_s*r_d_beta*t - beta*big_c*g*r_c_alpha*t - beta*big_d*big_s*r_c*t + beta*big_c*big_s*r_c*t - big_d*big_s*r_d_beta*s + beta*big_d*big_s*r_d*s - beta*big_c*big_s*r_d*s + beta*big_d*g*r_c_alpha*s + beta*big_c*g*r_d - big_c*big_s*r_d - beta*big_d*g*r_c + big_d*big_s*r_c
-- big_c*j*r_d*x1 + big_d*j*r_c*x1 + big_c*r_c_alpha*t - big_s*j*r_c*t - alpha*big_c*r_c*t + big_s*j*r_d*s + alpha*big_c*r_d*s - big_d*r_c_alpha*s - big_c*r_d + big_d*r_c
-- big_c*r_d*x1 + big_d*r_c*x1 - big_s*r_c*t + big_s*r_d*s - alpha*big_c*r_d + alpha*big_d*r_c
-- big_c*r_d*x2 + big_d*r_c*x2 - big_t*r_c*t - big_c*r_d*sk_u + big_d*r_c*sk_u + big_t*r_d*s - big_c*r_beta*r_d + big_d*r_beta*r_c
-- big_c*r_d_beta*t + beta*big_d*r_c*t + big_d*r_d_beta*s - beta*big_d*r_d*s - beta*big_c*j*r_d + big_c*r_d + beta*big_d*j*r_c - big_d*r_c
-- big_c^2*r_b*r_d*t*x1 + big_c*big_d*r_b*r_c*t*x1 + big_c^2*r_d^2*sk_u*x1 - big_c*big_d*r_c*r_d*sk_u*x1 + big_b*big_c*j*r_d^2*x1 - big_b*big_d*j*r_c*r_d*x1 - big_c*big_d*j*r_b*r_d*x1 + big_d^2*j*r_b*r_c*x1 - big_c*big_s*r_b*r_c*t^2 + big_c*big_s*r_c*r_d*sk_u*t + big_c*big_s*r_b*r_d*s*t - big_b*big_c*r_c_alpha*r_d*t + big_c*big_s*j*r_b*r_d*t + big_b*big_d*r_c*r_c_alpha*t - big_d*big_s*j*r_b*r_c*t - big_c*big_s*r_d^2*s*sk_u - big_c*big_s*j*r_d^2*sk_u + big_c*big_d*r_c_alpha*r_d*sk_u + big_d*big_s*j*r_c*r_d*sk_u - big_d^2*r_c*r_c_alpha*sk_u + big_b*big_c*r_d^2 - big_b*big_d*r_c*r_d - big_c*big_d*r_b*r_d + big_d^2*r_b*r_c
-- big_c^2*r_c*r_d*t*x1 + big_c*big_d*r_c^2*t*x1 + big_c^2*r_d^2*s*x1 - big_c*big_d*r_c*r_d*s*x1 + big_c^2*j*r_d^2*x1 + 52435875175126190479447740508185965837690552500527637822603658699938581184511*big_c*big_d*j*r_c*r_d*x1 + big_d^2*j*r_c^2*x1 - big_c*big_s*r_c^2*t^2 + 2*big_c*big_s*r_c*r_d*s*t - big_c^2*r_c_alpha*r_d*t + big_c*big_s*j*r_c*r_d*t + big_c*big_d*r_c*r_c_alpha*t - big_d*big_s*j*r_c^2*t - big_c*big_s*r_d^2*s^2 - big_c*big_s*j*r_d^2*s + big_c*big_d*r_c_alpha*r_d*s + big_d*big_s*j*r_c*r_d*s - big_d^2*r_c*r_c_alpha*s + big_c^2*r_d^2 + 52435875175126190479447740508185965837690552500527637822603658699938581184511*big_c*big_d*r_c*r_d + big_d^2*r_c^2
-- big_s*r_c*sk_u*x2 + big_s*r_b*s*x2 - big_b*r_c_alpha*x2 + alpha*big_b*r_c*x2 + big_s*j*r_b*x2 + big_t*r_c*sk_u*x1 - big_t*r_b*s*x1 - big_t*j*r_b*x1 - big_s*r_c*sk_u^2 + big_s*r_b*s*sk_u + big_t*r_c_alpha*sk_u - big_b*r_c_alpha*sk_u - big_s*r_beta*r_c*sk_u + alpha*big_b*r_c*sk_u + big_s*j*r_b*sk_u + big_s*r_b*r_beta*s - big_b*r_beta*r_c_alpha + alpha*big_b*r_beta*r_c + big_s*j*r_b*r_beta - big_t*r_b
-- big_s*x2 + big_t*x1 - big_s*sk_u - big_s*r_beta + alpha*big_t
-- g*r_b*t + g*r_d*sk_u - big_b*r_d + big_d*r_b
-- g*r_c*sk_u + g*r_b*s + big_b*r_c - big_c*r_b
-- g*r_c*t + g*r_d*s - big_c*r_d + big_d*r_c
-- g*r_d_beta*t*x1 + big_d*r_d_beta*x1 - big_c*r_d_beta*x1 + g*r_d*x1 - beta*big_d*r_d*x1 + beta*big_c*r_d*x1 - beta*g*r_c_alpha*t + beta*big_s*r_c*t + big_s*r_d_beta*s - beta*big_s*r_d*s - alpha*big_c*r_d_beta - beta*big_s*j*r_d + beta*g*r_d + beta*big_d*r_c_alpha + beta*big_s*j*r_c - big_s*r_c
-- h*r_c_alpha*x1 + alpha*big_c*x1 - alpha*h*r_c_alpha + alpha*big_s*j - big_s + alpha^2*big_c
-- h*r_c_alpha*x2 + big_s*j*x2 + alpha*big_c*x2 - big_t*j*x1 - h*r_c_alpha*sk_u + big_s*j*sk_u + alpha*big_c*sk_u - h*r_beta*r_c_alpha + big_s*j*r_beta + alpha*big_c*r_beta - big_t
-- h*r_d_beta + beta*g*j - g + beta*big_d
-- h*r_d_beta*x1 + beta*big_d*x1 - alpha*h*r_d_beta + beta*big_s*j - big_s + alpha*beta*big_d
-- h*r_d_beta*x1 - g*x1 + beta*big_d*x1 - beta*h*r_c_alpha + beta*big_s*j - beta*g + alpha*beta*big_c
-- h*r_d_beta*x2 + beta*big_d*x2 - h*r_d_beta*sk_u + beta*big_d*sk_u - h*r_beta*r_d_beta + beta*big_d*r_beta + beta*big_t*j - big_t
-__zippel::node::129 - 1
-__zippel::node::136 - 1
-__zippel::node::143 - 1
-__zippel::node::152 - 1
-__zippel::node::159 - 1
-__zippel::node::168 - 1
+- alpha*beta*g*t + alpha*beta*g*s + alpha*h*r_d_beta - alpha*beta*h*r_d - beta*h*r_c_alpha + alpha*beta*h*r_c - beta*g + alpha*g
 __zippel::node::178 - 1
 __zippel::node::188 - 1
-__zippel::node::221 - 1
-__zippel::node::225 - 1
-__zippel::node::230 - 1
-__zippel::node::237 - 1
-__zippel::node::242 - 1
-__zippel::node::249 - 1
-__zippel::node::256 - 1
-__zippel::node::263 - 1
-big_b*big_s*r_d_beta*x2 - beta*big_b*big_s*r_d*x2 + beta*big_b*big_s*r_c*x2 + big_t*g*r_d_beta*sk_u*x1 - big_b*big_t*r_d_beta*x1 - big_t*g*r_b*x1 + beta*big_d*big_t*r_b*x1 - beta*big_c*big_t*r_b*x1 - beta*big_s*big_t*r_b*t - big_s*big_t*r_d_beta*sk_u + big_b*big_s*r_d_beta*sk_u + beta*big_s*big_t*r_d*sk_u - beta*big_b*big_s*r_d*sk_u + beta*big_t*g*r_c_alpha*sk_u - beta*big_s*big_t*r_c*sk_u + beta*big_b*big_s*r_c*sk_u + beta*big_s*big_t*r_b*s + big_b*big_s*r_beta*r_d_beta - beta*big_b*big_s*r_beta*r_d - beta*big_b*big_t*r_c_alpha + beta*big_b*big_s*r_beta*r_c - beta*big_t*g*r_b + big_s*big_t*r_b
-big_b*g*r_d*r_d_beta*t*x1 - big_d*g*r_b*r_d_beta*t*x1 - big_b*big_d*r_d*r_d_beta*x1 + big_d^2*r_b*r_d_beta*x1 - big_b*g*r_d^2*x1 + beta*big_b*big_d*r_d^2*x1 - beta*big_b*big_c*r_d^2*x1 + big_d*g*r_b*r_d*x1 - beta*big_d^2*r_b*r_d*x1 + beta*big_c*big_d*r_b*r_d*x1 - big_b*big_s*r_d*r_d_beta*t + beta*big_b*g*r_c_alpha*r_d*t + beta*big_d*big_s*r_b*r_d*t - beta*big_c*big_s*r_b*r_d*t - beta*big_d*g*r_b*r_c_alpha*t + big_d*big_s*r_d*r_d_beta*sk_u - beta*big_d*big_s*r_d^2*sk_u + beta*big_c*big_s*r_d^2*sk_u - beta*big_b*g*r_d^2 + big_b*big_s*r_d^2 - beta*big_b*big_d*r_c_alpha*r_d + beta*big_d*g*r_b*r_d - big_d*big_s*r_b*r_d + beta*big_d^2*r_b*r_c_alpha
-big_b*r_c*s*x1 - big_c*r_b*s*x1 + big_b*j*r_c*x1 - big_c*j*r_b*x1 - big_s*r_c*s*sk_u + big_c*r_c_alpha*sk_u - big_s*j*r_c*sk_u - alpha*big_c*r_c*sk_u + big_s*r_b*s^2 - big_b*r_c_alpha*s + alpha*big_b*r_c*s + big_s*j*r_b*s + big_b*r_c - big_c*r_b
-big_b*r_c*t - big_c*r_b*t + big_c*r_d*sk_u - big_d*r_c*sk_u - big_b*r_d*s + big_d*r_b*s
-big_c*big_s*x2^2 - big_c*big_t*x1*x2 + 2*big_c*big_s*sk_u*x2 - big_t*h*r_c_alpha*x2 + 2*big_c*big_s*r_beta*x2 + big_s*big_t*j*x2 - big_c*big_t*sk_u*x1 - big_c*big_t*r_beta*x1 - big_t^2*j*x1 + big_c*big_s*sk_u^2 - big_t*h*r_c_alpha*sk_u + 2*big_c*big_s*r_beta*sk_u + big_s*big_t*j*sk_u - big_t*h*r_beta*r_c_alpha + big_c*big_s*r_beta^2 + big_s*big_t*j*r_beta - big_t^2
-big_c*g*r_d*r_d_beta*t*x1 - big_d*g*r_c*r_d_beta*t*x1 - big_c*big_d*r_d*r_d_beta*x1 + big_d^2*r_c*r_d_beta*x1 - big_c*g*r_d^2*x1 + beta*big_c*big_d*r_d^2*x1 - beta*big_c^2*r_d^2*x1 + big_d*g*r_c*r_d*x1 - beta*big_d^2*r_c*r_d*x1 + beta*big_c*big_d*r_c*r_d*x1 - big_c*big_s*r_d*r_d_beta*t + beta*big_c*g*r_c_alpha*r_d*t + beta*big_d*big_s*r_c*r_d*t - beta*big_c*big_s*r_c*r_d*t - beta*big_d*g*r_c*r_c_alpha*t + big_d*big_s*r_d*r_d_beta*s - beta*big_d*big_s*r_d^2*s + beta*big_c*big_s*r_d^2*s - beta*big_c*g*r_d^2 + big_c*big_s*r_d^2 - beta*big_c*big_d*r_c_alpha*r_d + beta*big_d*g*r_c*r_d - big_d*big_s*r_c*r_d + beta*big_d^2*r_c*r_c_alpha
-big_c*g*r_d_beta*sk_u*x1 - big_b*g*r_d_beta*s*x1 + big_b*g*r_c*x1 - beta*big_b*big_d*r_c*x1 + beta*big_b*big_c*r_c*x1 - big_c*g*r_b*x1 + beta*big_c*big_d*r_b*x1 - beta*big_c^2*r_b*x1 + beta*big_b*big_s*r_c*t - beta*big_c*big_s*r_b*t - big_c*big_s*r_d_beta*sk_u + beta*big_c*big_s*r_d*sk_u + beta*big_c*g*r_c_alpha*sk_u - beta*big_c*big_s*r_c*sk_u + big_b*big_s*r_d_beta*s - beta*big_b*big_s*r_d*s - beta*big_b*g*r_c_alpha*s + beta*big_c*big_s*r_b*s + beta*big_b*g*r_c - big_b*big_s*r_c - beta*big_c*g*r_b + big_c*big_s*r_b
-big_d*h*r_d_beta*x1 - big_c*h*r_d_beta*x1 + big_d*g*x1 - beta*big_d^2*x1 + beta*big_c*big_d*x1 - alpha*big_c*h*r_d_beta + beta*big_d*h*r_c_alpha - beta*big_d*big_s*j + beta*big_c*big_s*j + beta*big_d*g - big_c*big_s
-big_s*h*r_d_beta*x2 - beta*big_d*big_s*x2 + beta*big_c*big_s*x2 - big_t*h*r_d_beta*x1 - big_t*g*x1 + beta*big_d*big_t*x1 - beta*big_c*big_t*x1 + big_s*h*r_d_beta*sk_u - beta*big_d*big_s*sk_u + beta*big_c*big_s*sk_u + big_s*h*r_beta*r_d_beta - beta*big_t*h*r_c_alpha - beta*big_d*big_s*r_beta + beta*big_c*big_s*r_beta - beta*big_t*g + big_s*big_t
-g*h*r_d_beta*x1 + g^2*x1 - beta*big_d*g*x1 + beta*big_c*g*x1 - big_s*h*r_d_beta + beta*g*h*r_c_alpha + beta*g^2 - big_s*g + beta*big_d*big_s - beta*big_c*big_s
-g*j*x1 + h*r_c_alpha - big_s*j + g - alpha*big_c
-g*r_d_beta*sk_u*x1 - beta*big_b*r_d*x1 + beta*big_b*r_c*x1 - g*r_b*x1 + beta*big_d*r_b*x1 - beta*big_c*r_b*x1 - beta*big_s*r_b*t - big_s*r_d_beta*sk_u + beta*big_s*r_d*sk_u + beta*g*r_c_alpha*sk_u - beta*big_s*r_c*sk_u + beta*big_s*r_b*s + alpha*big_b*r_d_beta - alpha*beta*big_b*r_d - beta*big_b*r_c_alpha + alpha*beta*big_b*r_c - beta*g*r_b + big_s*r_b
-g*s + h*r_c - big_c
-g*sk_u + h*r_b - big_b
-g*t + h*r_d - big_d
-g*x1 + alpha*g - big_s
-g*x2 + g*sk_u + g*r_beta - big_t
-g^2*r_d_beta*s*x1 - big_c*g*r_d_beta*x1 - g^2*r_c*x1 + beta*big_d*g*r_c*x1 - beta*big_c*g*r_c*x1 - big_s*g*r_d_beta*s + beta*g^2*r_c_alpha*s + big_c*big_s*r_d_beta - beta*big_c*g*r_c_alpha - beta*g^2*r_c + big_s*g*r_c - beta*big_d*big_s*r_c + beta*big_c*big_s*r_c
-g^2*r_d_beta*sk_u*x1 - big_b*g*r_d_beta*x1 - g^2*r_b*x1 + beta*big_d*g*r_b*x1 - beta*big_c*g*r_b*x1 - big_s*g*r_d_beta*sk_u + beta*g^2*r_c_alpha*sk_u + big_b*big_s*r_d_beta - beta*big_b*g*r_c_alpha - beta*g^2*r_b + big_s*g*r_b - beta*big_d*big_s*r_b + beta*big_c*big_s*r_b
-g^2*r_d_beta*t*x1 - big_d*g*r_d_beta*x1 - g^2*r_d*x1 + beta*big_d*g*r_d*x1 - beta*big_c*g*r_d*x1 - big_s*g*r_d_beta*t + beta*g^2*r_c_alpha*t + big_d*big_s*r_d_beta - beta*g^2*r_d + big_s*g*r_d - beta*big_d*big_s*r_d + beta*big_c*big_s*r_d - beta*big_d*g*r_c_alpha
-h2*x2 + h1*x1 + f*r_y - big_y
+alpha*g*s - h*r_c_alpha + alpha*h*r_c + alpha*g*j - g
+beta*g*t - h*r_d_beta + beta*h*r_d + beta*g*j - g

@@ -7,18 +7,11 @@ expression: value
 - b[0]*u_points[0] + u_points[0] + b[0]*eval_points[0] - eval_points[0]
 - b[1]*u_evals[0] + u_evals[0] + b[1]*c_sim[1] - c_sim[1]
 - b[1]*u_points[0] + u_points[0] + b[1]*eval_points[1] - eval_points[1]
-- keys[0]*w[1] + keys[1]*w[0]
 __zippel::gb::interp_inv::0 + __zippel::gb::interp_inv::1
 __zippel::gb::interp_inv::2 + __zippel::gb::interp_inv::3
-__zippel::node::100 - 1
 __zippel::node::59 - 1
 __zippel::node::73 - 1
-__zippel::node::89 - 1
-__zippel::node::92 - 1
-__zippel::node::96 - 1
 b[0]^2 - b[0]
 b[1]^2 - b[1]
 eval_points[0]*__zippel::gb::interp_inv::2 + 1
-g*w[0] - keys[0]
-g*w[1] - keys[1]
 u_points[0]*__zippel::gb::interp_inv::0 + 1

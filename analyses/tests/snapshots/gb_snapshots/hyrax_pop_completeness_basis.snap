@@ -2,15 +2,4 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- big_x*r_Y*x*y + big_y*r_X*x*y + big_x*r_Z*y - big_z*r_X*y - big_y*r_Z*x + big_z*r_Y*x
-- g*r_X*y + g*r_Y*x - big_x*r_Y + big_y*r_X
-__zippel::node::51 - 1
-__zippel::node::58 - 1
-__zippel::node::65 - 1
-__zippel::node::82 - 1
-__zippel::node::86 - 1
-__zippel::node::92 - 1
-g*r_X*y^2 - g*r_Z*y + big_x*r_Y*y - big_y*r_X*y + big_y*r_Z - big_z*r_Y
-g*x + h*r_X - big_x
-g*x*y + h*r_Z - big_z
-g*y + h*r_Y - big_y
+

@@ -21,7 +21,6 @@ pub(crate) struct CompletenessEntry {
 
 pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyLock::new(|| {
     vec![
-        // --- Active ---
         CompletenessEntry {
             name: "sumcheck",
             zippel_path: "examples/sumcheck/sumcheck_full.zippel",
@@ -166,7 +165,6 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
             sizes: &[("NX", 1), ("NY", 1)],
             ignored: false,
         },
-        // --- Ignored: timeout (GB computation too slow for CI) ---
         CompletenessEntry {
             name: "coin_proof",
             zippel_path: "examples/coin_proof/coin_proof.zippel",
@@ -207,15 +205,15 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
             name: "dekart",
             zippel_path: "examples/dekart/dekart.zippel",
             sizes: &[("n", 3), ("b", 2), ("l_chunk", 1)],
-            ignored: true,
+            ignored: false,
         },
         // S=3 is the smallest size at which one recursive step calls
-        // another; it does not finish yet.
+        // another.
         CompletenessEntry {
             name: "dory_ipa",
             zippel_path: "examples/dory_ipa/dory_ipa.zippel",
             sizes: &[("S", 3)],
-            ignored: true,
+            ignored: false,
         },
         CompletenessEntry {
             name: "dory_pcs",
