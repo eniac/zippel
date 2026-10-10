@@ -336,8 +336,8 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         }
         let mut rel_locals = extract_locals(&grev_builder, &rel_tc);
         let mut grev_rel_result = grev_builder.build(rel_tc.clone());
-        rel_locals.inline(&Set::new());
-        grev_rel_result.inline(&Set::new());
+        rel_locals.inline();
+        grev_rel_result.inline();
 
         grev_search.merge(&grev_rel_result);
 
@@ -394,7 +394,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         let lex_order = MonoOrder::lex(lex_var_order);
 
         // Phase 3a: Inline the search ideal.
-        grev_search.inline(&Set::new());
+        grev_search.inline();
 
         Ok(SoundnessInputs {
             generating_set: std::mem::take(&mut grev_search.generating_set),
@@ -528,7 +528,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         }
 
         self.grev_validity.merge(&self.rel_locals);
-        self.grev_validity.inline(&Set::new());
+        self.grev_validity.inline();
 
         let backend = self.backend.build::<C::F>();
         let validity_gb = backend
