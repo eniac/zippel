@@ -199,7 +199,7 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
             name: "hyperplonk_permutation",
             zippel_path: "examples/hyperplonk_permutation/hyperplonk_permutation.zippel",
             sizes: &[("S", 3)],
-            ignored: true,
+            ignored: false,
         },
         CompletenessEntry {
             name: "dekart",
