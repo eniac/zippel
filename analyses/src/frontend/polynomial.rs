@@ -238,7 +238,7 @@ impl<F: Field> Polynomial<F> {
 
     /// Whether `v` occurs with a nonzero exponent in some term.
     pub fn contains(&self, v: &Var) -> bool {
-        self.vars().contains(v)
+        self.terms.keys().any(|t| t.0.contains(v))
     }
 
     /// The set of variables occurring anywhere in this polynomial; the
