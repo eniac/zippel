@@ -18,9 +18,16 @@ use super::PolySource;
 ///
 /// `b` is a single `Bool` for every operand shape, vectors included, and
 /// each scalar slot `j` of the LUB type of `x` and `y` contributes
-/// `d_j = x_j - y_j` (see [`equ_leaf`]):
-///   d_j * b = 0
-///   Σ_j d_j * inv_j + b - 1 = 0    (inv_j are fresh sentinel vars)
+/// `d_j = x_j - y_j` (inlined) and:
+///   d_j * b = 0              (b=1 → d_j=0)
+///
+/// Plus a single aggregate constraint with one fresh sentinel `inv_j` per
+/// slot:
+///   Σ_j d_j * inv_j + b - 1 = 0
+///
+/// This gives: b=1 iff all d_j=0 (i.e. x == y). When all d_j=0, the
+/// aggregate forces b=1. When some d_k≠0, set inv_k=1/d_k (others 0)
+/// to satisfy the aggregate with b=0.
 ///
 /// This connects `b` to `x` and `y` in the ideal, so that asserting `b`
 /// (the `where` clause or a `verify`, which adds `b - 1 = 0`) lets the GB
@@ -40,48 +47,11 @@ pub fn equ_op<C: ArkConfig + HasOpFactory>(
     );
     let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, a);
     let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, b);
-    equ_leaf(ctx, var, &a_src, &b_src);
-}
-
-/// The two sides `a_j == b_j` of each coefficient slot `j` of the LUB type of
-/// `a` and `b`: `a == b` holds exactly when every slot's sides are equal.
-pub(super) fn sides<C: ArkConfig + HasOpFactory>(
-    a_src: &PolySource<C>,
-    b_src: &PolySource<C>,
-) -> Vec<Check<C::F>> {
-    let lub = ATyp::lub_equ(a_src.typ(), b_src.typ(), &Nothing).expect("equ_op: lub_equ failed");
-    let a_lifted = a_src.lift_to(&lub);
-    let b_lifted = b_src.lift_to(&lub);
-    a_lifted
-        .polys
-        .into_iter()
-        .zip(b_lifted.polys)
-        .map(|(lhs, rhs)| Check { lhs, rhs })
-        .collect()
-}
-
-/// Emit the standard bool encoding for a single Bool slot `b` comparing
-/// two operands. Each coefficient slot `j` of the LUB type contributes:
-///   d_j = a_j - b_j          (inlined)
-///   d_j * b = 0              (b=1 → d_j=0)
-///
-/// Plus a single aggregate constraint with one witness `inv_j` per slot:
-///   Σ_j d_j * inv_j + b - 1 = 0
-///
-/// This gives: b=1 iff all d_j=0 (i.e. a == b). When all d_j=0, the
-/// aggregate forces b=1. When some d_k≠0, set inv_k=1/d_k (others 0)
-/// to satisfy the aggregate with b=0.
-fn equ_leaf<C: ArkConfig + HasOpFactory>(
-    ctx: &mut EncodeCtx<'_, C>,
-    var: &Var,
-    a_src: &PolySource<C>,
-    b_src: &PolySource<C>,
-) {
     let b_poly = Polynomial::var(var);
     let one = Polynomial::lit(&C::FOps::one());
 
-    // d_j = a_j - b_j for each slot
-    let diffs: Vec<Polynomial<C::F>> = sides(a_src, b_src)
+    // d_j = x_j - y_j for each slot
+    let diffs: Vec<Polynomial<C::F>> = sides(&a_src, &b_src)
         .iter()
         .map(|s| &s.lhs - &s.rhs)
         .collect();
@@ -100,6 +70,23 @@ fn equ_leaf<C: ArkConfig + HasOpFactory>(
         aggregate = &aggregate + &(d * &inv_poly);
     }
     ctx.ideal.generating_set.push(aggregate);
+}
+
+/// The two sides `a_j == b_j` of each coefficient slot `j` of the LUB type of
+/// `a` and `b`: `a == b` holds exactly when every slot's sides are equal.
+pub(super) fn sides<C: ArkConfig + HasOpFactory>(
+    a_src: &PolySource<C>,
+    b_src: &PolySource<C>,
+) -> Vec<Check<C::F>> {
+    let lub = ATyp::lub_equ(a_src.typ(), b_src.typ(), &Nothing).expect("equ_op: lub_equ failed");
+    let a_lifted = a_src.lift_to(&lub);
+    let b_lifted = b_src.lift_to(&lub);
+    a_lifted
+        .polys
+        .into_iter()
+        .zip(b_lifted.polys)
+        .map(|(lhs, rhs)| Check { lhs, rhs })
+        .collect()
 }
 
 #[cfg(test)]
