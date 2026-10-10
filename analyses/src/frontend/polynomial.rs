@@ -5,6 +5,7 @@
 //! to the backend when a Gröbner basis or reduction is needed.
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::fmt;
 use std::iter::Sum;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
@@ -22,8 +23,8 @@ use super::monomial::Monomial;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Polynomial<F: Field> {
     /// Nonzero terms, keyed by monomial. A missing key means a zero
-    /// coefficient; arithmetic prunes entries that cancel, so the empty map
-    /// is the canonical representation of the zero polynomial.
+    /// coefficient, so the empty map is the only representation of the zero
+    /// polynomial.
     pub terms: HashMap<Monomial, F>,
 }
 
@@ -31,21 +32,38 @@ pub struct Polynomial<F: Field> {
 // Arithmetic
 // -----------------------------------------------------------------------
 
+impl<F: Field> Polynomial<F> {
+    /// Add `coef·term`, removing the term when its coefficient becomes zero.
+    fn add_term(&mut self, term: Monomial, coef: F) {
+        match self.terms.entry(term) {
+            Entry::Occupied(mut e) => {
+                *e.get_mut() += coef;
+                if e.get().is_zero() {
+                    e.remove();
+                }
+            }
+            Entry::Vacant(e) => {
+                if !coef.is_zero() {
+                    e.insert(coef);
+                }
+            }
+        }
+    }
+}
+
 impl<F: Field> AddAssign for Polynomial<F> {
     fn add_assign(&mut self, other: Self) {
         for (term, coef) in other.terms {
-            *self.terms.entry(term).or_insert(F::zero()) += coef;
+            self.add_term(term, coef);
         }
-        self.terms.retain(|_, c| !c.is_zero());
     }
 }
 
 impl<F: Field> SubAssign for Polynomial<F> {
     fn sub_assign(&mut self, other: Self) {
         for (term, coef) in other.terms {
-            *self.terms.entry(term).or_insert(F::zero()) -= coef;
+            self.add_term(term, -coef);
         }
-        self.terms.retain(|_, c| !c.is_zero());
     }
 }
 
@@ -62,16 +80,13 @@ impl<F: Field> Neg for Polynomial<F> {
 
 impl<F: Field> MulAssign for Polynomial<F> {
     fn mul_assign(&mut self, other: Self) {
-        let mut new_terms: HashMap<Monomial, F> = HashMap::new();
+        let mut product = Polynomial::zero();
         for (term1, coeff1) in &self.terms {
             for (term2, coeff2) in &other.terms {
-                let new_term = term1.clone() * term2.clone();
-                let new_coeff = *coeff1 * *coeff2;
-                *new_terms.entry(new_term).or_insert(F::zero()) += new_coeff;
+                product.add_term(term1.clone() * term2.clone(), *coeff1 * *coeff2);
             }
         }
-        self.terms = new_terms;
-        self.terms.retain(|_, c| !c.is_zero());
+        *self = product;
     }
 }
 
@@ -137,17 +152,6 @@ impl<F: Field> Sum for Polynomial<F> {
     }
 }
 
-impl<F: Field> From<Vec<(&Monomial, F)>> for Polynomial<F> {
-    fn from(terms: Vec<(&Monomial, F)>) -> Self {
-        let mut poly = Polynomial::zero();
-        for (term, coeff) in terms {
-            *poly.terms.entry(term.clone()).or_insert(F::zero()) += coeff;
-        }
-        poly.terms.retain(|_, c| !c.is_zero());
-        poly
-    }
-}
-
 // -----------------------------------------------------------------------
 // Display — sorts terms structurally for deterministic output
 // -----------------------------------------------------------------------
@@ -167,8 +171,6 @@ impl<F: Field> fmt::Display for Polynomial<F> {
                 first = false;
             } else if coeff.is_one() {
                 parts.push(format!("+ {}", term));
-            } else if coeff.is_zero() {
-                continue;
             } else if (*coeff).neg().is_one() {
                 parts.push(format!("- {}", term));
                 first = false;
@@ -200,11 +202,12 @@ impl<F: Field> Polynomial<F> {
         self.terms.is_empty()
     }
 
-    /// The constant polynomial `f`, stored as `f` times the empty monomial.
+    /// The constant polynomial `f`, stored as `f` times the empty monomial,
+    /// or as no terms when `f` is zero.
     pub fn lit(f: &F) -> Self {
-        let mut terms = HashMap::new();
-        terms.insert(Monomial::default(), *f);
-        Polynomial { terms }
+        let mut p = Self::zero();
+        p.add_term(Monomial::default(), *f);
+        p
     }
 
     /// The polynomial `v`, i.e. the degree-one monomial in `v` with
@@ -331,10 +334,28 @@ impl<F: Field> Polynomial<F> {
                 .zip(term.powers().iter())
                 .map(|(v, &p)| (f(v), p))
                 .collect();
-            let new_term = Monomial::from(pairs);
-            *new_poly.terms.entry(new_term).or_insert(F::zero()) += *coeff;
+            new_poly.add_term(Monomial::from(pairs), *coeff);
         }
-        new_poly.terms.retain(|_, c| !c.is_zero());
         new_poly
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_bls12_381::Fr;
+    use backend::ATyp;
+    use lang::typ::Qualifier;
+    use petgraph::graph::NodeIndex;
+
+    #[test]
+    fn no_term_holds_a_zero_coefficient() {
+        let x = Var::from_var("x", NodeIndex::new(0), ATyp::scalar(), Qualifier::Instance);
+        let x = Polynomial::<Fr>::var(&x);
+        let lit = |c: i64| Polynomial::lit(&Fr::from(c));
+
+        assert!(lit(0).is_zero());
+        assert!((&x - &x).is_zero());
+        assert_eq!(&(&x + &lit(1)) - &lit(1), x);
     }
 }

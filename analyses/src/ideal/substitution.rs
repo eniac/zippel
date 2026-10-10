@@ -214,15 +214,6 @@ mod tests {
     }
 
     #[test]
-    fn zero_constants_resolve_to_zero() {
-        // `Polynomial::lit(0)` keeps a zero term, which `inline_vars` drops.
-        let [t] = vars(["t"]);
-        let s = Substitution::resolve(&defs([(&t, lit(0))]));
-        assert!(s.apply(&v(&t)).is_zero());
-        assert!(s.apply(&lit(0)).is_zero());
-    }
-
-    #[test]
     fn resolve_leaves_out_definitions_on_or_after_a_cycle() {
         let [x, y, z, w, c, d, a] = vars(["x", "y", "z", "w", "c", "d", "a"]);
         let s = Substitution::resolve(&defs([
