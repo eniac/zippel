@@ -2,34 +2,4 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- h1[0]*__zippel::node::53 + h1[2]*__zippel::node::52
-- h1[0]*__zippel::node::56 + h1[1]*__zippel::node::55
-- h1[0]*h1[3] + h1[1]*h1[2]
-- h1[0]*h2[1] + h1[1]*h2[0]
-- h1[0]*v1[1] + h1[2]*v1[0]
-- h1[0]*v_gen + h2[0]*v1[0]
-- h1[1]*__zippel::node::53 + h1[3]*__zippel::node::52
-- h1[1]*v1[1] + h1[3]*v1[0]
-- h1[1]*v_gen + h2[1]*v1[0]
-- h1[2]*__zippel::node::56 + h1[3]*__zippel::node::55
-- h1[2]*h2[1] + h1[3]*h2[0]
-- h1[2]*v_gen + h2[0]*v1[1]
-- h1[3]*v_gen + h2[1]*v1[1]
-- h2[0]*__zippel::node::56 + h2[1]*__zippel::node::55
-- v1[0]*__zippel::node::53 + v1[1]*__zippel::node::52
-- z0 + f[3]*x0[0]*y0[0] - f[2]*x0[0]*y0[0] - f[1]*x0[0]*y0[0] + f[0]*x0[0]*y0[0] + f[1]*y0[0] - f[0]*y0[0] + f[2]*x0[0] - f[0]*x0[0] + f[0]
-__zippel::node::28 - 1
-__zippel::node::32 - 1
-__zippel::node::39 - 1
-__zippel::node::68 - 1
-__zippel::node::71 - 1
-__zippel::node::75 - 1
-__zippel::node::79 - 1
-g_gen*__zippel::node::55 - h2[0]
-g_gen*__zippel::node::56 - h2[1]
-h2[0]*__zippel::node::52 - h1[0]
-h2[0]*__zippel::node::53 - h1[2]
-h2[1]*__zippel::node::52 - h1[1]
-h2[1]*__zippel::node::53 - h1[3]
-v_gen*__zippel::node::52 - v1[0]
-v_gen*__zippel::node::53 - v1[1]
+
