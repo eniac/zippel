@@ -33,9 +33,8 @@ pub struct Ideal<C: ArkConfig> {
     pub generating_set: Vec<Polynomial<C::F>>,
     /// What each `verify` checks. Recorded for reporting only, never a generator.
     pub checks: Vec<Check<C::F>>,
-    /// Definitional equations kept out of the generating set: each `Var` maps to
-    /// the polynomial it abbreviates, so chains of intermediate DAG nodes can be
-    /// substituted away by [`Ideal::inline`] instead of bloating the basis.
+    /// One-step definitions `x := f` recorded by the encoders, each also a
+    /// generator `f − x`. [`Ideal::inline`] resolves them and substitutes them away.
     pub pl: Ctx<Var, Polynomial<C::F>>,
     /// Namespace mapping each DAG node reference to the `Var` that stands for its
     /// value, so repeated visits to the same node reuse one variable.
@@ -87,8 +86,8 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         vars
     }
 
-    /// Substitute the `pl` definitions into the generators and both sides of
-    /// every check, and return them resolved.
+    /// Resolve the `pl` definitions, substitute them into the generators and
+    /// both sides of every check, and return them.
     ///
     /// Empties `pl` and drops the generators that become zero. A definition
     /// that [`Substitution::resolve`] leaves out stays a variable, which its
@@ -143,8 +142,6 @@ impl<C: ArkConfig> fmt::Display for Ideal<C> {
 mod tests {
     use super::*;
     use backend::{ATyp, ArkBls12_381};
-
-    /// This test is expected to FAIL before Task 3 because current vars() ignores basis-only vars.
 
     #[test]
     fn vars_is_pl_keys_union_basis_vars() {

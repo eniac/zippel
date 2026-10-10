@@ -45,8 +45,9 @@ pub struct CompletenessAnalysis<C: ArkConfig> {
 
 impl<C: HasOpFactory> CompletenessAnalysis<C> {
     /// Build the inputs to the Gröbner basis computation: construct the
-    /// prover, relation, and verifier ideals, inline the `pl` table, and
-    /// merge them into a single generating set.
+    /// prover, relation, and verifier ideals, substitute each one's
+    /// definitions into it and the prover's into the verifier's, and merge
+    /// them into a single generating set.
     ///
     /// This is the cheap phase — no GB computation. Call
     /// [`from_inputs`](Self::from_inputs) to compute the basis, or inspect
