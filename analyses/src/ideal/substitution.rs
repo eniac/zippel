@@ -32,8 +32,7 @@ pub enum Refused {
 /// Definitions `x := f` for distinct variables `x`, kept resolved: no value
 /// mentions a defined variable, so [`Substitution::apply`] needs one pass.
 ///
-/// Iteration follows insertion order, so nothing that iterates a
-/// substitution depends on hashing.
+/// Iteration follows insertion order.
 #[derive(Clone, Debug, Default)]
 pub struct Substitution<F: Field> {
     /// The defined variables, in insertion order.
@@ -60,8 +59,7 @@ impl<F: Field> Substitution<F> {
                 }
             }
         }
-        // Kosaraju's, not Tarjan's: petgraph's Tarjan recurses, and chains of
-        // definitions run thousands deep.
+        // Kosaraju's algorithm, which is iterative.
         for scc in kosaraju_scc(&graph) {
             if scc.len() > 1 || graph.contains_edge(scc[0], scc[0]) {
                 for x in scc {
@@ -230,7 +228,7 @@ mod tests {
     fn resolve_agrees_with_naive_substitution_on_triangular_systems() {
         arbtest::arbtest(|u| {
             let n: usize = u.int_in_range(1..=6)?;
-            // Shuffle the nodes, so that `Var` order is not dependency order.
+            // Shuffle the nodes, so that `Var` order is unrelated to dependency order.
             let mut nodes: Vec<usize> = (0..n).collect();
             for i in (1..n).rev() {
                 nodes.swap(i, u.int_in_range(0..=i)?);
