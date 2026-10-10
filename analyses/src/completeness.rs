@@ -26,7 +26,7 @@ pub struct CompletenessInputs<F: ark_ff::PrimeField> {
     /// messages included, and so is every variable a generator pins down.
     pub generating_set: Vec<Polynomial<F>>,
     /// Verifier polynomials to reduce against the basis in `run()`, minus
-    /// those already in `generating_set` (members by construction).
+    /// the verifier-locals' generators (members by construction).
     pub verifier: Vec<Polynomial<F>>,
     /// What each `verify` checks, over the verifier's own variables: its
     /// definitions are substituted, the prover messages are not. Unlike
@@ -96,8 +96,9 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         let verifier = verifier_result
             .generating_set
             .iter()
+            .filter(|p| !verifier_locals.generating_set.contains(p))
             .map(|p| pins.apply(&prover_defs.apply(p)))
-            .filter(|p| !p.is_zero() && !generating_set.contains(p))
+            .filter(|p| !p.is_zero())
             .collect();
 
         CompletenessInputs {
@@ -124,10 +125,9 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         }
     }
 
-    /// Reduces every verifier polynomial not already in the generating set
-    /// against the prover/relation Gröbner basis; a zero remainder means the
-    /// verifier equation is implied by the prover's computation, i.e. the
-    /// protocol is complete.
+    /// Reduces every verifier polynomial against the prover/relation Gröbner
+    /// basis; a zero remainder means the verifier equation is implied by the
+    /// prover's computation, i.e. the protocol is complete.
     ///
     /// # Errors
     /// Returns [`AnalysisError::UnitIdeal`] if the basis degenerated to the
