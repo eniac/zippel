@@ -2,27 +2,12 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- __zippel::gb::div_inv::0 + __zippel::gb::div_inv::7
-- __zippel::gb::div_inv::0 + beta_inv
-- __zippel::gb::div_inv::1 + __zippel::gb::div_inv::8
-- __zippel::gb::div_inv::1 + alpha_inv
-- __zippel::gb::div_inv::14 + d_inv
-- __zippel::gb::div_inv::2 + __zippel::gb::div_inv::9
-- __zippel::gb::div_inv::2 + beta_inv
-- __zippel::gb::div_inv::3 + __zippel::gb::div_inv::10
-- __zippel::gb::div_inv::3 + alpha_inv
-- __zippel::gb::div_inv::4 + __zippel::gb::div_inv::11
-- __zippel::gb::div_inv::4 + beta_inv
-- __zippel::gb::div_inv::5 + __zippel::gb::div_inv::12
-- __zippel::gb::div_inv::5 + alpha_inv
-- __zippel::gb::div_inv::6 + __zippel::gb::div_inv::13
-- __zippel::gb::div_inv::6 + gamma_inv
 __zippel::node::420 - 1
-alpha*__zippel::gb::div_inv::1 - 1
-alpha*__zippel::gb::div_inv::3 - 1
-alpha*__zippel::gb::div_inv::5 - 1
-beta*__zippel::gb::div_inv::0 - 1
-beta*__zippel::gb::div_inv::2 - 1
-beta*__zippel::gb::div_inv::4 - 1
-d*__zippel::gb::div_inv::14 - 1
-gamma*__zippel::gb::div_inv::6 - 1
+alpha*alpha_inv - 1
+alpha*alpha_inv - 1
+alpha*alpha_inv - 1
+beta*beta_inv - 1
+beta*beta_inv - 1
+beta*beta_inv - 1
+d*d_inv - 1
+gamma*gamma_inv - 1

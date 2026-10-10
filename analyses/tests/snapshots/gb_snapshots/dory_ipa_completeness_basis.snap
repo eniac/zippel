@@ -2,22 +2,10 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- __zippel::gb::div_inv::0 + __zippel::gb::div_inv::6
-- __zippel::gb::div_inv::0 + rho_inv
-- __zippel::gb::div_inv::1 + __zippel::gb::div_inv::7
-- __zippel::gb::div_inv::1 + alpha_inv
-- __zippel::gb::div_inv::2 + __zippel::gb::div_inv::8
-- __zippel::gb::div_inv::2 + rho_inv
-- __zippel::gb::div_inv::3 + __zippel::gb::div_inv::9
-- __zippel::gb::div_inv::3 + alpha_inv
-- __zippel::gb::div_inv::4 + __zippel::gb::div_inv::10
-- __zippel::gb::div_inv::4 + rho_inv
-- __zippel::gb::div_inv::5 + __zippel::gb::div_inv::11
-- __zippel::gb::div_inv::5 + alpha_inv
 __zippel::node::396 - 1
-alpha*__zippel::gb::div_inv::1 - 1
-alpha*__zippel::gb::div_inv::3 - 1
-alpha*__zippel::gb::div_inv::5 - 1
-rho*__zippel::gb::div_inv::0 - 1
-rho*__zippel::gb::div_inv::2 - 1
-rho*__zippel::gb::div_inv::4 - 1
+alpha*alpha_inv - 1
+alpha*alpha_inv - 1
+alpha*alpha_inv - 1
+rho*rho_inv - 1
+rho*rho_inv - 1
+rho*rho_inv - 1
