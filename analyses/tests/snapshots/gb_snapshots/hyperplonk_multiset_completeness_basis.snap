@@ -66,30 +66,10 @@ __zippel::node::129 - 1
 __zippel::node::170 - 1
 __zippel::node::173 - 1
 __zippel::node::186 - 1
-__zippel::node::189[0] - 1
-__zippel::node::189[1] - 1
-__zippel::node::189[2] - 1
-__zippel::node::189[3] - 1
-__zippel::node::189[4] - 1
-__zippel::node::189[5] - 1
-__zippel::node::189[6] - 1
-__zippel::node::189[7] - 1
-__zippel::node::193[0] - 1
-__zippel::node::193[1] - 1
-__zippel::node::193[2] - 1
-__zippel::node::193[3] - 1
-__zippel::node::193[4] - 1
-__zippel::node::193[5] - 1
-__zippel::node::193[6] - 1
-__zippel::node::193[7] - 1
-__zippel::node::198[0] - 1
-__zippel::node::198[1] - 1
-__zippel::node::198[2] - 1
-__zippel::node::198[3] - 1
-__zippel::node::198[4] - 1
-__zippel::node::198[5] - 1
-__zippel::node::198[6] - 1
-__zippel::node::202 - 1
+__zippel::node::189 - 1
+__zippel::node::192 - 1
+__zippel::node::196 - 1
+__zippel::node::199 - 1
 __zippel::node::81 - 1
 g_shift_inv[0]*r + g_evs[0]*g_shift_inv[0] - 1
 g_shift_inv[1]*r + g_evs[1]*g_shift_inv[1] - 1

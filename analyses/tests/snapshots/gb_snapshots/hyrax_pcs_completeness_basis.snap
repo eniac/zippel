@@ -12,11 +12,8 @@ expression: value
 - g_vec[2]*__zippel::node::118 + g_vec[3]*__zippel::node::117
 - g_vec[2]*h_trap + h_base*__zippel::node::117
 - g_vec[3]*h_trap + h_base*__zippel::node::118
-__zippel::node::123[0] - 1
-__zippel::node::123[1] - 1
-__zippel::node::123[2] - 1
-__zippel::node::123[3] - 1
-__zippel::node::126 - 1
+__zippel::node::123 - 1
+__zippel::node::125 - 1
 __zippel::node::73 - 1
 __zippel::node::81 - 1
 eval_check - 1

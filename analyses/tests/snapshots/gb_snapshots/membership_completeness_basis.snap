@@ -19,8 +19,8 @@ __zippel::node::53 - 1
 __zippel::node::61 - 1
 __zippel::node::65 - 1
 __zippel::node::76 - 1
-__zippel::node::83[0] - 1
-__zippel::node::87 - 1
+__zippel::node::83 - 1
+__zippel::node::86 - 1
 s[0]*s[1] - f_coeffs[0]*s[1] - f_coeffs[0]*s[0] + f_coeffs[0]^2
 s[1]*__zippel::gb::div_q::0[0] + s[0]*__zippel::gb::div_q::0[0] + 52435875175126190479447740508185965837690552500527637822603658699938581184511*f_coeffs[0]*__zippel::gb::div_q::0[0] + s[1]^2*__zippel::gb::div_q::1[0] + 52435875175126190479447740508185965837690552500527637822603658699938581184511*s[0]*s[1]*__zippel::gb::div_q::1[0] + s[0]^2*__zippel::gb::div_q::1[0]
 s[1]*__zippel::gb::div_q::0[1] + s[0]*__zippel::gb::div_q::0[1] + 52435875175126190479447740508185965837690552500527637822603658699938581184511*f_coeffs[0]*__zippel::gb::div_q::0[1] + __zippel::gb::div_q::1[0]*__zippel::gb::div_q::0[0]

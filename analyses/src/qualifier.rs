@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn qualifier_prop() {
         let ex = r#"
-            proto foo<F: Field, N: 2..4>(witness s: [F; N], witness s': F, instance i: Fin<2>) where reduce(&&, s == s) {
+            proto foo<F: Field, N: 2..4>(witness s: [F; N], witness s': F, instance i: Fin<2>) where s == s {
                 let r = random<F>;
                 a <- r * s[i];
                 b <- r * s';

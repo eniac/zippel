@@ -47,12 +47,9 @@ proto kzh<
     let eqx = eq_weights(x0);
     let eqy = eq_weights(y0);
     z0 == dot([eqx[k / NYV] * eqy[k % NYV] for k in 0..NXY], f)
-        && reduce(
-            &&,
-            [h1[k] for k in 0..NXY] == [g_gen * (mu1[k / NYV] * mu2[k % NYV]) for k in 0..NXY],
-        )
-        && reduce(&&, [h2[y] for y in 0..NYV] == [g_gen * mu2[y] for y in 0..NYV])
-        && reduce(&&, [v1[x] for x in 0..NXV] == [v_gen * mu1[x] for x in 0..NXV])
+        && [h1[k] for k in 0..NXY] == [g_gen * (mu1[k / NYV] * mu2[k % NYV]) for k in 0..NXY]
+        && [h2[y] for y in 0..NYV] == [g_gen * mu2[y] for y in 0..NYV]
+        && [v1[x] for x in 0..NXV] == [v_gen * mu1[x] for x in 0..NXV]
 {
     // Commit: C = <T, H1>
     c <- dot(f, h1);

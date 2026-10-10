@@ -250,26 +250,23 @@ proto hyperplonk_snark<
     let y = random<F>;
     let x = random<F>;
     let cells = [i * (zero + 1) for i in 0..N];
-    reduce(&&, q0 * w0 + q1 * w1 + q2 * w2 + q3 * w0 * w1 + q4 == [zero for _ in 0..N])
-        && reduce(&&, pub_input == w0[0..4])
+    q0 * w0 + q1 * w1 + q2 * w2 + q3 * w0 * w1 + q4 == [zero for _ in 0..N]
+        && pub_input == w0[0..4]
         && reduce(*, [cells[i] + y * w0[i] + x for i in 0..N])
             * reduce(*, [cells[i] + N * (zero + 1) + y * w1[i] + x for i in 0..N])
             * reduce(*, [cells[i] + 2 * N * (zero + 1) + y * w2[i] + x for i in 0..N])
             == reduce(*, [s0[i] + y * w0[i] + x for i in 0..N])
                 * reduce(*, [s1[i] + y * w1[i] + x for i in 0..N])
                 * reduce(*, [s2[i] + y * w2[i] + x for i in 0..N])
-        && reduce(
-            &&,
-            sel_comms
-                == [
-                    dot(q0, ck[0..N]),
-                    dot(q1, ck[0..N]),
-                    dot(q2, ck[0..N]),
-                    dot(q3, ck[0..N]),
-                    dot(q4, ck[0..N]),
-                ],
-        )
-        && reduce(&&, perm_comms == [dot(s0, ck[0..N]), dot(s1, ck[0..N]), dot(s2, ck[0..N])])
+        && sel_comms
+            == [
+                dot(q0, ck[0..N]),
+                dot(q1, ck[0..N]),
+                dot(q2, ck[0..N]),
+                dot(q3, ck[0..N]),
+                dot(q4, ck[0..N]),
+            ]
+        && perm_comms == [dot(s0, ck[0..N]), dot(s1, ck[0..N]), dot(s2, ck[0..N])]
 {
     let zero = pub_input[0] - pub_input[0];
     let one = zero + 1;

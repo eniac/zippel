@@ -46,14 +46,14 @@ proto dekart<
     let xi = random<f>;
     // ℓ_i(τ) = IFFT(1, τ, ..., τ^n)_i, as in upstream's `lagrange_basis`.
     let lagr = coef(interpolate([tau ^ k for k in 0..n + 1]));
-    reduce(&&, srs_g1_h == [gen_g1 * tau ^ i for i in 0..h_deg + 1])
-        && reduce(&&, srs_g1_lagr == [gen_g1 * lagr[i] for i in 0..n + 1])
+    srs_g1_h == [gen_g1 * tau ^ i for i in 0..h_deg + 1]
+        && srs_g1_lagr == [gen_g1 * lagr[i] for i in 0..n + 1]
         && srs_g2_tau == gen_g2 * tau
         && xi_g1 == gen_g1 * xi
         && srs_g2_xi == gen_g2 * xi
         // s0_commit commits to the Lagrange polynomial L_0.
         && s0_commit == srs_g1_lagr[0]
-        && reduce(&&, v_star == [1 for _ in 0..n + 1])
+        && v_star == [1 for _ in 0..n + 1]
         // Statement: com_f commits to f with hiding randomness rho.
         && com_f == dot(f_evals, srs_g1_lagr) + xi_g1 * rho
         // Range: every digit lies in [0, b).
@@ -61,30 +61,24 @@ proto dekart<
             &&,
             [
                 let chunk_j = chunks_bits[j];
-                reduce(
-                    &&,
-                    [reduce(*, [chunk_j[i] - d for d in 0..b]) for i in 0..n] == [0 for _ in 0..n],
-                )
+                [reduce(*, [chunk_j[i] - d for d in 0..b]) for i in 0..n] == [0 for _ in 0..n]
                 for j in 0..l_chunk
             ],
         )
         && f_evals[0] == 0
         // Decomposition: z_i = Σ_j b^j · digit_j(z_i).
-        && reduce(
-            &&,
-            f_evals[1..n + 1]
-                == [
-                    reduce(
-                        +,
-                        [
-                            let chunk_j = chunks_bits[j];
-                            chunk_j[i] * b_pow[j]
-                            for j in 0..l_chunk
-                        ],
-                    )
-                    for i in 0..n
-                ],
-        )
+        && f_evals[1..n + 1]
+            == [
+                reduce(
+                    +,
+                    [
+                        let chunk_j = chunks_bits[j];
+                        chunk_j[i] * b_pow[j]
+                        for j in 0..l_chunk
+                    ],
+                )
+                for i in 0..n
+            ]
 {
     // Step 2: re-randomise f(ω^0) and the hiding randomness
     let r = random<f>;

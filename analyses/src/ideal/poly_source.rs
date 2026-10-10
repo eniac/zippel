@@ -143,6 +143,9 @@ impl<C: ArkConfig> PolySource<C> {
     /// **Uni(n) → VPoly(n', m')** where `1 ≤ n'` and `n ≤ m'`:
     ///   Same as VPoly(1,n) → VPoly(n',m'). Handled by same-arity prefix or
     ///   cross-arity embedding as above.
+    ///
+    /// **Vec(A, n) → Vec(B, n)**:
+    ///   Lifts each element from `A` to `B` by the rules above, in order.
     pub fn lift_to(&self, target: &ATyp) -> PolySource<C> {
         let src_len = self.typ.physical_len();
         let dst_len = target.physical_len();
@@ -165,6 +168,13 @@ impl<C: ArkConfig> PolySource<C> {
         match (&self.typ, target) {
             (ATyp::Base(_), ATyp::Base(_)) => PolySource {
                 polys: self.polys.clone(),
+                typ: target.clone(),
+            },
+
+            (ATyp::Vec(_, n1), ATyp::Vec(dst_elem, n2)) if n1 == n2 => PolySource {
+                polys: (0..*n1)
+                    .flat_map(|i| self.at_index(i).unwrap().lift_to(dst_elem).polys)
+                    .collect(),
                 typ: target.clone(),
             },
 

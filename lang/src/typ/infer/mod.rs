@@ -529,11 +529,8 @@ impl Typeable for CExp {
                 let _lub = CTyp::lub_equ(&ta, &tb, kctx)
                     .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))?;
 
-                // Return Bool for scalar/poly/record operands, Vec<Bool, N> for vec operands
-                match &ta {
-                    CTyp::Vec(_, n) => Ok(CTyp::vec(&CTyp::Bool, n.node)),
-                    _ => Ok(CTyp::Bool),
-                }
+                // Equality is whole-value for every shape, vectors included
+                Ok(CTyp::Bool)
             }
 
             // Handle && (logical AND): both operands must be Bool, result is Bool

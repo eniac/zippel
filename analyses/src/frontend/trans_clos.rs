@@ -507,7 +507,7 @@ mod tests {
     fn trans_clos_prover_not_empty() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field>(witness s: [F; 10], witness s': F, instance i: Fin<5>) where reduce(&&, s == s) {
+            proto foo<F: Field>(witness s: [F; 10], witness s': F, instance i: Fin<5>) where s == s {
                 let r = random<F>;
                 a <- r * s[i + 2];
                 b <- r * s';
@@ -544,7 +544,7 @@ mod tests {
     fn trans_clos_relation_uses_input_namespace() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field>(witness s: [F; 10], witness s': F, instance i: Fin<5>) where reduce(&&, s == s) {
+            proto foo<F: Field>(witness s: [F; 10], witness s': F, instance i: Fin<5>) where s == s {
                 let r = random<F>;
                 a <- r * s[i + 2];
                 b <- r * s';
@@ -588,7 +588,7 @@ mod tests {
     fn trans_clos_parametric() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field, N: 2..4>(witness s: [F; N], witness s': F, instance i: Fin<2>) where reduce(&&, s == s) {
+            proto foo<F: Field, N: 2..4>(witness s: [F; N], witness s': F, instance i: Fin<2>) where s == s {
                 let r = random<F>;
                 a <- r * s[i];
                 b <- r * s';
@@ -800,7 +800,7 @@ mod tests {
     fn trans_clos_prover_topological_order() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field>(witness s: [F; 10], witness s': F, instance i: Fin<5>) where reduce(&&, s == s) {
+            proto foo<F: Field>(witness s: [F; 10], witness s': F, instance i: Fin<5>) where s == s {
                 let r = random<F>;
                 a <- r * s[i + 2];
                 b <- r * s';
@@ -831,7 +831,7 @@ mod tests {
     fn trans_clos_relation_topological_order() {
         let g = make_qualified_dag(
             r#"
-            proto foo<F: Field>(witness s: [F; 10], witness s': F, instance i: Fin<5>) where reduce(&&, s == s) {
+            proto foo<F: Field>(witness s: [F; 10], witness s': F, instance i: Fin<5>) where s == s {
                 let r = random<F>;
                 a <- r * s[i + 2];
                 b <- r * s';

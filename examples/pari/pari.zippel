@@ -116,10 +116,10 @@ proto pari<
     let w_b_poly = interpolate(w_b_evals);
     // (1) SR1CS satisfaction on the constraint domain K:
     //       (A z) ⊙ (A z) == (B z), element-wise.
-    reduce(&&, [z_a_evals[i] * z_a_evals[i] for i in 0..K] == z_b_evals)
+    [z_a_evals[i] * z_a_evals[i] for i in 0..K] == z_b_evals
         //     Az = A(0∥w) + x̂_A and Bz = B(0∥w) under the layout.
-        && reduce(&&, z_a_evals == [w_a_evals[i] + x_hat_a[i] for i in 0..K])
-        && reduce(&&, z_b_evals == w_b_evals)
+        && z_a_evals == [w_a_evals[i] + x_hat_a[i] for i in 0..K]
+        && z_b_evals == w_b_evals
         //     Witness basis, stated through its only use T_AB = Σ w_i Σ[i]:
         //       δ_2 · T_AB = (α ŵ_A(τ) + β ŵ_B(τ)) · G.
         && dot(w, sigma_w) * delta2 == g_g1 * (alpha * w_a_poly(tau) + beta * w_b_poly(tau))
@@ -130,36 +130,33 @@ proto pari<
         && delta2_h == h_g2 * delta2
         //     Opening-proof bases: Σ_A[i] = alpha·τ^i·G, Σ_B[i] = beta·τ^i·G,
         //     Σ_ {q'}[i] = τ^i·G, all indexed by i in 0..K.
-        && reduce(&&, [sigma_a[i] for i in 0..K] == [g_g1 * (alpha * tau ^ i) for i in 0..K])
-        && reduce(&&, [sigma_b[i] for i in 0..K] == [g_g1 * (beta * tau ^ i) for i in 0..K])
-        && reduce(&&, [sigma_q_prime[i] for i in 0..K] == [g_g1 * tau ^ i for i in 0..K])
+        && [sigma_a[i] for i in 0..K] == [g_g1 * (alpha * tau ^ i) for i in 0..K]
+        && [sigma_b[i] for i in 0..K] == [g_g1 * (beta * tau ^ i) for i in 0..K]
+        && [sigma_q_prime[i] for i in 0..K] == [g_g1 * tau ^ i for i in 0..K]
         //     Quotient basis: Σ_q[i] = (τ^i / δ_2)·G. State multiplicatively
         //     to avoid F-division in the where clause:
         //       Σ_q[i] · δ_2 = τ^i · G.
-        && reduce(&&, [sigma_q[i] * delta2 for i in 0..K] == [g_g1 * tau ^ i for i in 0..K])
+        && [sigma_q[i] * delta2 for i in 0..K] == [g_g1 * tau ^ i for i in 0..K]
         // (3) Field constants used by the verifier's Lagrange shortcut.
         && f_one == 1
         && k_inv * K == 1
         //     omegas[i] = ω^{K-N+i}: a K-th root of unity on which the
         //     Lagrange basis L_{K-N+i} evaluates to 1 (it is 0 on every
         //     other K-th root of unity).
-        && reduce(&&, [omegas[i] ^ K for i in 0..N] == [f_one for _ in 0..N])
-        && reduce(
-            &&,
-            [
-                // Unit vector at slot K-N+i; (i+1)/(m+1) · ((m+1)/(i+1)) is
-                // the Kronecker delta [i == m] in integer arithmetic.
-                let l_i = interpolate(
-                    [0 * f_one for _ in 0..K - N]
-                        ++ [(i + 1) / (m + 1) * ((m + 1) / (i + 1)) * f_one for m in 0..N],
-                );
-                l_i(omegas[i])
-                for i in 0..N
-            ]
-                == [f_one for _ in 0..N],
-        )
+        && [omegas[i] ^ K for i in 0..N] == [f_one for _ in 0..N]
+        && [
+            // Unit vector at slot K-N+i; (i+1)/(m+1) · ((m+1)/(i+1)) is
+            // the Kronecker delta [i == m] in integer arithmetic.
+            let l_i = interpolate(
+                [0 * f_one for _ in 0..K - N]
+                    ++ [(i + 1) / (m + 1) * ((m + 1) / (i + 1)) * f_one for m in 0..N],
+            );
+            l_i(omegas[i])
+            for i in 0..N
+        ]
+            == [f_one for _ in 0..N]
         //     v_K(X) = X^K - 1.
-        && reduce(&&, coef(v_k_poly) == [0 - f_one] ++ [0 * f_one for _ in 0..K - 1] ++ [f_one])
+        && coef(v_k_poly) == [0 - f_one] ++ [0 * f_one for _ in 0..K - 1] ++ [f_one]
 {
     // === Constant scalar derived from f_one ===
     let f_neg_one = 0 - f_one;

@@ -48,13 +48,6 @@ __zippel::gb::interp_inv::8 + 1
 __zippel::gb::interp_inv::9 + 17478625058375396826482580169395321945896850833509212607534552899979527061504*1
 __zippel::node::110 - 1
 __zippel::node::140 - 1
-__zippel::node::148[0] - 1
-__zippel::node::148[1] - 1
-__zippel::node::148[2] - 1
-__zippel::node::148[3] - 1
-__zippel::node::148[4] - 1
-__zippel::node::148[5] - 1
-__zippel::node::148[6] - 1
-__zippel::node::148[7] - 1
+__zippel::node::148 - 1
 __zippel::node::62 - 1
 __zippel::node::88 - 1

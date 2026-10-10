@@ -80,7 +80,8 @@ pub enum BinOp {
     ///     ```
     Rem,
 
-    ///     Equality comparison: returns `Bool` (scalar) or `Vec<Bool, N>` (vec).
+    ///     Equality comparison: returns a single `Bool` for every operand shape;
+    ///     two vectors are equal when all their elements are.
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let b = x == y;
@@ -270,7 +271,7 @@ pub enum Exp<N: ExpLiteral> {
     ),
 
     ///     Verifier check: verifies that the expression is true.
-    ///     The expression must be `Bool` or `Vec<Bool, N>`.
+    ///     The expression must be `Bool`.
     ///     **Zippel Code:**
     ///     ```zippel
     ///     verify(a == a)
