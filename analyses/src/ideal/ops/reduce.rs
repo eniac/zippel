@@ -348,30 +348,29 @@ mod tests {
         );
         builder.add_op(var.clone(), op, &mut ideal);
 
-        let v0 = var_v.clone().with_index(0).unwrap();
-        let v1 = var_v.clone().with_index(1).unwrap();
-        let v2 = var_v.clone().with_index(2).unwrap();
-        let r_slot = var.clone();
-
-        let step1_vars: Vec<_> = ideal
-            .generating_set
-            .iter()
-            .filter(|row| row.contains(&r_slot) && row.contains(&v2))
-            .collect();
-        assert!(
-            !step1_vars.is_empty(),
-            "basis should contain final div constraint involving v[2] and ideal"
+        // acc := v[0]·inv0 and var := acc·inv1, with inv0 and inv1 the
+        // inverses of v[1] and v[2].
+        let var_poly = |p: &Var| Polynomial::<ark_bls12_381::Fr>::var(p);
+        let local = |name: &str, node| {
+            Var::from_var(name, NodeIndex::new(node), ATyp::scalar(), Qualifier::Local)
+        };
+        let acc = local("__zippel::gb::reduce_div_acc::0", usize::MAX);
+        let inv0 = local("__zippel::gb::div_inv::0", usize::MAX - 1);
+        let inv1 = local("__zippel::gb::div_inv::1", usize::MAX - 2);
+        let v = |i| var_poly(&var_v.clone().with_index(i).unwrap());
+        assert_eq!(ideal.pl.get(&acc).cloned(), Some(&v(0) * &var_poly(&inv0)));
+        assert_eq!(
+            ideal.pl.get(&var).cloned(),
+            Some(&var_poly(&acc) * &var_poly(&inv1))
         );
-
-        let step0_vars: Vec<_> = ideal
-            .generating_set
-            .iter()
-            .filter(|row| row.contains(&v0) && row.contains(&v1))
-            .collect();
-        assert!(
-            !step0_vars.is_empty(),
-            "basis should contain first div constraint involving v[0] and v[1]"
-        );
+        let one = Polynomial::lit(&ark_bls12_381::Fr::from(1u64));
+        for (i, inv) in [(1, &inv0), (2, &inv1)] {
+            let expected = &(&v(i) * &var_poly(inv)) - &one;
+            assert!(
+                ideal.generating_set.contains(&expected),
+                "the inverse of v[{i}] is missing"
+            );
+        }
     }
 
     #[test]
