@@ -7,12 +7,9 @@
 //! prover messages and hypotheses `c·x + r`, with `c` a nonzero constant and
 //! `x` not in `r`, all qualify.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{HashMap, HashSet};
 
 use ark_ff::Field;
-use petgraph::Direction::Incoming;
-use petgraph::algo::kosaraju_scc;
-use petgraph::graphmap::DiGraphMap;
 use share::Ctx;
 
 use crate::Var;
@@ -31,73 +28,52 @@ pub enum Refused {
 
 /// Definitions `x := f` for distinct variables `x`, kept resolved: no value
 /// mentions a defined variable, so [`Substitution::apply`] needs one pass.
-///
-/// Iteration follows insertion order.
 #[derive(Clone, Debug, Default)]
 pub struct Substitution<F: Field> {
-    /// The defined variables, in insertion order.
-    order: Vec<Var>,
     /// The resolved value of each defined variable.
-    values: Ctx<Var, Polynomial<F>>,
+    defs: Ctx<Var, Polynomial<F>>,
 }
 
 impl<F: Field> Substitution<F> {
-    /// Resolve encoder definitions in dependency order: each comes after
-    /// every definition it mentions, and ties go to the least `Var`.
+    /// Resolve encoder definitions in dependency order.
     ///
-    /// Definitions that depend on each other cyclically, including one that
-    /// mentions itself, are left out, so their variables stay variables. A
-    /// definition that only reads one of them is kept.
+    /// A definition on a cycle, or one that reads such a definition, has no
+    /// place in that order and is left out, so its variable stays a variable.
     pub fn resolve(defs: &Ctx<Var, Polynomial<F>>) -> Self {
-        // An edge `x → y` when the definition of `x` mentions the key `y`.
-        let mut graph = DiGraphMap::<&Var, ()>::new();
+        // Kahn's algorithm: the number of keys each definition still waits
+        // for, and the definitions that read each key.
+        let mut waiting: HashMap<&Var, usize> = HashMap::new();
+        let mut readers: HashMap<&Var, Vec<&Var>> = HashMap::new();
         for (x, f) in defs.iter() {
-            graph.add_node(x);
-            for y in f.terms.keys().flat_map(|m| m.0.iter().map(|(y, _)| y)) {
-                if defs.contains(y) {
-                    graph.add_edge(x, y, ());
-                }
+            let keys: HashSet<&Var> = f
+                .terms
+                .keys()
+                .flat_map(|m| m.0.iter().map(|(y, _)| y))
+                .filter(|y| defs.contains(y))
+                .collect();
+            waiting.insert(x, keys.len());
+            for y in keys {
+                readers.entry(y).or_default().push(x);
             }
         }
-        // Kosaraju's algorithm, which is iterative.
-        for scc in kosaraju_scc(&graph) {
-            if scc.len() > 1 || graph.contains_edge(scc[0], scc[0]) {
-                for x in scc {
-                    graph.remove_node(x);
-                }
-            }
-        }
-
-        // Kahn's algorithm over the rest, which is acyclic.
-        let mut waiting: HashMap<&Var, usize> = graph
-            .nodes()
-            .map(|x| (x, graph.neighbors(x).count()))
+        let mut ready: Vec<&Var> = defs
+            .iter()
+            .map(|(x, _)| x)
+            .filter(|x| waiting[x] == 0)
             .collect();
-        let mut ready: BTreeSet<&Var> = graph.nodes().filter(|x| waiting[x] == 0).collect();
         let mut s = Self::default();
-        while let Some(x) = ready.pop_first() {
-            // Every key that `x` mentions is resolved already, or cyclic.
-            s.push(x.clone(), s.apply(&defs[x]));
-            for k in graph.neighbors_directed(x, Incoming) {
-                let n = waiting.get_mut(k).expect("a node of the graph");
+        while let Some(x) = ready.pop() {
+            let value = s.apply(&defs[x]);
+            s.defs.entry(x.clone()).or_insert(value);
+            for &k in readers.get(x).into_iter().flatten() {
+                let n = waiting.get_mut(k).expect("every key waits");
                 *n -= 1;
                 if *n == 0 {
-                    ready.insert(k);
+                    ready.push(k);
                 }
             }
         }
         s
-    }
-
-    /// The part whose keys `keep` accepts, in the same order. Still resolved,
-    /// since no value mentioned any key before.
-    pub fn restrict(&self, keep: impl Fn(&Var) -> bool) -> Self {
-        let order: Vec<Var> = self.order.iter().filter(|x| keep(x)).cloned().collect();
-        let values = order
-            .iter()
-            .map(|x| (x.clone(), self.values[x].clone()))
-            .collect();
-        Self { order, values }
     }
 
     /// Add `x := f`: resolve `f`, then substitute it into every value that
@@ -107,7 +83,7 @@ impl<F: Field> Substitution<F> {
     /// [`Refused::Defined`] if `x` is already defined, and [`Refused::Occurs`]
     /// if `x` occurs in the resolved `f`. Either way, nothing changes.
     pub fn insert(&mut self, x: Var, f: Polynomial<F>) -> Result<(), Refused> {
-        if self.values.contains(&x) {
+        if self.defs.contains(&x) {
             return Err(Refused::Defined);
         }
         let f = self.apply(&f);
@@ -116,41 +92,24 @@ impl<F: Field> Substitution<F> {
         }
         let def = Ctx::singleton(x.clone(), f.clone());
         let stale: Vec<Var> = self
-            .values
+            .defs
             .iter()
             .filter(|(_, v)| v.contains(&x))
             .map(|(k, _)| k.clone())
             .collect();
         for k in stale {
-            if let Some(v) = self.values.get_mut(&k) {
+            if let Some(v) = self.defs.get_mut(&k) {
                 *v = std::mem::replace(v, Polynomial::zero()).inline_vars(&def).0;
             }
         }
-        self.push(x, f);
+        self.defs.entry(x).or_insert(f);
         Ok(())
     }
 
     /// Substitute every definition into `p`. One pass suffices, since no
-    /// value mentions a key.
+    /// value mentions a defined variable.
     pub fn apply(&self, p: &Polynomial<F>) -> Polynomial<F> {
-        p.clone().inline_vars(&self.values).0
-    }
-
-    /// The resolved value of `x`, if `x` is defined.
-    pub fn get(&self, x: &Var) -> Option<&Polynomial<F>> {
-        self.values.get(x)
-    }
-
-    /// The definitions `x := f`, in insertion order.
-    pub fn iter(&self) -> impl Iterator<Item = (&Var, &Polynomial<F>)> {
-        self.order.iter().map(|x| (x, &self.values[x]))
-    }
-
-    /// Append `x := value`, which the caller has resolved: `value` mentions no
-    /// key, and no value mentions `x`.
-    fn push(&mut self, x: Var, value: Polynomial<F>) {
-        self.values.entry(x.clone()).or_insert(value);
-        self.order.push(x);
+        p.clone().inline_vars(&self.defs).0
     }
 }
 
@@ -171,7 +130,7 @@ mod tests {
         )
     }
 
-    /// One variable per name, on nodes `0, 1, …`, so they order like `names`.
+    /// One variable per name, on nodes `0, 1, …`.
     fn vars<const N: usize>(names: [&str; N]) -> [Var; N] {
         std::array::from_fn(|i| var(names[i], i))
     }
@@ -186,10 +145,6 @@ mod tests {
 
     fn defs<const N: usize>(entries: [(&Var, Polynomial<Fr>); N]) -> Ctx<Var, Polynomial<Fr>> {
         entries.into_iter().map(|(x, f)| (x.clone(), f)).collect()
-    }
-
-    fn keys(s: &Substitution<Fr>) -> Vec<String> {
-        s.iter().map(|(x, _)| x.to_string()).collect()
     }
 
     /// Substitute `defs` into `p` until nothing changes, which ends when
@@ -225,7 +180,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_agrees_with_naive_substitution_on_triangular_systems() {
+    fn resolve_and_insert_agree_with_naive_substitution_on_triangular_systems() {
         arbtest::arbtest(|u| {
             let n: usize = u.int_in_range(1..=6)?;
             // Shuffle the nodes, so that `Var` order is unrelated to dependency order.
@@ -241,29 +196,19 @@ mod tests {
                 system.insert(&keys[r], &arbitrary_poly(u, &keys[r + 1..], &free)?);
             }
 
-            let s = Substitution::resolve(&system);
-            assert_eq!(s.iter().count(), n, "a triangular system has no cycle");
-            for (x, f) in system.iter() {
-                assert_eq!(s.get(x), Some(&naive(f, &system)), "{x} := {f}");
-            }
-            let position: HashMap<&Var, usize> =
-                s.iter().enumerate().map(|(i, (x, _))| (x, i)).collect();
-            for (x, f) in system.iter() {
-                for y in f.vars().iter().filter(|y| system.contains(y)) {
-                    assert!(position[y] < position[x], "{x} := {f} comes before {y}");
-                }
-            }
-            let p = arbitrary_poly(u, &keys, &free)?;
-            assert_eq!(s.apply(&p), naive(&p, &system), "{p}");
-
-            // `Var` order, which the shuffle makes unrelated to dependency order.
+            let resolved = Substitution::resolve(&system);
+            // In `Var` order, which the shuffle makes unrelated to dependency order.
             let mut inserted = Substitution::default();
             for (x, f) in system.iter() {
                 inserted.insert(x.clone(), f.clone()).unwrap();
             }
-            for (x, f) in s.iter() {
-                assert_eq!(inserted.get(x), Some(f), "{x}");
+            for (x, f) in system.iter() {
+                let value = naive(f, &system);
+                assert_eq!(resolved.apply(&v(x)), value, "{x} := {f}");
+                assert_eq!(inserted.apply(&v(x)), value, "{x} := {f}");
             }
+            let p = arbitrary_poly(u, &keys, &free)?;
+            assert_eq!(resolved.apply(&p), naive(&p, &system), "{p}");
             Ok(())
         });
     }
@@ -273,35 +218,28 @@ mod tests {
         // `Polynomial::lit(0)` keeps a zero term, which `inline_vars` drops.
         let [t] = vars(["t"]);
         let s = Substitution::resolve(&defs([(&t, lit(0))]));
-        assert!(s.get(&t).unwrap().is_zero());
+        assert!(s.apply(&v(&t)).is_zero());
         assert!(s.apply(&lit(0)).is_zero());
     }
 
     #[test]
-    fn resolve_orders_by_dependency_then_var() {
-        let [a, b, c, d] = vars(["a", "b", "c", "d"]);
+    fn resolve_leaves_out_definitions_on_or_after_a_cycle() {
+        let [x, y, z, w, c, d, a] = vars(["x", "y", "z", "w", "c", "d", "a"]);
         let s = Substitution::resolve(&defs([
-            (&a, v(&b) + v(&d)),
-            (&b, v(&c) * v(&c)),
-            (&c, lit(3)),
-            (&d, v(&c) + lit(1)),
+            // Reads the cycle between `y` and `z`.
+            (&x, v(&y) + lit(1)),
+            (&y, v(&z) * v(&a)),
+            (&z, v(&y) + lit(2)),
+            // Mentions itself.
+            (&w, v(&w) * v(&a)),
+            (&c, v(&a) + lit(1)),
+            (&d, v(&c) * lit(2)),
         ]));
-        assert_eq!(keys(&s), ["c", "b", "d", "a"]);
-        assert_eq!(s.get(&a), Some(&lit(13)));
-    }
 
-    #[test]
-    fn iteration_follows_insertion_order() {
-        let [a, b, c] = vars(["a", "b", "c"]);
-        let mut s = Substitution::default();
-        for x in [&c, &a, &b] {
-            s.insert(x.clone(), lit(1)).unwrap();
+        for left_out in [&x, &y, &z, &w] {
+            assert_eq!(s.apply(&v(left_out)), v(left_out), "{left_out}");
         }
-        assert_eq!(keys(&s), ["c", "a", "b"]);
-
-        let without_a = s.restrict(|x| x != &a);
-        assert_eq!(keys(&without_a), ["c", "b"]);
-        assert_eq!(without_a.apply(&(v(&a) + v(&b))), v(&a) + lit(1));
+        assert_eq!(s.apply(&v(&d)), (v(&a) + lit(1)) * lit(2));
     }
 
     #[test]
@@ -314,8 +252,9 @@ mod tests {
         // `x := a + 1` resolves to `x·y + 1`, which mentions `x`.
         assert_eq!(s.insert(x.clone(), v(&a) + lit(1)), Err(Refused::Occurs));
 
-        assert_eq!(keys(&s), ["a"], "a refused definition changes nothing");
-        assert_eq!(s.get(&a), Some(&(v(&x) * v(&y))));
+        // A refused definition changes nothing.
+        assert_eq!(s.apply(&v(&a)), v(&x) * v(&y));
+        assert_eq!(s.apply(&v(&x)), v(&x));
     }
 
     #[test]
@@ -331,28 +270,9 @@ mod tests {
         s.insert(x.clone(), lit(2) * v(&c)).unwrap();
 
         let two_c = lit(2) * v(&y) + lit(4);
-        assert_eq!(s.get(&x), Some(&two_c));
-        assert_eq!(s.get(&a), Some(&(&two_c + &lit(1))));
-        assert_eq!(s.get(&b), Some(&(&two_c * &two_c * v(&y))));
-        assert_eq!(s.get(&c), Some(&(v(&y) + lit(2))));
-        assert_eq!(keys(&s), ["a", "b", "c", "x"]);
-    }
-
-    #[test]
-    fn resolve_leaves_out_cyclic_definitions() {
-        let [x, y, z, w, u, a] = vars(["x", "y", "z", "w", "u", "a"]);
-        let s = Substitution::resolve(&defs([
-            // Reads the cycle between `y` and `z`.
-            (&x, v(&y) + lit(1)),
-            (&y, v(&z) * v(&a)),
-            (&z, v(&y) + lit(2)),
-            // Mentions itself.
-            (&w, v(&w) * v(&a)),
-            (&u, v(&x) + v(&w)),
-        ]));
-
-        assert_eq!(keys(&s), ["x", "u"]);
-        assert_eq!(s.get(&x), Some(&(v(&y) + lit(1))));
-        assert_eq!(s.get(&u), Some(&(v(&y) + lit(1) + v(&w))));
+        assert_eq!(s.apply(&v(&x)), two_c);
+        assert_eq!(s.apply(&v(&a)), &two_c + &lit(1));
+        assert_eq!(s.apply(&v(&b)), &two_c * &two_c * v(&y));
+        assert_eq!(s.apply(&v(&c)), v(&y) + lit(2));
     }
 }
