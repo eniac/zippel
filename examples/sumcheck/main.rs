@@ -66,9 +66,7 @@ fn prover_create_inputs(num_vars: usize, max_degree: usize) -> Ctx<Vid, Value<Ar
     ));
     let mut full_poly = base.clone();
     for _ in 1..max_degree {
-        full_poly = full_poly
-            .poly_mul(&base)
-            .expect("failed to multiply full_poly by base");
+        full_poly = full_poly.poly_mul(&base);
     }
     let poly = Value::poly(full_poly);
 

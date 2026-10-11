@@ -28,7 +28,7 @@ pub struct Ref(pub NodeIndex);
 
 /// Typed operations are expressions which are not important
 /// enough to be nodes in the graph.
-#[derive(PartialEq, Eq, Clone, Debug, Ord, PartialOrd, Hash)]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub enum Op<C: ArkConfig, R> {
     /// Value
     Value(Value<C>),

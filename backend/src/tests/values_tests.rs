@@ -1099,10 +1099,10 @@ fn test_div_by_product_of_constants() {
     let mut vp = VirtualPolynomial::<Fr>::new();
     let c1 = Arc::new(PolyVariant::<Fr>::from_scalar(Fr::from(3u64)));
     let c2 = Arc::new(PolyVariant::<Fr>::from_scalar(Fr::from(4u64)));
-    vp.add_poly_list(vec![c1, c2], Fr::from(2u64)).unwrap();
+    vp.add_poly_list(vec![c1, c2], Fr::from(2u64));
 
     // Verify the polynomial is indeed constant with value 24
-    assert_eq!(vp.clone().into_scalar(), Some(Fr::from(24u64)));
+    assert_eq!(vp.clone().to_scalar(), Some(Fr::from(24u64)));
 
     // Test division: 240 / 24 = 10
     let scalar_val = Value::<TestConfig>::Scalar(Fr::from(240u64));
@@ -1126,7 +1126,7 @@ fn test_div_by_non_constant_poly_panics() {
     let vp = VirtualPolynomial::from_poly(poly);
 
     // Verify it's not constant
-    assert_eq!(vp.clone().into_scalar(), None);
+    assert_eq!(vp.clone().to_scalar(), None);
 
     // This should panic
     let scalar_val = Value::<TestConfig>::Scalar(Fr::from(100u64));
@@ -1156,7 +1156,7 @@ fn sumcheck_style_vp_serializes() {
 
     let mut full_poly = base.clone();
     for _ in 1..max_degree {
-        full_poly = full_poly.poly_mul(&base).unwrap();
+        full_poly = full_poly.poly_mul(&base);
     }
 
     let mut buf = Vec::new();
@@ -1189,20 +1189,20 @@ mod test_into_scalar {
             PolyVariant::<Fr>::DenseUni(DensePolynomial::from_coefficients_vec(vec![Fr::from(
                 42u64,
             )]));
-        assert_eq!(const_uni.into_scalar(), Some(Fr::from(42u64)));
+        assert_eq!(const_uni.to_scalar(), Some(Fr::from(42u64)));
 
         // Non-constant univariate
         let non_const = PolyVariant::<Fr>::DenseUni(DensePolynomial::from_coefficients_vec(vec![
             Fr::from(1u64),
             Fr::from(2u64),
         ]));
-        assert_eq!(non_const.into_scalar(), None);
+        assert_eq!(non_const.to_scalar(), None);
 
         // Constant MLE (0 vars)
         let const_mle = PolyVariant::<Fr>::DenseMle(
             DenseMultilinearExtension::from_evaluations_vec(0, vec![Fr::from(7u64)]),
         );
-        assert_eq!(const_mle.into_scalar(), Some(Fr::from(7u64)));
+        assert_eq!(const_mle.to_scalar(), Some(Fr::from(7u64)));
 
         // Non-constant MLE
         let non_const_mle =
@@ -1210,7 +1210,7 @@ mod test_into_scalar {
                 1,
                 vec![Fr::from(1u64), Fr::from(2u64)],
             ));
-        assert_eq!(non_const_mle.into_scalar(), None);
+        assert_eq!(non_const_mle.to_scalar(), None);
     }
 
     #[test]
@@ -1219,22 +1219,20 @@ mod test_into_scalar {
 
         // Scalar virtual polynomial
         let vp_scalar = VirtualPolynomial::<Fr>::from_scalar(Fr::from(100u64));
-        assert_eq!(vp_scalar.into_scalar(), Some(Fr::from(100u64)));
+        assert_eq!(vp_scalar.to_scalar(), Some(Fr::from(100u64)));
 
         // Product of constants: 2 * 3 * 4 = 24
         let mut vp_product = VirtualPolynomial::<Fr>::new();
         let c1 = Arc::new(PolyVariant::<Fr>::from_scalar(Fr::from(3u64)));
         let c2 = Arc::new(PolyVariant::<Fr>::from_scalar(Fr::from(4u64)));
-        vp_product
-            .add_poly_list(vec![c1, c2], Fr::from(2u64))
-            .unwrap();
-        assert_eq!(vp_product.into_scalar(), Some(Fr::from(24u64)));
+        vp_product.add_poly_list(vec![c1, c2], Fr::from(2u64));
+        assert_eq!(vp_product.to_scalar(), Some(Fr::from(24u64)));
 
         // Sum of constants: 5 + 7 = 12
         let mut vp_sum = VirtualPolynomial::<Fr>::new();
-        vp_sum.add_poly_list(vec![], Fr::from(5u64)).unwrap();
-        vp_sum.add_poly_list(vec![], Fr::from(7u64)).unwrap();
-        assert_eq!(vp_sum.into_scalar(), Some(Fr::from(12u64)));
+        vp_sum.add_poly_list(vec![], Fr::from(5u64));
+        vp_sum.add_poly_list(vec![], Fr::from(7u64));
+        assert_eq!(vp_sum.to_scalar(), Some(Fr::from(12u64)));
 
         // Mixed with non-constant
         let mut vp_mixed = VirtualPolynomial::<Fr>::new();
@@ -1242,12 +1240,12 @@ mod test_into_scalar {
         let nc = Arc::new(PolyVariant::<Fr>::DenseUni(
             DensePolynomial::from_coefficients_vec(vec![Fr::from(1u64), Fr::from(2u64)]),
         ));
-        vp_mixed.add_poly_list(vec![c, nc], Fr::from(1u64)).unwrap();
-        assert_eq!(vp_mixed.into_scalar(), None);
+        vp_mixed.add_poly_list(vec![c, nc], Fr::from(1u64));
+        assert_eq!(vp_mixed.to_scalar(), None);
 
         // Empty polynomial (zero)
         let vp_empty = VirtualPolynomial::<Fr>::new();
-        assert_eq!(vp_empty.into_scalar(), Some(Fr::zero()));
+        assert_eq!(vp_empty.to_scalar(), Some(Fr::zero()));
     }
 }
 

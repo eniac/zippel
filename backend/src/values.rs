@@ -5,17 +5,15 @@ use crate::optimization::{
 use crate::poly_variant::PolyVariant;
 use crate::shared::Shared;
 use crate::types::Lub;
-use crate::virtual_polynomial::{
-    SelectedEvalShape, VirtualPolynomial, add_coeffs_assign, trim_trailing_zero_coeffs,
-};
+use crate::virtual_polynomial::{SelectedEvalShape, VirtualPolynomial};
 use crate::{ABase, ATyp, ArkConfig, ArkGroupOps, ArkPairingOps, ArkScalarOps, to_bytes};
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::Field;
-use ark_ff::{One, PrimeField, Zero};
+use ark_ff::Zero;
 use ark_poly::{
     DenseMultilinearExtension, DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain,
-    MultilinearExtension, univariate::DensePolynomial,
+    univariate::DensePolynomial,
 };
 use ark_serialize::{CanonicalSerialize, SerializationError};
 use ark_std::log2;
@@ -25,7 +23,6 @@ use rand::Rng;
 use rayon::prelude::*;
 use share::Ctx;
 use spongefish::{DuplexSpongeInterface, ProverState};
-use std::cmp::Ordering;
 use std::fmt;
 use std::io::Write;
 use std::ops::{Add, AddAssign, BitXor, Div, Mul, MulAssign, Rem, Sub};
@@ -692,7 +689,7 @@ impl<C: ArkConfig> Value<C> {
             // Polynomial addition
             Value::Poly(a) => match &other {
                 Value::Poly(b) => {
-                    *other = Value::poly(a.poly_add(b).expect("Polynomial addition failed"));
+                    *other = Value::poly(a.poly_add(b));
                 }
                 Value::Scalar(_) | Value::Index(_) => {
                     *other = Value::poly(a.poly_add_scalar(other.into_scalar()));
@@ -781,10 +778,10 @@ impl<C: ArkConfig> Value<C> {
                 Value::Index(b) => *other.into_index_mut() = *a - *b,
                 Value::Scalar(_) => C::FOps::sub(&C::FOps::from_usize(*a), other.into_scalar_mut()),
                 Value::Poly(poly) => {
-                    *other = Value::poly(
-                        VirtualPolynomial::scalar_sub_poly(C::FOps::from_usize(*a), poly)
-                            .expect("scalar_sub_poly failed"),
-                    );
+                    *other = Value::poly(VirtualPolynomial::scalar_sub_poly(
+                        C::FOps::from_usize(*a),
+                        poly,
+                    ));
                 }
                 _ => panic!("Expected scalar, found {}", other),
             },
@@ -795,10 +792,7 @@ impl<C: ArkConfig> Value<C> {
                 }
                 Value::Scalar(_) => C::FOps::sub(a, other.into_scalar_mut()),
                 Value::Poly(poly) => {
-                    *other = Value::poly(
-                        VirtualPolynomial::scalar_sub_poly(*a, poly)
-                            .expect("scalar_sub_poly failed"),
-                    );
+                    *other = Value::poly(VirtualPolynomial::scalar_sub_poly(*a, poly));
                 }
                 _ => panic!("Expected scalar, found {}", other),
             },
@@ -857,7 +851,7 @@ impl<C: ArkConfig> Value<C> {
                 .for_each(|(a, b)| a.value_sub(b)),
             Value::Poly(a) => match &other {
                 Value::Poly(b) => {
-                    *other = Value::poly(a.poly_sub(b).expect("Polynomial subtraction failed"));
+                    *other = Value::poly(a.poly_sub(b));
                 }
                 Value::Scalar(_) | Value::Index(_) => {
                     *other = Value::poly(a.poly_sub_scalar(other.into_scalar()));
@@ -967,7 +961,7 @@ impl<C: ArkConfig> Value<C> {
             Value::VecG2Prepared(_) => unreachable!("prepared G2 vectors are unwrapped on entry"),
             Value::Poly(a) => match &other {
                 Value::Poly(b) => {
-                    *other = Value::poly(a.poly_mul(b).expect("Polynomial multiplication failed"));
+                    *other = Value::poly(a.poly_mul(b));
                 }
                 Value::Scalar(_) | Value::Index(_) => {
                     *other = Value::poly(a.poly_mul_scalar(other.into_scalar()));
@@ -1469,8 +1463,8 @@ impl<C: ArkConfig> Value<C> {
                 // Index / Poly
                 Value::Poly(poly) => {
                     // Can only divide by constant polynomial
-                    let mut poly_scalar = VirtualPolynomial::clone(poly)
-                        .into_scalar()
+                    let mut poly_scalar = poly
+                        .to_scalar()
                         .expect("Cannot divide by non-constant polynomial");
                     let numerator = C::FOps::from_usize(*a);
                     C::FOps::div(&numerator, &mut poly_scalar);
@@ -1502,8 +1496,8 @@ impl<C: ArkConfig> Value<C> {
                 // Scalar / Poly
                 Value::Poly(poly) => {
                     // Can only divide by constant polynomial
-                    let mut poly_scalar = VirtualPolynomial::clone(poly)
-                        .into_scalar()
+                    let mut poly_scalar = poly
+                        .to_scalar()
                         .expect("Cannot divide by non-constant polynomial");
                     C::FOps::div(a, &mut poly_scalar);
                     *other = Value::Scalar(poly_scalar);
@@ -2209,39 +2203,8 @@ impl<C: ArkConfig> Value<C> {
             other => panic!("Hypercube reduce expects a polynomial, found {}", other),
         };
 
-        if let Some(round) =
-            hypercube_reduce_selected_mle_products::<C>(&poly, tail_num_vars, shape)
-        {
-            record_canonical_sumcheck_rows_fused();
-            return Value::poly(round);
-        }
-
-        let tail_count = 1usize
-            .checked_shl(tail_num_vars as u32)
-            .expect("hypercube reduce tail arity exceeds usize bit width");
-        let degree = shape.max_degree.max(poly.degree_bound());
-        let evals: Vec<C::F> = (0..=degree)
-            .map(|t_idx| {
-                let t = C::FOps::from_usize(t_idx);
-                (0..tail_count)
-                    .into_par_iter()
-                    .map(|tail_index| {
-                        let mut point = Vec::with_capacity(shape.input_num_vars);
-                        point.push(t);
-                        for bit_index in 0..tail_num_vars {
-                            let bit = (tail_index >> bit_index) & 1;
-                            point.push(if bit == 0 { C::F::zero() } else { C::F::one() });
-                        }
-                        poly.evaluate_mv(&point)
-                            .expect("hypercube reduce selected evaluation failed")
-                    })
-                    .sum()
-            })
-            .collect();
-
+        let round = poly.sum_over_hypercube_tail(tail_num_vars, shape.max_degree);
         record_canonical_sumcheck_rows_fused();
-        let mut round = round_univariate_from_marginalize_evals(&evals);
-        round.num_variables = Some(1);
         Value::poly(round)
     }
 
@@ -2496,8 +2459,10 @@ impl<C: ArkConfig> Value<C> {
                 let points: Vec<C::F> = b.iter().map(|i| C::FOps::from_usize(*i)).collect();
 
                 let original_num_vars = poly.num_vars();
-                let result_poly = if let Ok(scalar) = poly.evaluate_mv(&points) {
-                    VirtualPolynomial::from_scalar(scalar)
+                let result_poly = if poly.is_full_point(n_points) {
+                    VirtualPolynomial::from_scalar(
+                        poly.evaluate_mv(&points).expect("full point evaluates"),
+                    )
                 } else {
                     poly.evaluate_or_fix_mle(&points)
                         .expect("MLE evaluation failed")
@@ -2523,8 +2488,10 @@ impl<C: ArkConfig> Value<C> {
                 let n_points = v.len();
 
                 let original_num_vars = poly.num_vars();
-                let result_poly = if let Ok(scalar) = poly.evaluate_mv(v) {
-                    VirtualPolynomial::from_scalar(scalar)
+                let result_poly = if poly.is_full_point(n_points) {
+                    VirtualPolynomial::from_scalar(
+                        poly.evaluate_mv(v).expect("full point evaluates"),
+                    )
                 } else {
                     poly.evaluate_or_fix_mle(v).expect("MLE evaluation failed")
                 };
@@ -2853,7 +2820,7 @@ impl<C: ArkConfig> Value<C> {
     /// where only the kind of the type matters.
     pub fn shape_typ(&self) -> ATyp {
         match self {
-            Value::Poly(poly) if poly.is_univariate_shallow() => ATyp::uni(0),
+            Value::Poly(poly) if poly.is_univariate() => ATyp::uni(0),
             _ => self.typ(),
         }
     }
@@ -3559,7 +3526,8 @@ impl<C: ArkConfig> Value<C> {
                     )));
                 }
 
-                let coeffs = interpolate_univariate_from_points::<C::F>(&xs, &evals);
+                let coeffs =
+                    crate::virtual_polynomial::interpolate_univariate_from_points(&xs, &evals);
                 Value::poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
                     DensePolynomial { coeffs },
                 )))
@@ -3672,268 +3640,17 @@ impl<C: ArkConfig> Value<C> {
     }
 }
 
-const HYPERCUBE_PARALLEL_TAIL_THRESHOLD: usize = 1024;
-
-enum FactorRef<'a, F> {
-    Dense(&'a [F]),
-    Sparse(&'a std::collections::HashMap<usize, F>),
-}
-
-fn accumulate_term<F: Field>(
-    term: &mut [F],
-    coefficient: F,
-    coeff_is_one: bool,
-    factors: &[FactorRef<F>],
-    tail_index: usize,
-    degree_cap: usize,
-) -> usize {
-    let base = tail_index << 1;
-    #[inline]
-    fn endpoints<F: Field>(f: &FactorRef<F>, base: usize) -> (F, F) {
-        match f {
-            FactorRef::Dense(evals) => (evals[base], evals[base | 1]),
-            FactorRef::Sparse(map) => (
-                map.get(&base).copied().unwrap_or_else(F::zero),
-                map.get(&(base | 1)).copied().unwrap_or_else(F::zero),
-            ),
-        }
-    }
-    let (mut len, start) = if coeff_is_one && !factors.is_empty() && degree_cap >= 2 {
-        let (v0, v1) = endpoints(&factors[0], base);
-        term[0] = v0;
-        term[1] = v1 - v0;
-        (2usize, 1usize)
-    } else {
-        term[0] = coefficient;
-        (1usize, 0usize)
-    };
-    for f in &factors[start..] {
-        let (v0, v1) = endpoints(f, base);
-        let delta = v1 - v0;
-        let new_len = (len + 1).min(degree_cap).max(1);
-        for i in (0..new_len).rev() {
-            let hi = if i < len { term[i] * v0 } else { F::zero() };
-            let lo = if i >= 1 && i - 1 < len {
-                term[i - 1] * delta
-            } else {
-                F::zero()
-            };
-            term[i] = hi + lo;
-        }
-        len = new_len;
-    }
-    len
-}
-
-fn hypercube_reduce_selected_mle_products<C: ArkConfig>(
-    poly: &VirtualPolynomial<C::F>,
-    tail_num_vars: usize,
-    shape: SelectedEvalShape,
-) -> Option<VirtualPolynomial<C::F>> {
-    if shape.output_num_vars != 1 || shape.input_num_vars != tail_num_vars + 1 {
-        return None;
-    }
-    let tail_count = 1usize.checked_shl(tail_num_vars as u32)?;
-    let degree_cap = shape.max_degree.max(poly.degree_bound()) + 1;
-
-    for (_coefficient, indices) in &poly.products {
-        for &idx in indices {
-            match poly.flattened_polys.get(idx)?.as_ref() {
-                PolyVariant::DenseMle(mle) => {
-                    if mle.num_vars() != shape.input_num_vars {
-                        return None;
-                    }
-                }
-                PolyVariant::SparseMle { num_vars, .. } => {
-                    if *num_vars != shape.input_num_vars {
-                        return None;
-                    }
-                }
-                _ => return None,
-            }
-        }
-    }
-
-    let sparse_mle_maps: Vec<Option<std::collections::HashMap<usize, C::F>>> = poly
-        .flattened_polys
-        .par_iter()
-        .map(|poly_ref| match poly_ref.as_ref() {
-            PolyVariant::SparseMle { evals, .. } => {
-                let mut map = std::collections::HashMap::with_capacity(evals.len());
-                for &(i, val) in evals {
-                    *map.entry(i).or_insert_with(C::F::zero) += val;
-                }
-                Some(map)
-            }
-            _ => None,
-        })
-        .collect();
-
-    let mut total = vec![C::F::zero(); degree_cap.max(1)];
-
-    for (coefficient, indices) in &poly.products {
-        let factors: Vec<FactorRef<C::F>> = indices
-            .iter()
-            .map(|&idx| match poly.flattened_polys[idx].as_ref() {
-                PolyVariant::DenseMle(mle) => FactorRef::Dense(&mle.evaluations),
-                PolyVariant::SparseMle { .. } => {
-                    FactorRef::Sparse(sparse_mle_maps[idx].as_ref().unwrap())
-                }
-                _ => unreachable!(),
-            })
-            .collect();
-        let coeff_is_one = coefficient.is_one();
-
-        let product_total = if tail_count < HYPERCUBE_PARALLEL_TAIL_THRESHOLD {
-            let mut acc = vec![C::F::zero(); degree_cap.max(1)];
-            let mut term = vec![C::F::zero(); degree_cap.max(1)];
-            for tail_index in 0..tail_count {
-                let n = accumulate_term(
-                    &mut term,
-                    *coefficient,
-                    coeff_is_one,
-                    &factors,
-                    tail_index,
-                    degree_cap,
-                );
-                add_coeffs_assign(&mut acc, &term[..n]);
-            }
-            acc
-        } else {
-            (0..tail_count)
-                .into_par_iter()
-                .fold(
-                    || {
-                        (
-                            vec![C::F::zero(); degree_cap.max(1)],
-                            vec![C::F::zero(); degree_cap.max(1)],
-                        )
-                    },
-                    |(mut acc, mut term), tail_index| {
-                        let n = accumulate_term(
-                            &mut term,
-                            *coefficient,
-                            coeff_is_one,
-                            &factors,
-                            tail_index,
-                            degree_cap,
-                        );
-                        add_coeffs_assign(&mut acc, &term[..n]);
-                        (acc, term)
-                    },
-                )
-                .map(|(acc, _)| acc)
-                .reduce(
-                    || vec![C::F::zero(); degree_cap.max(1)],
-                    |mut a, b| {
-                        add_coeffs_assign(&mut a, &b);
-                        a
-                    },
-                )
-        };
-        add_coeffs_assign(&mut total, &product_total);
-    }
-
-    trim_trailing_zero_coeffs(&mut total);
-    let mut round = VirtualPolynomial::from_poly(PolyVariant::DenseUni(
-        DensePolynomial::from_coefficients_vec(total),
-    ));
-    round.num_variables = Some(1);
-    Some(round)
-}
-
-#[cfg(test)]
-fn sparse_mle_factor_as_univariate<C: ArkConfig>(
-    poly: &PolyVariant<C::F>,
-    input_num_vars: usize,
-    tail_index: usize,
-) -> Option<[C::F; 2]> {
-    let PolyVariant::SparseMle { num_vars, evals } = poly else {
-        return None;
-    };
-    if *num_vars != input_num_vars {
-        return None;
-    }
-    let base_idx = tail_index.checked_shl(1)?;
-    let mut v0 = C::F::zero();
-    let mut v1 = C::F::zero();
-    for (i, val) in evals {
-        if *i == base_idx {
-            v0 += *val;
-        } else if *i == (base_idx | 1) {
-            v1 += *val;
-        }
-    }
-    Some([v0, v1 - v0])
-}
-
 fn reduce_univariate_poly_sum<C: ArkConfig>(
     elements: &[Value<C>],
 ) -> Option<VirtualPolynomial<C::F>> {
     let polys = elements
         .iter()
         .map(|element| match element {
-            Value::Poly(poly) => Some(VirtualPolynomial::clone(poly)),
+            Value::Poly(poly) => Some(&**poly),
             _ => None,
         })
         .collect::<Option<Vec<_>>>()?;
     VirtualPolynomial::sum_univariate_products_dense(&polys)
-}
-
-pub(crate) fn round_univariate_from_marginalize_evals<F: PrimeField>(
-    evals: &[F],
-) -> VirtualPolynomial<F> {
-    #![allow(clippy::needless_range_loop)]
-    let n = evals.len();
-    assert!(n > 0, "marginalize evaluations must be non-empty");
-    if n == 1 {
-        return VirtualPolynomial::from_poly(PolyVariant::DenseUni(
-            DensePolynomial::from_coefficients_vec(vec![evals[0]]),
-        ));
-    }
-    let mut aug: Vec<Vec<F>> = (0..n)
-        .map(|i| {
-            let xi = F::from(i as u64);
-            let mut row = Vec::with_capacity(n + 1);
-            let mut pow = F::one();
-            for _ in 0..n {
-                row.push(pow);
-                pow *= xi;
-            }
-            row.push(evals[i]);
-            row
-        })
-        .collect();
-    for col in 0..n {
-        let mut pivot = None;
-        for row in col..n {
-            if !aug[row][col].is_zero() {
-                pivot = Some(row);
-                break;
-            }
-        }
-        let pr = pivot.expect("singular Vandermonde in round_univariate interpolation");
-        aug.swap(col, pr);
-        let inv = aug[col][col].inverse().unwrap();
-        for j in col..=n {
-            aug[col][j] *= inv;
-        }
-        for row in 0..n {
-            if row != col {
-                let factor = aug[row][col];
-                if !factor.is_zero() {
-                    let pivot_row: Vec<F> = aug[col][col..=n].to_vec();
-                    for j in col..=n {
-                        aug[row][j] -= factor * pivot_row[j - col];
-                    }
-                }
-            }
-        }
-    }
-    let coeffs: Vec<F> = (0..n).map(|i| aug[i][n]).collect();
-    VirtualPolynomial::from_poly(PolyVariant::DenseUni(
-        DensePolynomial::from_coefficients_vec(coeffs),
-    ))
 }
 
 /// The scalars of a scalar or index vector, borrowed when they are stored as
@@ -3961,240 +3678,6 @@ fn are_fft_domain_points<C: ArkConfig>(points: &[C::F]) -> bool {
         return false;
     };
     domain.elements().zip(points.iter()).all(|(a, b)| a == *b)
-}
-
-fn interpolate_univariate_from_points<F: PrimeField>(points: &[F], evals: &[F]) -> Vec<F> {
-    let n = points.len();
-    assert_eq!(n, evals.len(), "point/eval length mismatch");
-    assert!(n > 0, "cannot interpolate empty point set");
-
-    let mut prod = vec![F::one()];
-    for &x in points {
-        let mut next = vec![F::zero(); prod.len() + 1];
-        for (i, &c) in prod.iter().enumerate() {
-            next[i] -= c * x;
-            next[i + 1] += c;
-        }
-        prod = next;
-    }
-
-    let mut coeffs = vec![F::zero(); n];
-    for i in 0..n {
-        let xi = points[i];
-        let mut denom = F::one();
-        for (j, &xj) in points.iter().enumerate() {
-            if i != j {
-                denom *= xi - xj;
-            }
-        }
-        assert!(!denom.is_zero(), "interpolation points must be distinct");
-
-        let qi = divide_by_x_minus_a(&prod, xi);
-        let scale = evals[i] * denom.inverse().unwrap();
-        for (k, qk) in qi.iter().enumerate() {
-            coeffs[k] += *qk * scale;
-        }
-    }
-
-    coeffs
-}
-
-fn divide_by_x_minus_a<F: PrimeField>(p: &[F], a: F) -> Vec<F> {
-    assert!(p.len() >= 2, "polynomial degree must be at least 1");
-    let n = p.len() - 1;
-    let mut q = vec![F::zero(); n];
-    q[n - 1] = p[n];
-    for k in (1..n).rev() {
-        q[k - 1] = p[k] + a * q[k];
-    }
-    q
-}
-
-/// Evaluates at `x` the unique polynomial of degree `evals.len() - 1` taking the
-/// values `evals` at the points `0, 1, ..., evals.len() - 1`.
-///
-/// Companion to the round-polynomial reconstruction used when a sum-check round
-/// is transmitted as an evaluation table rather than as coefficients.
-///
-/// # Panics
-/// Panics if `evals` is empty, or if the interpolation system is singular over
-/// the backend field.
-pub fn eval_univariate_from_evals_0d<F: PrimeField>(evals: &[F], x: F) -> F {
-    let g = round_univariate_from_marginalize_evals::<F>(evals);
-    g.evaluate_uv(&x)
-}
-
-/// Iteration-2 reference helper for the round/marginalize semantics used by
-/// explicit-round backend tests. This is intentionally *not* reachable from
-/// any parser/AST/typed graph public op; the previous `Op::Marginalize`
-/// public surface has been removed. Kept only as a private reference oracle
-/// for the explicit_round backend tests in `virtual_polynomial::tests`.
-#[cfg(test)]
-pub(crate) fn marginalize<C: ArkConfig>(
-    poly: &VirtualPolynomial<C::F>,
-    num_variables: usize,
-    max_degree: usize,
-    round: usize,
-    challenge: Option<C::F>,
-) -> (Vec<C::F>, VirtualPolynomial<C::F>) {
-    #![allow(clippy::needless_range_loop)]
-    // if self.round >= self.poly.aux_info.num_variables
-    if num_variables == 0 {
-        panic!("marginalize: num_variables must be > 0");
-    }
-
-    if let Some(n) = poly.num_vars() {
-        let expected_current_vars = if round == 0 {
-            num_variables
-        } else {
-            num_variables.saturating_sub(round - 1)
-        };
-        if n != expected_current_vars {
-            panic!(
-                "marginalize: num_variables mismatch: polynomial has {}, expected {} (num_variables={}, round={})",
-                n, expected_current_vars, num_variables, round
-            );
-        }
-    }
-
-    // Step 1:
-    // fix argument and evaluate f(x) over x_m = r; where r is the challenge
-    // for the current round, and m is the round number, indexed from 1
-    //
-    // i.e.:
-    // at round m <= n, for each mle g(x_1, ... x_n) within the flattened_mle
-    // which has already been evaluated to g(r_1, ..., r_{m-1}, x_m ... x_n)
-    //
-    //    g(r_1, ..., r_{m-1}, x_m ... x_n)
-    //
-    // eval g over r_m, and mutate g to g(r_1, ... r_m, x_{m+1}... x_n)
-    let next_poly = if round == 0 {
-        poly.clone()
-    } else if let Some(r) = challenge {
-        poly.fix_first_mle_variables_factorwise(&[r])
-            .unwrap_or_else(|e| {
-                panic!(
-                    "marginalize: failed to fix polynomial for round {} with challenge {:?} \
-                     (num_variables={}, max_degree={}): {:?}",
-                    round, r, num_variables, max_degree, e
-                )
-            })
-    } else {
-        poly.clone()
-    };
-
-    // Step 2: generate sum for the partial evaluated polynomial:
-    // f(r_1, ... r_m, x_{m+1}... x_n); we sum over the hypercube for the remaining
-    let num_remaining_vars = num_variables.saturating_sub(round + 1);
-    let total: usize = 1usize << num_remaining_vars;
-    let expected_mle_vars = num_variables.saturating_sub(round);
-
-    let all_mle = next_poly
-        .flattened_polys
-        .iter()
-        .all(|p| p.as_mle_evaluations().is_some());
-    let mle_tables: Option<Vec<&[C::F]>> = if all_mle && !next_poly.flattened_polys.is_empty() {
-        let tables: Vec<&[C::F]> = next_poly
-            .flattened_polys
-            .iter()
-            .filter_map(|p| p.as_mle_evaluations())
-            .collect();
-        if tables.len() == next_poly.flattened_polys.len()
-            && tables
-                .iter()
-                .all(|t| t.len() == (1usize << expected_mle_vars))
-        {
-            Some(tables)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let mut evaluations = vec![C::F::zero(); max_degree + 1];
-
-    if let Some(tables) = mle_tables {
-        let mut products_sum = vec![C::F::zero(); max_degree + 1];
-
-        for (coefficient, products) in &next_poly.products {
-            let product_tables: Vec<&[C::F]> = products.iter().map(|&idx| tables[idx]).collect();
-            let k = product_tables.len();
-
-            let coeff_acc: Vec<C::F> = (0..total)
-                .into_par_iter()
-                .fold(
-                    || (vec![C::F::zero(); k + 1], vec![C::F::zero(); k + 1]),
-                    |(mut acc, mut coeffs), b| {
-                        // P(t) = prod_i ((1-t)*v0_i + t*v1_i); coeffs of P (degree k).
-                        coeffs[0] = C::F::one();
-                        for c in &mut coeffs[1..] {
-                            *c = C::F::zero();
-                        }
-                        for i in 0..k {
-                            let v0_i = product_tables[i][2 * b];
-                            let v1_i = product_tables[i][2 * b + 1];
-                            let step = v1_i - v0_i;
-                            for d in (1..=i + 1).rev() {
-                                coeffs[d] = coeffs[d] * v0_i + coeffs[d - 1] * step;
-                            }
-                            coeffs[0] *= v0_i;
-                        }
-                        for (a, &c) in acc.iter_mut().zip(coeffs.iter()) {
-                            *a += c;
-                        }
-                        (acc, coeffs)
-                    },
-                )
-                .map(|(acc, _)| acc)
-                .reduce(
-                    || vec![C::F::zero(); k + 1],
-                    |mut left, right| {
-                        for (l, &r) in left.iter_mut().zip(right.iter()) {
-                            *l += r;
-                        }
-                        left
-                    },
-                );
-
-            for (ps, &acc) in products_sum.iter_mut().zip(coeff_acc.iter()) {
-                *ps += *coefficient * acc;
-            }
-        }
-
-        for t_idx in 0..=max_degree {
-            let t = C::FOps::from_usize(t_idx);
-            let mut val = C::F::zero();
-            let mut t_pow = C::F::one();
-            for d in 0..=max_degree {
-                val += products_sum[d] * t_pow;
-                t_pow *= t;
-            }
-            evaluations[t_idx] = val;
-        }
-    } else {
-        let point_len = num_variables - round;
-        for t_idx in 0..=max_degree {
-            let t = C::FOps::from_usize(t_idx);
-            let sum: C::F = (0..total)
-                .into_par_iter()
-                .map(|b| {
-                    let mut point: Vec<C::F> = Vec::with_capacity(point_len);
-                    point.push(t);
-                    for j in 0..num_remaining_vars {
-                        let bit = (b >> j) & 1;
-                        point.push(if bit == 0 { C::F::zero() } else { C::F::one() });
-                    }
-                    next_poly
-                        .evaluate_mv(&point)
-                        .expect("marginalize: polynomial evaluation failed")
-                })
-                .sum();
-            evaluations[t_idx] = sum;
-        }
-    }
-
-    (evaluations, next_poly)
 }
 
 impl<C: ArkConfig> AddAssign for Value<C> {
@@ -4417,97 +3900,12 @@ impl<C: ArkConfig> fmt::Display for Value<C> {
     }
 }
 
-/// Compare group elements by their x and y coordinates
-/// in affine form. Warning: Expensive!
-/// Should only be used at compile time.
-fn affine_group_cmp<G: CurveGroup>(a: &G::Affine, b: &G::Affine) -> Ordering {
-    match (a.xy(), b.xy()) {
-        (Some((x1, y1)), Some((x2, y2))) => x1.cmp(&x2).then(y1.cmp(&y2)),
-        (Some(_), None) => Ordering::Less,
-        (None, Some(_)) => Ordering::Greater,
-        (None, None) => Ordering::Equal,
-    }
-}
-
-/// Hacky: PartialOrd of the things that can be ordered
-impl<C: ArkConfig> PartialOrd for Value<C> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<C: ArkConfig> Ord for Value<C> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        let order_self = self.discriminant_order();
-        let order_other = other.discriminant_order();
-
-        // 1. Compare based on the variant kind (discriminant order)
-        match order_self.cmp(&order_other) {
-            Ordering::Less => Ordering::Less,
-            Ordering::Greater => Ordering::Greater,
-            Ordering::Equal => {
-                // 2. Variants are the same, compare inner values *if possible*
-                match (self, other) {
-                    // Variants with comparable inner types
-                    (Value::Index(a), Value::Index(b)) => a.cmp(b), // usize is Ord
-                    (Value::VecIndex(a), Value::VecIndex(b)) => a.cmp(b), // Vec<usize> is Ord
-                    (Value::Vec(a), Value::Vec(b)) => a.cmp(b), // Vec<Value<C>> uses this impl recursively
-
-                    // Variants with non-comparable inner types (return None)
-                    (Value::Scalar(a), Value::Scalar(b)) => a.into_bigint().cmp(&b.into_bigint()),
-                    (Value::VecScalar(a), Value::VecScalar(b)) => a.cmp(b), // Vec<Scalar> is Ord
-                    (Value::G1(a), Value::G1(b)) => {
-                        affine_group_cmp::<C::G1>(&a.into_affine(), &b.into_affine())
-                    }
-                    (Value::G2(a), Value::G2(b)) => {
-                        affine_group_cmp::<C::G2>(&a.into_affine(), &b.into_affine())
-                    }
-                    (Value::GT(a), Value::GT(b)) => a.cmp(b), // PairingOutput is Ord
-                    (Value::VecG1(a), Value::VecG1(b)) => a
-                        .iter()
-                        .zip(b.iter())
-                        .map(|(a, b)| affine_group_cmp::<C::G1>(&a.into_affine(), &b.into_affine()))
-                        .find(|o| o != &Ordering::Equal)
-                        .unwrap_or(Ordering::Equal),
-                    (Value::VecG2(a), Value::VecG2(b)) => a
-                        .iter()
-                        .zip(b.iter())
-                        .map(|(a, b)| affine_group_cmp::<C::G2>(&a.into_affine(), &b.into_affine()))
-                        .find(|o| o != &Ordering::Equal)
-                        .unwrap_or(Ordering::Equal),
-                    (Value::VecGT(a), Value::VecGT(b)) => a.cmp(b), // Vec<PairingOutput> is Ord
-                    (Value::G1Affine(a), Value::G1Affine(b)) => affine_group_cmp::<C::G1>(a, b),
-                    (Value::G2Affine(a), Value::G2Affine(b)) => affine_group_cmp::<C::G2>(a, b),
-                    (Value::VecG1Affine(a), Value::VecG1Affine(b)) => a
-                        .iter()
-                        .zip(b.iter())
-                        .map(|(a, b)| affine_group_cmp::<C::G1>(a, b))
-                        .find(|o| o != &Ordering::Equal)
-                        .unwrap_or(Ordering::Equal),
-                    (Value::VecG2Affine(a), Value::VecG2Affine(b)) => a
-                        .iter()
-                        .zip(b.iter())
-                        .map(|(a, b)| affine_group_cmp::<C::G2>(a, b))
-                        .find(|o| o != &Ordering::Equal)
-                        .unwrap_or(Ordering::Equal),
-                    (Value::Poly(a), Value::Poly(b)) => a.cmp(b),
-                    (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
-                    // This case should be unreachable because we've covered all variants
-                    // and already established that the discriminants are equal.
-                    (_, _) => {
-                        unreachable!("Variants matched discriminant order but not specific arms")
-                    }
-                }
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod value_tests {
     use super::*;
     use crate::ArkBn254;
     use ark_bn254::{Fr, G1Projective, G2Projective};
+    use ark_ff::One;
     use ark_std::UniformRand;
     use rand::thread_rng;
 
@@ -6012,27 +5410,6 @@ mod value_tests {
     }
 
     #[test]
-    fn sparse_reduce_factor_univariate() {
-        // tail_index 1 -> base_idx = 1<<1 = 2; v0 = entries at idx 2 (5+1), v1 = idx 3 (7).
-        let poly = PolyVariant::<Fr>::SparseMle {
-            num_vars: 3,
-            evals: vec![
-                (2, Fr::from(5u64)),
-                (3, Fr::from(7u64)),
-                (2, Fr::from(1u64)),
-            ],
-        };
-        assert_eq!(
-            sparse_mle_factor_as_univariate::<TestConfig>(&poly, 3, 1),
-            Some([Fr::from(6u64), Fr::from(1u64)])
-        );
-        assert_eq!(
-            sparse_mle_factor_as_univariate::<TestConfig>(&poly, 4, 1),
-            None
-        );
-    }
-
-    #[test]
     fn sparse_reduce_matches_generic() {
         // A single SparseMle factor forces the sparse fused path; the round poly
         // must match the trusted generic per-(t, tail) evaluate_mv oracle.
@@ -6042,9 +5419,7 @@ mod value_tests {
             (5, Fr::from(7u64)),
         ];
         let vp = VirtualPolynomial::from_poly(PolyVariant::SparseMle { num_vars: 3, evals });
-        let shape = SelectedEvalShape::new(3, 1, 1);
-        let round = hypercube_reduce_selected_mle_products::<TestConfig>(&vp, 2, shape)
-            .expect("sparse fast path must fire");
+        let round = vp.sum_over_hypercube_tail(2, 1);
         for t_u in [0u64, 1, 2, 3, 4] {
             let t = Fr::from(t_u);
             let mut expected = Fr::zero();
