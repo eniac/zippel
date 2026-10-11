@@ -140,13 +140,12 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use std::sync::Arc;
     use std::time::Instant;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs: HashMap<Vid, Arc<Value<ArkBls12_381>>>,
+        inputs: HashMap<Vid, Value<ArkBls12_381>>,
         /// The values, from which each run computes its `chunks_bits`
         /// input, as the native prover decomposes them inside `prove`.
         values: Vec<u64>,
@@ -191,15 +190,15 @@ pub mod zippel_side {
                     ("f_evals", Value::vec_scalar(f_evals)),
                     ("rho", Value::Scalar(sh.rho)),
                     // statement + public parameters
-                    ("com_f", Value::G1(sh.com_f.into_group())),
+                    ("com_f", Value::g1(sh.com_f.into_group())),
                     ("b_pow", Value::vec_scalar(b_pow)),
-                    ("gen_g1", Value::G1(g1)),
-                    ("gen_g2", Value::G2(g2)),
-                    ("srs_g2_tau", Value::G2(g2 * tau)),
-                    ("srs_g2_xi", Value::G2(g2 * xi)),
-                    ("xi_g1", Value::G1(g1 * xi)),
+                    ("gen_g1", Value::g1(g1)),
+                    ("gen_g2", Value::g2(g2)),
+                    ("srs_g2_tau", Value::g2(g2 * tau)),
+                    ("srs_g2_xi", Value::g2(g2 * xi)),
+                    ("xi_g1", Value::g1(g1 * xi)),
                     // s0 = Lagrange poly with s0(ω^0)=1, zero elsewhere on the domain.
-                    ("s0_commit", Value::G1(sh.srs.lagr_g1[0].into_group())),
+                    ("s0_commit", Value::g1(sh.srs.lagr_g1[0].into_group())),
                     ("srs_g1_lagr", Value::vec_g1_affine(sh.srs.lagr_g1.clone())),
                     (
                         "srs_g1_h",
@@ -236,7 +235,7 @@ pub mod zippel_side {
 
         /// The `chunks_bits` input: bit `j` of every value, for each of the
         /// `ell` bits.
-        fn chunks_bits(&self) -> (Vid, Arc<Value<ArkBls12_381>>) {
+        fn chunks_bits(&self) -> (Vid, Value<ArkBls12_381>) {
             let bits = (0..self.ell)
                 .map(|j| {
                     Value::vec_scalar(
@@ -247,7 +246,7 @@ pub mod zippel_side {
                     )
                 })
                 .collect();
-            (Vid::from("chunks_bits"), Arc::new(Value::Vec(bits)))
+            (Vid::from("chunks_bits"), Value::Vec(bits))
         }
 
         /// Mean prover wall-clock over `samples` runs; no verification.

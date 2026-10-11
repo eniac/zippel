@@ -529,7 +529,7 @@ mod tests {
         let var_ideal = Var::from_node(NodeIndex::new(2), ATyp::uni(3), Qualifier::Witness);
         ideal.register(&var_ideal);
 
-        let points = Op::Value(Value::VecIndex(vec![0, 0, 1]));
+        let points = Op::Value(Value::VecIndex(vec![0, 0, 1].into()));
         let evals = Op::Ref(graph::Ref::new(NodeIndex::new(1)), evals_typ);
         let op: GOp<ArkBls12_381> =
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));

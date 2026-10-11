@@ -272,12 +272,12 @@ fn build_inputs() -> Ctx<Vid, Value<C>> {
     let sigma_b_value = Value::vec_g1(sigma_b_vec);
     let sigma_q_prime_value = Value::vec_g1(sigma_q_prime_vec);
 
-    let alpha_g_value = Value::G1(alpha_g_val);
-    let beta_g_value = Value::G1(beta_g_val);
-    let g_g1_value = Value::G1(g_g1);
-    let delta2_h_value = Value::G2(delta2_h_val);
-    let tau_h_value = Value::G2(tau_h_val);
-    let h_g2_value = Value::G2(h_g2);
+    let alpha_g_value = Value::g1(alpha_g_val);
+    let beta_g_value = Value::g1(beta_g_val);
+    let g_g1_value = Value::g1(g_g1);
+    let delta2_h_value = Value::g2(delta2_h_val);
+    let tau_h_value = Value::g2(tau_h_val);
+    let h_g2_value = Value::g2(h_g2);
     let f_one_value = Value::Scalar(F::one());
     let k_inv_value = Value::Scalar(k_inv);
 

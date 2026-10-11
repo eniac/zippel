@@ -19,7 +19,6 @@ use rand::Rng;
 use share::Ctx;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 use zippel::{ZippelArgs, ZippelHandler, check_verification, proof_size_bytes};
 
 /// Default `log_2` of the R1CS constraint count used by the Spartan sweep.
@@ -57,7 +56,7 @@ pub struct ZippelTiming {
 pub struct Setup {
     m: usize,
     handler: ZippelHandler<ArkCurve25519>,
-    inputs: HashMap<Vid, Arc<Value<ArkCurve25519>>>,
+    inputs: HashMap<Vid, Value<ArkCurve25519>>,
     /// What the prover's `az`, `bz`, `cz` inputs are computed from, inside
     /// each timed run, as libspartan computes them inside `prove`.
     products: MatVec,
@@ -150,7 +149,7 @@ impl Setup {
         let (prove, prove_peak, proof) = crate::sample(|| {
             let [az, bz, cz] = self.products.products();
             let computed = [("az", az), ("bz", bz), ("cz", cz)]
-                .map(|(name, v)| (Vid::from(name), Arc::new(Value::vec_scalar(v))));
+                .map(|(name, v)| (Vid::from(name), Value::vec_scalar(v)));
             self.handler
                 .run_prover(crate::lend(&self.inputs).chain(computed))
                 .expect("run_prover failed")
@@ -281,7 +280,7 @@ where
     }
 }
 
-fn prover_create_inputs(m: usize) -> (HashMap<Vid, Arc<Value<ArkCurve25519>>>, MatVec) {
+fn prover_create_inputs(m: usize) -> (HashMap<Vid, Value<ArkCurve25519>>, MatVec) {
     let num_cons = 1usize << m;
     let witness_len = 1usize << (m - 1);
     let io_len = witness_len - 1;
@@ -325,7 +324,7 @@ fn prover_create_inputs(m: usize) -> (HashMap<Vid, Arc<Value<ArkCurve25519>>>, M
     };
     let two_m_vars = 2 * m;
     let mk_sparse_mle = |evals: Vec<(usize, Fr)>| {
-        Value::Poly(VirtualPolynomial::from_poly(PolyVariant::SparseMle {
+        Value::poly(VirtualPolynomial::from_poly(PolyVariant::SparseMle {
             num_vars: two_m_vars,
             evals,
         }))
@@ -354,8 +353,8 @@ fn prover_create_inputs(m: usize) -> (HashMap<Vid, Arc<Value<ArkCurve25519>>>, M
         (Vid("io".to_string()), Value::vec_scalar(r1cs.io)),
         (Vid("w".to_string()), Value::vec_scalar(r1cs.w)),
         (Vid("g_vec_w".to_string()), Value::vec_g1_affine(g_vec_aff)),
-        (Vid("g_base_w".to_string()), Value::G1(g_base_w)),
-        (Vid("h_base_w".to_string()), Value::G1(h_base_w)),
+        (Vid("g_base_w".to_string()), Value::g1(g_base_w)),
+        (Vid("h_base_w".to_string()), Value::g1(h_base_w)),
         (
             Vid("g_evs_d3".to_string()),
             Value::vec_g1_affine(g_evs_d3_aff),
@@ -364,7 +363,7 @@ fn prover_create_inputs(m: usize) -> (HashMap<Vid, Arc<Value<ArkCurve25519>>>, M
             Vid("g_evs_d2".to_string()),
             Value::vec_g1_affine(g_evs_d2_aff),
         ),
-        (Vid("h_evs".to_string()), Value::G1(h_evs)),
+        (Vid("h_evs".to_string()), Value::g1(h_evs)),
         (
             Vid("placeholder_tau".to_string()),
             Value::vec_scalar(placeholder_tau),

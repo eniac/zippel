@@ -57,9 +57,9 @@ where
 /// challenge (see [`Transcript`]).
 enum PendingAbsorb<C: ArkConfig> {
     /// An instance input, absorbed with [`absorb_instance_input`].
-    Instance(Arc<Value<C>>),
+    Instance(Value<C>),
     /// A prover message, absorbed as its serialized bytes.
-    Message(Arc<Value<C>>),
+    Message(Value<C>),
 }
 
 /// The first error of a run. The first task to fail records it here; tasks
@@ -136,7 +136,7 @@ impl<C: ArkConfig> RuntimeInformation<C> {
 
     /// Records that the predecessor `from` has finished, taking its value if
     /// it produced one, and returns whether this node is now ready to run.
-    fn receive(&self, from: NodeIndex, value: Option<&Arc<Value<C>>>) -> bool {
+    fn receive(&self, from: NodeIndex, value: Option<&Value<C>>) -> bool {
         if let Some(value) = value {
             self.inbox.deliver(graph::Ref(from), value);
         }
@@ -171,15 +171,15 @@ struct Transcript<'a, C: ArkConfig, H: DuplexSpongeInterface<U = u8>> {
     /// value, in a protocol with no challenges) never need serializing.
     pending: Vec<PendingAbsorb<C>>,
     /// Prover messages by node, for the proof; `None` for the verifier.
-    messages: Option<HashMap<NodeIndex, Arc<Value<C>>>>,
+    messages: Option<HashMap<NodeIndex, Value<C>>>,
 }
 
 impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8>> Transcript<'_, C, H> {
     /// Queues a prover message for the sponge, and keeps it for the proof.
-    fn message(&mut self, node: NodeIndex, value: &Arc<Value<C>>) {
-        self.pending.push(PendingAbsorb::Message(Arc::clone(value)));
+    fn message(&mut self, node: NodeIndex, value: &Value<C>) {
+        self.pending.push(PendingAbsorb::Message(value.clone()));
         if let Some(messages) = &mut self.messages {
-            messages.insert(node, Arc::clone(value));
+            messages.insert(node, value.clone());
         }
     }
 
@@ -189,7 +189,7 @@ impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8>> Transcript<'_, C, H> {
             match p {
                 PendingAbsorb::Instance(v) => absorb_instance_input::<C, H>(self.sponge, &v),
                 PendingAbsorb::Message(v) => {
-                    let serialized = value_to_bytes(&*v).unwrap();
+                    let serialized = value_to_bytes(&v).unwrap();
                     self.sponge.public_message(serialized.as_slice());
                 }
             }
@@ -208,7 +208,7 @@ struct Run<'a, C: ArkConfig, H: DuplexSpongeInterface<U = u8>> {
     graph: &'a MutexGraph<C>,
     /// The run's inputs, each taken out when its `Arg` node delivers it, so
     /// an input the caller gave up is freed after its last reader.
-    inputs: Mutex<HashMap<Vid, Arc<Value<C>>>>,
+    inputs: Mutex<HashMap<Vid, Value<C>>>,
     /// Every supplied input name, for error messages.
     names: Vec<Vid>,
     errors: ErrorSlot,
@@ -243,7 +243,7 @@ impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8> + Send> Run<'_, C, H> {
             Node::Op(_, _) => self.graph.handle_node(node),
             Node::Transcr(op, _) if matches!(**op, Op::Challenge(_, _)) => {
                 debug!("[run_graph] node {:?} is Challenge", node);
-                Arc::new(self.transcript.lock().unwrap().challenge())
+                self.transcript.lock().unwrap().challenge()
             }
             Node::Transcr(_, _) => {
                 debug!("[run_graph] node {:?} is Transcript", node);
@@ -303,7 +303,7 @@ impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8> + Send> Run<'_, C, H> {
         &'s self,
         scope: &rayon::Scope<'s>,
         node: NodeIndex,
-        value: Option<&Arc<Value<C>>>,
+        value: Option<&Value<C>>,
     ) {
         // A successor joined by parallel edges still counts `node` once.
         // Sorted, so a run spawns ready nodes in the same order every time
@@ -411,7 +411,7 @@ impl<C: ArkConfig> MutexGraph<C> {
     /// check-results mutex is poisoned, or if `eval_op` fails: every shape
     /// and type precondition is established by the `lang` type checker and
     /// the scheduler, so a failure is a compiler invariant violation.
-    pub fn handle_node(&self, node: NodeIndex) -> Arc<Value<C>> {
+    pub fn handle_node(&self, node: NodeIndex) -> Value<C> {
         let (Node::Op(op, info) | Node::Transcr(op, info)) = &self.mutex_graph[node] else {
             unreachable!("marker node {node:?} has nothing to compute")
         };
@@ -487,7 +487,7 @@ impl<C: ArkConfig> MutexGraph<C> {
     /// poisoned.
     pub fn run_graph<H: DuplexSpongeInterface<U = u8> + Send>(
         g: Arc<MutexGraph<C>>,
-        inputs: HashMap<Vid, Arc<Value<C>>>,
+        inputs: HashMap<Vid, Value<C>>,
         prover_state: &mut ProverState<H>,
         result_kind: ResultKind,
     ) -> Result<RunResult<C>, RuntimeError> {
@@ -603,7 +603,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let transcript: Vec<Value<C>> = result_indices
                     .into_iter()
                     .filter_map(|n| messages.remove(&n))
-                    .map(|m| Arc::unwrap_or_clone(m).compact())
+                    .map(Value::compact)
                     .collect();
                 RunResult::Prover(transcript)
             }

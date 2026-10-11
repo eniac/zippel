@@ -12,7 +12,6 @@ use rand::rngs::StdRng;
 use serial_test::serial;
 use share::Ctx;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 type B = ArkBls12_381;
 
@@ -202,7 +201,7 @@ fn reduce_map_eval_matches_materialized_reduce() {
     );
     let rm = GOp::reduce_map(BinOp::Add, domain, body);
 
-    let env: HashMap<Ref, Arc<Value<B>>> = HashMap::new();
+    let env: HashMap<Ref, Value<B>> = HashMap::new();
     let mut rng = StdRng::seed_from_u64(0);
     let got = eval_op(&rm, &env, &mut rng, &mut Vec::new()).unwrap();
 
@@ -217,10 +216,10 @@ fn reduce_map_eval_matches_materialized_reduce() {
     let want = eval_op(&reference, &env, &mut rng, &mut Vec::new()).unwrap();
 
     assert_eq!(
-        *got, *want,
+        got, want,
         "streaming reduce-map must match materialized reduce"
     );
-    assert_eq!(*got, scalar::<B>(20), "sum of 2*(1+2+3+4) = 20");
+    assert_eq!(got, scalar::<B>(20), "sum of 2*(1+2+3+4) = 20");
 }
 
 #[test]
@@ -239,7 +238,7 @@ fn map_eval_doubles_each_element() {
     );
     let map = GOp::map(domain, body);
 
-    let env: HashMap<Ref, Arc<Value<B>>> = HashMap::new();
+    let env: HashMap<Ref, Value<B>> = HashMap::new();
     let mut rng = StdRng::seed_from_u64(0);
     let got = eval_op(&map, &env, &mut rng, &mut Vec::new()).unwrap();
 
@@ -250,7 +249,7 @@ fn map_eval_doubles_each_element() {
             .collect(),
     );
     let want = eval_op(&want_vec, &env, &mut rng, &mut Vec::new()).unwrap();
-    assert_eq!(*got, *want, "map must apply the body element-wise");
+    assert_eq!(got, want, "map must apply the body element-wise");
 }
 
 #[test]
@@ -508,7 +507,7 @@ fn test_reduce_map_fused_optimization_fallback_on_non_mle() {
     ];
     let p = SparseMultivariatePolynomial { num_vars: 3, terms };
     let poly_variant = PolyVariant::SparseMultivariate(p);
-    let poly_val = Value::Poly(VirtualPolynomial::from_poly(poly_variant));
+    let poly_val = Value::poly(VirtualPolynomial::from_poly(poly_variant));
     inputs.insert(&lang::id::Vid::from("p"), &poly_val);
 
     reset_optimization_stats();
@@ -669,13 +668,13 @@ fn test_reduce_map_fused_optimization_skips_non_vec_domain() {
     // In this case, the domain of the ReduceMap is NOT a vector (e.g. it is a polynomial type, Uni(3)).
     // The optimization must skip (because domain typ is not Vec), falling back to evaluation which returns a type mismatch error.
     let scalar_t = ATyp::scalar();
-    let domain = Op::Value(Value::Poly(
+    let domain = Op::Value(Value::poly(
         backend::VirtualPolynomial::constant_with_num_vars(<B as backend::ArkConfig>::F::one(), 1),
     ));
 
     // fixed has LoopParam
     let fixed = mk::<B>(Op::LoopParam(0, scalar_t.clone()));
-    let p = mk::<B>(Op::Value(Value::Poly(
+    let p = mk::<B>(Op::Value(Value::poly(
         backend::VirtualPolynomial::constant_with_num_vars(<B as backend::ArkConfig>::F::one(), 2),
     )));
     let body = Op::Evaluate(p, Some(lang::ast::CRange::from_raw(0, 1, 1)), Some(fixed));
@@ -687,7 +686,7 @@ fn test_reduce_map_fused_optimization_skips_non_vec_domain() {
     assert_eq!(before.canonical_sumcheck_rows_seen, 0);
     assert_eq!(before.canonical_sumcheck_rows_fused, 0);
 
-    let env: HashMap<Ref, Arc<Value<B>>> = HashMap::new();
+    let env: HashMap<Ref, Value<B>> = HashMap::new();
     let mut rng = StdRng::seed_from_u64(0);
     let _res = eval_op(&rm, &env, &mut rng, &mut Vec::new());
 
@@ -725,12 +724,15 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_hypercube_domain_with_
     // Construct a non-canonical coordinate domain: [[1, 1], [1, 1], [1, 1], [1, 1]]
     let one = <B as backend::ArkConfig>::F::one();
     let sub_vec = Value::vec_scalar(vec![one, one]);
-    let domain_val = Value::Vec(vec![
-        sub_vec.clone(),
-        sub_vec.clone(),
-        sub_vec.clone(),
-        sub_vec.clone(),
-    ]);
+    let domain_val = Value::Vec(
+        vec![
+            sub_vec.clone(),
+            sub_vec.clone(),
+            sub_vec.clone(),
+            sub_vec.clone(),
+        ]
+        .into(),
+    );
     inputs.insert(&lang::id::Vid::from("domain"), &domain_val);
 
     reset_optimization_stats();
@@ -792,7 +794,7 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_indices_domain_with_ma
     let two = 2usize;
     let one = 1usize;
     let zero = 0usize;
-    let domain_val = Value::VecIndex(vec![three, two, one, zero]);
+    let domain_val = Value::VecIndex(vec![three, two, one, zero].into());
     inputs.insert(&lang::id::Vid::from("domain"), &domain_val);
 
     reset_optimization_stats();

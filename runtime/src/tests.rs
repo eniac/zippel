@@ -58,15 +58,11 @@ mod runtime_tests {
         let mut inputs = HashMap::new();
         inputs.insert(
             Vid::from("a"),
-            Arc::new(Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(
-                3u64,
-            ))),
+            Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(3u64)),
         );
         inputs.insert(
             Vid::from("b"),
-            Arc::new(Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(
-                4u64,
-            ))),
+            Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(4u64)),
         );
 
         let separator = graph::domain_seperator::ZippelDomainSeparator::new_zippel_domain_seperator(
@@ -99,15 +95,11 @@ mod runtime_tests {
         let mut verifier_inputs = HashMap::new();
         verifier_inputs.insert(
             Vid::from("a"),
-            Arc::new(Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(
-                3u64,
-            ))),
+            Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(3u64)),
         );
         verifier_inputs.insert(
             Vid::from("b"),
-            Arc::new(Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(
-                4u64,
-            ))),
+            Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(4u64)),
         );
 
         let transcript_args: Vec<lang::id::Vid> = verifier
@@ -123,7 +115,7 @@ mod runtime_tests {
 
         assert_eq!(transcript_args.len(), proof.len());
         for (name, val) in transcript_args.iter().zip(proof.iter()) {
-            verifier_inputs.insert(name.clone(), Arc::new(val.clone()));
+            verifier_inputs.insert(name.clone(), val.clone());
         }
 
         let mut verifier_state = separator.std_prover();
@@ -174,10 +166,7 @@ mod runtime_tests {
         let mut inputs = HashMap::new();
         inputs.insert(
             Vid::from("a"),
-            Arc::new(Value::vec_scalar(vec![
-                <TestConfig as backend::ArkConfig>::F::from(3u64);
-                n
-            ])),
+            Value::vec_scalar(vec![<TestConfig as backend::ArkConfig>::F::from(3u64); n]),
         );
         let separator = graph::domain_seperator::ZippelDomainSeparator::new_zippel_domain_seperator(
             "test_wide",
@@ -215,9 +204,7 @@ mod runtime_tests {
         let mut inputs = HashMap::new();
         inputs.insert(
             Vid::from("a"),
-            Arc::new(Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(
-                3u64,
-            ))),
+            Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(3u64)),
         );
 
         let separator = graph::domain_seperator::ZippelDomainSeparator::new_zippel_domain_seperator(

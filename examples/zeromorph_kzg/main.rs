@@ -31,10 +31,10 @@ fn prover_create_inputs(n_size: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
 
     let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let g = Value::G1(g_input);
+    let g = Value::g1(g_input);
 
     let h_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
-    let h = Value::G2(h_input);
+    let h = Value::g2(h_input);
 
     let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
     let xi_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);

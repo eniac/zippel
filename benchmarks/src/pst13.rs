@@ -476,14 +476,13 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use std::sync::Arc;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     /// Compiled PST13 protocol plus the instance/witness context derived from
     /// the shared SRS; borrows the [`Shared`] data it was built from.
     pub struct Setup<'a> {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs_base: HashMap<Vid, Arc<Value<ArkBls12_381>>>,
+        inputs_base: HashMap<Vid, Value<ArkBls12_381>>,
         #[allow(dead_code)]
         shared: &'a Shared,
         compile_time: Vec<std::time::Duration>,
@@ -507,8 +506,8 @@ pub mod zippel_side {
                     Vid("ck_N".to_string()),
                     Value::vec_g1_affine(shared.ck_affine.clone()),
                 ),
-                (Vid("g_gen".to_string()), Value::G1(shared.g_gen)),
-                (Vid("h_gen".to_string()), Value::G2(shared.h_gen)),
+                (Vid("g_gen".to_string()), Value::g1(shared.g_gen)),
+                (Vid("h_gen".to_string()), Value::g2(shared.h_gen)),
                 (
                     Vid("alpha_H".to_string()),
                     Value::vec_g2(shared.alpha_h.clone()),
@@ -610,8 +609,8 @@ mod cross_tests {
                 Vid("ck_N".to_string()),
                 Value::vec_g1_affine(shared.ck_affine.clone()),
             ),
-            (Vid("g_gen".to_string()), Value::G1(shared.g_gen)),
-            (Vid("h_gen".to_string()), Value::G2(shared.h_gen)),
+            (Vid("g_gen".to_string()), Value::g1(shared.g_gen)),
+            (Vid("h_gen".to_string()), Value::g2(shared.h_gen)),
             (
                 Vid("alpha_H".to_string()),
                 Value::vec_g2(shared.alpha_h.clone()),
@@ -645,9 +644,9 @@ mod cross_tests {
 
         // Pack native proof into the zippel transcript order: [c_p, π_0, ..., π_{n-1}].
         let mut cross_proof: Vec<Value<ArkBls12_381>> = Vec::with_capacity(n + 1);
-        cross_proof.push(Value::G1(proof_n.c));
+        cross_proof.push(Value::g1(proof_n.c));
         for pi in &proof_n.pis {
-            cross_proof.push(Value::G1(*pi));
+            cross_proof.push(Value::g1(*pi));
         }
         let verifier_result = handler
             .run_verifier(cross_proof.clone(), zip_inputs(&shared))
@@ -684,13 +683,13 @@ mod cross_tests {
         );
 
         let c = match &zip_proof[0] {
-            Value::G1(g) => *g,
+            Value::G1(g) => **g,
             other => panic!("expected G1 c_p, got {:?}", std::mem::discriminant(other)),
         };
         let mut pis: Vec<G1Projective> = Vec::with_capacity(n);
         for (i, v) in zip_proof.iter().enumerate().skip(1) {
             match v {
-                Value::G1(g) => pis.push(*g),
+                Value::G1(g) => pis.push(**g),
                 other => panic!(
                     "expected G1 π_{}, got {:?}",
                     i - 1,

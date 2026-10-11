@@ -38,20 +38,14 @@ fn const_eval_int<C: ArkConfig>(op: &HOp<C>, loop_vals: &[Option<Value<C>>]) -> 
     }
     // All referenced levels have concrete values; fill None entries with a
     // dummy (never accessed) so the params vector has the right length.
-    let params: Vec<std::sync::Arc<Value<C>>> = loop_vals
+    let params: Vec<Value<C>> = loop_vals
         .iter()
-        .map(|v| {
-            v.clone()
-                .map(std::sync::Arc::new)
-                .unwrap_or_else(|| std::sync::Arc::new(Value::Index(0)))
-        })
+        .map(|v| v.clone().unwrap_or(Value::Index(0)))
         .collect();
-    let env: HashMap<Ref, std::sync::Arc<Value<C>>> = HashMap::new();
+    let env: HashMap<Ref, Value<C>> = HashMap::new();
     let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(0);
     let mut check_sink = Vec::new();
-    graph::eval::eval_op_with_loop_params(op.get(), &env, &mut rng, &params, &mut check_sink)
-        .ok()
-        .map(|v| (*v).clone())
+    graph::eval::eval_op_with_loop_params(op.get(), &env, &mut rng, &params, &mut check_sink).ok()
 }
 
 /// Materialize an inline Map/ReduceMap body op-tree into registered

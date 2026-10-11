@@ -86,8 +86,8 @@ pub mod zippel_side {
             let h = h_affines.into_iter().next().unwrap();
             let inputs = crate::harness_inputs([
                 (Vid("x".to_string()), Value::Scalar(x)),
-                (Vid("g".to_string()), Value::G1(g)),
-                (Vid("h".to_string()), Value::G1Affine(h)),
+                (Vid("g".to_string()), Value::g1(g)),
+                (Vid("h".to_string()), Value::g1_affine(h)),
             ]);
 
             let (prove, prove_peak, proof) =

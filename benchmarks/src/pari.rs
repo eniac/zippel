@@ -227,7 +227,6 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use std::sync::Arc;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     type C = ArkBls12_381;
@@ -465,12 +464,12 @@ pub mod zippel_side {
                     Vid("sigma_q_prime".to_string()),
                     Value::vec_g1_affine(G1::normalize_batch(&self.srs.sigma_q_prime)),
                 ),
-                (Vid("alpha_g".to_string()), Value::G1(self.srs.alpha_g)),
-                (Vid("beta_g".to_string()), Value::G1(self.srs.beta_g)),
-                (Vid("g_g1".to_string()), Value::G1(self.srs.g_g1)),
-                (Vid("delta2_h".to_string()), Value::G2(self.srs.delta2_h)),
-                (Vid("tau_h".to_string()), Value::G2(self.srs.tau_h)),
-                (Vid("h_g2".to_string()), Value::G2(self.srs.h_g2)),
+                (Vid("alpha_g".to_string()), Value::g1(self.srs.alpha_g)),
+                (Vid("beta_g".to_string()), Value::g1(self.srs.beta_g)),
+                (Vid("g_g1".to_string()), Value::g1(self.srs.g_g1)),
+                (Vid("delta2_h".to_string()), Value::g2(self.srs.delta2_h)),
+                (Vid("tau_h".to_string()), Value::g2(self.srs.tau_h)),
+                (Vid("h_g2".to_string()), Value::g2(self.srs.h_g2)),
                 (
                     Vid("v_k_poly".to_string()),
                     Value::vec_scalar(self.srs.v_k_coeffs.clone()).value_poly(),
@@ -504,7 +503,7 @@ pub mod zippel_side {
                     ("w_a_evals", w_a),
                     ("w_b_evals", w_b),
                 ]
-                .map(|(name, v)| (Vid::from(name), Arc::new(Value::vec_scalar(v))));
+                .map(|(name, v)| (Vid::from(name), Value::vec_scalar(v)));
                 self.handler
                     .run_prover(crate::lend(&inputs).chain(computed))
                     .expect("run_prover failed")

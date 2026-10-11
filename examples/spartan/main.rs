@@ -191,7 +191,7 @@ fn prover_create_inputs(m: usize) -> Ctx<Vid, Value<ArkCurve25519>> {
     };
     let two_m_vars = 2 * m;
     let mk_sparse_mle = |evals: Vec<(usize, F)>| {
-        Value::Poly(VirtualPolynomial::from_poly(PolyVariant::SparseMle {
+        Value::poly(VirtualPolynomial::from_poly(PolyVariant::SparseMle {
             num_vars: two_m_vars,
             evals,
         }))
@@ -223,8 +223,8 @@ fn prover_create_inputs(m: usize) -> Ctx<Vid, Value<ArkCurve25519>> {
         (Vid("bz".to_string()), Value::vec_scalar(bz)),
         (Vid("cz".to_string()), Value::vec_scalar(cz)),
         (Vid("g_vec_w".to_string()), Value::vec_g1_affine(g_vec_aff)),
-        (Vid("g_base_w".to_string()), Value::G1(g_base_w)),
-        (Vid("h_base_w".to_string()), Value::G1(h_base_w)),
+        (Vid("g_base_w".to_string()), Value::g1(g_base_w)),
+        (Vid("h_base_w".to_string()), Value::g1(h_base_w)),
         (
             Vid("g_evs_d3".to_string()),
             Value::vec_g1_affine(g_evs_d3_aff),
@@ -233,7 +233,7 @@ fn prover_create_inputs(m: usize) -> Ctx<Vid, Value<ArkCurve25519>> {
             Vid("g_evs_d2".to_string()),
             Value::vec_g1_affine(g_evs_d2_aff),
         ),
-        (Vid("h_evs".to_string()), Value::G1(h_evs)),
+        (Vid("h_evs".to_string()), Value::g1(h_evs)),
         (
             Vid("placeholder_tau".to_string()),
             Value::vec_scalar(placeholder_tau),

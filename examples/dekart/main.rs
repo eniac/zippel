@@ -169,16 +169,19 @@ fn build_inputs(n_size: usize, b_size: usize, l_chunk: usize, h_deg: usize) -> C
 
     Ctx::<Vid, Value<C>>::from_iter([
         (Vid("f_evals".to_string()), Value::vec_scalar(f_evals)),
-        (Vid("chunks_bits".to_string()), Value::Vec(chunks_bits)),
+        (
+            Vid("chunks_bits".to_string()),
+            Value::Vec(chunks_bits.into()),
+        ),
         (Vid("rho".to_string()), Value::Scalar(rho)),
-        (Vid("com_f".to_string()), Value::G1(com_f)),
+        (Vid("com_f".to_string()), Value::g1(com_f)),
         (Vid("b_pow".to_string()), Value::vec_scalar(b_pow.clone())),
-        (Vid("gen_g1".to_string()), Value::G1(gen_g1)),
-        (Vid("gen_g2".to_string()), Value::G2(gen_g2)),
-        (Vid("srs_g2_tau".to_string()), Value::G2(srs_g2_tau)),
-        (Vid("srs_g2_xi".to_string()), Value::G2(srs_g2_xi)),
-        (Vid("xi_g1".to_string()), Value::G1(xi_g1)),
-        (Vid("s0_commit".to_string()), Value::G1(s0_commit)),
+        (Vid("gen_g1".to_string()), Value::g1(gen_g1)),
+        (Vid("gen_g2".to_string()), Value::g2(gen_g2)),
+        (Vid("srs_g2_tau".to_string()), Value::g2(srs_g2_tau)),
+        (Vid("srs_g2_xi".to_string()), Value::g2(srs_g2_xi)),
+        (Vid("xi_g1".to_string()), Value::g1(xi_g1)),
+        (Vid("s0_commit".to_string()), Value::g1(s0_commit)),
         (
             Vid("srs_g1_lagr".to_string()),
             Value::vec_g1(srs_g1_lagr_vec),

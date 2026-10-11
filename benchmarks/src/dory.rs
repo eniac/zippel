@@ -74,12 +74,11 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use std::sync::Arc;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs: HashMap<Vid, Arc<Value<ArkBls12_381>>>,
+        inputs: HashMap<Vid, Value<ArkBls12_381>>,
         compile_time: Vec<std::time::Duration>,
     }
 
@@ -123,11 +122,11 @@ pub mod zippel_side {
                             ark_bls12_381::G2Projective::normalize_batch(&s.g2_vec[..nv]),
                         )),
                     ),
-                    ("g1_0", Value::G1(v.g1_0)),
-                    ("g2_0", Value::G2(v.g2_0)),
-                    ("h1", Value::G1(v.h1)),
-                    ("h2", Value::G2(v.h2)),
-                    ("ht", Value::GT(v.ht)),
+                    ("g1_0", Value::g1(v.g1_0)),
+                    ("g2_0", Value::g2(v.g2_0)),
+                    ("h1", Value::g1(v.h1)),
+                    ("h2", Value::g2(v.h2)),
+                    ("ht", Value::gt(v.ht)),
                     ("chi", Value::vec_gt(v.chi[..=k].to_vec())),
                     ("delta_1l", Value::vec_gt(v.delta_1l[..=k].to_vec())),
                     ("delta_1r", Value::vec_gt(v.delta_1r[..=k].to_vec())),
@@ -280,21 +279,21 @@ mod cross_tests {
 
     fn gt(v: &Value<ArkBls12_381>) -> GT {
         match v {
-            Value::GT(g) => *g,
+            Value::GT(g) => **g,
             _ => panic!("expected GT, got {v}"),
         }
     }
     fn g1(v: &Value<ArkBls12_381>) -> G1Projective {
         match v {
-            Value::G1(g) => *g,
-            Value::G1Affine(g) => (*g).into(),
+            Value::G1(g) => **g,
+            Value::G1Affine(g) => (*(*g)).into(),
             _ => panic!("expected G1, got {v}"),
         }
     }
     fn g2(v: &Value<ArkBls12_381>) -> G2Projective {
         match v {
-            Value::G2(g) => *g,
-            Value::G2Affine(g) => (*g).into(),
+            Value::G2(g) => **g,
+            Value::G2Affine(g) => (**g).into(),
             _ => panic!("expected G2, got {v}"),
         }
     }

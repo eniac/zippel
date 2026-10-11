@@ -146,9 +146,9 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let final_gamma2 = cur_gamma2[0];
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("c1".to_string()), Value::GT(c1)),
-        (Vid("c2".to_string()), Value::GT(c2)),
-        (Vid("c3".to_string()), Value::GT(c3)),
+        (Vid("c1".to_string()), Value::gt(c1)),
+        (Vid("c2".to_string()), Value::gt(c2)),
+        (Vid("c3".to_string()), Value::gt(c3)),
         (Vid("hash1_l_vec".to_string()), Value::vec_gt(hash1_l_vec)),
         (Vid("hash1_r_vec".to_string()), Value::vec_gt(hash1_r_vec)),
         (Vid("hash2_l_vec".to_string()), Value::vec_gt(hash2_l_vec)),
@@ -157,8 +157,8 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
             Vid("gamma_pair_ipp_vec".to_string()),
             Value::vec_gt(gamma_pair_ipp_vec),
         ),
-        (Vid("final_gamma1".to_string()), Value::G1(final_gamma1)),
-        (Vid("final_gamma2".to_string()), Value::G2(final_gamma2)),
+        (Vid("final_gamma1".to_string()), Value::g1(final_gamma1)),
+        (Vid("final_gamma2".to_string()), Value::g2(final_gamma2)),
         (Vid("gamma1".to_string()), Value::vec_g1(gamma1)),
         (Vid("gamma2".to_string()), Value::vec_g2(gamma2)),
         (Vid("gamma1_prime".to_string()), Value::vec_g1(gamma1_prime)),

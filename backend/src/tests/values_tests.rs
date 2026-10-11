@@ -6,6 +6,7 @@ use ark_ff::Zero;
 use ark_std::test_rng;
 use lang::typ::CRange;
 use share::assert_deq;
+use std::sync::Arc;
 
 type TestConfig = ArkBls12_381;
 
@@ -406,7 +407,7 @@ fn test_value_vec_construction() {
 
 #[test]
 fn test_is_vec_true() {
-    let val = Value::<TestConfig>::Vec(vec![]);
+    let val = Value::<TestConfig>::Vec(vec![].into());
     assert!(val.is_vec());
 }
 
@@ -496,13 +497,13 @@ fn test_typ_scalar() {
 
 #[test]
 fn test_typ_g1() {
-    let val = Value::<TestConfig>::G1(<TestConfig as ArkConfig>::G1::generator());
+    let val = Value::<TestConfig>::G1(Arc::new(<TestConfig as ArkConfig>::G1::generator()));
     assert_eq!(val.typ(), ATyp::g1());
 }
 
 #[test]
 fn test_typ_g2() {
-    let val = Value::<TestConfig>::G2(<TestConfig as ArkConfig>::G2::generator());
+    let val = Value::<TestConfig>::G2(<TestConfig as ArkConfig>::G2::generator().into());
     assert_eq!(val.typ(), ATyp::g2());
 }
 
@@ -568,8 +569,8 @@ fn test_value_concat() {
 fn test_discriminant_order() {
     // Just verify it returns something consistent
     let scalar = Value::<TestConfig>::Scalar(Fr::zero());
-    let g1 = Value::<TestConfig>::G1(<TestConfig as ArkConfig>::G1::generator());
-    let vec = Value::<TestConfig>::Vec(vec![]);
+    let g1 = Value::<TestConfig>::G1(Arc::new(<TestConfig as ArkConfig>::G1::generator()));
+    let vec = Value::<TestConfig>::Vec(vec![].into());
 
     assert!(scalar.discriminant_order() < 20);
     assert!(g1.discriminant_order() < 20);
@@ -853,8 +854,8 @@ fn test_value_concat_extended() {
         _ => panic!("Expected VecScalar"),
     }
 
-    let a = Value::<TestConfig>::VecIndex(vec![1, 2]);
-    let b = Value::<TestConfig>::VecIndex(vec![3, 4]);
+    let a = Value::<TestConfig>::VecIndex(vec![1, 2].into());
+    let b = Value::<TestConfig>::VecIndex(vec![3, 4].into());
     let c = a.value_concat(b);
     match c {
         Value::VecIndex(v) => assert_eq!(v.len(), 4),
@@ -865,8 +866,8 @@ fn test_value_concat_extended() {
 #[test]
 fn test_elliptic_curve_pairing() {
     // value_pair and pair() perform pairing operations G1 x G2 -> GT
-    let g1 = Value::<TestConfig>::G1(<TestConfig as ArkConfig>::G1::generator());
-    let g2 = Value::<TestConfig>::G2(<TestConfig as ArkConfig>::G2::generator());
+    let g1 = Value::<TestConfig>::G1(Arc::new(<TestConfig as ArkConfig>::G1::generator()));
+    let g2 = Value::<TestConfig>::G2(<TestConfig as ArkConfig>::G2::generator().into());
 
     let gt_result = g1.pair(g2);
     match gt_result {
@@ -957,7 +958,7 @@ fn test_value_eval() {
     let poly_variant = PolyVariant::DenseUni(ark_poly::DenseUVPolynomial::from_coefficients_vec(
         coeffs_vec,
     ));
-    let poly = Value::<TestConfig>::Poly(VirtualPolynomial::from_poly(poly_variant));
+    let poly = Value::<TestConfig>::Poly(Arc::new(VirtualPolynomial::from_poly(poly_variant)));
 
     // Evaluate at a single scalar point x = 2: 1 + 2·2 + 3·4 = 17.
     let result = poly
@@ -1004,21 +1005,23 @@ fn test_scalar_multiplication_variants() {
     let scalar = Value::<TestConfig>::scalar_from_usize(5);
 
     // Scalar * G1
-    let g1 = Value::<TestConfig>::G1(<TestConfig as ArkConfig>::G1::generator());
+    let g1 = Value::<TestConfig>::G1(Arc::new(<TestConfig as ArkConfig>::G1::generator()));
     let _result = &scalar * &g1;
     let _result = &g1 * &scalar;
 
     // Scalar * G2
-    let g2 = Value::<TestConfig>::G2(<TestConfig as ArkConfig>::G2::generator());
+    let g2 = Value::<TestConfig>::G2(<TestConfig as ArkConfig>::G2::generator().into());
     let _result = &scalar * &g2;
     let _result = &g2 * &scalar;
 
     // Scalar * G1Affine
-    let g1_affine = Value::<TestConfig>::G1Affine(<TestConfig as ArkConfig>::G1Affine::generator());
+    let g1_affine =
+        Value::<TestConfig>::G1Affine(Arc::new(<TestConfig as ArkConfig>::G1Affine::generator()));
     let _result = &scalar * &g1_affine;
 
     // Scalar * G2Affine
-    let g2_affine = Value::<TestConfig>::G2Affine(<TestConfig as ArkConfig>::G2Affine::generator());
+    let g2_affine =
+        Value::<TestConfig>::G2Affine(<TestConfig as ArkConfig>::G2Affine::generator().into());
     let _result = &scalar * &g2_affine;
 }
 
@@ -1071,7 +1074,7 @@ fn test_div_by_constant_poly() {
     // Test Index / constant polynomial
     let index_val = Value::<TestConfig>::Index(20);
     let const_poly = VirtualPolynomial::<Fr>::from_scalar(Fr::from(5u64));
-    let poly_val = Value::<TestConfig>::Poly(const_poly);
+    let poly_val = Value::<TestConfig>::Poly(Arc::new(const_poly));
 
     let result = &index_val / &poly_val;
     // 20 / 5 = 4
@@ -1080,7 +1083,7 @@ fn test_div_by_constant_poly() {
     // Test Scalar / constant polynomial
     let scalar_val = Value::<TestConfig>::Scalar(Fr::from(100u64));
     let const_poly = VirtualPolynomial::<Fr>::from_scalar(Fr::from(4u64));
-    let poly_val = Value::<TestConfig>::Poly(const_poly);
+    let poly_val = Value::<TestConfig>::Poly(Arc::new(const_poly));
 
     let result = &scalar_val / &poly_val;
     // 100 / 4 = 25
@@ -1103,7 +1106,7 @@ fn test_div_by_product_of_constants() {
 
     // Test division: 240 / 24 = 10
     let scalar_val = Value::<TestConfig>::Scalar(Fr::from(240u64));
-    let poly_val = Value::<TestConfig>::Poly(vp);
+    let poly_val = Value::<TestConfig>::Poly(Arc::new(vp));
 
     let result = &scalar_val / &poly_val;
     assert_deq!(&result, &Value::<TestConfig>::scalar_from_usize(10));
@@ -1127,7 +1130,7 @@ fn test_div_by_non_constant_poly_panics() {
 
     // This should panic
     let scalar_val = Value::<TestConfig>::Scalar(Fr::from(100u64));
-    let poly_val = Value::<TestConfig>::Poly(vp);
+    let poly_val = Value::<TestConfig>::Poly(Arc::new(vp));
     let _result = &scalar_val / &poly_val;
 }
 
@@ -1160,8 +1163,14 @@ fn sumcheck_style_vp_serializes() {
     assert!(full_poly.serialize_compressed(&mut buf).is_ok());
 
     let mut buf2 = Vec::new();
-    assert!(serialize_value(&Value::<TestConfig>::Poly(full_poly.clone()), &mut buf2).is_ok());
-    assert!(value_to_bytes(&Value::<TestConfig>::Poly(full_poly)).is_ok());
+    assert!(
+        serialize_value(
+            &Value::<TestConfig>::Poly(Arc::new(full_poly.clone())),
+            &mut buf2
+        )
+        .is_ok()
+    );
+    assert!(value_to_bytes(&Value::<TestConfig>::Poly(Arc::new(full_poly))).is_ok());
 }
 
 #[cfg(test)]
@@ -1361,7 +1370,7 @@ fn test_value_concat_pbt() {
                                 elems
                                     .iter()
                                     .map(|e| match e {
-                                        Value::G1(g) => *g,
+                                        Value::G1(g) => **g,
                                         _ => panic!(),
                                     })
                                     .collect(),
@@ -1370,7 +1379,7 @@ fn test_value_concat_pbt() {
                                 elems
                                     .iter()
                                     .map(|e| match e {
-                                        Value::G2(g) => *g,
+                                        Value::G2(g) => **g,
                                         _ => panic!(),
                                     })
                                     .collect(),
@@ -1379,7 +1388,7 @@ fn test_value_concat_pbt() {
                                 elems
                                     .iter()
                                     .map(|e| match e {
-                                        Value::GT(g) => *g,
+                                        Value::GT(g) => **g,
                                         _ => panic!(),
                                     })
                                     .collect(),
@@ -1387,7 +1396,7 @@ fn test_value_concat_pbt() {
                         }
                     }
                 }
-                1 => Value::Vec(elems),
+                1 => Value::Vec(elems.into()),
                 _ => {
                     assert_eq!(elems.len(), 1);
                     elems[0].clone()
@@ -1420,12 +1429,12 @@ fn test_value_concat_pbt() {
                 Value::Scalar(s) => vec![Value::Scalar(s)],
                 Value::VecScalar(v) => v.into_vec().into_iter().map(Value::Scalar).collect(),
                 Value::G1(g) => vec![Value::G1(g)],
-                Value::VecG1(v) => v.into_vec().into_iter().map(Value::G1).collect(),
+                Value::VecG1(v) => v.into_vec().into_iter().map(Value::g1).collect(),
                 Value::G2(g) => vec![Value::G2(g)],
-                Value::VecG2(v) => v.into_vec().into_iter().map(Value::G2).collect(),
+                Value::VecG2(v) => v.into_vec().into_iter().map(Value::g2).collect(),
                 Value::GT(g) => vec![Value::GT(g)],
-                Value::VecGT(v) => v.into_vec().into_iter().map(Value::GT).collect(),
-                Value::Vec(v) => v,
+                Value::VecGT(v) => v.into_vec().into_iter().map(Value::gt).collect(),
+                Value::Vec(v) => v.into_vec(),
                 _ => panic!("Unexpected value type in concat test: {:?}", val),
             }
         };
@@ -1473,7 +1482,7 @@ fn test_value_concat_pbt() {
                         .iter()
                         .map(|op_ref| eval_op_local(op_ref.get()))
                         .collect();
-                    Value::Vec(vals)
+                    Value::Vec(vals.into())
                 }
                 crate::op::Op::Bin(lang::ast::BinOp::Concat, op1, op2, _) => {
                     let val1 = eval_op_local(op1.get());
@@ -1546,4 +1555,65 @@ fn ram_ref_slice_of_prepared_g2_matches_the_copy() {
         unreachable!()
     };
     assert_eq!(p.prepared.len(), 3);
+}
+
+/// The address of a value's heap payload, if it has one. Exhaustive on
+/// purpose: a new variant must say here whether it owns heap data, and
+/// [`cloning_a_value_shares_its_heap_payload`] then checks that a clone shares
+/// it instead of copying it.
+fn heap_payload(v: &Value<ArkBls12_381>) -> Option<*const u8> {
+    match v {
+        Value::VecIndex(x) => Some(x.as_ptr().cast()),
+        Value::VecScalar(x) => Some(x.as_ptr().cast()),
+        Value::VecG1(x) => Some(x.as_ptr().cast()),
+        Value::VecG2(x) => Some(x.as_ptr().cast()),
+        Value::VecGT(x) => Some(x.as_ptr().cast()),
+        Value::VecG1Affine(x) => Some(x.as_ptr().cast()),
+        Value::VecG2Affine(x) => Some(x.as_ptr().cast()),
+        Value::VecG2Prepared(x) => Some(x.prepared.as_ptr().cast()),
+        Value::Vec(x) => Some(x.as_ptr().cast()),
+        Value::G2(x) => Some(Arc::as_ptr(x).cast()),
+        Value::GT(x) => Some(Arc::as_ptr(x).cast()),
+        Value::G2Affine(x) => Some(Arc::as_ptr(x).cast()),
+        Value::Poly(x) => Some(Arc::as_ptr(x).cast()),
+        // Inline (no heap data), or a structurally shared `im` map.
+        Value::Index(_)
+        | Value::Scalar(_)
+        | Value::G1(_)
+        | Value::G1Affine(_)
+        | Value::Record(_)
+        | Value::Unit
+        | Value::Bool(_) => None,
+    }
+}
+
+/// A `Value` is a cheap handle: cloning one never copies heap data. The
+/// runtime hands every reader a clone, and a caller lends an input by passing
+/// one, so a clone that copied would cost memory and break the benchmarks'
+/// like-for-like accounting.
+#[test]
+fn cloning_a_value_shares_its_heap_payload() {
+    type C = ArkBls12_381;
+    let g2 = <C as ArkConfig>::G2::zero();
+    let g2a = g2.into_affine();
+    let values: Vec<Value<C>> = vec![
+        Value::VecIndex(vec![1, 2, 3].into()),
+        Value::vec_scalar(vec![Fr::from(1u64); 3]),
+        Value::vec_g1(vec![<C as ArkConfig>::G1::zero(); 3]),
+        Value::vec_g2(vec![g2; 3]),
+        Value::vec_gt(vec![Default::default(); 3]),
+        Value::vec_g1_affine(vec![<C as ArkConfig>::G1Affine::zero(); 3]),
+        Value::vec_g2_affine(vec![g2a; 3]),
+        Value::VecG2Prepared(crate::PreparedG2Vec::new(vec![g2a; 3])),
+        Value::Vec(vec![Value::Index(1), Value::Index(2)].into()),
+        Value::g2(g2),
+        Value::gt(Default::default()),
+        Value::g2_affine(g2a),
+        Value::vec_scalar(vec![Fr::from(1u64); 2]).value_poly(),
+    ];
+    for v in &values {
+        let payload = heap_payload(v).unwrap_or_else(|| panic!("{v} has no heap payload"));
+        let clone = v.clone();
+        assert_eq!(heap_payload(&clone), Some(payload), "cloning {v} copied it");
+    }
 }

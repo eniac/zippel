@@ -96,12 +96,11 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use std::sync::Arc;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs: HashMap<Vid, Arc<Value<ArkBls12_381>>>,
+        inputs: HashMap<Vid, Value<ArkBls12_381>>,
         compile_time: Vec<std::time::Duration>,
     }
 
@@ -149,8 +148,8 @@ pub mod zippel_side {
                 ),
                 ("pub_input", col(&sh.public_inputs)),
                 ("ck", Value::vec_g1_affine(ck)),
-                ("g", Value::G1(vk.pcs_param.g.into())),
-                ("h", Value::G2(vk.pcs_param.h.into())),
+                ("g", Value::g1(vk.pcs_param.g.into())),
+                ("h", Value::g2(vk.pcs_param.h.into())),
                 (
                     "h_mask",
                     Value::vec_g2(
@@ -304,8 +303,8 @@ mod cross_tests {
 
     fn g1(v: &Value<ArkBls12_381>) -> G1Projective {
         match v {
-            Value::G1(g) => *g,
-            Value::G1Affine(g) => (*g).into(),
+            Value::G1(g) => **g,
+            Value::G1Affine(g) => (*(*g)).into(),
             _ => panic!("expected G1, got {v}"),
         }
     }

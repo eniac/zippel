@@ -3160,7 +3160,7 @@ impl<C: HasOpFactory> UDag<C> {
                     let poly = Self::exp_to_poly_variant(&body, &fun_vars_vids, &var_map)?;
 
                     // Create a Value::Poly from the PolyVariant wrapped in VirtualPolynomial
-                    let poly_value = Value::Poly(VirtualPolynomial::from_poly(poly));
+                    let poly_value = Value::poly(VirtualPolynomial::from_poly(poly));
 
                     return Ok(GOp::Value(poly_value));
                 }

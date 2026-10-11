@@ -222,21 +222,25 @@ hold) does not. For zippel this includes every intermediate value it keeps
 during the run.
 
 Both sides keep their inputs. The native provers and verifiers borrow
-theirs. zippel's `run_prover`/`run_verifier` take each input either given (a
-`Value`, which the run frees after its last reader) or lent (an `Arc<Value>`
-the caller keeps a clone of, which the run never frees). The harness owns
-every input as an `Arc` (`benchmarks::harness_inputs`) and lends all of them,
-and the proof, to every run (`benchmarks::lend`), so the run frees nothing
-that was live before it started, whatever kind of value an input is. Only
-values computed inside the measured call (below) are given. (A deployment
+theirs. zippel's `run_prover`/`run_verifier` own the values they are passed,
+and a `Value` is a cheap handle: cloning one shares its heap data and copies
+none (a backend test, `cloning_a_value_shares_its_heap_payload`, checks every
+variant). The harness owns every input (`benchmarks::harness_inputs`) and
+lends all of them, and the proof, to every run by passing clones
+(`benchmarks::lend`), so the run frees nothing that was live before it
+started. Values computed inside the measured call (below) are passed without
+keeping a clone. (A deployment
 that gives its witness to the prover lowers the process's high-water mark by
 the witness size; that is a property of the API, not of the runtime, and is
 not measured.)
 
 The rules every measurement follows, on both sides:
 
-- A measured call frees nothing that was live before it started (checked by
-  tracking the counter's minimum, which is 0 for every run).
+- A measured call frees nothing its caller owns: native calls borrow their
+  inputs, and zippel's are lent as clones, which share their data (see
+  above). One source of noise remains on both sides: rayon frees resized
+  work-queue buffers lazily (through crossbeam-epoch), sometimes during a
+  later measured call, which can lower that call's peak by a few KB.
 - Whatever a call consumes or needs is made inside it: transcripts and
   sponges, and copies of inputs a call consumes (libspartan's `prove` takes
   its witness by value). Native IPA folds its first round straight from the

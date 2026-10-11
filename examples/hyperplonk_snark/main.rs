@@ -96,8 +96,8 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         ("perm_comms", Value::vec_g1(perm_comms)),
         ("pub_input", Value::vec_scalar(w[0][..4].to_vec())),
         ("ck", Value::vec_g1(ck)),
-        ("g", Value::G1(g)),
-        ("h", Value::G2(h)),
+        ("g", Value::g1(g)),
+        ("h", Value::g2(h)),
         ("h_mask", Value::vec_g2(h_mask)),
     ];
     for (name, c) in ["w0", "w1", "w2"].into_iter().zip(w) {

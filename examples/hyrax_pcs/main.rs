@@ -103,8 +103,8 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("z_col".to_string()), Value::vec_scalar(z_col)),
         (Vid("y".to_string()), Value::Scalar(y)),
         (Vid("g_vec".to_string()), Value::vec_g1(g_vec)),
-        (Vid("g_base".to_string()), Value::G1(g_base)),
-        (Vid("h_base".to_string()), Value::G1(h_base)),
+        (Vid("g_base".to_string()), Value::g1(g_base)),
+        (Vid("h_base".to_string()), Value::g1(h_base)),
     ])
 }
 

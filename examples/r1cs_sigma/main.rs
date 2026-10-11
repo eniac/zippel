@@ -50,7 +50,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("ck".to_string()), Value::vec_g1(vec![ck])),
-        (Vid("h_base".to_string()), Value::G1(h_base)),
+        (Vid("h_base".to_string()), Value::g1(h_base)),
         (Vid("mat_A".to_string()), Value::vec_scalar(mat_a)),
         (Vid("mat_B".to_string()), Value::vec_scalar(mat_b)),
         (Vid("mat_C".to_string()), Value::vec_scalar(mat_c)),
