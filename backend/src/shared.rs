@@ -15,11 +15,41 @@ use std::sync::Arc;
 /// this is the only owner of a whole buffer.
 pub struct Shared<T> {
     buf: Arc<Vec<T>>,
-    /// The viewed part of `buf`; `None` is all of it.
-    range: Option<Range<usize>>,
+    /// The viewed part of `buf`: `start..start + len`, or all of it when
+    /// `len` is [`WHOLE`] (which follows the buffer's length when it is
+    /// written through [`Shared::to_mut`]). Unlike an
+    /// `Option<Range<usize>>`, this needs no discriminant, which keeps a
+    /// handle at 24 bytes and so [`crate::Value`] small.
+    start: usize,
+    len: usize,
 }
 
+/// The `len` of a view of the whole buffer: no buffer has this many
+/// elements, so no real view has this length.
+const WHOLE: usize = usize::MAX;
+
 impl<T> Shared<T> {
+    /// The viewed range of the buffer; `None` is all of it.
+    fn range(&self) -> Option<Range<usize>> {
+        (self.len != WHOLE).then(|| self.start..self.start + self.len)
+    }
+
+    /// A handle on `buf` viewing `range`, or all of it for `None`.
+    pub(crate) fn with_range(buf: Arc<Vec<T>>, range: Option<Range<usize>>) -> Self {
+        match range {
+            None => Shared {
+                buf,
+                start: 0,
+                len: WHOLE,
+            },
+            Some(r) => Shared {
+                buf,
+                start: r.start,
+                len: r.len(),
+            },
+        }
+    }
+
     /// A view of `range` (relative to this view), sharing the buffer.
     ///
     /// # Panics
@@ -31,12 +61,10 @@ impl<T> Shared<T> {
             "slice {range:?} out of bounds for a vector of length {}",
             self.len()
         );
-        let offset = self.range.as_ref().map_or(0, |r| r.start);
+        let offset = self.range().map_or(0, |r| r.start);
         let absolute = offset + range.start..offset + range.end;
-        Shared {
-            buf: Arc::clone(&self.buf),
-            range: (absolute != (0..self.buf.len())).then_some(absolute),
-        }
+        let whole = absolute == (0..self.buf.len());
+        Shared::with_range(Arc::clone(&self.buf), (!whole).then_some(absolute))
     }
 }
 
@@ -63,7 +91,7 @@ impl<T: Clone + Send + Sync> Shared<T> {
 
 /// `start..end` when `indices` is `start, start + 1, …, end - 1` (an empty list
 /// is the empty run `0..0`); `None` otherwise.
-fn contiguous_run(indices: &[usize]) -> Option<Range<usize>> {
+pub(crate) fn contiguous_run(indices: &[usize]) -> Option<Range<usize>> {
     let Some(&start) = indices.first() else {
         return Some(0..0);
     };
@@ -75,7 +103,7 @@ impl<T: Clone> Shared<T> {
     /// The elements, for writing: copies the viewed elements first if the
     /// buffer is shared or this is a view of part of it.
     pub fn to_mut(&mut self) -> &mut Vec<T> {
-        if self.range.is_some() || Arc::get_mut(&mut self.buf).is_none() {
+        if self.range().is_some() || Arc::get_mut(&mut self.buf).is_none() {
             *self = Shared::from(self.to_vec());
         }
         Arc::get_mut(&mut self.buf).expect("buffer is unshared after the copy")
@@ -85,7 +113,7 @@ impl<T: Clone> Shared<T> {
     /// buffer it would otherwise keep alive; a whole buffer is kept.
     #[must_use]
     pub fn compact(self) -> Self {
-        if self.range.is_some() {
+        if self.range().is_some() {
             Shared::from(self.to_vec())
         } else {
             self
@@ -96,7 +124,7 @@ impl<T: Clone> Shared<T> {
     /// whole buffer, copied otherwise.
     #[must_use]
     pub fn into_vec(self) -> Vec<T> {
-        if self.range.is_some() {
+        if self.range().is_some() {
             return self.to_vec();
         }
         Arc::try_unwrap(self.buf).unwrap_or_else(|buf| buf.to_vec())
@@ -107,19 +135,16 @@ impl<T> Deref for Shared<T> {
     type Target = [T];
 
     fn deref(&self) -> &[T] {
-        match &self.range {
+        match self.range() {
             None => &self.buf,
-            Some(r) => &self.buf[r.clone()],
+            Some(r) => &self.buf[r],
         }
     }
 }
 
 impl<T> From<Vec<T>> for Shared<T> {
     fn from(v: Vec<T>) -> Self {
-        Shared {
-            buf: Arc::new(v),
-            range: None,
-        }
+        Shared::with_range(Arc::new(v), None)
     }
 }
 
@@ -128,7 +153,8 @@ impl<T> Clone for Shared<T> {
     fn clone(&self) -> Self {
         Shared {
             buf: Arc::clone(&self.buf),
-            range: self.range.clone(),
+            start: self.start,
+            len: self.len,
         }
     }
 }
@@ -208,6 +234,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_handle_is_twenty_four_bytes() {
+        assert_eq!(size_of::<Shared<u64>>(), 24);
+    }
+
+    #[test]
+    fn a_whole_view_follows_writes_through_to_mut() {
+        let mut v = Shared::from(vec![1, 2]);
+        v.to_mut().extend([3, 4, 5]);
+        assert_eq!(&*v, &[1, 2, 3, 4, 5]);
+        assert_eq!(&*v.slice(1..5), &[2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn a_view_out_to_the_end_keeps_its_range() {
+        let v = Shared::from(vec![1, 2, 3, 4]);
+        let tail = v.slice(2..4);
+        assert_eq!(tail.range(), Some(2..4));
+        assert_eq!(&*tail.slice(1..2), &[4]);
+    }
+
+    #[test]
     fn clones_and_slices_share_the_buffer() {
         let v = Shared::from(vec![1, 2, 3, 4]);
         let c = v.clone();
@@ -221,7 +268,7 @@ mod tests {
     #[test]
     fn a_full_slice_is_the_whole_buffer() {
         let v = Shared::from(vec![1, 2, 3]);
-        assert!(v.slice(0..3).range.is_none());
+        assert!(v.slice(0..3).range().is_none());
     }
 
     #[test]
@@ -285,7 +332,10 @@ mod tests {
             let s = v.select(idx);
             let expected: Vec<u64> = idx.iter().map(|&i| v[i]).collect();
             assert_eq!(s, expected);
-            assert!(s.range.is_none(), "{idx:?} is gathered into its own buffer");
+            assert!(
+                s.range().is_none(),
+                "{idx:?} is gathered into its own buffer"
+            );
         }
     }
 
