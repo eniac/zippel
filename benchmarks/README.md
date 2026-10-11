@@ -222,15 +222,16 @@ hold) does not. For zippel this includes every intermediate value it keeps
 during the run.
 
 Both sides keep their inputs. The native provers and verifiers borrow
-theirs; zippel's take inputs by value, so the harness hands each run clones
-of the arguments it reads (and of the proof, for the verifier), made as the
-run collects them. Cloning a vector value shares its buffer, so the harness
-still holds every input and the run frees nothing that was live before it
-started: like the native side, zippel is never credited for freeing its
-witness, SRS or proof. (A deployment that hands its witness to the prover
-without keeping a clone lets the run free it after its last reader; that
-lowers the process's high-water mark by the witness size, but it is a
-property of the by-value API, not of the runtime, and is not measured.)
+theirs. zippel's `run_prover`/`run_verifier` take each input either given (a
+`Value`, which the run frees after its last reader) or lent (an `Arc<Value>`
+the caller keeps a clone of, which the run never frees). The harness owns
+every input as an `Arc` (`benchmarks::harness_inputs`) and lends all of them,
+and the proof, to every run (`benchmarks::lend`), so the run frees nothing
+that was live before it started, whatever kind of value an input is. Only
+values computed inside the measured call (below) are given. (A deployment
+that gives its witness to the prover lowers the process's high-water mark by
+the witness size; that is a property of the API, not of the runtime, and is
+not measured.)
 
 The rules every measurement follows, on both sides:
 

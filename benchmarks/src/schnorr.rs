@@ -21,7 +21,6 @@ pub mod zippel_side {
     use backend::{ArkBls12_381, ArkConfig, ArkGroupOps, Value};
     use lang::id::Vid;
     use share::Ctx;
-    use std::collections::HashMap;
     use std::path::PathBuf;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
@@ -85,7 +84,7 @@ pub mod zippel_side {
             let g = G1::rand(&mut rng);
             let h_affines = G1Ops::vec_mul(&g, &[x]);
             let h = h_affines.into_iter().next().unwrap();
-            let inputs = HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
+            let inputs = crate::harness_inputs([
                 (Vid("x".to_string()), Value::Scalar(x)),
                 (Vid("g".to_string()), Value::G1(g)),
                 (Vid("h".to_string()), Value::G1Affine(h)),

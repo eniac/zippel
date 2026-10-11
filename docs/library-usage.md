@@ -120,11 +120,12 @@ fn prover_create_inputs() -> Vec<(&'static str, Value<ArkBls12_381>)> {
   `HashMap`, a `Ctx`, ...); the names must match the `.zippel` file's
   parameter names exactly (`x`, `g`, `h` above). The verifier reads only
   the instance arguments and drops the rest.
-- A run owns its inputs and frees each after its last use. Cloning a
-  vector value shares its buffer, so to reuse an input across runs (an
-  SRS, a proving key), pass a clone and keep the original, as
-  `inputs.clone()` does above; an input you pass without keeping a clone,
-  such as a fresh witness, is freed during the run.
+- Each value is given or lent. A `Value` is given: the run owns it and
+  frees it after its last use (a fresh witness). An `Arc<Value>` is lent
+  when you keep a clone of the `Arc`: the run reads it and never frees it,
+  so an input reused across runs (an SRS, a proving key) is lent, e.g.
+  `("srs", Arc::clone(&srs))`. Above, `inputs.clone()` copies the small
+  values so the verifier can be given the originals.
 - `compile` takes a `Ctx` of size parameters; this protocol has none.
 - `analyze_completeness()` returns `Result<(),
   analyses::AnalysisError<C>>`; `Ok(())` means the protocol is

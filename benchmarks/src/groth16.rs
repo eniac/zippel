@@ -507,13 +507,14 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     /// A compiled zippel Groth16 handler plus the size-invariant part of its
     /// input context, ready to be timed at one circuit size.
     pub struct Setup<'a> {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs_base: HashMap<Vid, Value<ArkBls12_381>>,
+        inputs_base: HashMap<Vid, Arc<Value<ArkBls12_381>>>,
         translated: &'a Translated,
         compile_time: Vec<std::time::Duration>,
     }
@@ -546,7 +547,7 @@ pub mod zippel_side {
             let l_query_aff = G1Projective::normalize_batch(&keys.l_query);
             let gamma_abc_aff = G1Projective::normalize_batch(&keys.gamma_abc_g1);
 
-            let inputs_base = HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
+            let inputs_base = crate::harness_inputs([
                 (
                     Vid("gen_g1".to_string()),
                     Value::G1(G1Projective::generator()),
@@ -645,7 +646,6 @@ pub mod zippel_side {
         /// Panics if the prover or verifier graph fails to execute, or if
         /// verification does not accept.
         pub fn time_protocol(&mut self) -> Timing {
-            let names = crate::prover_args(&self.handler);
             let (prove, prove_peak, proof) = crate::sample(|| {
                 let mut h_coeffs = witness_map(
                     &self.translated.mat,
@@ -654,9 +654,9 @@ pub mod zippel_side {
                     &self.translated.full_assignment,
                 );
                 h_coeffs.resize(self.translated.h_size, GitFr::zero());
-                let h = (Vid::from("h_coeffs"), Value::vec_scalar(h_coeffs));
+                let h = (Vid::from("h_coeffs"), Arc::new(Value::vec_scalar(h_coeffs)));
                 self.handler
-                    .run_prover(crate::shared_inputs(&self.inputs_base, &names).chain([h]))
+                    .run_prover(crate::lend(&self.inputs_base).chain([h]))
                     .expect("zippel groth16 prover failed")
             });
             let (verify, verify_peak, result) =

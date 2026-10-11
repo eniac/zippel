@@ -476,13 +476,14 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     /// Compiled PST13 protocol plus the instance/witness context derived from
     /// the shared SRS; borrows the [`Shared`] data it was built from.
     pub struct Setup<'a> {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs_base: HashMap<Vid, Value<ArkBls12_381>>,
+        inputs_base: HashMap<Vid, Arc<Value<ArkBls12_381>>>,
         #[allow(dead_code)]
         shared: &'a Shared,
         compile_time: Vec<std::time::Duration>,
@@ -498,7 +499,7 @@ pub mod zippel_side {
         pub fn new(shared: &'a Shared) -> Self {
             // Pre-affinize ck — same fix as the Groth16 bench (avoids per-prove
             // `normalize_batch`). ck_affine is already computed in `Shared`.
-            let inputs_base = HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
+            let inputs_base = crate::harness_inputs([
                 (Vid("p".to_string()), Value::vec_scalar(shared.p.clone())),
                 (Vid("z".to_string()), Value::vec_scalar(shared.z.clone())),
                 (Vid("y".to_string()), Value::Scalar(shared.y)),

@@ -226,8 +226,8 @@ pub mod zippel_side {
     use backend::{ArkBls12_381, ArkConfig, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
-    use std::collections::HashMap;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     type C = ArkBls12_381;
@@ -438,7 +438,7 @@ pub mod zippel_side {
 
             // The SRS goes in affine, as the native PARI keeps it: MSMs and
             // slices then work on 96-byte points, with no conversion first.
-            let inputs = HashMap::<Vid, Value<C>>::from_iter([
+            let inputs = crate::harness_inputs([
                 (Vid("w".to_string()), Value::vec_scalar(w_vec)),
                 (Vid("x".to_string()), Value::vec_scalar(x_vec.clone())),
                 (
@@ -482,7 +482,6 @@ pub mod zippel_side {
             // The four sparse matrix-vector products (Az, Bz and their
             // instance parts) are computed inside each run, as the native
             // `prove_from_sr1cs` computes them inside its prover.
-            let names = crate::prover_args(&self.handler);
             let n_pub = self.n_pub;
             let (prove, prove_peak, proof) = crate::sample(|| {
                 let mvm = |mat: &[Vec<(F, usize)>], v: &[F]| -> Vec<F> {
@@ -505,9 +504,9 @@ pub mod zippel_side {
                     ("w_a_evals", w_a),
                     ("w_b_evals", w_b),
                 ]
-                .map(|(name, v)| (Vid::from(name), Value::vec_scalar(v)));
+                .map(|(name, v)| (Vid::from(name), Arc::new(Value::vec_scalar(v))));
                 self.handler
-                    .run_prover(crate::shared_inputs(&inputs, &names).chain(computed))
+                    .run_prover(crate::lend(&inputs).chain(computed))
                     .expect("run_prover failed")
             });
             let (verify, verify_peak, result) =

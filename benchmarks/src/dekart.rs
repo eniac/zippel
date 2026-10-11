@@ -140,12 +140,13 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use std::time::Instant;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs: HashMap<Vid, Value<ArkBls12_381>>,
+        inputs: HashMap<Vid, Arc<Value<ArkBls12_381>>>,
         /// The values, from which each run computes its `chunks_bits`
         /// input, as the native prover decomposes them inside `prove`.
         values: Vec<u64>,
@@ -184,7 +185,7 @@ pub mod zippel_side {
             f_evals.extend(sh.values.iter().map(|&z| Fr::from(z)));
             let b_pow = (0..ell).map(|j| Fr::from(1u64 << j)).collect::<Vec<_>>();
 
-            let inputs = HashMap::from_iter(
+            let inputs = crate::harness_inputs(
                 [
                     // witness
                     ("f_evals", Value::vec_scalar(f_evals)),
@@ -235,7 +236,7 @@ pub mod zippel_side {
 
         /// The `chunks_bits` input: bit `j` of every value, for each of the
         /// `ell` bits.
-        fn chunks_bits(&self) -> (Vid, Value<ArkBls12_381>) {
+        fn chunks_bits(&self) -> (Vid, Arc<Value<ArkBls12_381>>) {
             let bits = (0..self.ell)
                 .map(|j| {
                     Value::vec_scalar(
@@ -246,7 +247,7 @@ pub mod zippel_side {
                     )
                 })
                 .collect();
-            (Vid::from("chunks_bits"), Value::Vec(bits))
+            (Vid::from("chunks_bits"), Arc::new(Value::Vec(bits)))
         }
 
         /// Mean prover wall-clock over `samples` runs; no verification.
@@ -256,7 +257,7 @@ pub mod zippel_side {
                 let t = Instant::now();
                 let bits = self.chunks_bits();
                 self.handler
-                    .run_prover(self.inputs.clone().into_iter().chain([bits]))
+                    .run_prover(crate::lend(&self.inputs).chain([bits]))
                     .expect("run_prover failed");
                 sum += t.elapsed();
             }
@@ -269,11 +270,10 @@ pub mod zippel_side {
         pub fn time_protocol(&mut self) -> Timing {
             // The bit decomposition is computed inside each run, as the
             // native `prove` decomposes its values.
-            let names = crate::prover_args(&self.handler);
             let (prove, prove_peak, proof) = crate::sample(|| {
                 let bits = self.chunks_bits();
                 self.handler
-                    .run_prover(crate::shared_inputs(&self.inputs, &names).chain([bits]))
+                    .run_prover(crate::lend(&self.inputs).chain([bits]))
                     .expect("run_prover failed")
             });
             let (verify, verify_peak, result) =
