@@ -115,7 +115,7 @@ pub mod zippel_side {
             ));
             let mut full_poly = base.clone();
             for _ in 1..md {
-                full_poly = full_poly.poly_mul(&base).expect("poly_mul");
+                full_poly = full_poly.poly_mul(&base);
             }
             let inputs = crate::harness_inputs([
                 (Vid("claimed_sum".to_string()), Value::Scalar(claimed_sum)),
