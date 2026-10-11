@@ -30,11 +30,12 @@ anything under `cargo build --workspace`), also requires:
 
 ## Before opening a pull request
 
-CI runs four checks on every push and pull request:
+CI runs five checks on every push and pull request:
 
 ```bash
 cargo fmt --all -- --check                # Rust formatting
 cargo clippy --workspace --all-targets    # lints
+cargo clippy -p benchmarks --all-targets --features dhat  # heap-profiling code
 cargo zfmt --check examples/*/*.zippel    # Zippel formatting
 cargo test --workspace                    # tests
 ```
