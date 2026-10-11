@@ -30,7 +30,6 @@ pub mod zippel_side {
     use backend::{ArkBls12_381, ArkConfig, Value, VirtualPolynomial};
     use lang::id::{Tid, Vid};
     use share::Ctx;
-    use std::collections::HashMap;
     use std::path::PathBuf;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
@@ -118,7 +117,7 @@ pub mod zippel_side {
             for _ in 1..md {
                 full_poly = full_poly.poly_mul(&base).expect("poly_mul");
             }
-            let inputs = HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
+            let inputs = crate::harness_inputs([
                 (Vid("claimed_sum".to_string()), Value::Scalar(claimed_sum)),
                 (Vid("p".to_string()), Value::Poly(full_poly)),
             ]);

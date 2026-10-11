@@ -96,11 +96,12 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs: HashMap<Vid, Value<ArkBls12_381>>,
+        inputs: HashMap<Vid, Arc<Value<ArkBls12_381>>>,
         compile_time: Vec<std::time::Duration>,
     }
 
@@ -168,7 +169,7 @@ pub mod zippel_side {
                 named.push((name, col(&pk.permutation_oracles[i].evaluations)));
             }
             let inputs =
-                HashMap::from_iter(named.into_iter().map(|(k, v)| (Vid(k.to_string()), v)));
+                crate::harness_inputs(named.into_iter().map(|(k, v)| (Vid(k.to_string()), v)));
 
             Setup {
                 handler,
@@ -183,7 +184,7 @@ pub mod zippel_side {
         /// Panics if the prover graph fails to execute.
         pub fn prove_once(&mut self) -> Vec<Value<ArkBls12_381>> {
             self.handler
-                .run_prover(self.inputs.clone())
+                .run_prover(crate::lend(&self.inputs))
                 .expect("run_prover failed")
         }
 

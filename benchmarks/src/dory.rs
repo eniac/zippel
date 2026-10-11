@@ -74,11 +74,12 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs: HashMap<Vid, Value<ArkBls12_381>>,
+        inputs: HashMap<Vid, Arc<Value<ArkBls12_381>>>,
         compile_time: Vec<std::time::Duration>,
     }
 
@@ -102,7 +103,7 @@ pub mod zippel_side {
 
             let (s, v) = (&sh.setup, &sh.vsetup);
             let nv = 1usize << k;
-            let inputs = HashMap::from_iter(
+            let inputs = crate::harness_inputs(
                 [
                     ("m", Value::vec_scalar(sh.coeffs.clone())),
                     // upstream point = columns (sigma) then rows (nu)
@@ -149,7 +150,7 @@ pub mod zippel_side {
         /// Panics if the prover graph fails to execute.
         pub fn prove_once(&mut self) -> Vec<Value<ArkBls12_381>> {
             self.handler
-                .run_prover(self.inputs.clone())
+                .run_prover(crate::lend(&self.inputs))
                 .expect("run_prover failed")
         }
 

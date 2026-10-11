@@ -63,7 +63,6 @@ pub mod zippel_side {
     use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
-    use std::collections::HashMap;
     use std::io::Write;
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
@@ -214,7 +213,7 @@ pub mod zippel_side {
             // Uni<F, N-1>` (a univariate in coefficient form), not the
             // old `poly_coeffs: [F; N]` vector this harness predates —
             // promote the sampled coefficient vector to a Uni value.
-            let inputs = HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
+            let inputs = crate::harness_inputs([
                 (Vid("poly_x".to_string()), p.value_poly()),
                 (Vid("gen_g1".to_string()), g),
                 (Vid("gen_g2".to_string()), h),

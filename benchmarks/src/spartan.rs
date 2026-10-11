@@ -19,6 +19,7 @@ use rand::Rng;
 use share::Ctx;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use zippel::{ZippelArgs, ZippelHandler, check_verification, proof_size_bytes};
 
 /// Default `log_2` of the R1CS constraint count used by the Spartan sweep.
@@ -56,7 +57,7 @@ pub struct ZippelTiming {
 pub struct Setup {
     m: usize,
     handler: ZippelHandler<ArkCurve25519>,
-    inputs: HashMap<Vid, Value<ArkCurve25519>>,
+    inputs: HashMap<Vid, Arc<Value<ArkCurve25519>>>,
     /// What the prover's `az`, `bz`, `cz` inputs are computed from, inside
     /// each timed run, as libspartan computes them inside `prove`.
     products: MatVec,
@@ -146,13 +147,12 @@ impl Setup {
     pub fn time_protocol(&mut self) -> ZippelTiming {
         // Az, Bz, Cz are computed inside each run, as libspartan computes
         // them inside `prove`.
-        let names = crate::prover_args(&self.handler);
         let (prove, prove_peak, proof) = crate::sample(|| {
             let [az, bz, cz] = self.products.products();
             let computed = [("az", az), ("bz", bz), ("cz", cz)]
-                .map(|(name, v)| (Vid::from(name), Value::vec_scalar(v)));
+                .map(|(name, v)| (Vid::from(name), Arc::new(Value::vec_scalar(v))));
             self.handler
-                .run_prover(crate::shared_inputs(&self.inputs, &names).chain(computed))
+                .run_prover(crate::lend(&self.inputs).chain(computed))
                 .expect("run_prover failed")
         });
         let proof_bytes = proof_size_bytes::<ArkCurve25519>(&proof);
@@ -281,7 +281,7 @@ where
     }
 }
 
-fn prover_create_inputs(m: usize) -> (HashMap<Vid, Value<ArkCurve25519>>, MatVec) {
+fn prover_create_inputs(m: usize) -> (HashMap<Vid, Arc<Value<ArkCurve25519>>>, MatVec) {
     let num_cons = 1usize << m;
     let witness_len = 1usize << (m - 1);
     let io_len = witness_len - 1;
@@ -347,7 +347,7 @@ fn prover_create_inputs(m: usize) -> (HashMap<Vid, Value<ArkCurve25519>>, MatVec
 
     let placeholder_tau: Vec<Fr> = vec![Fr::from(0u64); m];
 
-    let inputs = HashMap::<Vid, Value<ArkCurve25519>>::from_iter([
+    let inputs = crate::harness_inputs([
         (Vid("mat_a_t".to_string()), mat_a_t),
         (Vid("mat_b_t".to_string()), mat_b_t),
         (Vid("mat_c_t".to_string()), mat_c_t),

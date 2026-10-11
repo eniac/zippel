@@ -67,11 +67,12 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs: HashMap<Vid, Value<ArkBls12_381>>,
+        inputs: HashMap<Vid, Arc<Value<ArkBls12_381>>>,
         compile_time: Vec<std::time::Duration>,
     }
 
@@ -89,7 +90,7 @@ pub mod zippel_side {
                 handler
             });
 
-            let inputs = HashMap::from_iter(
+            let inputs = crate::harness_inputs(
                 [
                     ("f", Value::vec_scalar(sh.f.clone())),
                     ("x0", Value::vec_scalar(sh.point[..nx].to_vec())),

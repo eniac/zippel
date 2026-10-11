@@ -29,6 +29,7 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     /// A compiled Hyrax instance together with the fixed, seeded inputs it is
@@ -39,7 +40,7 @@ pub mod zippel_side {
     /// `time_protocol` calls measure the same instance.
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs: HashMap<Vid, Value<ArkBls12_381>>,
+        inputs: HashMap<Vid, Arc<Value<ArkBls12_381>>>,
         compile_time: Vec<std::time::Duration>,
     }
 
@@ -97,7 +98,7 @@ pub mod zippel_side {
             let g_base = G1Projective::rand(&mut rng);
             let h_base = G1Projective::rand(&mut rng);
 
-            let inputs = HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
+            let inputs = crate::harness_inputs([
                 (Vid("p".to_string()), Value::vec_scalar(p)),
                 (Vid("z_row".to_string()), Value::vec_scalar(z_row)),
                 (Vid("z_col".to_string()), Value::vec_scalar(z_col)),

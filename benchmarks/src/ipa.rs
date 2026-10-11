@@ -29,7 +29,6 @@ pub mod zippel_side {
     use backend::{ArkSecp256k1, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
-    use std::collections::HashMap;
     use std::path::PathBuf;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
@@ -153,7 +152,7 @@ pub mod zippel_side {
         /// Panics if the prover or verifier graph fails to execute, or if the
         /// verifier rejects the honestly generated proof.
         pub fn time_protocol(&mut self) -> Timing {
-            let inputs = HashMap::<Vid, Value<ArkSecp256k1>>::from_iter([
+            let inputs = crate::harness_inputs([
                 (
                     Vid("g_vec".to_string()),
                     Value::vec_g1(self.inputs.g_vec.clone()),
