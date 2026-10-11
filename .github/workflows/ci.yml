@@ -3,19 +3,20 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore:
+    paths-ignore: &ignored
       - '**/*.md'
       - 'docs/**'
       - 'artifact/**'
       - 'LICENSE-MIT'
       - '.gitignore'
   pull_request:
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - 'artifact/**'
-      - 'LICENSE-MIT'
-      - '.gitignore'
+    paths-ignore: *ignored
+
+# A newer push to the same pull request supersedes the running checks; pushes
+# to main always finish.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -23,77 +24,119 @@ env:
 
 jobs:
   lint:
-    name: Lint (fmt + clippy)
+    name: Lint
     runs-on: ubuntu-latest
-    container: rustlang/rust:nightly
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Check for Windows reserved-name path components
-        shell: bash
         run: bash .github/scripts/check-windows-reserved-names.sh
 
-      - name: Install build dependencies
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends gcc
-          rm -rf /var/lib/apt/lists/*
+      # The toolchain and its components come from rust-toolchain.toml.
+      - name: Install toolchain
+        run: rustup toolchain install
 
-      - name: Ensure rustfmt and clippy components
-        run: rustup component add rustfmt clippy
-
-      - name: Cache cargo registry and target
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
 
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
 
       - name: cargo clippy
-        run: cargo clippy --workspace --all-targets
+        run: cargo clippy --locked --workspace --all-targets
 
       # The heap-profiling code is behind a feature the step above leaves
       # off; build and lint it too, so it cannot rot unnoticed.
-      - name: cargo clippy (benchmarks, dhat feature)
-        run: cargo clippy -p benchmarks --all-targets --features dhat
-
-  zippel-fmt:
-    name: zippel-fmt --check examples
-    runs-on: ubuntu-latest
-    container: rustlang/rust:nightly
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install build dependencies
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends gcc
-          rm -rf /var/lib/apt/lists/*
-
-      - name: Cache cargo registry and target
-        uses: Swatinem/rust-cache@v2
+      - name: cargo clippy (experiments, dhat feature)
+        run: cargo clippy --locked -p experiments --all-targets --features dhat
 
       - name: zippel-fmt --check examples
-        run: cargo run -p fmt --bin zippel-fmt -- --check examples/*/*.zippel
+        run: cargo run --locked -p fmt --bin zippel-fmt -- --check examples/*/*.zippel
 
-  test:
-    name: Test
+  # Tests are split three ways so the two slow groups run in parallel. The
+  # slow groups build optimized (debug assertions and overflow checks stay
+  # on); the rest builds faster than optimizing would save, so it does not.
+  test-unit:
+    name: Test (unit)
     runs-on: ubuntu-latest
-    container: rustlang/rust:nightly
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - name: Install toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test (all but analyses and experiments)
+        run: cargo test --locked --workspace --exclude analyses --exclude experiments
 
-      - name: Check for Windows reserved-name path components
-        shell: bash
-        run: bash .github/scripts/check-windows-reserved-names.sh
-
-      - name: Install build dependencies
+  test-analyses:
+    name: Test (analyses, Singular)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_PROFILE_TEST_OPT_LEVEL: 3
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Singular
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends gcc singular
-          rm -rf /var/lib/apt/lists/*
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends singular
+      - name: Install toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      # Gröbner-basis snapshot tests and the Singular backend's unit tests.
+      - name: cargo test -p analyses
+        run: cargo test --locked -p analyses
 
-      - name: Cache cargo registry and target
-        uses: Swatinem/rust-cache@v2
+  test-crossverify:
+    name: Test (experiments cross-verification)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_PROFILE_TEST_OPT_LEVEL: 3
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      # The crate's build script runs `cargo metadata --offline`, which needs
+      # every workspace dependency on disk, not only this crate's.
+      - name: cargo fetch
+        run: cargo fetch --locked
+      - name: cargo test -p experiments
+        run: cargo test --locked -p experiments
 
-      - name: cargo test
-        run: cargo test --workspace
+  # Runs every example's prover and verifier end to end: the tests only
+  # compile-check examples, so a proof that stops verifying would otherwise
+  # surface only for the systems the cross-verification tests cover.
+  examples:
+    name: Examples
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the example runner
+        run: cargo build --locked --release -p zippel --example zippel
+      - name: Run every example (prover and verifier, no analyses)
+        run: |
+          bin=target/release/examples/zippel
+          # With no arguments the runner lists the examples and exits non-zero.
+          mapfile -t names < <("$bin" 2>&1 | sed -n '/^Commands:/,/^$/p' \
+            | grep -oE '^  [a-z0-9_]+' | tr -d ' ' | grep -vx help)
+          if [ "${#names[@]}" -eq 0 ]; then
+            echo "no examples found"; exit 1
+          fi
+          failed=()
+          for name in "${names[@]}"; do
+            echo "::group::$name"
+            if ! timeout 900 "$bin" "$name" --no-analysis; then
+              failed+=("$name")
+            fi
+            echo "::endgroup::"
+          done
+          echo "ran ${#names[@]} examples"
+          if [ "${#failed[@]}" -ne 0 ]; then
+            echo "failed: ${failed[*]}"; exit 1
+          fi

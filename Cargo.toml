@@ -9,7 +9,7 @@ members = [
   "analyses",
   "fmt",
   "check",
-  "benchmarks",
+  "experiments",
 ]
 default-members = [
   ".",

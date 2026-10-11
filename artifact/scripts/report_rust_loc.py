@@ -13,7 +13,7 @@ Test code is reported on its own row instead of in its component:
   - files under a `tests/` directory, and `tests.rs` files.
 
 Code vendored from other projects as benchmark baselines
-(benchmarks/src/*_upstream/) is not Zippel's; it is reported separately
+(experiments/src/*_upstream/) is not Zippel's; it is reported separately
 and left out of the total.
 
 Needs no build: reads the source files directly. Run from anywhere:
@@ -34,10 +34,10 @@ COMPONENTS = [
     ("Analyses", ["analyses"]),
     ("Runtime", ["runtime", "backend"]),
     ("Other library code", ["src", "share", "fmt", "check"]),
-    ("Benchmarks", ["benches", "benchmarks"]),
+    ("Benchmarks", ["benches", "experiments"]),
     ("Examples", ["examples"]),
 ]
-VENDORED = re.compile(r"^benchmarks/src/[^/]+_upstream/")
+VENDORED = re.compile(r"^experiments/src/[^/]+_upstream/")
 SKIP_DIRS = {"target", "output"}
 
 
@@ -330,7 +330,7 @@ def main():
     print(f"| **Total** | | **{total:,}** |")
     print()
     print(f"Not counted: {vendored:,} lines vendored from other projects as "
-          "benchmark baselines (benchmarks/src/*_upstream/).")
+          "benchmark baselines (experiments/src/*_upstream/).")
 
 
 if __name__ == "__main__":

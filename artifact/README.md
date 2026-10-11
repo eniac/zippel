@@ -35,7 +35,7 @@ collected in [`index.html`](index.html).
 | `fmt/` | `zippel-fmt` formatter; keeps `examples/*.zippel` in the canonical style |
 | `examples/` | 30+ `.zippel` protocol implementations and their Rust harnesses |
 | `benches/analysis/` | Analysis benches behind Experiments 2 and 3 |
-| `benchmarks/` | Zippel vs. native performance comparison (Experiment 1) |
+| `experiments/` | Zippel vs. native performance comparison (Experiment 1) |
 | `analyses/tests/gb_snapshots/` | Analysis correctness and Gröbner-basis regression tests |
 | `artifact/` | This package: `Dockerfile` and `scripts/` |
 
@@ -101,7 +101,7 @@ any benchmark:
 
 ```sh
 docker run --rm zippel-ae \
-  cargo run -q --release -p benchmarks --bin bench_all -- --ncloc-only
+  cargo run -q --release -p experiments --bin bench_all -- --ncloc-only
 ```
 
 **Difference from the submitted paper.** Most Zippel counts differ from
@@ -152,7 +152,7 @@ A line counts if it holds code once comments and blank lines are
 removed. Test code (`#[test]` and `#[cfg(test)]` items, and files under
 `tests/`) is reported on its own row rather than in its component, and
 code vendored from other projects as benchmark baselines
-(`benchmarks/src/*_upstream/`) is left out. The script reads the
+(`experiments/src/*_upstream/`) is left out. The script reads the
 sources directly, so it needs no build.
 
 ## Experiments
@@ -179,7 +179,7 @@ size parameter), with the prover at 1, 2, 4 and 8 threads and the
 verifier at 1 thread. By default each measurement is taken once; the
 paper reports the mean of 10 runs, which you can match with
 `-e BENCH_SAMPLES=10` at roughly ten times the runtime. The pinned
-results in `benchmarks/*_results.csv` use 10 runs.
+results in `experiments/*_results.csv` use 10 runs.
 
 To run a subset, pick systems and thread counts:
 
@@ -203,7 +203,7 @@ SRS caches in the mounted output directory after the container exits.
     each thread count, and verifier speedup at 1 thread;
   - prover peak memory ratio: existing implementation / Zippel prover
     peak heap at 1 thread, where it is deterministic (see
-    `benchmarks/README.md`).
+    `experiments/README.md`).
 - **Compile time** (§9.1): each system's Zippel compile time at the
   benchmark size (parsing, size concretization, type checking, and
   Graph IR construction and projection), then the minimum, maximum and

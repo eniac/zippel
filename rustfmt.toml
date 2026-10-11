@@ -2,9 +2,9 @@
 edition = "2024"
 
 ignore = [
-    "benchmarks/src/pari_upstream",
-    "benchmarks/src/sumcheck_upstream",
-    "benchmarks/src/pst13_upstream",
-    "benchmarks/src/hyrax_upstream",
-    "benchmarks/src/ark_spartan_upstream",
+    "experiments/src/pari_upstream",
+    "experiments/src/sumcheck_upstream",
+    "experiments/src/pst13_upstream",
+    "experiments/src/hyrax_upstream",
+    "experiments/src/ark_spartan_upstream",
 ]

@@ -47,17 +47,17 @@ that examples and external users call into.
 | [`share/`](share) | Small utilities shared across the workspace: a generic `Ctx` map keyed by identifiers (`context.rs`), tree traversal helpers (`traversal.rs`), pretty-printing (`pretty.rs`), macros (`macros.rs`). |
 | [`fmt/`](fmt) | `zippel-fmt`, the source formatter for `.zippel` files (binary in `fmt/src/bin/zippel-fmt.rs`). |
 | [`check/`](check) | `zippel-check`: every compile-time check, no harness or inputs. A thin driver (`check/src/main.rs`) over the same stages and diagnostics as `ZippelHandler::compile`: `UModule::parse`, `UModule::concretize`, `CModule::typecheck`, and Graph IR construction/projection, with every error turned into a `Diagnostic` via `From` (`TypeError`, `ModuleError`, `GraphError`); it only adds default sizes (`UModule::minimal_sizes`). `check/tests/examples.rs` runs it over every example; `EXAMPLE_SIZES` there lists the examples that need non-default sizes. |
-| [`benchmarks/`](benchmarks) | Criterion-style benchmarks comparing Zippel-generated code against hand-optimized native/upstream baselines (`*_upstream/` subdirs) for protocols like Schnorr, KZG, IPA, Hyrax, Spartan, PST13, Pari. Not a default workspace member (see below). |
+| [`experiments/`](experiments) | The `experiments` crate: Zippel against existing (native/upstream) implementations of the same protocols. Vendored baselines (`*_upstream/` subdirs), Zippel harnesses, the `bench_all` time/memory driver behind the paper's Figure 7 (the artifact's Experiment 1), and cross-verification tests. Not a default workspace member (see below). Distinct from `benches/`, the Criterion benchmarks of Zippel alone. |
 | [`examples/`](examples) | 30+ protocol implementations. Each `examples/<name>/` has a `<name>.zippel` source file and a `main.rs` harness that compiles it against a concrete curve and runs prover/verifier/analyses. `examples/main.rs` is the single dispatch binary (`cargo zrun <name>`; `--no-analysis` runs only the prover and verifier); `examples/common/cli.rs` builds its protocol-agnostic Clap CLI (tested by `tests/example_cli.rs`), and an example with its own arguments defines them as a `#[derive(clap::Args)] pub struct Args` in its module, registered as `name(args)` in the `examples!` list; `examples/common/analysis.rs` has shared harness helpers (`RunOptions`, `time_analysis!` macro, etc.). |
 | [`artifact/`](artifact) | Docker image and scripts (`artifact/scripts/`) to reproduce the paper's compilation/runtime benchmarks and completeness/soundness analysis results. |
 | [`docs/`](docs/library-usage.md) | How to depend on Zippel as a library from an external crate. |
 | `paper.pdf` | The design/evaluation paper this repo implements. |
 
 Workspace members (`Cargo.toml`): `lang`, `lang/lang-derive`, `runtime`,
-`share`, `graph`, `backend`, `analyses`, `fmt`, `check`, `benchmarks`. Only a
+`share`, `graph`, `backend`, `analyses`, `fmt`, `check`, `experiments`. Only a
 subset are **default members** (`.`, `lang`, `runtime`, `share`, `graph`,
-`backend`, `analyses`, `check`) — `fmt` and `benchmarks` require `--workspace` or
-`-p <crate>` explicitly, and `benchmarks` additionally needs `gcc`, `m4`,
+`backend`, `analyses`, `check`) — `fmt` and `experiments` require `--workspace` or
+`-p <crate>` explicitly, and `experiments` additionally needs `gcc`, `m4`,
 `pkg-config` (arkworks/GMP) and pulls in upstream comparison libraries.
 
 ## Language quick reference
@@ -93,14 +93,16 @@ cargo zcheck [--size N=2]... FILE...
 
 cargo fmt --all -- --check              # Rust formatting
 cargo clippy --workspace --all-targets  # lints
-cargo clippy -p benchmarks --all-targets --features dhat  # lints the heap-profiling code
+cargo clippy -p experiments --all-targets --features dhat  # lints the heap-profiling code
 cargo zfmt --check examples/*/*.zippel  # .zippel formatting (--write to reformat)
 ```
 
 `zrun`, `zrunr`, `zcheck`, and `zfmt` are aliases in `.cargo/config.toml`
 (e.g. `zcheck` = `run -q -p check --bin zippel-check --`). The last four
-commands plus `cargo test --workspace` are what CI runs (CI spells out the
-aliases); run them before committing. Some `analyses` tests use an
+commands plus `cargo test --workspace` and every example with `cargo zrunr
+<name> --no-analysis` are what CI runs (`.github/workflows/ci.yml`: one lint
+job, three test jobs, one examples job; tests built optimized, `--locked`);
+run them before committing. Some `analyses` tests use an
 optional Singular backend for Gröbner bases and are skipped with a
 warning if `singular` is not on `PATH`.
 

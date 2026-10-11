@@ -19,12 +19,15 @@ cargo bench --bench execution            # Criterion benchmark
 
 Aliases live in `.cargo/config.toml`: `test-all`, `test-verbose`, `test-coverage` (the latter requires `cargo-tarpaulin`), plus `zrun` / `zrunr` for running one example (`cargo zrun ipa`, `cargo zrunr hyperplonk_piop`), `zcheck` for running every compile-time check on `.zippel` files without a harness (`cargo zcheck --size N=2 examples/marlin_kzg/marlin_kzg.zippel`), and `zfmt` for formatting them (`cargo zfmt --check examples/*/*.zippel`).
 
-CI runs on GitHub Actions (`.github/workflows/ci.yml`) inside the `rustlang/rust:nightly` container. The exact CI commands are:
+CI runs on GitHub Actions (`.github/workflows/ci.yml`) on `ubuntu-latest` with the toolchain pinned in `rust-toolchain.toml`. The CI commands are:
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets
-cargo test --workspace
+cargo clippy --locked --workspace --all-targets
+cargo clippy --locked -p experiments --all-targets --features dhat
+cargo run --locked -p fmt --bin zippel-fmt -- --check examples/*/*.zippel
+cargo test --locked --workspace   # split into unit / analyses (Singular) / benchmarks jobs, built optimized
+# plus every example: cargo run --release -p zippel --example zippel -- <name> --no-analysis
 ```
 
 Run these locally before pushing — clippy in particular is strict about the whole workspace including `--all-targets` (tests, examples, benches).

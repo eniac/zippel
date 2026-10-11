@@ -1,7 +1,7 @@
 // HyperPlonk SNARK (Chen, Bünz, Boneh, Zhang 2022), end to end: vanilla
 // Plonk gate, gate-identity zerocheck, permutation check, and the batched
 // opening of every claim with multilinear KZG. Aligned message for message
-// with EspressoSystems/hyperplonk (benchmarks/src/hyperplonk_upstream).
+// with EspressoSystems/hyperplonk (experiments/src/hyperplonk_upstream).
 //
 // Sizes: S variables, N = 2^S gates, S >= 2. Three witness columns w0, w1,
 // w2; five selectors q0..q4 with

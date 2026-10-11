@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The paper's Figure 6 ("List of proof systems implemented in Zippel")
 and Figure 7 (comparison with existing implementations): the protocols
-the artifact reports on. benches/ and benchmarks/ cover every
+the artifact reports on. benches/ and experiments/ cover every
 implemented protocol; the artifact scripts only run and report the ones
 below.
 

@@ -6,7 +6,7 @@
    prover speedup (baseline/zippel) at each thread count present in the
    CSV, verifier speedup at threads=1, and prover peak memory ratio
    (baseline/zippel prover peak heap at threads=1, where the peak is
-   deterministic; see benchmarks/README.md). Rows and labels are the
+   deterministic; see experiments/README.md). Rows and labels are the
    paper's, from paper.py; a row missing from the CSV is left out.
 
 2. Zippel compile time per system, then its minimum, maximum and

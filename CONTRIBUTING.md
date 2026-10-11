@@ -12,7 +12,7 @@
 | [`share`](share) | Utilities shared across the workspace |
 | [`fmt`](fmt) | `zippel-fmt`, the source formatter |
 | [`check`](check) | `zippel-check`, which runs every compile-time check on `.zippel` files without a harness or inputs |
-| [`benchmarks`](benchmarks) | Zippel vs. hand-optimized native baselines |
+| [`experiments`](experiments) | Zippel vs. hand-optimized native baselines |
 | [`examples`](examples) | Protocol implementations and their Rust harnesses |
 | [`artifact`](artifact) | Docker image and scripts to reproduce our evaluation results |
 
@@ -20,7 +20,7 @@
 
 Building the default workspace members only requires the nightly Rust
 toolchain (see [README.md](README.md#quick-start)). Building or testing
-everything, including the `benchmarks` crate (`cargo test-all`, or
+everything, including the `experiments` crate (`cargo test-all`, or
 anything under `cargo build --workspace`), also requires:
 
 - `gcc`, `m4`, and `pkg-config` (the `arkworks`/GMP dependency chain)
@@ -30,17 +30,20 @@ anything under `cargo build --workspace`), also requires:
 
 ## Before opening a pull request
 
-CI runs five checks on every push and pull request:
+CI runs these checks on every push to `main` and every pull request:
 
 ```bash
 cargo fmt --all -- --check                # Rust formatting
 cargo clippy --workspace --all-targets    # lints
-cargo clippy -p benchmarks --all-targets --features dhat  # heap-profiling code
+cargo clippy -p experiments --all-targets --features dhat  # heap-profiling code
 cargo zfmt --check examples/*/*.zippel    # Zippel formatting
-cargo test --workspace                    # tests
+cargo test --workspace                    # tests (CI splits them across jobs)
+cargo zrunr <name> --no-analysis          # every example, end to end
 ```
 
-Run these locally before submitting. To reformat in place instead of
+Run them locally before submitting. CI builds the tests optimized
+(`CARGO_PROFILE_TEST_OPT_LEVEL=3`, debug assertions still on) and passes
+`--locked`, so commit `Cargo.lock` changes. To reformat in place instead of
 only checking, drop `--check` from `cargo fmt`, or pass `--write`
 instead of `--check` to `cargo zfmt`.
 

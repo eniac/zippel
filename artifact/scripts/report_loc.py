@@ -6,7 +6,7 @@ This is broader than run_benchmark.sh's LoC columns,
 which only cover the systems that also have a native baseline to compare
 against (the paper's Figure 7).
 
-NCLOC rule matches benchmarks/src/bin/bench_all.rs's
+NCLOC rule matches experiments/src/bin/bench_all.rs's
 `count_ncloc_line_comments`: a line counts if it is non-empty after
 trimming and does not start with `//`.
 

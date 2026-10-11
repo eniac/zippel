@@ -46,7 +46,7 @@ WORKDIR /zippel
 USER zippel
 
 # Resolves rust-toolchain.toml's pinned nightly and prebuilds the full
-# workspace (including the benchmarks crate, a workspace member but not a
+# workspace (including the experiments crate, a workspace member but not a
 # default-member). `--all-targets` is required for this to touch what the
 # scripts run at all: plain `cargo build` only builds lib/bin targets, not
 # the examples, test harnesses (e.g. `gb_snapshots`), or benches (`analysis`,
