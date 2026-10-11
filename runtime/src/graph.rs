@@ -60,6 +60,9 @@ enum PendingAbsorb<C: ArkConfig> {
     Instance(Value<C>),
     /// A prover message, absorbed as its serialized bytes.
     Message(Value<C>),
+    /// A prover message the transcript also keeps for the proof: queued by
+    /// node, so the message is held once.
+    Kept(NodeIndex),
 }
 
 /// The first error of a run. The first task to fail records it here; tasks
@@ -177,9 +180,11 @@ struct Transcript<'a, C: ArkConfig, H: DuplexSpongeInterface<U = u8>> {
 impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8>> Transcript<'_, C, H> {
     /// Queues a prover message for the sponge, and keeps it for the proof.
     fn message(&mut self, node: NodeIndex, value: &Value<C>) {
-        self.pending.push(PendingAbsorb::Message(value.clone()));
         if let Some(messages) = &mut self.messages {
             messages.insert(node, value.clone());
+            self.pending.push(PendingAbsorb::Kept(node));
+        } else {
+            self.pending.push(PendingAbsorb::Message(value.clone()));
         }
     }
 
@@ -190,6 +195,11 @@ impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8>> Transcript<'_, C, H> {
                 PendingAbsorb::Instance(v) => absorb_instance_input::<C, H>(self.sponge, &v),
                 PendingAbsorb::Message(v) => {
                     let serialized = value_to_bytes(&v).unwrap();
+                    self.sponge.public_message(serialized.as_slice());
+                }
+                PendingAbsorb::Kept(node) => {
+                    let messages = self.messages.as_ref().expect("kept messages");
+                    let serialized = value_to_bytes(&messages[&node]).unwrap();
                     self.sponge.public_message(serialized.as_slice());
                 }
             }
@@ -325,7 +335,16 @@ impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8> + Send> Run<'_, C, H> {
                 }
                 // Each input feeds one `Arg` node (checked in `run_graph`).
                 Node::Arg(vid, _, _, _, _) => {
-                    let input = self.inputs.lock().unwrap().remove(vid);
+                    let input = {
+                        let mut inputs = self.inputs.lock().unwrap();
+                        let input = inputs.remove(vid);
+                        // Once every input is handed out, free the map's
+                        // storage rather than keep it for the whole run.
+                        if inputs.is_empty() {
+                            *inputs = HashMap::new();
+                        }
+                        input
+                    };
                     match input {
                         Some(input) => self.release_successors(scope, successor, Some(&input)),
                         None => {

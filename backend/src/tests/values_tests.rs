@@ -1554,7 +1554,7 @@ fn ram_ref_slice_of_prepared_g2_matches_the_copy() {
     let Value::VecG2Prepared(p) = &view else {
         unreachable!()
     };
-    assert_eq!(p.prepared.len(), 3);
+    assert_eq!(p.prepared().len(), 3);
 }
 
 /// The address of a value's heap payload, if it has one. Exhaustive on
@@ -1570,7 +1570,7 @@ fn heap_payload(v: &Value<ArkBls12_381>) -> Option<*const u8> {
         Value::VecGT(x) => Some(x.as_ptr().cast()),
         Value::VecG1Affine(x) => Some(x.as_ptr().cast()),
         Value::VecG2Affine(x) => Some(x.as_ptr().cast()),
-        Value::VecG2Prepared(x) => Some(x.prepared.as_ptr().cast()),
+        Value::VecG2Prepared(x) => Some(x.prepared().as_ptr().cast()),
         Value::Vec(x) => Some(x.as_ptr().cast()),
         Value::G2(x) => Some(Arc::as_ptr(x).cast()),
         Value::GT(x) => Some(Arc::as_ptr(x).cast()),
@@ -1616,4 +1616,12 @@ fn cloning_a_value_shares_its_heap_payload() {
         let clone = v.clone();
         assert_eq!(heap_payload(&clone), Some(payload), "cloning {v} copied it");
     }
+}
+
+/// `Value` is a handle the runtime copies once per holder, so its size is
+/// a memory cost on every protocol; clippy's `large_enum_variant` cannot see
+/// it (type parameters count as zero-sized). Grow it only on purpose.
+#[test]
+fn a_value_is_forty_bytes() {
+    assert_eq!(size_of::<Value<ArkBls12_381>>(), 40);
 }
