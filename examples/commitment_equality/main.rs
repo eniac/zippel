@@ -40,10 +40,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let c2 = g.mul(x) + h.mul(r2);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("x".to_string()), Value::Scalar(x)),
-        (Vid("r1".to_string()), Value::Scalar(r1)),
-        (Vid("r2".to_string()), Value::Scalar(r2)),
-        (Vid("g".to_string()), Value::G1(g)),
+        (Vid("r_diff".to_string()), Value::Scalar(r1 - r2)),
         (Vid("h".to_string()), Value::G1(h)),
         (Vid("c1".to_string()), Value::G1(c1)),
         (Vid("c2".to_string()), Value::G1(c2)),

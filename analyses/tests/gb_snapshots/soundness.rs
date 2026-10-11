@@ -62,17 +62,7 @@ pub(crate) static SOUNDNESS_ENTRIES: LazyLock<Vec<SoundnessEntry>> = LazyLock::n
             zippel_path: "examples/commitment_equality/commitment_equality.zippel",
             sizes: &[],
             l_vec: &[2],
-            // Known: "No valid extractor for witness r1: NoExtractor".
-            ignored: true,
-        },
-        SoundnessEntry {
-            name: "pedersen_eq",
-            zippel_path: "examples/pedersen_eq/pedersen_eq.zippel",
-            sizes: &[],
-            l_vec: &[2],
-            // Known: "No valid extractor for witness m1:
-            // NotVisible(- m2 + m1)".
-            ignored: true,
+            ignored: false,
         },
         SoundnessEntry {
             name: "cds",

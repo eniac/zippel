@@ -83,12 +83,6 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
             ignored: false,
         },
         CompletenessEntry {
-            name: "pedersen_eq",
-            zippel_path: "examples/pedersen_eq/pedersen_eq.zippel",
-            sizes: &[],
-            ignored: false,
-        },
-        CompletenessEntry {
             name: "hyrax_pop",
             zippel_path: "examples/hyrax_pop/hyrax_pop.zippel",
             sizes: &[],

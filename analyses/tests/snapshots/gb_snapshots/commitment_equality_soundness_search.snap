@@ -1,20 +1,15 @@
 ---
-source: analyses/tests/gb_snapshots.rs
+source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+- c2*z::1*__zippel::soundness::d::0::1::0 + c1*z::1*__zippel::soundness::d::0::1::0 + c2*z::0*__zippel::soundness::d::0::1::0 - c1*z::0*__zippel::soundness::d::0::1::0 - c2*r_diff + c1*r_diff
 - c::1*__zippel::soundness::d::0::1::0 + c::0*__zippel::soundness::d::0::1::0 - 1
-- c_diff*c::1*z::1*__zippel::soundness::d::0::1::0 - t*z::1*__zippel::soundness::d::0::1::0 + c_diff*c::1*z::0*__zippel::soundness::d::0::1::0 + t*z::0*__zippel::soundness::d::0::1::0 - c_diff*z::1
-- g*r2*x + g*r1*x + c1*r2 - c2*r1
-- g*x*z::1*__zippel::soundness::d::0::1::0 + c1*z::1*__zippel::soundness::d::0::1::0 + g*x*z::0*__zippel::soundness::d::0::1::0 - c1*z::0*__zippel::soundness::d::0::1::0 + r1*c_diff
-- g*x*z::1*__zippel::soundness::d::0::1::0 + c2*z::1*__zippel::soundness::d::0::1::0 + g*x*z::0*__zippel::soundness::d::0::1::0 - c2*z::0*__zippel::soundness::d::0::1::0 + r2*c_diff
-__zippel::node::21::0 - 1
-__zippel::node::21::1 - 1
-__zippel::node::35 - 1
-__zippel::node::39 - 1
-c_diff*c::0*z::1 + t*z::1 - c_diff*c::1*z::0 - t*z::0
-g*x + h*r1 - c1
-g*x + h*r2 - c2
-g*x*c::1*z::1*__zippel::soundness::d::0::1::0 - c1*c::1*z::1*__zippel::soundness::d::0::1::0 - g*x*c::1*z::0*__zippel::soundness::d::0::1::0 + c1*c::1*z::0*__zippel::soundness::d::0::1::0 + g*x*z::1 - c1*z::1 + r1*t
-g*x*c::1*z::1*__zippel::soundness::d::0::1::0 - c2*c::1*z::1*__zippel::soundness::d::0::1::0 - g*x*c::1*z::0*__zippel::soundness::d::0::1::0 + c2*c::1*z::0*__zippel::soundness::d::0::1::0 + g*x*z::1 - c2*z::1 + r2*t
-h*z::0 - c_diff*c::0 - t
-h*z::1 - c_diff*c::1 - t
+- h*z::0 - c2*c::0 + c1*c::0 + t
+- h*z::1 - c2*c::1 + c1*c::1 + t
+- h*z::1*__zippel::soundness::d::0::1::0 + h*z::0*__zippel::soundness::d::0::1::0 + c2 - c1
+__zippel::node::16::0 - 1
+__zippel::node::16::1 - 1
+__zippel::node::26 - 1
+h*c::0*z::1 - h*c::1*z::0 + t*c::1 - t*c::0
+h*r_diff + c2 - c1
+t*z::1*__zippel::soundness::d::0::1::0 - t*z::0*__zippel::soundness::d::0::1::0 + r_diff*t

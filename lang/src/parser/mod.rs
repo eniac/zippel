@@ -1897,10 +1897,6 @@ fn eq_weights<G: Group, F: Scalar<G>, EK: 2..21>(instance x: [F; EK]) -> [F; 2^E
     );
     golden_test!(golden_okamoto, "../examples/okamoto/okamoto.zippel");
     golden_test!(golden_pari, "../examples/pari/pari.zippel");
-    golden_test!(
-        golden_pedersen_eq,
-        "../examples/pedersen_eq/pedersen_eq.zippel"
-    );
     golden_test!(golden_pst13, "../examples/pst13/pst13.zippel");
     golden_test!(
         golden_r1cs_sigma,

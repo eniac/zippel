@@ -288,11 +288,4 @@ pub static PROTOCOLS: &[Protocol] = &[
         completeness: true,
         soundness: Some(&[2]),
     },
-    Protocol {
-        name: "pedersen_eq",
-        path: "examples/pedersen_eq/pedersen_eq.zippel",
-        sizes: &[],
-        completeness: true,
-        soundness: Some(&[2]),
-    },
 ];

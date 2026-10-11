@@ -77,8 +77,6 @@ mod okamoto;
 mod okamoto_elgamal;
 #[path = "pari/main.rs"]
 mod pari;
-#[path = "pedersen_eq/main.rs"]
-mod pedersen_eq;
 #[path = "pst13/main.rs"]
 mod pst13;
 #[path = "r1cs_sigma/main.rs"]
@@ -149,7 +147,6 @@ examples! {
     okamoto,
     okamoto_elgamal,
     pari,
-    pedersen_eq,
     pst13(args),
     r1cs_sigma,
     schnorr,
