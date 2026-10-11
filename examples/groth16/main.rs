@@ -93,45 +93,45 @@ impl Groth16Params {
         let gen_g1 = G1Projective::generator();
         let gen_g2 = G2Projective::generator();
         vec![
-            (Vid("gen_g1".to_string()), Value::G1(gen_g1)),
-            (Vid("gen_g2".to_string()), Value::G2(gen_g2)),
-            (Vid("alpha_g1".to_string()), Value::G1(self.alpha_g1)),
-            (Vid("beta_g2".to_string()), Value::G2(self.beta_g2)),
-            (Vid("gamma_g2".to_string()), Value::G2(self.gamma_g2)),
-            (Vid("delta_g2".to_string()), Value::G2(self.delta_g2)),
+            (Vid("gen_g1".to_string()), Value::g1(gen_g1)),
+            (Vid("gen_g2".to_string()), Value::g2(gen_g2)),
+            (Vid("alpha_g1".to_string()), Value::g1(self.alpha_g1)),
+            (Vid("beta_g2".to_string()), Value::g2(self.beta_g2)),
+            (Vid("gamma_g2".to_string()), Value::g2(self.gamma_g2)),
+            (Vid("delta_g2".to_string()), Value::g2(self.delta_g2)),
             (
                 Vid("gamma_abc_g1".to_string()),
-                Value::VecG1(self.gamma_abc_g1.clone()),
+                Value::vec_g1(self.gamma_abc_g1.clone()),
             ),
-            (Vid("beta_g1".to_string()), Value::G1(self.beta_g1)),
-            (Vid("delta_g1".to_string()), Value::G1(self.delta_g1)),
+            (Vid("beta_g1".to_string()), Value::g1(self.beta_g1)),
+            (Vid("delta_g1".to_string()), Value::g1(self.delta_g1)),
             (
                 Vid("a_query".to_string()),
-                Value::VecG1(self.a_query.clone()),
+                Value::vec_g1(self.a_query.clone()),
             ),
             (
                 Vid("b_g1_query".to_string()),
-                Value::VecG1(self.b_g1_query.clone()),
+                Value::vec_g1(self.b_g1_query.clone()),
             ),
             (
                 Vid("b_g2_query".to_string()),
-                Value::VecG2(self.b_g2_query.clone()),
+                Value::vec_g2(self.b_g2_query.clone()),
             ),
             (
                 Vid("h_query".to_string()),
-                Value::VecG1(self.h_query.clone()),
+                Value::vec_g1(self.h_query.clone()),
             ),
             (
                 Vid("l_query".to_string()),
-                Value::VecG1(self.l_query.clone()),
+                Value::vec_g1(self.l_query.clone()),
             ),
             (
                 Vid("instance_assignment".to_string()),
-                Value::VecScalar(instance_assignment.to_vec()),
+                Value::vec_scalar(instance_assignment.to_vec()),
             ),
             (
                 Vid("witness_assignment".to_string()),
-                Value::VecScalar(witness_assignment.to_vec()),
+                Value::vec_scalar(witness_assignment.to_vec()),
             ),
         ]
     }
@@ -157,7 +157,7 @@ fn zippel_proof_to_ark(proof: &[Value<ArkBls12_381>]) -> ark_groth16::Proof<E> {
 fn run_and_verify(
     zippel_path: &str,
     sizes: &Ctx<Tid, usize>,
-    inputs: &Ctx<Vid, Value<ArkBls12_381>>,
+    inputs: Vec<(Vid, Value<ArkBls12_381>)>,
     vk: &ark_groth16::VerifyingKey<E>,
     instance_assignment: &[F],
 ) {
@@ -165,7 +165,7 @@ fn run_and_verify(
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile(sizes);
     let prover_start = Instant::now();
-    let proof = handler.run_prover(inputs).unwrap();
+    let proof = handler.run_prover(inputs.clone()).unwrap();
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Zippel prover time:    {prover_elapsed:.2?}");
@@ -178,7 +178,9 @@ fn run_and_verify(
     let mut verifier_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(verifier_args);
     verifier_handler.compile(sizes);
     let verifier_start = Instant::now();
-    let verifier_result = verifier_handler.run_verifier(&proof, inputs).unwrap();
+    let verifier_result = verifier_handler
+        .run_verifier(proof.clone(), inputs)
+        .unwrap();
     let verifier_elapsed = verifier_start.elapsed();
     let passed = check_verification(&verifier_result);
     println!("Zippel verifier time: {verifier_elapsed:.2?}");
@@ -224,10 +226,8 @@ fn run_groth16(
     let mut entries = params.common_inputs(instance_assignment, witness_assignment);
     entries.push((
         Vid("h_coeffs".to_string()),
-        Value::VecScalar(h_coeffs_padded),
+        Value::vec_scalar(h_coeffs_padded),
     ));
-
-    let inputs: Ctx<Vid, Value<ArkBls12_381>> = Ctx::from_iter(entries);
 
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("M"), &m);
@@ -237,7 +237,7 @@ fn run_groth16(
     run_and_verify(
         "examples/groth16/groth16.zippel",
         &sizes,
-        &inputs,
+        entries,
         vk,
         instance_assignment,
     );

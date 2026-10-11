@@ -72,12 +72,13 @@ pub mod zippel_side {
     use backend::{ArkBls12_381, PreparedG2Vec, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
+    use std::collections::HashMap;
     use std::path::PathBuf;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs: Ctx<Vid, Value<ArkBls12_381>>,
+        inputs: HashMap<Vid, Value<ArkBls12_381>>,
         compile_time: Vec<std::time::Duration>,
     }
 
@@ -101,16 +102,16 @@ pub mod zippel_side {
 
             let (s, v) = (&sh.setup, &sh.vsetup);
             let nv = 1usize << k;
-            let inputs = Ctx::from_iter(
+            let inputs = crate::harness_inputs(
                 [
-                    ("m", Value::VecScalar(sh.coeffs.clone())),
+                    ("m", Value::vec_scalar(sh.coeffs.clone())),
                     // upstream point = columns (sigma) then rows (nu)
-                    ("col_pt", Value::VecScalar(sh.point[..k].to_vec())),
-                    ("row_pt", Value::VecScalar(sh.point[k..].to_vec())),
+                    ("col_pt", Value::vec_scalar(sh.point[..k].to_vec())),
+                    ("row_pt", Value::vec_scalar(sh.point[k..].to_vec())),
                     ("y", Value::Scalar(sh.y)),
                     (
                         "g1_vec",
-                        Value::VecG1Affine(ark_bls12_381::G1Projective::normalize_batch(
+                        Value::vec_g1_affine(ark_bls12_381::G1Projective::normalize_batch(
                             &s.g1_vec[..nv],
                         )),
                     ),
@@ -121,15 +122,15 @@ pub mod zippel_side {
                             ark_bls12_381::G2Projective::normalize_batch(&s.g2_vec[..nv]),
                         )),
                     ),
-                    ("g1_0", Value::G1(v.g1_0)),
-                    ("g2_0", Value::G2(v.g2_0)),
-                    ("h1", Value::G1(v.h1)),
-                    ("h2", Value::G2(v.h2)),
-                    ("ht", Value::GT(v.ht)),
-                    ("chi", Value::VecGT(v.chi[..=k].to_vec())),
-                    ("delta_1l", Value::VecGT(v.delta_1l[..=k].to_vec())),
-                    ("delta_1r", Value::VecGT(v.delta_1r[..=k].to_vec())),
-                    ("delta_2r", Value::VecGT(v.delta_2r[..=k].to_vec())),
+                    ("g1_0", Value::g1(v.g1_0)),
+                    ("g2_0", Value::g2(v.g2_0)),
+                    ("h1", Value::g1(v.h1)),
+                    ("h2", Value::g2(v.h2)),
+                    ("ht", Value::gt(v.ht)),
+                    ("chi", Value::vec_gt(v.chi[..=k].to_vec())),
+                    ("delta_1l", Value::vec_gt(v.delta_1l[..=k].to_vec())),
+                    ("delta_1r", Value::vec_gt(v.delta_1r[..=k].to_vec())),
+                    ("delta_2r", Value::vec_gt(v.delta_2r[..=k].to_vec())),
                 ]
                 .into_iter()
                 .map(|(k, v)| (Vid(k.to_string()), v)),
@@ -148,7 +149,7 @@ pub mod zippel_side {
         /// Panics if the prover graph fails to execute.
         pub fn prove_once(&mut self) -> Vec<Value<ArkBls12_381>> {
             self.handler
-                .run_prover(&self.inputs)
+                .run_prover(crate::lend(&self.inputs))
                 .expect("run_prover failed")
         }
 
@@ -167,16 +168,10 @@ pub mod zippel_side {
         /// # Panics
         /// Panics if either graph fails to execute or the verifier rejects.
         pub fn time_protocol(&mut self) -> Timing {
-            let (prove, prove_peak, proof) = crate::sample(|| {
-                self.handler
-                    .run_prover(&self.inputs)
-                    .expect("run_prover failed")
-            });
-            let (verify, verify_peak, result) = crate::sample(|| {
-                self.handler
-                    .run_verifier(&proof, &self.inputs)
-                    .expect("run_verifier failed")
-            });
+            let (prove, prove_peak, proof) =
+                crate::sample_zippel_prover(&mut self.handler, &self.inputs);
+            let (verify, verify_peak, result) =
+                crate::sample_zippel_verifier(&mut self.handler, &proof, &self.inputs);
             assert!(
                 check_verification(&result),
                 "zippel Dory verification FAILED"
@@ -284,21 +279,21 @@ mod cross_tests {
 
     fn gt(v: &Value<ArkBls12_381>) -> GT {
         match v {
-            Value::GT(g) => *g,
+            Value::GT(g) => **g,
             _ => panic!("expected GT, got {v}"),
         }
     }
     fn g1(v: &Value<ArkBls12_381>) -> G1Projective {
         match v {
-            Value::G1(g) => *g,
-            Value::G1Affine(g) => (*g).into(),
+            Value::G1(g) => **g,
+            Value::G1Affine(g) => (*(*g)).into(),
             _ => panic!("expected G1, got {v}"),
         }
     }
     fn g2(v: &Value<ArkBls12_381>) -> G2Projective {
         match v {
-            Value::G2(g) => *g,
-            Value::G2Affine(g) => (*g).into(),
+            Value::G2(g) => **g,
+            Value::G2Affine(g) => (**g).into(),
             _ => panic!("expected G2, got {v}"),
         }
     }

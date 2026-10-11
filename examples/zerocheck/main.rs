@@ -15,8 +15,7 @@ pub fn run(opts: &common::RunOptions) {
     sizes.insert(&Tid::new("S"), &2);
     handler.compile(&sizes);
 
-    let inputs = prover_create_inputs();
-    common::run_prover_and_verify(&mut handler, &inputs);
+    common::run_prover_and_verify(&mut handler, prover_create_inputs());
 
     if !opts.analyses {
         return;
@@ -39,13 +38,13 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
     let one = <ArkSecp256k1 as ArkConfig>::F::one();
 
     let v_coeffs = vec![zero, one];
-    let v = Value::<ArkSecp256k1>::VecScalar(v_coeffs.clone()).value_poly();
+    let v = Value::<ArkSecp256k1>::vec_scalar(v_coeffs.clone()).value_poly();
 
     let alpha_val: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::scalar());
     let alpha = alpha_val.into_scalar();
     let p_coeffs: Vec<<ArkSecp256k1 as ArkConfig>::F> =
         v_coeffs.iter().map(|c| *c * alpha).collect();
-    let p = Value::<ArkSecp256k1>::VecScalar(p_coeffs).value_poly();
+    let p = Value::<ArkSecp256k1>::vec_scalar(p_coeffs).value_poly();
 
     Ctx::<Vid, Value<ArkSecp256k1>>::from_iter([
         (Vid("p".to_string()), p),

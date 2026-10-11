@@ -31,7 +31,9 @@ pub fn run(opts: &common::RunOptions) {
 
     let inputs = build_inputs(n_size, b_size, l_chunk, h_deg);
     let prover_start = Instant::now();
-    let proof = handler.run_prover(&inputs).expect("run_prover failed");
+    let proof = handler
+        .run_prover(inputs.clone())
+        .expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<C>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
@@ -45,7 +47,7 @@ pub fn run(opts: &common::RunOptions) {
     verifier_handler.compile(&sizes);
     let verifier_start = Instant::now();
     let verifier_result = verifier_handler
-        .run_verifier(&proof, &inputs)
+        .run_verifier(proof, inputs)
         .expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     let passed = check_verification(&verifier_result);
@@ -141,7 +143,7 @@ fn build_inputs(n_size: usize, b_size: usize, l_chunk: usize, h_deg: usize) -> C
                 F::from((z / (b_size as u64).pow(u32::try_from(j).unwrap())) % (b_size as u64))
             })
             .collect();
-        chunks_bits.push(Value::VecScalar(digits));
+        chunks_bits.push(Value::vec_scalar(digits));
     }
 
     // Commitment randomness of the statement
@@ -166,25 +168,28 @@ fn build_inputs(n_size: usize, b_size: usize, l_chunk: usize, h_deg: usize) -> C
     }
 
     Ctx::<Vid, Value<C>>::from_iter([
-        (Vid("f_evals".to_string()), Value::VecScalar(f_evals)),
-        (Vid("chunks_bits".to_string()), Value::Vec(chunks_bits)),
+        (Vid("f_evals".to_string()), Value::vec_scalar(f_evals)),
+        (
+            Vid("chunks_bits".to_string()),
+            Value::Vec(chunks_bits.into()),
+        ),
         (Vid("rho".to_string()), Value::Scalar(rho)),
-        (Vid("com_f".to_string()), Value::G1(com_f)),
-        (Vid("b_pow".to_string()), Value::VecScalar(b_pow.clone())),
-        (Vid("gen_g1".to_string()), Value::G1(gen_g1)),
-        (Vid("gen_g2".to_string()), Value::G2(gen_g2)),
-        (Vid("srs_g2_tau".to_string()), Value::G2(srs_g2_tau)),
-        (Vid("srs_g2_xi".to_string()), Value::G2(srs_g2_xi)),
-        (Vid("xi_g1".to_string()), Value::G1(xi_g1)),
-        (Vid("s0_commit".to_string()), Value::G1(s0_commit)),
+        (Vid("com_f".to_string()), Value::g1(com_f)),
+        (Vid("b_pow".to_string()), Value::vec_scalar(b_pow.clone())),
+        (Vid("gen_g1".to_string()), Value::g1(gen_g1)),
+        (Vid("gen_g2".to_string()), Value::g2(gen_g2)),
+        (Vid("srs_g2_tau".to_string()), Value::g2(srs_g2_tau)),
+        (Vid("srs_g2_xi".to_string()), Value::g2(srs_g2_xi)),
+        (Vid("xi_g1".to_string()), Value::g1(xi_g1)),
+        (Vid("s0_commit".to_string()), Value::g1(s0_commit)),
         (
             Vid("srs_g1_lagr".to_string()),
-            Value::VecG1(srs_g1_lagr_vec),
+            Value::vec_g1(srs_g1_lagr_vec),
         ),
-        (Vid("srs_g1_h".to_string()), Value::VecG1(srs_g1_h_vec)),
+        (Vid("srs_g1_h".to_string()), Value::vec_g1(srs_g1_h_vec)),
         (
             Vid("v_star".to_string()),
-            Value::VecScalar(vec![F::one(); n_size + 1]),
+            Value::vec_scalar(vec![F::one(); n_size + 1]),
         ),
     ])
 }

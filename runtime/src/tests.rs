@@ -1,16 +1,15 @@
 #[cfg(test)]
 mod runtime_tests {
-    use crate::graph::{MutexGraph, ResultKind, RunResult, RuntimeInformation};
-    use crate::queue::sync_channel;
+    use crate::graph::{MutexGraph, ResultKind, RunResult};
     use backend::Value;
     use backend::config::ArkBls12_381;
     use graph::UDags;
     use lang::ast::{CModule, UModule};
     use lang::id::Tid;
+    use lang::id::Vid;
     use share::Ctx;
+    use std::collections::HashMap;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::thread;
 
     type TestConfig = ArkBls12_381;
 
@@ -35,12 +34,6 @@ mod runtime_tests {
     }
 
     #[test]
-    fn test_runtime_information_creation() {
-        // Just test that we can create RuntimeInformation
-        let _rt_info = RuntimeInformation::<TestConfig>::new();
-    }
-
-    #[test]
     fn test_runtime_concurrency_and_evaluation() {
         let src = r#"
             proto test_eval_strong<F: Field>(instance a: F, instance b: F) where 1 == 1 {
@@ -62,14 +55,14 @@ mod runtime_tests {
         let verifier = dag.get_verifier().unwrap();
 
         // Prover execution
-        let mut inputs = Ctx::new();
+        let mut inputs = HashMap::new();
         inputs.insert(
-            &lang::id::Vid::from("a"),
-            &Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(3u64)),
+            Vid::from("a"),
+            Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(3u64)),
         );
         inputs.insert(
-            &lang::id::Vid::from("b"),
-            &Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(4u64)),
+            Vid::from("b"),
+            Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(4u64)),
         );
 
         let separator = graph::domain_seperator::ZippelDomainSeparator::new_zippel_domain_seperator(
@@ -79,17 +72,13 @@ mod runtime_tests {
         let mut prover_state = separator.std_prover();
 
         let mg_prover = Arc::new(MutexGraph::new(prover));
-        let proof = match MutexGraph::run_graph(
-            mg_prover,
-            Arc::new(inputs),
-            &mut prover_state,
-            ResultKind::Prover,
-        )
-        .unwrap()
-        {
-            RunResult::Prover(v) => v,
-            RunResult::Verifier { .. } => unreachable!(),
-        };
+        let proof =
+            match MutexGraph::run_graph(mg_prover, inputs, &mut prover_state, ResultKind::Prover)
+                .unwrap()
+            {
+                RunResult::Prover(v) => v,
+                RunResult::Verifier { .. } => unreachable!(),
+            };
 
         // Proof must contain x (9), y (16) and t (c * 25)
         assert_eq!(proof.len(), 3);
@@ -103,14 +92,14 @@ mod runtime_tests {
         );
 
         // Verifier execution
-        let mut verifier_inputs = Ctx::new();
+        let mut verifier_inputs = HashMap::new();
         verifier_inputs.insert(
-            &lang::id::Vid::from("a"),
-            &Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(3u64)),
+            Vid::from("a"),
+            Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(3u64)),
         );
         verifier_inputs.insert(
-            &lang::id::Vid::from("b"),
-            &Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(4u64)),
+            Vid::from("b"),
+            Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(4u64)),
         );
 
         let transcript_args: Vec<lang::id::Vid> = verifier
@@ -126,14 +115,14 @@ mod runtime_tests {
 
         assert_eq!(transcript_args.len(), proof.len());
         for (name, val) in transcript_args.iter().zip(proof.iter()) {
-            verifier_inputs.insert(name, val);
+            verifier_inputs.insert(name.clone(), val.clone());
         }
 
         let mut verifier_state = separator.std_prover();
         let mg_verifier = Arc::new(MutexGraph::new(verifier.clone()));
         let verify_results = match MutexGraph::run_graph(
             mg_verifier,
-            Arc::new(verifier_inputs),
+            verifier_inputs,
             &mut verifier_state,
             ResultKind::Verifier,
         )
@@ -145,6 +134,53 @@ mod runtime_tests {
 
         assert_eq!(verify_results.len(), 1);
         assert!(verify_results[0]);
+    }
+
+    // A comprehension with an impure body is unrolled, so the vector it
+    // builds is one node reading every element. A smoke test of such a wide
+    // node end to end; at this size it does not tell a linear operand check
+    // in `MutexGraph::new` from a quadratic one.
+    #[test]
+    fn a_node_reading_thousands_of_operands_runs() {
+        let src = r#"
+            proto wide<F: Field, N: Size>(instance a: [F; N]) where 1 == 1 {
+                let r = [random<F> + a[i] for i in 0..N];
+                s <- dot(r, a);
+                verify(s == s)
+            }
+        "#;
+        let n = 2048;
+        let mut sizes = Ctx::new();
+        sizes.insert(&Tid::from("N"), &n);
+        let m = parse_and_concretize(src, &sizes);
+        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let dag = gs.protocols()[0].clone();
+        let (prover, _) = dag.get_prover();
+        let widest = prover
+            .node_indices()
+            .map(|i| prover[i].references().len())
+            .max()
+            .unwrap();
+        assert!(widest >= n, "expected a node reading all {n} elements");
+
+        let mut inputs = HashMap::new();
+        inputs.insert(
+            Vid::from("a"),
+            Value::vec_scalar(vec![<TestConfig as backend::ArkConfig>::F::from(3u64); n]),
+        );
+        let separator = graph::domain_seperator::ZippelDomainSeparator::new_zippel_domain_seperator(
+            "test_wide",
+            &dag.clone().erase_ann(),
+        );
+        let mut prover_state = separator.std_prover();
+        let mg = Arc::new(MutexGraph::new(prover));
+        let proof = match MutexGraph::run_graph(mg, inputs, &mut prover_state, ResultKind::Prover)
+            .unwrap()
+        {
+            RunResult::Prover(v) => v,
+            RunResult::Verifier { .. } => unreachable!(),
+        };
+        assert_eq!(proof.len(), 1);
     }
 
     #[test]
@@ -165,10 +201,10 @@ mod runtime_tests {
         let (prover, _) = dag.get_prover();
 
         // Omit 'b' in inputs to cause a MissingArg runtime error on verify(b == 999)
-        let mut inputs = Ctx::new();
+        let mut inputs = HashMap::new();
         inputs.insert(
-            &lang::id::Vid::from("a"),
-            &Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(3u64)),
+            Vid::from("a"),
+            Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(3u64)),
         );
 
         let separator = graph::domain_seperator::ZippelDomainSeparator::new_zippel_domain_seperator(
@@ -180,7 +216,7 @@ mod runtime_tests {
         let mg = Arc::new(MutexGraph::new(prover));
         let result = MutexGraph::run_graph(
             mg,
-            Arc::new(inputs),
+            inputs,
             &mut prover_state,
             crate::graph::ResultKind::Prover,
         );
@@ -190,49 +226,5 @@ mod runtime_tests {
             result.unwrap_err(),
             crate::RuntimeError::MissingArg { .. }
         ));
-    }
-
-    #[test]
-    fn test_sync_queue_concurrency() {
-        use std::sync::Barrier;
-
-        let num_workers: usize = 30;
-        let (tx, rx) = sync_channel(1);
-        let processed_count = Arc::new(AtomicUsize::new(0));
-        let mut handles = vec![];
-
-        let barrier = Arc::new(Barrier::new(num_workers + 1));
-
-        for i in 0..num_workers {
-            let tx_clone = tx.clone();
-            let barrier_clone = Arc::clone(&barrier);
-            let handle = thread::spawn(move || {
-                barrier_clone.wait();
-                tx_clone.push(petgraph::graph::node_index(i));
-            });
-            handles.push(handle);
-        }
-
-        drop(tx);
-
-        let processed_clone = Arc::clone(&processed_count);
-        let main_handle = thread::spawn(move || {
-            let mut count = 0;
-            while let Some(msg) = rx.pop() {
-                count += 1;
-                thread::sleep(std::time::Duration::from_millis(1));
-                drop(msg);
-            }
-            processed_clone.store(count, Ordering::SeqCst);
-        });
-
-        barrier.wait();
-
-        for h in handles {
-            h.join().unwrap();
-        }
-        main_handle.join().unwrap();
-
-        assert_eq!(processed_count.load(Ordering::SeqCst), num_workers);
     }
 }

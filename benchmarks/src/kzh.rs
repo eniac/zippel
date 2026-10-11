@@ -65,12 +65,13 @@ pub mod zippel_side {
     use backend::{ArkBls12_381, PreparedG2Vec, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
+    use std::collections::HashMap;
     use std::path::PathBuf;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs: Ctx<Vid, Value<ArkBls12_381>>,
+        inputs: HashMap<Vid, Value<ArkBls12_381>>,
         compile_time: Vec<std::time::Duration>,
     }
 
@@ -88,21 +89,21 @@ pub mod zippel_side {
                 handler
             });
 
-            let inputs = Ctx::from_iter(
+            let inputs = crate::harness_inputs(
                 [
-                    ("f", Value::VecScalar(sh.f.clone())),
-                    ("x0", Value::VecScalar(sh.point[..nx].to_vec())),
-                    ("y0", Value::VecScalar(sh.point[nx..].to_vec())),
+                    ("f", Value::vec_scalar(sh.f.clone())),
+                    ("x0", Value::vec_scalar(sh.point[..nx].to_vec())),
+                    ("y0", Value::vec_scalar(sh.point[nx..].to_vec())),
                     ("z0", Value::Scalar(sh.value)),
-                    ("h1", Value::VecG1Affine(sh.srs.h_tensors[0].clone())),
-                    ("h2", Value::VecG1Affine(sh.srs.h_tensors[1].clone())),
+                    ("h1", Value::vec_g1_affine(sh.srs.h_tensors[0].clone())),
+                    ("h2", Value::vec_g1_affine(sh.srs.h_tensors[1].clone())),
                     // Prepared once here, as native's verifier key stores V1.
                     (
                         "v1",
                         Value::VecG2Prepared(PreparedG2Vec::new(sh.srs.v_mat[0].clone())),
                     ),
-                    ("v_gen", Value::G2(sh.srs.v.into_group())),
-                    ("g_gen", Value::G1(sh.srs.g.into_group())),
+                    ("v_gen", Value::g2(sh.srs.v.into_group())),
+                    ("g_gen", Value::g1(sh.srs.g.into_group())),
                 ]
                 .into_iter()
                 .map(|(k, v)| (Vid(k.to_string()), v)),
@@ -130,16 +131,10 @@ pub mod zippel_side {
         /// # Panics
         /// Panics if either graph fails to execute or the verifier rejects.
         pub fn time_protocol(&mut self) -> Timing {
-            let (prove, prove_peak, proof) = crate::sample(|| {
-                self.handler
-                    .run_prover(&self.inputs)
-                    .expect("run_prover failed")
-            });
-            let (verify, verify_peak, result) = crate::sample(|| {
-                self.handler
-                    .run_verifier(&proof, &self.inputs)
-                    .expect("run_verifier failed")
-            });
+            let (prove, prove_peak, proof) =
+                crate::sample_zippel_prover(&mut self.handler, &self.inputs);
+            let (verify, verify_peak, result) =
+                crate::sample_zippel_verifier(&mut self.handler, &proof, &self.inputs);
             assert!(
                 check_verification(&result),
                 "zippel KZH-2 verification FAILED"

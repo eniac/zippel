@@ -138,13 +138,18 @@ pub mod zippel_side {
     use backend::{ArkBls12_381, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
+    use std::collections::HashMap;
     use std::path::PathBuf;
     use std::time::Instant;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs: Ctx<Vid, Value<ArkBls12_381>>,
+        inputs: HashMap<Vid, Value<ArkBls12_381>>,
+        /// The values, from which each run computes its `chunks_bits`
+        /// input, as the native prover decomposes them inside `prove`.
+        values: Vec<u64>,
+        ell: usize,
         compile_time: Vec<std::time::Duration>,
     }
 
@@ -177,35 +182,29 @@ pub mod zippel_side {
 
             let mut f_evals = vec![Fr::zero()];
             f_evals.extend(sh.values.iter().map(|&z| Fr::from(z)));
-            let chunks_bits = (0..ell)
-                .map(|j| {
-                    Value::VecScalar(sh.values.iter().map(|&z| Fr::from((z >> j) & 1)).collect())
-                })
-                .collect();
             let b_pow = (0..ell).map(|j| Fr::from(1u64 << j)).collect::<Vec<_>>();
 
-            let inputs = Ctx::from_iter(
+            let inputs = crate::harness_inputs(
                 [
                     // witness
-                    ("f_evals", Value::VecScalar(f_evals)),
-                    ("chunks_bits", Value::Vec(chunks_bits)),
+                    ("f_evals", Value::vec_scalar(f_evals)),
                     ("rho", Value::Scalar(sh.rho)),
                     // statement + public parameters
-                    ("com_f", Value::G1(sh.com_f.into_group())),
-                    ("b_pow", Value::VecScalar(b_pow)),
-                    ("gen_g1", Value::G1(g1)),
-                    ("gen_g2", Value::G2(g2)),
-                    ("srs_g2_tau", Value::G2(g2 * tau)),
-                    ("srs_g2_xi", Value::G2(g2 * xi)),
-                    ("xi_g1", Value::G1(g1 * xi)),
+                    ("com_f", Value::g1(sh.com_f.into_group())),
+                    ("b_pow", Value::vec_scalar(b_pow)),
+                    ("gen_g1", Value::g1(g1)),
+                    ("gen_g2", Value::g2(g2)),
+                    ("srs_g2_tau", Value::g2(g2 * tau)),
+                    ("srs_g2_xi", Value::g2(g2 * xi)),
+                    ("xi_g1", Value::g1(g1 * xi)),
                     // s0 = Lagrange poly with s0(ω^0)=1, zero elsewhere on the domain.
-                    ("s0_commit", Value::G1(sh.srs.lagr_g1[0].into_group())),
-                    ("srs_g1_lagr", Value::VecG1Affine(sh.srs.lagr_g1.clone())),
+                    ("s0_commit", Value::g1(sh.srs.lagr_g1[0].into_group())),
+                    ("srs_g1_lagr", Value::vec_g1_affine(sh.srs.lagr_g1.clone())),
                     (
                         "srs_g1_h",
-                        Value::VecG1Affine(sh.srs.powers_g1[..=h_deg].to_vec()),
+                        Value::vec_g1_affine(sh.srs.powers_g1[..=h_deg].to_vec()),
                     ),
-                    ("v_star", Value::VecScalar(vec![Fr::one(); n + 1])),
+                    ("v_star", Value::vec_scalar(vec![Fr::one(); n + 1])),
                 ]
                 .into_iter()
                 .map(|(k, v)| (Vid(k.to_string()), v)),
@@ -214,6 +213,8 @@ pub mod zippel_side {
             Setup {
                 handler,
                 inputs,
+                values: sh.values.clone(),
+                ell,
                 compile_time,
             }
         }
@@ -232,13 +233,30 @@ pub mod zippel_side {
             )
         }
 
+        /// The `chunks_bits` input: bit `j` of every value, for each of the
+        /// `ell` bits.
+        fn chunks_bits(&self) -> (Vid, Value<ArkBls12_381>) {
+            let bits = (0..self.ell)
+                .map(|j| {
+                    Value::vec_scalar(
+                        self.values
+                            .iter()
+                            .map(|&z| Fr::from((z >> j) & 1))
+                            .collect(),
+                    )
+                })
+                .collect();
+            (Vid::from("chunks_bits"), Value::Vec(bits))
+        }
+
         /// Mean prover wall-clock over `samples` runs; no verification.
         pub fn time_prover_only(&mut self, samples: u32) -> std::time::Duration {
             let mut sum = std::time::Duration::ZERO;
             for _ in 0..samples {
                 let t = Instant::now();
+                let bits = self.chunks_bits();
                 self.handler
-                    .run_prover(&self.inputs)
+                    .run_prover(crate::lend(&self.inputs).chain([bits]))
                     .expect("run_prover failed");
                 sum += t.elapsed();
             }
@@ -249,16 +267,16 @@ pub mod zippel_side {
         /// Panics if the prover or verifier graph fails to execute, or if the
         /// verifier rejects the honestly generated proof.
         pub fn time_protocol(&mut self) -> Timing {
+            // The bit decomposition is computed inside each run, as the
+            // native `prove` decomposes its values.
             let (prove, prove_peak, proof) = crate::sample(|| {
+                let bits = self.chunks_bits();
                 self.handler
-                    .run_prover(&self.inputs)
+                    .run_prover(crate::lend(&self.inputs).chain([bits]))
                     .expect("run_prover failed")
             });
-            let (verify, verify_peak, result) = crate::sample(|| {
-                self.handler
-                    .run_verifier(&proof, &self.inputs)
-                    .expect("run_verifier failed")
-            });
+            let (verify, verify_peak, result) =
+                crate::sample_zippel_verifier(&mut self.handler, &proof, &self.inputs);
             assert!(
                 check_verification(&result),
                 "zippel DeKART verification FAILED"

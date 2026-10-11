@@ -27,6 +27,9 @@ parallel = ["ark-std/parallel", "ark-ff/parallel", "ark-ec/parallel", "ark-poly/
 # module. It doesn't gate any dep — rayon is unconditional workspace-wide.
 multicore = []
 sol = []
+# Heap-profile one run of every measurement with dhat (see README,
+# "Heap profiling"). Profiled runs are slow; ignore timings from such builds.
+dhat = ["dep:dhat"]
 
 [dependencies]
 # Zippel side.
@@ -110,6 +113,9 @@ ark-groth16 = { version = "0.6", default-features = false, features = ["parallel
 ark-crypto-primitives = { version = "0.6", default-features = false, features = ["sponge", "signature", "parallel"] }
 ark-secp256k1 = { version = "0.6", default-features = false }
 
+# Heap profiler behind the `dhat` feature.
+dhat = { version = "0.3", optional = true }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # CPU pinning of the timed threads in bench_all (sched_setaffinity).
 libc = "0.2"
@@ -187,6 +193,12 @@ path = "src/bin/spartan_compare.rs"
 # decision rule.
 name = "msm_batch_ceiling"
 path = "src/bin/msm_batch_ceiling.rs"
+
+[[bin]]
+# One MSM and three independent MSMs: native arkworks against zippel's
+# backend call and a zippel protocol, under RAYON_NUM_THREADS.
+name = "msm_micro"
+path = "src/bin/msm_micro.rs"
 
 [[bin]]
 # Same-binary head-to-head of zippel's c_rows loop vs ark-spartan's

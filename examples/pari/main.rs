@@ -47,7 +47,9 @@ pub fn run(opts: &common::RunOptions) {
 
     let inputs = build_inputs();
     let prover_start = Instant::now();
-    let proof = handler.run_prover(&inputs).expect("run_prover failed");
+    let proof = handler
+        .run_prover(inputs.clone())
+        .expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<C>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
@@ -70,7 +72,7 @@ pub fn run(opts: &common::RunOptions) {
     verifier_handler.compile(&sizes);
     let verifier_start = Instant::now();
     let verifier_result = verifier_handler
-        .run_verifier(&proof, &inputs)
+        .run_verifier(proof, inputs)
         .expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     let passed = check_verification(&verifier_result);
@@ -243,7 +245,7 @@ fn build_inputs() -> Ctx<Vid, Value<C>> {
     let mut v_k_coeffs_vec = vec![F::zero(); K + 1];
     v_k_coeffs_vec[0] = -F::one();
     v_k_coeffs_vec[K] = F::one();
-    let v_k_poly_value = Value::VecScalar(v_k_coeffs_vec).value_poly();
+    let v_k_poly_value = Value::vec_scalar(v_k_coeffs_vec).value_poly();
 
     // Lagrange shortcut inputs: x = (z[0], z[1], ..., z[N-1]),
     //                          omegas[i] = ω^{K-N+i}
@@ -255,27 +257,27 @@ fn build_inputs() -> Ctx<Vid, Value<C>> {
 
     let w_vec: Vec<F> = z[N_PUB..].to_vec();
 
-    let z_a_value = Value::VecScalar(az);
-    let z_b_value = Value::VecScalar(bz);
-    let w_a_value = Value::VecScalar(w_a_evals);
-    let w_b_value = Value::VecScalar(w_b_evals);
-    let w_value = Value::VecScalar(w_vec);
-    let x_value = Value::VecScalar(x_vec);
-    let omegas_value = Value::VecScalar(omegas_vec);
+    let z_a_value = Value::vec_scalar(az);
+    let z_b_value = Value::vec_scalar(bz);
+    let w_a_value = Value::vec_scalar(w_a_evals);
+    let w_b_value = Value::vec_scalar(w_b_evals);
+    let w_value = Value::vec_scalar(w_vec);
+    let x_value = Value::vec_scalar(x_vec);
+    let omegas_value = Value::vec_scalar(omegas_vec);
     let v_k_coeffs_value = v_k_poly_value;
 
-    let sigma_w_value = Value::VecG1(sigma_w_vec);
-    let sigma_q_value = Value::VecG1(sigma_q_vec);
-    let sigma_a_value = Value::VecG1(sigma_a_vec);
-    let sigma_b_value = Value::VecG1(sigma_b_vec);
-    let sigma_q_prime_value = Value::VecG1(sigma_q_prime_vec);
+    let sigma_w_value = Value::vec_g1(sigma_w_vec);
+    let sigma_q_value = Value::vec_g1(sigma_q_vec);
+    let sigma_a_value = Value::vec_g1(sigma_a_vec);
+    let sigma_b_value = Value::vec_g1(sigma_b_vec);
+    let sigma_q_prime_value = Value::vec_g1(sigma_q_prime_vec);
 
-    let alpha_g_value = Value::G1(alpha_g_val);
-    let beta_g_value = Value::G1(beta_g_val);
-    let g_g1_value = Value::G1(g_g1);
-    let delta2_h_value = Value::G2(delta2_h_val);
-    let tau_h_value = Value::G2(tau_h_val);
-    let h_g2_value = Value::G2(h_g2);
+    let alpha_g_value = Value::g1(alpha_g_val);
+    let beta_g_value = Value::g1(beta_g_val);
+    let g_g1_value = Value::g1(g_g1);
+    let delta2_h_value = Value::g2(delta2_h_val);
+    let tau_h_value = Value::g2(tau_h_val);
+    let h_g2_value = Value::g2(h_g2);
     let f_one_value = Value::Scalar(F::one());
     let k_inv_value = Value::Scalar(k_inv);
 

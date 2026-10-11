@@ -23,6 +23,7 @@ use benchmarks::groth16::{bridge, build_translated, shared};
 use clap::Parser;
 use lang::id::{Tid, Vid};
 use share::Ctx;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 use zippel::{ZippelArgs, ZippelHandler};
@@ -399,52 +400,52 @@ fn main() {
     sizes.insert(&Tid::new("H"), &t.h_size);
     handler.compile_for_execution(&sizes);
 
-    let inputs_base = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+    let inputs_base = HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
         (
             Vid("gen_g1".to_string()),
-            Value::G1(ark_bls12_381::G1Projective::generator()),
+            Value::g1(ark_bls12_381::G1Projective::generator()),
         ),
         (
             Vid("gen_g2".to_string()),
-            Value::G2(ark_bls12_381::G2Projective::generator()),
+            Value::g2(ark_bls12_381::G2Projective::generator()),
         ),
-        (Vid("alpha_g1".to_string()), Value::G1(t.keys.alpha_g1)),
-        (Vid("beta_g2".to_string()), Value::G2(t.keys.beta_g2)),
-        (Vid("gamma_g2".to_string()), Value::G2(t.keys.gamma_g2)),
-        (Vid("delta_g2".to_string()), Value::G2(t.keys.delta_g2)),
+        (Vid("alpha_g1".to_string()), Value::g1(t.keys.alpha_g1)),
+        (Vid("beta_g2".to_string()), Value::g2(t.keys.beta_g2)),
+        (Vid("gamma_g2".to_string()), Value::g2(t.keys.gamma_g2)),
+        (Vid("delta_g2".to_string()), Value::g2(t.keys.delta_g2)),
         (
             Vid("gamma_abc_g1".to_string()),
-            Value::VecG1(t.keys.gamma_abc_g1.clone()),
+            Value::vec_g1(t.keys.gamma_abc_g1.clone()),
         ),
-        (Vid("beta_g1".to_string()), Value::G1(t.keys.beta_g1)),
-        (Vid("delta_g1".to_string()), Value::G1(t.keys.delta_g1)),
+        (Vid("beta_g1".to_string()), Value::g1(t.keys.beta_g1)),
+        (Vid("delta_g1".to_string()), Value::g1(t.keys.delta_g1)),
         (
             Vid("a_query".to_string()),
-            Value::VecG1(t.keys.a_query.clone()),
+            Value::vec_g1(t.keys.a_query.clone()),
         ),
         (
             Vid("b_g1_query".to_string()),
-            Value::VecG1(t.keys.b_g1_query.clone()),
+            Value::vec_g1(t.keys.b_g1_query.clone()),
         ),
         (
             Vid("b_g2_query".to_string()),
-            Value::VecG2(t.keys.b_g2_query.clone()),
+            Value::vec_g2(t.keys.b_g2_query.clone()),
         ),
         (
             Vid("h_query".to_string()),
-            Value::VecG1(t.keys.h_query.clone()),
+            Value::vec_g1(t.keys.h_query.clone()),
         ),
         (
             Vid("l_query".to_string()),
-            Value::VecG1(t.keys.l_query.clone()),
+            Value::vec_g1(t.keys.l_query.clone()),
         ),
         (
             Vid("instance_assignment".to_string()),
-            Value::VecScalar(t.instance_assignment.clone()),
+            Value::vec_scalar(t.instance_assignment.clone()),
         ),
         (
             Vid("witness_assignment".to_string()),
-            Value::VecScalar(t.witness_assignment.clone()),
+            Value::vec_scalar(t.witness_assignment.clone()),
         ),
     ]);
 
@@ -453,25 +454,25 @@ fn main() {
         bridge::witness_map(&t.mat, t.num_inputs, t.num_constraints, &t.full_assignment);
     h_coeffs.resize(t.h_size, GitFr::zero());
     let mut inputs = inputs_base.clone();
-    inputs.insert(&Vid("h_coeffs".to_string()), &Value::VecScalar(h_coeffs));
+    inputs.insert(Vid::from("h_coeffs"), Value::vec_scalar(h_coeffs));
     // Relation-only QAP witnesses (zeros fine — analyses skipped).
     let n_total = t.m + t.l;
     inputs.insert(
-        &Vid("a_evs".to_string()),
-        &Value::VecScalar(vec![GitFr::zero(); n_total]),
+        Vid::from("a_evs"),
+        Value::vec_scalar(vec![GitFr::zero(); n_total]),
     );
     inputs.insert(
-        &Vid("b_evs".to_string()),
-        &Value::VecScalar(vec![GitFr::zero(); n_total]),
+        Vid::from("b_evs"),
+        Value::vec_scalar(vec![GitFr::zero(); n_total]),
     );
     inputs.insert(
-        &Vid("c_evs".to_string()),
-        &Value::VecScalar(vec![GitFr::zero(); n_total]),
+        Vid::from("c_evs"),
+        Value::vec_scalar(vec![GitFr::zero(); n_total]),
     );
-    inputs.insert(&Vid("t_at_tau".to_string()), &Value::Scalar(GitFr::zero()));
+    inputs.insert(Vid::from("t_at_tau"), Value::Scalar(GitFr::zero()));
     eprintln!("  witness_map + input clone:      {:>9.2?}", tic.elapsed());
     let tic = Instant::now();
-    let _proof = handler.run_prover(&inputs).expect("zippel prove");
+    let _proof = handler.run_prover(inputs).expect("zippel prove");
     eprintln!("  run_prover (all 5 MSMs + arith): {:>9.2?}", tic.elapsed());
 
     // Suppress unused warnings.

@@ -33,12 +33,14 @@ pub fn run(opts: &common::RunOptions) {
 
     let inputs = prover_create_inputs();
     let t = Instant::now();
-    let proof = handler.run_prover(&inputs).expect("run_prover failed");
+    let proof = handler
+        .run_prover(inputs.clone())
+        .expect("run_prover failed");
     println!("Prover time:    {:.2?}", t.elapsed());
     println!("Proof items:    {}", proof.len());
     let t = Instant::now();
     let verifier_result = handler
-        .run_verifier(&proof, &inputs)
+        .run_verifier(proof, inputs)
         .expect("run_verifier failed");
     println!("Verifier time:  {:.2?}", t.elapsed());
 
@@ -96,13 +98,13 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let h_base = G1::rand(&mut rng);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("p".to_string()), Value::VecScalar(p)),
-        (Vid("z_row".to_string()), Value::VecScalar(z_row)),
-        (Vid("z_col".to_string()), Value::VecScalar(z_col)),
+        (Vid("p".to_string()), Value::vec_scalar(p)),
+        (Vid("z_row".to_string()), Value::vec_scalar(z_row)),
+        (Vid("z_col".to_string()), Value::vec_scalar(z_col)),
         (Vid("y".to_string()), Value::Scalar(y)),
-        (Vid("g_vec".to_string()), Value::VecG1(g_vec)),
-        (Vid("g_base".to_string()), Value::G1(g_base)),
-        (Vid("h_base".to_string()), Value::G1(h_base)),
+        (Vid("g_vec".to_string()), Value::vec_g1(g_vec)),
+        (Vid("g_base".to_string()), Value::g1(g_base)),
+        (Vid("h_base".to_string()), Value::g1(h_base)),
     ])
 }
 

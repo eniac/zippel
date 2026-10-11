@@ -22,8 +22,7 @@ pub fn run(opts: &common::RunOptions) {
     let sizes = build_sizes_ctx();
     handler.compile(&sizes);
 
-    let inputs = prover_create_inputs();
-    common::run_prover_and_verify(&mut handler, &inputs);
+    common::run_prover_and_verify(&mut handler, prover_create_inputs());
 
     if !opts.analyses {
         return;
@@ -50,12 +49,12 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let h_base = G1::rand(&mut rng);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("ck".to_string()), Value::VecG1(vec![ck])),
-        (Vid("h_base".to_string()), Value::G1(h_base)),
-        (Vid("mat_A".to_string()), Value::VecScalar(mat_a)),
-        (Vid("mat_B".to_string()), Value::VecScalar(mat_b)),
-        (Vid("mat_C".to_string()), Value::VecScalar(mat_c)),
-        (Vid("x".to_string()), Value::VecScalar(vec![x0])),
-        (Vid("w".to_string()), Value::VecScalar(vec![w0])),
+        (Vid("ck".to_string()), Value::vec_g1(vec![ck])),
+        (Vid("h_base".to_string()), Value::g1(h_base)),
+        (Vid("mat_A".to_string()), Value::vec_scalar(mat_a)),
+        (Vid("mat_B".to_string()), Value::vec_scalar(mat_b)),
+        (Vid("mat_C".to_string()), Value::vec_scalar(mat_c)),
+        (Vid("x".to_string()), Value::vec_scalar(vec![x0])),
+        (Vid("w".to_string()), Value::vec_scalar(vec![w0])),
     ])
 }

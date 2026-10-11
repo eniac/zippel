@@ -3,6 +3,7 @@
 //! These benchmarks measure the end-to-end execution time of `run_graph`
 //! via the public `ZippelHandler` API. They are useful for comparing
 //! different `run_graph` implementations and tracking performance regressions.
+//! Each iteration's inputs (and proof) are cloned outside the timed region.
 //!
 //! Run with: cargo bench --bench `execution`
 
@@ -11,7 +12,7 @@
     reason = "criterion_group! synthesises an undocumentable `pub fn benches`"
 )]
 
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use std::path::PathBuf;
 
 use ark_ff::Field;
@@ -33,8 +34,8 @@ fn schnorr_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let h = h_affines.into_iter().next().unwrap();
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("x".to_string()), Value::Scalar(x)),
-        (Vid("g".to_string()), Value::G1(g)),
-        (Vid("h".to_string()), Value::G1Affine(h)),
+        (Vid("g".to_string()), Value::g1(g)),
+        (Vid("h".to_string()), Value::g1_affine(h)),
     ])
 }
 
@@ -50,7 +51,11 @@ fn bench_schnorr_prover(c: &mut Criterion) {
     let inputs = schnorr_inputs();
 
     group.bench_function("prover", |b| {
-        b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
+        b.iter_batched(
+            || inputs.clone(),
+            |inputs| handler.run_prover(inputs).expect("run_prover failed"),
+            BatchSize::SmallInput,
+        );
     });
 
     group.finish();
@@ -66,14 +71,20 @@ fn bench_schnorr_verifier(c: &mut Criterion) {
     ));
     handler.compile(&Ctx::new());
     let inputs = schnorr_inputs();
-    let proof = handler.run_prover(&inputs).expect("run_prover failed");
+    let proof = handler
+        .run_prover(inputs.clone())
+        .expect("run_prover failed");
 
     group.bench_function("verifier", |b| {
-        b.iter(|| {
-            handler
-                .run_verifier(&proof, &inputs)
-                .expect("run_verifier failed")
-        });
+        b.iter_batched(
+            || (proof.clone(), inputs.clone()),
+            |(proof, inputs)| {
+                handler
+                    .run_verifier(proof, inputs)
+                    .expect("run_verifier failed")
+            },
+            BatchSize::SmallInput,
+        );
     });
 
     group.finish();
@@ -105,9 +116,9 @@ fn hadamard_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
         p_b_coeffs.push(b_i.into_scalar());
         p_c_coeffs.push(c_i.into_scalar());
     }
-    let p_A = Value::<ArkSecp256k1>::VecScalar(p_a_coeffs).value_poly();
-    let p_B = Value::<ArkSecp256k1>::VecScalar(p_b_coeffs).value_poly();
-    let p_C = Value::<ArkSecp256k1>::VecScalar(p_c_coeffs).value_poly();
+    let p_A = Value::<ArkSecp256k1>::vec_scalar(p_a_coeffs).value_poly();
+    let p_B = Value::<ArkSecp256k1>::vec_scalar(p_b_coeffs).value_poly();
+    let p_C = Value::<ArkSecp256k1>::vec_scalar(p_c_coeffs).value_poly();
 
     // v_H = 1 (constant polynomial), so any poly is divisible by v_H.
     let zero = <ArkSecp256k1 as ArkConfig>::F::zero();
@@ -115,7 +126,7 @@ fn hadamard_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
     let mut v_h_coeffs = Vec::with_capacity(n);
     v_h_coeffs.push(one);
     v_h_coeffs.extend(std::iter::repeat_n(zero, n));
-    let v_H = Value::<ArkSecp256k1>::VecScalar(v_h_coeffs).value_poly();
+    let v_H = Value::<ArkSecp256k1>::vec_scalar(v_h_coeffs).value_poly();
 
     Ctx::<Vid, Value<ArkSecp256k1>>::from_iter([
         (Vid("p_A".to_string()), p_A),
@@ -139,7 +150,11 @@ fn bench_hadamard_prover(c: &mut Criterion) {
     let inputs = hadamard_inputs();
 
     group.bench_function("prover", |b| {
-        b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
+        b.iter_batched(
+            || inputs.clone(),
+            |inputs| handler.run_prover(inputs).expect("run_prover failed"),
+            BatchSize::SmallInput,
+        );
     });
 
     group.finish();
@@ -157,14 +172,20 @@ fn bench_hadamard_verifier(c: &mut Criterion) {
     sizes.insert(&Tid::new("S"), &4usize);
     handler.compile(&sizes);
     let inputs = hadamard_inputs();
-    let proof = handler.run_prover(&inputs).expect("run_prover failed");
+    let proof = handler
+        .run_prover(inputs.clone())
+        .expect("run_prover failed");
 
     group.bench_function("verifier", |b| {
-        b.iter(|| {
-            handler
-                .run_verifier(&proof, &inputs)
-                .expect("run_verifier failed")
-        });
+        b.iter_batched(
+            || (proof.clone(), inputs.clone()),
+            |(proof, inputs)| {
+                handler
+                    .run_verifier(proof, inputs)
+                    .expect("run_verifier failed")
+            },
+            BatchSize::SmallInput,
+        );
     });
 
     group.finish();
@@ -190,9 +211,9 @@ fn pedersen_eq_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("r_diff".to_string()), Value::Scalar(r1 - r2)),
-        (Vid("h".to_string()), Value::G1(h)),
-        (Vid("c1".to_string()), Value::G1(c1)),
-        (Vid("c2".to_string()), Value::G1(c2)),
+        (Vid("h".to_string()), Value::g1(h)),
+        (Vid("c1".to_string()), Value::g1(c1)),
+        (Vid("c2".to_string()), Value::g1(c2)),
     ])
 }
 
@@ -207,7 +228,11 @@ fn bench_pedersen_eq_prover(c: &mut Criterion) {
     let inputs = pedersen_eq_inputs();
 
     group.bench_function("prover", |b| {
-        b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
+        b.iter_batched(
+            || inputs.clone(),
+            |inputs| handler.run_prover(inputs).expect("run_prover failed"),
+            BatchSize::SmallInput,
+        );
     });
 
     group.finish();
@@ -222,14 +247,20 @@ fn bench_pedersen_eq_verifier(c: &mut Criterion) {
     ));
     handler.compile(&Ctx::new());
     let inputs = pedersen_eq_inputs();
-    let proof = handler.run_prover(&inputs).expect("run_prover failed");
+    let proof = handler
+        .run_prover(inputs.clone())
+        .expect("run_prover failed");
 
     group.bench_function("verifier", |b| {
-        b.iter(|| {
-            handler
-                .run_verifier(&proof, &inputs)
-                .expect("run_verifier failed")
-        });
+        b.iter_batched(
+            || (proof.clone(), inputs.clone()),
+            |(proof, inputs)| {
+                handler
+                    .run_verifier(proof, inputs)
+                    .expect("run_verifier failed")
+            },
+            BatchSize::SmallInput,
+        );
     });
 
     group.finish();
@@ -289,7 +320,11 @@ fn bench_ipa_prover(c: &mut Criterion) {
     let inputs = ipa_inputs(IPA_S);
 
     group.bench_function(format!("prover/S={}", IPA_S).as_str(), |b| {
-        b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
+        b.iter_batched(
+            || inputs.clone(),
+            |inputs| handler.run_prover(inputs).expect("run_prover failed"),
+            BatchSize::SmallInput,
+        );
     });
 
     group.finish();
@@ -305,14 +340,20 @@ fn bench_ipa_verifier(c: &mut Criterion) {
     sizes.insert(&Tid::new("S"), &IPA_S);
     handler.compile(&sizes);
     let inputs = ipa_inputs(IPA_S);
-    let proof = handler.run_prover(&inputs).expect("run_prover failed");
+    let proof = handler
+        .run_prover(inputs.clone())
+        .expect("run_prover failed");
 
     group.bench_function(format!("verifier/S={}", IPA_S).as_str(), |b| {
-        b.iter(|| {
-            handler
-                .run_verifier(&proof, &inputs)
-                .expect("run_verifier failed")
-        });
+        b.iter_batched(
+            || (proof.clone(), inputs.clone()),
+            |(proof, inputs)| {
+                handler
+                    .run_verifier(proof, inputs)
+                    .expect("run_verifier failed")
+            },
+            BatchSize::SmallInput,
+        );
     });
 
     group.finish();
@@ -345,17 +386,17 @@ fn hyrax_ipa_inputs(s: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
 
     let gx_dot = g_vec.clone().dot(x_vec.clone());
     let xi_val = match gx_dot {
-        Value::G1(gx_sum) => h_base * r_xi + gx_sum,
+        Value::G1(gx_sum) => h_base * r_xi + *gx_sum,
         _ => unreachable!(),
     };
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("xi".to_string()), Value::G1(xi_val)),
-        (Vid("tau".to_string()), Value::G1(tau_val)),
+        (Vid("xi".to_string()), Value::g1(xi_val)),
+        (Vid("tau".to_string()), Value::g1(tau_val)),
         (Vid("a_vec".to_string()), a_vec),
         (Vid("g_vec".to_string()), g_vec),
-        (Vid("g_base".to_string()), Value::G1(g_base)),
-        (Vid("h_base".to_string()), Value::G1(h_base)),
+        (Vid("g_base".to_string()), Value::g1(g_base)),
+        (Vid("h_base".to_string()), Value::g1(h_base)),
         (Vid("x_vec".to_string()), x_vec),
         (Vid("y".to_string()), y),
         (Vid("r_xi".to_string()), Value::Scalar(r_xi)),
@@ -378,7 +419,11 @@ fn bench_hyrax_ipa_prover(c: &mut Criterion) {
     let inputs = hyrax_ipa_inputs(HYRAX_IPA_S);
 
     group.bench_function(format!("prover/S={}", HYRAX_IPA_S).as_str(), |b| {
-        b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
+        b.iter_batched(
+            || inputs.clone(),
+            |inputs| handler.run_prover(inputs).expect("run_prover failed"),
+            BatchSize::SmallInput,
+        );
     });
 
     group.finish();
@@ -395,14 +440,20 @@ fn bench_hyrax_ipa_verifier(c: &mut Criterion) {
     sizes.insert(&Tid::new("S"), &HYRAX_IPA_S);
     handler.compile(&sizes);
     let inputs = hyrax_ipa_inputs(HYRAX_IPA_S);
-    let proof = handler.run_prover(&inputs).expect("run_prover failed");
+    let proof = handler
+        .run_prover(inputs.clone())
+        .expect("run_prover failed");
 
     group.bench_function(format!("verifier/S={}", HYRAX_IPA_S).as_str(), |b| {
-        b.iter(|| {
-            handler
-                .run_verifier(&proof, &inputs)
-                .expect("run_verifier failed")
-        });
+        b.iter_batched(
+            || (proof.clone(), inputs.clone()),
+            |(proof, inputs)| {
+                handler
+                    .run_verifier(proof, inputs)
+                    .expect("run_verifier failed")
+            },
+            BatchSize::SmallInput,
+        );
     });
 
     group.finish();
@@ -472,25 +523,25 @@ fn dory_inputs(log_n: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
     let final_gamma2 = cur_gamma2[0];
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("c1".to_string()), Value::GT(c1)),
-        (Vid("c2".to_string()), Value::GT(c2)),
-        (Vid("c3".to_string()), Value::GT(c3)),
-        (Vid("hash1_l_vec".to_string()), Value::VecGT(hash1_l_vec)),
-        (Vid("hash1_r_vec".to_string()), Value::VecGT(hash1_r_vec)),
-        (Vid("hash2_l_vec".to_string()), Value::VecGT(hash2_l_vec)),
-        (Vid("hash2_r_vec".to_string()), Value::VecGT(hash2_r_vec)),
+        (Vid("c1".to_string()), Value::gt(c1)),
+        (Vid("c2".to_string()), Value::gt(c2)),
+        (Vid("c3".to_string()), Value::gt(c3)),
+        (Vid("hash1_l_vec".to_string()), Value::vec_gt(hash1_l_vec)),
+        (Vid("hash1_r_vec".to_string()), Value::vec_gt(hash1_r_vec)),
+        (Vid("hash2_l_vec".to_string()), Value::vec_gt(hash2_l_vec)),
+        (Vid("hash2_r_vec".to_string()), Value::vec_gt(hash2_r_vec)),
         (
             Vid("gamma_pair_ipp_vec".to_string()),
-            Value::VecGT(gamma_pair_ipp_vec),
+            Value::vec_gt(gamma_pair_ipp_vec),
         ),
-        (Vid("final_gamma1".to_string()), Value::G1(final_gamma1)),
-        (Vid("final_gamma2".to_string()), Value::G2(final_gamma2)),
-        (Vid("gamma1".to_string()), Value::VecG1(gamma1)),
-        (Vid("gamma2".to_string()), Value::VecG2(gamma2)),
-        (Vid("gamma1_prime".to_string()), Value::VecG1(gamma1_prime)),
-        (Vid("gamma2_prime".to_string()), Value::VecG2(gamma2_prime)),
-        (Vid("u_vec".to_string()), Value::VecG1(u_vec)),
-        (Vid("g_vec".to_string()), Value::VecG2(g_vec)),
+        (Vid("final_gamma1".to_string()), Value::g1(final_gamma1)),
+        (Vid("final_gamma2".to_string()), Value::g2(final_gamma2)),
+        (Vid("gamma1".to_string()), Value::vec_g1(gamma1)),
+        (Vid("gamma2".to_string()), Value::vec_g2(gamma2)),
+        (Vid("gamma1_prime".to_string()), Value::vec_g1(gamma1_prime)),
+        (Vid("gamma2_prime".to_string()), Value::vec_g2(gamma2_prime)),
+        (Vid("u_vec".to_string()), Value::vec_g1(u_vec)),
+        (Vid("g_vec".to_string()), Value::vec_g2(g_vec)),
     ])
 }
 
@@ -509,7 +560,11 @@ fn bench_dory_prover(c: &mut Criterion) {
     let inputs = dory_inputs(DORY_LOG_N);
 
     group.bench_function(format!("prover/S={}", DORY_LOG_N).as_str(), |b| {
-        b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
+        b.iter_batched(
+            || inputs.clone(),
+            |inputs| handler.run_prover(inputs).expect("run_prover failed"),
+            BatchSize::SmallInput,
+        );
     });
 
     group.finish();
@@ -526,14 +581,20 @@ fn bench_dory_verifier(c: &mut Criterion) {
     sizes.insert(&Tid::new("S"), &DORY_LOG_N);
     handler.compile(&sizes);
     let inputs = dory_inputs(DORY_LOG_N);
-    let proof = handler.run_prover(&inputs).expect("run_prover failed");
+    let proof = handler
+        .run_prover(inputs.clone())
+        .expect("run_prover failed");
 
     group.bench_function(format!("verifier/S={}", DORY_LOG_N).as_str(), |b| {
-        b.iter(|| {
-            handler
-                .run_verifier(&proof, &inputs)
-                .expect("run_verifier failed")
-        });
+        b.iter_batched(
+            || (proof.clone(), inputs.clone()),
+            |(proof, inputs)| {
+                handler
+                    .run_verifier(proof, inputs)
+                    .expect("run_verifier failed")
+            },
+            BatchSize::SmallInput,
+        );
     });
 
     group.finish();
@@ -550,22 +611,22 @@ fn kzg_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let n_size = 2;
 
     let gen_g1_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let gen_g1: Value<ArkBls12_381> = Value::G1(gen_g1_input);
+    let gen_g1: Value<ArkBls12_381> = Value::g1(gen_g1_input);
 
     let gen_g2_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
-    let gen_g2: Value<ArkBls12_381> = Value::G2(gen_g2_input);
+    let gen_g2: Value<ArkBls12_381> = Value::g2(gen_g2_input);
 
     let poly_x: Value<ArkBls12_381> =
         Value::<ArkBls12_381>::random(&mut rng, &ATyp::uni(n_size - 1));
     let eval_point: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
     let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
 
-    let srs_g1: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|_| gen_g1_input).collect())
-        * Value::VecScalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect());
+    let srs_g1: Value<ArkBls12_381> = Value::vec_g1((0..n_size).map(|_| gen_g1_input).collect())
+        * Value::vec_scalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect());
 
     let eval_result: Value<ArkBls12_381> = poly_x.clone().value_eval(eval_point.clone());
 
-    let srs_g2_s: Value<ArkBls12_381> = Value::G2(gen_g2_input * tau_input);
+    let srs_g2_s: Value<ArkBls12_381> = Value::g2(gen_g2_input * tau_input);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("poly_x".to_string()), poly_x),
@@ -590,7 +651,11 @@ fn bench_kzg_prover(c: &mut Criterion) {
     let inputs = kzg_inputs();
 
     group.bench_function("prover", |b| {
-        b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
+        b.iter_batched(
+            || inputs.clone(),
+            |inputs| handler.run_prover(inputs).expect("run_prover failed"),
+            BatchSize::SmallInput,
+        );
     });
 
     group.finish();
@@ -607,14 +672,20 @@ fn bench_kzg_verifier(c: &mut Criterion) {
     handler.compile(&sizes);
     let inputs = kzg_inputs();
 
-    let proof = handler.run_prover(&inputs).expect("run_prover failed");
+    let proof = handler
+        .run_prover(inputs.clone())
+        .expect("run_prover failed");
 
     group.bench_function("verifier", |b| {
-        b.iter(|| {
-            handler
-                .run_verifier(&proof, &inputs)
-                .expect("run_verifier failed")
-        });
+        b.iter_batched(
+            || (proof.clone(), inputs.clone()),
+            |(proof, inputs)| {
+                handler
+                    .run_verifier(proof, inputs)
+                    .expect("run_verifier failed")
+            },
+            BatchSize::SmallInput,
+        );
     });
 
     group.finish();

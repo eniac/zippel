@@ -30,11 +30,12 @@ anything under `cargo build --workspace`), also requires:
 
 ## Before opening a pull request
 
-CI runs four checks on every push and pull request:
+CI runs five checks on every push and pull request:
 
 ```bash
 cargo fmt --all -- --check                # Rust formatting
 cargo clippy --workspace --all-targets    # lints
+cargo clippy -p benchmarks --all-targets --features dhat  # heap-profiling code
 cargo zfmt --check examples/*/*.zippel    # Zippel formatting
 cargo test --workspace                    # tests
 ```
@@ -150,7 +151,6 @@ witness/instance values, and runs the prover and verifier.
 ```rust
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, ArkGroupOps, Value};
-use lang::id::Vid;
 use share::Ctx;
 use std::path::PathBuf;
 use zippel::*;
@@ -163,8 +163,7 @@ pub fn run(opts: &common::RunOptions) {
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile(&Ctx::new());
 
-    let inputs = prover_create_inputs();
-    common::run_prover_and_verify(&mut handler, &inputs);
+    common::run_prover_and_verify(&mut handler, prover_create_inputs());
 
     if !opts.analyses {
         return;
@@ -188,10 +187,10 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         .into_iter()
         .next()
         .unwrap();
-    Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("x".to_string()), Value::Scalar(x)),
-        (Vid("g".to_string()), Value::G1(g)),
-        (Vid("h".to_string()), Value::G1Affine(h)),
+    Ctx::from_iter([
+        (Vid::from("x"), Value::Scalar(x)),
+        (Vid::from("g"), Value::G1(g)),
+        (Vid::from("h"), Value::G1Affine(h)),
     ])
 }
 ```

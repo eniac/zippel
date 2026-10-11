@@ -34,8 +34,7 @@ pub fn run(args: &Args, opts: &common::RunOptions) {
     sizes.insert(&Tid::new("N"), &n);
     handler.compile(&sizes);
 
-    let inputs = prover_create_inputs(n);
-    common::run_prover_and_verify(&mut handler, &inputs);
+    common::run_prover_and_verify(&mut handler, prover_create_inputs(n));
 
     if !opts.analyses {
         return;
@@ -71,17 +70,17 @@ fn prover_create_inputs(n: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
             })
         })
         .collect();
-    let ck_n = Value::VecG1(ck_n_scalars.iter().map(|s| gen_g * s).collect());
+    let ck_n = Value::vec_g1(ck_n_scalars.iter().map(|s| gen_g * s).collect());
 
     let p_scalars: Vec<_> = (0..size)
         .map(|_| <ArkBls12_381 as ArkConfig>::F::rand(&mut rng))
         .collect();
-    let p = Value::VecScalar(p_scalars.clone());
+    let p = Value::vec_scalar(p_scalars.clone());
 
     let z_scalars: Vec<_> = (0..n)
         .map(|_| <ArkBls12_381 as ArkConfig>::F::rand(&mut rng))
         .collect();
-    let z = Value::VecScalar(z_scalars.clone());
+    let z = Value::vec_scalar(z_scalars.clone());
 
     let y_val = (0..size).fold(<ArkBls12_381 as ArkConfig>::F::from(0u64), |acc, i| {
         let eq_z_i = (0..n).fold(one, |prod, j| {
@@ -96,16 +95,16 @@ fn prover_create_inputs(n: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
     });
     let y = Value::Scalar(y_val);
 
-    let alpha_h = Value::VecG2(alpha.iter().map(|a| gen_h * a).collect());
+    let alpha_h = Value::vec_g2(alpha.iter().map(|a| gen_h * a).collect());
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("p".to_string()), p),
         (Vid("z".to_string()), z),
         (Vid("y".to_string()), y),
         (Vid("ck_N".to_string()), ck_n),
-        (Vid("g_gen".to_string()), Value::G1(gen_g)),
-        (Vid("h_gen".to_string()), Value::G2(gen_h)),
+        (Vid("g_gen".to_string()), Value::g1(gen_g)),
+        (Vid("h_gen".to_string()), Value::g2(gen_h)),
         (Vid("alpha_H".to_string()), alpha_h),
-        (Vid("alpha".to_string()), Value::VecScalar(alpha)),
+        (Vid("alpha".to_string()), Value::vec_scalar(alpha)),
     ])
 }

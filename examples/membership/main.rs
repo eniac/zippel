@@ -29,7 +29,9 @@ pub fn run(opts: &common::RunOptions) {
 
     let inputs = prover_create_inputs(n_size, m_size);
     let prover_start = Instant::now();
-    let proof = handler.run_prover(&inputs).expect("run_prover failed");
+    let proof = handler
+        .run_prover(inputs.clone())
+        .expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
@@ -43,7 +45,7 @@ pub fn run(opts: &common::RunOptions) {
     verifier_handler.compile(&sizes);
     let verifier_start = Instant::now();
     let verifier_result = verifier_handler
-        .run_verifier(&proof, &inputs)
+        .run_verifier(proof, inputs)
         .expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     let passed = check_verification(&verifier_result);
@@ -82,23 +84,23 @@ fn prover_create_inputs(n_size: usize, m_size: usize) -> Ctx<Vid, Value<ArkBls12
     let s_size = usize::max(n_size, l_size);
 
     let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let g: Value<ArkBls12_381> = Value::G1(g_input);
+    let g: Value<ArkBls12_381> = Value::g1(g_input);
 
     let h_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
-    let h: Value<ArkBls12_381> = Value::G2(h_input);
+    let h: Value<ArkBls12_381> = Value::g2(h_input);
 
     let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
 
     // SRS G1 up to size S
-    let ss_g: Value<ArkBls12_381> = Value::VecG1((0..s_size).map(|_| g_input).collect());
-    let ss_index = Value::VecScalar((0..s_size).map(|i| tau_input.pow([i as u64])).collect());
+    let ss_g: Value<ArkBls12_381> = Value::vec_g1((0..s_size).map(|_| g_input).collect());
+    let ss_index = Value::vec_scalar((0..s_size).map(|i| tau_input.pow([i as u64])).collect());
     let ss = ss_g * ss_index;
 
     // SRS G2_s
-    let h_val: Value<ArkBls12_381> = Value::G2(h_input * tau_input);
+    let h_val: Value<ArkBls12_381> = Value::g2(h_input * tau_input);
 
     // Set S of size M (choose 0, 1, 2, ..., M-1)
-    let s_val = Value::VecScalar(
+    let s_val = Value::vec_scalar(
         (0..m_size)
             .map(|i| <ArkBls12_381 as ArkConfig>::F::from(i as u64))
             .collect(),
@@ -109,7 +111,7 @@ fn prover_create_inputs(n_size: usize, m_size: usize) -> Ctx<Vid, Value<ArkBls12
     for _ in 1..n_size {
         f_coeffs_vec.push(<ArkBls12_381 as ArkConfig>::F::rand(&mut rng));
     }
-    let f_coeffs = Value::VecScalar(f_coeffs_vec);
+    let f_coeffs = Value::vec_scalar(f_coeffs_vec);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("f_coeffs".to_string()), f_coeffs),

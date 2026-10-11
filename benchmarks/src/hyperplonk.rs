@@ -94,12 +94,13 @@ pub mod zippel_side {
     use backend::{ArkBls12_381, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
+    use std::collections::HashMap;
     use std::path::PathBuf;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs: Ctx<Vid, Value<ArkBls12_381>>,
+        inputs: HashMap<Vid, Value<ArkBls12_381>>,
         compile_time: Vec<std::time::Duration>,
     }
 
@@ -125,7 +126,7 @@ pub mod zippel_side {
             });
 
             let (pk, vk) = (&sh.pk, &sh.vk);
-            let col = |v: &Vec<_>| Value::VecScalar(v.clone());
+            let col = |v: &Vec<_>| Value::vec_scalar(v.clone());
             let ck: Vec<_> = pk
                 .pcs_param
                 .powers_of_g
@@ -139,19 +140,19 @@ pub mod zippel_side {
                 ("w2", col(&sh.witnesses[2])),
                 (
                     "sel_comms",
-                    Value::VecG1Affine(vk.selector_commitments.iter().map(|c| c.0).collect()),
+                    Value::vec_g1_affine(vk.selector_commitments.iter().map(|c| c.0).collect()),
                 ),
                 (
                     "perm_comms",
-                    Value::VecG1Affine(vk.perm_commitments.iter().map(|c| c.0).collect()),
+                    Value::vec_g1_affine(vk.perm_commitments.iter().map(|c| c.0).collect()),
                 ),
                 ("pub_input", col(&sh.public_inputs)),
-                ("ck", Value::VecG1Affine(ck)),
-                ("g", Value::G1(vk.pcs_param.g.into())),
-                ("h", Value::G2(vk.pcs_param.h.into())),
+                ("ck", Value::vec_g1_affine(ck)),
+                ("g", Value::g1(vk.pcs_param.g.into())),
+                ("h", Value::g2(vk.pcs_param.h.into())),
                 (
                     "h_mask",
-                    Value::VecG2(
+                    Value::vec_g2(
                         vk.pcs_param
                             .h_mask
                             .iter()
@@ -166,7 +167,8 @@ pub mod zippel_side {
             for (i, name) in ["s0", "s1", "s2"].into_iter().enumerate() {
                 named.push((name, col(&pk.permutation_oracles[i].evaluations)));
             }
-            let inputs = Ctx::from_iter(named.into_iter().map(|(k, v)| (Vid(k.to_string()), v)));
+            let inputs =
+                crate::harness_inputs(named.into_iter().map(|(k, v)| (Vid(k.to_string()), v)));
 
             Setup {
                 handler,
@@ -181,7 +183,7 @@ pub mod zippel_side {
         /// Panics if the prover graph fails to execute.
         pub fn prove_once(&mut self) -> Vec<Value<ArkBls12_381>> {
             self.handler
-                .run_prover(&self.inputs)
+                .run_prover(crate::lend(&self.inputs))
                 .expect("run_prover failed")
         }
 
@@ -200,16 +202,10 @@ pub mod zippel_side {
         /// # Panics
         /// Panics if either graph fails to execute or the verifier rejects.
         pub fn time_protocol(&mut self) -> Timing {
-            let (prove, prove_peak, proof) = crate::sample(|| {
-                self.handler
-                    .run_prover(&self.inputs)
-                    .expect("run_prover failed")
-            });
-            let (verify, verify_peak, result) = crate::sample(|| {
-                self.handler
-                    .run_verifier(&proof, &self.inputs)
-                    .expect("run_verifier failed")
-            });
+            let (prove, prove_peak, proof) =
+                crate::sample_zippel_prover(&mut self.handler, &self.inputs);
+            let (verify, verify_peak, result) =
+                crate::sample_zippel_verifier(&mut self.handler, &proof, &self.inputs);
             assert!(
                 check_verification(&result),
                 "zippel HyperPlonk verification FAILED"
@@ -307,14 +303,14 @@ mod cross_tests {
 
     fn g1(v: &Value<ArkBls12_381>) -> G1Projective {
         match v {
-            Value::G1(g) => *g,
-            Value::G1Affine(g) => (*g).into(),
+            Value::G1(g) => **g,
+            Value::G1Affine(g) => (*(*g)).into(),
             _ => panic!("expected G1, got {v}"),
         }
     }
     fn frs(v: &Value<ArkBls12_381>) -> Vec<Fr> {
         match v {
-            Value::VecScalar(f) => f.clone(),
+            Value::VecScalar(f) => f.to_vec(),
             _ => panic!("expected scalars, got {v}"),
         }
     }

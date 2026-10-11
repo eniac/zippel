@@ -16,8 +16,7 @@ pub fn run(opts: &common::RunOptions) {
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile(&Ctx::new());
 
-    let inputs = prover_create_inputs();
-    common::run_prover_and_verify(&mut handler, &inputs);
+    common::run_prover_and_verify(&mut handler, prover_create_inputs());
 
     if !opts.analyses {
         return;
@@ -75,18 +74,18 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     }
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("g".to_string()), Value::G1(g)),
-        (Vid("keys".to_string()), Value::VecG1Affine(pk_vec)),
+        (Vid("g".to_string()), Value::g1(g)),
+        (Vid("keys".to_string()), Value::vec_g1_affine(pk_vec)),
         (
             Vid("eval_points".to_string()),
-            Value::VecScalar(eval_points_vec),
+            Value::vec_scalar(eval_points_vec),
         ),
-        (Vid("w".to_string()), Value::VecScalar(w_vec)),
-        (Vid("r".to_string()), Value::VecScalar(r_vec)),
-        (Vid("b".to_string()), Value::VecScalar(b_vec)),
-        (Vid("c_sim".to_string()), Value::VecScalar(c_sim_vec)),
-        (Vid("m2_sim".to_string()), Value::VecScalar(m2_sim_vec)),
-        (Vid("u_points".to_string()), Value::VecScalar(u_points_vec)),
-        (Vid("u_evals".to_string()), Value::VecScalar(u_evals_vec)),
+        (Vid("w".to_string()), Value::vec_scalar(w_vec)),
+        (Vid("r".to_string()), Value::vec_scalar(r_vec)),
+        (Vid("b".to_string()), Value::vec_scalar(b_vec)),
+        (Vid("c_sim".to_string()), Value::vec_scalar(c_sim_vec)),
+        (Vid("m2_sim".to_string()), Value::vec_scalar(m2_sim_vec)),
+        (Vid("u_points".to_string()), Value::vec_scalar(u_points_vec)),
+        (Vid("u_evals".to_string()), Value::vec_scalar(u_evals_vec)),
     ])
 }

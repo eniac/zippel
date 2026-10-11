@@ -197,10 +197,10 @@ pub mod zippel_side {
             let mut rng = rand::rngs::OsRng;
             let n = self.n;
 
-            let g = Value::G1(self.srs.g_input);
-            let h = Value::G2(self.srs.h_input);
-            let ss = Value::VecG1Affine(self.srs.srs_affine.clone());
-            let h_val = Value::G2(self.srs.h_val);
+            let g = Value::g1(self.srs.g_input);
+            let h = Value::g2(self.srs.h_input);
+            let ss = Value::vec_g1_affine(self.srs.srs_affine.clone());
+            let h_val = Value::g2(self.srs.h_val);
 
             let p = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n));
             let z = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
@@ -213,7 +213,7 @@ pub mod zippel_side {
             // Uni<F, N-1>` (a univariate in coefficient form), not the
             // old `poly_coeffs: [F; N]` vector this harness predates —
             // promote the sampled coefficient vector to a Uni value.
-            let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+            let inputs = crate::harness_inputs([
                 (Vid("poly_x".to_string()), p.value_poly()),
                 (Vid("gen_g1".to_string()), g),
                 (Vid("gen_g2".to_string()), h),
@@ -223,12 +223,9 @@ pub mod zippel_side {
                 (Vid("srs_g2_s".to_string()), h_val),
             ]);
             let (prove, prove_peak, proof) =
-                crate::sample(|| self.handler.run_prover(&inputs).expect("run_prover failed"));
-            let (verify, verify_peak, result) = crate::sample(|| {
-                self.handler
-                    .run_verifier(&proof, &inputs)
-                    .expect("run_verifier failed")
-            });
+                crate::sample_zippel_prover(&mut self.handler, &inputs);
+            let (verify, verify_peak, result) =
+                crate::sample_zippel_verifier(&mut self.handler, &proof, &inputs);
             assert!(
                 check_verification(&result),
                 "zippel KZG verification FAILED"

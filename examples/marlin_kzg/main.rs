@@ -16,8 +16,7 @@ pub fn run(opts: &common::RunOptions) {
     sizes.insert(&Tid::new("N"), &2);
     handler.compile(&sizes);
 
-    let inputs = prover_create_inputs();
-    common::run_prover_and_verify(&mut handler, &inputs);
+    common::run_prover_and_verify(&mut handler, prover_create_inputs());
 
     if !opts.analyses {
         return;
@@ -33,10 +32,10 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let n_size = 2;
 
     let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let g: Value<ArkBls12_381> = Value::G1(g_input);
+    let g: Value<ArkBls12_381> = Value::g1(g_input);
 
     let h_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
-    let h: Value<ArkBls12_381> = Value::G2(h_input);
+    let h: Value<ArkBls12_381> = Value::g2(h_input);
 
     let p_val: Value<ArkBls12_381> =
         Value::<ArkBls12_381>::random(&mut rng, &ATyp::uni(n_size - 1));
@@ -47,15 +46,15 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
     // Powers of tau: tau^i * g and tau^i * gamma * g.
     let powers = |base| {
-        Value::VecG1((0..n_size).map(|_| base).collect())
-            * Value::VecScalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect())
+        Value::vec_g1((0..n_size).map(|_| base).collect())
+            * Value::vec_scalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect())
     };
     let ss: Value<ArkBls12_381> = powers(g_input);
     let gs: Value<ArkBls12_381> = powers(gamma_g_input);
 
     let y: Value<ArkBls12_381> = p_val.clone().value_eval(z.clone());
 
-    let h_val: Value<ArkBls12_381> = Value::G2(h_input * tau_input);
+    let h_val: Value<ArkBls12_381> = Value::g2(h_input * tau_input);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("p_val".to_string()), p_val),
@@ -64,7 +63,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("ss".to_string()), ss),
         (Vid("gs".to_string()), gs),
         (Vid("g".to_string()), g),
-        (Vid("gamma_g".to_string()), Value::G1(gamma_g_input)),
+        (Vid("gamma_g".to_string()), Value::g1(gamma_g_input)),
         (Vid("h".to_string()), h),
         (Vid("h_val".to_string()), h_val),
     ])

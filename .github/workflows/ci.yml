@@ -51,6 +51,11 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets
 
+      # The heap-profiling code is behind a feature the step above leaves
+      # off; build and lint it too, so it cannot rot unnoticed.
+      - name: cargo clippy (benchmarks, dhat feature)
+        run: cargo clippy -p benchmarks --all-targets --features dhat
+
   zippel-fmt:
     name: zippel-fmt --check examples
     runs-on: ubuntu-latest

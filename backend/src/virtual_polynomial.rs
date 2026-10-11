@@ -1659,10 +1659,10 @@ mod tests {
         let product = a.poly_mul(&b).unwrap();
         let fixed_tail = vec![Fr::from(3u64), Fr::from(5u64)];
 
-        let coeff_value = Value::<ArkBls12_381>::Poly(product.clone())
+        let coeff_value = Value::<ArkBls12_381>::Poly(Arc::new(product.clone()))
             .value_eval_selected(
                 CRange::singleton(0),
-                Value::VecScalar(fixed_tail.clone()),
+                Value::vec_scalar(fixed_tail.clone()),
                 SelectedEvalShape::new(3, 1, 2),
             )
             .value_coef();
@@ -1693,11 +1693,12 @@ mod tests {
         let product = a.poly_mul(&b).unwrap();
         let fixed_tail = vec![Fr::from(3u64), Fr::from(5u64)];
 
-        let selected_value = Value::<ArkBls12_381>::Poly(product.clone()).value_eval_selected(
-            CRange::singleton(0),
-            Value::VecScalar(fixed_tail.clone()),
-            SelectedEvalShape::new(3, 1, 2),
-        );
+        let selected_value = Value::<ArkBls12_381>::Poly(Arc::new(product.clone()))
+            .value_eval_selected(
+                CRange::singleton(0),
+                Value::vec_scalar(fixed_tail.clone()),
+                SelectedEvalShape::new(3, 1, 2),
+            );
 
         let mut expected_fft = direct_unit_selected_coeffs(&product, &fixed_tail, 2);
         <<ArkBls12_381 as ArkConfig>::FOps as ArkScalarOps<Fr>>::vec_fft(&mut expected_fft);
@@ -1721,15 +1722,15 @@ mod tests {
                 let tail: Vec<Fr> = (0..2)
                     .map(|j| Fr::from(((tail_index >> j) & 1) as u64))
                     .collect();
-                Value::<ArkBls12_381>::Poly(
+                Value::<ArkBls12_381>::Poly(Arc::new(
                     product
                         .fix_variables_except_range(CRange::singleton(0), &tail)
                         .unwrap(),
-                )
+                ))
             })
             .collect::<Vec<_>>();
 
-        let reduced = Value::<ArkBls12_381>::Vec(selected_terms).value_reduce(BinOp::Add);
+        let reduced = Value::<ArkBls12_381>::Vec(selected_terms.into()).value_reduce(BinOp::Add);
         let Value::Poly(round_poly) = reduced else {
             panic!("expected reduced polynomial");
         };
@@ -1889,15 +1890,15 @@ mod tests {
                 let tail: Vec<Fr> = (0..(num_vars - 1))
                     .map(|j| Fr::from(((tail_index >> j) & 1) as u64))
                     .collect();
-                Value::<ArkBls12_381>::Poly(
+                Value::<ArkBls12_381>::Poly(Arc::new(
                     product
                         .fix_variables_except_range(CRange::singleton(0), &tail)
                         .unwrap(),
-                )
+                ))
             })
             .collect::<Vec<_>>();
         let reduced_round0 =
-            match Value::<ArkBls12_381>::Vec(reduced_terms).value_reduce(BinOp::Add) {
+            match Value::<ArkBls12_381>::Vec(reduced_terms.into()).value_reduce(BinOp::Add) {
                 Value::Poly(poly) => (0..=max_degree)
                     .map(|t| poly.evaluate_uv(&Fr::from(t as u64)))
                     .collect::<Vec<_>>(),
@@ -2004,9 +2005,9 @@ mod tests {
     fn selected_eval_unit_zero_preserves_declared_degree_slots() {
         let degree = 7usize;
         let zero = VirtualPolynomial::<Fr>::zero_with_num_vars(3);
-        let selected_value = Value::<ArkBls12_381>::Poly(zero).value_eval_selected(
+        let selected_value = Value::<ArkBls12_381>::Poly(Arc::new(zero)).value_eval_selected(
             CRange::singleton(0),
-            Value::VecScalar(vec![Fr::from(2u64), Fr::from(3u64)]),
+            Value::vec_scalar(vec![Fr::from(2u64), Fr::from(3u64)]),
             SelectedEvalShape::new(3, 1, degree),
         );
 
@@ -2028,9 +2029,9 @@ mod tests {
         let degree = 7usize;
         let scalar = Fr::from(9u64);
         let constant = VirtualPolynomial::<Fr>::constant_with_num_vars(scalar, 3);
-        let selected_value = Value::<ArkBls12_381>::Poly(constant).value_eval_selected(
+        let selected_value = Value::<ArkBls12_381>::Poly(Arc::new(constant)).value_eval_selected(
             CRange::singleton(0),
-            Value::VecScalar(vec![Fr::from(2u64), Fr::from(3u64)]),
+            Value::vec_scalar(vec![Fr::from(2u64), Fr::from(3u64)]),
             SelectedEvalShape::new(3, 1, degree),
         );
 

@@ -40,9 +40,8 @@ SYSTEMS=hyrax THREADS=1,4,8 OUT=hyrax.csv BENCH_SAMPLES=3 benchmarks/run_all.sh
 ```
 
 On Linux, when `RAYON_NUM_THREADS=T` is set (as `run_all.sh` does), `bench_all` pins
-every timed thread (both rayon pools and the main thread, which computes
-zippel's transcript messages) to the first T physical cores, one SMT
-sibling each, and prints the core list in its header. Both sides therefore
+every timed thread (both rayon pools and the main thread) to the first T
+physical cores, one SMT sibling each, and prints the core list in its header. Both sides therefore
 get exactly T cores. The setup pool stays unpinned. Set `BENCH_NO_PIN=1` to
 disable pinning, e.g. to pin externally:
 
@@ -52,10 +51,12 @@ SYSTEMS=hyrax THREADS=1,2,4,8 OUT=hyrax.csv BENCH_NO_PIN=1 numactl --cpunodebind
 
 On macOS and other non-Linux platforms, `bench_all` automatically runs
 without CPU pinning and reports that pinning is unsupported in its header.
-`RAYON_NUM_THREADS=T` still sets the Rayon worker count, but Zippel's main
-thread can compute concurrently with those workers, so T is not a strict
-CPU budget. To use the same unpinned execution policy on Linux, set
-`BENCH_NO_PIN=1` there too.
+`RAYON_NUM_THREADS=T` still bounds both sides to T compute threads: Zippel's
+runtime runs every node inside its rayon pool, and the patched arkworks (see
+the workspace `Cargo.toml`) keeps MSMs inside the caller's pool. Without
+pinning, though, threads may share a physical core and timings vary more. To
+use the same unpinned execution policy on Linux, set `BENCH_NO_PIN=1` there
+too.
 
 ## Folder layout
 
@@ -217,8 +218,39 @@ non-comment, non-blank lines.
 (or verifier) call, counted from zero at the call's start: every buffer the
 call allocates counts, even one freed before it returns, while memory that
 was already live (the proving key, SRS, witness and other inputs both sides
-hold) does not. For zippel this includes the runtime's own copy of its
-inputs and every intermediate value it keeps during the run.
+hold) does not. For zippel this includes every intermediate value it keeps
+during the run.
+
+Both sides keep their inputs. The native provers and verifiers borrow
+theirs. zippel's `run_prover`/`run_verifier` own the values they are passed,
+and a `Value` is a cheap handle: cloning one shares its heap data and copies
+none (a backend test, `cloning_a_value_shares_its_heap_payload`, checks every
+variant). The harness owns every input (`benchmarks::harness_inputs`) and
+lends all of them, and the proof, to every run by passing clones
+(`benchmarks::lend`), so the run frees nothing that was live before it
+started. Values computed inside the measured call (below) are passed without
+keeping a clone. (A deployment
+that gives its witness to the prover lowers the process's high-water mark by
+the witness size; that is a property of the API, not of the runtime, and is
+not measured.)
+
+The rules every measurement follows, on both sides:
+
+- A measured call frees nothing its caller owns: native calls borrow their
+  inputs, and zippel's are lent as clones, which share their data (see
+  above). One source of noise remains on both sides: rayon frees resized
+  work-queue buffers lazily (through crossbeam-epoch), sometimes during a
+  later measured call, which can lower that call's peak by a few KB.
+- Whatever a call consumes or needs is made inside it: transcripts and
+  sponges, and copies of inputs a call consumes (libspartan's `prove` takes
+  its witness by value). Native IPA folds its first round straight from the
+  borrowed inputs instead of copying them.
+- Both sides do the same work inside the call. Where the zippel protocol
+  takes a derived witness as input that the native prover computes itself,
+  the harness computes it inside zippel's measured call: Groth16's
+  `h_coeffs`, PARI's four sparse matrix-vector products, Spartan's
+  `Az`/`Bz`/`Cz`, DeKART's bit decomposition. Nothing is subtracted
+  afterwards.
 
 The counter is off during the timed samples; each measurement adds
 `BENCH_SAMPLES` untimed prover runs and as many untimed verifier runs with
@@ -226,6 +258,45 @@ counting on, after the timed ones, and records each run's peak. At one
 thread the peak is essentially deterministic; with more threads it varies
 with how the scheduler interleaves allocations. Stack memory is not
 counted.
+
+## Heap profiling
+
+The peak columns say how much heap a run used; to see *what* used it, build
+with the `dhat` feature. Every measurement's first counted run is then
+profiled by [dhat](https://docs.rs/dhat), and the profile is written to
+`$DHAT_DIR` (default `dhat/`) as `<n>-<file>_<line>.json`, where
+`<file>_<line>` is the `sample`/`sample_with` call site that took it (e.g.
+`hyperplonk_203` is HyperPlonk's zippel prover). Profile one thread, so the
+peak is deterministic, and keep line tables so frames carry `file:line`:
+
+```sh
+CARGO_PROFILE_RELEASE_DEBUG=line-tables-only \
+  cargo build --release -p benchmarks --bin bench_all --features dhat
+RAYON_NUM_THREADS=1 BENCH_SAMPLES=1 DHAT_FRAMES=64 \
+  target/release/bench_all --systems hyperplonk --sizes 16 --threads-label 1 --out /tmp/x.csv
+benchmarks/dhat_top.py dhat/00-hyperplonk_203.json        # what is live at the peak
+benchmarks/dhat_top.py -n 30 -d 3 dhat/00-*.json          # more sites, more context
+benchmarks/dhat_top.py --total dhat/00-hyperplonk_203.json  # what allocates most overall
+benchmarks/dhat_top.py --diff before/00-*.json after/00-*.json  # what a change moved
+```
+
+`dhat_top.py` groups the bytes live at the peak (dhat's *t-gmax*) by the
+innermost frame in our own code, so an arkworks buffer allocated from
+`backend/src/values.rs` is charged to that line. The JSON also opens in
+dhat's viewer (`dh_view.html`) for full stacks. `DHAT_FRAMES` (default 32)
+caps backtrace depth; rayon stacks are deep, so raise it if many sites come
+out unattributed.
+
+`--total` ranks sites by the bytes and blocks they allocate over the whole
+run instead: allocation churn that never shows at the peak (e.g. per-element
+values in a comprehension). `--diff BEFORE AFTER` compares two profiles of
+the same measurement site by site at their peaks, largest increases first;
+profile a build before and after a change (into two `DHAT_DIR`s) to see what
+it moved. Small profiles are shown in KiB.
+
+dhat's own bookkeeping goes through the counting allocator, so the profiled
+sample's `*_peak_mib` is slightly high and its wall-time much higher: don't
+take timings from a `dhat` build.
 
 ## Output caching
 

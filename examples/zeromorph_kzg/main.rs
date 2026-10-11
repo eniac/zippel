@@ -17,8 +17,7 @@ pub fn run(opts: &common::RunOptions) {
     sizes.insert(&Tid::new("N"), &n_size);
     handler.compile(&sizes);
 
-    let inputs = prover_create_inputs(n_size);
-    common::run_prover_and_verify(&mut handler, &inputs);
+    common::run_prover_and_verify(&mut handler, prover_create_inputs(n_size));
 
     if !opts.analyses {
         return;
@@ -32,10 +31,10 @@ fn prover_create_inputs(n_size: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
 
     let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let g = Value::G1(g_input);
+    let g = Value::g1(g_input);
 
     let h_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
-    let h = Value::G2(h_input);
+    let h = Value::g2(h_input);
 
     let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
     let xi_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
@@ -45,11 +44,11 @@ fn prover_create_inputs(n_size: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
         srs_g1_vec.push(g_input * tau_input.pow([i as u64]));
     }
     srs_g1_vec.push(g_input * xi_input);
-    let srs_g1 = Value::VecG1(srs_g1_vec);
+    let srs_g1 = Value::vec_g1(srs_g1_vec);
 
     let tau_g2 = h_input * tau_input;
     let xi_g2 = h_input * xi_input;
-    let srs_g2 = Value::VecG2(vec![tau_g2, xi_g2]);
+    let srs_g2 = Value::vec_g2(vec![tau_g2, xi_g2]);
 
     let p_poly_val = Value::<ArkBls12_381>::random(&mut rng, &ATyp::uni(n_size - 1));
 

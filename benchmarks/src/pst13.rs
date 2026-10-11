@@ -474,6 +474,7 @@ pub mod zippel_side {
     use backend::{ArkBls12_381, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
+    use std::collections::HashMap;
     use std::path::PathBuf;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
@@ -481,7 +482,7 @@ pub mod zippel_side {
     /// the shared SRS; borrows the [`Shared`] data it was built from.
     pub struct Setup<'a> {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs_base: Ctx<Vid, Value<ArkBls12_381>>,
+        inputs_base: HashMap<Vid, Value<ArkBls12_381>>,
         #[allow(dead_code)]
         shared: &'a Shared,
         compile_time: Vec<std::time::Duration>,
@@ -497,19 +498,19 @@ pub mod zippel_side {
         pub fn new(shared: &'a Shared) -> Self {
             // Pre-affinize ck — same fix as the Groth16 bench (avoids per-prove
             // `normalize_batch`). ck_affine is already computed in `Shared`.
-            let inputs_base = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-                (Vid("p".to_string()), Value::VecScalar(shared.p.clone())),
-                (Vid("z".to_string()), Value::VecScalar(shared.z.clone())),
+            let inputs_base = crate::harness_inputs([
+                (Vid("p".to_string()), Value::vec_scalar(shared.p.clone())),
+                (Vid("z".to_string()), Value::vec_scalar(shared.z.clone())),
                 (Vid("y".to_string()), Value::Scalar(shared.y)),
                 (
                     Vid("ck_N".to_string()),
-                    Value::VecG1Affine(shared.ck_affine.clone()),
+                    Value::vec_g1_affine(shared.ck_affine.clone()),
                 ),
-                (Vid("g_gen".to_string()), Value::G1(shared.g_gen)),
-                (Vid("h_gen".to_string()), Value::G2(shared.h_gen)),
+                (Vid("g_gen".to_string()), Value::g1(shared.g_gen)),
+                (Vid("h_gen".to_string()), Value::g2(shared.h_gen)),
                 (
                     Vid("alpha_H".to_string()),
-                    Value::VecG2(shared.alpha_h.clone()),
+                    Value::vec_g2(shared.alpha_h.clone()),
                 ),
             ]);
 
@@ -550,16 +551,10 @@ pub mod zippel_side {
         /// Panics if either graph fails to execute or if verification does
         /// not pass.
         pub fn time_protocol(&mut self) -> Timing {
-            let (prove, prove_peak, proof) = crate::sample(|| {
-                self.handler
-                    .run_prover(&self.inputs_base)
-                    .expect("zippel pst13 prover failed")
-            });
-            let (verify, verify_peak, result) = crate::sample(|| {
-                self.handler
-                    .run_verifier(&proof, &self.inputs_base)
-                    .expect("zippel pst13 verifier failed")
-            });
+            let (prove, prove_peak, proof) =
+                crate::sample_zippel_prover(&mut self.handler, &self.inputs_base);
+            let (verify, verify_peak, result) =
+                crate::sample_zippel_verifier(&mut self.handler, &proof, &self.inputs_base);
             assert!(
                 check_verification(&result),
                 "zippel PST13 verification FAILED"
@@ -587,6 +582,7 @@ mod cross_tests {
     use backend::{ArkBls12_381, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
+    use std::collections::HashMap;
     use std::path::PathBuf;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
@@ -604,20 +600,20 @@ mod cross_tests {
         handler
     }
 
-    fn zip_inputs(shared: &Shared) -> Ctx<Vid, Value<ArkBls12_381>> {
-        Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-            (Vid("p".to_string()), Value::VecScalar(shared.p.clone())),
-            (Vid("z".to_string()), Value::VecScalar(shared.z.clone())),
+    fn zip_inputs(shared: &Shared) -> HashMap<Vid, Value<ArkBls12_381>> {
+        HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
+            (Vid("p".to_string()), Value::vec_scalar(shared.p.clone())),
+            (Vid("z".to_string()), Value::vec_scalar(shared.z.clone())),
             (Vid("y".to_string()), Value::Scalar(shared.y)),
             (
                 Vid("ck_N".to_string()),
-                Value::VecG1Affine(shared.ck_affine.clone()),
+                Value::vec_g1_affine(shared.ck_affine.clone()),
             ),
-            (Vid("g_gen".to_string()), Value::G1(shared.g_gen)),
-            (Vid("h_gen".to_string()), Value::G2(shared.h_gen)),
+            (Vid("g_gen".to_string()), Value::g1(shared.g_gen)),
+            (Vid("h_gen".to_string()), Value::g2(shared.h_gen)),
             (
                 Vid("alpha_H".to_string()),
-                Value::VecG2(shared.alpha_h.clone()),
+                Value::vec_g2(shared.alpha_h.clone()),
             ),
         ])
     }
@@ -643,17 +639,17 @@ mod cross_tests {
         // Prime zippel handler state by running its prover once.
         let mut handler = zippel_handler(&shared);
         let _ = handler
-            .run_prover(&zip_inputs(&shared))
+            .run_prover(zip_inputs(&shared))
             .expect("zippel run_prover (priming handler state)");
 
         // Pack native proof into the zippel transcript order: [c_p, π_0, ..., π_{n-1}].
         let mut cross_proof: Vec<Value<ArkBls12_381>> = Vec::with_capacity(n + 1);
-        cross_proof.push(Value::G1(proof_n.c));
+        cross_proof.push(Value::g1(proof_n.c));
         for pi in &proof_n.pis {
-            cross_proof.push(Value::G1(*pi));
+            cross_proof.push(Value::g1(*pi));
         }
         let verifier_result = handler
-            .run_verifier(&cross_proof, &zip_inputs(&shared))
+            .run_verifier(cross_proof.clone(), zip_inputs(&shared))
             .expect("zippel run_verifier on cross-proof");
         let result = check_verification(&verifier_result);
         assert!(
@@ -677,7 +673,7 @@ mod cross_tests {
 
         let mut handler = zippel_handler(&shared);
         let zip_proof: Vec<Value<ArkBls12_381>> = handler
-            .run_prover(&zip_inputs(&shared))
+            .run_prover(zip_inputs(&shared))
             .expect("zippel run_prover");
 
         assert_eq!(
@@ -687,13 +683,13 @@ mod cross_tests {
         );
 
         let c = match &zip_proof[0] {
-            Value::G1(g) => *g,
+            Value::G1(g) => **g,
             other => panic!("expected G1 c_p, got {:?}", std::mem::discriminant(other)),
         };
         let mut pis: Vec<G1Projective> = Vec::with_capacity(n);
         for (i, v) in zip_proof.iter().enumerate().skip(1) {
             match v {
-                Value::G1(g) => pis.push(*g),
+                Value::G1(g) => pis.push(**g),
                 other => panic!(
                     "expected G1 π_{}, got {:?}",
                     i - 1,

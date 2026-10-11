@@ -41,3 +41,58 @@ fn vec_div_agrees_with_scalar_div() {
     <FOps as ArkScalarOps<Fr>>::vec_mul(&f2, &mut roundtrip);
     assert_eq!(roundtrip, f1);
 }
+
+// Chunked pairing must equal one `multi_pairing` over all pairs, including at
+// and around the chunk boundary and for no pairs at all.
+#[test]
+fn prepared_vec_dot_equals_multi_pairing() {
+    use crate::config::{ArkBls12_381, ArkPairingOps};
+    use ark_bls12_381::{Bls12_381, G1Projective, G2Projective};
+    use ark_ec::pairing::Pairing;
+    use ark_std::{UniformRand, test_rng};
+    type C = ArkBls12_381;
+    let mut rng = test_rng();
+    for n in [0, 1, 31, 32, 33, 70] {
+        let g1: Vec<G1Projective> = (0..n).map(|_| G1Projective::rand(&mut rng)).collect();
+        let g2: Vec<G2Projective> = (0..n).map(|_| G2Projective::rand(&mut rng)).collect();
+        let prepared: Vec<<Bls12_381 as Pairing>::G2Prepared> =
+            g2.iter().map(|g| g.into()).collect();
+        let chunked = <C as ArkConfig>::POps::billinear_vec_dot_prepared(&g1, &prepared);
+        let whole = Bls12_381::multi_pairing(g1.clone(), g2.clone());
+        assert_eq!(chunked, whole, "{n} pairs");
+    }
+}
+
+// A length mismatch must panic, as `multi_pairing` does, whether or not the
+// two sides fall into the same number of chunks: a zip of the chunks alone
+// would drop the unmatched tail of (32, 33) or (32, 64), and return the
+// identity for (0, n).
+#[test]
+fn prepared_vec_dot_rejects_unequal_lengths() {
+    use crate::config::{ArkBls12_381, ArkPairingOps};
+    use ark_bls12_381::{Bls12_381, G1Projective, G2Projective};
+    use ark_ec::pairing::Pairing;
+    use ark_std::{UniformRand, test_rng};
+    use std::panic::catch_unwind;
+    type C = ArkBls12_381;
+    let mut rng = test_rng();
+    for (n1, n2) in [
+        (0, 1),
+        (1, 0),
+        (0, 40),
+        (10, 20),
+        (32, 33),
+        (33, 32),
+        (32, 64),
+        (64, 32),
+        (33, 64),
+    ] {
+        let g1: Vec<G1Projective> = (0..n1).map(|_| G1Projective::rand(&mut rng)).collect();
+        let prepared: Vec<<Bls12_381 as Pairing>::G2Prepared> = (0..n2)
+            .map(|_| G2Projective::rand(&mut rng).into())
+            .collect();
+        let result =
+            catch_unwind(|| <C as ArkConfig>::POps::billinear_vec_dot_prepared(&g1, &prepared));
+        assert!(result.is_err(), "({n1}, {n2}) pairs were accepted");
+    }
+}

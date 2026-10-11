@@ -16,8 +16,7 @@ pub fn run(opts: &common::RunOptions) {
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile(&Ctx::new());
 
-    let inputs = prover_create_inputs();
-    common::run_prover_and_verify(&mut handler, &inputs);
+    common::run_prover_and_verify(&mut handler, prover_create_inputs());
 
     if !opts.analyses {
         return;
@@ -41,8 +40,8 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("r_diff".to_string()), Value::Scalar(r1 - r2)),
-        (Vid("h".to_string()), Value::G1(h)),
-        (Vid("c1".to_string()), Value::G1(c1)),
-        (Vid("c2".to_string()), Value::G1(c2)),
+        (Vid("h".to_string()), Value::g1(h)),
+        (Vid("c1".to_string()), Value::g1(c1)),
+        (Vid("c2".to_string()), Value::g1(c2)),
     ])
 }

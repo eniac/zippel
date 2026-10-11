@@ -15,8 +15,7 @@ pub fn run(opts: &common::RunOptions) {
     sizes.insert(&Tid::new("S"), &6usize);
     handler.compile(&sizes);
 
-    let inputs = prover_create_inputs();
-    common::run_prover_and_verify(&mut handler, &inputs);
+    common::run_prover_and_verify(&mut handler, prover_create_inputs());
 
     if !opts.analyses {
         return;
@@ -54,17 +53,17 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
     let gx_dot = g_vec.clone().dot(x_vec.clone());
     let xi_val = match gx_dot {
-        Value::G1(gx_sum) => h_base * r_xi + gx_sum,
+        Value::G1(gx_sum) => h_base * r_xi + *gx_sum,
         _ => unreachable!(),
     };
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("xi".to_string()), Value::G1(xi_val)),
-        (Vid("tau".to_string()), Value::G1(tau_val)),
+        (Vid("xi".to_string()), Value::g1(xi_val)),
+        (Vid("tau".to_string()), Value::g1(tau_val)),
         (Vid("a_vec".to_string()), a_vec),
         (Vid("g_vec".to_string()), g_vec),
-        (Vid("g_base".to_string()), Value::G1(g_base)),
-        (Vid("h_base".to_string()), Value::G1(h_base)),
+        (Vid("g_base".to_string()), Value::g1(g_base)),
+        (Vid("h_base".to_string()), Value::g1(h_base)),
         (Vid("x_vec".to_string()), x_vec),
         (Vid("y".to_string()), y),
         (Vid("r_xi".to_string()), Value::Scalar(r_xi)),

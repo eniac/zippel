@@ -9,14 +9,14 @@ type TestValue = Value<ArkBn254>;
 type Fr = <ArkBn254 as backend::ArkConfig>::F;
 
 fn make_scalar(val: u64) -> TestValue {
-    TestValue::Poly(VirtualPolynomial::from_poly(PolyVariant::from_scalar(
+    TestValue::poly(VirtualPolynomial::from_poly(PolyVariant::from_scalar(
         Fr::from(val),
     )))
 }
 
 fn make_uni_poly(coeffs: Vec<u64>) -> TestValue {
     let poly = DensePolynomial::from_coefficients_vec(coeffs.into_iter().map(Fr::from).collect());
-    TestValue::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(poly)))
+    TestValue::poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(poly)))
 }
 
 #[test]
@@ -104,7 +104,7 @@ fn test_addition_identity() {
     let mut rng = rand::rngs::ThreadRng::default();
     let result = eval_op(&mk::<ArkBn254>(op), &env, &mut rng, &mut Vec::new()).unwrap();
 
-    assert_eq!(*result, p, "Adding zero should be identity");
+    assert_eq!(result, p, "Adding zero should be identity");
 }
 
 #[test]
@@ -192,7 +192,7 @@ fn test_multiplication_identity() {
     let mut rng = rand::rngs::ThreadRng::default();
     let result = eval_op(&mk::<ArkBn254>(op), &env, &mut rng, &mut Vec::new()).unwrap();
 
-    assert_eq!(*result, p, "Multiplying by one should be identity");
+    assert_eq!(result, p, "Multiplying by one should be identity");
 }
 
 #[test]
@@ -358,8 +358,8 @@ fn polynomial_division_coef_preserves_declared_bound() {
     )
     .unwrap();
     assert_eq!(
-        *result,
-        TestValue::VecScalar(vec![
+        result,
+        TestValue::vec_scalar(vec![
             Fr::from(0u64),
             Fr::from(0u64),
             Fr::from(0u64),
@@ -385,8 +385,8 @@ fn polynomial_division_coef_preserves_declared_bound() {
     )
     .unwrap();
     assert_eq!(
-        *result_self,
-        TestValue::VecScalar(vec![
+        result_self,
+        TestValue::vec_scalar(vec![
             Fr::from(1u64),
             Fr::from(0u64),
             Fr::from(0u64),

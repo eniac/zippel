@@ -22,7 +22,9 @@ pub fn run(opts: &common::RunOptions) {
     println!("Generating default schedule for prover...");
     println!("Running prover...");
     let prover_start = Instant::now();
-    let proof = handler.run_prover(&inputs).expect("run_prover failed");
+    let proof = handler
+        .run_prover(inputs.clone())
+        .expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
@@ -35,7 +37,7 @@ pub fn run(opts: &common::RunOptions) {
     println!("Running verifier...");
     let verifier_start = Instant::now();
     let verifier_result = handler
-        .run_verifier(&proof, &inputs)
+        .run_verifier(proof, inputs)
         .expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     let passed = check_verification(&verifier_result);
@@ -144,24 +146,24 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let final_gamma2 = cur_gamma2[0];
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("c1".to_string()), Value::GT(c1)),
-        (Vid("c2".to_string()), Value::GT(c2)),
-        (Vid("c3".to_string()), Value::GT(c3)),
-        (Vid("hash1_l_vec".to_string()), Value::VecGT(hash1_l_vec)),
-        (Vid("hash1_r_vec".to_string()), Value::VecGT(hash1_r_vec)),
-        (Vid("hash2_l_vec".to_string()), Value::VecGT(hash2_l_vec)),
-        (Vid("hash2_r_vec".to_string()), Value::VecGT(hash2_r_vec)),
+        (Vid("c1".to_string()), Value::gt(c1)),
+        (Vid("c2".to_string()), Value::gt(c2)),
+        (Vid("c3".to_string()), Value::gt(c3)),
+        (Vid("hash1_l_vec".to_string()), Value::vec_gt(hash1_l_vec)),
+        (Vid("hash1_r_vec".to_string()), Value::vec_gt(hash1_r_vec)),
+        (Vid("hash2_l_vec".to_string()), Value::vec_gt(hash2_l_vec)),
+        (Vid("hash2_r_vec".to_string()), Value::vec_gt(hash2_r_vec)),
         (
             Vid("gamma_pair_ipp_vec".to_string()),
-            Value::VecGT(gamma_pair_ipp_vec),
+            Value::vec_gt(gamma_pair_ipp_vec),
         ),
-        (Vid("final_gamma1".to_string()), Value::G1(final_gamma1)),
-        (Vid("final_gamma2".to_string()), Value::G2(final_gamma2)),
-        (Vid("gamma1".to_string()), Value::VecG1(gamma1)),
-        (Vid("gamma2".to_string()), Value::VecG2(gamma2)),
-        (Vid("gamma1_prime".to_string()), Value::VecG1(gamma1_prime)),
-        (Vid("gamma2_prime".to_string()), Value::VecG2(gamma2_prime)),
-        (Vid("u_vec".to_string()), Value::VecG1(u_vec)),
-        (Vid("g_vec".to_string()), Value::VecG2(g_vec)),
+        (Vid("final_gamma1".to_string()), Value::g1(final_gamma1)),
+        (Vid("final_gamma2".to_string()), Value::g2(final_gamma2)),
+        (Vid("gamma1".to_string()), Value::vec_g1(gamma1)),
+        (Vid("gamma2".to_string()), Value::vec_g2(gamma2)),
+        (Vid("gamma1_prime".to_string()), Value::vec_g1(gamma1_prime)),
+        (Vid("gamma2_prime".to_string()), Value::vec_g2(gamma2_prime)),
+        (Vid("u_vec".to_string()), Value::vec_g1(u_vec)),
+        (Vid("g_vec".to_string()), Value::vec_g2(g_vec)),
     ])
 }

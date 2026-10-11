@@ -33,8 +33,7 @@ pub fn run(opts: &common::RunOptions) {
     sizes.insert(&Tid::new("MAX_DEGREE_CONST"), &max_degree);
     handler.compile(&sizes);
 
-    let inputs = prover_create_inputs(num_vars, max_degree);
-    common::run_prover_and_verify(&mut handler, &inputs);
+    common::run_prover_and_verify(&mut handler, prover_create_inputs(num_vars, max_degree));
 
     if !opts.analyses {
         return;
@@ -71,7 +70,7 @@ fn prover_create_inputs(num_vars: usize, max_degree: usize) -> Ctx<Vid, Value<Ar
             .poly_mul(&base)
             .expect("failed to multiply full_poly by base");
     }
-    let poly = Value::Poly(full_poly);
+    let poly = Value::poly(full_poly);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("claimed_sum".to_string()), Value::Scalar(claimed_sum)),

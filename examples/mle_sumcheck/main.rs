@@ -26,8 +26,7 @@ pub fn run(opts: &common::RunOptions) {
     sizes.insert(&Tid::new("MAX_DEGREE_CONST"), &1usize);
     handler.compile(&sizes);
 
-    let inputs = prover_create_inputs(num_vars);
-    common::run_prover_and_verify(&mut handler, &inputs);
+    common::run_prover_and_verify(&mut handler, prover_create_inputs(num_vars));
 
     if !opts.analyses {
         return;
@@ -55,7 +54,7 @@ fn prover_create_inputs(num_vars: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
     let base = VirtualPolynomial::from_poly(PolyVariant::DenseMle(
         DenseMultilinearExtension::from_evaluations_vec(num_vars, base_evals),
     ));
-    let poly = Value::Poly(base);
+    let poly = Value::poly(base);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("claimed_sum".to_string()), Value::Scalar(claimed_sum)),
