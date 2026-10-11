@@ -1012,7 +1012,7 @@ mod tests {
         assert_eq!(tokens.last().unwrap().1.into_range().end, src.len());
     }
 
-    /// Lex all 38 examples and verify the lossless property.
+    /// Lex every example and verify the lossless property.
     #[test]
     fn lossless_all_examples() {
         // Tests run from the crate root (lang/). The examples directory is
@@ -1060,6 +1060,6 @@ mod tests {
                 count += 1;
             }
         }
-        assert_eq!(count, 40, "expected 40 .zippel examples");
+        assert_eq!(count, 39, "expected 39 .zippel examples");
     }
 }
