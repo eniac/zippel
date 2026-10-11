@@ -93,11 +93,12 @@ cargo zcheck [--size N=2]... FILE...
 
 cargo fmt --all -- --check              # Rust formatting
 cargo clippy --workspace --all-targets  # lints
+cargo clippy -p benchmarks --all-targets --features dhat  # lints the heap-profiling code
 cargo zfmt --check examples/*/*.zippel  # .zippel formatting (--write to reformat)
 ```
 
 `zrun`, `zrunr`, `zcheck`, and `zfmt` are aliases in `.cargo/config.toml`
-(e.g. `zcheck` = `run -q -p check --bin zippel-check --`). The last three
+(e.g. `zcheck` = `run -q -p check --bin zippel-check --`). The last four
 commands plus `cargo test --workspace` are what CI runs (CI spells out the
 aliases); run them before committing. Some `analyses` tests use an
 optional Singular backend for Gröbner bases and are skipped with a

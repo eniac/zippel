@@ -276,6 +276,8 @@ RAYON_NUM_THREADS=1 BENCH_SAMPLES=1 DHAT_FRAMES=64 \
   target/release/bench_all --systems hyperplonk --sizes 16 --threads-label 1 --out /tmp/x.csv
 benchmarks/dhat_top.py dhat/00-hyperplonk_203.json        # what is live at the peak
 benchmarks/dhat_top.py -n 30 -d 3 dhat/00-*.json          # more sites, more context
+benchmarks/dhat_top.py --total dhat/00-hyperplonk_203.json  # what allocates most overall
+benchmarks/dhat_top.py --diff before/00-*.json after/00-*.json  # what a change moved
 ```
 
 `dhat_top.py` groups the bytes live at the peak (dhat's *t-gmax*) by the
@@ -284,6 +286,13 @@ innermost frame in our own code, so an arkworks buffer allocated from
 dhat's viewer (`dh_view.html`) for full stacks. `DHAT_FRAMES` (default 32)
 caps backtrace depth; rayon stacks are deep, so raise it if many sites come
 out unattributed.
+
+`--total` ranks sites by the bytes and blocks they allocate over the whole
+run instead: allocation churn that never shows at the peak (e.g. per-element
+values in a comprehension). `--diff BEFORE AFTER` compares two profiles of
+the same measurement site by site at their peaks, largest increases first;
+profile a build before and after a change (into two `DHAT_DIR`s) to see what
+it moved. Small profiles are shown in KiB.
 
 dhat's own bookkeeping goes through the counting allocator, so the profiled
 sample's `*_peak_mib` is slightly high and its wall-time much higher: don't
