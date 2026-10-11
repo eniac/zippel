@@ -93,18 +93,18 @@ impl Groth16Params {
         let gen_g1 = G1Projective::generator();
         let gen_g2 = G2Projective::generator();
         vec![
-            (Vid("gen_g1".to_string()), Value::G1(gen_g1)),
-            (Vid("gen_g2".to_string()), Value::G2(gen_g2)),
-            (Vid("alpha_g1".to_string()), Value::G1(self.alpha_g1)),
-            (Vid("beta_g2".to_string()), Value::G2(self.beta_g2)),
-            (Vid("gamma_g2".to_string()), Value::G2(self.gamma_g2)),
-            (Vid("delta_g2".to_string()), Value::G2(self.delta_g2)),
+            (Vid("gen_g1".to_string()), Value::g1(gen_g1)),
+            (Vid("gen_g2".to_string()), Value::g2(gen_g2)),
+            (Vid("alpha_g1".to_string()), Value::g1(self.alpha_g1)),
+            (Vid("beta_g2".to_string()), Value::g2(self.beta_g2)),
+            (Vid("gamma_g2".to_string()), Value::g2(self.gamma_g2)),
+            (Vid("delta_g2".to_string()), Value::g2(self.delta_g2)),
             (
                 Vid("gamma_abc_g1".to_string()),
                 Value::vec_g1(self.gamma_abc_g1.clone()),
             ),
-            (Vid("beta_g1".to_string()), Value::G1(self.beta_g1)),
-            (Vid("delta_g1".to_string()), Value::G1(self.delta_g1)),
+            (Vid("beta_g1".to_string()), Value::g1(self.beta_g1)),
+            (Vid("delta_g1".to_string()), Value::g1(self.delta_g1)),
             (
                 Vid("a_query".to_string()),
                 Value::vec_g1(self.a_query.clone()),

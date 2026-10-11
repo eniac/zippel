@@ -8,7 +8,6 @@
 use backend::{ArkConfig, HasOpFactory, Value};
 use lang::id::Vid;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Duration;
 use zippel::ZippelHandler;
 
@@ -217,25 +216,23 @@ fn dhat_profiler(caller: &std::panic::Location<'_>) -> dhat::Profiler {
 }
 
 /// A zippel protocol's inputs as a harness keeps them: it owns every value
-/// and only ever lends it to a run, as an `Arc` clone.
+/// and only ever lends it to a run.
 #[must_use]
 pub fn harness_inputs<C: ArkConfig, K: Into<Vid>>(
     pairs: impl IntoIterator<Item = (K, Value<C>)>,
-) -> HashMap<Vid, Arc<Value<C>>> {
-    pairs
-        .into_iter()
-        .map(|(k, v)| (k.into(), Arc::new(v)))
-        .collect()
+) -> HashMap<Vid, Value<C>> {
+    pairs.into_iter().map(|(k, v)| (k.into(), v)).collect()
 }
 
-/// Lends every input to one run: `Arc` clones, made as the run collects them.
-/// The harness keeps its own `Arc`s, so the run frees nothing that was live
-/// before it started, as a native prover that borrows its inputs frees
-/// nothing; the heap count sees only what the run allocates.
+/// Lends every input to one run: clones, made as the run collects them. A
+/// `Value` clone shares its buffers and copies no data, so the harness keeps
+/// every buffer and the run frees nothing that was live before it started,
+/// as a native prover that borrows its inputs frees nothing; the heap count
+/// sees only what the run allocates.
 pub fn lend<C: ArkConfig>(
-    inputs: &HashMap<Vid, Arc<Value<C>>>,
-) -> impl Iterator<Item = (Vid, Arc<Value<C>>)> + '_ {
-    inputs.iter().map(|(k, v)| (k.clone(), Arc::clone(v)))
+    inputs: &HashMap<Vid, Value<C>>,
+) -> impl Iterator<Item = (Vid, Value<C>)> + '_ {
+    inputs.iter().map(|(k, v)| (k.clone(), v.clone()))
 }
 
 /// Samples a zippel prover with every input lent (see [`lend`]).
@@ -245,7 +242,7 @@ pub fn lend<C: ArkConfig>(
 #[track_caller]
 pub fn sample_zippel_prover<C: ArkConfig + HasOpFactory>(
     handler: &mut ZippelHandler<C>,
-    inputs: &HashMap<Vid, Arc<Value<C>>>,
+    inputs: &HashMap<Vid, Value<C>>,
 ) -> (Vec<Duration>, Vec<usize>, Vec<Value<C>>) {
     sample(|| handler.run_prover(lend(inputs)).expect("run_prover failed"))
 }
@@ -259,9 +256,8 @@ pub fn sample_zippel_prover<C: ArkConfig + HasOpFactory>(
 pub fn sample_zippel_verifier<C: ArkConfig + HasOpFactory>(
     handler: &mut ZippelHandler<C>,
     proof: &[Value<C>],
-    inputs: &HashMap<Vid, Arc<Value<C>>>,
+    inputs: &HashMap<Vid, Value<C>>,
 ) -> (Vec<Duration>, Vec<usize>, Vec<bool>) {
-    let proof: Vec<Arc<Value<C>>> = proof.iter().cloned().map(Arc::new).collect();
     sample(|| {
         handler
             .run_verifier(proof.iter().cloned(), lend(inputs))

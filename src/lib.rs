@@ -365,24 +365,24 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
 
     /// Run prover, takes inputs by name and returns proof.
     ///
-    /// Each input is given or lent: a `Value` is given, and the run frees it
-    /// after its last reader (a fresh witness); an `Arc<Value>` is lent when
-    /// the caller keeps a clone of the `Arc` (an SRS or proving key reused
-    /// across runs), and the run never frees it.
+    /// The run owns the values it is passed and frees each after its last
+    /// reader. A `Value` is a handle: cloning one shares its buffers and
+    /// copies no data, so an input the caller reuses across runs (an SRS, a
+    /// proving key) is lent by passing a clone, and the run never frees the
+    /// caller's buffers; an input passed without keeping a clone (a fresh
+    /// witness) is given.
     ///
     /// # Errors
     /// Returns `RuntimeError` if expected inputs are missing.
     ///
     /// # Panics
     /// If `compile()` has not been called first.
-    pub fn run_prover<K: Into<Vid>, V: Into<Arc<Value<C>>>>(
+    pub fn run_prover<K: Into<Vid>>(
         &mut self,
-        inputs: impl IntoIterator<Item = (K, V)>,
+        inputs: impl IntoIterator<Item = (K, Value<C>)>,
     ) -> Result<Vec<Value<C>>, RuntimeError> {
-        let inputs: HashMap<Vid, Arc<Value<C>>> = inputs
-            .into_iter()
-            .map(|(k, v)| (k.into(), v.into()))
-            .collect();
+        let inputs: HashMap<Vid, Value<C>> =
+            inputs.into_iter().map(|(k, v)| (k.into(), v)).collect();
         let prover = self.prover_graph.as_ref().unwrap();
 
         // Collect arg info from the prover dag directly.
@@ -444,7 +444,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     }
 
     /// Run verifier, takes proof and inputs by name and returns result.
-    /// Proof values and inputs are given or lent as in [`Self::run_prover`];
+    /// Proof values and inputs are owned as in [`Self::run_prover`];
     /// inputs that are not instance arguments are dropped unread.
     ///
     /// # Errors
@@ -452,10 +452,10 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     ///
     /// # Panics
     /// If `compile()` has not been called first.
-    pub fn run_verifier<K: Into<Vid>, P: Into<Arc<Value<C>>>, V: Into<Arc<Value<C>>>>(
+    pub fn run_verifier<K: Into<Vid>>(
         &mut self,
-        proof: impl IntoIterator<Item = P>,
-        inputs: impl IntoIterator<Item = (K, V)>,
+        proof: impl IntoIterator<Item = Value<C>>,
+        inputs: impl IntoIterator<Item = (K, Value<C>)>,
     ) -> Result<Vec<bool>, RuntimeError> {
         let verifier = self.verifier_graph.as_ref().unwrap();
 
@@ -472,7 +472,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             .collect();
         let instance_inputs = inputs
             .into_iter()
-            .map(|(k, v)| (k.into(), v.into()))
+            .map(|(k, v)| (k.into(), v))
             .filter(|(vid, _)| instance_args.contains(vid));
 
         // Transcript inputs: identify by ArgKind::TranscriptInput, zip with proof.
@@ -483,10 +483,9 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
                 Node::Arg(name, _, _, _, ArgKind::TranscriptInput) => Some(name.clone()),
                 _ => None,
             })
-            .zip(proof.into_iter().map(Into::into));
+            .zip(proof);
 
-        let all_inputs: HashMap<Vid, Arc<Value<C>>> =
-            instance_inputs.chain(transcript_inputs).collect();
+        let all_inputs: HashMap<Vid, Value<C>> = instance_inputs.chain(transcript_inputs).collect();
 
         let domain_separator_session = self.args.domain_separator_session();
         let verifier_seperator = ZippelDomainSeparator::new_zippel_domain_seperator(

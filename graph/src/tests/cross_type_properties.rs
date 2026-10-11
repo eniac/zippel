@@ -258,7 +258,7 @@ mod mle_differential_tests {
             2,
             vec![v0, v1, v2, v3],
         ));
-        let p_val = Value::Poly(VirtualPolynomial::from_poly(mle_poly));
+        let p_val = Value::poly(VirtualPolynomial::from_poly(mle_poly));
 
         let x_val = Value::<C>::random(&mut rng, &ATyp::scalar());
         let x_scalar = match &x_val {

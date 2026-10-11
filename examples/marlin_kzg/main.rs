@@ -32,10 +32,10 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let n_size = 2;
 
     let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let g: Value<ArkBls12_381> = Value::G1(g_input);
+    let g: Value<ArkBls12_381> = Value::g1(g_input);
 
     let h_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
-    let h: Value<ArkBls12_381> = Value::G2(h_input);
+    let h: Value<ArkBls12_381> = Value::g2(h_input);
 
     let p_val: Value<ArkBls12_381> =
         Value::<ArkBls12_381>::random(&mut rng, &ATyp::uni(n_size - 1));
@@ -54,7 +54,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
     let y: Value<ArkBls12_381> = p_val.clone().value_eval(z.clone());
 
-    let h_val: Value<ArkBls12_381> = Value::G2(h_input * tau_input);
+    let h_val: Value<ArkBls12_381> = Value::g2(h_input * tau_input);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("p_val".to_string()), p_val),
@@ -63,7 +63,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("ss".to_string()), ss),
         (Vid("gs".to_string()), gs),
         (Vid("g".to_string()), g),
-        (Vid("gamma_g".to_string()), Value::G1(gamma_g_input)),
+        (Vid("gamma_g".to_string()), Value::g1(gamma_g_input)),
         (Vid("h".to_string()), h),
         (Vid("h_val".to_string()), h_val),
     ])

@@ -83,8 +83,8 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
             ("h1", Value::vec_g1(h1)),
             ("h2", Value::vec_g1(h2)),
             ("v1", Value::vec_g2(v1)),
-            ("v_gen", Value::G2(v)),
-            ("g_gen", Value::G1(g)),
+            ("v_gen", Value::g2(v)),
+            ("g_gen", Value::g1(g)),
         ]
         .into_iter()
         .map(|(k, val)| (Vid(k.to_string()), val)),

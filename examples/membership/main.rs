@@ -84,10 +84,10 @@ fn prover_create_inputs(n_size: usize, m_size: usize) -> Ctx<Vid, Value<ArkBls12
     let s_size = usize::max(n_size, l_size);
 
     let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let g: Value<ArkBls12_381> = Value::G1(g_input);
+    let g: Value<ArkBls12_381> = Value::g1(g_input);
 
     let h_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
-    let h: Value<ArkBls12_381> = Value::G2(h_input);
+    let h: Value<ArkBls12_381> = Value::g2(h_input);
 
     let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
 
@@ -97,7 +97,7 @@ fn prover_create_inputs(n_size: usize, m_size: usize) -> Ctx<Vid, Value<ArkBls12
     let ss = ss_g * ss_index;
 
     // SRS G2_s
-    let h_val: Value<ArkBls12_381> = Value::G2(h_input * tau_input);
+    let h_val: Value<ArkBls12_381> = Value::g2(h_input * tau_input);
 
     // Set S of size M (choose 0, 1, 2, ..., M-1)
     let s_val = Value::vec_scalar(

@@ -112,7 +112,7 @@ fn main() {
     );
     assert_eq!(
         handler.run_prover(one.clone()).expect("prover")[0],
-        Value::G1(expected)
+        Value::g1(expected)
     );
     println!("1 MSM ({})", node_kinds(&handler));
     report("native msm", median(args.reps, || native(0)));
@@ -134,7 +134,7 @@ fn main() {
     let expected = native(0) + native(1) + native(2);
     assert_eq!(
         handler.run_prover(three.clone()).expect("prover")[0],
-        Value::G1(expected)
+        Value::g1(expected)
     );
     println!("3 MSMs ({})", node_kinds(&handler));
     report(

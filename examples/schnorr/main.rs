@@ -33,7 +33,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let h = h_affines.into_iter().next().unwrap();
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("x".to_string()), Value::Scalar(x)),
-        (Vid("g".to_string()), Value::G1(g)),
-        (Vid("h".to_string()), Value::G1Affine(h)),
+        (Vid("g".to_string()), Value::g1(g)),
+        (Vid("h".to_string()), Value::g1_affine(h)),
     ])
 }

@@ -331,7 +331,7 @@ mod tests {
             Op::Bin(
                 BinOp::Pow,
                 mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_s.clone())),
-                mk::<ArkBls12_381>(Op::Value(Value::VecIndex(vec![2, 3]))),
+                mk::<ArkBls12_381>(Op::Value(Value::VecIndex(vec![2, 3].into()))),
                 vec_ideal.clone(),
             ),
             &mut ideal,
@@ -593,7 +593,7 @@ mod tests {
                     graph::Ref::new(NodeIndex::new(0)),
                     vec_uni2.clone(),
                 )),
-                mk::<ArkBls12_381>(Op::Value(Value::VecIndex(vec![2, 2]))),
+                mk::<ArkBls12_381>(Op::Value(Value::VecIndex(vec![2, 2].into()))),
                 vec_ideal.clone(),
             ),
             &mut ideal,

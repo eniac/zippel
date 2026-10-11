@@ -12,7 +12,6 @@ use rand::rngs::StdRng;
 use rayon::prelude::*;
 use share::Ctx;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Evaluate a `GOp` against a reference environment.
 ///
@@ -263,9 +262,9 @@ fn verify_domain_is_canonical_coordinates<C: ArkConfig>(
 
 fn try_match_canonical_hypercube_ast<C: ArkConfig>(
     fixed: &HOp<C>,
-    env: &HashMap<Ref, Arc<Value<C>>>,
+    env: &HashMap<Ref, Value<C>>,
     rng: &mut impl rand::RngCore,
-    loop_params: &[Arc<Value<C>>],
+    loop_params: &[Value<C>],
     check_sink: &mut Vec<bool>,
 ) -> Result<bool, EvalError> {
     match fixed.get() {
@@ -312,24 +311,24 @@ fn try_match_canonical_hypercube_ast<C: ArkConfig>(
 #[allow(clippy::too_many_arguments)]
 fn verify_hypercube_coordinates<C: ArkConfig, R: RngCore>(
     fixed: &HOp<C>,
-    env: &HashMap<Ref, Arc<Value<C>>>,
+    env: &HashMap<Ref, Value<C>>,
     rng: &mut R,
-    loop_params: &[Arc<Value<C>>],
+    loop_params: &[Value<C>],
     check_sink: &mut Vec<bool>,
     dom_val: &Value<C>,
     n: usize,
     k: usize,
 ) -> Result<bool, EvalError> {
-    let get_elem = |i: usize| -> Arc<Value<C>> {
+    let get_elem = |i: usize| -> Value<C> {
         match dom_val {
-            Value::VecScalar(v) => Arc::new(Value::Scalar(v[i])),
-            Value::VecIndex(v) => Arc::new(Value::Index(v[i])),
-            Value::VecG1(v) => Arc::new(Value::G1(v[i])),
-            Value::VecG2(v) => Arc::new(Value::G2(v[i])),
-            Value::VecGT(v) => Arc::new(Value::GT(v[i])),
-            Value::VecG1Affine(v) => Arc::new(Value::G1Affine(v[i])),
-            Value::VecG2Affine(v) => Arc::new(Value::G2Affine(v[i])),
-            Value::Vec(v) => Arc::new(v[i].clone()),
+            Value::VecScalar(v) => Value::Scalar(v[i]),
+            Value::VecIndex(v) => Value::Index(v[i]),
+            Value::VecG1(v) => Value::g1(v[i]),
+            Value::VecG2(v) => Value::g2(v[i]),
+            Value::VecGT(v) => Value::gt(v[i]),
+            Value::VecG1Affine(v) => Value::g1_affine(v[i]),
+            Value::VecG2Affine(v) => Value::g2_affine(v[i]),
+            Value::Vec(v) => v[i].clone(),
             _ => panic!("Expected vector, found {}", dom_val),
         }
     };
@@ -338,7 +337,7 @@ fn verify_hypercube_coordinates<C: ArkConfig, R: RngCore>(
         let mut params = loop_params.to_vec();
         params.push(get_elem(i));
         let coord_val = eval_op_with_loop_params(fixed, env, rng, &params, check_sink)?;
-        if !is_canonical_hypercube_vector::<C>(coord_val.as_ref(), i, k) {
+        if !is_canonical_hypercube_vector::<C>(&coord_val, i, k) {
             return Ok(false);
         }
     }
@@ -365,11 +364,11 @@ fn try_eval_reduce_map_fused_hypercube<C, R>(
     op: BinOp,
     domain: &HOp<C>,
     body: &HOp<C>,
-    env: &HashMap<Ref, Arc<Value<C>>>,
+    env: &HashMap<Ref, Value<C>>,
     rng: &mut R,
-    loop_params: &[Arc<Value<C>>],
+    loop_params: &[Value<C>],
     check_sink: &mut Vec<bool>,
-) -> Result<Option<Arc<Value<C>>>, EvalError>
+) -> Result<Option<Value<C>>, EvalError>
 where
     C: ArkConfig,
     R: RngCore,
@@ -421,7 +420,7 @@ where
     // domain is always `Op::Value(VecIndex(0..n))`) to avoid cloning a
     // `Vec<usize>` of `n` entries on every round; only non-inline domains are
     // materialized into an owned `Arc`.
-    let dom_arc: Arc<Value<C>>;
+    let dom_arc: Value<C>;
     let dom_ref: &Value<C> = match domain.get() {
         Op::Value(v) => v,
         _ => {
@@ -460,28 +459,22 @@ where
         let shape = selected_eval_shape(poly, range);
         if tail_num_vars == shape.input_num_vars.saturating_sub(range.len()) {
             // Fast path — evaluate the polynomial and fuse
-            let p_val = Arc::unwrap_or_clone(eval_op_with_loop_params(
-                poly,
-                env,
-                rng,
-                loop_params,
-                check_sink,
-            )?);
-            Ok(Some(Arc::new(p_val.value_hypercube_reduce_selected(
+            let p_val = eval_op_with_loop_params(poly, env, rng, loop_params, check_sink)?;
+            Ok(Some(p_val.value_hypercube_reduce_selected(
                 range.clone(),
                 tail_num_vars,
                 shape,
-            ))))
+            )))
         } else {
             // Fallback using already evaluated dom_val
             let results =
                 eval_loop_body_each(body, env, dom_ref.clone().into_elements(), loop_params)?;
-            Ok(Some(Arc::new(Value::value_vec(results).value_reduce(op))))
+            Ok(Some(Value::value_vec(results).value_reduce(op)))
         }
     } else {
         // Fallback using already evaluated dom_val
         let results = eval_loop_body_each(body, env, dom_ref.clone().into_elements(), loop_params)?;
-        Ok(Some(Arc::new(Value::value_vec(results).value_reduce(op))))
+        Ok(Some(Value::value_vec(results).value_reduce(op)))
     }
 }
 
@@ -517,10 +510,10 @@ fn is_vector_value<C: ArkConfig>(v: &Value<C>) -> bool {
 /// analyses read, and no projection contains it.
 pub fn eval_op<C, R>(
     op: &GOp<C>,
-    env: &HashMap<Ref, Arc<Value<C>>>,
+    env: &HashMap<Ref, Value<C>>,
     rng: &mut R,
     check_sink: &mut Vec<bool>,
-) -> Result<Arc<Value<C>>, EvalError>
+) -> Result<Value<C>, EvalError>
 where
     C: ArkConfig,
     R: RngCore,
@@ -533,17 +526,17 @@ where
 /// `Op::LoopParam(level, _)`; the public `eval_op` calls this with `&[]`.
 pub fn eval_op_with_loop_params<C, R>(
     op: &GOp<C>,
-    env: &HashMap<Ref, Arc<Value<C>>>,
+    env: &HashMap<Ref, Value<C>>,
     rng: &mut R,
-    loop_params: &[Arc<Value<C>>],
+    loop_params: &[Value<C>],
     check_sink: &mut Vec<bool>,
-) -> Result<Arc<Value<C>>, EvalError>
+) -> Result<Value<C>, EvalError>
 where
     C: ArkConfig,
     R: RngCore,
 {
     match op {
-        Op::Value(v) => Ok(Arc::new(v.clone())),
+        Op::Value(v) => Ok(v.clone()),
         Op::Ref(r, _) => env.get(r).cloned().ok_or(EvalError::UndefinedRef(*r)),
         Op::Bin(binop, a, b, _) => {
             let av = eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?;
@@ -552,45 +545,45 @@ where
             // right operand must be materialised as owned (one inner clone
             // when the Arc is shared, free when unique).
             let av_ref: &Value<C> = &av;
-            Ok(Arc::new(match binop {
+            Ok(match binop {
                 BinOp::Add => {
-                    let mut bv_owned = Arc::unwrap_or_clone(bv);
+                    let mut bv_owned = bv;
                     av_ref.value_add(&mut bv_owned);
                     bv_owned
                 }
                 BinOp::Sub => {
-                    let mut bv_owned = Arc::unwrap_or_clone(bv);
+                    let mut bv_owned = bv;
                     av_ref.value_sub(&mut bv_owned);
                     bv_owned
                 }
                 BinOp::Mul => {
-                    let mut bv_owned = Arc::unwrap_or_clone(bv);
+                    let mut bv_owned = bv;
                     av_ref.value_mul(&mut bv_owned);
                     bv_owned
                 }
                 BinOp::Div => {
-                    let mut bv_owned = Arc::unwrap_or_clone(bv);
+                    let mut bv_owned = bv;
                     av_ref.value_div(&mut bv_owned);
                     bv_owned
                 }
                 BinOp::Rem => {
-                    let mut bv_owned = Arc::unwrap_or_clone(bv);
+                    let mut bv_owned = bv;
                     av_ref.value_rem(&mut bv_owned);
                     bv_owned
                 }
                 BinOp::Pow => {
-                    let mut bv_owned = Arc::unwrap_or_clone(bv);
+                    let mut bv_owned = bv;
                     av_ref.value_pow(&mut bv_owned);
                     bv_owned
                 }
                 BinOp::Dot => {
-                    let mut bv_owned = Arc::unwrap_or_clone(bv);
+                    let mut bv_owned = bv;
                     av_ref.value_dot(&mut bv_owned);
                     bv_owned
                 }
                 BinOp::Concat => {
-                    let av_owned = Arc::unwrap_or_clone(av);
-                    let bv_owned = Arc::unwrap_or_clone(bv);
+                    let av_owned = av;
+                    let bv_owned = bv;
                     av_owned.value_concat(bv_owned)
                 }
                 BinOp::Equ => Value::Bool(Value::equ(av_ref, &bv)),
@@ -598,37 +591,37 @@ where
                 // Op::bin() routes And to Mul, so this arm is only reached if
                 // an And op was constructed directly.
                 BinOp::And => {
-                    let mut bv_owned = Arc::unwrap_or_clone(bv);
+                    let mut bv_owned = bv;
                     av_ref.value_mul(&mut bv_owned);
                     bv_owned
                 }
-            }))
+            })
         }
         Op::Vec(ops) => {
             let mut values = Vec::with_capacity(ops.len());
             for child in ops {
-                values.push(Arc::unwrap_or_clone(eval_op_with_loop_params(
+                values.push(eval_op_with_loop_params(
                     child,
                     env,
                     rng,
                     loop_params,
                     check_sink,
-                )?));
+                )?);
             }
-            Ok(Arc::new(Value::value_vec(values)))
+            Ok(Value::value_vec(values))
         }
         Op::Record(fields) => {
             let mut out: Ctx<String, Value<C>> = Ctx::new();
             for (name, child) in fields.iter() {
                 let v = eval_op_with_loop_params(child, env, rng, loop_params, check_sink)?;
-                out.insert(name, &*v);
+                out.insert(name, &v);
             }
-            Ok(Arc::new(Value::Record(out)))
+            Ok(Value::Record(out))
         }
         Op::Ram(v, idx) => {
             let v_val = eval_op_with_loop_params(v, env, rng, loop_params, check_sink)?;
             let idx_val = eval_op_with_loop_params(idx, env, rng, loop_params, check_sink)?;
-            Ok(Arc::new(v_val.ram_ref(&*idx_val)))
+            Ok(v_val.ram_ref(&idx_val))
         }
         Op::Assert(_) => panic!(
             "cannot evaluate `Op::Assert`: it is the `where` clause, which only the static \
@@ -636,80 +629,34 @@ where
         ),
         Op::Verify(op) => {
             let val = eval_op_with_loop_params(op, env, rng, loop_params, check_sink)?;
-            let pass = match &*val {
+            let pass = match &val {
                 Value::Bool(b) => *b,
                 _ => panic!("Verify operand must be Bool, found {val}"),
             };
             check_sink.push(pass);
-            Ok(Arc::new(Value::Unit))
+            Ok(Value::Unit)
         }
         Op::Pair(a, b, _) => {
-            let av = Arc::unwrap_or_clone(eval_op_with_loop_params(
-                a,
-                env,
-                rng,
-                loop_params,
-                check_sink,
-            )?);
-            let bv = Arc::unwrap_or_clone(eval_op_with_loop_params(
-                b,
-                env,
-                rng,
-                loop_params,
-                check_sink,
-            )?);
-            Ok(Arc::new(av.pair(bv)))
+            let av = eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?;
+            let bv = eval_op_with_loop_params(b, env, rng, loop_params, check_sink)?;
+            Ok(av.pair(bv))
         }
-        Op::Random(typ, _) => Ok(Arc::new(Value::random(rng, typ))),
-        Op::Challenge(typ, _) => Ok(Arc::new(Value::random(rng, typ))),
+        Op::Random(typ, _) => Ok(Value::random(rng, typ)),
+        Op::Challenge(typ, _) => Ok(Value::random(rng, typ)),
         Op::Evaluate(p, None, None) => {
-            let p_val = Arc::unwrap_or_clone(eval_op_with_loop_params(
-                p,
-                env,
-                rng,
-                loop_params,
-                check_sink,
-            )?);
-            Ok(Arc::new(p_val.value_fft()))
+            let p_val = eval_op_with_loop_params(p, env, rng, loop_params, check_sink)?;
+            Ok(p_val.value_fft())
         }
         Op::Evaluate(p, None, Some(x)) => {
-            let p_val = Arc::unwrap_or_clone(eval_op_with_loop_params(
-                p,
-                env,
-                rng,
-                loop_params,
-                check_sink,
-            )?);
-            let x_val = Arc::unwrap_or_clone(eval_op_with_loop_params(
-                x,
-                env,
-                rng,
-                loop_params,
-                check_sink,
-            )?);
-            Ok(Arc::new(p_val.value_eval(x_val)))
+            let p_val = eval_op_with_loop_params(p, env, rng, loop_params, check_sink)?;
+            let x_val = eval_op_with_loop_params(x, env, rng, loop_params, check_sink)?;
+            Ok(p_val.value_eval(x_val))
         }
         Op::Evaluate(p, Some(range), Some(fixed)) => {
             let shape = selected_eval_shape(p, range);
-            let p_val = Arc::unwrap_or_clone(eval_op_with_loop_params(
-                p,
-                env,
-                rng,
-                loop_params,
-                check_sink,
-            )?);
-            let fixed_val = Arc::unwrap_or_clone(eval_op_with_loop_params(
-                fixed,
-                env,
-                rng,
-                loop_params,
-                check_sink,
-            )?);
-            Ok(Arc::new(p_val.value_eval_selected(
-                range.clone(),
-                fixed_val,
-                shape,
-            )))
+            let p_val = eval_op_with_loop_params(p, env, rng, loop_params, check_sink)?;
+            let fixed_val = eval_op_with_loop_params(fixed, env, rng, loop_params, check_sink)?;
+            Ok(p_val.value_eval_selected(range.clone(), fixed_val, shape))
         }
         Op::Evaluate(_, Some(_), None) => {
             panic!("Op::Evaluate selected mode requires explicit points/fixed values")
@@ -719,13 +666,7 @@ where
             .cloned()
             .ok_or(EvalError::LoopParam(*level)),
         Op::Map(domain, body) => {
-            let dom = Arc::unwrap_or_clone(eval_op_with_loop_params(
-                domain,
-                env,
-                rng,
-                loop_params,
-                check_sink,
-            )?);
+            let dom = eval_op_with_loop_params(domain, env, rng, loop_params, check_sink)?;
             if !is_vector_value(&dom) {
                 return Err(EvalError::TypeMismatch {
                     expected: "vector".to_string(),
@@ -733,7 +674,7 @@ where
                 });
             }
             let results = eval_loop_body_each(body, env, dom.into_elements(), loop_params)?;
-            Ok(Arc::new(Value::value_vec(results)))
+            Ok(Value::value_vec(results))
         }
         Op::ReduceMap(op, domain, body) => {
             if let Some(v) = try_eval_reduce_map_fused_hypercube(
@@ -747,13 +688,7 @@ where
             )? {
                 return Ok(v);
             }
-            let dom = Arc::unwrap_or_clone(eval_op_with_loop_params(
-                domain,
-                env,
-                rng,
-                loop_params,
-                check_sink,
-            )?);
+            let dom = eval_op_with_loop_params(domain, env, rng, loop_params, check_sink)?;
             if !is_vector_value(&dom) {
                 return Err(EvalError::TypeMismatch {
                     expected: "vector".to_string(),
@@ -761,86 +696,59 @@ where
                 });
             }
             let results = eval_loop_body_each(body, env, dom.into_elements(), loop_params)?;
-            Ok(Arc::new(Value::value_vec(results).value_reduce(*op)))
+            Ok(Value::value_vec(results).value_reduce(*op))
         }
         // Extract at the operand's declared type so a `Uni(m)` polynomial
         // always yields exactly its promised `m + 1` coefficient slots,
         // rather than the canonical Arkworks length with trailing zeros
         // dropped.
-        Op::Coef(a) => Ok(Arc::new(
-            (*eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?)
+        Op::Coef(a) => Ok(
+            eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?
                 .value_coef_typed(&a.typ()),
-        )),
-        Op::Poly(a) => Ok(Arc::new(
-            Arc::unwrap_or_clone(eval_op_with_loop_params(
-                a,
-                env,
-                rng,
-                loop_params,
-                check_sink,
-            )?)
-            .value_poly_owned(),
-        )),
+        ),
+        Op::Poly(a) => {
+            Ok(eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?.value_poly_owned())
+        }
         Op::Interpolate(points, evals) => {
             let points_val = eval_op_with_loop_params(points, env, rng, loop_params, check_sink)?;
             let evals_val = eval_op_with_loop_params(evals, env, rng, loop_params, check_sink)?;
-            Ok(Arc::new(
-                Arc::unwrap_or_clone(evals_val).value_interpolate_owned(Some(&*points_val)),
-            ))
+            Ok(evals_val.value_interpolate_owned(Some(&points_val)))
         }
-        Op::Ifft(a) => Ok(Arc::new(
-            Arc::unwrap_or_clone(eval_op_with_loop_params(
-                a,
-                env,
-                rng,
-                loop_params,
-                check_sink,
-            )?)
-            .value_interpolate_owned(None),
-        )),
-        Op::Fft(a) => Ok(Arc::new(
-            (*eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?).value_fft(),
-        )),
+        Op::Ifft(a) => Ok(
+            eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?
+                .value_interpolate_owned(None),
+        ),
+        Op::Fft(a) => {
+            Ok(eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?.value_fft())
+        }
         Op::Mle(a) => {
             // Consume the input via `value_mle_owned` to avoid a 500 MB
             // memcpy when the operand is a fresh or unique `VecScalar`.
             // When the Arc is shared (env still holds a strong ref), the
             // unwrap clones once — same cost as `value_mle`.
-            let av = Arc::unwrap_or_clone(eval_op_with_loop_params(
-                a,
-                env,
-                rng,
-                loop_params,
-                check_sink,
-            )?);
-            Ok(Arc::new(av.value_mle_owned()))
+            let av = eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?;
+            Ok(av.value_mle_owned())
         }
         Op::Reduce(binop, v) => {
-            let v_val = Arc::unwrap_or_clone(eval_op_with_loop_params(
-                v,
-                env,
-                rng,
-                loop_params,
-                check_sink,
-            )?);
-            Ok(Arc::new(v_val.value_reduce(*binop)))
+            let v_val = eval_op_with_loop_params(v, env, rng, loop_params, check_sink)?;
+            Ok(v_val.value_reduce(*binop))
         }
         Op::Proj(record_op, field_name, _) => {
             let rec_val = eval_op_with_loop_params(record_op, env, rng, loop_params, check_sink)?;
-            let Value::Record(r) = &*rec_val else {
+            let Value::Record(r) = &rec_val else {
                 unreachable!()
             };
-            Ok(Arc::new(r.get(field_name).cloned().unwrap()))
+            Ok(r.get(field_name).cloned().unwrap())
         }
         // One-way Fin → Scalar embedding; only finite-index values are admitted.
         Op::ToScalar(a) => {
             let av = eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?;
-            match &*av {
-                Value::Index(i) => Ok(Arc::new(Value::scalar_from_usize(*i))),
+            match &av {
+                Value::Index(i) => Ok(Value::scalar_from_usize(*i)),
                 Value::VecIndex(_) => {
-                    let mut v = Arc::unwrap_or_clone(av);
+                    let mut v = av;
                     v.into_vec_scalar_mut();
-                    Ok(Arc::new(v))
+                    Ok(v)
                 }
                 other => Err(EvalError::TypeMismatch {
                     expected: "Fin or Vec<Fin> value".to_string(),
@@ -856,26 +764,20 @@ where
 /// the per-task rng is a throwaway; rayon parallelizes across elements.
 fn eval_loop_body_each<C: ArkConfig>(
     body: &HOp<C>,
-    env: &HashMap<Ref, Arc<Value<C>>>,
+    env: &HashMap<Ref, Value<C>>,
     elems: Vec<Value<C>>,
-    loop_params: &[Arc<Value<C>>],
+    loop_params: &[Value<C>],
 ) -> Result<Vec<Value<C>>, EvalError> {
     elems
         .into_par_iter()
         .map(|elem| {
-            let mut params: Vec<Arc<Value<C>>> = loop_params.to_vec();
-            params.push(Arc::new(elem));
+            let mut params: Vec<Value<C>> = loop_params.to_vec();
+            params.push(elem);
             let mut rng = StdRng::seed_from_u64(0);
             // Loop bodies are pure templates — no Check nodes — so the
             // check_sink is a throwaway.
             let mut check_sink = Vec::new();
-            Ok(Arc::unwrap_or_clone(eval_op_with_loop_params(
-                body,
-                env,
-                &mut rng,
-                &params,
-                &mut check_sink,
-            )?))
+            eval_op_with_loop_params(body, env, &mut rng, &params, &mut check_sink)
         })
         .collect()
 }
@@ -951,7 +853,7 @@ mod tests {
         let mut rng = ThreadRng::default();
         let mut check_sink = Vec::new();
         let result = eval_op(&op, &env, &mut rng, &mut check_sink).unwrap();
-        assert_eq!(*result, TestValue::Scalar(Fr::from(42)));
+        assert_eq!(result, TestValue::Scalar(Fr::from(42)));
     }
 
     /// `==` on vectors evaluates to one `Bool` over all elements, nested or not.
@@ -967,9 +869,7 @@ mod tests {
             ));
             let mut check_sink = Vec::new();
             let env = HashMap::new();
-            Arc::unwrap_or_clone(
-                eval_op(&op, &env, &mut ThreadRng::default(), &mut check_sink).unwrap(),
-            )
+            eval_op(&op, &env, &mut ThreadRng::default(), &mut check_sink).unwrap()
         };
 
         assert_eq!(
@@ -981,7 +881,7 @@ mod tests {
             TestValue::Bool(false)
         );
 
-        let nested = |last: u64| TestValue::Vec(vec![scalars(&[1, 2]), scalars(&[3, last])]);
+        let nested = |last: u64| TestValue::Vec(vec![scalars(&[1, 2]), scalars(&[3, last])].into());
         assert_eq!(equ(nested(4), nested(4)), TestValue::Bool(true));
         assert_eq!(equ(nested(4), nested(5)), TestValue::Bool(false));
     }

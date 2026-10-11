@@ -403,22 +403,22 @@ fn main() {
     let inputs_base = HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
         (
             Vid("gen_g1".to_string()),
-            Value::G1(ark_bls12_381::G1Projective::generator()),
+            Value::g1(ark_bls12_381::G1Projective::generator()),
         ),
         (
             Vid("gen_g2".to_string()),
-            Value::G2(ark_bls12_381::G2Projective::generator()),
+            Value::g2(ark_bls12_381::G2Projective::generator()),
         ),
-        (Vid("alpha_g1".to_string()), Value::G1(t.keys.alpha_g1)),
-        (Vid("beta_g2".to_string()), Value::G2(t.keys.beta_g2)),
-        (Vid("gamma_g2".to_string()), Value::G2(t.keys.gamma_g2)),
-        (Vid("delta_g2".to_string()), Value::G2(t.keys.delta_g2)),
+        (Vid("alpha_g1".to_string()), Value::g1(t.keys.alpha_g1)),
+        (Vid("beta_g2".to_string()), Value::g2(t.keys.beta_g2)),
+        (Vid("gamma_g2".to_string()), Value::g2(t.keys.gamma_g2)),
+        (Vid("delta_g2".to_string()), Value::g2(t.keys.delta_g2)),
         (
             Vid("gamma_abc_g1".to_string()),
             Value::vec_g1(t.keys.gamma_abc_g1.clone()),
         ),
-        (Vid("beta_g1".to_string()), Value::G1(t.keys.beta_g1)),
-        (Vid("delta_g1".to_string()), Value::G1(t.keys.delta_g1)),
+        (Vid("beta_g1".to_string()), Value::g1(t.keys.beta_g1)),
+        (Vid("delta_g1".to_string()), Value::g1(t.keys.delta_g1)),
         (
             Vid("a_query".to_string()),
             Value::vec_g1(t.keys.a_query.clone()),

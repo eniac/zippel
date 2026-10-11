@@ -67,12 +67,11 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use std::sync::Arc;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs: HashMap<Vid, Arc<Value<ArkBls12_381>>>,
+        inputs: HashMap<Vid, Value<ArkBls12_381>>,
         compile_time: Vec<std::time::Duration>,
     }
 
@@ -103,8 +102,8 @@ pub mod zippel_side {
                         "v1",
                         Value::VecG2Prepared(PreparedG2Vec::new(sh.srs.v_mat[0].clone())),
                     ),
-                    ("v_gen", Value::G2(sh.srs.v.into_group())),
-                    ("g_gen", Value::G1(sh.srs.g.into_group())),
+                    ("v_gen", Value::g2(sh.srs.v.into_group())),
+                    ("g_gen", Value::g1(sh.srs.g.into_group())),
                 ]
                 .into_iter()
                 .map(|(k, v)| (Vid(k.to_string()), v)),

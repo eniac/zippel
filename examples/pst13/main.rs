@@ -102,8 +102,8 @@ fn prover_create_inputs(n: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("z".to_string()), z),
         (Vid("y".to_string()), y),
         (Vid("ck_N".to_string()), ck_n),
-        (Vid("g_gen".to_string()), Value::G1(gen_g)),
-        (Vid("h_gen".to_string()), Value::G2(gen_h)),
+        (Vid("g_gen".to_string()), Value::g1(gen_g)),
+        (Vid("h_gen".to_string()), Value::g2(gen_h)),
         (Vid("alpha_H".to_string()), alpha_h),
         (Vid("alpha".to_string()), Value::vec_scalar(alpha)),
     ])

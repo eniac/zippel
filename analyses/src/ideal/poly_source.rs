@@ -480,7 +480,7 @@ mod tests {
     fn test_ideal_builder_to_poly_value_vec_index() {
         use backend::Value;
 
-        let val = Value::VecIndex(vec![0, 1, 2]);
+        let val = Value::VecIndex(vec![0, 1, 2].into());
         let poly = PolySource::<ArkBls12_381>::to_poly_value(&val);
         assert_eq!(poly.len(), 3);
     }

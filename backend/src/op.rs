@@ -552,7 +552,7 @@ impl<C: HasOpFactory> GOp<C> {
                     return Op::ram(
                         v_inner_clone(&v),
                         Op::Value(Value::VecIndex(
-                            vr.iter().map(|j| vl[*j]).collect::<Vec<_>>(),
+                            vr.iter().map(|j| vl[*j]).collect::<Vec<_>>().into(),
                         )),
                     );
                 }
@@ -566,11 +566,9 @@ impl<C: HasOpFactory> GOp<C> {
             // [e0, e1, ..., en][i] = e_i
             (Op::Vec(vs), Op::Value(Value::Index(i))) => vs[i].get().clone(),
             // [e0, e1, ..., en][r] = [e_i for i in r]
-            (Op::Vec(vs), Op::Value(Value::VecIndex(vr))) => Op::vec(
-                vr.into_iter()
-                    .map(|i| vs[i].get().clone())
-                    .collect::<Vec<_>>(),
-            ),
+            (Op::Vec(vs), Op::Value(Value::VecIndex(vr))) => {
+                Op::vec(vr.iter().map(|&i| vs[i].get().clone()).collect::<Vec<_>>())
+            }
             // v[v2]
             (Op::Value(a), Op::Value(b)) => Op::Value(Value::ram(a, b)),
             // Default constructor
@@ -891,7 +889,7 @@ impl<C: HasOpFactory> GOp<C> {
                 Op::Value(Value::vec_scalar(vec![C::FOps::one(); *n]))
             }
             ATyp::Vec(ATyp::Base(ABase::Fin(r)), n) if r.contains(1) => {
-                Op::Value(Value::VecIndex(vec![1; *n]))
+                Op::Value(Value::VecIndex(vec![1; *n].into()))
             }
             ATyp::Vec(deref!(typ), n) => {
                 let mut vs = vec![];
@@ -903,7 +901,7 @@ impl<C: HasOpFactory> GOp<C> {
             ATyp::Uni(n) if *n > 0 => {
                 let mut vs = vec![0; *n];
                 vs[0] = 1;
-                Op::Value(Value::VecIndex(vs))
+                Op::Value(Value::VecIndex(vs.into()))
             }
             _ => unreachable!("UncaughtError: Op::one() not implemented for type {}", typ),
         }

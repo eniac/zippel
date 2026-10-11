@@ -34,8 +34,8 @@ fn schnorr_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let h = h_affines.into_iter().next().unwrap();
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("x".to_string()), Value::Scalar(x)),
-        (Vid("g".to_string()), Value::G1(g)),
-        (Vid("h".to_string()), Value::G1Affine(h)),
+        (Vid("g".to_string()), Value::g1(g)),
+        (Vid("h".to_string()), Value::g1_affine(h)),
     ])
 }
 
@@ -211,9 +211,9 @@ fn pedersen_eq_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("r_diff".to_string()), Value::Scalar(r1 - r2)),
-        (Vid("h".to_string()), Value::G1(h)),
-        (Vid("c1".to_string()), Value::G1(c1)),
-        (Vid("c2".to_string()), Value::G1(c2)),
+        (Vid("h".to_string()), Value::g1(h)),
+        (Vid("c1".to_string()), Value::g1(c1)),
+        (Vid("c2".to_string()), Value::g1(c2)),
     ])
 }
 
@@ -386,17 +386,17 @@ fn hyrax_ipa_inputs(s: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
 
     let gx_dot = g_vec.clone().dot(x_vec.clone());
     let xi_val = match gx_dot {
-        Value::G1(gx_sum) => h_base * r_xi + gx_sum,
+        Value::G1(gx_sum) => h_base * r_xi + *gx_sum,
         _ => unreachable!(),
     };
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("xi".to_string()), Value::G1(xi_val)),
-        (Vid("tau".to_string()), Value::G1(tau_val)),
+        (Vid("xi".to_string()), Value::g1(xi_val)),
+        (Vid("tau".to_string()), Value::g1(tau_val)),
         (Vid("a_vec".to_string()), a_vec),
         (Vid("g_vec".to_string()), g_vec),
-        (Vid("g_base".to_string()), Value::G1(g_base)),
-        (Vid("h_base".to_string()), Value::G1(h_base)),
+        (Vid("g_base".to_string()), Value::g1(g_base)),
+        (Vid("h_base".to_string()), Value::g1(h_base)),
         (Vid("x_vec".to_string()), x_vec),
         (Vid("y".to_string()), y),
         (Vid("r_xi".to_string()), Value::Scalar(r_xi)),
@@ -523,9 +523,9 @@ fn dory_inputs(log_n: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
     let final_gamma2 = cur_gamma2[0];
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("c1".to_string()), Value::GT(c1)),
-        (Vid("c2".to_string()), Value::GT(c2)),
-        (Vid("c3".to_string()), Value::GT(c3)),
+        (Vid("c1".to_string()), Value::gt(c1)),
+        (Vid("c2".to_string()), Value::gt(c2)),
+        (Vid("c3".to_string()), Value::gt(c3)),
         (Vid("hash1_l_vec".to_string()), Value::vec_gt(hash1_l_vec)),
         (Vid("hash1_r_vec".to_string()), Value::vec_gt(hash1_r_vec)),
         (Vid("hash2_l_vec".to_string()), Value::vec_gt(hash2_l_vec)),
@@ -534,8 +534,8 @@ fn dory_inputs(log_n: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
             Vid("gamma_pair_ipp_vec".to_string()),
             Value::vec_gt(gamma_pair_ipp_vec),
         ),
-        (Vid("final_gamma1".to_string()), Value::G1(final_gamma1)),
-        (Vid("final_gamma2".to_string()), Value::G2(final_gamma2)),
+        (Vid("final_gamma1".to_string()), Value::g1(final_gamma1)),
+        (Vid("final_gamma2".to_string()), Value::g2(final_gamma2)),
         (Vid("gamma1".to_string()), Value::vec_g1(gamma1)),
         (Vid("gamma2".to_string()), Value::vec_g2(gamma2)),
         (Vid("gamma1_prime".to_string()), Value::vec_g1(gamma1_prime)),
@@ -611,10 +611,10 @@ fn kzg_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let n_size = 2;
 
     let gen_g1_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let gen_g1: Value<ArkBls12_381> = Value::G1(gen_g1_input);
+    let gen_g1: Value<ArkBls12_381> = Value::g1(gen_g1_input);
 
     let gen_g2_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
-    let gen_g2: Value<ArkBls12_381> = Value::G2(gen_g2_input);
+    let gen_g2: Value<ArkBls12_381> = Value::g2(gen_g2_input);
 
     let poly_x: Value<ArkBls12_381> =
         Value::<ArkBls12_381>::random(&mut rng, &ATyp::uni(n_size - 1));
@@ -626,7 +626,7 @@ fn kzg_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
     let eval_result: Value<ArkBls12_381> = poly_x.clone().value_eval(eval_point.clone());
 
-    let srs_g2_s: Value<ArkBls12_381> = Value::G2(gen_g2_input * tau_input);
+    let srs_g2_s: Value<ArkBls12_381> = Value::g2(gen_g2_input * tau_input);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("poly_x".to_string()), poly_x),

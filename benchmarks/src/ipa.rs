@@ -163,7 +163,7 @@ pub mod zippel_side {
                 ),
                 (
                     Vid("p_initial_commitment".to_string()),
-                    Value::G1(self.inputs.p_initial),
+                    Value::g1(self.inputs.p_initial),
                 ),
                 (
                     Vid("ip_val_claimed".to_string()),
@@ -171,7 +171,7 @@ pub mod zippel_side {
                 ),
                 (
                     Vid("u_aux_base".to_string()),
-                    Value::G1(self.inputs.u_aux_base),
+                    Value::g1(self.inputs.u_aux_base),
                 ),
                 (
                     Vid("a_vec_witness".to_string()),

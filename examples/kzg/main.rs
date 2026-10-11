@@ -34,10 +34,10 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
     let n_size = 2;
     let gen_g1_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let gen_g1: Value<ArkBls12_381> = Value::G1(gen_g1_input);
+    let gen_g1: Value<ArkBls12_381> = Value::g1(gen_g1_input);
 
     let gen_g2_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
-    let gen_g2: Value<ArkBls12_381> = Value::G2(gen_g2_input);
+    let gen_g2: Value<ArkBls12_381> = Value::g2(gen_g2_input);
 
     let poly_x: Value<ArkBls12_381> =
         Value::<ArkBls12_381>::random(&mut rng, &ATyp::uni(n_size - 1));
@@ -49,7 +49,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
     let eval_result: Value<ArkBls12_381> = poly_x.clone().value_eval(eval_point.clone());
 
-    let srs_g2_s: Value<ArkBls12_381> = Value::G2(gen_g2_input * tau_input);
+    let srs_g2_s: Value<ArkBls12_381> = Value::g2(gen_g2_input * tau_input);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("poly_x".to_string()), poly_x),

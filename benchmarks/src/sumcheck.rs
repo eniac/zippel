@@ -119,7 +119,7 @@ pub mod zippel_side {
             }
             let inputs = crate::harness_inputs([
                 (Vid("claimed_sum".to_string()), Value::Scalar(claimed_sum)),
-                (Vid("p".to_string()), Value::Poly(full_poly)),
+                (Vid("p".to_string()), Value::poly(full_poly)),
             ]);
             let (prove, prove_peak, proof) =
                 crate::sample_zippel_prover(&mut self.handler, &inputs);

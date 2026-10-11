@@ -1503,7 +1503,7 @@ fn pin_fun_lit() {
     let poly = DensePolynomial::from_coefficients_vec(vec![F::zero(), F::one()]);
     let pv = PolyVariant::DenseUni(poly);
     let vp = VirtualPolynomial::from_poly(pv);
-    let val = GOp::<B>::Value(Value::Poly(vp));
+    let val = GOp::<B>::Value(Value::poly(vp));
 
     // Value is not a Ref → add_top_exp creates ret node
     let ret = expected.add_node(Node::ret(&val), 0..0);
@@ -2593,7 +2593,7 @@ fn pin_fun_multilinear() {
     let mle = DenseMultilinearExtension::from_evaluations_vec(2, evals);
     let pv = PolyVariant::DenseMle(mle);
     let vp = VirtualPolynomial::from_poly(pv);
-    let val = GOp::<B>::Value(Value::Poly(vp));
+    let val = GOp::<B>::Value(Value::poly(vp));
 
     let ret = expected.add_node(Node::ret(&val), 0..0);
     expected.add_edges(DepType::Data, ret, val);

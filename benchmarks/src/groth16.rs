@@ -507,14 +507,13 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use std::sync::Arc;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     /// A compiled zippel Groth16 handler plus the size-invariant part of its
     /// input context, ready to be timed at one circuit size.
     pub struct Setup<'a> {
         handler: ZippelHandler<ArkBls12_381>,
-        inputs_base: HashMap<Vid, Arc<Value<ArkBls12_381>>>,
+        inputs_base: HashMap<Vid, Value<ArkBls12_381>>,
         translated: &'a Translated,
         compile_time: Vec<std::time::Duration>,
     }
@@ -550,22 +549,22 @@ pub mod zippel_side {
             let inputs_base = crate::harness_inputs([
                 (
                     Vid("gen_g1".to_string()),
-                    Value::G1(G1Projective::generator()),
+                    Value::g1(G1Projective::generator()),
                 ),
                 (
                     Vid("gen_g2".to_string()),
-                    Value::G2(G2Projective::generator()),
+                    Value::g2(G2Projective::generator()),
                 ),
-                (Vid("alpha_g1".to_string()), Value::G1(keys.alpha_g1)),
-                (Vid("beta_g2".to_string()), Value::G2(keys.beta_g2)),
-                (Vid("gamma_g2".to_string()), Value::G2(keys.gamma_g2)),
-                (Vid("delta_g2".to_string()), Value::G2(keys.delta_g2)),
+                (Vid("alpha_g1".to_string()), Value::g1(keys.alpha_g1)),
+                (Vid("beta_g2".to_string()), Value::g2(keys.beta_g2)),
+                (Vid("gamma_g2".to_string()), Value::g2(keys.gamma_g2)),
+                (Vid("delta_g2".to_string()), Value::g2(keys.delta_g2)),
                 (
                     Vid("gamma_abc_g1".to_string()),
                     Value::vec_g1_affine(gamma_abc_aff),
                 ),
-                (Vid("beta_g1".to_string()), Value::G1(keys.beta_g1)),
-                (Vid("delta_g1".to_string()), Value::G1(keys.delta_g1)),
+                (Vid("beta_g1".to_string()), Value::g1(keys.beta_g1)),
+                (Vid("delta_g1".to_string()), Value::g1(keys.delta_g1)),
                 (
                     Vid("a_query".to_string()),
                     Value::vec_g1_affine(a_query_aff),
@@ -654,7 +653,7 @@ pub mod zippel_side {
                     &self.translated.full_assignment,
                 );
                 h_coeffs.resize(self.translated.h_size, GitFr::zero());
-                let h = (Vid::from("h_coeffs"), Arc::new(Value::vec_scalar(h_coeffs)));
+                let h = (Vid::from("h_coeffs"), Value::vec_scalar(h_coeffs));
                 self.handler
                     .run_prover(crate::lend(&self.inputs_base).chain([h]))
                     .expect("zippel groth16 prover failed")
@@ -1050,22 +1049,22 @@ mod cross_tests {
         HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
             (
                 Vid("gen_g1".to_string()),
-                Value::G1(ark_bls12_381::G1Projective::generator()),
+                Value::g1(ark_bls12_381::G1Projective::generator()),
             ),
             (
                 Vid("gen_g2".to_string()),
-                Value::G2(ark_bls12_381::G2Projective::generator()),
+                Value::g2(ark_bls12_381::G2Projective::generator()),
             ),
-            (Vid("alpha_g1".to_string()), Value::G1(t.keys.alpha_g1)),
-            (Vid("beta_g2".to_string()), Value::G2(t.keys.beta_g2)),
-            (Vid("gamma_g2".to_string()), Value::G2(t.keys.gamma_g2)),
-            (Vid("delta_g2".to_string()), Value::G2(t.keys.delta_g2)),
+            (Vid("alpha_g1".to_string()), Value::g1(t.keys.alpha_g1)),
+            (Vid("beta_g2".to_string()), Value::g2(t.keys.beta_g2)),
+            (Vid("gamma_g2".to_string()), Value::g2(t.keys.gamma_g2)),
+            (Vid("delta_g2".to_string()), Value::g2(t.keys.delta_g2)),
             (
                 Vid("gamma_abc_g1".to_string()),
                 Value::vec_g1(t.keys.gamma_abc_g1.clone()),
             ),
-            (Vid("beta_g1".to_string()), Value::G1(t.keys.beta_g1)),
-            (Vid("delta_g1".to_string()), Value::G1(t.keys.delta_g1)),
+            (Vid("beta_g1".to_string()), Value::g1(t.keys.beta_g1)),
+            (Vid("delta_g1".to_string()), Value::g1(t.keys.delta_g1)),
             (
                 Vid("a_query".to_string()),
                 Value::vec_g1(t.keys.a_query.clone()),
@@ -1147,9 +1146,9 @@ mod cross_tests {
         // The zippel transcript is [a_proof, b_proof, c_proof] in `<-` order
         // (lines 38, 39, 44 of groth16.zippel).
         let cross_proof: Vec<Value<ArkBls12_381>> = vec![
-            Value::G1(proof_n.a),
-            Value::G2(proof_n.b),
-            Value::G1(proof_n.c),
+            Value::g1(proof_n.a),
+            Value::g2(proof_n.b),
+            Value::g1(proof_n.c),
         ];
         let verifier_result = handler
             .run_verifier(cross_proof.clone(), zip_inputs.clone())
@@ -1187,21 +1186,21 @@ mod cross_tests {
             "log_constraints={log_constraints}: expected 3 transcript items (a, b, c)"
         );
         let a = match &zip_proof[0] {
-            Value::G1(g) => *g,
+            Value::G1(g) => **g,
             other => panic!(
                 "expected G1 a_proof, got variant {:?}",
                 std::mem::discriminant(other)
             ),
         };
         let b = match &zip_proof[1] {
-            Value::G2(g) => *g,
+            Value::G2(g) => **g,
             other => panic!(
                 "expected G2 b_proof, got variant {:?}",
                 std::mem::discriminant(other)
             ),
         };
         let c = match &zip_proof[2] {
-            Value::G1(g) => *g,
+            Value::G1(g) => **g,
             other => panic!(
                 "expected G1 c_proof, got variant {:?}",
                 std::mem::discriminant(other)

@@ -133,6 +133,18 @@ impl<T> Clone for Shared<T> {
     }
 }
 
+impl<T> FromIterator<T> for Shared<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        Shared::from(iter.into_iter().collect::<Vec<T>>())
+    }
+}
+
+impl<T: Send> FromParallelIterator<T> for Shared<T> {
+    fn from_par_iter<I: IntoParallelIterator<Item = T>>(iter: I) -> Self {
+        Shared::from(iter.into_par_iter().collect::<Vec<T>>())
+    }
+}
+
 impl<'a, T> IntoIterator for &'a Shared<T> {
     type Item = &'a T;
     type IntoIter = std::slice::Iter<'a, T>;
