@@ -727,7 +727,7 @@ mod tests {
         }
 
         for row in ideal.generating_set.iter() {
-            let (evaluated, _) = row.clone().inline_vars(&subs);
+            let (evaluated, _) = row.inline_vars(&subs);
             assert!(
                 evaluated.is_constant(),
                 "row {row} left free variables under the complete assignment"
