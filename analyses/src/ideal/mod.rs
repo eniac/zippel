@@ -23,7 +23,6 @@ mod substitution;
 pub use substitution::{Refused, Substitution};
 
 mod ops;
-pub(crate) use ops::div::is_division_witness;
 use ops::{EncodeCtx, link_to_polys};
 
 /// Constructs `Ideal`s from `TransClos` inputs. Owns a

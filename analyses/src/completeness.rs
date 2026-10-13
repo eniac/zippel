@@ -1,14 +1,13 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
-use share::Set;
 
 use crate::backend::{GbBackendKind, GbBasis};
 use crate::error::AnalysisError;
 use crate::extractor::extract_locals;
 use crate::frontend::{MonoOrder, Polynomial};
-use crate::ideal::{Check, IdealBuilder, Substitution, is_division_witness};
+use crate::ideal::{Check, IdealBuilder, Substitution};
 use crate::{TransClos, Var};
 use graph::{QDag, Ref};
 
@@ -88,8 +87,13 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
 
         // Then every variable a generator pins down, such as an input the
         // `where` clause defines.
-        let input_args: Set<Ref> = dag.input_args().into_iter().map(Ref::new).collect();
-        let pins = pin(&mut generating_set, |x| input_args.contains(&x.reference));
+        let input_args: HashSet<Ref> = dag.input_args().into_iter().map(Ref::new).collect();
+        let witnesses: HashSet<Ref> = prover_result
+            .division_witnesses
+            .union(&verifier_locals.division_witnesses)
+            .copied()
+            .collect();
+        let pins = pin(&mut generating_set, &input_args, &witnesses);
 
         // verifier_locals keeps the `==` node under each `verify`, so its
         // encoding is already a generator; reducing it again is wasted work.
@@ -165,14 +169,15 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
 /// every remaining generator resolved.
 fn pin<F: ark_ff::Field>(
     generating_set: &mut Vec<Polynomial<F>>,
-    is_input: impl Fn(&Var) -> bool,
+    inputs: &HashSet<Ref>,
+    witnesses: &HashSet<Ref>,
 ) -> Substitution<F> {
     let mut pins = Substitution::default();
     loop {
         let mut pinned = false;
         generating_set.retain_mut(|p| {
             *p = pins.apply(p);
-            let Some((x, value)) = pinned_var(p, &is_input) else {
+            let Some((x, value)) = pinned_var(p, inputs, witnesses) else {
                 return !p.is_zero();
             };
             pins.insert(x, value)
@@ -195,7 +200,8 @@ fn pin<F: ark_ff::Field>(
 /// relation stays over the inputs. Ties go to the least `Var`.
 fn pinned_var<F: ark_ff::Field>(
     p: &Polynomial<F>,
-    is_input: impl Fn(&Var) -> bool,
+    inputs: &HashSet<Ref>,
+    witnesses: &HashSet<Ref>,
 ) -> Option<(Var, Polynomial<F>)> {
     // The number of terms each variable occurs in.
     let mut occurrences: HashMap<&Var, usize> = HashMap::new();
@@ -204,12 +210,12 @@ fn pinned_var<F: ark_ff::Field>(
             *occurrences.entry(x).or_default() += 1;
         }
     }
-    let has_witness = occurrences.keys().any(|x| is_division_witness(x));
+    let has_witness = occurrences.keys().any(|x| witnesses.contains(&x.reference));
     let qualifies = |x: &Var| match occurrences.len() {
         // `x` is the only variable, so `r` is constant.
         1 => true,
-        _ if has_witness => is_division_witness(x),
-        _ => is_input(x),
+        _ if has_witness => witnesses.contains(&x.reference),
+        _ => inputs.contains(&x.reference),
     };
     let (x, c) = p
         .terms
@@ -225,7 +231,7 @@ fn pinned_var<F: ark_ff::Field>(
 
 #[cfg(test)]
 mod tests {
-    use super::{CompletenessAnalysis, is_division_witness, pinned_var};
+    use super::{CompletenessAnalysis, pinned_var};
     use crate::QualifierPropagation;
     use crate::Var;
     use crate::backend::GbBackend;
@@ -1385,11 +1391,16 @@ mod tests {
         // The quotient appears only as `f_one·q` until a later generator pins
         // `f_one := 1`.
         let inputs = CompletenessAnalysis::build_inputs(&dag_of(&opening("t == b")));
+        let prefix = crate::ideal::GB_GENERATED_NAME_PREFIX;
         let witnesses: Vec<_> = inputs
             .generating_set
             .iter()
             .flat_map(|p| p.vars())
-            .filter(is_division_witness)
+            .filter(|x| {
+                ["div_q::", "div_r::"]
+                    .iter()
+                    .any(|key| x.name.starts_with(&format!("{prefix}{key}")))
+            })
             .collect();
         assert!(witnesses.is_empty(), "{witnesses:?}");
 
@@ -1410,10 +1421,10 @@ mod tests {
 
     #[test]
     fn a_division_row_pins_its_witness_and_leaves_the_input() {
-        use crate::ideal::GB_GENERATED_NAME_PREFIX;
         use backend::ATyp;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
+        use std::collections::HashSet;
 
         let var = |name: &str, node: usize| {
             Var::from_var(
@@ -1423,26 +1434,26 @@ mod tests {
                 Qualifier::Instance,
             )
         };
-        let witness = |i: usize| var(&format!("{GB_GENERATED_NAME_PREFIX}div_q::{i}"), 10 + i);
         let (p1, z, f, q0, q1) = (
             var("p1", 0),
             var("z", 1),
             var("f", 2),
-            witness(0),
-            witness(1),
+            var("q0", 3),
+            var("q1", 4),
         );
         let v = |x: &Var| Polynomial::<ark_bls12_381::Fr>::var(x);
-        let is_input = |x: &Var| [&p1, &f].contains(&x);
+        let inputs = HashSet::from([p1.reference, f.reference]);
+        let witnesses = HashSet::from([q0.reference, q1.reference]);
 
         // The row of `(p − p(z)) / (X − z)` at `X^1`, in which the input
         // `p1` and the quotient's `q0` both occur only linearly.
         let row = v(&p1) + v(&z) * v(&q1) - v(&q0);
         assert_eq!(
-            pinned_var(&row, is_input),
+            pinned_var(&row, &inputs, &witnesses),
             Some((q0.clone(), v(&p1) + v(&z) * v(&q1)))
         );
         // The same row divided by `f·X − z`, before `f` is pinned.
         let row = v(&p1) + v(&z) * v(&q1) - v(&f) * v(&q0);
-        assert_eq!(pinned_var(&row, is_input), None);
+        assert_eq!(pinned_var(&row, &inputs, &witnesses), None);
     }
 }
