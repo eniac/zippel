@@ -515,7 +515,11 @@ pub mod zippel_side {
             ]);
 
             let (handler, compile_time) = crate::sample_compile(|| {
-                let args = ZippelArgs::new(PathBuf::from("examples/pst13/pst13.zippel"));
+                let args = ZippelArgs::new(
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("..")
+                        .join("examples/pst13/pst13.zippel"),
+                );
                 let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("N"), &shared.n);

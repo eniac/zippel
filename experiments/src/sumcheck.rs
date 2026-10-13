@@ -57,7 +57,11 @@ pub mod zippel_side {
         /// checked, or lowered to a graph for these sizes.
         pub fn new(num_vars: usize, max_degree: usize) -> Self {
             let (handler, compile_time) = crate::sample_compile(|| {
-                let args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"));
+                let args = ZippelArgs::new(
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("..")
+                        .join("examples/sumcheck/sumcheck.zippel"),
+                );
                 let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("NUM_VARS_CONST"), &num_vars);

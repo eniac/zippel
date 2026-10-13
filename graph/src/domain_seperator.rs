@@ -17,6 +17,10 @@ use share::Ctx;
 #[cfg(test)]
 use share::unwrap;
 
+/// The duplex sponge of every Zippel transcript (see
+/// [`ZippelDomainSeparator::prover_state`]).
+pub type Sponge = spongefish::instantiations::Blake3;
+
 /// Wrapper to make Vec<u8> implement Encoding for use as domain separator instance
 struct InstanceBytes(Vec<u8>);
 
@@ -96,14 +100,20 @@ impl<C: ArkConfig> ZippelDomainSeparator<C> {
         }
     }
 
-    /// Opens a `spongefish` prover state seeded with this domain separator.
-    pub fn std_prover(&self) -> spongefish::ProverState {
+    /// Opens a `spongefish` prover state seeded with this domain separator,
+    /// on spongefish's BLAKE3 duplex sponge ([`Sponge`]).
+    ///
+    /// BLAKE3 rather than spongefish's default SHAKE128: a transcript absorbs
+    /// every instance input whole, tens of megabytes for an R1CS instance,
+    /// and BLAKE3 absorbs about 7× faster (Spartan, M = 18: 31 MB of
+    /// matrices, 12.6 ms per matrix with SHAKE128 against 1.85 ms).
+    pub fn prover_state(&self) -> spongefish::ProverState<Sponge> {
         let session_bytes = session_id_from_str(&self.session);
         let instance = InstanceBytes(self.instance_bytes.clone());
         domain_separator!("zippel")
             .session(session_bytes)
             .instance(&instance)
-            .std_prover()
+            .to_prover(Sponge::default())
     }
 }
 
@@ -121,6 +131,6 @@ fn test_domain_separator() {
     let m = parse_and_concretize(ex, &Ctx::new());
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let domain_seperator = ZippelDomainSeparator::new("test_domain_separator", &gs[0]);
-    let _prover = domain_seperator.std_prover();
+    let _prover = domain_seperator.prover_state();
     debug!("Domain Seperator created successfully");
 }

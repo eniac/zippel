@@ -23,8 +23,8 @@ use lang::diagnostic::render_diagnostic;
 use lang::id::{Tid, Vid};
 use lang::typ::Qualifier;
 use log::{debug, error, info};
+use runtime::ResultKind;
 use runtime::RuntimeError;
-use runtime::graph::ResultKind;
 use share::{Ctx, unwrap};
 use std::collections::HashMap;
 use std::fs;
@@ -428,7 +428,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             &prover.clone(),
         );
 
-        let mut prover_state = prover_seperator.std_prover();
+        let mut prover_state = prover_seperator.prover_state();
         let result = MutexGraph::run_graph(
             Arc::new(MutexGraph::new(prover.clone())),
             inputs,
@@ -521,7 +521,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         );
         // For now, use prover state since we don't have narg_string yet
         // TODO: Fix this to use proper verifier state when narg_string is available
-        let mut verifier_state = verifier_seperator.std_prover();
+        let mut verifier_state = verifier_seperator.prover_state();
         let result = MutexGraph::run_graph(
             Arc::new(MutexGraph::new(verifier.clone())),
             all_inputs,

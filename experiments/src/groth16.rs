@@ -604,7 +604,11 @@ pub mod zippel_side {
             // would dominate verify time at large M+L.
 
             let (handler, compile_time) = crate::sample_compile(|| {
-                let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"));
+                let args = ZippelArgs::new(
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("..")
+                        .join("examples/groth16/groth16.zippel"),
+                );
                 let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("M"), &translated.m);

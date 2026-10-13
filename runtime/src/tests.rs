@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod runtime_tests {
-    use crate::graph::{MutexGraph, ResultKind, RunResult};
+    use crate::{MutexGraph, ResultKind, RunResult};
     use backend::Value;
     use backend::config::ArkBls12_381;
     use graph::UDags;
@@ -69,7 +69,7 @@ mod runtime_tests {
             "test",
             &dag.clone().erase_ann(),
         );
-        let mut prover_state = separator.std_prover();
+        let mut prover_state = separator.prover_state();
 
         let mg_prover = Arc::new(MutexGraph::new(prover));
         let proof =
@@ -118,7 +118,7 @@ mod runtime_tests {
             verifier_inputs.insert(name.clone(), val.clone());
         }
 
-        let mut verifier_state = separator.std_prover();
+        let mut verifier_state = separator.prover_state();
         let mg_verifier = Arc::new(MutexGraph::new(verifier.clone()));
         let verify_results = match MutexGraph::run_graph(
             mg_verifier,
@@ -172,7 +172,7 @@ mod runtime_tests {
             "test_wide",
             &dag.clone().erase_ann(),
         );
-        let mut prover_state = separator.std_prover();
+        let mut prover_state = separator.prover_state();
         let mg = Arc::new(MutexGraph::new(prover));
         let proof = match MutexGraph::run_graph(mg, inputs, &mut prover_state, ResultKind::Prover)
             .unwrap()
@@ -211,15 +211,11 @@ mod runtime_tests {
             "test_error",
             &dag.clone().erase_ann(),
         );
-        let mut prover_state = separator.std_prover();
+        let mut prover_state = separator.prover_state();
 
         let mg = Arc::new(MutexGraph::new(prover));
-        let result = MutexGraph::run_graph(
-            mg,
-            inputs,
-            &mut prover_state,
-            crate::graph::ResultKind::Prover,
-        );
+        let result =
+            MutexGraph::run_graph(mg, inputs, &mut prover_state, crate::ResultKind::Prover);
 
         assert!(result.is_err());
         assert!(matches!(

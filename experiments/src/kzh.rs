@@ -80,8 +80,11 @@ pub mod zippel_side {
             let (nx, ny) = (sh.srs.dimensions[0], sh.srs.dimensions[1]);
 
             let (handler, compile_time) = crate::sample_compile(|| {
-                let mut handler: ZippelHandler<ArkBls12_381> =
-                    ZippelHandler::new(ZippelArgs::new(PathBuf::from("examples/kzh/kzh.zippel")));
+                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(ZippelArgs::new(
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("..")
+                        .join("examples/kzh/kzh.zippel"),
+                ));
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("NX"), &nx);
                 sizes.insert(&Tid::new("NY"), &ny);

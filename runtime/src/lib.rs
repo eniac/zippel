@@ -10,12 +10,16 @@
 
 /// Typed failures raised while validating inputs or executing a graph.
 pub mod error;
-/// Runtime graph representation and the parallel execution loop.
+/// The executable graph: per-node run state and precomputed scheduling
+/// tables.
 pub mod graph;
 
 mod inbox;
+mod run;
+mod transcript;
 pub use error::RuntimeError;
-pub use graph::{MutexGraph, RunResult};
+pub use graph::MutexGraph;
+pub use run::{ResultKind, RunResult};
 
 #[cfg(test)]
 mod tests;
