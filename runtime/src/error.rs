@@ -72,6 +72,16 @@ pub enum RuntimeError {
         /// The message's declared type.
         expected: String,
     },
+
+    /// An input passed to `run_prover` or `run_verifier` is not a value of
+    /// the type the protocol declares for that argument.
+    #[error("input `{name}` is not a value of type {expected}")]
+    MalformedInput {
+        /// The argument's name.
+        name: String,
+        /// The argument's declared type.
+        expected: String,
+    },
 }
 
 impl RuntimeError {

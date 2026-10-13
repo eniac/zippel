@@ -708,38 +708,29 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
             // `produce_synthetic_r1cs` + `NIZKGens::new` are pure setup
             // (libspartan with the multicore feature uses rayon, so the
             // install routes them onto every core).
-            let (inst, vars, inputs, gens, inst_bytes, inputs_bytes) = setup_pool().install(|| {
+            let (inst, vars, inputs, gens) = setup_pool().install(|| {
                 let (inst, vars, inputs) =
                     Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
                 let gens = NIZKGens::new(num_cons, num_vars, num_inputs);
-                let inst_bytes = vec![0u8; 3 * num_cons * 40];
-                let inputs_bytes = bincode::serialize(&inputs).expect("serialize inputs");
-                (inst, vars, inputs, gens, inst_bytes, inputs_bytes)
+                (inst, vars, inputs, gens)
             });
 
             // Each run makes its transcript inside the timer and the heap
-            // count, as zippel makes its sponge inside each run. The prover
+            // count, as zippel makes its sponge inside each run. Each system
+            // binds its own instance: `NIZK::prove`/`verify` append the
+            // instance (serialized and compressed once, in setup), zippel
+            // absorbs its matrices and `io` in every run. The prover
             // computes Az, Bz, Cz inside `prove`; zippel's harness computes
             // them inside its timed call too (see `spartan::Setup`).
             // `prove` takes the witness by value, so a caller that keeps it
             // copies it per run, inside the measurement.
             let (native_prove, native_prove_peak, proof) = experiments::sample(|| {
                 let mut pt = Transcript::new(b"bench_all_spartan");
-                {
-                    let mut bind = Transcript::new(b"matrix_bind");
-                    bind.append_message(b"inst", &inst_bytes);
-                    bind.append_message(b"io", &inputs_bytes);
-                }
                 timed_pool().install(|| NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt))
             });
 
             let (native_verify, native_verify_peak, ()) = experiments::sample(|| {
                 let mut vt = Transcript::new(b"bench_all_spartan");
-                {
-                    let mut bind = Transcript::new(b"matrix_bind");
-                    bind.append_message(b"inst", &inst_bytes);
-                    bind.append_message(b"io", &inputs_bytes);
-                }
                 timed_pool()
                     .install(|| proof.verify(&inst, &inputs, &mut vt, &gens))
                     .expect("verify");

@@ -87,27 +87,14 @@ fn main() {
 
         let gens = NIZKGens::new(num_cons, num_vars, num_inputs);
 
-        let inst_bytes = vec![0u8; 3 * num_cons * 40];
-        let inputs_bytes = bincode::serialize(&inputs).expect("serialize inputs");
-
         let mut pt = Transcript::new(b"phase3_spartan_compare");
         let prover_start = Instant::now();
-        {
-            let mut bind = Transcript::new(b"matrix_bind");
-            bind.append_message(b"inst", &inst_bytes);
-            bind.append_message(b"io", &inputs_bytes);
-        }
         let proof = NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt);
         let n_prove = prover_start.elapsed();
         let native_proof_bytes = bincode::serialize(&proof).expect("encode proof").len();
 
         let mut vt = Transcript::new(b"phase3_spartan_compare");
         let verifier_start = Instant::now();
-        {
-            let mut bind = Transcript::new(b"matrix_bind");
-            bind.append_message(b"inst", &inst_bytes);
-            bind.append_message(b"io", &inputs_bytes);
-        }
         let verified_ok = proof.verify(&inst, &inputs, &mut vt, &gens).is_ok();
         let n_verify = verifier_start.elapsed();
         assert!(verified_ok, "native MS Spartan NIZK verify FAILED at M={m}");

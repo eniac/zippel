@@ -1,4 +1,4 @@
-proto hadamard<F: Field, S: Size, N: 1..S>(
+proto hadamard<F: Field, N: Size>(
     instance p_A: Uni<F, N>,
     instance p_B: Uni<F, N>,
     instance p_C: Uni<F, N>,

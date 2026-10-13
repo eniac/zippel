@@ -244,7 +244,7 @@ fn mul_coeffs<F: Field>(left: &[F], right: &[F]) -> Vec<F> {
 }
 
 fn trim_trailing_zero_coeffs<F: Field>(coeffs: &mut Vec<F>) {
-    while coeffs.len() > 1 && coeffs.last().is_some_and(|coeff| coeff.is_zero()) {
+    while coeffs.last().is_some_and(F::is_zero) {
         coeffs.pop();
     }
     if coeffs.is_empty() {

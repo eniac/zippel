@@ -7,12 +7,16 @@ use zippel::*;
 
 use crate::common;
 
+/// The degree bound `N` the protocol is compiled for: `v_H` has degree `N`,
+/// `p_A`, `p_B`, `p_C` degree `N - 1`.
+const N_VAL: usize = 4;
+
 pub fn run(opts: &common::RunOptions) {
     println!("=== Hadamard (ArkSecp256k1) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/hadamard/hadamard.zippel"));
     let mut handler: zippel::ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("S"), &5);
+    sizes.insert(&Tid::new("N"), &N_VAL);
     handler.compile(&sizes);
 
     common::run_prover_and_verify(&mut handler, prover_create_inputs());
@@ -24,7 +28,7 @@ pub fn run(opts: &common::RunOptions) {
     let analysis_args = ZippelArgs::new(PathBuf::from("examples/hadamard/hadamard.zippel"));
     let mut analysis_handler: ZippelHandler<ArkSecp256k1> = ZippelHandler::new(analysis_args);
     let mut analysis_sizes = Ctx::new();
-    analysis_sizes.insert(&Tid::new("S"), &2usize);
+    analysis_sizes.insert(&Tid::new("N"), &1usize);
     analysis_handler.compile(&analysis_sizes);
 
     common::time_analysis!("Completeness", analysis_handler.analyze_completeness());
@@ -35,7 +39,7 @@ pub fn run(opts: &common::RunOptions) {
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
     let mut rng = rand::rngs::OsRng;
 
-    let n_val_const = 4;
+    let n_val_const = N_VAL;
 
     let mut p_a_coeffs = Vec::with_capacity(n_val_const);
     let mut p_b_coeffs = Vec::with_capacity(n_val_const);
