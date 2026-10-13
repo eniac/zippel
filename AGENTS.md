@@ -72,7 +72,8 @@ values, `challenge<T>` draws a Fiat–Shamir challenge, `<-` both computes
 and appends a value to the transcript, `let` is a local (non-transcript)
 binding, and `verify(...)` is the final check. See
 `CONTRIBUTING.md`'s "Creating a new protocol with Zippel" section for a
-full worked example, or any file under `examples/*/*.zippel`.
+full worked example, or any file under `examples/*/*.zippel`. The parser
+requires size-type variables to start uppercase and values lowercase.
 
 ## Build, test, and format
 
@@ -144,3 +145,5 @@ non-default sizes, add it to `EXAMPLE_SIZES` in `check/tests/examples.rs`.
 - The `nothing` module in `backend` is a placeholder/no-op curve
   implementation, not a real backend — don't confuse it with
   `ArkBls12_381` etc. when picking a concrete type for new code.
+- If a build runs out of disk, `cargo clean -p <crate>` for crates you
+  aren't rebuilding.

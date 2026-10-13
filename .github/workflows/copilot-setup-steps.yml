@@ -7,9 +7,8 @@
 # (Android SDK, .NET, Haskell, Docker images, …) to reclaim ~31 GB before
 # the agent session starts.
 #
-# Complement: `.github/copilot-instructions.md` has a "Disk hygiene"
-# section telling the agent to run `cargo clean -p <crate>` if `target/`
-# itself bloats during a long session.
+# Complement: `AGENTS.md` (which the agent reads) tells it to run
+# `cargo clean -p <crate>` if `target/` itself bloats during a long session.
 
 name: Copilot Setup Steps
 
