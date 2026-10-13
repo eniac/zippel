@@ -903,4 +903,68 @@ proto bad_check<F: Field>(witness a: F, witness b: F, instance c: F) where a == 
             "bad_check with c = 42 should fail verification since c != 0"
         );
     }
+
+    /// Schnorr, from its example.
+    fn schnorr() -> ZippelHandler<ArkBls12_381> {
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/schnorr/schnorr.zippel");
+        ZippelHandler::new(ZippelArgs::new(path))
+    }
+
+    fn schnorr_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
+        use ark_std::UniformRand;
+        use backend::ArkGroupOps;
+
+        let mut rng = rand::rngs::OsRng;
+        let x = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
+        let g = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
+        let h = <ArkBls12_381 as ArkConfig>::G1Ops::vec_mul(&g, &[x])
+            .into_iter()
+            .next()
+            .unwrap();
+        Ctx::from_iter([
+            (Vid("x".to_string()), Value::Scalar(x)),
+            (Vid("g".to_string()), Value::g1(g)),
+            (Vid("h".to_string()), Value::g1_affine(h)),
+        ])
+    }
+
+    /// `compile_for_execution` leaves the `where` clause out of the protocol
+    /// graph, but projects the same prover and verifier as `compile`.
+    #[test]
+    fn compile_for_execution_projects_the_same_prover_and_verifier_as_compile() {
+        let mut full = schnorr();
+        full.compile(&Ctx::new());
+        let mut exec = schnorr();
+        exec.compile_for_execution(&Ctx::new());
+
+        assert_eq!(
+            full.prover_graph().node_count(),
+            exec.prover_graph().node_count()
+        );
+        assert_eq!(
+            full.verifier_graph().node_count(),
+            exec.verifier_graph().node_count()
+        );
+
+        // Proofs cross over in both directions, so the two compiles also agree
+        // on the Fiat-Shamir transcript.
+        let inputs = schnorr_inputs();
+        let proof = exec.run_prover(inputs.clone()).unwrap();
+        assert!(check_verification(
+            &full.run_verifier(proof, inputs.clone()).unwrap()
+        ));
+        let proof = full.run_prover(inputs.clone()).unwrap();
+        assert!(check_verification(
+            &exec.run_verifier(proof, inputs).unwrap()
+        ));
+    }
+
+    /// The analyses still see the relation `compile_for_execution` leaves out.
+    #[test]
+    fn compile_for_execution_keeps_the_relation_for_the_analyses() {
+        let mut exec = schnorr();
+        exec.compile_for_execution(&Ctx::new());
+        assert!(exec.analyze_completeness().is_ok());
+    }
 }
