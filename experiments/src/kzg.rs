@@ -124,7 +124,11 @@ pub mod zippel_side {
                 (ZippelArgs::new(file.path().to_path_buf()), Some(file))
             } else {
                 (
-                    ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel")),
+                    ZippelArgs::new(
+                        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                            .join("..")
+                            .join("examples/kzg/kzg.zippel"),
+                    ),
                     None,
                 )
             };

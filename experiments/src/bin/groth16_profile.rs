@@ -392,7 +392,11 @@ fn main() {
 
     // --- ZIPPEL breakdown ------------------------------------------------
     eprintln!("\n--- ZIPPEL breakdown ---");
-    let args_z = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"));
+    let args_z = ZippelArgs::new(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("examples/groth16/groth16.zippel"),
+    );
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args_z);
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("M"), &t.m);

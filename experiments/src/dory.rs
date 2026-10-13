@@ -84,7 +84,12 @@ pub mod zippel_side {
 
     impl Setup {
         pub fn new(sh: &shared::Shared) -> Self {
-            Self::with_proto(sh, PathBuf::from("examples/dory_pcs/dory_pcs.zippel"))
+            Self::with_proto(
+                sh,
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join("examples/dory_pcs/dory_pcs.zippel"),
+            )
         }
 
         /// Same inputs, a different proto source (the cross-check test runs a

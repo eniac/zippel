@@ -20,6 +20,7 @@ num = "0.4.3"
 spongefish = { version = "0.7", features = [
     "ark-ff",
     "ark-ec",
+    "blake3",
 ] }
 
 [dev-dependencies]

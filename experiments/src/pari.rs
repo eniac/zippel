@@ -379,7 +379,11 @@ pub mod zippel_side {
             let num_vars = inst.num_vars;
             let kmn = num_vars - n_pub;
             let (handler, compile_time) = crate::sample_compile(|| {
-                let args = ZippelArgs::new(PathBuf::from("examples/pari/pari.zippel"));
+                let args = ZippelArgs::new(
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("..")
+                        .join("examples/pari/pari.zippel"),
+                );
                 let mut handler: ZippelHandler<C> = ZippelHandler::new(args);
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("M"), &m_log);

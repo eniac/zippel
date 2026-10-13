@@ -108,7 +108,9 @@ pub mod zippel_side {
         pub fn new(sh: &shared::Shared) -> Self {
             Self::with_proto(
                 sh,
-                PathBuf::from("examples/hyperplonk_snark/hyperplonk_snark.zippel"),
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join("examples/hyperplonk_snark/hyperplonk_snark.zippel"),
             )
         }
 

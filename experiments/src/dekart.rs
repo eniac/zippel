@@ -155,7 +155,12 @@ pub mod zippel_side {
 
     impl Setup {
         pub fn new(sh: &shared::Shared) -> Self {
-            Self::new_with_proto(sh, PathBuf::from("examples/dekart/dekart.zippel"))
+            Self::new_with_proto(
+                sh,
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join("examples/dekart/dekart.zippel"),
+            )
         }
 
         /// Same inputs, different proto source (used by the `dekart_profile`
