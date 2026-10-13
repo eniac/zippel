@@ -1718,3 +1718,48 @@ fn conforms_to_accepts_every_representation_of_a_type() {
         assert!(!value.conforms_to(typ), "{value} should not be a {typ}");
     }
 }
+
+#[test]
+fn conforms_to_bounds_a_polynomial_by_its_type() {
+    use crate::virtual_polynomial::VirtualPolynomial;
+    use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePolynomial};
+    type V = Value<TestConfig>;
+    let fr = |xs: &[u64]| xs.iter().map(|&x| Fr::from(x)).collect::<Vec<_>>();
+    let uni = |cs: &[u64]| {
+        VirtualPolynomial::from_poly(PolyVariant::DenseUni(
+            DensePolynomial::from_coefficients_vec(fr(cs)),
+        ))
+    };
+    let mle = |evals: &[u64]| {
+        VirtualPolynomial::from_poly(PolyVariant::DenseMle(
+            DenseMultilinearExtension::from_evaluations_vec(2, fr(evals)),
+        ))
+    };
+    let cubic = uni(&[1, 2, 3, 4]);
+    let m = mle(&[1, 2, 3, 4]);
+    let product = &m * &mle(&[5, 6, 7, 8]);
+    // Two variables, three evaluations.
+    let short_mle =
+        VirtualPolynomial::from_poly(PolyVariant::DenseMle(DenseMultilinearExtension {
+            evaluations: fr(&[1, 2, 3]),
+            num_vars: 2,
+        }));
+
+    let cases = [
+        (&cubic, ATyp::Uni(3), true),
+        (&cubic, ATyp::Uni(2), false),
+        (&cubic, ATyp::Mle(2), false),
+        (&m, ATyp::Mle(2), true),
+        (&m, ATyp::Mle(3), false),
+        (&m, ATyp::Uni(4), false),
+        (&short_mle, ATyp::Mle(2), false),
+        (&product, ATyp::Mle(2), false),
+        // Two 2-variable multilinear factors: total degree up to 4.
+        (&product, ATyp::VPoly(2, 4), true),
+        (&product, ATyp::VPoly(2, 3), false),
+    ];
+    for (poly, typ, expected) in cases {
+        let value = V::poly(poly.clone());
+        assert_eq!(value.conforms_to(&typ), expected, "{value} as {typ}");
+    }
+}
