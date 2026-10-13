@@ -298,27 +298,42 @@ impl<F: Field> Polynomial<F> {
     }
 
     /// Inline variables from `substitutions` into this polynomial.
-    /// Returns `(result, did_change)`.
-    pub fn inline_vars(self, substitutions: &Ctx<Var, Polynomial<F>>) -> (Self, bool) {
-        let mut new_poly = Polynomial::zero();
+    /// Returns `(result, did_change)`, where `did_change` says whether some
+    /// variable had a substitution.
+    ///
+    /// A term without substituted variables is copied as is; the others are
+    /// expanded. Terms are summed into one map and cancelled ones dropped at
+    /// the end, so the cost is linear in the number of result terms.
+    pub fn inline_vars(&self, substitutions: &Ctx<Var, Polynomial<F>>) -> (Self, bool) {
+        let mut terms: HashMap<Monomial, F> = HashMap::with_capacity(self.terms.len());
         let mut did_change = false;
-        for (term, coeff) in self.terms.into_iter() {
-            let mut new_mono = Polynomial::lit(&coeff);
-            for (var, power) in term.vars().into_iter().zip(term.powers()) {
-                if let Some(sub) = substitutions.get(&var) {
-                    did_change = true;
-                    let mut p = sub.clone();
-                    p.pow(power);
-                    new_mono *= p;
-                } else {
-                    let mut p = Polynomial::var(&var);
-                    p.pow(power);
-                    new_mono *= p;
-                }
+        for (term, coeff) in &self.terms {
+            let subs: Vec<(&Var, &Polynomial<F>, usize)> = term
+                .iter()
+                .filter_map(|(v, &power)| substitutions.get(v).map(|p| (v, p, power)))
+                .collect();
+            if subs.is_empty() {
+                *terms.entry(term.clone()).or_insert(F::zero()) += coeff;
+                continue;
             }
-            new_poly += new_mono;
+            did_change = true;
+            // `coeff` times the remaining variables times each substituted
+            // value raised to its exponent.
+            let mut rest = term.clone();
+            let mut product = Polynomial::lit(coeff);
+            for (v, p, power) in subs {
+                rest.0.remove(v);
+                let mut p = p.clone();
+                p.pow(power);
+                product *= p;
+            }
+            for (mut m, c) in product.terms {
+                m *= rest.clone();
+                *terms.entry(m).or_insert(F::zero()) += c;
+            }
         }
-        (new_poly, did_change)
+        terms.retain(|_, c| !c.is_zero());
+        (Polynomial { terms }, did_change)
     }
 
     /// Remap every variable in every term through `f`.

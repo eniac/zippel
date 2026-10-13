@@ -99,7 +99,7 @@ impl<F: Field> Substitution<F> {
             .collect();
         for k in stale {
             if let Some(v) = self.defs.get_mut(&k) {
-                *v = std::mem::replace(v, Polynomial::zero()).inline_vars(&def).0;
+                *v = v.inline_vars(&def).0;
             }
         }
         self.defs.entry(x).or_insert(f);
@@ -109,7 +109,7 @@ impl<F: Field> Substitution<F> {
     /// Substitute every definition into `p`. One pass suffices, since no
     /// value mentions a defined variable.
     pub fn apply(&self, p: &Polynomial<F>) -> Polynomial<F> {
-        p.clone().inline_vars(&self.defs).0
+        p.inline_vars(&self.defs).0
     }
 }
 
@@ -150,7 +150,7 @@ mod tests {
     /// Substitute `defs` into `p` until nothing changes, which ends when
     /// `defs` is acyclic.
     fn naive(p: &Polynomial<Fr>, defs: &Ctx<Var, Polynomial<Fr>>) -> Polynomial<Fr> {
-        match p.clone().inline_vars(defs) {
+        match p.inline_vars(defs) {
             (q, true) => naive(&q, defs),
             (q, false) => q,
         }
