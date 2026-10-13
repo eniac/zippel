@@ -360,6 +360,46 @@ impl<F: Field> PolyVariant<F> {
         }
     }
 
+    /// Whether the representation is consistent: a dense MLE has
+    /// `2^num_vars` evaluations, and a sparse MLE's indices and a sparse
+    /// multivariate's variables are in range. Arithmetic assumes this, and
+    /// the arkworks types' fields are public, so a value from outside (a
+    /// proof) is checked.
+    pub fn is_well_formed(&self) -> bool {
+        let table_len = |num_vars: usize| 1usize.checked_shl(u32::try_from(num_vars).ok()?);
+        match self {
+            PolyVariant::DenseUni(_) | PolyVariant::SparseUni(_) => true,
+            PolyVariant::DenseMle(mle) => table_len(mle.num_vars) == Some(mle.evaluations.len()),
+            PolyVariant::SparseMle { num_vars, evals } => {
+                table_len(*num_vars).is_some_and(|len| evals.iter().all(|(i, _)| *i < len))
+            }
+            PolyVariant::SparseMultivariate(p) => p
+                .terms
+                .iter()
+                .all(|(_, term)| term.iter().all(|(var, _)| *var < p.num_vars)),
+        }
+    }
+
+    /// An upper bound on the total degree, read from the representation
+    /// rather than its bookkeeping (a dense univariate's coefficient count, a
+    /// sparse one's largest index): unlike [`Self::degree`], an MLE counts
+    /// as its variable count, and a malformed sparse univariate cannot
+    /// understate it.
+    pub fn total_degree_bound(&self) -> usize {
+        match self {
+            PolyVariant::DenseUni(p) => p.coeffs.len().saturating_sub(1),
+            PolyVariant::SparseUni(p) => p.iter().map(|(i, _)| *i).max().unwrap_or(0),
+            PolyVariant::DenseMle(mle) => mle.num_vars,
+            PolyVariant::SparseMle { num_vars, .. } => *num_vars,
+            PolyVariant::SparseMultivariate(p) => p
+                .terms
+                .iter()
+                .map(|(_, term)| term.degree())
+                .max()
+                .unwrap_or(0),
+        }
+    }
+
     /// Densify a `SparseMle`: instantiate the `2^num_vars` evaluation vector
     /// by scattering the listed `(index, value)` pairs. O(`2^num_vars + |evals|`).
     fn sparse_mle_to_dense_mle(

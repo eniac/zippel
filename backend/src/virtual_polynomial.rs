@@ -1040,6 +1040,58 @@ impl<F: PrimeField> VirtualPolynomial<F> {
         })
     }
 
+    /// Whether this is a polynomial of type `typ`, judged from its structure
+    /// (so conservatively: a polynomial whose degree cancels down to the
+    /// bound may be refused, one above it never accepted):
+    /// - `Uni(d)`: univariate factors only, each product of degree at most `d`;
+    /// - `Mle(n)`: `n`-variable multilinear factors, at most one per product;
+    /// - `VPoly(n, d)`: `n`-variable multivariate factors, each product of
+    ///   total degree at most `d` (an `n`-variable MLE counts as `n`).
+    ///
+    /// Every factor must be well formed ([`PolyVariant::is_well_formed`]).
+    /// Any other type gives `false`.
+    pub fn conforms_to(&self, typ: &crate::ATyp) -> bool {
+        use crate::ATyp;
+        let factors_ok = |ok: &dyn Fn(&PolyVariant<F>) -> bool| {
+            self.flattened_polys
+                .iter()
+                .all(|p| p.is_well_formed() && ok(p))
+        };
+        let max_product_degree = || {
+            self.products
+                .iter()
+                .map(|(_, indices)| {
+                    indices
+                        .iter()
+                        .map(|&i| self.flattened_polys[i].total_degree_bound())
+                        .sum::<usize>()
+                })
+                .max()
+                .unwrap_or(0)
+        };
+        match *typ {
+            ATyp::Uni(d) => {
+                self.num_variables.is_none_or(|n| n == 1)
+                    && factors_ok(&PolyVariant::is_univariate)
+                    && max_product_degree() <= d
+            }
+            ATyp::Mle(n) => {
+                self.num_vars() == Some(n)
+                    && factors_ok(&|p| {
+                        matches!(p, PolyVariant::DenseMle(_) | PolyVariant::SparseMle { .. })
+                            && p.num_vars() == n
+                    })
+                    && self.products.iter().all(|(_, indices)| indices.len() <= 1)
+            }
+            ATyp::VPoly(n, d) => {
+                self.num_vars() == Some(n)
+                    && factors_ok(&|p| p.is_multivariate() && p.num_vars() == n)
+                    && max_product_degree() <= d
+            }
+            _ => false,
+        }
+    }
+
     /// Degree of the normalized polynomial, or `0` if it cannot be normalized.
     pub fn degree(&self) -> usize {
         self.normalize().map(|p| p.degree()).unwrap_or(0)

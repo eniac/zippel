@@ -2883,10 +2883,11 @@ impl<C: ArkConfig> Value<C> {
     /// flat vector or a `Value::Vec`), with every length and `Fin` range
     /// checked. An index is accepted as a scalar, as arithmetic accepts it.
     ///
+    /// A polynomial must have the type's shape and degree bound (see
+    /// [`VirtualPolynomial::conforms_to`]).
+    ///
     /// Unlike [`Self::typ`] this never panics, so it can vet a value that
-    /// came from outside, such as a proof. A polynomial is checked only to be
-    /// one, with the type's variable count if multivariate: no degree bound.
-    /// (Polynomials have no transcript encoding, so a proof holds none.)
+    /// came from outside, such as a proof.
     #[must_use]
     pub fn conforms_to(&self, typ: &ATyp) -> bool {
         match typ {
@@ -2924,9 +2925,8 @@ impl<C: ArkConfig> Value<C> {
                 }
                 _ => false,
             },
-            ATyp::Uni(_) => matches!(self, Value::Poly(_)),
-            ATyp::Mle(vars) | ATyp::VPoly(vars, _) => {
-                matches!(self, Value::Poly(p) if p.num_vars() == Some(*vars))
+            ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => {
+                matches!(self, Value::Poly(p) if p.conforms_to(typ))
             }
         }
     }
