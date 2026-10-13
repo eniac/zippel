@@ -1,0 +1,12 @@
+---
+source: lang/tests/concretize.rs
+---
+error: `N` is range-kinded, so it cannot be given a size
+   ╭─[ test.zippel:1:28 ]
+   │
+ 1 │ proto p<F: Field, S: Size, N: 1..S>(instance a: [F; N]) where a == a {
+   │                            ┬  
+   │                            ╰── `N: 1..S` takes every value of its range
+   │                            │  
+   │                            ╰── note: only `Size` variables take values from the sizes
+───╯

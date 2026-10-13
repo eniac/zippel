@@ -1,0 +1,14 @@
+---
+source: lang/tests/concretize.rs
+---
+error: Protocol `p` concretizes to 3 instances, so which one to run is ambiguous
+   ╭─[ test.zippel:1:7 ]
+   │
+ 1 │ proto p<F: Field, S: Size, N: 1..S>(instance a: [F; N]) where a == a {
+   │       ┬                    ┬  
+   │       ╰─────────────────────── this protocol
+   │       │                    │  
+   │       │                    ╰── `N: 1..S` takes 3 values: 1, 2, 3
+   │       │                       
+   │       ╰─────────────────────── note: a protocol must concretize to one instance; make each range admit one value for the given sizes, or declare the variable a `Size`
+───╯

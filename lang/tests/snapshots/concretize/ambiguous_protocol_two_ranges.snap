@@ -1,0 +1,16 @@
+---
+source: lang/tests/concretize.rs
+---
+error: Protocol `p` concretizes to 38 instances, so which one to run is ambiguous
+   ╭─[ test.zippel:1:7 ]
+   │
+ 1 │ proto p<F: Field, N: 2..21, M: 1..3>(instance a: [F; N], instance b: [F; M]) where a == a {
+   │       ┬           ┬         ┬  
+   │       ╰──────────────────────── this protocol
+   │       │           │         │  
+   │       │           ╰──────────── `N: 2..21` takes 19 values: 2, 3, 4, …, 20
+   │       │                     │  
+   │       │                     ╰── `M: 1..3` takes 2 values: 1, 2
+   │       │                        
+   │       ╰──────────────────────── note: a protocol must concretize to one instance; make each range admit one value for the given sizes, or declare the variable a `Size`
+───╯

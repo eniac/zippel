@@ -21,7 +21,6 @@
 //! expression syntax is never parsed back.
 
 use std::collections::HashMap;
-use std::io::Write;
 use std::marker::PhantomData;
 use std::process::{Command, Stdio};
 use std::str::FromStr;
@@ -29,6 +28,7 @@ use std::str::FromStr;
 use crate::Var;
 use ark_ff::PrimeField;
 use num_bigint::BigUint;
+use share::process::ContainedChild;
 
 use super::{GbBackend, GbBasis};
 use crate::frontend::{BackendError, BlockKind, MonoOrder, Monomial, Polynomial};
@@ -230,25 +230,19 @@ fn build_script<F: PrimeField>(
 // -----------------------------------------------------------------------
 
 fn run_singular(script: &str) -> Result<String, BackendError> {
-    let mut child = Command::new("Singular")
+    let mut command = Command::new("Singular");
+    command
         .arg("-q")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+        .stderr(Stdio::piped());
+    // Singular dies with this process; dropping `child` on an early return
+    // kills it too.
+    let mut child = ContainedChild::spawn(command)
         .map_err(|e| BackendError::Other(format!("failed to spawn Singular: {e}")))?;
-
-    // Write the script to Singular's stdin.
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(script.as_bytes())
-            .map_err(|e| BackendError::Other(format!("failed to write to Singular stdin: {e}")))?;
-    }
-    // stdin is dropped here, signalling EOF.
-
     let output = child
-        .wait_with_output()
-        .map_err(|e| BackendError::Other(format!("failed to wait for Singular: {e}")))?;
+        .wait_with_output(script.as_bytes())
+        .map_err(|e| BackendError::Other(format!("failed to run Singular: {e}")))?;
 
     // Singular writes both data and diagnostics to stdout; stderr is usually
     // empty but we include it for debugging if present.

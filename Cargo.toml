@@ -85,11 +85,6 @@ petgraph = "0.7.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 clap = { version = "4", features = ["derive"] }
-process-wrap = { version = "10", default-features = false, features = [
-  "std",
-  "process-group",
-  "job-object",
-] }
 
 # arkworks 0.6.0 with one fix: its WNAF MSM ran every chunk on a freshly
 # built thread pool, outside the caller's, so concurrent MSMs each brought

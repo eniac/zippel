@@ -5,3 +5,17 @@ edition.workspace = true
 
 [dependencies]
 im = "15"
+
+# A launched program dies with its launcher: a parent-death signal on Linux,
+# a kill-on-close Job Object on Windows (`src/process.rs`).
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+log = "0.4"
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }

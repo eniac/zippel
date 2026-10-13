@@ -182,20 +182,27 @@ fn a_protocol_with_an_unset_range_variable_is_ambiguous() {
     };
 
     // `N` ranges over 1..4: three instances, and nothing says which to run.
-    match check(&[("S", 4)]) {
-        Some(ModuleError::AmbiguousProtocol {
-            ranges, instances, ..
-        }) => {
-            assert_eq!(instances, 3);
-            let [range] = ranges.as_slice() else {
-                panic!("expected one expanded range, got {ranges:?}");
-            };
-            assert_eq!(range.var.node, Tid::new("N"));
-            assert_eq!(range.range, "1..S");
-            assert_eq!(range.values, [1, 2, 3]);
-        }
-        other => panic!("expected an ambiguous protocol, got {other:?}"),
-    }
+    let Some(e) = check(&[("S", 4)]) else {
+        panic!("expected an ambiguous protocol");
+    };
+    let ModuleError::AmbiguousProtocol {
+        ranges, instances, ..
+    } = &e
+    else {
+        panic!("expected an ambiguous protocol, got {e:?}");
+    };
+    assert_eq!(*instances, 3);
+    let [range] = ranges.as_slice() else {
+        panic!("expected one expanded range, got {ranges:?}");
+    };
+    assert_eq!(range.var.node, Tid::new("N"));
+    assert_eq!(range.range, "1..S");
+    assert_eq!(range.values, [1, 2, 3]);
+    assert_snap!(
+        SNAP_DIR,
+        "ambiguous_protocol",
+        render_diagnostic(&Diagnostic::from(&e), "test.zippel", src)
+    );
     // A range with one value concretizes to one instance.
     assert!(check(&[("S", 2)]).is_none());
 }
@@ -208,13 +215,34 @@ fn a_size_for_a_range_variable_is_rejected() {
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &4);
     sizes.insert(&Tid::new("N"), &2);
-    match module.concretize(&sizes) {
-        Err(ModuleError::SizeForRange { var, range }) => {
-            assert_eq!(var.node, Tid::new("N"));
-            assert_eq!(range, "1..S");
-        }
-        other => panic!("expected a size for a range variable to be rejected, got {other:?}"),
-    }
+    let e = module.concretize(&sizes).unwrap_err();
+    let ModuleError::SizeForRange { var, range } = &e else {
+        panic!("expected a size for a range variable to be rejected, got {e:?}");
+    };
+    assert_eq!(var.node, Tid::new("N"));
+    assert_eq!(range, "1..S");
+    assert_snap!(
+        SNAP_DIR,
+        "size_for_range",
+        render_diagnostic(&Diagnostic::from(&e), "test.zippel", src)
+    );
+}
+
+/// Every range that expands is labelled; a long list of values is shortened.
+#[test]
+fn an_ambiguous_protocol_labels_each_expanded_range() {
+    use lang::id::Vid;
+    let src = "proto p<F: Field, N: 2..21, M: 1..3>(instance a: [F; N], instance b: [F; M]) where a == a {\n    verify(a == a)\n}\n";
+    let module = UModule::parse(src).0.unwrap();
+    let cmodule = module.concretize(&Ctx::new()).unwrap();
+    let e = module
+        .check_protocol_instances(&cmodule, &Vid::from("p"), &Ctx::new())
+        .unwrap_err();
+    assert_snap!(
+        SNAP_DIR,
+        "ambiguous_protocol_two_ranges",
+        render_diagnostic(&Diagnostic::from(&e), "test.zippel", src)
+    );
 }
 
 #[test]

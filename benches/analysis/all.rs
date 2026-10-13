@@ -18,12 +18,10 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-#[cfg(unix)]
-use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use process_wrap::std::*;
+use share::process::ContainedChild;
 
 use serde::{Deserialize, Serialize};
 
@@ -264,53 +262,33 @@ fn run_one(
     memory_limit_mb: Option<u64>,
     forwarded: &Forwarded<'_>,
 ) -> BenchResult {
-    let mut cmd = CommandWrap::with_new(bin, |cmd| {
-        cmd.args([protocol, "--backend", "singular"])
-            .args(["--analysis", forwarded.analysis])
-            .current_dir(cwd)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        if let Some(mb) = memory_limit_mb {
-            cmd.args(["--memory-limit-mb", &mb.to_string()]);
-        }
-        if let Some(path) = forwarded.path {
-            cmd.args(["--path", path]);
-        }
-        for size in forwarded.sizes {
-            cmd.args(["--size", size]);
-        }
-        if let Some(l_vec) = forwarded.l_vec {
-            cmd.args(["--l-vec", l_vec]);
-        }
-    });
-
-    // ProcessGroup on Unix, JobObject on Windows — either way,
-    // child.kill() kills the entire process tree (bench binary + Singular).
-    #[cfg(unix)]
-    {
-        cmd.wrap(ProcessGroup::leader());
+    let mut cmd = Command::new(bin);
+    cmd.args([protocol, "--backend", "singular"])
+        .args(["--analysis", forwarded.analysis])
+        .current_dir(cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(mb) = memory_limit_mb {
+        cmd.args(["--memory-limit-mb", &mb.to_string()]);
     }
-    #[cfg(windows)]
-    {
-        cmd.wrap(JobObject);
+    if let Some(path) = forwarded.path {
+        cmd.args(["--path", path]);
+    }
+    for size in forwarded.sizes {
+        cmd.args(["--size", size]);
+    }
+    if let Some(l_vec) = forwarded.l_vec {
+        cmd.args(["--l-vec", l_vec]);
     }
 
-    let mut child = match cmd.spawn() {
+    // `analysis` dies with `analysis_all` (Ctrl-C reaches both, being in one
+    // process group; a kill of `analysis_all` takes it along), and Singular
+    // dies with `analysis` in turn: see `share::process`.
+    let mut child = match ContainedChild::spawn(cmd) {
         Ok(c) => c,
         Err(e) => {
             return BenchResult::failed(protocol, 0.0, "crashed", &format!("spawn failed: {e}"));
         }
-    };
-
-    // ProcessGroup::leader() makes this child the leader of its own new
-    // group, so its PGID equals its own PID — record it so a SIGINT/SIGTERM
-    // to `analysis_all` can clean it (and Singular) up too, instead of
-    // Ctrl-C only killing `analysis_all` and orphaning the rest. Dropped
-    // (and thus cleared) automatically on every exit path below.
-    #[cfg(unix)]
-    let _pgid_guard = {
-        CURRENT_CHILD_PGID.store(child.id().cast_signed(), Ordering::SeqCst);
-        ChildPgidGuard
     };
 
     let start = Instant::now();
@@ -356,9 +334,7 @@ fn run_one(
             }
             Ok(None) => {
                 if Instant::now() >= deadline {
-                    // kill() sends SIGKILL to the process group (Unix) or
-                    // terminates the job object (Windows), killing the
-                    // bench binary and Singular together.
+                    // Killing `analysis` kills the Singular it runs too.
                     let _ = child.kill();
                     let _ = child.wait();
                     let wall = start.elapsed().as_secs_f64();
@@ -385,17 +361,17 @@ fn run_one(
     }
 }
 
-fn read_stdout(child: &mut Box<dyn ChildWrapper>) -> String {
+fn read_stdout(child: &mut ContainedChild) -> String {
     let mut s = String::new();
-    if let Some(out) = child.stdout() {
+    if let Some(out) = child.stdout.as_mut() {
         let _ = out.read_to_string(&mut s);
     }
     s.trim().to_string()
 }
 
-fn read_stderr(child: &mut Box<dyn ChildWrapper>) -> String {
+fn read_stderr(child: &mut ContainedChild) -> String {
     let mut s = String::new();
-    if let Some(err) = child.stderr() {
+    if let Some(err) = child.stderr.as_mut() {
         let _ = err.read_to_string(&mut s);
     }
     s
@@ -472,8 +448,6 @@ struct Args {
 }
 
 fn main() {
-    install_signal_handlers();
-
     let args = Args::parse();
     // A file or round parameters describe one protocol, not a sweep.
     if (args.path.is_some() || args.l_vec.is_some())
@@ -613,74 +587,4 @@ fn main() {
     tee(&mut log, &sep);
     tee(&mut log, &format!("\nResults written to {output}"));
     tee(&mut log, &format!("Log written to {log_path}"));
-}
-
-// ---------------------------------------------------------------------
-// Ctrl-C / SIGTERM cleanup.
-//
-// `run_one` puts each `analysis` child in its own new process group (see
-// `ProcessGroup::leader()`) so a timeout can `killpg` just that child (and
-// the Singular subprocess it spawns) without also killing `analysis_all`.
-// That isolation has a side effect: the terminal's Ctrl-C delivers
-// `SIGINT` only to `analysis_all`'s own (different) process group, never
-// reaching the child — so without the handler below, `analysis_all` would
-// just die and leave `analysis`/Singular running, orphaned.
-// ---------------------------------------------------------------------
-
-/// PGID of whichever `analysis` invocation is currently running, or `0` if
-/// none. Read/written only via `Ordering::SeqCst` so the signal handler
-/// (which may run on any thread, at any point) always sees an up-to-date
-/// value.
-#[cfg(unix)]
-static CURRENT_CHILD_PGID: AtomicI32 = AtomicI32::new(0);
-
-/// Signal handler for `SIGINT`/`SIGTERM`: kill the current child's process
-/// group (if any) before exiting, so Ctrl-C actually cleans up `analysis`
-/// and Singular instead of orphaning them. Must only call
-/// async-signal-safe functions — `AtomicI32::load`, `killpg`, and `_exit`
-/// all qualify; nothing here allocates or takes a lock.
-#[cfg(unix)]
-extern "C" fn kill_current_child_and_exit(_sig: libc::c_int) {
-    let pgid = CURRENT_CHILD_PGID.load(Ordering::SeqCst);
-    if pgid != 0 {
-        unsafe {
-            libc::killpg(pgid, libc::SIGKILL);
-        }
-    }
-    unsafe {
-        libc::_exit(130);
-    }
-}
-
-/// Install the Ctrl-C/SIGTERM cleanup handler. Best-effort: on non-unix,
-/// there's no separate child process group to orphan in the first place
-/// (see `JobObject` in `run_one`), so nothing to install.
-#[cfg(unix)]
-fn install_signal_handlers() {
-    unsafe {
-        libc::signal(
-            libc::SIGINT,
-            kill_current_child_and_exit as *const () as libc::sighandler_t,
-        );
-        libc::signal(
-            libc::SIGTERM,
-            kill_current_child_and_exit as *const () as libc::sighandler_t,
-        );
-    }
-}
-
-#[cfg(not(unix))]
-fn install_signal_handlers() {}
-
-/// Clears [`CURRENT_CHILD_PGID`] when dropped, so it's reset on every exit
-/// path out of `run_one` — normal completion, timeout, or an early error
-/// return — not just the ones that happen to remember to do it.
-#[cfg(unix)]
-struct ChildPgidGuard;
-
-#[cfg(unix)]
-impl Drop for ChildPgidGuard {
-    fn drop(&mut self) {
-        CURRENT_CHILD_PGID.store(0, Ordering::SeqCst);
-    }
 }
