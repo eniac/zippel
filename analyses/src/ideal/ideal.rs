@@ -2,7 +2,7 @@
 //! `IdealBuilder::build()` call. Holds the generating set, polynomial
 //! definitions (`pl`), and the variable namespace.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use backend::ArkConfig;
@@ -42,6 +42,9 @@ pub struct Ideal<C: ArkConfig> {
     /// Variables in the order they were introduced; used as the seed ranking when
     /// building the lex / elimination monomial order for the Gröbner run.
     pub var_order: Vec<Var>,
+    /// The quotient and remainder witnesses of every polynomial division
+    /// encoded into this ideal, each a sentinel with its own `Ref`.
+    pub division_witnesses: HashSet<Ref>,
 }
 
 impl<C: ArkConfig + HasOpFactory> Ideal<C> {
@@ -53,6 +56,7 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             pl: Ctx::new(),
             vars: HashMap::new(),
             var_order: Vec::new(),
+            division_witnesses: HashSet::new(),
         }
     }
 
@@ -118,6 +122,8 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         for (k, v) in other.vars.iter() {
             self.vars.entry(*k).or_insert_with(|| v.clone());
         }
+        self.division_witnesses
+            .extend(other.division_witnesses.iter().copied());
     }
 }
 
