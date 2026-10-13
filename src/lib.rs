@@ -373,7 +373,9 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     /// witness) is given.
     ///
     /// # Errors
-    /// Returns `RuntimeError` if expected inputs are missing.
+    /// Returns [`RuntimeError::MissingInputs`] if expected inputs are missing,
+    /// and [`RuntimeError::MalformedInput`] if an input is not a value of its
+    /// argument's declared type.
     ///
     /// # Panics
     /// If `compile()` has not been called first.
@@ -385,30 +387,25 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             inputs.into_iter().map(|(k, v)| (k.into(), v)).collect();
         let prover = self.prover_graph.as_ref().unwrap();
 
-        // Collect arg info from the prover dag directly.
-        let prover_arg_info: Vec<(Vid, bool, bool)> = prover
+        // The arguments the caller supplies, with their types.
+        // Transcript-sourced args are produced internally.
+        let caller_args: Vec<(&Vid, &ATyp)> = prover
             .input_args()
             .into_iter()
             .filter_map(|n| match &prover[n] {
-                Node::Arg(name, _, qual, _, kind) => Some((
-                    name.clone(),
-                    qual.is_instance(),
-                    matches!(kind, ArgKind::TranscriptInput),
-                )),
+                Node::Arg(name, typ, _, _, ArgKind::Input) => Some((name, typ)),
                 _ => None,
             })
             .collect();
 
         // Validate that every prover argument expected from the caller is
-        // present in `inputs`. Transcript-sourced args are produced internally
-        // and are not expected to be supplied. Without this check, a typo or
-        // mismatch between the protocol declaration and the call-site
-        // `inputs` map surfaces deep inside the runtime as an opaque
-        // `Option::unwrap() on a None value` panic.
-        let expected_args: Vec<Vid> = prover_arg_info
+        // present in `inputs`, and of its declared type. Without this check,
+        // a typo or mismatch between the protocol declaration and the
+        // call-site `inputs` map surfaces deep inside the runtime as an
+        // opaque panic, or a wrong-length vector is silently computed on.
+        let expected_args: Vec<Vid> = caller_args
             .iter()
-            .filter(|(_, _, is_transcript)| !is_transcript)
-            .map(|(name, _, _)| name.clone())
+            .map(|(name, _)| (*name).clone())
             .collect();
         let missing: Vec<&Vid> = expected_args
             .iter()
@@ -421,6 +418,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
                 inputs.keys(),
             ));
         }
+        check_input_types(caller_args, &inputs)?;
 
         let domain_separator_session = self.args.domain_separator_session();
         let prover_seperator = ZippelDomainSeparator::new_zippel_domain_seperator(
@@ -450,8 +448,10 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     /// # Errors
     /// Returns [`RuntimeError::ProofLength`] unless the proof has exactly one
     /// element per prover message, [`RuntimeError::MalformedProof`] if an
-    /// element is not a value of its message's declared type, and other
-    /// `RuntimeError`s if the run fails (e.g. a missing instance input). A
+    /// element is not a value of its message's declared type,
+    /// [`RuntimeError::MalformedInput`] if an instance input is not a value of
+    /// its argument's declared type, and other `RuntimeError`s if the run
+    /// fails (e.g. a missing instance input). A
     /// proof that runs but fails a check is not an error: see the returned
     /// results.
     ///
@@ -464,21 +464,24 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     ) -> Result<Vec<bool>, RuntimeError> {
         let verifier = self.verifier_graph.as_ref().unwrap();
 
-        // Instance inputs: filter by qual.is_instance() from verifier graph.
-        let instance_args: Vec<Vid> = verifier
+        // Instance inputs: filter by qual.is_instance() from verifier graph,
+        // each checked against its declared type.
+        let instance_args: Vec<(&Vid, &ATyp)> = verifier
             .input_args()
             .into_iter()
             .filter_map(|n| match &verifier[n] {
-                Node::Arg(name, _, qual, _, ArgKind::Input) if qual.is_instance() => {
-                    Some(name.clone())
+                Node::Arg(name, typ, qual, _, ArgKind::Input) if qual.is_instance() => {
+                    Some((name, typ))
                 }
                 _ => None,
             })
             .collect();
-        let instance_inputs = inputs
+        let instance_inputs: HashMap<Vid, Value<C>> = inputs
             .into_iter()
             .map(|(k, v)| (k.into(), v))
-            .filter(|(vid, _)| instance_args.contains(vid));
+            .filter(|(vid, _)| instance_args.iter().any(|(name, _)| *name == vid))
+            .collect();
+        check_input_types(instance_args, &instance_inputs)?;
 
         // Transcript inputs: the prover messages, one proof element each, in
         // order. The proof comes from outside, so its shape is checked here:
@@ -512,7 +515,8 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             .map(|(name, _)| name.clone())
             .zip(proof);
 
-        let all_inputs: HashMap<Vid, Value<C>> = instance_inputs.chain(transcript_inputs).collect();
+        let mut all_inputs = instance_inputs;
+        all_inputs.extend(transcript_inputs);
 
         let domain_separator_session = self.args.domain_separator_session();
         let verifier_seperator = ZippelDomainSeparator::new_zippel_domain_seperator(
@@ -581,6 +585,29 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         let inputs = SpecialSoundnessAnalysis::build_inputs(&*g, l_vec)?;
         SpecialSoundnessAnalysis::from_inputs(inputs, analyses::GbBackendKind::default())?.run()
     }
+}
+
+/// Checks each supplied input against the type its argument declares, in
+/// argument order; an argument with no input is left to the caller.
+///
+/// # Errors
+/// [`RuntimeError::MalformedInput`] for the first input that is not a value
+/// of its argument's type.
+fn check_input_types<'a, C: ArkConfig>(
+    args: impl IntoIterator<Item = (&'a Vid, &'a ATyp)>,
+    inputs: &HashMap<Vid, Value<C>>,
+) -> Result<(), RuntimeError> {
+    for (name, typ) in args {
+        if let Some(value) = inputs.get(name)
+            && !value.conforms_to(typ)
+        {
+            return Err(RuntimeError::MalformedInput {
+                name: name.to_string(),
+                expected: typ.to_string(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Interpret verifier output as pass/fail.
@@ -705,6 +732,35 @@ proto shapes<G: Group, F: Scalar<G>, N: Size>(witness v: [F; N], instance g: G) 
                 Err(RuntimeError::MalformedProof { index: i, .. }) => assert_eq!(i, index),
                 other => panic!("element {index} replaced gave {other:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn the_prover_rejects_inputs_of_the_wrong_shape() {
+        type F = <ArkBls12_381 as ArkConfig>::F;
+        let (mut handler, inputs, _) = shapes_protocol();
+        // `v: [F; 4]` (witness) one short, and `g: G` (instance) a scalar.
+        for (name, wrong) in [
+            ("v", Value::vec_scalar(vec![F::from(1u64); 3])),
+            ("g", Value::Scalar(F::from(1u64))),
+        ] {
+            let mut tampered = inputs.clone();
+            tampered.insert(name, wrong);
+            match handler.run_prover(tampered) {
+                Err(RuntimeError::MalformedInput { name: n, .. }) => assert_eq!(n, name),
+                other => panic!("input `{name}` replaced gave {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn the_verifier_rejects_instance_inputs_of_the_wrong_shape() {
+        type F = <ArkBls12_381 as ArkConfig>::F;
+        let (mut handler, mut inputs, proof) = shapes_protocol();
+        inputs.insert("g", Value::Scalar(F::from(1u64)));
+        match handler.run_verifier(proof, inputs) {
+            Err(RuntimeError::MalformedInput { name, .. }) => assert_eq!(name, "g"),
+            other => panic!("instance `g` replaced gave {other:?}"),
         }
     }
 
