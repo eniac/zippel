@@ -25,7 +25,6 @@ pub fn run(opts: &common::RunOptions) {
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &S);
-    sizes.insert(&Tid::new("N"), &NUM_GATES);
     handler.compile(&sizes);
 
     let inputs = prover_create_inputs();
@@ -63,7 +62,6 @@ pub fn run(opts: &common::RunOptions) {
         let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
         let mut analysis_sizes = Ctx::new();
         analysis_sizes.insert(&Tid::new("S"), &S);
-        analysis_sizes.insert(&Tid::new("N"), &NUM_GATES);
         analysis_handler.compile(&analysis_sizes);
 
         let completeness_start = Instant::now();

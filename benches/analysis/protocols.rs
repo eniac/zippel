@@ -81,7 +81,7 @@ pub static PROTOCOLS: &[Protocol] = &[
     Protocol {
         name: "hadamard",
         path: "examples/hadamard/hadamard.zippel",
-        sizes: &[("S", 2)],
+        sizes: &[("N", 1)],
         completeness: true,
         soundness: None,
     },

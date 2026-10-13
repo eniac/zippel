@@ -52,7 +52,8 @@ struct Cli {
     #[arg(long, value_name = "FILE")]
     path: Option<PathBuf>,
     /// Sets one size, replacing the registered value. A name the protocol
-    /// has no size parameter for is ignored, with a warning.
+    /// has no `Size` parameter for is ignored, with a warning; a
+    /// range-kinded one is an error, as it takes every value of its range.
     #[arg(long = "size", value_name = "NAME=VALUE", value_parser = parse_size)]
     sizes: Vec<(String, usize)>,
     /// The special-soundness round parameters, one per challenge round,

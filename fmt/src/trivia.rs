@@ -329,7 +329,7 @@ impl SourceLayout {
         // Merge comments and blank-line offsets in source order.
         let mut ci = 0;
         let mut bi = 0;
-        while ci < comments.len() || bi < blank_offsets.len() {
+        loop {
             let next_comment = comments.get(ci).map(|c| c.start);
             let next_blank = blank_offsets.get(bi).copied();
             match (next_comment, next_blank) {

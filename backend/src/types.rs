@@ -743,9 +743,7 @@ impl Lub for ATyp {
                 *n,
             )),
             // Uni<A> % Uni<B> = Uni<B-1> (requires B > 0)
-            (ATyp::Uni(_), ATyp::Uni(n2)) if *n2 > 0 => Ok(ATyp::uni(
-                n2.checked_sub(1).ok_or_else(|| LubError::rem(&x, &y))?,
-            )),
+            (ATyp::Uni(_), ATyp::Uni(n2)) if *n2 > 0 => Ok(ATyp::uni(n2 - 1)),
             // Vec<A> % C = Vec<lub_rem(A, C)>; scalar-left vector remainder
             // is not Groebner-lowerable and falls through to an error.
             (ATyp::Vec(deref!(t1), n1), b) => {

@@ -116,7 +116,7 @@ fn validate_2n_plus_1<C: ArkConfig>(
 
     for &node in &transcript {
         if dag[node].is_challenge() {
-            if !seen_prover_msg && current_round.is_empty() && challenge_rounds.is_empty() {
+            if !seen_prover_msg {
                 return Err(AnalysisError::Not2nPlus1MoveProtocol {
                     expected: l_vec.len(),
                     found: 0,

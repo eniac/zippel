@@ -141,12 +141,8 @@ fn split_alphanumeric(input: &str) -> (String, i32) {
             }
         }
         None => {
-            // The entire string is digits
-            if !input.is_empty() {
-                ("".to_string(), input.parse::<i32>().unwrap_or(0))
-            } else {
-                ("".to_string(), 0)
-            }
+            // The entire string is digits (or empty, which parses to 0)
+            ("".to_string(), input.parse::<i32>().unwrap_or(0))
         }
     }
 }

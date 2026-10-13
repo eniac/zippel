@@ -935,8 +935,7 @@ fn decorate(cause: &TypeError, mut d: Diagnostic) -> Diagnostic {
                 for (arg, t) in args.0.iter().zip(ts.iter()) {
                     d = has_type(d, &arg.span, &arg.node, kinded(t, kctx));
                 }
-            }
-            if defined.is_empty() {
+            } else {
                 // No declaration has this name: point at the name, like an undefined variable.
                 if !id.span.is_empty() {
                     d.span = id.span.clone();

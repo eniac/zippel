@@ -168,10 +168,13 @@ fn check(src: &str, given: &Ctx<Tid, usize>) -> Report {
         return report;
     }
 
+    // Sizes for undeclared names are dropped; one for a range-kinded variable is kept so
+    // that `concretize` reports it.
     let params = module.size_params();
+    let ranges = module.range_params();
     let given: Ctx<Tid, usize> = given
         .iter()
-        .filter(|(k, _)| params.contains(k))
+        .filter(|(k, _)| params.contains(k) || ranges.contains(k))
         .map(|(k, v)| (k.clone(), *v))
         .collect();
     let Some(sizes) = module.minimal_sizes(&given) else {

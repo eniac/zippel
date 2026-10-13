@@ -247,7 +247,6 @@ pub(crate) fn check_free_range<F: Field>(
     if free_range.step() != 1
         || free_range.start() >= free_range.end()
         || free_range.end() > input_num_vars
-        || free_len == 0
         || fixed_len != input_num_vars - free_len
     {
         return Err(PolyError::DimensionMismatch {
@@ -917,7 +916,7 @@ impl<F: Field> PolyVariant<F> {
         check_free_range(input_num_vars, &free_range, fixed.len())?;
         if self.is_univariate() {
             // Only the degenerate range `0..1` of a one-variable input.
-            return if input_num_vars == 1 && fixed.is_empty() {
+            return if input_num_vars == 1 {
                 Ok(self.clone())
             } else {
                 Err(PolyError::DimensionMismatch {

@@ -104,9 +104,7 @@ impl Typeable for CExp {
                             // determine a polynomial of max degree n-1
                             // (n coefficients under the m+1 convention).
                             // Pow2 check above rules out n == 0, so n >= 1.
-                            let deg = n
-                                .checked_sub(1)
-                                .ok_or_else(|| TypeError::interpolate_unary(kctx, vctx, self))?;
+                            let deg = n.node - 1;
                             Ok(CTyp::uni(&i, deg))
                         }
                         _ => Err(TypeError::interpolate_unary(kctx, vctx, self)),
@@ -142,9 +140,7 @@ impl Typeable for CExp {
                                 // (ne coefficients under the m+1 convention).
                                 // np == ne and ne >= 1 since vector typing
                                 // rejects empty literals upstream.
-                                let deg = ne
-                                    .checked_sub(1)
-                                    .ok_or_else(|| TypeError::interpolate(kctx, vctx, self))?;
+                                let deg = ne.node - 1;
                                 Ok(CTyp::uni(&ie, deg))
                             }
                             _ => Err(TypeError::interpolate(kctx, vctx, self)),
@@ -166,9 +162,7 @@ impl Typeable for CExp {
                             return Err(TypeError::poly(kctx, vctx, self));
                         }
                         let i = b.to_scalar(kctx).ok_or(TypeError::poly(kctx, vctx, self))?;
-                        let deg = k
-                            .checked_sub(1)
-                            .ok_or_else(|| TypeError::poly(kctx, vctx, self))?;
+                        let deg = k.node - 1;
                         Ok(CTyp::uni(&i, deg))
                     }
                     _ => Err(TypeError::poly(kctx, vctx, self)),
@@ -302,9 +296,7 @@ impl Typeable for CExp {
                                     return Ok(CTyp::Base(i_poly.clone()));
                                 }
                                 if len_vec < n {
-                                    let rem = n
-                                        .checked_sub(len_vec.node)
-                                        .ok_or_else(|| TypeError::evaluate(kctx, vctx, p, x))?;
+                                    let rem = n.node - len_vec.node;
                                     return Ok(CTyp::Poly(i_poly.clone(), Spanned::dummy(rem), d));
                                 }
                                 Err(TypeError::evaluate_mle_too_many_arguments(kctx, vctx, p, x))
@@ -329,8 +321,7 @@ impl Typeable for CExp {
                                 let range_len = range.len();
                                 if !fixed_elem.node.fits(&CTyp::Base(poly_tid.clone()), kctx)
                                     || range.end() > n.node
-                                    || fixed_len.node
-                                        != n.node.checked_sub(range_len).ok_or_else(fail)?
+                                    || fixed_len.node != n.node - range_len
                                 {
                                     return Err(fail());
                                 }
@@ -758,15 +749,11 @@ impl Typeable for CExp {
                         // The argument must be a field and the same as the MLE
                         match &param_types.0[0].node {
                             CTyp::Fin(_) | CTyp::FieldLiteral if n.node > 0 => {
-                                let rem = n.checked_sub(1).ok_or_else(|| {
-                                    TypeError::mle_app(kctx, vctx, &id.node, params, &param_types)
-                                })?;
+                                let rem = n.node - 1;
                                 Ok(CTyp::mle(tbase, rem))
                             }
                             CTyp::Base(tb) if tb == tbase && n.node > 0 => {
-                                let rem = n.checked_sub(1).ok_or_else(|| {
-                                    TypeError::mle_app(kctx, vctx, &id.node, params, &param_types)
-                                })?;
+                                let rem = n.node - 1;
                                 Ok(CTyp::mle(tbase, rem))
                             }
                             CTyp::Vec(CTyp::Base(tb), m) if tb == tbase && n.node == m.node => {
@@ -776,15 +763,11 @@ impl Typeable for CExp {
                                 Ok(CTyp::base(tbase))
                             }
                             CTyp::Vec(CTyp::Fin(_) | CTyp::FieldLiteral, m) if n.node > m.node => {
-                                let rem = n.checked_sub(m.node).ok_or_else(|| {
-                                    TypeError::mle_app(kctx, vctx, &id.node, params, &param_types)
-                                })?;
+                                let rem = n.node - m.node;
                                 Ok(CTyp::mle(tbase, rem))
                             }
                             CTyp::Vec(CTyp::Base(tb), m) if tb == tbase && n.node > m.node => {
-                                let rem = n.checked_sub(m.node).ok_or_else(|| {
-                                    TypeError::mle_app(kctx, vctx, &id.node, params, &param_types)
-                                })?;
+                                let rem = n.node - m.node;
                                 Ok(CTyp::mle(tbase, rem))
                             }
                             _ => Err(TypeError::mle_app(

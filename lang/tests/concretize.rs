@@ -163,3 +163,80 @@ proto p<G: Group, F: Scalar<G>>(instance g: G) where g == g {
         render_diagnostic(&d, "test.zippel", src)
     );
 }
+
+#[test]
+fn a_protocol_with_an_unset_range_variable_is_ambiguous() {
+    use lang::ast::module::ModuleError;
+    use lang::id::Vid;
+    let src = "proto p<F: Field, S: Size, N: 1..S>(instance a: [F; N]) where a == a {\n    verify(a == a)\n}\n";
+    let module = UModule::parse(src).0.unwrap();
+    let check = |pairs: &[(&str, usize)]| {
+        let mut ctx = Ctx::new();
+        for (name, value) in pairs {
+            ctx.insert(&Tid::new(name), value);
+        }
+        let cmodule = module.concretize(&ctx).unwrap();
+        module
+            .check_protocol_instances(&cmodule, &Vid::from("p"), &ctx)
+            .err()
+    };
+
+    // `N` ranges over 1..4: three instances, and nothing says which to run.
+    match check(&[("S", 4)]) {
+        Some(ModuleError::AmbiguousProtocol {
+            ranges, instances, ..
+        }) => {
+            assert_eq!(instances, 3);
+            let [range] = ranges.as_slice() else {
+                panic!("expected one expanded range, got {ranges:?}");
+            };
+            assert_eq!(range.var.node, Tid::new("N"));
+            assert_eq!(range.range, "1..S");
+            assert_eq!(range.values, [1, 2, 3]);
+        }
+        other => panic!("expected an ambiguous protocol, got {other:?}"),
+    }
+    // A range with one value concretizes to one instance.
+    assert!(check(&[("S", 2)]).is_none());
+}
+
+#[test]
+fn a_size_for_a_range_variable_is_rejected() {
+    use lang::ast::module::ModuleError;
+    let src = "proto p<F: Field, S: Size, N: 1..S>(instance a: [F; N]) where a == a {\n    verify(a == a)\n}\n";
+    let module = UModule::parse(src).0.unwrap();
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::new("S"), &4);
+    sizes.insert(&Tid::new("N"), &2);
+    match module.concretize(&sizes) {
+        Err(ModuleError::SizeForRange { var, range }) => {
+            assert_eq!(var.node, Tid::new("N"));
+            assert_eq!(range, "1..S");
+        }
+        other => panic!("expected a size for a range variable to be rejected, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_size_shared_with_a_range_variable_sets_only_the_size() {
+    // `N` is a `Size` in the protocol and a range in `f`: the size sets the
+    // protocol's `N`, and `f` still has one instance per value of `2..4`.
+    let src = concat!(
+        "fn f<F: Field, N: 2..4>(a: [F; N]) -> F { a[0] }\n",
+        "proto p<F: Field, N: Size>(instance a: [F; N]) where a == a {\n",
+        "    verify(a == a)\n",
+        "}\n",
+    );
+    let module = UModule::parse(src).0.unwrap();
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::new("N"), &3);
+    let cmodule = module.concretize(&sizes).unwrap();
+    let count = |name: &str| {
+        cmodule
+            .iter()
+            .filter(|(sig, _)| sig.name.node.0 == name)
+            .count()
+    };
+    assert_eq!(count("f"), 2);
+    assert_eq!(count("p"), 1);
+}

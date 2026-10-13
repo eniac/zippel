@@ -247,10 +247,8 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         let has_errors = diags
             .iter()
             .any(|d| d.severity == lang::diagnostic::Severity::Error);
-        if !diags.is_empty() {
-            for diag in &diags {
-                eprint!("{}", render_diagnostic(diag, &filename, &zfile));
-            }
+        for diag in &diags {
+            eprint!("{}", render_diagnostic(diag, &filename, &zfile));
         }
         if has_errors {
             process::exit(1);
@@ -329,6 +327,11 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         self.output_pdf(&gs, "symbolic_protocol_graph");
 
         let g = self.get_protocol_subgraph(&gs);
+        // One protocol runs: a range-kinded type variable gives one instance
+        // per value, of which the first would otherwise run silently.
+        module
+            .check_protocol_instances(&cmodule, &g.name(), sizes)
+            .unwrap_or_else(|e| self.fail(&[e.into()]));
         self.output_pdf(g, "concrete_protocol_graph");
 
         debug!("Projecting prover");

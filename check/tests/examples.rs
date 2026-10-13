@@ -237,3 +237,21 @@ fn tempdir() -> PathBuf {
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
+
+#[test]
+fn a_size_for_a_range_variable_is_reported_at_its_declaration() {
+    let path = tempdir().join("range_size.zippel");
+    std::fs::write(
+        &path,
+        "proto p<F: Field, S: Size, N: 1..S>(instance a: [F; N]) where a == a {\n    verify(a == a)\n}\n",
+    )
+    .unwrap();
+    let out = zippel_check(&["--size", "S=4", "--size", "N=2", path.to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("`N` is range-kinded, so it cannot be given a size"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("range_size.zippel:1:28"), "{stderr}");
+}

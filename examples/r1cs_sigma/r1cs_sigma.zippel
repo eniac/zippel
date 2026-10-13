@@ -2,7 +2,7 @@
 // Proves knowledge of witness w such that Az ∘ Bz = Cz where z = (x, w)
 // Uses Pedersen vector commitments over a field: Commit(ck, v; ω) = dot(ck, v) + h*ω
 //
-// Generic over: N (total variables), n (instance inputs, n < N), m (constraints).
+// Generic over: N (total variables), n (instance inputs, 1 <= n < N), m (constraints).
 // w ∈ F^(N-n), z ∈ F^N, A/B/C are m×N (stored flat as [F; m*N]).
 
 // Matrix-vector product for an m×N matrix (flat, row-major) times an N-vector.
@@ -13,7 +13,7 @@ fn matvec<G: Group, F: Scalar<G>, N: Size, m: Size>(
     [reduce(+, [mat[i * N + j] * v[j] for j in 0..N]) for i in 0..m]
 }
 
-proto r1cs_sigma<G: Group, F: Scalar<G>, N: Size, n: 1..N, m: Size>(
+proto r1cs_sigma<G: Group, F: Scalar<G>, N: Size, n: Size, m: Size>(
     // Instance inputs
     instance ck: [G; m], // Commitment key (m generators)
     instance h_base: G, // Blinding base

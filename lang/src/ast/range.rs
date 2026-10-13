@@ -104,12 +104,10 @@ impl CRange {
     /// Returns `RangeError::RangeOrder` if `start > end`, `step == 0`, or
     /// `end - start` is not an exact multiple of `step`.
     pub fn from_num(start: usize, step: usize, end: usize) -> Result<Self, RangeError> {
-        if (start <= end)
-            && (step > 0)
+        if step > 0
             && end
                 .checked_sub(start)
-                .map(|d| d.is_multiple_of(step))
-                .unwrap_or(false)
+                .is_some_and(|d| d.is_multiple_of(step))
         {
             Ok(Range::from_raw(start, step, end))
         } else {

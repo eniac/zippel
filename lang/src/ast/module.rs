@@ -4,7 +4,7 @@ use crate::ast::range::Range;
 use crate::ast::spanned::Spanned;
 use crate::ast::{Body, CSig, Sig};
 use crate::diagnostic::{Diagnostic, Phase};
-use crate::id::Tid;
+use crate::id::{Tid, Vid};
 use crate::semantic::{
     check_dead_variables, check_duplicate_declarations, check_proto_requirement, check_purity,
     check_scope, check_size_binding, check_type_alias_cycles, check_typevars,
@@ -16,7 +16,7 @@ use std::fmt;
 use thiserror::Error;
 
 use crate::ast::Size;
-use crate::typ::{Kind, RangeTraversal, TypeError, TypeInline, UTyp};
+use crate::typ::{Kind, RangeTraversal, SizeSubsts, TypeError, TypeInline, UTyp};
 use share::traversal::ToTraversal1;
 use share::{Ctx, Set};
 
@@ -74,10 +74,90 @@ pub enum ModuleError {
     /// No declaration with the requested name exists in the module.
     #[error("Declaration not found: {0}")]
     DeclarationNotFound(String),
+    /// A size was given for a range-kinded type variable, which takes every
+    /// value of its range.
+    #[error("A size was given for range-kinded `{}: {range}`", var.node)]
+    SizeForRange {
+        /// The variable, where it is declared.
+        var: Spanned<Tid>,
+        /// Its declared range, as written (`1..S`).
+        range: String,
+    },
+    /// A protocol concretized to several instances, one per value of each
+    /// range-kinded type variable the sizes left unset, where one protocol
+    /// is to run.
+    #[error("Protocol `{}` concretizes to {instances} instances", name.node)]
+    AmbiguousProtocol {
+        /// The protocol's name, where it is declared.
+        name: Spanned<Vid>,
+        /// Its range-kinded type variables that took more than one value.
+        ranges: Vec<ExpandedRange>,
+        /// How many instances it concretized to.
+        instances: usize,
+    },
+}
+
+/// A range-kinded type variable and the values it took when its declaration
+/// was concretized.
+#[derive(Debug, Clone)]
+pub struct ExpandedRange {
+    /// The variable, where it is declared.
+    pub var: Spanned<Tid>,
+    /// Its declared range, as written (`1..S`).
+    pub range: String,
+    /// The values it took, ascending.
+    pub values: Vec<usize>,
 }
 
 impl From<&ModuleError> for Diagnostic {
     fn from(e: &ModuleError) -> Self {
+        if let ModuleError::AmbiguousProtocol {
+            name,
+            ranges,
+            instances,
+        } = e
+        {
+            let mut d = Diagnostic::error(
+                Phase::Type,
+                name.span.clone(),
+                &format!(
+                    "Protocol `{}` concretizes to {instances} instances, so which one to run is ambiguous",
+                    name.node
+                ),
+            )
+            .primary_label("this protocol");
+            for r in ranges {
+                d = d.secondary_label(
+                    r.var.span.clone(),
+                    &format!(
+                        "`{}: {}` takes {} values: {}",
+                        r.var.node,
+                        r.range,
+                        r.values.len(),
+                        listed(&r.values)
+                    ),
+                );
+            }
+            return d.note(
+                "a protocol must concretize to one instance; make each range admit one value \
+                 for the given sizes, or declare the variable a `Size`",
+            );
+        }
+        if let ModuleError::SizeForRange { var, range } = e {
+            return Diagnostic::error(
+                Phase::Type,
+                var.span.clone(),
+                &format!(
+                    "`{}` is range-kinded, so it cannot be given a size",
+                    var.node
+                ),
+            )
+            .primary_label(&format!(
+                "`{}: {range}` takes every value of its range",
+                var.node
+            ))
+            .note("only `Size` variables take values from the sizes");
+        }
         if let ModuleError::InterchangeableDeclarations(first, second) = e {
             return Diagnostic::error(
                 Phase::Type,
@@ -115,7 +195,11 @@ impl From<&ModuleError> for Diagnostic {
             ModuleError::DeclarationNotFound(name) => {
                 (0..0, format!("Declaration `{name}` not found"))
             }
-            ModuleError::InterchangeableDeclarations(..) => unreachable!("handled above"),
+            ModuleError::AmbiguousProtocol { .. }
+            | ModuleError::SizeForRange { .. }
+            | ModuleError::InterchangeableDeclarations(..) => {
+                unreachable!("handled above")
+            }
         };
         let mut d = Diagnostic::error(Phase::Type, span, &one_line(&summary))
             .primary_label("while concretizing sizes for this declaration");
@@ -126,6 +210,20 @@ impl From<&ModuleError> for Diagnostic {
             ));
         }
         d
+    }
+}
+
+/// `values`, comma-separated; long lists keep their first three and last.
+fn listed(values: &[usize]) -> String {
+    let show = |vs: &[usize]| {
+        vs.iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    match values {
+        [first @ .., last] if first.len() > 4 => format!("{}, …, {last}", show(&first[..3])),
+        _ => show(values),
     }
 }
 
@@ -204,13 +302,22 @@ impl CModule {
 
 /// Polymorphic module with symbolic sizes
 impl UModule {
-    /// Type variables whose values a caller may supply to [`Self::concretize`]: `Size`
-    /// parameters, and range-kinded variables (pinning one selects a single value instead of
-    /// the whole range).
+    /// Type variables whose values a caller may supply to [`Self::concretize`]: the `Size`
+    /// parameters. A range-kinded variable takes every value of its range instead.
     pub fn size_params(&self) -> Set<Tid> {
         self.iter()
             .flat_map(|(sig, _)| sig.typevars.0.iter())
-            .filter(|tv| matches!(tv.kind, Kind::SizeVar | Kind::Range(_)))
+            .filter(|tv| matches!(tv.kind, Kind::SizeVar))
+            .map(|tv| tv.id.node.clone())
+            .collect()
+    }
+
+    /// The range-kinded type variables, which [`Self::concretize`] expands over their
+    /// whole range; a caller cannot supply their values.
+    pub fn range_params(&self) -> Set<Tid> {
+        self.iter()
+            .flat_map(|(sig, _)| sig.typevars.0.iter())
+            .filter(|tv| matches!(tv.kind, Kind::Range(_)))
             .map(|tv| tv.id.node.clone())
             .collect()
     }
@@ -390,6 +497,23 @@ impl UModule {
     /// same concrete signature, and `ModuleError::InterchangeableDeclarations` if two
     /// declarations of the same name accept exactly the same arguments.
     pub fn concretize(&self, sizes: &Ctx<Tid, usize>) -> Result<CModule, ModuleError> {
+        // Only `Size` variables take values from `sizes`; a name that is a range everywhere
+        // it is declared would otherwise be silently ignored.
+        let params = self.size_params();
+        for (name, _) in sizes.iter().filter(|(name, _)| !params.contains(name)) {
+            if let Some((var, Kind::Range(range))) = self
+                .iter()
+                .flat_map(|(sig, _)| sig.typevars.0.iter())
+                .map(|tv| (&tv.id, &tv.kind))
+                .find(|(id, kind)| id.node == *name && matches!(kind, Kind::Range(_)))
+            {
+                return Err(ModuleError::SizeForRange {
+                    var: var.clone(),
+                    range: range.to_string(),
+                });
+            }
+        }
+
         let mut ctx = Ctx::new();
 
         for decl in self.iter_decls() {
@@ -418,6 +542,65 @@ impl UModule {
         Ok(Module(ctx))
     }
 
+    /// Checks that protocol `name` concretized to one instance in `cmodule`,
+    /// `self` concretized with `sizes`. Each range-kinded type variable
+    /// gives one instance per value it admits; a caller that runs one
+    /// protocol would otherwise run one of them without saying which.
+    ///
+    /// # Errors
+    /// [`ModuleError::AmbiguousProtocol`] if it concretized to more than one
+    /// instance, with each range that took more than one value.
+    pub fn check_protocol_instances(
+        &self,
+        cmodule: &CModule,
+        name: &Vid,
+        sizes: &Ctx<Tid, usize>,
+    ) -> Result<(), ModuleError> {
+        let instances = cmodule
+            .iter()
+            .filter(|(sig, body)| body.is_proto() && sig.name.node == *name)
+            .count();
+        if instances <= 1 {
+            return Ok(());
+        }
+        let Some((sig, _)) = self
+            .iter()
+            .find(|(sig, body)| body.is_proto() && sig.name.node == *name)
+        else {
+            return Err(ModuleError::DeclarationNotFound(name.to_string()));
+        };
+        let substs = SizeSubsts::from_typevars(&sig.typevars.node, sizes).map_err(|e| {
+            ModuleError::DeclarationError(sig.name.span.clone(), DeclError::SubstError(e))
+        })?;
+        let ranges = sig
+            .typevars
+            .node
+            .0
+            .iter()
+            .filter_map(|tv| {
+                let Kind::Range(range) = &tv.node.kind else {
+                    return None;
+                };
+                let values: Vec<usize> = substs
+                    .iter()
+                    .filter_map(|s| s.get(&tv.node.id.node).copied())
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
+                (values.len() > 1).then(|| ExpandedRange {
+                    var: tv.node.id.clone(),
+                    range: range.to_string(),
+                    values,
+                })
+            })
+            .collect();
+        Err(ModuleError::AmbiguousProtocol {
+            name: sig.name.clone(),
+            ranges,
+            instances,
+        })
+    }
+
     /// Expand one declaration into one concrete declaration per assignment of its
     /// range-kinded type variables, with `sizes` supplying the remaining `Size` variables.
     fn concretize_decl(decl: &UDecl, sizes: &Ctx<Tid, usize>) -> Result<Vec<CDecl>, DeclError> {
@@ -425,8 +608,8 @@ impl UModule {
             .into_iter()
             .map(|mut substs| {
                 // Merge externally-provided SizeVar values (e.g. S: Size) into the
-                // substitution context. Skip keys already set by range expansion
-                // to avoid overriding pinned Range typevar values.
+                // substitution context. Skip keys already set by range expansion:
+                // a `Size` elsewhere may share a range variable's name.
                 for (k, v) in sizes.iter() {
                     if !substs.contains(k) {
                         substs.0.insert(k, v);

@@ -145,7 +145,7 @@ fn bench_hadamard_prover(c: &mut Criterion) {
         PathBuf::from("examples/hadamard/hadamard.zippel"),
     ));
     let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("S"), &4usize);
+    sizes.insert(&Tid::new("N"), &4usize);
     handler.compile(&sizes);
     let inputs = hadamard_inputs();
 
@@ -169,7 +169,7 @@ fn bench_hadamard_verifier(c: &mut Criterion) {
         PathBuf::from("examples/hadamard/hadamard.zippel"),
     ));
     let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("S"), &4usize);
+    sizes.insert(&Tid::new("N"), &4usize);
     handler.compile(&sizes);
     let inputs = hadamard_inputs();
     let proof = handler
