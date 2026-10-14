@@ -58,6 +58,9 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     /// Build a `Ideal` from a `TransClos`. Each call returns a
     /// fresh ideal with its own `vars` namespace, while the builder
     /// namespace keeps generated witness/sentinel allocation stable.
+    ///
+    /// A `verify`'s polynomials go to [`Ideal::check_polys`], not the
+    /// generators: a caller that assumes the checks hold moves them in.
     pub fn build(&mut self, tc: TransClos<C>) -> Ideal<C> {
         let mut ideal = Ideal::new();
         for new_arg in tc.vars.iter() {

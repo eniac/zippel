@@ -1,4 +1,4 @@
-//! Check op encoder: `assert_op`, `verify_op`, and `check_op`.
+//! Check op encoder: `assert_op`, `verify_op`, and `check_polys`.
 
 use backend::op::HasOpFactory;
 use backend::{ABase, ATyp, ArkConfig, ArkScalarOps};
@@ -20,17 +20,20 @@ use super::bool::sides;
 pub fn assert_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, _pr: &Var, exp: &HOp<C>) {
     let leaves = ctx.builder.collect_and_leaves(exp);
     for leaf in leaves {
-        check_op(ctx, &leaf);
+        let polys = check_polys(ctx, &leaf);
+        ctx.ideal.generating_set.extend(polys);
     }
 }
 
-/// Verifier-side check encoder. The ideal generation is identical to the
-/// relation's; `verify` also records what each leaf checks.
+/// Verifier-side check encoder. The polynomials are the relation's, but they
+/// go to [`Ideal::check_polys`](crate::ideal::Ideal::check_polys), not the
+/// generators; `verify` also records what each leaf checks.
 pub fn verify_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, _pr: &Var, exp: &HOp<C>) {
     let leaves = ctx.builder.collect_and_leaves(exp);
     for leaf in leaves {
         record_check(ctx, &leaf);
-        check_op(ctx, &leaf);
+        let polys = check_polys(ctx, &leaf);
+        ctx.ideal.check_polys.extend(polys);
     }
 }
 
@@ -56,20 +59,21 @@ fn record_check<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, exp: &H
     }
 }
 
-/// Shared core for `assert_op` / `verify_op`.
-/// Reads the Bool operand's polys and asserts each equals 1.
-fn check_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, exp: &HOp<C>) {
+/// Shared core for `assert_op` / `verify_op`: the Bool operand's polys, each
+/// minus 1, which vanish exactly when the check holds.
+fn check_polys<C: ArkConfig + HasOpFactory>(
+    ctx: &EncodeCtx<'_, C>,
+    exp: &HOp<C>,
+) -> Vec<Polynomial<C::F>> {
     let src = PolySource::from_ref_vars(&ctx.ideal.vars, exp);
     match src.typ() {
         ATyp::Base(ABase::Bool) => {
             let one = Polynomial::lit(&C::FOps::one());
-            for p in &src.polys {
-                ctx.ideal.generating_set.push(p - &one);
-            }
+            src.polys.iter().map(|p| p - &one).collect()
         }
         _ => {
             panic!(
-                "check_op: unsupported operand type {} (expected Bool)",
+                "check_polys: unsupported operand type {} (expected Bool)",
                 exp.typ()
             );
         }

@@ -111,6 +111,75 @@ impl<F: Field> Substitution<F> {
     pub fn apply(&self, p: &Polynomial<F>) -> Polynomial<F> {
         p.inline_vars(&self.defs).0
     }
+
+    /// The definitions solved out of `generators`: each `c·x + r`, with `c` a
+    /// nonzero constant, `x` not in `r` and `accepts(p, x)`, defines
+    /// `x := −r/c` and is dropped. Ties go to the least `Var`.
+    ///
+    /// `generators` must already be resolved by every substitution applied
+    /// before this one, so the definitions it finds mention no variable those
+    /// substitutions define. On return, no remaining generator mentions a
+    /// variable the result defines.
+    ///
+    /// Each pass applies the definitions so far to each generator in order.
+    /// Passes repeat until one solves nothing, since a definition can let an
+    /// earlier generator solve: a division row that reads the quotient only as
+    /// `f·q` solves for it once another generator defines `f := 1`.
+    pub fn solve(
+        generators: &mut Vec<Polynomial<F>>,
+        accepts: impl Fn(&Polynomial<F>, &Var) -> bool,
+    ) -> Self {
+        let mut solved = Self::default();
+        loop {
+            let mut found = false;
+            generators.retain_mut(|p| {
+                *p = solved.apply(p);
+                let Some((x, value)) = solve_for(p, &accepts) else {
+                    return !p.is_zero();
+                };
+                solved
+                    .insert(x, value)
+                    .expect("a generator the solved definitions resolved mentions none of them");
+                found = true;
+                false
+            });
+            if !found {
+                return solved;
+            }
+        }
+    }
+}
+
+/// `p = c·x + r` solved for the least `x` that `accepts`, with `c` a nonzero
+/// constant and `x` not in `r`: `x` and its value `−r/c`.
+fn solve_for<F: Field>(
+    p: &Polynomial<F>,
+    accepts: impl Fn(&Polynomial<F>, &Var) -> bool,
+) -> Option<(Var, Polynomial<F>)> {
+    // The number of terms each variable occurs in.
+    let mut occurrences: HashMap<&Var, usize> = HashMap::new();
+    for m in p.terms.keys() {
+        for (x, _) in m.0.iter() {
+            *occurrences.entry(x).or_default() += 1;
+        }
+    }
+    let (x, c) = p
+        .terms
+        .iter()
+        .filter_map(|(m, c)| {
+            // `c·x`: exactly one variable, with exponent 1.
+            let mut vars = m.iter();
+            match (vars.next(), vars.next()) {
+                (Some((x, &1)), None) => Some((x, c)),
+                _ => None,
+            }
+        })
+        .filter(|(x, _)| occurrences[*x] == 1 && accepts(p, x))
+        .min_by(|(x, _), (y, _)| x.cmp(y))?;
+    // `p` is a generator, so `p ≡ 0` modulo the ideal. With `p = c·x + r`,
+    // that gives `x ≡ x − p/c = −r/c`, and `x`'s own term cancels from the value.
+    let value = &Polynomial::var(x) - &(p * &Polynomial::lit(&c.inverse()?));
+    Some((x.clone(), value))
 }
 
 #[cfg(test)]
@@ -255,6 +324,59 @@ mod tests {
         // A refused definition changes nothing.
         assert_eq!(s.apply(&v(&a)), v(&x) * v(&y));
         assert_eq!(s.apply(&v(&x)), v(&x));
+    }
+
+    #[test]
+    fn solve_takes_the_least_linear_variable_and_drops_the_generator() {
+        let [x, y, z] = vars(["x", "y", "z"]);
+        // `x` and `y` both occur once, linearly; `z` occurs twice.
+        let mut generators = vec![lit(2) * v(&x) + v(&y) + v(&z) * v(&z) + v(&z) - lit(3)];
+        let s = Substitution::solve(&mut generators, |_, _| true);
+
+        assert!(generators.is_empty());
+        // x := −(y + z² + z − 3)/2
+        let half = Polynomial::lit(&Fr::from(2).inverse().unwrap());
+        assert_eq!(
+            s.apply(&v(&x)),
+            &(lit(3) - v(&y) - v(&z) * v(&z) - v(&z)) * &half
+        );
+        assert_eq!(s.apply(&v(&y)), v(&y));
+    }
+
+    #[test]
+    fn solve_revisits_a_generator_once_a_later_one_defines_its_coefficient() {
+        let [a, f, q] = vars(["a", "f", "q"]);
+        // `f·q − a` solves for `q` only once `f − 1` defines `f`; `a` is refused.
+        let mut generators = vec![v(&f) * v(&q) - v(&a), v(&f) - lit(1)];
+        let s = Substitution::solve(&mut generators, |_, x| *x != a);
+
+        assert!(generators.is_empty(), "{generators:?}");
+        assert_eq!(s.apply(&v(&f)), lit(1));
+        assert_eq!(s.apply(&v(&q)), v(&a));
+    }
+
+    #[test]
+    fn solve_leaves_nothing_that_mentions_a_solved_variable() {
+        arbtest::arbtest(|u| {
+            let keys: Vec<Var> = (0..4).map(|i| var(&format!("k{i}"), i)).collect();
+            let free = [var("a", 4), var("b", 5)];
+            let mut generators = Vec::new();
+            for _ in 0..u.int_in_range(1..=5)? {
+                generators.push(arbitrary_poly(u, &keys, &free)? + v(u.choose(&keys)?));
+            }
+            let s = Substitution::solve(&mut generators, |_, _| true);
+
+            let solved: Vec<&Var> = s.defs.iter().map(|(x, _)| x).collect();
+            for p in generators
+                .iter()
+                .chain(s.defs.iter().map(|(_, value)| value))
+            {
+                for x in &solved {
+                    assert!(!p.contains(x), "{p} mentions {x}");
+                }
+            }
+            Ok(())
+        });
     }
 
     #[test]
