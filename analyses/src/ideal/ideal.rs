@@ -29,12 +29,19 @@ pub struct Check<F: ark_ff::Field> {
 #[derive(Clone)]
 pub struct Ideal<C: ArkConfig> {
     /// The generators of the ideal: every polynomial constrained to vanish on
-    /// honest executions of the protocol fragment being analysed.
+    /// honest executions of the protocol fragment being analysed. A
+    /// `verify`'s polynomials are not among them; see `check_polys`.
     pub generating_set: Vec<Polynomial<C::F>>,
     /// What each `verify` checks. Recorded for reporting only, never a generator.
     pub checks: Vec<Check<C::F>>,
+    /// The polynomial form of `checks`: each must vanish for the verifier to
+    /// accept. Kept apart from the generators, since whether they hold is up
+    /// to the analysis: completeness shows they follow, and soundness assumes
+    /// them for an accepted transcript by moving them into `generating_set`.
+    pub check_polys: Vec<Polynomial<C::F>>,
     /// One-step definitions `x := f` recorded by the encoders, each also a
-    /// generator `f − x`. [`Ideal::inline`] resolves them and substitutes them away.
+    /// generator `f − x`. [`Ideal::substitute_definitions`] resolves them and
+    /// substitutes them away.
     pub pl: Ctx<Var, Polynomial<C::F>>,
     /// Namespace mapping each DAG node reference to the `Var` that stands for its
     /// value, so repeated visits to the same node reuse one variable.
@@ -53,6 +60,7 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         Self {
             generating_set: Vec::new(),
             checks: Vec::new(),
+            check_polys: Vec::new(),
             pl: Ctx::new(),
             vars: HashMap::new(),
             var_order: Vec::new(),
@@ -90,18 +98,22 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         vars
     }
 
-    /// Resolve the `pl` definitions, substitute them into the generators and
-    /// both sides of every check, and return them.
+    /// Resolve the `pl` definitions, substitute them into the generators, the
+    /// check polynomials and both sides of every check, and return them.
     ///
-    /// Empties `pl` and drops the generators that become zero. A definition
-    /// that [`Substitution::resolve`] leaves out stays a variable, which its
-    /// generator `f − x` still defines.
-    pub fn inline(&mut self) -> Substitution<C::F> {
+    /// Empties `pl` and drops the generators and check polynomials that
+    /// become zero. A definition that [`Substitution::resolve`] leaves out
+    /// stays a variable, which its generator `f − x` still defines.
+    pub fn substitute_definitions(&mut self) -> Substitution<C::F> {
         let defs = Substitution::resolve(&std::mem::take(&mut self.pl));
         for p in &mut self.generating_set {
             *p = defs.apply(p);
         }
         self.generating_set.retain(|p| !p.is_zero());
+        for p in &mut self.check_polys {
+            *p = defs.apply(p);
+        }
+        self.check_polys.retain(|p| !p.is_zero());
         // Checks keep their sides even when equal: a check that holds is still a check.
         for check in &mut self.checks {
             check.lhs = defs.apply(&check.lhs);
@@ -110,11 +122,12 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         defs
     }
 
-    /// Merge another ideal's basis, checks and polynomial definitions into this ideal.
+    /// Merge another ideal's basis, checks, check polynomials and definitions into this ideal.
     pub fn merge(&mut self, other: &Self) {
         self.generating_set
             .extend(other.generating_set.iter().cloned());
         self.checks.extend(other.checks.iter().cloned());
+        self.check_polys.extend(other.check_polys.iter().cloned());
         for (k, v) in other.pl.iter() {
             self.pl.insert(k, v);
         }
@@ -188,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn inline_substitutes_resolved_definitions_and_returns_them() {
+    fn substitute_definitions_resolves_and_returns_them() {
         use ark_bls12_381::Fr;
         use ark_ff::One;
 
@@ -223,7 +236,7 @@ mod tests {
             rhs: a_plus_1.clone(),
         });
 
-        let defs = ideal.inline();
+        let defs = ideal.substitute_definitions();
 
         assert!(ideal.pl.is_empty());
         assert_eq!(defs.apply(&v(&t)), t_value);

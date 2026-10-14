@@ -1,19 +1,18 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
 
 use crate::backend::{GbBackendKind, GbBasis};
 use crate::error::AnalysisError;
-use crate::extractor::extract_locals;
 use crate::frontend::{MonoOrder, Polynomial};
 use crate::ideal::{Check, IdealBuilder, Substitution};
 use crate::{TransClos, Var};
 use graph::{QDag, Ref};
 
 /// Inputs to the Gröbner basis computation: the generating set (prover ∪
-/// relation ∪ verifier-locals, after inlining) and the verifier
-/// polynomials to reduce in `run()`.
+/// relation ∪ verifier-locals, definitions substituted) and the verifier's
+/// goals to reduce in `run()`.
 ///
 /// Produced by [`CompletenessAnalysis::build_inputs`]; consumed by
 /// [`CompletenessAnalysis::from_inputs`]. Splitting construction from GB
@@ -22,10 +21,11 @@ use graph::{QDag, Ref};
 pub struct CompletenessInputs<F: ark_ff::PrimeField> {
     /// The generating set for the Gröbner basis (prover ∪ relation ∪
     /// verifier-locals). Every definition is substituted away, prover
-    /// messages included, and so is every variable a generator pins down.
+    /// messages included, and so is every variable a generator solves for.
     pub generating_set: Vec<Polynomial<F>>,
-    /// Verifier polynomials to reduce against the basis in `run()`, minus
-    /// the verifier-locals' generators (members by construction).
+    /// The verifier's goals, what each `verify` asserts, to reduce against
+    /// the basis in `run()`; a goal that is already a verifier generator is
+    /// left out.
     pub verifier: Vec<Polynomial<F>>,
     /// What each `verify` checks, over the verifier's own variables: its
     /// definitions are substituted, the prover messages are not. Unlike
@@ -46,11 +46,11 @@ pub struct CompletenessAnalysis<C: ArkConfig> {
 }
 
 impl<C: HasOpFactory> CompletenessAnalysis<C> {
-    /// Build the inputs to the Gröbner basis computation: construct the
-    /// prover, relation, and verifier ideals, substitute each one's
-    /// definitions into it and the prover's into the verifier's, merge them
-    /// into a single generating set, and substitute away every variable a
-    /// generator pins down.
+    /// Build the inputs to the Gröbner basis computation, in stages: the
+    /// prover and the relation with their definitions substituted; the
+    /// verifier, whose locals are generators and whose checks are the goals,
+    /// with its own definitions and then the prover's substituted; and then
+    /// every variable a generator solves for, substituted away.
     ///
     /// This is the cheap phase — no GB computation. Call
     /// [`from_inputs`](Self::from_inputs) to compute the basis, or inspect
@@ -58,57 +58,58 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
     pub fn build_inputs(dag: &QDag<C>) -> CompletenessInputs<C::F> {
         let mut builder = IdealBuilder::new();
 
-        let prover_tc = TransClos::prover(dag);
-        let mut prover_result = builder.build(prover_tc);
+        // The prover and the relation, with their definitions substituted,
+        // the prover messages included.
+        let mut prover = builder.build(TransClos::prover(dag));
+        prover.merge(&builder.build(TransClos::relation(dag)));
+        let defs = prover.substitute_definitions();
 
-        let rel_result = builder.build(TransClos::relation(dag));
-        prover_result.merge(&rel_result);
-
-        // The prover's and the relation's definitions, the prover messages included.
-        let prover_defs = prover_result.inline();
-
-        let verifier_tc = TransClos::verifier(dag);
-        let mut verifier_locals = extract_locals(&builder, &verifier_tc);
-        verifier_locals.inline();
-
-        let mut verifier_result = builder.build(verifier_tc);
-        verifier_result.inline();
+        // The verifier, with its own definitions substituted. Its checks are
+        // the goals; a goal that is already one of its generators holds by
+        // construction.
+        let mut verifier = builder.build(TransClos::verifier(dag));
+        verifier.substitute_definitions();
+        verifier
+            .check_polys
+            .retain(|g| !verifier.generating_set.contains(g));
 
         // The verifier reads the prover messages as variables, which the
         // prover's definitions replace.
-        let mut generating_set = prover_result.generating_set;
-        generating_set.extend(
-            verifier_locals
-                .generating_set
-                .iter()
-                .map(|p| prover_defs.apply(p))
-                .filter(|p| !p.is_zero()),
-        );
+        for p in verifier
+            .generating_set
+            .iter_mut()
+            .chain(&mut verifier.check_polys)
+        {
+            *p = defs.apply(p);
+        }
 
-        // Then every variable a generator pins down, such as an input the
-        // `where` clause defines.
-        let input_args: HashSet<Ref> = dag.input_args().into_iter().map(Ref::new).collect();
-        let witnesses: HashSet<Ref> = prover_result
+        // Then every variable a generator solves for, such as an input the
+        // `where` clause defines. The generators are resolved by `defs`, as
+        // `solve` requires, and `defs` is not resolved against the result:
+        // a goal takes `defs`, then `solved`.
+        let inputs: HashSet<Ref> = dag.input_args().into_iter().map(Ref::new).collect();
+        let witnesses: HashSet<Ref> = prover
             .division_witnesses
-            .union(&verifier_locals.division_witnesses)
+            .union(&verifier.division_witnesses)
             .copied()
             .collect();
-        let pins = pin(&mut generating_set, &input_args, &witnesses);
+        let mut generating_set = prover.generating_set;
+        generating_set.extend(verifier.generating_set.into_iter().filter(|p| !p.is_zero()));
+        let solved = Substitution::solve(&mut generating_set, |p, x| {
+            completeness_accepts(p, x, &inputs, &witnesses)
+        });
 
-        // verifier_locals keeps the `==` node under each `verify`, so its
-        // encoding is already a generator; reducing it again is wasted work.
-        let verifier = verifier_result
-            .generating_set
+        let goals = verifier
+            .check_polys
             .iter()
-            .filter(|p| !verifier_locals.generating_set.contains(p))
-            .map(|p| pins.apply(&prover_defs.apply(p)))
-            .filter(|p| !p.is_zero())
+            .map(|g| solved.apply(g))
+            .filter(|g| !g.is_zero())
             .collect();
 
         CompletenessInputs {
             generating_set,
-            verifier,
-            checks: verifier_result.checks,
+            verifier: goals,
+            checks: verifier.checks,
         }
     }
 
@@ -159,79 +160,42 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
     }
 }
 
-/// Substitute away every variable a generator pins down (see
-/// [`pinned_var`]), drop that generator, and return the pins.
+/// Whether completeness may solve `p` for `x`.
 ///
-/// Each pass applies the pins so far to each generator in order. Passes
-/// repeat until one pins nothing, since a pin can let an earlier generator
-/// pin a variable: a division row that reads the quotient only as `f·q`
-/// pins it once the relation pins `f := 1`. That last pass also leaves
-/// every remaining generator resolved.
-fn pin<F: ark_ff::Field>(
-    generating_set: &mut Vec<Polynomial<F>>,
-    inputs: &HashSet<Ref>,
-    witnesses: &HashSet<Ref>,
-) -> Substitution<F> {
-    let mut pins = Substitution::default();
-    loop {
-        let mut pinned = false;
-        generating_set.retain_mut(|p| {
-            *p = pins.apply(p);
-            let Some((x, value)) = pinned_var(p, inputs, witnesses) else {
-                return !p.is_zero();
-            };
-            pins.insert(x, value)
-                .expect("a generator the pins resolved mentions no pinned variable");
-            pinned = true;
-            false
-        });
-        if !pinned {
-            return pins;
-        }
-    }
-}
-
-/// The variable `x` that `p = c·x + r` pins down, with `c` a nonzero constant
-/// and `x` not in `r`, and its value `−r/c`.
+/// Every `x` that [`Substitution::solve`] offers gives an exact substitution,
+/// so this rule decides only which variables reach the Gröbner basis, and with
+/// them its size. It accepts:
 ///
-/// Any `x` qualifies when `r` is constant. Otherwise a division witness
-/// does, and an input does when `p` contains no division witness: a division
-/// row whose dividend is linear in inputs then pins the quotient, and the
-/// relation stays over the inputs. Ties go to the least `Var`.
-fn pinned_var<F: ark_ff::Field>(
+/// - any `x` that is `p`'s only variable, such as `f_one := 1` from
+///   `where f_one == 1`;
+/// - a division witness when `p` reads one: the row `p1 + z·q1 − q0` of
+///   `(p − p(z)) / (X − z)` solves for the quotient `q0`, not the input `p1`,
+///   which removes the variable the division introduced;
+/// - otherwise an input, such as `h := g·x` from `where h == g*x`, which turns
+///   a check written over `h` into an identity in the witness `x`.
+///
+/// Challenges, prover messages and random values are never solved for:
+/// eliminating them is exact too, but leaves larger goals and bases.
+fn completeness_accepts<F: ark_ff::Field>(
     p: &Polynomial<F>,
+    x: &Var,
     inputs: &HashSet<Ref>,
     witnesses: &HashSet<Ref>,
-) -> Option<(Var, Polynomial<F>)> {
-    // The number of terms each variable occurs in.
-    let mut occurrences: HashMap<&Var, usize> = HashMap::new();
-    for m in p.terms.keys() {
-        for (x, _) in m.0.iter() {
-            *occurrences.entry(x).or_default() += 1;
-        }
+) -> bool {
+    let vars = || p.terms.keys().flat_map(|m| m.0.iter().map(|(y, _)| y));
+    if vars().all(|y| y == x) {
+        return true;
     }
-    let has_witness = occurrences.keys().any(|x| witnesses.contains(&x.reference));
-    let qualifies = |x: &Var| match occurrences.len() {
-        // `x` is the only variable, so `r` is constant.
-        1 => true,
-        _ if has_witness => witnesses.contains(&x.reference),
-        _ => inputs.contains(&x.reference),
-    };
-    let (x, c) = p
-        .terms
-        .iter()
-        .filter(|(m, _)| m.degree() == 1)
-        .map(|(m, c)| (m.vars().remove(0), *c))
-        .filter(|(x, _)| occurrences[x] == 1 && qualifies(x))
-        .min_by(|(x, _), (y, _)| x.cmp(y))?;
-    // −r/c = x − p/c
-    let value = &Polynomial::var(&x) - &(p * &Polynomial::lit(&c.inverse()?));
-    Some((x, value))
+    if vars().any(|y| witnesses.contains(&y.reference)) {
+        witnesses.contains(&x.reference)
+    } else {
+        inputs.contains(&x.reference)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CompletenessAnalysis, pinned_var};
+    use super::{CompletenessAnalysis, completeness_accepts};
     use crate::QualifierPropagation;
     use crate::Var;
     use crate::backend::GbBackend;
@@ -1343,7 +1307,7 @@ mod tests {
     }
 
     #[test]
-    fn inputs_the_relation_defines_are_pinned() {
+    fn inputs_the_relation_defines_are_solved_for() {
         let inputs = CompletenessAnalysis::build_inputs(&dag_of(&defined_inputs("g*z == u + k*c")));
         let left: Vec<_> = inputs
             .generating_set
@@ -1361,7 +1325,7 @@ mod tests {
     }
 
     #[test]
-    fn a_wrong_check_over_pinned_inputs_stays_incomplete() {
+    fn a_wrong_check_over_solved_inputs_stays_incomplete() {
         let result = from_input(&dag_of(&defined_inputs("g*z == u + h*c"))).run();
         assert!(
             matches!(result, Err(AnalysisError::Incomplete(_))),
@@ -1387,9 +1351,9 @@ mod tests {
     }
 
     #[test]
-    fn a_division_pins_its_witnesses_once_the_relation_fixes_the_leading_coefficient() {
-        // The quotient appears only as `f_one·q` until a later generator pins
-        // `f_one := 1`.
+    fn a_division_solves_for_its_witnesses_once_the_relation_fixes_the_leading_coefficient() {
+        // The quotient appears only as `f_one·q` until a later generator
+        // defines `f_one := 1`.
         let inputs = CompletenessAnalysis::build_inputs(&dag_of(&opening("t == b")));
         let prefix = crate::ideal::GB_GENERATED_NAME_PREFIX;
         let witnesses: Vec<_> = inputs
@@ -1411,7 +1375,7 @@ mod tests {
     }
 
     #[test]
-    fn a_wrong_check_over_a_pinned_quotient_stays_incomplete() {
+    fn a_wrong_check_over_a_solved_quotient_stays_incomplete() {
         let result = from_input(&dag_of(&opening("t == b + 1"))).run();
         assert!(
             matches!(result, Err(AnalysisError::Incomplete(_))),
@@ -1420,7 +1384,7 @@ mod tests {
     }
 
     #[test]
-    fn a_division_row_pins_its_witness_and_leaves_the_input() {
+    fn a_division_row_solves_for_its_witness_and_leaves_the_input() {
         use backend::ATyp;
         use lang::typ::Qualifier;
         use petgraph::graph::NodeIndex;
@@ -1445,15 +1409,25 @@ mod tests {
         let inputs = HashSet::from([p1.reference, f.reference]);
         let witnesses = HashSet::from([q0.reference, q1.reference]);
 
+        let solve = |row: &Polynomial<ark_bls12_381::Fr>| {
+            let mut generators = vec![row.clone()];
+            let solved = crate::ideal::Substitution::solve(&mut generators, |p, x| {
+                completeness_accepts(p, x, &inputs, &witnesses)
+            });
+            (solved, generators)
+        };
+
         // The row of `(p − p(z)) / (X − z)` at `X^1`, in which the input
-        // `p1` and the quotient's `q0` both occur only linearly.
-        let row = v(&p1) + v(&z) * v(&q1) - v(&q0);
-        assert_eq!(
-            pinned_var(&row, &inputs, &witnesses),
-            Some((q0.clone(), v(&p1) + v(&z) * v(&q1)))
-        );
-        // The same row divided by `f·X − z`, before `f` is pinned.
+        // `p1` and the quotient's `q0` both occur only linearly: the quotient
+        // is solved for, and the input stays.
+        let (solved, left) = solve(&(v(&p1) + v(&z) * v(&q1) - v(&q0)));
+        assert!(left.is_empty(), "{left:?}");
+        assert_eq!(solved.apply(&v(&q0)), v(&p1) + v(&z) * v(&q1));
+        assert_eq!(solved.apply(&v(&p1)), v(&p1));
+        // The same row divided by `f·X − z`, before `f` is defined: nothing.
         let row = v(&p1) + v(&z) * v(&q1) - v(&f) * v(&q0);
-        assert_eq!(pinned_var(&row, &inputs, &witnesses), None);
+        let (solved, left) = solve(&row);
+        assert_eq!(left, [row]);
+        assert_eq!(solved.apply(&v(&q0)), v(&q0));
     }
 }

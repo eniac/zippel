@@ -28,7 +28,7 @@ use share::Set;
 /// expensive step.
 pub struct SoundnessInputs<C: ArkConfig> {
     /// The generating set for the search GB (d-equations + copy TCs +
-    /// relation, inlined).
+    /// relation, definitions substituted).
     pub generating_set: Vec<Polynomial<C::F>>,
     /// Lex elimination ordering for the search GB.
     pub lex_order: MonoOrder,
@@ -39,7 +39,7 @@ pub struct SoundnessInputs<C: ArkConfig> {
     /// Validity ideal: d-equations + copy TCs. Extractors are added in
     /// `run()` before computing the validity GB.
     pub grev_validity: Ideal<C>,
-    /// Relation ideal (inlined). Relation polys are reduced against the
+    /// Relation ideal, definitions substituted. Relation polys are reduced against the
     /// validity GB in `run()`.
     pub grev_rel_result: Ideal<C>,
     /// Relation locals (merged into validity ideal in `run()`).
@@ -59,7 +59,7 @@ pub struct SpecialSoundnessAnalysis<C: ArkConfig> {
     /// Validity ideal: d-equations + copy TCs. Extractors are added in
     /// `run()` before computing the validity GB.
     grev_validity: Ideal<C>,
-    /// Relation ideal (inlined). Relation polys are reduced against the
+    /// Relation ideal, definitions substituted. Relation polys are reduced against the
     /// validity GB in `run()`.
     grev_rel_result: Ideal<C>,
     /// Relation locals (merged into validity ideal in `run()`).
@@ -151,7 +151,7 @@ fn validate_2n_plus_1<C: ArkConfig>(
 impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
     /// Build the inputs to the search Gröbner basis computation:
     /// construct all d-equations, copy TCs, and relation polys, build the
-    /// lex elimination ordering, and inline the `pl` table.
+    /// lex elimination ordering, and substitute the `pl` definitions.
     ///
     /// This is the cheap phase — no GB computation. Call
     /// [`from_inputs`](Self::from_inputs) to compute the basis, or inspect
@@ -321,7 +321,11 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                     non_witness_vars.push(var.clone());
                 }
             }
-            let copy_result = grev_builder.build(tc);
+            // An accepted transcript: its checks are assumed to hold.
+            let mut copy_result = grev_builder.build(tc);
+            copy_result
+                .generating_set
+                .append(&mut copy_result.check_polys);
             grev_search.merge(&copy_result);
             grev_validity.merge(&copy_result);
         }
@@ -336,8 +340,8 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         }
         let mut rel_locals = extract_locals(&grev_builder, &rel_tc);
         let mut grev_rel_result = grev_builder.build(rel_tc.clone());
-        rel_locals.inline();
-        grev_rel_result.inline();
+        rel_locals.substitute_definitions();
+        grev_rel_result.substitute_definitions();
 
         grev_search.merge(&grev_rel_result);
 
@@ -393,8 +397,8 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         };
         let lex_order = MonoOrder::lex(lex_var_order);
 
-        // Phase 3a: Inline the search ideal.
-        grev_search.inline();
+        // Phase 3a: Substitute the search ideal's definitions.
+        grev_search.substitute_definitions();
 
         Ok(SoundnessInputs {
             generating_set: std::mem::take(&mut grev_search.generating_set),
@@ -528,7 +532,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         }
 
         self.grev_validity.merge(&self.rel_locals);
-        self.grev_validity.inline();
+        self.grev_validity.substitute_definitions();
 
         let backend = self.backend.build::<C::F>();
         let validity_gb = backend
