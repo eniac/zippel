@@ -13,7 +13,7 @@ fn eq_weights<G: Group, F: Scalar<G>>(instance x: [F; 1]) -> [F; 2] {
     [1 - x[0], x[0]]
 }
 
-fn eq_weights<G: Group, F: Scalar<G>, EK: 2..21>(instance x: [F; EK]) -> [F; 2 ^ EK] {
+fn eq_weights<G: Group, F: Scalar<G>, M: Size, EK: 2..M + 1>(instance x: [F; EK]) -> [F; 2 ^ EK] {
     let x_lo = x[0..EK - 1];
     let a = x[EK - 1];
     let prev = eq_weights(x_lo);
@@ -25,7 +25,9 @@ fn draw_taus<G: Group, F: Scalar<G>>(instance _placeholder: [F; 1]) -> [F; 1] {
     [t]
 }
 
-fn draw_taus<G: Group, F: Scalar<G>, DK: 2..21>(instance placeholder: [F; DK]) -> [F; DK] {
+fn draw_taus<G: Group, F: Scalar<G>, M: Size, DK: 2..M + 1>(
+    instance placeholder: [F; DK],
+) -> [F; DK] {
     let prev = draw_taus(placeholder[0..DK - 1]);
     t <- challenge<F>;
     prev ++ [t]
@@ -147,7 +149,7 @@ fn compute_s_vec<G: Group, F: Scalar<G>>(instance c: [F; 1], instance c_inv: [F;
     [c_inv[0], c[0]]
 }
 
-fn compute_s_vec<G: Group, F: Scalar<G>, K: 2..21>(
+fn compute_s_vec<G: Group, F: Scalar<G>, M: Size, K: 2..M + 1>(
     instance c: [F; K],
     instance c_inv: [F; K],
 ) -> [F; 2 ^ K] {

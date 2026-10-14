@@ -57,11 +57,14 @@ fn build_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<C>> {
 
     // Decompose values into radix-b digits (the prover blinds f_j(ω^0) itself)
     let mut chunks_bits = Vec::new();
-    for j in 0..l_chunk {
-        let digits = z_vals
-            .iter()
+    let mut remaining = z_vals;
+    for _ in 0..l_chunk {
+        let digits = remaining
+            .iter_mut()
             .map(|z| {
-                F::from((z / (b_size as u64).pow(u32::try_from(j).unwrap())) % (b_size as u64))
+                let digit = *z % b_size as u64;
+                *z /= b_size as u64;
+                F::from(digit)
             })
             .collect();
         chunks_bits.push(Value::vec_scalar(digits));
@@ -131,17 +134,8 @@ pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
             {
                 return Err("n+1 must be an exact supported evaluation-domain size".into());
             }
-            if size(sizes, "b") < 2
-                || u32::try_from(size(sizes, "l_chunk"))
-                    .ok()
-                    .and_then(|exponent| {
-                        u64::try_from(size(sizes, "b")).ok()?.checked_pow(exponent)
-                    })
-                    .is_none()
-            {
-                return Err(
-                    "b must be >= 2 and b^l_chunk must fit u64 for digit decomposition".into(),
-                );
+            if size(sizes, "b") < 2 {
+                return Err("b must be >= 2 for digit decomposition".into());
             }
             Ok(())
         }),

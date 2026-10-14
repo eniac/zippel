@@ -20,7 +20,7 @@ fn eq_weights<F: Field>(instance x: [F; 1]) -> [F; 2] {
     [1 - x[0], x[0]]
 }
 
-fn eq_weights<F: Field, K: 2..16>(instance x: [F; K]) -> [F; 2 ^ K] {
+fn eq_weights<F: Field, S: Size, K: 2..S + 1>(instance x: [F; K]) -> [F; 2 ^ K] {
     let x_lo = x[0..K - 1];
     let a = x[K - 1];
     let prev = eq_weights(x_lo);
@@ -33,7 +33,7 @@ fn draw_taus<F: Field>(instance _placeholder: [F; 1]) -> [F; 1] {
     [t]
 }
 
-fn draw_taus<F: Field, K: 2..16>(instance placeholder: [F; K]) -> [F; K] {
+fn draw_taus<F: Field, S: Size, K: 2..S + 1>(instance placeholder: [F; K]) -> [F; K] {
     let prev = draw_taus(placeholder[0..K - 1]);
     t <- challenge<F>;
     prev ++ [t]

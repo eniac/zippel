@@ -30,7 +30,7 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
         CompletenessEntry {
             name: "mle_sumcheck",
             zippel_path: "examples/mle_sumcheck/mle_sumcheck.zippel",
-            sizes: &[("NUM_VARS", 3), ("MAX_DEGREE_CONST", 1)],
+            sizes: &[("NUM_VARS", 3)],
             ignored: false,
         },
         CompletenessEntry {

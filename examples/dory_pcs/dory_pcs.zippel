@@ -12,7 +12,7 @@ fn eq_weights<F: Field>(instance x: [F; 1]) -> [F; 2] {
     [1 - x[0], x[0]]
 }
 
-fn eq_weights<F: Field, J: 2..16>(instance x: [F; J]) -> [F; 2 ^ J] {
+fn eq_weights<F: Field, K: Size, J: 2..K + 1>(instance x: [F; J]) -> [F; 2 ^ J] {
     let x_lo = x[0..J - 1];
     let a = x[J - 1];
     let prev = eq_weights(x_lo);
@@ -31,7 +31,7 @@ fn chi_vec<G1: Group, G2: Group, GT: Pairing<G1, G2>>(
     [dot(g1, g2)]
 }
 
-fn chi_vec<G1: Group, G2: Group, GT: Pairing<G1, G2>, J: 1..16>(
+fn chi_vec<G1: Group, G2: Group, GT: Pairing<G1, G2>, K: Size, J: 1..K + 1>(
     instance g1: [G1; 2 ^ J],
     instance g2: [G2; 2 ^ J],
 ) -> [GT; J + 1] {
@@ -46,7 +46,7 @@ fn delta_1r_vec<G1: Group, G2: Group, GT: Pairing<G1, G2>>(
     [e - e]
 }
 
-fn delta_1r_vec<G1: Group, G2: Group, GT: Pairing<G1, G2>, J: 1..16>(
+fn delta_1r_vec<G1: Group, G2: Group, GT: Pairing<G1, G2>, K: Size, J: 1..K + 1>(
     instance g1: [G1; 2 ^ J],
     instance g2: [G2; 2 ^ J],
 ) -> [GT; J + 1] {
@@ -62,7 +62,7 @@ fn delta_2r_vec<G1: Group, G2: Group, GT: Pairing<G1, G2>>(
     [e - e]
 }
 
-fn delta_2r_vec<G1: Group, G2: Group, GT: Pairing<G1, G2>, J: 1..16>(
+fn delta_2r_vec<G1: Group, G2: Group, GT: Pairing<G1, G2>, K: Size, J: 1..K + 1>(
     instance g1: [G1; 2 ^ J],
     instance g2: [G2; 2 ^ J],
 ) -> [GT; J + 1] {

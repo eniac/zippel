@@ -44,6 +44,7 @@ fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<Ark
         (Vid("u".to_string()), u_val),
         (Vid("v".to_string()), v_val),
         (Vid("srs_g1".to_string()), srs_g1),
+        (Vid("tau_g1".to_string()), Value::g1(g_input * tau_input)),
         (Vid("srs_g2".to_string()), srs_g2),
         (Vid("gen_g1".to_string()), g),
         (Vid("gen_g2".to_string()), h),

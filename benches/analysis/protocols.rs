@@ -102,7 +102,7 @@ pub static PROTOCOLS: &[Protocol] = &[
     Protocol {
         name: "mle_sumcheck",
         path: "examples/mle_sumcheck/mle_sumcheck.zippel",
-        sizes: &[("NUM_VARS", 3), ("MAX_DEGREE_CONST", 1)],
+        sizes: &[("NUM_VARS", 3)],
         completeness: true,
         soundness: None,
     },

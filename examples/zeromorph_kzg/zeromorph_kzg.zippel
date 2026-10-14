@@ -13,6 +13,7 @@ proto zeromorph_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>
     instance u: F,
     instance v: F,
     extra srs_g1: [G1; N + 1],
+    extra tau_g1: G1, // [tau]_1, including when N = 1 has no tau power in srs_g1
     instance gen_g1: G1,
     instance gen_g2: G2,
     instance srs_g2: [G2; 2],
@@ -20,6 +21,7 @@ proto zeromorph_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>
     let tau = random<F>;
     let xi = random<F>;
     srs_g1 == [tau ^ i * gen_g1 for i in 0..N] ++ [xi * gen_g1]
+        && tau_g1 == tau * gen_g1
         && srs_g2 == [tau * gen_g2, xi * gen_g2]
         && p_poly(u) == v
 {
@@ -38,17 +40,13 @@ proto zeromorph_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>
     let s = random<F>;
 
     // pi = [q(tau)]_1 + s[xi]_1
-    // q's declared bound is the dividend's; the monic linear divisor X - u
-    // leaves N-1 meaningful coefficients.
-    let q_coeffs = coef(q_poly);
-    let q_coeffs_truncated = q_coeffs[0..N - 1];
-    let pi_coeffs = q_coeffs_truncated ++ [s];
-
-    let srs_for_pi = srs_g1[0..N - 1] ++ [srs_g1[N]];
-    pi <- dot(pi_coeffs, srs_for_pi);
+    // Keep the quotient's zero padding to N coefficients, including the
+    // constant-polynomial case where q is zero and N = 1.
+    let pi_coeffs = coef(q_poly) ++ [s];
+    pi <- dot(pi_coeffs, srs_g1);
 
     // delta = r[1]_1 - s[tau]_1 + (s*u)[1]_1
-    let delta_g1 = r * srs_g1[0] - s * srs_g1[1] + s * u * srs_g1[0];
+    let delta_g1 = r * gen_g1 - s * tau_g1 + s * u * gen_g1;
     delta <- delta_g1;
 
     // Verify equation:

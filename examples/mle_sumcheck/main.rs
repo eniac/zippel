@@ -34,7 +34,7 @@ fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<Ark
 pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
     common::ExampleSpec {
         source: "examples/mle_sumcheck/mle_sumcheck.zippel",
-        defaults: &[("NUM_VARS", 3), ("MAX_DEGREE_CONST", 1)],
+        defaults: &[("NUM_VARS", 3)],
         validate: Some(|sizes, _analysis| {
             common::check_power_of_two(sizes, "NUM_VARS")?;
             Ok(())

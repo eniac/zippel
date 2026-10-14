@@ -11,12 +11,13 @@
 // Polynomials are multilinear over their evaluation tables, variable 0 the
 // least significant bit, as in arkworks.
 
+// The eq/draw ranges also cover the fixed five-challenge opening batch at S = 2.
 // Lagrange (eq) basis at x: 2^J evaluations of eq(x, ·), LSB-first.
 fn eq_weights<F: Field>(instance x: [F; 1]) -> [F; 2] {
     [1 - x[0], x[0]]
 }
 
-fn eq_weights<F: Field, J: 2..21>(instance x: [F; J]) -> [F; 2 ^ J] {
+fn eq_weights<F: Field, S: Size, J: 2..S + 4>(instance x: [F; J]) -> [F; 2 ^ J] {
     let x_lo = x[0..J - 1];
     let a = x[J - 1];
     let prev = eq_weights(x_lo);
@@ -34,7 +35,7 @@ fn draw<F: Field>(instance _placeholder: [F; 1]) -> [F; 1] {
     [c]
 }
 
-fn draw<F: Field, DK: 2..21>(instance placeholder: [F; DK]) -> [F; DK] {
+fn draw<F: Field, S: Size, DK: 2..S + 4>(instance placeholder: [F; DK]) -> [F; DK] {
     let prev = draw(placeholder[0..DK - 1]);
     c <- challenge<F>;
     prev ++ [c]
@@ -46,7 +47,9 @@ fn iota<F: Field>(instance _two_pows: [F; 1]) -> {ones: [F; 2], id: [F; 2]} {
     {|ones: [1, 1], id: [0, 1]|}
 }
 
-fn iota<F: Field, IK: 2..21>(instance two_pows: [F; IK]) -> {ones: [F; 2 ^ IK], id: [F; 2 ^ IK]} {
+fn iota<F: Field, S: Size, IK: 2..S + 1>(
+    instance two_pows: [F; IK],
+) -> {ones: [F; 2 ^ IK], id: [F; 2 ^ IK]} {
     let prev = iota(two_pows[0..IK - 1]);
     let top = two_pows[IK - 1];
     {|ones: prev.ones ++ prev.ones, id: prev.id ++ (prev.id + prev.ones * top)|}
@@ -58,7 +61,7 @@ fn prod_tree<F: Field>(witness v: [F; 2]) -> [F; 1] {
     [v[0] * v[1]]
 }
 
-fn prod_tree<F: Field, PK: 2..21>(witness v: [F; 2 ^ PK]) -> [F; 2 ^ PK - 1] {
+fn prod_tree<F: Field, S: Size, PK: 2..S + 1>(witness v: [F; 2 ^ PK]) -> [F; 2 ^ PK - 1] {
     let layer = v[0, 2..2 ^ PK] * v[1, 2..2 ^ PK + 1];
     layer ++ prod_tree(layer)
 }
@@ -198,7 +201,7 @@ fn kzg_open<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
     [pi]
 }
 
-fn kzg_open<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, KO: 2..21>(
+fn kzg_open<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, S: Size, KO: 2..S + 1>(
     witness f: [F; 2 ^ KO],
     extra levels: [G1; 2 ^ KO - 1],
     instance z: [F; KO],
