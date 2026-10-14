@@ -180,9 +180,9 @@ pub fn run<C: ArkConfig + HasOpFactory>(
         .join(", ");
     let curve = std::any::type_name::<C>().rsplit("::").next().unwrap();
     print!(
-        "{name} | {curve} | {}",
+        "{name} | {curve} | sizes={}",
         if described.is_empty() {
-            "sizes=none"
+            "none"
         } else {
             &described
         }
