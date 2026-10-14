@@ -69,12 +69,11 @@ impl<F: Field> SubAssign for Polynomial<F> {
 
 impl<F: Field> Neg for Polynomial<F> {
     type Output = Self;
-    fn neg(self) -> Self {
-        let mut result = self.clone();
-        for coeff in result.terms.values_mut() {
+    fn neg(mut self) -> Self {
+        for coeff in self.terms.values_mut() {
             *coeff = (*coeff).neg();
         }
-        result
+        self
     }
 }
 
@@ -92,10 +91,9 @@ impl<F: Field> MulAssign for Polynomial<F> {
 
 impl<F: Field> Add for Polynomial<F> {
     type Output = Self;
-    fn add(self, other: Self) -> Self {
-        let mut result = self.clone();
-        result += other;
-        result
+    fn add(mut self, other: Self) -> Self {
+        self += other;
+        self
     }
 }
 
@@ -110,10 +108,9 @@ impl<F: Field> Add for &Polynomial<F> {
 
 impl<F: Field> Sub for Polynomial<F> {
     type Output = Self;
-    fn sub(self, other: Self) -> Self {
-        let mut result = self.clone();
-        result -= other;
-        result
+    fn sub(mut self, other: Self) -> Self {
+        self -= other;
+        self
     }
 }
 
@@ -128,10 +125,9 @@ impl<F: Field> Sub for &Polynomial<F> {
 
 impl<F: Field> Mul for Polynomial<F> {
     type Output = Self;
-    fn mul(self, other: Self) -> Self {
-        let mut result = self.clone();
-        result *= other;
-        result
+    fn mul(mut self, other: Self) -> Self {
+        self *= other;
+        self
     }
 }
 
