@@ -406,9 +406,11 @@ impl<C: ArkConfig> PolySource<C> {
     ///
     /// This is used for encoding `Op::Value` literals into the ideal.
     /// Only scalar-valued types are supported (Scalar, Index, VecScalar,
-    /// VecIndex, and nested Vec of these). Group elements and polynomial
-    /// types are not supported — they are formal variables in the ideal,
-    /// not literal constants.
+    /// VecIndex, and nested Vec of these), plus the identity of a group: group
+    /// elements are encoded by their discrete logs, so the identity (what
+    /// `0 * g` folds to) is `0`, as `g - g` is. Other group elements and
+    /// polynomial types are not supported — they are formal variables in the
+    /// ideal, not literal constants.
     ///
     /// For partial value constraining of group-typed args, see
     /// [`IdealBuilder::constrain_partial_value`](super::IdealBuilder::constrain_partial_value).
@@ -423,6 +425,15 @@ impl<C: ArkConfig> PolySource<C> {
                 .iter()
                 .map(|i| Polynomial::lit(&C::FOps::from_usize(*i)))
                 .collect::<Vec<_>>(),
+            Value::G1(_)
+            | Value::G2(_)
+            | Value::GT(_)
+            | Value::G1Affine(_)
+            | Value::G2Affine(_)
+                if v.is_zero() =>
+            {
+                vec![Polynomial::zero()]
+            }
             _ => panic!("Unsupported value: {}", v),
         }
     }

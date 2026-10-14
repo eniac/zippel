@@ -241,12 +241,6 @@ fn build_inputs() -> Ctx<Vid, Value<C>> {
     let delta2_h_val: G2 = h_g2 * delta2;
     let tau_h_val: G2 = h_g2 * tau;
 
-    // v_K(X) = X^K - 1
-    let mut v_k_coeffs_vec = vec![F::zero(); K + 1];
-    v_k_coeffs_vec[0] = -F::one();
-    v_k_coeffs_vec[K] = F::one();
-    let v_k_poly_value = Value::vec_scalar(v_k_coeffs_vec).value_poly();
-
     // Lagrange shortcut inputs: x = (z[0], z[1], ..., z[N-1]),
     //                          omegas[i] = ω^{K-N+i}
     let x_vec: Vec<F> = z[..N_PUB].to_vec();
@@ -264,7 +258,6 @@ fn build_inputs() -> Ctx<Vid, Value<C>> {
     let w_value = Value::vec_scalar(w_vec);
     let x_value = Value::vec_scalar(x_vec);
     let omegas_value = Value::vec_scalar(omegas_vec);
-    let v_k_coeffs_value = v_k_poly_value;
 
     let sigma_w_value = Value::vec_g1(sigma_w_vec);
     let sigma_q_value = Value::vec_g1(sigma_q_vec);
@@ -278,7 +271,6 @@ fn build_inputs() -> Ctx<Vid, Value<C>> {
     let delta2_h_value = Value::g2(delta2_h_val);
     let tau_h_value = Value::g2(tau_h_val);
     let h_g2_value = Value::g2(h_g2);
-    let f_one_value = Value::Scalar(F::one());
     let k_inv_value = Value::Scalar(k_inv);
 
     Ctx::<Vid, Value<C>>::from_iter([
@@ -300,8 +292,6 @@ fn build_inputs() -> Ctx<Vid, Value<C>> {
         (Vid("delta2_h".to_string()), delta2_h_value),
         (Vid("tau_h".to_string()), tau_h_value),
         (Vid("h_g2".to_string()), h_g2_value),
-        (Vid("v_k_poly".to_string()), v_k_coeffs_value),
-        (Vid("f_one".to_string()), f_one_value),
         (Vid("k_inv".to_string()), k_inv_value),
     ])
 }

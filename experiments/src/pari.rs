@@ -254,7 +254,6 @@ pub mod zippel_side {
         h_g2: G2,
         omegas: Vec<F>,
         k_inv: F,
-        v_k_coeffs: Vec<F>,
     }
 
     impl PariSrs {
@@ -324,10 +323,6 @@ pub mod zippel_side {
             let delta2_h: G2 = h_g2 * delta2;
             let tau_h: G2 = h_g2 * tau;
 
-            let mut v_k_coeffs = vec![F::zero(); k + 1];
-            v_k_coeffs[0] = -F::one();
-            v_k_coeffs[k] = F::one();
-
             let omega = domain.group_gen();
             let omegas: Vec<F> = (0..n_pub)
                 .map(|i| omega.pow([(k - n_pub + i) as u64]))
@@ -348,7 +343,6 @@ pub mod zippel_side {
                 h_g2,
                 omegas,
                 k_inv,
-                v_k_coeffs,
             }
         }
     }
@@ -474,11 +468,6 @@ pub mod zippel_side {
                 (Vid("delta2_h".to_string()), Value::g2(self.srs.delta2_h)),
                 (Vid("tau_h".to_string()), Value::g2(self.srs.tau_h)),
                 (Vid("h_g2".to_string()), Value::g2(self.srs.h_g2)),
-                (
-                    Vid("v_k_poly".to_string()),
-                    Value::vec_scalar(self.srs.v_k_coeffs.clone()).value_poly(),
-                ),
-                (Vid("f_one".to_string()), Value::Scalar(F::one())),
                 (Vid("k_inv".to_string()), Value::Scalar(self.srs.k_inv)),
             ]);
 

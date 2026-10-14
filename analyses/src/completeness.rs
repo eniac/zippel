@@ -1410,6 +1410,33 @@ mod tests {
         );
     }
 
+    /// `verify(check)` with the group identity written `0 * g`, which folds to a constant.
+    fn identity(check: &str) -> String {
+        format!(
+            r#"
+            proto identity<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g * x {{
+                t <- g * x;
+                let zero = 0 * g;
+                verify({check})
+            }}"#
+        )
+    }
+
+    #[test]
+    fn a_check_against_the_group_identity_is_complete() {
+        let result = from_input(&dag_of(&identity("zero - t + h == zero"))).run();
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn a_wrong_check_against_the_group_identity_stays_incomplete() {
+        let result = from_input(&dag_of(&identity("zero + t == zero"))).run();
+        assert!(
+            matches!(result, Err(AnalysisError::Incomplete(_))),
+            "{result:?}"
+        );
+    }
+
     #[test]
     fn a_division_row_solves_for_its_witness_and_leaves_the_input() {
         use backend::ATyp;

@@ -60,7 +60,7 @@ proto kzh<
     t2 <- [dot(eqx, [f[x * NYV + y] for x in 0..NXV]) for y in 0..NYV];
 
     // Verify 1: e(C, V) == Σ_x e(D[x], V1[x]), as one multi-pairing
-    let zero_g1 = g_gen - g_gen;
+    let zero_g1 = 0 * g_gen;
     let pairing = dot([zero_g1 - c] ++ d, [v_gen] ++ v1);
     verify(pairing == pairing - pairing);
 

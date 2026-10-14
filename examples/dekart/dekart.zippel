@@ -172,7 +172,7 @@ proto dekart<
     let verif_u = hat_c * mu
         + com_h * mu_h
         + reduce(+, [com_chunks[j] * mus[j] for j in 0..l_chunk]);
-    let zero_g1 = gen_g1 - gen_g1;
+    let zero_g1 = 0 * gen_g1;
     let pairing = dot(
         [verif_u - gen_g1 * a_u, zero_g1 - pi_1, zero_g1 - pi_2],
         [gen_g2, srs_g2_tau - gen_g2 * gamma, srs_g2_xi],

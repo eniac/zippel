@@ -42,9 +42,8 @@ fn draw<F: Field, DK: 2..21>(instance placeholder: [F; DK]) -> [F; DK] {
 
 // The all-ones vector and the identity vector [0, 1, ..., 2^IK - 1], built by
 // doubling from two_pows = [1, 2, 4, ..., 2^(IK-1)].
-fn iota<F: Field>(instance two_pows: [F; 1]) -> {ones: [F; 2], id: [F; 2]} {
-    let one = two_pows[0];
-    {|ones: [one, one], id: [one - one, one]|}
+fn iota<F: Field>(instance _two_pows: [F; 1]) -> {ones: [F; 2], id: [F; 2]} {
+    {|ones: [1, 1], id: [0, 1]|}
 }
 
 fn iota<F: Field, IK: 2..21>(instance two_pows: [F; IK]) -> {ones: [F; 2 ^ IK], id: [F; 2 ^ IK]} {
@@ -243,18 +242,17 @@ proto hyperplonk_snark<
     instance h: G2,
     instance h_mask: [G2; S],
 ) where
-    let zero = pub_input[0] - pub_input[0];
     // Wiring as a scalar identity: the multisets of (cell, value) pairs
     // agree between the identity and the permuted wiring (Schwartz-Zippel
     // over the random y, x).
     let y = random<F>;
     let x = random<F>;
-    let cells = [i * (zero + 1) for i in 0..N];
-    q0 * w0 + q1 * w1 + q2 * w2 + q3 * w0 * w1 + q4 == [zero for _ in 0..N]
+    let cells = 0..N;
+    q0 * w0 + q1 * w1 + q2 * w2 + q3 * w0 * w1 + q4 == [0 for _ in 0..N]
         && pub_input == w0[0..4]
         && reduce(*, [cells[i] + y * w0[i] + x for i in 0..N])
-            * reduce(*, [cells[i] + N * (zero + 1) + y * w1[i] + x for i in 0..N])
-            * reduce(*, [cells[i] + 2 * N * (zero + 1) + y * w2[i] + x for i in 0..N])
+            * reduce(*, [cells[i] + N + y * w1[i] + x for i in 0..N])
+            * reduce(*, [cells[i] + 2 * N + y * w2[i] + x for i in 0..N])
             == reduce(*, [s0[i] + y * w0[i] + x for i in 0..N])
                 * reduce(*, [s1[i] + y * w1[i] + x for i in 0..N])
                 * reduce(*, [s2[i] + y * w2[i] + x for i in 0..N])
@@ -268,12 +266,9 @@ proto hyperplonk_snark<
             ]
         && perm_comms == [dot(s0, ck[0..N]), dot(s1, ck[0..N]), dot(s2, ck[0..N])]
 {
-    let zero = pub_input[0] - pub_input[0];
-    let one = zero + 1;
-    let neg_one = zero - one;
-    let placeholder = [zero for _ in 0..S];
+    let placeholder = [0 for _ in 0..S];
     let ck0 = ck[0..N];
-    let two_pows = [2 ^ i * one for i in 0..S];
+    let two_pows = [2 ^ i for i in 0..S];
     let iota_n = iota(two_pows);
     let ones = iota_n.ones;
     let id_vec = iota_n.id;
@@ -297,7 +292,7 @@ proto hyperplonk_snark<
     let f_gate = mle(q0) * w0_m + mle(q1) * w1_m + mle(q2) * w2_m + mle(q3) * w0_m * w1_m + mle(q4);
     let f_hat = f_gate * mle(eq_weights(r_g));
 
-    let pts5 = [i * one for i in 0..5];
+    let pts5 = 0..5;
     let g_round0 = reduce(
         +,
         [
@@ -307,7 +302,7 @@ proto hyperplonk_snark<
     );
     let g_evs0_local = [g_round0(t) for t in pts5];
     g_evs0 <- g_evs0_local;
-    verify(zero == g_evs0[0] + g_evs0[1]);
+    verify(0 == g_evs0[0] + g_evs0[1]);
     let g_poly0 = interpolate(pts5, g_evs0);
     rg0 <- challenge<F>;
     let gate_sc = sc_d4(f_hat, pts5, [rg0], g_poly0(rg0), rg0);
@@ -322,16 +317,15 @@ proto hyperplonk_snark<
     // ---------------------------------------------------------------
     beta <- challenge<F>;
     gamma <- challenge<F>;
-    let n_off = N * one;
     let beta_id = id_vec * beta;
     let n0 = w0 + (beta_id + ones * gamma);
-    let n1 = w1 + (beta_id + ones * (gamma + beta * n_off));
-    let n2 = w2 + (beta_id + ones * (gamma + beta * (n_off + n_off)));
+    let n1 = w1 + (beta_id + ones * (gamma + beta * N));
+    let n2 = w2 + (beta_id + ones * (gamma + beta * (2 * N)));
     let d0 = w0 + (s0 * beta + ones * gamma);
     let d1 = w1 + (s1 * beta + ones * gamma);
     let d2 = w2 + (s2 * beta + ones * gamma);
     let frac = n0 * n1 * n2 / (d0 * d1 * d2);
-    let prod = prod_tree(frac) ++ [zero];
+    let prod = prod_tree(frac) ++ [0];
 
     c_frac <- dot(frac, ck0);
     c_prod <- dot(prod, ck0);
@@ -341,16 +335,15 @@ proto hyperplonk_snark<
     let p2 = frac[1, 2..N + 1] ++ prod[1, 2..N + 1];
     let frac_m = mle(frac);
     let prod_m = mle(prod);
-    let neg_alpha = zero - alpha;
     let q_perm = prod_m
-        + mle(p1) * neg_one * mle(p2)
+        + mle(p1) * -1 * mle(p2)
         + mle(d0) * alpha * mle(d1) * mle(d2) * frac_m
-        + mle(n0) * neg_alpha * mle(n1) * mle(n2);
+        + mle(n0) * -alpha * mle(n1) * mle(n2);
 
     let r_p = draw(placeholder);
     let q_hat = q_perm * mle(eq_weights(r_p));
 
-    let pts6 = [i * one for i in 0..6];
+    let pts6 = 0..6;
     let p_round0 = reduce(
         +,
         [
@@ -360,7 +353,7 @@ proto hyperplonk_snark<
     );
     let p_evs0_local = [p_round0(t) for t in pts6];
     p_evs0 <- p_evs0_local;
-    verify(zero == p_evs0[0] + p_evs0[1]);
+    verify(0 == p_evs0[0] + p_evs0[1]);
     let p_poly0 = interpolate(pts6, p_evs0);
     rp0 <- challenge<F>;
     let perm_sc = sc_d5(q_hat, pts6, [rp0], p_poly0(rp0), rp0);
@@ -369,10 +362,10 @@ proto hyperplonk_snark<
     // ---------------------------------------------------------------
     // 4. Evaluations at the opening points.
     // ---------------------------------------------------------------
-    let pc0 = [zero] ++ zp[0..S - 1];
-    let pc1 = [one] ++ zp[0..S - 1];
-    let fin = [zero] ++ [one for _ in 0..S - 1];
-    let r_pi = draw([zero, zero]);
+    let pc0 = [0] ++ zp[0..S - 1];
+    let pc1 = [1] ++ zp[0..S - 1];
+    let fin = [0] ++ [1 for _ in 0..S - 1];
+    let r_pi = draw([0, 0]);
     let rpi_ext = r_pi ++ placeholder;
     let rpi = rpi_ext[0..S];
 
@@ -424,8 +417,8 @@ proto hyperplonk_snark<
     let p2_at = evals[6] + x1 * (evals[2] - evals[6]);
     let id0 = dot(two_pows, zp);
     let f_prod = (evals[10] + beta * id0 + gamma)
-        * (evals[11] + beta * (id0 + n_off) + gamma)
-        * (evals[12] + beta * (id0 + n_off + n_off) + gamma);
+        * (evals[11] + beta * (id0 + N) + gamma)
+        * (evals[12] + beta * (id0 + 2 * N) + gamma);
     let g_prod = (evals[10] + beta * evals[7] + gamma)
         * (evals[11] + beta * evals[8] + gamma)
         * (evals[12] + beta * evals[9] + gamma);
@@ -440,7 +433,7 @@ proto hyperplonk_snark<
     //    sumcheck sum_j g_j(b)·eq(b, z_j) down to one point a2, and open
     //    g' = sum_j eq(a2, z_j)·g_j there.
     // ---------------------------------------------------------------
-    let et = eq_weights(draw([zero, zero, zero, zero, zero]));
+    let et = eq_weights(draw([0, 0, 0, 0, 0]));
     let g_zp = prod * et[0]
         + frac * et[4]
         + s0 * et[7]
@@ -469,7 +462,7 @@ proto hyperplonk_snark<
         + mle(g_rpi) * mle(e_rpi);
     let b_claim = dot(et[0..22], evals);
 
-    let pts3 = [i * one for i in 0..3];
+    let pts3 = 0..3;
     let b_round0 = reduce(
         +,
         [

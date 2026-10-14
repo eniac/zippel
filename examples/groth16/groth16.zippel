@@ -95,7 +95,7 @@ proto groth16<
     // Rearrange  e(A,B) == e(α,β) + e(IC,γ) + e(C,δ)
     //         ⟺  e(A,B) + e(-α,β) + e(-IC,γ) + e(-C,δ) == 0_GT.
     // Negate G1 points via binary subtraction (zero - x).
-    let zero_g1 = alpha_g1 - alpha_g1;
+    let zero_g1 = 0 * alpha_g1;
     let neg_alpha = zero_g1 - alpha_g1;
     let neg_ic = zero_g1 - ic;
     let neg_c = zero_g1 - c_proof;

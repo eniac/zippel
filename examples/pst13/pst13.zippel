@@ -156,7 +156,7 @@ proto pst13<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Siz
     //   G2 side: [h_gen,          α_H[1] − z_1·h_gen, ..., α_H[N] − z_N·h_gen]
     // Negation via binary subtraction (zero - x). One zero is enough; the
     // backend folds zero - pis[i] into a single G1 sub each.
-    let zero_g1 = g_gen - g_gen;
+    let zero_g1 = 0 * g_gen;
     let lhs_g1 = c_p - g_gen * y;
     let neg_pis = [zero_g1 - pis[i] for i in 0..N];
     let g1_terms = [lhs_g1] ++ neg_pis;
