@@ -4,28 +4,10 @@ use backend::{ArkBls12_381, ArkConfig, Value};
 use lang::id::Vid;
 use share::Ctx;
 use std::ops::Mul;
-use std::path::PathBuf;
-use zippel::*;
 
 use crate::common;
 
-pub fn run(opts: &common::RunOptions) {
-    println!("=== Coin Proof (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/coin_proof/coin_proof.zippel"));
-    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    handler.compile(&Ctx::new());
-
-    common::run_prover_and_verify(&mut handler, prover_create_inputs());
-
-    if !opts.analyses {
-        return;
-    }
-    println!("\n--- Static Analysis ---");
-    common::time_analysis!("Completeness", handler.analyze_completeness());
-    common::time_analysis!("ZK", handler.analyze_knowledge());
-}
-
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
+fn prover_create_inputs(_sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     type F = <ArkBls12_381 as ArkConfig>::F;
     type G1 = <ArkBls12_381 as ArkConfig>::G1;
     let mut rng = rand::rngs::OsRng;
@@ -77,7 +59,6 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         t_big_b + big_b.mul(ch),
         "Native Sigma protocol check failed!"
     );
-    println!("Native Sigma Protocol Check: ✓ OK");
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("x1".to_string()), Value::Scalar(x1)),
@@ -107,4 +88,14 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("big_d".to_string()), Value::g1(big_d)),
         (Vid("j".to_string()), Value::Scalar(j)),
     ])
+}
+
+pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
+    common::ExampleSpec {
+        source: "examples/coin_proof/coin_proof.zippel",
+        defaults: &[],
+        validate: None,
+        make_inputs: prover_create_inputs,
+        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+    }
 }

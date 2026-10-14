@@ -30,7 +30,7 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{CompileOptions, CompiledProtocol, ParsedModule, check_verification};
 
     // Cached IPA inputs. Bases (g_vec, h_vec, u_aux_base) are Pedersen
     // setup. (a_vec, b_vec, sum_vec) would normally be the per-call
@@ -91,7 +91,7 @@ pub mod zippel_side {
     /// in `S` and therefore cached on disk — the benchmark measures asymptotic
     /// cost, which is data-independent.
     pub struct Setup {
-        handler: ZippelHandler<ArkSecp256k1>,
+        handler: CompiledProtocol<ArkSecp256k1>,
         _n: usize,
         inputs: IpaInputs,
         compile_time: Vec<std::time::Duration>,
@@ -111,11 +111,12 @@ pub mod zippel_side {
                 .join("..")
                 .join("examples/ipa/ipa.zippel");
             let (handler, compile_time) = crate::sample_compile(|| {
-                let args = ZippelArgs::new(zippel_file.clone());
-                let mut handler: ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
+                let module = ParsedModule::load(&zippel_file).expect("parse protocol");
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("S"), &s_const);
-                handler.compile_for_execution(&sizes);
+                let handler: CompiledProtocol<ArkSecp256k1> = module
+                    .compile(&sizes, CompileOptions::default())
+                    .expect("compile protocol");
                 handler
             });
 
@@ -186,10 +187,9 @@ pub mod zippel_side {
                     Value::vec_scalar(self.inputs.sum_vec.clone()),
                 ),
             ]);
-            let (prove, prove_peak, proof) =
-                crate::sample_zippel_prover(&mut self.handler, &inputs);
+            let (prove, prove_peak, proof) = crate::sample_zippel_prover(&self.handler, &inputs);
             let (verify, verify_peak, result) =
-                crate::sample_zippel_verifier(&mut self.handler, &proof, &inputs);
+                crate::sample_zippel_verifier(&self.handler, &proof, &inputs);
             assert!(
                 check_verification(&result),
                 "zippel IPA verification FAILED"

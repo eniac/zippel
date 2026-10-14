@@ -2,86 +2,15 @@
 
 use ark_ff::{Field, One, Zero};
 use backend::{ArkBls12_381, ArkConfig, Value};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use rand::Rng;
 use rand::seq::SliceRandom;
 use share::Ctx;
-use std::{path::PathBuf, time::Instant};
-use zippel::*;
 
 use crate::common;
+use crate::common::size;
 
-// Edit S to scale; num_gates = 2^S follows.
-const S: usize = 3;
-const NUM_GATES: usize = 1 << S;
-
-pub fn run(opts: &common::RunOptions) {
-    let zippel_file = PathBuf::from("examples/hyperplonk_piop/hyperplonk_piop.zippel");
-
-    println!("=== HyperPlonk (gate identity + 3-wire wiring) ===");
-    println!("num_gates = {NUM_GATES}, s = log num_gates = {S}");
-
-    let args = ZippelArgs::new(zippel_file.clone());
-    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("S"), &S);
-    handler.compile(&sizes);
-
-    let inputs = prover_create_inputs();
-    let prover_start = Instant::now();
-    let proof = handler
-        .run_prover(inputs.clone())
-        .expect("run_prover failed");
-    let prover_elapsed = prover_start.elapsed();
-    let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
-    println!("Prover time:    {prover_elapsed:.2?}");
-    println!(
-        "Proof size:     {proof_bytes} bytes ({} elements)",
-        proof.len()
-    );
-    let verifier_start = Instant::now();
-    let verifier_result = handler
-        .run_verifier(proof, inputs)
-        .expect("run_verifier failed");
-    let verifier_elapsed = verifier_start.elapsed();
-    let passed = check_verification(&verifier_result);
-    println!("Verifier time:  {verifier_elapsed:.2?}");
-    if passed {
-        println!("Verification:   ✓ PASSED");
-    } else {
-        println!("Verification:   ✗ FAILED");
-        std::process::exit(1);
-    }
-
-    if !opts.analyses {
-        return;
-    }
-    let analysis_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        println!("\n--- Static Analysis ---");
-        let analysis_args = ZippelArgs::new(zippel_file.clone());
-        let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
-        let mut analysis_sizes = Ctx::new();
-        analysis_sizes.insert(&Tid::new("S"), &S);
-        analysis_handler.compile(&analysis_sizes);
-
-        let completeness_start = Instant::now();
-        match analysis_handler.analyze_completeness() {
-            Ok(()) => println!("Completeness:    ✓"),
-            Err(e) => println!("Completeness:    ✗ {}", e),
-        }
-        println!("Completeness time: {:.2?}", completeness_start.elapsed());
-
-        let zk_start = Instant::now();
-        match analysis_handler.analyze_knowledge() {
-            Ok(()) => println!("ZK:              ✓"),
-            Err(e) => println!("ZK:              ✗ {}", e),
-        }
-        println!("ZK time:         {:.2?}", zk_start.elapsed());
-    }));
-    if analysis_result.is_err() {
-        println!("Analysis:        ⚠ not supported (non-polynomial operations)");
-    }
-}
+// Edit s to scale; num_gates = 2^s follows.
 
 struct PlonkishInstance<F> {
     a: Vec<F>,
@@ -263,14 +192,17 @@ where
     }
 }
 
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
+fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     type F = <ArkBls12_381 as ArkConfig>::F;
+    let s = size(sizes, "S");
+    let num_gates = 1 << s;
+
     let mut rng = rand::rngs::OsRng;
 
-    let inst = random_plonkish::<F, _>(&mut rng, NUM_GATES);
+    let inst = random_plonkish::<F, _>(&mut rng, num_gates);
 
     // Sanity check.
-    for i in 0..NUM_GATES {
+    for i in 0..num_gates {
         let gate = inst.q_l[i] * inst.a[i]
             + inst.q_r[i] * inst.b[i]
             + inst.q_o[i] * inst.c[i]
@@ -330,4 +262,17 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
             Value::vec_scalar(inst.g_shift_c_inv),
         ),
     ])
+}
+
+pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
+    common::ExampleSpec {
+        source: "examples/hyperplonk_piop/hyperplonk_piop.zippel",
+        defaults: &[("S", 3)],
+        validate: Some(|sizes, _analysis| {
+            common::check_power_of_two(sizes, "S")?;
+            Ok(())
+        }),
+        make_inputs: prover_create_inputs,
+        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+    }
 }

@@ -123,7 +123,7 @@ fn check_program(name: &str, src: &str) -> (Option<i32>, String) {
     )
 }
 
-// These are well-typed but fail `ZippelHandler::compile`; zippel-check must catch them too.
+// These are well-typed but fail `ParsedModule::compile`; zippel-check must catch them too.
 
 #[test]
 fn witness_in_verifier_is_reported_at_the_witness() {

@@ -43,16 +43,16 @@ inside the repository.
 ### Running examples
 
 ```bash
-cargo zrun ipa               # run the IPA example
-cargo zrun schnorr           # run the Schnorr protocol
-cargo zrun kzg               # run the KZG commitment scheme
-cargo zrun                   # list every available example
-cargo zrunr hyperplonk_piop  # run in release mode
-cargo zrunr hyperplonk_piop --no-analysis  # prover and verifier only
+cargo zrun run ipa                        # prove and verify at default sizes
+cargo zrun run ipa --size S=10            # larger instance
+cargo zrun analyze ipa --size S=1         # run registered analyses
+cargo zrun analyze ipa completeness --size S=2 --backend singular
+cargo zrun run --help                    # list examples
+cargo zrunr run hyperplonk_piop --size S=3 # release mode
 ```
 
-See [`examples/`](examples) for 30+ more protocols implemented in
-Zippel.
+See [`examples/`](examples) for more protocols, or run
+`cargo zrun run <example> --help` for available options.
 
 ### Typechecking a protocol
 

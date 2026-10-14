@@ -31,15 +31,15 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{CompileOptions, CompiledProtocol, ParsedModule, check_verification};
 
     /// A compiled sumcheck instance, reusable across `time_protocol` calls.
     ///
-    /// Holds the `ZippelHandler` (which owns the compiled prover/verifier
+    /// Holds the `CompiledProtocol` (which owns the compiled prover/verifier
     /// graphs), the two size parameters bound at compile time, and how long
     /// compilation took.
     pub struct Setup {
-        handler: ZippelHandler<ArkBls12_381>,
+        handler: CompiledProtocol<ArkBls12_381>,
         num_vars: usize,
         max_degree: usize,
         compile_time: Vec<std::time::Duration>,
@@ -57,16 +57,18 @@ pub mod zippel_side {
         /// checked, or lowered to a graph for these sizes.
         pub fn new(num_vars: usize, max_degree: usize) -> Self {
             let (handler, compile_time) = crate::sample_compile(|| {
-                let args = ZippelArgs::new(
+                let module = ParsedModule::load(
                     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                         .join("..")
                         .join("examples/sumcheck/sumcheck.zippel"),
-                );
-                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+                )
+                .expect("parse protocol");
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("NUM_VARS_CONST"), &num_vars);
                 sizes.insert(&Tid::new("MAX_DEGREE_CONST"), &max_degree);
-                handler.compile_for_execution(&sizes);
+                let handler: CompiledProtocol<ArkBls12_381> = module
+                    .compile(&sizes, CompileOptions::default())
+                    .expect("compile protocol");
                 handler
             });
 
@@ -78,7 +80,7 @@ pub mod zippel_side {
             }
         }
 
-        /// Wall-time spent in `ZippelHandler::compile` for this instance:
+        /// Wall-time spent in `ParsedModule::compile` for this instance:
         /// parsing, type checking, and graph construction only.
         pub fn compile_time(&self) -> Vec<std::time::Duration> {
             self.compile_time.clone()
@@ -125,10 +127,9 @@ pub mod zippel_side {
                 (Vid("claimed_sum".to_string()), Value::Scalar(claimed_sum)),
                 (Vid("p".to_string()), Value::poly(full_poly)),
             ]);
-            let (prove, prove_peak, proof) =
-                crate::sample_zippel_prover(&mut self.handler, &inputs);
+            let (prove, prove_peak, proof) = crate::sample_zippel_prover(&self.handler, &inputs);
             let (verify, verify_peak, result) =
-                crate::sample_zippel_verifier(&mut self.handler, &proof, &inputs);
+                crate::sample_zippel_verifier(&self.handler, &proof, &inputs);
             assert!(
                 check_verification(&result),
                 "zippel sumcheck verification FAILED"

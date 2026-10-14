@@ -38,7 +38,7 @@ cargo clippy --workspace --all-targets    # lints
 cargo clippy -p experiments --all-targets --features dhat  # heap-profiling code
 cargo zfmt --check examples/*/*.zippel    # Zippel formatting
 cargo test --workspace                    # tests (CI splits them across jobs)
-cargo zrunr <name> --no-analysis          # every example, end to end
+cargo zrunr run <name> --size NAME=VALUE  # supply every declared size
 ```
 
 Run them locally before submitting. CI builds the tests optimized
@@ -94,16 +94,9 @@ examples! {
 }
 ```
 
-`examples!` makes each entry a Clap subcommand that calls that module's
-`run(&common::RunOptions)`. The dispatcher uses Clap to select the example,
-parse its arguments, and handle shared options such as `--no-analysis`.
-Every registered example appears in `cargo zrun --help`, in list order, so
-keep the list alphabetical. If your example takes arguments, define them as
-a `#[derive(clap::Args)] pub struct Args` in your own module (see
-`examples/pst13/main.rs`), register it as `schnorr4(args)`, and take them
-as `run(&Args, &common::RunOptions)`. The struct's doc comment becomes the
-example's description in `--help`. Keep protocol-specific arguments out of
-`examples/common/`.
+`examples!` registers each module's `spec()` under both `run` and `analyze`.
+Keep the list alphabetical. Examples supply input construction and metadata;
+the common harness handles arguments, compilation, timing and results.
 
 ### 3. Define the protocol
 
@@ -138,87 +131,104 @@ splitting the protocol into prover and verifier programs. The last step
 rejects a `verify` that depends on a `witness`, an `extra` argument, or
 a `random` value, since the verifier never sees those. Checking
 happens at concrete sizes: set a `Size` parameter with
-`--size NAME=VALUE` (repeatable). Parameters you leave unset default
-to the smallest values (by sum, each at most 16) that keep every range
-non-empty; if none exist, `zippel-check` reports an error asking for
-`--size`. Defaults may be too small for some protocols (for example, one that indexes `v[1]`
-needs `N >= 2`). A pass only covers the sizes printed on the status
-line.
+`--size NAME=VALUE` (repeatable). For parameters you leave unset,
+`zippel-check` chooses small defaults where possible. If checking fails,
+try supplying sizes appropriate for your protocol. A pass only covers
+the sizes printed on the status line.
 
-### 5. Define the harness
+### 5. Write the example's Rust module
 
-The harness compiles the protocol against a concrete curve, generates
-witness/instance values, and runs the prover and verifier.
-`examples/schnorr4/main.rs`:
+Create `examples/schnorr4/main.rs`. You need two functions: one that builds
+valid inputs for your protocol, and a public `spec()` that tells the shared
+harness how to run it.
+
+For the Schnorr protocol above, sample a secret `x` and a generator `g`, then
+compute `h = g * x` so the inputs satisfy the protocol's relation:
 
 ```rust
 use ark_std::UniformRand;
-use backend::{ArkBls12_381, ArkConfig, ArkGroupOps, Value};
+use backend::{ArkBls12_381, ArkConfig, Value};
+use lang::id::{Tid, Vid};
 use share::Ctx;
-use std::path::PathBuf;
-use zippel::*;
 
 use crate::common;
 
-pub fn run(opts: &common::RunOptions) {
-    println!("=== Schnorr4 (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/schnorr4/schnorr4.zippel"));
-    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    handler.compile(&Ctx::new());
-
-    common::run_prover_and_verify(&mut handler, prover_create_inputs());
-
-    if !opts.analyses {
-        return;
-    }
-    // Static analysis (completeness, ZK, and soundness)
-    println!("\n--- Static Analysis ---");
-
-    common::time_analysis!("Completeness", handler.analyze_completeness());
-    common::time_analysis!("ZK", handler.analyze_knowledge());
-    common::time_analysis!(
-        "Soundness",
-        handler.analyze_special_soundness(vec![2])
-    );
-}
-
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
+fn make_inputs(_sizes: &Ctx<Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
     let x = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
     let g = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let h = <ArkBls12_381 as ArkConfig>::G1Ops::vec_mul(&g, &[x])
-        .into_iter()
-        .next()
-        .unwrap();
+    let h = g * x;
+
     Ctx::from_iter([
-        (Vid::from("x"), Value::Scalar(x)),
-        (Vid::from("g"), Value::G1(g)),
-        (Vid::from("h"), Value::G1Affine(h)),
+        (Vid::new("x"), Value::Scalar(x)),
+        (Vid::new("g"), Value::g1(g)),
+        (Vid::new("h"), Value::g1(h)),
     ])
+}
+
+pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
+    common::ExampleSpec {
+        source: "examples/schnorr4/schnorr4.zippel",
+        defaults: &[],
+        validate: None,
+        make_inputs,
+        analyses: &[
+            common::Analysis::Completeness,
+            common::Analysis::Zk,
+            common::Analysis::Soundness(&[2]),
+        ],
+    }
 }
 ```
 
-- `ZippelHandler<ArkBls12_381>` fixes the concrete curve.
-- Name the `.zippel` file relative to the repository root, as above; the
-  harness runs every example from there, wherever `cargo zrun` is invoked.
-- `Ctx<Vid, Value<...>>` maps each `.zippel` parameter name to a
-  value; its keys must match the protocol's parameter names exactly
-  (`x`, `g`, `h` above).
-- `common::run_prover_and_verify`/`common::time_analysis!` are shared
-  by every example; reuse them in your own harness.
-- Check `opts.analyses` after proof verification and before any analysis
-  setup, so `--no-analysis` skips all static analyses.
-- `analyze_completeness()` and `analyze_knowledge()` (the
-  zero-knowledge check) take no arguments.
-- `analyze_special_soundness(l_vec)` takes one `l` per round, the
-  number of accepting transcripts needed to extract a witness under
-  `l`-special soundness (schnorr4 is 2-special-sound, hence
-  `vec![2]`).
+Adapt this module to your protocol:
+
+- Choose the concrete curve in `ExampleSpec<...>` and use the same curve
+  for the input values.
+- Set `source` to your `.zippel` file's path from the repository root.
+- In `make_inputs`, return a value for every `witness`, `instance`, and
+  `extra` argument. The keys must be the exact argument names in the source.
+  Compute public claims from the generated witness, as `h` is computed from
+  `x` above, so the resulting instance satisfies your relation.
+- List the analyses you want the harness to run in `analyses`. Soundness
+  needs the protocol's transcript count for each challenge round: Schnorr
+  has one round and uses `Soundness(&[2])`. Omit soundness if you have not
+  established those parameters.
+
+If your protocol declares sizes, put a small runnable value for each one in
+`defaults`, for example `&[("N", 4)]`. In `make_inputs`, read that value with
+`let n = common::size(sizes, "N");` and use it for input lengths and any
+size-dependent calculations. Choose defaults that exercise both recursive
+and base cases. See [the IPA module](examples/ipa/main.rs) for a sized example.
+Schnorr has no size parameters, so it uses `defaults: &[]` and ignores
+`_sizes`.
+
+Start with `validate: None`. If your input generator needs additional size
+constraints, supply a callback that returns `Err` with an explanation for
+unsupported sizes; see [Spartan](examples/spartan/main.rs) for an example.
+The shared harness calls it before generating inputs.
+
+The harness handles compilation, command-line arguments, timing and result
+printing. Your module only supplies the inputs and the specification above.
 
 ### 6. Compile and run
 
 ```bash
-cargo zrun schnorr4
-cargo zrun schnorr4 --no-analysis  # prover and verifier only
-cargo zrun schnorr4 --help         # example options
+cargo zrun run schnorr4
+cargo zrun analyze schnorr4
+cargo zrun analyze schnorr4 soundness --backend singular
+cargo zrun run schnorr4 --help
+# For an example with sizes:
+cargo zrun run ipa --size S=4
+cargo zrun analyze ipa completeness --size S=2
 ```
+
+Use `run` to check that your generated inputs produce a proof the verifier
+accepts. Use `analyze` to run a registered analysis, or omit the pass name to
+run all analyses you registered. Analyses use `ark-gb` by default; to use
+`--backend singular`, install Singular and make it available on `PATH`.
+
+Try your example at its defaults and at other supported sizes. Supply sizes
+with repeated `--size NAME=VALUE` flags. If you supply any, include every
+`Size` parameter: explicit sizes replace the entire default set. Use your
+example's `--help` to see its defaults and registered analyses.

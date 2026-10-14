@@ -507,12 +507,12 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{CompileOptions, CompiledProtocol, ParsedModule, check_verification};
 
     /// A compiled zippel Groth16 handler plus the size-invariant part of its
     /// input context, ready to be timed at one circuit size.
     pub struct Setup<'a> {
-        handler: ZippelHandler<ArkBls12_381>,
+        handler: CompiledProtocol<ArkBls12_381>,
         inputs_base: HashMap<Vid, Value<ArkBls12_381>>,
         translated: &'a Translated,
         compile_time: Vec<std::time::Duration>,
@@ -604,17 +604,19 @@ pub mod zippel_side {
             // would dominate verify time at large M+L.
 
             let (handler, compile_time) = crate::sample_compile(|| {
-                let args = ZippelArgs::new(
+                let module = ParsedModule::load(
                     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                         .join("..")
                         .join("examples/groth16/groth16.zippel"),
-                );
-                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+                )
+                .expect("parse protocol");
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("M"), &translated.m);
                 sizes.insert(&Tid::new("L"), &translated.l);
                 sizes.insert(&Tid::new("H"), &translated.h_size);
-                handler.compile_for_execution(&sizes);
+                let handler: CompiledProtocol<ArkBls12_381> = module
+                    .compile(&sizes, CompileOptions::default())
+                    .expect("compile protocol");
                 handler
             });
 
@@ -659,11 +661,11 @@ pub mod zippel_side {
                 h_coeffs.resize(self.translated.h_size, GitFr::zero());
                 let h = (Vid::from("h_coeffs"), Value::vec_scalar(h_coeffs));
                 self.handler
-                    .run_prover(crate::lend(&self.inputs_base).chain([h]))
+                    .prove(crate::lend(&self.inputs_base).chain([h]))
                     .expect("zippel groth16 prover failed")
             });
             let (verify, verify_peak, result) =
-                crate::sample_zippel_verifier(&mut self.handler, &proof, &self.inputs_base);
+                crate::sample_zippel_verifier(&self.handler, &proof, &self.inputs_base);
             assert!(
                 check_verification(&result),
                 "zippel Groth16 verification FAILED"
@@ -1015,7 +1017,7 @@ mod cross_tests {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{CompileOptions, CompiledProtocol, ParsedModule, check_verification};
 
     /// Sweep used by both cross-tests. Capped at log_2 num_constraints = 6
     /// (= 64 constraints, M ≈ 65 inputs, L ≈ 128 witnesses) so each test
@@ -1026,17 +1028,18 @@ mod cross_tests {
     /// Build a zippel handler for Groth16, compiled at the given (M, L, H)
     /// sizes. The .zippel path is resolved relative to the experiments crate
     /// manifest so tests work regardless of cargo's cwd.
-    fn zippel_handler(t: &Translated) -> ZippelHandler<ArkBls12_381> {
+    fn zippel_handler(t: &Translated) -> CompiledProtocol<ArkBls12_381> {
         let zippel_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("examples/groth16/groth16.zippel");
-        let args = ZippelArgs::new(zippel_path);
-        let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+        let module = ParsedModule::load(zippel_path).expect("parse protocol");
         let mut sizes = Ctx::new();
         sizes.insert(&Tid::new("M"), &t.m);
         sizes.insert(&Tid::new("L"), &t.l);
         sizes.insert(&Tid::new("H"), &t.h_size);
-        handler.compile_for_execution(&sizes);
+        let handler: CompiledProtocol<ArkBls12_381> = module
+            .compile(&sizes, CompileOptions::default())
+            .expect("compile protocol");
         handler
     }
 
@@ -1141,10 +1144,10 @@ mod cross_tests {
 
         // ---- Zippel: compile handler, prime state via run_prover, then
         //      run_verifier against the NATIVE-produced proof --------------
-        let mut handler = zippel_handler(&t);
+        let handler = zippel_handler(&t);
         let zip_inputs = zip_inputs_from_translated(&t);
         let _ = handler
-            .run_prover(zip_inputs.clone())
+            .prove(zip_inputs.clone())
             .expect("zippel run_prover (priming handler state)");
 
         // The zippel transcript is [a_proof, b_proof, c_proof] in `<-` order
@@ -1155,7 +1158,7 @@ mod cross_tests {
             Value::g1(proof_n.c),
         ];
         let verifier_result = handler
-            .run_verifier(cross_proof.clone(), zip_inputs.clone())
+            .verify(cross_proof.clone(), zip_inputs.clone())
             .expect("zippel run_verifier on cross-proof");
         let result = check_verification(&verifier_result);
         assert!(
@@ -1178,10 +1181,10 @@ mod cross_tests {
         let t = build_translated(num_constraints);
 
         // ---- Zippel: run_prover and extract (a, b, c) from the transcript -
-        let mut handler = zippel_handler(&t);
+        let handler = zippel_handler(&t);
         let zip_inputs = zip_inputs_from_translated(&t);
         let zip_proof: Vec<Value<ArkBls12_381>> = handler
-            .run_prover(zip_inputs.clone())
+            .prove(zip_inputs.clone())
             .expect("zippel run_prover");
 
         assert_eq!(

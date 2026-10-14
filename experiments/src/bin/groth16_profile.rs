@@ -26,7 +26,7 @@ use share::Ctx;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
-use zippel::{ZippelArgs, ZippelHandler};
+use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -392,17 +392,19 @@ fn main() {
 
     // --- ZIPPEL breakdown ------------------------------------------------
     eprintln!("\n--- ZIPPEL breakdown ---");
-    let args_z = ZippelArgs::new(
+    let module = ParsedModule::load(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("examples/groth16/groth16.zippel"),
-    );
-    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args_z);
+    )
+    .expect("parse protocol");
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("M"), &t.m);
     sizes.insert(&Tid::new("L"), &t.l);
     sizes.insert(&Tid::new("H"), &t.h_size);
-    handler.compile_for_execution(&sizes);
+    let handler: CompiledProtocol<ArkBls12_381> = module
+        .compile(&sizes, CompileOptions::default())
+        .expect("compile protocol");
 
     let inputs_base = HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
         (
@@ -476,7 +478,7 @@ fn main() {
     inputs.insert(Vid::from("t_at_tau"), Value::Scalar(GitFr::zero()));
     eprintln!("  witness_map + input clone:      {:>9.2?}", tic.elapsed());
     let tic = Instant::now();
-    let _proof = handler.run_prover(inputs).expect("zippel prove");
+    let _proof = handler.prove(inputs).expect("zippel prove");
     eprintln!("  run_prover (all 5 MSMs + arith): {:>9.2?}", tic.elapsed());
 
     // Suppress unused warnings.

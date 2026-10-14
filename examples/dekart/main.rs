@@ -2,92 +2,23 @@ use ark_ff::{Field, One, UniformRand, Zero};
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_std::test_rng;
 use backend::{ArkBls12_381, ArkConfig, Value};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use share::Ctx;
-use std::{path::PathBuf, time::Instant};
-use zippel::*;
 
 use crate::common;
+use crate::common::size;
 
 type C = ArkBls12_381;
 type F = <C as ArkConfig>::F;
 type G1 = <C as ArkConfig>::G1;
 type G2 = <C as ArkConfig>::G2;
 
-pub fn run(opts: &common::RunOptions) {
-    println!("=== DeKART Range Proof ===");
-    let n_size = 3;
-    let b_size = 2;
-    let l_chunk = 8;
+fn build_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<C>> {
+    let n_size = size(sizes, "n");
+    let b_size = size(sizes, "b");
+    let l_chunk = size(sizes, "l_chunk");
     let h_deg = (b_size - 1) * n_size;
 
-    let args = ZippelArgs::new(PathBuf::from("examples/dekart/dekart.zippel"));
-    let mut handler: ZippelHandler<C> = ZippelHandler::new(args);
-    let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("n"), &n_size);
-    sizes.insert(&Tid::new("b"), &b_size);
-    sizes.insert(&Tid::new("l_chunk"), &l_chunk);
-    handler.compile(&sizes);
-
-    let inputs = build_inputs(n_size, b_size, l_chunk, h_deg);
-    let prover_start = Instant::now();
-    let proof = handler
-        .run_prover(inputs.clone())
-        .expect("run_prover failed");
-    let prover_elapsed = prover_start.elapsed();
-    let proof_bytes = proof_size_bytes::<C>(&proof);
-    println!("Prover time:    {prover_elapsed:.2?}");
-    println!(
-        "Proof size:     {proof_bytes} bytes ({} elements)",
-        proof.len()
-    );
-
-    let args = ZippelArgs::new(PathBuf::from("examples/dekart/dekart.zippel"));
-    let mut verifier_handler: ZippelHandler<C> = ZippelHandler::new(args);
-    verifier_handler.compile(&sizes);
-    let verifier_start = Instant::now();
-    let verifier_result = verifier_handler
-        .run_verifier(proof, inputs)
-        .expect("run_verifier failed");
-    let verifier_elapsed = verifier_start.elapsed();
-    let passed = check_verification(&verifier_result);
-    println!("Verifier time:  {verifier_elapsed:.2?}");
-    if passed {
-        println!("Verification:   ✓ PASSED");
-    } else {
-        println!("Verification:   ✗ FAILED");
-        for (i, v) in verifier_result.iter().enumerate() {
-            println!("  verify[{i}] = {v}");
-        }
-        std::process::exit(1);
-    }
-
-    if !opts.analyses {
-        return;
-    }
-    let analysis_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        println!("\n--- Static Analysis ---");
-
-        let completeness_start = Instant::now();
-        match handler.analyze_completeness() {
-            Ok(()) => println!("Completeness:    ✓"),
-            Err(e) => println!("Completeness:    ✗ {}", e),
-        }
-        println!("Completeness time: {:.2?}", completeness_start.elapsed());
-
-        let zk_start = Instant::now();
-        match handler.analyze_knowledge() {
-            Ok(()) => println!("ZK:              ✓"),
-            Err(e) => println!("ZK:              ✗ {}", e),
-        }
-        println!("ZK time:         {:.2?}", zk_start.elapsed());
-    }));
-    if analysis_result.is_err() {
-        println!("Analysis:        ⚠ not supported (non-polynomial operations)");
-    }
-}
-
-fn build_inputs(n_size: usize, b_size: usize, l_chunk: usize, h_deg: usize) -> Ctx<Vid, Value<C>> {
     let mut rng = test_rng();
 
     // 1. Setup generators & trapdoors
@@ -117,18 +48,8 @@ fn build_inputs(n_size: usize, b_size: usize, l_chunk: usize, h_deg: usize) -> C
         current_tau *= tau;
     }
 
-    // 3. Witness values to prove (must be in [0, b_size^l_chunk - 1])
-    // With n = n_size, b = b_size, l_chunk = l_chunk, values must be in [0, b_size^l_chunk - 1]
-    let z_vals = vec![5u64, 12u64, 7u64];
-    assert_eq!(z_vals.len(), n_size, "z_vals length must equal n_size");
-    for &z in &z_vals {
-        assert!(
-            z < (b_size as u64).pow(u32::try_from(l_chunk).unwrap()),
-            "witness value {} exceeds max allowed range {}",
-            z,
-            (b_size as u64).pow(u32::try_from(l_chunk).unwrap()) - 1
-        );
-    }
+    // Small radix-b digits keep witnesses in range without overflowing u64.
+    let z_vals: Vec<u64> = (0..n_size).map(|i| (i % b_size) as u64).collect();
     let mut f_evals = vec![F::zero()];
     for z in &z_vals {
         f_evals.push(F::from(*z));
@@ -192,4 +113,39 @@ fn build_inputs(n_size: usize, b_size: usize, l_chunk: usize, h_deg: usize) -> C
             Value::vec_scalar(vec![F::one(); n_size + 1]),
         ),
     ])
+}
+
+pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
+    common::ExampleSpec {
+        source: "examples/dekart/dekart.zippel",
+        defaults: &[("n", 3), ("b", 2), ("l_chunk", 8)],
+        validate: Some(|sizes, analysis| {
+            if analysis {
+                return Ok(());
+            }
+            let domain_size = size(sizes, "n")
+                .checked_add(1)
+                .ok_or("n+1 overflows the evaluation domain")?;
+            if GeneralEvaluationDomain::<F>::new(domain_size)
+                .is_none_or(|d| d.size() != domain_size)
+            {
+                return Err("n+1 must be an exact supported evaluation-domain size".into());
+            }
+            if size(sizes, "b") < 2
+                || u32::try_from(size(sizes, "l_chunk"))
+                    .ok()
+                    .and_then(|exponent| {
+                        u64::try_from(size(sizes, "b")).ok()?.checked_pow(exponent)
+                    })
+                    .is_none()
+            {
+                return Err(
+                    "b must be >= 2 and b^l_chunk must fit u64 for digit decomposition".into(),
+                );
+            }
+            Ok(())
+        }),
+        make_inputs: build_inputs,
+        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+    }
 }

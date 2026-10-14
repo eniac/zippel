@@ -44,63 +44,75 @@ fn knowledge_order(result: &Ideal<impl ArkConfig>, dist_map: &Ctx<Ref, Distribut
     ])
 }
 
+/// Inputs prepared without Gröbner-basis computation.
+/// Produced by [`KnowledgeAnalysis::build_inputs`] and consumed by
+/// [`KnowledgeAnalysis::try_from_inputs`].
+pub struct KnowledgeInputs<F: ark_ff::PrimeField> {
+    /// Generators of the prover and relation ideal.
+    pub generating_set: Vec<Polynomial<F>>,
+    /// Elimination ordering for the prover and relation basis.
+    pub order: MonoOrder,
+    /// Relation generators and their ordering.
+    pub relation: (Vec<Polynomial<F>>, MonoOrder),
+    /// Distribution information used to distinguish masks from leaks.
+    dist_map: Ctx<Ref, Distribution>,
+}
+
 /// Perform a knowledge analysis using Groebner bases.
 pub struct KnowledgeAnalysis<C: ArkConfig> {
     /// Gröbner basis of (prover ∪ relation) under the knowledge block order.
-    /// Computed in `from_input_with_backend`.
+    /// Computed in `try_from_inputs`.
     pub basis: GbBasis<C::F>,
     /// Gröbner basis of the relation (precondition) alone, used to filter
     /// polynomials that are derivable from the precondition (not real leaks).
-    /// `None` when the protocol has no relation.
-    pub relation_basis: Option<GbBasis<C::F>>,
+    pub relation_basis: GbBasis<C::F>,
     /// Side map from `Ref` → `Distribution`, computed by
     /// `UniformityPropagation`, used to check uniformity.
     dist_map: Ctx<Ref, Distribution>,
 }
 
 impl<C: HasOpFactory> KnowledgeAnalysis<C> {
-    /// Builds the analysis with the default Gröbner-basis backend.
-    ///
-    /// # Panics
-    /// Panics if the backend cannot compute a basis under the knowledge
-    /// block order.
-    pub fn from_input(dag: &QDag<C>) -> Self {
-        Self::from_input_with_backend(dag, GbBackendKind::default())
-    }
-
-    /// Like [`from_input`](Self::from_input) but with a user-selected GB
-    /// backend.
-    pub fn from_input_with_backend(dag: &QDag<C>, backend: GbBackendKind) -> Self {
+    /// Encode the prover and relation without computing Gröbner bases.
+    pub fn build_inputs(dag: &QDag<C>) -> KnowledgeInputs<C::F> {
         let dist_map = UniformityPropagation::from_dag(dag).distributions;
         let mut gb = IdealBuilder::new();
         let mut prover_ideal = gb.build(TransClos::prover(dag));
 
-        let gb_backend = backend.build::<C::F>();
+        let mut rel_gb = gb.clone();
+        let rel_ideal = rel_gb.build(TransClos::relation(dag));
+        let order = knowledge_order(&rel_ideal, &dist_map);
+        let relation = (rel_ideal.generating_set, order);
 
-        let relation_basis = if dag.relation_node().is_some() {
-            let mut rel_gb = gb.clone();
-            let rel_ideal = rel_gb.build(TransClos::relation(dag));
-            let order = knowledge_order(&rel_ideal, &dist_map);
-            gb_backend.compute_gb(rel_ideal.generating_set, &order).ok()
-        } else {
-            None
-        };
-
-        if dag.relation_node().is_some() {
-            let rel_ideal = gb.build(TransClos::relation(dag));
-            prover_ideal.merge(&rel_ideal);
-        }
+        let rel_ideal = gb.build(TransClos::relation(dag));
+        prover_ideal.merge(&rel_ideal);
 
         let order = knowledge_order(&prover_ideal, &dist_map);
-        let basis = gb_backend
-            .compute_gb(prover_ideal.generating_set, &order)
-            .expect("GB backend should support knowledge block order");
-
-        Self {
-            basis,
-            relation_basis,
+        KnowledgeInputs {
+            generating_set: prover_ideal.generating_set,
+            order,
+            relation,
             dist_map,
         }
+    }
+
+    /// Compute bases from prepared inputs with the selected backend.
+    ///
+    /// # Errors
+    /// Returns a backend error when either basis computation fails.
+    #[allow(clippy::result_large_err)]
+    pub fn try_from_inputs(
+        inputs: KnowledgeInputs<C::F>,
+        backend: GbBackendKind,
+    ) -> Result<Self, AnalysisError<C>> {
+        let gb_backend = backend.build::<C::F>();
+        let (relation_generators, relation_order) = inputs.relation;
+        let relation_basis = gb_backend.compute_gb(relation_generators, &relation_order)?;
+        let basis = gb_backend.compute_gb(inputs.generating_set, &inputs.order)?;
+        Ok(Self {
+            basis,
+            relation_basis,
+            dist_map: inputs.dist_map,
+        })
     }
 
     fn is_uniform(&self, v: &Var) -> bool {
@@ -176,7 +188,7 @@ impl<C: HasOpFactory> KnowledgeAnalysis<C> {
 
     /// Run knowledge analysis.
     ///
-    /// Uses the pre-computed Gröbner basis from `from_input_with_backend`.
+    /// Uses the pre-computed Gröbner basis from `try_from_inputs`.
     pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
         if self.basis.is_unit() {
             return Err(AnalysisError::UnitIdeal {
@@ -197,9 +209,7 @@ impl<C: HasOpFactory> KnowledgeAnalysis<C> {
             if self.is_leak(p) {
                 // Skip polynomials derivable from the relation (precondition).
                 // The verifier already knows these — they're not new leaks.
-                if let Some(ref rel_basis) = self.relation_basis
-                    && rel_basis.polys.iter().any(|rp| rp == p)
-                {
+                if self.relation_basis.polys.iter().any(|rp| rp == p) {
                     continue;
                 }
                 warn!("Leak found: {}", p);
@@ -213,6 +223,7 @@ impl<C: HasOpFactory> KnowledgeAnalysis<C> {
 #[cfg(test)]
 mod tests {
     use super::KnowledgeAnalysis;
+    use crate::GbBackendKind;
     use crate::QualifierPropagation;
     use crate::tests::parse_and_concretize;
     use backend::ArkBls12_381;
@@ -247,7 +258,11 @@ mod tests {
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         // Compute Groebner basis for the implementation
-        let mut kz = KnowledgeAnalysis::from_input(&g);
+        let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
+            KnowledgeAnalysis::build_inputs(&g),
+            GbBackendKind::default(),
+        )
+        .unwrap();
 
         // Compute the Groebner bases
         assert!(kz.run().is_err());
@@ -279,7 +294,11 @@ mod tests {
         let g = g_inp;
 
         // Create an object computing the Groebner basis
-        let mut kz = KnowledgeAnalysis::from_input(&g);
+        let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
+            KnowledgeAnalysis::build_inputs(&g),
+            GbBackendKind::default(),
+        )
+        .unwrap();
 
         // Compute the Groebner basis
         assert!(kz.run().is_ok());
@@ -310,7 +329,11 @@ mod tests {
         // Uniformity propagation
         let g = g_inp;
         // Create an object computing the Groebner basis
-        let mut kz = KnowledgeAnalysis::from_input(&g);
+        let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
+            KnowledgeAnalysis::build_inputs(&g),
+            GbBackendKind::default(),
+        )
+        .unwrap();
 
         // Compute the Groebner basis
         assert!(kz.run().is_ok());
@@ -349,7 +372,11 @@ mod tests {
         // Uniformity propagation
 
         // Create an object computing the Groebner basis
-        let mut kz = KnowledgeAnalysis::from_input(&g);
+        let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
+            KnowledgeAnalysis::build_inputs(&g),
+            GbBackendKind::default(),
+        )
+        .unwrap();
 
         assert!(kz.run().is_err());
     }
@@ -389,7 +416,11 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut kz = KnowledgeAnalysis::from_input(&g);
+        let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
+            KnowledgeAnalysis::build_inputs(&g),
+            GbBackendKind::default(),
+        )
+        .unwrap();
         assert!(
             kz.run().is_ok(),
             "Schnorr protocol should be zero-knowledge"
@@ -411,7 +442,11 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut kz = KnowledgeAnalysis::from_input(&g);
+        let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
+            KnowledgeAnalysis::build_inputs(&g),
+            GbBackendKind::default(),
+        )
+        .unwrap();
         let result = kz.run();
         if let Err(ref e) = result {
             eprintln!("Leak detected: {}", e);
@@ -435,7 +470,11 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut kz = KnowledgeAnalysis::from_input(&g);
+        let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
+            KnowledgeAnalysis::build_inputs(&g),
+            GbBackendKind::default(),
+        )
+        .unwrap();
         assert!(
             kz.run().is_err(),
             "d <- x + y leaks x (verifier knows y and d)"
@@ -456,7 +495,11 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut kz = KnowledgeAnalysis::from_input(&g);
+        let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
+            KnowledgeAnalysis::build_inputs(&g),
+            GbBackendKind::default(),
+        )
+        .unwrap();
         assert!(
             kz.run().is_err(),
             "z <- x*c without random blinding leaks x"
@@ -477,7 +520,11 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut kz = KnowledgeAnalysis::from_input(&g);
+        let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
+            KnowledgeAnalysis::build_inputs(&g),
+            GbBackendKind::default(),
+        )
+        .unwrap();
         assert!(
             kz.run().is_err(),
             "a - b = s - t leaks relationship between secrets"
@@ -503,7 +550,11 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut kz = KnowledgeAnalysis::from_input(&g);
+        let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
+            KnowledgeAnalysis::build_inputs(&g),
+            GbBackendKind::default(),
+        )
+        .unwrap();
         assert!(
             kz.run().is_ok(),
             "Schnorr with proper blinding should be ZK"
@@ -528,7 +579,11 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut kz = KnowledgeAnalysis::from_input(&g);
+        let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
+            KnowledgeAnalysis::build_inputs(&g),
+            GbBackendKind::default(),
+        )
+        .unwrap();
         assert!(
             kz.run().is_err(),
             "One safe and one leaking verify should fail knowledge analysis"
@@ -554,7 +609,11 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut kz = KnowledgeAnalysis::from_input(&g);
+        let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
+            KnowledgeAnalysis::build_inputs(&g),
+            GbBackendKind::default(),
+        )
+        .unwrap();
         assert!(
             kz.run().is_ok(),
             "Two verify statements both properly blinded with independent randoms should pass knowledge analysis"
@@ -586,7 +645,11 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut kz = KnowledgeAnalysis::from_input(&g);
+        let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
+            KnowledgeAnalysis::build_inputs(&g),
+            GbBackendKind::default(),
+        )
+        .unwrap();
         // All inputs are instance so nothing could leak; trivially ZK.
         assert!(
             kz.run().is_ok(),
@@ -609,14 +672,13 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
-        let mut kz = KnowledgeAnalysis::from_input(&g);
+        let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
+            KnowledgeAnalysis::build_inputs(&g),
+            GbBackendKind::default(),
+        )
+        .unwrap();
         assert!(
-            kz.relation_basis
-                .as_ref()
-                .unwrap()
-                .vars()
-                .iter()
-                .any(|v| v.is_local()),
+            kz.relation_basis.vars().iter().any(|v| v.is_local()),
             "relation-only basis should contain polynomial div/rem witness variables"
         );
         let result = kz.run();

@@ -1,42 +1,15 @@
 use ark_ec::{CurveGroup, VariableBaseMSM};
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, Value};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use share::Ctx;
-use std::path::PathBuf;
-use zippel::*;
 
 use crate::common;
+use crate::common::size;
 
 type F = <ArkBls12_381 as ArkConfig>::F;
 type G1 = <ArkBls12_381 as ArkConfig>::G1;
 type G2 = <ArkBls12_381 as ArkConfig>::G2;
-
-/// Number of variables: 2^S gates.
-const S: usize = 2;
-
-pub fn run(opts: &common::RunOptions) {
-    println!(
-        "=== HyperPlonk SNARK (ArkBls12_381, S={S}, {} gates) ===",
-        1 << S
-    );
-    let args = ZippelArgs::new(PathBuf::from(
-        "examples/hyperplonk_snark/hyperplonk_snark.zippel",
-    ));
-    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("S"), &S);
-    handler.compile(&sizes);
-
-    common::run_prover_and_verify(&mut handler, prover_create_inputs());
-
-    if !opts.analyses {
-        return;
-    }
-    println!("\n--- Static Analysis ---");
-    common::time_analysis!("Completeness", handler.analyze_completeness());
-    common::time_analysis!("ZK", handler.analyze_knowledge());
-}
 
 /// eq(x, r) over x ∈ {0,1}^n with r[0] the low bit.
 fn eq_weights(r: &[F]) -> Vec<F> {
@@ -55,15 +28,17 @@ fn msm(bases: &[G1], scalars: &[F]) -> G1 {
     G1::msm(&G1::normalize_batch(bases), scalars).unwrap()
 }
 
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
+fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
+    let s = size(sizes, "S");
+
     let mut rng = rand::rngs::OsRng;
-    let n = 1usize << S;
+    let n = 1usize << s;
 
     // Multilinear KZG setup: level i holds eq(t[i..], b)·g, the last is [g].
-    let t: Vec<F> = (0..S).map(|_| F::rand(&mut rng)).collect();
+    let t: Vec<F> = (0..s).map(|_| F::rand(&mut rng)).collect();
     let g = G1::rand(&mut rng);
     let h = G2::rand(&mut rng);
-    let ck: Vec<G1> = (0..=S)
+    let ck: Vec<G1> = (0..=s)
         .flat_map(|i| eq_weights(&t[i..]).into_iter().map(move |e| g * e))
         .collect();
     let h_mask: Vec<G2> = t.iter().map(|&ti| h * ti).collect();
@@ -110,4 +85,17 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         named.push((name, Value::vec_scalar(c)));
     }
     Ctx::from_iter(named.into_iter().map(|(k, v)| (Vid(k.to_string()), v)))
+}
+
+pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
+    common::ExampleSpec {
+        source: "examples/hyperplonk_snark/hyperplonk_snark.zippel",
+        defaults: &[("S", 3)],
+        validate: Some(|sizes, _analysis| {
+            common::check_power_of_two(sizes, "S")?;
+            Ok(())
+        }),
+        make_inputs: prover_create_inputs,
+        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+    }
 }

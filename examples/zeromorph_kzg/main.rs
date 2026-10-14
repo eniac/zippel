@@ -1,33 +1,15 @@
 use ark_ff::fields::Field;
 use ark_std::UniformRand;
 use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use share::Ctx;
-use std::path::PathBuf;
-use zippel::*;
 
 use crate::common;
+use crate::common::size;
 
-pub fn run(opts: &common::RunOptions) {
-    println!("=== Zeromorph Hiding KZG ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/zeromorph_kzg/zeromorph_kzg.zippel"));
-    let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    let mut sizes = Ctx::new();
-    let n_size = 2;
-    sizes.insert(&Tid::new("N"), &n_size);
-    handler.compile(&sizes);
+fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
+    let n_size = size(sizes, "N");
 
-    common::run_prover_and_verify(&mut handler, prover_create_inputs(n_size));
-
-    if !opts.analyses {
-        return;
-    }
-    println!("\n--- Static Analysis ---");
-    common::time_analysis!("Completeness", handler.analyze_completeness());
-    common::time_analysis!("ZK", handler.analyze_knowledge());
-}
-
-fn prover_create_inputs(n_size: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
 
     let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
@@ -66,4 +48,14 @@ fn prover_create_inputs(n_size: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("gen_g1".to_string()), g),
         (Vid("gen_g2".to_string()), h),
     ])
+}
+
+pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
+    common::ExampleSpec {
+        source: "examples/zeromorph_kzg/zeromorph_kzg.zippel",
+        defaults: &[("N", 2)],
+        validate: None,
+        make_inputs: prover_create_inputs,
+        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+    }
 }

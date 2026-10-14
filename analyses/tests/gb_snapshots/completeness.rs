@@ -156,7 +156,7 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
         CompletenessEntry {
             name: "kzh",
             zippel_path: "examples/kzh/kzh.zippel",
-            sizes: &[("NX", 1), ("NY", 1)],
+            sizes: &[("NX", 2), ("NY", 2)],
             ignored: false,
         },
         CompletenessEntry {
@@ -230,7 +230,7 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
         CompletenessEntry {
             name: "hyperplonk_snark",
             zippel_path: "examples/hyperplonk_snark/hyperplonk_snark.zippel",
-            sizes: &[("S", 2)],
+            sizes: &[("S", 3)],
             ignored: true,
         },
         CompletenessEntry {
@@ -248,7 +248,7 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
         CompletenessEntry {
             name: "spartan",
             zippel_path: "examples/spartan/spartan.zippel",
-            sizes: &[("M", 3)],
+            sizes: &[("M", 4)],
             ignored: true,
         },
     ]
@@ -270,7 +270,8 @@ fn run_completeness_snapshot(entry: &CompletenessEntry) -> Result<(), Failed> {
         if inputs.checks.is_empty() {
             return Err(Failed::from("the protocol has no verifier checks"));
         }
-        let mut ca = CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, backend);
+        let mut ca = CompletenessAnalysis::<ArkBls12_381>::try_from_inputs(inputs, backend)
+            .map_err(|e| Failed::from(e.to_string()))?;
         ca.run().map_err(|e| Failed::from(e.to_string()))?;
         Ok::<String, Failed>(normalize_basis(&ca.basis.polys))
     })

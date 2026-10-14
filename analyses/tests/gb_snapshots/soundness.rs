@@ -95,7 +95,7 @@ fn run_soundness_snapshot(entry: &SoundnessEntry) -> Result<(), Failed> {
         let dag = compile_to_dag(&path, &sizes);
         let inputs = SpecialSoundnessAnalysis::build_inputs(&dag, l_vec)
             .map_err(|e| Failed::from(e.to_string()))?;
-        let mut sa = SpecialSoundnessAnalysis::from_inputs(inputs, backend)
+        let mut sa = SpecialSoundnessAnalysis::try_from_inputs(inputs, backend)
             .map_err(|e| Failed::from(e.to_string()))?;
         sa.run().map_err(|e| Failed::from(e.to_string()))?;
         Ok::<String, Failed>(normalize_basis(&sa.search_gb.polys))

@@ -1,87 +1,20 @@
 use ark_ff::fields::Field;
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, Value};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use share::Ctx;
-use std::{path::PathBuf, time::Instant};
-use zippel::*;
 
 use crate::common;
+use crate::common::size;
 
-pub fn run(opts: &common::RunOptions) {
-    println!("=== Membership ===");
-    let n_size = 2;
-    let m_size = 2;
-    // `L - 1` indexes the h-opening MSM, so `L = (N - 1) * M` must be at
-    // least one: N must be at least two.
-    assert!(n_size >= 2, "n_size must be at least 2");
-    assert!(m_size >= 1, "m_size must be at least 1");
-    let l_size = (n_size - 1) * m_size;
-    let s_size = usize::max(n_size, l_size);
+fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
+    let n_size = size(sizes, "N");
+    let m_size = size(sizes, "M");
 
-    let args = ZippelArgs::new(PathBuf::from("examples/membership/membership.zippel"));
-    let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("N"), &n_size);
-    sizes.insert(&Tid::new("M"), &m_size);
-    sizes.insert(&Tid::new("S"), &s_size);
-    handler.compile(&sizes);
-
-    let inputs = prover_create_inputs(n_size, m_size);
-    let prover_start = Instant::now();
-    let proof = handler
-        .run_prover(inputs.clone())
-        .expect("run_prover failed");
-    let prover_elapsed = prover_start.elapsed();
-    let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
-    println!("Prover time:    {prover_elapsed:.2?}");
-    println!(
-        "Proof size:     {proof_bytes} bytes ({} elements)",
-        proof.len()
-    );
-
-    let args = ZippelArgs::new(PathBuf::from("examples/membership/membership.zippel"));
-    let mut verifier_handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    verifier_handler.compile(&sizes);
-    let verifier_start = Instant::now();
-    let verifier_result = verifier_handler
-        .run_verifier(proof, inputs)
-        .expect("run_verifier failed");
-    let verifier_elapsed = verifier_start.elapsed();
-    let passed = check_verification(&verifier_result);
-    println!("Verifier time:  {verifier_elapsed:.2?}");
-    if passed {
-        println!("Verification:   ✓ PASSED");
-    } else {
-        println!("Verification:   ✗ FAILED");
-        std::process::exit(1);
-    }
-
-    if !opts.analyses {
-        return;
-    }
-    println!("\n--- Static Analysis ---");
-    let completeness_start = Instant::now();
-    match handler.analyze_completeness() {
-        Ok(()) => println!("Completeness:    ✓"),
-        Err(e) => println!("Completeness:    ✗ {}", e),
-    }
-    println!("Completeness time: {:.2?}", completeness_start.elapsed());
-
-    let zk_start = Instant::now();
-    match handler.analyze_knowledge() {
-        Ok(()) => println!("ZK:              ✓"),
-        Err(e) => println!("ZK:              ✗ {}", e),
-    }
-    println!("ZK time:         {:.2?}", zk_start.elapsed());
-}
-
-fn prover_create_inputs(n_size: usize, m_size: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
     assert!(n_size >= 2, "n_size must be at least 2");
     assert!(m_size >= 1, "m_size must be at least 1");
     let mut rng = rand::rngs::OsRng;
-    let l_size = (n_size - 1) * m_size;
-    let s_size = usize::max(n_size, l_size);
+    let s_size = size(sizes, "S");
 
     let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
     let g: Value<ArkBls12_381> = Value::g1(g_input);
@@ -121,4 +54,23 @@ fn prover_create_inputs(n_size: usize, m_size: usize) -> Ctx<Vid, Value<ArkBls12
         (Vid("srs_g1".to_string()), ss),
         (Vid("srs_g2_s".to_string()), h_val),
     ])
+}
+
+pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
+    common::ExampleSpec {
+        source: "examples/membership/membership.zippel",
+        defaults: &[("N", 2), ("M", 2), ("S", 2)],
+        validate: Some(|sizes, _analysis| {
+            if size(sizes, "N") < 2
+                || size(sizes, "M") < 1
+                || size(sizes, "S")
+                    < size(sizes, "N").max((size(sizes, "N") - 1).saturating_mul(size(sizes, "M")))
+            {
+                return Err("N must be >= 2, M >= 1, and S >= max(N, (N-1)*M)".into());
+            }
+            Ok(())
+        }),
+        make_inputs: prover_create_inputs,
+        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+    }
 }

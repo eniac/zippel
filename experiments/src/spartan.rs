@@ -19,7 +19,9 @@ use rand::Rng;
 use share::Ctx;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use zippel::{ZippelArgs, ZippelHandler, check_verification, proof_size_bytes};
+use zippel::{
+    CompileOptions, CompiledProtocol, ParsedModule, check_verification, proof_size_bytes,
+};
 
 /// Default `log_2` of the R1CS constraint count used by the Spartan sweep.
 pub const DEFAULT_M: usize = 8;
@@ -55,7 +57,7 @@ pub struct ZippelTiming {
 /// across every timing sample at one size.
 pub struct Setup {
     m: usize,
-    handler: ZippelHandler<ArkCurve25519>,
+    handler: CompiledProtocol<ArkCurve25519>,
     inputs: HashMap<Vid, Value<ArkCurve25519>>,
     /// What the prover's `az`, `bz`, `cz` inputs are computed from, inside
     /// each timed run, as libspartan computes them inside `prove`.
@@ -106,11 +108,12 @@ impl Setup {
         let (inputs, products) = prover_create_inputs(m);
 
         let (handler, compile_time) = crate::sample_compile(|| {
-            let args = ZippelArgs::new(zippel_path.clone());
-            let mut handler: ZippelHandler<ArkCurve25519> = ZippelHandler::new(args);
+            let module = ParsedModule::load(zippel_path.clone()).expect("parse protocol");
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("M"), &m);
-            handler.compile_for_execution(&sizes);
+            let handler: CompiledProtocol<ArkCurve25519> = module
+                .compile(&sizes, CompileOptions::default())
+                .expect("compile protocol");
             handler
         });
 
@@ -151,12 +154,12 @@ impl Setup {
             let computed = [("az", az), ("bz", bz), ("cz", cz)]
                 .map(|(name, v)| (Vid::from(name), Value::vec_scalar(v)));
             self.handler
-                .run_prover(crate::lend(&self.inputs).chain(computed))
+                .prove(crate::lend(&self.inputs).chain(computed))
                 .expect("run_prover failed")
         });
         let proof_bytes = proof_size_bytes::<ArkCurve25519>(&proof);
         let (verify, verify_peak, result) =
-            crate::sample_zippel_verifier(&mut self.handler, &proof, &self.inputs);
+            crate::sample_zippel_verifier(&self.handler, &proof, &self.inputs);
         let passed = check_verification(&result);
 
         ZippelTiming {

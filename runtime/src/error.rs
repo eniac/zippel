@@ -8,7 +8,7 @@ pub enum RuntimeError {
     /// supplied in the `inputs` map passed to `run_prover` / `run_verifier`.
     ///
     /// Surfaced by the upfront validation in
-    /// [`ZippelHandler::run_prover`](../../src/lib.rs.html) before any graph
+    /// [`CompiledProtocol::prove`](../../src/lib.rs.html) before any graph
     /// execution begins; this is the user-facing error for a typo or schema
     /// mismatch between the `.zippel` `proto`/`fn` signature and the caller.
     #[error(

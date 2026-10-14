@@ -9,7 +9,7 @@ use backend::{ArkConfig, HasOpFactory, Value};
 use lang::id::Vid;
 use std::collections::HashMap;
 use std::time::Duration;
-use zippel::ZippelHandler;
+use zippel::CompiledProtocol;
 
 /// Per-sample prover and verifier wall-times and peak heaps for one
 /// protocol measurement.
@@ -238,29 +238,29 @@ pub fn lend<C: ArkConfig>(
 /// Samples a zippel prover with every input lent (see [`lend`]).
 ///
 /// # Panics
-/// Panics if the handler is not compiled or a run fails.
+/// Panics if a run fails.
 #[track_caller]
 pub fn sample_zippel_prover<C: ArkConfig + HasOpFactory>(
-    handler: &mut ZippelHandler<C>,
+    handler: &CompiledProtocol<C>,
     inputs: &HashMap<Vid, Value<C>>,
 ) -> (Vec<Duration>, Vec<usize>, Vec<Value<C>>) {
-    sample(|| handler.run_prover(lend(inputs)).expect("run_prover failed"))
+    sample(|| handler.prove(lend(inputs)).expect("run_prover failed"))
 }
 
 /// Samples a zippel verifier on `proof` with the proof and every input lent:
 /// the harness keeps the proof, as a native verifier borrows it.
 ///
 /// # Panics
-/// Panics if the handler is not compiled or a run fails.
+/// Panics if a run fails.
 #[track_caller]
 pub fn sample_zippel_verifier<C: ArkConfig + HasOpFactory>(
-    handler: &mut ZippelHandler<C>,
+    handler: &CompiledProtocol<C>,
     proof: &[Value<C>],
     inputs: &HashMap<Vid, Value<C>>,
 ) -> (Vec<Duration>, Vec<usize>, Vec<bool>) {
     sample(|| {
         handler
-            .run_verifier(proof.iter().cloned(), lend(inputs))
+            .verify(proof.iter().cloned(), lend(inputs))
             .expect("run_verifier failed")
     })
 }

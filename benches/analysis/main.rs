@@ -239,7 +239,8 @@ fn run_completeness(
 
     // Stage 3: Compute GB (expensive — may hang).
     let start = Instant::now();
-    let mut ca = CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, target.backend);
+    let ca = CompletenessAnalysis::<ArkBls12_381>::try_from_inputs(inputs, target.backend);
+    let mut ca = ca.map_err(|e| e.to_string())?;
     out.gb_ms = Some(elapsed_ms(start));
 
     // Emit post-GB metrics before run() — survives if run() hangs or is killed.
@@ -282,7 +283,7 @@ fn run_soundness(
 
     // Stage 3: Compute the search GB (expensive — may hang).
     let start = Instant::now();
-    let sa = SpecialSoundnessAnalysis::<ArkBls12_381>::from_inputs(inputs, target.backend);
+    let sa = SpecialSoundnessAnalysis::<ArkBls12_381>::try_from_inputs(inputs, target.backend);
     out.gb_ms = Some(elapsed_ms(start));
     let mut sa = sa.map_err(|e| e.to_string())?;
 

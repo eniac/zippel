@@ -213,7 +213,7 @@ pub mod inst_gen {
 // ---------------------------------------------------------------------------
 
 /// Zippel side of the comparison: compiles `examples/pari/pari.zippel`, builds
-/// the matching SRS, and times prove/verify through `ZippelHandler`.
+/// the matching SRS, and times prove/verify through `CompiledProtocol`.
 pub mod zippel_side {
     use super::*;
     use ark_ec::CurveGroup;
@@ -227,7 +227,7 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{CompileOptions, CompiledProtocol, ParsedModule, check_verification};
 
     type C = ArkBls12_381;
     type F = <C as ArkConfig>::F;
@@ -350,7 +350,7 @@ pub mod zippel_side {
     /// Compiled PARI protocol plus its cached SRS, reused across the whole
     /// thread/size sweep.
     pub struct Setup {
-        handler: ZippelHandler<C>,
+        handler: CompiledProtocol<C>,
         m_log: usize,
         k: usize,
         n_pub: usize,
@@ -373,17 +373,19 @@ pub mod zippel_side {
             let num_vars = inst.num_vars;
             let kmn = num_vars - n_pub;
             let (handler, compile_time) = crate::sample_compile(|| {
-                let args = ZippelArgs::new(
+                let module = ParsedModule::load(
                     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                         .join("..")
                         .join("examples/pari/pari.zippel"),
-                );
-                let mut handler: ZippelHandler<C> = ZippelHandler::new(args);
+                )
+                .expect("parse protocol");
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("M"), &m_log);
                 sizes.insert(&Tid::new("N"), &n_pub);
                 sizes.insert(&Tid::new("KMN"), &kmn);
-                handler.compile_for_execution(&sizes);
+                let handler: CompiledProtocol<C> = module
+                    .compile(&sizes, CompileOptions::default())
+                    .expect("compile protocol");
                 handler
             });
 
@@ -498,11 +500,11 @@ pub mod zippel_side {
                 ]
                 .map(|(name, v)| (Vid::from(name), Value::vec_scalar(v)));
                 self.handler
-                    .run_prover(crate::lend(&inputs).chain(computed))
+                    .prove(crate::lend(&inputs).chain(computed))
                     .expect("run_prover failed")
             });
             let (verify, verify_peak, result) =
-                crate::sample_zippel_verifier(&mut self.handler, &proof, &inputs);
+                crate::sample_zippel_verifier(&self.handler, &proof, &inputs);
             assert!(
                 check_verification(&result),
                 "zippel PARI verification FAILED"

@@ -53,6 +53,10 @@ impl<C: ArkConfig> Clone for ExtractorRejection<C> {
 #[derive(Error, Debug)]
 #[allow(clippy::result_large_err)]
 pub enum AnalysisError<C: ArkConfig> {
+    /// Gröbner-basis backend could not complete the computation.
+    #[error("Backend error: {0}")]
+    Backend(#[from] crate::frontend::BackendError),
+
     /// A verifier equation that cannot be derived from the prover's Gröbner basis.
     #[error("Incomplete protocol: {0}")]
     Incomplete(Polynomial<C::F>),

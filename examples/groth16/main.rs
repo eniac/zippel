@@ -1,304 +1,108 @@
-use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
-use ark_ec::{AffineRepr, CurveGroup, PrimeGroup};
-use ark_ff::{UniformRand, Zero};
-use ark_groth16::Groth16;
-use ark_groth16::r1cs_to_qap::{LibsnarkReduction, R1CSToQAP};
-use ark_poly::GeneralEvaluationDomain;
-use ark_relations::gr1cs::{
-    ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, LinearCombination,
-    R1CS_PREDICATE_LABEL, SynthesisMode,
-};
-use backend::{ArkBls12_381, Value};
+use ark_ec::PrimeGroup;
+use ark_ff::{Field, One, UniformRand};
+use backend::{ArkBls12_381, ArkConfig, Value};
 use lang::id::{Tid, Vid};
 use share::Ctx;
-use std::{path::PathBuf, time::Instant};
-use zippel::*;
 
-use crate::common;
+use crate::common::{self, size};
 
-type E = Bls12_381;
-type F = Fr;
+type C = ArkBls12_381;
+type F = <C as ArkConfig>::F;
 
-const CONSTRAINT_SIZE: usize = 1 << 5;
-
-#[derive(Clone)]
-struct BenchCircuit {
-    num_constraints: usize,
-}
-
-impl ConstraintSynthesizer<F> for BenchCircuit {
-    fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> ark_relations::gr1cs::Result<()> {
-        let num_cons = self.num_constraints;
-        let mut witness_vars = Vec::new();
-        for _ in 0..(2 * num_cons) {
-            let val = F::rand(&mut rand::rngs::OsRng);
-            let w = cs.new_witness_variable(|| Ok(val))?;
-            witness_vars.push((w, val));
-        }
-        for i in 0..num_cons {
-            let (w1, v1) = witness_vars[2 * i];
-            let (w2, v2) = witness_vars[2 * i + 1];
-            let out_val = v1 * v2;
-            let out = cs.new_input_variable(|| Ok(out_val))?;
-            cs.enforce_constraint_arity_3(
-                R1CS_PREDICATE_LABEL,
-                || LinearCombination::from(w1),
-                || LinearCombination::from(w2),
-                || LinearCombination::from(out),
-            )?;
-        }
-        Ok(())
+pub fn spec() -> common::ExampleSpec<C> {
+    common::ExampleSpec {
+        source: "examples/groth16/groth16.zippel",
+        defaults: &[("M", 2), ("L", 3), ("H", 4)],
+        validate: None,
+        make_inputs,
+        analyses: &[],
     }
 }
 
-struct Groth16Params {
-    alpha_g1: G1Projective,
-    beta_g1: G1Projective,
-    beta_g2: G2Projective,
-    gamma_g2: G2Projective,
-    delta_g1: G1Projective,
-    delta_g2: G2Projective,
-    a_query: Vec<G1Projective>,
-    b_g1_query: Vec<G1Projective>,
-    b_g2_query: Vec<G2Projective>,
-    h_query: Vec<G1Projective>,
-    l_query: Vec<G1Projective>,
-    gamma_abc_g1: Vec<G1Projective>,
-}
-
-impl Groth16Params {
-    fn from_keys(pk: &ark_groth16::ProvingKey<E>, vk: &ark_groth16::VerifyingKey<E>) -> Self {
-        Self {
-            alpha_g1: pk.vk.alpha_g1.into_group(),
-            beta_g1: pk.beta_g1.into_group(),
-            beta_g2: vk.beta_g2.into_group(),
-            gamma_g2: vk.gamma_g2.into_group(),
-            delta_g1: pk.delta_g1.into_group(),
-            delta_g2: pk.vk.delta_g2.into_group(),
-            a_query: pk.a_query.iter().map(|p| p.into_group()).collect(),
-            b_g1_query: pk.b_g1_query.iter().map(|p| p.into_group()).collect(),
-            b_g2_query: pk.b_g2_query.iter().map(|p| p.into_group()).collect(),
-            h_query: pk.h_query.iter().map(|p| p.into_group()).collect(),
-            l_query: pk.l_query.iter().map(|p| p.into_group()).collect(),
-            gamma_abc_g1: vk.gamma_abc_g1.iter().map(|p| p.into_group()).collect(),
-        }
-    }
-
-    fn common_inputs(
-        &self,
-        instance_assignment: &[F],
-        witness_assignment: &[F],
-    ) -> Vec<(Vid, Value<ArkBls12_381>)> {
-        // Fixed generators for BLS12-381.
-        let gen_g1 = G1Projective::generator();
-        let gen_g2 = G2Projective::generator();
-        vec![
-            (Vid("gen_g1".to_string()), Value::g1(gen_g1)),
-            (Vid("gen_g2".to_string()), Value::g2(gen_g2)),
-            (Vid("alpha_g1".to_string()), Value::g1(self.alpha_g1)),
-            (Vid("beta_g2".to_string()), Value::g2(self.beta_g2)),
-            (Vid("gamma_g2".to_string()), Value::g2(self.gamma_g2)),
-            (Vid("delta_g2".to_string()), Value::g2(self.delta_g2)),
-            (
-                Vid("gamma_abc_g1".to_string()),
-                Value::vec_g1(self.gamma_abc_g1.clone()),
-            ),
-            (Vid("beta_g1".to_string()), Value::g1(self.beta_g1)),
-            (Vid("delta_g1".to_string()), Value::g1(self.delta_g1)),
-            (
-                Vid("a_query".to_string()),
-                Value::vec_g1(self.a_query.clone()),
-            ),
-            (
-                Vid("b_g1_query".to_string()),
-                Value::vec_g1(self.b_g1_query.clone()),
-            ),
-            (
-                Vid("b_g2_query".to_string()),
-                Value::vec_g2(self.b_g2_query.clone()),
-            ),
-            (
-                Vid("h_query".to_string()),
-                Value::vec_g1(self.h_query.clone()),
-            ),
-            (
-                Vid("l_query".to_string()),
-                Value::vec_g1(self.l_query.clone()),
-            ),
-            (
-                Vid("instance_assignment".to_string()),
-                Value::vec_scalar(instance_assignment.to_vec()),
-            ),
-            (
-                Vid("witness_assignment".to_string()),
-                Value::vec_scalar(witness_assignment.to_vec()),
-            ),
-        ]
-    }
-}
-
-fn zippel_proof_to_ark(proof: &[Value<ArkBls12_381>]) -> ark_groth16::Proof<E> {
-    ark_groth16::Proof {
-        a: match &proof[0] {
-            Value::G1(p) => p.into_affine(),
-            _ => panic!("expected G1 for a_proof"),
-        },
-        b: match &proof[1] {
-            Value::G2(p) => p.into_affine(),
-            _ => panic!("expected G2 for b_proof"),
-        },
-        c: match &proof[2] {
-            Value::G1(p) => p.into_affine(),
-            _ => panic!("expected G1 for c_proof"),
-        },
-    }
-}
-
-fn run_and_verify(
-    zippel_path: &str,
-    sizes: &Ctx<Tid, usize>,
-    inputs: Vec<(Vid, Value<ArkBls12_381>)>,
-    vk: &ark_groth16::VerifyingKey<E>,
-    instance_assignment: &[F],
-) {
-    let args = ZippelArgs::new(PathBuf::from(zippel_path));
-    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    handler.compile(sizes);
-    let prover_start = Instant::now();
-    let proof = handler.run_prover(inputs.clone()).unwrap();
-    let prover_elapsed = prover_start.elapsed();
-    let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
-    println!("Zippel prover time:    {prover_elapsed:.2?}");
-    println!(
-        "Proof size:           {proof_bytes} bytes ({} elements)",
-        proof.len()
-    );
-
-    let verifier_args = ZippelArgs::new(PathBuf::from(zippel_path));
-    let mut verifier_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(verifier_args);
-    verifier_handler.compile(sizes);
-    let verifier_start = Instant::now();
-    let verifier_result = verifier_handler
-        .run_verifier(proof.clone(), inputs)
-        .unwrap();
-    let verifier_elapsed = verifier_start.elapsed();
-    let passed = check_verification(&verifier_result);
-    println!("Zippel verifier time: {verifier_elapsed:.2?}");
-    if passed {
-        println!("Verification:         ✓ PASSED");
-    } else {
-        println!("Verification:         ✗ FAILED");
-        std::process::exit(1);
-    }
-
-    let pvk = ark_groth16::prepare_verifying_key(vk);
-    let proof_ark = zippel_proof_to_ark(&proof);
-    let ark_verify =
-        Groth16::<E>::verify_proof(&pvk, &proof_ark, &instance_assignment[1..]).unwrap();
-    println!(
-        "\nArkworks cross-verification (zippel proof → arkworks verifier): {}",
-        if ark_verify {
-            "✓ PASSED"
-        } else {
-            "✗ FAILED"
-        }
-    );
-}
-
-fn run_groth16(
-    pk: &ark_groth16::ProvingKey<E>,
-    vk: &ark_groth16::VerifyingKey<E>,
-    h_coeffs: &[F],
-    instance_assignment: &[F],
-    witness_assignment: &[F],
-) {
-    let params = Groth16Params::from_keys(pk, vk);
-    let m = vk.gamma_abc_g1.len();
-    let l = pk.l_query.len();
-    let h_size = pk.h_query.len();
-
-    let h_coeffs_padded = {
-        let mut v = h_coeffs.to_vec();
-        v.resize(h_size, F::zero());
-        v
-    };
-
-    let mut entries = params.common_inputs(instance_assignment, witness_assignment);
-    entries.push((
-        Vid("h_coeffs".to_string()),
-        Value::vec_scalar(h_coeffs_padded),
-    ));
-
-    let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("M"), &m);
-    sizes.insert(&Tid::new("L"), &l);
-    sizes.insert(&Tid::new("H"), &h_size);
-
-    run_and_verify(
-        "examples/groth16/groth16.zippel",
-        &sizes,
-        entries,
-        vk,
-        instance_assignment,
-    );
-}
-
-pub fn run(_opts: &common::RunOptions) {
-    type D<FF> = GeneralEvaluationDomain<FF>;
-    println!("=== Groth16 (ArkBls12_381) — constraints: {CONSTRAINT_SIZE} ===");
-
-    let circuit = BenchCircuit {
-        num_constraints: CONSTRAINT_SIZE,
-    };
+// Sample the trusted-setup relation in groth16.zippel directly. Choosing the
+// constant assignment first lets us solve one c evaluation for the QAP identity.
+fn make_inputs(sizes: &Ctx<Tid, usize>) -> Ctx<Vid, Value<C>> {
     let mut rng = rand::rngs::OsRng;
-
-    let pk =
-        Groth16::<E>::generate_random_parameters_with_reduction(circuit.clone(), &mut rng).unwrap();
-    let vk = pk.vk.clone();
-
-    let cs = ConstraintSystem::<F>::new_ref();
-    cs.set_mode(SynthesisMode::Prove {
-        construct_matrices: true,
-        generate_lc_assignments: false,
-    });
-    circuit.generate_constraints(cs.clone()).unwrap();
-    cs.finalize();
-
-    let cs_borrowed = cs.borrow().unwrap();
-    let num_constraints = cs_borrowed.num_constraints();
-    let num_inputs = cs_borrowed.num_instance_variables();
-    let matrices_map = cs_borrowed.to_matrices().unwrap();
-    let matrices: Vec<_> = matrices_map
-        .get(R1CS_PREDICATE_LABEL)
-        .cloned()
-        .unwrap_or_default();
-    let instance_assignment: Vec<F> = cs_borrowed.instance_assignment().unwrap().to_vec();
-    let witness_assignment: Vec<F> = cs_borrowed.witness_assignment().unwrap().to_vec();
-
-    println!("num_constraints={num_constraints} num_inputs={num_inputs}");
-    println!(
-        "N={} M={} L={} H={}",
-        pk.a_query.len(),
-        vk.gamma_abc_g1.len(),
-        pk.l_query.len(),
-        pk.h_query.len()
-    );
-
-    let full_assignment: Vec<F> =
-        [instance_assignment.clone(), witness_assignment.clone()].concat();
-    let h_coeffs = LibsnarkReduction::witness_map_from_matrices::<F, D<F>>(
-        &matrices,
-        num_inputs,
-        num_constraints,
-        &full_assignment,
-    )
-    .unwrap();
-
-    run_groth16(
-        &pk,
-        &vk,
-        &h_coeffs,
-        &instance_assignment,
-        &witness_assignment,
-    );
+    let (m, l, h) = (size(sizes, "M"), size(sizes, "L"), size(sizes, "H"));
+    let mut nonzero = || loop {
+        let x = F::rand(&mut rng);
+        if let Some(inv) = x.inverse() {
+            break (x, inv);
+        }
+    };
+    let (gamma, gamma_inv) = nonzero();
+    let (delta, delta_inv) = nonzero();
+    let alpha = F::rand(&mut rng);
+    let beta = F::rand(&mut rng);
+    let tau = F::rand(&mut rng);
+    let t = F::rand(&mut rng);
+    let mut assignment: Vec<F> = (0..m + l).map(|_| F::rand(&mut rng)).collect();
+    assignment[0] = F::one();
+    let a: Vec<F> = (0..m + l).map(|_| F::rand(&mut rng)).collect();
+    let b: Vec<F> = (0..m + l).map(|_| F::rand(&mut rng)).collect();
+    let mut c: Vec<F> = (0..m + l).map(|_| F::rand(&mut rng)).collect();
+    let h_coeffs: Vec<F> = (0..h).map(|_| F::rand(&mut rng)).collect();
+    let dot = |xs: &[F], ys: &[F]| xs.iter().zip(ys).map(|(x, y)| *x * y).sum::<F>();
+    let powers: Vec<F> = (0..h).map(|j| tau.pow([j as u64])).collect();
+    c[0] = dot(&a, &assignment) * dot(&b, &assignment)
+        - dot(&h_coeffs, &powers) * t
+        - dot(&c[1..], &assignment[1..]);
+    let g1 = <C as ArkConfig>::G1::generator();
+    let g2 = <C as ArkConfig>::G2::generator();
+    let combined: Vec<F> = (0..m + l)
+        .map(|i| beta * a[i] + alpha * b[i] + c[i])
+        .collect();
+    [
+        ("gen_g1", Value::g1(g1)),
+        ("gen_g2", Value::g2(g2)),
+        ("alpha_g1", Value::g1(g1 * alpha)),
+        ("beta_g1", Value::g1(g1 * beta)),
+        ("beta_g2", Value::g2(g2 * beta)),
+        ("gamma_g2", Value::g2(g2 * gamma)),
+        ("delta_g1", Value::g1(g1 * delta)),
+        ("delta_g2", Value::g2(g2 * delta)),
+        (
+            "gamma_abc_g1",
+            Value::vec_g1(
+                combined[..m]
+                    .iter()
+                    .map(|x| g1 * (*x * gamma_inv))
+                    .collect(),
+            ),
+        ),
+        (
+            "l_query",
+            Value::vec_g1(
+                combined[m..]
+                    .iter()
+                    .map(|x| g1 * (*x * delta_inv))
+                    .collect(),
+            ),
+        ),
+        ("a_query", Value::vec_g1(a.iter().map(|x| g1 * x).collect())),
+        (
+            "b_g1_query",
+            Value::vec_g1(b.iter().map(|x| g1 * x).collect()),
+        ),
+        (
+            "b_g2_query",
+            Value::vec_g2(b.iter().map(|x| g2 * x).collect()),
+        ),
+        (
+            "h_query",
+            Value::vec_g1(powers.iter().map(|x| g1 * (*x * t * delta_inv)).collect()),
+        ),
+        (
+            "instance_assignment",
+            Value::vec_scalar(assignment[..m].to_vec()),
+        ),
+        (
+            "witness_assignment",
+            Value::vec_scalar(assignment[m..].to_vec()),
+        ),
+        ("h_coeffs", Value::vec_scalar(h_coeffs)),
+    ]
+    .into_iter()
+    .map(|(name, value)| (Vid::new(name), value))
+    .collect()
 }

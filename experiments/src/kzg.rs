@@ -66,7 +66,7 @@ pub mod zippel_side {
     use std::io::Write;
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{CompileOptions, CompiledProtocol, ParsedModule, check_verification};
 
     type F = <ArkBls12_381 as ArkConfig>::F;
     type G1 = <ArkBls12_381 as ArkConfig>::G1;
@@ -92,7 +92,7 @@ pub mod zippel_side {
     /// the artifact cache in `new_with`, so it is built at most once per size
     /// across a whole thread sweep.
     pub struct Setup {
-        handler: ZippelHandler<ArkBls12_381>,
+        handler: CompiledProtocol<ArkBls12_381>,
         n: usize,
         srs: KzgSrs,
         // Only `Some` for the diagnostic `--no-srs-check` variant — the
@@ -117,28 +117,27 @@ pub mod zippel_side {
         /// where-clause SRS structure check. Diagnostic toggle to isolate
         /// where the zippel-vs-native verifier gap comes from.
         pub fn new_with(n: usize, drop_srs_check: bool) -> Self {
-            let (args, _source_file) = if drop_srs_check {
+            let (path, _source_file) = if drop_srs_check {
                 let mut file = NamedTempFile::with_suffix(".zippel").expect("tempfile");
                 file.write_all(render_zippel_source_no_srs_check().as_bytes())
                     .expect("write tempfile");
-                (ZippelArgs::new(file.path().to_path_buf()), Some(file))
+                (file.path().to_path_buf(), Some(file))
             } else {
                 (
-                    ZippelArgs::new(
-                        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                            .join("..")
-                            .join("examples/kzg/kzg.zippel"),
-                    ),
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("..")
+                        .join("examples/kzg/kzg.zippel"),
                     None,
                 )
             };
 
             let (handler, compile_time) = crate::sample_compile(|| {
-                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args.clone());
+                let module = ParsedModule::load(&path).expect("parse protocol");
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("N"), &n);
-                handler.compile_for_execution(&sizes);
-                handler
+                module
+                    .compile::<ArkBls12_381>(&sizes, CompileOptions::default())
+                    .expect("compile protocol")
             });
 
             // Build (or load) SRS here so it runs inside the caller's
@@ -226,10 +225,9 @@ pub mod zippel_side {
                 (Vid("srs_g1".to_string()), ss),
                 (Vid("srs_g2_s".to_string()), h_val),
             ]);
-            let (prove, prove_peak, proof) =
-                crate::sample_zippel_prover(&mut self.handler, &inputs);
+            let (prove, prove_peak, proof) = crate::sample_zippel_prover(&self.handler, &inputs);
             let (verify, verify_peak, result) =
-                crate::sample_zippel_verifier(&mut self.handler, &proof, &inputs);
+                crate::sample_zippel_verifier(&self.handler, &proof, &inputs);
             assert!(
                 check_verification(&result),
                 "zippel KZG verification FAILED"

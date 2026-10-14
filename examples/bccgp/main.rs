@@ -1,38 +1,13 @@
 use backend::{ATyp, ArkSecp256k1, Value};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use share::Ctx;
-use std::path::PathBuf;
-use zippel::*;
 
 use crate::common;
+use crate::common::size;
 
-pub fn run(opts: &common::RunOptions) {
-    println!("=== BCCGP 2016 IPA (ArkSecp256k1) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/bccgp/bccgp.zippel"));
-    let mut handler: zippel::ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
-    let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("S"), &6usize);
-    handler.compile(&sizes);
-
-    common::run_prover_and_verify(&mut handler, prover_create_inputs());
-
-    if !opts.analyses {
-        return;
-    }
-    println!("\n--- Static Analysis ---");
-    let analysis_args = ZippelArgs::new(PathBuf::from("examples/bccgp/bccgp.zippel"));
-    let mut analysis_handler: ZippelHandler<ArkSecp256k1> = ZippelHandler::new(analysis_args);
-    let mut analysis_sizes = Ctx::new();
-    analysis_sizes.insert(&Tid::new("S"), &1usize);
-    analysis_handler.compile(&analysis_sizes);
-
-    common::time_analysis!("Completeness", analysis_handler.analyze_completeness());
-    common::time_analysis!("ZK", analysis_handler.analyze_knowledge());
-}
-
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
+fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkSecp256k1>> {
     let mut rng = rand::rngs::OsRng;
-    let n_val_const = 64;
+    let n_val_const = 1usize << size(sizes, "S");
 
     let g_vec: Value<ArkSecp256k1> =
         Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const));
@@ -56,4 +31,17 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
         (Vid("a_vec".to_string()), a_vec),
         (Vid("b_vec".to_string()), b_vec),
     ])
+}
+
+pub fn spec() -> common::ExampleSpec<ArkSecp256k1> {
+    common::ExampleSpec {
+        source: "examples/bccgp/bccgp.zippel",
+        defaults: &[("S", 2)],
+        validate: Some(|sizes, _analysis| {
+            common::check_power_of_two(sizes, "S")?;
+            Ok(())
+        }),
+        make_inputs: prover_create_inputs,
+        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+    }
 }

@@ -44,7 +44,7 @@ pub use completeness::{CompletenessAnalysis, CompletenessInputs};
 pub use error::AnalysisError;
 pub use frontend::TransClos;
 pub use ideal::{Ideal, IdealBuilder, IdealNamespace};
-pub use knowledge::KnowledgeAnalysis;
+pub use knowledge::{KnowledgeAnalysis, KnowledgeInputs};
 pub use qualifier::QualifierPropagation;
 pub use soundness::{SoundnessInputs, SpecialSoundnessAnalysis};
 pub use uniform::UniformityPropagation;

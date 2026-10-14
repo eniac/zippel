@@ -1,99 +1,37 @@
 use ark_std::One;
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, Value};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use share::Ctx;
-use std::{path::PathBuf, time::Instant};
-use zippel::*;
 
 use crate::common;
-
-const L: usize = 2;
-const M: usize = 2;
-const NROWS: usize = 1 << L;
-const NCOLS: usize = 1 << M;
-const NTOT: usize = NROWS * NCOLS;
+use crate::common::size;
 
 type F = <ArkBls12_381 as ArkConfig>::F;
 type G1 = <ArkBls12_381 as ArkConfig>::G1;
 
-fn build_sizes_ctx() -> Ctx<Tid, usize> {
-    let mut ctx = Ctx::new();
-    ctx.insert(&Tid::new("L"), &L);
-    ctx.insert(&Tid::new("M"), &M);
-    ctx
-}
+fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
+    let l = size(sizes, "L");
+    let m = size(sizes, "M");
+    let nrows = 1 << l;
+    let ncols = 1 << m;
+    let ntot = nrows * ncols;
 
-pub fn run(opts: &common::RunOptions) {
-    println!("=== Hyrax PCS (ArkBls12_381) — L={L}, M={M}, NTOT={NTOT} ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/hyrax_pcs/hyrax_pcs.zippel"));
-    let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    let sizes = build_sizes_ctx();
-    handler.compile(&sizes);
-
-    let inputs = prover_create_inputs();
-    let t = Instant::now();
-    let proof = handler
-        .run_prover(inputs.clone())
-        .expect("run_prover failed");
-    println!("Prover time:    {:.2?}", t.elapsed());
-    println!("Proof items:    {}", proof.len());
-    let t = Instant::now();
-    let verifier_result = handler
-        .run_verifier(proof, inputs)
-        .expect("run_verifier failed");
-    println!("Verifier time:  {:.2?}", t.elapsed());
-
-    let passed = check_verification(&verifier_result);
-    if passed {
-        println!("Verification:   ✓ PASSED");
-    } else {
-        println!("Verification:   ✗ FAILED");
-        std::process::exit(1);
-    }
-
-    if !opts.analyses {
-        return;
-    }
-    let analysis_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        println!("\n--- Static Analysis ---");
-
-        let completeness_start = Instant::now();
-        match handler.analyze_completeness() {
-            Ok(()) => println!("Completeness:    ✓"),
-            Err(e) => println!("Completeness:    ✗ {}", e),
-        }
-        println!("Completeness time: {:.2?}", completeness_start.elapsed());
-
-        // The ZK analysis does not finish here (over 10 minutes in release).
-        // let zk_start = Instant::now();
-        // match handler.analyze_knowledge() {
-        //     Ok(()) => println!("ZK:              ✓"),
-        //     Err(e) => println!("ZK:              ✗ {}", e),
-        // }
-        // println!("ZK time:         {:.2?}", zk_start.elapsed());
-    }));
-    if analysis_result.is_err() {
-        println!("Analysis:        ⚠ not supported (non-polynomial operations)");
-    }
-}
-
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
     let one = F::one();
 
-    let p: Vec<F> = (0..NTOT).map(|_| F::rand(&mut rng)).collect();
-    let z_row: Vec<F> = (0..L).map(|_| F::rand(&mut rng)).collect();
-    let z_col: Vec<F> = (0..M).map(|_| F::rand(&mut rng)).collect();
+    let p: Vec<F> = (0..ntot).map(|_| F::rand(&mut rng)).collect();
+    let z_row: Vec<F> = (0..l).map(|_| F::rand(&mut rng)).collect();
+    let z_col: Vec<F> = (0..m).map(|_| F::rand(&mut rng)).collect();
 
     let l_vec = eq_evals(&z_row, one);
     let r_vec = eq_evals(&z_col, one);
-    let y: F = (0..NROWS)
-        .flat_map(|i| (0..NCOLS).map(move |j| (i, j)))
-        .map(|(i, j)| l_vec[i] * r_vec[j] * p[i * NCOLS + j])
+    let y: F = (0..nrows)
+        .flat_map(|i| (0..ncols).map(move |j| (i, j)))
+        .map(|(i, j)| l_vec[i] * r_vec[j] * p[i * ncols + j])
         .sum();
 
-    let g_vec: Vec<G1> = (0..NCOLS).map(|_| G1::rand(&mut rng)).collect();
+    let g_vec: Vec<G1> = (0..ncols).map(|_| G1::rand(&mut rng)).collect();
     let g_base = G1::rand(&mut rng);
     let h_base = G1::rand(&mut rng);
 
@@ -122,4 +60,19 @@ fn eq_evals(x: &[F], one: F) -> Vec<F> {
         size *= 2;
     }
     out
+}
+
+pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
+    common::ExampleSpec {
+        source: "examples/hyrax_pcs/hyrax_pcs.zippel",
+        defaults: &[("L", 2), ("M", 2)],
+        validate: Some(|sizes, _analysis| {
+            common::check_power_of_two(sizes, "L")?;
+            common::check_power_of_two(sizes, "M")?;
+            common::check_power_of_two_sum(sizes, "L", "M")?;
+            Ok(())
+        }),
+        make_inputs: prover_create_inputs,
+        analyses: &[common::Analysis::Completeness],
+    }
 }

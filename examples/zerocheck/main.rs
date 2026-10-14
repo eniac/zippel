@@ -1,43 +1,18 @@
 use ark_ff::{One, Zero};
 use backend::{ATyp, ArkConfig, ArkSecp256k1, Value};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use share::Ctx;
-use std::path::PathBuf;
-use zippel::*;
 
-use crate::common;
+use crate::common::{self, size};
 
-pub fn run(opts: &common::RunOptions) {
-    println!("=== Zerocheck (ArkSecp256k1) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/zerocheck/zerocheck.zippel"));
-    let mut handler: zippel::ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
-    let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("S"), &2);
-    handler.compile(&sizes);
-
-    common::run_prover_and_verify(&mut handler, prover_create_inputs());
-
-    if !opts.analyses {
-        return;
-    }
-    println!("\n--- Static Analysis ---");
-    let analysis_args = ZippelArgs::new(PathBuf::from("examples/zerocheck/zerocheck.zippel"));
-    let mut analysis_handler: ZippelHandler<ArkSecp256k1> = ZippelHandler::new(analysis_args);
-    let mut analysis_sizes = Ctx::new();
-    analysis_sizes.insert(&Tid::new("S"), &1usize);
-    analysis_handler.compile(&analysis_sizes);
-
-    common::time_analysis!("Completeness", analysis_handler.analyze_completeness());
-    common::time_analysis!("ZK", analysis_handler.analyze_knowledge());
-}
-
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
+fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkSecp256k1>> {
     let mut rng = rand::rngs::OsRng;
 
     let zero = <ArkSecp256k1 as ArkConfig>::F::zero();
     let one = <ArkSecp256k1 as ArkConfig>::F::one();
 
-    let v_coeffs = vec![zero, one];
+    let mut v_coeffs = vec![zero; size(sizes, "S") + 1];
+    *v_coeffs.last_mut().unwrap() = one;
     let v = Value::<ArkSecp256k1>::vec_scalar(v_coeffs.clone()).value_poly();
 
     let alpha_val: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::scalar());
@@ -50,4 +25,14 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
         (Vid("p".to_string()), p),
         (Vid("v".to_string()), v),
     ])
+}
+
+pub fn spec() -> common::ExampleSpec<ArkSecp256k1> {
+    common::ExampleSpec {
+        source: "examples/zerocheck/zerocheck.zippel",
+        defaults: &[("S", 2)],
+        validate: None,
+        make_inputs: prover_create_inputs,
+        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+    }
 }

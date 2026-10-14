@@ -25,7 +25,7 @@ use rand::rngs::StdRng;
 use share::Ctx;
 use std::io::Write;
 use std::time::{Duration, Instant};
-use zippel::{ZippelArgs, ZippelHandler};
+use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
 
 type C = ArkBls12_381;
 
@@ -103,7 +103,7 @@ fn main() {
         args.reps
     );
 
-    let (mut handler, _source) = compile(ONE_MSM, n);
+    let (handler, _source) = compile(ONE_MSM, n);
     let one = inputs(1);
     let expected = native(0);
     assert_eq!(
@@ -111,7 +111,7 @@ fn main() {
         expected
     );
     assert_eq!(
-        handler.run_prover(one.clone()).expect("prover")[0],
+        handler.prove(one.clone()).expect("prover")[0],
         Value::g1(expected)
     );
     println!("1 MSM ({})", node_kinds(&handler));
@@ -124,16 +124,14 @@ fn main() {
     );
     report(
         "zippel protocol",
-        median(args.reps, || {
-            handler.run_prover(one.clone()).expect("prover")
-        }),
+        median(args.reps, || handler.prove(one.clone()).expect("prover")),
     );
 
-    let (mut handler, _source) = compile(THREE_MSMS, n);
+    let (handler, _source) = compile(THREE_MSMS, n);
     let three = inputs(3);
     let expected = native(0) + native(1) + native(2);
     assert_eq!(
-        handler.run_prover(three.clone()).expect("prover")[0],
+        handler.prove(three.clone()).expect("prover")[0],
         Value::g1(expected)
     );
     println!("3 MSMs ({})", node_kinds(&handler));
@@ -143,29 +141,29 @@ fn main() {
     );
     report(
         "zippel protocol",
-        median(args.reps, || {
-            handler.run_prover(three.clone()).expect("prover")
-        }),
+        median(args.reps, || handler.prove(three.clone()).expect("prover")),
     );
 }
 
-/// Compiles the protocol `source` with `N = n`. The returned file holds the
-/// source and must outlive the handler.
-fn compile(source: &str, n: usize) -> (ZippelHandler<C>, tempfile::NamedTempFile) {
+/// Compiles the protocol `source` with `N = n`. The returned file keeps the
+/// source available for inspection.
+fn compile(source: &str, n: usize) -> (CompiledProtocol<C>, tempfile::NamedTempFile) {
     let mut file = tempfile::Builder::new()
         .suffix(".zippel")
         .tempfile()
         .expect("temp file");
     file.write_all(source.as_bytes()).expect("write protocol");
-    let mut handler = ZippelHandler::new(ZippelArgs::new(file.path().to_path_buf()));
+    let module = ParsedModule::load(file.path()).expect("parse protocol");
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("N"), &n);
-    handler.compile(&sizes);
+    let handler = module
+        .compile(&sizes, CompileOptions::default())
+        .expect("compile protocol");
     (handler, file)
 }
 
 /// The prover graph's op and transcript node counts.
-fn node_kinds(handler: &ZippelHandler<C>) -> String {
+fn node_kinds(handler: &CompiledProtocol<C>) -> String {
     let g = handler.prover_graph();
     let ops = g.node_indices().filter(|n| g[*n].is_op()).count();
     let transcript = g.node_indices().filter(|n| g[*n].is_transcript()).count();

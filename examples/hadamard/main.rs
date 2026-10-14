@@ -1,45 +1,20 @@
 use ark_ff::{One, Zero};
 use backend::{ATyp, ArkConfig, ArkSecp256k1, Value};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use share::Ctx;
-use std::path::PathBuf;
-use zippel::*;
 
 use crate::common;
+use crate::common::size;
 
 /// The degree bound `N` the protocol is compiled for: `v_H` has degree `N`,
 /// `p_A`, `p_B`, `p_C` degree `N - 1`.
-const N_VAL: usize = 4;
-
-pub fn run(opts: &common::RunOptions) {
-    println!("=== Hadamard (ArkSecp256k1) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/hadamard/hadamard.zippel"));
-    let mut handler: zippel::ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
-    let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("N"), &N_VAL);
-    handler.compile(&sizes);
-
-    common::run_prover_and_verify(&mut handler, prover_create_inputs());
-
-    if !opts.analyses {
-        return;
-    }
-    println!("\n--- Static Analysis ---");
-    let analysis_args = ZippelArgs::new(PathBuf::from("examples/hadamard/hadamard.zippel"));
-    let mut analysis_handler: ZippelHandler<ArkSecp256k1> = ZippelHandler::new(analysis_args);
-    let mut analysis_sizes = Ctx::new();
-    analysis_sizes.insert(&Tid::new("N"), &1usize);
-    analysis_handler.compile(&analysis_sizes);
-
-    common::time_analysis!("Completeness", analysis_handler.analyze_completeness());
-    common::time_analysis!("ZK", analysis_handler.analyze_knowledge());
-}
-
 #[allow(non_snake_case)]
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
+fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkSecp256k1>> {
+    let n_val = size(sizes, "N");
+
     let mut rng = rand::rngs::OsRng;
 
-    let n_val_const = N_VAL;
+    let n_val_const = n_val;
 
     let mut p_a_coeffs = Vec::with_capacity(n_val_const);
     let mut p_b_coeffs = Vec::with_capacity(n_val_const);
@@ -69,4 +44,14 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
         (Vid("p_C".to_string()), p_C),
         (Vid("v_H".to_string()), v_H),
     ])
+}
+
+pub fn spec() -> common::ExampleSpec<ArkSecp256k1> {
+    common::ExampleSpec {
+        source: "examples/hadamard/hadamard.zippel",
+        defaults: &[("N", 4)],
+        validate: None,
+        make_inputs: prover_create_inputs,
+        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+    }
 }

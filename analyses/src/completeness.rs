@@ -15,7 +15,7 @@ use graph::{QDag, Ref};
 /// goals to reduce in `run()`.
 ///
 /// Produced by [`CompletenessAnalysis::build_inputs`]; consumed by
-/// [`CompletenessAnalysis::from_inputs`]. Splitting construction from GB
+/// [`CompletenessAnalysis::try_from_inputs`]. Splitting construction from GB
 /// computation lets callers inspect pre-GB metrics before the expensive
 /// step.
 pub struct CompletenessInputs<F: ark_ff::PrimeField> {
@@ -39,7 +39,7 @@ pub struct CompletenessInputs<F: ark_ff::PrimeField> {
 /// One shared namespace is used for prover, relation, and verifier.
 pub struct CompletenessAnalysis<C: ArkConfig> {
     /// Gröbner basis of (prover ∪ relation ∪ verifier-locals) under grevlex.
-    /// Computed in `from_inputs`.
+    /// Computed in `try_from_inputs`.
     pub basis: GbBasis<C::F>,
     /// Verifier polynomials to reduce against `basis` in `run()`.
     pub verifier: Vec<Polynomial<C::F>>,
@@ -53,7 +53,7 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
     /// every variable a generator solves for, substituted away.
     ///
     /// This is the cheap phase — no GB computation. Call
-    /// [`from_inputs`](Self::from_inputs) to compute the basis, or inspect
+    /// [`try_from_inputs`](Self::try_from_inputs) to compute the basis, or inspect
     /// the generating set for pre-GB metrics.
     pub fn build_inputs(dag: &QDag<C>) -> CompletenessInputs<C::F> {
         let mut builder = IdealBuilder::new();
@@ -113,21 +113,22 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         }
     }
 
-    /// Compute the Gröbner basis from pre-built inputs.
+    /// Compute the basis, propagating backend failures.
     ///
-    /// This is the expensive phase — `compute_gb` may hang or take a long
-    /// time. Call [`build_inputs`](Self::build_inputs) first if you need
-    /// pre-GB metrics.
-    pub fn from_inputs(inputs: CompletenessInputs<C::F>, backend: GbBackendKind) -> Self {
+    /// # Errors
+    /// Returns an error when the selected backend fails.
+    #[allow(clippy::result_large_err)]
+    pub fn try_from_inputs(
+        inputs: CompletenessInputs<C::F>,
+        backend: GbBackendKind,
+    ) -> Result<Self, AnalysisError<C>> {
         let gb = backend.build::<C::F>();
-        let basis = gb
-            .compute_gb(inputs.generating_set, &MonoOrder::grevlex())
-            .expect("GB backend should support grevlex");
+        let basis = gb.compute_gb(inputs.generating_set, &MonoOrder::grevlex())?;
 
-        Self {
+        Ok(Self {
             basis,
             verifier: inputs.verifier,
-        }
+        })
     }
 
     /// Reduces every verifier polynomial against the prover/relation Gröbner
@@ -212,7 +213,7 @@ mod tests {
     /// Test helper: build + compute in one call with the default backend.
     fn from_input(dag: &graph::QDag<ArkBls12_381>) -> CompletenessAnalysis<ArkBls12_381> {
         let inputs = CompletenessAnalysis::build_inputs(dag);
-        CompletenessAnalysis::from_inputs(inputs, GbBackendKind::default())
+        CompletenessAnalysis::try_from_inputs(inputs, GbBackendKind::default()).unwrap()
     }
 
     /// The DAG of the first protocol in `ex`.
@@ -1205,7 +1206,8 @@ mod tests {
         );
 
         let mut ca =
-            CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, GbBackendKind::default());
+            CompletenessAnalysis::<ArkBls12_381>::try_from_inputs(inputs, GbBackendKind::default())
+                .unwrap();
         assert!(
             ca.run().is_ok(),
             "message defined via an earlier message should be complete"
@@ -1319,7 +1321,8 @@ mod tests {
         assert!(left.is_empty(), "{left:?}");
 
         let mut ca =
-            CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, GbBackendKind::default());
+            CompletenessAnalysis::<ArkBls12_381>::try_from_inputs(inputs, GbBackendKind::default())
+                .unwrap();
         let result = ca.run();
         assert!(result.is_ok(), "{result:?}");
     }
@@ -1369,7 +1372,8 @@ mod tests {
         assert!(witnesses.is_empty(), "{witnesses:?}");
 
         let mut ca =
-            CompletenessAnalysis::<ArkBls12_381>::from_inputs(inputs, GbBackendKind::default());
+            CompletenessAnalysis::<ArkBls12_381>::try_from_inputs(inputs, GbBackendKind::default())
+                .unwrap();
         let result = ca.run();
         assert!(result.is_ok(), "{result:?}");
     }

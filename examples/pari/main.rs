@@ -1,7 +1,7 @@
 //! PARI (Square R1CS SNARK) — small sanity check.
 //!
-//! Generates a tiny SR1CS instance (K=16 constraints, N=1 instance input,
-//! `K_VARS=3` variables) in the upstream "instance outliner" layout, runs
+//! Generates a tiny SR1CS instance (k=16 constraints, N=1 instance input,
+//! `k_vars=3` variables) in the upstream "instance outliner" layout, runs
 //! PARI's setup (G), prover (P), and verifier (V), and asserts that
 //! verification passes. Matches the matrix-layout assumptions in
 //! `pari.zippel` so the verifier's Lagrange shortcut is sound.
@@ -13,180 +13,98 @@ use ark_poly::{
 };
 use ark_std::test_rng;
 use backend::{ArkBls12_381, ArkConfig, Value};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use share::Ctx;
-use std::{path::PathBuf, time::Instant};
-use zippel::*;
 
 use crate::common;
+use crate::common::size;
 
 type C = ArkBls12_381;
 type F = <C as ArkConfig>::F;
 type G1 = <C as ArkConfig>::G1;
 type G2 = <C as ArkConfig>::G2;
 
-const M_LOG: usize = 4;
-const K: usize = 1 << M_LOG; // = 16 constraints
-const N_PUB: usize = 1; // instance inputs (includes the constant 1 at z[0])
-const M_WIT: usize = 1; // "real" witness variables
 // Total variables under the instance-outliner layout:
-//   z = [1, x[1..N], w[0..M_WIT], aux[0..N]]   with aux[i] = z[i]^2.
-const K_VARS: usize = 2 * N_PUB + M_WIT;
-const KMN: usize = K_VARS - N_PUB; // length of `w` passed to zippel
-
-pub fn run(opts: &common::RunOptions) {
-    println!("=== PARI (Square R1CS, K={K}, N={N_PUB}, K_VARS={K_VARS}, KMN={KMN}) ===");
-
-    let args = ZippelArgs::new(PathBuf::from("examples/pari/pari.zippel"));
-    let mut handler: ZippelHandler<C> = ZippelHandler::new(args);
-    let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("M"), &M_LOG);
-    sizes.insert(&Tid::new("N"), &N_PUB);
-    sizes.insert(&Tid::new("KMN"), &KMN);
-    handler.compile(&sizes);
-
-    let inputs = build_inputs();
-    let prover_start = Instant::now();
-    let proof = handler
-        .run_prover(inputs.clone())
-        .expect("run_prover failed");
-    let prover_elapsed = prover_start.elapsed();
-    let proof_bytes = proof_size_bytes::<C>(&proof);
-    println!("Prover time:    {prover_elapsed:.2?}");
-    println!(
-        "Proof size:     {proof_bytes} bytes ({} elements)",
-        proof.len()
-    );
-    for (i, v) in proof.iter().enumerate() {
-        let variant = match v {
-            Value::Scalar(_) => "Scalar",
-            Value::G1(_) | Value::G1Affine(_) => "G1",
-            Value::G2(_) | Value::G2Affine(_) => "G2",
-            _ => "other",
-        };
-        println!("  proof[{i}] = {variant}");
-    }
-
-    let args = ZippelArgs::new(PathBuf::from("examples/pari/pari.zippel"));
-    let mut verifier_handler: ZippelHandler<C> = ZippelHandler::new(args);
-    verifier_handler.compile(&sizes);
-    let verifier_start = Instant::now();
-    let verifier_result = verifier_handler
-        .run_verifier(proof, inputs)
-        .expect("run_verifier failed");
-    let verifier_elapsed = verifier_start.elapsed();
-    let passed = check_verification(&verifier_result);
-    println!("Verifier time:  {verifier_elapsed:.2?}");
-    if passed {
-        println!("Verification:   ✓ PASSED");
-    } else {
-        println!("Verification:   ✗ FAILED");
-        std::process::exit(1);
-    }
-
-    if !opts.analyses {
-        return;
-    }
-    let analysis_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        println!("\n--- Static Analysis ---");
-        let analysis_args = ZippelArgs::new(PathBuf::from("examples/pari/pari.zippel"));
-        let mut analysis_handler: ZippelHandler<C> = ZippelHandler::new(analysis_args);
-        let mut analysis_sizes = Ctx::new();
-        analysis_sizes.insert(&Tid::new("M"), &M_LOG);
-        analysis_sizes.insert(&Tid::new("N"), &N_PUB);
-        analysis_sizes.insert(&Tid::new("KMN"), &KMN);
-        analysis_handler.compile(&analysis_sizes);
-
-        let completeness_start = Instant::now();
-        match analysis_handler.analyze_completeness() {
-            Ok(()) => println!("Completeness:    ✓"),
-            Err(e) => println!("Completeness:    ✗ {}", e),
-        }
-        println!("Completeness time: {:.2?}", completeness_start.elapsed());
-
-        let zk_start = Instant::now();
-        match analysis_handler.analyze_knowledge() {
-            Ok(()) => println!("ZK:              ✓"),
-            Err(e) => println!("ZK:              ✗ {}", e),
-        }
-        println!("ZK time:         {:.2?}", zk_start.elapsed());
-    }));
-    if analysis_result.is_err() {
-        println!("Analysis:        ⚠ not supported (non-polynomial operations)");
-    }
-}
+//   z = [1, x[1..N], w[0..m_wit], aux[0..N]]   with aux[i] = z[i]^2.
 
 /// Build a satisfying SR1CS instance in the upstream instance-outliner
 /// layout (matching `pari.zippel`'s Lagrange shortcut requirement).
-fn build_inputs() -> Ctx<Vid, Value<C>> {
+fn build_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<C>> {
+    let m_log = size(sizes, "M");
+    let k = 1 << m_log;
+    let n_pub = size(sizes, "N");
+    let m_wit = size(sizes, "KMN") - size(sizes, "N");
+    let k_vars = size(sizes, "N") + size(sizes, "KMN");
+    let kmn = size(sizes, "KMN");
+
     let mut rng = test_rng();
 
-    // --- z = [1, x[1..N], w[0..M_WIT], aux[0..N]],  aux[i] = z[i]^2 ---
-    let mut z = [F::zero(); K_VARS];
+    // --- z = [1, x[1..N], w[0..m_wit], aux[0..N]],  aux[i] = z[i]^2 ---
+    let mut z = vec![F::zero(); k_vars];
     z[0] = F::one();
-    // With `N_PUB = 1` this loop is empty, but it stays here so the layout
-    // generalizes if N_PUB is bumped.
-    for z_i in z.iter_mut().take(N_PUB).skip(1) {
+    // With `n_pub = 1` this loop is empty, but it stays here so the layout
+    // generalizes if n_pub is bumped.
+    for z_i in z.iter_mut().take(n_pub).skip(1) {
         *z_i = nonzero(&mut rng);
     }
-    for z_j in z.iter_mut().skip(N_PUB).take(M_WIT) {
+    for z_j in z.iter_mut().skip(n_pub).take(m_wit) {
         *z_j = nonzero(&mut rng);
     }
-    for i in 0..N_PUB {
-        z[N_PUB + M_WIT + i] = z[i] * z[i];
+    for i in 0..n_pub {
+        z[n_pub + m_wit + i] = z[i] * z[i];
     }
 
     // --- Build matrices in outliner layout ---
-    //   A: rows 0..K-N have nonzero entries only on witness columns
-    //      [N_PUB, K_VARS). Rows K-N..K are e_i (one-hot at instance i).
-    //   B: rows 0..K-N derived to satisfy (Az)² = Bz, with nonzero only
-    //      on witness columns. Rows K-N..K hit the aux witness column
+    //   A: rows 0..k-N have nonzero entries only on witness columns
+    //      [n_pub, k_vars). Rows k-N..k are e_i (one-hot at instance i).
+    //   B: rows 0..k-N derived to satisfy (Az)² = Bz, with nonzero only
+    //      on witness columns. Rows k-N..k hit the aux witness column
     //      that holds z[i]².
-    let original_k = K - N_PUB;
-    let mut a_mat = vec![vec![F::zero(); K_VARS]; K];
-    let mut b_mat = vec![vec![F::zero(); K_VARS]; K];
+    let original_k = k - n_pub;
+    let mut a_mat = vec![vec![F::zero(); k_vars]; k];
+    let mut b_mat = vec![vec![F::zero(); k_vars]; k];
 
     for j in 0..original_k {
         let mut a_row_acc = F::zero();
         // Sparse row: a couple of random nonzero coefficients on the
         // first witness columns, just enough to exercise the code path.
-        let cols: Vec<usize> = (N_PUB..K_VARS.min(N_PUB + 2)).collect();
+        let cols: Vec<usize> = (n_pub..k_vars.min(n_pub + 2)).collect();
         for &c in &cols {
             let coeff = F::rand(&mut rng);
             a_mat[j][c] = coeff;
             a_row_acc += coeff * z[c];
         }
         // Place (Az)² in a witness column so (Bz)[j] = (Az)[j]².
-        let c = N_PUB + (j % KMN);
+        let c = n_pub + (j % kmn);
         b_mat[j][c] = (a_row_acc * a_row_acc) * z[c].inverse().unwrap();
     }
-    for i in 0..N_PUB {
+    for i in 0..n_pub {
         a_mat[original_k + i][i] = F::one();
-        b_mat[original_k + i][N_PUB + M_WIT + i] = F::one();
+        b_mat[original_k + i][n_pub + m_wit + i] = F::one();
     }
 
     // Sanity: (Az)² = Bz at every constraint.
-    let az: Vec<F> = (0..K)
-        .map(|i| (0..K_VARS).map(|j| a_mat[i][j] * z[j]).sum::<F>())
+    let az: Vec<F> = (0..k)
+        .map(|i| (0..k_vars).map(|j| a_mat[i][j] * z[j]).sum::<F>())
         .collect();
-    let bz: Vec<F> = (0..K)
-        .map(|i| (0..K_VARS).map(|j| b_mat[i][j] * z[j]).sum::<F>())
+    let bz: Vec<F> = (0..k)
+        .map(|i| (0..k_vars).map(|j| b_mat[i][j] * z[j]).sum::<F>())
         .collect();
-    for i in 0..K {
+    for i in 0..k {
         assert_eq!(az[i] * az[i], bz[i], "SR1CS check failed in setup");
     }
 
     // ŵ_M = ẑ_M − x̂_M on the constraint domain.
-    let mut x_padded = [F::zero(); K_VARS];
-    x_padded[..N_PUB].copy_from_slice(&z[..N_PUB]);
-    let x_a_evals: Vec<F> = (0..K)
-        .map(|i| (0..K_VARS).map(|j| a_mat[i][j] * x_padded[j]).sum::<F>())
+    let mut x_padded = vec![F::zero(); k_vars];
+    x_padded[..n_pub].copy_from_slice(&z[..n_pub]);
+    let x_a_evals: Vec<F> = (0..k)
+        .map(|i| (0..k_vars).map(|j| a_mat[i][j] * x_padded[j]).sum::<F>())
         .collect();
-    let x_b_evals: Vec<F> = (0..K)
-        .map(|i| (0..K_VARS).map(|j| b_mat[i][j] * x_padded[j]).sum::<F>())
+    let x_b_evals: Vec<F> = (0..k)
+        .map(|i| (0..k_vars).map(|j| b_mat[i][j] * x_padded[j]).sum::<F>())
         .collect();
-    let w_a_evals: Vec<F> = (0..K).map(|i| az[i] - x_a_evals[i]).collect();
-    let w_b_evals: Vec<F> = (0..K).map(|i| bz[i] - x_b_evals[i]).collect();
+    let w_a_evals: Vec<F> = (0..k).map(|i| az[i] - x_a_evals[i]).collect();
+    let w_b_evals: Vec<F> = (0..k).map(|i| bz[i] - x_b_evals[i]).collect();
 
     // --- PARI Generator: sample trapdoor, build SRS ---
     let alpha = F::rand(&mut rng);
@@ -196,20 +114,20 @@ fn build_inputs() -> Ctx<Vid, Value<C>> {
     let g_g1: G1 = G1::rand(&mut rng);
     let h_g2: G2 = G2::rand(&mut rng);
 
-    let domain = GeneralEvaluationDomain::<F>::new(K).expect("K-domain");
+    let domain = GeneralEvaluationDomain::<F>::new(k).expect("k-domain");
     let omega = domain.group_gen();
 
-    let mut a_polys: Vec<DensePolynomial<F>> = Vec::with_capacity(K_VARS);
-    let mut b_polys: Vec<DensePolynomial<F>> = Vec::with_capacity(K_VARS);
-    for j in 0..K_VARS {
-        let a_col: Vec<F> = (0..K).map(|i| a_mat[i][j]).collect();
-        let b_col: Vec<F> = (0..K).map(|i| b_mat[i][j]).collect();
+    let mut a_polys: Vec<DensePolynomial<F>> = Vec::with_capacity(k_vars);
+    let mut b_polys: Vec<DensePolynomial<F>> = Vec::with_capacity(k_vars);
+    for j in 0..k_vars {
+        let a_col: Vec<F> = (0..k).map(|i| a_mat[i][j]).collect();
+        let b_col: Vec<F> = (0..k).map(|i| b_mat[i][j]).collect();
         a_polys.push(DensePolynomial::from_coefficients_vec(domain.ifft(&a_col)));
         b_polys.push(DensePolynomial::from_coefficients_vec(domain.ifft(&b_col)));
     }
 
     let delta2_inv = delta2.inverse().expect("delta2 != 0");
-    let sigma_w_vec: Vec<G1> = (N_PUB..K_VARS)
+    let sigma_w_vec: Vec<G1> = (n_pub..k_vars)
         .map(|i| {
             let scalar =
                 (alpha * a_polys[i].evaluate(&tau) + beta * b_polys[i].evaluate(&tau)) * delta2_inv;
@@ -219,7 +137,7 @@ fn build_inputs() -> Ctx<Vid, Value<C>> {
 
     let tau_powers: Vec<F> = {
         let mut acc = F::one();
-        (0..K)
+        (0..k)
             .map(|_| {
                 let v = acc;
                 acc *= tau;
@@ -242,14 +160,14 @@ fn build_inputs() -> Ctx<Vid, Value<C>> {
     let tau_h_val: G2 = h_g2 * tau;
 
     // Lagrange shortcut inputs: x = (z[0], z[1], ..., z[N-1]),
-    //                          omegas[i] = ω^{K-N+i}
-    let x_vec: Vec<F> = z[..N_PUB].to_vec();
-    let omegas_vec: Vec<F> = (0..N_PUB)
-        .map(|i| omega.pow([(K - N_PUB + i) as u64]))
+    //                          omegas[i] = ω^{k-N+i}
+    let x_vec: Vec<F> = z[..n_pub].to_vec();
+    let omegas_vec: Vec<F> = (0..n_pub)
+        .map(|i| omega.pow([(k - n_pub + i) as u64]))
         .collect();
-    let k_inv = F::from(K as u64).inverse().unwrap();
+    let k_inv = F::from(k as u64).inverse().unwrap();
 
-    let w_vec: Vec<F> = z[N_PUB..].to_vec();
+    let w_vec: Vec<F> = z[n_pub..].to_vec();
 
     let z_a_value = Value::vec_scalar(az);
     let z_b_value = Value::vec_scalar(bz);
@@ -302,5 +220,27 @@ fn nonzero<R: rand::Rng>(rng: &mut R) -> F {
         if !v.is_zero() {
             return v;
         }
+    }
+}
+
+pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
+    common::ExampleSpec {
+        source: "examples/pari/pari.zippel",
+        defaults: &[("M", 3), ("N", 2), ("KMN", 3)],
+        validate: Some(|sizes, analysis| {
+            common::check_power_of_two(sizes, "M")?;
+            if !analysis
+                && (size(sizes, "N") == 0
+                    || size(sizes, "KMN") < size(sizes, "N")
+                    || size(sizes, "N") >= 1usize << size(sizes, "M"))
+            {
+                return Err(
+                    "N must be >= 1 and < 2^M; KMN must be >= N for the outliner layout".into(),
+                );
+            }
+            Ok(())
+        }),
+        make_inputs: build_inputs,
+        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
     }
 }

@@ -1,86 +1,19 @@
 // ProductCheck PIOP example driver.
 //
-// Builds a random satisfying instance with NUM_LEAVES = 2^S hypercube points
+// Builds a random satisfying instance with num_leaves = 2^s hypercube points
 // for f and runs the parametric ProductCheck protocol from
 // hyperplonk_productcheck.zippel on it.
 
 use ark_ff::{Field, Zero};
 use backend::{ArkBls12_381, ArkConfig, Value};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use rand::Rng;
 use share::Ctx;
-use std::{path::PathBuf, time::Instant};
-use zippel::*;
 
 use crate::common;
+use crate::common::size;
 
-// ProductCheck dimension. Edit S to scale; num_leaves = 2^S follows.
-const S: usize = 3;
-const NUM_LEAVES: usize = 1 << S; // = 2^S
-
-pub fn run(opts: &common::RunOptions) {
-    let zippel_file =
-        PathBuf::from("examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel");
-
-    println!("=== HyperPlonk ProductCheck PIOP ===");
-    println!("num_leaves = {NUM_LEAVES}, s = log num_leaves = {S}");
-
-    let args = ZippelArgs::new(zippel_file);
-    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("S"), &S);
-    handler.compile(&sizes);
-
-    let inputs = prover_create_inputs();
-    let prover_start = Instant::now();
-    let proof = handler
-        .run_prover(inputs.clone())
-        .expect("run_prover failed");
-    let prover_elapsed = prover_start.elapsed();
-    let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
-    println!("Prover time:    {prover_elapsed:.2?}");
-    println!(
-        "Proof size:     {proof_bytes} bytes ({} elements)",
-        proof.len()
-    );
-    let verifier_start = Instant::now();
-    let verifier_result = handler
-        .run_verifier(proof, inputs)
-        .expect("run_verifier failed");
-    let verifier_elapsed = verifier_start.elapsed();
-    let passed = check_verification(&verifier_result);
-    println!("Verifier time:  {verifier_elapsed:.2?}");
-    if passed {
-        println!("Verification:   ✓ PASSED");
-    } else {
-        println!("Verification:   ✗ FAILED");
-        std::process::exit(1);
-    }
-
-    if !opts.analyses {
-        return;
-    }
-    let analysis_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        println!("\n--- Static Analysis ---");
-
-        let completeness_start = Instant::now();
-        match handler.analyze_completeness() {
-            Ok(()) => println!("Completeness:    ✓"),
-            Err(e) => println!("Completeness:    ✗ {}", e),
-        }
-        println!("Completeness time: {:.2?}", completeness_start.elapsed());
-
-        let zk_start = Instant::now();
-        match handler.analyze_knowledge() {
-            Ok(()) => println!("ZK:              ✓"),
-            Err(e) => println!("ZK:              ✗ {}", e),
-        }
-        println!("ZK time:         {:.2?}", zk_start.elapsed());
-    }));
-    if analysis_result.is_err() {
-        println!("Analysis:        ⚠ not supported (non-polynomial operations)");
-    }
-}
+// ProductCheck dimensions follow the resolved S size.
 
 /// A satisfying `ProductCheck` instance: leaves `f` of length `num_leaves`,
 /// the product-tree MLE `v` of length `2·num_leaves` (s+1 variables), and
@@ -98,7 +31,7 @@ struct ProductCheckInstance<F> {
 ///   ṽ(1, `x_1`, ..., `x_S`) = `ṽ(x_1`, ..., `x_S`, 0) · `ṽ(x_1`, ..., `x_S`, 1)
 /// with the self-referential top entry ṽ(1, ..., 1) := 0.
 ///
-/// Layout in v[]: idx = `X_0` + `2·X_1` + ... + `2^S·X_S`. So leaves live at even
+/// Layout in v[]: idx = `X_0` + `2·X_1` + ... + `2^s·X_S`. So leaves live at even
 /// indices (v[2k] = f[k]); internal nodes live at odd indices.
 fn build_product_tree<F: Field + Zero>(f: &[F]) -> Vec<F> {
     let n = f.len();
@@ -153,25 +86,41 @@ where
     ProductCheckInstance { f, v, claimed }
 }
 
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
+fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     type F = <ArkBls12_381 as ArkConfig>::F;
+    let s = size(sizes, "S");
+    let num_leaves = 1 << s;
+
     let mut rng = rand::rngs::OsRng;
 
     // -------------------------------------------------------------------
     // Generate a random satisfying ProductCheck instance.
     //
-    //   f       (length NUM_LEAVES)        — MLE leaves on B_s
-    //   v       (length 2·NUM_LEAVES)      — product-tree MLE on B_{s+1}
+    //   f       (length num_leaves)        — MLE leaves on B_s
+    //   v       (length 2·num_leaves)      — product-tree MLE on B_{s+1}
     //   claimed (scalar)                   — the claimed product (= root)
     //
     // Replace `random_productcheck(...)` with explicit constants if you
     // want to pin a specific instance.
     // -------------------------------------------------------------------
-    let inst = random_productcheck::<F, _>(&mut rng, NUM_LEAVES);
+    let inst = random_productcheck::<F, _>(&mut rng, num_leaves);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("f_evs".to_string()), Value::vec_scalar(inst.f)),
         (Vid("v_evs".to_string()), Value::vec_scalar(inst.v)),
         (Vid("claimed".to_string()), Value::Scalar(inst.claimed)),
     ])
+}
+
+pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
+    common::ExampleSpec {
+        source: "examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel",
+        defaults: &[("S", 3)],
+        validate: Some(|sizes, _analysis| {
+            common::check_power_of_two(sizes, "S")?;
+            Ok(())
+        }),
+        make_inputs: prover_create_inputs,
+        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+    }
 }

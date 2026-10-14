@@ -3427,12 +3427,9 @@ name = "zippel"
 version = "0.1.0"
 dependencies = [
  "analyses",
- "ark-bls12-381",
  "ark-ec",
  "ark-ff",
- "ark-groth16",
  "ark-poly",
- "ark-relations",
  "ark-std",
  "backend",
  "clap",
@@ -3441,7 +3438,6 @@ dependencies = [
  "graph",
  "lang",
  "libc",
- "log",
  "petgraph",
  "rand 0.8.6",
  "runtime",

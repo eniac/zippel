@@ -172,7 +172,7 @@ pub static PROTOCOLS: &[Protocol] = &[
     Protocol {
         name: "spartan",
         path: "examples/spartan/spartan.zippel",
-        sizes: &[("M", 3)],
+        sizes: &[("M", 4)],
         completeness: true,
         soundness: None,
     },
@@ -242,7 +242,7 @@ pub static PROTOCOLS: &[Protocol] = &[
     Protocol {
         name: "hyperplonk_snark",
         path: "examples/hyperplonk_snark/hyperplonk_snark.zippel",
-        sizes: &[("S", 2)],
+        sizes: &[("S", 3)],
         completeness: true,
         soundness: None,
     },
@@ -256,7 +256,7 @@ pub static PROTOCOLS: &[Protocol] = &[
     Protocol {
         name: "kzh",
         path: "examples/kzh/kzh.zippel",
-        sizes: &[("NX", 1), ("NY", 1)],
+        sizes: &[("NX", 2), ("NY", 2)],
         completeness: true,
         soundness: None,
     },

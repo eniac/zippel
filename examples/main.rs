@@ -1,20 +1,7 @@
-//! Single entry point for every Zippel protocol example.
-//!
-//! Each `examples/<name>/main.rs` exposes `run(&common::RunOptions)`, or
-//! `run(&Args, &common::RunOptions)` with a `clap::Args` struct if it takes
-//! arguments; the `examples!` list registers it as a Clap subcommand. One
-//! Cargo target means one link product and one debug-info file for all
-//! protocols instead of one per protocol.
-//!
-//! ```text
-//! cargo run --example zippel -- <name> [example args...]
-//! cargo run --example zippel -- <name> --no-analysis   # prover and verifier only
-//! cargo run --example zippel                 # list available examples
-//! ```
+//! Registered protocol examples: `zippel run <example>` or `zippel analyze <example>`.
 
 #[path = "common/cli.rs"]
 mod cli;
-#[path = "common/analysis.rs"]
 mod common;
 
 #[path = "bccgp/main.rs"]
@@ -94,23 +81,26 @@ mod zerocheck;
 #[path = "zeromorph_kzg/main.rs"]
 mod zeromorph_kzg;
 
-/// Declares the `Example` subcommands and dispatches each to its module's
-/// `run`. An entry written `name(args)` takes that module's `Args`.
+/// Register typed example descriptors and positional CLI choices.
 macro_rules! examples {
-    (@args $name:ident $args:ident) => { $name::Args };
-    ($($name:ident $(($args:ident))?),* $(,)?) => {
-        #[derive(clap::Subcommand)]
-        #[command(rename_all = "snake_case")]
-        #[allow(non_camel_case_types)]
-        enum Example {
-            $($name $((examples!(@args $name $args)))?,)*
+    ($($name:ident),* $(,)?) => {
+        fn command() -> clap::Command {
+            const NAMES: &[&str] = &[$(stringify!($name)),*];
+            clap::Command::new("zippel").about("Run and analyze Zippel protocol examples")
+                .arg_required_else_help(true)
+                .subcommand(cli::operation("run", "Prove and verify an example", NAMES, false))
+                .subcommand(cli::operation("analyze", "Run static analyses", NAMES, true))
         }
-
-        impl Example {
-            fn run(self, opts: &common::RunOptions) {
-                match self {
-                    $(Self::$name $(($args))? => $name::run($(&$args,)? opts),)*
-                }
+        fn example_help(name: &str) -> String {
+            match name {
+                $(stringify!($name) => cli::example_help(&$name::spec()),)*
+                _ => unreachable!("clap validates example names"),
+            }
+        }
+        fn dispatch(name: &str, request: &common::Request) -> u8 {
+            match name {
+                $(stringify!($name) => common::run(name, &$name::spec(), request),)*
+                _ => unreachable!("clap validates example names"),
             }
         }
     };
@@ -147,25 +137,33 @@ examples! {
     okamoto,
     okamoto_elgamal,
     pari,
-    pst13(args),
+    pst13,
     r1cs_sigma,
     schnorr,
     schnorr_3round,
-    spartan(args),
+    spartan,
     sumcheck,
     zerocheck,
     zeromorph_kzg,
 }
 
-fn main() {
-    let cli = <cli::Cli<Example> as clap::Parser>::parse();
-    // Examples name their `.zippel` files relative to the repository root.
-    std::env::set_current_dir(env!("CARGO_MANIFEST_DIR")).expect("repository root exists");
-    if cli.no_analysis {
-        println!("(static analyses skipped: --no-analysis)");
+fn main() -> std::process::ExitCode {
+    let mut command = command();
+    let matches = command.clone().get_matches();
+    let (operation, matches) = matches.subcommand().unwrap();
+    let name = matches.get_one::<String>("example");
+    if matches.get_flag("help") {
+        let mut help = command
+            .find_subcommand_mut(operation)
+            .unwrap()
+            .clone()
+            .bin_name(format!("zippel {operation}"));
+        if let Some(name) = name {
+            help = help.after_help(example_help(name));
+        }
+        help.print_help().expect("write help");
+        return std::process::ExitCode::SUCCESS;
     }
-    let opts = common::RunOptions {
-        analyses: !cli.no_analysis,
-    };
-    cli.example.run(&opts);
+    let request = cli::request(matches, operation);
+    std::process::ExitCode::from(dispatch(name.unwrap(), &request))
 }

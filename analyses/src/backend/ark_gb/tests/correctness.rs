@@ -550,3 +550,21 @@ fn cyclic_3_elim_pinned() {
     let pinned = pinned_polys(&vars, CYCLIC_3_GB);
     assert_matches_reference("cyclic/3/elim/pinned", &our_g, pinned, &order);
 }
+
+#[test]
+fn capacity_limits_return_backend_errors() {
+    let backend = ArkGb::<Fr>::with_width(8);
+    let vars = mk_vars("capacity", 64);
+    let ideal = vars.iter().map(Polynomial::var).collect();
+    let error = backend
+        .compute_gb(ideal, &MonoOrder::grevlex())
+        .unwrap_err();
+    assert!(error.to_string().contains("at most 63 variables"));
+
+    let mut polynomial = Polynomial::var(&vars[0]);
+    polynomial.pow(128);
+    let error = backend
+        .compute_gb(vec![polynomial], &MonoOrder::grevlex())
+        .unwrap_err();
+    assert!(error.to_string().contains("exponents <= 127"));
+}

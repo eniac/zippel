@@ -25,7 +25,7 @@ echo
 echo "== Running example protocols =="
 for proto in schnorr kzg ipa; do
     echo "-- ${proto} --"
-    cargo run --release --example zippel -- "${proto}"
+    cargo run --release --example zippel -- run "${proto}"
     echo
 done
 

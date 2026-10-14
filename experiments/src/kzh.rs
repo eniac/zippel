@@ -67,10 +67,10 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{CompileOptions, CompiledProtocol, ParsedModule, check_verification};
 
     pub struct Setup {
-        handler: ZippelHandler<ArkBls12_381>,
+        handler: CompiledProtocol<ArkBls12_381>,
         inputs: HashMap<Vid, Value<ArkBls12_381>>,
         compile_time: Vec<std::time::Duration>,
     }
@@ -80,15 +80,18 @@ pub mod zippel_side {
             let (nx, ny) = (sh.srs.dimensions[0], sh.srs.dimensions[1]);
 
             let (handler, compile_time) = crate::sample_compile(|| {
-                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(ZippelArgs::new(
+                let module = ParsedModule::load(
                     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                         .join("..")
                         .join("examples/kzh/kzh.zippel"),
-                ));
+                )
+                .expect("parse protocol");
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("NX"), &nx);
                 sizes.insert(&Tid::new("NY"), &ny);
-                handler.compile_for_execution(&sizes);
+                let handler: CompiledProtocol<ArkBls12_381> = module
+                    .compile(&sizes, CompileOptions::default())
+                    .expect("compile protocol");
                 handler
             });
 
@@ -135,9 +138,9 @@ pub mod zippel_side {
         /// Panics if either graph fails to execute or the verifier rejects.
         pub fn time_protocol(&mut self) -> Timing {
             let (prove, prove_peak, proof) =
-                crate::sample_zippel_prover(&mut self.handler, &self.inputs);
+                crate::sample_zippel_prover(&self.handler, &self.inputs);
             let (verify, verify_peak, result) =
-                crate::sample_zippel_verifier(&mut self.handler, &proof, &self.inputs);
+                crate::sample_zippel_verifier(&self.handler, &proof, &self.inputs);
             assert!(
                 check_verification(&result),
                 "zippel KZH-2 verification FAILED"

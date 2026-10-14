@@ -152,7 +152,7 @@ impl Report {
     }
 }
 
-/// Everything `ZippelHandler::compile` does short of running the protocol: parse, concretize
+/// Everything `ParsedModule::compile` does short of running the protocol: parse, concretize
 /// sizes, type-check, then build the Graph IR and project each protocol. A stage runs only if
 /// the ones before it reported no errors, which would otherwise cascade.
 fn check(src: &str, given: &Ctx<Tid, usize>) -> Report {
@@ -221,7 +221,7 @@ fn no_default_sizes(module: &UModule, given: &Ctx<Tid, usize>) -> Diagnostic {
 }
 
 /// Build the Graph IR and project the prover and verifier of every protocol, as
-/// `ZippelHandler::compile` does for one.
+/// `ParsedModule::compile` does for one.
 fn lower(module: &CModule) -> Vec<Diagnostic> {
     let dags = match UDags::<Backend>::from_module(module.clone()) {
         Ok(dags) => dags,
@@ -230,7 +230,7 @@ fn lower(module: &CModule) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     let mut seen = HashSet::new();
     for proto in dags.protocols() {
-        // Like `ZippelHandler::compile`, also project the prover: it can only fail by
+        // Like `ParsedModule::compile`, also project the prover: it can only fail by
         // panicking on a broken internal invariant, reported as an internal compiler error.
         let _ = proto.get_prover();
         if let Err(e) = proto.get_verifier() {

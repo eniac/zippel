@@ -1,87 +1,13 @@
 use backend::{ArkBls12_381, ArkConfig, ArkGroupOps, ArkPairingOps, Value};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use share::Ctx;
-use std::{path::PathBuf, time::Instant};
-use zippel::*;
 
 use crate::common;
+use crate::common::size;
 
-pub fn run(opts: &common::RunOptions) {
-    const LOG_N: usize = 8;
-    env_logger::init();
-    println!("=== Dory Evaluation Proof (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/dory_ipa/dory_ipa.zippel"));
-    let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    println!("Compiling Zippel files...");
-    let mut sizes: Ctx<Tid, usize> = Ctx::new();
-    sizes.insert(&Tid::new("S"), &LOG_N);
-    handler.compile(&sizes);
-    println!("Compilation successful.");
-
-    let inputs = prover_create_inputs();
-    println!("Generating default schedule for prover...");
-    println!("Running prover...");
-    let prover_start = Instant::now();
-    let proof = handler
-        .run_prover(inputs.clone())
-        .expect("run_prover failed");
-    let prover_elapsed = prover_start.elapsed();
-    let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
-    println!("Prover time:    {prover_elapsed:.2?}");
-    println!(
-        "Proof size:     {proof_bytes} bytes ({} elements)",
-        proof.len()
-    );
-
-    println!("Generating default schedule for verifier...");
-    println!("Running verifier...");
-    let verifier_start = Instant::now();
-    let verifier_result = handler
-        .run_verifier(proof, inputs)
-        .expect("run_verifier failed");
-    let verifier_elapsed = verifier_start.elapsed();
-    let passed = check_verification(&verifier_result);
-    println!("Verifier time:  {verifier_elapsed:.2?}");
-    if passed {
-        println!("Verification:   ✓ PASSED");
-    } else {
-        println!("Verification:   ✗ FAILED");
-        std::process::exit(1);
-    }
-
-    if !opts.analyses {
-        return;
-    }
-    let analysis_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        println!("\n--- Static Analysis ---");
-        let analysis_args = ZippelArgs::new(PathBuf::from("examples/dory_ipa/dory_ipa.zippel"));
-        let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
-        let mut analysis_sizes = Ctx::new();
-        analysis_sizes.insert(&Tid::new("S"), &LOG_N);
-        analysis_handler.compile(&analysis_sizes);
-
-        let completeness_start = Instant::now();
-        match analysis_handler.analyze_completeness() {
-            Ok(()) => println!("Completeness:    ✓"),
-            Err(e) => println!("Completeness:    ✗ {}", e),
-        }
-        println!("Completeness time: {:.2?}", completeness_start.elapsed());
-
-        let zk_start = Instant::now();
-        match analysis_handler.analyze_knowledge() {
-            Ok(()) => println!("ZK:              ✓"),
-            Err(e) => println!("ZK:              ✗ {}", e),
-        }
-        println!("ZK time:         {:.2?}", zk_start.elapsed());
-    }));
-    if analysis_result.is_err() {
-        println!("Analysis:        ⚠ not supported (non-polynomial operations)");
-    }
-}
-
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
+fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
-    let n = 256;
+    let n = 1usize << size(sizes, "S");
 
     // Generate random vectors
     let u_vec = <ArkBls12_381 as ArkConfig>::G1Ops::vec_rand(&mut rng, n);
@@ -166,4 +92,17 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("u_vec".to_string()), Value::vec_g1(u_vec)),
         (Vid("g_vec".to_string()), Value::vec_g2(g_vec)),
     ])
+}
+
+pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
+    common::ExampleSpec {
+        source: "examples/dory_ipa/dory_ipa.zippel",
+        defaults: &[("S", 3)],
+        validate: Some(|sizes, _analysis| {
+            common::check_power_of_two(sizes, "S")?;
+            Ok(())
+        }),
+        make_inputs: prover_create_inputs,
+        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+    }
 }

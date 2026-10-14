@@ -1,51 +1,15 @@
 use ark_std::One;
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, Value};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use share::Ctx;
-use std::path::PathBuf;
-use zippel::*;
 
 use crate::common;
+use crate::common::size;
 
-/// PST13 multilinear polynomial commitment with N variables
-#[derive(clap::Args)]
-pub struct Args {
-    /// Number of variables (N >= 1)
-    #[arg(value_name = "N", default_value_t = 2, value_parser = parse_n)]
-    n: usize,
-}
+fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
+    let n = size(sizes, "N");
 
-fn parse_n(value: &str) -> Result<usize, String> {
-    let n = value.parse().map_err(|_| "N must be an integer")?;
-    if n == 0 {
-        return Err("N must be >= 1".into());
-    }
-    Ok(n)
-}
-
-pub fn run(args: &Args, opts: &common::RunOptions) {
-    let n = args.n;
-
-    println!("=== PST13 Multilinear PCS (ArkBls12_381, N={n}) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/pst13/pst13.zippel"));
-    let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("N"), &n);
-    handler.compile(&sizes);
-
-    common::run_prover_and_verify(&mut handler, prover_create_inputs(n));
-
-    if !opts.analyses {
-        return;
-    }
-    println!("\n--- Static Analysis ---");
-    common::time_analysis!("Completeness", handler.analyze_completeness());
-    common::time_analysis!("ZK", handler.analyze_knowledge());
-    common::time_analysis!("Soundness", handler.analyze_special_soundness(vec![2]));
-}
-
-fn prover_create_inputs(n: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
     let size = 1usize << n;
 
@@ -107,4 +71,21 @@ fn prover_create_inputs(n: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("alpha_H".to_string()), alpha_h),
         (Vid("alpha".to_string()), Value::vec_scalar(alpha)),
     ])
+}
+
+pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
+    common::ExampleSpec {
+        source: "examples/pst13/pst13.zippel",
+        defaults: &[("N", 2)],
+        validate: Some(|sizes, _analysis| {
+            common::check_power_of_two(sizes, "N")?;
+            Ok(())
+        }),
+        make_inputs: prover_create_inputs,
+        analyses: &[
+            common::Analysis::Completeness,
+            common::Analysis::Zk,
+            common::Analysis::Soundness(&[2]),
+        ],
+    }
 }

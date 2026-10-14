@@ -67,6 +67,14 @@ impl<F: PrimeField> GbBackend<F> for ArkGb<F> {
         order: &MonoOrder,
     ) -> Result<GbBasis<F>, BackendError> {
         let w = self.w;
+        let (vars, exponents_fit) = collect_and_validate(&ideal);
+        if vars.len() > 8 * w - 1 || !exponents_fit {
+            return Err(BackendError::Other(format!(
+                "ark-gb supports at most {} variables and exponents <= 127; got {} variables (exponents fit: {exponents_fit}); try --backend singular",
+                8 * w - 1,
+                vars.len()
+            )));
+        }
         let blocks = order.blocks();
 
         // Case 1: single GrevLex block, vars inferred.

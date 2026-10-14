@@ -22,12 +22,12 @@ pub mod zippel_side {
     use lang::id::Vid;
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{CompileOptions, CompiledProtocol, ParsedModule, check_verification};
 
     /// The compiled Schnorr protocol. It takes no size parameters, so the only
     /// per-instance state is the handler and the measured compile time.
     pub struct Setup {
-        handler: ZippelHandler<ArkBls12_381>,
+        handler: CompiledProtocol<ArkBls12_381>,
         compile_time: Vec<std::time::Duration>,
     }
 
@@ -43,9 +43,10 @@ pub mod zippel_side {
                 .join("..")
                 .join("examples/schnorr/schnorr.zippel");
             let (handler, compile_time) = crate::sample_compile(|| {
-                let args = ZippelArgs::new(zippel_file.clone());
-                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-                handler.compile_for_execution(&Ctx::new());
+                let module = ParsedModule::load(&zippel_file).expect("parse protocol");
+                let handler: CompiledProtocol<ArkBls12_381> = module
+                    .compile(&Ctx::new(), CompileOptions::default())
+                    .expect("compile protocol");
                 handler
             });
             Setup {
@@ -90,10 +91,9 @@ pub mod zippel_side {
                 (Vid("h".to_string()), Value::g1_affine(h)),
             ]);
 
-            let (prove, prove_peak, proof) =
-                crate::sample_zippel_prover(&mut self.handler, &inputs);
+            let (prove, prove_peak, proof) = crate::sample_zippel_prover(&self.handler, &inputs);
             let (verify, verify_peak, result) =
-                crate::sample_zippel_verifier(&mut self.handler, &proof, &inputs);
+                crate::sample_zippel_verifier(&self.handler, &proof, &inputs);
             assert!(
                 check_verification(&result),
                 "zippel schnorr verification FAILED"

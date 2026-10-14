@@ -2,29 +2,10 @@ use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, Value};
 use lang::id::Vid;
 use share::Ctx;
-use std::path::PathBuf;
-use zippel::*;
 
 use crate::common;
 
-pub fn run(opts: &common::RunOptions) {
-    println!("=== Okamoto (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/okamoto/okamoto.zippel"));
-    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    handler.compile(&Ctx::new());
-
-    common::run_prover_and_verify(&mut handler, prover_create_inputs());
-
-    if !opts.analyses {
-        return;
-    }
-    println!("\n--- Static Analysis ---");
-    common::time_analysis!("Completeness", handler.analyze_completeness());
-    common::time_analysis!("ZK", handler.analyze_knowledge());
-    common::time_analysis!("Soundness", handler.analyze_special_soundness(vec![2]));
-}
-
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
+fn prover_create_inputs(_sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     type F = <ArkBls12_381 as ArkConfig>::F;
     type G1 = <ArkBls12_381 as ArkConfig>::G1;
     let mut rng = rand::rngs::OsRng;
@@ -43,4 +24,18 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("h".to_string()), Value::g1(h)),
         (Vid("comm".to_string()), Value::g1(comm)),
     ])
+}
+
+pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
+    common::ExampleSpec {
+        source: "examples/okamoto/okamoto.zippel",
+        defaults: &[],
+        validate: None,
+        make_inputs: prover_create_inputs,
+        analyses: &[
+            common::Analysis::Completeness,
+            common::Analysis::Zk,
+            common::Analysis::Soundness(&[2]),
+        ],
+    }
 }

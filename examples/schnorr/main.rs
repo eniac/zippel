@@ -2,30 +2,10 @@ use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, ArkGroupOps, Value};
 use lang::id::Vid;
 use share::Ctx;
-use std::path::PathBuf;
-use zippel::*;
 
 use crate::common;
 
-pub fn run(opts: &common::RunOptions) {
-    println!("=== Schnorr (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/schnorr/schnorr.zippel"));
-    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    handler.compile(&Ctx::new());
-
-    common::run_prover_and_verify(&mut handler, prover_create_inputs());
-
-    if !opts.analyses {
-        return;
-    }
-    // Static analysis (completeness, ZK, & soundness)
-    println!("\n--- Static Analysis ---");
-    common::time_analysis!("Completeness", handler.analyze_completeness());
-    common::time_analysis!("ZK", handler.analyze_knowledge());
-    common::time_analysis!("Soundness", handler.analyze_special_soundness(vec![2]));
-}
-
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
+fn prover_create_inputs(_sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
     let x = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
     let g = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
@@ -36,4 +16,18 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("g".to_string()), Value::g1(g)),
         (Vid("h".to_string()), Value::g1_affine(h)),
     ])
+}
+
+pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
+    common::ExampleSpec {
+        source: "examples/schnorr/schnorr.zippel",
+        defaults: &[],
+        validate: None,
+        make_inputs: prover_create_inputs,
+        analyses: &[
+            common::Analysis::Completeness,
+            common::Analysis::Zk,
+            common::Analysis::Soundness(&[2]),
+        ],
+    }
 }

@@ -1,38 +1,16 @@
 use ark_ff::fields::Field;
 use ark_std::UniformRand;
 use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use share::Ctx;
-use std::path::PathBuf;
-use zippel::*;
 
 use crate::common;
+use crate::common::size;
 
-pub fn run(opts: &common::RunOptions) {
-    println!("=== KZG (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel"));
-    let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("N"), &2);
-    handler.compile(&sizes);
-
-    common::run_prover_and_verify(&mut handler, prover_create_inputs());
-
-    if !opts.analyses {
-        return;
-    }
-    // Analyze completeness/ZK at the same (small) N the prover demonstrates.
-    // kzg's `where` clause contains `for i in 0..N-1`, which is empty (and
-    // ill-typed) at the auto-minimized N=1, so analyze at the compiled N=2.
-    println!("\n--- Static Analysis ---");
-    common::time_analysis!("Completeness", handler.analyze_completeness());
-    common::time_analysis!("ZK", handler.analyze_knowledge());
-}
-
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
+fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
 
-    let n_size = 2;
+    let n_size = size(sizes, "N");
     let gen_g1_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
     let gen_g1: Value<ArkBls12_381> = Value::g1(gen_g1_input);
 
@@ -60,4 +38,14 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("gen_g2".to_string()), gen_g2),
         (Vid("srs_g2_s".to_string()), srs_g2_s),
     ])
+}
+
+pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
+    common::ExampleSpec {
+        source: "examples/kzg/kzg.zippel",
+        defaults: &[("N", 2)],
+        validate: None,
+        make_inputs: prover_create_inputs,
+        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+    }
 }

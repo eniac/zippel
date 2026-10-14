@@ -122,16 +122,13 @@ jobs:
       - name: Run every example (prover and verifier, no analyses)
         run: |
           bin=target/release/examples/zippel
-          # With no arguments the runner lists the examples and exits non-zero.
-          mapfile -t names < <("$bin" 2>&1 | sed -n '/^Commands:/,/^$/p' \
+          mapfile -t names < <("$bin" run --help | sed -n '/^Examples:/,/^$/p' \
             | grep -oE '^  [a-z0-9_]+' | tr -d ' ' | grep -vx help)
-          if [ "${#names[@]}" -eq 0 ]; then
-            echo "no examples found"; exit 1
-          fi
+          if [ "${#names[@]}" -eq 0 ]; then echo "no examples found"; exit 1; fi
           failed=()
           for name in "${names[@]}"; do
             echo "::group::$name"
-            if ! timeout 900 "$bin" "$name" --no-analysis; then
+            if ! timeout 900 "$bin" run "$name"; then
               failed+=("$name")
             fi
             echo "::endgroup::"

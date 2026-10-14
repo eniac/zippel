@@ -23,7 +23,7 @@ use share::Set;
 /// the lex ordering, and all state needed by `run()`.
 ///
 /// Produced by [`SpecialSoundnessAnalysis::build_inputs`]; consumed by
-/// [`SpecialSoundnessAnalysis::from_inputs`]. Splitting construction
+/// [`SpecialSoundnessAnalysis::try_from_inputs`]. Splitting construction
 /// from GB computation lets callers inspect pre-GB metrics before the
 /// expensive step.
 pub struct SoundnessInputs<C: ArkConfig> {
@@ -49,7 +49,7 @@ pub struct SoundnessInputs<C: ArkConfig> {
 /// Perform a special soundness analysis using Groebner bases.
 pub struct SpecialSoundnessAnalysis<C: ArkConfig> {
     /// Gröbner basis of the search ideal (verifier TC copies + d-equations +
-    /// relation) under lex order. Computed in `from_inputs`.
+    /// relation) under lex order. Computed in `try_from_inputs`.
     /// Snapshotable.
     pub search_gb: GbBasis<C::F>,
     /// Witness slots (witness args) for extractor search in `run()`.
@@ -154,7 +154,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
     /// lex elimination ordering, and substitute the `pl` definitions.
     ///
     /// This is the cheap phase — no GB computation. Call
-    /// [`from_inputs`](Self::from_inputs) to compute the basis, or inspect
+    /// [`try_from_inputs`](Self::try_from_inputs) to compute the basis, or inspect
     /// the generating set for pre-GB metrics.
     ///
     /// # Errors
@@ -420,14 +420,12 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
     /// # Errors
     /// Returns `AnalysisError::UnitIdeal` if the search ideal is the unit
     /// ideal (trivially solvable — no soundness guarantee).
-    pub fn from_inputs(
+    pub fn try_from_inputs(
         inputs: SoundnessInputs<C>,
         backend: GbBackendKind,
     ) -> Result<Self, AnalysisError<C>> {
         let gb = backend.build::<C::F>();
-        let search_gb = gb
-            .compute_gb(inputs.generating_set, &inputs.lex_order)
-            .expect("GB backend should support lex order");
+        let search_gb = gb.compute_gb(inputs.generating_set, &inputs.lex_order)?;
 
         if search_gb.is_unit() {
             return Err(AnalysisError::UnitIdeal {
@@ -535,12 +533,10 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         self.grev_validity.substitute_definitions();
 
         let backend = self.backend.build::<C::F>();
-        let validity_gb = backend
-            .compute_gb(
-                std::mem::take(&mut self.grev_validity.generating_set),
-                &self.lex_order,
-            )
-            .expect("GB backend should support lex order");
+        let validity_gb = backend.compute_gb(
+            std::mem::take(&mut self.grev_validity.generating_set),
+            &self.lex_order,
+        )?;
 
         if validity_gb.is_unit() {
             return Err(AnalysisError::UnitIdeal {
@@ -706,7 +702,7 @@ mod tests {
         l_vec: Vec<usize>,
     ) -> Result<SpecialSoundnessAnalysis<ArkBls12_381>, AnalysisError<ArkBls12_381>> {
         let inputs = SpecialSoundnessAnalysis::build_inputs(dag, l_vec)?;
-        SpecialSoundnessAnalysis::from_inputs(inputs, GbBackendKind::default())
+        SpecialSoundnessAnalysis::try_from_inputs(inputs, GbBackendKind::default())
     }
 
     fn analyze_soundness(

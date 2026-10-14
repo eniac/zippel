@@ -2,81 +2,15 @@
 
 use ark_ff::{Field, Zero};
 use backend::{ArkBls12_381, ArkConfig, Value};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use rand::Rng;
 use rand::seq::SliceRandom;
 use share::Ctx;
-use std::{path::PathBuf, time::Instant};
-use zippel::*;
 
 use crate::common;
+use crate::common::size;
 
-// Edit S to scale; num_points = 2^S follows.
-const S: usize = 3;
-const NUM_POINTS: usize = 1 << S;
-
-pub fn run(opts: &common::RunOptions) {
-    let zippel_file = PathBuf::from("examples/hyperplonk_multiset/hyperplonk_multiset.zippel");
-
-    println!("=== HyperPlonk MultiSet Check PIOP ===");
-    println!("num_points = {NUM_POINTS}, s = log num_points = {S}");
-
-    let args = ZippelArgs::new(zippel_file);
-    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("S"), &S);
-    handler.compile(&sizes);
-
-    let inputs = prover_create_inputs();
-    let prover_start = Instant::now();
-    let proof = handler
-        .run_prover(inputs.clone())
-        .expect("run_prover failed");
-    let prover_elapsed = prover_start.elapsed();
-    let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
-    println!("Prover time:    {prover_elapsed:.2?}");
-    println!(
-        "Proof size:     {proof_bytes} bytes ({} elements)",
-        proof.len()
-    );
-    let verifier_start = Instant::now();
-    let verifier_result = handler
-        .run_verifier(proof, inputs)
-        .expect("run_verifier failed");
-    let verifier_elapsed = verifier_start.elapsed();
-    let passed = check_verification(&verifier_result);
-    println!("Verifier time:  {verifier_elapsed:.2?}");
-    if passed {
-        println!("Verification:   ✓ PASSED");
-    } else {
-        println!("Verification:   ✗ FAILED");
-        std::process::exit(1);
-    }
-
-    if !opts.analyses {
-        return;
-    }
-    let analysis_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        println!("\n--- Static Analysis ---");
-
-        let completeness_start = Instant::now();
-        match handler.analyze_completeness() {
-            Ok(()) => println!("Completeness:    ✓"),
-            Err(e) => println!("Completeness:    ✗ {}", e),
-        }
-        println!("Completeness time: {:.2?}", completeness_start.elapsed());
-
-        let zk_start = Instant::now();
-        match handler.analyze_knowledge() {
-            Ok(()) => println!("ZK:              ✓"),
-            Err(e) => println!("ZK:              ✗ {}", e),
-        }
-        println!("ZK time:         {:.2?}", zk_start.elapsed());
-    }));
-    if analysis_result.is_err() {
-        println!("Analysis:        ⚠ not supported (non-polynomial operations)");
-    }
-}
+// The input dimensions follow the resolved S size.
 
 struct MultiSetInstance<F> {
     f: Vec<F>,
@@ -152,11 +86,14 @@ where
     }
 }
 
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
+fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     type F = <ArkBls12_381 as ArkConfig>::F;
+    let s = size(sizes, "S");
+    let num_points = 1 << s;
+
     let mut rng = rand::rngs::OsRng;
 
-    let inst = random_multiset::<F, _>(&mut rng, NUM_POINTS);
+    let inst = random_multiset::<F, _>(&mut rng, num_points);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("f_evs".to_string()), Value::vec_scalar(inst.f)),
@@ -168,4 +105,17 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
             Value::vec_scalar(inst.g_shift_inv),
         ),
     ])
+}
+
+pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
+    common::ExampleSpec {
+        source: "examples/hyperplonk_multiset/hyperplonk_multiset.zippel",
+        defaults: &[("S", 3)],
+        validate: Some(|sizes, _analysis| {
+            common::check_power_of_two(sizes, "S")?;
+            Ok(())
+        }),
+        make_inputs: prover_create_inputs,
+        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+    }
 }

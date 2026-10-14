@@ -59,29 +59,24 @@ prover and verifier.
 
 ```rust
 use ark_std::UniformRand;
-use std::path::PathBuf;
 use zippel::backend::{ArkBls12_381, ArkConfig, ArkGroupOps, Value};
 use zippel::share::Ctx;
-use zippel::{check_verification, proof_size_bytes, ZippelArgs, ZippelHandler};
+use zippel::analyses::GbBackendKind;
+use zippel::{Analysis, CompileOptions, ParsedModule, check_verification, proof_size_bytes};
 
-fn main() {
-    let args = ZippelArgs::new(PathBuf::from("schnorr.zippel"));
-    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    handler.compile(&Ctx::new());
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let module = ParsedModule::load("schnorr.zippel")?;
+    let protocol = module.compile::<ArkBls12_381>(&Ctx::new(), CompileOptions::default())?;
 
     let inputs = prover_create_inputs();
-    let proof = handler
-        .run_prover(inputs.clone())
-        .expect("run_prover failed");
+    let proof = protocol.prove(inputs.clone())?;
     println!(
         "Proof size: {} bytes ({} elements)",
         proof_size_bytes::<ArkBls12_381>(&proof),
         proof.len()
     );
 
-    let verifier_result = handler
-        .run_verifier(proof, inputs)
-        .expect("run_verifier failed");
+    let verifier_result = protocol.verify(proof, inputs)?;
     println!(
         "Verification: {}",
         if check_verification(&verifier_result) {
@@ -91,10 +86,12 @@ fn main() {
         }
     );
 
-    match handler.analyze_completeness() {
+    let analysis = protocol.prepare_analysis()?;
+    match analysis.run(Analysis::Completeness, GbBackendKind::ArkGb) {
         Ok(()) => println!("Completeness: PASSED"),
         Err(e) => println!("Completeness: FAILED ({e})"),
     }
+    Ok(())
 }
 
 fn prover_create_inputs() -> Vec<(&'static str, Value<ArkBls12_381>)> {
@@ -107,29 +104,34 @@ fn prover_create_inputs() -> Vec<(&'static str, Value<ArkBls12_381>)> {
         .unwrap();
     vec![
         ("x", Value::Scalar(x)),
-        ("g", Value::G1(g)),
-        ("h", Value::G1Affine(h)),
+        ("g", Value::g1(g)),
+        ("h", Value::g1_affine(h)),
     ]
 }
 ```
 
-- `ZippelHandler<C>` drives compiling, running, and analyzing a
-  protocol for one concrete curve `C`.
-- `ZippelArgs` points a handler at a `.zippel` file.
-- `run_prover` and `run_verifier` take `(name, value)` pairs (a `Vec`, a
-  `HashMap`, a `Ctx`, ...); the names must match the `.zippel` file's
-  parameter names exactly (`x`, `g`, `h` above). The verifier reads only
-  the instance arguments and drops the rest.
-- A run owns the values it is passed and frees each after its last use.
-  A `Value` is a cheap handle: `clone()` shares its data and copies none.
-  To reuse an input across runs (an SRS, a proving key), pass a clone and
-  keep the original, as `inputs.clone()` does above; the run never frees
-  the original's data. An input you pass without keeping a clone, such as
-  a fresh witness, is freed during the run.
-- `compile` takes a `Ctx` of size parameters; this protocol has none.
-- `analyze_completeness()` returns `Result<(),
-  analyses::AnalysisError<C>>`; `Ok(())` means the protocol is
-  complete.
+`ParsedModule::load` reads and parses the source. Calling `compile::<ArkBls12_381>`
+chooses the curve and returns a `CompiledProtocol` ready to use. The first argument
+supplies concrete size parameters: Schnorr has none, so this example uses an empty
+`Ctx`. `CompileOptions::default()` selects the first protocol in the file.
+
+`prover_create_inputs` supplies a witness `x` and public values `g` and `h` satisfying
+`h = g * x`. Input names must match the source parameters exactly. `prove` takes
+these inputs and returns a proof. We clone the inputs so we can reuse them for
+verification; cloning a `Value` shares its data.
+
+`verify` takes the proof and inputs, reading only the public instance arguments.
+It returns one boolean per verification check, and `check_verification` requires
+all of them to pass. A failed check produces `false`; an execution error returns
+`Err`.
+
+`prepare_analysis` returns a `PreparedAnalysis` for running static checks.
+Here, `run(Analysis::Completeness, GbBackendKind::ArkGb)` checks completeness using
+the ark-gb backend.
+
+Loading, compilation, execution and analysis preparation return `Result`; the
+example uses `?` to propagate errors. The analysis result is handled separately
+so the example can print whether the completeness check passed.
 
 ## 4. Compile and run
 

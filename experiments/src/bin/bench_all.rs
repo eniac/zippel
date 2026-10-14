@@ -124,7 +124,7 @@ struct Row {
     zippel: Timing,
     /// Wall-clock time for the zippel compiler: source → executable
     /// graph (parse + type-check + graph construction inside
-    /// `ZippelHandler::compile`). Excludes the Rust compiler (which
+    /// `ParsedModule::compile`). Excludes the Rust compiler (which
     /// builds this binary once), excludes runtime scheduling
     /// (graph→TDag), and excludes prove/verify execution. One entry per
     /// sample.

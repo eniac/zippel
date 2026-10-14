@@ -1,39 +1,14 @@
 use ark_std::UniformRand;
 use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use share::Ctx;
-use std::path::PathBuf;
-use zippel::*;
 
 use crate::common;
+use crate::common::size;
 
-pub fn run(opts: &common::RunOptions) {
-    println!("=== Hyrax PoDP (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/hyrax_podp/hyrax_podp.zippel"));
-    let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("S"), &4);
-    handler.compile(&sizes);
-
-    common::run_prover_and_verify(&mut handler, prover_create_inputs());
-
-    if !opts.analyses {
-        return;
-    }
-    println!("\n--- Static Analysis ---");
-    let analysis_args = ZippelArgs::new(PathBuf::from("examples/hyrax_podp/hyrax_podp.zippel"));
-    let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
-    let mut analysis_sizes = Ctx::new();
-    analysis_sizes.insert(&Tid::new("S"), &1usize);
-    analysis_handler.compile(&analysis_sizes);
-
-    common::time_analysis!("Completeness", analysis_handler.analyze_completeness());
-    common::time_analysis!("ZK", analysis_handler.analyze_knowledge());
-}
-
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
+fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
-    let n = 4;
+    let n = size(sizes, "S");
 
     let x_vec = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n));
     let a_vec = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n));
@@ -70,4 +45,14 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("xi".to_string()), Value::g1(xi_val)),
         (Vid("tau".to_string()), Value::g1(tau_val)),
     ])
+}
+
+pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
+    common::ExampleSpec {
+        source: "examples/hyrax_podp/hyrax_podp.zippel",
+        defaults: &[("S", 4)],
+        validate: None,
+        make_inputs: prover_create_inputs,
+        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+    }
 }

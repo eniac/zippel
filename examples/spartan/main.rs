@@ -1,41 +1,12 @@
 use ark_ff::{Field, Zero};
 use ark_std::UniformRand;
 use backend::{ArkConfig, ArkCurve25519, PolyVariant, Value, VirtualPolynomial};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use rand::Rng;
 use share::Ctx;
-use std::path::PathBuf;
-use zippel::*;
 
 use crate::common;
-
-/// Spartan-NIZK with 2^M R1CS constraints
-#[derive(clap::Args)]
-pub struct Args {
-    /// Log2 of the number of constraints (M >= 3)
-    #[arg(value_name = "M", default_value_t = 3, value_parser = parse_m)]
-    m: usize,
-}
-
-fn parse_m(value: &str) -> Result<usize, String> {
-    let m = value.parse().map_err(|_| "M must be an integer")?;
-    if m < 3 {
-        return Err("M must be >= 3 (Hyrax needs M-1 >= 2 to split L,M_h both >= 1)".into());
-    }
-    Ok(m)
-}
-
-pub fn run(args: &Args, _opts: &common::RunOptions) {
-    let m = args.m;
-    println!("=== Spartan-NIZK (PIOP + Hyrax PCS, ArkCurve25519, M={m}) ===");
-    let zippel_args = ZippelArgs::new(PathBuf::from("examples/spartan/spartan.zippel"));
-    let mut handler: ZippelHandler<ArkCurve25519> = ZippelHandler::new(zippel_args);
-    let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("M"), &m);
-    handler.compile(&sizes);
-
-    common::run_prover_and_verify(&mut handler, prover_create_inputs(m));
-}
+use crate::common::size;
 
 const fn hyrax_split(m: usize) -> (usize, usize) {
     let nw = m - 1;
@@ -138,10 +109,11 @@ where
     }
 }
 
-fn prover_create_inputs(m: usize) -> Ctx<Vid, Value<ArkCurve25519>> {
+fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkCurve25519>> {
     type F = <ArkCurve25519 as ArkConfig>::F;
     type G1 = <ArkCurve25519 as ArkConfig>::G1;
     use ark_ec::CurveGroup;
+    let m = size(sizes, "M");
 
     let num_cons = 1usize << m;
     let witness_len = 1usize << (m - 1);
@@ -239,4 +211,20 @@ fn prover_create_inputs(m: usize) -> Ctx<Vid, Value<ArkCurve25519>> {
             Value::vec_scalar(placeholder_tau),
         ),
     ])
+}
+
+pub fn spec() -> common::ExampleSpec<ArkCurve25519> {
+    common::ExampleSpec {
+        source: "examples/spartan/spartan.zippel",
+        defaults: &[("M", 4)],
+        validate: Some(|sizes, analysis| {
+            common::check_power_of_two(sizes, "M")?;
+            if !analysis && size(sizes, "M") < 3 {
+                return Err("M must be >= 3 for the Hyrax split".into());
+            }
+            Ok(())
+        }),
+        make_inputs: prover_create_inputs,
+        analyses: &[],
+    }
 }

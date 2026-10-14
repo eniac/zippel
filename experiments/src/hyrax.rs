@@ -29,7 +29,7 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+    use zippel::{CompileOptions, CompiledProtocol, ParsedModule, check_verification};
 
     /// A compiled Hyrax instance together with the fixed, seeded inputs it is
     /// timed on.
@@ -38,7 +38,7 @@ pub mod zippel_side {
     /// are generated once in `new` from an `n`-derived seed so repeated
     /// `time_protocol` calls measure the same instance.
     pub struct Setup {
-        handler: ZippelHandler<ArkBls12_381>,
+        handler: CompiledProtocol<ArkBls12_381>,
         inputs: HashMap<Vid, Value<ArkBls12_381>>,
         compile_time: Vec<std::time::Duration>,
     }
@@ -113,12 +113,13 @@ pub mod zippel_side {
             // graph→TDag work the runtime does) and excludes the actual
             // prove/verify execution.
             let (handler, compile_time) = crate::sample_compile(|| {
-                let args = ZippelArgs::new(zippel_path.clone());
-                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+                let module = ParsedModule::load(zippel_path.clone()).expect("parse protocol");
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("L"), &l);
                 sizes.insert(&Tid::new("M"), &m);
-                handler.compile_for_execution(&sizes);
+                let handler: CompiledProtocol<ArkBls12_381> = module
+                    .compile(&sizes, CompileOptions::default())
+                    .expect("compile protocol");
                 handler
             });
 
@@ -143,9 +144,9 @@ pub mod zippel_side {
         /// verifier rejects the honestly generated proof.
         pub fn time_protocol(&mut self) -> Timing {
             let (prove, prove_peak, proof) =
-                crate::sample_zippel_prover(&mut self.handler, &self.inputs);
+                crate::sample_zippel_prover(&self.handler, &self.inputs);
             let (verify, verify_peak, result) =
-                crate::sample_zippel_verifier(&mut self.handler, &proof, &self.inputs);
+                crate::sample_zippel_verifier(&self.handler, &proof, &self.inputs);
             assert!(
                 check_verification(&result),
                 "zippel hyrax verification FAILED"

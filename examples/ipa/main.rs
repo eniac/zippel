@@ -1,38 +1,13 @@
 use backend::{ATyp, ArkSecp256k1, Value};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use share::Ctx;
-use std::path::PathBuf;
-use zippel::*;
 
 use crate::common;
+use crate::common::size;
 
-pub fn run(opts: &common::RunOptions) {
-    println!("=== IPA (ArkSecp256k1) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/ipa/ipa.zippel"));
-    let mut handler: zippel::ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
-    let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("S"), &8usize);
-    handler.compile(&sizes);
-
-    common::run_prover_and_verify(&mut handler, prover_create_inputs());
-
-    if !opts.analyses {
-        return;
-    }
-    println!("\n--- Static Analysis ---");
-    let analysis_args = ZippelArgs::new(PathBuf::from("examples/ipa/ipa.zippel"));
-    let mut analysis_handler: ZippelHandler<ArkSecp256k1> = ZippelHandler::new(analysis_args);
-    let mut analysis_sizes = Ctx::new();
-    analysis_sizes.insert(&Tid::new("S"), &1usize);
-    analysis_handler.compile(&analysis_sizes);
-
-    common::time_analysis!("Completeness", analysis_handler.analyze_completeness());
-    common::time_analysis!("ZK", analysis_handler.analyze_knowledge());
-}
-
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
+fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkSecp256k1>> {
     let mut rng = rand::rngs::OsRng;
-    let n_val_const = 256;
+    let n_val_const = 1usize << size(sizes, "S");
 
     let u_aux_base: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::g1());
 
@@ -64,4 +39,17 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
         (Vid("b_vec_witness".to_string()), b_vec_witness),
         (Vid("sum_vec".to_string()), sum_vec),
     ])
+}
+
+pub fn spec() -> common::ExampleSpec<ArkSecp256k1> {
+    common::ExampleSpec {
+        source: "examples/ipa/ipa.zippel",
+        defaults: &[("S", 2)],
+        validate: Some(|sizes, _analysis| {
+            common::check_power_of_two(sizes, "S")?;
+            Ok(())
+        }),
+        make_inputs: prover_create_inputs,
+        analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
+    }
 }

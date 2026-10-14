@@ -1,6 +1,6 @@
 //! Run a closure on a scoped thread with a larger-than-default stack.
 //!
-//! Several compiler entry points (`zippel-check`, `ZippelHandler::compile`,
+//! Several compiler entry points (`zippel-check`, `ParsedModule::compile`,
 //! the inline benchmark, the GB snapshot tests) spawn a worker thread with a
 //! bigger stack because this compiler's recursive passes can overflow the
 //! default 8MiB thread stack, then block until it finishes. This module

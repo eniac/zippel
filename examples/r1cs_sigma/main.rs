@@ -1,60 +1,57 @@
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, Value};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use share::Ctx;
-use std::path::PathBuf;
-use zippel::*;
 
 use crate::common;
+use crate::common::size;
 
-fn build_sizes_ctx() -> Ctx<Tid, usize> {
-    let mut ctx = Ctx::new();
-    ctx.insert(&Tid::new("N"), &2);
-    ctx.insert(&Tid::new("n"), &1);
-    ctx.insert(&Tid::new("m"), &1);
-    ctx
-}
-
-pub fn run(opts: &common::RunOptions) {
-    println!("=== R1CS Sigma (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/r1cs_sigma/r1cs_sigma.zippel"));
-    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    let sizes = build_sizes_ctx();
-    handler.compile(&sizes);
-
-    common::run_prover_and_verify(&mut handler, prover_create_inputs());
-
-    if !opts.analyses {
-        return;
-    }
-    println!("\n--- Static Analysis ---");
-    common::time_analysis!("Completeness", handler.analyze_completeness());
-    common::time_analysis!("ZK", handler.analyze_knowledge());
-    common::time_analysis!("Soundness", handler.analyze_special_soundness(vec![2]));
-}
-
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
+fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     type F = <ArkBls12_381 as ArkConfig>::F;
     type G1 = <ArkBls12_381 as ArkConfig>::G1;
     let mut rng = rand::rngs::OsRng;
 
-    let x0 = F::rand(&mut rng);
-    let w0 = x0 * x0;
-
-    let mat_a = vec![F::from(1u64), F::from(0u64)];
-    let mat_b = vec![F::from(1u64), F::from(0u64)];
-    let mat_c = vec![F::from(0u64), F::from(1u64)];
-
-    let ck = G1::rand(&mut rng);
+    let (n_instance, n_witness, n_rows) = (
+        size(sizes, "n"),
+        size(sizes, "N") - size(sizes, "n"),
+        size(sizes, "m"),
+    );
+    let x: Vec<F> = (0..n_instance).map(|_| F::rand(&mut rng)).collect();
+    let mut w: Vec<F> = (0..n_witness).map(|_| F::rand(&mut rng)).collect();
+    w[0] = x[0] * x[0];
+    let width = n_instance + n_witness;
+    let mut mat_a = vec![F::from(0u64); width * n_rows];
+    let mut mat_b = mat_a.clone();
+    let mut mat_c = mat_a.clone();
+    for row in 0..n_rows {
+        mat_a[row * width] = F::from(1u64);
+        mat_b[row * width] = F::from(1u64);
+        mat_c[row * width + n_instance] = F::from(1u64);
+    }
+    let ck = (0..n_rows).map(|_| G1::rand(&mut rng)).collect();
     let h_base = G1::rand(&mut rng);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("ck".to_string()), Value::vec_g1(vec![ck])),
+        (Vid("ck".to_string()), Value::vec_g1(ck)),
         (Vid("h_base".to_string()), Value::g1(h_base)),
         (Vid("mat_A".to_string()), Value::vec_scalar(mat_a)),
         (Vid("mat_B".to_string()), Value::vec_scalar(mat_b)),
         (Vid("mat_C".to_string()), Value::vec_scalar(mat_c)),
-        (Vid("x".to_string()), Value::vec_scalar(vec![x0])),
-        (Vid("w".to_string()), Value::vec_scalar(vec![w0])),
+        (Vid("x".to_string()), Value::vec_scalar(x)),
+        (Vid("w".to_string()), Value::vec_scalar(w)),
     ])
+}
+
+pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
+    common::ExampleSpec {
+        source: "examples/r1cs_sigma/r1cs_sigma.zippel",
+        defaults: &[("N", 2), ("n", 1), ("m", 1)],
+        validate: None,
+        make_inputs: prover_create_inputs,
+        analyses: &[
+            common::Analysis::Completeness,
+            common::Analysis::Zk,
+            common::Analysis::Soundness(&[2]),
+        ],
+    }
 }
