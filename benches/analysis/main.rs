@@ -25,10 +25,10 @@ use analyses::{
 use backend::ArkBls12_381;
 use clap::{Parser, ValueEnum};
 use graph::{QDag, UDags};
-use lang::ast::UModule;
+use lang::ast::{SizeSearchError, UModule, minimal_sizes};
 use lang::diagnostic::Severity;
 use lang::id::Tid;
-use share::unwrap;
+use share::{Ctx, unwrap};
 
 use memory::MemoryWindow;
 use output::{BenchOutput, Status};
@@ -153,8 +153,7 @@ impl Target {
     }
 }
 
-/// Parses, concretizes and lowers the target's source to its first
-/// protocol's DAG.
+/// Parses, validates the configured sizes and lowers the source to its first protocol's DAG.
 fn load_dag(target: &Target) -> Result<QDag<ArkBls12_381>, String> {
     let source = std::fs::read_to_string(&target.path).map_err(|e| format!("read failed: {e}"))?;
 
@@ -173,11 +172,30 @@ fn load_dag(target: &Target) -> Result<QDag<ArkBls12_381>, String> {
             );
         }
     }
-    let ctx = target
+    let ctx: Ctx<_, _> = target
         .sizes
         .iter()
         .map(|(n, v)| (Tid::new(n), *v))
         .collect();
+    for name in params.iter() {
+        if !ctx.contains(name) {
+            return Err(format!("missing configured size {name}"));
+        }
+    }
+    // Every Size is fixed: validate this assignment, including overload coverage,
+    // without searching for or replacing any configured values.
+    minimal_sizes(&module, &ctx).map_err(|error| match error {
+        SizeSearchError::Exhausted { rejection, .. } => format!(
+            "invalid configured sizes: {}",
+            rejection
+                .diagnostics
+                .iter()
+                .map(|d| d.summary.as_str())
+                .collect::<Vec<_>>()
+                .join("; ")
+        ),
+        SizeSearchError::WorkLimit { .. } => format!("size validation stopped: {error}"),
+    })?;
     let concrete = module
         .concretize(&ctx)
         .map_err(|e| format!("concretize failed: {e}"))?;

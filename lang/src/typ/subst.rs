@@ -1,4 +1,6 @@
+use crate::ast::range::{CRangeIter, RangeError};
 use crate::ast::size::EvalError;
+use crate::ast::{Range, Size};
 use crate::id::Tid;
 use crate::typ::{Kind, UTypeVars};
 use share::traversal::ToTraversal1;
@@ -12,6 +14,12 @@ pub enum SubstError {
     /// it mentions a size variable that is not yet bound.
     #[error("Error evaluating range for typevar {0}: {1}")]
     Eval(Tid, EvalError),
+    /// A range has an unrepresentable end or a zero step.
+    #[error("Invalid range for typevar {0}: {1}")]
+    InvalidRange(Tid, RangeError),
+    /// Default selection must not erase a declaration-range branch.
+    #[error("Default sizes leave an empty size range for typevar {0}")]
+    EmptyRange(Tid),
 }
 
 /// Represents a possible valuation of sized type variables
@@ -62,70 +70,134 @@ impl<T: Clone> FromIterator<(Tid, T)> for Substs<T> {
 }
 
 impl SizeSubsts {
-    /// Enumerates every concrete size valuation admitted by a signature's type
-    /// variables.
+    /// Enumerates substitutions for the signature's range-kinded type variables.
     ///
-    /// Each `Range`-kinded type variable contributes one dimension of the product,
-    /// every value its range admits: a range is never set from `sizes`, which only
-    /// supplies the `Size` variables its bounds mention. Non-range type variables are
-    /// skipped, and a signature with no range variables yields the single empty
-    /// substitution.
+    /// Expands variables in declaration order. Each range is evaluated using `sizes`
+    /// and the range variables already chosen on that branch; those local bindings
+    /// take precedence over supplied values. Later ranges can therefore depend on earlier
+    /// choices, so the result need not be a Cartesian product of independent ranges.
+    /// Singleton ranges also bind a variable; empty ranges discard their branch.
+    ///
+    /// Returned substitutions contain only range-variable bindings. Other kinds are
+    /// skipped; with no range variables, the result contains one empty substitution.
     ///
     /// # Errors
-    /// Returns [`SubstError::Eval`] when a range bound cannot be evaluated with the
-    /// sizes bound so far.
-    // Collect all sized type variables, for example [N: 0..10, M: 3,2..7]
-    // and take all possible combinations of sizes.
-    // Range bounds may reference earlier Range typevars in the same signature;
-    // expand declarations left-to-right so dependent bounds such as
-    // `NUM: 10, V: 2..NUM` can be resolved without an external size binding.
-    // Warning: exponential, the idea is there are few sizes (or even 1)
+    /// Returns [`SubstError::Eval`] if a range expression cannot be evaluated under
+    /// the supplied values and earlier bindings. Returns [`SubstError::InvalidRange`]
+    /// for an unrepresentable singleton end or a zero step.
     pub fn from_typevars(tv: &UTypeVars, sizes: &Ctx<Tid, usize>) -> Result<Set<Self>, SubstError> {
-        let mut partials: Vec<Ctx<Tid, usize>> = vec![Ctx::new()];
-        let mut saw_range = false;
-
-        for tv in tv.clone().into_iter() {
-            let tv = tv.node;
-            let Kind::Range(r) = tv.kind else {
-                continue;
-            };
-            saw_range = true;
-
-            let mut next = Vec::new();
-            for partial in partials.into_iter() {
-                let eval_ctx = Self::eval_context_for_partial(sizes, &partial);
-
-                let concrete_range = r
-                    .clone()
-                    .traverse1(&mut |s| s.eval(&eval_ctx))
-                    .map_err(|e| SubstError::Eval(tv.id.node.clone(), e))?;
-
-                for value in concrete_range {
-                    let mut expanded = partial.clone();
-                    expanded.insert(&tv.id.node, &value);
-                    next.push(expanded);
-                }
-            }
-            partials = next;
-        }
-
-        // If there are no range type variables, return the empty substitution.
-        if !saw_range {
-            return Ok(Set::from(vec![SizeSubsts::new()]));
-        }
-
-        Ok(partials.into_iter().map(Substs).collect())
+        Self::iter_typevars(tv, sizes, false).collect()
     }
 
-    fn eval_context_for_partial(
+    /// Streams range assignments, optionally rejecting every empty dependent branch.
+    pub(crate) fn iter_typevars(
+        tv: &UTypeVars,
         sizes: &Ctx<Tid, usize>,
-        partial: &Ctx<Tid, usize>,
-    ) -> Ctx<Tid, usize> {
-        let mut eval_ctx = sizes.clone();
-        for (k, v) in partial.iter() {
-            eval_ctx.insert(k, v);
+        require_nonempty: bool,
+    ) -> SizeSubstsIter {
+        SizeSubstsIter {
+            ranges: tv
+                .iter()
+                .filter_map(|tv| match &tv.kind {
+                    Kind::Range(range) => Some((tv.id.node.clone(), range.clone())),
+                    _ => None,
+                })
+                .collect(),
+            sizes: sizes.clone(),
+            require_nonempty,
+            stack: Vec::new(),
+            started: false,
+            finished: false,
         }
-        eval_ctx
+    }
+}
+
+struct RangeFrame {
+    partial: Ctx<Tid, usize>,
+    values: CRangeIter,
+}
+
+/// Depth-first expansion stores one iterator per range, never its full Cartesian product.
+pub(crate) struct SizeSubstsIter {
+    ranges: Vec<(Tid, Range<Size>)>,
+    sizes: Ctx<Tid, usize>,
+    require_nonempty: bool,
+    stack: Vec<RangeFrame>,
+    started: bool,
+    finished: bool,
+}
+
+impl SizeSubstsIter {
+    fn push_frame(&mut self, partial: Ctx<Tid, usize>) -> Result<(), SubstError> {
+        let (id, range) = &self.ranges[self.stack.len()];
+        let mut ctx = self.sizes.clone();
+        for (name, value) in partial.iter() {
+            ctx.insert(name, value);
+        }
+        let range = range
+            .clone()
+            .traverse1(&mut |size| size.eval(&ctx))
+            .map_err(|error| SubstError::Eval(id.clone(), error))?;
+        let end = range
+            .checked_end()
+            .map_err(|error| SubstError::InvalidRange(id.clone(), error))?;
+        if range.step() == 0 {
+            return Err(SubstError::InvalidRange(
+                id.clone(),
+                RangeError::RangeOrder(range.start(), 0, end),
+            ));
+        }
+        if self.require_nonempty && range.start() >= end {
+            return Err(SubstError::EmptyRange(id.clone()));
+        }
+        self.stack.push(RangeFrame {
+            partial,
+            values: range.into_iter(),
+        });
+        Ok(())
+    }
+
+    fn fail(&mut self, error: SubstError) -> Option<Result<SizeSubsts, SubstError>> {
+        self.finished = true;
+        self.stack.clear();
+        Some(Err(error))
+    }
+}
+
+impl Iterator for SizeSubstsIter {
+    type Item = Result<SizeSubsts, SubstError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.finished {
+            return None;
+        }
+        if !self.started {
+            self.started = true;
+            if self.ranges.is_empty() {
+                self.finished = true;
+                return Some(Ok(SizeSubsts::new()));
+            }
+            if let Err(error) = self.push_frame(Ctx::new()) {
+                return self.fail(error);
+            }
+        }
+        while let Some(frame) = self.stack.last_mut() {
+            let Some(value) = frame.values.next() else {
+                self.stack.pop();
+                continue;
+            };
+            let depth = self.stack.len() - 1;
+            let mut partial = self.stack[depth].partial.clone();
+            partial.insert(&self.ranges[depth].0, &value);
+            if depth + 1 == self.ranges.len() {
+                return Some(Ok(Substs(partial)));
+            }
+            if let Err(error) = self.push_frame(partial) {
+                return self.fail(error);
+            }
+        }
+        self.finished = true;
+        None
     }
 }
 

@@ -3,8 +3,9 @@
 //! Runs every compile-time check on `.zippel` files (parsing, type checking, Graph IR
 //! construction, and the prover/verifier projection) without running the protocol or supplying
 //! inputs. Checking needs a concrete value for every `Size` parameter: values come from
-//! `--size NAME=VALUE`, and any left unset default to the smallest values (by sum) that keep
-//! every dependent range non-empty. Diagnostics go to stderr, one status line per file to stdout.
+//! `--size NAME=VALUE`, and any left unset default to the smallest values (by sum) that satisfy
+//! size constraints and cover function overloads. Diagnostics go to stderr, one status line
+//! per file to stdout.
 //!
 //! Exit status: 0 if every file checks without errors, 1 if any file has errors or cannot be
 //! read, 2 on invalid command-line usage.
@@ -15,8 +16,7 @@ use std::process::ExitCode;
 use backend::ArkBls12_381;
 use clap::Parser;
 use graph::UDags;
-use lang::ast::module::MAX_DEFAULT_SIZE;
-use lang::ast::{CModule, UModule};
+use lang::ast::{CModule, MAX_DEFAULT_SIZE, SizeSearchError, UModule, minimal_sizes};
 use lang::diagnostic::{Diagnostic, Phase, Severity, render_diagnostic};
 use lang::id::Tid;
 use lang::typ::Kind;
@@ -33,7 +33,7 @@ type Backend = ArkBls12_381;
 #[command(name = "zippel-check")]
 struct Cli {
     /// Set a size parameter for every FILE (repeatable). Unset `Size` parameters default to the
-    /// smallest values (by sum) that keep every dependent range non-empty.
+    /// smallest values (by sum) that satisfy size constraints and cover function overloads.
     #[arg(short = 's', long = "size", value_name = "NAME=VALUE", value_parser = parse_size)]
     sizes: Vec<(Tid, usize)>,
 
@@ -177,9 +177,37 @@ fn check(src: &str, given: &Ctx<Tid, usize>) -> Report {
         .filter(|(k, _)| params.contains(k) || ranges.contains(k))
         .map(|(k, v)| (k.clone(), *v))
         .collect();
-    let Some(sizes) = module.minimal_sizes(&given) else {
-        report.diagnostics.push(no_default_sizes(&module, &given));
-        return report;
+    let sizes = if params.iter().all(|name| given.contains(name)) {
+        // Explicit sizes and unsized programs retain the compiler's precise diagnostics.
+        Ok(given.clone())
+    } else {
+        minimal_sizes(&module, &given)
+    };
+    let sizes = match sizes {
+        Ok(sizes) => sizes,
+        Err(error) => {
+            report
+                .diagnostics
+                .push(no_default_sizes(&module, &given, &error));
+            let rejection = match error {
+                SizeSearchError::Exhausted { rejection, .. } => Some(rejection),
+                SizeSearchError::WorkLimit { rejection, .. } => rejection,
+            };
+            if let Some(rejection) = rejection {
+                let candidate = rejection
+                    .candidate
+                    .iter()
+                    .map(|(name, value)| format!("{name}={value}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                report
+                    .diagnostics
+                    .extend(rejection.diagnostics.into_iter().map(|diagnostic| {
+                        diagnostic.note(&format!("this error occurred with sizes {candidate}"))
+                    }));
+            }
+            return report;
+        }
     };
 
     match module.concretize(&sizes) {
@@ -198,9 +226,12 @@ fn check(src: &str, given: &Ctx<Tid, usize>) -> Report {
     report
 }
 
-/// Reported when no default values make every range non-empty; anchored at the first `Size`
-/// parameter the command line left unset.
-fn no_default_sizes(module: &UModule, given: &Ctx<Tid, usize>) -> Diagnostic {
+/// Reports bounded-search exhaustion at the first unset `Size` parameter.
+fn no_default_sizes(
+    module: &UModule,
+    given: &Ctx<Tid, usize>,
+    error: &SizeSearchError,
+) -> Diagnostic {
     let unset: Vec<_> = module
         .iter()
         .flat_map(|(sig, _)| sig.typevars.0.iter())
@@ -208,16 +239,23 @@ fn no_default_sizes(module: &UModule, given: &Ctx<Tid, usize>) -> Diagnostic {
         .map(|tv| &tv.id)
         .collect();
     let names: Vec<String> = unset.iter().map(|id| format!("`{}`", id.node)).collect();
-    Diagnostic::error(
+    let diagnostic = Diagnostic::error(
         Phase::Type,
         unset.first().map_or(0..0, |id| id.span.clone()),
-        "No default sizes make every range non-empty",
+        &error.to_string(),
     )
     .primary_label(&format!(
-        "tried every value up to {MAX_DEFAULT_SIZE} for {}",
+        "unset sizes are bounded by 1..={MAX_DEFAULT_SIZE}: {}",
         names.join(", ")
-    ))
-    .note("set the sizes with `--size NAME=VALUE`")
+    ));
+    let diagnostic = match error {
+        SizeSearchError::Exhausted { .. } => {
+            diagnostic.note("this does not rule out valid configurations beyond the search bound")
+        }
+        SizeSearchError::WorkLimit { .. } => diagnostic
+            .note("the search stopped early; untested configurations within the bound may succeed"),
+    };
+    diagnostic.note("set the sizes with `--size NAME=VALUE` to check a specific configuration")
 }
 
 /// Build the Graph IR and project the prover and verifier of every protocol, as

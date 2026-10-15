@@ -9,6 +9,7 @@
 //! is not on `PATH`, the test prints a warning and passes (skips the GB
 //! computation). This allows local development without Singular, while CI
 //! installs Singular explicitly.
+//! Configured-size validation runs independently of Singular, including ignored analyses.
 //!
 //! When `INSTA_UPDATE` is set (snapshot regeneration mode), Singular is
 //! always used. If Singular is not on `PATH` during regeneration, the test
@@ -36,7 +37,7 @@ mod knowledge;
 mod soundness;
 
 fn main() {
-    // If Singular is missing, force-ignore all trials and warn once up
+    // If Singular is missing, force-ignore GB trials and warn once up
     // front — test trial output is captured by the harness and would
     // hide per-test warnings.
     let singular_ok = common::singular();
@@ -49,6 +50,25 @@ fn main() {
     let force_ignored = !singular_ok;
 
     let mut trials = Vec::new();
+    let size_entries = completeness::COMPLETENESS_ENTRIES
+        .iter()
+        .map(|e| ("completeness", e.name, e.zippel_path, e.sizes))
+        .chain(
+            soundness::SOUNDNESS_ENTRIES
+                .iter()
+                .map(|e| ("soundness", e.name, e.zippel_path, e.sizes)),
+        );
+    trials.extend(size_entries.map(|(analysis, name, source, sizes)| {
+        libtest_mimic::Trial::test(format!("sizes::{analysis}::{name}"), move || {
+            let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join(source);
+            share::thread::run_or_panic("analysis-sizes", || {
+                common::check_configured_sizes(&path, sizes);
+            });
+            Ok(())
+        })
+    }));
     trials.extend(completeness::trials(force_ignored));
     trials.extend(knowledge::trials());
     trials.extend(soundness::trials(force_ignored));

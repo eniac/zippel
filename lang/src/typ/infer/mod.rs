@@ -44,6 +44,21 @@ pub trait Typeable {
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Self::Context,
+    ) -> Result<CTyp, TypeError> {
+        self.infer_with_calls(kctx, fctx, vctx, &|_| {})
+    }
+
+    /// Infers a type and reports the original concrete signature selected at each function
+    /// call. Polynomial applications do not select a declaration and are not reported.
+    ///
+    /// # Errors
+    /// Returns the same errors as [`Self::infer`].
+    fn infer_with_calls(
+        &self,
+        kctx: &Ctx<Tid, CKind>,
+        fctx: &Set<CSig>,
+        vctx: &Self::Context,
+        on_call: &dyn Fn(&CSig),
     ) -> Result<CTyp, TypeError>;
 }
 
@@ -51,14 +66,15 @@ pub trait Typeable {
 /// failure is tagged with the span of the innermost spanned expression on its path.
 impl<T: Typeable> Typeable for Spanned<T> {
     type Context = T::Context;
-    fn infer(
+    fn infer_with_calls(
         &self,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Self::Context,
+        on_call: &dyn Fn(&CSig),
     ) -> Result<CTyp, TypeError> {
         self.node
-            .infer(kctx, fctx, vctx)
+            .infer_with_calls(kctx, fctx, vctx, on_call)
             .map_err(|e| TypeError::located(&self.span, e))
     }
 }
@@ -66,11 +82,12 @@ impl<T: Typeable> Typeable for Spanned<T> {
 /// Type inference for [CExp]
 impl Typeable for CExp {
     type Context = Ctx<Vid, CTyp>;
-    fn infer(
+    fn infer_with_calls(
         &self,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Self::Context,
+        on_call: &dyn Fn(&CSig),
     ) -> Result<CTyp, TypeError> {
         match self {
             // A literal that is a valid finite index has the singleton type `Fin<n>`; a larger
@@ -86,7 +103,7 @@ impl Typeable for CExp {
             // Unary: FFT-grid interpolation; binary: explicit points + evaluations
             CExp::Interpolate(points_opt, evals) => {
                 let evals_typ = evals
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match points_opt {
@@ -111,7 +128,7 @@ impl Typeable for CExp {
                     },
                     Some(points) => {
                         let points_typ = points
-                            .infer(kctx, fctx, vctx)
+                            .infer_with_calls(kctx, fctx, vctx, on_call)
                             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                         match (points_typ, evals_typ) {
@@ -153,7 +170,7 @@ impl Typeable for CExp {
             // (degree convention: `m = k - 1`).
             CExp::Poly(v) => {
                 let typ = v
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match typ {
@@ -173,7 +190,7 @@ impl Typeable for CExp {
             // is degree + 1 under the Phase 14 degree convention).
             CExp::Coef(p) => {
                 let typ = p
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match typ {
@@ -213,7 +230,7 @@ impl Typeable for CExp {
 
             CExp::Evaluate(p, selector, opt_points) => {
                 let p_typ = p
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match (selector, opt_points) {
@@ -250,7 +267,7 @@ impl Typeable for CExp {
                     // Binary form: eval(p, points) — point or vector evaluation.
                     (None, Some(x)) => {
                         let x_typ = x
-                            .infer(kctx, fctx, vctx)
+                            .infer_with_calls(kctx, fctx, vctx, on_call)
                             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                         match (p_typ, x_typ) {
@@ -307,7 +324,7 @@ impl Typeable for CExp {
                     // Selected form: eval<range>(p, fixed).
                     (Some(range), Some(fixed)) => {
                         let fixed_typ = fixed
-                            .infer(kctx, fctx, vctx)
+                            .infer_with_calls(kctx, fctx, vctx, on_call)
                             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                         let fail =
@@ -346,7 +363,7 @@ impl Typeable for CExp {
             CExp::Mle(v) => {
                 // It must be a vector of fields, or a vector of Fin
                 let typ = v
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match typ {
@@ -366,7 +383,10 @@ impl Typeable for CExp {
             CExp::Vec(v) => {
                 let ts: CTyps = v
                     .iter()
-                    .map(|aexp| aexp.infer(kctx, fctx, vctx).map(Spanned::dummy))
+                    .map(|aexp| {
+                        aexp.infer_with_calls(kctx, fctx, vctx, on_call)
+                            .map(Spanned::dummy)
+                    })
                     .collect::<Result<_, _>>()
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
@@ -394,10 +414,10 @@ impl Typeable for CExp {
 
             CExp::Pair(t, e) => {
                 let ta = t
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = e
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_pair(&ta, &tb, kctx)
@@ -407,10 +427,10 @@ impl Typeable for CExp {
             // Handle +
             CExp::Bin(BinOp::Add, a, b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_add(&ta, &tb, kctx)
@@ -420,10 +440,10 @@ impl Typeable for CExp {
             // Handle -
             CExp::Bin(BinOp::Sub, a, b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_sub(&ta, &tb, kctx)
@@ -433,10 +453,10 @@ impl Typeable for CExp {
             // Handle *
             CExp::Bin(BinOp::Mul, a, b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_mul(&ta, &tb, kctx)
@@ -446,10 +466,10 @@ impl Typeable for CExp {
             // Handle /
             CExp::Bin(BinOp::Div, a, b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_div(&ta, &tb, kctx)
@@ -459,10 +479,10 @@ impl Typeable for CExp {
             // Handle ^
             CExp::Bin(BinOp::Pow, a, b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_pow(&ta, &tb, kctx)
@@ -472,10 +492,10 @@ impl Typeable for CExp {
             // Handle .
             CExp::Bin(BinOp::Dot, a, b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_dot(&ta, &tb, kctx)
@@ -485,10 +505,10 @@ impl Typeable for CExp {
             // Handle %
             CExp::Bin(BinOp::Rem, a, b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_rem(&ta, &tb, kctx)
@@ -497,10 +517,10 @@ impl Typeable for CExp {
             // Handle ++
             CExp::Bin(BinOp::Concat, a, b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_concat(&ta, &tb, kctx)
@@ -510,10 +530,10 @@ impl Typeable for CExp {
             // Handle ==
             CExp::Bin(BinOp::Equ, a, b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 // Check lub_equ compatibility
@@ -527,10 +547,10 @@ impl Typeable for CExp {
             // Handle && (logical AND): both operands must be Bool, result is Bool
             CExp::Bin(BinOp::And, a, b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_and(&ta, &tb, kctx)
@@ -541,7 +561,7 @@ impl Typeable for CExp {
             // operand keeps its type.
             CExp::Neg(a) => {
                 let t = a
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 Ok(match t {
                     CTyp::Fin(_) | CTyp::FieldLiteral => CTyp::FieldLiteral,
@@ -562,7 +582,7 @@ impl Typeable for CExp {
             CExp::Map(x, id, r) => {
                 // Type infer the range expression
                 let tr = r
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match tr {
@@ -575,7 +595,7 @@ impl Typeable for CExp {
 
                         // Type infer the expression [x] with the new context
                         let tx = x
-                            .infer(kctx, fctx, &innerctx)
+                            .infer_with_calls(kctx, fctx, &innerctx, on_call)
                             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                         Ok(CTyp::vec(&tx, n.node))
@@ -586,7 +606,7 @@ impl Typeable for CExp {
 
             CExp::Reduce(op, v) => {
                 let tv = v
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match tv {
@@ -658,10 +678,10 @@ impl Typeable for CExp {
             // Random access into vectors
             CExp::Ram(a, b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 // The index must be a compile-time known integer (Fin type).
@@ -704,7 +724,10 @@ impl Typeable for CExp {
                 // type inference for each parameter
                 let param_types: CTyps = params
                     .iter()
-                    .map(|p| p.infer(kctx, fctx, vctx).map(Spanned::dummy))
+                    .map(|p| {
+                        p.infer_with_calls(kctx, fctx, vctx, on_call)
+                            .map(Spanned::dummy)
+                    })
                     .collect::<Result<_, _>>()
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
@@ -783,7 +806,8 @@ impl Typeable for CExp {
                         // It is a function: resolve the call among the declarations of this name.
                         let decls = fctx.iter().filter(|sig| sig.name.node == id.node);
                         let cause = match CSig::resolve_call(decls, &param_types, kctx) {
-                            Ok((_, sig, _)) => {
+                            Ok((decl, sig, _)) => {
+                                on_call(decl);
                                 return Ok(sig.ret.map_or(CTyp::Unit, |r| r.node));
                             }
                             Err(CallError::NoMatch(failures)) => {
@@ -824,7 +848,7 @@ impl Typeable for CExp {
 
             CExp::Verify(exp) => {
                 let t = exp
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 // The operand must be Bool (not Vec<Bool>)
@@ -840,21 +864,21 @@ impl Typeable for CExp {
             }
 
             CExp::Let(Some(var), left, right) | CExp::Log(var, left, right) => {
-                let tleft = left.infer(kctx, fctx, vctx)?;
+                let tleft = left.infer_with_calls(kctx, fctx, vctx, on_call)?;
                 let mut vctx = vctx.clone();
                 vctx.insert(&var.node, &tleft);
                 match right {
                     Some(right) => {
-                        let tright = right.infer(kctx, fctx, &vctx)?;
+                        let tright = right.infer_with_calls(kctx, fctx, &vctx, on_call)?;
                         Ok(tright)
                     }
                     None => Ok(CTyp::Unit),
                 }
             }
             CExp::Let(None, left, right) => {
-                left.infer(kctx, fctx, vctx)?;
+                left.infer_with_calls(kctx, fctx, vctx, on_call)?;
                 match right {
-                    Some(right) => right.infer(kctx, fctx, vctx),
+                    Some(right) => right.infer_with_calls(kctx, fctx, vctx, on_call),
                     None => Ok(CTyp::Unit),
                 }
             }
@@ -878,7 +902,7 @@ impl Typeable for CExp {
                     }
 
                     // Infer the type of the body - should get Poly(F, 1, N) where N is the degree
-                    let body_type = body.infer(kctx, fctx, &new_vctx)?;
+                    let body_type = body.infer_with_calls(kctx, fctx, &new_vctx, on_call)?;
 
                     // Extract the degree from the inferred type
                     match body_type {
@@ -903,7 +927,7 @@ impl Typeable for CExp {
                         new_vctx.insert(&var.node, &CTyp::Base(field_tid.clone()));
                     }
 
-                    let body_type = body.infer(kctx, fctx, &new_vctx)?;
+                    let body_type = body.infer_with_calls(kctx, fctx, &new_vctx, on_call)?;
 
                     match body_type {
                         CTyp::Base(tid)
@@ -933,7 +957,7 @@ impl Typeable for CExp {
                 // Infer the type of each field
                 for (field_name, field_exp) in fields.iter() {
                     let field_typ = field_exp
-                        .infer(kctx, fctx, vctx)
+                        .infer_with_calls(kctx, fctx, vctx, on_call)
                         .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                     field_types.insert(field_name, &Spanned::dummy(field_typ));
                 }
@@ -944,7 +968,7 @@ impl Typeable for CExp {
             CExp::Proj(record_exp, field_name) => {
                 // Infer the type of the record expression
                 let record_typ = record_exp
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match record_typ {
@@ -975,7 +999,7 @@ impl Typeable for CExp {
             CExp::SetRecord(record_exp, field_name, value_exp) => {
                 // Infer the type of the record expression (must be a record)
                 let record_typ = record_exp
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let CTyp::Record(fields) = &record_typ else {
                     return Err(TypeError::next(
@@ -991,7 +1015,7 @@ impl Typeable for CExp {
                     )
                 })?;
                 let value_typ = value_exp
-                    .infer(kctx, fctx, vctx)
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 if !value_typ.fits(field_typ, kctx) {
                     return Err(TypeError::next(
@@ -1019,21 +1043,22 @@ impl Typeable for CExp {
 /// Type inference for [CBody]
 impl Typeable for CBody {
     type Context = Ctx<Vid, CTyp>;
-    fn infer(
+    fn infer_with_calls(
         &self,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Self::Context,
+        on_call: &dyn Fn(&CSig),
     ) -> Result<CTyp, TypeError> {
         // Type inference for each statement in the Body
         match self {
             CBody::Proto { relation, body } => {
                 // Infer the relation (Let/Assert chain — infers to Unit)
-                relation.infer(kctx, fctx, &vctx.clone())?;
+                relation.infer_with_calls(kctx, fctx, &vctx.clone(), on_call)?;
 
                 // Then the body (empty body is Unit)
                 if let Some(body) = body {
-                    let tbody = body.infer(kctx, fctx, &vctx.clone())?;
+                    let tbody = body.infer_with_calls(kctx, fctx, &vctx.clone(), on_call)?;
                     if tbody != CTyp::Unit {
                         return Err(TypeError::located(
                             &tail(body).span,
@@ -1045,7 +1070,7 @@ impl Typeable for CBody {
                 Ok(CTyp::Unit)
             }
             CBody::Func { body } => match body {
-                Some(body) => body.infer(kctx, fctx, &vctx.clone()),
+                Some(body) => body.infer_with_calls(kctx, fctx, &vctx.clone(), on_call),
                 None => Ok(CTyp::Unit),
             },
             CBody::TypeAlias => Ok(CTyp::Unit), // Type aliases have no body to check

@@ -4,6 +4,7 @@ pub mod arg;
 pub mod decl;
 /// Expressions and binary operators — the bulk of the surface syntax.
 pub mod exp;
+mod minimal_sizes;
 /// A whole compilation unit: signatures mapped to declaration bodies.
 pub mod module;
 /// Strided integer ranges, used for sizes, slices and range-kinded typevars.
@@ -18,6 +19,10 @@ pub mod spanned;
 pub use arg::{Arg, Args, CArg, CArgs, GArg, GArgs};
 pub use decl::{Body, CBody};
 pub use exp::{BinOp, CExp, CExps, Exp, ExpLiteral, ExpTraversal, Exps, FreeVars, UExp, UExps};
+pub use minimal_sizes::{
+    MAX_DEFAULT_SIZE, SizeRejection, SizeSearchError, SizeSearchLimit, SizeSearchStage,
+    minimal_sizes,
+};
 pub use module::{CModule, Module, UModule};
 pub use range::{CRange, Range, RangeError, RangeTraversal};
 pub use sig::{CSig, Sig};

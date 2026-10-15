@@ -69,7 +69,7 @@ cargo zcheck --size N=2 examples/marlin_kzg/marlin_kzg.zippel
 ```
 
 Pass `--size NAME=VALUE` for the sizes you care about; unset `Size` parameters default to the smallest
-value that keeps every range non-empty.
+values that satisfy size constraints and cover function overloads.
 
 ### Formatting
 

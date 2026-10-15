@@ -1,6 +1,5 @@
-use crate::ast::decl::{CDecl, DeclError, UDecl};
-use crate::ast::exp::{ExpLiteral, ExpTraversal};
-use crate::ast::range::Range;
+use crate::ast::decl::{DeclError, UDecl};
+use crate::ast::exp::ExpLiteral;
 use crate::ast::spanned::Spanned;
 use crate::ast::{Body, CSig, Sig};
 use crate::diagnostic::{Diagnostic, Phase};
@@ -16,9 +15,23 @@ use std::fmt;
 use thiserror::Error;
 
 use crate::ast::Size;
-use crate::typ::{Kind, RangeTraversal, SizeSubsts, TypeError, TypeInline, UTyp};
-use share::traversal::ToTraversal1;
+use crate::typ::{Kind, SizeSubsts, TypeError, TypeInline, UTyp};
 use share::{Ctx, Set};
+
+/// Identity within one source module, independent of diagnostic locations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct DeclId(pub(super) usize);
+
+pub(super) struct ExpandedModule {
+    pub(super) module: CModule,
+    pub(super) origins: std::collections::BTreeMap<CSig, DeclId>,
+}
+
+pub(super) enum ExpansionFailure {
+    Substitutions(ModuleError),
+    Concretization(ModuleError),
+    Limit { expanded: usize },
+}
 
 /// Polymorphic Module, a collection of declarations indexed by their typevars and signature
 pub struct Module<N: ExpLiteral>(pub Ctx<Sig<N::Size>, Body<N>>);
@@ -267,6 +280,11 @@ impl CModule {
     /// source spans, so an error common to several instances is reported once, naming the
     /// first failing instance.
     pub fn typecheck(&self) -> Vec<Diagnostic> {
+        self.typecheck_with_calls(&|_, _| {})
+    }
+
+    /// The shared checking pass reports direct selected calls without rechecking bodies.
+    pub(super) fn typecheck_with_calls(&self, on_call: &dyn Fn(&CSig, &CSig)) -> Vec<Diagnostic> {
         let fctx: Set<CSig> = self.iter().map(|(sig, _)| sig.clone()).collect();
         let mut instances: HashMap<&str, usize> = HashMap::new();
         for (sig, _) in self.iter() {
@@ -275,7 +293,9 @@ impl CModule {
         let mut seen = HashSet::new();
         let mut diags = Vec::new();
         for (sig, body) in self.iter() {
-            let Err(e) = body.typecheck(sig.clone(), &fctx) else {
+            let Err(e) =
+                body.typecheck_with_calls(sig.clone(), &fctx, &|callee| on_call(sig, callee))
+            else {
                 continue;
             };
             // Fall back to the declaration's name when inference located nothing.
@@ -293,8 +313,8 @@ impl CModule {
         //     `semantic::verify` implements it but resolves calls by name, ignoring overloads,
         //     so it is not enabled.
         //   - check_dead_code (uncalled function)
-        // They need the typed call graph: inference resolves each call to one signature but
-        // does not record which.
+        // They need the typed call graph; infer_with_calls can record resolved signatures,
+        // as the default-size coverage check does.
         diags.sort_by_key(|d| d.span.start);
         diags
     }
@@ -320,53 +340,6 @@ impl UModule {
             .filter(|tv| matches!(tv.kind, Kind::Range(_)))
             .map(|tv| tv.id.node.clone())
             .collect()
-    }
-
-    /// Extends `fixed` with default values for the other `Size` parameters.
-    ///
-    /// The defaults are the smallest values in `1..=MAX_DEFAULT_SIZE` under which every size
-    /// expression in signatures and bodies evaluates without underflow and every range is
-    /// non-empty. Returns `None` if no such values exist within that bound.
-    ///
-    /// Only expressions over `Size` parameters, `fixed` values and derived sizes
-    /// (`L: (N - 1) * M`) are checked; the rest (e.g. over `K: 2..16`) are left to
-    /// concretization. Smallest means the least sum, ties broken by the smallest values in
-    /// name order.
-    pub fn minimal_sizes(&self, fixed: &Ctx<Tid, usize>) -> Option<Ctx<Tid, usize>> {
-        let size_vars: Set<Tid> = self
-            .iter()
-            .flat_map(|(sig, _)| sig.typevars.0.iter())
-            .filter(|tv| matches!(tv.kind, Kind::SizeVar))
-            .map(|tv| tv.id.node.clone())
-            .collect();
-        let decls: Vec<SizeConstraints> = self
-            .iter()
-            .map(|(sig, body)| SizeConstraints::new(sig, body, &size_vars, fixed))
-            .collect();
-
-        // The unset parameters, in name order: those some constraint mentions are searched
-        // jointly; the others are unconstrained, so their smallest value is 1.
-        let (searched, unconstrained): (Vec<Tid>, Vec<Tid>) = size_vars
-            .iter()
-            .filter(|v| !fixed.contains(v))
-            .cloned()
-            .partition(|v| decls.iter().any(|d| d.mentioned.contains(v)));
-        let mut base = fixed.clone();
-        for v in &unconstrained {
-            base.insert(v, &1);
-        }
-
-        let n = searched.len();
-        (n..=n * MAX_DEFAULT_SIZE)
-            .flat_map(|total| compositions(total, n, MAX_DEFAULT_SIZE))
-            .map(|values| {
-                let mut sizes = base.clone();
-                for (v, x) in searched.iter().zip(&values) {
-                    sizes.insert(v, x);
-                }
-                sizes
-            })
-            .find(|sizes| decls.iter().all(|d| d.hold(sizes)))
     }
 
     /// Parse source text into a polymorphic, untyped module with symbolic
@@ -497,6 +470,23 @@ impl UModule {
     /// same concrete signature, and `ModuleError::InterchangeableDeclarations` if two
     /// declarations of the same name accept exactly the same arguments.
     pub fn concretize(&self, sizes: &Ctx<Tid, usize>) -> Result<CModule, ModuleError> {
+        self.expand(sizes, false, None)
+            .map(|expanded| expanded.module)
+            .map_err(|error| match error {
+                ExpansionFailure::Substitutions(error)
+                | ExpansionFailure::Concretization(error) => error,
+                ExpansionFailure::Limit { .. } => {
+                    unreachable!("ordinary concretization has no instance limit")
+                }
+            })
+    }
+
+    pub(super) fn expand(
+        &self,
+        sizes: &Ctx<Tid, usize>,
+        require_nonempty: bool,
+        max_instances: Option<usize>,
+    ) -> Result<ExpandedModule, ExpansionFailure> {
         // Only `Size` variables take values from `sizes`; a name that is a range everywhere
         // it is declared would otherwise be silently ignored.
         let params = self.size_params();
@@ -507,22 +497,49 @@ impl UModule {
                 .map(|tv| (&tv.id, &tv.kind))
                 .find(|(id, kind)| id.node == *name && matches!(kind, Kind::Range(_)))
             {
-                return Err(ModuleError::SizeForRange {
-                    var: var.clone(),
-                    range: range.to_string(),
-                });
+                return Err(ExpansionFailure::Concretization(
+                    ModuleError::SizeForRange {
+                        var: var.clone(),
+                        range: range.to_string(),
+                    },
+                ));
             }
         }
 
         let mut ctx = Ctx::new();
-
-        for decl in self.iter_decls() {
-            let cdecls = Self::concretize_decl(&decl, sizes)
-                .map_err(|e| ModuleError::DeclarationError(decl.sig.name.span.clone(), e))?;
-            for cdecl in cdecls {
-                ctx.insert_with(cdecl.sig, cdecl.body, &|sig, _, _| {
-                    Err(ModuleError::OverlapDeclaration(sig.clone()))
+        let mut origins = std::collections::BTreeMap::new();
+        for (source, decl) in self.iter_decls().enumerate() {
+            for substs in
+                SizeSubsts::iter_typevars(&decl.sig.typevars.node, sizes, require_nonempty)
+            {
+                let mut substs = substs.map_err(|error| {
+                    ExpansionFailure::Substitutions(ModuleError::DeclarationError(
+                        decl.sig.name.span.clone(),
+                        DeclError::SubstError(error),
+                    ))
                 })?;
+                if max_instances.is_some_and(|limit| ctx.len() == limit) {
+                    return Err(ExpansionFailure::Limit {
+                        expanded: ctx.len(),
+                    });
+                }
+                // Range bindings shadow supplied Size values from other declarations.
+                for (name, value) in sizes.iter() {
+                    if !substs.contains(name) {
+                        substs.0.insert(name, value);
+                    }
+                }
+                let concrete = decl.concretize(&substs).map_err(|error| {
+                    ExpansionFailure::Concretization(ModuleError::DeclarationError(
+                        decl.sig.name.span.clone(),
+                        error,
+                    ))
+                })?;
+                origins.insert(concrete.sig.clone(), DeclId(source));
+                ctx.insert_with(concrete.sig, concrete.body, &|sig, _, _| {
+                    Err(ModuleError::OverlapDeclaration(sig.clone()))
+                })
+                .map_err(ExpansionFailure::Concretization)?;
             }
         }
         let sigs: Vec<&CSig> = ctx.iter().map(|(sig, _)| sig).collect();
@@ -533,13 +550,15 @@ impl UModule {
                 } else {
                     (b, a)
                 };
-                return Err(ModuleError::InterchangeableDeclarations(
-                    (*first).clone(),
-                    (**second).clone(),
+                return Err(ExpansionFailure::Concretization(
+                    ModuleError::InterchangeableDeclarations((*first).clone(), (**second).clone()),
                 ));
             }
         }
-        Ok(Module(ctx))
+        Ok(ExpandedModule {
+            module: Module(ctx),
+            origins,
+        })
     }
 
     /// Checks that protocol `name` concretized to one instance in `cmodule`,
@@ -600,25 +619,6 @@ impl UModule {
             instances,
         })
     }
-
-    /// Expand one declaration into one concrete declaration per assignment of its
-    /// range-kinded type variables, with `sizes` supplying the remaining `Size` variables.
-    fn concretize_decl(decl: &UDecl, sizes: &Ctx<Tid, usize>) -> Result<Vec<CDecl>, DeclError> {
-        decl.get_size_substitutions(sizes)?
-            .into_iter()
-            .map(|mut substs| {
-                // Merge externally-provided SizeVar values (e.g. S: Size) into the
-                // substitution context. Skip keys already set by range expansion:
-                // a `Size` elsewhere may share a range variable's name.
-                for (k, v) in sizes.iter() {
-                    if !substs.contains(k) {
-                        substs.0.insert(k, v);
-                    }
-                }
-                decl.concretize(&substs)
-            })
-            .collect()
-    }
 }
 
 impl<N: ExpLiteral> IntoIterator for Module<N> {
@@ -650,150 +650,6 @@ where
         }
         Ok(())
     }
-}
-
-/// The size constraints of one declaration that [`UModule::minimal_sizes`] can check: those
-/// over `Size` parameters, fixed values and the declaration's derived sizes, depending on at
-/// least one unset parameter.
-struct SizeConstraints {
-    /// Singleton range variables (`L: (N - 1) * M`) and their definitions, each over the
-    /// parameters and the derived sizes before it.
-    derived: Vec<(Tid, Size)>,
-    /// Size expressions in signatures, ranges and selectors, which must evaluate to `usize`.
-    exprs: Vec<Size>,
-    /// Expression literals, which must evaluate exactly but need not fit in `usize`.
-    literals: Vec<Size>,
-    /// Ranges, which must be non-empty.
-    ranges: Vec<Range<Size>>,
-    /// The unset `Size` parameters these depend on.
-    mentioned: Set<Tid>,
-}
-
-impl SizeConstraints {
-    fn new(
-        sig: &Sig<Size>,
-        body: &Body<Size>,
-        size_vars: &Set<Tid>,
-        fixed: &Ctx<Tid, usize>,
-    ) -> Self {
-        // Each name the constraints may mention ↦ the unset parameters it depends on.
-        let mut deps: Ctx<Tid, Set<Tid>> =
-            fixed.iter().map(|(v, _)| (v.clone(), Set::new())).collect();
-        for v in size_vars.iter().filter(|v| !fixed.contains(v)) {
-            deps.insert(v, &Set::singleton(v.clone()));
-        }
-        let depends_on = |vars: Set<Tid>, deps: &Ctx<Tid, Set<Tid>>| {
-            vars.iter().try_fold(Set::new(), |acc, v| {
-                deps.get(v).map(|d| acc.union(d.clone()))
-            })
-        };
-
-        let mut derived = Vec::new();
-        for tv in sig.typevars.0.iter() {
-            if let Kind::Range(r) = &tv.kind
-                && r.end.is_none()
-                && !deps.contains(&tv.id.node)
-                && let Some(d) = depends_on(r.start.node.free_vars(), &deps)
-            {
-                deps.insert(&tv.id.node, &d);
-                derived.push((tv.id.node.clone(), r.start.node.clone()));
-            }
-        }
-
-        let mut exprs = Vec::new();
-        let _ = sig.clone().traverse1(&mut |s: Size| {
-            exprs.push(s.clone());
-            Ok::<_, ()>(s)
-        });
-        let mut literals = Vec::new();
-        let mut body_sizes = Vec::new();
-        let _ = body.clone().traverse_exp(
-            &mut |s: Size| {
-                literals.push(s.clone());
-                Ok::<_, ()>(s)
-            },
-            &mut |s: Size| {
-                body_sizes.push(s.clone());
-                Ok(s)
-            },
-        );
-        exprs.extend(body_sizes);
-        let mut ranges = Vec::new();
-        let _ = sig.clone().range_traverse(&mut |r: Range<Size>| {
-            ranges.push(r.clone());
-            Ok::<_, ()>(r)
-        });
-        let _ = body.clone().range_traverse(&mut |r: Range<Size>| {
-            ranges.push(r.clone());
-            Ok::<_, ()>(r)
-        });
-
-        let mut mentioned = Set::new();
-        let mut checkable = |vars: Set<Tid>| match depends_on(vars, &deps) {
-            Some(d) if !d.is_empty() => {
-                mentioned = mentioned.clone().union(d);
-                true
-            }
-            _ => false,
-        };
-        exprs.retain(|s| checkable(s.free_vars()));
-        literals.retain(|s| checkable(s.free_vars()));
-        ranges.retain(|r| checkable(range_free_vars(r)));
-        SizeConstraints {
-            derived,
-            exprs,
-            literals,
-            ranges,
-            mentioned,
-        }
-    }
-
-    /// Whether every constraint holds under `sizes`.
-    fn hold(&self, sizes: &Ctx<Tid, usize>) -> bool {
-        let mut ctx = sizes.clone();
-        for (v, def) in &self.derived {
-            match def.eval(&ctx) {
-                Ok(x) => ctx.insert(v, &x),
-                Err(_) => return false,
-            };
-        }
-        self.exprs.iter().all(|s| s.eval(&ctx).is_ok())
-            && self.literals.iter().all(|s| s.eval_literal(&ctx).is_ok())
-            && self.ranges.iter().all(|r| {
-                r.clone()
-                    .traverse1(&mut |s| s.eval(&ctx))
-                    .is_ok_and(|cr| cr.start() < cr.end())
-            })
-    }
-}
-
-/// The largest value [`UModule::minimal_sizes`] tries for a `Size` parameter.
-pub const MAX_DEFAULT_SIZE: usize = 16;
-
-/// Every way to write `total` as `parts` values in `1..=max`, in lexicographic order.
-fn compositions(total: usize, parts: usize, max: usize) -> Vec<Vec<usize>> {
-    if parts == 0 {
-        return if total == 0 { vec![vec![]] } else { vec![] };
-    }
-    (1..=max.min(total))
-        .flat_map(|first| {
-            compositions(total - first, parts - 1, max)
-                .into_iter()
-                .map(move |mut rest| {
-                    rest.insert(0, first);
-                    rest
-                })
-        })
-        .collect()
-}
-
-fn range_free_vars(r: &Range<Size>) -> Set<Tid> {
-    r.start.node.free_vars().union(
-        r.end
-            .as_ref()
-            .map(|e| e.node.free_vars())
-            .unwrap_or_default(),
-    )
 }
 
 fn one_line(s: &str) -> String {

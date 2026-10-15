@@ -3,11 +3,6 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-/// Examples that only pass at sizes larger than the defaults `zippel-check` picks. The
-/// values match the sizes their `main.rs` harnesses compile with.
-const EXAMPLE_SIZES: &[(&str, &[&str])] =
-    &[("membership/membership.zippel", &["N=2", "M=2", "S=2"])];
-
 fn examples_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples")
 }
@@ -52,13 +47,7 @@ fn all_examples_pass() {
     let mut failures = Vec::new();
     for path in &examples {
         let name = relative(path);
-        let sizes = EXAMPLE_SIZES
-            .iter()
-            .find(|(file, _)| *file == name)
-            .map_or(&[][..], |(_, sizes)| *sizes);
-        let mut args: Vec<&str> = sizes.iter().flat_map(|s| ["--size", s]).collect();
-        let path_str = path.to_str().unwrap();
-        args.push(path_str);
+        let args = [path.to_str().unwrap()];
         let out = zippel_check(&args);
         if !out.status.success() {
             failures.push(format!("{name}:\n{}", String::from_utf8_lossy(&out.stderr)));
@@ -71,21 +60,6 @@ fn all_examples_pass() {
         examples.len(),
         failures.join("\n")
     );
-}
-
-#[test]
-fn size_listed_examples_fail_at_default_sizes() {
-    // Guards `EXAMPLE_SIZES` against going stale: drop an entry once its example passes at
-    // default sizes.
-    for (name, _) in EXAMPLE_SIZES {
-        let path = examples_dir().join(name);
-        let out = zippel_check(&[path.to_str().unwrap()]);
-        assert_eq!(
-            out.status.code(),
-            Some(1),
-            "{name} now passes at default sizes; remove it from EXAMPLE_SIZES"
-        );
-    }
 }
 
 #[test]
@@ -254,4 +228,68 @@ fn a_size_for_a_range_variable_is_reported_at_its_declaration() {
         "{stderr}"
     );
     assert!(stderr.contains("range_size.zippel:1:28"), "{stderr}");
+}
+
+#[test]
+fn failed_size_search_preserves_type_diagnostics() {
+    let (code, stderr) = check_program(
+        "sized_type_error",
+        "proto p<G: Group, F: Scalar<G>, N: Size>(instance x: F, instance g: G) where x == x {\n    verify(x + g == g)\n}\n",
+    );
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(
+        stderr.contains("No valid size configuration found within the search bound"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("Cannot add F (Scalar<G>) and G (Group)"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("this error occurred with sizes N=1"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn exhausted_size_search_does_not_claim_unsatisfiability() {
+    let path = tempdir().join("beyond_bound.zippel");
+    std::fs::write(&path, "proto p<F: Field, N: Size>(instance a: [F; N], instance b: [F; 17]) where dot(a, b) == dot(a, b) {\n    verify(dot(a, b) == dot(a, b))\n}\n").unwrap();
+    let out = zippel_check(&[path.to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("No valid size configuration found within the search bound"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("1..=16"), "{stderr}");
+    let out = zippel_check(&["--size", "N=17", path.to_str().unwrap()]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn instance_budget_reports_interrupted_search() {
+    let src = format!(
+        "fn helper<F: Field, K: 0..{}>(instance x: [F; K+1]) -> F {{ x[0] }}\nproto p<F: Field, N: Size>(instance a: F) where a == a {{ verify(a == a) }}",
+        usize::MAX
+    );
+    let (code, stderr) = check_program("instance_budget", &src);
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(
+        stderr.contains("Size search stopped at a work limit"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("instance budget"), "{stderr}");
+    assert!(
+        stderr.contains("untested configurations within the bound may succeed"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("No valid size configuration found"),
+        "{stderr}"
+    );
 }

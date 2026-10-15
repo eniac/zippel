@@ -5,12 +5,12 @@ use analyses::QualifierPropagation;
 use analyses::frontend::Polynomial;
 use backend::{ArkBls12_381, ArkConfig};
 use graph::UDags;
-use lang::ast::UModule;
+use lang::ast::{SizeSearchError, UModule, minimal_sizes};
 use lang::diagnostic::Severity;
 use lang::id::Tid;
 use lang::typ::Qualifier;
 use share::{Ctx, unwrap};
-use std::path::PathBuf;
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
@@ -49,9 +49,7 @@ pub(crate) fn singular() -> bool {
     *SINGULAR_AVAILABLE.get_or_init(singular_available)
 }
 
-/// Parse + concretize + build the analysis DAG.
-#[track_caller]
-pub(crate) fn compile_to_dag(path: &PathBuf, sizes: &[(&str, usize)]) -> AnalysisDag {
+fn parse_module(path: &Path) -> UModule {
     let source = std::fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
     let (module, diags) = UModule::parse(&source);
@@ -70,9 +68,47 @@ pub(crate) fn compile_to_dag(path: &PathBuf, sizes: &[(&str, usize)]) -> Analysi
                 .join("\n")
         );
     }
-    let module =
-        module.unwrap_or_else(|| panic!("parse returned no module for {}", path.display()));
+    module.unwrap_or_else(|| panic!("parse returned no module for {}", path.display()))
+}
+
+fn validate_sizes(module: &UModule, ctx: &Ctx<Tid, usize>, path: &Path) {
+    for name in module.size_params().iter() {
+        assert!(
+            ctx.contains(name),
+            "missing configured size {name} for {}",
+            path.display()
+        );
+    }
+    // Complete fixed assignments make minimal_sizes validate exactly the chosen sizes.
+    if let Err(error) = minimal_sizes(module, ctx) {
+        let reason = match error {
+            SizeSearchError::Exhausted { rejection, .. } => rejection
+                .diagnostics
+                .iter()
+                .map(|d| d.summary.as_str())
+                .collect::<Vec<_>>()
+                .join("; "),
+            SizeSearchError::WorkLimit { .. } => error.to_string(),
+        };
+        panic!(
+            "configured size validation failed for {}: {reason}",
+            path.display()
+        );
+    }
+}
+
+/// Check sizes without building a DAG or running a GB backend, including ignored analyses.
+pub(crate) fn check_configured_sizes(path: &Path, sizes: &[(&str, usize)]) {
+    let module = parse_module(path);
+    validate_sizes(&module, &build_sizes_ctx(sizes), path);
+}
+
+/// Parse + validate configured sizes + concretize + build the analysis DAG.
+#[track_caller]
+pub(crate) fn compile_to_dag(path: &Path, sizes: &[(&str, usize)]) -> AnalysisDag {
+    let module = parse_module(path);
     let ctx = build_sizes_ctx(sizes);
+    validate_sizes(&module, &ctx, path);
     let concrete = module
         .concretize(&ctx)
         .unwrap_or_else(|e| panic!("failed to concretize {}: {e}", path.display()));

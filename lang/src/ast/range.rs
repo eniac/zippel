@@ -13,6 +13,9 @@ pub enum RangeError {
     /// of steps.
     #[error("Instantiated an invalid range [{0},{1}..{2}]")]
     RangeOrder(usize, usize, usize),
+    /// A singleton's exclusive upper bound cannot fit in `usize`.
+    #[error("Range end overflow: {0} + 1 does not fit usize")]
+    EndOverflow(usize),
 }
 
 /// Represents a range of numbers.
@@ -81,12 +84,27 @@ impl CRange {
     pub fn step(&self) -> usize {
         self.step.as_ref().map(|s| s.node).unwrap_or(1)
     }
-    /// Raw end value (defaults to `start + 1` if `None`)
+    /// Raw end value (defaults to `start + 1` if `None`).
+    ///
+    /// # Panics
+    /// Panics if the implicit end is unrepresentable; validate source ranges with
+    /// [`Self::check`] or [`Self::checked_end`] first.
     pub fn end(&self) -> usize {
-        self.end
-            .as_ref()
-            .map(|s| s.node)
-            .unwrap_or(self.start() + 1)
+        self.checked_end().expect("range end must be representable")
+    }
+
+    /// Returns the exclusive upper bound, checking implicit singleton-end arithmetic.
+    ///
+    /// # Errors
+    /// Returns [`RangeError::EndOverflow`] if an implicit end cannot fit in `usize`.
+    pub fn checked_end(&self) -> Result<usize, RangeError> {
+        match &self.end {
+            Some(end) => Ok(end.node),
+            None => self
+                .start()
+                .checked_add(1)
+                .ok_or(RangeError::EndOverflow(self.start())),
+        }
     }
 
     /// Construct a concrete range from raw values, wrapping in `Spanned::dummy`.
@@ -122,7 +140,7 @@ impl CRange {
     /// # Errors
     /// Returns `RangeError::RangeOrder` if the range is not well formed.
     pub fn check(&self) -> Result<(), RangeError> {
-        Range::from_num(self.start(), self.step(), self.end()).map(|_| ())
+        Range::from_num(self.start(), self.step(), self.checked_end()?).map(|_| ())
     }
 
     /// Create a singleton range
@@ -542,4 +560,18 @@ fn is_subset_of_respects_bounds_and_steps() {
     // A single value only needs to be a member; an empty range is in everything.
     assert!(CRange::singleton(4).is_subset_of(&r(0, 2, 10)));
     assert!(r(3, 1, 3).is_subset_of(&r(0, 1, 1)));
+}
+
+#[test]
+fn checked_end_handles_the_usize_boundary() {
+    let singleton = CRange::singleton(usize::MAX);
+    assert_eq!(
+        singleton.checked_end(),
+        Err(RangeError::EndOverflow(usize::MAX))
+    );
+    assert_eq!(singleton.check(), Err(RangeError::EndOverflow(usize::MAX)));
+    let empty = CRange::from_raw(usize::MAX, 1, usize::MAX);
+    assert_eq!(empty.end(), usize::MAX);
+    assert!(empty.check().is_ok());
+    assert_eq!(CRange::singleton(usize::MAX - 1).end(), usize::MAX);
 }

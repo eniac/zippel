@@ -211,9 +211,8 @@ pub type UDecls = Decls<Size>;
 pub type CDecls = Decls<BigUint>;
 
 impl UDecl {
-    /// Each declaration has typevariables that can be concretized to different sizes.
-    /// This method returns all possible size substitutions for the declaration.
-    /// If `sizes` pins a Range typevar, only that value is generated.
+    /// Returns every range-variable substitution, evaluating dependent bounds in
+    /// declaration order. Supplied sizes evaluate bounds; they do not pin range variables.
     ///
     /// # Errors
     /// Returns `DeclError::SubstError` if a size-type variable cannot be
@@ -296,6 +295,16 @@ impl CBody {
     /// protocol body does not infer to `Unit`; or if a function body's type has
     /// no least upper bound with the declared return type.
     pub fn typecheck(&self, sig: CSig, fctx: &Set<CSig>) -> Result<(), TypeError> {
+        self.typecheck_with_calls(sig, fctx, &|_| {})
+    }
+
+    /// Type-checks the declaration while recording resolved function calls.
+    pub(crate) fn typecheck_with_calls(
+        &self,
+        sig: CSig,
+        fctx: &Set<CSig>,
+        on_call: &dyn Fn(&CSig),
+    ) -> Result<(), TypeError> {
         // Kind context
         let kctx = sig.typevars.node.to_ctx();
         // Add arguments to [vctx] and [vars]
@@ -318,7 +327,7 @@ impl CBody {
                     ));
                 }
                 // Relation must infer to Bool (the relation IS the assertion)
-                let rel_typ = relation.infer(&kctx, fctx, &vctx)?;
+                let rel_typ = relation.infer_with_calls(&kctx, fctx, &vctx, on_call)?;
                 if !matches!(rel_typ, CTyp::Bool) {
                     return Err(TypeError::decl(
                         &sig.name,
@@ -330,7 +339,7 @@ impl CBody {
                 }
                 // Body must infer to Unit (empty body is Unit)
                 if let Some(body) = body {
-                    let br = body.infer(&kctx, fctx, &vctx)?;
+                    let br = body.infer_with_calls(&kctx, fctx, &vctx, on_call)?;
                     if br != CTyp::Unit {
                         let last = crate::typ::infer::tail(body);
                         return Err(TypeError::decl(
@@ -352,7 +361,7 @@ impl CBody {
                     .unwrap_or_else(|| Spanned::dummy(CTyp::Unit));
                 match body {
                     Some(body) => {
-                        let br = body.infer(&kctx, fctx, &vctx)?;
+                        let br = body.infer_with_calls(&kctx, fctx, &vctx, on_call)?;
                         if br.fits(&ret.node, &kctx) {
                             Ok(())
                         } else {
