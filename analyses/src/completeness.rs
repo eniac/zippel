@@ -1,7 +1,8 @@
 use std::collections::HashSet;
 
-use backend::ArkConfig;
 use backend::op::HasOpFactory;
+use backend::{ATyp, ArkConfig, ArkScalarOps};
+use share::Set;
 
 use crate::backend::{GbBackendKind, GbBasis};
 use crate::error::AnalysisError;
@@ -82,6 +83,7 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
             .generating_set
             .iter_mut()
             .chain(&mut verifier.check_polys)
+            .chain(&mut verifier.divisors)
         {
             *p = defs.apply(p);
         }
@@ -101,6 +103,26 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         let solved = Substitution::solve(&mut generating_set, |p, x| {
             completeness_accepts(p, x, &inputs, &witnesses)
         });
+
+        // A checked divisor that mentions a sample makes its exclusion a
+        // generator: `t·p − 1` for what the exclusion makes nonzero, `p`, and
+        // a fresh `t`. Unmentioned ones would only slow the basis. The samples
+        // are the prover's and the relation's: the verifier reads its
+        // challenges as inputs.
+        let mentioned: Set<Var> = prover
+            .divisors
+            .iter()
+            .chain(&verifier.divisors)
+            .flat_map(|d| solved.apply(d).vars())
+            .collect();
+        let one = Polynomial::lit(&C::FOps::one());
+        for (sample, nonzero) in &prover.excluded {
+            if mentioned.contains(sample) {
+                let name = builder.ns.next_name("excluded_inv");
+                let t = Polynomial::var(&builder.ns.sentinel_var(&name, ATyp::scalar()));
+                generating_set.push(&(&t * &solved.apply(nonzero)) - &one);
+            }
+        }
 
         // The goals: the verifier's checks and the prover's divisor checks.
         let goals = prover
@@ -1524,6 +1546,39 @@ mod tests {
             matches!(result, Err(AnalysisError::Incomplete(_))),
             "{result:?}"
         );
+    }
+
+    #[test]
+    fn a_divisor_mixing_exclusions_is_complete() {
+        // `c·(d − 1)` is not a monomial, so `c`'s exclusion is needed too.
+        let result = completeness_of(
+            r#"
+            proto mixed<F: Field>(instance a: F) where a == a {
+                c <- challenge<F*>;
+                d <- challenge<F - [1]>;
+                let t = 1 / (c * (d - 1));
+                verify(t * c * (d - 1) == 1)
+            }"#,
+        );
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn an_exclusion_no_divisor_mentions_is_no_generator() {
+        let generators = |typ: &str| {
+            CompletenessAnalysis::build_inputs(&dag_of(&format!(
+                r#"
+                proto unused<F: Field>(instance a: F) where a == a {{
+                    c <- challenge<{typ}>;
+                    d <- challenge<F - [1]>;
+                    let t = 1 / (d - 1);
+                    verify(t * (d - 1) == c - c + 1)
+                }}"#
+            )))
+            .generating_set
+            .len()
+        };
+        assert_eq!(generators("F - [a]"), generators("F"));
     }
 
     /// A verifier that divides by `c − w`, for a fourth root of unity `w` and

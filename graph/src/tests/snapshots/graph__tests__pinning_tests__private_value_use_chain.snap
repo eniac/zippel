@@ -9,7 +9,7 @@ error: The verifier depends on random value `r`, which only the prover knows
    │         ┬  
    │         ╰── sampled by the prover; the verifier would draw its own, different value
    │         │  
-   │         ╰── note: a `verify` check may only use `instance` arguments, challenges, and values the prover sends with `<-` (directly or through `let`s)
+   │         ╰── note: the verifier may only use `instance` arguments, challenges, and values the prover sends with `<-` (directly or through `let`s)
    │ 
  4 │     let t = r + r;
    │         ┬  
@@ -20,5 +20,5 @@ error: The verifier depends on random value `r`, which only the prover knows
    │ 
  8 │     verify(g * w == u)
    │     ─────────┬────────  
-   │              ╰────────── the verifier checks it here
+   │              ╰────────── the verifier uses it here
 ───╯

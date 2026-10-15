@@ -1,16 +1,15 @@
 use std::fmt;
 
-/// The values a `random` or `challenge` sample is drawn again on, so that it
-/// is uniform over the rest of its type: `T*` excludes zero, `T - v` the
-/// entries of the vector `v`, and `T - roots_of_unity(n)` every `x` with
-/// `x^n == 1`. `V` represents `v` and `S` represents `n`.
+/// What a `random` or `challenge` sample excludes: it is resampled while
+/// excluded. `V` represents an excluded vector and `S` the order of the
+/// excluded roots of unity.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Exclusion<V, S> {
     /// Zero: `T*`.
     Zero,
     /// The entries of a vector: `T - v`.
     Values(V),
-    /// The `n`-th roots of unity: `T - roots_of_unity(n)`.
+    /// Every `x` with `x^n == 1`: `T - roots_of_unity(n)`.
     RootsOfUnity(S),
 }
 
@@ -23,29 +22,13 @@ impl<V, S> Exclusion<V, S> {
         }
     }
 
-    /// The excluded vector, mutably, if the exclusion lists one.
-    pub const fn values_mut(&mut self) -> Option<&mut V> {
+    /// The same exclusion, borrowing its vector and order.
+    pub const fn as_ref(&self) -> Exclusion<&V, &S> {
         match self {
-            Exclusion::Values(v) => Some(v),
-            Exclusion::Zero | Exclusion::RootsOfUnity(_) => None,
-        }
-    }
-
-    /// The same exclusion with its vector rewritten by `values` and its size
-    /// by `size`.
-    ///
-    /// # Errors
-    /// Returns the first error of `values` or `size`.
-    pub fn try_map<W, T, E>(
-        self,
-        values: impl FnOnce(V) -> Result<W, E>,
-        size: impl FnOnce(S) -> Result<T, E>,
-    ) -> Result<Exclusion<W, T>, E> {
-        Ok(match self {
             Exclusion::Zero => Exclusion::Zero,
-            Exclusion::Values(v) => Exclusion::Values(values(v)?),
-            Exclusion::RootsOfUnity(n) => Exclusion::RootsOfUnity(size(n)?),
-        })
+            Exclusion::Values(v) => Exclusion::Values(v),
+            Exclusion::RootsOfUnity(n) => Exclusion::RootsOfUnity(n),
+        }
     }
 
     /// The same exclusion with its vector rewritten by `f`.
@@ -55,6 +38,21 @@ impl<V, S> Exclusion<V, S> {
             Exclusion::Values(v) => Exclusion::Values(f(v)),
             Exclusion::RootsOfUnity(n) => Exclusion::RootsOfUnity(n),
         }
+    }
+
+    /// The same exclusion with its vector rewritten by `f`.
+    ///
+    /// # Errors
+    /// Returns the error of `f`.
+    pub fn try_map_values<W, E>(
+        self,
+        f: impl FnOnce(V) -> Result<W, E>,
+    ) -> Result<Exclusion<W, S>, E> {
+        Ok(match self {
+            Exclusion::Zero => Exclusion::Zero,
+            Exclusion::Values(v) => Exclusion::Values(f(v)?),
+            Exclusion::RootsOfUnity(n) => Exclusion::RootsOfUnity(n),
+        })
     }
 }
 

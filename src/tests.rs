@@ -206,10 +206,10 @@ fn a_prover_that_divides_by_zero_fails() {
     ));
 }
 
-/// Prover and verifier divide by what their samples exclude, which the
-/// verifier computes from the instance.
+/// Samples with exclusions run end to end, the verifier computing a
+/// challenge's excluded values from the instance.
 #[test]
-fn samples_exclude_what_the_protocol_divides_by() {
+fn samples_with_exclusions_prove_and_verify() {
     let protocol = compile_src(
         "proto excludes<F: Field>(witness a: F, instance b: F) where a == b {
             let r = random<F - roots_of_unity(4)>;

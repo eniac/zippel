@@ -660,16 +660,14 @@ where
             let bv = eval_op_with_loop_params(b, env, rng, loop_params, check_sink)?;
             Ok(av.pair(bv))
         }
-        // A sample is drawn again on the values it excludes: the analyses
-        // rely on it to divide by it.
+        // Resampled while excluded: the analyses rely on it.
         Op::Random(typ, exclusion) | Op::Challenge(typ, exclusion) => {
             let exclusion = exclusion
                 .clone()
                 .map(|x| {
-                    x.try_map(
-                        |v| eval_op_with_loop_params(&v, env, rng, loop_params, check_sink),
-                        Ok,
-                    )
+                    x.try_map_values(|v| {
+                        eval_op_with_loop_params(&v, env, rng, loop_params, check_sink)
+                    })
                 })
                 .transpose()?;
             let mut value = Value::random(rng, typ);
@@ -961,8 +959,8 @@ mod tests {
         }
     }
 
-    /// A sample that excludes zero, as `*` or as a value, is drawn again
-    /// until it is nonzero; a plain one may be zero.
+    /// A sample that excludes zero, as `*` or as a value, is resampled until
+    /// it is nonzero; a plain one may be zero.
     #[test]
     fn test_eval_nonzero_sample_resamples_zero() {
         let sample = |op: GOp<ArkBn254>| {
@@ -977,12 +975,11 @@ mod tests {
         };
         let zero = mk::<ArkBn254>(Op::Value(Value::VecScalar(vec![Zero::zero()].into())));
         for exclusion in [None, Some(Exclusion::Zero), Some(Exclusion::Values(zero))] {
-            let excluded = exclusion.is_some();
             for op in [
                 Op::Random(ATyp::scalar(), exclusion.clone()),
                 Op::Challenge(ATyp::scalar(), exclusion.clone()),
             ] {
-                assert_eq!(sample(op).is_zero(), !excluded);
+                assert_eq!(sample(op).is_zero(), exclusion.is_none());
             }
         }
     }

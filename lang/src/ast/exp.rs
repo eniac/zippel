@@ -232,15 +232,14 @@ pub enum Exp<N: ExpLiteral> {
     ///     ```
     Pair(Box<Spanned<Exp<N>>>, Box<Spanned<Exp<N>>>),
 
-    ///     Sample pseudo-random number generator, drawn again on the values it
-    ///     excludes, if any
+    ///     Random sample, resampled while excluded
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let r = random<F*>;
     ///     ```
     Random(Spanned<Tid>, Option<ExpExclusion<N>>),
 
-    ///     Random oracle challenge, drawn again on the values it excludes, if any
+    ///     Random oracle challenge, resampled while excluded
     ///     **Zippel Code:**
     ///     ```zippel
     ///     r <- challenge<F - [1]>;
@@ -499,7 +498,7 @@ impl TidSubst for CExp {
                 if let Some(n) = f(&t.node) {
                     t.node = n;
                 }
-                if let Some(v) = x.as_mut().and_then(Exclusion::values_mut) {
+                if let Some(Exclusion::Values(v)) = x {
                     v.map_tids(f);
                 }
             }
@@ -1027,20 +1026,13 @@ where
             Exp::Map(x, id, range) => write!(f, "[{} for {id} in {}]", m.sub(x), m.sub(range)),
             Exp::Reduce(op, a) => write!(f, "reduce({op}, {})", m.sub(a)),
             Exp::Var(x) => write!(f, "{x}"),
-            Exp::Challenge(t, x) | Exp::Random(t, x) => {
-                let name = if matches!(self, Exp::Challenge(..)) {
-                    "challenge"
-                } else {
-                    "random"
-                };
-                write!(f, "{name}<{t}")?;
-                match x {
-                    None => {}
-                    Some(Exclusion::Zero) => f.write_str("*")?,
-                    Some(Exclusion::Values(v)) => write!(f, " - {}", m.sub(v))?,
-                    Some(Exclusion::RootsOfUnity(n)) => write!(f, " - roots_of_unity({n})")?,
-                }
-                f.write_str(">")
+            Exp::Challenge(t, None) => write!(f, "challenge<{t}>"),
+            Exp::Challenge(t, Some(x)) => {
+                write!(f, "challenge<{t}{}>", x.as_ref().map_values(|v| m.sub(v)))
+            }
+            Exp::Random(t, None) => write!(f, "random<{t}>"),
+            Exp::Random(t, Some(x)) => {
+                write!(f, "random<{t}{}>", x.as_ref().map_values(|v| m.sub(v)))
             }
             Exp::Pair(t, e) => write!(f, "pair({}, {})", m.sub(t), m.sub(e)),
             Exp::Range(r) => write!(f, "{r}"),
@@ -1095,9 +1087,7 @@ impl<N: ExpLiteral> Exp<N> {
     fn is_leaf(&self) -> bool {
         match self {
             Exp::Lit(_) | Exp::Unit | Exp::Var(_) | Exp::Range(_) => true,
-            Exp::Challenge(_, x) | Exp::Random(_, x) => {
-                x.as_ref().is_none_or(|x| x.values().is_none())
-            }
+            Exp::Challenge(_, x) | Exp::Random(_, x) => !matches!(x, Some(Exclusion::Values(_))),
             _ => false,
         }
     }

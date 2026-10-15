@@ -10,9 +10,8 @@
 //!   recursively for `;`-separated relations (where `gap_hard` after
 //!   `;` provides the break).
 
-use lang::ast::Exclusion;
 use lang::ast::exp::{BinOp, Exp, ExpExclusion, Exps};
-use lang::ast::{Size, Spanned};
+use lang::ast::{Exclusion, Size, Spanned};
 use lang::id::Tid;
 use lang::parser::Token;
 use pretty::DocAllocator;
@@ -489,12 +488,31 @@ fn format_unary_call(
     end: usize,
     style: &Style,
 ) -> (TriviaGap, Doc<'static>) {
+    format_call1(
+        name,
+        pred,
+        |cursor| format_exp(arg, cursor, style),
+        cursor,
+        end,
+        style,
+    )
+}
+
+/// `name(arg)`, with `arg` formatted by `format_arg`.
+fn format_call1(
+    name: &'static str,
+    pred: impl Fn(&Token) -> bool,
+    format_arg: impl FnOnce(&mut TokenCursor) -> (TriviaGap, Doc<'static>),
+    cursor: &mut TokenCursor,
+    end: usize,
+    style: &Style,
+) -> (TriviaGap, Doc<'static>) {
     let keyword_gap = cursor.advance_to_token(end, pred);
     let open = gap_none(
         cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
         style,
     );
-    let (arg_gap, arg_doc) = format_exp(arg, cursor, style);
+    let (arg_gap, arg_doc) = format_arg(cursor);
     let close_comments = cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
     let mut list = DelimList::new(style, ",", true);
     list.push(arg_gap, arg_doc);
@@ -623,24 +641,13 @@ fn format_sampling(
             format_exp(values, cursor, style)
         }),
         Some(Exclusion::RootsOfUnity(n)) => format_excluded(cursor, end, style, |cursor| {
-            let keyword_gap =
-                cursor.advance_to_token(end, |token| matches!(token, Token::KwRootsOfUnity));
-            let open = gap_none(
-                cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
+            format_call1(
+                "roots_of_unity",
+                |token| matches!(token, Token::KwRootsOfUnity),
+                |cursor| format_size(n, cursor, end, style),
+                cursor,
+                end,
                 style,
-            );
-            let (n_gap, n_doc) = format_size(n, cursor, end, style);
-            let close_comments =
-                cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
-            let mut list = DelimList::new(style, ",", true);
-            list.push(n_gap, n_doc);
-            (
-                keyword_gap,
-                ALLOC.concat([
-                    ALLOC.text("roots_of_unity"),
-                    open,
-                    list.finish("(", ")", close_comments),
-                ]),
             )
         }),
     };

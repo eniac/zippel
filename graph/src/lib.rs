@@ -38,10 +38,11 @@ pub use node::{ArgKind, Node};
 use ark_ff::PrimeField;
 use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePolynomial};
 use backend::{ABase, ATyp, ArkConfig, PolyVariant, Value, VirtualPolynomial};
-use lang::ast::exp::ExpExclusion;
 use lang::ast::range::CRange;
 use lang::ast::spanned::Spanned;
-use lang::ast::{BinOp, CBody, CExp, CModule, CSig, Exclusion, Exp, ExpLiteral, Exps};
+use lang::ast::{
+    BinOp, CBody, CExp, CModule, CSig, Exclusion, Exp, ExpExclusion, ExpLiteral, Exps,
+};
 use lang::diagnostic::{Diagnostic, Phase};
 use lang::id::{Fresh, Tid, Vid};
 use lang::typ::infer::{TypeError, Typeable};
@@ -113,9 +114,10 @@ pub enum GraphError {
         name: Option<Vid>,
         /// Where the value is bound in the source.
         span: std::ops::Range<usize>,
-        /// The named values on the way from it to the check, innermost first.
+        /// The named values on the way from it to the use, innermost first.
         via: Vec<Spanned<Vid>>,
-        /// The `verify` check that needs it.
+        /// Where the verifier uses it: a `verify` check, or a challenge's
+        /// exclusion.
         check: std::ops::Range<usize>,
     },
     /// A `lang`-level typing failure surfaced during lowering.
@@ -187,9 +189,9 @@ impl From<&GraphError> for Diagnostic {
                     );
                     previous = format!("`{}`", step.node);
                 }
-                d.secondary_label(check.clone(), "the verifier checks it here")
+                d.secondary_label(check.clone(), "the verifier uses it here")
                     .note(
-                        "a `verify` check may only use `instance` arguments, challenges, and values \
+                        "the verifier may only use `instance` arguments, challenges, and values \
                          the prover sends with `<-` (directly or through `let`s)",
                     )
             }
@@ -1136,6 +1138,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         }
 
         let mut non_challenge_transcripts: HashSet<NodeIndex> = HashSet::new();
+        let mut challenges = Vec::new();
 
         // Add transcript nodes to verifier graph (source ops are kept as-is;
         // they will be rewritten *after* `map_node_indices` so verifier-local
@@ -1145,6 +1148,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             if node.is_challenge() {
                 let new_node = verifier.add_weight(node.clone());
                 node_map_self.insert(n_transcr, new_node);
+                challenges.push(n_transcr);
                 continue;
             }
             non_challenge_transcripts.insert(n_transcr);
@@ -1156,21 +1160,18 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         let mut worklist = self.find_verify();
         assert!(!worklist.is_empty(), "No verifier check found");
         // and the challenges, since the verifier computes the values they exclude
-        worklist.extend(
-            self.transcript_nodes()
-                .into_iter()
-                .filter(|&n| self[n].is_challenge()),
-        );
-        // Each reached node ↦ the node that needed it, back to a check, for reporting leaks.
+        worklist.extend(challenges);
+        // Each reached node ↦ the node that needed it, back to a check or a
+        // challenge, for reporting leaks.
         let mut via: HashMap<NodeIndex, NodeIndex> = HashMap::new();
 
         while let Some(n) = worklist.pop() {
-            // A challenge is already in the verifier, but not what it excludes.
+            // Op nodes are added once, transcript nodes are already in the
+            // verifier, and a challenge is visited for what it excludes.
             let challenge = self[n].is_challenge();
-            if !challenge && node_map_self.contains_key(&n) {
-                continue;
-            } else if !challenge && (!self[n].is_op() || self[n].is_transcript()) {
-                // Only op nodes are added to the verifier, transcript nodes are already added to the prover
+            if !challenge
+                && (node_map_self.contains_key(&n) || !self[n].is_op() || self[n].is_transcript())
+            {
                 continue;
             }
 
@@ -1565,16 +1566,12 @@ impl<C: HasOpFactory> UDag<C> {
     ) -> Result<Option<OpExclusion<C>>, GraphError> {
         exclusion
             .map(|x| {
-                x.try_map(
-                    |v| {
-                        let span = v.span.clone();
-                        let v =
-                            self.add_exp(*v, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
-                        let typ = v.typ();
-                        Ok(mk::<C>(self.materialize(v, edge_type, typ, span)))
-                    },
-                    Ok,
-                )
+                x.try_map_values(|v| {
+                    let span = v.span.clone();
+                    let v = self.add_exp(*v, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
+                    let typ = v.typ();
+                    Ok(mk::<C>(self.materialize(v, edge_type, typ, span)))
+                })
             })
             .transpose()
     }

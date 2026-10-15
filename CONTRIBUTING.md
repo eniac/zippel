@@ -120,16 +120,17 @@ stating the relation being proven. The body samples randomness
 (`random<F>`), draws challenges (`challenge<F*>`), computes messages
 with `<-`, and ends in a `verify(...)` check.
 
-A sample is drawn again on the values it excludes. A `*` sample
-(`random<F*>`, `challenge<F*>`) is never zero; `challenge<F - [1, a]>`
-is never 1 or `a`; and `challenge<F - roots_of_unity(K)>` is never a
-`K`-th root of unity, so `r^K - 1` is nonzero. Dividing by zero aborts
-the run, so the completeness analysis must show that no honest run
-divides by zero: divide by values the samples exclude, by nonzero
-constants, or by values the relation and protocol make nonzero. A
-protocol that divides by a plain `challenge<F>` is reported incomplete,
-since that challenge is zero with probability 1/|F|. In a `where` clause,
-a division makes its divisor nonzero as part of the relation.
+A sample is resampled while excluded. A `*` sample (`random<F*>`,
+`challenge<F*>`) is never zero; `challenge<F - [1, a]>` is never 1 or
+`a`; and `challenge<F - roots_of_unity(K)>` is never a `K`-th root of
+unity, so `r^K - 1` is nonzero. Dividing by zero aborts the run, so the
+completeness analysis must show that no honest run divides by zero:
+divide by what the exclusions make nonzero (`c - a` for
+`c <- challenge<F - [a]>`), by nonzero constants, or by values the
+relation and protocol make nonzero. A protocol that divides by a plain
+`challenge<F>` is reported incomplete, since that challenge is zero with
+probability 1/|F|. In a `where` clause, a division makes its divisor
+nonzero as part of the relation.
 
 ### 4. Check it
 

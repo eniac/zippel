@@ -707,7 +707,7 @@ where
                     sp.into_range()
                 })
             }),
-        // random<T>, random<T*>, random<T - v> or random<T - roots_of_unity(n)>
+        // random<T>, optionally with an exclusion
         just(Token::KwRandom)
             .ignored()
             .ignore_then(just(Token::LAngle).ignored())
@@ -720,8 +720,7 @@ where
                     sp.into_range()
                 })
             }),
-        // challenge<T>, challenge<T*>, challenge<T - v> or
-        // challenge<T - roots_of_unity(n)>
+        // challenge<T>, optionally with an exclusion
         just(Token::KwChallenge)
             .ignored()
             .ignore_then(just(Token::LAngle).ignored())

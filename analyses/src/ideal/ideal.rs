@@ -52,6 +52,11 @@ pub struct Ideal<C: ArkConfig> {
     /// The quotient and remainder witnesses of every polynomial division
     /// encoded into this ideal, each a sentinel with its own `Ref`.
     pub division_witnesses: HashSet<Ref>,
+    /// Each sample with an exclusion, and what the exclusion makes nonzero:
+    /// `r`, `∏ (r − s)` over the excluded values `s`, or `r^n − 1`.
+    pub excluded: Vec<(Var, Polynomial<C::F>)>,
+    /// The divisors `check_polys` require nonzero.
+    pub divisors: Vec<Polynomial<C::F>>,
 }
 
 impl<C: ArkConfig + HasOpFactory> Ideal<C> {
@@ -65,6 +70,8 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             vars: HashMap::new(),
             var_order: Vec::new(),
             division_witnesses: HashSet::new(),
+            excluded: Vec::new(),
+            divisors: Vec::new(),
         }
     }
 
@@ -99,7 +106,8 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
     }
 
     /// Resolve the `pl` definitions, substitute them into the generators, the
-    /// check polynomials and both sides of every check, and return them.
+    /// check polynomials, both sides of every check, the exclusions and the
+    /// divisors, and return them.
     ///
     /// Empties `pl` and drops the generators and check polynomials that
     /// become zero. A definition that [`Substitution::resolve`] leaves out
@@ -119,10 +127,19 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             check.lhs = defs.apply(&check.lhs);
             check.rhs = defs.apply(&check.rhs);
         }
+        for p in self
+            .excluded
+            .iter_mut()
+            .map(|(_, p)| p)
+            .chain(&mut self.divisors)
+        {
+            *p = defs.apply(p);
+        }
         defs
     }
 
-    /// Merge another ideal's basis, checks, check polynomials and definitions into this ideal.
+    /// Merge another ideal's basis, checks, check polynomials, definitions,
+    /// exclusions and divisors into this ideal.
     pub fn merge(&mut self, other: &Self) {
         self.generating_set
             .extend(other.generating_set.iter().cloned());
@@ -137,6 +154,8 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         }
         self.division_witnesses
             .extend(other.division_witnesses.iter().copied());
+        self.excluded.extend(other.excluded.iter().cloned());
+        self.divisors.extend(other.divisors.iter().cloned());
     }
 }
 
