@@ -67,7 +67,7 @@ pub(crate) static SOUNDNESS_ENTRIES: LazyLock<Vec<SoundnessEntry>> = LazyLock::n
         SoundnessEntry {
             name: "cds",
             zippel_path: "examples/cds/cds.zippel",
-            sizes: &[],
+            sizes: &[("N", 2)],
             l_vec: &[2],
             ignored: true,
         },

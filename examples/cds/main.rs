@@ -6,29 +6,30 @@ use share::Ctx;
 
 use crate::common;
 
-const N: usize = 2;
+/// The number of simulated instances; the relation assumes one.
 const K: usize = 1;
 
-fn make_inputs(_sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
+fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     type F = <ArkBls12_381 as ArkConfig>::F;
     type G1 = <ArkBls12_381 as ArkConfig>::G1;
+    let n = common::size(sizes, "N");
     let mut rng = rand::rngs::OsRng;
 
     let g = G1::rand(&mut rng);
 
-    let mut w_vec = Vec::with_capacity(N);
-    let mut r_vec = Vec::with_capacity(N);
-    let mut b_vec = Vec::with_capacity(N);
-    let mut c_sim_vec = Vec::with_capacity(N);
-    let mut m2_sim_vec = Vec::with_capacity(N);
-    let mut pk_vec = Vec::with_capacity(N);
+    let mut w_vec = Vec::with_capacity(n);
+    let mut r_vec = Vec::with_capacity(n);
+    let mut b_vec = Vec::with_capacity(n);
+    let mut c_sim_vec = Vec::with_capacity(n);
+    let mut m2_sim_vec = Vec::with_capacity(n);
+    let mut pk_vec = Vec::with_capacity(n);
 
     let mut u_points_vec = Vec::new();
     let mut u_evals_vec = Vec::new();
-    let mut eval_points_vec = Vec::with_capacity(N);
+    let mut eval_points_vec = Vec::with_capacity(n);
 
-    for i in 0..N {
-        let is_known = i < (N - K);
+    for i in 0..n {
+        let is_known = i < (n - K);
         eval_points_vec.push(F::from((i + 1) as u64));
 
         let w_val = F::rand(&mut rng);
@@ -56,10 +57,19 @@ fn make_inputs(_sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_38
         }
     }
 
-    let distinct_inv =
-        (eval_points_vec[0] * eval_points_vec[1] * (eval_points_vec[1] - eval_points_vec[0]))
-            .inverse()
-            .unwrap();
+    // The relation's product: every point, times its difference from every
+    // other point.
+    let distinct_product: F = (0..n)
+        .map(|i| {
+            let differences: F = (1..n)
+                .map(|d| eval_points_vec[i] - eval_points_vec[(i + d) % n])
+                .product();
+            eval_points_vec[i] * differences
+        })
+        .product();
+    let distinct_inv = distinct_product
+        .inverse()
+        .expect("the points 1..=N are distinct and nonzero");
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("g".to_string()), Value::g1(g)),
@@ -82,8 +92,13 @@ fn make_inputs(_sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_38
 pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
     common::ExampleSpec {
         source: "examples/cds/cds.zippel",
-        defaults: &[],
-        validate: None,
+        defaults: &[("N", 2)],
+        validate: Some(|sizes, _analysis| {
+            if common::size(sizes, "N") <= K {
+                return Err(format!("N must exceed K = {K}: some instance must be real"));
+            }
+            Ok(())
+        }),
         make_inputs,
         analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
     }

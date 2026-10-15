@@ -74,7 +74,7 @@ pub static PROTOCOLS: &[Protocol] = &[
     Protocol {
         name: "cds",
         path: "examples/cds/cds.zippel",
-        sizes: &[],
+        sizes: &[("N", 2)],
         completeness: true,
         soundness: Some(&[2]),
     },
