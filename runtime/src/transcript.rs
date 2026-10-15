@@ -63,8 +63,8 @@ impl<'a, C: ArkConfig, H: DuplexSpongeInterface<U = u8>> Transcript<'a, C, H> {
         }
     }
 
-    /// Absorbs everything queued, then squeezes a challenge, squeezed again
-    /// while `exclusion` excludes it, which prover and verifier do alike.
+    /// Absorbs everything queued, then squeezes a challenge, resampled while
+    /// `exclusion` excludes it, as prover and verifier both do.
     pub(crate) fn challenge(&mut self, exclusion: Option<&Exclusion<Value<C>, usize>>) -> Value<C> {
         for p in self.pending.drain(..) {
             let value = match &p {
@@ -96,30 +96,27 @@ mod tests {
 
     type C = ArkBls12_381;
 
-    /// The first `n` challenges squeezed, none excluded, from a fresh sponge.
-    fn squeezes(n: usize) -> Vec<Value<C>> {
+    /// The first `n` challenges from a fresh sponge, each resampled while
+    /// `exclusion` excludes it.
+    fn challenges(n: usize, exclusion: Option<&Exclusion<Value<C>, usize>>) -> Vec<Value<C>> {
         let separator =
             ZippelDomainSeparator::<C>::new_zippel_domain_separator("test", &UDag::<C>::new());
         let mut sponge = separator.prover_state();
         let mut transcript = Transcript::<C, _>::new(&mut sponge, false);
-        (0..n).map(|_| transcript.challenge(None)).collect()
+        (0..n).map(|_| transcript.challenge(exclusion)).collect()
     }
 
-    /// A challenge is squeezed again while its exclusion excludes it.
+    /// A challenge is resampled while its exclusion excludes it.
     #[test]
-    fn an_excluded_challenge_is_squeezed_again() {
-        let expected = squeezes(3);
-        let separator =
-            ZippelDomainSeparator::<C>::new_zippel_domain_separator("test", &UDag::<C>::new());
-        let mut sponge = separator.prover_state();
-        let mut transcript = Transcript::<C, _>::new(&mut sponge, false);
-        let Value::Scalar(first) = expected[0] else {
-            unreachable!("a challenge is a scalar")
-        };
-        let Value::Scalar(second) = expected[1] else {
-            unreachable!("a challenge is a scalar")
-        };
-        let excluded = Exclusion::Values(Value::VecScalar(vec![second, first].into()));
-        assert_eq!(transcript.challenge(Some(&excluded)), expected[2]);
+    fn an_excluded_challenge_is_resampled() {
+        let plain: Vec<_> = challenges(3, None)
+            .into_iter()
+            .map(|c| match c {
+                Value::Scalar(x) => x,
+                _ => unreachable!("a challenge is a scalar"),
+            })
+            .collect();
+        let excluded = Exclusion::Values(Value::VecScalar(vec![plain[1], plain[0]].into()));
+        assert_eq!(challenges(1, Some(&excluded)), [Value::Scalar(plain[2])]);
     }
 }

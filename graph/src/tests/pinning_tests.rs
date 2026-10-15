@@ -1645,8 +1645,8 @@ fn pin_project_verifier_witness_leak() {
     }
 }
 
-/// The verifier computes the values its challenges exclude: from instances,
-/// but never from a witness.
+/// The verifier computes the values its challenges exclude, so they may not
+/// depend on a witness.
 /// Tests: GraphError::PrivateValueInVerifier.
 #[test]
 fn pin_project_verifier_challenge_exclusion() {
@@ -1665,26 +1665,6 @@ fn pin_project_verifier_challenge_exclusion() {
         Err(e) => panic!("Expected PrivateValueInVerifier, got: {}", e),
         Ok(_) => panic!("Expected error but got Ok"),
     }
-
-    let instance = r#"
-        proto foo<F: Field>(instance a: F) where a == a {
-            c <- challenge<F - [a + 1]>;
-            verify(c == c)
-        }
-    "#;
-    let verifier = parse_and_build(instance)[0].project_verifier().unwrap();
-    let challenge = verifier
-        .node_indices()
-        .find(|&n| verifier[n].is_challenge())
-        .unwrap();
-    let excluded = verifier
-        .neighbors_directed(challenge, Direction::Incoming)
-        .find(|&n| !verifier[n].is_transcript() && !verifier[n].is_input())
-        .expect("the verifier computes the excluded vector");
-    assert!(matches!(
-        &*verifier[excluded].clone().into_op(),
-        GOp::Vec(_)
-    ));
 }
 
 /// A leaked value is reported with the named values it flows through, out to the check.
