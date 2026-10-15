@@ -6,9 +6,9 @@
 
 #[cfg(test)]
 mod scalar_g1_properties {
-    use crate::Op;
-    use crate::tests::test_helpers::*;
+    use crate::eval::graph_tests::helpers::*;
     use backend::{ATyp, Value};
+    use graph::Op;
     use lang::id::Vid;
 
     type C = TestConfig;
@@ -227,7 +227,7 @@ mod scalar_g1_properties {
 
 #[cfg(test)]
 mod mle_differential_tests {
-    use crate::tests::test_helpers::*;
+    use crate::eval::graph_tests::helpers::*;
     use ark_poly::DenseMultilinearExtension;
     use backend::{ATyp, Value, poly_variant::PolyVariant, virtual_polynomial::VirtualPolynomial};
     use lang::id::Vid;
@@ -244,7 +244,7 @@ mod mle_differential_tests {
             }
         "#;
         let m = parse_and_concretize(src, &Ctx::new());
-        let dags = crate::UDags::<C>::from_module(m).unwrap();
+        let dags = graph::UDags::<C>::from_module(m).unwrap();
         let dag = &dags[0];
 
         let mut rng = ark_std::test_rng();

@@ -724,7 +724,7 @@ mod tests {
         proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
             let r = random<F>;
             u <- g*r;
-            c <- challenge<F*>;
+            c <- challenge<F>;
             z <- r + x*c;
             verify(g*z == u + h*c)
         }
@@ -867,7 +867,7 @@ mod tests {
             proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where g == g - g && h == g*x {
                 let r = random<F>;
                 u <- g*r;
-                c <- challenge<F*>;
+                c <- challenge<F>;
                 z <- r + x*c;
                 verify(g*z == u + h*c)
             }
@@ -947,8 +947,8 @@ mod tests {
                 u1 <- g * r1;
                 let r2 = random<F>;
                 u2 <- g * r2;
-                c1 <- challenge<F*>;
-                c2 <- challenge<F*>;
+                c1 <- challenge<F>;
+                c2 <- challenge<F>;
                 z1 <- r1 + x * c1;
                 z2 <- r2 + r1 * c2 + x * (c1 * c2);
                 verify(g*z1 == u1 + h*c1); verify(g*z2 == u2 + u1*c2 + h*(c1*c2))
@@ -965,9 +965,9 @@ mod tests {
                 let s = random<F>;
                 u <- g*r;
                 v <- g*s;
-                c1 <- challenge<F*>;
+                c1 <- challenge<F>;
                 z1 <- r + x*c1;
-                c2 <- challenge<F*>;
+                c2 <- challenge<F>;
                 z2 <- s + r*c2 + x*(c1*c2) + x*(c2*c2);
                 verify(g*z1 == u + h*c1); verify(g*z2 == v + u*c2 + h*(c1*c2 + c2*c2))
             }
@@ -981,10 +981,10 @@ mod tests {
             proto multi_schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
                 let r1 = random<F>;
                 u1 <- g*r1;
-                c1 <- challenge<F*>;
+                c1 <- challenge<F>;
                 let r2 = random<F>;
                 u2 <- g*r2;
-                c2 <- challenge<F*>;
+                c2 <- challenge<F>;
                 z1 <- r1 + x*c1;
                 z2 <- r2 + x*c2;
                 verify(g*z1 == u1 + h*c1); verify(g*z2 == u2 + h*c2)

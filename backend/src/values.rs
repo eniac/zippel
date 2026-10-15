@@ -2,11 +2,13 @@ use crate::optimization::{
     record_canonical_sumcheck_rows_fused, record_canonical_sumcheck_rows_seen,
     record_reduce_univariate_post_materialization, record_selected_eval_term_materialized,
 };
-use crate::poly_variant::PolyVariant;
+use crate::poly_variant::{PolyError, PolyVariant};
 use crate::shared::Shared;
 use crate::types::Lub;
 use crate::virtual_polynomial::{SelectedEvalShape, VirtualPolynomial};
-use crate::{ABase, ATyp, ArkConfig, ArkGroupOps, ArkPairingOps, ArkScalarOps, to_bytes};
+use crate::{
+    ABase, ATyp, ArkConfig, ArkGroupOps, ArkPairingOps, ArkScalarOps, DivisionByZero, to_bytes,
+};
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::Field;
@@ -25,7 +27,7 @@ use share::Ctx;
 use spongefish::{DuplexSpongeInterface, ProverState};
 use std::fmt;
 use std::io::Write;
-use std::ops::{Add, AddAssign, BitXor, Div, Mul, MulAssign, Rem, Sub};
+use std::ops::{Add, AddAssign, BitXor, Mul, MulAssign, Sub};
 use std::sync::Arc;
 
 /// A runtime value: the payload carried by a node of a scheduled DAG during
@@ -1444,8 +1446,11 @@ impl<C: ArkConfig> Value<C> {
     }
 
     /// Value division, saves result in other
+    ///
+    /// # Errors
+    /// [`DivisionByZero`] if a divisor (`other`, or an entry of it) is zero.
     #[inline]
-    pub fn value_div(&self, other: &mut Self) {
+    pub fn value_div(&self, other: &mut Self) -> Result<(), DivisionByZero> {
         // A prepared G2 vector takes part in arithmetic through its points.
         if let Value::VecG2Prepared(v) = self {
             return Value::VecG2Affine(v.affine()).value_div(other);
@@ -1457,9 +1462,11 @@ impl<C: ArkConfig> Value<C> {
             Value::VecG2Prepared(_) => unreachable!("prepared G2 vectors are unwrapped on entry"),
             Value::Index(a) => match &other {
                 // Index / Index = Index
-                Value::Index(_) => *other = Value::Index(*a / other.into_index()),
+                Value::Index(b) => *other = Value::Index(index_div(*a, *b)?),
                 // Index / whatever, cast index to scalar
-                Value::Scalar(_) => C::FOps::div(&C::FOps::from_usize(*a), other.into_scalar_mut()),
+                Value::Scalar(_) => {
+                    C::FOps::div(&C::FOps::from_usize(*a), other.into_scalar_mut())?;
+                }
                 // Index / Poly
                 Value::Poly(poly) => {
                     // Can only divide by constant polynomial
@@ -1467,22 +1474,27 @@ impl<C: ArkConfig> Value<C> {
                         .to_scalar()
                         .expect("Cannot divide by non-constant polynomial");
                     let numerator = C::FOps::from_usize(*a);
-                    C::FOps::div(&numerator, &mut poly_scalar);
+                    C::FOps::div(&numerator, &mut poly_scalar)?;
                     *other = Value::Scalar(poly_scalar);
                 }
                 // Index / Vectors
-                Value::VecIndex(_) => other
-                    .into_vec_index_mut()
-                    .par_iter_mut()
-                    .for_each(|b| *b /= *a),
+                Value::VecIndex(_) => {
+                    other
+                        .into_vec_index_mut()
+                        .par_iter_mut()
+                        .try_for_each(|b| {
+                            *b = index_div(*a, *b)?;
+                            Ok(())
+                        })?
+                }
                 Value::VecScalar(_) => other
                     .into_vec_scalar_mut()
                     .par_iter_mut()
-                    .for_each(|b| C::FOps::div(&C::FOps::from_usize(*a), b)),
+                    .try_for_each(|b| C::FOps::div(&C::FOps::from_usize(*a), b))?,
                 Value::Vec(_) => other
                     .into_vec_mut()
                     .par_iter_mut()
-                    .for_each(|b| self.value_div(b)),
+                    .try_for_each(|b| self.value_div(b))?,
                 Value::Record(_) => {
                     panic!("Cannot divide Index and Record")
                 }
@@ -1490,27 +1502,31 @@ impl<C: ArkConfig> Value<C> {
             },
             Value::Scalar(a) => match &other {
                 // Scalar / index, cast index to Scalar
-                Value::Index(b) => C::FOps::div(a, &mut C::FOps::from_usize(*b)),
+                Value::Index(b) => {
+                    let mut quotient = C::FOps::from_usize(*b);
+                    C::FOps::div(a, &mut quotient)?;
+                    *other = Value::Scalar(quotient);
+                }
                 // Scalar / Scalar = Scalar
-                Value::Scalar(_) => C::FOps::div(a, other.into_scalar_mut()),
+                Value::Scalar(_) => C::FOps::div(a, other.into_scalar_mut())?,
                 // Scalar / Poly
                 Value::Poly(poly) => {
                     // Can only divide by constant polynomial
                     let mut poly_scalar = poly
                         .to_scalar()
                         .expect("Cannot divide by non-constant polynomial");
-                    C::FOps::div(a, &mut poly_scalar);
+                    C::FOps::div(a, &mut poly_scalar)?;
                     *other = Value::Scalar(poly_scalar);
                 }
                 // Scalar / Vector
                 Value::VecIndex(_) | Value::VecScalar(_) => other
                     .into_vec_scalar_mut()
                     .par_iter_mut()
-                    .for_each(|b| C::FOps::div(a, b)),
+                    .try_for_each(|b| C::FOps::div(a, b))?,
                 Value::Vec(_) => other
                     .into_vec_mut()
                     .par_iter_mut()
-                    .for_each(|b| self.value_div(b)),
+                    .try_for_each(|b| self.value_div(b))?,
                 Value::Record(_) => {
                     panic!("Cannot divide Scalar and Record")
                 }
@@ -1519,10 +1535,7 @@ impl<C: ArkConfig> Value<C> {
             Value::G1(a) => match &other {
                 // Group1 / scalar
                 Value::Scalar(_) | Value::Index(_) => {
-                    let f = other
-                        .into_scalar()
-                        .inverse()
-                        .unwrap_or_else(|| panic!("Failed to invert scalar {}", other));
+                    let f = scalar_inverse(&other.into_scalar())?;
                     let mut g = **a;
                     C::G1Ops::mul(&f, &mut g);
                     *other = Value::g1(g);
@@ -1530,23 +1543,20 @@ impl<C: ArkConfig> Value<C> {
                 // Group1 / Vec<Index>
                 Value::VecIndex(_) | Value::VecScalar(_) => {
                     let vr = other.into_vec_scalar_mut();
-                    C::FOps::vec_inv(vr);
+                    C::FOps::vec_inv(vr)?;
                     *other = Value::vec_g1_affine(C::G1Ops::vec_mul(a, vr));
                 }
                 Value::Vec(_) => other
                     .into_vec_mut()
                     .par_iter_mut()
-                    .for_each(|b| self.value_div(b)),
+                    .try_for_each(|b| self.value_div(b))?,
 
                 _ => panic!("Expected scalar, found {}", other),
             },
             Value::G2(a) => match &other {
                 // G2 / scalar
                 Value::Scalar(_) | Value::Index(_) => {
-                    let f = other
-                        .into_scalar()
-                        .inverse()
-                        .unwrap_or_else(|| panic!("Failed to invert scalar {}", other));
+                    let f = scalar_inverse(&other.into_scalar())?;
                     let mut g = **a;
                     C::G2Ops::mul(&f, &mut g);
                     *other = Value::G2(Arc::new(g));
@@ -1554,25 +1564,22 @@ impl<C: ArkConfig> Value<C> {
                 // G2 / Vec<Index>
                 Value::VecIndex(_) | Value::VecScalar(_) => {
                     let vr = other.into_vec_scalar_mut();
-                    C::FOps::vec_inv(vr);
+                    C::FOps::vec_inv(vr)?;
                     *other = Value::vec_g2_affine(C::G2Ops::vec_mul(a, vr));
                 }
                 Value::Vec(_) => other
                     .into_vec_mut()
                     .par_iter_mut()
-                    .for_each(|b| self.value_div(b)),
+                    .try_for_each(|b| self.value_div(b))?,
 
                 _ => panic!("Expected scalar, found {}", other),
             },
-            Value::G1Affine(a) => Self::value_div(&Value::g1((**a).into()), other),
-            Value::G2Affine(a) => Self::value_div(&Value::g2((**a).into()), other),
+            Value::G1Affine(a) => Self::value_div(&Value::g1((**a).into()), other)?,
+            Value::G2Affine(a) => Self::value_div(&Value::g2((**a).into()), other)?,
             Value::GT(a) => match &other {
                 // G2 / scalar
                 Value::Scalar(_) | Value::Index(_) => {
-                    let f = other
-                        .into_scalar()
-                        .inverse()
-                        .unwrap_or_else(|| panic!("Failed to invert scalar {}", other));
+                    let f = scalar_inverse(&other.into_scalar())?;
                     let mut g = **a;
                     C::POps::mul(&f, &mut g);
                     *other = Value::GT(Arc::new(g));
@@ -1580,20 +1587,24 @@ impl<C: ArkConfig> Value<C> {
                 // G2 / Vec<Index>
                 Value::VecIndex(_) | Value::VecScalar(_) => {
                     let vr = other.into_vec_scalar_mut();
-                    C::FOps::vec_inv(vr);
+                    C::FOps::vec_inv(vr)?;
                     *other = Value::vec_gt(C::POps::vec_mul(a, vr));
                 }
                 Value::Vec(_) => other
                     .into_vec_mut()
                     .par_iter_mut()
-                    .for_each(|b| self.value_div(b)),
+                    .try_for_each(|b| self.value_div(b))?,
 
                 _ => panic!("Expected scalar, found {}", other),
             },
             Value::VecIndex(v) => match &other {
                 // Vec<Index> / Index
                 Value::Index(i) => {
-                    *other = Value::VecIndex(v.par_iter().map(|a| *a / *i).collect())
+                    let quotients = v
+                        .par_iter()
+                        .map(|a| index_div(*a, *i))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    *other = Value::VecIndex(quotients.into());
                 }
                 // Vec<Index> / Scalar
                 Value::Scalar(_) => {
@@ -1602,34 +1613,34 @@ impl<C: ArkConfig> Value<C> {
                     );
                     v.par_iter()
                         .zip(other.into_vec_scalar_mut().par_iter_mut())
-                        .for_each(|(a, b)| C::FOps::div(&C::FOps::from_usize(*a), b));
+                        .try_for_each(|(a, b)| C::FOps::div(&C::FOps::from_usize(*a), b))?;
                 }
                 // Vec<Index> / Vec<Index> = Vec<Index>
                 Value::VecIndex(_) => v
                     .par_iter()
                     .zip(other.into_vec_index_mut().par_iter_mut())
-                    .for_each(|(a, b)| *b /= *a),
+                    .try_for_each(|(a, b)| {
+                        *b = index_div(*a, *b)?;
+                        Ok(())
+                    })?,
                 // Vec<Index> * Vec<Scalar> = Vec<Scalar>
                 Value::VecScalar(_) => v
                     .par_iter()
                     .zip(other.into_vec_scalar_mut().par_iter_mut())
-                    .for_each(|(a, b)| C::FOps::div(&C::FOps::from_usize(*a), b)),
+                    .try_for_each(|(a, b)| C::FOps::div(&C::FOps::from_usize(*a), b))?,
                 // Vec<Index> * Vec<T>
                 Value::Vec(_) => v
                     .par_iter()
                     .zip(other.into_vec_mut().par_iter_mut())
-                    .for_each(|(a, b)| Value::Index(*a).value_div(b)),
+                    .try_for_each(|(a, b)| Value::Index(*a).value_div(b))?,
 
                 _ => panic!("Expected vec index, found {}", other),
             },
             Value::VecScalar(v) => match &other {
                 // Vec<Scalar> / Index
                 Value::Index(_) | Value::Scalar(_) => {
-                    let f = other.into_scalar_mut();
-                    f.inverse()
-                        .unwrap_or_else(|| panic!("Failed to invert scalar {}", f));
-                    let mut vr =
-                        std::iter::repeat_n(f.inverse().unwrap(), v.len()).collect::<Vec<_>>();
+                    let f_inv = scalar_inverse(&other.into_scalar())?;
+                    let mut vr = vec![f_inv; v.len()];
                     v.par_iter()
                         .zip(vr.par_iter_mut())
                         .for_each(|(a, b)| C::FOps::mul(a, b));
@@ -1638,7 +1649,7 @@ impl<C: ArkConfig> Value<C> {
                 // Vec<Index> / Vec<Index> = Vec<Index>
                 Value::VecIndex(_) | Value::VecScalar(_) => {
                     let vr = other.into_vec_scalar_mut();
-                    C::FOps::vec_inv(vr);
+                    C::FOps::vec_inv(vr)?;
                     v.par_iter()
                         .zip(vr.par_iter_mut())
                         .for_each(|(a, b)| C::FOps::mul(a, b));
@@ -1647,7 +1658,7 @@ impl<C: ArkConfig> Value<C> {
                 Value::Vec(_) => v
                     .par_iter()
                     .zip(other.into_vec_mut().par_iter_mut())
-                    .for_each(|(a, b)| Value::Scalar(*a).value_div(b)),
+                    .try_for_each(|(a, b)| Value::Scalar(*a).value_div(b))?,
                 Value::Record(_) => {
                     panic!("Cannot divide Vec<Scalar> and Record")
                 }
@@ -1656,8 +1667,7 @@ impl<C: ArkConfig> Value<C> {
             Value::VecG1(v) => match &other {
                 // Vec<Group1> / scalar multiplication
                 Value::Index(_) | Value::Scalar(_) => {
-                    let f = other.into_scalar();
-                    let f_inv = f.inverse().unwrap();
+                    let f_inv = scalar_inverse(&other.into_scalar())?;
                     *other = Value::vec_g1(
                         v.par_iter()
                             .map(|g| {
@@ -1672,7 +1682,7 @@ impl<C: ArkConfig> Value<C> {
                 Value::VecIndex(_) | Value::VecScalar(_) => {
                     // TODO: There has to be a better way to do this...
                     let vl = other.into_vec_scalar_mut();
-                    C::FOps::vec_inv(vl);
+                    C::FOps::vec_inv(vl)?;
                     let mut vr = v.to_vec();
                     (*vl)
                         .par_iter()
@@ -1684,7 +1694,7 @@ impl<C: ArkConfig> Value<C> {
                 Value::Vec(_) => v
                     .par_iter()
                     .zip(other.into_vec_mut().par_iter_mut())
-                    .for_each(|(a, b)| Value::g1(*a).value_div(b)),
+                    .try_for_each(|(a, b)| Value::g1(*a).value_div(b))?,
                 Value::Record(_) => {
                     panic!("Cannot divide Vec<G1> and Record")
                 }
@@ -1693,8 +1703,7 @@ impl<C: ArkConfig> Value<C> {
             Value::VecG2(v) => match &other {
                 // Vec<Group1> / scalar multiplication
                 Value::Index(_) | Value::Scalar(_) => {
-                    let f = other.into_scalar();
-                    let f_inv = f.inverse().unwrap();
+                    let f_inv = scalar_inverse(&other.into_scalar())?;
                     *other = Value::vec_g2(
                         v.par_iter()
                             .map(|g| {
@@ -1709,7 +1718,7 @@ impl<C: ArkConfig> Value<C> {
                 Value::VecIndex(_) | Value::VecScalar(_) => {
                     // TODO: There has to be a better way to do this...
                     let vl = other.into_vec_scalar_mut();
-                    C::FOps::vec_inv(vl);
+                    C::FOps::vec_inv(vl)?;
                     let mut vr = v.to_vec();
                     (*vl)
                         .par_iter()
@@ -1721,7 +1730,7 @@ impl<C: ArkConfig> Value<C> {
                 Value::Vec(_) => v
                     .par_iter()
                     .zip(other.into_vec_mut().par_iter_mut())
-                    .for_each(|(a, b)| Value::g2(*a).value_div(b)),
+                    .try_for_each(|(a, b)| Value::g2(*a).value_div(b))?,
                 Value::Record(_) => {
                     panic!("Cannot divide Vec<G2> and Record")
                 }
@@ -1730,22 +1739,20 @@ impl<C: ArkConfig> Value<C> {
             Value::VecG1Affine(v) => Self::value_div(
                 &Value::vec_g1(v.par_iter().map(|a| (*a).into()).collect()),
                 other,
-            ),
+            )?,
             Value::VecG2Affine(v) => Self::value_div(
                 &Value::vec_g2(v.par_iter().map(|a| (*a).into()).collect()),
                 other,
-            ),
+            )?,
             Value::VecGT(v) => match &other {
-                // Vec<Group1> / scalar multiplication
+                // Vec<GT> / scalar multiplication
                 Value::Index(_) | Value::Scalar(_) => {
-                    let vr = other.into_vec_scalar_mut();
-                    C::FOps::vec_inv(vr);
+                    let f_inv = scalar_inverse(&other.into_scalar())?;
                     *other = Value::vec_gt(
                         v.par_iter()
-                            .zip((*vr).par_iter())
-                            .map(|(g, f)| {
+                            .map(|g| {
                                 let mut gm = *g;
-                                C::POps::mul(f, &mut gm);
+                                C::POps::mul(&f_inv, &mut gm);
                                 gm
                             })
                             .collect(),
@@ -1755,7 +1762,7 @@ impl<C: ArkConfig> Value<C> {
                 Value::VecIndex(_) | Value::VecScalar(_) => {
                     // TODO: There has to be a better way to do this...
                     let vl = other.into_vec_scalar_mut();
-                    C::FOps::vec_inv(vl);
+                    C::FOps::vec_inv(vl)?;
                     let mut vr = v.to_vec();
                     (*vl)
                         .par_iter()
@@ -1767,23 +1774,20 @@ impl<C: ArkConfig> Value<C> {
                 Value::Vec(_) => v
                     .par_iter()
                     .zip(other.into_vec_mut().par_iter_mut())
-                    .for_each(|(a, b)| Value::gt(*a).value_div(b)),
+                    .try_for_each(|(a, b)| Value::gt(*a).value_div(b))?,
 
                 _ => panic!("Expected scalar, found {}", other),
             },
             Value::Vec(v) => v
                 .par_iter()
                 .zip(other.into_vec_mut().par_iter_mut())
-                .for_each(|(a, b)| a.value_div(b)),
+                .try_for_each(|(a, b)| a.value_div(b))?,
             Value::Poly(p) => match &other {
                 Value::Poly(o) => {
-                    *other = Value::poly(p.poly_div(o).expect("Polynomial division failed"));
+                    *other = Value::poly(poly_quotient(p.poly_div(o))?);
                 }
                 Value::Scalar(_) | Value::Index(_) => {
-                    *other = Value::poly(
-                        p.poly_div_scalar(other.into_scalar())
-                            .expect("Polynomial division by scalar failed"),
-                    );
+                    *other = Value::poly(poly_quotient(p.poly_div_scalar(other.into_scalar()))?);
                 }
                 Value::Record(_) => {
                     panic!("Cannot divide Poly and Record")
@@ -1796,6 +1800,7 @@ impl<C: ArkConfig> Value<C> {
             Value::Unit => panic!("Cannot divide Unit"),
             Value::Bool(_) => panic!("Cannot divide Bool"),
         }
+        Ok(())
     }
 
     /// Computes `self % other`, storing the result in `other`.
@@ -1803,32 +1808,43 @@ impl<C: ArkConfig> Value<C> {
     /// Defined only on index-typed values, which are the loop and array-offset
     /// domain; a field has no remainder operation.
     ///
+    /// # Errors
+    /// [`DivisionByZero`] if a divisor (`other`, or an entry of it) is zero.
+    ///
     /// # Panics
-    /// Panics if either operand is not an `Index` or `VecIndex`, and (through the
-    /// integer operation itself) if a divisor is zero.
-    pub fn value_rem(&self, other: &mut Self) {
+    /// Panics if either operand is not an `Index` or `VecIndex`.
+    pub fn value_rem(&self, other: &mut Self) -> Result<(), DivisionByZero> {
         match (self, &other) {
-            (Value::Index(a), Value::Index(b)) => *other.into_index_mut() = *a % *b,
+            (Value::Index(a), Value::Index(b)) => *other = Value::Index(index_rem(*a, *b)?),
             (Value::Index(i), Value::VecIndex(_)) => {
                 other
                     .into_vec_index_mut()
                     .par_iter_mut()
-                    .for_each(|v| *v %= *i);
+                    .try_for_each(|v| {
+                        *v = index_rem(*i, *v)?;
+                        Ok(())
+                    })?;
             }
             (Value::VecIndex(vs), Value::Index(i)) => {
-                let mut vs = vs.clone();
-                vs.to_mut().par_iter_mut().for_each(|v| *v %= *i);
-                *other = Value::VecIndex(vs);
+                let remainders = vs
+                    .par_iter()
+                    .map(|v| index_rem(*v, *i))
+                    .collect::<Result<Vec<_>, _>>()?;
+                *other = Value::VecIndex(remainders.into());
             }
             (Value::VecIndex(vs), Value::VecIndex(_)) => {
                 other
                     .into_vec_index_mut()
                     .par_iter_mut()
                     .zip(vs.par_iter())
-                    .for_each(|(v, i)| *v = *i % *v);
+                    .try_for_each(|(v, i)| {
+                        *v = index_rem(*i, *v)?;
+                        Ok(())
+                    })?;
             }
             (_, _) => panic!("Cannot do {} % {}", self, other),
         }
+        Ok(())
     }
     /// Value exponentiation, saves result in other
     pub fn value_pow(&self, other: &mut Self) {
@@ -3327,24 +3343,6 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
-    /// Whether dividing by this value divides by zero: it is zero, or an entry
-    /// of it is.
-    pub fn has_zero(&self) -> bool {
-        match self {
-            Value::VecScalar(a) => a.par_iter().any(Zero::is_zero),
-            Value::VecIndex(a) => a.par_iter().any(|a| *a == 0),
-            Value::Vec(a) => a.par_iter().any(Self::has_zero),
-            _ => self.is_zero(),
-        }
-    }
-
-    /// Whether two entries of this scalar or index vector are equal, so that
-    /// interpolating at them divides by zero.
-    pub fn has_duplicate(&self) -> bool {
-        let mut seen = std::collections::HashSet::new();
-        !value_scalars::<C>(self).iter().all(|x| seen.insert(*x))
-    }
-
     /// Builds a vector value from element values, collapsing to the flat
     /// homogeneous representation whenever the elements share a base type.
     ///
@@ -3554,19 +3552,25 @@ impl<C: ArkConfig> Value<C> {
     /// checked first: FFT-domain points still take the inverse FFT path, while
     /// arbitrary points fall back to general interpolation.
     ///
+    /// # Errors
+    /// [`DivisionByZero`] if two of the `points` are equal.
+    ///
     /// # Panics
     /// Panics if the evaluations are empty, if `points` and evaluations have
     /// different lengths, or if either operand is not a scalar/index vector.
-    pub fn value_interpolate(&self, points: Option<&Self>) -> Self {
+    pub fn value_interpolate(&self, points: Option<&Self>) -> Result<Self, DivisionByZero> {
         self.clone().value_interpolate_owned(points)
     }
 
     /// [`Self::value_interpolate`] consuming the evaluations: when this is
     /// their only owner, they become the coefficients in place.
     ///
+    /// # Errors
+    /// As [`Self::value_interpolate`].
+    ///
     /// # Panics
     /// As [`Self::value_interpolate`].
-    pub fn value_interpolate_owned(self, points: Option<&Self>) -> Self {
+    pub fn value_interpolate_owned(self, points: Option<&Self>) -> Result<Self, DivisionByZero> {
         let evals = value_into_scalar_vec::<C>(self);
         assert!(
             !evals.is_empty(),
@@ -3577,8 +3581,8 @@ impl<C: ArkConfig> Value<C> {
             None => {
                 let mut coeffs = evals;
                 C::FOps::vec_ifft(&mut coeffs);
-                Value::poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
-                    DensePolynomial { coeffs },
+                Ok(Value::poly(VirtualPolynomial::from_poly(
+                    PolyVariant::DenseUni(DensePolynomial { coeffs }),
                 )))
             }
             Some(points) => {
@@ -3592,15 +3596,15 @@ impl<C: ArkConfig> Value<C> {
                 if are_fft_domain_points::<C>(&xs) {
                     let mut coeffs = evals;
                     C::FOps::vec_ifft(&mut coeffs);
-                    return Value::poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
-                        DensePolynomial { coeffs },
+                    return Ok(Value::poly(VirtualPolynomial::from_poly(
+                        PolyVariant::DenseUni(DensePolynomial { coeffs }),
                     )));
                 }
 
                 let coeffs =
-                    crate::virtual_polynomial::interpolate_univariate_from_points(&xs, &evals);
-                Value::poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
-                    DensePolynomial { coeffs },
+                    crate::virtual_polynomial::interpolate_univariate_from_points(&xs, &evals)?;
+                Ok(Value::poly(VirtualPolynomial::from_poly(
+                    PolyVariant::DenseUni(DensePolynomial { coeffs }),
                 )))
             }
         }
@@ -3636,17 +3640,42 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// `self op other`.
+    ///
+    /// # Errors
+    /// [`DivisionByZero`] if `op` is `/` or `%` and a divisor is zero.
+    pub fn value_bin(self, op: BinOp, other: Self) -> Result<Self, DivisionByZero> {
+        // Each `value_*` writes its result into `other`.
+        let mut other = other;
+        match op {
+            BinOp::Add => self.value_add(&mut other),
+            BinOp::Sub => self.value_sub(&mut other),
+            // && is multiplication in the GB encoding (Bool values are 0/1).
+            BinOp::Mul | BinOp::And => self.value_mul(&mut other),
+            BinOp::Div => self.value_div(&mut other)?,
+            BinOp::Rem => self.value_rem(&mut other)?,
+            BinOp::Pow => self.value_pow(&mut other),
+            BinOp::Dot => self.value_dot(&mut other),
+            BinOp::Concat => return Ok(self.value_concat(other)),
+            BinOp::Equ => return Ok(Value::Bool(Value::equ(&self, &other))),
+        }
+        Ok(other)
+    }
+
     /// Reduce a vector using a binary operation.
     /// Commutative operations (Add, Mul) use parallel fold via rayon.
     /// Non-commutative operations use sequential left fold.
-    pub fn value_reduce(self, op: BinOp) -> Self {
+    ///
+    /// # Errors
+    /// [`DivisionByZero`] if `op` is `/` or `%` and a divisor is zero.
+    pub fn value_reduce(self, op: BinOp) -> Result<Self, DivisionByZero> {
         let elements = self.into_elements();
         assert!(!elements.is_empty(), "Cannot reduce empty vector");
-        match op {
+        Ok(match op {
             BinOp::Add => {
                 if let Some(poly) = reduce_univariate_poly_sum(&elements) {
                     record_reduce_univariate_post_materialization();
-                    return Value::poly(poly);
+                    return Ok(Value::poly(poly));
                 }
                 // The identity element only depends on the kind of the type.
                 let elem_typ = elements[0].shape_typ();
@@ -3670,17 +3699,9 @@ impl<C: ArkConfig> Value<C> {
             _ => {
                 let mut iter = elements.into_iter();
                 let first = iter.next().unwrap();
-                iter.fold(first, |acc, x| match op {
-                    BinOp::Sub => acc - x,
-                    BinOp::Div => acc / x,
-                    BinOp::Pow => acc ^ x,
-                    BinOp::Rem => acc % x,
-                    BinOp::Dot => acc.dot(x),
-                    BinOp::Concat => acc.value_concat(x),
-                    _ => unreachable!(),
-                })
+                return iter.try_fold(first, |acc, x| acc.value_bin(op, x));
             }
-        }
+        })
     }
 
     /// Convert a vector Value into a Vec of element Values.
@@ -3712,6 +3733,32 @@ impl<C: ArkConfig> Value<C> {
 }
 
 /// Whether `i` is one of the values `range` steps through.
+/// `a / b` on indices.
+fn index_div(a: usize, b: usize) -> Result<usize, DivisionByZero> {
+    a.checked_div(b).ok_or(DivisionByZero)
+}
+
+/// `a % b` on indices.
+fn index_rem(a: usize, b: usize) -> Result<usize, DivisionByZero> {
+    a.checked_rem(b).ok_or(DivisionByZero)
+}
+
+/// `f⁻¹`.
+fn scalar_inverse<F: Field>(f: &F) -> Result<F, DivisionByZero> {
+    f.inverse().ok_or(DivisionByZero)
+}
+
+/// The quotient of a polynomial division. A zero divisor is a
+/// [`DivisionByZero`]; any other failure is an operand the type checker
+/// rules out.
+fn poly_quotient<T, F: Field>(quotient: Result<T, PolyError<F>>) -> Result<T, DivisionByZero> {
+    match quotient {
+        Ok(q) => Ok(q),
+        Err(PolyError::DivisionByZero { .. }) => Err(DivisionByZero),
+        Err(e) => panic!("Polynomial division failed: {e}"),
+    }
+}
+
 fn in_range(range: &CRange, i: usize) -> bool {
     range.start() <= i && i < range.end() && (i - range.start()).is_multiple_of(range.step())
 }
@@ -3798,23 +3845,45 @@ impl<C: ArkConfig> Mul for Value<C> {
     }
 }
 
-impl<C: ArkConfig> Div for Value<C> {
-    type Output = Value<C>;
+/// `/` and `%` for tests, which divide by nonzero values. Elsewhere a division
+/// goes through [`Value::value_bin`], which reports a zero divisor.
+#[cfg(test)]
+mod test_division {
+    use super::{ArkConfig, BinOp, Value};
+    use std::ops::{Div, Rem};
 
-    fn div(self, other: Self) -> Self::Output {
-        let mut other = other;
-        self.value_div(&mut other);
-        other
+    impl<C: ArkConfig> Div for Value<C> {
+        type Output = Self;
+
+        fn div(self, other: Self) -> Self {
+            self.value_bin(BinOp::Div, other)
+                .expect("a test divided by zero")
+        }
     }
-}
 
-impl<C: ArkConfig> Rem for Value<C> {
-    type Output = Value<C>;
+    impl<C: ArkConfig> Rem for Value<C> {
+        type Output = Self;
 
-    fn rem(self, other: Self) -> Self::Output {
-        let mut other = other;
-        self.value_rem(&mut other);
-        other
+        fn rem(self, other: Self) -> Self {
+            self.value_bin(BinOp::Rem, other)
+                .expect("a test divided by zero")
+        }
+    }
+
+    impl<C: ArkConfig> Div for &Value<C> {
+        type Output = Value<C>;
+
+        fn div(self, other: Self) -> Value<C> {
+            self.clone() / other.clone()
+        }
+    }
+
+    impl<C: ArkConfig> Rem for &Value<C> {
+        type Output = Value<C>;
+
+        fn rem(self, other: Self) -> Value<C> {
+            self.clone() % other.clone()
+        }
     }
 }
 
@@ -3854,26 +3923,6 @@ impl<C: ArkConfig> Mul for &Value<C> {
     fn mul(self, other: Self) -> Self::Output {
         let mut other = other.clone();
         self.value_mul(&mut other);
-        other
-    }
-}
-
-impl<C: ArkConfig> Div for &Value<C> {
-    type Output = Value<C>;
-
-    fn div(self, other: Self) -> Self::Output {
-        let mut other = other.clone();
-        self.value_div(&mut other);
-        other
-    }
-}
-
-impl<C: ArkConfig> Rem for &Value<C> {
-    type Output = Value<C>;
-
-    fn rem(self, other: Self) -> Self::Output {
-        let mut other = other.clone();
-        self.value_rem(&mut other);
         other
     }
 }
@@ -4299,17 +4348,18 @@ mod value_tests {
     }
 
     #[test]
-    #[should_panic(expected = "Division by zero")]
-    fn test_scalar_div_by_zero_aborts() {
-        let _ = scalar(1) / scalar(0);
+    fn test_scalar_div_by_zero_fails() {
+        assert_eq!(
+            scalar(1).value_bin(BinOp::Div, scalar(0)),
+            Err(DivisionByZero)
+        );
     }
 
     #[test]
-    #[should_panic(expected = "Division by zero")]
-    fn test_vec_scalar_div_by_a_zero_entry_aborts() {
+    fn test_vec_scalar_div_by_a_zero_entry_fails() {
         let a = TestValue::vec_scalar(vec![Fr::from(1u64), Fr::from(2u64)]);
         let b = TestValue::vec_scalar(vec![Fr::from(1u64), Fr::from(0u64)]);
-        let _ = a / b;
+        assert_eq!(a.value_bin(BinOp::Div, b), Err(DivisionByZero));
     }
 
     #[test]
@@ -4355,9 +4405,8 @@ mod value_tests {
 
     #[test]
     fn test_vec_index_div() {
-        // a / b computes b = b / a (mutates second operand)
-        let a = TestValue::VecIndex(vec![2, 4, 5].into());
-        let b = TestValue::VecIndex(vec![10, 20, 30].into());
+        let a = TestValue::VecIndex(vec![10, 20, 30].into());
+        let b = TestValue::VecIndex(vec![2, 4, 5].into());
         assert_eq!(a / b, TestValue::VecIndex(vec![5, 5, 6].into()));
     }
 
@@ -4629,10 +4678,9 @@ mod value_tests {
 
     #[test]
     fn test_scalar_rem_by_index() {
-        // a % b computes b % a (mutates second operand)
         let a = TestValue::Index(17);
         let b = TestValue::VecIndex(vec![5, 7, 10].into());
-        assert_eq!(a % b, TestValue::VecIndex(vec![5, 7, 10].into()));
+        assert_eq!(a % b, TestValue::VecIndex(vec![2, 3, 7].into()));
     }
 
     // ========== Mixed Operations: Index Coercion ==========
@@ -5524,5 +5572,86 @@ mod value_tests {
             }
             assert_eq!(round.evaluate_uv(&t), expected, "round mismatch at t={t_u}");
         }
+    }
+
+    // ========== Division by zero and operand order ==========
+
+    /// The univariate polynomial with these coefficients, lowest degree first.
+    fn uni(coeffs: &[u64]) -> TestValue {
+        TestValue::poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
+            DensePolynomial::from_coefficients_vec(coeffs.iter().map(|&c| Fr::from(c)).collect()),
+        )))
+    }
+
+    fn vec_index(xs: &[usize]) -> TestValue {
+        TestValue::VecIndex(xs.to_vec().into())
+    }
+
+    #[test]
+    fn test_division_keeps_operand_order() {
+        assert_eq!(
+            TestValue::Index(12) / vec_index(&[2, 3]),
+            vec_index(&[6, 4])
+        );
+        assert_eq!(TestValue::Index(7) % vec_index(&[2, 3]), vec_index(&[1, 1]));
+        assert_eq!(scalar(6) / TestValue::Index(2), scalar(3));
+    }
+
+    #[test]
+    fn test_vec_gt_div_scalar_divides_every_entry() {
+        let v = TestValue::random(&mut thread_rng(), &ATyp::vec_gt(3));
+        assert_eq!(v.clone() / scalar(1), v);
+    }
+
+    #[test]
+    fn test_division_by_zero_fails() {
+        let div = |a: TestValue, b: TestValue| a.value_bin(BinOp::Div, b);
+        let rem = |a: TestValue, b: TestValue| a.value_bin(BinOp::Rem, b);
+        assert_eq!(
+            div(TestValue::Index(1), TestValue::Index(0)),
+            Err(DivisionByZero)
+        );
+        assert_eq!(
+            div(TestValue::Index(1), vec_index(&[1, 0])),
+            Err(DivisionByZero)
+        );
+        assert_eq!(
+            div(vec_index(&[4, 6]), vec_index(&[2, 0])),
+            Err(DivisionByZero)
+        );
+        assert_eq!(
+            rem(TestValue::Index(1), TestValue::Index(0)),
+            Err(DivisionByZero)
+        );
+        assert_eq!(
+            rem(vec_index(&[4, 6]), TestValue::Index(0)),
+            Err(DivisionByZero)
+        );
+        assert_eq!(div(scalar(1), TestValue::Index(0)), Err(DivisionByZero));
+        assert_eq!(div(random_g1(), scalar(0)), Err(DivisionByZero));
+        assert_eq!(div(random_g1(), vec_scalar(&[1, 0])), Err(DivisionByZero));
+        assert_eq!(div(uni(&[1, 2]), scalar(0)), Err(DivisionByZero));
+        assert_eq!(div(uni(&[1, 2]), uni(&[0])), Err(DivisionByZero));
+        assert_eq!(div(scalar(1), uni(&[0])), Err(DivisionByZero));
+    }
+
+    #[test]
+    fn test_reduce_division_by_zero_fails() {
+        // The first entry is the dividend, so it may be zero.
+        assert!(vec_scalar(&[0, 2]).value_reduce(BinOp::Div).is_ok());
+        assert_eq!(
+            vec_scalar(&[6, 0]).value_reduce(BinOp::Div),
+            Err(DivisionByZero)
+        );
+    }
+
+    #[test]
+    fn test_interpolation_at_repeated_points_fails() {
+        let evals = vec_scalar(&[1, 2]);
+        assert_eq!(
+            evals.value_interpolate(Some(&vec_scalar(&[3, 3]))),
+            Err(DivisionByZero)
+        );
+        assert!(evals.value_interpolate(Some(&vec_scalar(&[3, 4]))).is_ok());
     }
 }

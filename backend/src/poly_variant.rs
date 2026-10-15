@@ -459,14 +459,18 @@ impl<F: Field> PolyVariant<F> {
         )
     }
 
-    /// The constant this polynomial is, if it is a non-zero constant
-    /// (degree-0 univariate, zero-variable MLE, or constant zero-variable
-    /// sparse multivariate). Zero-coefficient univariates have no stored
-    /// coefficient and answer `None`.
+    /// The constant this polynomial is, if it is a constant (degree-0
+    /// univariate, zero-variable MLE, or constant zero-variable sparse
+    /// multivariate). The zero univariate stores no coefficient and is `0`.
     pub fn to_scalar(&self) -> Option<F> {
         match self {
-            PolyVariant::DenseUni(p) if p.degree() == 0 => p.coeffs.first().copied(),
-            PolyVariant::SparseUni(p) if p.degree() == 0 => p.first().map(|&(_, c)| c),
+            // The zero polynomial has degree 0 and no coefficients.
+            PolyVariant::DenseUni(p) if p.degree() == 0 => {
+                Some(p.coeffs.first().copied().unwrap_or_else(F::zero))
+            }
+            PolyVariant::SparseUni(p) if p.degree() == 0 => {
+                Some(p.first().map_or_else(F::zero, |&(_, c)| c))
+            }
             PolyVariant::DenseMle(mle) if mle.num_vars() == 0 => mle.evaluations.first().copied(),
             PolyVariant::SparseMultivariate(p) if p.degree() == 0 && p.num_vars == 0 => {
                 match p.terms.as_slice() {

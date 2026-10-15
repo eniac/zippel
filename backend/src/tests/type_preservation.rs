@@ -471,7 +471,7 @@ mod vec_ops {
             let n: usize = u.int_in_range(1..=6)?;
             let mut rng = test_rng();
             let v: V = Value::random(&mut rng, &ATyp::vec_scalar(n));
-            let r = v.value_reduce(BinOp::Add);
+            let r = v.value_reduce(BinOp::Add).unwrap();
             assert!(
                 has_atyp(&r, &ATyp::scalar()),
                 "reduce(+, vec_scalar({n})) -> {} (expected Scalar)",
@@ -644,7 +644,7 @@ mod cross_layer {
             let v: V = Value::random(&mut rng, &ATyp::vec_scalar(k));
             let op = ifft_op(&v);
             let expected = op.typ();
-            let actual = v.value_interpolate(None);
+            let actual = v.value_interpolate(None).unwrap();
             assert!(
                 has_atyp(&actual, &expected),
                 "value_interpolate(Vec(F,{k}), None) -> {} fails has_atyp(_, {expected})",
@@ -668,7 +668,7 @@ mod cross_layer {
             let v: V = Value::random(&mut rng, &ATyp::vec_scalar(k));
             let op = ifft_op(&v);
             let expected = op.typ();
-            let actual = v.value_interpolate(None);
+            let actual = v.value_interpolate(None).unwrap();
             assert!(
                 has_atyp(&actual, &expected),
                 "value_interpolate(Vec(F,{k}), None) -> {} fails has_atyp(_, {expected})",
@@ -694,7 +694,7 @@ mod cross_layer {
             let evals: V = Value::random(&mut rng, &ATyp::vec_scalar(k));
             let op = interp_op(&points, &evals);
             let expected = op.typ();
-            let actual = evals.value_interpolate(Some(&points));
+            let actual = evals.value_interpolate(Some(&points)).unwrap();
             assert!(
                 has_atyp(&actual, &expected),
                 "value_interpolate(Vec(F,{k}), Some(Vec(F,{k}))) -> {} fails has_atyp(_, {expected})",

@@ -1,8 +1,8 @@
 use crate::eval::eval_op;
-/// Tests for polynomial ring laws and algebraic properties end-to-end through graph operations
-use crate::{Op, mk};
 use ark_poly::{DenseUVPolynomial, univariate::DensePolynomial};
 use backend::{ATyp, ArkBn254, PolyVariant, Value, VirtualPolynomial};
+/// Tests for polynomial ring laws and algebraic properties end-to-end through graph operations
+use graph::{Op, mk};
 use std::collections::HashMap;
 
 type TestValue = Value<ArkBn254>;

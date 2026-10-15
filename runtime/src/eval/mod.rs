@@ -1,8 +1,8 @@
 /// `EvalError`, the failure type raised while interpreting a DAG node.
 pub mod error;
 
-use crate::{GOp, HOp, Op, Ref};
 use ark_ff::{One, Zero};
+use backend::op::{GOp, HOp, Op, Ref};
 use backend::{ATyp, ArkConfig, SelectedEvalShape, Value};
 use error::EvalError;
 use lang::ast::BinOp;
@@ -469,25 +469,13 @@ where
             // Fallback using already evaluated dom_val
             let results =
                 eval_loop_body_each(body, env, dom_ref.clone().into_elements(), loop_params)?;
-            reduce(Value::value_vec(results), op).map(Some)
+            Ok(Some(Value::value_vec(results).value_reduce(op)?))
         }
     } else {
         // Fallback using already evaluated dom_val
         let results = eval_loop_body_each(body, env, dom_ref.clone().into_elements(), loop_params)?;
-        reduce(Value::value_vec(results), op).map(Some)
+        Ok(Some(Value::value_vec(results).value_reduce(op)?))
     }
-}
-
-/// `v` reduced by `op`; dividing by a zero entry is an error.
-fn reduce<C: ArkConfig>(v: Value<C>, op: BinOp) -> Result<Value<C>, EvalError> {
-    if !matches!(op, BinOp::Div | BinOp::Rem) {
-        return Ok(v.value_reduce(op));
-    }
-    let elements = v.into_elements();
-    if elements.iter().skip(1).any(Value::has_zero) {
-        return Err(EvalError::DivisionByZero);
-    }
-    Ok(Value::value_vec(elements).value_reduce(op))
 }
 
 fn is_vector_value<C: ArkConfig>(v: &Value<C>) -> bool {
@@ -553,64 +541,7 @@ where
         Op::Bin(binop, a, b, _) => {
             let av = eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?;
             let bv = eval_op_with_loop_params(b, env, rng, loop_params, check_sink)?;
-            if matches!(binop, BinOp::Div | BinOp::Rem) && bv.has_zero() {
-                return Err(EvalError::DivisionByZero);
-            }
-            // Borrow `av` by reference (no clone of left operand); only the
-            // right operand must be materialised as owned (one inner clone
-            // when the Arc is shared, free when unique).
-            let av_ref: &Value<C> = &av;
-            Ok(match binop {
-                BinOp::Add => {
-                    let mut bv_owned = bv;
-                    av_ref.value_add(&mut bv_owned);
-                    bv_owned
-                }
-                BinOp::Sub => {
-                    let mut bv_owned = bv;
-                    av_ref.value_sub(&mut bv_owned);
-                    bv_owned
-                }
-                BinOp::Mul => {
-                    let mut bv_owned = bv;
-                    av_ref.value_mul(&mut bv_owned);
-                    bv_owned
-                }
-                BinOp::Div => {
-                    let mut bv_owned = bv;
-                    av_ref.value_div(&mut bv_owned);
-                    bv_owned
-                }
-                BinOp::Rem => {
-                    let mut bv_owned = bv;
-                    av_ref.value_rem(&mut bv_owned);
-                    bv_owned
-                }
-                BinOp::Pow => {
-                    let mut bv_owned = bv;
-                    av_ref.value_pow(&mut bv_owned);
-                    bv_owned
-                }
-                BinOp::Dot => {
-                    let mut bv_owned = bv;
-                    av_ref.value_dot(&mut bv_owned);
-                    bv_owned
-                }
-                BinOp::Concat => {
-                    let av_owned = av;
-                    let bv_owned = bv;
-                    av_owned.value_concat(bv_owned)
-                }
-                BinOp::Equ => Value::Bool(Value::equ(av_ref, &bv)),
-                // && is multiplication in the GB encoding (Bool values are 0/1).
-                // Op::bin() routes And to Mul, so this arm is only reached if
-                // an And op was constructed directly.
-                BinOp::And => {
-                    let mut bv_owned = bv;
-                    av_ref.value_mul(&mut bv_owned);
-                    bv_owned
-                }
-            })
+            Ok(av.value_bin(*binop, bv)?)
         }
         Op::Vec(ops) => {
             let mut values = Vec::with_capacity(ops.len());
@@ -717,7 +648,7 @@ where
                 });
             }
             let results = eval_loop_body_each(body, env, dom.into_elements(), loop_params)?;
-            reduce(Value::value_vec(results), *op)
+            Ok(Value::value_vec(results).value_reduce(*op)?)
         }
         // Extract at the operand's declared type so a `Uni(m)` polynomial
         // always yields exactly its promised `m + 1` coefficient slots,
@@ -732,15 +663,12 @@ where
         }
         Op::Interpolate(points, evals) => {
             let points_val = eval_op_with_loop_params(points, env, rng, loop_params, check_sink)?;
-            if points_val.has_duplicate() {
-                return Err(EvalError::DivisionByZero);
-            }
             let evals_val = eval_op_with_loop_params(evals, env, rng, loop_params, check_sink)?;
-            Ok(evals_val.value_interpolate_owned(Some(&points_val)))
+            Ok(evals_val.value_interpolate_owned(Some(&points_val))?)
         }
         Op::Ifft(a) => Ok(
             eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?
-                .value_interpolate_owned(None),
+                .value_interpolate_owned(None)?,
         ),
         Op::Fft(a) => {
             Ok(eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?.value_fft())
@@ -755,7 +683,7 @@ where
         }
         Op::Reduce(binop, v) => {
             let v_val = eval_op_with_loop_params(v, env, rng, loop_params, check_sink)?;
-            reduce(v_val, *binop)
+            Ok(v_val.value_reduce(*binop)?)
         }
         Op::Proj(record_op, field_name, _) => {
             let rec_val = eval_op_with_loop_params(record_op, env, rng, loop_params, check_sink)?;
@@ -861,10 +789,12 @@ fn collect_refs_into<C: ArkConfig>(op: &GOp<C>, acc: &mut Vec<Ref>) {
 }
 
 #[cfg(test)]
+mod graph_tests;
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mk;
     use backend::ArkBn254;
+    use backend::op::mk;
     use rand::rngs::ThreadRng;
 
     type Fr = <ArkBn254 as ArkConfig>::F;

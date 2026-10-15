@@ -40,7 +40,7 @@ pub mod virtual_polynomial;
 pub use config::{
     ArkBls12_381, ArkBn254, ArkConfig, ArkCurve25519, ArkEd25519, ArkField17, ArkField65537,
     ArkFieldN, ArkGroupOps, ArkMNT4_298, ArkPairingOps, ArkPallas, ArkScalarOps, ArkSecp256k1,
-    ArkVesta,
+    ArkVesta, DivisionByZero,
 };
 pub use nothing::{NoCurve, NoField, NoPairing};
 pub use op::{GOp, HasOpFactory, Op, Ref};

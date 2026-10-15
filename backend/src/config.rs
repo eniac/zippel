@@ -20,6 +20,11 @@ use crate::nothing::{NoCurve, NoPairing};
 use crate::op::{HasOpFactory, OpFactory};
 use std::sync::RwLock;
 
+/// A division (or inversion, or interpolation at repeated points) by zero.
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[error("Division by zero")]
+pub struct DivisionByZero;
+
 /// API to Arkworks finite fields, elliptic curves, and pairings
 pub trait ArkConfig:
     Clone + Copy + Send + Sync + 'static + Eq + PartialEq + Ord + PartialOrd + fmt::Display + Hash
@@ -98,18 +103,22 @@ pub trait ArkScalarOps<F: PrimeField> {
 
     /// Scalar inversion in place.
     ///
-    /// # Panics
-    /// Panics if `f` is zero.
+    /// # Errors
+    /// [`DivisionByZero`] if `f` is zero; `f` is then unchanged.
     #[inline]
-    fn inv(f: &mut F) {
-        f.inverse_in_place().expect("Division by zero");
+    fn inv(f: &mut F) -> Result<(), DivisionByZero> {
+        f.inverse_in_place().map(|_| ()).ok_or(DivisionByZero)
     }
 
     /// Scalar division, saves result in f2
+    ///
+    /// # Errors
+    /// [`DivisionByZero`] if `f2` is zero.
     #[inline]
-    fn div(f1: &F, f2: &mut F) {
-        Self::inv(f2);
+    fn div(f1: &F, f2: &mut F) -> Result<(), DivisionByZero> {
+        Self::inv(f2)?;
         Self::mul(f1, f2);
+        Ok(())
     }
 
     /// Scalar exponentiation, saves result in f1
@@ -171,22 +180,29 @@ pub trait ArkScalarOps<F: PrimeField> {
 
     /// Vector batch inversion, saves result in f2
     ///
-    /// # Panics
-    /// Panics if an entry is zero.
+    /// # Errors
+    /// [`DivisionByZero`] if an entry is zero; `f` is then unchanged.
     #[inline]
-    fn vec_inv(f: &mut Vec<F>) {
-        assert!(f.iter().all(|x| !x.is_zero()), "Division by zero");
+    fn vec_inv(f: &mut Vec<F>) -> Result<(), DivisionByZero> {
+        if f.par_iter().any(|x| x.is_zero()) {
+            return Err(DivisionByZero);
+        }
         ark_ff::fields::batch_inversion::<F>(f);
+        Ok(())
     }
 
     /// Pointwise vector division, saving the result in `f2`.
     ///
     /// Computes `f2 := f1 / f2` via a single batch inversion, mirroring the
     /// scalar [`div`](ArkScalarOps::div) contract.
+    ///
+    /// # Errors
+    /// [`DivisionByZero`] if an entry of `f2` is zero.
     #[inline]
-    fn vec_div(f1: &[F], f2: &mut Vec<F>) {
-        Self::vec_inv(f2);
+    fn vec_div(f1: &[F], f2: &mut Vec<F>) -> Result<(), DivisionByZero> {
+        Self::vec_inv(f2)?;
         Self::vec_mul(f1, f2);
+        Ok(())
     }
 
     /// Raises every entry of `f1` to the `i`-th power in place.
