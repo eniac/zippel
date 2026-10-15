@@ -58,8 +58,8 @@ pub(crate) static SOUNDNESS_ENTRIES: LazyLock<Vec<SoundnessEntry>> = LazyLock::n
             ignored: false,
         },
         SoundnessEntry {
-            name: "commitment_equality",
-            zippel_path: "examples/commitment_equality/commitment_equality.zippel",
+            name: "pedersen_eq",
+            zippel_path: "examples/pedersen_eq/pedersen_eq.zippel",
             sizes: &[],
             l_vec: &[2],
             ignored: false,

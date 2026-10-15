@@ -19,9 +19,7 @@ use rand::Rng;
 use share::Ctx;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use zippel::{
-    CompileOptions, CompiledProtocol, ParsedModule, check_verification, proof_size_bytes,
-};
+use zippel::{CompileOptions, CompiledProtocol, ParsedModule, proof_size_bytes};
 
 /// Default `log_2` of the R1CS constraint count used by the Spartan sweep.
 pub const DEFAULT_M: usize = 8;
@@ -158,9 +156,8 @@ impl Setup {
                 .expect("run_prover failed")
         });
         let proof_bytes = proof_size_bytes::<ArkCurve25519>(&proof);
-        let (verify, verify_peak, result) =
+        let (verify, verify_peak, passed) =
             crate::sample_zippel_verifier(&self.handler, &proof, &self.inputs);
-        let passed = check_verification(&result);
 
         ZippelTiming {
             timing: Timing {

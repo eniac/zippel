@@ -31,7 +31,7 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{CompileOptions, CompiledProtocol, ParsedModule, check_verification};
+    use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
 
     /// A compiled sumcheck instance, reusable across `time_protocol` calls.
     ///
@@ -130,10 +130,7 @@ pub mod zippel_side {
             let (prove, prove_peak, proof) = crate::sample_zippel_prover(&self.handler, &inputs);
             let (verify, verify_peak, result) =
                 crate::sample_zippel_verifier(&self.handler, &proof, &inputs);
-            assert!(
-                check_verification(&result),
-                "zippel sumcheck verification FAILED"
-            );
+            assert!(result, "zippel sumcheck verification FAILED");
 
             Timing {
                 prove,

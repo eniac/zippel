@@ -28,7 +28,7 @@ fn prover_create_inputs(_sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<Ar
 
 pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
     common::ExampleSpec {
-        source: "examples/commitment_equality/commitment_equality.zippel",
+        source: "examples/pedersen_eq/pedersen_eq.zippel",
         defaults: &[],
         validate: None,
         make_inputs: prover_create_inputs,

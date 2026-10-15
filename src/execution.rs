@@ -83,7 +83,7 @@ impl<C: ArkConfig + HasOpFactory> CompiledProtocol<C> {
         }
     }
 
-    /// Run verifier, takes proof and inputs by name and returns result.
+    /// Run verifier, returning `true` if every verification check passes.
     /// Proof values and inputs are owned as in [`Self::prove`];
     /// inputs that are not instance arguments are dropped unread.
     ///
@@ -94,14 +94,13 @@ impl<C: ArkConfig + HasOpFactory> CompiledProtocol<C> {
     /// [`RuntimeError::MalformedInput`] if an instance input is not a value of
     /// its argument's declared type, and other `RuntimeError`s if the run
     /// fails (e.g. a missing instance input). A
-    /// proof that runs but fails a check is not an error: see the returned
-    /// results.
+    /// proof that runs but fails a check returns `Ok(false)`.
     ///
     pub fn verify<K: Into<Vid>>(
         &self,
         proof: impl IntoIterator<Item = Value<C>>,
         inputs: impl IntoIterator<Item = (K, Value<C>)>,
-    ) -> Result<Vec<bool>, RuntimeError> {
+    ) -> Result<bool, RuntimeError> {
         let verifier = &self.verifier_graph;
 
         // Instance inputs: filter by qual.is_instance() from verifier graph,
@@ -173,7 +172,7 @@ impl<C: ArkConfig + HasOpFactory> CompiledProtocol<C> {
             ResultKind::Verifier,
         )?;
         match result {
-            RunResult::Verifier { verify_results } => Ok(verify_results),
+            RunResult::Verifier { verify_results } => Ok(verify_results.iter().all(|b| *b)),
             RunResult::Prover { .. } => {
                 unreachable!("verify with ResultKind::Verifier")
             }

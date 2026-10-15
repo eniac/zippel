@@ -507,7 +507,7 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{CompileOptions, CompiledProtocol, ParsedModule, check_verification};
+    use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
 
     /// A compiled zippel Groth16 handler plus the size-invariant part of its
     /// input context, ready to be timed at one circuit size.
@@ -666,10 +666,7 @@ pub mod zippel_side {
             });
             let (verify, verify_peak, result) =
                 crate::sample_zippel_verifier(&self.handler, &proof, &self.inputs_base);
-            assert!(
-                check_verification(&result),
-                "zippel Groth16 verification FAILED"
-            );
+            assert!(result, "zippel Groth16 verification FAILED");
 
             Timing {
                 prove,
@@ -1017,7 +1014,7 @@ mod cross_tests {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{CompileOptions, CompiledProtocol, ParsedModule, check_verification};
+    use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
 
     /// Sweep used by both cross-tests. Capped at log_2 num_constraints = 6
     /// (= 64 constraints, M ≈ 65 inputs, L ≈ 128 witnesses) so each test
@@ -1157,10 +1154,9 @@ mod cross_tests {
             Value::g2(proof_n.b),
             Value::g1(proof_n.c),
         ];
-        let verifier_result = handler
+        let result = handler
             .verify(cross_proof.clone(), zip_inputs.clone())
             .expect("zippel run_verifier on cross-proof");
-        let result = check_verification(&verifier_result);
         assert!(
             result,
             "log_constraints={log_constraints}: CROSS-VERIFY FAILED: zippel verifier rejected native-produced proof"

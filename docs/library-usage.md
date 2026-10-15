@@ -62,7 +62,7 @@ use ark_std::UniformRand;
 use zippel::backend::{ArkBls12_381, ArkConfig, ArkGroupOps, Value};
 use zippel::share::Ctx;
 use zippel::analyses::GbBackendKind;
-use zippel::{Analysis, CompileOptions, ParsedModule, check_verification, proof_size_bytes};
+use zippel::{Analysis, CompileOptions, ParsedModule, proof_size_bytes};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let module = ParsedModule::load("schnorr.zippel")?;
@@ -79,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let verifier_result = protocol.verify(proof, inputs)?;
     println!(
         "Verification: {}",
-        if check_verification(&verifier_result) {
+        if verifier_result {
             "PASSED"
         } else {
             "FAILED"
@@ -121,9 +121,8 @@ these inputs and returns a proof. We clone the inputs so we can reuse them for
 verification; cloning a `Value` shares its data.
 
 `verify` takes the proof and inputs, reading only the public instance arguments.
-It returns one boolean per verification check, and `check_verification` requires
-all of them to pass. A failed check produces `false`; an execution error returns
-`Err`.
+It returns `Ok(true)` if every verification check passes, `Ok(false)` if any
+check fails, and `Err` for an execution error.
 
 `prepare_analysis` returns a `PreparedAnalysis` for running static checks.
 Here, `run(Analysis::Completeness, GbBackendKind::ArkGb)` checks completeness using

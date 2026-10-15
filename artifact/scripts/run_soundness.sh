@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Experiment 2: special-soundness analysis across the paper's seven
+# Experiment 2: special-soundness analysis across the paper's eight
 # candidates, Figure 6's Sound. column (analysis_all, Singular backend,
 # 16 GiB memory limit per run).
 #

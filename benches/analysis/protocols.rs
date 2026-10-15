@@ -282,8 +282,8 @@ pub static PROTOCOLS: &[Protocol] = &[
         soundness: Some(&[2]),
     },
     Protocol {
-        name: "commitment_equality",
-        path: "examples/commitment_equality/commitment_equality.zippel",
+        name: "pedersen_eq",
+        path: "examples/pedersen_eq/pedersen_eq.zippel",
         sizes: &[],
         completeness: true,
         soundness: Some(&[2]),

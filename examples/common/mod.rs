@@ -7,9 +7,7 @@ use lang::{
 use share::Ctx;
 use std::{path::Path, time::Instant};
 pub use zippel::Analysis;
-use zippel::{
-    CompileOptions, CompiledProtocol, ParsedModule, check_verification, proof_size_bytes,
-};
+use zippel::{CompileOptions, CompiledProtocol, ParsedModule, proof_size_bytes};
 
 use analyses::GbBackendKind;
 
@@ -266,7 +264,7 @@ fn run_protocol<C: ArkConfig + HasOpFactory>(
         proof.len()
     );
     let start = Instant::now();
-    let result = match handler.verify(proof, inputs) {
+    let passed = match handler.verify(proof, inputs) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Verifier: {e}");
@@ -274,7 +272,6 @@ fn run_protocol<C: ArkConfig + HasOpFactory>(
         }
     };
     println!("Verifier: {:.2} ms", start.elapsed().as_secs_f64() * 1000.0);
-    let passed = check_verification(&result);
     println!("Verification: {}", if passed { "PASS" } else { "FAIL" });
     u8::from(!passed)
 }

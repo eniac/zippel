@@ -47,7 +47,7 @@ fn the_verifier_accepts_an_honest_proof_of_each_shape() {
     let (handler, inputs, proof) = shapes_protocol();
     assert_eq!(proof.len(), 2);
     let results = handler.verify(proof, inputs).expect("run_verifier failed");
-    assert!(check_verification(&results));
+    assert!(results);
 }
 
 #[test]
@@ -148,8 +148,7 @@ proto eq_proof<F: Field>(witness a: F, witness b: F) where a == b {
     );
 
     let proof = handler.prove(inputs.clone()).expect("run_prover failed");
-    let verifier_result = handler.verify(proof, inputs).expect("run_verifier failed");
-    let passed = check_verification(&verifier_result);
+    let passed = handler.verify(proof, inputs).expect("run_verifier failed");
     assert!(passed, "eq_proof with a == b should pass verification");
 }
 
@@ -192,8 +191,7 @@ proto repro<F: Field>(witness s: F) where s == s {
         "issue #157 repro should emit all six non-challenge transcript proof values"
     );
 
-    let verifier_result = handler.verify(proof, inputs).expect("run_verifier failed");
-    let passed = check_verification(&verifier_result);
+    let passed = handler.verify(proof, inputs).expect("run_verifier failed");
     assert!(
         passed,
         "issue #157 repro should pass verification after transcript relogs"
@@ -236,8 +234,7 @@ proto bad_check<F: Field>(witness a: F, witness b: F, instance c: F) where a == 
     );
 
     let proof = handler.prove(inputs.clone()).expect("run_prover failed");
-    let verifier_result = handler.verify(proof, inputs).expect("run_verifier failed");
-    let passed = check_verification(&verifier_result);
+    let passed = handler.verify(proof, inputs).expect("run_verifier failed");
     assert!(
         !passed,
         "bad_check with c = 42 should fail verification since c != 0"
@@ -286,11 +283,9 @@ fn transcript_session_defaults_to_source_name_and_can_be_overridden() {
         .unwrap();
     let inputs = schnorr_inputs();
     let proof = original.prove(inputs.clone()).unwrap();
-    assert!(check_verification(
-        &relocated.verify(proof, inputs.clone()).unwrap()
-    ));
+    assert!(relocated.verify(proof, inputs.clone()).unwrap());
     let proof = relocated.prove(inputs.clone()).unwrap();
-    assert!(check_verification(&original.verify(proof, inputs).unwrap()));
+    assert!(original.verify(proof, inputs).unwrap());
 }
 
 #[test]
@@ -306,7 +301,7 @@ fn parsed_source_compiles_without_a_file() {
         .unwrap();
     let inputs = schnorr_inputs();
     let proof = protocol.prove(inputs.clone()).unwrap();
-    assert!(check_verification(&protocol.verify(proof, inputs).unwrap()));
+    assert!(protocol.verify(proof, inputs).unwrap());
 }
 
 #[test]
@@ -367,11 +362,9 @@ fn execution_matches_full_relation_lowering() {
     );
     let inputs = schnorr_inputs();
     let proof = exec.prove(inputs.clone()).unwrap();
-    assert!(check_verification(
-        &full.verify(proof, inputs.clone()).unwrap()
-    ));
+    assert!(full.verify(proof, inputs.clone()).unwrap());
     let proof = full.prove(inputs.clone()).unwrap();
-    assert!(check_verification(&exec.verify(proof, inputs).unwrap()));
+    assert!(exec.verify(proof, inputs).unwrap());
 }
 
 /// Prepared analysis owns the full relation graph independently of execution.

@@ -66,7 +66,7 @@ pub mod zippel_side {
     use std::io::Write;
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
-    use zippel::{CompileOptions, CompiledProtocol, ParsedModule, check_verification};
+    use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
 
     type F = <ArkBls12_381 as ArkConfig>::F;
     type G1 = <ArkBls12_381 as ArkConfig>::G1;
@@ -228,10 +228,7 @@ pub mod zippel_side {
             let (prove, prove_peak, proof) = crate::sample_zippel_prover(&self.handler, &inputs);
             let (verify, verify_peak, result) =
                 crate::sample_zippel_verifier(&self.handler, &proof, &inputs);
-            assert!(
-                check_verification(&result),
-                "zippel KZG verification FAILED"
-            );
+            assert!(result, "zippel KZG verification FAILED");
             Timing {
                 prove,
                 verify,

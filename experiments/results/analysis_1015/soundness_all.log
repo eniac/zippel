@@ -1,0 +1,24 @@
+[                       schnorr] ...           ok  build=1.0ms  gb=36.5ms  run=12.8ms  total=50.3ms  basis=11  max_deg=4  vars=12  nodes=24  gen=10  gen_deg=3  gen_vars=15  gen_terms=31  gen_max_terms=5  goals=3  goal_deg=3  goal_max_terms=4  rss=10MiB  singular_rss=11MiB
+[                schnorr_3round] ...           ok  build=7.8ms  gb=6646.3ms  run=5991.0ms  total=12645.1ms  basis=401  max_deg=4  vars=56  nodes=48  gen=82  gen_deg=3  gen_vars=81  gen_terms=269  gen_max_terms=5  goals=3  goal_deg=3  goal_max_terms=4  rss=39MiB  singular_rss=66MiB
+[           pedersen_eq] ...           ok  build=1.3ms  gb=14.6ms  run=13.1ms  total=28.9ms  basis=11  max_deg=3  vars=13  nodes=28  gen=10  gen_deg=3  gen_vars=16  gen_terms=37  gen_max_terms=6  goals=3  goal_deg=3  goal_max_terms=5  rss=10MiB  singular_rss=11MiB
+[                       okamoto] ...       failed  build=1.4ms  gb=13.9ms  run=0.0ms  total=15.3ms  basis=9  max_deg=3  vars=16  nodes=38  gen=10  gen_deg=3  gen_vars=19  gen_terms=37  gen_max_terms=6  goals=3  goal_deg=3  goal_max_terms=5  rss=9MiB  singular_rss=11MiB
+[               okamoto_elgamal] ...           ok  build=2.2ms  gb=95.2ms  run=49.1ms  total=146.5ms  basis=44  max_deg=7  vars=21  nodes=50  gen=19  gen_deg=3  gen_vars=27  gen_terms=65  gen_max_terms=6  goals=6  goal_deg=3  goal_max_terms=5  rss=12MiB  singular_rss=12MiB
+[                            cp] ...           ok  build=2.3ms  gb=28.3ms  run=24.3ms  total=54.9ms  basis=24  max_deg=4  vars=18  nodes=38  gen=19  gen_deg=3  gen_vars=24  gen_terms=59  gen_max_terms=5  goals=6  goal_deg=3  goal_max_terms=4  rss=10MiB  singular_rss=11MiB
+[                           cds] ...       failed  build=11.6ms  gb=13.2ms  run=-  total=-  basis=-  max_deg=-  vars=-  nodes=103  gen=38  gen_deg=4  gen_vars=48  gen_terms=139  gen_max_terms=10  goals=16  goal_deg=3  goal_max_terms=10  rss=15MiB  singular_rss=11MiB
+[                    coin_proof] ...      timeout  build=13.7ms  gb=-  run=-  total=-  basis=-  max_deg=-  vars=-  nodes=266  gen=73  gen_deg=4  gen_vars=115  gen_terms=307  gen_max_terms=8  goals=24  goal_deg=4  goal_max_terms=6  rss=17MiB  singular_rss=-
+
+============================================================
+                      Protocol |       status |         time
+------------------------------------------------------------
+                       schnorr |           ok |       50.3ms
+                schnorr_3round |           ok |    12645.1ms
+           pedersen_eq |           ok |       28.9ms
+                       okamoto |       failed |       failed
+               okamoto_elgamal |           ok |      146.5ms
+                            cp |           ok |       54.9ms
+                           cds |       failed |       failed
+                    coin_proof |      timeout |      timeout
+============================================================
+
+Results written to artifact/output/soundness_results.json
+Log written to artifact/output/soundness_all.log

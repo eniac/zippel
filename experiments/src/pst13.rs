@@ -476,7 +476,7 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{CompileOptions, CompiledProtocol, ParsedModule, check_verification};
+    use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
 
     /// Compiled PST13 protocol plus the instance/witness context derived from
     /// the shared SRS; borrows the [`Shared`] data it was built from.
@@ -561,10 +561,7 @@ pub mod zippel_side {
                 crate::sample_zippel_prover(&self.handler, &self.inputs_base);
             let (verify, verify_peak, result) =
                 crate::sample_zippel_verifier(&self.handler, &proof, &self.inputs_base);
-            assert!(
-                check_verification(&result),
-                "zippel PST13 verification FAILED"
-            );
+            assert!(result, "zippel PST13 verification FAILED");
             Timing {
                 prove,
                 verify,
@@ -590,7 +587,7 @@ mod cross_tests {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{CompileOptions, CompiledProtocol, ParsedModule, check_verification};
+    use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
 
     const N_SWEEP: &[usize] = &[1, 2, 4, 6];
 
@@ -655,10 +652,9 @@ mod cross_tests {
         for pi in &proof_n.pis {
             cross_proof.push(Value::g1(*pi));
         }
-        let verifier_result = handler
+        let result = handler
             .verify(cross_proof.clone(), zip_inputs(&shared))
             .expect("zippel run_verifier on cross-proof");
-        let result = check_verification(&verifier_result);
         assert!(
             result,
             "n={n}: CROSS-VERIFY FAILED: zippel verifier rejected native-produced proof"

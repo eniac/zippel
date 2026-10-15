@@ -257,7 +257,7 @@ pub fn sample_zippel_verifier<C: ArkConfig + HasOpFactory>(
     handler: &CompiledProtocol<C>,
     proof: &[Value<C>],
     inputs: &HashMap<Vid, Value<C>>,
-) -> (Vec<Duration>, Vec<usize>, Vec<bool>) {
+) -> (Vec<Duration>, Vec<usize>, bool) {
     sample(|| {
         handler
             .verify(proof.iter().cloned(), lend(inputs))

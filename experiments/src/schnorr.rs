@@ -22,7 +22,7 @@ pub mod zippel_side {
     use lang::id::Vid;
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{CompileOptions, CompiledProtocol, ParsedModule, check_verification};
+    use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
 
     /// The compiled Schnorr protocol. It takes no size parameters, so the only
     /// per-instance state is the handler and the measured compile time.
@@ -94,10 +94,7 @@ pub mod zippel_side {
             let (prove, prove_peak, proof) = crate::sample_zippel_prover(&self.handler, &inputs);
             let (verify, verify_peak, result) =
                 crate::sample_zippel_verifier(&self.handler, &proof, &inputs);
-            assert!(
-                check_verification(&result),
-                "zippel schnorr verification FAILED"
-            );
+            assert!(result, "zippel schnorr verification FAILED");
 
             Timing {
                 prove,

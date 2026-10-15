@@ -227,7 +227,7 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{CompileOptions, CompiledProtocol, ParsedModule, check_verification};
+    use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
 
     type C = ArkBls12_381;
     type F = <C as ArkConfig>::F;
@@ -505,10 +505,7 @@ pub mod zippel_side {
             });
             let (verify, verify_peak, result) =
                 crate::sample_zippel_verifier(&self.handler, &proof, &inputs);
-            assert!(
-                check_verification(&result),
-                "zippel PARI verification FAILED"
-            );
+            assert!(result, "zippel PARI verification FAILED");
             Timing {
                 prove,
                 verify,

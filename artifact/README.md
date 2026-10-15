@@ -232,7 +232,7 @@ docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" \
     python3 artifact/scripts/process_soundness.py'
 ```
 
-This analyzes Figure 6's seven special-soundness candidates (the rows
+This analyzes Figure 6's eight special-soundness candidates (the rows
 with a mark in its Spec. Sound column) with Singular, a 2-minute
 timeout and a 16 GiB memory limit per protocol. Results go to
 `artifact/output/soundness_results.json` and the raw log to
@@ -251,10 +251,10 @@ summary line:
 | Okamoto | ✗ | ... | failed | No valid extractor for witness r: NoExtractor |
 ...
 
-soundness pass=4 failed=2 timeout=1 unexpected=0
+soundness pass=5 failed=2 timeout=1 unexpected=0
 ```
 
-Schnorr, Multi-Schnorr, ElGamal and Chaum-Pedersen pass, matching
+Schnorr, Multi-Schnorr, Pedersen-Eq, ElGamal and Chaum-Pedersen pass, matching
 Figure 6's check marks. Okamoto and CDS fail with a reason, and E-Cash
 Coin reaches the timeout (it may report `failed` instead, depending on
 `--timeout`). The run reproduces the paper if it reports
@@ -274,13 +274,13 @@ docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" \
     python3 artifact/scripts/process_completeness.py'
 ```
 
-This analyzes all 34 Figure 6 protocols with a 5-minute timeout and a
+This analyzes all 35 Figure 6 protocols with a 5-minute timeout and a
 16 GiB memory limit per run. To run a subset, add for example
 `--protocols schnorr,groth16,ipa` after `--timeout 300`.
 
 **Note on the timeout.** §9.3 budgets 20 minutes per protocol. Every
-protocol that completes takes far less (the slowest, Multiset, takes
-133 seconds on the paper's testbed), so a 5-minute timeout keeps the
+protocol that completes takes far less (the slowest, Permutation, takes
+33.7 seconds), so a 5-minute timeout keeps the
 full run short.
 
 **What to expect.** A table of outcomes and analysis times in Figure 6
@@ -293,14 +293,13 @@ order, then a summary:
 | Schnorr | ✓ | ... |
 ...
 
-Automatically verified complete: 28 of 34 Figure 6 protocols present in this run.
+Automatically verified complete: 33 of 35 Figure 6 protocols present in this run.
 Unexpected outcomes: 0
 ```
 
-The analysis verifies the 28 protocols Figure 6 marks with a check.
-The other six are Figure 6's crosses: Spartan, Dory IPA, Permutation,
-Dekart and Pari reach the timeout, and HyperPlonk exceeds the memory
-limit. The run reproduces the paper if it reports
+The analysis verifies the 33 protocols Figure 6 marks with a check.
+The other two are Figure 6's crosses: Spartan and HyperPlonk exceed the memory
+limit during ideal construction. The run reproduces the paper if it reports
 `Unexpected outcomes: 0`.
 
 **Difference from the submitted paper.** The submitted paper verified
@@ -308,8 +307,7 @@ limit. The run reproduces the paper if it reports
 were incomplete and had kept the analysis from proving those protocols
 complete.
 
-**Runtime**: about 30 minutes, mostly the five protocols that reach the
-timeout.
+**Runtime**: a few minutes after building, including the two memory-limited runs.
 
 ---
 

@@ -141,7 +141,7 @@ pub mod zippel_side {
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::time::Instant;
-    use zippel::{CompileOptions, CompiledProtocol, ParsedModule, check_verification};
+    use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
 
     pub struct Setup {
         handler: CompiledProtocol<ArkBls12_381>,
@@ -283,10 +283,7 @@ pub mod zippel_side {
             });
             let (verify, verify_peak, result) =
                 crate::sample_zippel_verifier(&self.handler, &proof, &self.inputs);
-            assert!(
-                check_verification(&result),
-                "zippel DeKART verification FAILED"
-            );
+            assert!(result, "zippel DeKART verification FAILED");
             Timing {
                 prove,
                 verify,

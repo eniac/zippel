@@ -76,8 +76,8 @@ pub(crate) static COMPLETENESS_ENTRIES: LazyLock<Vec<CompletenessEntry>> = LazyL
             ignored: false,
         },
         CompletenessEntry {
-            name: "commitment_equality",
-            zippel_path: "examples/commitment_equality/commitment_equality.zippel",
+            name: "pedersen_eq",
+            zippel_path: "examples/pedersen_eq/pedersen_eq.zippel",
             sizes: &[],
             ignored: false,
         },

@@ -1837,8 +1837,8 @@ fn eq_weights<G: Group, F: Scalar<G>, EK: 2..21>(instance x: [F; EK]) -> [F; 2^E
         "../examples/coin_proof/coin_proof.zippel"
     );
     golden_test!(
-        golden_commitment_equality,
-        "../examples/commitment_equality/commitment_equality.zippel"
+        golden_pedersen_eq,
+        "../examples/pedersen_eq/pedersen_eq.zippel"
     );
     golden_test!(golden_cp, "../examples/cp/cp.zippel");
     golden_test!(golden_dekart, "../examples/dekart/dekart.zippel");

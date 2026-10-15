@@ -23,13 +23,6 @@ pub use share;
 
 use backend::{ArkConfig, Value, value_to_bytes};
 
-/// Interpret verifier output as pass/fail.
-/// Passes if every Check in the output returned `true`.
-#[must_use]
-pub fn check_verification(outputs: &[bool]) -> bool {
-    outputs.iter().all(|b| *b)
-}
-
 /// Compute the total serialized size (in bytes) of a proof certificate.
 pub fn proof_size_bytes<C: ArkConfig>(proof: &[Value<C>]) -> usize {
     proof

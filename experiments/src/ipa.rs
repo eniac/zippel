@@ -30,7 +30,7 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{CompileOptions, CompiledProtocol, ParsedModule, check_verification};
+    use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
 
     // Cached IPA inputs. Bases (g_vec, h_vec, u_aux_base) are Pedersen
     // setup. (a_vec, b_vec, sum_vec) would normally be the per-call
@@ -190,10 +190,7 @@ pub mod zippel_side {
             let (prove, prove_peak, proof) = crate::sample_zippel_prover(&self.handler, &inputs);
             let (verify, verify_peak, result) =
                 crate::sample_zippel_verifier(&self.handler, &proof, &inputs);
-            assert!(
-                check_verification(&result),
-                "zippel IPA verification FAILED"
-            );
+            assert!(result, "zippel IPA verification FAILED");
 
             Timing {
                 prove,

@@ -10,8 +10,6 @@ mod bccgp;
 mod cds;
 #[path = "coin_proof/main.rs"]
 mod coin_proof;
-#[path = "commitment_equality/main.rs"]
-mod commitment_equality;
 #[path = "cp/main.rs"]
 mod cp;
 #[path = "dekart/main.rs"]
@@ -64,6 +62,8 @@ mod okamoto;
 mod okamoto_elgamal;
 #[path = "pari/main.rs"]
 mod pari;
+#[path = "pedersen_eq/main.rs"]
+mod pedersen_eq;
 #[path = "pst13/main.rs"]
 mod pst13;
 #[path = "r1cs_sigma/main.rs"]
@@ -110,7 +110,6 @@ examples! {
     bccgp,
     cds,
     coin_proof,
-    commitment_equality,
     cp,
     dekart,
     dory_ipa,
@@ -137,6 +136,7 @@ examples! {
     okamoto,
     okamoto_elgamal,
     pari,
+    pedersen_eq,
     pst13,
     r1cs_sigma,
     schnorr,

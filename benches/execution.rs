@@ -213,10 +213,8 @@ fn bench_pedersen_eq_prover(c: &mut Criterion) {
     let mut group = c.benchmark_group("pedersen_eq");
     group.sample_size(10);
 
-    let module = ParsedModule::load(PathBuf::from(
-        "examples/commitment_equality/commitment_equality.zippel",
-    ))
-    .expect("parse protocol");
+    let module = ParsedModule::load(PathBuf::from("examples/pedersen_eq/pedersen_eq.zippel"))
+        .expect("parse protocol");
     let handler: CompiledProtocol<ArkBls12_381> = module
         .compile(&Ctx::new(), CompileOptions::default())
         .expect("compile protocol");
@@ -237,10 +235,8 @@ fn bench_pedersen_eq_verifier(c: &mut Criterion) {
     let mut group = c.benchmark_group("pedersen_eq");
     group.sample_size(10);
 
-    let module = ParsedModule::load(PathBuf::from(
-        "examples/commitment_equality/commitment_equality.zippel",
-    ))
-    .expect("parse protocol");
+    let module = ParsedModule::load(PathBuf::from("examples/pedersen_eq/pedersen_eq.zippel"))
+        .expect("parse protocol");
     let handler: CompiledProtocol<ArkBls12_381> = module
         .compile(&Ctx::new(), CompileOptions::default())
         .expect("compile protocol");

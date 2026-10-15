@@ -3,7 +3,7 @@
 // For C1 = g*x + h*r1 and C2 = g*x + h*r2, the difference C1 - C2 = h*(r1 - r2)
 // commits to 0. The prover proves knowledge of r_diff = r1 - r2 such that
 // C1 - C2 = h*r_diff.
-proto prove_commitment_equality<G: Group, F: Scalar<G>>(
+proto prove_pedersen_eq<G: Group, F: Scalar<G>>(
     witness r_diff: F, // The randomness of the difference commitment, r1 - r2
     instance h: G, // Base for randomness
     instance c1: G, // Commitment C1 = g*x + h*r1
