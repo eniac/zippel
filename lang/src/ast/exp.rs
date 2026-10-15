@@ -6,6 +6,7 @@ use std::ops::Index;
 use share::traversal::ToTraversal1;
 
 use crate::ast::Size;
+use crate::ast::exclusion::Exclusion;
 use crate::ast::range::{Range, RangeTraversal};
 use crate::ast::spanned::Spanned;
 use crate::id::{Tid, TidSubst, Vid};
@@ -231,19 +232,20 @@ pub enum Exp<N: ExpLiteral> {
     ///     ```
     Pair(Box<Spanned<Exp<N>>>, Box<Spanned<Exp<N>>>),
 
-    ///     Sample pseudo-random number generator
+    ///     Sample pseudo-random number generator, drawn again on the values it
+    ///     excludes, if any
     ///     **Zippel Code:**
     ///     ```zippel
-    ///     let r := random<F*>();
+    ///     let r = random<F*>;
     ///     ```
-    Random(Spanned<Tid>, bool),
+    Random(Spanned<Tid>, Option<ExpExclusion<N>>),
 
-    ///     Random oracle challenge.
+    ///     Random oracle challenge, drawn again on the values it excludes, if any
     ///     **Zippel Code:**
     ///     ```zippel
-    ///     r <- challenge<F>();
+    ///     r <- challenge<F - [1]>;
     ///     ```
-    Challenge(Spanned<Tid>, bool),
+    Challenge(Spanned<Tid>, Option<ExpExclusion<N>>),
 
     ///     Represents a let-expression, which binds a value to an identifier.
     ///
@@ -319,6 +321,9 @@ pub trait FreeVars {
 /// arguments, or a statement block whose value is its last expression.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Exps<N: ExpLiteral>(pub Vec<Spanned<Exp<N>>>);
+
+/// The values a sample in an [`Exp`] excludes.
+pub type ExpExclusion<N> = Exclusion<Box<Spanned<Exp<N>>>, <N as ExpLiteral>::Size>;
 
 /// Symbolic sized AST node, as parsed from input
 pub type UExp = Exp<Size>;
@@ -411,8 +416,8 @@ impl<N: ExpLiteral> ExpTraversal<N> for Exp<N> {
                 Exp::Map(x, id, go!(r))
             }
             Exp::Reduce(op, x) => Exp::Reduce(op, go!(x)),
-            Exp::Challenge(t, b) => Exp::Challenge(t, b),
-            Exp::Random(t, b) => Exp::Random(t, b),
+            Exp::Challenge(t, x) => Exp::Challenge(t, x.traverse_exp(literal, size)?),
+            Exp::Random(t, x) => Exp::Random(t, x.traverse_exp(literal, size)?),
             Exp::Range(r) => Exp::Range(r.traverse1(size)?),
             Exp::Ram(x, i) => {
                 let x = go!(x);
@@ -452,6 +457,24 @@ impl<N: ExpLiteral> ExpTraversal<N> for Exp<N> {
     }
 }
 
+impl<N: ExpLiteral> ExpTraversal<N> for Option<ExpExclusion<N>> {
+    type Output<M: ExpLiteral> = Option<ExpExclusion<M>>;
+    fn traverse_exp<M: ExpLiteral, E>(
+        self,
+        literal: &mut dyn FnMut(N) -> Result<M, E>,
+        size: &mut dyn FnMut(N::Size) -> Result<M::Size, E>,
+    ) -> Result<Option<ExpExclusion<M>>, E> {
+        Ok(match self {
+            None => None,
+            Some(Exclusion::Zero) => Some(Exclusion::Zero),
+            Some(Exclusion::Values(v)) => Some(Exclusion::Values(Box::new(
+                (*v).traverse_exp(literal, size)?,
+            ))),
+            Some(Exclusion::RootsOfUnity(n)) => Some(Exclusion::RootsOfUnity(size(n)?)),
+        })
+    }
+}
+
 impl<N: ExpLiteral> ExpTraversal<N> for Exps<N> {
     type Output<M: ExpLiteral> = Exps<M>;
     fn traverse_exp<M: ExpLiteral, E>(
@@ -472,9 +495,12 @@ impl<N: ExpLiteral> ExpTraversal<N> for Exps<N> {
 impl TidSubst for CExp {
     fn map_tids(&mut self, f: &dyn Fn(&Tid) -> Option<Tid>) {
         match self {
-            Exp::Challenge(t, _) | Exp::Random(t, _) => {
+            Exp::Challenge(t, x) | Exp::Random(t, x) => {
                 if let Some(n) = f(&t.node) {
                     t.node = n;
+                }
+                if let Some(v) = x.as_mut().and_then(Exclusion::values_mut) {
+                    v.map_tids(f);
                 }
             }
             Exp::Interpolate(None, e) => e.map_tids(f),
@@ -536,9 +562,11 @@ impl FreeVars for CExp {
     fn freevars(&self) -> Set<Vid> {
         match self {
             Exp::Var(id) => Set::singleton(id.node.clone()),
-            Exp::Unit | Exp::Challenge(_, _) | Exp::Random(_, _) | Exp::Lit(_) | Exp::Range(_) => {
-                Set::new()
-            }
+            Exp::Unit | Exp::Lit(_) | Exp::Range(_) => Set::new(),
+            Exp::Challenge(_, x) | Exp::Random(_, x) => x
+                .as_ref()
+                .and_then(Exclusion::values)
+                .map_or_else(Set::new, |v| v.freevars()),
             Exp::Interpolate(points, evals) => match points {
                 None => evals.freevars(),
                 Some(p) => p.freevars().union(evals.freevars()),
@@ -675,6 +703,14 @@ impl<N: ExpLiteral> RangeTraversal<N::Size> for Exp<N> {
                 field,
                 Box::new(value.range_traverse(f)?),
             )),
+            Exp::Challenge(t, Some(Exclusion::Values(v))) => Ok(Exp::Challenge(
+                t,
+                Some(Exclusion::Values(Box::new(v.range_traverse(f)?))),
+            )),
+            Exp::Random(t, Some(Exclusion::Values(v))) => Ok(Exp::Random(
+                t,
+                Some(Exclusion::Values(Box::new(v.range_traverse(f)?))),
+            )),
             other => Ok(other),
         }
     }
@@ -747,12 +783,12 @@ impl<N: ExpLiteral> Exp<N> {
     /// The direct subexpressions of this expression, in source order.
     pub fn children(&self) -> Vec<&Spanned<Exp<N>>> {
         match self {
-            Exp::Lit(_)
-            | Exp::Unit
-            | Exp::Var(_)
-            | Exp::Range(_)
-            | Exp::Random(_, _)
-            | Exp::Challenge(_, _) => vec![],
+            Exp::Lit(_) | Exp::Unit | Exp::Var(_) | Exp::Range(_) => vec![],
+            Exp::Random(_, x) | Exp::Challenge(_, x) => x
+                .iter()
+                .filter_map(Exclusion::values)
+                .map(|v| &**v)
+                .collect(),
             Exp::App(_, args) | Exp::Vec(args) => args.0.iter().collect(),
             Exp::Let(_, val, cont) | Exp::Log(_, val, cont) => {
                 std::iter::once(&**val).chain(cont.as_deref()).collect()
@@ -819,7 +855,10 @@ impl<N: ExpLiteral> Exp<N> {
             // Reject: verifier-only constructs
             Exp::Challenge(_, _) | Exp::Log(_, _, _) | Exp::Verify(_) => false,
             // Allow: Random (trusted-setup trapdoors, etc.)
-            Exp::Random(_, _) => true,
+            Exp::Random(_, x) => x
+                .as_ref()
+                .and_then(Exclusion::values)
+                .is_none_or(|v| v.is_relation_pure()),
             Exp::Let(_, val, cont) => {
                 val.is_relation_pure() && cont.as_ref().is_none_or(|c| c.is_relation_pure())
             }
@@ -957,7 +996,6 @@ where
             alternate: f.alternate(),
             precision: f.precision(),
         };
-        let star = |nonzero: &bool| if *nonzero { "*" } else { "" };
         match self {
             Exp::Lit(p) => write!(f, "{p}"),
             Exp::Unit => f.write_str("()"),
@@ -989,8 +1027,21 @@ where
             Exp::Map(x, id, range) => write!(f, "[{} for {id} in {}]", m.sub(x), m.sub(range)),
             Exp::Reduce(op, a) => write!(f, "reduce({op}, {})", m.sub(a)),
             Exp::Var(x) => write!(f, "{x}"),
-            Exp::Challenge(t, nonzero) => write!(f, "challenge<{t}{}>", star(nonzero)),
-            Exp::Random(t, nonzero) => write!(f, "random<{t}{}>", star(nonzero)),
+            Exp::Challenge(t, x) | Exp::Random(t, x) => {
+                let name = if matches!(self, Exp::Challenge(..)) {
+                    "challenge"
+                } else {
+                    "random"
+                };
+                write!(f, "{name}<{t}")?;
+                match x {
+                    None => {}
+                    Some(Exclusion::Zero) => f.write_str("*")?,
+                    Some(Exclusion::Values(v)) => write!(f, " - {}", m.sub(v))?,
+                    Some(Exclusion::RootsOfUnity(n)) => write!(f, " - roots_of_unity({n})")?,
+                }
+                f.write_str(">")
+            }
             Exp::Pair(t, e) => write!(f, "pair({}, {})", m.sub(t), m.sub(e)),
             Exp::Range(r) => write!(f, "{r}"),
             Exp::App(x, d) => write!(f, "{x}({})", m.list(d)),
@@ -1042,15 +1093,13 @@ pub const MAX_LISTED: usize = 4;
 impl<N: ExpLiteral> Exp<N> {
     /// Whether `self` prints in full at any depth.
     fn is_leaf(&self) -> bool {
-        matches!(
-            self,
-            Exp::Lit(_)
-                | Exp::Unit
-                | Exp::Var(_)
-                | Exp::Range(_)
-                | Exp::Challenge(..)
-                | Exp::Random(..)
-        )
+        match self {
+            Exp::Lit(_) | Exp::Unit | Exp::Var(_) | Exp::Range(_) => true,
+            Exp::Challenge(_, x) | Exp::Random(_, x) => {
+                x.as_ref().is_none_or(|x| x.values().is_none())
+            }
+            _ => false,
+        }
     }
 }
 

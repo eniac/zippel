@@ -2,6 +2,8 @@
 pub mod arg;
 /// Declaration bodies: protocols, functions and type aliases.
 pub mod decl;
+/// The values a `random` or `challenge` sample is drawn again on.
+pub mod exclusion;
 /// Expressions and binary operators — the bulk of the surface syntax.
 pub mod exp;
 mod minimal_sizes;
@@ -18,6 +20,7 @@ pub mod spanned;
 
 pub use arg::{Arg, Args, CArg, CArgs, GArg, GArgs};
 pub use decl::{Body, CBody};
+pub use exclusion::Exclusion;
 pub use exp::{BinOp, CExp, CExps, Exp, ExpLiteral, ExpTraversal, Exps, FreeVars, UExp, UExps};
 pub use minimal_sizes::{
     MAX_DEFAULT_SIZE, SizeRejection, SizeSearchError, SizeSearchLimit, SizeSearchStage,

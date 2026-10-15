@@ -11,7 +11,7 @@ use num::ToPrimitive;
 use crate::ast::range::Range;
 use crate::ast::sig::{CSig, SigError};
 use crate::ast::spanned::Spanned;
-use crate::ast::{BinOp, CBody, CExp};
+use crate::ast::{BinOp, CBody, CExp, Exclusion};
 use crate::id::{Tid, Vid};
 use crate::typ::instantiate::CallError;
 use crate::typ::lub::{Lub, LubError};
@@ -661,7 +661,7 @@ impl Typeable for CExp {
                 .ok_or(TypeError::var_not_found(&id.node, vctx)),
 
             // Random oracle challenge
-            CExp::Challenge(t, _) | CExp::Random(t, _) => {
+            CExp::Challenge(t, x) | CExp::Random(t, x) => {
                 // What kind of [t]?
                 let k = kctx.get(&t.node).ok_or(TypeError::lub(
                     TypeError::exp(kctx, vctx, self),
@@ -672,7 +672,30 @@ impl Typeable for CExp {
                     return Err(TypeError::challenge(kctx, vctx, &t.node, k));
                 }
 
-                Ok(CTyp::base(&t.node))
+                let typ = CTyp::base(&t.node);
+                match x {
+                    // `x^0 == 1` for every `x`: nothing would be left to sample.
+                    Some(Exclusion::RootsOfUnity(0)) => {
+                        return Err(TypeError::excludes_all(kctx, vctx, &t.node));
+                    }
+                    // A vector of `t` values.
+                    Some(Exclusion::Values(v)) => {
+                        let tv = v
+                            .infer_with_calls(kctx, fctx, vctx, on_call)
+                            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                        let of_typ = |elem: &CTyp| {
+                            CTyp::lub_equ(elem, &typ, kctx).is_ok_and(|elem| elem == typ)
+                        };
+                        if !matches!(&tv, CTyp::Vec(elem, _) if of_typ(&elem.node)) {
+                            return Err(TypeError::located(
+                                &v.span,
+                                TypeError::excluded(kctx, vctx, &t.node, &tv),
+                            ));
+                        }
+                    }
+                    None | Some(Exclusion::Zero | Exclusion::RootsOfUnity(_)) => {}
+                }
+                Ok(typ)
             }
 
             // Random access into vectors

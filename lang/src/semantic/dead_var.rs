@@ -20,7 +20,7 @@ use std::ops::Range;
 
 use crate::ast::decl::{Body, UDecl};
 use crate::ast::spanned::Spanned;
-use crate::ast::{Exp, UExp};
+use crate::ast::{Exclusion, Exp, UExp};
 use crate::diagnostic::Diagnostic;
 use crate::id::Vid;
 use lang_derive::Diagnostic as DiagnosticDerive;
@@ -287,8 +287,15 @@ fn visit<'a>(
             }
         }
 
+        // ── Samples: the values they exclude ───────────────────────────
+        Exp::Challenge(_, x) | Exp::Random(_, x) => {
+            if let Some(v) = x.as_ref().and_then(Exclusion::values) {
+                stack.push(Work::Expr(v));
+            }
+        }
+
         // ── Leaves: no sub-expressions ──────────────────────────────────
-        Exp::Lit(_) | Exp::Unit | Exp::Range(_) | Exp::Challenge(_, _) | Exp::Random(_, _) => {}
+        Exp::Lit(_) | Exp::Unit | Exp::Range(_) => {}
     }
 }
 

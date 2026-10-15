@@ -8,7 +8,7 @@ mod op_construction_tests {
     use crate::tests::test_helpers::*;
     use crate::{GOp, Op};
     use backend::{ATyp, Value};
-    use lang::ast::{BinOp, CRange};
+    use lang::ast::{BinOp, CRange, Exclusion};
 
     type C = TestConfig;
 
@@ -190,7 +190,7 @@ mod op_construction_tests {
     fn test_challenge_construction() {
         let challenge = GOp::<C>::challenge(ATyp::scalar());
         match challenge {
-            Op::Challenge(typ, false) => assert_eq!(typ, ATyp::scalar()),
+            Op::Challenge(typ, None) => assert_eq!(typ, ATyp::scalar()),
             _ => panic!("Expected Challenge"),
         }
     }
@@ -199,7 +199,7 @@ mod op_construction_tests {
     fn test_random_construction() {
         let random = GOp::<C>::random(ATyp::scalar());
         match random {
-            Op::Random(typ, false) => assert_eq!(typ, ATyp::scalar()),
+            Op::Random(typ, None) => assert_eq!(typ, ATyp::scalar()),
             _ => panic!("Expected Random"),
         }
     }
@@ -208,7 +208,7 @@ mod op_construction_tests {
     fn test_challenge_nz_construction() {
         let challenge = GOp::<C>::challenge_nz(ATyp::scalar());
         match challenge {
-            Op::Challenge(typ, true) => assert_eq!(typ, ATyp::scalar()),
+            Op::Challenge(typ, Some(Exclusion::Zero)) => assert_eq!(typ, ATyp::scalar()),
             _ => panic!("Expected Challenge with nonzero flag"),
         }
     }
@@ -217,7 +217,7 @@ mod op_construction_tests {
     fn test_random_nz_construction() {
         let random = GOp::<C>::random_nz(ATyp::scalar());
         match random {
-            Op::Random(typ, true) => assert_eq!(typ, ATyp::scalar()),
+            Op::Random(typ, Some(Exclusion::Zero)) => assert_eq!(typ, ATyp::scalar()),
             _ => panic!("Expected Random with nonzero flag"),
         }
     }
@@ -427,8 +427,8 @@ mod op_additional_tests {
 
     #[test]
     fn test_op_dot_non_values() {
-        let a = GOp::<C>::Random(ATyp::scalar(), false);
-        let b = GOp::<C>::Random(ATyp::scalar(), false);
+        let a = GOp::<C>::Random(ATyp::scalar(), None);
+        let b = GOp::<C>::Random(ATyp::scalar(), None);
         let typ = ATyp::scalar();
         let result = Op::dot(a, b, typ);
 

@@ -1,6 +1,6 @@
 use backend::ArkConfig;
 use graph::{GOp, Node, Op, QDag, Ref};
-use lang::ast::BinOp;
+use lang::ast::{BinOp, Exclusion};
 use lang::typ::Distribution;
 #[cfg(test)]
 use log::debug;
@@ -274,15 +274,11 @@ fn compute_distribution_loops<C: ArkConfig>(
                 Some(Distribution::Nonuniform)
             }
         }
-        Op::Random(_, b) => Some(if *b {
-            Distribution::UniformNonZero
-        } else {
-            Distribution::Uniform
-        }),
-        Op::Challenge(_, b) => Some(if *b {
-            Distribution::UniformNonZero
-        } else {
-            Distribution::Uniform
+        // A sample excluding other values is not uniform over either domain.
+        Op::Random(_, x) | Op::Challenge(_, x) => Some(match x {
+            None => Distribution::Uniform,
+            Some(Exclusion::Zero) => Distribution::UniformNonZero,
+            Some(Exclusion::Values(_) | Exclusion::RootsOfUnity(_)) => Distribution::Nonuniform,
         }),
         Op::Reduce(op, v) => {
             let dist_v =
@@ -468,28 +464,28 @@ mod tests {
 
     #[test]
     fn test_compute_distribution_random() {
-        let op = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), false);
+        let op = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), None);
         let dist = compute_distribution(&op, &Ctx::new(), &Ctx::new());
         assert_eq!(dist, Some(Distribution::Uniform));
     }
 
     #[test]
     fn test_compute_distribution_random_nonzero() {
-        let op = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), true);
+        let op = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), Some(Exclusion::Zero));
         let dist = compute_distribution(&op, &Ctx::new(), &Ctx::new());
         assert_eq!(dist, Some(Distribution::UniformNonZero));
     }
 
     #[test]
     fn test_compute_distribution_challenge() {
-        let op = GOp::<ArkBls12_381>::Challenge(backend::ATyp::scalar(), false);
+        let op = GOp::<ArkBls12_381>::Challenge(backend::ATyp::scalar(), None);
         let dist = compute_distribution(&op, &Ctx::new(), &Ctx::new());
         assert_eq!(dist, Some(Distribution::Uniform));
     }
 
     #[test]
     fn test_compute_distribution_challenge_nonzero() {
-        let op = GOp::<ArkBls12_381>::Challenge(backend::ATyp::scalar(), true);
+        let op = GOp::<ArkBls12_381>::Challenge(backend::ATyp::scalar(), Some(Exclusion::Zero));
         let dist = compute_distribution(&op, &Ctx::new(), &Ctx::new());
         assert_eq!(dist, Some(Distribution::UniformNonZero));
     }
@@ -503,15 +499,15 @@ mod tests {
 
     #[test]
     fn test_op_ancestors_of_random() {
-        let op = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), false);
+        let op = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), None);
         let ancestors = op_ancestors_of(&op, &Ctx::new());
         assert_eq!(ancestors.len(), 0);
     }
 
     #[test]
     fn test_is_independent_disjoint() {
-        let op1 = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), false);
-        let op2 = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), false);
+        let op1 = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), None);
+        let op2 = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), None);
         assert!(is_independent(&op1, &op2, &Ctx::new()));
     }
 

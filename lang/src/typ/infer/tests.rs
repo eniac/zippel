@@ -17,10 +17,10 @@ fn range<N: ExpLiteral>(r: Range<N::Size>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Range(r))
 }
 fn challenge<N: ExpLiteral>(t: Tid) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Challenge(Spanned::dummy(t), false))
+    Spanned::dummy(Exp::Challenge(Spanned::dummy(t), None))
 }
 fn random<N: ExpLiteral>(t: Tid) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Random(Spanned::dummy(t), false))
+    Spanned::dummy(Exp::Random(Spanned::dummy(t), None))
 }
 fn bin<N: ExpLiteral>(op: BinOp, l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
     Spanned::dummy(Exp::Bin(op, Box::new(l), Box::new(r)))

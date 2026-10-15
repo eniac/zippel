@@ -43,7 +43,7 @@ pub use config::{
     ArkVesta, DivisionByZero,
 };
 pub use nothing::{NoCurve, NoField, NoPairing};
-pub use op::{GOp, HasOpFactory, Op, Ref};
+pub use op::{GOp, HasOpFactory, Op, OpExclusion, Ref};
 pub use optimization::{OptimizationStats, optimization_stats_snapshot, reset_optimization_stats};
 pub use poly_variant::{PolyError, PolyVariant};
 pub use shared::Shared;
