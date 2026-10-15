@@ -3,7 +3,7 @@ use lang::id::Vid;
 use lang::typ::{Distribution, Nothing, Qualifier};
 use share::traversal::ToTraversal2;
 
-use backend::op::{GOp, HOp, HasOpFactory, Op, Ref, mk};
+use backend::op::{GOp, HOp, HasOpFactory, Op, OpExclusion, Ref, mk};
 use backend::{ATyp, ArkConfig};
 use petgraph::graph::NodeIndex;
 use std::fmt;
@@ -342,15 +342,15 @@ impl<C: HasOpFactory> Node<C, Nothing> {
             Nothing,
         )
     }
-    /// Builds a transcript node sampling a Fiat-Shamir challenge of type `typ`;
-    /// `non_zero` requests a value rejected if it is zero.
-    pub fn challenge(typ: &ATyp, non_zero: bool) -> Self {
-        Node::Transcr(mk::<C>(Op::Challenge(typ.clone(), non_zero)), Nothing)
+    /// Builds a transcript node sampling a Fiat-Shamir challenge of type `typ`,
+    /// drawn again on the values `exclusion` excludes, if any.
+    pub fn challenge(typ: &ATyp, exclusion: Option<OpExclusion<C>>) -> Self {
+        Node::Transcr(mk::<C>(Op::Challenge(typ.clone(), exclusion)), Nothing)
     }
-    /// Builds a node sampling prover-local randomness of type `typ`; `non_zero`
-    /// requests a value rejected if it is zero.
-    pub fn random(typ: &ATyp, non_zero: bool) -> Self {
-        Node::Op(mk::<C>(Op::Random(typ.clone(), non_zero)), Nothing)
+    /// Builds a node sampling prover-local randomness of type `typ`, drawn
+    /// again on the values `exclusion` excludes, if any.
+    pub fn random(typ: &ATyp, exclusion: Option<OpExclusion<C>>) -> Self {
+        Node::Op(mk::<C>(Op::Random(typ.clone(), exclusion)), Nothing)
     }
     /// Builds a transcript node emitting `op` as a prover message in the proof.
     pub fn transcr(op: &GOp<C>) -> Self {

@@ -5,11 +5,12 @@
 
 use backend::{ArkConfig, Value};
 use graph::eval::error::EvalError;
-use graph::{Dag, GOp, Node, Op, UDag};
+use graph::{Dag, GOp, HOp, Node, Op, Ref, UDag};
+use lang::ast::Exclusion;
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
 use rand::rngs::ThreadRng;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::error::RuntimeError;
@@ -190,13 +191,59 @@ impl<C: ArkConfig> MutexGraph<C> {
         };
         let env = state.inbox.take_all();
         let mut checks = Vec::new();
-        let value = match graph::eval::eval_op(op, &env, &mut ThreadRng::default(), &mut checks) {
-            Err(EvalError::DivisionByZero) => return Err(RuntimeError::DivisionByZero),
-            value => {
-                value.expect("runtime invariant violation: eval_op failed on a scheduled node")
-            }
-        };
+        let value = eval(op, &env, &mut checks)?;
         let passed = (!checks.is_empty()).then(|| checks.iter().all(|&p| p));
         Ok((value, passed))
+    }
+
+    /// Evaluates the values challenge `node` excludes on the operands in its
+    /// inbox, which are dropped once they have been evaluated.
+    ///
+    /// # Errors
+    ///
+    /// [`RuntimeError::DivisionByZero`] if computing them divides by zero.
+    ///
+    /// # Panics
+    ///
+    /// Panics as [`MutexGraph::evaluate`] does, or if `node` is not a
+    /// challenge.
+    pub(crate) fn exclusion(
+        &self,
+        node: NodeIndex,
+    ) -> Result<Option<Exclusion<Value<C>, usize>>, RuntimeError> {
+        let Node::Transcr(op, state) = &self.dag[node] else {
+            unreachable!("node {node:?} is not a challenge")
+        };
+        let Op::Challenge(_, exclusion) = &**op else {
+            unreachable!("node {node:?} is not a challenge")
+        };
+        let env = state.inbox.take_all();
+        exclusion
+            .clone()
+            .map(|x| x.try_map(|v| eval(&v, &env, &mut Vec::new()), Ok))
+            .transpose()
+    }
+}
+
+/// Evaluates `op` on the operands `env`, recording the outcome of each check
+/// it evaluates in `checks`.
+///
+/// # Errors
+///
+/// [`RuntimeError::DivisionByZero`] if `op` divides by zero.
+///
+/// # Panics
+///
+/// Panics if `eval_op` fails otherwise.
+fn eval<C: ArkConfig>(
+    op: &HOp<C>,
+    env: &HashMap<Ref, Value<C>>,
+    checks: &mut Vec<bool>,
+) -> Result<Value<C>, RuntimeError> {
+    match graph::eval::eval_op(op, env, &mut ThreadRng::default(), checks) {
+        Err(EvalError::DivisionByZero) => Err(RuntimeError::DivisionByZero),
+        value => {
+            Ok(value.expect("runtime invariant violation: eval_op failed on a scheduled node"))
+        }
     }
 }

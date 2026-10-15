@@ -24,7 +24,7 @@ use num::{BigUint, ToPrimitive};
 use crate::ast::arg::Args;
 use crate::ast::decl::{Decl, UDecl};
 use crate::ast::spanned::Spanned;
-use crate::ast::{BinOp, Exps, GArg, UExp};
+use crate::ast::{BinOp, Exclusion, Exps, GArg, UExp};
 use crate::ast::{ExpLiteral, Size};
 use crate::diagnostic::Diagnostic;
 use crate::id::{Tid, Vid};
@@ -568,6 +568,19 @@ fn exp_atom<'src, I>(
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
+    // What a sample excludes: `*`, `- v` or `- roots_of_unity(n)`
+    let exclusion = choice((
+        just(Token::Star).to(Exclusion::Zero),
+        just(Token::Minus).ignore_then(choice((
+            just(Token::KwRootsOfUnity)
+                .ignore_then(
+                    size_ty_parser().delimited_by(just(Token::LParen), just(Token::RParen)),
+                )
+                .map(|n| Exclusion::RootsOfUnity(n.node)),
+            exp_no_seq.clone().map(|v| Exclusion::Values(Box::new(v))),
+        ))),
+    ))
+    .or_not();
     choice((
         // Range expression: 0..N or 0,1..N
         // Must come before parenthesized expression so (M-1)..(M-1) is parsed as a range, not (M-1)
@@ -694,28 +707,29 @@ where
                     sp.into_range()
                 })
             }),
-        // random<T> or random<T*>
+        // random<T>, random<T*>, random<T - v> or random<T - roots_of_unity(n)>
         just(Token::KwRandom)
             .ignored()
             .ignore_then(just(Token::LAngle).ignored())
             .ignore_then(tid_tok())
-            .then(just(Token::Star).ignored().or_not())
+            .then(exclusion.clone())
             .then_ignore(just(Token::RAngle).ignored())
-            .map_with(|(t, star), e| {
-                Spanned::new(UExp::Random(t, star.is_some()), {
+            .map_with(|(t, x), e| {
+                Spanned::new(UExp::Random(t, x), {
                     let sp: SimpleSpan = e.span();
                     sp.into_range()
                 })
             }),
-        // challenge<T> or challenge<T*>
+        // challenge<T>, challenge<T*>, challenge<T - v> or
+        // challenge<T - roots_of_unity(n)>
         just(Token::KwChallenge)
             .ignored()
             .ignore_then(just(Token::LAngle).ignored())
             .ignore_then(tid_tok())
-            .then(just(Token::Star).ignored().or_not())
+            .then(exclusion)
             .then_ignore(just(Token::RAngle).ignored())
-            .map_with(|(t, star), e| {
-                Spanned::new(UExp::Challenge(t, star.is_some()), {
+            .map_with(|(t, x), e| {
+                Spanned::new(UExp::Challenge(t, x), {
                     let sp: SimpleSpan = e.span();
                     sp.into_range()
                 })

@@ -30,7 +30,7 @@ mod node;
 #[cfg(test)]
 mod tests;
 
-pub use backend::op::{GOp, HOp, HasOpFactory, Op, Ref, mk};
+pub use backend::op::{GOp, HOp, HasOpFactory, Op, OpExclusion, Ref, mk};
 pub use dep::{Dep, DepType};
 use log::debug;
 pub use node::{ArgKind, Node};
@@ -38,9 +38,10 @@ pub use node::{ArgKind, Node};
 use ark_ff::PrimeField;
 use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePolynomial};
 use backend::{ABase, ATyp, ArkConfig, PolyVariant, Value, VirtualPolynomial};
+use lang::ast::exp::ExpExclusion;
 use lang::ast::range::CRange;
 use lang::ast::spanned::Spanned;
-use lang::ast::{BinOp, CBody, CExp, CModule, CSig, Exp, ExpLiteral, Exps};
+use lang::ast::{BinOp, CBody, CExp, CModule, CSig, Exclusion, Exp, ExpLiteral, Exps};
 use lang::diagnostic::{Diagnostic, Phase};
 use lang::id::{Fresh, Tid, Vid};
 use lang::typ::infer::{TypeError, Typeable};
@@ -1154,13 +1155,21 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         // Add the verifier nodes, start with the verifier checks
         let mut worklist = self.find_verify();
         assert!(!worklist.is_empty(), "No verifier check found");
+        // and the challenges, since the verifier computes the values they exclude
+        worklist.extend(
+            self.transcript_nodes()
+                .into_iter()
+                .filter(|&n| self[n].is_challenge()),
+        );
         // Each reached node ↦ the node that needed it, back to a check, for reporting leaks.
         let mut via: HashMap<NodeIndex, NodeIndex> = HashMap::new();
 
         while let Some(n) = worklist.pop() {
-            if node_map_self.contains_key(&n) {
+            // A challenge is already in the verifier, but not what it excludes.
+            let challenge = self[n].is_challenge();
+            if !challenge && node_map_self.contains_key(&n) {
                 continue;
-            } else if !self[n].is_op() || self[n].is_transcript() {
+            } else if !challenge && (!self[n].is_op() || self[n].is_transcript()) {
                 // Only op nodes are added to the verifier, transcript nodes are already added to the prover
                 continue;
             }
@@ -1200,8 +1209,10 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             }
 
             // Add node to verifier graph
-            let new_node = verifier.add_weight(self.graph[n].clone());
-            node_map_self.insert(n, new_node);
+            if !challenge {
+                let new_node = verifier.add_weight(self.graph[n].clone());
+                node_map_self.insert(n, new_node);
+            }
 
             // Add parent neighbors to worklist
             for e in self.graph.edges_directed(n, Direction::Incoming) {
@@ -1537,6 +1548,35 @@ impl<C: HasOpFactory> UDag<C> {
                 GOp::underscore(node, atyp)
             }
         }
+    }
+
+    /// Adds the vector a sample excludes, if it lists one, as a node or a
+    /// literal, and returns the exclusion for the sample's operation.
+    #[allow(clippy::too_many_arguments)]
+    fn add_exclusion(
+        &mut self,
+        exclusion: Option<ExpExclusion<BigUint>>,
+        transcr: &mut NodeIndex,
+        edge_type: DepType,
+        kctx: &Ctx<Tid, CKind>,
+        fctx: &Ctx<CSig, CBody>,
+        vctx: &Ctx<Vid, CTyp>,
+        vars: &Ctx<Vid, GOp<C>>,
+    ) -> Result<Option<OpExclusion<C>>, GraphError> {
+        exclusion
+            .map(|x| {
+                x.try_map(
+                    |v| {
+                        let span = v.span.clone();
+                        let v =
+                            self.add_exp(*v, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
+                        let typ = v.typ();
+                        Ok(mk::<C>(self.materialize(v, edge_type, typ, span)))
+                    },
+                    Ok,
+                )
+            })
+            .transpose()
     }
 
     /// Adds `bop`, a `GOp::bin` result of type `atyp`: a `Node::bin` when it stayed a
@@ -2187,11 +2227,7 @@ impl<C: HasOpFactory> UDag<C> {
                     CExp::Var(id)
                 }
             }
-            CExp::Lit(_)
-            | CExp::Unit
-            | CExp::Range(_)
-            | CExp::Random(_, _)
-            | CExp::Challenge(_, _) => exp,
+            CExp::Lit(_) | CExp::Unit | CExp::Range(_) => exp,
             CExp::Bin(op, a, b) => CExp::Bin(
                 op,
                 Box::new(Spanned::dummy(Self::substitute_var(
@@ -2433,7 +2469,10 @@ impl<C: HasOpFactory> UDag<C> {
                 Self::exp_mentions_free_var(record, target)
                     || Self::exp_mentions_free_var(value, target)
             }
-            CExp::Random(_, _) | CExp::Challenge(_, _) => false,
+            CExp::Random(_, x) | CExp::Challenge(_, x) => x
+                .as_ref()
+                .and_then(Exclusion::values)
+                .is_some_and(|v| Self::exp_mentions_free_var(v, target)),
         }
     }
 
@@ -2872,10 +2911,14 @@ impl<C: HasOpFactory> UDag<C> {
                         .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
                     return Ok(self.materialize(GOp::ram(oa, ob), edge_type, atyp, span.clone()));
                 }
-                CExp::Challenge(_, non_zero) => {
+                CExp::Challenge(_, exclusion) => {
                     let at = ATyp::from_ctyp(&typ, kctx)
                         .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
-                    let nchallenge = self.add_node(Node::challenge(&at, non_zero), span.clone());
+                    let exclusion = self
+                        .add_exclusion(exclusion, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let nchallenge =
+                        self.add_node(Node::challenge(&at, exclusion.clone()), span.clone());
+                    self.add_edges(edge_type, nchallenge, GOp::Challenge(at.clone(), exclusion));
                     // Add transcript edge to [nchallenge]
                     self.add_edge(*transcr, nchallenge, Dep::transcript());
                     // Update transcript node
@@ -2883,10 +2926,13 @@ impl<C: HasOpFactory> UDag<C> {
 
                     return Ok(GOp::underscore(nchallenge, at));
                 }
-                CExp::Random(_, non_zero) => {
+                CExp::Random(_, exclusion) => {
                     let at = ATyp::from_ctyp(&typ, kctx)
                         .ok_or_else(|| ark_error(kctx, &vctx, &exp, &typ))?;
-                    let nrand = self.add_node(Node::random(&at, non_zero), span.clone());
+                    let exclusion = self
+                        .add_exclusion(exclusion, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let nrand = self.add_node(Node::random(&at, exclusion.clone()), span.clone());
+                    self.add_edges(edge_type, nrand, GOp::Random(at.clone(), exclusion));
                     return Ok(GOp::underscore(nrand, at));
                 }
                 CExp::App(fid, params) => {

@@ -17,7 +17,7 @@ use ark_poly::{
 };
 use ark_serialize::{CanonicalSerialize, SerializationError};
 use ark_std::log2;
-use lang::ast::BinOp;
+use lang::ast::{BinOp, Exclusion};
 use lang::typ::{CRange, Nothing};
 use rand::Rng;
 use rayon::prelude::*;
@@ -3345,6 +3345,21 @@ impl<C: ArkConfig> Value<C> {
         !value_scalars::<C>(self).iter().all(|x| seen.insert(*x))
     }
 
+    /// Whether `exclusion` excludes this sample: zero, an entry of a scalar
+    /// or index vector, or an `n`-th root of unity.
+    ///
+    /// # Panics
+    /// Panics if `exclusion` lists values or roots of unity and this is not a
+    /// scalar.
+    pub fn is_excluded_by(&self, exclusion: &Exclusion<Self, usize>) -> bool {
+        match (exclusion, self) {
+            (Exclusion::Zero, _) => self.is_zero(),
+            (Exclusion::Values(values), Value::Scalar(x)) => value_scalars::<C>(values).contains(x),
+            (Exclusion::RootsOfUnity(n), Value::Scalar(x)) => x.pow([*n as u64]) == C::FOps::one(),
+            _ => panic!("Expected a scalar sample, found {self}"),
+        }
+    }
+
     /// Builds a vector value from element values, collapsing to the flat
     /// homogeneous representation whenever the elements share a base type.
     ///
@@ -4310,6 +4325,22 @@ mod value_tests {
         let a = TestValue::vec_scalar(vec![Fr::from(1u64), Fr::from(2u64)]);
         let b = TestValue::vec_scalar(vec![Fr::from(1u64), Fr::from(0u64)]);
         let _ = a / b;
+    }
+
+    /// A sample is excluded when it is zero, listed, or a root of unity of
+    /// the given order.
+    #[test]
+    fn test_is_excluded_by() {
+        let minus_one = TestValue::Scalar(-Fr::from(1u64));
+        let listed = Exclusion::Values(TestValue::vec_scalar(vec![Fr::from(2u64), Fr::from(3u64)]));
+        assert!(scalar(0).is_excluded_by(&Exclusion::Zero));
+        assert!(!scalar(1).is_excluded_by(&Exclusion::Zero));
+        assert!(scalar(3).is_excluded_by(&listed));
+        assert!(!scalar(4).is_excluded_by(&listed));
+        assert!(scalar(1).is_excluded_by(&Exclusion::RootsOfUnity(4)));
+        assert!(minus_one.is_excluded_by(&Exclusion::RootsOfUnity(4)));
+        assert!(!minus_one.is_excluded_by(&Exclusion::RootsOfUnity(3)));
+        assert!(!scalar(2).is_excluded_by(&Exclusion::RootsOfUnity(4)));
     }
 
     #[test]

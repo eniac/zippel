@@ -120,10 +120,9 @@ proto dekart<
     let rho_h = random<f>;
     com_h <- dot(h_coeffs, srs_g1_h) + xi_g1 * rho_h;
 
-    // Step 8: evaluation point, uniform over F \ {1}: the verifier divides by
+    // Step 8: evaluation point, other than 1: the verifier divides by
     // gamma - 1 in step 11
-    gamma_minus_one <- challenge<f*>;
-    let gamma = gamma_minus_one + 1;
+    gamma <- challenge<f - [1]>;
 
     // Step 9: evaluations at gamma, then ell + 2 batching challenges
     a <- f_hat(gamma);

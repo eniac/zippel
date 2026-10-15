@@ -12,6 +12,7 @@
 use backend::op::HasOpFactory;
 use backend::{ABase, ATyp, ArkConfig, ArkScalarOps};
 use graph::{HOp, Op};
+use lang::ast::Exclusion;
 
 use ark_ff::Field;
 
@@ -489,7 +490,7 @@ fn known_nonzero<C: ArkConfig + HasOpFactory>(
     term.0.iter().all(|(v, _)| {
         matches!(
             ctx.builder.node_ops.get(&v.reference),
-            Some(Op::Challenge(_, true) | Op::Random(_, true))
+            Some(Op::Challenge(_, Some(Exclusion::Zero)) | Op::Random(_, Some(Exclusion::Zero)))
         )
     })
 }

@@ -71,11 +71,13 @@ qualified `witness` (prover-secret), `instance` (public to both), or
 analyses, not executed). Inside the body: `random<T>` samples blinding
 values, `challenge<T>` draws a Fiat–Shamir challenge, `<-` both computes
 and appends a value to the transcript, `let` is a local (non-transcript)
-binding, and `verify(...)` is the final check. `random<F*>` and
-`challenge<F*>` are sampled nonzero; a division by zero fails the run with
+binding, and `verify(...)` is the final check. A sample is drawn again on
+the values it excludes: `F*` excludes zero, `F - v` the entries of a vector
+`v` (for a challenge, one the verifier computes), and `F - roots_of_unity(n)`
+every `x` with `x^n == 1`. A division by zero fails the run with
 `RuntimeError::DivisionByZero`, and completeness must prove every
-prover/verifier divisor nonzero (see `analyses/src/ideal/ops/div.rs`), so
-divide by `*` samples. See
+prover/verifier divisor nonzero (see `analyses/src/ideal/ops/div.rs` and
+`sample.rs`), so divide by values the samples exclude. See
 `CONTRIBUTING.md`'s "Creating a new protocol with Zippel" section for a
 full worked example, or any file under `examples/*/*.zippel`. The parser
 requires size-type variables to start uppercase and values lowercase.
