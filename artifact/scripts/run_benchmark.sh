@@ -6,7 +6,7 @@
 # knows (its ALL_SYSTEMS: the paper's Figure 7 systems plus those added
 # since) at run_all.sh's default size grid (log_size=18, fixed for
 # Schnorr), threads {1,2,4,8}, and one sample per measurement
-# (BENCH_SAMPLES=1). The pinned results in experiments/*_results.csv use
+# (BENCH_SAMPLES=1). The pinned results in experiments/results/*_results.csv use
 # BENCH_SAMPLES=10, which takes roughly ten times as long.
 # Maps to Figure 7 of the submitted paper (page 13) -- see ../README.md.
 #

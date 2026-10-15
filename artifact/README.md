@@ -179,7 +179,7 @@ size parameter), with the prover at 1, 2, 4 and 8 threads and the
 verifier at 1 thread. By default each measurement is taken once; the
 paper reports the mean of 10 runs, which you can match with
 `-e BENCH_SAMPLES=10` at roughly ten times the runtime. The pinned
-results in `experiments/*_results.csv` use 10 runs.
+results in `experiments/results/*_results.csv` use 10 runs.
 
 To run a subset, pick systems and thread counts:
 

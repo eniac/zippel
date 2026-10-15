@@ -111,7 +111,7 @@ experiments/
 │
 ├── benches/               criterion benches for a couple of systems (rarely used now)
 ├── artifacts/             auto-created at runtime — on-disk SRS cache (see cache.rs)
-└── *.csv                  sample / saved bench outputs
+└── results/               saved CSV outputs from previous benchmark runs
 ```
 
 `*_upstream/` modules exist where the original upstream code had a bug,
