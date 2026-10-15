@@ -103,19 +103,26 @@ impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8> + Send> Run<'_, C, H> {
             "runtime invariant violation: node {node:?} executed twice"
         );
         let value = match &self.graph.dag[node] {
-            Node::Transcr(op, _) if matches!(**op, Op::Challenge(_, _)) => {
+            Node::Transcr(op, _) if let Op::Challenge(_, non_zero) = **op => {
                 debug!("[run_graph] node {node:?} is Challenge");
-                self.transcript.lock().unwrap().challenge()
+                self.transcript.lock().unwrap().challenge(non_zero)
             }
             Node::Op(op, _) if matches!(**op, Op::Challenge(_, _)) => {
                 unreachable!("challenge {node:?} outside the transcript")
             }
-            Node::Op(_, _) => self.evaluate(node),
+            Node::Op(_, _) => {
+                let Some(value) = self.evaluate(node) else {
+                    return;
+                };
+                value
+            }
             Node::Transcr(op, _) => {
                 debug!("[run_graph] node {node:?} is Transcript");
                 // Computed outside the lock; only the sponge bookkeeping is
                 // in it.
-                let value = self.evaluate(node);
+                let Some(value) = self.evaluate(node) else {
+                    return;
+                };
                 // The type checker guarantees it; a verifier's message is a
                 // proof element `run_verifier` has already checked.
                 debug_assert!(
@@ -133,13 +140,21 @@ impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8> + Send> Run<'_, C, H> {
         self.release_successors(scope, node, Some(&value));
     }
 
-    /// Evaluates `node`, recording the outcome of any checks it evaluated.
-    fn evaluate(&self, node: NodeIndex) -> Value<C> {
-        let (value, passed) = self.graph.evaluate(node);
-        if let Some(passed) = passed {
-            self.checks.lock().unwrap().insert(node, passed);
+    /// Evaluates `node`, recording the outcome of any checks it evaluated, or
+    /// records the run's error and returns `None` if it fails.
+    fn evaluate(&self, node: NodeIndex) -> Option<Value<C>> {
+        match self.graph.evaluate(node) {
+            Ok((value, passed)) => {
+                if let Some(passed) = passed {
+                    self.checks.lock().unwrap().insert(node, passed);
+                }
+                Some(value)
+            }
+            Err(err) => {
+                self.error.record(err);
+                None
+            }
         }
-        value
     }
 
     /// Queues the instance inputs of the `Inp` marker `node` for the sponge,

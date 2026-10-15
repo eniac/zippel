@@ -4,6 +4,7 @@
 //! successors, the nodes ready at the start, the input marker and the checks.
 
 use backend::{ArkConfig, Value};
+use graph::eval::error::EvalError;
 use graph::{Dag, GOp, Node, Op, UDag};
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
@@ -11,6 +12,7 @@ use rand::rngs::ThreadRng;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use crate::error::RuntimeError;
 use crate::inbox::Inbox;
 
 /// The state of one compute (`Op`/`Transcr`) node during the run.
@@ -169,21 +171,32 @@ impl<C: ArkConfig> MutexGraph<C> {
     /// node that evaluated checks whether all of them passed (a later check
     /// must not hide an earlier failure).
     ///
+    /// # Errors
+    ///
+    /// [`RuntimeError::DivisionByZero`] if the node divides by zero.
+    ///
     /// # Panics
     ///
     /// Panics if `node` is not a compute node, if an operand was not
-    /// delivered (a scheduling bug), or if `eval_op` fails: every shape and
-    /// type precondition is established by the `lang` type checker and the
-    /// scheduler, so a failure is a compiler invariant violation.
-    pub(crate) fn evaluate(&self, node: NodeIndex) -> (Value<C>, Option<bool>) {
+    /// delivered (a scheduling bug), or if `eval_op` fails otherwise: every
+    /// shape and type precondition is established by the `lang` type checker
+    /// and the scheduler, so a failure is a compiler invariant violation.
+    pub(crate) fn evaluate(
+        &self,
+        node: NodeIndex,
+    ) -> Result<(Value<C>, Option<bool>), RuntimeError> {
         let (Node::Op(op, state) | Node::Transcr(op, state)) = &self.dag[node] else {
             unreachable!("node {node:?} has nothing to compute")
         };
         let env = state.inbox.take_all();
         let mut checks = Vec::new();
-        let value = graph::eval::eval_op(op, &env, &mut ThreadRng::default(), &mut checks)
-            .expect("runtime invariant violation: eval_op failed on a scheduled node");
+        let value = match graph::eval::eval_op(op, &env, &mut ThreadRng::default(), &mut checks) {
+            Err(EvalError::DivisionByZero) => return Err(RuntimeError::DivisionByZero),
+            value => {
+                value.expect("runtime invariant violation: eval_op failed on a scheduled node")
+            }
+        };
         let passed = (!checks.is_empty()).then(|| checks.iter().all(|&p| p));
-        (value, passed)
+        Ok((value, passed))
     }
 }

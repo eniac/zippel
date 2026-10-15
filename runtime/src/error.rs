@@ -83,6 +83,11 @@ pub enum RuntimeError {
         /// The argument's declared type.
         expected: String,
     },
+
+    /// The run divided by zero: the prover produces no proof, and the
+    /// verifier rejects the proof.
+    #[error("division by zero")]
+    DivisionByZero,
 }
 
 impl RuntimeError {

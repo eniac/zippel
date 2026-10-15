@@ -51,8 +51,9 @@ impl<C: ArkConfig + HasOpFactory> CompiledProver<C> {
     ///
     /// # Errors
     /// Returns [`RuntimeError::MissingInputs`] if expected inputs are missing,
-    /// and [`RuntimeError::MalformedInput`] if an input is not a value of its
-    /// argument's declared type.
+    /// [`RuntimeError::MalformedInput`] if an input is not a value of its
+    /// argument's declared type, and [`RuntimeError::DivisionByZero`] if the
+    /// prover divides by zero.
     ///
     pub fn prove<K: Into<Vid>>(
         &self,
@@ -127,9 +128,10 @@ impl<C: ArkConfig + HasOpFactory> CompiledVerifier<C> {
     /// element per prover message, [`RuntimeError::MalformedProof`] if an
     /// element is not a value of its message's declared type,
     /// [`RuntimeError::MalformedInput`] if an instance input is not a value of
-    /// its argument's declared type, and other `RuntimeError`s if the run
-    /// fails (e.g. a missing instance input). A
-    /// proof that runs but fails a check returns `Ok(false)`.
+    /// its argument's declared type, [`RuntimeError::DivisionByZero`] if the
+    /// proof makes the verifier divide by zero, and other `RuntimeError`s if
+    /// the run fails (e.g. a missing instance input). A proof that runs but
+    /// fails a check returns `Ok(false)`.
     ///
     pub fn verify<K: Into<Vid>>(
         &self,

@@ -276,7 +276,7 @@ mod cross_tests {
             out.push('\n');
             let t = line.trim_start();
             for c in ["beta", "alpha", "gamma", "d"] {
-                if t.starts_with(&format!("{c} <- challenge<F>;")) {
+                if t.starts_with(&format!("{c} <- challenge<F")) {
                     out.push_str(&format!("    {c}_echo <- {c};\n"));
                 }
             }

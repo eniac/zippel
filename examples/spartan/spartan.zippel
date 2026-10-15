@@ -190,7 +190,7 @@ fn bullet_collect<G: Group, F: Scalar<G>>(
     let dot_x2_a1 = dot(x_2, a_1);
     upsilon_neg1 <- h_base * r_L + g_base * dot_x1_a2 + dot(g_2, x_1);
     upsilon_1 <- h_base * r_R + g_base * dot_x2_a1 + dot(g_1, x_2);
-    c <- challenge<F>;
+    c <- challenge<F*>;
     let c_inv = 1 / c;
     let c_sq = c * c;
     let c_inv_sq = c_inv * c_inv;
@@ -237,7 +237,7 @@ fn bullet_collect<G: Group, F: Scalar<G>, M: Size, N: 2..M - 1 - (M - 1) / 2 + 1
     let dot_x2_a1 = dot(x_2, a_1);
     upsilon_neg1 <- h_base * r_L + g_base * dot_x1_a2 + dot(g_2, x_1);
     upsilon_1 <- h_base * r_R + g_base * dot_x2_a1 + dot(g_1, x_2);
-    c <- challenge<F>;
+    c <- challenge<F*>;
     let c_inv = 1 / c;
     let c_sq = c * c;
     let c_inv_sq = c_inv * c_inv;

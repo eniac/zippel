@@ -85,7 +85,7 @@ fn dory_reduce<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
     log_d2l <- d2_l;
     log_d2r <- d2_r;
 
-    rho <- challenge<F>;
+    rho <- challenge<F*>;
     let rho_inv = 1 / rho;
 
     let w1 = u_vec + gamma1 * rho;
@@ -102,7 +102,7 @@ fn dory_reduce<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
     log_vl <- v_l;
     log_vr <- v_r;
 
-    alpha <- challenge<F>;
+    alpha <- challenge<F*>;
     let alpha_inv = 1 / alpha;
     let alpha_sq = alpha * alpha;
     let alpha_inv_sq = alpha_inv * alpha_inv;
@@ -190,7 +190,7 @@ fn dory_reduce<
     log_d2r <- d2_r;
 
     // 2. Verifier sends rho
-    rho <- challenge<F>;
+    rho <- challenge<F*>;
     let rho_inv = 1 / rho;
 
     // 3. Prover logic
@@ -210,7 +210,7 @@ fn dory_reduce<
     log_vr <- v_r;
 
     // 5. Verifier checks and sends alpha
-    alpha <- challenge<F>;
+    alpha <- challenge<F*>;
     let alpha_inv = 1 / alpha;
     let alpha_sq = alpha * alpha;
     let alpha_inv_sq = alpha_inv * alpha_inv;

@@ -158,6 +158,54 @@ proto eq_proof<F: Field>(witness a: F, witness b: F) where a == b {
     assert!(passed, "eq_proof with a == b should pass verification");
 }
 
+/// The protocol `src`, compiled at no sizes.
+fn compile_src(src: &str) -> CompiledProtocol<ArkBls12_381> {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let file_path = temp_dir.path().join("protocol.zippel");
+    std::fs::write(&file_path, src).unwrap();
+    ParsedModule::load(file_path)
+        .expect("parse protocol")
+        .compile(&Ctx::new(), CompileOptions::default())
+        .expect("compile protocol")
+}
+
+fn scalar(x: u64) -> Value<ArkBls12_381> {
+    Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(x))
+}
+
+#[test]
+fn the_verifier_rejects_a_proof_that_makes_it_divide_by_zero() {
+    let protocol = compile_src(
+        "proto divides<F: Field>(witness a: F, instance b: F) where a == b {
+            m <- a;
+            verify(b / m == 1)
+        }",
+    );
+    let verifier = protocol.project_verifier().expect("project verifier");
+    let inputs = HashMap::from([("a", scalar(5)), ("b", scalar(5))]);
+    let proof = protocol.project_prover().prove(inputs.clone()).unwrap();
+    assert!(matches!(verifier.verify(proof, inputs.clone()), Ok(true)));
+    assert!(matches!(
+        verifier.verify([scalar(0)], inputs),
+        Err(RuntimeError::DivisionByZero)
+    ));
+}
+
+#[test]
+fn a_prover_that_divides_by_zero_fails() {
+    let protocol = compile_src(
+        "proto inverts<F: Field>(witness a: F) where a == a {
+            m <- 1 / a;
+            verify(m == m)
+        }",
+    );
+    let inputs = HashMap::from([("a", scalar(0))]);
+    assert!(matches!(
+        protocol.project_prover().prove(inputs),
+        Err(RuntimeError::DivisionByZero)
+    ));
+}
+
 /// Regression for issue #157: re-logging earlier transcript values after a
 /// challenge must preserve every proof element and verifier alignment.
 #[test]

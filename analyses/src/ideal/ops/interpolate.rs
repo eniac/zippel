@@ -2,8 +2,8 @@
 
 use ark_ff::{Field, One, Zero};
 
+use backend::ArkConfig;
 use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig};
 use graph::{HOp, Op};
 
 use crate::Var;
@@ -11,6 +11,7 @@ use crate::frontend::Polynomial;
 
 use super::EncodeCtx;
 use super::PolySource;
+use super::div::inverse;
 use super::lagrange_basis;
 use super::link_to_polys;
 
@@ -18,8 +19,8 @@ use super::link_to_polys;
 /// interpolation polynomial through `(points[i], evals[i])`.
 ///
 /// Constant points use precomputed Lagrange basis coefficients.
-/// Symbolic points introduce fresh inverse sentinels for non-constant
-/// denominators.
+/// Symbolic points divide by the differences of points, through
+/// [`inverse`]: their nonzeroness is checked like any divisor's.
 ///
 /// Falls back to opaque if the point values aren't all constant.
 pub fn interpolate_op<C: ArkConfig + HasOpFactory>(
@@ -92,23 +93,14 @@ pub fn interpolate_op<C: ArkConfig + HasOpFactory>(
         }
         link_to_polys(ctx.ideal, &var, ideal_polys);
     } else {
+        // 1 / (x_i − x_j) for each i ≠ j, a division like any other.
         let n_pts = xs_polys.len();
-        let mut denom_inverses: Vec<Vec<Option<Var>>> = vec![vec![None; n_pts]; n_pts];
+        let mut denom_inverses = vec![vec![Polynomial::<C::F>::zero(); n_pts]; n_pts];
         for i in 0..n_pts {
             for j in 0..n_pts {
-                if i == j {
-                    continue;
+                if i != j {
+                    denom_inverses[i][j] = inverse(ctx, &(&xs_polys[i] - &xs_polys[j]));
                 }
-                let diff = &xs_polys[i] - &xs_polys[j];
-                if diff.is_constant() {
-                    continue;
-                }
-                let d_name = ctx.builder.ns.next_name("interp_inv");
-                let d = ctx.builder.sentinel_var(&d_name, ATyp::scalar(), ctx.ideal);
-                ctx.ideal
-                    .generating_set
-                    .push(Polynomial::var(&d) * diff - Polynomial::<C::F>::lit(&C::F::one()));
-                denom_inverses[i][j] = Some(d);
             }
         }
 
@@ -142,17 +134,7 @@ pub fn interpolate_op<C: ArkConfig + HasOpFactory>(
                 }
                 lag_poly = new_lag;
 
-                // denom_inv *= 1 / (x_i - x_j)
-                let diff = &xs_polys[i] - &xs_polys[j];
-                if diff.is_constant() {
-                    let c = diff.constant_coeff();
-                    denom_inv *= Polynomial::lit(&c.inverse().unwrap());
-                } else {
-                    let d = denom_inverses[i][j]
-                        .as_ref()
-                        .expect("d-variable must exist for non-constant diff");
-                    denom_inv *= Polynomial::var(d);
-                }
+                denom_inv *= denom_inverses[i][j].clone();
             }
 
             for (k, coeff) in lag_poly.iter().enumerate() {
@@ -460,7 +442,7 @@ mod tests {
         let d_vars: Vec<_> = ideal
             .var_order
             .iter()
-            .filter(|v| v.name.contains("interp_inv"))
+            .filter(|v| v.name.contains("div_inv"))
             .collect();
         assert_eq!(d_vars.len(), 2, "should have 2 d-variables");
         let d01 = d_vars[0];

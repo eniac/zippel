@@ -365,10 +365,15 @@ mod tests {
         );
         let one = Polynomial::lit(&ark_bls12_381::Fr::from(1u64));
         for (i, inv) in [(1, &inv0), (2, &inv1)] {
-            let expected = &(&v(i) * &var_poly(inv)) - &one;
+            let nonzero = &(&v(i) * &var_poly(inv)) - &one;
             assert!(
-                ideal.generating_set.contains(&expected),
+                ideal.generating_set.contains(&(&v(i) * &nonzero))
+                    && ideal.generating_set.contains(&(&var_poly(inv) * &nonzero)),
                 "the inverse of v[{i}] is missing"
+            );
+            assert!(
+                ideal.check_polys.contains(&nonzero),
+                "v[{i}] is not checked nonzero"
             );
         }
     }
