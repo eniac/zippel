@@ -213,7 +213,7 @@ pub mod inst_gen {
 // ---------------------------------------------------------------------------
 
 /// Zippel side of the comparison: compiles `examples/pari/pari.zippel`, builds
-/// the matching SRS, and times prove/verify through `CompiledProtocol`.
+/// the matching SRS, and times the projected prover and verifier.
 pub mod zippel_side {
     use super::*;
     use ark_ec::CurveGroup;
@@ -227,7 +227,9 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
+    use zippel::{
+        CompileOptions, CompiledProtocol, CompiledProver, CompiledVerifier, ParsedModule,
+    };
 
     type C = ArkBls12_381;
     type F = <C as ArkConfig>::F;
@@ -350,7 +352,8 @@ pub mod zippel_side {
     /// Compiled PARI protocol plus its cached SRS, reused across the whole
     /// thread/size sweep.
     pub struct Setup {
-        handler: CompiledProtocol<C>,
+        prover: CompiledProver<C>,
+        verifier: CompiledVerifier<C>,
         m_log: usize,
         k: usize,
         n_pub: usize,
@@ -372,7 +375,7 @@ pub mod zippel_side {
             let k = 1usize << m_log;
             let num_vars = inst.num_vars;
             let kmn = num_vars - n_pub;
-            let (handler, compile_time) = crate::sample_compile(|| {
+            let ((prover, verifier), compile_time) = crate::sample_compile(|| {
                 let module = ParsedModule::load(
                     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                         .join("..")
@@ -383,10 +386,13 @@ pub mod zippel_side {
                 sizes.insert(&Tid::new("M"), &m_log);
                 sizes.insert(&Tid::new("N"), &n_pub);
                 sizes.insert(&Tid::new("KMN"), &kmn);
-                let handler: CompiledProtocol<C> = module
+                let protocol: CompiledProtocol<C> = module
                     .compile(&sizes, CompileOptions::default())
                     .expect("compile protocol");
-                handler
+                (
+                    protocol.project_prover(),
+                    protocol.project_verifier().expect("project verifier"),
+                )
             });
 
             let srs = crate::cache::load_or_build_canonical("pari_zippel_srs", m_log, || {
@@ -394,7 +400,8 @@ pub mod zippel_side {
             });
 
             Setup {
-                handler,
+                prover,
+                verifier,
                 m_log,
                 k,
                 n_pub,
@@ -413,8 +420,8 @@ pub mod zippel_side {
         /// (prover graph node count, verifier graph node count).
         pub fn graph_sizes(&self) -> (usize, usize) {
             (
-                self.handler.prover_graph().node_count(),
-                self.handler.verifier_graph().node_count(),
+                self.prover.graph().node_count(),
+                self.verifier.graph().node_count(),
             )
         }
 
@@ -499,13 +506,13 @@ pub mod zippel_side {
                     ("w_b_evals", w_b),
                 ]
                 .map(|(name, v)| (Vid::from(name), Value::vec_scalar(v)));
-                self.handler
+                self.prover
                     .prove(crate::lend(&inputs).chain(computed))
                     .expect("run_prover failed")
             });
-            let (verify, verify_peak, result) =
-                crate::sample_zippel_verifier(&self.handler, &proof, &inputs);
-            assert!(result, "zippel PARI verification FAILED");
+            let (verify, verify_peak, passed) =
+                crate::sample_zippel_verifier(&self.verifier, &proof, &inputs);
+            assert!(passed, "zippel PARI verification FAILED");
             Timing {
                 prove,
                 verify,
@@ -621,9 +628,9 @@ pub mod native_side {
                 )
                 .expect("Pari::prove_from_sr1cs failed")
             });
-            let (verify, verify_peak, ok) =
+            let (verify, verify_peak, passed) =
                 crate::sample(|| Pari::<E>::verify(&proof, &self.vk, &self.instance_inputs));
-            assert!(ok, "upstream PARI verification FAILED");
+            assert!(passed, "upstream PARI verification FAILED");
 
             Timing {
                 prove,

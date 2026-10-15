@@ -1,4 +1,5 @@
-Source: experiments/results/analysis_1015/completeness_results.json (35 rows, timeout=1200s, memory_limit_mb=16384)
+Source: experiments/results/analysis_1015/completeness_results.json (35 rows,
+timeout=1200s, memory_limit_mb=16384)
 
 | Protocol | Pass | Time |
 |---|---|---|
@@ -38,5 +39,5 @@ Source: experiments/results/analysis_1015/completeness_results.json (35 rows, ti
 | Dekart | ✓ | 83.2ms |
 | Pari | ✓ | 100.7ms |
 
-Automatically verified complete: 33 of 35 Figure 6 protocols present in this run.
-Unexpected outcomes: 0
+Automatically verified complete: 33 of 35 Figure 6 protocols present in this
+run. Unexpected outcomes: 0

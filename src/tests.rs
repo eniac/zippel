@@ -14,7 +14,8 @@ type TestInputs = HashMap<&'static str, Value<ArkBls12_381>>;
 /// A verifier for a protocol whose prover sends a vector of `N = 4`
 /// scalars and then a group element, with an honest proof.
 fn shapes_protocol() -> (
-    CompiledProtocol<ArkBls12_381>,
+    CompiledProver<ArkBls12_381>,
+    CompiledVerifier<ArkBls12_381>,
     TestInputs,
     Vec<Value<ArkBls12_381>>,
 ) {
@@ -32,31 +33,34 @@ proto shapes<G: Group, F: Scalar<G>, N: Size>(witness v: [F; N], instance g: G) 
     let module = ParsedModule::load(file_path).expect("parse protocol");
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("N"), &4);
-    let handler: CompiledProtocol<ArkBls12_381> = module
+    let protocol: CompiledProtocol<ArkBls12_381> = module
         .compile(&sizes, CompileOptions::default())
         .expect("compile protocol");
     let mut inputs = HashMap::new();
     inputs.insert("v", Value::vec_scalar((1..=4).map(F::from).collect()));
     inputs.insert("g", Value::g1(<ArkBls12_381 as ArkConfig>::G1::default()));
-    let proof = handler.prove(inputs.clone()).expect("run_prover failed");
-    (handler, inputs, proof)
+    let prover = protocol.project_prover();
+    let verifier = protocol.project_verifier().expect("project verifier");
+    drop(protocol);
+    let proof = prover.prove(inputs.clone()).expect("run_prover failed");
+    (prover, verifier, inputs, proof)
 }
 
 #[test]
 fn the_verifier_accepts_an_honest_proof_of_each_shape() {
-    let (handler, inputs, proof) = shapes_protocol();
+    let (_, verifier, inputs, proof) = shapes_protocol();
     assert_eq!(proof.len(), 2);
-    let results = handler.verify(proof, inputs).expect("run_verifier failed");
-    assert!(results);
+    let passed = verifier.verify(proof, inputs).expect("run_verifier failed");
+    assert!(passed);
 }
 
 #[test]
 fn the_verifier_rejects_a_proof_with_extra_or_missing_elements() {
-    let (handler, inputs, proof) = shapes_protocol();
+    let (_, verifier, inputs, proof) = shapes_protocol();
     let mut longer = proof.clone();
     longer.push(proof[1].clone());
     for (tampered, found) in [(longer, 3), (proof[..1].to_vec(), 1), (Vec::new(), 0)] {
-        match handler.verify(tampered, inputs.clone()) {
+        match verifier.verify(tampered, inputs.clone()) {
             Err(RuntimeError::ProofLength {
                 expected: 2,
                 found: f,
@@ -69,7 +73,7 @@ fn the_verifier_rejects_a_proof_with_extra_or_missing_elements() {
 #[test]
 fn the_verifier_rejects_proof_elements_of_the_wrong_shape() {
     type F = <ArkBls12_381 as ArkConfig>::F;
-    let (handler, inputs, proof) = shapes_protocol();
+    let (_, verifier, inputs, proof) = shapes_protocol();
     let short = Value::vec_scalar(vec![F::from(1u64); 3]);
     let scalar = Value::Scalar(F::from(1u64));
     for (index, wrong) in [
@@ -80,7 +84,7 @@ fn the_verifier_rejects_proof_elements_of_the_wrong_shape() {
     ] {
         let mut tampered = proof.clone();
         tampered[index] = wrong;
-        match handler.verify(tampered, inputs.clone()) {
+        match verifier.verify(tampered, inputs.clone()) {
             Err(RuntimeError::MalformedProof { index: i, .. }) => assert_eq!(i, index),
             other => panic!("element {index} replaced gave {other:?}"),
         }
@@ -90,7 +94,7 @@ fn the_verifier_rejects_proof_elements_of_the_wrong_shape() {
 #[test]
 fn the_prover_rejects_inputs_of_the_wrong_shape() {
     type F = <ArkBls12_381 as ArkConfig>::F;
-    let (handler, inputs, _) = shapes_protocol();
+    let (prover, _, inputs, _) = shapes_protocol();
     // `v: [F; 4]` (witness) one short, and `g: G` (instance) a scalar.
     for (name, wrong) in [
         ("v", Value::vec_scalar(vec![F::from(1u64); 3])),
@@ -98,7 +102,7 @@ fn the_prover_rejects_inputs_of_the_wrong_shape() {
     ] {
         let mut tampered = inputs.clone();
         tampered.insert(name, wrong);
-        match handler.prove(tampered) {
+        match prover.prove(tampered) {
             Err(RuntimeError::MalformedInput { name: n, .. }) => assert_eq!(n, name),
             other => panic!("input `{name}` replaced gave {other:?}"),
         }
@@ -108,9 +112,9 @@ fn the_prover_rejects_inputs_of_the_wrong_shape() {
 #[test]
 fn the_verifier_rejects_instance_inputs_of_the_wrong_shape() {
     type F = <ArkBls12_381 as ArkConfig>::F;
-    let (handler, mut inputs, proof) = shapes_protocol();
+    let (_, verifier, mut inputs, proof) = shapes_protocol();
     inputs.insert("g", Value::Scalar(F::from(1u64)));
-    match handler.verify(proof, inputs) {
+    match verifier.verify(proof, inputs) {
         Err(RuntimeError::MalformedInput { name, .. }) => assert_eq!(name, "g"),
         other => panic!("instance `g` replaced gave {other:?}"),
     }
@@ -133,9 +137,11 @@ proto eq_proof<F: Field>(witness a: F, witness b: F) where a == b {
     let file_path = temp_dir.path().join("eq_proof_positive.zippel");
     std::fs::write(&file_path, src).unwrap();
     let module = ParsedModule::load(file_path).expect("parse protocol");
-    let handler: CompiledProtocol<ArkBls12_381> = module
+    let protocol: CompiledProtocol<ArkBls12_381> = module
         .compile(&Ctx::new(), CompileOptions::default())
         .expect("compile protocol");
+    let prover = protocol.project_prover();
+    let verifier = protocol.project_verifier().expect("project verifier");
 
     let mut inputs = HashMap::<&str, Value<ArkBls12_381>>::new();
     inputs.insert(
@@ -147,8 +153,8 @@ proto eq_proof<F: Field>(witness a: F, witness b: F) where a == b {
         Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
     );
 
-    let proof = handler.prove(inputs.clone()).expect("run_prover failed");
-    let passed = handler.verify(proof, inputs).expect("run_verifier failed");
+    let proof = prover.prove(inputs.clone()).expect("run_prover failed");
+    let passed = verifier.verify(proof, inputs).expect("run_verifier failed");
     assert!(passed, "eq_proof with a == b should pass verification");
 }
 
@@ -174,9 +180,11 @@ proto repro<F: Field>(witness s: F) where s == s {
     let file_path = temp_dir.path().join("issue_157_relogs.zippel");
     std::fs::write(&file_path, src).unwrap();
     let module = ParsedModule::load(file_path).expect("parse protocol");
-    let handler: CompiledProtocol<ArkBls12_381> = module
+    let protocol: CompiledProtocol<ArkBls12_381> = module
         .compile(&Ctx::new(), CompileOptions::default())
         .expect("compile protocol");
+    let prover = protocol.project_prover();
+    let verifier = protocol.project_verifier().expect("project verifier");
 
     let mut inputs = HashMap::<&str, Value<ArkBls12_381>>::new();
     inputs.insert(
@@ -184,14 +192,14 @@ proto repro<F: Field>(witness s: F) where s == s {
         Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
     );
 
-    let proof = handler.prove(inputs.clone()).expect("run_prover failed");
+    let proof = prover.prove(inputs.clone()).expect("run_prover failed");
     assert_eq!(
         proof.len(),
         EXPECTED_PROOF_VALUES,
         "issue #157 repro should emit all six non-challenge transcript proof values"
     );
 
-    let passed = handler.verify(proof, inputs).expect("run_verifier failed");
+    let passed = verifier.verify(proof, inputs).expect("run_verifier failed");
     assert!(
         passed,
         "issue #157 repro should pass verification after transcript relogs"
@@ -215,9 +223,11 @@ proto bad_check<F: Field>(witness a: F, witness b: F, instance c: F) where a == 
     let file_path = temp_dir.path().join("bad_check_negative.zippel");
     std::fs::write(&file_path, src).unwrap();
     let module = ParsedModule::load(file_path).expect("parse protocol");
-    let handler: CompiledProtocol<ArkBls12_381> = module
+    let protocol: CompiledProtocol<ArkBls12_381> = module
         .compile(&Ctx::new(), CompileOptions::default())
         .expect("compile protocol");
+    let prover = protocol.project_prover();
+    let verifier = protocol.project_verifier().expect("project verifier");
 
     let mut inputs = HashMap::<&str, Value<ArkBls12_381>>::new();
     inputs.insert(
@@ -233,8 +243,8 @@ proto bad_check<F: Field>(witness a: F, witness b: F, instance c: F) where a == 
         Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(42u64)),
     );
 
-    let proof = handler.prove(inputs.clone()).expect("run_prover failed");
-    let passed = handler.verify(proof, inputs).expect("run_verifier failed");
+    let proof = prover.prove(inputs.clone()).expect("run_prover failed");
+    let passed = verifier.verify(proof, inputs).expect("run_verifier failed");
     assert!(
         !passed,
         "bad_check with c = 42 should fail verification since c != 0"
@@ -281,11 +291,15 @@ fn transcript_session_defaults_to_source_name_and_can_be_overridden() {
             },
         )
         .unwrap();
+    let original_prover = original.project_prover();
+    let original_verifier = original.project_verifier().unwrap();
+    let relocated_prover = relocated.project_prover();
+    let relocated_verifier = relocated.project_verifier().unwrap();
     let inputs = schnorr_inputs();
-    let proof = original.prove(inputs.clone()).unwrap();
-    assert!(relocated.verify(proof, inputs.clone()).unwrap());
-    let proof = relocated.prove(inputs.clone()).unwrap();
-    assert!(original.verify(proof, inputs).unwrap());
+    let proof = original_prover.prove(inputs.clone()).unwrap();
+    assert!(relocated_verifier.verify(proof, inputs.clone()).unwrap());
+    let proof = relocated_prover.prove(inputs.clone()).unwrap();
+    assert!(original_verifier.verify(proof, inputs).unwrap());
 }
 
 #[test]
@@ -299,9 +313,15 @@ fn parsed_source_compiles_without_a_file() {
     let protocol = module
         .compile::<ArkBls12_381>(&Ctx::new(), CompileOptions::default())
         .unwrap();
+    let prover = protocol.project_prover();
+    let verifier = protocol.project_verifier().unwrap();
+    drop(protocol);
+    drop(module);
     let inputs = schnorr_inputs();
-    let proof = protocol.prove(inputs.clone()).unwrap();
-    assert!(protocol.verify(proof, inputs).unwrap());
+    for _ in 0..2 {
+        let proof = prover.prove(inputs.clone()).unwrap();
+        assert!(verifier.verify(proof, inputs.clone()).unwrap());
+    }
 }
 
 #[test]
@@ -340,6 +360,33 @@ fn source_errors_return_diagnostics() {
     }
 }
 
+/// Joint compilation succeeds before projection checks the verifier's visibility.
+#[test]
+fn verifier_projection_returns_source_diagnostics_for_private_dependencies() {
+    for (source, private_name) in [
+        (
+            "proto leak<F: Field>(witness s: F) where s == s { verify(s == s) }",
+            "s",
+        ),
+        (
+            "proto leak<F: Field>() where 1 == 1 { let r = random<F>; verify(r == r) }",
+            "r",
+        ),
+    ] {
+        let module = ParsedModule::parse("private.zippel", source).unwrap();
+        let protocol = module
+            .compile::<ArkBls12_381>(&Ctx::new(), CompileOptions::default())
+            .unwrap();
+        let error = protocol
+            .project_verifier()
+            .err()
+            .expect("private dependency");
+        let diagnostic = &error.diagnostics()[0];
+        assert_eq!(&source[diagnostic.span.clone()], private_name);
+        assert!(error.to_string().contains("private.zippel"));
+    }
+}
+
 /// Execution compilation preserves the graphs and transcript of full relation lowering.
 #[test]
 fn execution_matches_full_relation_lowering() {
@@ -349,22 +396,25 @@ fn execution_matches_full_relation_lowering() {
     assert!(diagnostics.is_empty());
     let concrete = module.unwrap().concretize(&Ctx::new()).unwrap();
     let graphs = graph::UDags::<ArkBls12_381>::from_module(concrete).unwrap();
-    let graph = graphs.get_proto(&"schnorr".to_owned()).unwrap();
-    full.prover_graph = graph.get_prover().0;
-    full.verifier_graph = graph.get_verifier().unwrap();
+    let graph = graphs.protocol(&"schnorr".to_owned()).unwrap();
+    full.graph = graph.clone();
+    let full_prover = full.project_prover();
+    let full_verifier = full.project_verifier().unwrap();
+    let exec_prover = exec.project_prover();
+    let exec_verifier = exec.project_verifier().unwrap();
     assert_eq!(
-        full.prover_graph().node_count(),
-        exec.prover_graph().node_count()
+        full_prover.graph().node_count(),
+        exec_prover.graph().node_count()
     );
     assert_eq!(
-        full.verifier_graph().node_count(),
-        exec.verifier_graph().node_count()
+        full_verifier.graph().node_count(),
+        exec_verifier.graph().node_count()
     );
     let inputs = schnorr_inputs();
-    let proof = exec.prove(inputs.clone()).unwrap();
-    assert!(full.verify(proof, inputs.clone()).unwrap());
-    let proof = full.prove(inputs.clone()).unwrap();
-    assert!(exec.verify(proof, inputs).unwrap());
+    let proof = exec_prover.prove(inputs.clone()).unwrap();
+    assert!(full_verifier.verify(proof, inputs.clone()).unwrap());
+    let proof = full_prover.prove(inputs.clone()).unwrap();
+    assert!(exec_verifier.verify(proof, inputs).unwrap());
 }
 
 /// Prepared analysis owns the full relation graph independently of execution.

@@ -31,15 +31,17 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
+    use zippel::{
+        CompileOptions, CompiledProtocol, CompiledProver, CompiledVerifier, ParsedModule,
+    };
 
     /// A compiled sumcheck instance, reusable across `time_protocol` calls.
     ///
-    /// Holds the `CompiledProtocol` (which owns the compiled prover/verifier
-    /// graphs), the two size parameters bound at compile time, and how long
-    /// compilation took.
+    /// Holds the projected prover and verifier, the two size parameters bound
+    /// at compile time, and how long compilation and projection took.
     pub struct Setup {
-        handler: CompiledProtocol<ArkBls12_381>,
+        prover: CompiledProver<ArkBls12_381>,
+        verifier: CompiledVerifier<ArkBls12_381>,
         num_vars: usize,
         max_degree: usize,
         compile_time: Vec<std::time::Duration>,
@@ -56,7 +58,7 @@ pub mod zippel_side {
         /// Panics if the `.zippel` source cannot be read, parsed, type
         /// checked, or lowered to a graph for these sizes.
         pub fn new(num_vars: usize, max_degree: usize) -> Self {
-            let (handler, compile_time) = crate::sample_compile(|| {
+            let ((prover, verifier), compile_time) = crate::sample_compile(|| {
                 let module = ParsedModule::load(
                     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                         .join("..")
@@ -66,14 +68,18 @@ pub mod zippel_side {
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("NUM_VARS_CONST"), &num_vars);
                 sizes.insert(&Tid::new("MAX_DEGREE_CONST"), &max_degree);
-                let handler: CompiledProtocol<ArkBls12_381> = module
+                let protocol: CompiledProtocol<ArkBls12_381> = module
                     .compile(&sizes, CompileOptions::default())
                     .expect("compile protocol");
-                handler
+                (
+                    protocol.project_prover(),
+                    protocol.project_verifier().expect("project verifier"),
+                )
             });
 
             Setup {
-                handler,
+                prover,
+                verifier,
                 num_vars,
                 max_degree,
                 compile_time,
@@ -89,8 +95,8 @@ pub mod zippel_side {
         /// (prover graph node count, verifier graph node count).
         pub fn graph_sizes(&self) -> (usize, usize) {
             (
-                self.handler.prover_graph().node_count(),
-                self.handler.verifier_graph().node_count(),
+                self.prover.graph().node_count(),
+                self.verifier.graph().node_count(),
             )
         }
 
@@ -127,10 +133,10 @@ pub mod zippel_side {
                 (Vid("claimed_sum".to_string()), Value::Scalar(claimed_sum)),
                 (Vid("p".to_string()), Value::poly(full_poly)),
             ]);
-            let (prove, prove_peak, proof) = crate::sample_zippel_prover(&self.handler, &inputs);
-            let (verify, verify_peak, result) =
-                crate::sample_zippel_verifier(&self.handler, &proof, &inputs);
-            assert!(result, "zippel sumcheck verification FAILED");
+            let (prove, prove_peak, proof) = crate::sample_zippel_prover(&self.prover, &inputs);
+            let (verify, verify_peak, passed) =
+                crate::sample_zippel_verifier(&self.verifier, &proof, &inputs);
+            assert!(passed, "zippel sumcheck verification FAILED");
 
             Timing {
                 prove,

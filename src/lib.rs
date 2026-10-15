@@ -1,7 +1,8 @@
 //! Compile, execute and analyze cryptographic protocols written in Zippel.
 //!
 //! [`ParsedModule`] owns parsed source and exposes its size parameters.
-//! [`ParsedModule::compile`] returns a [`CompiledProtocol`] ready to prove and verify.
+//! [`ParsedModule::compile`] returns a joint [`CompiledProtocol`]. Explicit projection
+//! produces a [`CompiledProver`] or [`CompiledVerifier`] ready to execute.
 //! [`CompiledProtocol::prepare_analysis`] lowers relations and propagates qualifiers,
 //! returning a [`PreparedAnalysis`] that can run several passes without further graph work.
 //! All source and execution errors are returned to the caller; the library does not exit.
@@ -12,6 +13,7 @@ mod execution;
 
 pub use analysis::{Analysis, PreparedAnalysis};
 pub use compiler::{CompileError, CompileOptions, CompiledProtocol, ParsedModule};
+pub use execution::{CompiledProver, CompiledVerifier};
 
 // Re-export workspace crates so library users only need a dependency on zippel.
 pub use analyses;

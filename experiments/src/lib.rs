@@ -9,7 +9,7 @@ use backend::{ArkConfig, HasOpFactory, Value};
 use lang::id::Vid;
 use std::collections::HashMap;
 use std::time::Duration;
-use zippel::CompiledProtocol;
+use zippel::{CompiledProver, CompiledVerifier};
 
 /// Per-sample prover and verifier wall-times and peak heaps for one
 /// protocol measurement.
@@ -241,10 +241,10 @@ pub fn lend<C: ArkConfig>(
 /// Panics if a run fails.
 #[track_caller]
 pub fn sample_zippel_prover<C: ArkConfig + HasOpFactory>(
-    handler: &CompiledProtocol<C>,
+    prover: &CompiledProver<C>,
     inputs: &HashMap<Vid, Value<C>>,
 ) -> (Vec<Duration>, Vec<usize>, Vec<Value<C>>) {
-    sample(|| handler.prove(lend(inputs)).expect("run_prover failed"))
+    sample(|| prover.prove(lend(inputs)).expect("run_prover failed"))
 }
 
 /// Samples a zippel verifier on `proof` with the proof and every input lent:
@@ -254,19 +254,19 @@ pub fn sample_zippel_prover<C: ArkConfig + HasOpFactory>(
 /// Panics if a run fails.
 #[track_caller]
 pub fn sample_zippel_verifier<C: ArkConfig + HasOpFactory>(
-    handler: &CompiledProtocol<C>,
+    verifier: &CompiledVerifier<C>,
     proof: &[Value<C>],
     inputs: &HashMap<Vid, Value<C>>,
 ) -> (Vec<Duration>, Vec<usize>, bool) {
     sample(|| {
-        handler
+        verifier
             .verify(proof.iter().cloned(), lend(inputs))
             .expect("run_verifier failed")
     })
 }
 
-/// Runs a `.zippel` compile [`SAMPLES`] times and returns the last
-/// handler with every run's wall-time. The previous handler is dropped
+/// Runs compilation and explicit projection [`SAMPLES`] times and returns the last
+/// result with every run's wall-time. The previous result is dropped
 /// before each run, outside the timer.
 pub fn sample_compile<H>(mut compile: impl FnMut() -> H) -> (H, Vec<Duration>) {
     let n = *SAMPLES;

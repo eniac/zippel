@@ -30,7 +30,9 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
+    use zippel::{
+        CompileOptions, CompiledProtocol, CompiledProver, CompiledVerifier, ParsedModule,
+    };
 
     // Cached IPA inputs. Bases (g_vec, h_vec, u_aux_base) are Pedersen
     // setup. (a_vec, b_vec, sum_vec) would normally be the per-call
@@ -91,7 +93,8 @@ pub mod zippel_side {
     /// in `S` and therefore cached on disk — the benchmark measures asymptotic
     /// cost, which is data-independent.
     pub struct Setup {
-        handler: CompiledProtocol<ArkSecp256k1>,
+        prover: CompiledProver<ArkSecp256k1>,
+        verifier: CompiledVerifier<ArkSecp256k1>,
         _n: usize,
         inputs: IpaInputs,
         compile_time: Vec<std::time::Duration>,
@@ -110,14 +113,17 @@ pub mod zippel_side {
             let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("..")
                 .join("examples/ipa/ipa.zippel");
-            let (handler, compile_time) = crate::sample_compile(|| {
+            let ((prover, verifier), compile_time) = crate::sample_compile(|| {
                 let module = ParsedModule::load(&zippel_file).expect("parse protocol");
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("S"), &s_const);
-                let handler: CompiledProtocol<ArkSecp256k1> = module
+                let protocol: CompiledProtocol<ArkSecp256k1> = module
                     .compile(&sizes, CompileOptions::default())
                     .expect("compile protocol");
-                handler
+                (
+                    protocol.project_prover(),
+                    protocol.project_verifier().expect("project verifier"),
+                )
             });
 
             let inputs =
@@ -126,7 +132,8 @@ pub mod zippel_side {
                 });
 
             Setup {
-                handler,
+                prover,
+                verifier,
                 _n: n,
                 inputs,
                 compile_time,
@@ -142,8 +149,8 @@ pub mod zippel_side {
         /// (prover graph node count, verifier graph node count).
         pub fn graph_sizes(&self) -> (usize, usize) {
             (
-                self.handler.prover_graph().node_count(),
-                self.handler.verifier_graph().node_count(),
+                self.prover.graph().node_count(),
+                self.verifier.graph().node_count(),
             )
         }
 
@@ -187,10 +194,10 @@ pub mod zippel_side {
                     Value::vec_scalar(self.inputs.sum_vec.clone()),
                 ),
             ]);
-            let (prove, prove_peak, proof) = crate::sample_zippel_prover(&self.handler, &inputs);
-            let (verify, verify_peak, result) =
-                crate::sample_zippel_verifier(&self.handler, &proof, &inputs);
-            assert!(result, "zippel IPA verification FAILED");
+            let (prove, prove_peak, proof) = crate::sample_zippel_prover(&self.prover, &inputs);
+            let (verify, verify_peak, passed) =
+                crate::sample_zippel_verifier(&self.verifier, &proof, &inputs);
+            assert!(passed, "zippel IPA verification FAILED");
 
             Timing {
                 prove,
@@ -344,7 +351,7 @@ pub mod native_side {
             // ---- Verifier (naive: fold bases each round, matching upstream) ----
             // The first round folds straight from the bases the verifier
             // keeps; each later round owns the halves the previous one built.
-            let (verify, verify_peak, ok) = crate::sample(|| {
+            let (verify, verify_peak, passed) = crate::sample(|| {
                 let mut verifier_transcript = Transcript::new(b"ipa-bench");
                 let mut g: Cow<[Projective]> = Cow::Borrowed(&g_proj_init);
                 let mut h: Cow<[Projective]> = Cow::Borrowed(&h_proj_init);
@@ -381,7 +388,7 @@ pub mod native_side {
                 p_cur == expected
             });
 
-            assert!(ok, "vendored Bp2aryStep IPA verification FAILED");
+            assert!(passed, "vendored Bp2aryStep IPA verification FAILED");
             Timing {
                 prove,
                 verify,

@@ -49,10 +49,10 @@ mod runtime_tests {
         let dag = gs.protocols()[0].clone();
 
         // Prover graph
-        let (prover, _) = dag.get_prover();
+        let (prover, _) = dag.project_prover();
 
         // Verifier graph
-        let verifier = dag.get_verifier().unwrap();
+        let verifier = dag.project_verifier().unwrap();
 
         // Prover execution
         let mut inputs = HashMap::new();
@@ -65,7 +65,7 @@ mod runtime_tests {
             Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(4u64)),
         );
 
-        let separator = graph::domain_seperator::ZippelDomainSeparator::new_zippel_domain_seperator(
+        let separator = graph::domain_separator::ZippelDomainSeparator::new_zippel_domain_separator(
             "test",
             &dag.clone().erase_ann(),
         );
@@ -155,7 +155,7 @@ mod runtime_tests {
         let m = parse_and_concretize(src, &sizes);
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = gs.protocols()[0].clone();
-        let (prover, _) = dag.get_prover();
+        let (prover, _) = dag.project_prover();
         let widest = prover
             .node_indices()
             .map(|i| prover[i].references().len())
@@ -168,7 +168,7 @@ mod runtime_tests {
             Vid::from("a"),
             Value::vec_scalar(vec![<TestConfig as backend::ArkConfig>::F::from(3u64); n]),
         );
-        let separator = graph::domain_seperator::ZippelDomainSeparator::new_zippel_domain_seperator(
+        let separator = graph::domain_separator::ZippelDomainSeparator::new_zippel_domain_separator(
             "test_wide",
             &dag.clone().erase_ann(),
         );
@@ -198,7 +198,7 @@ mod runtime_tests {
         let m = parse_and_concretize(src, &Ctx::new());
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = gs.protocols()[0].clone();
-        let (prover, _) = dag.get_prover();
+        let (prover, _) = dag.project_prover();
 
         // Omit 'b' in inputs to cause a MissingArg runtime error on verify(b == 999)
         let mut inputs = HashMap::new();
@@ -207,7 +207,7 @@ mod runtime_tests {
             Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(3u64)),
         );
 
-        let separator = graph::domain_seperator::ZippelDomainSeparator::new_zippel_domain_seperator(
+        let separator = graph::domain_separator::ZippelDomainSeparator::new_zippel_domain_separator(
             "test_error",
             &dag.clone().erase_ann(),
         );

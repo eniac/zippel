@@ -5,7 +5,7 @@ use share::Ctx;
 
 use crate::common::{self, size};
 
-fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkSecp256k1>> {
+fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkSecp256k1>> {
     let mut rng = rand::rngs::OsRng;
 
     let zero = <ArkSecp256k1 as ArkConfig>::F::zero();
@@ -32,7 +32,7 @@ pub fn spec() -> common::ExampleSpec<ArkSecp256k1> {
         source: "examples/zerocheck/zerocheck.zippel",
         defaults: &[("S", 2)],
         validate: None,
-        make_inputs: prover_create_inputs,
+        make_inputs,
         analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
     }
 }

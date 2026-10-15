@@ -68,18 +68,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let module = ParsedModule::load("schnorr.zippel")?;
     let protocol = module.compile::<ArkBls12_381>(&Ctx::new(), CompileOptions::default())?;
 
-    let inputs = prover_create_inputs();
-    let proof = protocol.prove(inputs.clone())?;
+    let prover = protocol.project_prover();
+    let verifier = protocol.project_verifier()?;
+
+    let inputs = make_inputs();
+    let proof = prover.prove(inputs.clone())?;
     println!(
         "Proof size: {} bytes ({} elements)",
         proof_size_bytes::<ArkBls12_381>(&proof),
         proof.len()
     );
 
-    let verifier_result = protocol.verify(proof, inputs)?;
+    let passed = verifier.verify(proof, inputs)?;
     println!(
         "Verification: {}",
-        if verifier_result {
+        if passed {
             "PASSED"
         } else {
             "FAILED"
@@ -94,7 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn prover_create_inputs() -> Vec<(&'static str, Value<ArkBls12_381>)> {
+fn make_inputs() -> Vec<(&'static str, Value<ArkBls12_381>)> {
     let mut rng = rand::rngs::OsRng;
     let x = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
     let g = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
@@ -110,12 +113,19 @@ fn prover_create_inputs() -> Vec<(&'static str, Value<ArkBls12_381>)> {
 }
 ```
 
-`ParsedModule::load` reads and parses the source. Calling `compile::<ArkBls12_381>`
-chooses the curve and returns a `CompiledProtocol` ready to use. The first argument
-supplies concrete size parameters: Schnorr has none, so this example uses an empty
-`Ctx`. `CompileOptions::default()` selects the first protocol in the file.
+`ParsedModule::load` reads and parses the source. Calling
+`compile::<ArkBls12_381>` chooses the curve and returns a joint
+`CompiledProtocol`. The first argument supplies concrete size parameters:
+Schnorr has none, so this example uses an empty `Ctx`.
+`CompileOptions::default()` selects the first protocol in the file.
 
-`prover_create_inputs` supplies a witness `x` and public values `g` and `h` satisfying
+`project_prover` builds a `CompiledProver`; `project_verifier` builds a
+`CompiledVerifier`, reporting source diagnostics if a verifier check depends on
+private inputs or randomness. Each owns its projected graph and transcript
+identity and can be reused after the joint protocol is dropped. `prove` belongs
+to the prover; `verify` belongs to the verifier.
+
+`make_inputs` supplies a witness `x` and public values `g` and `h` satisfying
 `h = g * x`. Input names must match the source parameters exactly. `prove` takes
 these inputs and returns a proof. We clone the inputs so we can reuse them for
 verification; cloning a `Value` shares its data.
@@ -124,13 +134,14 @@ verification; cloning a `Value` shares its data.
 It returns `Ok(true)` if every verification check passes, `Ok(false)` if any
 check fails, and `Err` for an execution error.
 
-`prepare_analysis` returns a `PreparedAnalysis` for running static checks.
-Here, `run(Analysis::Completeness, GbBackendKind::ArkGb)` checks completeness using
+`prepare_analysis` returns a `PreparedAnalysis` for running static checks. Here,
+`run(Analysis::Completeness, GbBackendKind::ArkGb)` checks completeness using
 the ark-gb backend.
 
-Loading, compilation, execution and analysis preparation return `Result`; the
-example uses `?` to propagate errors. The analysis result is handled separately
-so the example can print whether the completeness check passed.
+Loading, compilation, verifier projection, execution and analysis preparation
+return `Result`; the example uses `?` to propagate errors. The analysis result
+is handled separately so the example can print whether the completeness check
+passed.
 
 ## 4. Compile and run
 

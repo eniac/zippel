@@ -5,8 +5,8 @@
 //! This crate sits between `lang` and `runtime` in the pipeline: a concretized
 //! `CModule` is lowered into one [`Dag`] per declaration ([`UDags::from_module`]),
 //! static analyses in `graph::analyses` re-annotate it, and the prover and
-//! verifier are obtained as subgraph projections ([`Dag::get_prover`],
-//! [`Dag::get_verifier`]) before scheduling and execution.
+//! verifier are obtained as subgraph projections ([`Dag::project_prover`],
+//! [`Dag::project_verifier`]) before scheduling and execution.
 //!
 //! A [`Dag`] is a `petgraph` graph whose nodes are [`Node`]s carrying
 //! hash-consed [`HOp`] operations and whose edges are [`Dep`]s, distinguishing
@@ -22,7 +22,7 @@ extern crate self as graph;
 
 mod dep;
 /// Fiat-Shamir domain separation derived from a protocol's instance inputs.
-pub mod domain_seperator;
+pub mod domain_separator;
 /// Interpreter for individual graph operations over `Value<C>`.
 pub mod eval;
 mod node;
@@ -470,7 +470,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
     }
 
     /// All node indices, materialised into a `Vec`.
-    pub fn nodes_indices(&self) -> Vec<NodeIndex> {
+    pub fn node_indices_vec(&self) -> Vec<NodeIndex> {
         self.graph.node_indices().collect()
     }
 
@@ -577,7 +577,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
     /// Mutable access to a node weight, used by passes that rewrite
     /// annotations in place.
-    pub fn get_node(&mut self, it: NodeIndex) -> &mut Node<C, A> {
+    pub fn node_mut(&mut self, it: NodeIndex) -> &mut Node<C, A> {
         &mut self.graph[it].node
     }
 
@@ -939,7 +939,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
     /// Panics if remapping encounters a reference to a source node that was not
     /// copied into the projection, which would mean the reachability walk and
     /// the operations' references disagree.
-    pub fn get_prover(&self) -> (Dag<C, A>, HashMap<NodeIndex, Ref>)
+    pub fn project_prover(&self) -> (Dag<C, A>, HashMap<NodeIndex, Ref>)
     where
         A: Clone,
     {
@@ -1025,7 +1025,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
     /// # Errors
     /// Returns [`GraphError::RelationNotFound`] if this DAG has no `Node::Rel`
     /// marker, i.e. it is a `fun` rather than a protocol.
-    pub fn get_relation(&self) -> Result<Dag<C, A>, GraphError>
+    pub fn project_relation(&self) -> Result<Dag<C, A>, GraphError>
     where
         A: Clone,
     {
@@ -1104,7 +1104,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
     /// # Panics
     /// Panics if the protocol contains no terminal `Verify` node, so there is
     /// nothing for the verifier to check.
-    pub fn get_verifier(&self) -> Result<Dag<C, A>, GraphError>
+    pub fn project_verifier(&self) -> Result<Dag<C, A>, GraphError>
     where
         A: Clone,
     {
@@ -1428,7 +1428,7 @@ impl<C: ArkConfig, A> Dags<C, A> {
     ///
     /// Only protocols are searched, so a `fun` declaration sharing the name is
     /// never returned.
-    pub fn get_proto(&self, name: &String) -> Option<&Dag<C, A>> {
+    pub fn protocol(&self, name: &String) -> Option<&Dag<C, A>> {
         self.protocols().into_iter().find(|g| {
             if let Some(v) = g[g.input_node()].name() {
                 &v.0 == name
@@ -3107,7 +3107,7 @@ impl<C: HasOpFactory> UDag<C> {
                                 .add_node(Node::transcr(&GOp::Ref(Ref(n), ol.typ())), sent.clone());
                             self.add_edges(DepType::Data, nl, ol.clone());
                             self.add_edge(*transcr, nl, Dep::transcript());
-                            self.get_node(nl).set_transcript();
+                            self.node_mut(nl).set_transcript();
                             self.bind(nl, &id);
                             self.transcript_vars.insert(&nl, &true);
                             *transcr = nl;
@@ -3118,7 +3118,7 @@ impl<C: HasOpFactory> UDag<C> {
                             let nl = self.add_node(Node::transcr(&ol), sent.clone());
                             self.add_edges(DepType::Data, nl, ol.clone());
                             self.add_edge(*transcr, nl, Dep::transcript());
-                            self.get_node(nl).set_transcript();
+                            self.node_mut(nl).set_transcript();
                             self.bind(nl, &id);
                             self.transcript_vars.insert(&nl, &true);
                             *transcr = nl;

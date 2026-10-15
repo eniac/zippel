@@ -6,7 +6,7 @@ use share::Ctx;
 use crate::common;
 use crate::common::size;
 
-fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
+fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     type F = <ArkBls12_381 as ArkConfig>::F;
     type G1 = <ArkBls12_381 as ArkConfig>::G1;
     let mut rng = rand::rngs::OsRng;
@@ -47,7 +47,7 @@ pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
         source: "examples/r1cs_sigma/r1cs_sigma.zippel",
         defaults: &[("N", 2), ("n", 1), ("m", 1)],
         validate: None,
-        make_inputs: prover_create_inputs,
+        make_inputs,
         analyses: &[
             common::Analysis::Completeness,
             common::Analysis::Zk,

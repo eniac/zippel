@@ -29,7 +29,9 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
+    use zippel::{
+        CompileOptions, CompiledProtocol, CompiledProver, CompiledVerifier, ParsedModule,
+    };
 
     /// A compiled Hyrax instance together with the fixed, seeded inputs it is
     /// timed on.
@@ -38,7 +40,8 @@ pub mod zippel_side {
     /// are generated once in `new` from an `n`-derived seed so repeated
     /// `time_protocol` calls measure the same instance.
     pub struct Setup {
-        handler: CompiledProtocol<ArkBls12_381>,
+        prover: CompiledProver<ArkBls12_381>,
+        verifier: CompiledVerifier<ArkBls12_381>,
         inputs: HashMap<Vid, Value<ArkBls12_381>>,
         compile_time: Vec<std::time::Duration>,
     }
@@ -112,19 +115,23 @@ pub mod zippel_side {
             // Excludes runtime scheduling (which is per-call cheap
             // graph→TDag work the runtime does) and excludes the actual
             // prove/verify execution.
-            let (handler, compile_time) = crate::sample_compile(|| {
+            let ((prover, verifier), compile_time) = crate::sample_compile(|| {
                 let module = ParsedModule::load(zippel_path.clone()).expect("parse protocol");
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("L"), &l);
                 sizes.insert(&Tid::new("M"), &m);
-                let handler: CompiledProtocol<ArkBls12_381> = module
+                let protocol: CompiledProtocol<ArkBls12_381> = module
                     .compile(&sizes, CompileOptions::default())
                     .expect("compile protocol");
-                handler
+                (
+                    protocol.project_prover(),
+                    protocol.project_verifier().expect("project verifier"),
+                )
             });
 
             Setup {
-                handler,
+                prover,
+                verifier,
                 inputs,
                 compile_time,
             }
@@ -144,10 +151,10 @@ pub mod zippel_side {
         /// verifier rejects the honestly generated proof.
         pub fn time_protocol(&mut self) -> Timing {
             let (prove, prove_peak, proof) =
-                crate::sample_zippel_prover(&self.handler, &self.inputs);
-            let (verify, verify_peak, result) =
-                crate::sample_zippel_verifier(&self.handler, &proof, &self.inputs);
-            assert!(result, "zippel hyrax verification FAILED");
+                crate::sample_zippel_prover(&self.prover, &self.inputs);
+            let (verify, verify_peak, passed) =
+                crate::sample_zippel_verifier(&self.verifier, &proof, &self.inputs);
+            assert!(passed, "zippel hyrax verification FAILED");
             Timing {
                 prove,
                 verify,
@@ -160,8 +167,8 @@ pub mod zippel_side {
         /// order — the size proxy reported alongside the timings.
         pub fn graph_sizes(&self) -> (usize, usize) {
             (
-                self.handler.prover_graph().node_count(),
-                self.handler.verifier_graph().node_count(),
+                self.prover.graph().node_count(),
+                self.verifier.graph().node_count(),
             )
         }
     }
@@ -276,11 +283,11 @@ pub mod native_side {
                 let proof = hyrax_upstream::open(&self.ck, &com, point, &mut sponge, &state);
                 (com, proof)
             });
-            let (verify, verify_peak, ok) = crate::sample(|| {
+            let (verify, verify_peak, passed) = crate::sample(|| {
                 let mut sponge_v = test_sponge::<Fr>();
                 hyrax_upstream::check(&self.vk, &com, point, &proof, &mut sponge_v)
             });
-            assert!(ok, "vendored Hyrax verification FAILED");
+            assert!(passed, "vendored Hyrax verification FAILED");
 
             Timing {
                 prove,

@@ -61,7 +61,7 @@ impl<C: ArkConfig + HasOpFactory> CompiledProtocol<C> {
                 }
             })?;
             let graph = graphs
-                .get_proto(&self.protocol_name)
+                .protocol(&self.protocol_name)
                 .expect("compiled protocol exists");
             Ok(PreparedAnalysis {
                 graph: QualifierPropagation::from_dag(graph),

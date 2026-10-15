@@ -95,9 +95,9 @@ fn main() {
 
         let mut vt = Transcript::new(b"phase3_spartan_compare");
         let verifier_start = Instant::now();
-        let verified_ok = proof.verify(&inst, &inputs, &mut vt, &gens).is_ok();
+        let passed = proof.verify(&inst, &inputs, &mut vt, &gens).is_ok();
         let n_verify = verifier_start.elapsed();
-        assert!(verified_ok, "native MS Spartan NIZK verify FAILED at M={m}");
+        assert!(passed, "native MS Spartan NIZK verify FAILED at M={m}");
 
         let (l, m_h) = hyrax_split(m);
         let split_lbl = format!("L={l}, M_h={m_h}");

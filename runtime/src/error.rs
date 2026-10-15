@@ -5,10 +5,11 @@ use thiserror::Error;
 #[derive(Error, Debug, Clone)]
 pub enum RuntimeError {
     /// One or more inputs declared by the protocol signature were not
-    /// supplied in the `inputs` map passed to `run_prover` / `run_verifier`.
+    /// supplied in the `inputs` map passed to `CompiledProver::prove` or
+    /// `CompiledVerifier::verify`.
     ///
     /// Surfaced by the upfront validation in
-    /// [`CompiledProtocol::prove`](../../src/lib.rs.html) before any graph
+    /// `CompiledProver::prove` before any graph
     /// execution begins; this is the user-facing error for a typo or schema
     /// mismatch between the `.zippel` `proto`/`fn` signature and the caller.
     #[error(
@@ -51,8 +52,8 @@ pub enum RuntimeError {
         provided: Vec<String>,
     },
 
-    /// The proof passed to `run_verifier` does not have one element per
-    /// prover message of the protocol.
+    /// The proof passed to `CompiledVerifier::verify` does not have one
+    /// element per prover message of the protocol.
     #[error("the proof has {found} element(s); the protocol's prover sends {expected} message(s)")]
     ProofLength {
         /// The protocol's number of prover messages.
@@ -73,8 +74,8 @@ pub enum RuntimeError {
         expected: String,
     },
 
-    /// An input passed to `run_prover` or `run_verifier` is not a value of
-    /// the type the protocol declares for that argument.
+    /// An input passed to `CompiledProver::prove` or `CompiledVerifier::verify`
+    /// is not a value of the type the protocol declares for that argument.
     #[error("input `{name}` is not a value of type {expected}")]
     MalformedInput {
         /// The argument's name.

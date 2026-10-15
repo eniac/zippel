@@ -47,7 +47,7 @@ impl<C: ArkConfig> ZippelDomainSeparator<C> {
     /// Builds a separator that binds only the session string `domsep`.
     ///
     /// The DAG is accepted for signature symmetry with
-    /// [`Self::new_zippel_domain_seperator`] but is not inspected, so the
+    /// [`Self::new_zippel_domain_separator`] but is not inspected, so the
     /// instance part of the separator is empty.
     pub fn new<A>(domsep: &str, _dag: &Dag<C, A>) -> Self {
         Self {
@@ -65,7 +65,7 @@ impl<C: ArkConfig> ZippelDomainSeparator<C> {
     /// order, and each contributes its name bytes followed by the little-endian
     /// `u64` physical length of its type. Only shapes are bound, not values:
     /// the actual instance values enter the transcript during execution.
-    pub fn new_zippel_domain_seperator<A>(session: &str, dag: &Dag<C, A>) -> Self {
+    pub fn new_zippel_domain_separator<A>(session: &str, dag: &Dag<C, A>) -> Self {
         // Collect instance, non-transcript Arg nodes sorted by name.
         let mut instance_args: Vec<(&Vid, &backend::ATyp)> = dag
             .input_args()
@@ -130,7 +130,7 @@ fn test_domain_separator() {
 "#;
     let m = parse_and_concretize(ex, &Ctx::new());
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-    let domain_seperator = ZippelDomainSeparator::new("test_domain_separator", &gs[0]);
-    let _prover = domain_seperator.prover_state();
-    debug!("Domain Seperator created successfully");
+    let domain_separator = ZippelDomainSeparator::new("test_domain_separator", &gs[0]);
+    let _prover = domain_separator.prover_state();
+    debug!("Domain Separator created successfully");
 }

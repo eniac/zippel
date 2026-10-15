@@ -141,10 +141,13 @@ pub mod zippel_side {
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::time::Instant;
-    use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
+    use zippel::{
+        CompileOptions, CompiledProtocol, CompiledProver, CompiledVerifier, ParsedModule,
+    };
 
     pub struct Setup {
-        handler: CompiledProtocol<ArkBls12_381>,
+        prover: CompiledProver<ArkBls12_381>,
+        verifier: CompiledVerifier<ArkBls12_381>,
         inputs: HashMap<Vid, Value<ArkBls12_381>>,
         /// The values, from which each run computes its `chunks_bits`
         /// input, as the native prover decomposes them inside `prove`.
@@ -170,16 +173,19 @@ pub mod zippel_side {
             let b = 2usize;
             let h_deg = (b - 1) * n;
 
-            let (handler, compile_time) = crate::sample_compile(|| {
+            let ((prover, verifier), compile_time) = crate::sample_compile(|| {
                 let module = ParsedModule::load(&proto).expect("parse protocol");
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("n"), &n);
                 sizes.insert(&Tid::new("b"), &b);
                 sizes.insert(&Tid::new("l_chunk"), &ell);
-                let handler: CompiledProtocol<ArkBls12_381> = module
+                let protocol: CompiledProtocol<ArkBls12_381> = module
                     .compile(&sizes, CompileOptions::default())
                     .expect("compile protocol");
-                handler
+                (
+                    protocol.project_prover(),
+                    protocol.project_verifier().expect("project verifier"),
+                )
             });
 
             let g1 = G1Projective::from(G1Affine::generator());
@@ -217,7 +223,8 @@ pub mod zippel_side {
             );
 
             Setup {
-                handler,
+                prover,
+                verifier,
                 inputs,
                 values: sh.values.clone(),
                 ell,
@@ -234,8 +241,8 @@ pub mod zippel_side {
         /// (prover graph node count, verifier graph node count).
         pub fn graph_sizes(&self) -> (usize, usize) {
             (
-                self.handler.prover_graph().node_count(),
-                self.handler.verifier_graph().node_count(),
+                self.prover.graph().node_count(),
+                self.verifier.graph().node_count(),
             )
         }
 
@@ -261,7 +268,7 @@ pub mod zippel_side {
             for _ in 0..samples {
                 let t = Instant::now();
                 let bits = self.chunks_bits();
-                self.handler
+                self.prover
                     .prove(crate::lend(&self.inputs).chain([bits]))
                     .expect("run_prover failed");
                 sum += t.elapsed();
@@ -277,13 +284,13 @@ pub mod zippel_side {
             // native `prove` decomposes its values.
             let (prove, prove_peak, proof) = crate::sample(|| {
                 let bits = self.chunks_bits();
-                self.handler
+                self.prover
                     .prove(crate::lend(&self.inputs).chain([bits]))
                     .expect("run_prover failed")
             });
-            let (verify, verify_peak, result) =
-                crate::sample_zippel_verifier(&self.handler, &proof, &self.inputs);
-            assert!(result, "zippel DeKART verification FAILED");
+            let (verify, verify_peak, passed) =
+                crate::sample_zippel_verifier(&self.verifier, &proof, &self.inputs);
+            assert!(passed, "zippel DeKART verification FAILED");
             Timing {
                 prove,
                 verify,

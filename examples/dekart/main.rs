@@ -13,7 +13,7 @@ type F = <C as ArkConfig>::F;
 type G1 = <C as ArkConfig>::G1;
 type G2 = <C as ArkConfig>::G2;
 
-fn build_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<C>> {
+fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<C>> {
     let n_size = size(sizes, "n");
     let b_size = size(sizes, "b");
     let l_chunk = size(sizes, "l_chunk");
@@ -139,7 +139,7 @@ pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
             }
             Ok(())
         }),
-        make_inputs: build_inputs,
+        make_inputs,
         analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
     }
 }

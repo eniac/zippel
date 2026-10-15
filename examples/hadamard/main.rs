@@ -9,7 +9,7 @@ use crate::common::size;
 /// The degree bound `N` the protocol is compiled for: `v_H` has degree `N`,
 /// `p_A`, `p_B`, `p_C` degree `N - 1`.
 #[allow(non_snake_case)]
-fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkSecp256k1>> {
+fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkSecp256k1>> {
     let n_val = size(sizes, "N");
 
     let mut rng = rand::rngs::OsRng;
@@ -51,7 +51,7 @@ pub fn spec() -> common::ExampleSpec<ArkSecp256k1> {
         source: "examples/hadamard/hadamard.zippel",
         defaults: &[("N", 4)],
         validate: None,
-        make_inputs: prover_create_inputs,
+        make_inputs,
         analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
     }
 }

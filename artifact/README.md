@@ -307,7 +307,8 @@ limit during ideal construction. The run reproduces the paper if it reports
 were incomplete and had kept the analysis from proving those protocols
 complete.
 
-**Runtime**: a few minutes after building, including the two memory-limited runs.
+**Runtime**: a few minutes after building, including the two memory-limited
+runs.
 
 ---
 

@@ -28,25 +28,26 @@ cryptography paper's pseudocode would. The compiler:
    semantics as polynomial ideals and checking ideal containment via
    Gröbner bases (`analyses`).
 
-The pipeline is: `.zippel` source → `lang` (parse/typecheck/concretize)
-→ `graph` (Graph IR + projection) → `runtime`/`backend` (execution) and,
+The pipeline is: `.zippel` source → `lang` (parse/typecheck/concretize) →
+`graph` (Graph IR + projection) → `runtime`/`backend` (execution) and,
 independently, `graph` → `analyses` (completeness/soundness). `src/lib.rs`
-(`ParsedModule`, `CompiledProtocol`, `PreparedAnalysis`) wires all of this together and is the top-level interface
+(`ParsedModule`, `CompiledProtocol`, `CompiledProver`, `CompiledVerifier`,
+`PreparedAnalysis`) wires all of this together and is the top-level interface
 that examples and external users call into.
 
 ## Workspace layout
 
 | Crate / directory | Role |
 |---|---|
-| [`src/`](src/lib.rs) | Top-level `zippel` crate. `ParsedModule` loads/parses source; `compile::<C>` returns `CompiledProtocol<C>` ready to prove/verify. Explicit `prepare_analysis` returns `PreparedAnalysis<C>` with relations lowered and qualifiers propagated; its `run` performs a pass with an explicit backend. `compiler.rs`, `execution.rs`, and `analysis.rs` own these stages. Re-exports the member crates so downstream users only depend on `zippel`. |
+| [`src/`](src/lib.rs) | Top-level `zippel` crate. `ParsedModule` loads/parses source; `compile::<C>` returns a joint `CompiledProtocol<C>`; explicit `project_prover`/`project_verifier` return owned `CompiledProver<C>`/`CompiledVerifier<C>` that prove/verify independently. Explicit `prepare_analysis` returns `PreparedAnalysis<C>` with relations lowered and qualifiers propagated; its `run` performs a pass with an explicit backend. `compiler.rs`, `execution.rs`, and `analysis.rs` own these stages. Re-exports the member crates so downstream users only depend on `zippel`. |
 | [`lang/`](lang) | The Zippel language: lexer/parser (`parser/`), AST (`ast/`), type system incl. sized/visibility types (`typ/`), semantic checks like dead-variable and purity analysis (`semantic/`), diagnostics (`diagnostic/`). Has its own proc-macro helper crate, `lang/lang-derive`. |
-| [`graph/`](graph) | Graph IR: node definitions (`node.rs`), dependency/sequencing edges (`dep.rs`), the domain separator / Fiat–Shamir transcript machinery (`domain_seperator.rs`), and prover/verifier projection. `eval/` evaluates operations for testing. |
+| [`graph/`](graph) | Graph IR: node definitions (`node.rs`), dependency/sequencing edges (`dep.rs`), the domain separator / Fiat–Shamir transcript machinery (`domain_separator.rs`), and prover/verifier projection. `eval/` evaluates operations for testing. |
 | [`backend/`](backend) | Concrete algebraic types and operations backed by `arkworks` (`ark-ff`, `ark-ec`, `ark-poly`, ...): field/group/pairing config (`config.rs`, `types.rs`), runtime values (`values.rs`), the operator implementations (`op.rs`), polynomial representations (`poly_variant.rs`, `virtual_polynomial.rs`). `nothing/` is a no-op backend used where no concrete curve is needed (e.g., some analysis paths). |
 | [`runtime/`](runtime) | Executes a projected Graph IR DAG: work-stealing scheduler (`queue.rs`), graph execution and transcript/Fiat-Shamir handling (`graph.rs`), error types (`error.rs`). |
 | [`analyses/`](analyses) | Completeness (`completeness.rs`) and (generalized) special-soundness (`soundness.rs`) analyses, plus zero-knowledge/qualifier propagation (`knowledge.rs`, `qualifier.rs`). Encodes Graph IR as polynomial ideals (`ideal/`, `frontend/`) and checks ideal membership via a Gröbner-basis backend (`backend/`, including an optional Singular integration in `backend/singular.rs`). `extractor.rs` builds candidate knowledge extractors for the soundness check. |
 | [`share/`](share) | Small utilities shared across the workspace: a generic `Ctx` map keyed by identifiers (`context.rs`), tree traversal helpers (`traversal.rs`), pretty-printing (`pretty.rs`), macros (`macros.rs`). |
 | [`fmt/`](fmt) | `zippel-fmt`, the source formatter for `.zippel` files (binary in `fmt/src/bin/zippel-fmt.rs`). |
-| [`check/`](check) | `zippel-check`: every compile-time check, no harness or inputs. A thin driver (`check/src/main.rs`) over the same stages and diagnostics as `ParsedModule::compile`: `UModule::parse`, `UModule::concretize`, `CModule::typecheck`, and Graph IR construction/projection, with every error turned into a `Diagnostic` via `From` (`TypeError`, `ModuleError`, `GraphError`); it only adds default sizes (`lang::ast::minimal_sizes`). `check/tests/examples.rs` runs it over every example using automatic defaults. |
+| [`check/`](check) | `zippel-check`: every compile-time check, no harness or inputs. A thin driver (`check/src/main.rs`) over the same stages and diagnostics as compilation plus explicit projection: `UModule::parse`, `UModule::concretize`, `CModule::typecheck`, and Graph IR construction/projection, with every error turned into a `Diagnostic` via `From` (`TypeError`, `ModuleError`, `GraphError`); it only adds default sizes (`lang::ast::minimal_sizes`). `check/tests/examples.rs` runs it over every example using automatic defaults. |
 | [`experiments/`](experiments) | The `experiments` crate: Zippel against existing (native/upstream) implementations of the same protocols. Vendored baselines (`*_upstream/` subdirs), Zippel harnesses, the `bench_all` time/memory driver behind the paper's Figure 7 (the artifact's Experiment 1), and cross-verification tests. Not a default workspace member (see below). Distinct from `benches/`, the Criterion benchmarks of Zippel alone. |
 | [`examples/`](examples) | 30+ protocol implementations. Each `examples/<name>/` has a `<name>.zippel` source file and a `main.rs` harness that compiles it against a concrete curve and runs prover/verifier/analyses. `examples/main.rs` is the single dispatch binary (`cargo zrun run <name> --size NAME=VALUE ...`; `cargo zrun analyze <name> [completeness|zk|soundness]`). Each module registers `spec()` with its source, curve, size defaults, input generator and analyses (soundness owns its round parameters). `examples/common/cli.rs` handles common size/backend arguments; `examples/common/mod.rs` owns size resolution, execution, analysis and uniform reporting. It prepares the analysis graph before timing passes. |
 | [`artifact/`](artifact) | Docker image and scripts (`artifact/scripts/`) to reproduce the paper's compilation/runtime benchmarks and completeness/soundness analysis results. |
@@ -56,8 +57,8 @@ that examples and external users call into.
 Workspace members (`Cargo.toml`): `lang`, `lang/lang-derive`, `runtime`,
 `share`, `graph`, `backend`, `analyses`, `fmt`, `check`, `experiments`. Only a
 subset are **default members** (`.`, `lang`, `runtime`, `share`, `graph`,
-`backend`, `analyses`, `check`) — `fmt` and `experiments` require `--workspace` or
-`-p <crate>` explicitly, and `experiments` additionally needs `gcc`, `m4`,
+`backend`, `analyses`, `check`) — `fmt` and `experiments` require `--workspace`
+or `-p <crate>` explicitly, and `experiments` additionally needs `gcc`, `m4`,
 `pkg-config` (arkworks/GMP) and pulls in upstream comparison libraries.
 
 ## Language quick reference
@@ -98,13 +99,13 @@ cargo clippy -p experiments --all-targets --features dhat  # lints the heap-prof
 cargo zfmt --check examples/*/*.zippel  # .zippel formatting (--write to reformat)
 ```
 
-`zrun`, `zrunr`, `zcheck`, and `zfmt` are aliases in `.cargo/config.toml`
-(e.g. `zcheck` = `run -q -p check --bin zippel-check --`). The last four
-commands plus `cargo test --workspace` and every example with `cargo zrunr
-run <name> --size NAME=VALUE ...` are what CI runs (`.github/workflows/ci.yml`: one lint
-job, three test jobs, one examples job; tests built optimized, `--locked`);
-run them before committing. Some `analyses` tests use an
-optional Singular backend for Gröbner bases and are skipped with a
+`zrun`, `zrunr`, `zcheck`, and `zfmt` are aliases in `.cargo/config.toml` (e.g.
+`zcheck` = `run -q -p check --bin zippel-check --`). The last four commands plus
+`cargo test --workspace` and every example with
+`cargo zrunr run <name> --size NAME=VALUE ...` are what CI runs
+(`.github/workflows/ci.yml`: one lint job, three test jobs, one examples job;
+tests built optimized, `--locked`); run them before committing. Some `analyses`
+tests use an optional Singular backend for Gröbner bases and are skipped with a
 warning if `singular` is not on `PATH`.
 
 CI also rejects any path component that is a reserved Windows device
@@ -113,19 +114,21 @@ case-insensitive, extension ignored).
 
 ## Adding a new protocol
 
-See `CONTRIBUTING.md` → "Creating a new protocol with Zippel" for the
-full step-by-step (create `examples/<name>/{<name>.zippel,main.rs}`,
-register it in `examples/main.rs`, register an `ExampleSpec<ArkBls12_381>`). Input generators read the explicit
-size context; shared code owns compilation, execution, analysis and output. With no size flags, defaults apply. Any explicit sizes replace the entire default
-set and must cover every declared Size. CI runs each registration at its defaults.
+See `CONTRIBUTING.md` → "Creating a new protocol with Zippel" for the full
+step-by-step (create `examples/<name>/{<name>.zippel,main.rs}`, register it in
+`examples/main.rs`, register an `ExampleSpec<ArkBls12_381>`). Input generators
+read the explicit size context; shared code owns compilation, execution,
+analysis and output. With no size flags, defaults apply. Any explicit sizes
+replace the entire default set and must cover every declared Size. CI runs each
+registration at its defaults.
 
-Iterate on the `.zippel` file with `cargo zcheck` before writing the
-harness: if it passes, `compile` will too. It reports errors with source
-locations, including a `verify` that depends on a witness or on a
-`random` value; fix those by sending what the check needs with `<-`,
-never by reading the witness. Checks run at concrete sizes. Automatic defaults satisfy size/operator constraints and
-cover overloads in function groups reachable from protocols; unused helpers are still
-typechecked. Use `--size` to check specific sizes.
+Iterate on the `.zippel` file with `cargo zcheck` before writing the harness: if
+it passes, compilation and projection will too. It reports errors with source
+locations, including a `verify` that depends on a witness or on a `random`
+value; fix those by sending what the check needs with `<-`, never by reading the
+witness. Checks run at concrete sizes. Automatic defaults satisfy size/operator
+constraints and cover overloads in function groups reachable from protocols;
+unused helpers are still typechecked. Use `--size` to check specific sizes.
 
 ## Conventions worth knowing
 

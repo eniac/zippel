@@ -3,7 +3,7 @@
 //! Instance inputs and prover messages are queued as they are produced and
 //! absorbed, in order, when the next challenge is squeezed. Instance inputs
 //! are absorbed whole, however large (an R1CS instance's matrices are tens of
-//! megabytes); the sponge is BLAKE3 (`graph::domain_seperator::Sponge`) so
+//! megabytes); the sponge is BLAKE3 (`graph::domain_separator::Sponge`) so
 //! that stays cheap.
 
 use backend::{ArkConfig, Value, value_to_bytes};

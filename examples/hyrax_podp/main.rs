@@ -6,7 +6,7 @@ use share::Ctx;
 use crate::common;
 use crate::common::size;
 
-fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
+fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
     let n = size(sizes, "S");
 
@@ -52,7 +52,7 @@ pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
         source: "examples/hyrax_podp/hyrax_podp.zippel",
         defaults: &[("S", 4)],
         validate: None,
-        make_inputs: prover_create_inputs,
+        make_inputs,
         analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
     }
 }

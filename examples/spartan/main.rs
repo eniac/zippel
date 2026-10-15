@@ -109,7 +109,7 @@ where
     }
 }
 
-fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkCurve25519>> {
+fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkCurve25519>> {
     type F = <ArkCurve25519 as ArkConfig>::F;
     type G1 = <ArkCurve25519 as ArkConfig>::G1;
     use ark_ec::CurveGroup;
@@ -224,7 +224,7 @@ pub fn spec() -> common::ExampleSpec<ArkCurve25519> {
             }
             Ok(())
         }),
-        make_inputs: prover_create_inputs,
+        make_inputs,
         analyses: &[],
     }
 }

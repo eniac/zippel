@@ -28,7 +28,7 @@ fn msm(bases: &[G1], scalars: &[F]) -> G1 {
     G1::msm(&G1::normalize_batch(bases), scalars).unwrap()
 }
 
-fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
+fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     let s = size(sizes, "S");
 
     let mut rng = rand::rngs::OsRng;
@@ -95,7 +95,7 @@ pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
             common::check_power_of_two(sizes, "S")?;
             Ok(())
         }),
-        make_inputs: prover_create_inputs,
+        make_inputs,
         analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
     }
 }

@@ -4,7 +4,7 @@ use share::Ctx;
 
 use crate::common;
 
-fn prover_create_inputs(_sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
+fn make_inputs(_sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
 
     let beta: Value<ArkBls12_381> = Value::random(&mut rng, &ATyp::scalar());
@@ -28,7 +28,7 @@ pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
         source: "examples/cp/cp.zippel",
         defaults: &[],
         validate: None,
-        make_inputs: prover_create_inputs,
+        make_inputs,
         analyses: &[
             common::Analysis::Completeness,
             common::Analysis::Zk,

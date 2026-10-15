@@ -31,7 +31,7 @@ fn multi_pair(g1: &[G1], g2: &[G2]) -> GT {
     P::multi_pairing(g1.iter().copied(), g2.iter().copied())
 }
 
-fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
+fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     let k = size(sizes, "K");
 
     let mut rng = rand::rngs::OsRng;
@@ -92,7 +92,7 @@ pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
             common::check_power_of_two(sizes, "K")?;
             Ok(())
         }),
-        make_inputs: prover_create_inputs,
+        make_inputs,
         analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
     }
 }

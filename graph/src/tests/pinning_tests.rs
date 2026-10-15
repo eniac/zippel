@@ -1517,10 +1517,10 @@ fn pin_fun_lit() {
 // Group B: Graph Decomposition Tests
 // ============================================================================
 
-/// get_prover extracts the prover subgraph from transcript nodes backward.
-/// Tests: get_prover() returns correct subgraph with inputs and computation up to transcripts.
+/// project_prover extracts the prover subgraph from transcript nodes backward.
+/// Tests: project_prover() returns correct subgraph with inputs and computation up to transcripts.
 #[test]
-fn pin_get_prover_basic() {
+fn pin_project_prover_basic() {
     let src = r#"
         proto foo<F: Field>(witness s: F, instance v: F) where s == s {
             a <- s + v;
@@ -1530,7 +1530,7 @@ fn pin_get_prover_basic() {
     let gs = parse_and_build(src);
     let dag = &gs[0];
 
-    let (prover, node_map) = dag.get_prover();
+    let (prover, node_map) = dag.project_prover();
 
     // The prover should have an input node
     assert!(prover.node_count() > 0);
@@ -1543,10 +1543,10 @@ fn pin_get_prover_basic() {
     assert!(prover.find_verify().is_empty());
 }
 
-/// get_verifier extracts the verifier subgraph.
-/// Tests: get_verifier() produces subgraph with instance inputs, transcript vars, challenges, check node.
+/// project_verifier extracts the verifier subgraph.
+/// Tests: project_verifier() produces subgraph with instance inputs, transcript vars, challenges, check node.
 #[test]
-fn pin_get_verifier_basic() {
+fn pin_project_verifier_basic() {
     let src = r#"
         proto foo<F: Field>(witness s: F, instance v: F) where s == s {
             a <- s + v;
@@ -1556,7 +1556,7 @@ fn pin_get_verifier_basic() {
     let gs = parse_and_build(src);
     let dag = &gs[0];
 
-    let verifier = dag.get_verifier().unwrap();
+    let verifier = dag.project_verifier().unwrap();
 
     // Verifier must have a check node
     assert!(!verifier.find_verify().is_empty());
@@ -1575,10 +1575,10 @@ fn pin_get_verifier_basic() {
     assert!(args.iter().all(|is_instance| *is_instance));
 }
 
-/// get_relation extracts the relation subgraph from the Rel node.
-/// Tests: get_relation() returns the relation subgraph for a protocol with `where` clause.
+/// project_relation extracts the relation subgraph from the Rel node.
+/// Tests: project_relation() returns the relation subgraph for a protocol with `where` clause.
 #[test]
-fn pin_get_relation_basic() {
+fn pin_project_relation_basic() {
     let src = r#"
         proto foo<F: Field>(witness s: F, instance v: F) where s == v {
             verify(s == v)
@@ -1587,7 +1587,7 @@ fn pin_get_relation_basic() {
     let gs = parse_and_build(src);
     let dag = &gs[0];
 
-    let relation = dag.get_relation().unwrap();
+    let relation = dag.project_relation().unwrap();
 
     // Relation should have the Rel node
     assert!(relation.relation_node().is_some());
@@ -1595,10 +1595,10 @@ fn pin_get_relation_basic() {
     assert!(!relation.op_nodes().is_empty());
 }
 
-/// Regression: get_relation had a duplicate outgoing-edge loop that doubled
+/// Regression: project_relation had a duplicate outgoing-edge loop that doubled
 /// the number of nodes explored. Verify edge count is reasonable.
 #[test]
-fn pin_get_relation_no_duplicate_edges() {
+fn pin_project_relation_no_duplicate_edges() {
     let src = r#"
         proto foo<F: Field>(witness s: F, instance v: F) where s == v {
             verify(s == v)
@@ -1607,20 +1607,20 @@ fn pin_get_relation_no_duplicate_edges() {
     let gs = parse_and_build(src);
     let dag = &gs[0];
 
-    let relation = dag.get_relation().unwrap();
+    let relation = dag.project_relation().unwrap();
     // A simple `s == v` relation should have ≤ 5 edges:
     // Rel→Arg(s), Rel→Arg(v), Arg(s)→Equ, Arg(v)→Equ, Equ→Assert
     assert!(
         relation.edge_count() <= 5,
-        "get_relation has {} edges, expected ≤ 5 (duplicate loop bug?)",
+        "project_relation has {} edges, expected ≤ 5 (duplicate loop bug?)",
         relation.edge_count()
     );
 }
 
-/// get_verifier returns error when verifier body references a witness input directly.
+/// project_verifier returns error when verifier body references a witness input directly.
 /// Tests: GraphError::PrivateValueInVerifier.
 #[test]
-fn pin_get_verifier_witness_leak() {
+fn pin_project_verifier_witness_leak() {
     let src = r#"
         proto foo<F: Field>(witness s: F) where s == s {
             verify(s == s)
@@ -1630,7 +1630,7 @@ fn pin_get_verifier_witness_leak() {
     let dag = &gs[0];
 
     // The verifier assertion `s == s` directly uses witness `s`.
-    let result = dag.get_verifier();
+    let result = dag.project_verifier();
     match result {
         Err(GraphError::PrivateValueInVerifier {
             kind: PrivateValue::Arg(Qualifier::Witness),
@@ -1655,7 +1655,7 @@ fn pin_private_value_error_shows_the_use_chain() {
     verify(g * w == u)
 }
 ";
-    let Err(err) = parse_and_build(src)[0].get_verifier() else {
+    let Err(err) = parse_and_build(src)[0].project_verifier() else {
         panic!("expected the leak to be reported");
     };
     let rendered = lang::diagnostic::render_diagnostic(
@@ -1666,11 +1666,11 @@ fn pin_private_value_error_shows_the_use_chain() {
     insta::assert_snapshot!("private_value_use_chain", rendered);
 }
 
-/// get_verifier returns error when a verifier check needs a `random` sample
+/// project_verifier returns error when a verifier check needs a `random` sample
 /// that never went through the transcript: the verifier would draw its own.
 /// Tests: GraphError::PrivateValueInVerifier.
 #[test]
-fn pin_get_verifier_random_leak() {
+fn pin_project_verifier_random_leak() {
     // `r` is reached through `t`, not directly from the check.
     let src = r#"
         proto foo<G: Group, F: Scalar<G>>(instance g: G) where g == g {
@@ -1681,7 +1681,7 @@ fn pin_get_verifier_random_leak() {
             verify(g * t == u + u)
         }
     "#;
-    match parse_and_build(src)[0].get_verifier() {
+    match parse_and_build(src)[0].project_verifier() {
         Err(GraphError::PrivateValueInVerifier {
             kind: PrivateValue::Random,
             name: Some(name),
@@ -1699,20 +1699,20 @@ fn pin_get_verifier_random_leak() {
             verify(u == u)
         }
     "#;
-    assert!(parse_and_build(src_ok)[0].get_verifier().is_ok());
+    assert!(parse_and_build(src_ok)[0].project_verifier().is_ok());
 }
 
-/// get_relation returns error for a function (no `where` clause).
+/// project_relation returns error for a function (no `where` clause).
 /// Tests: GraphError::RelationNotFound.
 #[test]
-fn pin_get_relation_no_relation() {
+fn pin_project_relation_no_relation() {
     let src = r#"
         fn f<F: Field>(instance a: F) -> F { a }
     "#;
     let gs = parse_and_build(src);
     let dag = &gs[0];
 
-    let result = dag.get_relation();
+    let result = dag.project_relation();
     match result {
         // Reported at the declaration's name.
         Err(GraphError::RelationNotFound(name)) => assert_eq!(&src[name.span], "f"),
@@ -1757,7 +1757,7 @@ fn pin_nodes_carry_their_source_spans() {
     assert_eq!(text(dag.relation_node().unwrap()), "h == g * x");
 
     // Projection keeps them; the verifier reads each proof value where the prover sends it.
-    let verifier = dag.get_verifier().unwrap();
+    let verifier = dag.project_verifier().unwrap();
     let vtext = |n| &src[verifier.span(n)];
     let mut read: Vec<&str> = Vec::new();
     for n in verifier.node_indices() {
@@ -1920,8 +1920,8 @@ fn pin_transcript_nodes_preserve_post_challenge_relogs_issue_157() {
     let transcript_nodes = dag.transcript_nodes();
     let proof_nodes = dag.get_proof_nodes();
     let challenge_nodes = dag.get_challenge_nodes();
-    let (prover, _) = dag.get_prover();
-    let verifier = dag.get_verifier().unwrap();
+    let (prover, _) = dag.project_prover();
+    let verifier = dag.project_verifier().unwrap();
 
     assert_eq!(
         transcript_nodes.len(),
@@ -2041,10 +2041,10 @@ fn pin_find_verify_multiple() {
     );
 }
 
-/// get_verifier works correctly with multiple check nodes.
+/// project_verifier works correctly with multiple check nodes.
 /// Tests: verifier subgraph includes all check nodes from a multi-verify protocol.
 #[test]
-fn pin_get_verifier_multiple_checks() {
+fn pin_project_verifier_multiple_checks() {
     let src = r#"
         proto two_verify<F: Field>(witness s: F, witness t: F, instance v: F) where 1 == 1 {
             a <- s + v;
@@ -2056,7 +2056,7 @@ fn pin_get_verifier_multiple_checks() {
     let gs = parse_and_build(src);
     let dag = &gs[0];
 
-    let verifier = dag.get_verifier().unwrap();
+    let verifier = dag.project_verifier().unwrap();
 
     // Verifier must have one check node for each verify in this protocol
     let checks = verifier.find_verify();
@@ -2079,10 +2079,10 @@ fn pin_get_verifier_multiple_checks() {
     assert!(args.iter().all(|is_instance| *is_instance));
 }
 
-/// get_prover works correctly with multiple check nodes.
+/// project_prover works correctly with multiple check nodes.
 /// Tests: prover subgraph excludes all verify check nodes in a multi-verify protocol.
 #[test]
-fn pin_get_prover_multiple_checks() {
+fn pin_project_prover_multiple_checks() {
     let src = r#"
         proto two_verify<F: Field>(witness s: F, witness t: F, instance v: F) where 1 == 1 {
             a <- s + v;
@@ -2094,7 +2094,7 @@ fn pin_get_prover_multiple_checks() {
     let gs = parse_and_build(src);
     let dag = &gs[0];
 
-    let (prover, _node_map) = dag.get_prover();
+    let (prover, _node_map) = dag.project_prover();
 
     // Prover should have computation nodes but NO verify check nodes
     assert!(
@@ -2155,7 +2155,7 @@ fn pin_find_verify_interleaved_with_challenge() {
 /// Verifier subgraph from a protocol with scattered verify statements includes all
 /// necessary dependencies and all args are instance.
 #[test]
-fn pin_get_verifier_scattered_checks() {
+fn pin_project_verifier_scattered_checks() {
     let src = r#"
         proto scattered<F: Field>(witness s: F, instance v: F) where 1 == 1 {
             a <- s + v;
@@ -2167,7 +2167,7 @@ fn pin_get_verifier_scattered_checks() {
     let gs = parse_and_build(src);
     let dag = &gs[0];
 
-    let verifier = dag.get_verifier().unwrap();
+    let verifier = dag.project_verifier().unwrap();
     let checks = verifier.find_verify();
     assert!(
         checks.len() >= 2,
@@ -2192,7 +2192,7 @@ fn pin_get_verifier_scattered_checks() {
 
 /// Prover subgraph from a protocol with scattered verify statements excludes ALL check nodes.
 #[test]
-fn pin_get_prover_scattered_checks() {
+fn pin_project_prover_scattered_checks() {
     let src = r#"
         proto scattered<F: Field>(witness s: F, instance v: F) where 1 == 1 {
             a <- s + v;
@@ -2204,7 +2204,7 @@ fn pin_get_prover_scattered_checks() {
     let gs = parse_and_build(src);
     let dag = &gs[0];
 
-    let (prover, _node_map) = dag.get_prover();
+    let (prover, _node_map) = dag.project_prover();
     assert!(
         prover.find_verify().is_empty(),
         "Prover should not have any check nodes, even with scattered verify statements"
@@ -2235,14 +2235,14 @@ fn pin_projections_exclude_where_assert() {
         "the full DAG should keep the where-clause Assert"
     );
 
-    let (prover, _) = dag.get_prover();
+    let (prover, _) = dag.project_prover();
     assert!(
         !has_assert(&prover),
         "prover graph contains the where-clause Assert"
     );
     assert!(prover.relation_node().is_none());
 
-    let verifier = dag.get_verifier().unwrap();
+    let verifier = dag.project_verifier().unwrap();
     assert!(
         !has_assert(&verifier),
         "verifier graph contains the where-clause Assert"
@@ -2318,7 +2318,7 @@ fn pin_find_verify_cross_function_verify() {
         "Full DAG should have 2 terminal checks: one inlined from function, one from protocol"
     );
     // Verifier subgraph: both checks are also present
-    let verifier = proto.get_verifier().unwrap();
+    let verifier = proto.project_verifier().unwrap();
     assert!(
         verifier.find_verify().len() >= 2,
         "Verifier should have both inlined and protocol check nodes, got {}",
@@ -2424,9 +2424,9 @@ fn pin_dags_protocols_vs_functions() {
     assert!(funcs[0].find_verify().is_empty());
 }
 
-/// get_proto finds a protocol by name.
+/// protocol finds a protocol by name.
 #[test]
-fn pin_dags_get_proto() {
+fn pin_dags_protocol() {
     let src = r#"
         fn helper<F: Field>(instance x: F) -> F { x }
         proto bar<F: Field>(witness s: F) where s == s {
@@ -2436,12 +2436,12 @@ fn pin_dags_get_proto() {
     let gs = parse_and_build(src);
 
     // Find by name
-    let bar = gs.get_proto(&"bar".to_string());
+    let bar = gs.protocol(&"bar".to_string());
     assert!(bar.is_some(), "Should find protocol 'bar'");
     assert_eq!(bar.unwrap().name(), Vid::new("bar"));
 
     // Non-existent name
-    let missing = gs.get_proto(&"nonexistent".to_string());
+    let missing = gs.protocol(&"nonexistent".to_string());
     assert!(missing.is_none(), "Should not find non-existent protocol");
 }
 
@@ -2813,7 +2813,7 @@ fn pin_same_name_sent_twice_gets_two_verifier_inputs() {
             verify(a == b)
         }
     "#;
-    let verifier = parse_and_build(src)[0].get_verifier().unwrap();
+    let verifier = parse_and_build(src)[0].project_verifier().unwrap();
     // Labelled by the caller's `let` names; what matters is that there are two.
     assert_eq!(transcript_inputs(&verifier).len(), 2);
 }
@@ -2828,7 +2828,7 @@ fn pin_transcript_shadowing_an_instance_argument_is_read_from_the_proof() {
             verify(u == g)
         }
     "#;
-    let verifier = parse_and_build(src)[0].get_verifier().unwrap();
+    let verifier = parse_and_build(src)[0].project_verifier().unwrap();
     assert_eq!(transcript_inputs(&verifier), ["u#2"]);
 }
 
@@ -2844,7 +2844,7 @@ fn pin_resent_instance_argument_is_read_from_the_proof() {
             verify(u == g)
         }
     "#;
-    let verifier = parse_and_build(src)[0].get_verifier().unwrap();
+    let verifier = parse_and_build(src)[0].project_verifier().unwrap();
     assert_eq!(transcript_inputs(&verifier), ["g#2", "u"]);
 }
 

@@ -402,9 +402,11 @@ fn main() {
     sizes.insert(&Tid::new("M"), &t.m);
     sizes.insert(&Tid::new("L"), &t.l);
     sizes.insert(&Tid::new("H"), &t.h_size);
-    let handler: CompiledProtocol<ArkBls12_381> = module
+    let protocol: CompiledProtocol<ArkBls12_381> = module
         .compile(&sizes, CompileOptions::default())
         .expect("compile protocol");
+    let prover = protocol.project_prover();
+    drop(protocol);
 
     let inputs_base = HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
         (
@@ -478,7 +480,7 @@ fn main() {
     inputs.insert(Vid::from("t_at_tau"), Value::Scalar(GitFr::zero()));
     eprintln!("  witness_map + input clone:      {:>9.2?}", tic.elapsed());
     let tic = Instant::now();
-    let _proof = handler.prove(inputs).expect("zippel prove");
+    let _proof = prover.prove(inputs).expect("zippel prove");
     eprintln!("  run_prover (all 5 MSMs + arith): {:>9.2?}", tic.elapsed());
 
     // Suppress unused warnings.

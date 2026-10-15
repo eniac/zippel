@@ -10,7 +10,7 @@ use share::Ctx;
 use crate::common;
 use crate::common::size;
 
-fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
+fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     type F = <ArkBls12_381 as ArkConfig>::F;
     let num_vars = size(sizes, "NUM_VARS_CONST");
     let max_degree = size(sizes, "MAX_DEGREE_CONST");
@@ -47,7 +47,7 @@ pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
             common::check_power_of_two(sizes, "NUM_VARS_CONST")?;
             Ok(())
         }),
-        make_inputs: prover_create_inputs,
+        make_inputs,
         analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
     }
 }

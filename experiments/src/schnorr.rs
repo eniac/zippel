@@ -22,12 +22,15 @@ pub mod zippel_side {
     use lang::id::Vid;
     use share::Ctx;
     use std::path::PathBuf;
-    use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
+    use zippel::{
+        CompileOptions, CompiledProtocol, CompiledProver, CompiledVerifier, ParsedModule,
+    };
 
     /// The compiled Schnorr protocol. It takes no size parameters, so the only
-    /// per-instance state is the handler and the measured compile time.
+    /// per-instance state is the projected roles and the measured compile time.
     pub struct Setup {
-        handler: CompiledProtocol<ArkBls12_381>,
+        prover: CompiledProver<ArkBls12_381>,
+        verifier: CompiledVerifier<ArkBls12_381>,
         compile_time: Vec<std::time::Duration>,
     }
 
@@ -42,15 +45,19 @@ pub mod zippel_side {
             let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("..")
                 .join("examples/schnorr/schnorr.zippel");
-            let (handler, compile_time) = crate::sample_compile(|| {
+            let ((prover, verifier), compile_time) = crate::sample_compile(|| {
                 let module = ParsedModule::load(&zippel_file).expect("parse protocol");
-                let handler: CompiledProtocol<ArkBls12_381> = module
+                let protocol: CompiledProtocol<ArkBls12_381> = module
                     .compile(&Ctx::new(), CompileOptions::default())
                     .expect("compile protocol");
-                handler
+                (
+                    protocol.project_prover(),
+                    protocol.project_verifier().expect("project verifier"),
+                )
             });
             Setup {
-                handler,
+                prover,
+                verifier,
                 compile_time,
             }
         }
@@ -64,8 +71,8 @@ pub mod zippel_side {
         /// (prover graph node count, verifier graph node count).
         pub fn graph_sizes(&self) -> (usize, usize) {
             (
-                self.handler.prover_graph().node_count(),
-                self.handler.verifier_graph().node_count(),
+                self.prover.graph().node_count(),
+                self.verifier.graph().node_count(),
             )
         }
 
@@ -91,10 +98,10 @@ pub mod zippel_side {
                 (Vid("h".to_string()), Value::g1_affine(h)),
             ]);
 
-            let (prove, prove_peak, proof) = crate::sample_zippel_prover(&self.handler, &inputs);
-            let (verify, verify_peak, result) =
-                crate::sample_zippel_verifier(&self.handler, &proof, &inputs);
-            assert!(result, "zippel schnorr verification FAILED");
+            let (prove, prove_peak, proof) = crate::sample_zippel_prover(&self.prover, &inputs);
+            let (verify, verify_peak, passed) =
+                crate::sample_zippel_verifier(&self.verifier, &proof, &inputs);
+            assert!(passed, "zippel schnorr verification FAILED");
 
             Timing {
                 prove,
@@ -172,11 +179,11 @@ pub mod native_side {
                 SchnorrSig::sign(&self.params, &self.sk, &self.message, &mut rng)
                     .expect("schnorr sign")
             });
-            let (verify, verify_peak, ok) = crate::sample(|| {
+            let (verify, verify_peak, passed) = crate::sample(|| {
                 SchnorrSig::verify(&self.params, &self.pk, &self.message, &sig)
                     .expect("schnorr verify")
             });
-            assert!(ok, "ark-crypto-primitives schnorr verification FAILED");
+            assert!(passed, "ark-crypto-primitives schnorr verification FAILED");
 
             Timing {
                 prove,

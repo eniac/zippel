@@ -22,7 +22,7 @@
 // where bit_j(i) = (i >> (K-1-j)) & 1 — i.e. z[0] is the high bit and is
 // peeled first. This matches the recursion in `pst13_open_rounds` (which
 // folds on `z_curr[0]` after splitting `p_curr` on its high half) and the
-// `ck_n_scalars` construction in the Rust `prover_create_inputs`.
+// `ck_n_scalars` construction in the Rust `make_inputs`.
 //
 // Used in the proto's `where` clause to express the canonical PCS
 // evaluation statement:  y == dot(eq_mle(z), p) == p̃(z).

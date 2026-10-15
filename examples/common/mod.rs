@@ -7,7 +7,10 @@ use lang::{
 use share::Ctx;
 use std::{path::Path, time::Instant};
 pub use zippel::Analysis;
-use zippel::{CompileOptions, CompiledProtocol, ParsedModule, proof_size_bytes};
+use zippel::{
+    CompileOptions, CompiledProtocol, CompiledProver, CompiledVerifier, ParsedModule,
+    proof_size_bytes,
+};
 
 use analyses::GbBackendKind;
 
@@ -143,14 +146,14 @@ pub fn run<C: ArkConfig + HasOpFactory>(
     {
         return usage(format!("{name}: {e}"));
     }
-    let handler = match module.compile::<C>(&sizes, CompileOptions::default()) {
+    let protocol = match module.compile::<C>(&sizes, CompileOptions::default()) {
         Ok(protocol) => protocol,
         Err(error) => {
             eprintln!("{error}");
             return 2;
         }
     };
-    for diagnostic in handler
+    for diagnostic in protocol
         .diagnostics()
         .iter()
         .skip(module.diagnostics().len())
@@ -196,20 +199,31 @@ pub fn run<C: ArkConfig + HasOpFactory>(
     }
     println!();
     match request.operation {
-        Operation::Run => run_protocol(&handler, (spec.make_inputs)(&sizes)),
+        Operation::Run => {
+            let prover = protocol.project_prover();
+            let verifier = match protocol.project_verifier() {
+                Ok(verifier) => verifier,
+                Err(error) => {
+                    eprintln!("{error}");
+                    return 2;
+                }
+            };
+            drop(protocol);
+            run_protocol(&prover, &verifier, (spec.make_inputs)(&sizes))
+        }
         Operation::Analyze { pass, backend } => {
-            run_analyses(&handler, spec.analyses, pass, backend)
+            run_analyses(&protocol, spec.analyses, pass, backend)
         }
     }
 }
 
 fn run_analyses<C: ArkConfig + HasOpFactory>(
-    handler: &CompiledProtocol<C>,
+    protocol: &CompiledProtocol<C>,
     analyses: &[Analysis<'_>],
     selected: Option<AnalysisKind>,
     backend: GbBackendKind,
 ) -> u8 {
-    let prepared = match handler.prepare_analysis() {
+    let prepared = match protocol.prepare_analysis() {
         Ok(prepared) => prepared,
         Err(error) => {
             eprintln!("{error}");
@@ -246,11 +260,12 @@ fn run_analyses<C: ArkConfig + HasOpFactory>(
 }
 
 fn run_protocol<C: ArkConfig + HasOpFactory>(
-    handler: &CompiledProtocol<C>,
+    prover: &CompiledProver<C>,
+    verifier: &CompiledVerifier<C>,
     inputs: Ctx<Vid, Value<C>>,
 ) -> u8 {
     let start = Instant::now();
-    let proof = match handler.prove(inputs.clone()) {
+    let proof = match prover.prove(inputs.clone()) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Prover: {e}");
@@ -264,7 +279,7 @@ fn run_protocol<C: ArkConfig + HasOpFactory>(
         proof.len()
     );
     let start = Instant::now();
-    let passed = match handler.verify(proof, inputs) {
+    let passed = match verifier.verify(proof, inputs) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Verifier: {e}");

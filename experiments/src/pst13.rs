@@ -301,9 +301,9 @@ pub mod native_side {
                 let proof = Pcs::open(&self.ck, &poly, &point);
                 (comm, proof)
             });
-            let (verify, verify_peak, ok) =
+            let (verify, verify_peak, passed) =
                 crate::sample(|| Pcs::check(&self.vk, &comm, &point, value, &proof));
-            assert!(ok, "ark-poly-commit MultilinearPC verification FAILED");
+            assert!(passed, "ark-poly-commit MultilinearPC verification FAILED");
 
             Timing {
                 prove,
@@ -350,8 +350,8 @@ mod textbook_native_side {
 
         pub fn time_protocol(&self) -> Timing {
             let (prove, prove_peak, proof) = crate::sample(|| prove(self.shared));
-            let (verify, verify_peak, ok) = crate::sample(|| verify(self.shared, &proof));
-            assert!(ok, "native PST13 verification FAILED");
+            let (verify, verify_peak, passed) = crate::sample(|| verify(self.shared, &proof));
+            assert!(passed, "native PST13 verification FAILED");
 
             Timing {
                 prove,
@@ -476,12 +476,15 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
+    use zippel::{
+        CompileOptions, CompiledProtocol, CompiledProver, CompiledVerifier, ParsedModule,
+    };
 
     /// Compiled PST13 protocol plus the instance/witness context derived from
     /// the shared SRS; borrows the [`Shared`] data it was built from.
     pub struct Setup<'a> {
-        handler: CompiledProtocol<ArkBls12_381>,
+        prover: CompiledProver<ArkBls12_381>,
+        verifier: CompiledVerifier<ArkBls12_381>,
         inputs_base: HashMap<Vid, Value<ArkBls12_381>>,
         #[allow(dead_code)]
         shared: &'a Shared,
@@ -514,7 +517,7 @@ pub mod zippel_side {
                 ),
             ]);
 
-            let (handler, compile_time) = crate::sample_compile(|| {
+            let ((prover, verifier), compile_time) = crate::sample_compile(|| {
                 let module = ParsedModule::load(
                     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                         .join("..")
@@ -523,14 +526,18 @@ pub mod zippel_side {
                 .expect("parse protocol");
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("N"), &shared.n);
-                let handler: CompiledProtocol<ArkBls12_381> = module
+                let protocol: CompiledProtocol<ArkBls12_381> = module
                     .compile(&sizes, CompileOptions::default())
                     .expect("compile protocol");
-                handler
+                (
+                    protocol.project_prover(),
+                    protocol.project_verifier().expect("project verifier"),
+                )
             });
 
             Setup {
-                handler,
+                prover,
+                verifier,
                 inputs_base,
                 shared,
                 compile_time,
@@ -545,8 +552,8 @@ pub mod zippel_side {
         /// (prover graph node count, verifier graph node count).
         pub fn graph_sizes(&self) -> (usize, usize) {
             (
-                self.handler.prover_graph().node_count(),
-                self.handler.verifier_graph().node_count(),
+                self.prover.graph().node_count(),
+                self.verifier.graph().node_count(),
             )
         }
 
@@ -558,10 +565,10 @@ pub mod zippel_side {
         /// not pass.
         pub fn time_protocol(&mut self) -> Timing {
             let (prove, prove_peak, proof) =
-                crate::sample_zippel_prover(&self.handler, &self.inputs_base);
-            let (verify, verify_peak, result) =
-                crate::sample_zippel_verifier(&self.handler, &proof, &self.inputs_base);
-            assert!(result, "zippel PST13 verification FAILED");
+                crate::sample_zippel_prover(&self.prover, &self.inputs_base);
+            let (verify, verify_peak, passed) =
+                crate::sample_zippel_verifier(&self.verifier, &proof, &self.inputs_base);
+            assert!(passed, "zippel PST13 verification FAILED");
             Timing {
                 prove,
                 verify,
@@ -591,20 +598,20 @@ mod cross_tests {
 
     const N_SWEEP: &[usize] = &[1, 2, 4, 6];
 
-    fn zippel_handler(shared: &Shared) -> CompiledProtocol<ArkBls12_381> {
+    fn zippel_protocol(shared: &Shared) -> CompiledProtocol<ArkBls12_381> {
         let zippel_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("examples/pst13/pst13.zippel");
         let module = ParsedModule::load(zippel_path).expect("parse protocol");
         let mut sizes = Ctx::new();
         sizes.insert(&Tid::new("N"), &shared.n);
-        let handler: CompiledProtocol<ArkBls12_381> = module
+        let protocol: CompiledProtocol<ArkBls12_381> = module
             .compile(&sizes, CompileOptions::default())
             .expect("compile protocol");
-        handler
+        protocol
     }
 
-    fn zip_inputs(shared: &Shared) -> HashMap<Vid, Value<ArkBls12_381>> {
+    fn zippel_inputs(shared: &Shared) -> HashMap<Vid, Value<ArkBls12_381>> {
         HashMap::<Vid, Value<ArkBls12_381>>::from_iter([
             (Vid("p".to_string()), Value::vec_scalar(shared.p.clone())),
             (Vid("z".to_string()), Value::vec_scalar(shared.z.clone())),
@@ -640,11 +647,13 @@ mod cross_tests {
             "n={n}: native verifier rejected its own proof"
         );
 
-        // Prime zippel handler state by running its prover once.
-        let handler = zippel_handler(&shared);
-        let _ = handler
-            .prove(zip_inputs(&shared))
-            .expect("zippel run_prover (priming handler state)");
+        // Prime zippel protocol state by running its prover once.
+        let protocol = zippel_protocol(&shared);
+        let prover = protocol.project_prover();
+        let verifier = protocol.project_verifier().expect("project verifier");
+        let _ = prover
+            .prove(zippel_inputs(&shared))
+            .expect("zippel run_prover (priming protocol state)");
 
         // Pack native proof into the zippel transcript order: [c_p, π_0, ..., π_{n-1}].
         let mut cross_proof: Vec<Value<ArkBls12_381>> = Vec::with_capacity(n + 1);
@@ -652,11 +661,11 @@ mod cross_tests {
         for pi in &proof_n.pis {
             cross_proof.push(Value::g1(*pi));
         }
-        let result = handler
-            .verify(cross_proof.clone(), zip_inputs(&shared))
+        let passed = verifier
+            .verify(cross_proof.clone(), zippel_inputs(&shared))
             .expect("zippel run_verifier on cross-proof");
         assert!(
-            result,
+            passed,
             "n={n}: CROSS-VERIFY FAILED: zippel verifier rejected native-produced proof"
         );
     }
@@ -674,23 +683,24 @@ mod cross_tests {
     fn run_zippel_prove_native_verify(n: usize) {
         let shared = build(n);
 
-        let handler = zippel_handler(&shared);
-        let zip_proof: Vec<Value<ArkBls12_381>> = handler
-            .prove(zip_inputs(&shared))
+        let protocol = zippel_protocol(&shared);
+        let prover = protocol.project_prover();
+        let zippel_proof: Vec<Value<ArkBls12_381>> = prover
+            .prove(zippel_inputs(&shared))
             .expect("zippel run_prover");
 
         assert_eq!(
-            zip_proof.len(),
+            zippel_proof.len(),
             n + 1,
             "n={n}: expected n+1 transcript items (c_p, π_0..π_{{n-1}})"
         );
 
-        let c = match &zip_proof[0] {
+        let c = match &zippel_proof[0] {
             Value::G1(g) => **g,
             other => panic!("expected G1 c_p, got {:?}", std::mem::discriminant(other)),
         };
         let mut pis: Vec<G1Projective> = Vec::with_capacity(n);
-        for (i, v) in zip_proof.iter().enumerate().skip(1) {
+        for (i, v) in zippel_proof.iter().enumerate().skip(1) {
             match v {
                 Value::G1(g) => pis.push(**g),
                 other => panic!(

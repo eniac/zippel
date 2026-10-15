@@ -24,7 +24,7 @@ fn eq_weights(r: &[F]) -> Vec<F> {
     w
 }
 
-fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
+fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     let nx = size(sizes, "NX");
     let ny = size(sizes, "NY");
 
@@ -77,7 +77,7 @@ pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
             common::check_power_of_two_sum(sizes, "NX", "NY")?;
             Ok(())
         }),
-        make_inputs: prover_create_inputs,
+        make_inputs,
         analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
     }
 }

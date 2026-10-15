@@ -10,7 +10,7 @@ use crate::common::size;
 type F = <ArkBls12_381 as ArkConfig>::F;
 type G1 = <ArkBls12_381 as ArkConfig>::G1;
 
-fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
+fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     let l = size(sizes, "L");
     let m = size(sizes, "M");
     let nrows = 1 << l;
@@ -72,7 +72,7 @@ pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
             common::check_power_of_two_sum(sizes, "L", "M")?;
             Ok(())
         }),
-        make_inputs: prover_create_inputs,
+        make_inputs,
         analyses: &[common::Analysis::Completeness],
     }
 }

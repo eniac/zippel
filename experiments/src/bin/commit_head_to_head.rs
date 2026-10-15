@@ -76,7 +76,7 @@ fn run_all() {
 
         let w: Vec<Fr> = (0..wlen).map(|_| Fr::rand(&mut rng)).collect();
 
-        // Zippel-side inputs (matching spartan.rs prover_create_inputs).
+        // Zippel-side inputs (matching spartan.rs make_inputs).
         let g_vec_proj: Vec<EdwardsProjective> = (0..ncols)
             .map(|_| EdwardsProjective::rand(&mut rng))
             .collect();

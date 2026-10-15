@@ -19,7 +19,10 @@ use rand::Rng;
 use share::Ctx;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use zippel::{CompileOptions, CompiledProtocol, ParsedModule, proof_size_bytes};
+use zippel::{
+    CompileOptions, CompiledProtocol, CompiledProver, CompiledVerifier, ParsedModule,
+    proof_size_bytes,
+};
 
 /// Default `log_2` of the R1CS constraint count used by the Spartan sweep.
 pub const DEFAULT_M: usize = 8;
@@ -55,7 +58,8 @@ pub struct ZippelTiming {
 /// across every timing sample at one size.
 pub struct Setup {
     m: usize,
-    handler: CompiledProtocol<ArkCurve25519>,
+    prover: CompiledProver<ArkCurve25519>,
+    verifier: CompiledVerifier<ArkCurve25519>,
     inputs: HashMap<Vid, Value<ArkCurve25519>>,
     /// What the prover's `az`, `bz`, `cz` inputs are computed from, inside
     /// each timed run, as libspartan computes them inside `prove`.
@@ -103,21 +107,25 @@ impl Setup {
             PathBuf::from("examples/spartan/spartan.zippel")
         };
 
-        let (inputs, products) = prover_create_inputs(m);
+        let (inputs, products) = make_inputs(m);
 
-        let (handler, compile_time) = crate::sample_compile(|| {
+        let ((prover, verifier), compile_time) = crate::sample_compile(|| {
             let module = ParsedModule::load(zippel_path.clone()).expect("parse protocol");
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("M"), &m);
-            let handler: CompiledProtocol<ArkCurve25519> = module
+            let protocol: CompiledProtocol<ArkCurve25519> = module
                 .compile(&sizes, CompileOptions::default())
                 .expect("compile protocol");
-            handler
+            (
+                protocol.project_prover(),
+                protocol.project_verifier().expect("project verifier"),
+            )
         });
 
         Setup {
             m,
-            handler,
+            prover,
+            verifier,
             inputs,
             products,
             compile_time,
@@ -132,8 +140,8 @@ impl Setup {
     /// (prover graph node count, verifier graph node count).
     pub fn graph_sizes(&self) -> (usize, usize) {
         (
-            self.handler.prover_graph().node_count(),
-            self.handler.verifier_graph().node_count(),
+            self.prover.graph().node_count(),
+            self.verifier.graph().node_count(),
         )
     }
 
@@ -151,13 +159,13 @@ impl Setup {
             let [az, bz, cz] = self.products.products();
             let computed = [("az", az), ("bz", bz), ("cz", cz)]
                 .map(|(name, v)| (Vid::from(name), Value::vec_scalar(v)));
-            self.handler
+            self.prover
                 .prove(crate::lend(&self.inputs).chain(computed))
                 .expect("run_prover failed")
         });
         let proof_bytes = proof_size_bytes::<ArkCurve25519>(&proof);
         let (verify, verify_peak, passed) =
-            crate::sample_zippel_verifier(&self.handler, &proof, &self.inputs);
+            crate::sample_zippel_verifier(&self.verifier, &proof, &self.inputs);
 
         ZippelTiming {
             timing: Timing {
@@ -284,7 +292,7 @@ where
     }
 }
 
-fn prover_create_inputs(m: usize) -> (HashMap<Vid, Value<ArkCurve25519>>, MatVec) {
+fn make_inputs(m: usize) -> (HashMap<Vid, Value<ArkCurve25519>>, MatVec) {
     let num_cons = 1usize << m;
     let witness_len = 1usize << (m - 1);
     let io_len = witness_len - 1;

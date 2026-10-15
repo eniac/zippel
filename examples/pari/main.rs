@@ -29,7 +29,7 @@ type G2 = <C as ArkConfig>::G2;
 
 /// Build a satisfying SR1CS instance in the upstream instance-outliner
 /// layout (matching `pari.zippel`'s Lagrange shortcut requirement).
-fn build_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<C>> {
+fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<C>> {
     let m_log = size(sizes, "M");
     let k = 1 << m_log;
     let n_pub = size(sizes, "N");
@@ -240,7 +240,7 @@ pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
             }
             Ok(())
         }),
-        make_inputs: build_inputs,
+        make_inputs,
         analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
     }
 }

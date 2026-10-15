@@ -67,10 +67,13 @@ pub mod zippel_side {
     use share::Ctx;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
+    use zippel::{
+        CompileOptions, CompiledProtocol, CompiledProver, CompiledVerifier, ParsedModule,
+    };
 
     pub struct Setup {
-        handler: CompiledProtocol<ArkBls12_381>,
+        prover: CompiledProver<ArkBls12_381>,
+        verifier: CompiledVerifier<ArkBls12_381>,
         inputs: HashMap<Vid, Value<ArkBls12_381>>,
         compile_time: Vec<std::time::Duration>,
     }
@@ -79,7 +82,7 @@ pub mod zippel_side {
         pub fn new(sh: &shared::Shared) -> Self {
             let (nx, ny) = (sh.srs.dimensions[0], sh.srs.dimensions[1]);
 
-            let (handler, compile_time) = crate::sample_compile(|| {
+            let ((prover, verifier), compile_time) = crate::sample_compile(|| {
                 let module = ParsedModule::load(
                     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                         .join("..")
@@ -89,10 +92,13 @@ pub mod zippel_side {
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("NX"), &nx);
                 sizes.insert(&Tid::new("NY"), &ny);
-                let handler: CompiledProtocol<ArkBls12_381> = module
+                let protocol: CompiledProtocol<ArkBls12_381> = module
                     .compile(&sizes, CompileOptions::default())
                     .expect("compile protocol");
-                handler
+                (
+                    protocol.project_prover(),
+                    protocol.project_verifier().expect("project verifier"),
+                )
             });
 
             let inputs = crate::harness_inputs(
@@ -116,7 +122,8 @@ pub mod zippel_side {
             );
 
             Setup {
-                handler,
+                prover,
+                verifier,
                 inputs,
                 compile_time,
             }
@@ -129,8 +136,8 @@ pub mod zippel_side {
         /// (prover graph node count, verifier graph node count).
         pub fn graph_sizes(&self) -> (usize, usize) {
             (
-                self.handler.prover_graph().node_count(),
-                self.handler.verifier_graph().node_count(),
+                self.prover.graph().node_count(),
+                self.verifier.graph().node_count(),
             )
         }
 
@@ -138,10 +145,10 @@ pub mod zippel_side {
         /// Panics if either graph fails to execute or the verifier rejects.
         pub fn time_protocol(&mut self) -> Timing {
             let (prove, prove_peak, proof) =
-                crate::sample_zippel_prover(&self.handler, &self.inputs);
-            let (verify, verify_peak, result) =
-                crate::sample_zippel_verifier(&self.handler, &proof, &self.inputs);
-            assert!(result, "zippel KZH-2 verification FAILED");
+                crate::sample_zippel_prover(&self.prover, &self.inputs);
+            let (verify, verify_peak, passed) =
+                crate::sample_zippel_verifier(&self.verifier, &proof, &self.inputs);
+            assert!(passed, "zippel KZH-2 verification FAILED");
             Timing {
                 prove,
                 verify,
@@ -186,9 +193,9 @@ pub mod native_side {
                 (com, proof, value)
             });
             assert_eq!(value, self.value);
-            let (verify, verify_peak, ok) =
+            let (verify, verify_peak, passed) =
                 crate::sample(|| kzh::verify(&self.vp, &com, &self.point, &self.value, &proof));
-            assert!(ok, "native KZH-2 verification FAILED");
+            assert!(passed, "native KZH-2 verification FAILED");
             Timing {
                 prove,
                 verify,

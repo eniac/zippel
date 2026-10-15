@@ -53,9 +53,10 @@ aliases defined in [`.cargo/config.toml`](.cargo/config.toml) for
 release).
 
 `cargo test` also runs `zippel-check` over every example
-(`check/tests/examples.rs`) using automatic defaults. The checker searches for small
-sizes that satisfy size/operator constraints and cover overloads in function groups
-reachable from protocols. Unused helpers are still typechecked. Pass `--size` to check specific sizes.
+(`check/tests/examples.rs`) using automatic defaults. The checker searches for
+small sizes that satisfy size/operator constraints and cover overloads in
+function groups reachable from protocols. Unused helpers are still typechecked.
+Pass `--size` to check specific sizes.
 
 CI also fails if any path component (a directory or file name, ignoring
 extension, case-insensitively) is a reserved Windows device name (`con`,

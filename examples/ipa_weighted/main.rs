@@ -6,7 +6,7 @@ use crate::common;
 use crate::common::size;
 
 #[allow(non_snake_case)]
-fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkSecp256k1>> {
+fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkSecp256k1>> {
     let mut rng = rand::rngs::OsRng;
     let n_val_const = 1usize << size(sizes, "S");
 
@@ -60,7 +60,7 @@ pub fn spec() -> common::ExampleSpec<ArkSecp256k1> {
             common::check_power_of_two(sizes, "S")?;
             Ok(())
         }),
-        make_inputs: prover_create_inputs,
+        make_inputs,
         analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
     }
 }

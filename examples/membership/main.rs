@@ -7,7 +7,7 @@ use share::Ctx;
 use crate::common;
 use crate::common::size;
 
-fn prover_create_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
+fn make_inputs(sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     let n_size = size(sizes, "N");
     let m_size = size(sizes, "M");
 
@@ -70,7 +70,7 @@ pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
             }
             Ok(())
         }),
-        make_inputs: prover_create_inputs,
+        make_inputs,
         analyses: &[common::Analysis::Completeness, common::Analysis::Zk],
     }
 }

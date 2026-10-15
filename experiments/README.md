@@ -7,9 +7,9 @@ and 3 (completeness and special-soundness analyses) run from
 alone.
 
 Wall-clock comparison between **zippel-compiled protocols** and **native Rust
-baselines** for thirteen SNARK / commitment / signature / range-proof schemes. Each system runs
-both sides on the same machine, same curve, same input size, inside the same
-rayon thread pool — only the implementation differs.
+baselines** for thirteen SNARK / commitment / signature / range-proof schemes.
+Each system runs both sides on the same machine, same curve, same input size,
+inside the same rayon thread pool — only the implementation differs.
 
 Systems benched: `schnorr`, `sumcheck`, `ipa`, `kzg`, `pari`, `groth16`,
 `pst13`, `hyrax`, `spartan`, `dekart`, `kzh`, `dory`, `hyperplonk`.
@@ -45,11 +45,11 @@ For iteration, narrow the sweep with environment variables:
 SYSTEMS=hyrax THREADS=1,4,8 OUT=hyrax.csv BENCH_SAMPLES=3 experiments/run_all.sh
 ```
 
-On Linux, when `RAYON_NUM_THREADS=T` is set (as `run_all.sh` does), `bench_all` pins
-every timed thread (both rayon pools and the main thread) to the first T
-physical cores, one SMT sibling each, and prints the core list in its header. Both sides therefore
-get exactly T cores. The setup pool stays unpinned. Set `BENCH_NO_PIN=1` to
-disable pinning, e.g. to pin externally:
+On Linux, when `RAYON_NUM_THREADS=T` is set (as `run_all.sh` does), `bench_all`
+pins every timed thread (both rayon pools and the main thread) to the first T
+physical cores, one SMT sibling each, and prints the core list in its header.
+Both sides therefore get exactly T cores. The setup pool stays unpinned. Set
+`BENCH_NO_PIN=1` to disable pinning, e.g. to pin externally:
 
 ```sh
 SYSTEMS=hyrax THREADS=1,2,4,8 OUT=hyrax.csv BENCH_NO_PIN=1 numactl --cpunodebind=0 --membind=0 experiments/run_all.sh
@@ -145,8 +145,9 @@ verifier and the zippel compile are sampled the same way.
 
 ## Driver internals: `bench_all` binary
 
-`run_all.sh` builds and invokes `<workspace root>/target/release/bench_all`. Its flags map
-mostly to the script's env vars but can be used directly for one-off runs:
+`run_all.sh` builds and invokes `<workspace root>/target/release/bench_all`. Its
+flags map mostly to the script's env vars but can be used directly for one-off
+runs:
 
 ```sh
 cargo run --release --manifest-path experiments/Cargo.toml --bin bench_all -- \

@@ -5,7 +5,7 @@ use share::Ctx;
 
 use crate::common;
 
-fn prover_create_inputs(_sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
+fn make_inputs(_sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
     let x = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
     let g = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
@@ -23,7 +23,7 @@ pub fn spec() -> common::ExampleSpec<ArkBls12_381> {
         source: "examples/schnorr/schnorr.zippel",
         defaults: &[],
         validate: None,
-        make_inputs: prover_create_inputs,
+        make_inputs,
         analyses: &[
             common::Analysis::Completeness,
             common::Analysis::Zk,

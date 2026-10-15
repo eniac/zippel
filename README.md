@@ -56,20 +56,21 @@ See [`examples/`](examples) for more protocols, or run
 
 ### Typechecking a protocol
 
-If you are developing a new Zippel protocol and just want to typecheck it to make
-sure your syntax is correct and there are no obvious bugs, you can use `cargo zcheck`.
-Note that typechecking does not invoke any of our static analyses. This only ensures
-the program is valid and the verifier is not using prover-only variables
-(instance, extra, random). Since Zippel has sized types, you can also specify the
-sizes. Some examples:
+If you are developing a new Zippel protocol and just want to typecheck it to
+make sure your syntax is correct and there are no obvious bugs, you can use
+`cargo zcheck`. Note that typechecking does not invoke any of our static
+analyses. This only ensures the program is valid and the verifier is not using
+prover-only variables (instance, extra, random). Since Zippel has sized types,
+you can also specify the sizes. Some examples:
 
 ```bash
 cargo zcheck examples/kzg/kzg.zippel
 cargo zcheck --size N=2 examples/marlin_kzg/marlin_kzg.zippel
 ```
 
-Pass `--size NAME=VALUE` for the sizes you care about; unset `Size` parameters default to the smallest
-values that satisfy size constraints and cover function overloads.
+Pass `--size NAME=VALUE` for the sizes you care about; unset `Size` parameters
+default to the smallest values that satisfy size constraints and cover function
+overloads.
 
 ### Formatting
 

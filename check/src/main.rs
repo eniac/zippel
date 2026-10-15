@@ -259,7 +259,7 @@ fn no_default_sizes(
 }
 
 /// Build the Graph IR and project the prover and verifier of every protocol, as
-/// `ParsedModule::compile` does for one.
+/// compilation followed by explicit projection does for one.
 fn lower(module: &CModule) -> Vec<Diagnostic> {
     let dags = match UDags::<Backend>::from_module(module.clone()) {
         Ok(dags) => dags,
@@ -268,10 +268,10 @@ fn lower(module: &CModule) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     let mut seen = HashSet::new();
     for proto in dags.protocols() {
-        // Like `ParsedModule::compile`, also project the prover: it can only fail by
+        // Also project the prover: it can only fail by
         // panicking on a broken internal invariant, reported as an internal compiler error.
-        let _ = proto.get_prover();
-        if let Err(e) = proto.get_verifier() {
+        let _ = proto.project_prover();
+        if let Err(e) = proto.project_verifier() {
             let d = Diagnostic::from(e);
             if seen.insert((d.span.clone(), d.summary.clone())) {
                 diags.push(d);

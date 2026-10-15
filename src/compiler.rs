@@ -1,5 +1,6 @@
 //! Source loading, diagnostics and compilation of one protocol.
 
+use crate::{CompiledProver, CompiledVerifier};
 use backend::{ArkConfig, HasOpFactory};
 use graph::{UDag, UDags};
 use lang::{
@@ -152,7 +153,7 @@ impl ParsedModule {
         &self.diagnostics
     }
 
-    /// Compile one protocol at concrete sizes, ready to prove and verify.
+    /// Compile one joint protocol at concrete sizes, ready for projection or analysis.
     ///
     /// The relation is type-checked here. Its graph is lowered explicitly by
     /// [`CompiledProtocol::prepare_analysis`], independently of execution compilation.
@@ -183,7 +184,7 @@ impl ParsedModule {
                 .as_ref()
                 .map_or_else(
                     || graphs.protocols().first().copied(),
-                    |name| graphs.get_proto(name),
+                    |name| graphs.protocol(name),
                 )
                 .ok_or_else(|| {
                     let message = options.protocol.as_ref().map_or_else(
@@ -195,10 +196,6 @@ impl ParsedModule {
             self.module
                 .check_protocol_instances(&concrete, &graph.name(), sizes)
                 .map_err(|e| self.error(vec![e.into()]))?;
-            let (prover, _) = graph.get_prover();
-            let verifier = graph
-                .get_verifier()
-                .map_err(|e| self.error(vec![e.into()]))?;
             Ok(CompiledProtocol {
                 source_name: self.name.clone(),
                 source: Arc::clone(&self.source),
@@ -207,8 +204,7 @@ impl ParsedModule {
                     .domain_separator_session
                     .unwrap_or_else(|| self.name.clone()),
                 concrete_module: concrete,
-                prover_graph: prover,
-                verifier_graph: verifier,
+                graph: graph.clone(),
                 diagnostics: self
                     .diagnostics
                     .iter()
@@ -232,32 +228,25 @@ fn has_errors(diagnostics: &[Diagnostic]) -> bool {
     diagnostics.iter().any(|d| d.severity == Severity::Error)
 }
 
-/// A successfully compiled protocol with execution graphs and concrete types.
+/// A successfully compiled joint protocol with concrete types.
 ///
-/// Constructed by [`ParsedModule::compile`]. Proof generation and verification require
-/// no further compilation; static-analysis preparation is explicit and separately measurable.
+/// Constructed by [`ParsedModule::compile`]. Explicit projection produces independent
+/// prover and verifier objects; static-analysis preparation is separately measurable.
 pub struct CompiledProtocol<C: ArkConfig> {
     pub(super) source_name: String,
     pub(super) source: Arc<str>,
     pub(super) protocol_name: String,
     pub(super) domain_separator_session: String,
     pub(super) concrete_module: CModule,
-    pub(super) prover_graph: UDag<C>,
-    pub(super) verifier_graph: UDag<C>,
+    pub(super) graph: UDag<C>,
     diagnostics: Vec<Diagnostic>,
 }
 
 impl<C: ArkConfig> CompiledProtocol<C> {
-    /// Prover graph, for inspection or explicit PDF export with `graph::WritePdf`.
+    /// Joint execution graph, with the relation marked but not lowered.
     #[must_use]
-    pub const fn prover_graph(&self) -> &UDag<C> {
-        &self.prover_graph
-    }
-
-    /// Verifier graph, for inspection or explicit PDF export with `graph::WritePdf`.
-    #[must_use]
-    pub const fn verifier_graph(&self) -> &UDag<C> {
-        &self.verifier_graph
+    pub const fn graph(&self) -> &UDag<C> {
+        &self.graph
     }
 
     /// Fiat–Shamir session identity used by both execution graphs.
@@ -270,5 +259,43 @@ impl<C: ArkConfig> CompiledProtocol<C> {
     #[must_use]
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
+    }
+}
+
+impl<C: ArkConfig + HasOpFactory> CompiledProtocol<C> {
+    /// Project an owned prover that can execute independently of this protocol.
+    ///
+    /// # Panics
+    /// If an internal projection invariant fails or the compiler thread cannot be spawned.
+    #[must_use]
+    pub fn project_prover(&self) -> CompiledProver<C> {
+        share::thread::run_or_panic("zippel-project-prover", || CompiledProver {
+            graph: self.graph.project_prover().0,
+            domain_separator_session: self.domain_separator_session.clone(),
+        })
+    }
+
+    /// Project an owned verifier that can execute independently of this protocol.
+    ///
+    /// # Errors
+    /// Returns source diagnostics if a verifier check depends on private inputs or randomness.
+    ///
+    /// # Panics
+    /// If an internal projection invariant fails or the compiler thread cannot be spawned.
+    pub fn project_verifier(&self) -> Result<CompiledVerifier<C>, CompileError> {
+        share::thread::run_or_panic("zippel-project-verifier", || {
+            let graph =
+                self.graph
+                    .project_verifier()
+                    .map_err(|error| CompileError::Diagnostics {
+                        name: self.source_name.clone(),
+                        source: Arc::clone(&self.source),
+                        diagnostics: vec![error.into()],
+                    })?;
+            Ok(CompiledVerifier {
+                graph,
+                domain_separator_session: self.domain_separator_session.clone(),
+            })
+        })
     }
 }

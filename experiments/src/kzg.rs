@@ -66,7 +66,7 @@ pub mod zippel_side {
     use std::io::Write;
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
-    use zippel::{CompileOptions, CompiledProtocol, ParsedModule};
+    use zippel::{CompileOptions, CompiledProver, CompiledVerifier, ParsedModule};
 
     type F = <ArkBls12_381 as ArkConfig>::F;
     type G1 = <ArkBls12_381 as ArkConfig>::G1;
@@ -92,7 +92,8 @@ pub mod zippel_side {
     /// the artifact cache in `new_with`, so it is built at most once per size
     /// across a whole thread sweep.
     pub struct Setup {
-        handler: CompiledProtocol<ArkBls12_381>,
+        prover: CompiledProver<ArkBls12_381>,
+        verifier: CompiledVerifier<ArkBls12_381>,
         n: usize,
         srs: KzgSrs,
         // Only `Some` for the diagnostic `--no-srs-check` variant — the
@@ -131,13 +132,17 @@ pub mod zippel_side {
                 )
             };
 
-            let (handler, compile_time) = crate::sample_compile(|| {
+            let ((prover, verifier), compile_time) = crate::sample_compile(|| {
                 let module = ParsedModule::load(&path).expect("parse protocol");
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("N"), &n);
-                module
+                let protocol = module
                     .compile::<ArkBls12_381>(&sizes, CompileOptions::default())
-                    .expect("compile protocol")
+                    .expect("compile protocol");
+                (
+                    protocol.project_prover(),
+                    protocol.project_verifier().expect("project verifier"),
+                )
             });
 
             // Build (or load) SRS here so it runs inside the caller's
@@ -167,7 +172,8 @@ pub mod zippel_side {
             });
 
             Setup {
-                handler,
+                prover,
+                verifier,
                 n,
                 srs,
                 _source_file,
@@ -184,8 +190,8 @@ pub mod zippel_side {
         /// (prover graph node count, verifier graph node count).
         pub fn graph_sizes(&self) -> (usize, usize) {
             (
-                self.handler.prover_graph().node_count(),
-                self.handler.verifier_graph().node_count(),
+                self.prover.graph().node_count(),
+                self.verifier.graph().node_count(),
             )
         }
 
@@ -225,10 +231,10 @@ pub mod zippel_side {
                 (Vid("srs_g1".to_string()), ss),
                 (Vid("srs_g2_s".to_string()), h_val),
             ]);
-            let (prove, prove_peak, proof) = crate::sample_zippel_prover(&self.handler, &inputs);
-            let (verify, verify_peak, result) =
-                crate::sample_zippel_verifier(&self.handler, &proof, &inputs);
-            assert!(result, "zippel KZG verification FAILED");
+            let (prove, prove_peak, proof) = crate::sample_zippel_prover(&self.prover, &inputs);
+            let (verify, verify_peak, passed) =
+                crate::sample_zippel_verifier(&self.verifier, &proof, &inputs);
+            assert!(passed, "zippel KZG verification FAILED");
             Timing {
                 prove,
                 verify,
@@ -379,11 +385,11 @@ pub mod native_side {
 
             // Every verifier run checks the same proof.
             // Kzg::check borrows everything, so no clone needed in the loop.
-            let (verify, verify_peak, ok) = crate::sample(|| {
+            let (verify, verify_peak, passed) = crate::sample(|| {
                 Kzg::check(&self.vk, &comm_out, point, value, &proof_out).expect("kzg check")
             });
 
-            assert!(ok, "ark-poly-commit KZG verification FAILED");
+            assert!(passed, "ark-poly-commit KZG verification FAILED");
 
             Timing {
                 prove,
