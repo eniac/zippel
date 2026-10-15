@@ -174,7 +174,9 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             Op::Assert(ref a) => ops::check::assert_op(&mut ctx, &var, a),
             Op::Verify(ref a) => ops::check::verify_op(&mut ctx, &var, a),
             Op::Bin(BinOp::Equ, ref a, ref b, _) => ops::bool::equ_op(&mut ctx, &var, a, b),
-            Op::Challenge(_, _) | Op::Random(_, _) => {}
+            Op::Challenge(_, ref x) | Op::Random(_, ref x) => {
+                ops::sample::sample_op(&mut ctx, &var, x.as_ref());
+            }
             Op::Interpolate(ref points, ref evals) => {
                 ops::interpolate::interpolate_op(&mut ctx, var, points, evals);
             }
@@ -464,11 +466,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let var = Var::from_node(NodeIndex::new(100), ATyp::scalar(), Qualifier::Instance);
 
-        builder.add_op(
-            var.clone(),
-            Op::Challenge(ATyp::scalar(), false),
-            &mut ideal,
-        );
+        builder.add_op(var.clone(), Op::Challenge(ATyp::scalar(), None), &mut ideal);
 
         assert!(
             ideal.generating_set.is_empty(),
@@ -495,7 +493,7 @@ mod tests {
         let mut ideal = Ideal::<ArkBls12_381>::new();
         let var = Var::from_node(NodeIndex::new(101), ATyp::scalar(), Qualifier::Witness);
 
-        builder.add_op(var.clone(), Op::Random(ATyp::scalar(), false), &mut ideal);
+        builder.add_op(var.clone(), Op::Random(ATyp::scalar(), None), &mut ideal);
 
         assert!(
             ideal.generating_set.is_empty(),
@@ -525,7 +523,7 @@ mod tests {
         ideal.register(&challenge_var);
         builder.add_op(
             challenge_var.clone(),
-            Op::Challenge(ATyp::scalar(), false),
+            Op::Challenge(ATyp::scalar(), None),
             &mut ideal,
         );
 

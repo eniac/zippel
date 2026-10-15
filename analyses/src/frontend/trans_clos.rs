@@ -4,7 +4,7 @@
 use crate::Var;
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
-use graph::{GOp, Node, Op, QDag, Ref, mk};
+use graph::{GOp, Node, Op, OpExclusion, QDag, Ref, mk};
 use petgraph::graph::NodeIndex;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
@@ -411,8 +411,8 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
                 let ob = self.trans_clos_op(dag, b.get().clone(), seen);
                 Op::Pair(mk::<C>(oa), mk::<C>(ob), t)
             }
-            Op::Random(t, b) => Op::Random(t, b),
-            Op::Challenge(t, b) => Op::Challenge(t, b),
+            Op::Random(t, x) => Op::Random(t, self.trans_clos_exclusion(dag, x, seen)),
+            Op::Challenge(t, x) => Op::Challenge(t, self.trans_clos_exclusion(dag, x, seen)),
 
             Op::Proj(op, field, typ) => Op::Proj(
                 mk::<C>(self.trans_clos_op(dag, op.get().clone(), seen)),
@@ -420,6 +420,16 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
                 typ.clone(),
             ),
         }
+    }
+
+    /// The values a sample excludes, over the closure's variables.
+    fn trans_clos_exclusion(
+        &mut self,
+        dag: &QDag<C>,
+        exclusion: Option<OpExclusion<C>>,
+        seen: &mut HashMap<NodeIndex, Var>,
+    ) -> Option<OpExclusion<C>> {
+        exclusion.map(|x| x.map_values(|v| mk::<C>(self.trans_clos_op(dag, v.get().clone(), seen))))
     }
 
     fn find<'a>(seen: &'a HashMap<NodeIndex, Var>, r: &Ref) -> Option<&'a Var> {
@@ -449,13 +459,6 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             return Op::Ref(canonical.reference, canonical.typ.clone());
         }
         match &dag[r.node()] {
-            Node::Op(op, qualifier) | Node::Transcr(op, qualifier)
-                if matches!(op.get(), Op::Challenge(_, _) | Op::Random(_, _)) =>
-            {
-                let inner = op.get();
-                let var = named_var(dag, r, inner.typ(), *qualifier);
-                self.insert(var, inner.clone(), seen)
-            }
             Node::Op(op, qualifier) | Node::Transcr(op, qualifier) => {
                 let obin = self.trans_clos_op(dag, op.get().clone(), seen);
                 self.insert(named_var(dag, r, obin.typ(), *qualifier), obin, seen)

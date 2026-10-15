@@ -1428,6 +1428,62 @@ mod tests {
         );
     }
 
+    /// A verifier that divides by `(c − a)(c − 1)` for a `challenge<{typ}>`.
+    fn excluding(typ: &str) -> String {
+        format!(
+            r#"
+            proto excluding<F: Field>(instance a: F) where a == a {{
+                c <- challenge<{typ}>;
+                let t = 1 / ((c - a) * (c - 1));
+                verify(t * (c - a) * (c - 1) == 1)
+            }}"#
+        )
+    }
+
+    #[test]
+    fn a_challenge_excluding_every_root_of_the_divisor_is_complete() {
+        let result = completeness_of(&excluding("F - [a, 1]"));
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn a_challenge_excluding_some_roots_of_the_divisor_is_incomplete() {
+        let result = completeness_of(&excluding("F - [a]"));
+        assert!(
+            matches!(result, Err(AnalysisError::Incomplete(_))),
+            "{result:?}"
+        );
+    }
+
+    /// A verifier that divides by `c − w`, for a fourth root of unity `w` and
+    /// a `challenge<{typ}>`.
+    fn off_the_roots(typ: &str) -> String {
+        format!(
+            r#"
+            proto off_the_roots<F: Field>(instance w: F) where w ^ 4 == 1 {{
+                c <- challenge<{typ}>;
+                let t = 1 / (c - w);
+                verify(t * (c - w) == 1)
+            }}"#
+        )
+    }
+
+    #[test]
+    fn a_challenge_off_the_fourth_roots_of_unity_is_complete() {
+        let result = completeness_of(&off_the_roots("F - roots_of_unity(4)"));
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn a_challenge_off_fewer_roots_of_unity_is_incomplete() {
+        // `w` may be a primitive fourth root, which `c` may equal.
+        let result = completeness_of(&off_the_roots("F - roots_of_unity(2)"));
+        assert!(
+            matches!(result, Err(AnalysisError::Incomplete(_))),
+            "{result:?}"
+        );
+    }
+
     /// The toy protocol of the paper's "Encoding Failures" section, with its
     /// challenge sampled from `{typ}`. The verifier's assertion `x²y − x` is
     /// one of the prover's own equations for `y = 1/x`, so only the prover's
@@ -1501,6 +1557,12 @@ mod tests {
     #[test]
     fn a_prover_that_divides_by_a_nonzero_random_is_complete() {
         let result = completeness_of(&prover_division("F*"));
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn a_prover_that_divides_by_a_random_excluding_zero_is_complete() {
+        let result = completeness_of(&prover_division("F - [0]"));
         assert!(result.is_ok(), "{result:?}");
     }
 

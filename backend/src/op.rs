@@ -1,6 +1,6 @@
 use crate::{ABase, ATyp, ArkConfig, ArkScalarOps, DivisionByZero, Value};
-use lang::ast::BinOp;
 use lang::ast::range::CRange;
+use lang::ast::{BinOp, Exclusion};
 use lang::id::Vid;
 use lang::typ::Nothing;
 use lang::typ::lub::Lub;
@@ -48,14 +48,14 @@ pub enum Op<C: ArkConfig, R> {
     /// Record with named fields
     Record(Ctx<String, HOp<C>>),
 
-    /// Random element
-    Random(ATyp, bool),
+    /// Random element, drawn again on the values it excludes, if any
+    Random(ATyp, Option<OpExclusion<C>>),
 
     /// Billinear pairing
     Pair(HOp<C>, HOp<C>, ATyp),
 
-    /// Random oracle challenge
-    Challenge(ATyp, bool),
+    /// Random oracle challenge, drawn again on the values it excludes, if any
+    Challenge(ATyp, Option<OpExclusion<C>>),
 
     /// Inverse FFT: evaluations on the FFT grid (n roots of unity, n a power of two)
     /// → univariate polynomial coefficients.
@@ -115,6 +115,9 @@ pub type GOp<C> = Op<C, Ref>;
 
 /// Hash-consed graph operation
 pub type HOp<C> = HConsed<GOp<C>>;
+
+/// The values a sample in an [`Op`] excludes.
+pub type OpExclusion<C> = Exclusion<HOp<C>, usize>;
 
 /// Factory type for hash-consing operations
 pub type OpFactory<C> = HConsign<GOp<C>>;
@@ -473,21 +476,21 @@ impl<C: ArkConfig, R> Op<C, R> {
     /// Builds a Fiat-Shamir random-oracle challenge of type `typ`, with no nonzero
     /// constraint.
     pub fn challenge(typ: ATyp) -> Op<C, R> {
-        Op::Challenge(typ, false)
+        Op::Challenge(typ, None)
     }
     /// Builds a locally sampled random element of type `typ`, with no nonzero constraint.
     pub fn random(typ: ATyp) -> Op<C, R> {
-        Op::Random(typ, false)
+        Op::Random(typ, None)
     }
     /// Builds a Fiat-Shamir challenge of type `typ` that is constrained to be nonzero
     /// (needed wherever the challenge is used as a divisor or evaluation denominator).
     pub fn challenge_nz(typ: ATyp) -> Op<C, R> {
-        Op::Challenge(typ, true)
+        Op::Challenge(typ, Some(Exclusion::Zero))
     }
     /// Builds a locally sampled random element of type `typ` constrained to be nonzero,
     /// e.g. a blinding factor that must be invertible.
     pub fn random_nz(typ: ATyp) -> Op<C, R> {
-        Op::Random(typ, true)
+        Op::Random(typ, Some(Exclusion::Zero))
     }
 }
 
@@ -1152,7 +1155,11 @@ impl<C: ArkConfig> GOp<C> {
             | Op::Fft(v)
             | Op::ToScalar(v) => v.references(),
             Op::Proj(v, _, _) => v.references(),
-            Op::Value(_) | Op::Random(_, _) | Op::Challenge(_, _) => vec![],
+            Op::Random(_, x) | Op::Challenge(_, x) => x
+                .as_ref()
+                .and_then(Exclusion::values)
+                .map_or_else(Vec::new, |v| v.references()),
+            Op::Value(_) => vec![],
         }
     }
 }
@@ -1217,6 +1224,16 @@ impl<C: HasOpFactory> GOp<C> {
             }
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.map_node_indices(f))),
             Op::ToScalar(op) => Op::ToScalar(mk::<C>(op.map_node_indices(f))),
+            Op::Random(t, x) => Op::Random(
+                t.clone(),
+                x.clone()
+                    .map(|x| x.map_values(|v| mk::<C>(v.map_node_indices(f)))),
+            ),
+            Op::Challenge(t, x) => Op::Challenge(
+                t.clone(),
+                x.clone()
+                    .map(|x| x.map_values(|v| mk::<C>(v.map_node_indices(f)))),
+            ),
             _ => self.clone(),
         }
     }
@@ -1250,7 +1267,15 @@ impl<C: HasOpFactory> GOp<C> {
             }
             Op::Ifft(op) => Op::Ifft(mk::<C>(op.map_refs(f))),
             Op::Fft(op) => Op::Fft(mk::<C>(op.map_refs(f))),
-            Op::Value(_) | Op::Random(_, _) | Op::Challenge(_, _) => self.clone(),
+            Op::Random(t, x) => Op::Random(
+                t.clone(),
+                x.clone().map(|x| x.map_values(|v| mk::<C>(v.map_refs(f)))),
+            ),
+            Op::Challenge(t, x) => Op::Challenge(
+                t.clone(),
+                x.clone().map(|x| x.map_values(|v| mk::<C>(v.map_refs(f)))),
+            ),
+            Op::Value(_) => self.clone(),
             Op::Poly(op) => Op::Poly(mk::<C>(op.map_refs(f))),
             Op::Coef(op) => Op::Coef(mk::<C>(op.map_refs(f))),
             Op::Evaluate(p, range, x) => Op::Evaluate(
@@ -1487,10 +1512,18 @@ impl<C: ArkConfig, R: fmt::Display> fmt::Display for Op<C, R> {
             }
             Op::Assert(op) => write!(f, "(assert {})", op.get()),
             Op::Verify(op) => write!(f, "(verify {})", op.get()),
-            Op::Challenge(t, true) => write!(f, "challenge<{t}*>"),
-            Op::Random(t, true) => write!(f, "random<{t}*>"),
-            Op::Challenge(t, false) => write!(f, "challenge<{t}>"),
-            Op::Random(t, false) => write!(f, "random<{t}>"),
+            Op::Challenge(t, x) | Op::Random(t, x) => {
+                let name = if matches!(self, Op::Challenge(..)) {
+                    "challenge"
+                } else {
+                    "random"
+                };
+                write!(f, "{name}<{t}")?;
+                if let Some(x) = x {
+                    write!(f, "{x}")?;
+                }
+                f.write_str(">")
+            }
             Op::Ram(v, r) => write!(f, "{}[{}]", v.get(), r.get()),
             Op::Vec(vs) => {
                 f.write_str("[")?;

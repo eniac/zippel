@@ -1,0 +1,10 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: A sample of F can exclude only a vector of F, but got F (Field)
+   ╭─[ test.zippel:3:24 ]
+   │
+ 3 │     c <- challenge<F - a>;
+   │                        ┬  
+   │                        ╰── has type F (Field)
+───╯

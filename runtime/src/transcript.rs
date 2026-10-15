@@ -7,6 +7,7 @@
 //! that stays cheap.
 
 use backend::{ArkConfig, Value, value_to_bytes};
+use lang::ast::Exclusion;
 use petgraph::graph::NodeIndex;
 use spongefish::{DuplexSpongeInterface, ProverState};
 use std::collections::HashMap;
@@ -62,10 +63,9 @@ impl<'a, C: ArkConfig, H: DuplexSpongeInterface<U = u8>> Transcript<'a, C, H> {
         }
     }
 
-    /// Absorbs everything queued, then squeezes a challenge; a `non_zero`
-    /// challenge is squeezed again until it is nonzero, which prover and
-    /// verifier do alike.
-    pub(crate) fn challenge(&mut self, non_zero: bool) -> Value<C> {
+    /// Absorbs everything queued, then squeezes a challenge, squeezed again
+    /// while `exclusion` excludes it, which prover and verifier do alike.
+    pub(crate) fn challenge(&mut self, exclusion: Option<&Exclusion<Value<C>, usize>>) -> Value<C> {
         for p in self.pending.drain(..) {
             let value = match &p {
                 PendingAbsorb::Owned(v) => v,
@@ -75,7 +75,7 @@ impl<'a, C: ArkConfig, H: DuplexSpongeInterface<U = u8>> Transcript<'a, C, H> {
             self.sponge.public_message(bytes.as_slice());
         }
         let mut value = Value::<C>::challenge(self.sponge);
-        while non_zero && value.is_zero() {
+        while exclusion.is_some_and(|x| value.is_excluded_by(x)) {
             value = Value::<C>::challenge(self.sponge);
         }
         value
@@ -84,5 +84,42 @@ impl<'a, C: ArkConfig, H: DuplexSpongeInterface<U = u8>> Transcript<'a, C, H> {
     /// The prover's messages by transcript node; empty for the verifier.
     pub(crate) fn into_messages(self) -> HashMap<NodeIndex, Value<C>> {
         self.messages.unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use backend::ArkBls12_381;
+    use graph::UDag;
+    use graph::domain_separator::ZippelDomainSeparator;
+
+    type C = ArkBls12_381;
+
+    /// The first `n` challenges squeezed, none excluded, from a fresh sponge.
+    fn squeezes(n: usize) -> Vec<Value<C>> {
+        let separator =
+            ZippelDomainSeparator::<C>::new_zippel_domain_separator("test", &UDag::<C>::new());
+        let mut sponge = separator.prover_state();
+        let mut transcript = Transcript::<C, _>::new(&mut sponge, false);
+        (0..n).map(|_| transcript.challenge(None)).collect()
+    }
+
+    /// A challenge is squeezed again while its exclusion excludes it.
+    #[test]
+    fn an_excluded_challenge_is_squeezed_again() {
+        let expected = squeezes(3);
+        let separator =
+            ZippelDomainSeparator::<C>::new_zippel_domain_separator("test", &UDag::<C>::new());
+        let mut sponge = separator.prover_state();
+        let mut transcript = Transcript::<C, _>::new(&mut sponge, false);
+        let Value::Scalar(first) = expected[0] else {
+            unreachable!("a challenge is a scalar")
+        };
+        let Value::Scalar(second) = expected[1] else {
+            unreachable!("a challenge is a scalar")
+        };
+        let excluded = Exclusion::Values(Value::VecScalar(vec![second, first].into()));
+        assert_eq!(transcript.challenge(Some(&excluded)), expected[2]);
     }
 }

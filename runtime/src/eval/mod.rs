@@ -5,7 +5,7 @@ use ark_ff::{One, Zero};
 use backend::op::{GOp, HOp, Op, Ref};
 use backend::{ATyp, ArkConfig, SelectedEvalShape, Value};
 use error::EvalError;
-use lang::ast::BinOp;
+use lang::ast::{BinOp, Exclusion};
 use rand::RngCore;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -93,7 +93,11 @@ pub fn op_has_loop_param<C: ArkConfig>(op: &GOp<C>, target_level: usize) -> bool
         }
         Op::Assert(a) | Op::Verify(a) => op_has_loop_param(a.get(), target_level),
         Op::Reduce(_, a) => op_has_loop_param(a.get(), target_level),
-        Op::Value(_) | Op::Ref(_, _) | Op::Random(_, _) | Op::Challenge(_, _) => false,
+        Op::Random(_, x) | Op::Challenge(_, x) => x
+            .as_ref()
+            .and_then(Exclusion::values)
+            .is_some_and(|v| op_has_loop_param(v.get(), target_level)),
+        Op::Value(_) | Op::Ref(_, _) => false,
     }
 }
 
@@ -587,10 +591,20 @@ where
             let bv = eval_op_with_loop_params(b, env, rng, loop_params, check_sink)?;
             Ok(av.pair(bv))
         }
-        // `*` samples are nonzero: the analyses rely on it to divide by them.
-        Op::Random(typ, non_zero) | Op::Challenge(typ, non_zero) => {
+        // A sample is drawn again on the values it excludes: the analyses
+        // rely on it to divide by it.
+        Op::Random(typ, exclusion) | Op::Challenge(typ, exclusion) => {
+            let exclusion = exclusion
+                .clone()
+                .map(|x| {
+                    x.try_map(
+                        |v| eval_op_with_loop_params(&v, env, rng, loop_params, check_sink),
+                        Ok,
+                    )
+                })
+                .transpose()?;
             let mut value = Value::random(rng, typ);
-            while *non_zero && value.is_zero() {
+            while exclusion.as_ref().is_some_and(|x| value.is_excluded_by(x)) {
                 value = Value::random(rng, typ);
             }
             Ok(value)
@@ -745,7 +759,12 @@ pub fn collect_refs<C: ArkConfig>(op: &GOp<C>) -> Vec<Ref> {
 
 fn collect_refs_into<C: ArkConfig>(op: &GOp<C>, acc: &mut Vec<Ref>) {
     match op {
-        Op::Value(_) | Op::Random(_, _) | Op::Challenge(_, _) => {}
+        Op::Random(_, x) | Op::Challenge(_, x) => {
+            if let Some(v) = x.as_ref().and_then(Exclusion::values) {
+                collect_refs_into(v, acc);
+            }
+        }
+        Op::Value(_) => {}
         Op::Ref(r, _) => acc.push(*r),
         Op::Bin(_, a, b, _) | Op::Pair(a, b, _) | Op::Ram(a, b) | Op::Interpolate(a, b) => {
             collect_refs_into(a, acc);
@@ -872,7 +891,8 @@ mod tests {
         }
     }
 
-    /// A `*` sample is drawn again until it is nonzero; a plain one may be zero.
+    /// A sample that excludes zero, as `*` or as a value, is drawn again
+    /// until it is nonzero; a plain one may be zero.
     #[test]
     fn test_eval_nonzero_sample_resamples_zero() {
         let sample = |op: GOp<ArkBn254>| {
@@ -885,12 +905,14 @@ mod tests {
             )
             .unwrap()
         };
-        for non_zero in [false, true] {
+        let zero = mk::<ArkBn254>(Op::Value(Value::VecScalar(vec![Zero::zero()].into())));
+        for exclusion in [None, Some(Exclusion::Zero), Some(Exclusion::Values(zero))] {
+            let excluded = exclusion.is_some();
             for op in [
-                Op::Random(ATyp::scalar(), non_zero),
-                Op::Challenge(ATyp::scalar(), non_zero),
+                Op::Random(ATyp::scalar(), exclusion.clone()),
+                Op::Challenge(ATyp::scalar(), exclusion.clone()),
             ] {
-                assert_eq!(sample(op).is_zero(), !non_zero);
+                assert_eq!(sample(op).is_zero(), !excluded);
             }
         }
     }

@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn test_qualifier_from_op_random() {
         let qp = QualifierPropagation { quals: Ctx::new() };
-        let op = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), false);
+        let op = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), None);
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Local));
     }
@@ -240,7 +240,7 @@ mod tests {
     #[test]
     fn test_qualifier_from_op_challenge() {
         let qp = QualifierPropagation { quals: Ctx::new() };
-        let op = GOp::<ArkBls12_381>::Challenge(backend::ATyp::scalar(), false);
+        let op = GOp::<ArkBls12_381>::Challenge(backend::ATyp::scalar(), None);
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Instance));
     }

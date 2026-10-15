@@ -178,7 +178,9 @@ proto pari<
     t_proof <- t_value;
 
     // === Fiat-Shamir challenge ===
-    r <- challenge<F>;
+    // Outside the domain K: the verifier divides by v_K(r) = r^K - 1 and by
+    // each r - omegas[i].
+    r <- challenge<F - roots_of_unity(K)>;
 
     // === Prover: ŵ_A, ŵ_B from precomputed w_*_evals ===
     let w_a_poly = interpolate(w_a_evals);

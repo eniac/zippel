@@ -10,8 +10,8 @@ use crate::{
     Dep, DepType, GOp, GraphError, HOp, Node, Nothing, Op, PrivateValue, Ref, UDag, UDags, mk,
 };
 use backend::{ATyp, ArkBls12_381};
-use lang::ast::BinOp;
 use lang::ast::spanned::Spanned;
+use lang::ast::{BinOp, Exclusion};
 use lang::id::Vid;
 use lang::typ::{Distribution, Qualifier};
 use petgraph::Direction;
@@ -260,7 +260,7 @@ fn pin_random() {
     let mut expected = UDag::<B>::new();
     let (_inp, __inp_args) = expected_inp(&mut expected, "f", &[instance_s("a")]);
     let _arg_a = __inp_args[0];
-    let _rand = expected.add_node(Node::random(&ATyp::scalar(), false), 0..0);
+    let _rand = expected.add_node(Node::random(&ATyp::scalar(), None), 0..0);
 
     assert!(gs[0] == expected);
 }
@@ -274,7 +274,7 @@ fn pin_random_nz() {
     let mut expected = UDag::<B>::new();
     let (_inp, __inp_args) = expected_inp(&mut expected, "f", &[instance_s("a")]);
     let _arg_a = __inp_args[0];
-    let _rand = expected.add_node(Node::random(&ATyp::scalar(), true), 0..0);
+    let _rand = expected.add_node(Node::random(&ATyp::scalar(), Some(Exclusion::Zero)), 0..0);
 
     assert!(gs[0] == expected);
 }
@@ -289,7 +289,7 @@ fn pin_challenge() {
     let mut expected = UDag::<B>::new();
     let (inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a")]);
     let _arg_a = _inp_args[0];
-    let ch = expected.add_node(Node::challenge(&ATyp::scalar(), false), 0..0);
+    let ch = expected.add_node(Node::challenge(&ATyp::scalar(), None), 0..0);
     expected.add_edge(inp, ch, Dep::transcript());
 
     assert!(gs[0] == expected);
@@ -304,7 +304,10 @@ fn pin_challenge_nz() {
     let mut expected = UDag::<B>::new();
     let (inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a")]);
     let _arg_a = _inp_args[0];
-    let ch = expected.add_node(Node::challenge(&ATyp::scalar(), true), 0..0);
+    let ch = expected.add_node(
+        Node::challenge(&ATyp::scalar(), Some(Exclusion::Zero)),
+        0..0,
+    );
     expected.add_edge(inp, ch, Dep::transcript());
 
     assert!(gs[0] == expected);
@@ -1640,6 +1643,48 @@ fn pin_project_verifier_witness_leak() {
         Err(e) => panic!("Expected PrivateValueInVerifier, got: {}", e),
         Ok(_) => panic!("Expected error but got Ok"),
     }
+}
+
+/// The verifier computes the values its challenges exclude: from instances,
+/// but never from a witness.
+/// Tests: GraphError::PrivateValueInVerifier.
+#[test]
+fn pin_project_verifier_challenge_exclusion() {
+    let leak = r#"
+        proto foo<F: Field>(witness s: F) where s == s {
+            c <- challenge<F - [s]>;
+            verify(c == c)
+        }
+    "#;
+    match parse_and_build(leak)[0].project_verifier() {
+        Err(GraphError::PrivateValueInVerifier {
+            kind: PrivateValue::Arg(Qualifier::Witness),
+            name: Some(name),
+            ..
+        }) => assert_eq!(name, Vid::new("s")),
+        Err(e) => panic!("Expected PrivateValueInVerifier, got: {}", e),
+        Ok(_) => panic!("Expected error but got Ok"),
+    }
+
+    let instance = r#"
+        proto foo<F: Field>(instance a: F) where a == a {
+            c <- challenge<F - [a + 1]>;
+            verify(c == c)
+        }
+    "#;
+    let verifier = parse_and_build(instance)[0].project_verifier().unwrap();
+    let challenge = verifier
+        .node_indices()
+        .find(|&n| verifier[n].is_challenge())
+        .unwrap();
+    let excluded = verifier
+        .neighbors_directed(challenge, Direction::Incoming)
+        .find(|&n| !verifier[n].is_transcript() && !verifier[n].is_input())
+        .expect("the verifier computes the excluded vector");
+    assert!(matches!(
+        &*verifier[excluded].clone().into_op(),
+        GOp::Vec(_)
+    ));
 }
 
 /// A leaked value is reported with the named values it flows through, out to the check.

@@ -10,7 +10,8 @@
 //!   recursively for `;`-separated relations (where `gap_hard` after
 //!   `;` provides the break).
 
-use lang::ast::exp::{BinOp, Exp, Exps};
+use lang::ast::Exclusion;
+use lang::ast::exp::{BinOp, Exp, ExpExclusion, Exps};
 use lang::ast::{Size, Spanned};
 use lang::id::Tid;
 use lang::parser::Token;
@@ -18,7 +19,7 @@ use pretty::DocAllocator;
 
 use crate::ctx::{ALLOC, Doc, parenthesize};
 use crate::delim_list::{DelimList, take_separator_gap_split};
-use crate::size::format_range;
+use crate::size::{format_range, format_size};
 use crate::style::Style;
 use crate::trivia::{TokenCursor, TriviaGap, format_gap, gap_hard, gap_none, gap_space};
 
@@ -303,20 +304,20 @@ fn format_exp(
             end,
             style,
         ),
-        Exp::Random(typ, star) => format_sampling(
+        Exp::Random(typ, exclusion) => format_sampling(
             "random",
             |t| matches!(t, Token::KwRandom),
             typ,
-            *star,
+            exclusion.as_ref(),
             cursor,
             end,
             style,
         ),
-        Exp::Challenge(typ, star) => format_sampling(
+        Exp::Challenge(typ, exclusion) => format_sampling(
             "challenge",
             |t| matches!(t, Token::KwChallenge),
             typ,
-            *star,
+            exclusion.as_ref(),
             cursor,
             end,
             style,
@@ -598,7 +599,7 @@ fn format_sampling(
     name: &'static str,
     pred: impl Fn(&Token) -> bool,
     typ: &Tid,
-    star: bool,
+    exclusion: Option<&ExpExclusion<Size>>,
     cursor: &mut TokenCursor,
     end: usize,
     style: &Style,
@@ -609,16 +610,41 @@ fn format_sampling(
         style,
     );
     let typ_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
-    let star = if star {
-        let comments = gap_none(
-            cursor.advance_to_token(end, |token| matches!(token, Token::Star)),
-            style,
-        );
-        ALLOC.concat([comments, ALLOC.text("*")])
-    } else {
-        ALLOC.nil()
+    let exclusion = match exclusion {
+        None => ALLOC.nil(),
+        Some(Exclusion::Zero) => {
+            let comments = gap_none(
+                cursor.advance_to_token(end, |token| matches!(token, Token::Star)),
+                style,
+            );
+            ALLOC.concat([comments, ALLOC.text("*")])
+        }
+        Some(Exclusion::Values(values)) => format_excluded(cursor, end, style, |cursor| {
+            format_exp(values, cursor, style)
+        }),
+        Some(Exclusion::RootsOfUnity(n)) => format_excluded(cursor, end, style, |cursor| {
+            let keyword_gap =
+                cursor.advance_to_token(end, |token| matches!(token, Token::KwRootsOfUnity));
+            let open = gap_none(
+                cursor.advance_to_token(end, |token| matches!(token, Token::LParen)),
+                style,
+            );
+            let (n_gap, n_doc) = format_size(n, cursor, end, style);
+            let close_comments =
+                cursor.advance_to_token(end, |token| matches!(token, Token::RParen));
+            let mut list = DelimList::new(style, ",", true);
+            list.push(n_gap, n_doc);
+            (
+                keyword_gap,
+                ALLOC.concat([
+                    ALLOC.text("roots_of_unity"),
+                    open,
+                    list.finish("(", ")", close_comments),
+                ]),
+            )
+        }),
     };
-    let content = ALLOC.concat([ALLOC.as_string(typ), star]);
+    let content = ALLOC.concat([ALLOC.as_string(typ), exclusion]);
     let close_comments = cursor.advance_to_token(end, |token| matches!(token, Token::RAngle));
 
     let mut list = DelimList::new(style, ",", true);
@@ -631,6 +657,23 @@ fn format_sampling(
             list.finish("<", ">", close_comments),
         ]),
     )
+}
+
+/// ` - ` followed by what a sample excludes, which `excluded` formats.
+fn format_excluded(
+    cursor: &mut TokenCursor,
+    end: usize,
+    style: &Style,
+    excluded: impl FnOnce(&mut TokenCursor) -> (TriviaGap, Doc<'static>),
+) -> Doc<'static> {
+    let minus_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Minus));
+    let (excluded_gap, excluded_doc) = excluded(cursor);
+    ALLOC.concat([
+        gap_space(minus_gap, style),
+        ALLOC.text("-"),
+        gap_space(excluded_gap, style),
+        excluded_doc,
+    ])
 }
 
 fn format_assertion(

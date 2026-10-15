@@ -103,9 +103,19 @@ impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8> + Send> Run<'_, C, H> {
             "runtime invariant violation: node {node:?} executed twice"
         );
         let value = match &self.graph.dag[node] {
-            Node::Transcr(op, _) if let Op::Challenge(_, non_zero) = **op => {
+            Node::Transcr(op, _) if matches!(**op, Op::Challenge(_, _)) => {
                 debug!("[run_graph] node {node:?} is Challenge");
-                self.transcript.lock().unwrap().challenge(non_zero)
+                let exclusion = match self.graph.exclusion(node) {
+                    Ok(exclusion) => exclusion,
+                    Err(err) => {
+                        self.error.record(err);
+                        return;
+                    }
+                };
+                self.transcript
+                    .lock()
+                    .unwrap()
+                    .challenge(exclusion.as_ref())
             }
             Node::Op(op, _) if matches!(**op, Op::Challenge(_, _)) => {
                 unreachable!("challenge {node:?} outside the transcript")

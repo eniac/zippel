@@ -97,6 +97,7 @@ pub mod pow;
 pub mod ram;
 pub mod record;
 pub mod reduce;
+pub mod sample;
 pub mod test_helpers;
 pub mod value;
 

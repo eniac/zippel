@@ -2,8 +2,9 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
+- __zippel::gb::excluded_inv::0 + __zippel::gb::div_inv::4
 __zippel::node::135 - 1
 chunks_bits[0][0]^2 - chunks_bits[0][0]
 chunks_bits[0][1]^2 - chunks_bits[0][1]
 chunks_bits[0][2]^2 - chunks_bits[0][2]
-gamma_minus_one*__zippel::gb::div_inv::4 - 1
+gamma*__zippel::gb::excluded_inv::0 - __zippel::gb::excluded_inv::0 - 1

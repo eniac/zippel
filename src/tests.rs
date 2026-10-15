@@ -206,6 +206,25 @@ fn a_prover_that_divides_by_zero_fails() {
     ));
 }
 
+/// Prover and verifier divide by what their samples exclude, which the
+/// verifier computes from the instance.
+#[test]
+fn samples_exclude_what_the_protocol_divides_by() {
+    let protocol = compile_src(
+        "proto excludes<F: Field>(witness a: F, instance b: F) where a == b {
+            let r = random<F - roots_of_unity(4)>;
+            m <- a / (r ^ 4 - 1);
+            n <- r ^ 4 - 1;
+            c <- challenge<F - [b, 1]>;
+            verify(m * n / ((c - b) * (c - 1)) == b / ((c - b) * (c - 1)))
+        }",
+    );
+    let inputs = HashMap::from([("a", scalar(5)), ("b", scalar(5))]);
+    let proof = protocol.project_prover().prove(inputs.clone()).unwrap();
+    let verifier = protocol.project_verifier().expect("project verifier");
+    assert!(matches!(verifier.verify(proof, inputs), Ok(true)));
+}
+
 /// Regression for issue #157: re-logging earlier transcript values after a
 /// challenge must preserve every proof element and verifier alignment.
 #[test]
