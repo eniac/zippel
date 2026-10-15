@@ -32,4 +32,9 @@ pub enum EvalError {
     /// evaluation context does not bind.
     #[error("Loop parameter out of range: level {0}")]
     LoopParam(usize),
+
+    /// A division (or remainder, or interpolation at repeated points) by zero.
+    /// Unlike the other variants, the values of a run can cause it.
+    #[error("Division by zero")]
+    DivisionByZero,
 }

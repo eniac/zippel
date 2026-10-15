@@ -97,9 +97,12 @@ pub trait ArkScalarOps<F: PrimeField> {
     }
 
     /// Scalar inversion in place.
+    ///
+    /// # Panics
+    /// Panics if `f` is zero.
     #[inline]
     fn inv(f: &mut F) {
-        f.inverse_in_place();
+        f.inverse_in_place().expect("Division by zero");
     }
 
     /// Scalar division, saves result in f2
@@ -167,8 +170,12 @@ pub trait ArkScalarOps<F: PrimeField> {
     }
 
     /// Vector batch inversion, saves result in f2
+    ///
+    /// # Panics
+    /// Panics if an entry is zero.
     #[inline]
     fn vec_inv(f: &mut Vec<F>) {
+        assert!(f.iter().all(|x| !x.is_zero()), "Division by zero");
         ark_ff::fields::batch_inversion::<F>(f);
     }
 

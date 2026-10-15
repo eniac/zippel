@@ -62,8 +62,10 @@ impl<'a, C: ArkConfig, H: DuplexSpongeInterface<U = u8>> Transcript<'a, C, H> {
         }
     }
 
-    /// Absorbs everything queued, then squeezes a challenge.
-    pub(crate) fn challenge(&mut self) -> Value<C> {
+    /// Absorbs everything queued, then squeezes a challenge; a `non_zero`
+    /// challenge is squeezed again until it is nonzero, which prover and
+    /// verifier do alike.
+    pub(crate) fn challenge(&mut self, non_zero: bool) -> Value<C> {
         for p in self.pending.drain(..) {
             let value = match &p {
                 PendingAbsorb::Owned(v) => v,
@@ -72,7 +74,11 @@ impl<'a, C: ArkConfig, H: DuplexSpongeInterface<U = u8>> Transcript<'a, C, H> {
             let bytes = value_to_bytes(value).expect("value serialization should not fail");
             self.sponge.public_message(bytes.as_slice());
         }
-        Value::<C>::challenge(self.sponge)
+        let mut value = Value::<C>::challenge(self.sponge);
+        while non_zero && value.is_zero() {
+            value = Value::<C>::challenge(self.sponge);
+        }
+        value
     }
 
     /// The prover's messages by transcript node; empty for the verifier.

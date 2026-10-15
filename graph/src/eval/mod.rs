@@ -469,13 +469,25 @@ where
             // Fallback using already evaluated dom_val
             let results =
                 eval_loop_body_each(body, env, dom_ref.clone().into_elements(), loop_params)?;
-            Ok(Some(Value::value_vec(results).value_reduce(op)))
+            reduce(Value::value_vec(results), op).map(Some)
         }
     } else {
         // Fallback using already evaluated dom_val
         let results = eval_loop_body_each(body, env, dom_ref.clone().into_elements(), loop_params)?;
-        Ok(Some(Value::value_vec(results).value_reduce(op)))
+        reduce(Value::value_vec(results), op).map(Some)
     }
+}
+
+/// `v` reduced by `op`; dividing by a zero entry is an error.
+fn reduce<C: ArkConfig>(v: Value<C>, op: BinOp) -> Result<Value<C>, EvalError> {
+    if !matches!(op, BinOp::Div | BinOp::Rem) {
+        return Ok(v.value_reduce(op));
+    }
+    let elements = v.into_elements();
+    if elements.iter().skip(1).any(Value::has_zero) {
+        return Err(EvalError::DivisionByZero);
+    }
+    Ok(Value::value_vec(elements).value_reduce(op))
 }
 
 fn is_vector_value<C: ArkConfig>(v: &Value<C>) -> bool {
@@ -541,6 +553,9 @@ where
         Op::Bin(binop, a, b, _) => {
             let av = eval_op_with_loop_params(a, env, rng, loop_params, check_sink)?;
             let bv = eval_op_with_loop_params(b, env, rng, loop_params, check_sink)?;
+            if matches!(binop, BinOp::Div | BinOp::Rem) && bv.has_zero() {
+                return Err(EvalError::DivisionByZero);
+            }
             // Borrow `av` by reference (no clone of left operand); only the
             // right operand must be materialised as owned (one inner clone
             // when the Arc is shared, free when unique).
@@ -641,8 +656,14 @@ where
             let bv = eval_op_with_loop_params(b, env, rng, loop_params, check_sink)?;
             Ok(av.pair(bv))
         }
-        Op::Random(typ, _) => Ok(Value::random(rng, typ)),
-        Op::Challenge(typ, _) => Ok(Value::random(rng, typ)),
+        // `*` samples are nonzero: the analyses rely on it to divide by them.
+        Op::Random(typ, non_zero) | Op::Challenge(typ, non_zero) => {
+            let mut value = Value::random(rng, typ);
+            while *non_zero && value.is_zero() {
+                value = Value::random(rng, typ);
+            }
+            Ok(value)
+        }
         Op::Evaluate(p, None, None) => {
             let p_val = eval_op_with_loop_params(p, env, rng, loop_params, check_sink)?;
             Ok(p_val.value_fft())
@@ -696,7 +717,7 @@ where
                 });
             }
             let results = eval_loop_body_each(body, env, dom.into_elements(), loop_params)?;
-            Ok(Value::value_vec(results).value_reduce(*op))
+            reduce(Value::value_vec(results), *op)
         }
         // Extract at the operand's declared type so a `Uni(m)` polynomial
         // always yields exactly its promised `m + 1` coefficient slots,
@@ -711,6 +732,9 @@ where
         }
         Op::Interpolate(points, evals) => {
             let points_val = eval_op_with_loop_params(points, env, rng, loop_params, check_sink)?;
+            if points_val.has_duplicate() {
+                return Err(EvalError::DivisionByZero);
+            }
             let evals_val = eval_op_with_loop_params(evals, env, rng, loop_params, check_sink)?;
             Ok(evals_val.value_interpolate_owned(Some(&points_val)))
         }
@@ -731,7 +755,7 @@ where
         }
         Op::Reduce(binop, v) => {
             let v_val = eval_op_with_loop_params(v, env, rng, loop_params, check_sink)?;
-            Ok(v_val.value_reduce(*binop))
+            reduce(v_val, *binop)
         }
         Op::Proj(record_op, field_name, _) => {
             let rec_val = eval_op_with_loop_params(record_op, env, rng, loop_params, check_sink)?;
@@ -884,5 +908,60 @@ mod tests {
         let nested = |last: u64| TestValue::Vec(vec![scalars(&[1, 2]), scalars(&[3, last])].into());
         assert_eq!(equ(nested(4), nested(4)), TestValue::Bool(true));
         assert_eq!(equ(nested(4), nested(5)), TestValue::Bool(false));
+    }
+
+    /// An rng whose first `zeros` words are zero and whose later words are one,
+    /// so that its first scalar is zero.
+    struct ZeroFirst {
+        zeros: usize,
+    }
+
+    impl RngCore for ZeroFirst {
+        fn next_u32(&mut self) -> u32 {
+            u32::try_from(self.next_u64()).unwrap()
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            if self.zeros == 0 {
+                1
+            } else {
+                self.zeros -= 1;
+                0
+            }
+        }
+
+        fn fill_bytes(&mut self, dest: &mut [u8]) {
+            for chunk in dest.chunks_mut(8) {
+                chunk.copy_from_slice(&self.next_u64().to_le_bytes()[..chunk.len()]);
+            }
+        }
+
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
+            self.fill_bytes(dest);
+            Ok(())
+        }
+    }
+
+    /// A `*` sample is drawn again until it is nonzero; a plain one may be zero.
+    #[test]
+    fn test_eval_nonzero_sample_resamples_zero() {
+        let sample = |op: GOp<ArkBn254>| {
+            let mut rng = ZeroFirst { zeros: 4 };
+            eval_op(
+                &mk::<ArkBn254>(op),
+                &HashMap::new(),
+                &mut rng,
+                &mut Vec::new(),
+            )
+            .unwrap()
+        };
+        for non_zero in [false, true] {
+            for op in [
+                Op::Random(ATyp::scalar(), non_zero),
+                Op::Challenge(ATyp::scalar(), non_zero),
+            ] {
+                assert_eq!(sample(op).is_zero(), !non_zero);
+            }
+        }
     }
 }

@@ -2,16 +2,30 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- b[0]*__zippel::gb::interp_inv::0 + __zippel::gb::interp_inv::0 + b[0]*__zippel::gb::interp_inv::2 - __zippel::gb::interp_inv::2
-- b[0]*u_evals[0] + u_evals[0] + b[0]*c_sim[0] - c_sim[0]
-- b[0]*u_points[0] + u_points[0] + b[0]*eval_points[0] - eval_points[0]
+- __zippel::gb::div_inv::2^2*__zippel::gb::div_inv::0^3 + __zippel::gb::div_inv::2^3*__zippel::gb::div_inv::0^2 + distinct_inv*__zippel::gb::div_inv::0^2 + 52435875175126190479447740508185965837690552500527637822603658699938581184511*distinct_inv*__zippel::gb::div_inv::2*__zippel::gb::div_inv::0 + distinct_inv*__zippel::gb::div_inv::2^2
+- b[1]*__zippel::gb::div_inv::0 + b[1]*__zippel::gb::div_inv::2
+- b[1]*u_evals[0] + b[1]*c_sim[0]
 - b[1]*u_evals[0] + u_evals[0] + b[1]*c_sim[1] - c_sim[1]
+- b[1]*u_points[0] + b[1]*eval_points[0]
 - b[1]*u_points[0] + u_points[0] + b[1]*eval_points[1] - eval_points[1]
-__zippel::gb::interp_inv::0 + __zippel::gb::interp_inv::1
-__zippel::gb::interp_inv::2 + __zippel::gb::interp_inv::3
-__zippel::node::59 - 1
-__zippel::node::73 - 1
-b[0]^2 - b[0]
+- eval_points[1]*__zippel::gb::div_inv::0 - u_points[0]*__zippel::gb::div_inv::2 + eval_points[1]*__zippel::gb::div_inv::2 - 1
+- u_evals[0]*__zippel::gb::div_inv::2*__zippel::gb::div_inv::0 + c_sim[0]*__zippel::gb::div_inv::2*__zippel::gb::div_inv::0 + distinct_inv*u_evals[0]*u_points[0] - c_sim[0]*distinct_inv*u_points[0] - distinct_inv*eval_points[0]*u_evals[0] + c_sim[0]*distinct_inv*eval_points[0]
+- u_evals[0]*__zippel::gb::div_inv::2^2*__zippel::gb::div_inv::0^2 + c_sim[0]*__zippel::gb::div_inv::2^2*__zippel::gb::div_inv::0^2 + distinct_inv*u_evals[0]*__zippel::gb::div_inv::0 - c_sim[0]*distinct_inv*__zippel::gb::div_inv::0 - distinct_inv*u_evals[0]*__zippel::gb::div_inv::2 + c_sim[0]*distinct_inv*__zippel::gb::div_inv::2
+2*b[1]*__zippel::gb::div_inv::0 - __zippel::gb::div_inv::0 - __zippel::gb::div_inv::2 - distinct_inv*u_points[0]^2 + distinct_inv*eval_points[0]^2
+__zippel::gb::div_inv::0 + __zippel::gb::div_inv::1
+__zippel::gb::div_inv::2 + __zippel::gb::div_inv::3
+__zippel::gb::div_inv::2*__zippel::gb::div_inv::0^2 - __zippel::gb::div_inv::2^2*__zippel::gb::div_inv::0 + distinct_inv*eval_points[0]*__zippel::gb::div_inv::0 + distinct_inv*u_points[0]*__zippel::gb::div_inv::2 + 2*distinct_inv
+__zippel::gb::div_inv::2*__zippel::gb::div_inv::0^3 - __zippel::gb::div_inv::2^2*__zippel::gb::div_inv::0^2 + distinct_inv*eval_points[0]*__zippel::gb::div_inv::0^2 + 2*distinct_inv*__zippel::gb::div_inv::0 - distinct_inv*__zippel::gb::div_inv::2
+__zippel::node::60 - 1
+__zippel::node::74 - 1
+b[1]*__zippel::gb::div_inv::0 - __zippel::gb::div_inv::2 - distinct_inv*u_points[0]^2 + distinct_inv*eval_points[0]*u_points[0]
+b[1]*__zippel::gb::div_inv::0 - distinct_inv*eval_points[1]*u_points[0] + distinct_inv*eval_points[1]^2
+b[1]*__zippel::gb::div_inv::0^2 - __zippel::gb::div_inv::2*__zippel::gb::div_inv::0 + distinct_inv*u_points[0] - distinct_inv*eval_points[0]
 b[1]^2 - b[1]
-eval_points[0]*__zippel::gb::interp_inv::2 + 1
-u_points[0]*__zippel::gb::interp_inv::0 + 1
+eval_points[0]*__zippel::gb::div_inv::2 + 1
+u_evals[0]*__zippel::gb::div_inv::0 - c_sim[1]*__zippel::gb::div_inv::0 - u_evals[0]*__zippel::gb::div_inv::2 + c_sim[1]*__zippel::gb::div_inv::2
+u_evals[0]*u_points[0] - c_sim[0]*u_points[0] - eval_points[1]*u_evals[0] + c_sim[0]*eval_points[1]
+u_evals[0]*u_points[0] - c_sim[1]*u_points[0] - eval_points[0]*u_evals[0] + c_sim[1]*eval_points[0]
+u_evals[0]^2 - c_sim[1]*u_evals[0] - c_sim[0]*u_evals[0] + c_sim[0]*c_sim[1]
+u_points[0]*__zippel::gb::div_inv::0 + 1
+u_points[0]^2 - eval_points[1]*u_points[0] - eval_points[0]*u_points[0] + eval_points[0]*eval_points[1]

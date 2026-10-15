@@ -120,6 +120,14 @@ stating the relation being proven. The body samples randomness
 (`random<F>`), draws challenges (`challenge<F*>`), computes messages
 with `<-`, and ends in a `verify(...)` check.
 
+A `*` sample (`random<F*>`, `challenge<F*>`) is never zero. Dividing by
+zero aborts the run, so the completeness analysis must show that no
+honest run divides by zero: divide by `*` samples, products of them, or
+nonzero constants, or by values the relation and protocol make nonzero.
+A protocol that divides by a plain `challenge<F>` is reported incomplete,
+since that challenge is zero with probability 1/|F|. In a `where` clause,
+a division makes its divisor nonzero as part of the relation.
+
 ### 4. Check it
 
 ```bash

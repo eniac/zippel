@@ -23,9 +23,9 @@ pub struct CompletenessInputs<F: ark_ff::PrimeField> {
     /// verifier-locals). Every definition is substituted away, prover
     /// messages included, and so is every variable a generator solves for.
     pub generating_set: Vec<Polynomial<F>>,
-    /// The verifier's goals, what each `verify` asserts, to reduce against
-    /// the basis in `run()`; a goal that is already a verifier generator is
-    /// left out.
+    /// The goals to reduce against the basis in `run()`: what each `verify`
+    /// asserts, and that every divisor of the prover and the verifier is
+    /// nonzero. A goal that is already a verifier generator is left out.
     pub verifier: Vec<Polynomial<F>>,
     /// What each `verify` checks, over the verifier's own variables: its
     /// definitions are substituted, the prover messages are not. Unlike
@@ -41,7 +41,7 @@ pub struct CompletenessAnalysis<C: ArkConfig> {
     /// Gröbner basis of (prover ∪ relation ∪ verifier-locals) under grevlex.
     /// Computed in `try_from_inputs`.
     pub basis: GbBasis<C::F>,
-    /// Verifier polynomials to reduce against `basis` in `run()`.
+    /// Goals to reduce against `basis` in `run()`.
     pub verifier: Vec<Polynomial<C::F>>,
 }
 
@@ -59,9 +59,12 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         let mut builder = IdealBuilder::new();
 
         // The prover and the relation, with their definitions substituted,
-        // the prover messages included.
+        // the prover messages included. The relation's divisor checks are
+        // part of the relation.
         let mut prover = builder.build(TransClos::prover(dag));
-        prover.merge(&builder.build(TransClos::relation(dag)));
+        let mut relation = builder.build(TransClos::relation(dag));
+        relation.generating_set.append(&mut relation.check_polys);
+        prover.merge(&relation);
         let defs = prover.substitute_definitions();
 
         // The verifier, with its own definitions substituted. Its checks are
@@ -99,9 +102,11 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
             completeness_accepts(p, x, &inputs, &witnesses)
         });
 
-        let goals = verifier
+        // The goals: the verifier's checks and the prover's divisor checks.
+        let goals = prover
             .check_polys
             .iter()
+            .chain(&verifier.check_polys)
             .map(|g| solved.apply(g))
             .filter(|g| !g.is_zero())
             .collect();
@@ -221,6 +226,11 @@ mod tests {
         let m = parse_and_concretize(ex, &Ctx::new());
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         QualifierPropagation::from_dag(gs.protocols()[0])
+    }
+
+    /// Completeness of the first protocol in `ex`.
+    fn completeness_of(ex: &str) -> Result<(), AnalysisError<ArkBls12_381>> {
+        from_input(&dag_of(ex)).run()
     }
 
     /// The checks `build_inputs` records for the protocol `ex`, as `lhs == rhs`.
@@ -1018,14 +1028,16 @@ mod tests {
 
     #[test]
     fn poly_div_exact_completeness() {
-        // Division constraints model defined program traces, so the degree
-        // chain requires `d != 0`. The canonical identity and remainder bound
-        // then uniquely determine the quotient as `p`.
+        // The relation makes `d[0]`, and so `d`, nonzero; the identity and
+        // remainder bound then determine the quotient as `p`.
         let ex = r#"
             proto poly_div_exact<F: Field>(
                 instance p: Poly<F, 1, 1>,
-                instance d: Poly<F, 1, 1>
-            ) where p == p {
+                instance d0: F,
+                instance d1: F,
+                witness w: F
+            ) where d0 * w == 1 {
+                let d = poly([d0, d1]);
                 let prod = p * d;
                 let q = prod / d;
                 verify(q == p)
@@ -1037,7 +1049,27 @@ mod tests {
         let mut ca = from_input(&g);
         assert!(
             ca.run().is_ok(),
-            "(p*d)/d == p should be complete over defined traces where d != 0"
+            "(p*d)/d == p should be complete for a nonzero d"
+        );
+    }
+
+    #[test]
+    fn poly_div_by_a_divisor_that_may_be_zero_is_incomplete() {
+        // The relation admits `d = 0`, where the check holds (the quotient is
+        // 0) but the verifier divides by zero.
+        let ex = r#"
+            proto poly_div_zero<F: Field>(
+                instance p: Poly<F, 1, 1>,
+                instance d: Poly<F, 1, 1>
+            ) where p == p {
+                let prod = p * d;
+                let q = prod / d;
+                verify(q * d == prod)
+            }"#;
+        let result = completeness_of(ex);
+        assert!(
+            matches!(result, Err(AnalysisError::Incomplete(_))),
+            "{result:?}"
         );
     }
 
@@ -1046,8 +1078,11 @@ mod tests {
         let ex = r#"
             proto poly_divmod<F: Field>(
                 instance p: Poly<F, 1, 2>,
-                instance d: Poly<F, 1, 1>
-            ) where p == p {
+                instance d0: F,
+                instance d1: F,
+                witness w: F
+            ) where d0 * w == 1 {
+                let d = poly([d0, d1]);
                 let q = p / d;
                 let r = p % d;
                 verify(p == d * q + r)
@@ -1074,8 +1109,9 @@ mod tests {
         let ex = r#"
             proto poly_div_zero_lead<F: Field>(
                 instance p: Poly<F, 1, 3>,
-                instance d0: F
-            ) where p == p {
+                instance d0: F,
+                witness w: F
+            ) where d0 * w == 1 {
                 let d = poly([d0, 0, 0]);
                 let r = p % d;
                 verify(r == poly([0, 0]))
@@ -1111,12 +1147,15 @@ mod tests {
         //
         // The test asserts incompleteness, which holds only with the
         // correct cumulative encoding.
+        //
+        // The relation makes the divisor nonzero, isolating the `r[0]` goal.
         let ex = r#"
             proto poly_div_mid_zero<F: Field>(
                 instance p: Poly<F, 1, 3>,
                 instance b0: F,
-                instance b2: F
-            ) where p == p {
+                instance b2: F,
+                witness w: F
+            ) where b0 * w == 1 {
                 let d = poly([b0, 0, b2]);
                 let r = p % d;
                 let rc = coef(r);
@@ -1388,11 +1427,11 @@ mod tests {
     }
 
     /// `verify(check)` over the quotient `c / b`, which is `a` once the
-    /// `where` clause defines `c` as `a·b`.
+    /// `where` clause defines `c` as `a·b` with `b` nonzero.
     fn quotient(check: &str) -> String {
         format!(
             r#"
-            proto quotient<F: Field>(witness a: F, instance b: F, instance c: F) where c == a * b {{
+            proto quotient<F: Field>(witness a: F, instance b: F, instance c: F, witness b_inv: F) where c == a * b && b * b_inv == 1 {{
                 t <- a;
                 verify({check})
             }}"#
@@ -1400,18 +1439,106 @@ mod tests {
     }
 
     #[test]
-    fn a_check_over_a_quotient_by_a_scalar_is_complete() {
-        let result = from_input(&dag_of(&quotient("c / b == t"))).run();
+    fn a_check_over_a_quotient_by_a_nonzero_scalar_is_complete() {
+        let result = completeness_of(&quotient("c / b == t"));
         assert!(result.is_ok(), "{result:?}");
     }
 
     #[test]
     fn a_wrong_check_over_a_quotient_by_a_scalar_stays_incomplete() {
-        let result = from_input(&dag_of(&quotient("c / b == t + 1"))).run();
+        let result = completeness_of(&quotient("c / b == t + 1"));
         assert!(
             matches!(result, Err(AnalysisError::Incomplete(_))),
             "{result:?}"
         );
+    }
+
+    /// A verifier that divides by `c <- challenge<{typ}>`. Its check holds
+    /// even at `c = 0`, where the quotient is 0, so only the divisor's check
+    /// can fail.
+    fn by_challenge(typ: &str) -> String {
+        format!(
+            r#"
+            proto by_challenge<F: Field>(instance a: F) where a == a {{
+                c <- challenge<{typ}>;
+                let t = a / c;
+                verify(t * c * c == a * c)
+            }}"#
+        )
+    }
+
+    #[test]
+    fn a_quotient_by_a_challenge_is_incomplete() {
+        let result = completeness_of(&by_challenge("F"));
+        assert!(
+            matches!(result, Err(AnalysisError::Incomplete(_))),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_quotient_by_a_nonzero_challenge_is_complete() {
+        let result = completeness_of(&by_challenge("F*"));
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn a_divisor_that_vanishes_at_one_challenge_is_incomplete() {
+        // `c − 1` is zero at `c = 1`, although `c` is nonzero.
+        let result = completeness_of(
+            r#"
+            proto at_one<F: Field>(instance a: F) where a == a {
+                c <- challenge<F*>;
+                let t = (c * c - 1) / (c - 1);
+                verify(t * (c - 1) == c * c - 1)
+            }"#,
+        );
+        assert!(
+            matches!(result, Err(AnalysisError::Incomplete(_))),
+            "{result:?}"
+        );
+    }
+
+    /// A prover that divides by its own `random<{typ}>`. The check holds even
+    /// at `r = 0`, so only the divisor's check can fail.
+    fn prover_division(typ: &str) -> String {
+        format!(
+            r#"
+            proto prover_division<F: Field>(witness x: F, instance y: F) where y == x {{
+                let r = random<{typ}>;
+                m <- x / r;
+                s <- r;
+                verify(m * s * s == y * s)
+            }}"#
+        )
+    }
+
+    #[test]
+    fn a_prover_that_may_divide_by_zero_is_incomplete() {
+        let result = completeness_of(&prover_division("F"));
+        assert!(
+            matches!(result, Err(AnalysisError::Incomplete(_))),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_prover_that_divides_by_a_nonzero_random_is_complete() {
+        let result = completeness_of(&prover_division("F*"));
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn a_division_in_the_relation_makes_its_divisor_nonzero() {
+        // The relation holds only for `z ≠ 0`, so `y·z` is `x`.
+        let result = completeness_of(
+            r#"
+            proto relation_division<F: Field>(witness x: F, instance z: F, instance y: F) where y == x / z {
+                t <- x;
+                verify(t == y * z)
+            }"#,
+        );
+        assert!(result.is_ok(), "{result:?}");
     }
 
     /// `verify(check)` with the group identity written `0 * g`, which folds to a constant.

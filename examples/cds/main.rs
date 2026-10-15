@@ -1,3 +1,4 @@
+use ark_ff::Field;
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, ArkGroupOps, Value};
 use lang::id::Vid;
@@ -55,6 +56,11 @@ fn make_inputs(_sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_38
         }
     }
 
+    let distinct_inv =
+        (eval_points_vec[0] * eval_points_vec[1] * (eval_points_vec[1] - eval_points_vec[0]))
+            .inverse()
+            .unwrap();
+
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("g".to_string()), Value::g1(g)),
         (Vid("keys".to_string()), Value::vec_g1_affine(pk_vec)),
@@ -69,6 +75,7 @@ fn make_inputs(_sizes: &Ctx<lang::id::Tid, usize>) -> Ctx<Vid, Value<ArkBls12_38
         (Vid("m2_sim".to_string()), Value::vec_scalar(m2_sim_vec)),
         (Vid("u_points".to_string()), Value::vec_scalar(u_points_vec)),
         (Vid("u_evals".to_string()), Value::vec_scalar(u_evals_vec)),
+        (Vid("distinct_inv".to_string()), Value::Scalar(distinct_inv)),
     ])
 }
 

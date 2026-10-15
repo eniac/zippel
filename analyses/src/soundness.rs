@@ -340,6 +340,10 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         }
         let mut rel_locals = extract_locals(&grev_builder, &rel_tc);
         let mut grev_rel_result = grev_builder.build(rel_tc.clone());
+        // The relation's divisor checks are part of the relation.
+        grev_rel_result
+            .generating_set
+            .append(&mut grev_rel_result.check_polys);
         rel_locals.substitute_definitions();
         grev_rel_result.substitute_definitions();
 
@@ -737,6 +741,37 @@ mod tests {
             Ok(()) => {}
             Err(e) => panic!("analyze() failed: {:?}", e),
         }
+    }
+
+    /// Schnorr for `g·x = h·k`, under the relation `h == g·(x / k)`, which
+    /// holds only for `k ≠ 0`; the verifier checks `check`.
+    fn relation_division(check: &str) -> String {
+        format!(
+            r#"
+            proto relation_division<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G, instance k: F) where h == g * (x / k) {{
+                let r = random<F>;
+                u <- g*r;
+                c <- challenge<F*>;
+                z <- r + x*c;
+                verify({check})
+            }}"#
+        )
+    }
+
+    #[test]
+    fn a_relation_divisor_the_verifier_does_not_check_is_unsound() {
+        // At `k = 0` the verifier accepts, but no witness satisfies the relation.
+        let result = analyze_soundness(&relation_division("g*z == u + h*k*c"), vec![2]);
+        assert!(
+            matches!(result, Err(AnalysisError::ExtractorInvalid(_))),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_relation_divisor_the_verifier_divides_by_is_sound() {
+        let result = analyze_soundness(&relation_division("g*(z / k) == u / k + h*c"), vec![2]);
+        assert!(result.is_ok(), "{result:?}");
     }
 
     #[test]

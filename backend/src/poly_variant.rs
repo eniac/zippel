@@ -840,6 +840,10 @@ impl<F: Field> PolyVariant<F> {
     where
         F: PrimeField,
     {
+        // ark-poly returns `(0, 0)` for a zero dividend before checking the divisor.
+        if p2.is_zero() {
+            return Err(PolyError::DivisionByZero { v: divisor.clone() });
+        }
         DenseOrSparsePolynomial::from(p1)
             .divide_with_q_and_r(&DenseOrSparsePolynomial::from(p2))
             .ok_or_else(|| PolyError::DivisionByZero { v: divisor.clone() })

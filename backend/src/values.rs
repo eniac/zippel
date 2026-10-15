@@ -3327,6 +3327,24 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Whether dividing by this value divides by zero: it is zero, or an entry
+    /// of it is.
+    pub fn has_zero(&self) -> bool {
+        match self {
+            Value::VecScalar(a) => a.par_iter().any(Zero::is_zero),
+            Value::VecIndex(a) => a.par_iter().any(|a| *a == 0),
+            Value::Vec(a) => a.par_iter().any(Self::has_zero),
+            _ => self.is_zero(),
+        }
+    }
+
+    /// Whether two entries of this scalar or index vector are equal, so that
+    /// interpolating at them divides by zero.
+    pub fn has_duplicate(&self) -> bool {
+        let mut seen = std::collections::HashSet::new();
+        !value_scalars::<C>(self).iter().all(|x| seen.insert(*x))
+    }
+
     /// Builds a vector value from element values, collapsing to the flat
     /// homogeneous representation whenever the elements share a base type.
     ///
@@ -4278,6 +4296,20 @@ mod value_tests {
         let one = scalar(1);
         let a_inv = one.clone() / a.clone();
         assert_eq!(a * a_inv, one);
+    }
+
+    #[test]
+    #[should_panic(expected = "Division by zero")]
+    fn test_scalar_div_by_zero_aborts() {
+        let _ = scalar(1) / scalar(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Division by zero")]
+    fn test_vec_scalar_div_by_a_zero_entry_aborts() {
+        let a = TestValue::vec_scalar(vec![Fr::from(1u64), Fr::from(2u64)]);
+        let b = TestValue::vec_scalar(vec![Fr::from(1u64), Fr::from(0u64)]);
+        let _ = a / b;
     }
 
     #[test]
