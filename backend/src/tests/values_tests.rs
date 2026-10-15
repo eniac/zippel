@@ -86,12 +86,12 @@ fn coef_eval_test() {
     let mut rng = test_rng();
     let coeffs = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(8));
     let poly = coeffs.value_poly();
-    let recovered_poly = poly.value_fft().value_interpolate(None);
+    let recovered_poly = poly.value_fft().value_interpolate(None).unwrap();
     assert_deq!(&recovered_poly, &poly);
 
     // Vec(F, 8) -[ifft]-> Poly(F, 1, 8) -[fft]-> Vec(F, 8) round-trips.
     let a = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(8));
-    let c = a.value_interpolate(None).value_fft();
+    let c = a.value_interpolate(None).unwrap().value_fft();
     assert_deq!(&c, &a);
 
     // Poly(F, 1, 7) -[fft]-> Vec(F, 8) -[ifft]-> Poly(F, 1, 7) round-trips.
@@ -99,7 +99,7 @@ fn coef_eval_test() {
     // of two — FFT then produces 8 evaluations and IFFT recovers exactly 8
     // coefficients without padding.
     let p = Value::<TestConfig>::random(&mut rng, &ATyp::uni(7));
-    let p2 = p.value_fft().value_interpolate(None);
+    let p2 = p.value_fft().value_interpolate(None).unwrap();
     assert_deq!(&p2.value_coef(), &p.value_coef());
 }
 
@@ -134,7 +134,7 @@ fn interpolate_with_points_uses_general_interpolation() {
             .collect(),
     );
 
-    let recovered_poly = evals.value_interpolate(Some(&points));
+    let recovered_poly = evals.value_interpolate(Some(&points)).unwrap();
     assert_deq!(&recovered_poly, &poly);
 }
 
@@ -787,7 +787,7 @@ fn test_remainder_operations() {
     // value_rem computes self % other and stores in other
     let a = Value::<TestConfig>::Index(10);
     let mut b = Value::<TestConfig>::Index(3);
-    a.value_rem(&mut b);
+    a.value_rem(&mut b).unwrap();
     assert_deq!(&b, &Value::<TestConfig>::Index(1));
 
     // Using % operator with references
@@ -1296,11 +1296,11 @@ fn test_poly_vector_reduction_pbt() {
         assert_eq!(internal_vec.len(), len);
 
         // Test reduction under Addition
-        let reduced_add = vec_val.clone().value_reduce(lang::ast::BinOp::Add);
+        let reduced_add = vec_val.clone().value_reduce(lang::ast::BinOp::Add).unwrap();
         assert!(matches!(reduced_add, Value::Poly(_)));
 
         // Test reduction under Multiplication
-        let reduced_mul = vec_val.value_reduce(lang::ast::BinOp::Mul);
+        let reduced_mul = vec_val.value_reduce(lang::ast::BinOp::Mul).unwrap();
         assert!(matches!(reduced_mul, Value::Poly(_)));
 
         Ok(())

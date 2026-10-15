@@ -5,9 +5,9 @@
 
 #[cfg(test)]
 mod op_construction {
-    use crate::tests::test_helpers::*;
-    use crate::{GOp, Op};
+    use crate::eval::graph_tests::helpers::*;
     use backend::{ATyp, Value};
+    use graph::{GOp, Op};
     use lang::ast::BinOp;
 
     type C = TestConfig;
@@ -251,13 +251,146 @@ mod op_construction {
         }
     }
 
+    /// Distributing `-` over a vector keeps the operand order, for a scalar,
+    /// flat or boxed constant.
     #[test]
-    #[should_panic(expected = "Division by zero")]
+    fn test_op_sub_distributes_in_order() {
+        use crate::eval::eval_op;
+        use graph::Ref;
+        use petgraph::graph::NodeIndex;
+
+        let x = || Op::Ref(Ref(NodeIndex::new(0)), ATyp::scalar());
+        let mut env = std::collections::HashMap::new();
+        env.insert(Ref(NodeIndex::new(0)), scalar::<C>(10));
+        let run =
+            |op: GOp<C>| eval_op(&op, &env, &mut rand::thread_rng(), &mut Vec::new()).unwrap();
+        let typ = ATyp::vec_scalar(1);
+        let eight = Value::vec_scalar(vec![scalar::<C>(8).into_scalar()]);
+        let minus_eight = Value::vec_scalar(vec![-scalar::<C>(8).into_scalar()]);
+        for two in [
+            scalar::<C>(2),
+            Value::vec_scalar(vec![scalar::<C>(2).into_scalar()]),
+            Value::Vec(vec![scalar::<C>(2)].into()),
+        ] {
+            let x_minus_2 = Op::sub(Op::vec(vec![x()]), Op::Value(two.clone()), typ.clone());
+            assert!(values_equal(&run(x_minus_2), &eight), "[x] - {two}");
+            let two_minus_x = Op::sub(Op::Value(two.clone()), Op::vec(vec![x()]), typ.clone());
+            assert!(values_equal(&run(two_minus_x), &minus_eight), "{two} - [x]");
+        }
+    }
+
+    /// `+` and `*` distribute over a vector with a scalar, flat or boxed
+    /// constant.
+    #[test]
+    fn test_op_add_mul_distribute_over_any_constant() {
+        use crate::eval::eval_op;
+        use graph::Ref;
+        use petgraph::graph::NodeIndex;
+
+        let x = || Op::Ref(Ref(NodeIndex::new(0)), ATyp::scalar());
+        let mut env = std::collections::HashMap::new();
+        env.insert(Ref(NodeIndex::new(0)), scalar::<C>(10));
+        let run =
+            |op: GOp<C>| eval_op(&op, &env, &mut rand::thread_rng(), &mut Vec::new()).unwrap();
+        let typ = ATyp::vec_scalar(1);
+        let twelve = Value::vec_scalar(vec![scalar::<C>(12).into_scalar()]);
+        let twenty = Value::vec_scalar(vec![scalar::<C>(20).into_scalar()]);
+        for two in [
+            scalar::<C>(2),
+            Value::vec_scalar(vec![scalar::<C>(2).into_scalar()]),
+            Value::Vec(vec![scalar::<C>(2)].into()),
+        ] {
+            for (l, r) in [
+                (Op::vec(vec![x()]), Op::Value(two.clone())),
+                (Op::Value(two.clone()), Op::vec(vec![x()])),
+            ] {
+                let sum = run(Op::add(l.clone(), r.clone(), typ.clone()));
+                assert!(values_equal(&sum, &twelve), "{two} + x");
+                let product = run(Op::mul(l, r, typ.clone()));
+                assert!(values_equal(&product, &twenty), "{two} * x");
+            }
+        }
+    }
+
+    /// `0 / x` is not folded to `0`, so a zero `x` fails the run.
+    #[test]
+    fn test_op_zero_over_x_is_not_folded() {
+        use crate::eval::{error::EvalError, eval_op};
+        use graph::Ref;
+        use petgraph::graph::NodeIndex;
+
+        let x = Op::Ref(Ref(NodeIndex::new(0)), ATyp::scalar());
+        let op: GOp<C> = Op::div(Op::Value(zero_scalar::<C>()), x, ATyp::scalar());
+        assert!(matches!(op, Op::Bin(BinOp::Div, _, _, _)));
+        let mut env = std::collections::HashMap::new();
+        env.insert(Ref(NodeIndex::new(0)), zero_scalar::<C>());
+        let result = eval_op(&op, &env, &mut rand::thread_rng(), &mut Vec::new());
+        assert!(matches!(result, Err(EvalError::DivisionByZero)));
+    }
+
+    /// Distributing `/` and `%` over a vector keeps the operand order.
+    #[test]
+    fn test_op_div_rem_distribute_in_order() {
+        use crate::eval::eval_op;
+        use graph::Ref;
+        use lang::ast::CRange;
+        use petgraph::graph::NodeIndex;
+
+        let x = Op::Ref(Ref(NodeIndex::new(0)), ATyp::scalar());
+        let fin = || ATyp::fin(CRange::singleton(10));
+        let i = Op::Ref(Ref(NodeIndex::new(1)), fin());
+        let mut env = std::collections::HashMap::new();
+        env.insert(Ref(NodeIndex::new(0)), scalar::<C>(6));
+        env.insert(Ref(NodeIndex::new(1)), Value::Index(6));
+        let run =
+            |op: GOp<C>| eval_op(&op, &env, &mut rand::thread_rng(), &mut Vec::new()).unwrap();
+
+        let x_over_2 = Op::div(
+            Op::vec(vec![x.clone()]),
+            Op::Value(scalar::<C>(2)),
+            ATyp::vec_scalar(1),
+        );
+        assert!(values_equal(
+            &run(x_over_2),
+            &Value::vec_scalar(vec![scalar::<C>(3).into_scalar()])
+        ));
+        let twelve_over_x = Op::div(
+            Op::Value(scalar::<C>(12)),
+            Op::vec(vec![x]),
+            ATyp::vec_scalar(1),
+        );
+        assert!(values_equal(
+            &run(twelve_over_x),
+            &Value::vec_scalar(vec![scalar::<C>(2).into_scalar()])
+        ));
+        let vec_fin = ATyp::Vec(Box::new(fin()), 1);
+        let i_mod_4 = Op::rem(
+            Op::vec(vec![i.clone()]),
+            Op::Value(Value::Index(4)),
+            vec_fin.clone(),
+        );
+        assert_eq!(run(i_mod_4), Value::VecIndex(vec![2].into()));
+        let nine_mod_i = Op::rem(Op::Value(Value::Index(9)), Op::vec(vec![i]), vec_fin);
+        assert_eq!(run(nine_mod_i), Value::VecIndex(vec![3].into()));
+    }
+
+    /// A constant division by zero is left in the graph, and evaluating it
+    /// reports the error.
+    #[test]
     fn test_op_div_by_zero() {
+        use crate::eval::{error::EvalError, eval_op};
         let v = scalar::<C>(42);
         let zero = zero_scalar::<C>();
 
-        let _op: GOp<C> = Op::div(Op::Value(v), Op::Value(zero), ATyp::scalar());
+        let op: GOp<C> = Op::div(Op::Value(v), Op::Value(zero), ATyp::scalar());
+        assert!(matches!(op, Op::Bin(BinOp::Div, _, _, _)));
+        let result = eval_op(
+            &op,
+            &std::collections::HashMap::new(),
+            &mut rand::thread_rng(),
+            &mut Vec::new(),
+        );
+        assert!(matches!(result, Err(EvalError::DivisionByZero)));
     }
 
     // ============================================================================
@@ -368,9 +501,9 @@ mod op_construction {
 
 #[cfg(test)]
 mod op_integration {
-    use crate::Op;
-    use crate::tests::test_helpers::*;
+    use crate::eval::graph_tests::helpers::*;
     use backend::{ATyp, Value};
+    use graph::Op;
 
     type C = TestConfig;
 
@@ -604,13 +737,13 @@ mod op_integration {
     const BIG: &str = "34545435435435435435435";
 
     /// Lowers `src` and runs its function `name` on `inputs`.
-    fn run<B: crate::HasOpFactory>(
+    fn run<B: graph::HasOpFactory>(
         src: &str,
         name: &str,
         inputs: share::Ctx<lang::id::Vid, Value<B>>,
     ) -> Value<B> {
         let module = parse_and_concretize(src, &share::Ctx::new());
-        let dags = crate::UDags::<B>::from_module(module).unwrap();
+        let dags = graph::UDags::<B>::from_module(module).unwrap();
         let dag = dags
             .functions()
             .into_iter()
@@ -643,7 +776,7 @@ mod op_integration {
         );
     }
 
-    fn literal_modulo_field<B: crate::HasOpFactory>(residue: u64) {
+    fn literal_modulo_field<B: graph::HasOpFactory>(residue: u64) {
         let src = format!("fn f<F: Field>() -> F {{ {BIG} }}");
         assert_field::<B>(&run::<B>(&src, "f", share::Ctx::new()), f::<B>(residue));
     }
@@ -734,8 +867,8 @@ mod op_integration {
             &share::Ctx::new(),
         );
         assert!(matches!(
-            crate::UDags::<B>::from_module(module),
-            Err(crate::GraphError::NonPolynomialFun(..))
+            graph::UDags::<B>::from_module(module),
+            Err(graph::GraphError::NonPolynomialFun(..))
         ));
 
         // A polynomial plus a literal keeps its polynomial type even when the sum folds.
@@ -754,7 +887,7 @@ mod op_integration {
                        verify(s.a == 1)
                    }";
         let module = parse_and_concretize(src, &share::Ctx::new());
-        let dags = crate::UDags::<B>::from_module(module).unwrap();
+        let dags = graph::UDags::<B>::from_module(module).unwrap();
         let dag = dags.protocols()[0];
         let mut inputs = share::Ctx::new();
         inputs.insert(

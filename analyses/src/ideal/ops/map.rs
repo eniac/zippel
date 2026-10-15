@@ -2,9 +2,7 @@
 //! `body_to_poly`, `body_child`, `rebuild_body_op`, `explode_domain`,
 //! `const_eval_int`.
 
-use std::collections::HashMap;
-
-use graph::{GOp, HOp, Op, Ref, mk};
+use graph::{GOp, HOp, Op, mk};
 use lang::ast::BinOp;
 
 use backend::op::HasOpFactory;
@@ -30,22 +28,69 @@ fn const_eval_int<C: ArkConfig>(op: &HOp<C>, loop_vals: &[Option<Value<C>>]) -> 
     if !(t.is_fin() || t.is_unit()) {
         return None;
     }
-    // If the op references a loop level whose value is None, we can't eval.
-    for (level, val) in loop_vals.iter().enumerate() {
-        if val.is_none() && graph::eval::op_has_loop_param(op.get(), level) {
-            return None;
+    const_fold(op.get(), &mut loop_vals.to_vec())
+}
+
+/// The value of `op` if it is built only from constants and loop indices bound
+/// in `loop_vals`; `None` otherwise (a `Ref`, a sample, an unbound index, a
+/// division by zero, ...).
+fn const_fold<C: ArkConfig>(
+    op: &GOp<C>,
+    loop_vals: &mut Vec<Option<Value<C>>>,
+) -> Option<Value<C>> {
+    match op {
+        Op::Value(v) => Some(v.clone()),
+        Op::LoopParam(level, _) => loop_vals.get(*level)?.clone(),
+        Op::Bin(binop, a, b, _) => {
+            let a = const_fold(a, loop_vals)?;
+            a.value_bin(*binop, const_fold(b, loop_vals)?).ok()
         }
+        Op::Vec(ops) => ops
+            .iter()
+            .map(|o| const_fold(o, loop_vals))
+            .collect::<Option<Vec<_>>>()
+            .map(Value::value_vec),
+        Op::Record(fields) => {
+            let mut out = Ctx::new();
+            for (name, child) in fields.iter() {
+                out.insert(name, &const_fold(child, loop_vals)?);
+            }
+            Some(Value::Record(out))
+        }
+        Op::Proj(record, field, _) => match const_fold(record, loop_vals)? {
+            Value::Record(r) => r.get(field).cloned(),
+            _ => None,
+        },
+        Op::Ram(v, idx) => Some(const_fold(v, loop_vals)?.ram_ref(&const_fold(idx, loop_vals)?)),
+        Op::Reduce(binop, v) => const_fold(v, loop_vals)?.value_reduce(*binop).ok(),
+        Op::Map(domain, body) => {
+            let values = const_fold_each(domain, body, loop_vals)?;
+            Some(Value::value_vec(values))
+        }
+        Op::ReduceMap(binop, domain, body) => {
+            let values = const_fold_each(domain, body, loop_vals)?;
+            Value::value_vec(values).value_reduce(*binop).ok()
+        }
+        _ => None,
     }
-    // All referenced levels have concrete values; fill None entries with a
-    // dummy (never accessed) so the params vector has the right length.
-    let params: Vec<Value<C>> = loop_vals
-        .iter()
-        .map(|v| v.clone().unwrap_or(Value::Index(0)))
-        .collect();
-    let env: HashMap<Ref, Value<C>> = HashMap::new();
-    let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(0);
-    let mut check_sink = Vec::new();
-    graph::eval::eval_op_with_loop_params(op.get(), &env, &mut rng, &params, &mut check_sink).ok()
+}
+
+/// `body` folded once per element of `domain`, with the element bound as the
+/// innermost loop index.
+fn const_fold_each<C: ArkConfig>(
+    domain: &HOp<C>,
+    body: &HOp<C>,
+    loop_vals: &mut Vec<Option<Value<C>>>,
+) -> Option<Vec<Value<C>>> {
+    let elements = const_fold(domain, loop_vals)?.into_elements();
+    let mut values = Vec::with_capacity(elements.len());
+    for element in elements {
+        loop_vals.push(Some(element));
+        let value = const_fold(body, loop_vals);
+        loop_vals.pop();
+        values.push(value?);
+    }
+    Some(values)
 }
 
 /// Materialize an inline Map/ReduceMap body op-tree into registered

@@ -10,9 +10,9 @@
 
 #[cfg(test)]
 mod scalar_field_properties {
-    use crate::Op;
-    use crate::tests::test_helpers::*;
+    use crate::eval::graph_tests::helpers::*;
     use backend::ATyp;
+    use graph::Op;
 
     type C = TestConfig;
 
@@ -759,9 +759,9 @@ mod scalar_field_properties {
 
 #[cfg(test)]
 mod vector_properties {
-    use super::super::test_helpers::*;
-    use crate::Op;
+    use crate::eval::graph_tests::helpers::*;
     use backend::{ATyp, Value};
+    use graph::Op;
 
     type C = TestConfig;
 
@@ -986,9 +986,9 @@ mod vector_properties {
 
 #[cfg(test)]
 mod complex_properties {
-    use super::super::test_helpers::*;
-    use crate::Op;
+    use crate::eval::graph_tests::helpers::*;
     use backend::ATyp;
+    use graph::Op;
 
     type C = TestConfig;
 

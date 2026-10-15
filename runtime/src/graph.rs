@@ -3,8 +3,8 @@
 //! scheduler reads on every step, computed once here: each node's distinct
 //! successors, the nodes ready at the start, the input marker and the checks.
 
+use crate::eval::error::EvalError;
 use backend::{ArkConfig, Value};
-use graph::eval::error::EvalError;
 use graph::{Dag, GOp, Node, Op, UDag};
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
@@ -190,7 +190,7 @@ impl<C: ArkConfig> MutexGraph<C> {
         };
         let env = state.inbox.take_all();
         let mut checks = Vec::new();
-        let value = match graph::eval::eval_op(op, &env, &mut ThreadRng::default(), &mut checks) {
+        let value = match crate::eval::eval_op(op, &env, &mut ThreadRng::default(), &mut checks) {
             Err(EvalError::DivisionByZero) => return Err(RuntimeError::DivisionByZero),
             value => {
                 value.expect("runtime invariant violation: eval_op failed on a scheduled node")

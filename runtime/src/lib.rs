@@ -10,6 +10,8 @@
 
 /// Typed failures raised while validating inputs or executing a graph.
 pub mod error;
+/// Interpreter for individual graph operations over `Value<C>`.
+pub mod eval;
 /// The executable graph: per-node run state and precomputed scheduling
 /// tables.
 pub mod graph;

@@ -1,4 +1,4 @@
-use crate::{ABase, ATyp, ArkConfig, ArkScalarOps, Value};
+use crate::{ABase, ATyp, ArkConfig, ArkScalarOps, DivisionByZero, Value};
 use lang::ast::BinOp;
 use lang::ast::range::CRange;
 use lang::id::Vid;
@@ -133,6 +133,16 @@ pub trait HasOpFactory: ArkConfig {
 /// Construct a hash-consed operation
 pub fn mk<C: HasOpFactory>(op: GOp<C>) -> HOp<C> {
     C::op_factory().write().unwrap().mk(op)
+}
+
+/// The entries a constant contributes, one per entry of an `n`-entry vector:
+/// its own entries if it is a vector, otherwise itself `n` times.
+fn constant_entries<C: ArkConfig>(v: Value<C>, n: usize) -> Vec<Value<C>> {
+    if v.is_vec() {
+        v.into_elements()
+    } else {
+        vec![v; n]
+    }
 }
 
 impl Ref {
@@ -633,13 +643,13 @@ impl<C: HasOpFactory> GOp<C> {
             // v1 + v2
             (Op::Value(a), Op::Value(b)) => Op::Value(a + b),
             // e + v = v + e
-            (Op::Vec(l), Op::Value(mut v)) | (Op::Value(mut v), Op::Vec(l)) => {
+            (Op::Vec(l), Op::Value(v)) | (Op::Value(v), Op::Vec(l)) => {
                 let (t, _) = typ.clone().into_vec();
+                let entries = constant_entries(v, l.len());
                 Op::vec(
-                    v.into_vec_mut()
-                        .iter_mut()
-                        .zip(l.iter())
-                        .map(|(v, l)| Op::add(Op::Value(v.clone()), l.get().clone(), t.clone()))
+                    l.into_iter()
+                        .zip(entries)
+                        .map(|(l, v)| Op::add(Op::Value(v), l.get().clone(), t.clone()))
                         .collect(),
                 )
             }
@@ -683,14 +693,25 @@ impl<C: HasOpFactory> GOp<C> {
             (Op::Value(a), Op::Value(b)) if b.is_zero() && a.typ() == typ => Op::Value(a),
             // v1 - v2
             (Op::Value(a), Op::Value(b)) => Op::Value(a - b),
-            // e - v = v - e
-            (Op::Vec(l), Op::Value(mut v)) | (Op::Value(mut v), Op::Vec(l)) => {
+            // [e0, ..., en] - v = [e0 - v0, e1 - v1, ..., en - vn]
+            (Op::Vec(l), Op::Value(v)) => {
                 let (t, _) = typ.clone().into_vec();
+                let entries = constant_entries(v, l.len());
                 Op::vec(
-                    v.into_vec_mut()
-                        .iter_mut()
-                        .zip(l.iter())
-                        .map(|(v, l)| Op::sub(Op::Value(v.clone()), l.get().clone(), t.clone()))
+                    l.into_iter()
+                        .zip(entries)
+                        .map(|(l, v)| Op::sub(l.get().clone(), Op::Value(v), t.clone()))
+                        .collect(),
+                )
+            }
+            // v - [e0, ..., en] = [v0 - e0, v1 - e1, ..., vn - en]
+            (Op::Value(v), Op::Vec(l)) => {
+                let (t, _) = typ.clone().into_vec();
+                let entries = constant_entries(v, l.len());
+                Op::vec(
+                    l.into_iter()
+                        .zip(entries)
+                        .map(|(l, v)| Op::sub(Op::Value(v), l.get().clone(), t.clone()))
                         .collect(),
                 )
             }
@@ -737,23 +758,15 @@ impl<C: HasOpFactory> GOp<C> {
             // v1 * v2 = v1.mul(v2)
             (Op::Value(a), Op::Value(b)) => Op::Value(a * b),
             // [e0, ..., en] * v = [e0 * v0, e1 * v1, ..., en * vn]
-            (Op::Vec(l), Op::Value(mut v)) | (Op::Value(mut v), Op::Vec(l)) => {
+            (Op::Vec(l), Op::Value(v)) | (Op::Value(v), Op::Vec(l)) => {
                 let (t, _) = typ.clone().into_vec();
-                if v.is_vec() {
-                    Op::vec(
-                        v.into_vec_mut()
-                            .iter_mut()
-                            .zip(l.iter())
-                            .map(|(v, l)| Op::mul(Op::Value(v.clone()), l.get().clone(), t.clone()))
-                            .collect(),
-                    )
-                } else {
-                    Op::vec(
-                        l.into_iter()
-                            .map(|l| Op::mul(Op::Value(v.clone()), l.get().clone(), t.clone()))
-                            .collect(),
-                    )
-                }
+                let entries = constant_entries(v, l.len());
+                Op::vec(
+                    l.into_iter()
+                        .zip(entries)
+                        .map(|(l, v)| Op::mul(Op::Value(v), l.get().clone(), t.clone()))
+                        .collect(),
+                )
             }
             // [e0, e1, ... en] * [e0', e1', ... en'] = [e0 * e0', e1 * e1', ... en * en']
             (Op::Vec(l), Op::Vec(r)) => {
@@ -772,37 +785,53 @@ impl<C: HasOpFactory> GOp<C> {
 
     /// Division smart constructor.
     ///
-    /// Folds `0 / v`, `v / 1`, and constant pairs, and distributes over `Op::Vec`.
+    /// Folds `v / 1` and constant pairs, and distributes over `Op::Vec`. A
+    /// division that may be by zero is not folded, so running it reports the
+    /// error: neither a constant zero divisor nor `0 / v`.
     ///
     /// # Panics
-    /// Panics on a syntactically zero divisor, and if `typ` is not a vector type while
-    /// either operand is a vector.
+    /// Panics if `typ` is not a vector type while either operand is a vector.
     pub fn div(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
-            (_, Op::Value(b)) if b.is_zero() => panic!("UncaughtError: Division by zero"),
-            (Op::Value(a), _) if a.is_zero() => Op::zero(&typ),
+            (a, Op::Value(b)) if b.is_zero() => {
+                Op::Bin(BinOp::Div, mk::<C>(a), mk::<C>(Op::Value(b)), typ)
+            }
             // v / 1 = v, only when `v` already has the result type.
             (a, Op::Value(b)) if b.is_one() && a.typ() == typ => a,
             // v1 / v2
-            (Op::Value(a), Op::Value(b)) => Op::Value(a / b),
-            // [e0, ..., en] / v = [e0 / v0, e1 / v1, ..., en / vn]
-            (Op::Vec(l), Op::Value(mut v)) | (Op::Value(mut v), Op::Vec(l)) => {
-                let (t, _) = typ.clone().into_vec();
-                if v.is_vec() {
-                    Op::vec(
-                        v.into_vec_mut()
-                            .iter_mut()
-                            .zip(l.iter())
-                            .map(|(v, l)| Op::div(Op::Value(v.clone()), l.get().clone(), t.clone()))
-                            .collect(),
-                    )
-                } else {
-                    Op::vec(
-                        l.into_iter()
-                            .map(|l| Op::div(Op::Value(v.clone()), l.get().clone(), t.clone()))
-                            .collect(),
-                    )
+            (Op::Value(a), Op::Value(b)) => {
+                let mut quotient = b.clone();
+                match a.value_div(&mut quotient) {
+                    Ok(()) => Op::Value(quotient),
+                    Err(DivisionByZero) => Op::Bin(
+                        BinOp::Div,
+                        mk::<C>(Op::Value(a)),
+                        mk::<C>(Op::Value(b)),
+                        typ,
+                    ),
                 }
+            }
+            // [e0, ..., en] / v = [e0 / v0, e1 / v1, ..., en / vn]
+            (Op::Vec(l), Op::Value(v)) => {
+                let (t, _) = typ.clone().into_vec();
+                let entries = constant_entries(v, l.len());
+                Op::vec(
+                    l.into_iter()
+                        .zip(entries)
+                        .map(|(l, v)| Op::div(l.get().clone(), Op::Value(v), t.clone()))
+                        .collect(),
+                )
+            }
+            // v / [e0, ..., en] = [v0 / e0, v1 / e1, ..., vn / en]
+            (Op::Value(v), Op::Vec(l)) => {
+                let (t, _) = typ.clone().into_vec();
+                let entries = constant_entries(v, l.len());
+                Op::vec(
+                    l.into_iter()
+                        .zip(entries)
+                        .map(|(l, v)| Op::div(Op::Value(v), l.get().clone(), t.clone()))
+                        .collect(),
+                )
             }
             // [e0, e1, ... en] / [e0', e1', ... en'] = [e0 / e0', e1 / e1', ... en / en']
             (Op::Vec(l), Op::Vec(r)) => {
@@ -832,31 +861,46 @@ impl<C: HasOpFactory> GOp<C> {
     }
 
     /// Remainder smart constructor: folds constant pairs and distributes over `Op::Vec`.
+    /// A constant remainder by zero is not folded, so running it reports the error.
     ///
     /// # Panics
     /// Panics if `typ` is not a vector type while either operand is a vector.
     pub fn rem(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
             // v1 % v2
-            (Op::Value(a), Op::Value(b)) => Op::Value(a % b),
-            // [e0, ..., en] % v = [e0 % v0, e1 % v1, ..., en % vn]
-            (Op::Vec(l), Op::Value(mut v)) | (Op::Value(mut v), Op::Vec(l)) => {
-                let (t, _) = typ.clone().into_vec();
-                if v.is_vec() {
-                    Op::vec(
-                        v.into_vec_mut()
-                            .iter_mut()
-                            .zip(l.iter())
-                            .map(|(v, l)| Op::rem(Op::Value(v.clone()), l.get().clone(), t.clone()))
-                            .collect(),
-                    )
-                } else {
-                    Op::vec(
-                        l.into_iter()
-                            .map(|l| Op::rem(Op::Value(v.clone()), l.get().clone(), t.clone()))
-                            .collect(),
-                    )
+            (Op::Value(a), Op::Value(b)) => {
+                let mut remainder = b.clone();
+                match a.value_rem(&mut remainder) {
+                    Ok(()) => Op::Value(remainder),
+                    Err(DivisionByZero) => Op::Bin(
+                        BinOp::Rem,
+                        mk::<C>(Op::Value(a)),
+                        mk::<C>(Op::Value(b)),
+                        typ,
+                    ),
                 }
+            }
+            // [e0, ..., en] % v = [e0 % v0, e1 % v1, ..., en % vn]
+            (Op::Vec(l), Op::Value(v)) => {
+                let (t, _) = typ.clone().into_vec();
+                let entries = constant_entries(v, l.len());
+                Op::vec(
+                    l.into_iter()
+                        .zip(entries)
+                        .map(|(l, v)| Op::rem(l.get().clone(), Op::Value(v), t.clone()))
+                        .collect(),
+                )
+            }
+            // v % [e0, ..., en] = [v0 % e0, v1 % e1, ..., vn % en]
+            (Op::Value(v), Op::Vec(l)) => {
+                let (t, _) = typ.clone().into_vec();
+                let entries = constant_entries(v, l.len());
+                Op::vec(
+                    l.into_iter()
+                        .zip(entries)
+                        .map(|(l, v)| Op::rem(Op::Value(v), l.get().clone(), t.clone()))
+                        .collect(),
+                )
             }
             // [e0, e1, ... en] % [e0', e1', ... en'] = [e0 % e0', e1 % e1', ... en % en']
             (Op::Vec(l), Op::Vec(r)) => {

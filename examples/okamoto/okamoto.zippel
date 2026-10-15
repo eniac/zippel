@@ -8,7 +8,7 @@ proto pedersen_schnorr<G: Group, F: Scalar<G>>(
     let rx = random<F>;
     let rr = random<F>;
     t <- g * rx + h * rr;
-    c <- challenge<F*>;
+    c <- challenge<F>;
     sx <- rx + x * c;
     sr <- rr + r * c;
     verify(g * sx + h * sr == t + comm * c)

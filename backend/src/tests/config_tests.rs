@@ -27,11 +27,11 @@ fn vec_div_agrees_with_scalar_div() {
         .collect();
 
     let mut quotient = f2.clone();
-    <FOps as ArkScalarOps<Fr>>::vec_div(&f1, &mut quotient);
+    <FOps as ArkScalarOps<Fr>>::vec_div(&f1, &mut quotient).unwrap();
 
     let mut expected = f2.clone();
     for (a, b) in f1.iter().zip(expected.iter_mut()) {
-        <FOps as ArkScalarOps<Fr>>::div(a, b);
+        <FOps as ArkScalarOps<Fr>>::div(a, b).unwrap();
     }
     assert_eq!(quotient, expected);
 

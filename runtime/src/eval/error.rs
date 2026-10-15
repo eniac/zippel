@@ -1,8 +1,8 @@
-use crate::Ref;
+use backend::Ref;
 use thiserror::Error;
 
 /// Failure raised while constant-folding / interpreting a DAG node outside the
-/// full `runtime` engine (see `graph::eval`).
+/// full `runtime` engine (see `runtime::eval`).
 ///
 /// These are invariant violations in the IR or unsupported value shapes, not
 /// user-facing type errors — those are reported by `lang`'s `infer()`.
@@ -37,4 +37,10 @@ pub enum EvalError {
     /// Unlike the other variants, the values of a run can cause it.
     #[error("Division by zero")]
     DivisionByZero,
+}
+
+impl From<backend::DivisionByZero> for EvalError {
+    fn from(_: backend::DivisionByZero) -> Self {
+        Self::DivisionByZero
+    }
 }

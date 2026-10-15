@@ -1,6 +1,6 @@
 use crate::optimization::record_selected_eval_interpolation_fallback;
 use crate::poly_variant::check_free_range;
-use crate::{PolyError, PolyVariant};
+use crate::{DivisionByZero, PolyError, PolyVariant};
 use ark_ff::{Field, PrimeField};
 use ark_poly::{DenseUVPolynomial, univariate::DensePolynomial};
 use ark_serialize::{CanonicalSerialize, SerializationError};
@@ -82,13 +82,15 @@ impl SelectedEvalShape {
 /// Coefficients of the polynomial of degree below `points.len()` taking
 /// `evals[i]` at `points[i]` (Lagrange form, `O(n^2)`).
 ///
+/// # Errors
+/// [`DivisionByZero`] if the points are not distinct.
+///
 /// # Panics
-/// Panics if the points are empty, of a different count than `evals`, or not
-/// distinct.
+/// Panics if the points are empty or of a different count than `evals`.
 pub(crate) fn interpolate_univariate_from_points<F: PrimeField>(
     points: &[F],
     evals: &[F],
-) -> Vec<F> {
+) -> Result<Vec<F>, DivisionByZero> {
     let n = points.len();
     assert_eq!(n, evals.len(), "point/eval length mismatch");
     assert!(n > 0, "cannot interpolate empty point set");
@@ -112,16 +114,16 @@ pub(crate) fn interpolate_univariate_from_points<F: PrimeField>(
                 denom *= xi - xj;
             }
         }
-        assert!(!denom.is_zero(), "interpolation points must be distinct");
+        let denom_inv = denom.inverse().ok_or(DivisionByZero)?;
 
         let qi = divide_by_x_minus_a(&prod, xi);
-        let scale = evals[i] * denom.inverse().unwrap();
+        let scale = evals[i] * denom_inv;
         for (k, qk) in qi.iter().enumerate() {
             coeffs[k] += *qk * scale;
         }
     }
 
-    coeffs
+    Ok(coeffs)
 }
 
 fn divide_by_x_minus_a<F: PrimeField>(p: &[F], a: F) -> Vec<F> {
@@ -605,9 +607,10 @@ impl<F: PrimeField> VirtualPolynomial<F> {
             })
             .collect::<Result<_, _>>()?;
 
-        Ok(Self::univariate(interpolate_univariate_from_points(
-            &points, &evals,
-        )))
+        Ok(Self::univariate(
+            interpolate_univariate_from_points(&points, &evals)
+                .expect("the points 0..=degree are distinct"),
+        ))
     }
 
     /// The univariate polynomial with coefficients `coeffs`, declared as
@@ -738,6 +741,7 @@ impl<F: PrimeField> VirtualPolynomial<F> {
             })
             .collect();
         interpolate_univariate_from_points(&points, &evals)
+            .expect("the points 0..=degree are distinct")
     }
 
     /// Sum a batch of univariate virtual polynomials into one dense
@@ -1550,7 +1554,7 @@ mod tests {
     /// The polynomial of degree below `evals.len()` taking `evals[i]` at `i`.
     fn round_from_evals(evals: &[Fr]) -> VirtualPolynomial<Fr> {
         let points: Vec<Fr> = (0..evals.len()).map(|i| Fr::from(i as u64)).collect();
-        VirtualPolynomial::univariate(interpolate_univariate_from_points(&points, evals))
+        VirtualPolynomial::univariate(interpolate_univariate_from_points(&points, evals).unwrap())
     }
 
     /// `Value::eval` picks full evaluation over fixing variables by
@@ -1721,7 +1725,7 @@ mod tests {
                 product.evaluate_mv(&point).unwrap()
             })
             .collect();
-        let mut coeffs = interpolate_univariate_from_points(&points, &evals);
+        let mut coeffs = interpolate_univariate_from_points(&points, &evals).unwrap();
         trim_trailing_zero_coeffs(&mut coeffs);
         coeffs
     }
@@ -1868,7 +1872,9 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let reduced = Value::<ArkBls12_381>::Vec(selected_terms.into()).value_reduce(BinOp::Add);
+        let reduced = Value::<ArkBls12_381>::Vec(selected_terms.into())
+            .value_reduce(BinOp::Add)
+            .unwrap();
         let Value::Poly(round_poly) = reduced else {
             panic!("expected reduced polynomial");
         };
@@ -2035,13 +2041,15 @@ mod tests {
                 ))
             })
             .collect::<Vec<_>>();
-        let reduced_round0 =
-            match Value::<ArkBls12_381>::Vec(reduced_terms.into()).value_reduce(BinOp::Add) {
-                Value::Poly(poly) => (0..=max_degree)
-                    .map(|t| poly.evaluate_uv(&Fr::from(t as u64)))
-                    .collect::<Vec<_>>(),
-                other => panic!("expected reduced polynomial, got {other}"),
-            };
+        let reduced_round0 = match Value::<ArkBls12_381>::Vec(reduced_terms.into())
+            .value_reduce(BinOp::Add)
+            .unwrap()
+        {
+            Value::Poly(poly) => (0..=max_degree)
+                .map(|t| poly.evaluate_uv(&Fr::from(t as u64)))
+                .collect::<Vec<_>>(),
+            other => panic!("expected reduced polynomial, got {other}"),
+        };
         assert_eq!(explicit_round0, reduced_round0);
         let (legacy_round0, _) =
             marginalize::<ArkBls12_381>(&product, num_vars, max_degree, 0, None);

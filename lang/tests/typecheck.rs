@@ -41,7 +41,7 @@ fn well_typed_module_has_no_type_errors() {
 proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g * x {
     let r = random<F>;
     u <- g * r;
-    c <- challenge<F*>;
+    c <- challenge<F>;
     z <- r + x * c;
     verify(g * z == u + h * c)
 }

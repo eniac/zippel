@@ -36,7 +36,7 @@ Zippel also requires nightly Rust; pin the same toolchain Zippel does
 proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g * x {
     let r = random<F>;
     u <- g * r;
-    c <- challenge<F*>;
+    c <- challenge<F>;
     z <- r + x * c;
     verify(g * z == u + h * c)
 }
@@ -46,7 +46,7 @@ A `proto` takes generic curve/field parameters (`G: Group`, `F:
 Scalar<G>`), then its parameters tagged `witness` (secret, known only
 to the prover) or `instance` (public), and an optional `where` clause
 stating the relation being proven. The body samples randomness
-(`random<F>`), draws challenges (`challenge<F*>`), computes messages
+(`random<F>`), draws challenges (`challenge<F>`), computes messages
 with `<-`, and ends in a `verify(...)` check.
 
 ## 3. Write the harness

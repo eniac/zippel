@@ -464,15 +464,18 @@ mod op_additional_tests {
         }
     }
 
+    /// A constant division by zero is not folded, so running it reports the
+    /// error.
     #[test]
-    fn test_op_div_by_zero_panics() {
+    fn test_op_div_by_zero_is_not_folded() {
         let a = GOp::<C>::value(&scalar::<C>(42));
         let zero = GOp::<C>::zero(&ATyp::scalar());
         let typ = ATyp::scalar();
 
-        let result = std::panic::catch_unwind(|| Op::div(a, zero, typ));
-
-        assert!(result.is_err());
+        assert!(matches!(
+            Op::div(a, zero, typ),
+            Op::Bin(BinOp::Div, _, _, _)
+        ));
     }
 
     #[test]

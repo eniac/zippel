@@ -23,8 +23,6 @@ extern crate self as graph;
 mod dep;
 /// Fiat-Shamir domain separation derived from a protocol's instance inputs.
 pub mod domain_separator;
-/// Interpreter for individual graph operations over `Value<C>`.
-pub mod eval;
 mod node;
 
 #[cfg(test)]
@@ -529,15 +527,16 @@ impl<C: ArkConfig, A> Dag<C, A> {
         out
     }
 
-    /// Dep deduplication
-    pub(crate) fn add_edge(&mut self, source: NodeIndex, sink: NodeIndex, edge: Dep) {
+    /// Adds an edge from `source` to `sink`, unless it would be a self-loop.
+    pub fn add_edge(&mut self, source: NodeIndex, sink: NodeIndex, edge: Dep) {
         // If the edge is not a self-loop add it
         if source != sink {
             self.graph.add_edge(source, sink, edge);
         }
     }
 
-    pub(crate) fn add_edges(&mut self, edge_type: DepType, sink: NodeIndex, source: GOp<C>) {
+    /// Adds an `edge_type` edge to `sink` from every node `source` references.
+    pub fn add_edges(&mut self, edge_type: DepType, sink: NodeIndex, source: GOp<C>) {
         source.references().into_iter().for_each(|refer| {
             self.add_edge(refer.node(), sink, Dep(edge_type));
         });
@@ -626,12 +625,6 @@ impl<C: ArkConfig, A> Dag<C, A> {
     /// Iterator over the graph's node indices.
     pub fn node_indices(&self) -> NodeIndices {
         self.graph.node_indices()
-    }
-
-    /// Get reference to internal graph (for testing)
-    #[cfg(test)]
-    pub(crate) fn inner_graph(&self) -> &Graph<Spanned<Node<C, A>>, Dep> {
-        &self.graph
     }
 
     /// The highest node index currently allocated.
@@ -1422,6 +1415,11 @@ impl<C: ArkConfig, A> Dags<C, A> {
     /// Whether the collection holds no DAGs.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    /// The DAGs, in declaration order.
+    pub fn iter(&self) -> std::slice::Iter<'_, Dag<C, A>> {
+        self.0.iter()
     }
 
     /// Finds the protocol whose input marker carries `name`.

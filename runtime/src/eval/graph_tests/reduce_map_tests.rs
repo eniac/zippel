@@ -2,10 +2,10 @@
 //! / `Op::LoopParam` and the streaming reduce-map evaluator.
 
 use crate::eval::eval_op;
-use crate::tests::test_helpers::{parse_and_concretize, scalar};
-use crate::{GOp, Op, Ref, UDags, mk};
+use crate::eval::graph_tests::helpers::{parse_and_concretize, scalar};
 use ark_ff::{One, Zero};
 use backend::{ATyp, ArkBls12_381, Value};
+use graph::{GOp, Op, Ref, UDags, mk};
 use lang::ast::BinOp;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -23,7 +23,6 @@ fn parse_and_build(src: &str) -> UDags<B> {
 /// Count op nodes across all graphs matching `pred`.
 fn count_ops<P: Fn(&GOp<B>) -> bool>(graphs: &UDags<B>, pred: P) -> usize {
     graphs
-        .0
         .iter()
         .map(|dag| {
             dag.op_nodes()
@@ -77,7 +76,7 @@ fn generic_reduce_over_map_lowers_to_reduce_map() {
     // Exactly one fused reduce-map with the generic (Unknown) domain fact,
     // whose body references the loop binder; no unrolled Reduce/Map nodes.
     let mut reduce_maps = 0;
-    for dag in graphs.0.iter() {
+    for dag in graphs.iter() {
         for n in dag.op_nodes() {
             let Some(op) = dag[n].op() else {
                 continue;
@@ -114,7 +113,7 @@ fn standalone_map_lowers_to_map_op() {
     let graphs = parse_and_build(src);
 
     let mut maps = 0;
-    for dag in graphs.0.iter() {
+    for dag in graphs.iter() {
         for n in dag.op_nodes() {
             let Some(op) = dag[n].op() else {
                 continue;
@@ -141,7 +140,7 @@ fn nested_map_domain_is_composed_away() {
     let graphs = parse_and_build(src);
 
     let mut found = false;
-    for dag in graphs.0.iter() {
+    for dag in graphs.iter() {
         for n in dag.op_nodes() {
             let Some(op) = dag[n].op() else {
                 continue;
@@ -255,7 +254,7 @@ fn map_eval_doubles_each_element() {
 #[test]
 #[serial]
 fn test_reduce_map_fused_optimization_fires() {
-    use crate::tests::test_helpers::execute_graph;
+    use crate::eval::graph_tests::helpers::execute_graph;
     use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     // A helper function returning the computed round polynomial
@@ -273,7 +272,7 @@ fn test_reduce_map_fused_optimization_fires() {
         }
     "#;
     let graphs = parse_and_build(src);
-    let dag = &graphs.0[0];
+    let dag = &graphs[0];
 
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
@@ -323,7 +322,7 @@ fn test_reduce_map_fused_optimization_fires() {
 #[test]
 #[serial]
 fn test_reduce_map_fused_optimization_skips_non_pow_two() {
-    use crate::tests::test_helpers::execute_graph;
+    use crate::eval::graph_tests::helpers::execute_graph;
     use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     // Domain size 3 is not a power of 2, so the optimization must be skipped,
@@ -342,7 +341,7 @@ fn test_reduce_map_fused_optimization_skips_non_pow_two() {
         }
     "#;
     let graphs = parse_and_build(src);
-    let dag = &graphs.0[0];
+    let dag = &graphs[0];
 
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
@@ -392,7 +391,7 @@ fn test_reduce_map_fused_optimization_skips_non_pow_two() {
 #[test]
 #[serial]
 fn test_reduce_map_fused_optimization_skips_multiplicative() {
-    use crate::tests::test_helpers::execute_graph;
+    use crate::eval::graph_tests::helpers::execute_graph;
     use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     // Multiplicative reduction should not match, so optimization must be skipped,
@@ -411,7 +410,7 @@ fn test_reduce_map_fused_optimization_skips_multiplicative() {
         }
     "#;
     let graphs = parse_and_build(src);
-    let dag = &graphs.0[0];
+    let dag = &graphs[0];
 
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
@@ -461,7 +460,7 @@ fn test_reduce_map_fused_optimization_skips_multiplicative() {
 #[test]
 #[serial]
 fn test_reduce_map_fused_optimization_fallback_on_non_mle() {
-    use crate::tests::test_helpers::execute_graph;
+    use crate::eval::graph_tests::helpers::execute_graph;
     use ark_poly::multivariate::{
         SparsePolynomial as SparseMultivariatePolynomial, SparseTerm as MultiSparseTerm, Term as _,
     };
@@ -486,7 +485,7 @@ fn test_reduce_map_fused_optimization_fallback_on_non_mle() {
         }
     "#;
     let graphs = parse_and_build(src);
-    let dag = &graphs.0[0];
+    let dag = &graphs[0];
 
     let mut inputs = Ctx::new();
 
@@ -540,7 +539,7 @@ fn test_reduce_map_fused_optimization_fallback_on_non_mle() {
 #[test]
 #[serial]
 fn test_reduce_map_fused_optimization_skips_modified_loop_param() {
-    use crate::tests::test_helpers::execute_graph;
+    use crate::eval::graph_tests::helpers::execute_graph;
     use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     // The loop parameter is modified inside the eval call: eval<0>(p, [t + one for t in tail]).
@@ -559,7 +558,7 @@ fn test_reduce_map_fused_optimization_skips_modified_loop_param() {
         }
     "#;
     let graphs = parse_and_build(src);
-    let dag = &graphs.0[0];
+    let dag = &graphs[0];
 
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
@@ -615,7 +614,7 @@ fn test_reduce_map_fused_optimization_skips_modified_loop_param() {
 #[test]
 #[serial]
 fn test_reduce_map_fused_optimization_skips_poly_depending_on_loop_param() {
-    use crate::tests::test_helpers::execute_graph;
+    use crate::eval::graph_tests::helpers::execute_graph;
     use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     // Here, the polynomial being evaluated (which is `p` in the eval expression)
@@ -636,7 +635,7 @@ fn test_reduce_map_fused_optimization_skips_poly_depending_on_loop_param() {
         }
     "#;
     let graphs = parse_and_build(src);
-    let dag = &graphs.0[0];
+    let dag = &graphs[0];
 
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
@@ -699,7 +698,7 @@ fn test_reduce_map_fused_optimization_skips_non_vec_domain() {
 #[test]
 #[serial]
 fn test_reduce_map_fused_optimization_skips_non_canonical_hypercube_domain_with_loop_param() {
-    use crate::tests::test_helpers::execute_graph;
+    use crate::eval::graph_tests::helpers::execute_graph;
     use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     let src = r#"
@@ -714,7 +713,7 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_hypercube_domain_with_
         }
     "#;
     let graphs = parse_and_build(src);
-    let dag = &graphs.0[0];
+    let dag = &graphs[0];
 
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
@@ -765,7 +764,7 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_hypercube_domain_with_
 #[test]
 #[serial]
 fn test_reduce_map_fused_optimization_skips_non_canonical_indices_domain_with_map() {
-    use crate::tests::test_helpers::execute_graph;
+    use crate::eval::graph_tests::helpers::execute_graph;
     use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     let src = r#"
@@ -782,7 +781,7 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_indices_domain_with_ma
         }
     "#;
     let graphs = parse_and_build(src);
-    let dag = &graphs.0[0];
+    let dag = &graphs[0];
 
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
@@ -832,7 +831,7 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_indices_domain_with_ma
 #[test]
 #[serial]
 fn test_reduce_map_fused_optimization_skips_arity_mismatch() {
-    use crate::tests::test_helpers::execute_graph;
+    use crate::eval::graph_tests::helpers::execute_graph;
     use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     // Poly has 3 variables (so 2 tail variables needed).
@@ -853,7 +852,7 @@ fn test_reduce_map_fused_optimization_skips_arity_mismatch() {
         }
     "#;
     let graphs = parse_and_build(src);
-    let dag = &graphs.0[0];
+    let dag = &graphs[0];
 
     let mut inputs = Ctx::new();
     let mut rng = StdRng::seed_from_u64(0);
