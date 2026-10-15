@@ -48,13 +48,13 @@ pub enum Op<C: ArkConfig, R> {
     /// Record with named fields
     Record(Ctx<String, HOp<C>>),
 
-    /// Random element, drawn again on the values it excludes, if any
+    /// Random element, resampled while excluded
     Random(ATyp, Option<OpExclusion<C>>),
 
     /// Billinear pairing
     Pair(HOp<C>, HOp<C>, ATyp),
 
-    /// Random oracle challenge, drawn again on the values it excludes, if any
+    /// Random oracle challenge, resampled while excluded
     Challenge(ATyp, Option<OpExclusion<C>>),
 
     /// Inverse FFT: evaluations on the FFT grid (n roots of unity, n a power of two)
@@ -1169,6 +1169,10 @@ impl<C: HasOpFactory> GOp<C> {
     /// re-hash-consing each child. Used when a subgraph is copied into another `Dag`
     /// and node numbering shifts.
     pub fn map_node_indices<F: Fn(NodeIndex) -> NodeIndex>(&self, f: &F) -> GOp<C> {
+        let exclusion = |x: &Option<OpExclusion<C>>| {
+            x.clone()
+                .map(|x| x.map_values(|v| mk::<C>(v.map_node_indices(f))))
+        };
         match self {
             Op::Ref(r, typ) => Op::Ref(Ref(f(r.0)), typ.clone()),
             Op::Bin(op, a, b, typ) => Op::Bin(
@@ -1224,16 +1228,8 @@ impl<C: HasOpFactory> GOp<C> {
             }
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.map_node_indices(f))),
             Op::ToScalar(op) => Op::ToScalar(mk::<C>(op.map_node_indices(f))),
-            Op::Random(t, x) => Op::Random(
-                t.clone(),
-                x.clone()
-                    .map(|x| x.map_values(|v| mk::<C>(v.map_node_indices(f)))),
-            ),
-            Op::Challenge(t, x) => Op::Challenge(
-                t.clone(),
-                x.clone()
-                    .map(|x| x.map_values(|v| mk::<C>(v.map_node_indices(f)))),
-            ),
+            Op::Random(t, x) => Op::Random(t.clone(), exclusion(x)),
+            Op::Challenge(t, x) => Op::Challenge(t.clone(), exclusion(x)),
             _ => self.clone(),
         }
     }
@@ -1241,6 +1237,9 @@ impl<C: HasOpFactory> GOp<C> {
     /// Rebuilds this operation with every `Ref` rewritten by `f`, re-hash-consing each
     /// child. The `Ref`-level counterpart of `map_node_indices`.
     pub fn map_refs<F: Fn(Ref) -> Ref>(&self, f: &F) -> GOp<C> {
+        let exclusion = |x: &Option<OpExclusion<C>>| {
+            x.clone().map(|x| x.map_values(|v| mk::<C>(v.map_refs(f))))
+        };
         match self {
             Op::Ref(r, typ) => Op::Ref(f(*r), typ.clone()),
             Op::Bin(op, a, b, typ) => Op::Bin(
@@ -1267,14 +1266,8 @@ impl<C: HasOpFactory> GOp<C> {
             }
             Op::Ifft(op) => Op::Ifft(mk::<C>(op.map_refs(f))),
             Op::Fft(op) => Op::Fft(mk::<C>(op.map_refs(f))),
-            Op::Random(t, x) => Op::Random(
-                t.clone(),
-                x.clone().map(|x| x.map_values(|v| mk::<C>(v.map_refs(f)))),
-            ),
-            Op::Challenge(t, x) => Op::Challenge(
-                t.clone(),
-                x.clone().map(|x| x.map_values(|v| mk::<C>(v.map_refs(f)))),
-            ),
+            Op::Random(t, x) => Op::Random(t.clone(), exclusion(x)),
+            Op::Challenge(t, x) => Op::Challenge(t.clone(), exclusion(x)),
             Op::Value(_) => self.clone(),
             Op::Poly(op) => Op::Poly(mk::<C>(op.map_refs(f))),
             Op::Coef(op) => Op::Coef(mk::<C>(op.map_refs(f))),
@@ -1512,18 +1505,10 @@ impl<C: ArkConfig, R: fmt::Display> fmt::Display for Op<C, R> {
             }
             Op::Assert(op) => write!(f, "(assert {})", op.get()),
             Op::Verify(op) => write!(f, "(verify {})", op.get()),
-            Op::Challenge(t, x) | Op::Random(t, x) => {
-                let name = if matches!(self, Op::Challenge(..)) {
-                    "challenge"
-                } else {
-                    "random"
-                };
-                write!(f, "{name}<{t}")?;
-                if let Some(x) = x {
-                    write!(f, "{x}")?;
-                }
-                f.write_str(">")
-            }
+            Op::Challenge(t, None) => write!(f, "challenge<{t}>"),
+            Op::Challenge(t, Some(x)) => write!(f, "challenge<{t}{x}>"),
+            Op::Random(t, None) => write!(f, "random<{t}>"),
+            Op::Random(t, Some(x)) => write!(f, "random<{t}{x}>"),
             Op::Ram(v, r) => write!(f, "{}[{}]", v.get(), r.get()),
             Op::Vec(vs) => {
                 f.write_str("[")?;

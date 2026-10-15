@@ -5,8 +5,9 @@
 //! Division by zero aborts a run, so each division is encoded totally (a zero
 //! divisor gives a zero quotient) plus a definedness condition, that its
 //! divisor is nonzero, among the fragment's conditions; each analysis assumes
-//! or proves it with the rest of them. [`divide_by`] explains the encoding. A
-//! [`known_nonzero`] divisor needs no condition.
+//! or proves it with the rest of them. The divisor itself goes to
+//! [`Ideal::divisors`](crate::ideal::Ideal::divisors). [`divide_by`] explains
+//! the encoding. A [`known_nonzero`] divisor needs no condition.
 
 use backend::op::HasOpFactory;
 use backend::{ABase, ATyp, ArkConfig, ArkScalarOps};
@@ -265,8 +266,11 @@ fn div_rem_poly<C: ArkConfig + HasOpFactory>(
     let (q_wit, r_wit) = alloc_div_witness_pair(ctx, ATyp::Uni(ma), ATyp::Uni(mr));
 
     // Degree chain, giving `s_0`, unless the divisor's lead is known nonzero.
-    let s_zero = (!known_nonzero(ctx, &b.polys()[mb]))
-        .then(|| Polynomial::var(&emit_degree_chain::<C>(ctx, b, &r_wit, mb)));
+    let lead = &b.polys()[mb];
+    let s_zero = (!known_nonzero(ctx, lead)).then(|| {
+        ctx.ideal.divisors.push(lead.clone());
+        Polynomial::var(&emit_degree_chain::<C>(ctx, b, &r_wit, mb))
+    });
 
     // Emit a = b·q + r, one row per coefficient of the product bound.
     // For degree k: a[k] = Σ_{i+j=k} b[i]·q[j] + r[k]  (r[k] only if k ≤ mr),
@@ -489,6 +493,7 @@ fn divide_by<C: ArkConfig + HasOpFactory>(
         ctx.ideal.generating_set.push(definition);
         return;
     }
+    ctx.ideal.divisors.push(divisor.clone());
     ctx.ideal.generating_set.push(divisor * &definition);
     ctx.ideal.generating_set.push(quotient * &definition);
     ctx.ideal.conditions.push(definition);

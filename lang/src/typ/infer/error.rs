@@ -177,7 +177,7 @@ pub enum TypeError {
 
     /// A sample of `t` excludes values that are not a vector of `t`.
     #[error("A sample of {2} can exclude only a vector of {2}, but got {}", kinded(.3, .0))]
-    Excluded(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, Tid, CTyp),
+    ExclusionType(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, Tid, CTyp),
 
     /// A sample excludes `roots_of_unity(0)`, every value of its type.
     #[error("`roots_of_unity(0)` excludes every {2}, so nothing is left to sample")]
@@ -570,8 +570,13 @@ impl TypeError {
     }
     /// Reports a sample of `t` excluding values of type `tv`, which is not a
     /// vector of `t`.
-    pub fn excluded(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, t: &Tid, tv: &CTyp) -> Self {
-        TypeError::Excluded(kctx.clone(), vctx.clone(), t.clone(), tv.clone())
+    pub fn exclusion_type(
+        kctx: &Ctx<Tid, CKind>,
+        vctx: &Ctx<Vid, CTyp>,
+        t: &Tid,
+        tv: &CTyp,
+    ) -> Self {
+        TypeError::ExclusionType(kctx.clone(), vctx.clone(), t.clone(), tv.clone())
     }
     /// Reports a sample of `t` excluding `roots_of_unity(0)`, every value.
     pub fn excludes_all(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, t: &Tid) -> Self {
@@ -818,7 +823,7 @@ fn primary_label(cause: &TypeError) -> String {
             format!("applied to {}", kinded_list(ts, kctx))
         }
         E::Challenge(_, _, t, k) => format!("{t} has kind {k}"),
-        E::Excluded(kctx, _, _, t) => has_type(t, kctx),
+        E::ExclusionType(kctx, _, _, t) => has_type(t, kctx),
         E::ExcludesAll(..) => "excludes every value".to_string(),
         E::VarNotFound(v, _) => format!("`{v}` is not defined here"),
         E::Range(_, _, r, _) => format!("range {r}"),

@@ -689,7 +689,7 @@ impl Typeable for CExp {
                         if !matches!(&tv, CTyp::Vec(elem, _) if of_typ(&elem.node)) {
                             return Err(TypeError::located(
                                 &v.span,
-                                TypeError::excluded(kctx, vctx, &t.node, &tv),
+                                TypeError::exclusion_type(kctx, vctx, &t.node, &tv),
                             ));
                         }
                     }

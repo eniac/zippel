@@ -105,13 +105,7 @@ impl<C: ArkConfig, H: DuplexSpongeInterface<U = u8> + Send> Run<'_, C, H> {
         let value = match &self.graph.dag[node] {
             Node::Transcr(op, _) if matches!(**op, Op::Challenge(_, _)) => {
                 debug!("[run_graph] node {node:?} is Challenge");
-                let exclusion = match self.graph.exclusion(node) {
-                    Ok(exclusion) => exclusion,
-                    Err(err) => {
-                        self.error.record(err);
-                        return;
-                    }
-                };
+                let exclusion = self.graph.evaluate_exclusion(node);
                 self.transcript
                     .lock()
                     .unwrap()

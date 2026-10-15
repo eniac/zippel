@@ -343,12 +343,12 @@ impl<C: HasOpFactory> Node<C, Nothing> {
         )
     }
     /// Builds a transcript node sampling a Fiat-Shamir challenge of type `typ`,
-    /// drawn again on the values `exclusion` excludes, if any.
+    /// resampled while `exclusion`, if any, excludes it.
     pub fn challenge(typ: &ATyp, exclusion: Option<OpExclusion<C>>) -> Self {
         Node::Transcr(mk::<C>(Op::Challenge(typ.clone(), exclusion)), Nothing)
     }
-    /// Builds a node sampling prover-local randomness of type `typ`, drawn
-    /// again on the values `exclusion` excludes, if any.
+    /// Builds a node sampling prover-local randomness of type `typ`,
+    /// resampled while `exclusion`, if any, excludes it.
     pub fn random(typ: &ATyp, exclusion: Option<OpExclusion<C>>) -> Self {
         Node::Op(mk::<C>(Op::Random(typ.clone(), exclusion)), Nothing)
     }

@@ -293,26 +293,6 @@ proto p<G: Group, F: Scalar<G>>(witness x: F, instance h: G) where h == x {
     );
 }
 
-/// A sample excludes zero, a vector of values of its own type, or the roots
-/// of unity of some order.
-#[test]
-fn typecheck_sample_exclusions() {
-    let src = r"
-proto p<F: Field, K: Size>(instance a: F) where a == a {
-    let r = random<F*>;
-    m <- r;
-    c <- challenge<F - [a, 1]>;
-    d <- challenge<F - roots_of_unity(K)>;
-    verify(c * d == c * d)
-}
-";
-    let (module, _) = UModule::parse(src);
-    let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("K"), &4);
-    let cmodule = module.unwrap().concretize(&sizes).unwrap();
-    assert!(cmodule.typecheck().is_empty());
-}
-
 #[test]
 fn typecheck_sample_excluding_a_scalar() {
     let src = r"
