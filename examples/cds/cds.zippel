@@ -1,6 +1,6 @@
 // The Cramer-Damgård-Schoenmakers (CDS) protocol for proofs of partial knowledge.
 // Proves knowledge of (N-K) out of N discrete logs (Schnorr witnesses).
-proto cds<G: Group, F: Scalar<G>, N: 2, K: 1>(
+proto cds<G: Group, F: Scalar<G>, N: Size, K: 1>(
     // Instance inputs
     instance g: G,
     instance keys: [G; N],
@@ -17,18 +17,29 @@ proto cds<G: Group, F: Scalar<G>, N: 2, K: 1>(
     witness c_sim: [F; N],
     witness m2_sim: [F; N],
 
-    // The subset of K indices (1-based) where the witness is unknown
+    // The subset of K indices (1-based) where the witness is unknown; the
+    // relation below assumes K = 1 (it reads u_points[0] and u_evals[0])
     witness u_points: [F; K],
     witness u_evals: [F; K],
 
-    // The inverse of the product of the differences of 0 and the evaluation
-    // points, which are interpolated together, so they must be distinct
+    // The inverse of the product of every evaluation point and of the
+    // difference of every two of them: 0 and the points are interpolated
+    // together, so they must be distinct
     witness distinct_inv: F,
 ) where
     [keys[i] for i in 0..N] == [g * w[i] for i in 0..N]
         && [b[i] * (1 - b[i]) for i in 0..N] == [0 for _ in 0..N]
         && reduce(+, [1 - b[i] for i in 0..N]) == K
-        && eval_points[0] * eval_points[1] * (eval_points[1] - eval_points[0]) * distinct_inv == 1
+        && reduce(
+            *,
+            [
+                eval_points[i]
+                    * reduce(*, [eval_points[i] - eval_points[(i + d + 1) % N] for d in 0..N - 1])
+                for i in 0..N
+            ],
+        )
+            * distinct_inv
+            == 1
         && [(1 - b[i]) * (eval_points[i] - u_points[0]) for i in 0..N] == [0 for _ in 0..N]
         && [(1 - b[i]) * (c_sim[i] - u_evals[0]) for i in 0..N] == [0 for _ in 0..N]
 {
