@@ -101,8 +101,7 @@ See [`docs/library-usage.md`](docs/library-usage.md) for how to depend
 on Zippel from your own crate, then write, compile, run, and analyze a
 protocol.
 
-
-# Reading and citing our paper
+## Reading and citing our paper
 
 Zippel will appear at S&P 2027. You can find our paper [here](https://github.com/eniac/zippel/blob/main/docs/tech-report.pdf).
 If you wish to cite our work, please use this:
@@ -122,7 +121,6 @@ If you wish to cite our work, please use this:
 reproduce the benchmarks, completeness analyses, and special-soundness
 analyses reported in our IEEE S&P 2027 submission. See
 [`artifact/README.md`](artifact/README.md) for details.
-
 
 ## Contributing
 
