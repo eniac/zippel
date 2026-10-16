@@ -1428,6 +1428,53 @@ mod tests {
         );
     }
 
+    /// The toy protocol of the paper's "Encoding Failures" section, with its
+    /// challenge sampled from `{typ}`. The verifier's assertion `x²y − x` is
+    /// one of the prover's own equations for `y = 1/x`, so only the prover's
+    /// definedness condition `xy − 1` can make completeness fail.
+    fn papers_toy(typ: &str) -> String {
+        format!(
+            r#"
+            proto toy<F: Field>() where 1 == 1 {{
+              x <- challenge<{typ}>;
+              y <- 1 / x;
+              verify(x * x * y == x)
+            }}"#
+        )
+    }
+
+    #[test]
+    fn the_papers_toy_protocol_is_incomplete() {
+        // At `x = 0`, which happens with probability 1/|F|, the honest prover
+        // aborts.
+        let result = completeness_of(&papers_toy("F"));
+        assert!(
+            matches!(result, Err(AnalysisError::Incomplete(_))),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn the_papers_toy_protocol_with_a_nonzero_challenge_is_complete() {
+        let result = completeness_of(&papers_toy("F*"));
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    /// The paper's `where y == 1 / x`: the relation holds only if `x ≠ 0`, so
+    /// completeness assumes it. Without that assumption, `x = y = 0` would
+    /// satisfy the relation (`1/0` encodes as `0`) and fail the check.
+    #[test]
+    fn the_papers_relation_inverse_makes_its_divisor_nonzero() {
+        let result = completeness_of(
+            r#"
+            proto relation_inverse<F: Field>(witness x: F, instance y: F) where y == 1 / x {
+              m <- x;
+              verify(m * y == 1)
+            }"#,
+        );
+        assert!(result.is_ok(), "{result:?}");
+    }
+
     /// A prover that divides by its own `random<{typ}>`. The check holds even
     /// at `r = 0`, so only the divisor's check can fail.
     fn prover_division(typ: &str) -> String {
