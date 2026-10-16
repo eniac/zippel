@@ -756,6 +756,8 @@ mod tests {
         )
     }
 
+    /// The paper's soundness example ("Encoding Failures"): the relation
+    /// holds only if `k ≠ 0`, which the verifier never checks.
     #[test]
     fn a_relation_divisor_the_verifier_does_not_check_is_unsound() {
         // At `k = 0` the verifier accepts, but no witness satisfies the relation.
