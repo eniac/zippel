@@ -3,11 +3,10 @@
 //! division (`div_rem_poly`).
 //!
 //! Division by zero aborts a run, so each division is encoded totally (a zero
-//! divisor gives a zero quotient) plus a check that its divisor is nonzero, in
-//! [`Ideal::conditions`](crate::ideal::Ideal::conditions): completeness
-//! proves it, soundness assumes it of an accepted transcript. A
-//! [`known_nonzero`] divisor needs no check. In a relation the check joins the
-//! relation's equations.
+//! divisor gives a zero quotient) plus a definedness condition, that its
+//! divisor is nonzero, among the fragment's conditions; each analysis assumes
+//! or proves it with the rest of them. [`divide_by`] explains the encoding. A
+//! [`known_nonzero`] divisor needs no condition.
 
 use backend::op::HasOpFactory;
 use backend::{ABase, ATyp, ArkConfig, ArkScalarOps};
@@ -217,9 +216,19 @@ fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
 /// assuming the divisor has exact degree `mb`.
 ///
 /// **Zero divisor**: the degree chain ends in `s_0`, which is 1 when the
-/// divisor is nonzero and 0 when it is the zero polynomial. Each identity row
-/// is multiplied by `s_0` and `(1 − s_0)·q = 0` is added, so a zero divisor
-/// gives `q = r = 0`, and `s_0 − 1` is the check that the divisor is nonzero.
+/// divisor is nonzero and 0 when it is the zero polynomial, and at 0 the
+/// chain also forces `r = 0`. The encoding is total, as for a scalar
+/// division (see [`divide_by`], whose three parts these mirror):
+///
+/// | Polynomial | divisor nonzero (`s_0 = 1`) | zero divisor (`s_0 = 0`) |
+/// |---|---|---|
+/// | `s_0 · row`, each identity row (like `b·D`) | `a = b·q + r` | `0 = 0`: the trace survives |
+/// | `(1 − s_0)·q` (like `q·D`) | `0 = 0` | forces `q = 0` |
+/// | `s_0 − 1`, a condition (like `D`) | holds | fails |
+///
+/// Unscaled, a row at a zero divisor would read `a = 0·q + r = 0`, ruling
+/// out every trace with a zero divisor and a nonzero dividend, so the
+/// analysis would never see the division abort.
 ///
 /// **Optimization**: When the divisor's leading coefficient is
 /// [`known_nonzero`], the entire chain is skipped — the type bound
@@ -288,8 +297,8 @@ fn div_rem_poly<C: ArkConfig + HasOpFactory>(
         });
     }
 
-    // A zero divisor gives `q = 0` (the chain already gives `r = 0`), and the
-    // divisor must be nonzero.
+    // A zero divisor gives `q = 0` (the chain already gives `r = 0`), and
+    // `s_0 − 1` is the condition that the divisor is nonzero.
     if let Some(s_zero) = s_zero {
         let one = Polynomial::lit(&C::FOps::one());
         let one_minus_s = &one - &s_zero;
@@ -439,11 +448,36 @@ pub(super) fn inverse<C: ArkConfig + HasOpFactory>(
     inv
 }
 
-/// Emits `definition`, which vanishes exactly when `divisor ≠ 0` and
-/// `quotient` is its quotient: as a generator for a [`known_nonzero`] divisor;
-/// otherwise as `divisor·definition` and `quotient·definition`, which also give
-/// `quotient = 0` at a zero divisor (where `definition` must be a nonzero
-/// constant), with `definition` as the check.
+/// Encodes a division by `divisor` (`b`) with result `quotient` (`q`), given
+/// its `definition` `D`: a polynomial that vanishes exactly when `b` is
+/// nonzero and `q` is correct, and is a nonzero constant when `b = 0`. For
+/// [`inverse`], `D = b·ι − 1`: it is `0` when `ι = 1/b` and `−1` when `b = 0`.
+///
+/// Pushing `D` itself as a generator would make every trace with `b = 0`
+/// impossible, since `D` cannot vanish there. The analysis would then never
+/// see a zero divisor, and completeness would hold vacuously for a protocol
+/// that aborts. Instead the encoding is total, with three parts:
+///
+/// | Polynomial | `b ≠ 0` | `b = 0` (`D` a nonzero constant) |
+/// |---|---|---|
+/// | `b·D` (generator) | forces `D = 0`: `q` is the quotient | `0 = 0`: the trace survives |
+/// | `q·D` (generator) | follows from `D = 0` | forces `q = 0` |
+/// | `D` (condition) | holds | fails |
+///
+/// So `q` is defined on every trace (the quotient, or `0` for a zero
+/// divisor), and whether `b` may be zero is left to the analysis through the
+/// condition `D`, which it assumes or proves with the fragment's other
+/// conditions: completeness proves the prover's and the verifier's, for
+/// example, and assumes the relation's. For `inverse` the two generators are
+/// `b²ι − b` and `bι² − ι`, which say `bιb = b` and `ιbι = ι`: `ι` is the
+/// pseudo-inverse of `b`.
+///
+/// A [`known_nonzero`] divisor has no zero case: `D` is pushed as the
+/// generator, and there is no condition.
+///
+/// [`div_rem_poly`] encodes a polynomial division the same way, with its
+/// identity rows times `s_0` for `b·D`, `(1 − s_0)·q` for `q·D`, and
+/// `s_0 − 1` for `D`.
 fn divide_by<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     divisor: &Polynomial<C::F>,
