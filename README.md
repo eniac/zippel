@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE-MIT)
 [![rustc nightly](https://img.shields.io/badge/rustc-nightly-orange.svg)](rust-toolchain.toml)
 
-Zippel is a choreographic language, compiler, and runtime for cryptographic
+[Zippel](https://github.com/eniac/zippel/blob/main/docs/tech-report.pdf) is a choreographic language, compiler, and runtime for cryptographic
 proof systems. A single `.zippel` source file describes a protocol the way a
 cryptography paper would, and Zippel compiles it into a computation graph
 (the Graph IR) from which it derives:
@@ -22,6 +22,7 @@ Bulletproofs, Hyrax, PST13, Dory).
 
 > **Status: research prototype.** Zippel has not been independently
 > audited. Do not use it to protect anything of value.
+
 
 ## Quick start
 
@@ -100,12 +101,28 @@ See [`docs/library-usage.md`](docs/library-usage.md) for how to depend
 on Zippel from your own crate, then write, compile, run, and analyze a
 protocol.
 
+
+# Reading and citing our paper
+
+Zippel will appear at S&P 2027. You can find our paper [here](https://github.com/eniac/zippel/blob/main/docs/tech-report.pdf).
+If you wish to cite our work, please use this:
+
+```bibtex
+@inproceedings{angel2027zippel,
+  title        = {Zippel: A Language, Compiler, Runtime, and Analyzer for ZK Proof Systems},
+  author       = {Sebastian Angel and Sydnie-Shea Cohen and Eleftherios Ioannidis and Pratyush Mishra and Alex Ozdemir and Yuxiang Qiu and Alireza Shirzad},
+  booktitle    = {Proceedings of the IEEE Symposium on Security and Privacy (S\&P)},
+  year         = {2027},
+}
+```
+
 ## Reproducing our evaluation
 
 `artifact/` contains a Dockerfile and scripts that build Zippel and
 reproduce the benchmarks, completeness analyses, and special-soundness
 analyses reported in our IEEE S&P 2027 submission. See
 [`artifact/README.md`](artifact/README.md) for details.
+
 
 ## Contributing
 
