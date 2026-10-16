@@ -2791,6 +2791,105 @@ fn transcript_inputs(verifier: &UDag<B>) -> Vec<String> {
         .collect()
 }
 
+/// Proof values are supplied in transcript order, even when checks do not use them.
+#[test]
+fn pin_verifier_proof_inputs_follow_transcript_order() {
+    let src = r#"
+        proto p<G: Group, F: Scalar<G>>(witness x: F, instance g: G) where g == g {
+            a <- x + 1;
+            b <- g * x;
+            c <- [x, x];
+            verify(g == g)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+    let verifier = dag.project_verifier().unwrap();
+    assert_eq!(transcript_inputs(&verifier), ["a", "b", "c"]);
+    let args: Vec<_> = verifier
+        .input_args()
+        .into_iter()
+        .filter(|&n| verifier[n].arg_kind() == Some(ArgKind::TranscriptInput))
+        .collect();
+    for (arg, message) in args.into_iter().zip(dag.get_proof_nodes()) {
+        assert_eq!(verifier[arg].typ(), dag[message].typ());
+        assert_eq!(verifier.span(arg), dag.span(message));
+    }
+}
+
+/// Replaying the transcript retains unused events, its initial edge, and challenge operands.
+#[test]
+fn pin_verifier_retains_unused_transcript_and_challenge_dependencies() {
+    let src = r#"
+        proto p<F: Field>(instance x: F) where x == x {
+            a <- x;
+            let excluded = [x + 1];
+            c <- challenge<F - excluded>;
+            b <- x + x;
+            verify(x == x)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+    let verifier = dag.project_verifier().unwrap();
+    let transcript = verifier.transcript_nodes();
+    let source_transcript = dag.transcript_nodes();
+    assert_eq!(transcript.len(), 3);
+    assert_eq!(transcript_inputs(&verifier), ["a", "b"]);
+    let mut previous = verifier.input_node();
+    for (&node, &source) in transcript.iter().zip(&source_transcript) {
+        assert_eq!(verifier.span(node), dag.span(source));
+        let edge = verifier.transcript_edge(node, Direction::Incoming).unwrap();
+        assert_eq!(edge.source(), previous);
+        previous = node;
+    }
+    let Node::Transcr(challenge, _) = &verifier[transcript[1]] else {
+        panic!("expected the challenge to remain in the transcript");
+    };
+    assert!(matches!(&**challenge, GOp::Challenge(..)));
+    assert!(!challenge.references().is_empty());
+    let dependencies = verifier.trc(transcript[1], Direction::Incoming);
+    assert!(
+        dependencies
+            .iter()
+            .any(|&n| &src[verifier.span(n)] == "x + 1")
+    );
+    // The final prover computation is replaced with a proof read.
+    assert!(!verifier.node_indices().any(|n| {
+        !verifier[n].is_transcript() && verifier[n].is_op() && &src[verifier.span(n)] == "x + x"
+    }));
+}
+
+/// LIFO roots prioritize the last check, then challenges ahead of checks.
+#[test]
+fn pin_verifier_first_private_dependency_is_deterministic() {
+    for (body, expected_name, expected_use) in [
+        ("verify(x == 1); verify(y == 1)", "y", "verify(y == 1)"),
+        (
+            "c <- challenge<F - [x]>; verify(y == 1)",
+            "x",
+            "challenge<F - [x]>",
+        ),
+        (
+            "c <- challenge<F - [x]>; d <- challenge<F - [y]>; verify(x == 1)",
+            "y",
+            "challenge<F - [y]>",
+        ),
+    ] {
+        let src =
+            format!("proto p<F: Field>(witness x: F, witness y: F) where x == y {{ {body} }}");
+        let Err(GraphError::PrivateValueInVerifier {
+            name, span, check, ..
+        }) = parse_and_build(&src)[0].project_verifier()
+        else {
+            panic!("expected a private dependency for {body}");
+        };
+        assert_eq!(name, Some(Vid::new(expected_name)), "{body}");
+        assert_eq!(&src[span], expected_name, "{body}");
+        assert_eq!(&src[check], expected_use, "{body}");
+    }
+}
+
 /// A function that sends `u` is inlined twice: the two sends are different proof values, so
 /// the verifier needs two inputs even though both are named `u`.
 #[test]

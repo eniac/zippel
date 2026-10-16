@@ -1081,8 +1081,8 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         }
     }
 
-    /// Get the verifier graph, by reachability analysis starting from the verifier assertion
-    /// and stopping at transcript nodes.
+    /// Projects verifier computations by walking backwards from checks and challenges.
+    /// Prover messages stop data-flow traversal; the entire transcript is retained.
     ///
     /// Instance arguments are replicated, challenge transcript nodes are kept
     /// as computations, and each non-challenge (proof) transcript node is
@@ -1091,7 +1091,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
     ///
     /// # Errors
     /// Returns [`GraphError::PrivateValueInVerifier`] if the backwards walk
-    /// from a `Verify` node reaches a non-instance argument or a `random`
+    /// from a `Verify` node or challenge reaches a non-instance argument or a `random`
     /// sample without passing through the transcript — the verifier cannot
     /// depend on private data.
     ///
@@ -1102,74 +1102,53 @@ impl<C: HasOpFactory, A> Dag<C, A> {
     where
         A: Clone,
     {
-        let mut verifier = Dag::new();
+        let transcript = self.transcript_nodes();
+        let selected = self.verifier_nodes(&transcript)?;
+        Ok(self.build_verifier(&selected, &transcript))
+    }
 
-        // Instance inputs that survive into the verifier (with their source-dag NodeIndex).
-        let instance_args: Vec<(NodeIndex, Vid)> = self
-            .input_args()
-            .into_iter()
-            .filter_map(|n| match &self[n] {
-                Node::Arg(name, _, qual, _, _) if qual.is_instance() => Some((n, name.clone())),
-                _ => None,
-            })
+    /// Selects verifier obligations and their computations, reporting the first private use.
+    fn verifier_nodes(&self, transcript: &[NodeIndex]) -> Result<Vec<NodeIndex>, GraphError> {
+        let mut selected = vec![self.input_node()];
+        selected.extend(
+            self.input_args()
+                .into_iter()
+                .filter(|&n| matches!(&self[n], Node::Arg(_, _, qual, _, _) if qual.is_instance())),
+        );
+        selected.extend_from_slice(transcript);
+        let mut retained: HashSet<_> = selected.iter().copied().collect();
+        // Proof messages and instance inputs are leaves. Challenges are retained,
+        // but still need a visit to select and validate their exclusion operands.
+        let mut visited: HashSet<_> = selected
+            .iter()
+            .copied()
+            .filter(|&n| !self[n].is_challenge())
             .collect();
-        let name = self.name();
 
-        // Associate old node indices with new node indices
-        let mut node_map_self = HashMap::<NodeIndex, NodeIndex>::new();
-
-        // Make new input node + replicate instance Args.
-        let n_input = verifier.add_node(Node::Inp(name), self.span(self.input_node()));
-        node_map_self.insert(self.input_node(), n_input);
-
-        for (old_arg_idx, _) in &instance_args {
-            let new_arg = verifier.add_weight(self.graph[*old_arg_idx].clone());
-            verifier.add_edge(n_input, new_arg, Dep::data());
-            node_map_self.insert(*old_arg_idx, new_arg);
-        }
-
-        let mut non_challenge_transcripts: HashSet<NodeIndex> = HashSet::new();
-        let mut challenges = Vec::new();
-
-        // Add transcript nodes to verifier graph (source ops are kept as-is;
-        // they will be rewritten *after* `map_node_indices` so verifier-local
-        // indices are not subject to remapping).
-        for &n_transcr in &self.transcript_nodes() {
-            let node = &self.graph[n_transcr];
-            if node.is_challenge() {
-                let new_node = verifier.add_weight(node.clone());
-                node_map_self.insert(n_transcr, new_node);
-                challenges.push(n_transcr);
-                continue;
-            }
-            non_challenge_transcripts.insert(n_transcr);
-            let new_idx = verifier.add_weight(node.clone());
-            node_map_self.insert(n_transcr, new_idx);
-        }
-
-        // Add the verifier nodes, start with the verifier checks
+        // Start with checks, then challenges, preserving diagnostic traversal order.
         let mut worklist = self.find_verify();
         assert!(!worklist.is_empty(), "No verifier check found");
-        // and the challenges, since the verifier computes the values they exclude
-        worklist.extend(challenges);
+        worklist.extend(
+            transcript
+                .iter()
+                .copied()
+                .filter(|&n| self[n].is_challenge()),
+        );
         // Each reached node ↦ the node that needed it, back to a check or a
         // challenge, for reporting leaks.
         let mut via: HashMap<NodeIndex, NodeIndex> = HashMap::new();
 
         while let Some(n) = worklist.pop() {
-            // Op nodes are added once, transcript nodes are already in the
-            // verifier, and a challenge is visited for what it excludes.
-            let challenge = self[n].is_challenge();
-            if !challenge
-                && (node_map_self.contains_key(&n) || !self[n].is_op() || self[n].is_transcript())
-            {
+            if !visited.insert(n) {
                 continue;
             }
+            let Some(op) = self[n].op() else {
+                continue;
+            };
 
             // A `random` sample the verifier needs is a leak: the verifier would
             // draw its own value instead of the prover's.
-            let op = self[n].clone().into_op();
-            if matches!(&*op, Op::Random(_, _)) {
+            if matches!(&**op, Op::Random(_, _)) {
                 // Reported where it is named, or at `random<..>` if it never is.
                 let binding = self.binding(n);
                 let (steps, check) = self.use_path(&via, via.get(&n).copied().unwrap_or(n));
@@ -1200,15 +1179,13 @@ impl<C: HasOpFactory, A> Dag<C, A> {
                 }
             }
 
-            // Add node to verifier graph
-            if !challenge {
-                let new_node = verifier.add_weight(self.graph[n].clone());
-                node_map_self.insert(n, new_node);
+            if retained.insert(n) {
+                selected.push(n);
             }
 
             // Add parent neighbors to worklist
             for e in self.graph.edges_directed(n, Direction::Incoming) {
-                if !node_map_self.contains_key(&e.source()) {
+                if !retained.contains(&e.source()) {
                     debug!(
                         "Adding parent {} of {} to worklist",
                         self[e.source()].drop_annotation(),
@@ -1220,89 +1197,82 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             }
         }
 
-        // Add edges to verifier graph using the mapped node indices
-        let source_input_node = self.input_node();
-        for edge_ref in self.graph.edge_references() {
-            let old_source_idx = edge_ref.source();
-            let old_target_idx = edge_ref.target();
-            let weight = *edge_ref.weight();
+        Ok(selected)
+    }
 
-            if old_source_idx == source_input_node && self[old_target_idx].is_input_arg() {
-                continue;
-            }
+    /// Builds proof reads and retained computations, then connects their dependencies.
+    fn build_verifier(&self, selected: &[NodeIndex], transcript: &[NodeIndex]) -> Dag<C, A>
+    where
+        A: Clone,
+    {
+        let mut verifier = Dag::new();
+        let input = self.input_node();
+        let new_input = verifier.add_weight(self.graph[input].clone());
+        let mut node_map = HashMap::from([(input, new_input)]);
+        let mut taken = HashSet::new();
 
-            if let Some(new_node) = node_map_self.get(&old_target_idx) {
-                if verifier[*new_node].is_input() {
-                    continue;
-                }
-                if non_challenge_transcripts.contains(&old_target_idx)
-                    && edge_ref.weight().is_data()
-                {
-                    continue;
-                }
-            }
-            if let (Some(new_source_idx), Some(new_target_idx)) = (
-                node_map_self.get(&old_source_idx),
-                node_map_self.get(&old_target_idx),
-            ) {
-                verifier.add_edge(*new_source_idx, *new_target_idx, weight);
+        for &n in selected {
+            if let Node::Arg(name, _, _, _, _) = &self[n] {
+                let arg = verifier.add_weight(self.graph[n].clone());
+                verifier.add_edge(new_input, arg, Dep::data());
+                node_map.insert(n, arg);
+                taken.insert(name.clone());
             }
         }
 
-        // Translate all source-local node indices in cloned ops to verifier-local indices.
-        let mut verifier =
-            verifier.map_node_indices(&|n| node_map_self.get(&n).copied().unwrap_or(n));
-
-        // Now that map_node_indices is done, materialise verifier-local
-        // Arg nodes for transcript proof values and rewrite each
-        // non-challenge Transcr op to reference its Arg. These freshly
-        // allocated indices will not be re-mapped.
-        //
-        // Each proof value gets its own input, keyed by its transcript node rather than its
-        // name: the same name can be sent several times (a function with `x <- ...` inlined
-        // twice) or shadow an argument. Iterate in source-graph transcript order so that the verifier's transcript Arg
-        // nodes are created in the same order the prover emits proof values.
-        let transcr_pairs: Vec<(NodeIndex, Vid)> = self
-            .transcript_nodes()
-            .iter()
-            .filter(|src| non_challenge_transcripts.contains(src))
-            .filter_map(|src| {
-                let new_idx = node_map_self.get(src).copied()?;
-                let v = self.find_var(*src)?;
-                Some((new_idx, v))
-            })
-            .collect();
-        // The runtime supplies verifier inputs by name, so every input needs a distinct one.
-        let mut taken: HashSet<Vid> = instance_args.iter().map(|(_, name)| name.clone()).collect();
-
-        for (new_idx, transcript_var) in transcr_pairs {
-            let typ = match &verifier[new_idx] {
-                Node::Transcr(op, _) => op.typ(),
-                _ => unreachable!("non-challenge transcript must be Transcr"),
+        // Allocate proof inputs in transcript order. Messages read them directly;
+        // their prover operations never enter the verifier graph.
+        for &n in transcript.iter().filter(|&&n| self[n].is_proof()) {
+            let Node::Transcr(op, ann) = &self[n] else {
+                unreachable!("prover message must be a transcript node");
             };
-            // The verifier reads the value where the prover sends it.
-            let span = verifier.span(new_idx);
-            let arg_node = verifier.add_node(
+            let name = self.find_var(n).expect("prover message must have a name");
+            let typ = op.typ();
+            let arg = verifier.add_node(
                 Node::Arg(
-                    unique_name(&transcript_var, &mut taken),
-                    typ,
+                    unique_name(&name, &mut taken),
+                    typ.clone(),
                     Qualifier::Instance,
                     Distribution::default(),
                     ArgKind::TranscriptInput,
                 ),
-                span,
+                self.span(n),
             );
-            verifier.add_edge(n_input, arg_node, Dep::data());
-
-            // Rewrite Transcr op to reference the Arg, and add the data edge.
-            if let Node::Transcr(op, _) = &mut verifier[new_idx] {
-                let typ = op.typ();
-                *op = mk::<C>(GOp::var(&transcript_var, arg_node, typ));
-            }
-            verifier.add_edge(arg_node, new_idx, Dep::data());
+            verifier.add_edge(new_input, arg, Dep::data());
+            let message = verifier.add_node(
+                Node::Transcr(mk::<C>(GOp::var(&name, arg, typ)), ann.clone()),
+                self.span(n),
+            );
+            node_map.insert(n, message);
         }
 
-        Ok(verifier)
+        // Finish the map before translating any source operations. Allocation
+        // order does not need to be topological.
+        for &n in selected {
+            node_map
+                .entry(n)
+                .or_insert_with(|| verifier.add_weight(self.graph[n].clone()));
+        }
+        for &n in selected {
+            if self[n].is_op() && !self[n].is_proof() {
+                *verifier.node_mut(node_map[&n]) = self[n].map_node_indices(&|n| node_map[&n]);
+            }
+        }
+
+        // Data edges come from final verifier operations, including proof reads.
+        for n in verifier.node_indices_vec() {
+            for reference in verifier[n].references() {
+                verifier.add_edge(reference.node(), n, Dep::data());
+            }
+        }
+        // Keep the entire transcript chain, including its input-marker anchor.
+        for &n in transcript {
+            if let Some(edge) = self.transcript_edge(n, Direction::Incoming) {
+                verifier.add_edge(node_map[&edge.source()], node_map[&n], *edge.weight());
+            }
+        }
+
+        verifier
     }
 }
 
