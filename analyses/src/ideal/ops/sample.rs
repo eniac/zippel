@@ -30,7 +30,7 @@ pub(crate) fn sample_op<C: ArkConfig + HasOpFactory>(
             .fold(one.clone(), |product, s| &product * &(&r - s)),
         Exclusion::RootsOfUnity(n) => {
             let mut power = r;
-            power.pow(*n);
+            power.pow(n.node);
             &power - &one
         }
     };

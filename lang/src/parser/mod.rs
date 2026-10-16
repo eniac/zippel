@@ -546,16 +546,21 @@ fn exp_atom<'src, I>(
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
-    // What a sample excludes: `- v` or `- roots_of_unity(n)`
+    // What a sample excludes: `- v` or `- roots_of_unity(n)`, spanned from
+    // the `-`
     let exclusion = just(Token::Minus)
         .ignore_then(choice((
             just(Token::KwRootsOfUnity)
                 .ignore_then(
                     size_ty_parser().delimited_by(just(Token::LParen), just(Token::RParen)),
                 )
-                .map(|n| Exclusion::RootsOfUnity(n.node)),
+                .map(Exclusion::RootsOfUnity),
             exp_no_seq.clone().map(|v| Exclusion::Values(Box::new(v))),
         )))
+        .map_with(|x, e| {
+            let sp: SimpleSpan = e.span();
+            Spanned::new(x, sp.into_range())
+        })
         .or_not();
     choice((
         // Range expression: 0..N or 0,1..N

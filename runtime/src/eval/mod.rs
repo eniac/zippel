@@ -596,7 +596,7 @@ where
             let exclusion = exclusion
                 .clone()
                 .map(|x| {
-                    x.try_map_values(|v| {
+                    x.map_order(|n| n.node).try_map_values(|v| {
                         eval_op_with_loop_params(&v, env, rng, loop_params, check_sink)
                     })
                 })

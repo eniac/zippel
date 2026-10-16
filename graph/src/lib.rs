@@ -38,9 +38,7 @@ use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePo
 use backend::{ABase, ATyp, ArkConfig, PolyVariant, Value, VirtualPolynomial};
 use lang::ast::range::CRange;
 use lang::ast::spanned::Spanned;
-use lang::ast::{
-    BinOp, CBody, CExp, CModule, CSig, Exclusion, Exp, ExpExclusion, ExpLiteral, Exps,
-};
+use lang::ast::{BinOp, CBody, CExp, CModule, CSig, Exp, ExpExclusion, ExpLiteral, Exps};
 use lang::diagnostic::{Diagnostic, Phase};
 use lang::id::{Fresh, Tid, Vid};
 use lang::typ::infer::{TypeError, Typeable};
@@ -1554,7 +1552,7 @@ impl<C: HasOpFactory> UDag<C> {
     #[allow(clippy::too_many_arguments)]
     fn add_exclusion(
         &mut self,
-        exclusion: Option<ExpExclusion<BigUint>>,
+        exclusion: Option<Spanned<ExpExclusion<BigUint>>>,
         transcr: &mut NodeIndex,
         edge_type: DepType,
         kctx: &Ctx<Tid, CKind>,
@@ -1564,7 +1562,7 @@ impl<C: HasOpFactory> UDag<C> {
     ) -> Result<Option<OpExclusion<C>>, GraphError> {
         exclusion
             .map(|x| {
-                x.try_map_values(|v| {
+                x.node.try_map_values(|v| {
                     let span = v.span.clone();
                     let v = self.add_exp(*v, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
                     let typ = v.typ();
@@ -2466,7 +2464,7 @@ impl<C: HasOpFactory> UDag<C> {
             }
             CExp::Random(_, x) | CExp::Challenge(_, x) => x
                 .as_ref()
-                .and_then(Exclusion::values)
+                .and_then(|x| x.values())
                 .is_some_and(|v| Self::exp_mentions_free_var(v, target)),
         }
     }

@@ -1,5 +1,6 @@
 use crate::{ABase, ATyp, ArkConfig, ArkScalarOps, DivisionByZero, Value};
 use lang::ast::range::CRange;
+use lang::ast::spanned::Spanned;
 use lang::ast::{BinOp, Exclusion};
 use lang::id::Vid;
 use lang::typ::Nothing;
@@ -117,7 +118,8 @@ pub type GOp<C> = Op<C, Ref>;
 pub type HOp<C> = HConsed<GOp<C>>;
 
 /// The values a sample in an [`Op`] excludes.
-pub type OpExclusion<C> = Exclusion<HOp<C>, usize>;
+/// Root orders retain their source spans, like concrete range bounds.
+pub type OpExclusion<C> = Exclusion<HOp<C>, Spanned<usize>>;
 
 /// Factory type for hash-consing operations
 pub type OpFactory<C> = HConsign<GOp<C>>;

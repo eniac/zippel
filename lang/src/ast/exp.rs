@@ -237,14 +237,14 @@ pub enum Exp<N: ExpLiteral> {
     ///     ```zippel
     ///     let r = random<F - [0]>;
     ///     ```
-    Random(Spanned<Tid>, Option<ExpExclusion<N>>),
+    Random(Spanned<Tid>, Option<Spanned<ExpExclusion<N>>>),
 
     ///     Random oracle challenge, resampled while excluded
     ///     **Zippel Code:**
     ///     ```zippel
     ///     r <- challenge<F - [1]>;
     ///     ```
-    Challenge(Spanned<Tid>, Option<ExpExclusion<N>>),
+    Challenge(Spanned<Tid>, Option<Spanned<ExpExclusion<N>>>),
 
     ///     Represents a let-expression, which binds a value to an identifier.
     ///
@@ -322,7 +322,7 @@ pub trait FreeVars {
 pub struct Exps<N: ExpLiteral>(pub Vec<Spanned<Exp<N>>>);
 
 /// The values a sample in an [`Exp`] excludes.
-pub type ExpExclusion<N> = Exclusion<Box<Spanned<Exp<N>>>, <N as ExpLiteral>::Size>;
+pub type ExpExclusion<N> = Exclusion<Box<Spanned<Exp<N>>>, Spanned<<N as ExpLiteral>::Size>>;
 
 /// Symbolic sized AST node, as parsed from input
 pub type UExp = Exp<Size>;
@@ -456,20 +456,30 @@ impl<N: ExpLiteral> ExpTraversal<N> for Exp<N> {
     }
 }
 
-impl<N: ExpLiteral> ExpTraversal<N> for Option<ExpExclusion<N>> {
-    type Output<M: ExpLiteral> = Option<ExpExclusion<M>>;
+impl<N: ExpLiteral> ExpTraversal<N> for ExpExclusion<N> {
+    type Output<M: ExpLiteral> = ExpExclusion<M>;
     fn traverse_exp<M: ExpLiteral, E>(
         self,
         literal: &mut dyn FnMut(N) -> Result<M, E>,
         size: &mut dyn FnMut(N::Size) -> Result<M::Size, E>,
-    ) -> Result<Option<ExpExclusion<M>>, E> {
+    ) -> Result<ExpExclusion<M>, E> {
         Ok(match self {
-            None => None,
-            Some(Exclusion::Values(v)) => Some(Exclusion::Values(Box::new(
-                (*v).traverse_exp(literal, size)?,
-            ))),
-            Some(Exclusion::RootsOfUnity(n)) => Some(Exclusion::RootsOfUnity(size(n)?)),
+            Exclusion::Values(v) => Exclusion::Values(Box::new((*v).traverse_exp(literal, size)?)),
+            Exclusion::RootsOfUnity(n) => {
+                Exclusion::RootsOfUnity(Spanned::new(size(n.node)?, n.span))
+            }
         })
+    }
+}
+
+impl<T: ExpTraversal<N>, N: ExpLiteral> ExpTraversal<N> for Option<T> {
+    type Output<M: ExpLiteral> = Option<T::Output<M>>;
+    fn traverse_exp<M: ExpLiteral, E>(
+        self,
+        literal: &mut dyn FnMut(N) -> Result<M, E>,
+        size: &mut dyn FnMut(N::Size) -> Result<M::Size, E>,
+    ) -> Result<Self::Output<M>, E> {
+        self.map(|x| x.traverse_exp(literal, size)).transpose()
     }
 }
 
@@ -497,7 +507,11 @@ impl TidSubst for CExp {
                 if let Some(n) = f(&t.node) {
                     t.node = n;
                 }
-                if let Some(Exclusion::Values(v)) = x {
+                if let Some(Spanned {
+                    node: Exclusion::Values(v),
+                    ..
+                }) = x
+                {
                     v.map_tids(f);
                 }
             }
@@ -563,7 +577,7 @@ impl FreeVars for CExp {
             Exp::Unit | Exp::Lit(_) | Exp::Range(_) => Set::new(),
             Exp::Challenge(_, x) | Exp::Random(_, x) => x
                 .as_ref()
-                .and_then(Exclusion::values)
+                .and_then(|x| x.values())
                 .map_or_else(Set::new, |v| v.freevars()),
             Exp::Interpolate(points, evals) => match points {
                 None => evals.freevars(),
@@ -701,13 +715,31 @@ impl<N: ExpLiteral> RangeTraversal<N::Size> for Exp<N> {
                 field,
                 Box::new(value.range_traverse(f)?),
             )),
-            Exp::Challenge(t, Some(Exclusion::Values(v))) => Ok(Exp::Challenge(
+            Exp::Challenge(
                 t,
-                Some(Exclusion::Values(Box::new(v.range_traverse(f)?))),
+                Some(Spanned {
+                    node: Exclusion::Values(v),
+                    span,
+                }),
+            ) => Ok(Exp::Challenge(
+                t,
+                Some(Spanned::new(
+                    Exclusion::Values(Box::new(v.range_traverse(f)?)),
+                    span,
+                )),
             )),
-            Exp::Random(t, Some(Exclusion::Values(v))) => Ok(Exp::Random(
+            Exp::Random(
                 t,
-                Some(Exclusion::Values(Box::new(v.range_traverse(f)?))),
+                Some(Spanned {
+                    node: Exclusion::Values(v),
+                    span,
+                }),
+            ) => Ok(Exp::Random(
+                t,
+                Some(Spanned::new(
+                    Exclusion::Values(Box::new(v.range_traverse(f)?)),
+                    span,
+                )),
             )),
             other => Ok(other),
         }
@@ -782,11 +814,9 @@ impl<N: ExpLiteral> Exp<N> {
     pub fn children(&self) -> Vec<&Spanned<Exp<N>>> {
         match self {
             Exp::Lit(_) | Exp::Unit | Exp::Var(_) | Exp::Range(_) => vec![],
-            Exp::Random(_, x) | Exp::Challenge(_, x) => x
-                .iter()
-                .filter_map(Exclusion::values)
-                .map(|v| &**v)
-                .collect(),
+            Exp::Random(_, x) | Exp::Challenge(_, x) => {
+                x.iter().filter_map(|x| x.values()).map(|v| &**v).collect()
+            }
             Exp::App(_, args) | Exp::Vec(args) => args.0.iter().collect(),
             Exp::Let(_, val, cont) | Exp::Log(_, val, cont) => {
                 std::iter::once(&**val).chain(cont.as_deref()).collect()
@@ -855,7 +885,7 @@ impl<N: ExpLiteral> Exp<N> {
             // Allow: Random (trusted-setup trapdoors, etc.)
             Exp::Random(_, x) => x
                 .as_ref()
-                .and_then(Exclusion::values)
+                .and_then(|x| x.values())
                 .is_none_or(|v| v.is_relation_pure()),
             Exp::Let(_, val, cont) => {
                 val.is_relation_pure() && cont.as_ref().is_none_or(|c| c.is_relation_pure())

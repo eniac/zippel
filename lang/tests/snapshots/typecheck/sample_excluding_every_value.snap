@@ -2,9 +2,9 @@
 source: lang/tests/typecheck.rs
 ---
 error: `roots_of_unity(0)` excludes every F, so nothing is left to sample
-   ╭─[ test.zippel:3:10 ]
+   ╭─[ test.zippel:3:22 ]
    │
  3 │     c <- challenge<F - roots_of_unity(K - K)>;
-   │          ──────────────────┬─────────────────  
-   │                            ╰─────────────────── excludes every value
+   │                      ───────────┬───────────  
+   │                                 ╰───────────── excludes every value
 ───╯
