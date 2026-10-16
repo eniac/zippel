@@ -232,12 +232,19 @@ docker run --rm -v "$(pwd)/artifact/output:/zippel/artifact/output" \
     python3 artifact/scripts/process_soundness.py'
 ```
 
-This analyzes Figure 6's eight special-soundness candidates (the rows
+This analyzes Figure 6's ten special-soundness candidates (the rows
 with a mark in its Spec. Sound column) with Singular, a 2-minute
 timeout and a 16 GiB memory limit per protocol. Results go to
 `artifact/output/soundness_results.json` and the raw log to
 `artifact/output/soundness_all.log`. To run a subset, add for example
 `--protocols schnorr,okamoto` after `--timeout 120`.
+
+**Note on the timeout and memory limit.** §9.3 budgets 20 minutes per
+protocol. Every candidate that passes takes far less (the slowest,
+Multi-Schnorr, takes 13.4 seconds), and E-Cash Coin reaches the timeout
+even at 20 minutes, so a 2-minute timeout keeps the full run short. The
+16 GiB memory limit does not change any outcome either: no candidate
+that fails would pass with the machine's full 64 GB.
 
 **What to expect.** A table of outcomes, analysis times (ideal
 construction, Gröbner basis and check) and failure reasons, then a
@@ -251,15 +258,21 @@ summary line:
 | Okamoto | ✗ | ... | failed | No valid extractor for witness r: NoExtractor |
 ...
 
-soundness pass=5 failed=2 timeout=1 unexpected=0
+soundness pass=5 failed=4 timeout=1 unexpected=0
 ```
 
-Schnorr, Multi-Schnorr, Pedersen-Eq, ElGamal and Chaum-Pedersen pass, matching
-Figure 6's check marks. Okamoto and CDS fail with a reason, and E-Cash
-Coin reaches the timeout (it may report `failed` instead, depending on
-`--timeout`). The run reproduces the paper if it reports
-`unexpected=0`. A cross means the analysis could not establish special
-soundness, not that the protocol is unsound.
+Schnorr, Multi-Schnorr, Pedersen-Eq, ElGamal and Chaum-Pedersen pass,
+matching Figure 6's check marks. Okamoto, CDS, Dot Product and Product
+Proof fail with a reason, and E-Cash Coin reaches the timeout (it may
+report `failed` instead, depending on `--timeout`). The run reproduces
+the paper if it reports `unexpected=0`. A cross means the analysis could
+not establish special soundness, not that the protocol is unsound.
+
+**Difference from the submitted paper.** The submitted paper listed
+eight special-soundness candidates. Hyrax's Dot Product and Product
+Proof are also special-sound, so Figure 6 now marks them too; like
+E-Cash Coin, they use Pedersen commitments, and the analysis cannot
+extract their witnesses.
 
 **Runtime**: about 3 minutes, mostly the E-Cash Coin timeout.
 
@@ -278,10 +291,12 @@ This analyzes all 35 Figure 6 protocols with a 5-minute timeout and a
 16 GiB memory limit per run. To run a subset, add for example
 `--protocols schnorr,groth16,ipa` after `--timeout 300`.
 
-**Note on the timeout.** §9.3 budgets 20 minutes per protocol. Every
-protocol that completes takes far less (the slowest, Permutation, takes
-33.7 seconds), so a 5-minute timeout keeps the
-full run short.
+**Note on the timeout and memory limit.** §9.3 budgets 20 minutes per
+protocol. Every protocol that completes takes far less (the slowest,
+Permutation, takes 35.7 seconds), so a 5-minute timeout keeps the full
+run short. The 16 GiB memory limit does not change any outcome either:
+Spartan and HyperPlonk run out of memory even with the machine's full
+64 GB, so the limit only makes them fail sooner.
 
 **What to expect.** A table of outcomes and analysis times in Figure 6
 order, then a summary:

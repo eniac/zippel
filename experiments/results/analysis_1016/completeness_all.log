@@ -1,0 +1,78 @@
+[                      sumcheck] ...           ok  build=15.1ms  gb=0.1ms  run=0.0ms  total=15.1ms  basis=0  max_deg=0  vars=0  nodes=66  gen=0  gen_deg=0  gen_vars=0  gen_terms=0  gen_max_terms=0  goals=0  goal_deg=0  goal_max_terms=0  rss=15MiB  singular_rss=-
+[                       schnorr] ...           ok  build=0.7ms  gb=0.0ms  run=0.0ms  total=0.7ms  basis=0  max_deg=0  vars=0  nodes=24  gen=0  gen_deg=0  gen_vars=0  gen_terms=0  gen_max_terms=0  goals=0  goal_deg=0  goal_max_terms=0  rss=8MiB  singular_rss=-
+[                schnorr_3round] ...           ok  build=1.4ms  gb=0.0ms  run=0.0ms  total=1.4ms  basis=0  max_deg=0  vars=0  nodes=48  gen=0  gen_deg=0  gen_vars=0  gen_terms=0  gen_max_terms=0  goals=0  goal_deg=0  goal_max_terms=0  rss=8MiB  singular_rss=-
+[                   pedersen_eq] ...           ok  build=0.8ms  gb=0.0ms  run=0.0ms  total=0.8ms  basis=0  max_deg=0  vars=0  nodes=28  gen=0  gen_deg=0  gen_vars=0  gen_terms=0  gen_max_terms=0  goals=0  goal_deg=0  goal_max_terms=0  rss=8MiB  singular_rss=-
+[                       okamoto] ...           ok  build=1.1ms  gb=0.0ms  run=0.0ms  total=1.1ms  basis=0  max_deg=0  vars=0  nodes=38  gen=0  gen_deg=0  gen_vars=0  gen_terms=0  gen_max_terms=0  goals=0  goal_deg=0  goal_max_terms=0  rss=8MiB  singular_rss=-
+[               okamoto_elgamal] ...           ok  build=1.9ms  gb=0.0ms  run=0.0ms  total=1.9ms  basis=0  max_deg=0  vars=0  nodes=50  gen=0  gen_deg=0  gen_vars=0  gen_terms=0  gen_max_terms=0  goals=0  goal_deg=0  goal_max_terms=0  rss=8MiB  singular_rss=-
+[                            cp] ...           ok  build=1.1ms  gb=0.0ms  run=0.0ms  total=1.1ms  basis=0  max_deg=0  vars=0  nodes=38  gen=0  gen_deg=0  gen_vars=0  gen_terms=0  gen_max_terms=0  goals=0  goal_deg=0  goal_max_terms=0  rss=8MiB  singular_rss=-
+[                           cds] ...           ok  build=13.7ms  gb=29.0ms  run=1.2ms  total=43.9ms  basis=24  max_deg=5  vars=14  nodes=112  gen=24  gen_deg=7  gen_vars=28  gen_terms=100  gen_max_terms=14  goals=6  goal_deg=2  goal_max_terms=2  rss=15MiB  singular_rss=12MiB
+[                      hadamard] ...           ok  build=3.6ms  gb=56.7ms  run=1.9ms  total=62.2ms  basis=51  max_deg=5  vars=25  nodes=34  gen=26  gen_deg=6  gen_vars=28  gen_terms=92  gen_max_terms=14  goals=2  goal_deg=1  goal_max_terms=2  rss=11MiB  singular_rss=12MiB
+[                    coin_proof] ...           ok  build=10.1ms  gb=10.6ms  run=0.1ms  total=20.8ms  basis=5  max_deg=4  vars=13  nodes=266  gen=8  gen_deg=5  gen_vars=18  gen_terms=44  gen_max_terms=7  goals=2  goal_deg=1  goal_max_terms=2  rss=14MiB  singular_rss=12MiB
+[                           kzg] ...           ok  build=2.5ms  gb=0.0ms  run=0.0ms  total=2.5ms  basis=0  max_deg=0  vars=0  nodes=48  gen=0  gen_deg=0  gen_vars=0  gen_terms=0  gen_max_terms=0  goals=0  goal_deg=0  goal_max_terms=0  rss=9MiB  singular_rss=-
+[                  mle_sumcheck] ...           ok  build=15.5ms  gb=0.0ms  run=0.0ms  total=15.5ms  basis=0  max_deg=0  vars=0  nodes=66  gen=0  gen_deg=0  gen_vars=0  gen_terms=0  gen_max_terms=0  goals=0  goal_deg=0  goal_max_terms=0  rss=16MiB  singular_rss=-
+[                         pst13] ...           ok  build=14.0ms  gb=0.0ms  run=0.0ms  total=14.0ms  basis=0  max_deg=0  vars=0  nodes=79  gen=0  gen_deg=0  gen_vars=0  gen_terms=0  gen_max_terms=0  goals=0  goal_deg=0  goal_max_terms=0  rss=14MiB  singular_rss=-
+[                         bccgp] ...           ok  build=3.6ms  gb=9.1ms  run=0.1ms  total=12.9ms  basis=6  max_deg=2  vars=7  nodes=82  gen=10  gen_deg=5  gen_vars=17  gen_terms=52  gen_max_terms=14  goals=4  goal_deg=2  goal_max_terms=2  rss=11MiB  singular_rss=12MiB
+[                       groth16] ...           ok  build=10.2ms  gb=20.8ms  run=0.5ms  total=31.5ms  basis=11  max_deg=7  vars=19  nodes=143  gen=10  gen_deg=7  gen_vars=25  gen_terms=58  gen_max_terms=13  goals=1  goal_deg=1  goal_max_terms=2  rss=14MiB  singular_rss=12MiB
+[                           ipa] ...           ok  build=4.3ms  gb=9.1ms  run=0.1ms  total=13.6ms  basis=5  max_deg=2  vars=6  nodes=87  gen=8  gen_deg=7  gen_vars=17  gen_terms=50  gen_max_terms=20  goals=3  goal_deg=2  goal_max_terms=2  rss=10MiB  singular_rss=12MiB
+[                    hyrax_podp] ...           ok  build=2.8ms  gb=0.0ms  run=0.0ms  total=2.8ms  basis=0  max_deg=0  vars=0  nodes=77  gen=0  gen_deg=0  gen_vars=0  gen_terms=0  gen_max_terms=0  goals=0  goal_deg=0  goal_max_terms=0  rss=9MiB  singular_rss=-
+[                     hyrax_pop] ...           ok  build=3.5ms  gb=0.0ms  run=0.0ms  total=3.5ms  basis=0  max_deg=0  vars=0  nodes=95  gen=0  gen_deg=0  gen_vars=0  gen_terms=0  gen_max_terms=0  goals=0  goal_deg=0  goal_max_terms=0  rss=9MiB  singular_rss=-
+[                     hyrax_ipa] ...           ok  build=8.6ms  gb=10.6ms  run=0.1ms  total=19.2ms  basis=5  max_deg=2  vars=6  nodes=127  gen=8  gen_deg=11  gen_vars=23  gen_terms=70  gen_max_terms=30  goals=3  goal_deg=2  goal_max_terms=2  rss=12MiB  singular_rss=12MiB
+[                     hyrax_pcs] ...           ok  build=37.5ms  gb=0.0ms  run=0.0ms  total=37.5ms  basis=0  max_deg=0  vars=0  nodes=129  gen=0  gen_deg=0  gen_vars=0  gen_terms=0  gen_max_terms=0  goals=0  goal_deg=0  goal_max_terms=0  rss=25MiB  singular_rss=-
+[                    membership] ...           ok  build=6.5ms  gb=9.9ms  run=0.1ms  total=16.5ms  basis=7  max_deg=2  vars=13  nodes=90  gen=12  gen_deg=5  gen_vars=19  gen_terms=38  gen_max_terms=6  goals=3  goal_deg=1  goal_max_terms=2  rss=12MiB  singular_rss=12MiB
+[                    marlin_kzg] ...           ok  build=4.7ms  gb=0.0ms  run=0.0ms  total=4.7ms  basis=0  max_deg=0  vars=0  nodes=77  gen=0  gen_deg=0  gen_vars=0  gen_terms=0  gen_max_terms=0  goals=0  goal_deg=0  goal_max_terms=0  rss=10MiB  singular_rss=-
+[                       spartan] ...          oom  build=-  gb=-  run=-  total=-  basis=-  max_deg=-  vars=-  nodes=703  gen=-  gen_deg=-  gen_vars=-  gen_terms=-  gen_max_terms=-  goals=-  goal_deg=-  goal_max_terms=-  rss=17MiB  singular_rss=-
+[                      dory_ipa] ...           ok  build=155.1ms  gb=100.9ms  run=1.4ms  total=257.4ms  basis=27  max_deg=2  vars=33  nodes=732  gen=42  gen_deg=11  gen_vars=76  gen_terms=1618  gen_max_terms=726  goals=15  goal_deg=2  goal_max_terms=2  rss=62MiB  singular_rss=54MiB
+[                      dory_pcs] ...           ok  build=7216.8ms  gb=5301.6ms  run=5.2ms  total=12523.7ms  basis=32  max_deg=2  vars=40  nodes=571  gen=48  gen_deg=17  gen_vars=129  gen_terms=74032  gen_max_terms=36971  goals=16  goal_deg=2  goal_max_terms=2  rss=1804MiB  singular_rss=1746MiB
+[                    r1cs_sigma] ...           ok  build=10.6ms  gb=8.5ms  run=0.1ms  total=19.1ms  basis=2  max_deg=4  vars=9  nodes=137  gen=4  gen_deg=6  gen_vars=12  gen_terms=26  gen_max_terms=8  goals=1  goal_deg=1  goal_max_terms=2  rss=14MiB  singular_rss=12MiB
+[           hyperplonk_multiset] ...           ok  build=22864.9ms  gb=180.3ms  run=0.1ms  total=23045.3ms  basis=10  max_deg=8  vars=26  nodes=178  gen=13  gen_deg=17  gen_vars=36  gen_terms=1078  gen_max_terms=512  goals=1  goal_deg=1  goal_max_terms=2  rss=3102MiB  singular_rss=2861MiB
+[        hyperplonk_permutation] ...           ok  build=35246.7ms  gb=425.6ms  run=7.7ms  total=35680.0ms  basis=94  max_deg=8  vars=35  nodes=185  gen=13  gen_deg=12  gen_vars=48  gen_terms=78  gen_max_terms=32  goals=1  goal_deg=1  goal_max_terms=2  rss=4561MiB  singular_rss=3722MiB
+[          hyperplonk_zerocheck] ...           ok  build=9324.1ms  gb=0.0ms  run=0.0ms  total=9324.1ms  basis=0  max_deg=0  vars=0  nodes=126  gen=0  gen_deg=0  gen_vars=0  gen_terms=0  gen_max_terms=0  goals=0  goal_deg=0  goal_max_terms=0  rss=1422MiB  singular_rss=-
+[       hyperplonk_productcheck] ...           ok  build=11123.6ms  gb=0.0ms  run=0.0ms  total=11123.6ms  basis=0  max_deg=0  vars=0  nodes=160  gen=0  gen_deg=0  gen_vars=0  gen_terms=0  gen_max_terms=0  goals=0  goal_deg=0  goal_max_terms=0  rss=1728MiB  singular_rss=-
+[              hyperplonk_snark] ...          oom  build=-  gb=-  run=-  total=-  basis=-  max_deg=-  vars=-  nodes=924  gen=-  gen_deg=-  gen_vars=-  gen_terms=-  gen_max_terms=-  goals=-  goal_deg=-  goal_max_terms=-  rss=17MiB  singular_rss=-
+[                 zeromorph_kzg] ...           ok  build=4.4ms  gb=0.0ms  run=0.0ms  total=4.4ms  basis=0  max_deg=0  vars=0  nodes=74  gen=0  gen_deg=0  gen_vars=0  gen_terms=0  gen_max_terms=0  goals=0  goal_deg=0  goal_max_terms=0  rss=10MiB  singular_rss=-
+[                           kzh] ...           ok  build=41.3ms  gb=0.0ms  run=0.0ms  total=41.3ms  basis=0  max_deg=0  vars=0  nodes=109  gen=0  gen_deg=0  gen_vars=0  gen_terms=0  gen_max_terms=0  goals=0  goal_deg=0  goal_max_terms=0  rss=25MiB  singular_rss=-
+[                        dekart] ...           ok  build=69.2ms  gb=19.4ms  run=0.1ms  total=88.8ms  basis=7  max_deg=2  vars=8  nodes=233  gen=10  gen_deg=12  gen_vars=17  gen_terms=380  gen_max_terms=178  goals=2  goal_deg=2  goal_max_terms=3  rss=34MiB  singular_rss=27MiB
+[                          pari] ...           ok  build=59.6ms  gb=51.2ms  run=2.9ms  total=113.6ms  basis=15  max_deg=6  vars=26  nodes=183  gen=18  gen_deg=19  gen_vars=34  gen_terms=590  gen_max_terms=234  goals=3  goal_deg=5  goal_max_terms=3  rss=30MiB  singular_rss=22MiB
+
+============================================================
+                      Protocol |       status |         time
+------------------------------------------------------------
+                      sumcheck |           ok |       15.1ms
+                       schnorr |           ok |        0.7ms
+                schnorr_3round |           ok |        1.4ms
+                   pedersen_eq |           ok |        0.8ms
+                       okamoto |           ok |        1.1ms
+               okamoto_elgamal |           ok |        1.9ms
+                            cp |           ok |        1.1ms
+                           cds |           ok |       43.9ms
+                      hadamard |           ok |       62.2ms
+                    coin_proof |           ok |       20.8ms
+                           kzg |           ok |        2.5ms
+                  mle_sumcheck |           ok |       15.5ms
+                         pst13 |           ok |       14.0ms
+                         bccgp |           ok |       12.9ms
+                       groth16 |           ok |       31.5ms
+                           ipa |           ok |       13.6ms
+                    hyrax_podp |           ok |        2.8ms
+                     hyrax_pop |           ok |        3.5ms
+                     hyrax_ipa |           ok |       19.2ms
+                     hyrax_pcs |           ok |       37.5ms
+                    membership |           ok |       16.5ms
+                    marlin_kzg |           ok |        4.7ms
+                       spartan |          oom |          oom
+                      dory_ipa |           ok |      257.4ms
+                      dory_pcs |           ok |    12523.7ms
+                    r1cs_sigma |           ok |       19.1ms
+           hyperplonk_multiset |           ok |    23045.3ms
+        hyperplonk_permutation |           ok |    35680.0ms
+          hyperplonk_zerocheck |           ok |     9324.1ms
+       hyperplonk_productcheck |           ok |    11123.6ms
+              hyperplonk_snark |          oom |          oom
+                 zeromorph_kzg |           ok |        4.4ms
+                           kzh |           ok |       41.3ms
+                        dekart |           ok |       88.8ms
+                          pari |           ok |      113.6ms
+============================================================
+
+Results written to artifact/output/completeness_results.json
+Log written to artifact/output/completeness_all.log

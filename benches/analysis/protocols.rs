@@ -139,14 +139,14 @@ pub static PROTOCOLS: &[Protocol] = &[
         path: "examples/hyrax_podp/hyrax_podp.zippel",
         sizes: &[("S", 1)],
         completeness: true,
-        soundness: None,
+        soundness: Some(&[2]),
     },
     Protocol {
         name: "hyrax_pop",
         path: "examples/hyrax_pop/hyrax_pop.zippel",
         sizes: &[],
         completeness: true,
-        soundness: None,
+        soundness: Some(&[2]),
     },
     Protocol {
         name: "hyrax_ipa",
