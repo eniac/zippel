@@ -6,7 +6,7 @@ use backend::op::HasOpFactory;
 use crate::backend::{GbBackendKind, GbBasis};
 use crate::error::AnalysisError;
 use crate::frontend::{MonoOrder, Polynomial};
-use crate::ideal::{Check, IdealBuilder, Substitution};
+use crate::ideal::{IdealBuilder, Substitution};
 use crate::{TransClos, Var};
 use graph::{QDag, Ref};
 
@@ -27,11 +27,6 @@ pub struct CompletenessInputs<F: ark_ff::PrimeField> {
     /// asserts, and that every divisor of the prover and the verifier is
     /// nonzero. A goal that is already a verifier generator is left out.
     pub verifier: Vec<Polynomial<F>>,
-    /// What each `verify` checks, over the verifier's own variables: its
-    /// definitions are substituted, the prover messages are not. Unlike
-    /// `verifier`, a check stays when the substitution discharges it, so it
-    /// is what to report.
-    pub checks: Vec<Check<F>>,
 }
 
 /// Perform a completeness analysis using Groebner bases.
@@ -100,7 +95,6 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
             .collect();
         // The honest prover must not abort: its conditions are goals too.
         let prover_goals = prover.take_conditions();
-        let checks = std::mem::take(&mut verifier.checks);
         let mut generating_set = prover.into_generators();
         generating_set.extend(
             verifier
@@ -122,7 +116,6 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         CompletenessInputs {
             generating_set,
             verifier: goals,
-            checks,
         }
     }
 
@@ -239,78 +232,6 @@ mod tests {
     /// Completeness of the first protocol in `ex`.
     fn completeness_of(ex: &str) -> Result<(), AnalysisError<ArkBls12_381>> {
         from_input(&dag_of(ex)).run()
-    }
-
-    /// The checks `build_inputs` records for the protocol `ex`, as `lhs == rhs`.
-    fn checks_of(ex: &str) -> Vec<String> {
-        CompletenessAnalysis::build_inputs(&dag_of(ex))
-            .checks
-            .iter()
-            .map(|c| format!("{} == {}", c.lhs, c.rhs))
-            .collect()
-    }
-
-    #[test]
-    fn checks_keep_the_prover_messages() {
-        // The substitution discharges this check, so `verifier` is empty, but
-        // the check is still recorded, over the messages `u` and `z`.
-        let ex = r#"
-            proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
-                let r = random<F>;
-                u <- g*r;
-                c <- challenge<F>;
-                z <- r + x*c;
-                verify(g*z == u + h*c)
-            }"#;
-        assert_eq!(checks_of(ex), ["g*z == h*c + u"]);
-    }
-
-    #[test]
-    fn checks_substitute_the_verifiers_definitions() {
-        let ex = r#"
-            proto defs<F: Field>(instance a: F, instance b: F) where a == b {
-                let s = a + b;
-                let t = b + a;
-                verify(s == t)
-            }"#;
-        // Both sides are equal, and the check is still recorded.
-        assert_eq!(checks_of(ex), ["b + a == b + a"]);
-    }
-
-    #[test]
-    fn checks_record_each_conjunct_of_each_verify() {
-        let ex = r#"
-            proto conjuncts<F: Field>(witness a: F, witness b: F) where a == b {
-                let r = random<F>;
-                x <- a * r;
-                y <- b * r;
-                u <- a * x;
-                v <- b * y;
-                verify(x == y && u == v);
-                verify(u == x)
-            }"#;
-        assert_eq!(checks_of(ex), ["x == y", "u == v", "u == x"]);
-    }
-
-    #[test]
-    fn checks_record_each_coefficient_slot() {
-        let ex = r#"
-            proto slots<F: Field>(instance p: Poly<F, 1, 1>, instance q: Poly<F, 1, 1>) where p == q {
-                verify(p == q)
-            }"#;
-        assert_eq!(checks_of(ex), ["p[0] == q[0]", "p[1] == q[1]"]);
-    }
-
-    #[test]
-    fn a_checked_message_is_checked_against_one() {
-        // `b` is a prover message: the verifier checks it as sent, not the
-        // `==` the prover computed it with.
-        let ex = r#"
-            proto message<F: Field>(instance x: F, instance y: F) where x == y {
-                b <- x == y;
-                verify(b)
-            }"#;
-        assert_eq!(checks_of(ex), ["b == 1"]);
     }
 
     #[test]

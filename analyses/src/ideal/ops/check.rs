@@ -2,16 +2,13 @@
 
 use backend::op::HasOpFactory;
 use backend::{ABase, ATyp, ArkConfig, ArkScalarOps};
-use graph::{HOp, Op};
-use lang::ast::BinOp;
+use graph::HOp;
 
 use crate::Var;
 use crate::frontend::Polynomial;
-use crate::ideal::Check;
 
 use super::EncodeCtx;
 use super::PolySource;
-use super::bool::sides;
 
 /// Encoder for the `where` clause's `Assert`, the only one in the graph.
 /// Traces `&&` chains through the graph and asserts each leaf bool
@@ -28,35 +25,12 @@ pub fn assert_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, _pr: &
 
 /// Verifier-side check encoder. Like `assert`, its polynomials go to
 /// [`Ideal::conditions`](crate::ideal::Ideal::conditions), not the
-/// generators; `verify` also records what each leaf checks.
+/// generators.
 pub fn verify_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, _pr: &Var, exp: &HOp<C>) {
     let leaves = ctx.builder.collect_and_leaves(exp);
     for leaf in leaves {
-        record_check(ctx, &leaf);
         let polys = check_polys(ctx, &leaf);
         ctx.ideal.conditions.extend(polys);
-    }
-}
-
-/// Record what the `verify` leaf `exp` checks in `ideal.checks`: `lhs == rhs` per slot
-/// when it is an `==`, and `b == 1` for any other bool.
-fn record_check<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, exp: &HOp<C>) {
-    let op = match exp.get() {
-        Op::Ref(r, _) => ctx.builder.node_ops.get(r).cloned(),
-        op => Some(op.clone()),
-    };
-    if let Some(Op::Bin(BinOp::Equ, a, b, _)) = op {
-        let a_src = PolySource::from_ref_vars(&ctx.ideal.vars, &a);
-        let b_src = PolySource::from_ref_vars(&ctx.ideal.vars, &b);
-        ctx.ideal.checks.extend(sides(&a_src, &b_src));
-    } else {
-        let src = PolySource::from_ref_vars(&ctx.ideal.vars, exp);
-        let one = Polynomial::lit(&C::FOps::one());
-        let checks = src.polys.into_iter().map(|lhs| Check {
-            lhs,
-            rhs: one.clone(),
-        });
-        ctx.ideal.checks.extend(checks);
     }
 }
 
@@ -90,8 +64,7 @@ mod tests {
     use graph::UDags;
     use share::{Ctx, unwrap};
 
-    /// What the relation asserts is a condition, not a generator, and is
-    /// not reported as a `verify` check.
+    /// What the relation asserts is a condition, not a generator.
     #[test]
     fn an_assert_is_a_condition() {
         let src = r#"
@@ -109,6 +82,5 @@ mod tests {
             panic!("one condition, got {:?}", relation.conditions);
         };
         assert!(!relation.generating_set.contains(condition));
-        assert!(relation.checks.is_empty());
     }
 }

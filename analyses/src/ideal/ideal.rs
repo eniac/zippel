@@ -14,16 +14,6 @@ use super::Substitution;
 use crate::Var;
 use crate::frontend::Polynomial;
 
-/// One coefficient slot of what a `verify` checks: `lhs == rhs`, or `b == 1` for
-/// a bool that is not an `==`.
-#[derive(Clone, Debug)]
-pub struct Check<F: ark_ff::Field> {
-    /// The left-hand side.
-    pub lhs: Polynomial<F>,
-    /// The right-hand side.
-    pub rhs: Polynomial<F>,
-}
-
 /// The ideal of building a Gröbner basis — the basis polynomials, their
 /// polynomial definitions (pl), and the vars used in the basis.
 #[derive(Clone)]
@@ -31,8 +21,6 @@ pub struct Ideal<C: ArkConfig> {
     /// The generators of the ideal: what a run of the fragment computes. Its
     /// `conditions` are not among them.
     pub generating_set: Vec<Polynomial<C::F>>,
-    /// What each `verify` checks. Recorded for reporting only, never a generator.
-    pub checks: Vec<Check<C::F>>,
     /// When a run of the fragment succeeds: each polynomial vanishes exactly
     /// when its `verify` or `assert` holds, or its operation (a division, an
     /// interpolation) is defined rather than aborting. Kept apart from the
@@ -61,7 +49,6 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
     pub fn new() -> Self {
         Self {
             generating_set: Vec::new(),
-            checks: Vec::new(),
             conditions: Vec::new(),
             pl: Ctx::new(),
             vars: HashMap::new(),
@@ -100,8 +87,8 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         vars
     }
 
-    /// Resolve the `pl` definitions, substitute them into the generators, the
-    /// conditions and both sides of every check, and return them.
+    /// Resolve the `pl` definitions, substitute them into the generators and
+    /// the conditions, and return them.
     ///
     /// Empties `pl` and drops the generators and conditions that become
     /// zero. A definition that [`Substitution::resolve`] leaves out
@@ -116,11 +103,6 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             *p = defs.apply(p);
         }
         self.conditions.retain(|p| !p.is_zero());
-        // Checks keep their sides even when equal: a check that holds is still a check.
-        for check in &mut self.checks {
-            check.lhs = defs.apply(&check.lhs);
-            check.rhs = defs.apply(&check.rhs);
-        }
         defs
     }
 
@@ -152,12 +134,11 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         self.generating_set
     }
 
-    /// Merge another ideal's generators, checks, conditions and definitions
-    /// into this ideal. Its conditions stay conditions.
+    /// Merge another ideal's generators, conditions and definitions into this
+    /// ideal. Its conditions stay conditions.
     pub fn merge(&mut self, other: &Self) {
         self.generating_set
             .extend(other.generating_set.iter().cloned());
-        self.checks.extend(other.checks.iter().cloned());
         self.conditions.extend(other.conditions.iter().cloned());
         for (k, v) in other.pl.iter() {
             self.pl.insert(k, v);
@@ -258,14 +239,6 @@ mod tests {
         ideal.pl.insert(&t, &(&v(&s) * &v(&s)));
         ideal.generating_set.push(&v(&t) - &v(&b));
         ideal.generating_set.push(&v(&t) - &(&v(&s) * &v(&s)));
-        ideal.checks.push(Check {
-            lhs: v(&s),
-            rhs: v(&t),
-        });
-        ideal.checks.push(Check {
-            lhs: v(&s),
-            rhs: a_plus_1.clone(),
-        });
 
         let defs = ideal.substitute_definitions();
 
@@ -276,11 +249,6 @@ mod tests {
             [&t_value - &v(&b)],
             "a generator that becomes zero is dropped"
         );
-        assert_eq!(ideal.checks.len(), 2, "a check that holds is still a check");
-        assert_eq!(ideal.checks[0].lhs, a_plus_1);
-        assert_eq!(ideal.checks[0].rhs, t_value);
-        assert_eq!(ideal.checks[1].lhs, a_plus_1);
-        assert_eq!(ideal.checks[1].rhs, a_plus_1);
     }
 
     /// A condition stays a condition through `merge`, and leaves only by
