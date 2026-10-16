@@ -11,7 +11,7 @@ proto okamoto_elgamal<G: Group, F: Scalar<G>>(
     let rr = random<F>;
     t1 <- g * rr;
     t2 <- h * rr + g * rx;
-    c <- challenge<F*>;
+    c <- challenge<F>;
     sx <- rx + x * c;
     sr <- rr + r * c;
     verify(g * sr == t1 + c1 * c);

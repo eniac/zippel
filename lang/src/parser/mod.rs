@@ -482,29 +482,8 @@ where
     })
 }
 
-/// Parse a distribution.
-/// Mirrors `distribution = { "uniform" ~ star? }`
-fn distribution_parser<'src, I>()
--> impl Parser<'src, I, Spanned<Distribution>, extra::Err<RichError<'src>>> + Clone
-where
-    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
-{
-    just(Token::KwUniform)
-        .ignored()
-        .then(just(Token::Star).ignored().or_not())
-        .map_with(|(_, star), e| {
-            let dist = if star.is_some() {
-                Distribution::UniformNonZero
-            } else {
-                Distribution::Uniform
-            };
-            let sp: SimpleSpan = e.span();
-            Spanned::new(dist, sp.into_range())
-        })
-}
-
 /// Parse an argument.
-/// Mirrors `arg = { qualifier? ~ distribution? ~ id ~ ":" ~ typ }`
+/// Mirrors `arg = { qualifier? ~ id ~ ":" ~ typ }`
 fn arg_parser<'src, I>()
 -> impl Parser<'src, I, Spanned<GArg<Size>>, extra::Err<RichError<'src>>> + Clone
 where
@@ -512,16 +491,15 @@ where
 {
     qualifier_parser()
         .or_not()
-        .then(distribution_parser().or_not())
         .then(id_tok())
         .then_ignore(just(Token::Colon).ignored())
         .then(typ_parser())
-        .map_with(|(((qual, dist), id), typ), e| {
+        .map_with(|((qual, id), typ), e| {
             let sp: SimpleSpan = e.span();
             Spanned::new(
                 GArg {
                     qualifier: qual.unwrap_or(Spanned::dummy(Qualifier::Local)),
-                    distribution: dist.unwrap_or(Spanned::dummy(Distribution::Nonuniform)),
+                    distribution: Spanned::dummy(Distribution::Nonuniform),
                     id,
                     typ,
                 },
@@ -568,19 +546,17 @@ fn exp_atom<'src, I>(
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
-    // What a sample excludes: `*`, `- v` or `- roots_of_unity(n)`
-    let exclusion = choice((
-        just(Token::Star).to(Exclusion::Zero),
-        just(Token::Minus).ignore_then(choice((
+    // What a sample excludes: `- v` or `- roots_of_unity(n)`
+    let exclusion = just(Token::Minus)
+        .ignore_then(choice((
             just(Token::KwRootsOfUnity)
                 .ignore_then(
                     size_ty_parser().delimited_by(just(Token::LParen), just(Token::RParen)),
                 )
                 .map(|n| Exclusion::RootsOfUnity(n.node)),
             exp_no_seq.clone().map(|v| Exclusion::Values(Box::new(v))),
-        ))),
-    ))
-    .or_not();
+        )))
+        .or_not();
     choice((
         // Range expression: 0..N or 0,1..N
         // Must come before parenthesized expression so (M-1)..(M-1) is parsed as a range, not (M-1)

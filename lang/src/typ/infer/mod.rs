@@ -693,7 +693,7 @@ impl Typeable for CExp {
                             ));
                         }
                     }
-                    None | Some(Exclusion::Zero | Exclusion::RootsOfUnity(_)) => {}
+                    None | Some(Exclusion::RootsOfUnity(_)) => {}
                 }
                 Ok(typ)
             }

@@ -175,9 +175,6 @@ pub enum Token<'src> {
     KwWitness,
     /// `extra` — auxiliary qualifier (`Qualifier::Extra`).
     KwExtra,
-    /// `uniform` — marks a value as uniformly distributed for the uniformity
-    /// analysis.
-    KwUniform,
     /// `Field` — field kind.
     KwField,
     /// `Group` — group kind.
@@ -288,7 +285,6 @@ impl<'src> Token<'src> {
             Token::KwInstance => Token::KwInstance,
             Token::KwWitness => Token::KwWitness,
             Token::KwExtra => Token::KwExtra,
-            Token::KwUniform => Token::KwUniform,
             Token::KwField => Token::KwField,
             Token::KwGroup => Token::KwGroup,
             Token::KwPairing => Token::KwPairing,
@@ -366,7 +362,6 @@ impl<'src> std::fmt::Display for Token<'src> {
             Token::KwInstance => write!(f, "instance"),
             Token::KwWitness => write!(f, "witness"),
             Token::KwExtra => write!(f, "extra"),
-            Token::KwUniform => write!(f, "uniform"),
             Token::KwField => write!(f, "Field"),
             Token::KwGroup => write!(f, "Group"),
             Token::KwPairing => write!(f, "Pairing"),
@@ -538,11 +533,10 @@ const KEYWORDS: &[(&str, Token<'static>)] = &[
     ("verify", Token::KwVerify),
     ("pair", Token::KwPair),
     ("where", Token::KwWhere),
-    // Qualifier / distribution keywords
+    // Qualifier keywords
     ("instance", Token::KwInstance),
     ("witness", Token::KwWitness),
     ("extra", Token::KwExtra),
-    ("uniform", Token::KwUniform),
     // Type keywords (uppercase)
     ("Field", Token::KwField),
     ("Group", Token::KwGroup),

@@ -56,7 +56,7 @@ fn bccgp_recursive<G: Group, F: Scalar<G>, S: Size, N: 1..S + 1>(
     c_l_transcript <- c_l;
     c_r_transcript <- c_r;
 
-    x_challenge <- challenge<F*>;
+    x_challenge <- challenge<F - [0]>;
 
     let x_inv = 1 / x_challenge;
     let x_sq = x_challenge * x_challenge;

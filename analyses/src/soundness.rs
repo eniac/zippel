@@ -749,7 +749,7 @@ mod tests {
             proto relation_division<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G, instance k: F) where h == g * (x / k) {{
                 let r = random<F>;
                 u <- g*r;
-                c <- challenge<F*>;
+                c <- challenge<F - [0]>;
                 z <- r + x*c;
                 verify({check})
             }}"#
@@ -809,7 +809,7 @@ mod tests {
             proto foo<G: Group, F: Scalar<G>>(witness x: F, witness w: F, instance g: G, instance h: G) where h == g*x {
                 let r = random<F>;
                 u <- g*r;
-                c <- challenge<F*>;
+                c <- challenge<F>;
                 z <- r + x*c;
                 verify(g*z == u + h*c)
             }
@@ -855,7 +855,7 @@ mod tests {
             let r = random<F>;
             u <- g*r;
             w <- g2*r;
-            c <- challenge<F*>;
+            c <- challenge<F>;
             z <- r + x*c;
             verify(g*z == u + h1*c); verify(g2*z == w + h2*c)
         }
@@ -925,8 +925,8 @@ mod tests {
             proto vec_challenge<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
                 let r = random<F>;
                 u <- g*r;
-                c1 <- challenge<F*>;
-                c2 <- challenge<F*>;
+                c1 <- challenge<F>;
+                c2 <- challenge<F>;
                 z <- r + x*c1 + x*c2;
                 verify(g*z == u + h*c1 + h*c2)
             }
@@ -997,7 +997,7 @@ mod tests {
     fn reject_challenge_before_any_prover_message() {
         let proto = r#"
             proto bad<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
-                c <- challenge<F*>;
+                c <- challenge<F>;
                 u <- g*x;
                 verify(g*x == u)
             }
@@ -1015,9 +1015,9 @@ mod tests {
             proto bad<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
                 let r = random<F>;
                 u <- g*r;
-                c <- challenge<F*>;
+                c <- challenge<F>;
                 z <- r + x*c;
-                d <- challenge<F*>;
+                d <- challenge<F>;
                 verify(g*z == u + h*c)
             }
         "#;
@@ -1034,9 +1034,9 @@ mod tests {
             proto bad<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
                 let r = random<F>;
                 u <- g*r;
-                c1 <- challenge<F*>;
+                c1 <- challenge<F>;
                 z1 <- r + x*c1;
-                c2 <- challenge<F*>;
+                c2 <- challenge<F>;
                 z2 <- r + x*c2;
                 verify(g*z1 == u + h*c1); verify(g*z2 == u + h*c2)
             }
@@ -1088,7 +1088,7 @@ mod tests {
                 let r1 = random<F>;
                 u0 <- g*r0;
                 u1 <- g*r1;
-                c <- challenge<F*>;
+                c <- challenge<F>;
                 z0 <- r0 + x[0]*c;
                 z1 <- r1 + x[1]*c;
                 verify(g*z0 == u0 + h1*c); verify(g*z1 == u1 + h2*c)
@@ -1112,8 +1112,8 @@ mod tests {
             proto vec_two_wit<G: Group, F: Scalar<G>>(witness x1: F, witness x2: F, instance g: G, instance h1: G, instance h2: G) where h1 == g*x1 && h2 == g*x2 {
                 let r = random<F>;
                 u <- g*r;
-                c1 <- challenge<F*>;
-                c2 <- challenge<F*>;
+                c1 <- challenge<F>;
+                c2 <- challenge<F>;
                 z <- r + x1*c1 + x2*c2;
                 verify(g*z == u + h1*c1 + h2*c2)
             }
@@ -1134,8 +1134,8 @@ mod tests {
                 let s = random<F>;
                 u1 <- g*r;
                 u2 <- g*s;
-                c1 <- challenge<F*>;
-                c2 <- challenge<F*>;
+                c1 <- challenge<F>;
+                c2 <- challenge<F>;
                 z1 <- r + x*c1;
                 z2 <- s + x*c2;
                 verify(g*z1 == u1 + h*c1); verify(g*z2 == u2 + h*c2)

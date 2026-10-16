@@ -2,6 +2,8 @@
 source: analyses/tests/gb_snapshots/common.rs
 expression: value
 ---
-- __zippel::gb::div_inv::0 + __zippel::gb::div_inv::1
-__zippel::node::71 - 1
-x_challenge*__zippel::gb::div_inv::0 - 1
+- __zippel::gb::excluded_inv::0 + __zippel::gb::div_inv::0
+- __zippel::gb::excluded_inv::0 + __zippel::gb::div_inv::1
+- __zippel::gb::excluded_inv::0 + __zippel::gb::excluded_inv::1
+__zippel::node::72 - 1
+x_challenge*__zippel::gb::excluded_inv::0 - 1

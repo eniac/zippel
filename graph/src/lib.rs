@@ -3516,7 +3516,7 @@ fn graph_foo() {
 fn graph_poly() {
     let ex = r#"
         proto poly_mul<F: Field>(instance a: Uni<F, 4>, instance b: Uni<F, 4>) where a == a {
-            let r = random<F*>;
+            let r = random<F>;
             let p = a * b;
             verify(p(r) == (a(r) * b(r)))
         }"#;

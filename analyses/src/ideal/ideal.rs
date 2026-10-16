@@ -42,11 +42,6 @@ pub struct Ideal<C: ArkConfig> {
     /// The quotient and remainder witnesses of every polynomial division
     /// encoded into this ideal, each a sentinel with its own `Ref`.
     pub division_witnesses: HashSet<Ref>,
-    /// Each sample with an exclusion, and what the exclusion makes nonzero:
-    /// `r`, `∏ (r − s)` over the excluded values `s`, or `r^n − 1`.
-    pub excluded: Vec<(Var, Polynomial<C::F>)>,
-    /// The divisors whose definedness conditions require them nonzero.
-    pub divisors: Vec<Polynomial<C::F>>,
 }
 
 impl<C: ArkConfig + HasOpFactory> Ideal<C> {
@@ -59,8 +54,6 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             vars: HashMap::new(),
             var_order: Vec::new(),
             division_witnesses: HashSet::new(),
-            excluded: Vec::new(),
-            divisors: Vec::new(),
         }
     }
 
@@ -94,8 +87,8 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         vars
     }
 
-    /// Resolve the `pl` definitions, substitute them into the generators, the
-    /// conditions, the exclusions and the divisors, and return them.
+    /// Resolve the `pl` definitions, substitute them into the generators and
+    /// the conditions, and return them.
     ///
     /// Empties `pl` and drops the generators and conditions that become
     /// zero. A definition that [`Substitution::resolve`] leaves out
@@ -110,14 +103,6 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             *p = defs.apply(p);
         }
         self.conditions.retain(|p| !p.is_zero());
-        for p in self
-            .excluded
-            .iter_mut()
-            .map(|(_, p)| p)
-            .chain(&mut self.divisors)
-        {
-            *p = defs.apply(p);
-        }
         defs
     }
 
@@ -149,8 +134,8 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         self.generating_set
     }
 
-    /// Merge another ideal's generators, conditions, definitions, exclusions
-    /// and divisors into this ideal. Its conditions stay conditions.
+    /// Merge another ideal's generators, conditions and definitions into this
+    /// ideal. Its conditions stay conditions.
     pub fn merge(&mut self, other: &Self) {
         self.generating_set
             .extend(other.generating_set.iter().cloned());
@@ -164,8 +149,6 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         }
         self.division_witnesses
             .extend(other.division_witnesses.iter().copied());
-        self.excluded.extend(other.excluded.iter().cloned());
-        self.divisors.extend(other.divisors.iter().cloned());
     }
 }
 

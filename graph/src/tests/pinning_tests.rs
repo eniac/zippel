@@ -10,8 +10,8 @@ use crate::{
     Dep, DepType, GOp, GraphError, HOp, Node, Nothing, Op, PrivateValue, Ref, UDag, UDags, mk,
 };
 use backend::{ATyp, ArkBls12_381};
+use lang::ast::BinOp;
 use lang::ast::spanned::Spanned;
-use lang::ast::{BinOp, Exclusion};
 use lang::id::Vid;
 use lang::typ::{Distribution, Qualifier};
 use petgraph::Direction;
@@ -265,20 +265,6 @@ fn pin_random() {
     assert!(gs[0] == expected);
 }
 
-/// Random non-zero scalar.
-#[test]
-fn pin_random_nz() {
-    let src = "fn f<F: Field>(instance a: F) -> F { random<F*> }";
-    let gs = parse_and_build(src);
-
-    let mut expected = UDag::<B>::new();
-    let (_inp, __inp_args) = expected_inp(&mut expected, "f", &[instance_s("a")]);
-    let _arg_a = __inp_args[0];
-    let _rand = expected.add_node(Node::random(&ATyp::scalar(), Some(Exclusion::Zero)), 0..0);
-
-    assert!(gs[0] == expected);
-}
-
 /// Challenge creates a transcript edge from the start node.
 /// Tests: CExp::Challenge, Node::challenge, transcript edge.
 #[test]
@@ -290,24 +276,6 @@ fn pin_challenge() {
     let (inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a")]);
     let _arg_a = _inp_args[0];
     let ch = expected.add_node(Node::challenge(&ATyp::scalar(), None), 0..0);
-    expected.add_edge(inp, ch, Dep::transcript());
-
-    assert!(gs[0] == expected);
-}
-
-/// Challenge non-zero.
-#[test]
-fn pin_challenge_nz() {
-    let src = "fn f<F: Field>(instance a: F) -> F { challenge<F*> }";
-    let gs = parse_and_build(src);
-
-    let mut expected = UDag::<B>::new();
-    let (inp, _inp_args) = expected_inp(&mut expected, "f", &[instance_s("a")]);
-    let _arg_a = _inp_args[0];
-    let ch = expected.add_node(
-        Node::challenge(&ATyp::scalar(), Some(Exclusion::Zero)),
-        0..0,
-    );
     expected.add_edge(inp, ch, Dep::transcript());
 
     assert!(gs[0] == expected);
@@ -1675,7 +1643,7 @@ fn pin_private_value_error_shows_the_use_chain() {
     u <- g * r;
     let t = r + r;
     let w = t * t;
-    c <- challenge<F*>;
+    c <- challenge<F>;
     z <- r + x * c;
     verify(g * w == u)
 }
@@ -1702,7 +1670,7 @@ fn pin_project_verifier_random_leak() {
             let r = random<F>;
             u <- g * r;
             let t = r + r;
-            c <- challenge<F*>;
+            c <- challenge<F>;
             verify(g * t == u + u)
         }
     "#;
@@ -1720,7 +1688,7 @@ fn pin_project_verifier_random_leak() {
         proto foo<G: Group, F: Scalar<G>>(instance g: G) where g == g {
             let r = random<F>;
             u <- g * r;
-            c <- challenge<F*>;
+            c <- challenge<F>;
             verify(u == u)
         }
     "#;

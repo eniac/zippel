@@ -482,16 +482,6 @@ impl<C: ArkConfig, R> Op<C, R> {
     pub fn random(typ: ATyp) -> Op<C, R> {
         Op::Random(typ, None)
     }
-    /// Builds a Fiat-Shamir challenge of type `typ` that is constrained to be nonzero
-    /// (needed wherever the challenge is used as a divisor or evaluation denominator).
-    pub fn challenge_nz(typ: ATyp) -> Op<C, R> {
-        Op::Challenge(typ, Some(Exclusion::Zero))
-    }
-    /// Builds a locally sampled random element of type `typ` constrained to be nonzero,
-    /// e.g. a blinding factor that must be invertible.
-    pub fn random_nz(typ: ATyp) -> Op<C, R> {
-        Op::Random(typ, Some(Exclusion::Zero))
-    }
 }
 
 impl<C: HasOpFactory> GOp<C> {

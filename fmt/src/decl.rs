@@ -6,7 +6,7 @@ use lang::ast::sig::Sig;
 use lang::ast::{Size, Spanned};
 use lang::id::Tid;
 use lang::parser::Token;
-use lang::typ::{Distribution, Qualifier};
+use lang::typ::Qualifier;
 use pretty::DocAllocator;
 
 use crate::ctx::{ALLOC, Doc, hardlines};
@@ -306,22 +306,6 @@ fn format_arg(
         });
         leading_gap = qualifier_gap;
         parts.push(ALLOC.text(qualifier_text(arg.node.qualifier.node)));
-        has_prefix = true;
-    }
-
-    if !matches!(arg.node.distribution.node, Distribution::Nonuniform) {
-        let uniform_gap = cursor.advance_to_token(end, |token| matches!(token, Token::KwUniform));
-        if has_prefix {
-            parts.push(gap_space(uniform_gap, style));
-        } else {
-            leading_gap = uniform_gap;
-        }
-        parts.push(ALLOC.text("uniform"));
-        if matches!(arg.node.distribution.node, Distribution::UniformNonZero) {
-            let star_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Star));
-            parts.push(gap_space(star_gap, style));
-            parts.push(ALLOC.text("*"));
-        }
         has_prefix = true;
     }
 
