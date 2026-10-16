@@ -1,21 +1,24 @@
 #![allow(refining_impl_trait)]
 
+mod call;
 mod error;
+mod poly;
+mod record;
 #[cfg(test)]
 mod tests;
+mod vector;
 
 pub use error::TypeError;
 
-use num::ToPrimitive;
+use num::{BigUint, ToPrimitive};
 
 use crate::ast::range::Range;
-use crate::ast::sig::{CSig, SigError};
+use crate::ast::sig::CSig;
 use crate::ast::spanned::Spanned;
-use crate::ast::{BinOp, CBody, CExp, Exclusion};
+use crate::ast::{BinOp, CBody, CExp, Exclusion, ExpExclusion};
 use crate::id::{Tid, Vid};
-use crate::typ::instantiate::CallError;
 use crate::typ::lub::{Lub, LubError};
-use crate::typ::{CKind, CTyp, CTyps};
+use crate::typ::{CKind, CTyp};
 use share::{Ctx, Set};
 
 /// Kind-directed type inference for concretized AST nodes.
@@ -102,472 +105,40 @@ impl Typeable for CExp {
 
             // Unary: FFT-grid interpolation; binary: explicit points + evaluations
             CExp::Interpolate(points_opt, evals) => {
-                let evals_typ = evals
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                match points_opt {
-                    None => match evals_typ {
-                        CTyp::Vec(b, n) => {
-                            let i = b
-                                .to_scalar(kctx)
-                                .ok_or(TypeError::interpolate_unary(kctx, vctx, self))?;
-                            if !n.is_power_of_two() {
-                                return Err(TypeError::interpolate_unary_not_pow2(
-                                    kctx, vctx, self, n.node,
-                                ));
-                            }
-                            // n evaluations on the n-th roots of unity uniquely
-                            // determine a polynomial of max degree n-1
-                            // (n coefficients under the m+1 convention).
-                            // Pow2 check above rules out n == 0, so n >= 1.
-                            let deg = n.node - 1;
-                            Ok(CTyp::uni(&i, deg))
-                        }
-                        _ => Err(TypeError::interpolate_unary(kctx, vctx, self)),
-                    },
-                    Some(points) => {
-                        let points_typ = points
-                            .infer_with_calls(kctx, fctx, vctx, on_call)
-                            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                        match (points_typ, evals_typ) {
-                            (CTyp::Vec(bp, np), CTyp::Vec(be, ne)) if np == ne => {
-                                if ne.node == 0 {
-                                    return Err(TypeError::interpolate(kctx, vctx, self));
-                                }
-                                // A side typed by a scalar field pins the field; otherwise
-                                // integer points/evaluations need a unique scalar in scope.
-                                let named = |t: &CTyp| match t {
-                                    CTyp::Base(b) if kctx.get(b).is_some_and(CKind::is_scalar) => {
-                                        Some(b.clone())
-                                    }
-                                    _ => None,
-                                };
-                                let ie = named(&be.node)
-                                    .or_else(|| named(&bp.node))
-                                    .or_else(|| be.to_scalar(kctx))
-                                    .ok_or(TypeError::interpolate(kctx, vctx, self))?;
-                                let field = CTyp::Base(ie.clone());
-                                if !bp.node.fits(&field, kctx) || !be.node.fits(&field, kctx) {
-                                    return Err(TypeError::interpolate(kctx, vctx, self));
-                                }
-                                // Lagrange interpolation at ne distinct points
-                                // yields a polynomial of max degree ne-1
-                                // (ne coefficients under the m+1 convention).
-                                // np == ne and ne >= 1 since vector typing
-                                // rejects empty literals upstream.
-                                let deg = ne.node - 1;
-                                Ok(CTyp::uni(&ie, deg))
-                            }
-                            _ => Err(TypeError::interpolate(kctx, vctx, self)),
-                        }
-                    }
-                }
+                self.infer_interpolate(points_opt.as_deref(), evals, kctx, fctx, vctx, on_call)
             }
 
             // `poly(v: [F; k])` with `k >= 1` yields `Poly<F, 1, k - 1>`
             // (degree convention: `m = k - 1`).
-            CExp::Poly(v) => {
-                let typ = v
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                match typ {
-                    CTyp::Vec(b, k) => {
-                        if k.node == 0 {
-                            return Err(TypeError::poly(kctx, vctx, self));
-                        }
-                        let i = b.to_scalar(kctx).ok_or(TypeError::poly(kctx, vctx, self))?;
-                        let deg = k.node - 1;
-                        Ok(CTyp::uni(&i, deg))
-                    }
-                    _ => Err(TypeError::poly(kctx, vctx, self)),
-                }
-            }
+            CExp::Poly(v) => self.infer_poly(v, kctx, fctx, vctx, on_call),
 
             // `coef(p: Poly<F, 1, m>)` yields `[F; m + 1]` (coefficient count
             // is degree + 1 under the Phase 14 degree convention).
-            CExp::Coef(p) => {
-                let typ = p
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            CExp::Coef(p) => self.infer_coef(p, kctx, fctx, vctx, on_call),
 
-                match typ {
-                    CTyp::Poly(tid, m_vars, m) if m_vars.node == 1 => {
-                        let k = kctx.get(&tid).ok_or(TypeError::lub(
-                            TypeError::exp(kctx, vctx, self),
-                            LubError::kind_not_found(&tid),
-                        ))?;
-                        // Only field elements can be evaluated
-                        if k.is_scalar() {
-                            let len = m
-                                .checked_add(1)
-                                .ok_or_else(|| TypeError::coef(kctx, vctx, self))?;
-                            Ok(CTyp::vec(&CTyp::Base(tid), len))
-                        } else {
-                            Err(TypeError::coef(kctx, vctx, self))
-                        }
-                    }
-                    CTyp::Poly(tid, n, d) if n.node > 1 && d.node == 1 => {
-                        let k = kctx.get(&tid).ok_or(TypeError::lub(
-                            TypeError::exp(kctx, vctx, self),
-                            LubError::kind_not_found(&tid),
-                        ))?;
-                        if k.is_scalar() {
-                            if let Some(len) = 1_usize.checked_shl(n.node as u32) {
-                                Ok(CTyp::vec(&CTyp::Base(tid), len))
-                            } else {
-                                Err(TypeError::coef(kctx, vctx, self))
-                            }
-                        } else {
-                            Err(TypeError::coef(kctx, vctx, self))
-                        }
-                    }
-                    _ => Err(TypeError::coef(kctx, vctx, self)),
-                }
-            }
-
-            CExp::Evaluate(p, selector, opt_points) => {
-                let p_typ = p
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                match (selector, opt_points) {
-                    // Unary form: eval(p) — evaluation on the FFT grid (n roots of unity).
-                    (None, None) => {
-                        let t = p_typ;
-                        match t.clone() {
-                            CTyp::Poly(tid, m_vars, n) if m_vars.node == 1 => {
-                                let k = kctx.get(&tid).ok_or(TypeError::lub(
-                                    TypeError::exp(kctx, vctx, self),
-                                    LubError::kind_not_found(&tid),
-                                ))?;
-                                if !k.is_scalar() {
-                                    return Err(TypeError::evaluate_grid(kctx, vctx, p, &t));
-                                }
-                                // Phase 14 m+1 convention: Poly<F, 1, n> has n+1
-                                // coefficients. The runtime FFT requires the
-                                // coefficient count to be a power of two
-                                // (`GeneralEvaluationDomain::new(n+1)` else pads).
-                                // Check the coefficient count, not the max-degree.
-                                let coef_count = n
-                                    .checked_add(1)
-                                    .ok_or_else(|| TypeError::evaluate_grid(kctx, vctx, p, &t))?;
-                                if !coef_count.is_power_of_two() {
-                                    return Err(TypeError::evaluate_grid_not_pow2(
-                                        kctx, vctx, p, n.node, &t,
-                                    ));
-                                }
-                                Ok(CTyp::vec(&CTyp::Base(tid), coef_count))
-                            }
-                            _ => Err(TypeError::evaluate_grid(kctx, vctx, p, &t)),
-                        }
-                    }
-                    // Binary form: eval(p, points) — point or vector evaluation.
-                    (None, Some(x)) => {
-                        let x_typ = x
-                            .infer_with_calls(kctx, fctx, vctx, on_call)
-                            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                        match (p_typ, x_typ) {
-                            // Univariate polynomial evaluated at a single scalar point.
-                            // Result is a scalar of the same base type. (The
-                            // pre-Phase-B path desugared `p(x)` into
-                            // `dot(p, [x^0, ..., x^n])`, which routed through
-                            // `lub_dot(Poly, Vec)` — that arm has been
-                            // removed, and the App desugaring now produces
-                            // `evaluate(p, x)` directly.)
-                            (CTyp::Poly(i, m, _n), CTyp::Base(b)) if m.node == 1 && i == b => {
-                                let k =
-                                    kctx.get(&i).ok_or(TypeError::evaluate(kctx, vctx, p, x))?;
-                                if !k.is_scalar() {
-                                    return Err(TypeError::evaluate(kctx, vctx, p, x));
-                                }
-                                Ok(CTyp::Base(i))
-                            }
-                            // An integer point embeds into the polynomial's own field.
-                            (CTyp::Poly(i, m, _n), CTyp::Fin(_) | CTyp::FieldLiteral)
-                                if m.node == 1 =>
-                            {
-                                let k =
-                                    kctx.get(&i).ok_or(TypeError::evaluate(kctx, vctx, p, x))?;
-                                if !k.is_scalar() {
-                                    return Err(TypeError::evaluate(kctx, vctx, p, x));
-                                }
-                                Ok(CTyp::Base(i))
-                            }
-                            // Univariate polynomial evaluated at a vector of points is a
-                            // hard type error: evaluate at a single scalar via `p(x)`, or
-                            // write `[p(x) for x in points]` to evaluate at many points.
-                            (CTyp::Poly(_i, m, _n), CTyp::Vec(_b, _len)) if m.node == 1 => {
-                                Err(TypeError::evaluate_univariate_vector(kctx, vctx, p, x))
-                            }
-                            // Multivariate polynomial (MLE, virtual, etc.): n > 1.
-                            (CTyp::Poly(i_poly, n, d), CTyp::Vec(b, len_vec)) if n.node > 1 => {
-                                // Points must fit the polynomial's field (integers embed).
-                                if !b.node.fits(&CTyp::Base(i_poly.clone()), kctx) {
-                                    return Err(TypeError::evaluate(kctx, vctx, p, x));
-                                }
-                                if len_vec == n {
-                                    return Ok(CTyp::Base(i_poly.clone()));
-                                }
-                                if len_vec < n {
-                                    let rem = n.node - len_vec.node;
-                                    return Ok(CTyp::Poly(i_poly.clone(), Spanned::dummy(rem), d));
-                                }
-                                Err(TypeError::evaluate_mle_too_many_arguments(kctx, vctx, p, x))
-                            }
-                            _ => Err(TypeError::evaluate(kctx, vctx, p, x)),
-                        }
-                    }
-                    // Selected form: eval<range>(p, fixed).
-                    (Some(range), Some(fixed)) => {
-                        let fixed_typ = fixed
-                            .infer_with_calls(kctx, fctx, vctx, on_call)
-                            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                        let fail =
-                            || TypeError::evaluate_selected(kctx, vctx, p, fixed, range.clone());
-                        if range.step() != 1 || range.start() >= range.end() {
-                            return Err(fail());
-                        }
-
-                        match (p_typ, fixed_typ) {
-                            (CTyp::Poly(poly_tid, n, d), CTyp::Vec(fixed_elem, fixed_len)) => {
-                                let range_len = range.len();
-                                if !fixed_elem.node.fits(&CTyp::Base(poly_tid.clone()), kctx)
-                                    || range.end() > n.node
-                                    || fixed_len.node != n.node - range_len
-                                {
-                                    return Err(fail());
-                                }
-                                Ok(CTyp::Poly(poly_tid, Spanned::dummy(range_len), d))
-                            }
-                            _ => Err(fail()),
-                        }
-                    }
-                    // Parser conversion rejects this mode for source programs.
-                    // Keep inference defensive in case an internal caller builds
-                    // the impossible shape directly.
-                    (Some(range), None) => Err(TypeError::evaluate_selector_without_points(
-                        kctx,
-                        vctx,
-                        p,
-                        range.clone(),
-                    )),
-                }
-            }
+            CExp::Evaluate(p, selector, opt_points) => self.infer_evaluate(
+                p,
+                selector.as_ref(),
+                opt_points.as_deref(),
+                kctx,
+                fctx,
+                vctx,
+                on_call,
+            ),
 
             // Infer the type of an MLE from 2^n evaluations in a bool hypercube (as a vector)
-            CExp::Mle(v) => {
-                // It must be a vector of fields, or a vector of Fin
-                let typ = v
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                match typ {
-                    CTyp::Vec(b, n) => {
-                        if n.node == 0 || !n.is_power_of_two() {
-                            return Err(TypeError::mle(kctx, vctx, self));
-                        }
-                        let n_pow = n.ilog2() as usize;
-                        let i = b.to_scalar(kctx).ok_or(TypeError::mle(kctx, vctx, self))?;
-                        Ok(CTyp::mle(&i, n_pow))
-                    }
-                    _ => Err(TypeError::mle(kctx, vctx, self)),
-                }
-            }
+            CExp::Mle(v) => self.infer_mle(v, kctx, fctx, vctx, on_call),
 
             // Infer the type of a (nonempty) vector by unifying the types of its elements
-            CExp::Vec(v) => {
-                let ts: CTyps = v
-                    .iter()
-                    .map(|aexp| {
-                        aexp.infer_with_calls(kctx, fctx, vctx, on_call)
-                            .map(Spanned::dummy)
-                    })
-                    .collect::<Result<_, _>>()
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            CExp::Vec(v) => self.infer_vec(v, kctx, fctx, vctx, on_call),
 
-                // Vectors cannot be empty for type inference to work
-                if ts.is_empty() {
-                    return Err(TypeError::vec_empty(kctx, vctx));
-                }
+            CExp::Pair(t, e) => self.infer_pair(t, e, kctx, fctx, vctx, on_call),
 
-                // For reference, the type of the first element
-                let mut t = ts.0[0].node.clone();
-
-                // Unify types of all elements in the vector to [t]
-                for (i, tx) in ts.0.iter().enumerate().skip(1) {
-                    t = CTyp::lub_equ(&t, tx, kctx).map_err(|e| {
-                        TypeError::vec(kctx, vctx, &v.0[i], tx, &v.0[0], &ts.0[0], e.into())
-                    })?;
-                }
-
-                // Vector length
-                let n = ts.len();
-
-                // Generalize the type of the parameters
-                Ok(CTyp::vec(&t, n))
-            }
-
-            CExp::Pair(t, e) => {
-                let ta = t
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let tb = e
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                CTyp::lub_pair(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
-            }
-
-            // Handle +
-            CExp::Bin(BinOp::Add, a, b) => {
-                let ta = a
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let tb = b
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                CTyp::lub_add(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))
-            }
-
-            // Handle -
-            CExp::Bin(BinOp::Sub, a, b) => {
-                let ta = a
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let tb = b
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                CTyp::lub_sub(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))
-            }
-
-            // Handle *
-            CExp::Bin(BinOp::Mul, a, b) => {
-                let ta = a
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let tb = b
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                CTyp::lub_mul(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))
-            }
-
-            // Handle /
-            CExp::Bin(BinOp::Div, a, b) => {
-                let ta = a
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let tb = b
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                CTyp::lub_div(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))
-            }
-
-            // Handle ^
-            CExp::Bin(BinOp::Pow, a, b) => {
-                let ta = a
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let tb = b
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                CTyp::lub_pow(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))
-            }
-
-            // Handle .
-            CExp::Bin(BinOp::Dot, a, b) => {
-                let ta = a
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let tb = b
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                CTyp::lub_dot(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))
-            }
-
-            // Handle %
-            CExp::Bin(BinOp::Rem, a, b) => {
-                let ta = a
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let tb = b
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                CTyp::lub_rem(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))
-            }
-            // Handle ++
-            CExp::Bin(BinOp::Concat, a, b) => {
-                let ta = a
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let tb = b
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                CTyp::lub_concat(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))
-            }
-
-            // Handle ==
-            CExp::Bin(BinOp::Equ, a, b) => {
-                let ta = a
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let tb = b
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                // Check lub_equ compatibility
-                let _lub = CTyp::lub_equ(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))?;
-
-                // Equality is whole-value for every shape, vectors included
-                Ok(CTyp::Bool)
-            }
-
-            // Handle && (logical AND): both operands must be Bool, result is Bool
-            CExp::Bin(BinOp::And, a, b) => {
-                let ta = a
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let tb = b
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                CTyp::lub_and(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))
-            }
+            CExp::Bin(op, a, b) => self.infer_bin(*op, a, b, kctx, fctx, vctx, on_call),
 
             // Unary negation: a negated integer is only meaningful in a field; every other
             // operand keeps its type.
-            CExp::Neg(a) => {
-                let t = a
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                Ok(match t {
-                    CTyp::Fin(_) | CTyp::FieldLiteral => CTyp::FieldLiteral,
-                    t => t,
-                })
-            }
+            CExp::Neg(a) => self.infer_neg(a, kctx, fctx, vctx, on_call),
 
             // Range expression
             CExp::Range(r) => {
@@ -579,81 +150,9 @@ impl Typeable for CExp {
             }
 
             // Map comprehension
-            CExp::Map(x, id, r) => {
-                // Type infer the range expression
-                let tr = r
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            CExp::Map(x, id, r) => self.infer_map(x, id, r, kctx, fctx, vctx, on_call),
 
-                match tr {
-                    CTyp::Vec(inner, n) if n.node > 0 => {
-                        // Clone the context
-                        let mut innerctx = vctx.clone();
-
-                        // Add variable [id] to the context with type [inner]
-                        innerctx.insert(&id.node, &inner);
-
-                        // Type infer the expression [x] with the new context
-                        let tx = x
-                            .infer_with_calls(kctx, fctx, &innerctx, on_call)
-                            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                        Ok(CTyp::vec(&tx, n.node))
-                    }
-                    _ => Err(TypeError::map(kctx, vctx, &x.node, &id.node, &r.node, &tr)),
-                }
-            }
-
-            CExp::Reduce(op, v) => {
-                let tv = v
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                match tv {
-                    CTyp::Vec(elem, n) if n.node > 0 => {
-                        // Multiplying a vector of polynomials multiplies all factors, so
-                        // the resulting degree is the element degree times vector length.
-                        if *op == BinOp::Mul
-                            && let CTyp::Poly(_, _, d) = &elem.node
-                        {
-                            // Validate the pairwise multiplication under the kind context first.
-                            let res_t = CTyp::lub_op(*op, &elem, &elem, kctx)
-                                .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
-                            if let CTyp::Poly(res_a, num_vars, _) = res_t {
-                                let degree = d.checked_mul(n.node).ok_or_else(|| {
-                                    TypeError::lub(
-                                        TypeError::exp(kctx, vctx, self),
-                                        LubError::DegreeOverflow(d.node, n.node),
-                                    )
-                                })?;
-                                return Ok(CTyp::Poly(res_a, num_vars, Spanned::dummy(degree)));
-                            }
-                        }
-
-                        let result = CTyp::lub_op(*op, &elem, &elem, kctx)
-                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
-                        if result == elem.node {
-                            Ok(elem.node.clone())
-                        } else {
-                            Err(TypeError::next(
-                                TypeError::exp(kctx, vctx, self),
-                                TypeError::ReduceAcc(
-                                    kctx.clone(),
-                                    vctx.clone(),
-                                    *op,
-                                    self.clone(),
-                                    elem.node.clone(),
-                                    result,
-                                ),
-                            ))
-                        }
-                    }
-                    _ => Err(TypeError::next(
-                        TypeError::exp(kctx, vctx, self),
-                        TypeError::reduce(kctx, vctx, *op, v, &tv),
-                    )),
-                }
-            }
+            CExp::Reduce(op, v) => self.infer_reduce(*op, v, kctx, fctx, vctx, on_call),
             // Variable context lookup
             CExp::Var(id) => vctx
                 .get(&id.node)
@@ -662,407 +161,216 @@ impl Typeable for CExp {
 
             // Random oracle challenge
             CExp::Challenge(t, x) | CExp::Random(t, x) => {
-                // What kind of [t]?
-                let k = kctx.get(&t.node).ok_or(TypeError::lub(
-                    TypeError::exp(kctx, vctx, self),
-                    LubError::kind_not_found(&t.node),
-                ))?;
-
-                if !k.is_scalar() {
-                    return Err(TypeError::challenge(kctx, vctx, &t.node, k));
-                }
-
-                let typ = CTyp::base(&t.node);
-                match x.as_ref().map(|x| (&x.node, &x.span)) {
-                    // `x^0 == 1` for every `x`: nothing would be left to sample.
-                    Some((Exclusion::RootsOfUnity(n), span)) if n.node == 0 => {
-                        return Err(TypeError::located(
-                            span,
-                            TypeError::excludes_all(kctx, vctx, &t.node),
-                        ));
-                    }
-                    // A vector of `t` values.
-                    Some((Exclusion::Values(v), _)) => {
-                        let tv = v
-                            .infer_with_calls(kctx, fctx, vctx, on_call)
-                            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                        let of_typ = |elem: &CTyp| {
-                            CTyp::lub_equ(elem, &typ, kctx).is_ok_and(|elem| elem == typ)
-                        };
-                        if !matches!(&tv, CTyp::Vec(elem, _) if of_typ(&elem.node)) {
-                            return Err(TypeError::located(
-                                &v.span,
-                                TypeError::exclusion_type(kctx, vctx, &t.node, &tv),
-                            ));
-                        }
-                    }
-                    None | Some((Exclusion::RootsOfUnity(_), _)) => {}
-                }
-                Ok(typ)
+                self.infer_sample(t, x.as_ref(), kctx, fctx, vctx, on_call)
             }
 
             // Random access into vectors
-            CExp::Ram(a, b) => {
-                let ta = a
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let tb = b
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                // The index must be a compile-time known integer (Fin type).
-                // Fin types arise from literals, ranges, size parameters, and
-                // loop variables bound to fixed ranges — all compile-time known.
-                // Non-Fin indices (e.g. Scalar-typed runtime values) are rejected
-                // because the GB analysis cannot resolve dynamic RAM reads.
-                // A strided index `[start, step..end]` reaches `end - step`
-                // at most, so it may name an `end` past the vector's length.
-                let in_bounds = |r: &crate::typ::CRange, n: usize| {
-                    r.end() <= n || (!r.is_empty() && r.start() + (r.len() - 1) * r.step() < n)
-                };
-                match (&ta, &tb) {
-                    // An integer beyond the finite-index range is never reduced to an index.
-                    (_, CTyp::FieldLiteral) => Err(TypeError::located(
-                        &b.span,
-                        TypeError::FiniteIndexOverflow(kctx.clone(), vctx.clone(), self.clone()),
-                    )),
-                    (CTyp::Vec(typ, n), CTyp::Fin(r)) => {
-                        if in_bounds(r, n.node) {
-                            Ok(typ.node.clone())
-                        } else {
-                            Err(TypeError::ram(kctx, vctx, self, ta, tb))
-                        }
-                    }
-                    (CTyp::Vec(typ, n), CTyp::Vec(CTyp::Fin(r), m)) => {
-                        if in_bounds(r, n.node) {
-                            Ok(CTyp::vec(&typ.node, m.node))
-                        } else {
-                            Err(TypeError::ram(kctx, vctx, self, ta, tb))
-                        }
-                    }
-                    // Index is not Fin-typed → dynamic RAM, unsupported.
-                    _ => Err(TypeError::ram_dynamic_index(kctx, vctx, self, ta, tb)),
-                }
-            }
+            CExp::Ram(a, b) => self.infer_ram(a, b, kctx, fctx, vctx, on_call),
 
             // Function or polynomial application
-            CExp::App(id, params) => {
-                // type inference for each parameter
-                let param_types: CTyps = params
-                    .iter()
-                    .map(|p| {
-                        p.infer_with_calls(kctx, fctx, vctx, on_call)
-                            .map(Spanned::dummy)
-                    })
-                    .collect::<Result<_, _>>()
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            CExp::App(id, params) => self.infer_app(id, params, kctx, fctx, vctx, on_call),
 
-                // Is it a polynomial, MLE, or a function?
-                match vctx.get(&id.node) {
-                    Some(CTyp::Poly(tbase, m, _)) if m.node == 1 => {
-                        // It is a univariate polynomial
-                        let k = kctx.get(tbase).ok_or(TypeError::lub(
-                            TypeError::exp(kctx, vctx, self),
-                            LubError::kind_not_found(tbase),
-                        ))?;
+            CExp::Verify(exp) => self.infer_verify(exp, kctx, fctx, vctx, on_call),
 
-                        // Only field elements can be evaluated and only 1 argument can be given
-                        if !k.is_scalar() || param_types.len() != 1 {
-                            return Err(TypeError::uni(kctx, vctx, &id.node, params, &param_types));
-                        }
+            CExp::Let(..) | CExp::Log(..) => self.infer_chain(kctx, fctx, vctx, on_call),
 
-                        // The argument must fit the polynomial's field (integers embed)
-                        if param_types.0[0].node.fits(&CTyp::Base(tbase.clone()), kctx) {
-                            Ok(CTyp::base(tbase))
-                        } else {
-                            Err(TypeError::uni(kctx, vctx, &id.node, params, &param_types))
-                        }
-                    }
-                    Some(CTyp::Poly(tbase, n, d)) if d.node == 1 => {
-                        // It is a multilinear extension
-                        let k = kctx.get(tbase).ok_or(TypeError::lub(
-                            TypeError::exp(kctx, vctx, self),
-                            LubError::kind_not_found(tbase),
-                        ))?;
-                        // Only field elements can be evaluated and only 1 argument can be given
-                        if !k.is_scalar() || param_types.len() != 1 {
-                            return Err(TypeError::mle_app(
-                                kctx,
-                                vctx,
-                                &id.node,
-                                params,
-                                &param_types,
-                            ));
-                        }
+            CExp::Fun(vars, body) => self.infer_fun(vars, body, kctx, fctx, vctx, on_call),
 
-                        // The argument must be a field and the same as the MLE
-                        match &param_types.0[0].node {
-                            CTyp::Fin(_) | CTyp::FieldLiteral if n.node > 0 => {
-                                let rem = n.node - 1;
-                                Ok(CTyp::mle(tbase, rem))
-                            }
-                            CTyp::Base(tb) if tb == tbase && n.node > 0 => {
-                                let rem = n.node - 1;
-                                Ok(CTyp::mle(tbase, rem))
-                            }
-                            CTyp::Vec(CTyp::Base(tb), m) if tb == tbase && n.node == m.node => {
-                                Ok(CTyp::base(tbase))
-                            }
-                            CTyp::Vec(CTyp::Fin(_) | CTyp::FieldLiteral, m) if n.node == m.node => {
-                                Ok(CTyp::base(tbase))
-                            }
-                            CTyp::Vec(CTyp::Fin(_) | CTyp::FieldLiteral, m) if n.node > m.node => {
-                                let rem = n.node - m.node;
-                                Ok(CTyp::mle(tbase, rem))
-                            }
-                            CTyp::Vec(CTyp::Base(tb), m) if tb == tbase && n.node > m.node => {
-                                let rem = n.node - m.node;
-                                Ok(CTyp::mle(tbase, rem))
-                            }
-                            _ => Err(TypeError::mle_app(
-                                kctx,
-                                vctx,
-                                &id.node,
-                                params,
-                                &param_types,
-                            )),
-                        }
-                    }
-                    _ => {
-                        // It is a function: resolve the call among the declarations of this name.
-                        let decls = fctx.iter().filter(|sig| sig.name.node == id.node);
-                        let cause = match CSig::resolve_call(decls, &param_types, kctx) {
-                            Ok((decl, sig, _)) => {
-                                on_call(decl);
-                                return Ok(sig.ret.map_or(CTyp::Unit, |r| r.node));
-                            }
-                            Err(CallError::NoMatch(failures)) => {
-                                // Declarations that fit the arguments but whose type parameters
-                                // could not all be solved.
-                                let mut unresolved: Vec<(CSig, SigError)> = failures
-                                    .into_iter()
-                                    .filter(|(_, e)| {
-                                        matches!(
-                                            e,
-                                            SigError::Uninferable { .. }
-                                                | SigError::KindUnsatisfied { .. }
-                                        )
-                                    })
-                                    .collect();
-                                if unresolved.len() == 1 {
-                                    let (_, e) = unresolved.pop().expect("one element");
-                                    TypeError::Call(kctx.clone(), id.clone(), e)
-                                } else {
-                                    TypeError::func_not_found(
-                                        kctx,
-                                        fctx,
-                                        id,
-                                        param_types,
-                                        params,
-                                        unresolved,
-                                    )
-                                }
-                            }
-                            Err(CallError::Ambiguous(tied)) => {
-                                TypeError::app_multiple(kctx, tied, id, param_types, params)
-                            }
-                        };
-                        Err(TypeError::next(TypeError::exp(kctx, vctx, self), cause))
-                    }
-                }
-            }
-
-            CExp::Verify(exp) => {
-                let t = exp
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                // The operand must be Bool (not Vec<Bool>)
-                if t != CTyp::Bool {
-                    return Err(TypeError::located(
-                        &exp.span,
-                        TypeError::condition(kctx, vctx, self, &t),
-                    ));
-                }
-
-                // Assert/Verify return Unit
-                Ok(CTyp::Unit)
-            }
-
-            CExp::Let(Some(var), left, right) | CExp::Log(var, left, right) => {
-                let tleft = left.infer_with_calls(kctx, fctx, vctx, on_call)?;
-                let mut vctx = vctx.clone();
-                vctx.insert(&var.node, &tleft);
-                match right {
-                    Some(right) => {
-                        let tright = right.infer_with_calls(kctx, fctx, &vctx, on_call)?;
-                        Ok(tright)
-                    }
-                    None => Ok(CTyp::Unit),
-                }
-            }
-            CExp::Let(None, left, right) => {
-                left.infer_with_calls(kctx, fctx, vctx, on_call)?;
-                match right {
-                    Some(right) => right.infer_with_calls(kctx, fctx, vctx, on_call),
-                    None => Ok(CTyp::Unit),
-                }
-            }
-
-            CExp::Fun(vars, body) => {
-                // Create a new variable context with the parameters
-                let mut new_vctx = vctx.clone();
-
-                // Find a field type
-                let field_tid = kctx
-                    .iter()
-                    .find(|(_, k)| k.is_scalar())
-                    .map(|(tid, _)| tid.clone())
-                    .ok_or(TypeError::exp(kctx, vctx, self))?;
-
-                if vars.len() == 1 {
-                    // Univariate polynomial - type the variable as Poly(F, 1, 1) (degree-1 polynomial)
-                    // Then type inference will compute the actual degree through lub operations
-                    for var in vars {
-                        new_vctx.insert(&var.node, &CTyp::uni(&field_tid, 1));
-                    }
-
-                    // Infer the type of the body - should get Poly(F, 1, N) where N is the degree
-                    let body_type = body.infer_with_calls(kctx, fctx, &new_vctx, on_call)?;
-
-                    // Extract the degree from the inferred type
-                    match body_type {
-                        CTyp::Poly(tid, m, degree) if m.node == 1 => Ok(CTyp::Poly(tid, m, degree)),
-                        CTyp::Base(tid) => Ok(CTyp::uni(&tid, 0)), // Constant polynomial
-                        // An integer constant is a constant polynomial over the unique field.
-                        t @ (CTyp::Fin(_) | CTyp::FieldLiteral) => match t.to_scalar(kctx) {
-                            Some(tid) => Ok(CTyp::uni(&tid, 0)),
-                            None => Err(TypeError::located(
-                                &body.span,
-                                TypeError::fun_body(kctx, vctx, self, vars.len(), &t),
-                            )),
-                        },
-                        t => Err(TypeError::located(
-                            &body.span,
-                            TypeError::fun_body(kctx, vctx, self, vars.len(), &t),
-                        )),
-                    }
-                } else {
-                    // Multilinear polynomial - type variables as scalars and validate structure
-                    for var in vars {
-                        new_vctx.insert(&var.node, &CTyp::Base(field_tid.clone()));
-                    }
-
-                    let body_type = body.infer_with_calls(kctx, fctx, &new_vctx, on_call)?;
-
-                    match body_type {
-                        CTyp::Base(tid)
-                            if kctx.get(&tid).map(|k| k.is_scalar()).unwrap_or(false) =>
-                        {
-                            // For multilinear, we just return Mle with the number of variables
-                            // Backend validation will catch if it's not actually multilinear
-                            Ok(CTyp::mle(&tid, vars.len()))
-                        }
-                        // An integer constant is a constant over the unique field.
-                        ref t @ (CTyp::Fin(_) | CTyp::FieldLiteral)
-                            if let Some(tid) = t.to_scalar(kctx) =>
-                        {
-                            Ok(CTyp::mle(&tid, vars.len()))
-                        }
-                        t => Err(TypeError::located(
-                            &body.span,
-                            TypeError::fun_body(kctx, vctx, self, vars.len(), &t),
-                        )),
-                    }
-                }
-            }
-
-            CExp::Record(fields) => {
-                let mut field_types = Ctx::new();
-
-                // Infer the type of each field
-                for (field_name, field_exp) in fields.iter() {
-                    let field_typ = field_exp
-                        .infer_with_calls(kctx, fctx, vctx, on_call)
-                        .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                    field_types.insert(field_name, &Spanned::dummy(field_typ));
-                }
-
-                Ok(CTyp::Record(field_types))
-            }
+            CExp::Record(fields) => self.infer_record(fields, kctx, fctx, vctx, on_call),
 
             CExp::Proj(record_exp, field_name) => {
-                // Infer the type of the record expression
-                let record_typ = record_exp
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                match record_typ {
-                    CTyp::Record(fields) => {
-                        // Look up the field in the record type
-                        fields
-                            .get(field_name)
-                            .map(|f| f.node.clone())
-                            .ok_or_else(|| {
-                                TypeError::next(
-                                    TypeError::exp(kctx, vctx, self),
-                                    TypeError::field_not_found(
-                                        kctx,
-                                        vctx,
-                                        record_exp,
-                                        &field_name.node,
-                                    ),
-                                )
-                            })
-                    }
-                    _ => Err(TypeError::next(
-                        TypeError::exp(kctx, vctx, self),
-                        TypeError::not_a_record(kctx, vctx, record_exp, &record_typ),
-                    )),
-                }
+                self.infer_proj(record_exp, field_name, kctx, fctx, vctx, on_call)
             }
 
             CExp::SetRecord(record_exp, field_name, value_exp) => {
-                // Infer the type of the record expression (must be a record)
-                let record_typ = record_exp
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let CTyp::Record(fields) = &record_typ else {
-                    return Err(TypeError::next(
-                        TypeError::exp(kctx, vctx, self),
-                        TypeError::not_a_record(kctx, vctx, record_exp, &record_typ),
-                    ));
-                };
-                // Check the field exists and the value fits its type (e.g. an integer fits F)
-                let field_typ = fields.get(field_name).ok_or_else(|| {
-                    TypeError::next(
-                        TypeError::exp(kctx, vctx, self),
-                        TypeError::field_not_found(kctx, vctx, record_exp, &field_name.node),
-                    )
-                })?;
-                let value_typ = value_exp
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                if !value_typ.fits(field_typ, kctx) {
-                    return Err(TypeError::next(
-                        TypeError::exp(kctx, vctx, self),
-                        TypeError::located(
-                            &value_exp.span,
-                            TypeError::field_update(
-                                kctx,
-                                vctx,
-                                &value_exp.node,
-                                &field_name.node,
-                                field_typ,
-                                &value_typ,
-                            ),
-                        ),
-                    ));
-                }
-                // Result type is the same record type
-                Ok(record_typ.clone())
+                self.infer_set_record(record_exp, field_name, value_exp, kctx, fctx, vctx, on_call)
             }
         }
+    }
+}
+
+/// The match arms of [`CExp::infer_with_calls`], one function each (the larger groups live in
+/// the `call`, `poly`, `record` and `vector` submodules). Debug builds give every arm's locals
+/// their own stack slots, so keeping them out of the dispatcher keeps each level of expression
+/// nesting to a small frame (issue #252).
+impl CExp {
+    /// Infers a `let`/`<-`/`;` chain in a loop, so stack depth does not grow with its length.
+    /// A failure is located as the `Spanned` wrapper of each chain node would locate it, at the
+    /// innermost non-empty span among the nodes below `self` (the caller's wrapper adds `self`'s).
+    #[inline(never)]
+    fn infer_chain(
+        &self,
+        kctx: &Ctx<Tid, CKind>,
+        fctx: &Set<CSig>,
+        vctx: &Ctx<Vid, CTyp>,
+        on_call: &dyn Fn(&CSig),
+    ) -> Result<CTyp, TypeError> {
+        let mut vctx = vctx.clone();
+        let mut span = 0..0;
+        let mut exp = self;
+        loop {
+            let (var, left, right) = match exp {
+                CExp::Let(var, left, right) => (var.as_ref(), left, right),
+                CExp::Log(var, left, right) => (Some(var), left, right),
+                // The chain's tail: its value is the chain's value.
+                _ => {
+                    return exp
+                        .infer_with_calls(kctx, fctx, &vctx, on_call)
+                        .map_err(|e| TypeError::located(&span, e));
+                }
+            };
+            let tleft = left
+                .infer_with_calls(kctx, fctx, &vctx, on_call)
+                .map_err(|e| TypeError::located(&span, e))?;
+            if let Some(var) = var {
+                vctx.insert(&var.node, &tleft);
+            }
+            let Some(right) = right else {
+                return Ok(CTyp::Unit);
+            };
+            if !right.span.is_empty() {
+                span = right.span.clone();
+            }
+            exp = &right.node;
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[inline(never)]
+    fn infer_bin(
+        &self,
+        op: BinOp,
+        a: &Spanned<CExp>,
+        b: &Spanned<CExp>,
+        kctx: &Ctx<Tid, CKind>,
+        fctx: &Set<CSig>,
+        vctx: &Ctx<Vid, CTyp>,
+        on_call: &dyn Fn(&CSig),
+    ) -> Result<CTyp, TypeError> {
+        let ta = a
+            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+        let tb = b
+            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+
+        let t = CTyp::lub_op(op, &ta, &tb, kctx)
+            .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))?;
+
+        // Equality is whole-value for every shape, vectors included
+        Ok(if op == BinOp::Equ { CTyp::Bool } else { t })
+    }
+
+    #[inline(never)]
+    fn infer_pair(
+        &self,
+        t: &Spanned<CExp>,
+        e: &Spanned<CExp>,
+        kctx: &Ctx<Tid, CKind>,
+        fctx: &Set<CSig>,
+        vctx: &Ctx<Vid, CTyp>,
+        on_call: &dyn Fn(&CSig),
+    ) -> Result<CTyp, TypeError> {
+        let ta = t
+            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+        let tb = e
+            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+
+        CTyp::lub_pair(&ta, &tb, kctx)
+            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
+    }
+
+    #[inline(never)]
+    fn infer_neg(
+        &self,
+        a: &Spanned<CExp>,
+        kctx: &Ctx<Tid, CKind>,
+        fctx: &Set<CSig>,
+        vctx: &Ctx<Vid, CTyp>,
+        on_call: &dyn Fn(&CSig),
+    ) -> Result<CTyp, TypeError> {
+        let t = a
+            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+        Ok(match t {
+            CTyp::Fin(_) | CTyp::FieldLiteral => CTyp::FieldLiteral,
+            t => t,
+        })
+    }
+
+    #[inline(never)]
+    fn infer_sample(
+        &self,
+        t: &Spanned<Tid>,
+        x: Option<&Spanned<ExpExclusion<BigUint>>>,
+        kctx: &Ctx<Tid, CKind>,
+        fctx: &Set<CSig>,
+        vctx: &Ctx<Vid, CTyp>,
+        on_call: &dyn Fn(&CSig),
+    ) -> Result<CTyp, TypeError> {
+        // What kind of [t]?
+        let k = kctx.get(&t.node).ok_or(TypeError::lub(
+            TypeError::exp(kctx, vctx, self),
+            LubError::kind_not_found(&t.node),
+        ))?;
+
+        if !k.is_scalar() {
+            return Err(TypeError::challenge(kctx, vctx, &t.node, k));
+        }
+
+        let typ = CTyp::base(&t.node);
+        match x.as_ref().map(|x| (&x.node, &x.span)) {
+            // `x^0 == 1` for every `x`: nothing would be left to sample.
+            Some((Exclusion::RootsOfUnity(n), span)) if n.node == 0 => {
+                return Err(TypeError::located(
+                    span,
+                    TypeError::excludes_all(kctx, vctx, &t.node),
+                ));
+            }
+            // A vector of `t` values.
+            Some((Exclusion::Values(v), _)) => {
+                let tv = v
+                    .infer_with_calls(kctx, fctx, vctx, on_call)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                let of_typ =
+                    |elem: &CTyp| CTyp::lub_equ(elem, &typ, kctx).is_ok_and(|elem| elem == typ);
+                if !matches!(&tv, CTyp::Vec(elem, _) if of_typ(&elem.node)) {
+                    return Err(TypeError::located(
+                        &v.span,
+                        TypeError::exclusion_type(kctx, vctx, &t.node, &tv),
+                    ));
+                }
+            }
+            None | Some((Exclusion::RootsOfUnity(_), _)) => {}
+        }
+        Ok(typ)
+    }
+
+    #[inline(never)]
+    fn infer_verify(
+        &self,
+        exp: &Spanned<CExp>,
+        kctx: &Ctx<Tid, CKind>,
+        fctx: &Set<CSig>,
+        vctx: &Ctx<Vid, CTyp>,
+        on_call: &dyn Fn(&CSig),
+    ) -> Result<CTyp, TypeError> {
+        let t = exp
+            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+
+        // The operand must be Bool (not Vec<Bool>)
+        if t != CTyp::Bool {
+            return Err(TypeError::located(
+                &exp.span,
+                TypeError::condition(kctx, vctx, self, &t),
+            ));
+        }
+
+        // Assert/Verify return Unit
+        Ok(CTyp::Unit)
     }
 }
 
@@ -1105,9 +413,9 @@ impl Typeable for CBody {
 }
 
 /// The expression a `let`/`<-`/`;` chain ends in: its value is the chain's value.
-pub(crate) fn tail(e: &Spanned<CExp>) -> &Spanned<CExp> {
-    match &e.node {
-        CExp::Let(_, _, Some(rest)) | CExp::Log(_, _, Some(rest)) => tail(rest),
-        _ => e,
+pub(crate) fn tail(mut e: &Spanned<CExp>) -> &Spanned<CExp> {
+    while let CExp::Let(_, _, Some(rest)) | CExp::Log(_, _, Some(rest)) = &e.node {
+        e = rest;
     }
+    e
 }

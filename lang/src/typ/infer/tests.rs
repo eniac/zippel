@@ -1824,3 +1824,72 @@ fn test_type_alias_cycle_returns_error_instead_of_overflow() {
     let (_, diags) = crate::ast::UModule::parse(ex);
     assert!(!diags.is_empty());
 }
+
+/// `let x_i = x_{i-1} + 1` for `i` in `1..=n` from `x_0 = f1`, with every third statement a `<-`
+/// and every fifth followed by a `verify;` statement, ending in `x_n`.
+fn let_chain(n: usize) -> Spanned<CExp> {
+    let x = |i: usize| -> Vid {
+        if i == 0 {
+            Vid::from("f1")
+        } else {
+            Vid::from(format!("x{i}").as_str())
+        }
+    };
+    let mut e = varstr(&x(n).0);
+    for i in (1..=n).rev() {
+        if i % 5 == 0 {
+            e = seq(verify_eq(varstr(&x(i).0), varstr(&x(i).0)), e);
+        }
+        let d = add(varstr(&x(i - 1).0), lit(1));
+        e = if i % 3 == 0 {
+            logx(x(i), d, e)
+        } else {
+            letx(x(i), d, e)
+        };
+    }
+    e
+}
+
+#[test]
+fn test_long_let_chain_infers_on_small_stack() {
+    // Each statement must not add an inference frame: 1000 statements on a 2 MiB stack.
+    let result = std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(|| let_chain(1000).infer(&KIND_CTX, &Set::new(), &VAR_CTX))
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(result, Ok(CTyp::Base(Tid::from("F"))));
+}
+
+#[test]
+fn test_let_chain_error_located_at_innermost_statement() {
+    // A spanless failure in a statement is located at the innermost spanned chain node.
+    let stmt = |d: Spanned<CExp>, e: Spanned<CExp>, span| {
+        Spanned::new(
+            CExp::Let(
+                Some(Spanned::dummy(Vid::from("y"))),
+                Box::new(d),
+                Some(Box::new(e)),
+            ),
+            span,
+        )
+    };
+    let unbound = varstr("missing");
+    let third = stmt(unbound, varstr("y"), 20..30);
+    let second = stmt(
+        varstr("f1"),
+        Spanned::new(seq(lit(0), third).node, 0..0),
+        10..20,
+    );
+    let first = stmt(varstr("f1"), second, 0..40);
+    let err = first.infer(&KIND_CTX, &Set::new(), &VAR_CTX).unwrap_err();
+    assert_eq!(err.span(), Some(20..30));
+
+    // With no spanned chain node below the root, the root's span applies.
+    let inner = stmt(varstr("missing"), varstr("y"), 0..0);
+    let err = stmt(varstr("f1"), inner, 5..9)
+        .infer(&KIND_CTX, &Set::new(), &VAR_CTX)
+        .unwrap_err();
+    assert_eq!(err.span(), Some(5..9));
+}
