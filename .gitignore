@@ -10,5 +10,6 @@ flamegraph.svg
 __pycache__/
 .atomic/
 experiments/artifacts/
+artifacts
 artifact/output/
 dhat/

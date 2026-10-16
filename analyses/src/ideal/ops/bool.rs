@@ -8,7 +8,6 @@ use lang::typ::lub::Lub;
 
 use crate::Var;
 use crate::frontend::Polynomial;
-use crate::ideal::Check;
 
 use super::EncodeCtx;
 use super::PolySource;
@@ -51,10 +50,7 @@ pub fn equ_op<C: ArkConfig + HasOpFactory>(
     let one = Polynomial::lit(&C::FOps::one());
 
     // d_j = x_j - y_j for each slot
-    let diffs: Vec<Polynomial<C::F>> = sides(&x_src, &y_src)
-        .iter()
-        .map(|s| &s.lhs - &s.rhs)
-        .collect();
+    let diffs = slot_differences(&x_src, &y_src);
 
     // d_j * b = 0 for each slot (b=1 → all d_j=0)
     for d in &diffs {
@@ -72,20 +68,20 @@ pub fn equ_op<C: ArkConfig + HasOpFactory>(
     ctx.ideal.generating_set.push(aggregate);
 }
 
-/// The two sides `x_j == y_j` of each coefficient slot `j` of the LUB type of
-/// `x` and `y`: `x == y` holds exactly when every slot's sides are equal.
-pub(super) fn sides<C: ArkConfig + HasOpFactory>(
+/// `x_j − y_j` for each coefficient slot `j` of the LUB type of `x` and `y`:
+/// `x == y` holds exactly when every difference is zero.
+fn slot_differences<C: ArkConfig + HasOpFactory>(
     x_src: &PolySource<C>,
     y_src: &PolySource<C>,
-) -> Vec<Check<C::F>> {
+) -> Vec<Polynomial<C::F>> {
     let lub = ATyp::lub_equ(x_src.typ(), y_src.typ(), &Nothing).expect("equ_op: lub_equ failed");
     let x_lifted = x_src.lift_to(&lub);
     let y_lifted = y_src.lift_to(&lub);
     x_lifted
         .polys
-        .into_iter()
-        .zip(y_lifted.polys)
-        .map(|(lhs, rhs)| Check { lhs, rhs })
+        .iter()
+        .zip(&y_lifted.polys)
+        .map(|(x, y)| x - y)
         .collect()
 }
 
