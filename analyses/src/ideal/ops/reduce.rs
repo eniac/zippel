@@ -372,7 +372,7 @@ mod tests {
                 "the inverse of v[{i}] is missing"
             );
             assert!(
-                ideal.check_polys.contains(&nonzero),
+                ideal.conditions.contains(&nonzero),
                 "v[{i}] is not checked nonzero"
             );
         }

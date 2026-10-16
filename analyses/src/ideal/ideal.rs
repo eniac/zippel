@@ -28,17 +28,19 @@ pub struct Check<F: ark_ff::Field> {
 /// polynomial definitions (pl), and the vars used in the basis.
 #[derive(Clone)]
 pub struct Ideal<C: ArkConfig> {
-    /// The generators of the ideal: every polynomial constrained to vanish on
-    /// honest executions of the protocol fragment being analysed. A
-    /// `verify`'s polynomials are not among them; see `check_polys`.
+    /// The generators of the ideal: what a run of the fragment computes. Its
+    /// `conditions` are not among them.
     pub generating_set: Vec<Polynomial<C::F>>,
     /// What each `verify` checks. Recorded for reporting only, never a generator.
     pub checks: Vec<Check<C::F>>,
-    /// The polynomial form of `checks`: each must vanish for the verifier to
-    /// accept. Kept apart from the generators, since whether they hold is up
-    /// to the analysis: completeness shows they follow, and soundness assumes
-    /// them for an accepted transcript by moving them into `generating_set`.
-    pub check_polys: Vec<Polynomial<C::F>>,
+    /// When a run of the fragment succeeds: each polynomial vanishes exactly
+    /// when its `verify` or `assert` holds, or its operation (a division, an
+    /// interpolation) is defined rather than aborting. Kept apart from the
+    /// generators because an analysis decides what they mean: it either
+    /// assumes them ([`Ideal::assuming_conditions`]) or proves them
+    /// ([`Ideal::take_conditions`]), and [`Ideal::into_generators`] refuses
+    /// an ideal that did neither.
+    pub(super) conditions: Vec<Polynomial<C::F>>,
     /// One-step definitions `x := f` recorded by the encoders, each also a
     /// generator `f − x`. [`Ideal::substitute_definitions`] resolves them and
     /// substitutes them away.
@@ -60,7 +62,7 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         Self {
             generating_set: Vec::new(),
             checks: Vec::new(),
-            check_polys: Vec::new(),
+            conditions: Vec::new(),
             pl: Ctx::new(),
             vars: HashMap::new(),
             var_order: Vec::new(),
@@ -99,10 +101,10 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
     }
 
     /// Resolve the `pl` definitions, substitute them into the generators, the
-    /// check polynomials and both sides of every check, and return them.
+    /// conditions and both sides of every check, and return them.
     ///
-    /// Empties `pl` and drops the generators and check polynomials that
-    /// become zero. A definition that [`Substitution::resolve`] leaves out
+    /// Empties `pl` and drops the generators and conditions that become
+    /// zero. A definition that [`Substitution::resolve`] leaves out
     /// stays a variable, which its generator `f − x` still defines.
     pub fn substitute_definitions(&mut self) -> Substitution<C::F> {
         let defs = Substitution::resolve(&std::mem::take(&mut self.pl));
@@ -110,10 +112,10 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
             *p = defs.apply(p);
         }
         self.generating_set.retain(|p| !p.is_zero());
-        for p in &mut self.check_polys {
+        for p in &mut self.conditions {
             *p = defs.apply(p);
         }
-        self.check_polys.retain(|p| !p.is_zero());
+        self.conditions.retain(|p| !p.is_zero());
         // Checks keep their sides even when equal: a check that holds is still a check.
         for check in &mut self.checks {
             check.lhs = defs.apply(&check.lhs);
@@ -122,12 +124,41 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         defs
     }
 
-    /// Merge another ideal's basis, checks, check polynomials and definitions into this ideal.
+    /// The fragment restricted to its successful runs: its conditions become
+    /// generators.
+    #[must_use]
+    pub fn assuming_conditions(mut self) -> Self {
+        self.generating_set.append(&mut self.conditions);
+        self
+    }
+
+    /// Removes and returns the conditions, for an analysis that proves them.
+    pub fn take_conditions(&mut self) -> Vec<Polynomial<C::F>> {
+        std::mem::take(&mut self.conditions)
+    }
+
+    /// The generators, for a Gröbner basis computation.
+    ///
+    /// # Panics
+    /// Panics if conditions remain: each must be assumed or proved, never
+    /// silently left out.
+    pub fn into_generators(self) -> Vec<Polynomial<C::F>> {
+        assert!(
+            self.conditions.is_empty(),
+            "{} unresolved condition(s): assume them with `assuming_conditions` \
+             or prove them with `take_conditions`",
+            self.conditions.len()
+        );
+        self.generating_set
+    }
+
+    /// Merge another ideal's generators, checks, conditions and definitions
+    /// into this ideal. Its conditions stay conditions.
     pub fn merge(&mut self, other: &Self) {
         self.generating_set
             .extend(other.generating_set.iter().cloned());
         self.checks.extend(other.checks.iter().cloned());
-        self.check_polys.extend(other.check_polys.iter().cloned());
+        self.conditions.extend(other.conditions.iter().cloned());
         for (k, v) in other.pl.iter() {
             self.pl.insert(k, v);
         }
@@ -250,5 +281,50 @@ mod tests {
         assert_eq!(ideal.checks[0].rhs, t_value);
         assert_eq!(ideal.checks[1].lhs, a_plus_1);
         assert_eq!(ideal.checks[1].rhs, a_plus_1);
+    }
+
+    /// A condition stays a condition through `merge`, and leaves only by
+    /// being assumed or taken.
+    #[test]
+    fn conditions_are_assumed_or_taken() {
+        use ark_bls12_381::Fr;
+        use lang::typ::Qualifier;
+        use petgraph::graph::NodeIndex;
+
+        let v = |name: &str, node: usize| {
+            Polynomial::<Fr>::var(&Var::from_var(
+                name,
+                NodeIndex::new(node),
+                ATyp::scalar(),
+                Qualifier::Instance,
+            ))
+        };
+        let (generator, condition) = (v("g", 0), v("c", 1));
+        let mut fragment = Ideal::<ArkBls12_381>::new();
+        fragment.generating_set.push(generator.clone());
+        fragment.conditions.push(condition.clone());
+
+        let mut merged = Ideal::<ArkBls12_381>::new();
+        merged.merge(&fragment);
+        assert_eq!(merged.conditions, vec![condition.clone()]);
+        assert_eq!(merged.generating_set, vec![generator.clone()]);
+
+        let assumed = fragment.clone().assuming_conditions();
+        assert!(assumed.conditions.is_empty());
+        assert_eq!(
+            assumed.into_generators(),
+            vec![generator.clone(), condition.clone()]
+        );
+
+        assert_eq!(merged.take_conditions(), vec![condition]);
+        assert_eq!(merged.into_generators(), vec![generator]);
+    }
+
+    #[test]
+    #[should_panic(expected = "unresolved condition")]
+    fn generators_refuse_unresolved_conditions() {
+        let mut ideal = Ideal::<ArkBls12_381>::new();
+        ideal.conditions.push(Polynomial::zero());
+        let _ = ideal.into_generators();
     }
 }

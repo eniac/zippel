@@ -290,10 +290,7 @@ fn run_soundness(
     let inputs = SpecialSoundnessAnalysis::<ArkBls12_381>::build_inputs(dag, l_vec);
     out.build_ms = Some(elapsed_ms(start));
     let inputs = inputs.map_err(|e| e.to_string())?;
-    out.record_inputs(
-        &inputs.generating_set,
-        &inputs.grev_rel_result.generating_set,
-    );
+    out.record_inputs(&inputs.generating_set, &inputs.relation_goals);
     out.emit();
     if target.build_only {
         return Ok(Status::Built);

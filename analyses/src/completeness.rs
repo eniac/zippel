@@ -59,29 +59,31 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         let mut builder = IdealBuilder::new();
 
         // The prover and the relation, with their definitions substituted,
-        // the prover messages included. The relation's divisor checks are
-        // part of the relation.
+        // the prover messages included. Completeness considers only inputs
+        // that satisfy the relation, so its conditions (what it asserts, and
+        // that its divisions are defined) are assumed.
         let mut prover = builder.build(TransClos::prover(dag));
-        let mut relation = builder.build(TransClos::relation(dag));
-        relation.generating_set.append(&mut relation.check_polys);
-        prover.merge(&relation);
+        prover.merge(
+            &builder
+                .build(TransClos::relation(dag))
+                .assuming_conditions(),
+        );
         let defs = prover.substitute_definitions();
 
-        // The verifier, with its own definitions substituted. Its checks are
-        // the goals; a goal that is already one of its generators holds by
+        // The verifier, with its own definitions substituted. Its conditions
+        // are goals; a goal that is already one of its generators holds by
         // construction.
         let mut verifier = builder.build(TransClos::verifier(dag));
         verifier.substitute_definitions();
-        verifier
-            .check_polys
-            .retain(|g| !verifier.generating_set.contains(g));
+        let mut verifier_goals = verifier.take_conditions();
+        verifier_goals.retain(|g| !verifier.generating_set.contains(g));
 
         // The verifier reads the prover messages as variables, which the
         // prover's definitions replace.
         for p in verifier
             .generating_set
             .iter_mut()
-            .chain(&mut verifier.check_polys)
+            .chain(&mut verifier_goals)
         {
             *p = defs.apply(p);
         }
@@ -96,17 +98,23 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
             .union(&verifier.division_witnesses)
             .copied()
             .collect();
-        let mut generating_set = prover.generating_set;
-        generating_set.extend(verifier.generating_set.into_iter().filter(|p| !p.is_zero()));
+        // The honest prover must not abort: its conditions are goals too.
+        let prover_goals = prover.take_conditions();
+        let checks = std::mem::take(&mut verifier.checks);
+        let mut generating_set = prover.into_generators();
+        generating_set.extend(
+            verifier
+                .into_generators()
+                .into_iter()
+                .filter(|p| !p.is_zero()),
+        );
         let solved = Substitution::solve(&mut generating_set, |p, x| {
             completeness_accepts(p, x, &inputs, &witnesses)
         });
 
-        // The goals: the verifier's checks and the prover's divisor checks.
-        let goals = prover
-            .check_polys
+        let goals = prover_goals
             .iter()
-            .chain(&verifier.check_polys)
+            .chain(&verifier_goals)
             .map(|g| solved.apply(g))
             .filter(|g| !g.is_zero())
             .collect();
@@ -114,7 +122,7 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         CompletenessInputs {
             generating_set,
             verifier: goals,
-            checks: verifier.checks,
+            checks,
         }
     }
 

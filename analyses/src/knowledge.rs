@@ -75,20 +75,24 @@ impl<C: HasOpFactory> KnowledgeAnalysis<C> {
     /// Encode the prover and relation without computing Gröbner bases.
     pub fn build_inputs(dag: &QDag<C>) -> KnowledgeInputs<C::F> {
         let dist_map = UniformityPropagation::from_dag(dag).distributions;
+        // Knowledge considers honest runs on inputs that satisfy the
+        // relation: the prover's and the relation's conditions (what the
+        // relation asserts, and that their divisions are defined) are
+        // assumed.
         let mut gb = IdealBuilder::new();
-        let mut prover_ideal = gb.build(TransClos::prover(dag));
+        let mut prover_ideal = gb.build(TransClos::prover(dag)).assuming_conditions();
 
         let mut rel_gb = gb.clone();
-        let rel_ideal = rel_gb.build(TransClos::relation(dag));
+        let rel_ideal = rel_gb.build(TransClos::relation(dag)).assuming_conditions();
         let order = knowledge_order(&rel_ideal, &dist_map);
-        let relation = (rel_ideal.generating_set, order);
+        let relation = (rel_ideal.into_generators(), order);
 
-        let rel_ideal = gb.build(TransClos::relation(dag));
+        let rel_ideal = gb.build(TransClos::relation(dag)).assuming_conditions();
         prover_ideal.merge(&rel_ideal);
 
         let order = knowledge_order(&prover_ideal, &dist_map);
         KnowledgeInputs {
-            generating_set: prover_ideal.generating_set,
+            generating_set: prover_ideal.into_generators(),
             order,
             relation,
             dist_map,
@@ -231,6 +235,40 @@ mod tests {
     use graph::WritePdf;
     use log::debug;
     use share::{Ctx, unwrap};
+
+    /// The relation holds only where its division is defined, so its
+    /// definedness condition `k·ι − 1` (the only generator with a constant
+    /// term) is assumed, both with the prover and in the relation basis.
+    #[test]
+    fn the_relations_definedness_is_assumed() {
+        use ark_ff::Zero;
+
+        let ex = r#"
+        proto q<F: Field>(witness x: F, instance y: F, instance k: F) where y == x / k {
+            let r = random<F>;
+            c <- challenge<F>;
+            z <- r + x * c;
+            verify(z == z)
+        }"#;
+        let m = parse_and_concretize(ex, &Ctx::new());
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let inputs = KnowledgeAnalysis::<ArkBls12_381>::build_inputs(&g);
+        let has_definedness =
+            |generators: &[crate::frontend::Polynomial<
+                <ArkBls12_381 as backend::ArkConfig>::F,
+            >]| { generators.iter().any(|p| !p.constant_coeff().is_zero()) };
+        assert!(
+            has_definedness(&inputs.generating_set),
+            "{:?}",
+            inputs.generating_set
+        );
+        assert!(
+            has_definedness(&inputs.relation.0),
+            "{:?}",
+            inputs.relation.0
+        );
+    }
 
     #[test]
     fn knowledge_foo() {

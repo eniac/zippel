@@ -4,7 +4,7 @@ use crate::TransClos;
 use crate::Var;
 use crate::backend::{GbBackendKind, GbBasis};
 use crate::error::{AnalysisError, ExtractorRejection};
-use crate::extractor::{extract_locals, valid_extractor};
+use crate::extractor::valid_extractor;
 use crate::frontend::{MonoOrder, Polynomial};
 use crate::ideal::{Ideal, IdealBuilder};
 use ark_ff::One;
@@ -39,11 +39,13 @@ pub struct SoundnessInputs<C: ArkConfig> {
     /// Validity ideal: d-equations + copy TCs. Extractors are added in
     /// `run()` before computing the validity GB.
     pub grev_validity: Ideal<C>,
-    /// Relation ideal, definitions substituted. Relation polys are reduced against the
-    /// validity GB in `run()`.
-    pub grev_rel_result: Ideal<C>,
-    /// Relation locals (merged into validity ideal in `run()`).
-    pub rel_locals: Ideal<C>,
+    /// The relation's intermediate values, definitions substituted: merged
+    /// into the validity ideal in `run()`, which assumes them.
+    pub relation: Ideal<C>,
+    /// The relation's conditions, definitions substituted: what it asserts,
+    /// and that its divisions are defined. `run()` proves them by reducing
+    /// them against the validity GB.
+    pub relation_goals: Vec<Polynomial<C::F>>,
 }
 
 /// Perform a special soundness analysis using Groebner bases.
@@ -59,11 +61,10 @@ pub struct SpecialSoundnessAnalysis<C: ArkConfig> {
     /// Validity ideal: d-equations + copy TCs. Extractors are added in
     /// `run()` before computing the validity GB.
     grev_validity: Ideal<C>,
-    /// Relation ideal, definitions substituted. Relation polys are reduced against the
-    /// validity GB in `run()`.
-    grev_rel_result: Ideal<C>,
-    /// Relation locals (merged into validity ideal in `run()`).
-    rel_locals: Ideal<C>,
+    /// The relation's intermediate values; see [`SoundnessInputs::relation`].
+    relation: Ideal<C>,
+    /// The relation's conditions; see [`SoundnessInputs::relation_goals`].
+    relation_goals: Vec<Polynomial<C::F>>,
     /// Lex ordering used for both search and validity GBs.
     lex_order: MonoOrder,
     /// Backend for the validity GB computation in `run()`.
@@ -321,11 +322,9 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                     non_witness_vars.push(var.clone());
                 }
             }
-            // An accepted transcript: its checks are assumed to hold.
-            let mut copy_result = grev_builder.build(tc);
-            copy_result
-                .generating_set
-                .append(&mut copy_result.check_polys);
+            // An accepted transcript: its verifier passed every check and did
+            // not abort, so its conditions are assumed.
+            let copy_result = grev_builder.build(tc).assuming_conditions();
             grev_search.merge(&copy_result);
             grev_validity.merge(&copy_result);
         }
@@ -338,23 +337,20 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                 non_witness_vars.push(var.clone());
             }
         }
-        let mut rel_locals = extract_locals(&grev_builder, &rel_tc);
-        let mut grev_rel_result = grev_builder.build(rel_tc.clone());
-        // The relation's divisor checks are part of the relation.
-        grev_rel_result
-            .generating_set
-            .append(&mut grev_rel_result.check_polys);
-        rel_locals.substitute_definitions();
-        grev_rel_result.substitute_definitions();
-
-        grev_search.merge(&grev_rel_result);
+        let mut relation = grev_builder.build(rel_tc);
+        relation.substitute_definitions();
+        // The extractor search assumes the relation's conditions (what it
+        // asserts, and that its divisions are defined); validation must
+        // prove them, from the relation's intermediate values.
+        grev_search.merge(&relation.clone().assuming_conditions());
+        let relation_goals = relation.take_conditions();
 
         // Phase 2: Build lex ordering as runtime data.
         // Priority: rel_locals > witness_vars > other_locals > non_witness_vars.
         // In MonoOrder::lex, the first variable has the highest elimination
         // priority. Within each group, sort by Var::Ord for determinism.
         let lex_var_order: Vec<Var> = {
-            let rel_locals_set: Set<Var> = grev_rel_result.var_order.iter().cloned().collect();
+            let rel_locals_set: Set<Var> = relation.var_order.iter().cloned().collect();
             let witness_set: Set<Var> = witness_vars.iter().cloned().collect();
             let non_witness_set: Set<Var> = non_witness_vars.iter().cloned().collect();
 
@@ -405,13 +401,13 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         grev_search.substitute_definitions();
 
         Ok(SoundnessInputs {
-            generating_set: std::mem::take(&mut grev_search.generating_set),
+            generating_set: grev_search.into_generators(),
             lex_order,
             witness_slots,
             verifier_visible,
             grev_validity,
-            grev_rel_result,
-            rel_locals,
+            relation,
+            relation_goals,
         })
     }
 
@@ -442,21 +438,21 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             witness_slots: inputs.witness_slots,
             verifier_visible: inputs.verifier_visible,
             grev_validity: inputs.grev_validity,
-            grev_rel_result: inputs.grev_rel_result,
-            rel_locals: inputs.rel_locals,
+            relation: inputs.relation,
+            relation_goals: inputs.relation_goals,
             lex_order: inputs.lex_order,
             backend,
         })
     }
 
     /// Run the checking phase: extract witnesses from the search GB, build the
-    /// validity GB, and verify that all relation polys reduce to zero.
+    /// validity GB, and verify that the relation's conditions reduce to zero.
     ///
     /// # Phases
     ///
     /// 4. **Extract witnesses** from the search basis.
-    /// 5. **Build validity GB** (also under lex) and verify that all relation
-    ///    polys reduce to zero.
+    /// 5. **Build validity GB** (also under lex) and verify that the
+    ///    relation's conditions reduce to zero.
     pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
         // Phase 4: Extract witnesses.
         let mut search_polys = self.search_gb.polys.clone();
@@ -533,12 +529,14 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             self.grev_validity.generating_set.push(ext_poly.clone());
         }
 
-        self.grev_validity.merge(&self.rel_locals);
+        // The relation's intermediate values are assumed; its conditions are
+        // the goals below.
+        self.grev_validity.merge(&self.relation);
         self.grev_validity.substitute_definitions();
 
         let backend = self.backend.build::<C::F>();
         let validity_gb = backend.compute_gb(
-            std::mem::take(&mut self.grev_validity.generating_set),
+            std::mem::take(&mut self.grev_validity).into_generators(),
             &self.lex_order,
         )?;
 
@@ -548,7 +546,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             });
         }
 
-        for r in self.grev_rel_result.generating_set.iter() {
+        for r in &self.relation_goals {
             if r.is_zero() {
                 continue;
             }
