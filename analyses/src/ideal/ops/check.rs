@@ -16,24 +16,25 @@ use super::bool::sides;
 /// Encoder for the `where` clause's `Assert`, the only one in the graph.
 /// Traces `&&` chains through the graph and asserts each leaf bool
 /// individually, avoiding a high-degree product polynomial in the GB
-/// generating set.
+/// generating set. What the relation asserts is one of its
+/// [`conditions`](crate::ideal::Ideal::conditions), not a generator.
 pub fn assert_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, _pr: &Var, exp: &HOp<C>) {
     let leaves = ctx.builder.collect_and_leaves(exp);
     for leaf in leaves {
         let polys = check_polys(ctx, &leaf);
-        ctx.ideal.generating_set.extend(polys);
+        ctx.ideal.conditions.extend(polys);
     }
 }
 
-/// Verifier-side check encoder. The polynomials are the relation's, but they
-/// go to [`Ideal::check_polys`](crate::ideal::Ideal::check_polys), not the
+/// Verifier-side check encoder. Like `assert`, its polynomials go to
+/// [`Ideal::conditions`](crate::ideal::Ideal::conditions), not the
 /// generators; `verify` also records what each leaf checks.
 pub fn verify_op<C: ArkConfig + HasOpFactory>(ctx: &mut EncodeCtx<'_, C>, _pr: &Var, exp: &HOp<C>) {
     let leaves = ctx.builder.collect_and_leaves(exp);
     for leaf in leaves {
         record_check(ctx, &leaf);
         let polys = check_polys(ctx, &leaf);
-        ctx.ideal.check_polys.extend(polys);
+        ctx.ideal.conditions.extend(polys);
     }
 }
 
@@ -77,5 +78,37 @@ fn check_polys<C: ArkConfig + HasOpFactory>(
                 exp.typ()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ideal::IdealBuilder;
+    use crate::tests::parse_and_concretize;
+    use crate::{QualifierPropagation, TransClos};
+    use backend::ArkBls12_381;
+    use graph::UDags;
+    use share::{Ctx, unwrap};
+
+    /// What the relation asserts is a condition, not a generator, and is
+    /// not reported as a `verify` check.
+    #[test]
+    fn an_assert_is_a_condition() {
+        let src = r#"
+            proto p<F: Field>(witness x: F, instance y: F) where y == x * x {
+                verify(y == y)
+            }"#;
+        let m = parse_and_concretize(src, &Ctx::new());
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut relation = IdealBuilder::new().build(TransClos::relation(&g));
+        relation.substitute_definitions();
+        // The `==` itself is computed by the generators; asserting it is the
+        // one condition.
+        let [condition] = relation.conditions.as_slice() else {
+            panic!("one condition, got {:?}", relation.conditions);
+        };
+        assert!(!relation.generating_set.contains(condition));
+        assert!(relation.checks.is_empty());
     }
 }

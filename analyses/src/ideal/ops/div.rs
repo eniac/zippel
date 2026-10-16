@@ -4,7 +4,7 @@
 //!
 //! Division by zero aborts a run, so each division is encoded totally (a zero
 //! divisor gives a zero quotient) plus a check that its divisor is nonzero, in
-//! [`Ideal::check_polys`](crate::ideal::Ideal::check_polys): completeness
+//! [`Ideal::conditions`](crate::ideal::Ideal::conditions): completeness
 //! proves it, soundness assumes it of an accepted transcript. A
 //! [`known_nonzero`] divisor needs no check. In a relation the check joins the
 //! relation's equations.
@@ -298,7 +298,7 @@ fn div_rem_poly<C: ArkConfig + HasOpFactory>(
                 .generating_set
                 .push(&one_minus_s * &Polynomial::var(&qf));
         }
-        ctx.ideal.check_polys.push(&s_zero - &one);
+        ctx.ideal.conditions.push(&s_zero - &one);
     }
 
     let wit = if is_rem { &r_wit } else { &q_wit };
@@ -407,26 +407,12 @@ fn emit_degree_chain<C: ArkConfig + HasOpFactory>(
 /// Where `b·ι − 1` holds, the definition `a·ι − t` generates the same ideal as
 /// the constraint `a − b·t`: `a·ι − t = t·(b·ι − 1) − ι·(b·t − a)` and
 /// `a − b·t = b·(a·ι − t) − a·(b·ι − 1)`.
-///
-/// A reciprocal `c / b`, with `c` a nonzero constant, is defined by `c − b·t`
-/// instead, through [`divide_by`]. It needs no `ι`, and it leaves `t` one
-/// variable that the prover and the verifier share, where each of them mints
-/// its own `ι`.
 fn slot_wise_div<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
     a_polys: &[Polynomial<C::F>],
     b: &Polynomial<C::F>,
 ) {
-    let slots = target.slots();
-    if let ([t], [c]) = (slots.as_slice(), a_polys)
-        && c.is_constant()
-        && !c.is_zero()
-    {
-        let t = Polynomial::var(t);
-        divide_by(ctx, b, &t, c - &(b * &t));
-        return;
-    }
     let b_inv = inverse(ctx, b);
     let quotients = a_polys.iter().map(|a| a * &b_inv).collect();
     link_to_polys(ctx.ideal, target, quotients);
@@ -470,7 +456,7 @@ fn divide_by<C: ArkConfig + HasOpFactory>(
     }
     ctx.ideal.generating_set.push(divisor * &definition);
     ctx.ideal.generating_set.push(quotient * &definition);
-    ctx.ideal.check_polys.push(definition);
+    ctx.ideal.conditions.push(definition);
 }
 
 /// Whether `poly` is nonzero on every trace: once definitions are inlined, a
@@ -598,9 +584,9 @@ mod tests {
         );
 
         // The divisor is not known to be nonzero: its check is `s_0 − 1`.
-        assert_eq!(ideal.check_polys.len(), 1, "one nonzero-divisor check");
+        assert_eq!(ideal.conditions.len(), 1, "one nonzero-divisor check");
         let one = Polynomial::<ark_bls12_381::Fr>::lit(&ark_bls12_381::Fr::from(1));
-        let s_zero = &ideal.check_polys[0] + &one;
+        let s_zero = &ideal.conditions[0] + &one;
 
         // Check identity rows, times `s_0`, exist in basis.
         let zero = Polynomial::<ark_bls12_381::Fr>::zero();
@@ -775,7 +761,7 @@ mod tests {
         }
 
         // The divisor is nonzero, so its check holds too.
-        for row in ideal.generating_set.iter().chain(&ideal.check_polys) {
+        for row in ideal.generating_set.iter().chain(&ideal.conditions) {
             let (evaluated, _) = row.inline_vars(&subs);
             assert!(
                 evaluated.is_constant(),
@@ -896,9 +882,9 @@ mod tests {
                     .any(|var| var.name.starts_with("__zippel::gb::div_inv"))
         };
         assert!(
-            matches!(ideal.check_polys.as_slice(), [check] if is_nonzero_check(check)),
+            matches!(ideal.conditions.as_slice(), [check] if is_nonzero_check(check)),
             "constant polynomial division should check `b[0] * inv - 1 = 0`, got {:?}",
-            ideal.check_polys
+            ideal.conditions
         );
     }
 
@@ -961,7 +947,7 @@ mod tests {
             "Rem should emit fresh identity + degree-chain + quotient + 1 linking row"
         );
         // Each checks its divisor.
-        assert_eq!(ideal.check_polys.len(), 2, "{:?}", ideal.check_polys);
+        assert_eq!(ideal.conditions.len(), 2, "{:?}", ideal.conditions);
     }
 
     #[test]
@@ -1104,7 +1090,7 @@ mod tests {
         let expected_nonzero = &(&var_poly(&var_b) * &var_poly(&inv))
             - &Polynomial::lit(&ark_bls12_381::Fr::from(1u64));
         assert_eq!(
-            ideal.check_polys,
+            ideal.conditions,
             std::slice::from_ref(&expected_nonzero),
             "scalar fallback should check `b * inv - 1 = 0`"
         );
@@ -1164,7 +1150,7 @@ mod tests {
             let expected_nonzero = &(&var_poly(&b_i) * &var_poly(&inv_i))
                 - &Polynomial::lit(&ark_bls12_381::Fr::from(1u64));
             assert!(
-                ideal.check_polys.contains(&expected_nonzero),
+                ideal.conditions.contains(&expected_nonzero),
                 "b[{i}] should be checked nonzero through inv_{i}"
             );
         }
@@ -1399,27 +1385,6 @@ mod tests {
         assert!(left.is_empty(), "{left:?}");
     }
 
-    /// A reciprocal is the constraint `1 − b·t`, so substitution keeps `t`, and
-    /// it mints no inverse.
-    #[test]
-    fn a_reciprocal_stays_a_variable() {
-        let src = r#"
-            proto reciprocal<F: Field>(instance b: F) where b == b {
-                let t = 1 / b;
-                verify(b * t == 1)
-            }"#;
-        let mut ideal = IdealBuilder::<ArkBls12_381>::new().build(trans_clos_from_src(src));
-        ideal.substitute_definitions();
-        let names: Vec<_> = ideal
-            .generating_set
-            .iter()
-            .flat_map(|p| p.vars())
-            .map(|v| v.name)
-            .collect();
-        assert!(names.iter().any(|n| n == "t"), "{names:?}");
-        assert!(!names.iter().any(|n| n.contains("div_inv")), "{names:?}");
-    }
-
     #[test]
     fn a_divisor_that_resolves_to_zero_fails_its_check() {
         // The quotient is defined, as zero, but the check that the divisor is
@@ -1438,11 +1403,11 @@ mod tests {
         );
         assert!(
             ideal
-                .check_polys
+                .conditions
                 .iter()
                 .any(|p| p.is_constant() && !p.is_zero()),
             "no nonzero constant among the checks: {:?}",
-            ideal.check_polys
+            ideal.conditions
         );
     }
 
@@ -1625,8 +1590,8 @@ mod tests {
         // The top identity row forces b[3]·q[1] to vanish, for a nonzero
         // divisor: the dividend has no coefficient at degree 4. The check is
         // `s_0 − 1`.
-        let [check] = ideal.check_polys.as_slice() else {
-            panic!("one nonzero-divisor check, got {:?}", ideal.check_polys);
+        let [check] = ideal.conditions.as_slice() else {
+            panic!("one nonzero-divisor check, got {:?}", ideal.conditions);
         };
         let s_zero = check + &Polynomial::lit(&ark_bls12_381::Fr::from(1));
         let zero = Polynomial::<ark_bls12_381::Fr>::zero();
