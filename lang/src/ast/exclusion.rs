@@ -28,6 +28,14 @@ impl<V, S> Exclusion<V, S> {
         }
     }
 
+    /// The same exclusion with its root order rewritten by `f`.
+    pub fn map_order<T>(self, f: impl FnOnce(S) -> T) -> Exclusion<V, T> {
+        match self {
+            Exclusion::Values(v) => Exclusion::Values(v),
+            Exclusion::RootsOfUnity(n) => Exclusion::RootsOfUnity(f(n)),
+        }
+    }
+
     /// The same exclusion with its vector rewritten by `f`.
     pub fn map_values<W>(self, f: impl FnOnce(V) -> W) -> Exclusion<W, S> {
         match self {

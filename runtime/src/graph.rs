@@ -218,7 +218,7 @@ impl<C: ArkConfig> MutexGraph<C> {
         };
         let env = state.inbox.take_all();
         exclusion.clone().map(|x| {
-            x.map_values(|v| {
+            x.map_order(|n| n.node).map_values(|v| {
                 crate::eval::eval_op(&v, &env, &mut ThreadRng::default(), &mut Vec::new())
                     .expect("runtime invariant violation: an exclusion failed to evaluate")
             })

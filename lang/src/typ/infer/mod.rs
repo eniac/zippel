@@ -673,13 +673,16 @@ impl Typeable for CExp {
                 }
 
                 let typ = CTyp::base(&t.node);
-                match x {
+                match x.as_ref().map(|x| (&x.node, &x.span)) {
                     // `x^0 == 1` for every `x`: nothing would be left to sample.
-                    Some(Exclusion::RootsOfUnity(0)) => {
-                        return Err(TypeError::excludes_all(kctx, vctx, &t.node));
+                    Some((Exclusion::RootsOfUnity(n), span)) if n.node == 0 => {
+                        return Err(TypeError::located(
+                            span,
+                            TypeError::excludes_all(kctx, vctx, &t.node),
+                        ));
                     }
                     // A vector of `t` values.
-                    Some(Exclusion::Values(v)) => {
+                    Some((Exclusion::Values(v), _)) => {
                         let tv = v
                             .infer_with_calls(kctx, fctx, vctx, on_call)
                             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
@@ -693,7 +696,7 @@ impl Typeable for CExp {
                             ));
                         }
                     }
-                    None | Some(Exclusion::RootsOfUnity(_)) => {}
+                    None | Some((Exclusion::RootsOfUnity(_), _)) => {}
                 }
                 Ok(typ)
             }

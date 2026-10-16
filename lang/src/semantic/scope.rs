@@ -14,7 +14,7 @@ use std::ops::Range;
 
 use crate::ast::decl::UDecl;
 use crate::ast::spanned::Spanned;
-use crate::ast::{Exclusion, Exp, Exps};
+use crate::ast::{Exp, Exps};
 use crate::diagnostic::{Applicability, Diagnostic, Phase};
 use crate::id::Vid;
 
@@ -150,7 +150,7 @@ fn check_exp_scope(
         Exp::Lit(_) | Exp::Unit | Exp::Range(_) => {}
 
         Exp::Random(_, x) | Exp::Challenge(_, x) => {
-            if let Some(v) = x.as_ref().and_then(Exclusion::values) {
+            if let Some(v) = x.as_ref().and_then(|x| x.values()) {
                 check_exp_scope(v, scope, undefined);
             }
         }

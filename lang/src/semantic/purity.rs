@@ -3,8 +3,8 @@
 
 use std::ops::Range;
 
+use crate::ast::Exp;
 use crate::ast::spanned::Spanned;
-use crate::ast::{Exclusion, Exp};
 use crate::diagnostic::Diagnostic;
 use lang_derive::Diagnostic as DiagnosticDerive;
 
@@ -39,7 +39,7 @@ fn collect_impure_constructs(
     match &exp.node {
         Exp::Challenge(_, _) => out.push((exp.span.clone(), "challenge".to_string())),
         Exp::Random(_, x) => {
-            if let Some(v) = x.as_ref().and_then(Exclusion::values) {
+            if let Some(v) = x.as_ref().and_then(|x| x.values()) {
                 collect_impure_constructs(v, out);
             }
         }
