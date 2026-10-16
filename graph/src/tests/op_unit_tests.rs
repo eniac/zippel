@@ -8,7 +8,7 @@ mod op_construction_tests {
     use crate::tests::test_helpers::*;
     use crate::{GOp, Op};
     use backend::{ATyp, Value};
-    use lang::ast::{BinOp, CRange, Exclusion};
+    use lang::ast::{BinOp, CRange};
 
     type C = TestConfig;
 
@@ -201,24 +201,6 @@ mod op_construction_tests {
         match random {
             Op::Random(typ, None) => assert_eq!(typ, ATyp::scalar()),
             _ => panic!("Expected Random"),
-        }
-    }
-
-    #[test]
-    fn test_challenge_nz_construction() {
-        let challenge = GOp::<C>::challenge_nz(ATyp::scalar());
-        match challenge {
-            Op::Challenge(typ, Some(Exclusion::Zero)) => assert_eq!(typ, ATyp::scalar()),
-            _ => panic!("Expected Challenge with nonzero flag"),
-        }
-    }
-
-    #[test]
-    fn test_random_nz_construction() {
-        let random = GOp::<C>::random_nz(ATyp::scalar());
-        match random {
-            Op::Random(typ, Some(Exclusion::Zero)) => assert_eq!(typ, ATyp::scalar()),
-            _ => panic!("Expected Random with nonzero flag"),
         }
     }
 

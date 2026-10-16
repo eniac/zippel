@@ -117,7 +117,7 @@ fn witness_in_verifier_is_reported_at_the_witness() {
 fn random_in_verifier_is_reported_at_the_sample() {
     let (code, stderr) = check_program(
         "random_leak",
-        "proto leak<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g * x {\n    let r = random<F>;\n    u <- g * r;\n    c <- challenge<F*>;\n    z <- r + x * c;\n    verify(g * r == u)\n}\n",
+        "proto leak<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g * x {\n    let r = random<F>;\n    u <- g * r;\n    c <- challenge<F - [0]>;\n    z <- r + x * c;\n    verify(g * r == u)\n}\n",
     );
     assert_eq!(code, Some(1), "{stderr}");
     assert!(
@@ -133,7 +133,7 @@ fn random_in_verifier_is_reported_at_the_sample() {
 fn random_from_a_function_is_reported_where_it_is_named() {
     let (code, stderr) = check_program(
         "random_fn_leak",
-        "fn sample<G: Group, F: Scalar<G>>(instance _like: F) -> F {\n    random<F>\n}\nproto leak<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g * x {\n    let r = sample(x);\n    u <- g * r;\n    c <- challenge<F*>;\n    z <- r + x * c;\n    verify(g * r == u)\n}\n",
+        "fn sample<G: Group, F: Scalar<G>>(instance _like: F) -> F {\n    random<F>\n}\nproto leak<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g * x {\n    let r = sample(x);\n    u <- g * r;\n    c <- challenge<F - [0]>;\n    z <- r + x * c;\n    verify(g * r == u)\n}\n",
     );
     assert_eq!(code, Some(1), "{stderr}");
     assert!(

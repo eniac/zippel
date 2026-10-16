@@ -154,7 +154,9 @@ pub struct TransClos<C: ArkConfig> {
     pub clos: Vec<(Var, GOp<C>)>,
     /// The leaf Vars of the closure — opaque inputs such as protocol
     /// arguments, transcript challenges and randomness. Disjoint from the
-    /// bindings in `clos`.
+    /// bindings in `clos`, except for a challenge the verifier reads: it is a
+    /// leaf, and `clos` also binds it to its `Op::Challenge`, so that its
+    /// exclusion is encoded.
     pub vars: Vec<Var>,
     /// Refs of `vars` that are actual protocol args (not transcript vars).
     /// Used by `IdealBuilder::build()` to emit divisor-invertibility
@@ -281,8 +283,8 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         // Pre-populate seen with transcript source nodes so trans_clos_ref
         // doesn't recurse past them into prover-only nodes. Also add
         // transcript source Vars to vars — they are opaque inputs to
-        // the verifier, analogous to instance args. These are leaf nodes
-        // and are NOT added to clos.
+        // the verifier, analogous to instance args. These are leaf nodes;
+        // only challenges are also bound in clos, below.
         for &n in &transcripts_vec {
             match &dag[n] {
                 Node::Op(op, qualifier) | Node::Transcr(op, qualifier) => {
@@ -292,6 +294,19 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
                     seen.insert(n, var);
                 }
                 _ => {}
+            }
+        }
+
+        // A challenge the verifier reads stays a leaf, but is still drawn
+        // from its domain: bind it to its op too, so that its exclusion is
+        // encoded. Bound before the walk, after its exclusion's values and
+        // before every use, so `clos` stays in topological order.
+        for &n in &transcripts_vec {
+            if let Node::Op(op, _) | Node::Transcr(op, _) = &dag[n]
+                && let challenge @ Op::Challenge(..) = op.get()
+            {
+                let challenge = tc.trans_clos_op(dag, challenge.clone(), &mut seen);
+                tc.clos.push((seen[&n].clone(), challenge));
             }
         }
 
@@ -827,6 +842,30 @@ mod tests {
         );
 
         let tc = TransClos::verifier(&g);
+        verify_topo_order(&tc);
+    }
+
+    /// A challenge the verifier reads is a leaf and is also bound to its op,
+    /// after the value its exclusion lists and before its uses.
+    #[test]
+    fn trans_clos_verifier_binds_challenges_in_topological_order() {
+        let g = make_qualified_dag(
+            r#"
+            proto foo<F: Field>(witness a: F, instance b: F) where a == b {
+                m <- a;
+                c <- challenge<F - [b + 1]>;
+                verify(m * c == b * c)
+            }"#,
+        );
+
+        let tc = TransClos::verifier(&g);
+        let challenge = tc
+            .clos
+            .iter()
+            .find(|(_, op)| matches!(op, Op::Challenge(..)))
+            .map(|(var, _)| var.clone())
+            .expect("the challenge is bound in clos");
+        assert!(tc.vars.contains(&challenge), "and stays a leaf");
         verify_topo_order(&tc);
     }
 

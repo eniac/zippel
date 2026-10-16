@@ -72,7 +72,7 @@ fn ipa_recursive<G: Group, F: Scalar<G>, S: Size, N_current: 1..S + 1>(
     r_transcript <- dot(g_v_lo, a_p_hi) + dot(h_v_hi, b_p_lo) + u_base_for_ipa * cR_val;
 
     // Verifier "sends" challenge x (derived from transcript using Fiat-Shamir)
-    x_challenge <- challenge<F*>;
+    x_challenge <- challenge<F - [0]>;
 
     let inverse = 1 / x_challenge;
     // Both Prover and Verifier compute parameters for the next recursive call:

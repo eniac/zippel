@@ -5,14 +5,14 @@
 //! Division by zero aborts a run, so each division is encoded totally (a zero
 //! divisor gives a zero quotient) plus a definedness condition, that its
 //! divisor is nonzero, among the fragment's conditions; each analysis assumes
-//! or proves it with the rest of them. The divisor itself goes to
-//! [`Ideal::divisors`](crate::ideal::Ideal::divisors). [`divide_by`] explains
-//! the encoding. A [`known_nonzero`] divisor needs no condition.
+//! or proves it with the rest of them. [`divide_by`] explains the encoding. A
+//! divisor that resolves to a nonzero constant needs no condition, and a
+//! sample that excludes zero is nonzero by its exclusion generator (see
+//! `sample_op`), from which the condition follows.
 
 use backend::op::HasOpFactory;
 use backend::{ABase, ATyp, ArkConfig, ArkScalarOps};
-use graph::{HOp, Op};
-use lang::ast::Exclusion;
+use graph::HOp;
 
 use ark_ff::Field;
 
@@ -232,9 +232,9 @@ fn div_rem_leaf<C: ArkConfig + HasOpFactory>(
 /// out every trace with a zero divisor and a nonzero dividend, so the
 /// analysis would never see the division abort.
 ///
-/// **Optimization**: When the divisor's leading coefficient is
-/// [`known_nonzero`], the entire chain is skipped — the type bound
-/// `deg(r) < mb` already suffices, and the divisor needs no check.
+/// **Optimization**: When the divisor's leading coefficient resolves to a
+/// nonzero constant, the divisor cannot be zero: the chain is skipped, the
+/// type bound `deg(r) < mb` already suffices, and there is no condition.
 fn div_rem_poly<C: ArkConfig + HasOpFactory>(
     ctx: &mut EncodeCtx<'_, C>,
     target: &Var,
@@ -265,12 +265,10 @@ fn div_rem_poly<C: ArkConfig + HasOpFactory>(
     let mr = mb - 1;
     let (q_wit, r_wit) = alloc_div_witness_pair(ctx, ATyp::Uni(ma), ATyp::Uni(mr));
 
-    // Degree chain, giving `s_0`, unless the divisor's lead is known nonzero.
-    let lead = &b.polys()[mb];
-    let s_zero = (!known_nonzero(ctx, lead)).then(|| {
-        ctx.ideal.divisors.push(lead.clone());
-        Polynomial::var(&emit_degree_chain::<C>(ctx, b, &r_wit, mb))
-    });
+    // Degree chain, giving `s_0`, unless the divisor's lead is a nonzero
+    // constant.
+    let s_zero = (!is_nonzero_constant(ctx, &b.polys()[mb]))
+        .then(|| Polynomial::var(&emit_degree_chain::<C>(ctx, b, &r_wit, mb)));
 
     // Emit a = b·q + r, one row per coefficient of the product bound.
     // For degree k: a[k] = Σ_{i+j=k} b[i]·q[j] + r[k]  (r[k] only if k ≤ mr),
@@ -477,8 +475,9 @@ pub(super) fn inverse<C: ArkConfig + HasOpFactory>(
 /// `b²ι − b` and `bι² − ι`, which say `bιb = b` and `ιbι = ι`: `ι` is the
 /// pseudo-inverse of `b`.
 ///
-/// A [`known_nonzero`] divisor has no zero case: `D` is pushed as the
-/// generator, and there is no condition.
+/// A divisor that is a sample excluding zero still gets this encoding: its
+/// exclusion generator (see `sample_op`) makes `b ≠ 0`, so the condition
+/// follows from the generators.
 ///
 /// [`div_rem_poly`] encodes a polynomial division the same way, with its
 /// identity rows times `s_0` for `b·D`, `(1 − s_0)·q` for `q·D`, and
@@ -489,35 +488,19 @@ fn divide_by<C: ArkConfig + HasOpFactory>(
     quotient: &Polynomial<C::F>,
     definition: Polynomial<C::F>,
 ) {
-    if known_nonzero(ctx, divisor) {
-        ctx.ideal.generating_set.push(definition);
-        return;
-    }
-    ctx.ideal.divisors.push(divisor.clone());
     ctx.ideal.generating_set.push(divisor * &definition);
     ctx.ideal.generating_set.push(quotient * &definition);
     ctx.ideal.conditions.push(definition);
 }
 
-/// Whether `poly` is nonzero on every trace: once definitions are inlined, a
-/// nonzero constant times a product of `challenge<F*>` and `random<F*>`
-/// values, which the runtime samples nonzero.
-fn known_nonzero<C: ArkConfig + HasOpFactory>(
+/// Whether `poly` resolves to a nonzero constant once definitions are
+/// inlined.
+fn is_nonzero_constant<C: ArkConfig + HasOpFactory>(
     ctx: &EncodeCtx<'_, C>,
     poly: &Polynomial<C::F>,
 ) -> bool {
     let poly = inlined(ctx, poly);
-    // `Polynomial` keeps no zero terms, so one term has a nonzero coefficient.
-    let mut terms = poly.terms.keys();
-    let (Some(term), None) = (terms.next(), terms.next()) else {
-        return false;
-    };
-    term.0.iter().all(|(v, _)| {
-        matches!(
-            ctx.builder.node_ops.get(&v.reference),
-            Some(Op::Challenge(_, Some(Exclusion::Zero)) | Op::Random(_, Some(Exclusion::Zero)))
-        )
-    })
+    poly.is_constant() && !poly.is_zero()
 }
 
 /// `poly` with every `pl` definition inlined.

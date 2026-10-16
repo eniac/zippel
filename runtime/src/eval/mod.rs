@@ -904,7 +904,7 @@ mod tests {
             .unwrap()
         };
         let zero = mk::<ArkBn254>(Op::Value(Value::VecScalar(vec![Zero::zero()].into())));
-        for exclusion in [None, Some(Exclusion::Zero), Some(Exclusion::Values(zero))] {
+        for exclusion in [None, Some(Exclusion::Values(zero))] {
             for op in [
                 Op::Random(ATyp::scalar(), exclusion.clone()),
                 Op::Challenge(ATyp::scalar(), exclusion.clone()),

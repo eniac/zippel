@@ -630,13 +630,6 @@ fn format_sampling(
     let typ_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
     let exclusion = match exclusion {
         None => ALLOC.nil(),
-        Some(Exclusion::Zero) => {
-            let comments = gap_none(
-                cursor.advance_to_token(end, |token| matches!(token, Token::Star)),
-                style,
-            );
-            ALLOC.concat([comments, ALLOC.text("*")])
-        }
         Some(Exclusion::Values(values)) => format_excluded(cursor, end, style, |cursor| {
             format_exp(values, cursor, style)
         }),

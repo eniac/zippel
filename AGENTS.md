@@ -72,9 +72,10 @@ analyses, not executed). Inside the body: `random<T>` samples blinding
 values, `challenge<T>` draws a Fiat–Shamir challenge, `<-` both computes
 and appends a value to the transcript, `let` is a local (non-transcript)
 binding, and `verify(...)` is the final check. A sample is resampled while
-excluded: `F*` excludes zero, `F - v` the entries of a vector `v` (for a
-challenge, one the verifier computes), and `F - roots_of_unity(n)` every `x`
-with `x^n == 1`. A division by zero fails the run with
+excluded: `F - v` excludes the entries of a vector `v` (`F - [0]` samples a
+nonzero value; for a challenge, `v` is one the verifier computes), and
+`F - roots_of_unity(n)` every `x` with `x^n == 1`. The analyses encode each
+exclusion as a generator, in every analysis. A division by zero fails the run with
 `RuntimeError::DivisionByZero`, and completeness must prove every
 prover/verifier divisor nonzero (see `analyses/src/ideal/ops/div.rs` and
 `sample.rs`), so divide by what the exclusions make nonzero, such as `c - a`

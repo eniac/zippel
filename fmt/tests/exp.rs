@@ -599,10 +599,10 @@ fn f<F: Field>() -> F {
 #[test]
 fn formats_sample_exclusions() {
     assert_ok(
-        "proto p<F: Field, K: Size>(instance a: F) where a == a { let r = random<F *>; m <- r; c <- challenge<F-[a,1]>; d <- challenge< F - roots_of_unity( K ) >; verify(c * d == c * d) }",
+        "proto p<F: Field, K: Size>(instance a: F) where a == a { let r = random<F-[0]>; m <- r; c <- challenge<F-[a,1]>; d <- challenge< F - roots_of_unity( K ) >; verify(c * d == c * d) }",
         "\
 proto p<F: Field, K: Size>(instance a: F) where a == a {
-    let r = random<F*>;
+    let r = random<F - [0]>;
     m <- r;
     c <- challenge<F - [a, 1]>;
     d <- challenge<F - roots_of_unity(K)>;

@@ -235,7 +235,7 @@ pub enum Exp<N: ExpLiteral> {
     ///     Random sample, resampled while excluded
     ///     **Zippel Code:**
     ///     ```zippel
-    ///     let r = random<F*>;
+    ///     let r = random<F - [0]>;
     ///     ```
     Random(Spanned<Tid>, Option<ExpExclusion<N>>),
 
@@ -465,7 +465,6 @@ impl<N: ExpLiteral> ExpTraversal<N> for Option<ExpExclusion<N>> {
     ) -> Result<Option<ExpExclusion<M>>, E> {
         Ok(match self {
             None => None,
-            Some(Exclusion::Zero) => Some(Exclusion::Zero),
             Some(Exclusion::Values(v)) => Some(Exclusion::Values(Box::new(
                 (*v).traverse_exp(literal, size)?,
             ))),

@@ -101,11 +101,11 @@ fn dory_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 
     instance e1_init: G1,
     instance d2_init: GT,
 ) -> Unit {
-    gamma <- challenge<F*>;
+    gamma <- challenge<F - [0]>;
     let gamma_inv = 1 / gamma;
     final_e1 <- v1[0] + h1 * (gamma * s1[0]);
     final_e2 <- v2[0] + h2 * (gamma_inv * s2[0]);
-    d <- challenge<F*>;
+    d <- challenge<F - [0]>;
 
     // e(E1_fin + d Γ1,0, E2_fin + d^-1 Γ2,0) · e(H1, -γ (E2 + d^-1 s1 Γ2,0))
     //   · e(-γ^-1 (E1 + d s2 Γ1,0), H2) · e(d² E1_init, Γ2,0)
@@ -160,7 +160,7 @@ fn dory_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 
     d2_right <- dot(g1_half, v2[2 ^ (R - 1)..2 ^ R]);
     e1_beta <- dot(g1_vec, s2);
     e2_beta <- dot(g2_vec, s1);
-    beta <- challenge<F*>;
+    beta <- challenge<F - [0]>;
     let beta_inv = 1 / beta;
     let w1 = v1 + g1_vec * beta;
     let w2 = v2 + g2_vec * beta_inv;
@@ -180,7 +180,7 @@ fn dory_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 
     e1_minus <- dot(w1_r, s2_l);
     e2_plus <- dot(w2_r, s1_l);
     e2_minus <- dot(w2_l, s1_r);
-    alpha <- challenge<F*>;
+    alpha <- challenge<F - [0]>;
     let alpha_inv = 1 / alpha;
 
     // Verifier state update (process_round)
@@ -285,7 +285,7 @@ proto dory_pcs<
     d2_right <- pair(dot(g1_half, v_vec[2 ^ (K - 1)..2 ^ K]), g2_0);
     e1_beta <- dot(g1_vec, left);
     e2_beta <- dot(g2_vec, right);
-    beta <- challenge<F*>;
+    beta <- challenge<F - [0]>;
     let beta_inv = 1 / beta;
     let w1 = rows + g1_vec * beta;
     let w2 = v2 + g2_vec * beta_inv;
@@ -304,7 +304,7 @@ proto dory_pcs<
     e1_minus <- dot(w1_r, s2_l);
     e2_plus <- dot(w2_r, s1_l);
     e2_minus <- dot(w2_l, s1_r);
-    alpha <- challenge<F*>;
+    alpha <- challenge<F - [0]>;
     let alpha_inv = 1 / alpha;
 
     // Verifier: initial state (C, D1 = com, D2, E1, E2 = y Γ2,0), then round 1

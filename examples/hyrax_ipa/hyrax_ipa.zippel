@@ -69,7 +69,7 @@ fn bullet_reduce<G: Group, F: Scalar<G>, S: Size, N: 1..S + 1>(
     upsilon_1 <- h_base * r_Upsilon_1 + g_base * dot_x2_a1 + dot(g_1, x_2);
 
     // Verifier Step 3
-    c <- challenge<F*>;
+    c <- challenge<F - [0]>;
 
     let c_inv = 1 / c;
     let c_sq = c * c;

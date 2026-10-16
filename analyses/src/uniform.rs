@@ -1,4 +1,4 @@
-use backend::ArkConfig;
+use backend::{ArkConfig, OpExclusion, Value};
 use graph::{GOp, Node, Op, QDag, Ref};
 use lang::ast::{BinOp, Exclusion};
 use lang::typ::Distribution;
@@ -100,6 +100,54 @@ fn is_independent_loops<C: ArkConfig>(
 ) -> bool {
     op_ancestors_of_loops(a, ancestors, loops)
         .is_disjoint(&op_ancestors_of_loops(b, ancestors, loops))
+}
+
+/// The distribution of a sample with `exclusion`: uniform when it excludes
+/// nothing, uniform over the nonzero values when it excludes only zero
+/// (`F - [0]`), and uniform over neither domain otherwise. `node` resolves a
+/// list that the exclusion references.
+fn sample_distribution<C: ArkConfig>(
+    exclusion: Option<&OpExclusion<C>>,
+    node: &dyn Fn(Ref) -> Option<GOp<C>>,
+) -> Distribution {
+    match exclusion {
+        None => Distribution::Uniform,
+        Some(Exclusion::Values(values))
+            if constants(values.get(), node)
+                .is_some_and(|values| !values.is_empty() && values.iter().all(Value::is_zero)) =>
+        {
+            Distribution::UniformNonZero
+        }
+        Some(_) => Distribution::Nonuniform,
+    }
+}
+
+/// The entries of `op` if it is a list of constants, inline or behind a
+/// reference that `node` resolves.
+fn constants<C: ArkConfig>(
+    op: &GOp<C>,
+    node: &dyn Fn(Ref) -> Option<GOp<C>>,
+) -> Option<Vec<Value<C>>> {
+    match op {
+        Op::Value(v) => Some(v.clone().into_elements()),
+        Op::Vec(entries) => entries
+            .iter()
+            .map(|entry| match entry.get() {
+                Op::Value(v) => Some(v.clone()),
+                _ => None,
+            })
+            .collect(),
+        Op::Ref(r, _) => constants(&node(*r)?, node),
+        _ => None,
+    }
+}
+
+/// The operation of node `r` of `dag`, if it computes one.
+fn node_op<C: ArkConfig>(dag: &QDag<C>, r: Ref) -> Option<GOp<C>> {
+    match &dag[r.0] {
+        Node::Op(op, _) | Node::Transcr(op, _) => Some(op.get().clone()),
+        _ => None,
+    }
 }
 
 fn compute_distribution<C: ArkConfig>(
@@ -274,12 +322,9 @@ fn compute_distribution_loops<C: ArkConfig>(
                 Some(Distribution::Nonuniform)
             }
         }
-        // A sample excluding other values is not uniform over either domain.
-        Op::Random(_, x) | Op::Challenge(_, x) => Some(match x {
-            None => Distribution::Uniform,
-            Some(Exclusion::Zero) => Distribution::UniformNonZero,
-            Some(Exclusion::Values(_) | Exclusion::RootsOfUnity(_)) => Distribution::Nonuniform,
-        }),
+        // A sample is a node of its own, which `from_dag` classifies with the
+        // graph at hand; here only an inline list can be read.
+        Op::Random(_, x) | Op::Challenge(_, x) => Some(sample_distribution(x.as_ref(), &|_| None)),
         Op::Reduce(op, v) => {
             let dist_v =
                 compute_distribution_loops(v, ancestors, distributions, dist_loops, anc_loops)?;
@@ -343,7 +388,13 @@ impl UniformityPropagation {
                     distributions.insert(&Ref(n), dist);
                 }
                 Node::Transcr(op, _) | Node::Op(op, _) => {
-                    if let Some(d) = compute_distribution(op, &ancestors, &distributions) {
+                    let d = match op.get() {
+                        Op::Random(_, x) | Op::Challenge(_, x) => {
+                            Some(sample_distribution(x.as_ref(), &|r| node_op(dag, r)))
+                        }
+                        _ => compute_distribution(op, &ancestors, &distributions),
+                    };
+                    if let Some(d) = d {
                         distributions.insert(&Ref(n), &d);
                     }
                 }
@@ -392,6 +443,43 @@ impl fmt::Display for UniformityPropagation {
 mod tests {
     use super::*;
     use crate::QualifierPropagation;
+    use backend::op::mk;
+
+    /// The exclusion of `T - [0]`, with its list inline.
+    fn excluding_zero() -> OpExclusion<ArkBls12_381> {
+        Exclusion::Values(mk(GOp::<ArkBls12_381>::Value(Value::vec_scalar(vec![
+            ark_ff::Zero::zero(),
+        ]))))
+    }
+
+    /// The distribution `from_dag` gives the one `random` of `src`, whose
+    /// exclusion lowering puts behind a reference.
+    fn distribution_of_random(src: &str) -> Distribution {
+        let m = parse_and_concretize(src, &Ctx::new());
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let random = g
+            .node_indices()
+            .find(|&n| matches!(&g[n], Node::Op(op, _) if matches!(op.get(), Op::Random(..))))
+            .expect("a random node");
+        UniformityPropagation::from_dag(&g).find_distribution(random)
+    }
+
+    #[test]
+    fn a_random_excluding_zero_is_uniform_over_the_nonzero_values() {
+        let dist = distribution_of_random(
+            "proto p<F: Field>(instance a: F) where a == a { let r = random<F - [0]>; m <- r; verify(m == m) }",
+        );
+        assert_eq!(dist, Distribution::UniformNonZero);
+    }
+
+    #[test]
+    fn a_random_excluding_other_values_is_not_uniform() {
+        let dist = distribution_of_random(
+            "proto p<F: Field>(instance a: F) where a == a { let r = random<F - [1]>; m <- r; verify(m == m) }",
+        );
+        assert_eq!(dist, Distribution::Nonuniform);
+    }
     use crate::tests::parse_and_concretize;
     use backend::ArkBls12_381;
     use graph::UDags;
@@ -401,7 +489,7 @@ mod tests {
     #[test]
     fn uniformity_prop() {
         let ex = r#"
-            proto foo<F: Field>(witness uniform* s: F, instance x: F) where 1 == 1 {
+            proto foo<F: Field>(witness s: F, instance x: F) where 1 == 1 {
                 let r = random<F>;
                 a <- r * s;
                 b <- r * x;
@@ -471,7 +559,7 @@ mod tests {
 
     #[test]
     fn test_compute_distribution_random_nonzero() {
-        let op = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), Some(Exclusion::Zero));
+        let op = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), Some(excluding_zero()));
         let dist = compute_distribution(&op, &Ctx::new(), &Ctx::new());
         assert_eq!(dist, Some(Distribution::UniformNonZero));
     }
@@ -485,7 +573,7 @@ mod tests {
 
     #[test]
     fn test_compute_distribution_challenge_nonzero() {
-        let op = GOp::<ArkBls12_381>::Challenge(backend::ATyp::scalar(), Some(Exclusion::Zero));
+        let op = GOp::<ArkBls12_381>::Challenge(backend::ATyp::scalar(), Some(excluding_zero()));
         let dist = compute_distribution(&op, &Ctx::new(), &Ctx::new());
         assert_eq!(dist, Some(Distribution::UniformNonZero));
     }

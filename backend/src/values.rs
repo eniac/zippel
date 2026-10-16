@@ -3343,15 +3343,13 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
-    /// Whether `exclusion` excludes this sample: zero, an entry of a scalar
-    /// or index vector, or an `n`-th root of unity.
+    /// Whether `exclusion` excludes this sample: an entry of a scalar or
+    /// index vector, or an `n`-th root of unity.
     ///
     /// # Panics
-    /// Panics if `exclusion` lists values or roots of unity and this is not a
-    /// scalar.
+    /// Panics if this is not a scalar.
     pub fn is_excluded_by(&self, exclusion: &Exclusion<Self, usize>) -> bool {
         match (exclusion, self) {
-            (Exclusion::Zero, _) => self.is_zero(),
             (Exclusion::Values(values), Value::Scalar(x)) => value_scalars::<C>(values).contains(x),
             (Exclusion::RootsOfUnity(n), Value::Scalar(x)) => x.pow([*n as u64]) == C::FOps::one(),
             _ => panic!("Expected a scalar sample, found {self}"),
@@ -4377,14 +4375,15 @@ mod value_tests {
         assert_eq!(a.value_bin(BinOp::Div, b), Err(DivisionByZero));
     }
 
-    /// A sample is excluded when it is zero, listed, or a root of unity of
-    /// the given order.
+    /// A sample is excluded when it is listed (`[0]` for a nonzero sample),
+    /// or a root of unity of the given order.
     #[test]
     fn test_is_excluded_by() {
         let minus_one = TestValue::Scalar(-Fr::from(1u64));
         let listed = Exclusion::Values(TestValue::vec_scalar(vec![Fr::from(2u64), Fr::from(3u64)]));
-        assert!(scalar(0).is_excluded_by(&Exclusion::Zero));
-        assert!(!scalar(1).is_excluded_by(&Exclusion::Zero));
+        let zero = Exclusion::Values(TestValue::vec_scalar(vec![Fr::from(0u64)]));
+        assert!(scalar(0).is_excluded_by(&zero));
+        assert!(!scalar(1).is_excluded_by(&zero));
         assert!(scalar(3).is_excluded_by(&listed));
         assert!(!scalar(4).is_excluded_by(&listed));
         assert!(scalar(1).is_excluded_by(&Exclusion::RootsOfUnity(4)));

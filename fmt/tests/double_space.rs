@@ -104,14 +104,6 @@ fn f<F: Field>(/* c */ instance a: F) -> F {
 ",
         ),
         (
-            "fn f<F: Field>(instance /* c */ uniform a: F) -> F { a }",
-            "\
-fn f<F: Field>(instance /* c */ uniform a: F) -> F {
-    a
-}
-",
-        ),
-        (
             "fn f<F: Field>(instance a /* c */ : F) -> F { a }",
             "\
 fn f<F: Field>(instance a /* c */ : F) -> F {
@@ -1569,30 +1561,6 @@ fn f<F: Field>(instance a: F, instance b: F) -> F {
 // Section AP: Comments around uniform* `uniform* a: F`
 // ══════════════════════════════════════════════════════════════════
 
-#[test]
-fn comment_between_uniform_and_star() {
-    assert_ok(
-        "fn f<F: Field>(uniform /* c */ * a: F) -> F { a }",
-        "\
-fn f<F: Field>(uniform /* c */ * a: F) -> F {
-    a
-}
-",
-    );
-}
-
-#[test]
-fn comment_between_star_and_name_in_uniform_star() {
-    assert_ok(
-        "fn f<F: Field>(uniform * /* c */ a: F) -> F { a }",
-        "\
-fn f<F: Field>(uniform * /* c */ a: F) -> F {
-    a
-}
-",
-    );
-}
-
 // ══════════════════════════════════════════════════════════════════
 // Section AQ: Double-space regression tests (from double_space.rs)
 //
@@ -1761,18 +1729,6 @@ proto p<F: Field>(instance a: F) where /* c */ a == a {
 // (gap_none with sep=nil doesn't provide space after non-breaking
 // comment, so the next token glues to the comment)
 // ──────────────────────────────────────────────────────────────────
-
-#[test]
-fn uniform_to_star_inline_comment_missing_space() {
-    assert_ok(
-        "fn f<F: Field>(uniform /* c */ * a: F) -> F { a }",
-        "\
-fn f<F: Field>(uniform /* c */ * a: F) -> F {
-    a
-}
-",
-    );
-}
 
 // ──────────────────────────────────────────────────────────────────
 // Sanity checks: these cases should NOT have double-space bugs

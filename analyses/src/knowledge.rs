@@ -525,7 +525,7 @@ mod tests {
     fn zk_leak_no_random_blinding() {
         let ex = r#"
         proto leak<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g*x {
-            c <- challenge<F*>;
+            c <- challenge<F>;
             z <- x * c;
             verify(g*z == h*c)
         }"#;
