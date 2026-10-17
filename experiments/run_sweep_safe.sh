@@ -50,8 +50,6 @@ case "$OUT" in /*) ;; *) OUT="$(pwd)/$OUT" ;; esac
 : > "$OUT"
 echo 'system,baseline,threads,log_size,zippel_prover_ms,zippel_verifier_ms,zippel_ncloc,baseline_prover_ms,baseline_verifier_ms,baseline_ncloc,compile_ms,prover_nodes,verifier_nodes' > "$OUT"
 
-export RUST_MIN_STACK=536870912
-
 IFS=',' read -ra THREADS <<< "$THREADS_LIST"
 IFS=',' read -ra SYSTEMS <<< "$SYSTEMS_LIST"
 

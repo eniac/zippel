@@ -9,11 +9,12 @@ use lang::ast::{
     BinOp, Block, BodyTypes, CBody, CExp, CRef, CSig, Exp, ExpExclusion, ExpId, ExpLiteral, Exprs,
     Exps, Stmt, TypedModule,
 };
-use lang::id::{Fresh, Tid};
+use lang::id::Tid;
 use lang::stack_guard;
-use lang::typ::infer::{Cx, TypeTable};
+use lang::typ::infer::{Cx, TypeTable, VarTypes};
 use lang::typ::{CKind, CTyp};
 use num::{BigUint, ToPrimitive};
+use share::ScopedCtx;
 use share::traversal::ToTraversal1;
 use std::collections::BTreeMap;
 
@@ -338,8 +339,8 @@ impl<C: HasOpFactory> UDag<C> {
                         kctx: &kctx,
                         fctx,
                         sigs,
-                        vctx: vctx.clone(),
-                        vars,
+                        vctx: VarTypes::new(vctx.clone()),
+                        vars: ScopedCtx::new(vars),
                     };
                     self.add_top_exp(&mut scope, root, None)?;
                 }
@@ -364,8 +365,8 @@ impl<C: HasOpFactory> UDag<C> {
                         kctx: &kctx,
                         fctx,
                         sigs,
-                        vctx: vctx.clone(),
-                        vars,
+                        vctx: VarTypes::new(vctx.clone()),
+                        vars: ScopedCtx::new(vars),
                     };
                     let rel_op = self.add_exp(&mut scope, relation, None)?;
                     let nassert = self.add_node(Node::assert(&rel_op), where_span);
@@ -391,8 +392,8 @@ impl<C: HasOpFactory> UDag<C> {
                         kctx: &kctx,
                         fctx,
                         sigs,
-                        vctx: vctx.clone(),
-                        vars,
+                        vctx: VarTypes::new(vctx.clone()),
+                        vars: ScopedCtx::new(vars),
                     };
                     self.add_top_exp(&mut scope, root, ret)?;
                 }
@@ -442,7 +443,7 @@ impl<C: HasOpFactory> UDag<C> {
     }
 
     /// Variables to operations by lookup in [vars]
-    fn op_from_var(id: &Spanned<Vid>, vars: &Ctx<Vid, GOp<C>>) -> Result<GOp<C>, GraphError> {
+    fn op_from_var(id: &Spanned<Vid>, vars: &ScopedCtx<Vid, GOp<C>>) -> Result<GOp<C>, GraphError> {
         vars.get(&id.node)
             .cloned()
             .ok_or_else(|| GraphError::var_not_found(id))
@@ -478,7 +479,7 @@ impl<C: HasOpFactory> UDag<C> {
         mut expected: Option<ATyp>,
     ) -> Result<GOp<C>, GraphError> {
         let span = scope.exprs.span(initial).clone();
-        let op = self.add_exp_raw(&mut scope.nested(), initial, &mut expected)?;
+        let op = scope.scoped(|scope| self.add_exp_raw(scope, initial, &mut expected))?;
         Ok(match expected {
             Some(target) if op.typ() != target => {
                 let op = coerce_field_op(op, &target, 0);
@@ -568,18 +569,9 @@ impl<C: HasOpFactory> UDag<C> {
                 CExp::Ram(a, b) => return self.lower_ram(scope, id, a, b),
                 CExp::Challenge(_, exclusion) => return self.lower_challenge(scope, id, exclusion),
                 CExp::Random(_, exclusion) => return self.lower_random(scope, id, exclusion),
-                CExp::App(fid, params) => match self.lower_app(scope, id, fid, params, expected)? {
-                    Lowered::Rewrite(next) => id = next,
-                    Lowered::Inline {
-                        body,
-                        vctx: callee_vctx,
-                        vars: callee_vars,
-                    } => {
-                        id = body;
-                        scope.vctx = callee_vctx;
-                        scope.vars = callee_vars;
-                    }
-                },
+                // Every application is rewritten (polynomial and MLE evaluation) or inlined,
+                // then lowered in this loop.
+                CExp::App(fid, params) => id = self.lower_app(scope, id, fid, params, expected)?,
                 // Statements in order, each binding its variable for the rest of the block;
                 // then the trampoline continues with the block's value.
                 CExp::Block(block) => {
@@ -610,8 +602,9 @@ impl<C: HasOpFactory> UDag<C> {
     }
 }
 
-/// The state shared while lowering a tree. Nested expressions clone the persistent variable
-/// contexts, while sharing the arena and the current transcript node.
+/// The state shared while lowering a tree. A nested expression's variable bindings are undone
+/// when it is lowered (see [`Scope::scoped`]); arena additions and the current transcript node
+/// persist.
 struct Scope<'a, C: HasOpFactory> {
     exprs: &'a mut Arena,
     transcr: &'a mut NodeIndex,
@@ -619,8 +612,8 @@ struct Scope<'a, C: HasOpFactory> {
     kctx: &'a Ctx<Tid, CKind>,
     fctx: &'a Ctx<CSig, CBody>,
     sigs: &'a Set<CSig>,
-    vctx: Ctx<Vid, CTyp>,
-    vars: Ctx<Vid, GOp<C>>,
+    vctx: VarTypes,
+    vars: ScopedCtx<Vid, GOp<C>>,
 }
 
 impl<C: HasOpFactory> Scope<'_, C> {
@@ -630,37 +623,20 @@ impl<C: HasOpFactory> Scope<'_, C> {
             &Cx {
                 kctx: self.kctx,
                 fctx: self.sigs,
-                vctx: &self.vctx,
             },
+            &mut self.vctx,
             types,
         )
     }
 
-    fn nested(&mut self) -> Scope<'_, C> {
-        Scope {
-            exprs: self.exprs,
-            transcr: self.transcr,
-            edge_type: self.edge_type,
-            kctx: self.kctx,
-            fctx: self.fctx,
-            sigs: self.sigs,
-            vctx: self.vctx.clone(),
-            vars: self.vars.clone(),
-        }
+    /// Runs `f` in a nested scope: the variables it binds are unbound when it returns.
+    fn scoped<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let (vctx, vars) = (self.vctx.mark(), self.vars.mark());
+        let result = f(self);
+        self.vctx.rollback(vctx);
+        self.vars.rollback(vars);
+        result
     }
-}
-
-/// How lowering continues after an application that [`UDag::add_exp_raw`] does not lower
-/// directly: every application is rewritten or inlined, then lowered in the same loop.
-enum Lowered<C: HasOpFactory> {
-    /// Lower this expression in the application's place (polynomial and MLE evaluation).
-    Rewrite(ExpId),
-    /// Lower an inlined function body under the callee's variable contexts.
-    Inline {
-        body: ExpId,
-        vctx: Ctx<Vid, CTyp>,
-        vars: Ctx<Vid, GOp<C>>,
-    },
 }
 
 /// The arms of [`UDag::add_exp_raw`] kept in this module; the larger groups live in the `call`,
@@ -668,7 +644,6 @@ enum Lowered<C: HasOpFactory> {
 impl<C: HasOpFactory> UDag<C> {
     /// Lowers one statement of a block, binding its variable in `vctx` and `vars` for the rest
     /// of the block.
-    #[inline(never)]
     fn lower_stmt(&mut self, scope: &mut Scope<'_, C>, stmt: Stmt) -> Result<(), GraphError> {
         let value = stmt.value();
         let op = self.add_exp(scope, value, None)?;
@@ -695,7 +670,6 @@ impl<C: HasOpFactory> UDag<C> {
 
     /// The transcript operation `id <- ol` records, sent from `sent`: the node itself when it is
     /// already a transcript node with no other name, else a new transcript node wrapping it.
-    #[inline(never)]
     fn log_transcript(
         &mut self,
         transcr: &mut NodeIndex,
@@ -741,7 +715,6 @@ impl<C: HasOpFactory> UDag<C> {
         }
     }
 
-    #[inline(never)]
     fn lower_pair(
         &mut self,
         scope: &mut Scope<'_, C>,
@@ -765,7 +738,6 @@ impl<C: HasOpFactory> UDag<C> {
         ))
     }
 
-    #[inline(never)]
     fn lower_neg(
         &mut self,
         scope: &mut Scope<'_, C>,
@@ -779,7 +751,6 @@ impl<C: HasOpFactory> UDag<C> {
         Ok(self.add_bin(bop, scope.edge_type, ATyp::scalar(), span.clone()))
     }
 
-    #[inline(never)]
     fn lower_bin(
         &mut self,
         scope: &mut Scope<'_, C>,
@@ -802,7 +773,6 @@ impl<C: HasOpFactory> UDag<C> {
         Ok(self.add_bin(bop, scope.edge_type, atyp, span.clone()))
     }
 
-    #[inline(never)]
     fn lower_challenge(
         &mut self,
         scope: &mut Scope<'_, C>,
@@ -828,7 +798,6 @@ impl<C: HasOpFactory> UDag<C> {
         Ok(GOp::underscore(nchallenge, at))
     }
 
-    #[inline(never)]
     fn lower_random(
         &mut self,
         scope: &mut Scope<'_, C>,
@@ -845,7 +814,6 @@ impl<C: HasOpFactory> UDag<C> {
         Ok(GOp::underscore(nrand, at))
     }
 
-    #[inline(never)]
     fn lower_verify(
         &mut self,
         scope: &mut Scope<'_, C>,

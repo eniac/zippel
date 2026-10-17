@@ -22,16 +22,13 @@ fn run_knowledge_snapshot(entry: &CompletenessEntry) -> Result<(), Failed> {
         .join(entry.zippel_path);
     let sizes = entry.sizes.to_vec();
 
-    let (basis_norm, rel_norm) = share::thread::run("gb-knowledge", move || {
-        let dag = compile_to_dag(&path, &sizes);
-        let inputs = KnowledgeAnalysis::build_inputs(&dag);
-        let ka = KnowledgeAnalysis::<backend::ArkBls12_381>::try_from_inputs(inputs, backend)
-            .map_err(|e| Failed::from(e.to_string()))?;
-        let basis_norm = normalize_basis(&ka.basis.polys);
-        let rel_norm = normalize_basis(&ka.relation_basis.polys);
-        Ok::<_, Failed>((basis_norm, rel_norm))
-    })
-    .expect("thread panicked")?;
+    let dag = compile_to_dag(&path, &sizes);
+    let inputs = KnowledgeAnalysis::build_inputs(&dag);
+    let ka = KnowledgeAnalysis::<backend::ArkBls12_381>::try_from_inputs(inputs, backend)
+        .map_err(|e| Failed::from(e.to_string()))?;
+    let basis_norm = normalize_basis(&ka.basis.polys);
+    let rel_norm = normalize_basis(&ka.relation_basis.polys);
+    let (basis_norm, rel_norm) = (basis_norm, rel_norm);
 
     assert_named_snapshot(&snap_basis, &basis_norm);
     if !rel_norm.is_empty() {

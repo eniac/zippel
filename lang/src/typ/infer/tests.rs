@@ -1967,10 +1967,10 @@ fn resolved_calls_keep_declaration_signature_and_substitution() {
     let cx = Cx {
         kctx: &decls[1].sig.typevars.to_ctx(),
         fctx: &fctx,
-        vctx: &decls[1].sig.args.to_ctx(),
     };
+    let mut vctx = VarTypes::new(decls[1].sig.args.to_ctx());
     let mut types = TypeTable::new();
-    tree.root().infer(&cx, &mut types).unwrap();
+    tree.root().infer(&cx, &mut vctx, &mut types).unwrap();
     assert_eq!(
         types.calls().len(),
         1,
@@ -1987,6 +1987,6 @@ fn resolved_calls_keep_declaration_signature_and_substitution() {
     assert!(matches!(body.body().unwrap().node(), Exp::Random(t, _) if t.node == Tid::from("F")));
     assert_eq!(types.call(*id).unwrap().signature, call.signature);
     // Cached inference neither resolves again nor creates duplicate records.
-    tree.root().infer(&cx, &mut types).unwrap();
+    tree.root().infer(&cx, &mut vctx, &mut types).unwrap();
     assert_eq!(types.calls().len(), 1);
 }

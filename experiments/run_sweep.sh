@@ -18,8 +18,6 @@
 #   - Builds bench_all in release once. Skip rebuild with --no-build.
 #   - Each row in the CSV is one (system, threads, log_size) triple with
 #     prove_ms, verify_ms, native_prove_ms, native_verify_ms.
-#   - RUST_MIN_STACK=536870912 is set to survive deep rayon work-stealing at
-#     large M (Spartan, PST13, etc. push past the default 8MB stack).
 
 set -euo pipefail
 
@@ -94,8 +92,6 @@ esac
 : > "$OUT"
 
 IFS=',' read -ra THREADS <<< "$THREADS_LIST"
-
-export RUST_MIN_STACK=536870912
 
 FIRST=1
 for T in "${THREADS[@]}"; do

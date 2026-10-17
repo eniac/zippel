@@ -4,7 +4,6 @@ use super::*;
 use lang::ast::CExps;
 
 impl<C: HasOpFactory> UDag<C> {
-    #[inline(never)]
     pub(super) fn lower_vec(
         &mut self,
         scope: &mut Scope<'_, C>,
@@ -25,7 +24,6 @@ impl<C: HasOpFactory> UDag<C> {
         Ok(self.materialize(vec_op, scope.edge_type, atyp, span.clone()))
     }
 
-    #[inline(never)]
     pub(super) fn lower_map(
         &mut self,
         scope: &mut Scope<'_, C>,
@@ -69,18 +67,19 @@ impl<C: HasOpFactory> UDag<C> {
         for i in 0..n.node {
             // Add oe[i] to local variable contexts; the map binder
             // shadows any same-named let binding in the body.
-            let mut local_scope = scope.nested();
             let ram_op = GOp::ram(oe.clone(), GOp::index(i));
             let ram_ref = self.materialize(
                 ram_op,
-                local_scope.edge_type,
+                scope.edge_type,
                 input_element_typ.clone(),
                 span.clone(),
             );
-            local_scope.vars.insert(&x.node, &ram_ref);
-            local_scope.vctx.insert(&x.node, &ie);
             // Add subexpression
-            let ol = self.add_exp(&mut local_scope, l, elem_target.clone())?;
+            let ol = scope.scoped(|scope| {
+                scope.vars.insert(&x.node, &ram_ref);
+                scope.vctx.insert(&x.node, &ie);
+                self.add_exp(scope, l, elem_target.clone())
+            })?;
             res.push(ol);
         }
         let vec_op = GOp::vec(res);
@@ -92,7 +91,6 @@ impl<C: HasOpFactory> UDag<C> {
         Ok(self.materialize(vec_op, scope.edge_type, atyp, span.clone()))
     }
 
-    #[inline(never)]
     pub(super) fn lower_reduce(
         &mut self,
         scope: &mut Scope<'_, C>,
@@ -118,7 +116,6 @@ impl<C: HasOpFactory> UDag<C> {
         Ok(self.materialize(GOp::reduce(op, ov), scope.edge_type, atyp, span.clone()))
     }
 
-    #[inline(never)]
     pub(super) fn lower_ram(
         &mut self,
         scope: &mut Scope<'_, C>,

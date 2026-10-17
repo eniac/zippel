@@ -263,19 +263,16 @@ fn run_completeness_snapshot(entry: &CompletenessEntry) -> Result<(), Failed> {
         .join(entry.zippel_path);
     let sizes = entry.sizes.to_vec();
 
-    let normalized = share::thread::run("gb-completeness", move || {
-        let dag = compile_to_dag(&path, &sizes);
-        // Without a check, `run()` passes vacuously.
-        if dag.find_verify().is_empty() {
-            return Err(Failed::from("the protocol has no verifier checks"));
-        }
-        let inputs = CompletenessAnalysis::<ArkBls12_381>::build_inputs(&dag);
-        let mut ca = CompletenessAnalysis::<ArkBls12_381>::try_from_inputs(inputs, backend)
-            .map_err(|e| Failed::from(e.to_string()))?;
-        ca.run().map_err(|e| Failed::from(e.to_string()))?;
-        Ok::<String, Failed>(normalize_basis(&ca.basis.polys))
-    })
-    .expect("thread panicked")?;
+    let dag = compile_to_dag(&path, &sizes);
+    // Without a check, `run()` passes vacuously.
+    if dag.find_verify().is_empty() {
+        return Err(Failed::from("the protocol has no verifier checks"));
+    }
+    let inputs = CompletenessAnalysis::<ArkBls12_381>::build_inputs(&dag);
+    let mut ca = CompletenessAnalysis::<ArkBls12_381>::try_from_inputs(inputs, backend)
+        .map_err(|e| Failed::from(e.to_string()))?;
+    ca.run().map_err(|e| Failed::from(e.to_string()))?;
+    let normalized = normalize_basis(&ca.basis.polys);
 
     assert_named_snapshot(&snap_name, &normalized);
     Ok(())

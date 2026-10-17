@@ -56,7 +56,7 @@ impl<T> Substs<T> {
 
 impl<T: Clone> IntoIterator for Substs<T> {
     type Item = (Tid, T);
-    type IntoIter = share::CtxConsumingIter<(Tid, T)>;
+    type IntoIter = std::collections::btree_map::IntoIter<Tid, T>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()

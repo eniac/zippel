@@ -95,7 +95,7 @@ impl CRef<'_> {
                     .ok_or(TypeError::from(LubError::kind_not_found(&tid)))?;
                 // Only field elements can be evaluated
                 if k.is_scalar() {
-                    let len = m.checked_add(1).ok_or_else(|| TypeError::Coef)?;
+                    let len = m.checked_add(1).ok_or(TypeError::Coef)?;
                     Ok(CTyp::vec(&CTyp::Base(tid), len))
                 } else {
                     Err(TypeError::Coef)

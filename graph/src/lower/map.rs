@@ -155,14 +155,10 @@ impl<C: HasOpFactory> UDag<C> {
                 let ld = sub!(domain, None);
                 let mut inner_binders = binders.to_vec();
                 inner_binders.push((binder.node.clone(), binder_atyp));
-                let mut inner_scope = scope.nested();
-                inner_scope.vctx.insert(&binder.node, &elem_ctyp);
-                let Some(lb) = self.lower_loop_body_template(
-                    &mut inner_scope,
-                    body,
-                    &inner_binders,
-                    expected_elem,
-                )?
+                let Some(lb) = scope.scoped(|scope| {
+                    scope.vctx.insert(&binder.node, &elem_ctyp);
+                    self.lower_loop_body_template(scope, body, &inner_binders, expected_elem)
+                })?
                 else {
                     return Ok(None);
                 };
@@ -304,10 +300,10 @@ impl<C: HasOpFactory> UDag<C> {
         };
         let mut body_binders = binders.to_vec();
         body_binders.push((binder.clone(), binder_atyp));
-        let mut inner_scope = scope.nested();
-        inner_scope.vctx.insert(&binder, &elem_ctyp);
-        let Some(body_op) =
-            self.lower_loop_body_template(&mut inner_scope, body, &body_binders, None)?
+        let Some(body_op) = scope.scoped(|scope| {
+            scope.vctx.insert(&binder, &elem_ctyp);
+            self.lower_loop_body_template(scope, body, &body_binders, None)
+        })?
         else {
             return Ok(None);
         };

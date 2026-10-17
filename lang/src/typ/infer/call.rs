@@ -14,7 +14,8 @@ impl CRef<'_> {
         env: &Env<'_>,
         call: &mut Option<ResolvedCall>,
     ) -> Result<CTyp, TypeError> {
-        let Cx { kctx, fctx, vctx } = env.cx;
+        let Cx { kctx, fctx } = env.cx;
+        let vctx = env.vctx;
         let param_types: CTyps = params
             .iter()
             .map(|p| Spanned::new(env.typ(self.at(p)), self.at(p).span().clone()))

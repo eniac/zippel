@@ -63,9 +63,7 @@ fn main() {
             let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("..")
                 .join(source);
-            share::thread::run_or_panic("analysis-sizes", || {
-                common::check_configured_sizes(&path, sizes);
-            });
+            common::check_configured_sizes(&path, sizes);
             Ok(())
         })
     }));
