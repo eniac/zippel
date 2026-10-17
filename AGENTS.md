@@ -157,6 +157,9 @@ unused helpers are still typechecked. Use `--size` to check specific sizes.
   node means uses `lang/src/ast/walk.rs` instead of matching every `Exp` variant:
   `Exp::children`/`for_each_child_mut`, or `ExpRef::walk` (iterative, evaluation
   order, resolves names to their bindings). The binder rules live only there.
+  Type inference is such a walk too: each rule in `lang/src/typ/infer/` types a
+  node from its children's types (`Env::typ`). Only lowering and `zippel-fmt`
+  recurse, under `#[lang::stack_guard]`.
 - The `nothing` module in `backend` is a placeholder/no-op curve
   implementation, not a real backend — don't confuse it with
   `ArkBls12_381` etc. when picking a concrete type for new code.

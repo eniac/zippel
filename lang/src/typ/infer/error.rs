@@ -191,11 +191,6 @@ pub enum TypeError {
     #[error("Invalid range {2}: {3}")]
     Range(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, Range<usize>, RangeError),
 
-    /// `interpolate` argument inferred to a type that is not a field vector; carries the type
-    /// actually inferred.
-    #[error("`interpolate` expects a vector of field elements, but got {}", kinded(.3, .0))]
-    Interp(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, CTyp),
-
     /// Unary `eval` (evaluation over the full FFT/boolean grid) was applied to a value that is
     /// neither a univariate polynomial nor a multilinear extension.
     #[error("`eval` expects a univariate polynomial or a multilinear extension, but got {}", kinded(.3, .0))]
@@ -261,10 +256,6 @@ pub enum TypeError {
     /// A protocol body ended in an expression that is not unit-typed; carries its type.
     #[error("A protocol body must end in a statement such as `verify(...)`, but this has type {}", kinded(.3, .0))]
     Unit(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, CTyp),
-
-    /// The two sides of a `==` constraint have types with no common upper bound.
-    #[error("{}", describe_bin(BinOp::Equ, &kinded(.4, .0), &kinded(.5, .0)))]
-    ConstraintMismatch(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, CExpr, CTyp, CTyp),
 
     /// A function body's inferred type disagrees with its declared return type; the fifth field
     /// is the declared type and the sixth the inferred one.
@@ -630,10 +621,6 @@ impl TypeError {
     ) -> Self {
         TypeError::Range(kctx.clone(), vctx.clone(), r.clone(), e)
     }
-    /// Reports that the `interpolate` operand `a` has type `ta`, which is not a field vector.
-    pub fn interp(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, a: CRef<'_>, ta: &CTyp) -> Self {
-        TypeError::Interp(kctx.clone(), vctx.clone(), a.to_expr(), ta.clone())
-    }
     /// Reports that unary `eval` operand `a` has non-polynomial type `ta`.
     pub fn evaluate_grid(
         kctx: &Ctx<Tid, CKind>,
@@ -682,24 +669,6 @@ impl TypeError {
     /// Reports that the protocol body ends in `e`, of type `t` rather than unit.
     pub fn unit(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: CRef<'_>, t: &CTyp) -> Self {
         TypeError::Unit(kctx.clone(), vctx.clone(), e.to_expr(), t.clone())
-    }
-    /// Reports a constraint `lhs == rhs` whose sides have incompatible types `ta` and `tb`.
-    pub fn constraint_mismatch(
-        kctx: &Ctx<Tid, CKind>,
-        vctx: &Ctx<Vid, CTyp>,
-        lhs: CRef<'_>,
-        rhs: CRef<'_>,
-        ta: &CTyp,
-        tb: &CTyp,
-    ) -> Self {
-        TypeError::ConstraintMismatch(
-            kctx.clone(),
-            vctx.clone(),
-            lhs.to_expr(),
-            rhs.to_expr(),
-            ta.clone(),
-            tb.clone(),
-        )
     }
     /// Reports that call `id(params)` fits the signatures `tied` equally well.
     pub fn app_multiple(
@@ -840,7 +809,6 @@ fn primary_label(cause: &TypeError) -> String {
         E::RelationNotBool(kctx, t, _) => has_type(t, kctx),
         E::Ark(kctx, _, _, t)
         | E::Condition(kctx, _, _, t)
-        | E::Interp(kctx, _, _, t)
         | E::EvaluateGrid(kctx, _, _, t)
         | E::NotARecord(kctx, _, _, t)
         | E::Unit(kctx, _, _, t)
@@ -882,9 +850,6 @@ fn primary_label(cause: &TypeError) -> String {
         E::EvaluateMleTooManyArguments(..) => "too many evaluation points".to_string(),
         E::Pair(kctx, _, _, a, _, b) => {
             format!("pairs {} with {}", kinded(a, kctx), kinded(b, kctx))
-        }
-        E::ConstraintMismatch(kctx, _, _, _, a, b) => {
-            format!("compares {} with {}", kinded(a, kctx), kinded(b, kctx))
         }
         E::FieldNotFound(_, _, _, f) => format!("no field `{f}`"),
         E::FieldUpdate(kctx, _, _, _, _, t) => has_type(t, kctx),

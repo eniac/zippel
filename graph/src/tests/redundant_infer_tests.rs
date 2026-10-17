@@ -6,12 +6,10 @@
 //!
 //! 1. `UDag::add_decl` runs `body.typecheck(...)?` (`graph/src/lib.rs:1133`) before
 //!    invoking `add_exp`, so the entire body has already been type-inferred via the
-//!    matching arms in `lang/src/typ/infer.rs` (e.g. the `CExp::Pair` arm at
-//!    `:652-662` and the `CExp::Bin` arms at `:665+`, both of which recursively
-//!    `infer` each child with `TypeError::next(TypeError::exp(parent), child_err)`
-//!    provenance).
-//! 2. The loop-top `exp.infer(...)?` at `add_exp` line `1329` re-validates each
-//!    sub-expression on the way down, with the same parent-provenance wrapping.
+//!    typing rules in `lang/src/typ/infer/`, which type every child before its
+//!    parent.
+//! 2. The loop-top `exprs.infer(...)?` in `add_exp_raw` types each sub-expression
+//!    on the way down, through the same rules.
 //!
 //! These tests pin the observable error behavior so the deletion of the discarded
 //! calls cannot silently regress diagnostics: any ill-typed Pair/Bin must still

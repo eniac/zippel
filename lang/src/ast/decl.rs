@@ -6,7 +6,7 @@ use crate::ast::Size;
 use crate::ast::exp::{ExpLiteral, ExpTraversal};
 use crate::ast::size::EvalError;
 use crate::ast::spanned::Spanned;
-use crate::ast::{CSig, Exp, Expr, FreeVars, GArgs, Sig};
+use crate::ast::{CSig, Exp, Expr, GArgs, Sig};
 use crate::id::{Tid, TidSubst, Vid};
 use crate::typ::infer::{TypeError, Typeable};
 use crate::typ::lub::Lub;
@@ -114,20 +114,6 @@ impl<N: ExpLiteral> Body<N> {
         match self {
             Body::Proto { relation, .. } => Some(relation),
             _ => None,
-        }
-    }
-}
-
-impl FreeVars for CBody {
-    fn freevars(&self) -> Set<Vid> {
-        match self {
-            Body::Proto { body, relation } => body
-                .as_ref()
-                .map(|b| b.freevars())
-                .unwrap_or_default()
-                .union(relation.freevars()),
-            Body::Func { body } => body.as_ref().map(|b| b.freevars()).unwrap_or_default(),
-            Body::TypeAlias => Set::new(),
         }
     }
 }

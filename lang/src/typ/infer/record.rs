@@ -3,43 +3,31 @@
 use super::*;
 
 impl CRef<'_> {
-    #[inline(never)]
     pub(super) fn infer_record(
         self,
         fields: &Ctx<Spanned<String>, ExpId>,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
-        vctx: &Ctx<Vid, CTyp>,
-        cx: &Cx<'_>,
+        env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
         let mut field_types = Ctx::new();
 
         // Infer the type of each field
         for (field_name, field_exp) in fields.iter() {
-            let field_typ = self
-                .at(*field_exp)
-                .infer_in(kctx, fctx, vctx, cx)
-                .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
+            let field_typ = env.typ(self.at(*field_exp));
             field_types.insert(field_name, &Spanned::dummy(field_typ));
         }
 
         Ok(CTyp::Record(field_types))
     }
 
-    #[inline(never)]
     pub(super) fn infer_proj(
         self,
         record_exp: CRef<'_>,
         field_name: &Spanned<String>,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
-        vctx: &Ctx<Vid, CTyp>,
-        cx: &Cx<'_>,
+        env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
+        let Env { kctx, vctx, .. } = *env;
         // Infer the type of the record expression
-        let record_typ = record_exp
-            .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
+        let record_typ = env.typ(record_exp);
 
         match record_typ {
             CTyp::Record(fields) => {
@@ -62,38 +50,46 @@ impl CRef<'_> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[inline(never)]
-    pub(super) fn infer_set_record(
+    /// The type of field `field_name` of record `record_exp`, which a `.set` updates; checked
+    /// once the record is typed, before the new value is.
+    pub(super) fn record_field(
         self,
         record_exp: CRef<'_>,
         field_name: &Spanned<String>,
-        value_exp: CRef<'_>,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
-        vctx: &Ctx<Vid, CTyp>,
-        cx: &Cx<'_>,
+        env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        // Infer the type of the record expression (must be a record)
-        let record_typ = record_exp
-            .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
+        let Env { kctx, vctx, .. } = *env;
+        let record_typ = env.typ(record_exp);
         let CTyp::Record(fields) = &record_typ else {
             return Err(TypeError::next(
                 TypeError::exp(kctx, vctx, self),
                 TypeError::not_a_record(kctx, vctx, record_exp, &record_typ),
             ));
         };
-        // Check the field exists and the value fits its type (e.g. an integer fits F)
-        let field_typ = fields.get(field_name).ok_or_else(|| {
-            TypeError::next(
-                TypeError::exp(kctx, vctx, self),
-                TypeError::field_not_found(kctx, vctx, record_exp, &field_name.node),
-            )
-        })?;
-        let value_typ = value_exp
-            .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
-        if !value_typ.fits(field_typ, kctx) {
+        fields
+            .get(field_name)
+            .map(|f| f.node.clone())
+            .ok_or_else(|| {
+                TypeError::next(
+                    TypeError::exp(kctx, vctx, self),
+                    TypeError::field_not_found(kctx, vctx, record_exp, &field_name.node),
+                )
+            })
+    }
+
+    /// `record_exp.set(field_name, value_exp)`: the same record, with a value that fits the
+    /// field (an integer fits `F`).
+    pub(super) fn infer_set_record(
+        self,
+        record_exp: CRef<'_>,
+        field_name: &Spanned<String>,
+        value_exp: CRef<'_>,
+        env: &Env<'_>,
+    ) -> Result<CTyp, TypeError> {
+        let Env { kctx, vctx, .. } = *env;
+        let field_typ = self.record_field(record_exp, field_name, env)?;
+        let value_typ = env.typ(value_exp);
+        if !value_typ.fits(&field_typ, kctx) {
             return Err(TypeError::next(
                 TypeError::exp(kctx, vctx, self),
                 TypeError::located(
@@ -103,13 +99,12 @@ impl CRef<'_> {
                         vctx,
                         value_exp,
                         &field_name.node,
-                        field_typ,
+                        &field_typ,
                         &value_typ,
                     ),
                 ),
             ));
         }
-        // Result type is the same record type
-        Ok(record_typ.clone())
+        Ok(env.typ(record_exp))
     }
 }

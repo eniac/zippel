@@ -12,8 +12,6 @@ use crate::ast::range::{Range, RangeTraversal};
 use crate::ast::spanned::Spanned;
 use crate::ast::walk::Visit;
 use crate::id::{Tid, TidSubst, Vid};
-use crate::stack_guard;
-use share::Set;
 
 /// The carrier of an [`Exp`]'s numeric literals, paired with the size type of its ranges
 /// and evaluation selectors: symbolic [`Size`] for both before concretization, a
@@ -323,13 +321,6 @@ impl Stmt {
     }
 }
 
-/// Value variables that occur free in an expression.
-pub trait FreeVars {
-    /// Value variables that occur free in `self`, i.e. are not bound by an
-    /// enclosing `fun` parameter.
-    fn freevars(&self) -> Set<Vid>;
-}
-
 /// A sequence of expressions: a vector literal's elements or a call's actual arguments.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Exps(pub Vec<ExpId>);
@@ -516,24 +507,6 @@ impl TidSubst for CExpr {
     }
 }
 
-/// The variables read and not bound in the tree itself (by a `fun`, a comprehension or an
-/// earlier statement of a block).
-impl<N: ExpLiteral> FreeVars for ExpRef<'_, N> {
-    fn freevars(&self) -> Set<Vid> {
-        let mut free = Set::new();
-        let mut walk = self.walk();
-        while let Some(visit) = walk.next() {
-            if let Visit::Enter(e) = visit
-                && let Exp::Var(x) = e.node()
-                && !walk.is_bound(&x.node)
-            {
-                free.insert(x.node.clone());
-            }
-        }
-        free
-    }
-}
-
 impl<N: ExpLiteral> ExpRef<'_, N> {
     /// Whether the tree reads `name` where the tree itself does not bind it.
     pub fn reads_free(self, name: &Vid) -> bool {
@@ -548,12 +521,6 @@ impl<N: ExpLiteral> ExpRef<'_, N> {
             }
         }
         false
-    }
-}
-
-impl FreeVars for CExpr {
-    fn freevars(&self) -> Set<Vid> {
-        self.root().freevars()
     }
 }
 
@@ -687,119 +654,28 @@ impl fmt::Display for BinOp {
 /// A precision limits the depth for use in messages: `{:.3}` prints three levels of the tree,
 /// writes deeper subexpressions as `…` (variables, literals, and ranges are always printed),
 /// and shortens lists to their first [`MAX_LISTED`] elements followed by `…`.
+/// Source syntax, one line; `{:#}` puts a block's statements on their own lines; a precision
+/// `{:.n}` prints `n` levels and elides deeper subexpressions as `…`. Printed from a stack of
+/// pieces, so deep trees take bounded stack.
 impl<N: ExpLiteral + fmt::Display> fmt::Display for ExpRef<'_, N>
 where
     N::Size: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let e = *self;
-        if f.precision() == Some(0) && !e.node().is_leaf() {
-            return f.write_str("…");
-        }
-        // Children print one level shallower, in the same one-line/multi-line mode.
-        let m = Mode {
-            alternate: f.alternate(),
-            precision: f.precision(),
-        };
-        let sub = |id: ExpId| m.sub(e.at(id));
-        let list = |exps| m.list(e.exprs(), exps);
-        match e.node() {
-            Exp::Lit(p) => write!(f, "{p}"),
-            Exp::Unit => f.write_str("()"),
-            Exp::Interpolate(None, ev) => write!(f, "interpolate({})", sub(*ev)),
-            Exp::Interpolate(Some(points), evals) => {
-                write!(f, "interpolate({}, {})", sub(*points), sub(*evals))
-            }
-            Exp::Poly(p) => write!(f, "poly({})", sub(*p)),
-            Exp::Coef(p) => write!(f, "coef({})", sub(*p)),
-            Exp::Evaluate(p, None, None) => write!(f, "eval({})", sub(*p)),
-            Exp::Evaluate(p, None, Some(x)) => write!(f, "eval({}, {})", sub(*p), sub(*x)),
-            Exp::Evaluate(p, Some(range), Some(x)) => {
-                write!(f, "eval<{range}>({}, {})", sub(*p), sub(*x))
-            }
-            Exp::Evaluate(p, Some(range), None) => write!(f, "eval<{range}>({})", sub(*p)),
-            Exp::Mle(p) => write!(f, "mle({})", sub(*p)),
-            Exp::Vec(ts) => write!(f, "[{}]", list(ts)),
-            // Dot products are written as a call, not infix.
-            Exp::Bin(BinOp::Dot, a, b) => write!(f, "dot({}, {})", sub(*a), sub(*b)),
-            Exp::Bin(op, a, b) => {
-                let parens = |needed| if needed { ("(", ")") } else { ("", "") };
-                let (l, r) = parens(op.lhs_needs_paren(e.at(*a).node()));
-                write!(f, "{l}{}{r} {op} ", sub(*a))?;
-                let (l, r) = parens(op.rhs_needs_paren(e.at(*b).node()));
-                write!(f, "{l}{}{r}", sub(*b))
-            }
-            Exp::Neg(a) if e.at(*a).node().needs_paren_under_neg() => {
-                write!(f, "-({})", sub(*a))
-            }
-            Exp::Neg(a) => write!(f, "-{}", sub(*a)),
-            Exp::Map(x, id, range) => write!(f, "[{} for {id} in {}]", sub(*x), sub(*range)),
-            Exp::Reduce(op, a) => write!(f, "reduce({op}, {})", sub(*a)),
-            Exp::Var(x) => write!(f, "{x}"),
-            Exp::Challenge(t, None) => write!(f, "challenge<{t}>"),
-            Exp::Challenge(t, Some(x)) => {
-                write!(
-                    f,
-                    "challenge<{t}{}>",
-                    x.node.as_ref().map_values(|v| sub(*v))
-                )
-            }
-            Exp::Random(t, None) => write!(f, "random<{t}>"),
-            Exp::Random(t, Some(x)) => {
-                write!(f, "random<{t}{}>", x.node.as_ref().map_values(|v| sub(*v)))
-            }
-            Exp::Pair(t, u) => write!(f, "pair({}, {})", sub(*t), sub(*u)),
-            Exp::Range(r) => write!(f, "{r}"),
-            Exp::App(x, d) => write!(f, "{x}({})", list(d)),
-            Exp::Ram(x, i) => write!(f, "{}[{}]", sub(*x), sub(*i)),
-            Exp::Block(stmts, tail) => {
-                let sep = if f.alternate() { "\n" } else { " " };
-                for (i, s) in stmts.iter().enumerate() {
-                    if i > 0 {
-                        f.write_str(sep)?;
-                    }
-                    match &s.node {
-                        Stmt::Let(x, t) => write!(f, "let {x} = {};", sub(*t))?,
-                        Stmt::Log(x, t) => write!(f, "{x} <- {};", sub(*t))?,
-                        Stmt::Exp(t) => write!(f, "{};", sub(*t))?,
-                    }
+        let alternate = f.alternate();
+        let mut todo = vec![Piece::Exp(*self, f.precision())];
+        while let Some(piece) = todo.pop() {
+            match piece {
+                Piece::Text(s) => f.write_str(s)?,
+                Piece::Show(x) => write!(f, "{x}")?,
+                Piece::Exp(e, depth) => {
+                    let first = todo.len();
+                    e.pieces(depth, alternate, &mut todo);
+                    todo[first..].reverse();
                 }
-                // The block's value prints at the block's depth: it is a sibling of the
-                // statements, not their child.
-                let Some(value) = tail else { return Ok(()) };
-                let value = Sub {
-                    exp: e.at(*value),
-                    alternate: f.alternate(),
-                    precision: f.precision(),
-                };
-                write!(f, "{sep}{value}")
-            }
-            Exp::Verify(a) => write!(f, "verify({})", sub(*a)),
-            Exp::Fun(vars, body) => {
-                f.write_str("fun ")?;
-                crate::display::sep(f, vars.iter().map(|v| &v.node), ", ")?;
-                write!(f, " => {}", sub(*body))
-            }
-            Exp::Record(fields) => {
-                f.write_str("{|")?;
-                let limit = f.precision().map_or(usize::MAX, |_| MAX_LISTED);
-                for (i, (name, v)) in fields.iter().enumerate() {
-                    if i > 0 {
-                        f.write_str(", ")?;
-                    }
-                    if i == limit {
-                        f.write_str("…")?;
-                        break;
-                    }
-                    write!(f, "{}: {}", name.node, sub(*v))?;
-                }
-                f.write_str("|}")
-            }
-            Exp::Proj(r, field) => write!(f, "{}.{}", sub(*r), field.node),
-            Exp::SetRecord(record, field, value) => {
-                write!(f, "{}.set({}, {})", sub(*record), field.node, sub(*value))
             }
         }
+        Ok(())
     }
 }
 
@@ -816,6 +692,181 @@ where
 /// How many elements of a list a depth-limited expression display shows before `…`.
 pub const MAX_LISTED: usize = 4;
 
+/// A piece of an expression's text.
+enum Piece<'a, N: ExpLiteral> {
+    Text(&'static str),
+    Show(&'a dyn fmt::Display),
+    /// A subexpression, printed with at most this many more levels (`None`: all of them).
+    Exp(ExpRef<'a, N>, Option<usize>),
+}
+
+impl<'a, N: ExpLiteral + fmt::Display> ExpRef<'a, N>
+where
+    N::Size: fmt::Display,
+{
+    /// Appends the pieces this node prints as, with `depth` levels left, to `out`; children
+    /// print one level shallower.
+    fn pieces(self, depth: Option<usize>, alternate: bool, out: &mut Vec<Piece<'a, N>>) {
+        use Piece::{Show, Text};
+        if depth == Some(0) && !self.node().is_leaf() {
+            return out.push(Text("…"));
+        }
+        let sub = |id: &ExpId| Piece::Exp(self.at(*id), depth.map(|d| d.saturating_sub(1)));
+        // Comma-separated subexpressions; with a depth limit, the first few then `…`.
+        let list = |out: &mut Vec<Piece<'a, N>>, exps: &'a Exps| {
+            let limit = depth.map_or(usize::MAX, |_| MAX_LISTED);
+            for (i, e) in exps.0.iter().enumerate() {
+                if i > 0 {
+                    out.push(Text(", "));
+                }
+                if i == limit {
+                    return out.push(Text("…"));
+                }
+                out.push(sub(e));
+            }
+        };
+        let sample = |out: &mut Vec<Piece<'a, N>>, name, t: &'a Spanned<Tid>, x: &'a Option<_>| {
+            out.extend([Text(name), Show(t)]);
+            match x.as_ref().map(|x: &Spanned<ExpExclusion<N>>| &x.node) {
+                Some(Exclusion::Values(v)) => out.extend([Text(" - "), sub(v)]),
+                Some(Exclusion::RootsOfUnity(n)) => {
+                    out.extend([Text(" - roots_of_unity("), Show(n), Text(")")]);
+                }
+                None => {}
+            }
+            out.push(Text(">"));
+        };
+        match self.node() {
+            Exp::Lit(p) => out.push(Show(p)),
+            Exp::Unit => out.push(Text("()")),
+            Exp::Interpolate(None, ev) => out.extend([Text("interpolate("), sub(ev), Text(")")]),
+            Exp::Interpolate(Some(points), evals) => out.extend([
+                Text("interpolate("),
+                sub(points),
+                Text(", "),
+                sub(evals),
+                Text(")"),
+            ]),
+            Exp::Poly(p) => out.extend([Text("poly("), sub(p), Text(")")]),
+            Exp::Coef(p) => out.extend([Text("coef("), sub(p), Text(")")]),
+            Exp::Evaluate(p, range, x) => {
+                out.push(Text("eval"));
+                if let Some(range) = range {
+                    out.extend([Text("<"), Show(range), Text(">")]);
+                }
+                out.extend([Text("("), sub(p)]);
+                if let Some(x) = x {
+                    out.extend([Text(", "), sub(x)]);
+                }
+                out.push(Text(")"));
+            }
+            Exp::Mle(p) => out.extend([Text("mle("), sub(p), Text(")")]),
+            Exp::Vec(ts) => {
+                out.push(Text("["));
+                list(out, ts);
+                out.push(Text("]"));
+            }
+            // Dot products are written as a call, not infix.
+            Exp::Bin(BinOp::Dot, a, b) => {
+                out.extend([Text("dot("), sub(a), Text(", "), sub(b), Text(")")]);
+            }
+            Exp::Bin(op, a, b) => {
+                let operand = |out: &mut Vec<Piece<'a, N>>, id, parens| {
+                    if parens {
+                        out.extend([Text("("), sub(id), Text(")")]);
+                    } else {
+                        out.push(sub(id));
+                    }
+                };
+                operand(out, a, op.lhs_needs_paren(self.at(*a).node()));
+                out.extend([Text(" "), Show(op), Text(" ")]);
+                operand(out, b, op.rhs_needs_paren(self.at(*b).node()));
+            }
+            Exp::Neg(a) if self.at(*a).node().needs_paren_under_neg() => {
+                out.extend([Text("-("), sub(a), Text(")")]);
+            }
+            Exp::Neg(a) => out.extend([Text("-"), sub(a)]),
+            Exp::Map(x, id, range) => out.extend([
+                Text("["),
+                sub(x),
+                Text(" for "),
+                Show(id),
+                Text(" in "),
+                sub(range),
+                Text("]"),
+            ]),
+            Exp::Reduce(op, a) => {
+                out.extend([Text("reduce("), Show(op), Text(", "), sub(a), Text(")")])
+            }
+            Exp::Var(x) => out.push(Show(x)),
+            Exp::Challenge(t, x) => sample(out, "challenge<", t, x),
+            Exp::Random(t, x) => sample(out, "random<", t, x),
+            Exp::Pair(t, u) => out.extend([Text("pair("), sub(t), Text(", "), sub(u), Text(")")]),
+            Exp::Range(r) => out.push(Show(r)),
+            Exp::App(x, d) => {
+                out.extend([Show(x), Text("(")]);
+                list(out, d);
+                out.push(Text(")"));
+            }
+            Exp::Ram(x, i) => out.extend([sub(x), Text("["), sub(i), Text("]")]),
+            Exp::Block(stmts, tail) => {
+                let sep = Text(if alternate { "\n" } else { " " });
+                for (i, s) in stmts.iter().enumerate() {
+                    if i > 0 {
+                        out.push(Text(if alternate { "\n" } else { " " }));
+                    }
+                    match &s.node {
+                        Stmt::Let(x, v) => out.extend([Text("let "), Show(x), Text(" = "), sub(v)]),
+                        Stmt::Log(x, v) => out.extend([Show(x), Text(" <- "), sub(v)]),
+                        Stmt::Exp(v) => out.push(sub(v)),
+                    }
+                    out.push(Text(";"));
+                }
+                // The block's value prints at the block's depth: it is a sibling of the
+                // statements, not their child.
+                if let Some(value) = tail {
+                    out.extend([sep, Piece::Exp(self.at(*value), depth)]);
+                }
+            }
+            Exp::Verify(a) => out.extend([Text("verify("), sub(a), Text(")")]),
+            Exp::Fun(vars, body) => {
+                out.push(Text("fun "));
+                for (i, v) in vars.iter().enumerate() {
+                    if i > 0 {
+                        out.push(Text(", "));
+                    }
+                    out.push(Show(&v.node));
+                }
+                out.extend([Text(" => "), sub(body)]);
+            }
+            Exp::Record(fields) => {
+                out.push(Text("{|"));
+                let limit = depth.map_or(usize::MAX, |_| MAX_LISTED);
+                for (i, (name, v)) in fields.iter().enumerate() {
+                    if i > 0 {
+                        out.push(Text(", "));
+                    }
+                    if i == limit {
+                        out.push(Text("…"));
+                        break;
+                    }
+                    out.extend([Show(&name.node), Text(": "), sub(v)]);
+                }
+                out.push(Text("|}"));
+            }
+            Exp::Proj(r, field) => out.extend([sub(r), Text("."), Show(&field.node)]),
+            Exp::SetRecord(record, field, value) => out.extend([
+                sub(record),
+                Text(".set("),
+                Show(&field.node),
+                Text(", "),
+                sub(value),
+                Text(")"),
+            ]),
+        }
+    }
+}
+
 impl<N: ExpLiteral> Exp<N> {
     /// Whether `self` prints in full at any depth.
     fn is_leaf(&self) -> bool {
@@ -826,97 +877,6 @@ impl<N: ExpLiteral> Exp<N> {
             }
             _ => false,
         }
-    }
-}
-
-/// The one-line/multi-line mode and remaining depth an expression is printed in.
-#[derive(Clone, Copy)]
-struct Mode {
-    alternate: bool,
-    precision: Option<usize>,
-}
-
-impl Mode {
-    /// A child of the expression printed in this mode.
-    const fn sub<N: ExpLiteral>(self, e: ExpRef<'_, N>) -> Sub<'_, N> {
-        Sub::new(e, self.alternate, self.precision)
-    }
-
-    /// A list of children of the expression printed in this mode.
-    const fn list<'a, N: ExpLiteral>(self, exprs: &'a Exprs<N>, exps: &'a Exps) -> List<'a, N> {
-        List {
-            exprs,
-            exps,
-            alternate: self.alternate,
-            precision: self.precision,
-        }
-    }
-}
-
-/// A child expression, printed one level shallower than its parent and in its mode.
-struct Sub<'a, N: ExpLiteral> {
-    exp: ExpRef<'a, N>,
-    alternate: bool,
-    precision: Option<usize>,
-}
-
-impl<'a, N: ExpLiteral> Sub<'a, N> {
-    /// `exp` as a child of a parent printed with `alternate` and depth `precision`.
-    const fn new(exp: ExpRef<'a, N>, alternate: bool, precision: Option<usize>) -> Self {
-        Sub {
-            exp,
-            alternate,
-            precision: match precision {
-                Some(p) => Some(p.saturating_sub(1)),
-                None => None,
-            },
-        }
-    }
-}
-
-impl<N: ExpLiteral + fmt::Display> fmt::Display for Sub<'_, N>
-where
-    N::Size: fmt::Display,
-{
-    #[stack_guard]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match (self.alternate, self.precision) {
-            (false, None) => write!(f, "{}", self.exp),
-            (true, None) => write!(f, "{:#}", self.exp),
-            (false, Some(p)) => write!(f, "{:.*}", p, self.exp),
-            (true, Some(p)) => write!(f, "{:#.*}", p, self.exp),
-        }
-    }
-}
-
-/// Comma-separated child expressions; with a depth limit, the first [`MAX_LISTED`] then `…`.
-struct List<'a, N: ExpLiteral> {
-    exprs: &'a Exprs<N>,
-    exps: &'a Exps,
-    alternate: bool,
-    precision: Option<usize>,
-}
-
-impl<N: ExpLiteral + fmt::Display> fmt::Display for List<'_, N>
-where
-    N::Size: fmt::Display,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let limit = self.precision.map_or(usize::MAX, |_| MAX_LISTED);
-        for (i, e) in self.exps.iter().enumerate() {
-            if i > 0 {
-                f.write_str(", ")?;
-            }
-            if i == limit {
-                return f.write_str("…");
-            }
-            write!(
-                f,
-                "{}",
-                Sub::new(self.exprs.at(e), self.alternate, self.precision)
-            )?;
-        }
-        Ok(())
     }
 }
 

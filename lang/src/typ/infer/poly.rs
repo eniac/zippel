@@ -4,19 +4,14 @@ use super::*;
 use crate::ast::range::CRange;
 
 impl CRef<'_> {
-    #[inline(never)]
     pub(super) fn infer_interpolate(
         self,
         points_opt: Option<CRef<'_>>,
         evals: CRef<'_>,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
-        vctx: &Ctx<Vid, CTyp>,
-        cx: &Cx<'_>,
+        env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        let evals_typ = evals
-            .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
+        let Env { kctx, vctx, .. } = *env;
+        let evals_typ = env.typ(evals);
 
         match points_opt {
             None => match evals_typ {
@@ -39,9 +34,7 @@ impl CRef<'_> {
                 _ => Err(TypeError::interpolate_unary(kctx, vctx, self)),
             },
             Some(points) => {
-                let points_typ = points
-                    .infer_in(kctx, fctx, vctx, cx)
-                    .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
+                let points_typ = env.typ(points);
 
                 match (points_typ, evals_typ) {
                     (CTyp::Vec(bp, np), CTyp::Vec(be, ne)) if np == ne => {
@@ -78,18 +71,9 @@ impl CRef<'_> {
         }
     }
 
-    #[inline(never)]
-    pub(super) fn infer_poly(
-        self,
-        v: CRef<'_>,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
-        vctx: &Ctx<Vid, CTyp>,
-        cx: &Cx<'_>,
-    ) -> Result<CTyp, TypeError> {
-        let typ = v
-            .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
+    pub(super) fn infer_poly(self, v: CRef<'_>, env: &Env<'_>) -> Result<CTyp, TypeError> {
+        let Env { kctx, vctx, .. } = *env;
+        let typ = env.typ(v);
 
         match typ {
             CTyp::Vec(b, k) => {
@@ -104,18 +88,9 @@ impl CRef<'_> {
         }
     }
 
-    #[inline(never)]
-    pub(super) fn infer_coef(
-        self,
-        p: CRef<'_>,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
-        vctx: &Ctx<Vid, CTyp>,
-        cx: &Cx<'_>,
-    ) -> Result<CTyp, TypeError> {
-        let typ = p
-            .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
+    pub(super) fn infer_coef(self, p: CRef<'_>, env: &Env<'_>) -> Result<CTyp, TypeError> {
+        let Env { kctx, vctx, .. } = *env;
+        let typ = env.typ(p);
 
         match typ {
             CTyp::Poly(tid, m_vars, m) if m_vars.node == 1 => {
@@ -153,20 +128,15 @@ impl CRef<'_> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[inline(never)]
     pub(super) fn infer_evaluate(
         self,
         p: CRef<'_>,
         selector: Option<&CRange>,
         opt_points: Option<CRef<'_>>,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
-        vctx: &Ctx<Vid, CTyp>,
-        cx: &Cx<'_>,
+        env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        let p_typ = p
-            .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
+        let Env { kctx, vctx, .. } = *env;
+        let p_typ = env.typ(p);
 
         match (selector, opt_points) {
             // Unary form: eval(p) — evaluation on the FFT grid (n roots of unity).
@@ -201,9 +171,7 @@ impl CRef<'_> {
             }
             // Binary form: eval(p, points) — point or vector evaluation.
             (None, Some(x)) => {
-                let x_typ = x
-                    .infer_in(kctx, fctx, vctx, cx)
-                    .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
+                let x_typ = env.typ(x);
 
                 match (p_typ, x_typ) {
                     // Univariate polynomial evaluated at a single scalar point.
@@ -254,9 +222,7 @@ impl CRef<'_> {
             }
             // Selected form: eval<range>(p, fixed).
             (Some(range), Some(fixed)) => {
-                let fixed_typ = fixed
-                    .infer_in(kctx, fctx, vctx, cx)
-                    .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
+                let fixed_typ = env.typ(fixed);
 
                 let fail = || TypeError::evaluate_selected(kctx, vctx, p, fixed, range.clone());
                 if range.step() != 1 || range.start() >= range.end() {
@@ -289,19 +255,10 @@ impl CRef<'_> {
         }
     }
 
-    #[inline(never)]
-    pub(super) fn infer_mle(
-        self,
-        v: CRef<'_>,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
-        vctx: &Ctx<Vid, CTyp>,
-        cx: &Cx<'_>,
-    ) -> Result<CTyp, TypeError> {
+    pub(super) fn infer_mle(self, v: CRef<'_>, env: &Env<'_>) -> Result<CTyp, TypeError> {
+        let Env { kctx, vctx, .. } = *env;
         // It must be a vector of fields, or a vector of Fin
-        let typ = v
-            .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
+        let typ = env.typ(v);
 
         match typ {
             CTyp::Vec(b, n) => {
@@ -316,65 +273,49 @@ impl CRef<'_> {
         }
     }
 
-    #[inline(never)]
+    /// The field a `fun`'s parameters range over: the scalar type variable in scope; checked
+    /// before the body is typed.
+    pub(super) fn fun_field(self, env: &Env<'_>) -> Result<Tid, TypeError> {
+        let Env { kctx, vctx, .. } = *env;
+        kctx.iter()
+            .find(|(_, k)| k.is_scalar())
+            .map(|(tid, _)| tid.clone())
+            .ok_or(TypeError::exp(kctx, vctx, self))
+    }
+
+    /// A `fun` over one parameter is a univariate polynomial whose degree is its body's (the
+    /// parameter is a degree-1 polynomial); over several, a multilinear one whose parameters
+    /// are field elements.
     pub(super) fn infer_fun(
         self,
         vars: &[Spanned<Vid>],
         body: CRef<'_>,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
-        vctx: &Ctx<Vid, CTyp>,
-        cx: &Cx<'_>,
+        env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        // Create a new variable context with the parameters
-        let mut new_vctx = vctx.clone();
-
-        // Find a field type
-        let field_tid = kctx
-            .iter()
-            .find(|(_, k)| k.is_scalar())
-            .map(|(tid, _)| tid.clone())
-            .ok_or(TypeError::exp(kctx, vctx, self))?;
-
+        let Env { kctx, vctx, .. } = *env;
+        let not_poly = |t: &CTyp| {
+            TypeError::located(
+                body.span(),
+                TypeError::fun_body(kctx, vctx, self, vars.len(), t),
+            )
+        };
+        let body_type = env.typ(body);
         if vars.len() == 1 {
-            // Univariate polynomial - type the variable as Poly(F, 1, 1) (degree-1 polynomial)
-            // Then type inference will compute the actual degree through lub operations
-            for var in vars {
-                new_vctx.insert(&var.node, &CTyp::uni(&field_tid, 1));
-            }
-
-            // Infer the type of the body - should get Poly(F, 1, N) where N is the degree
-            let body_type = body.infer_in(kctx, fctx, &new_vctx, cx)?;
-
-            // Extract the degree from the inferred type
             match body_type {
                 CTyp::Poly(tid, m, degree) if m.node == 1 => Ok(CTyp::Poly(tid, m, degree)),
                 CTyp::Base(tid) => Ok(CTyp::uni(&tid, 0)), // Constant polynomial
                 // An integer constant is a constant polynomial over the unique field.
                 t @ (CTyp::Fin(_) | CTyp::FieldLiteral) => match t.to_scalar(kctx) {
                     Some(tid) => Ok(CTyp::uni(&tid, 0)),
-                    None => Err(TypeError::located(
-                        body.span(),
-                        TypeError::fun_body(kctx, vctx, self, vars.len(), &t),
-                    )),
+                    None => Err(not_poly(&t)),
                 },
-                t => Err(TypeError::located(
-                    body.span(),
-                    TypeError::fun_body(kctx, vctx, self, vars.len(), &t),
-                )),
+                t => Err(not_poly(&t)),
             }
         } else {
-            // Multilinear polynomial - type variables as scalars and validate structure
-            for var in vars {
-                new_vctx.insert(&var.node, &CTyp::Base(field_tid.clone()));
-            }
-
-            let body_type = body.infer_in(kctx, fctx, &new_vctx, cx)?;
-
             match body_type {
-                CTyp::Base(tid) if kctx.get(&tid).map(|k| k.is_scalar()).unwrap_or(false) => {
-                    // For multilinear, we just return Mle with the number of variables
-                    // Backend validation will catch if it's not actually multilinear
+                // For multilinear, we just return Mle with the number of variables
+                // Backend validation will catch if it's not actually multilinear
+                CTyp::Base(tid) if kctx.get(&tid).is_some_and(CKind::is_scalar) => {
                     Ok(CTyp::mle(&tid, vars.len()))
                 }
                 // An integer constant is a constant over the unique field.
@@ -383,10 +324,7 @@ impl CRef<'_> {
                 {
                     Ok(CTyp::mle(&tid, vars.len()))
                 }
-                t => Err(TypeError::located(
-                    body.span(),
-                    TypeError::fun_body(kctx, vctx, self, vars.len(), &t),
-                )),
+                t => Err(not_poly(&t)),
             }
         }
     }
