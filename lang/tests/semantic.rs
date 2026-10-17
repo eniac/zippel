@@ -140,6 +140,62 @@ fn semantic_impure_constructs_anywhere_in_where() {
 }
 
 #[test]
+fn purity_queries_preserve_randomness_and_call_policies() {
+    use lang::ast::Body;
+
+    // Parse without semantic/type checks: these queries classify the syntax itself.
+    for (body, pure, relation_pure) in [
+        ("x + 1", true, true),
+        ("random<F>", false, true),
+        ("challenge<F>", false, false),
+        ("verify(x == x)", false, false),
+        ("sent <- x; sent", false, false),
+        ("f(x)", true, true),
+        ("f(random<F>)", false, true),
+        ("f(challenge<F>)", false, false),
+        ("random<F - [challenge<F>]>", false, false),
+    ] {
+        let src = format!("fn f<F: Field>(instance x: F) {{ {body} }}");
+        let (decls, errors) = lang::parser::parse_decls(&src);
+        assert!(errors.is_empty(), "{errors:?}");
+        let Body::Func { body: Some(tree) } = &decls[0].node.body else {
+            panic!("expected a function body");
+        };
+        assert_eq!(tree.root().is_pure(), pure, "{body}");
+        assert_eq!(tree.root().is_relation_pure(), relation_pure, "{body}");
+    }
+}
+
+#[test]
+fn nested_relation_effects_keep_diagnostic_order_and_spans() {
+    use lang::ast::Body;
+
+    let src = "proto p<F: Field>(instance x: F) where \
+        (sent <- random<F - [challenge<F>]>; verify(sent == x); sent == x) \
+        { verify(x == x) }";
+    let (decls, errors) = lang::parser::parse_decls(src);
+    assert!(errors.is_empty(), "{errors:?}");
+    let Body::Proto { relation, .. } = &decls[0].node.body else {
+        panic!("expected a protocol");
+    };
+    let diagnostics = lang::semantic::check_purity(relation);
+    let expected = [
+        ("log", "sent <- random<F - [challenge<F>]>;"),
+        ("challenge", "challenge<F>"),
+        ("verify", "verify(sent == x)"),
+    ];
+    assert_eq!(diagnostics.len(), expected.len());
+    for (diagnostic, (kind, text)) in diagnostics.iter().zip(expected) {
+        assert_eq!(
+            diagnostic.summary,
+            format!("impure construct `{kind}` in proto relation")
+        );
+        let start = src.find(text).unwrap();
+        assert_eq!(diagnostic.span, start..start + text.len(), "{kind}");
+    }
+}
+
+#[test]
 fn semantic_circular_typevar_ref() {
     // V: Pairing<G> and G: Pairing<V> — circular kind reference.
     let src = "proto p<V: Pairing<G, G>, G: Pairing<V, V>>(instance a: V) where a == a { verify(a == a) }";

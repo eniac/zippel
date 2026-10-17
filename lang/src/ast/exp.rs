@@ -10,7 +10,7 @@ use crate::ast::exclusion::Exclusion;
 use crate::ast::range::{Range, RangeTraversal};
 use crate::ast::spanned::Spanned;
 use crate::ast::walk::Visit;
-use crate::ast::{Block, Size, Stmt};
+use crate::ast::{Block, Size};
 use crate::id::{Tid, TidSubst, Vid};
 
 /// The carrier of an [`Exp`]'s numeric literals, paired with the size type of its ranges
@@ -316,36 +316,6 @@ pub type CExps = Exps;
 pub type CExpr = Expr<BigUint>;
 /// A node of a concrete expression tree, for reading it.
 pub type CRef<'a> = ExpRef<'a, BigUint>;
-
-impl<N: ExpLiteral> ExpRef<'_, N> {
-    /// Whether evaluating this expression has no protocol-visible effect:
-    /// no transcript logging (`log`), no oracle `challenge`, no `random`
-    /// sampling and no `verify`. Purity is what lets the graph
-    /// builder duplicate, hoist or drop a subexpression freely.
-    pub fn is_pure(self) -> bool {
-        self.walk().all(|visit| match visit {
-            Visit::Enter(e) => !matches!(
-                e.node(),
-                Exp::Challenge(..) | Exp::Random(..) | Exp::Verify(_)
-            ),
-            Visit::EnterStmt(stmt) => !matches!(stmt.node, Stmt::Log(..)),
-            _ => true,
-        })
-    }
-
-    /// Check if an expression is valid in a relation (where clause).
-    ///
-    /// Allows: `let`, `Random`, and all pure expressions.
-    /// Rejects: `Challenge` (verifier oracle), `<-` (transcript),
-    /// `Verify` (verifier-side check).
-    pub fn is_relation_pure(self) -> bool {
-        self.walk().all(|visit| match visit {
-            Visit::Enter(e) => !matches!(e.node(), Exp::Challenge(..) | Exp::Verify(_)),
-            Visit::EnterStmt(stmt) => !matches!(stmt.node, Stmt::Log(..)),
-            _ => true,
-        })
-    }
-}
 
 impl<N: ExpLiteral> Exp<N> {
     /// The same node over the literal carrier `M`: literals mapped by `literal`, range and
