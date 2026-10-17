@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use crate::ast::{Exp, Stmt, UExpr, URef, Visit};
+use crate::ast::{Effect, UExpr};
 use crate::diagnostic::Diagnostic;
 use lang_derive::Diagnostic as DiagnosticDerive;
 
@@ -23,34 +23,24 @@ struct ImpureRelation {
     _note: (),
 }
 
-/// Every impure construct (`challenge`, `verify`, a `<-` statement) in an expression, with its
-/// span, in walk order.
-fn find_impure_constructs(exp: URef<'_>) -> Vec<(Range<usize>, &'static str)> {
-    let mut found = Vec::new();
-    for visit in exp.walk() {
-        match visit {
-            Visit::Enter(e) => match e.node() {
-                Exp::Challenge(..) => found.push((e.span().clone(), "challenge")),
-                Exp::Verify(_) => found.push((e.span().clone(), "verify")),
-                _ => {}
-            },
-            Visit::EnterStmt(stmt) if matches!(stmt.node, Stmt::Log(..)) => {
-                found.push((stmt.span.clone(), "log"));
-            }
-            _ => {}
-        }
-    }
-    found
-}
-
 /// Check that a proto relation contains no impure constructs.
 /// Returns one error per impure construct found.
 pub fn check_purity(relation: &UExpr) -> Vec<Diagnostic> {
-    find_impure_constructs(relation.root())
-        .into_iter()
+    relation
+        .root()
+        .effects()
+        .filter_map(|(effect, span)| {
+            let construct = match effect {
+                Effect::Challenge => "challenge",
+                Effect::Log => "log",
+                Effect::Verify => "verify",
+                Effect::Random => return None,
+            };
+            Some((span, construct))
+        })
         .map(|(span, construct)| {
             ImpureRelation {
-                span,
+                span: span.clone(),
                 construct: construct.to_string(),
                 _note: (),
             }

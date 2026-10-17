@@ -160,6 +160,8 @@ unused helpers are still typechecked. Use `--size` to check specific sizes.
   node means uses `lang/src/ast/walk.rs` instead of matching every `Exp` variant:
   `Exp::children`/`for_each_child_mut`, or `ExpRef::walk` (iterative, evaluation
   order, resolves names to their bindings). The binder rules live only there.
+  Direct syntactic effects for purity queries and relation diagnostics are
+  described in `ast/effect.rs`; their different purity policies remain explicit.
   Type inference is such a walk too: each rule in `lang/src/typ/infer/` types a
   node from its children's types (`Env::typ`). The `TypeTable` also stores resolved
   calls (declaration, instantiated signature and substitution); lowering reads

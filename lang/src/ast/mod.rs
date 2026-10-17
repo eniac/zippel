@@ -6,6 +6,7 @@ pub mod arg;
 pub mod block;
 /// Declaration bodies: protocols, functions and type aliases.
 pub mod decl;
+mod effect;
 /// What a `random` or `challenge` sample excludes.
 pub mod exclusion;
 /// Expressions and binary operators — the bulk of the surface syntax.
@@ -28,6 +29,7 @@ pub use arena::{ExpId, ExpRef, Expr, Exprs};
 pub use arg::{Arg, Args, CArg, CArgs, GArg, GArgs};
 pub use block::{Block, Stmt};
 pub use decl::{Body, BodyTypes, CBody};
+pub(crate) use effect::Effect;
 pub use exclusion::Exclusion;
 pub use exp::{
     BinOp, CExp, CExpr, CExps, CRef, Exp, ExpExclusion, ExpLiteral, ExpTraversal, Exps, UExp,
