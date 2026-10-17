@@ -1,7 +1,7 @@
 use crate::ast::range::{Range, RangeError};
 use crate::ast::sig::{CSig, SigError};
 use crate::ast::spanned::Spanned;
-use crate::ast::{BinOp, CExp, CExps};
+use crate::ast::{BinOp, CExp, CExpr, CRef};
 use crate::diagnostic::{Applicability, Diagnostic, Phase};
 use crate::id::{Tid, Vid};
 use crate::semantic::levenshtein;
@@ -38,20 +38,20 @@ pub enum TypeError {
     /// A specification relation referenced transcript or randomness, so it is not a pure
     /// predicate over the statement and witness.
     #[error("A `where` clause cannot use the transcript or randomness")]
-    NotPureRel(CExp),
+    NotPureRel(CExpr),
 
     /// A `where` clause inferred to something other than `Bool`.
     #[error("A `where` clause must be a boolean condition, but this has type {}", kinded(.1, .0))]
-    RelationNotBool(Ctx<Tid, CKind>, CTyp, CExp),
+    RelationNotBool(Ctx<Tid, CKind>, CTyp, CExpr),
 
     /// A source type has no `ATyp` image, i.e. it cannot be lowered to an `arkworks` runtime
     /// type under the current kind context.
     #[error("Type {} is not supported by the arkworks backend", kinded(.3, .0))]
-    Ark(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp),
+    Ark(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, CTyp),
 
     /// Generic inference failure for an expression with no more specific variant.
     #[error("Ill-typed expression")]
-    CExp(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
+    CExp(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr),
 
     /// A binary operator was applied to operand types it is not defined on. The operand types
     /// are spanned at the operands; the `LubError` is the underlying failure.
@@ -59,7 +59,7 @@ pub enum TypeError {
     Bin(
         Ctx<Tid, CKind>,
         Ctx<Vid, CTyp>,
-        CExp,
+        CExpr,
         BinOp,
         Spanned<CTyp>,
         Spanned<CTyp>,
@@ -68,12 +68,12 @@ pub enum TypeError {
 
     /// The condition of a `verify` is not a boolean.
     #[error("`verify` expects a boolean condition, but this has type {}", kinded(.3, .0))]
-    Condition(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp),
+    Condition(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, CTyp),
 
     /// The body of a `fun` has a type its variables cannot make into a polynomial; carries the
     /// `fun`, its number of variables, and the body's type.
     #[error("{}", fun_body_message(*.3, &kinded(.4, .0)))]
-    FunBody(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, usize, CTyp),
+    FunBody(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, usize, CTyp),
 
     /// An empty vector literal has no element type to infer from.
     #[error("Cannot infer the element type of an empty vector")]
@@ -88,38 +88,38 @@ pub enum TypeError {
         Spanned<CTyp>,
         Spanned<CTyp>,
         Box<TypeError>,
-        CExp,
-        CExp,
+        CExpr,
+        CExpr,
     ),
 
     /// The argument list of `interpolate` was not a pair of field vectors.
     #[error("`interpolate` expects vectors of field elements")]
-    Interpolate(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
+    Interpolate(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr),
 
     /// The single argument of the one-argument `interpolate` form was not a field vector.
     #[error("`interpolate` expects a vector of field elements")]
-    InterpolateUnary(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
+    InterpolateUnary(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr),
 
     /// Unary `interpolate` lowers to an inverse FFT, so its input vector length must be a power
     /// of two; the offending length is carried as the last component.
     #[error("`interpolate` needs a vector whose length is a power of two, but this has length {3}")]
-    InterpolateUnaryNotPow2(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, usize),
+    InterpolateUnaryNotPow2(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, usize),
 
     /// `poly` was applied to something other than a vector of field elements.
     #[error("`poly` expects a vector of field elements")]
-    Poly(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
+    Poly(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr),
 
     /// Polynomial evaluation received operands that are not a polynomial applied to a scalar
     /// point or a vector of scalar points.
     #[error("A polynomial can only be evaluated at a scalar or a vector of scalars")]
-    Evaluate(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CExp),
+    Evaluate(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, CExpr),
 
     /// A univariate polynomial was applied to a vector of points; univariate evaluation takes a
     /// single scalar, and batching must be written as an explicit comprehension.
     #[error(
         "A univariate polynomial cannot be evaluated at a vector of points; evaluate at one point with `p(x)`, or write `[p(x) for x in points]`"
     )]
-    EvaluateUnivariateVector(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CExp),
+    EvaluateUnivariateVector(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, CExpr),
 
     /// Partial evaluation `eval<range>` was given a bad selector: the free range must be a
     /// nonempty contiguous window inside the polynomial's variables, and the remaining
@@ -127,48 +127,48 @@ pub enum TypeError {
     #[error(
         "`eval<{4}>` needs a polynomial, a non-empty contiguous range of its variables, and one fixed scalar for each remaining variable"
     )]
-    SelectedEvaluate(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CExp, Range<usize>),
+    SelectedEvaluate(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, CExpr, Range<usize>),
 
     /// Internal invariant breach: a selected-evaluation node survived parser conversion without
     /// the explicit point and fixed-value arguments that lowering requires.
     #[error("Internal compiler error: `eval<{3}>` lost its point arguments during parsing")]
-    EvaluateSelectorWithoutPoints(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, Range<usize>),
+    EvaluateSelectorWithoutPoints(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, Range<usize>),
 
     /// A multilinear extension was applied to more points than it has variables.
     #[error("Too many evaluation points for this multilinear extension")]
-    EvaluateMleTooManyArguments(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CExp),
+    EvaluateMleTooManyArguments(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, CExpr),
 
     /// `coef` was applied to a non-polynomial; only polynomials expose a coefficient vector.
     #[error("`coef` expects a polynomial")]
-    Coef(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
+    Coef(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr),
 
     /// `mle` requires a vector whose length is a power of two, since the multilinear encoding
     /// stores `2^n` evaluation slots.
     #[error("`mle` expects a vector whose length is a power of two")]
-    Mle(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
+    Mle(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr),
 
     /// A multilinear extension was applied to arguments that are neither scalars nor vectors of
     /// scalars.
     #[error("Multilinear extension `{2}` must be applied to scalars or a vector of scalars, but got {}", kinded_list(.4, .0))]
-    MleApp(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, Vid, CExps, CTyps),
+    MleApp(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, Vid, Vec<CExpr>, CTyps),
 
     /// The source of a `for` comprehension did not infer to a non-empty vector type; carries
     /// the type actually inferred.
     #[error("A `for` comprehension must range over a non-empty vector, but this has type {}", kinded(.5, .0))]
-    Map(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, Vid, CExp, CTyp),
+    Map(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, Vid, CExpr, CTyp),
 
     /// `reduce` was applied to an expression that is not a vector.
     #[error("`reduce` expects a vector, but got {}", kinded(.4, .0))]
-    Reduce(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, BinOp, CExp, CTyp),
+    Reduce(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, BinOp, CExpr, CTyp),
 
     /// The reduction operator is not closed over the element type: `lub_op` of the element type
     /// with itself produced a different type, so the accumulator has no fixed point.
     #[error("`reduce` with `{op}` needs `{op}` to keep the element type {elem}, but it gives {res}", op = .2, elem = kinded(.4, .0), res = kinded(.5, .0))]
-    ReduceAcc(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, BinOp, CExp, CTyp, CTyp),
+    ReduceAcc(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, BinOp, CExpr, CTyp, CTyp),
 
     /// A univariate polynomial was applied to arguments other than one scalar point.
     #[error("Univariate polynomial `{2}` must be evaluated at a single scalar, but got {}", kinded_list(.4, .0))]
-    Uni(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, Vid, CExps, CTyps),
+    Uni(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, Vid, Vec<CExpr>, CTyps),
 
     /// A Fiat-Shamir `challenge` was asked to produce a non-field value; challenges are drawn
     /// from the scalar field only.
@@ -194,19 +194,19 @@ pub enum TypeError {
     /// `interpolate` argument inferred to a type that is not a field vector; carries the type
     /// actually inferred.
     #[error("`interpolate` expects a vector of field elements, but got {}", kinded(.3, .0))]
-    Interp(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp),
+    Interp(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, CTyp),
 
     /// Unary `eval` (evaluation over the full FFT/boolean grid) was applied to a value that is
     /// neither a univariate polynomial nor a multilinear extension.
     #[error("`eval` expects a univariate polynomial or a multilinear extension, but got {}", kinded(.3, .0))]
-    EvaluateGrid(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp),
+    EvaluateGrid(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, CTyp),
 
     /// Unary `eval` lowers to a forward FFT, so a univariate operand must have a power-of-two
     /// coefficient count `m + 1`; the offending `max_degree` is carried as the fourth field.
     #[error(
         "`eval` needs a polynomial with a power-of-two number of coefficients, but this has degree {3}"
     )]
-    EvaluateGridNotPow2(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, usize, CTyp),
+    EvaluateGridNotPow2(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, usize, CTyp),
 
     /// A vector index is not a `Fin` type bounded by the vector's length, so the access cannot
     /// be proven in range.
@@ -214,7 +214,7 @@ pub enum TypeError {
     Ram(
         Ctx<Tid, CKind>,
         Ctx<Vid, CTyp>,
-        CExp,
+        CExpr,
         Spanned<CTyp>,
         Spanned<CTyp>,
     ),
@@ -225,7 +225,7 @@ pub enum TypeError {
     RamDynamicIndex(
         Ctx<Tid, CKind>,
         Ctx<Vid, CTyp>,
-        CExp,
+        CExpr,
         Spanned<CTyp>,
         Spanned<CTyp>,
     ),
@@ -233,12 +233,12 @@ pub enum TypeError {
     /// A vector index is an integer outside the finite-index range; it is never reduced
     /// modulo a field prime to make it fit.
     #[error("An integer outside the finite-index range cannot index a vector")]
-    FiniteIndexOverflow(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
+    FiniteIndexOverflow(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr),
 
     /// Several signatures fit the call's argument types and none is at least as specific as
     /// all the others; carries the ones no other is more specific than.
     #[error("Call to `{2}` is ambiguous: several definitions accept arguments of type {}", kinded_list(.3, .0))]
-    AppMultiple(Ctx<Tid, CKind>, Vec<CSig>, Spanned<Vid>, CTyps, CExps),
+    AppMultiple(Ctx<Tid, CKind>, Vec<CSig>, Spanned<Vid>, CTyps, Vec<CExpr>),
 
     /// Overload resolution found no signature matching the call's argument types. The last
     /// field holds the declarations that fit the arguments but whose type parameters could not
@@ -249,7 +249,7 @@ pub enum TypeError {
         Set<CSig>,
         Spanned<Vid>,
         CTyps,
-        CExps,
+        Vec<CExpr>,
         Vec<(CSig, SigError)>,
     ),
 
@@ -260,11 +260,11 @@ pub enum TypeError {
 
     /// A protocol body ended in an expression that is not unit-typed; carries its type.
     #[error("A protocol body must end in a statement such as `verify(...)`, but this has type {}", kinded(.3, .0))]
-    Unit(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp),
+    Unit(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, CTyp),
 
     /// The two sides of a `==` constraint have types with no common upper bound.
     #[error("{}", describe_bin(BinOp::Equ, &kinded(.4, .0), &kinded(.5, .0)))]
-    ConstraintMismatch(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CExp, CTyp, CTyp),
+    ConstraintMismatch(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, CExpr, CTyp, CTyp),
 
     /// A function body's inferred type disagrees with its declared return type; the fifth field
     /// is the declared type and the sixth the inferred one.
@@ -272,7 +272,7 @@ pub enum TypeError {
     FuncRet(
         Ctx<Tid, CKind>,
         Ctx<Vid, CTyp>,
-        CExp,
+        CExpr,
         Vid,
         Spanned<CTyp>,
         CTyp,
@@ -281,20 +281,20 @@ pub enum TypeError {
     /// `pair` was applied to operands that are not a `G1`/`G2` pair of a pairing-friendly curve
     /// declared in the kind context.
     #[error("`pair` expects the two groups of a pairing-friendly curve, but got {} and {}", kinded(.3, .0), kinded(.5, .0))]
-    Pair(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
+    Pair(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, CTyp, CExpr, CTyp),
 
     /// A record projection named a field the record type does not declare.
     #[error("Record has no field `{3}`")]
-    FieldNotFound(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, String),
+    FieldNotFound(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, String),
 
     /// A record update's new value does not fit the field's type; carries the field, the
     /// field's type and the value's type.
     #[error("Field `{3}` has type {}, but the new value has type {}", kinded(.4, .0), kinded(.5, .0))]
-    FieldUpdate(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, String, CTyp, CTyp),
+    FieldUpdate(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, String, CTyp, CTyp),
 
     /// A field projection was applied to an expression whose type is not a record.
     #[error("Expected a record, but got {}", kinded(.3, .0))]
-    NotARecord(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp),
+    NotARecord(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExpr, CTyp),
 
     /// A kind-aware unification step failed; see `UnifyError`.
     #[error(transparent)]
@@ -341,64 +341,64 @@ impl TypeError {
         TypeError::Next(Box::new(a), Box::new(b))
     }
     /// Reports that specification relation `e` is not pure.
-    pub fn not_pure_rel(e: &CExp) -> Self {
-        TypeError::NotPureRel(e.clone())
+    pub fn not_pure_rel(e: CRef<'_>) -> Self {
+        TypeError::NotPureRel(e.to_expr())
     }
     /// Reports that a `where` clause `e` inferred to `t` instead of `Bool`.
-    pub fn relation_not_bool(kctx: &Ctx<Tid, CKind>, t: &CTyp, e: &CExp) -> Self {
-        TypeError::RelationNotBool(kctx.clone(), t.clone(), e.clone())
+    pub fn relation_not_bool(kctx: &Ctx<Tid, CKind>, t: &CTyp, e: CRef<'_>) -> Self {
+        TypeError::RelationNotBool(kctx.clone(), t.clone(), e.to_expr())
     }
     /// Chains a least-upper-bound failure `l` behind the higher-level error `a`.
     pub fn lub(a: Self, l: LubError) -> Self {
         TypeError::next(a, TypeError::from(l))
     }
     /// Reports that type `t` of `e` has no `arkworks` (`ATyp`) image under `kctx`.
-    pub fn ark(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, t: &CTyp) -> Self {
-        TypeError::Ark(kctx.clone(), vctx.clone(), e.clone(), t.clone())
+    pub fn ark(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: CRef<'_>, t: &CTyp) -> Self {
+        TypeError::Ark(kctx.clone(), vctx.clone(), e.to_expr(), t.clone())
     }
     /// Reports a generic inference failure for expression `e` under the given contexts.
-    pub fn exp(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
-        TypeError::CExp(kctx.clone(), vctx.clone(), e.clone())
+    pub fn exp(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: CRef<'_>) -> Self {
+        TypeError::CExp(kctx.clone(), vctx.clone(), e.to_expr())
     }
     /// Reports that binary expression `e` applies `op` to operands of types `a` and `b`, on
     /// which it is not defined; `l` is the underlying least-upper-bound failure.
     pub fn bin(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
-        e: &CExp,
+        e: CRef<'_>,
         a: &CTyp,
         b: &CTyp,
         l: LubError,
     ) -> Self {
-        let CExp::Bin(op, x, y) = e else {
+        let CExp::Bin(op, x, y) = e.node() else {
             unreachable!("`TypeError::bin` is only raised for binary expressions")
         };
         TypeError::Bin(
             kctx.clone(),
             vctx.clone(),
-            e.clone(),
+            e.to_expr(),
             *op,
-            Spanned::new(a.clone(), x.span.clone()),
-            Spanned::new(b.clone(), y.span.clone()),
+            Spanned::new(a.clone(), e.at(*x).span().clone()),
+            Spanned::new(b.clone(), e.at(*y).span().clone()),
             l,
         )
     }
 
     /// Reports that the condition of the `verify` statement `e` has type `t`, not
     /// `Bool`.
-    pub fn condition(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, t: &CTyp) -> Self {
-        TypeError::Condition(kctx.clone(), vctx.clone(), e.clone(), t.clone())
+    pub fn condition(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: CRef<'_>, t: &CTyp) -> Self {
+        TypeError::Condition(kctx.clone(), vctx.clone(), e.to_expr(), t.clone())
     }
 
     /// Reports that the body of the `fun` `e`, over `vars` variables, has type `t`.
     pub fn fun_body(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
-        e: &CExp,
+        e: CRef<'_>,
         vars: usize,
         t: &CTyp,
     ) -> Self {
-        TypeError::FunBody(kctx.clone(), vctx.clone(), e.clone(), vars, t.clone())
+        TypeError::FunBody(kctx.clone(), vctx.clone(), e.to_expr(), vars, t.clone())
     }
     /// Reports that an empty vector literal has no inferable element type.
     pub fn vec_empty(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>) -> Self {
@@ -409,103 +409,108 @@ impl TypeError {
     pub fn vec(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
-        elem: &Spanned<CExp>,
+        elem: CRef<'_>,
         elem_typ: &CTyp,
-        first: &Spanned<CExp>,
+        first: CRef<'_>,
         first_typ: &CTyp,
         r: TypeError,
     ) -> Self {
         TypeError::Vec(
             kctx.clone(),
             vctx.clone(),
-            Spanned::new(elem_typ.clone(), elem.span.clone()),
-            Spanned::new(first_typ.clone(), first.span.clone()),
+            Spanned::new(elem_typ.clone(), elem.span().clone()),
+            Spanned::new(first_typ.clone(), first.span().clone()),
             Box::new(r),
-            elem.node.clone(),
-            first.node.clone(),
+            elem.to_expr(),
+            first.to_expr(),
         )
     }
     /// Reports ill-typed arguments to the two-argument `interpolate` form.
-    pub fn interpolate(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
-        TypeError::Interpolate(kctx.clone(), vctx.clone(), e.clone())
+    pub fn interpolate(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: CRef<'_>) -> Self {
+        TypeError::Interpolate(kctx.clone(), vctx.clone(), e.to_expr())
     }
     /// Reports that the unary `interpolate` argument is not a field vector.
-    pub fn interpolate_unary(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
-        TypeError::InterpolateUnary(kctx.clone(), vctx.clone(), e.clone())
+    pub fn interpolate_unary(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: CRef<'_>) -> Self {
+        TypeError::InterpolateUnary(kctx.clone(), vctx.clone(), e.to_expr())
     }
     /// Reports that unary `interpolate` got a vector of non-power-of-two length `n`.
     pub fn interpolate_unary_not_pow2(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
-        e: &CExp,
+        e: CRef<'_>,
         n: usize,
     ) -> Self {
-        TypeError::InterpolateUnaryNotPow2(kctx.clone(), vctx.clone(), e.clone(), n)
+        TypeError::InterpolateUnaryNotPow2(kctx.clone(), vctx.clone(), e.to_expr(), n)
     }
     /// Reports that unary `eval` got a polynomial of type `t` whose degree `n` yields a
     /// non-power-of-two coefficient count.
     pub fn evaluate_grid_not_pow2(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
-        e: &CExp,
+        e: CRef<'_>,
         n: usize,
         t: &CTyp,
     ) -> Self {
-        TypeError::EvaluateGridNotPow2(kctx.clone(), vctx.clone(), e.clone(), n, t.clone())
+        TypeError::EvaluateGridNotPow2(kctx.clone(), vctx.clone(), e.to_expr(), n, t.clone())
     }
     /// Reports that `poly` was applied to a non-field-vector argument.
-    pub fn poly(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
-        TypeError::Poly(kctx.clone(), vctx.clone(), e.clone())
+    pub fn poly(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: CRef<'_>) -> Self {
+        TypeError::Poly(kctx.clone(), vctx.clone(), e.to_expr())
     }
     /// Reports that `coef` was applied to a non-polynomial argument.
-    pub fn coef(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
-        TypeError::Coef(kctx.clone(), vctx.clone(), e.clone())
+    pub fn coef(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: CRef<'_>) -> Self {
+        TypeError::Coef(kctx.clone(), vctx.clone(), e.to_expr())
     }
     /// Reports that evaluating polynomial `p` at point `x` is ill-typed.
-    pub fn evaluate(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, p: &CExp, x: &CExp) -> Self {
-        TypeError::Evaluate(kctx.clone(), vctx.clone(), p.clone(), x.clone())
+    pub fn evaluate(
+        kctx: &Ctx<Tid, CKind>,
+        vctx: &Ctx<Vid, CTyp>,
+        p: CRef<'_>,
+        x: CRef<'_>,
+    ) -> Self {
+        TypeError::Evaluate(kctx.clone(), vctx.clone(), p.to_expr(), x.to_expr())
     }
     /// Reports that univariate polynomial `p` was applied to a vector of points `x`.
     pub fn evaluate_univariate_vector(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
-        p: &CExp,
-        x: &CExp,
+        p: CRef<'_>,
+        x: CRef<'_>,
     ) -> Self {
-        TypeError::EvaluateUnivariateVector(kctx.clone(), vctx.clone(), p.clone(), x.clone())
+        TypeError::EvaluateUnivariateVector(kctx.clone(), vctx.clone(), p.to_expr(), x.to_expr())
     }
     /// Reports an ill-formed partial evaluation `eval<range>` of `p` at `x`.
     pub fn evaluate_selected(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
-        p: &CExp,
-        x: &CExp,
+        p: CRef<'_>,
+        x: CRef<'_>,
         range: Range<usize>,
     ) -> Self {
-        TypeError::SelectedEvaluate(kctx.clone(), vctx.clone(), p.clone(), x.clone(), range)
+        TypeError::SelectedEvaluate(kctx.clone(), vctx.clone(), p.to_expr(), x.to_expr(), range)
     }
     /// Reports the internal invariant breach of a selector-bearing `eval` that carries no
     /// point arguments after parser conversion.
     pub fn evaluate_selector_without_points(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
-        p: &CExp,
+        p: CRef<'_>,
         range: Range<usize>,
     ) -> Self {
-        TypeError::EvaluateSelectorWithoutPoints(kctx.clone(), vctx.clone(), p.clone(), range)
+        TypeError::EvaluateSelectorWithoutPoints(kctx.clone(), vctx.clone(), p.to_expr(), range)
     }
     /// Reports that multilinear extension `p` was applied to more points than it has variables.
     pub fn evaluate_mle_too_many_arguments(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
-        p: &CExp,
-        x: &CExp,
+        p: CRef<'_>,
+        x: CRef<'_>,
     ) -> Self {
-        TypeError::EvaluateMleTooManyArguments(kctx.clone(), vctx.clone(), p.clone(), x.clone())
+        TypeError::EvaluateMleTooManyArguments(kctx.clone(), vctx.clone(), p.to_expr(), x.to_expr())
     }
     /// Reports that `mle` was applied to something other than a power-of-two-length vector.
-    pub fn mle(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
-        TypeError::Mle(kctx.clone(), vctx.clone(), e.clone())
+    pub fn mle(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: CRef<'_>) -> Self {
+        TypeError::Mle(kctx.clone(), vctx.clone(), e.to_expr())
     }
     /// Reports that multilinear extension `id` was applied to arguments `e` of types `t` that
     /// are neither scalars nor scalar vectors.
@@ -513,27 +518,33 @@ impl TypeError {
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
         id: &Vid,
-        e: &CExps,
+        e: &[CExpr],
         t: &CTyps,
     ) -> Self {
-        TypeError::MleApp(kctx.clone(), vctx.clone(), id.clone(), e.clone(), t.clone())
+        TypeError::MleApp(
+            kctx.clone(),
+            vctx.clone(),
+            id.clone(),
+            e.to_vec(),
+            t.clone(),
+        )
     }
     /// Reports that the source `r` of the comprehension `[e for id in r]` has type `t`, which
     /// is not a non-empty vector.
     pub fn map(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
-        e: &CExp,
+        e: CRef<'_>,
         id: &Vid,
-        r: &CExp,
+        r: CRef<'_>,
         t: &CTyp,
     ) -> Self {
         TypeError::Map(
             kctx.clone(),
             vctx.clone(),
-            e.clone(),
+            e.to_expr(),
             id.clone(),
-            r.clone(),
+            r.to_expr(),
             t.clone(),
         )
     }
@@ -542,10 +553,10 @@ impl TypeError {
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
         op: BinOp,
-        e: &CExp,
+        e: CRef<'_>,
         t: &CTyp,
     ) -> Self {
-        TypeError::Reduce(kctx.clone(), vctx.clone(), op, e.clone(), t.clone())
+        TypeError::Reduce(kctx.clone(), vctx.clone(), op, e.to_expr(), t.clone())
     }
     /// Reports that univariate polynomial `id` was applied to argument list `e` of types `ts`
     /// rather than to a single scalar.
@@ -553,14 +564,14 @@ impl TypeError {
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
         id: &Vid,
-        e: &CExps,
+        e: &[CExpr],
         ts: &CTyps,
     ) -> Self {
         TypeError::Uni(
             kctx.clone(),
             vctx.clone(),
             id.clone(),
-            e.clone(),
+            e.to_vec(),
             ts.clone(),
         )
     }
@@ -596,24 +607,24 @@ impl TypeError {
         TypeError::Range(kctx.clone(), vctx.clone(), r.clone(), e)
     }
     /// Reports that the `interpolate` operand `a` has type `ta`, which is not a field vector.
-    pub fn interp(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: &CTyp) -> Self {
-        TypeError::Interp(kctx.clone(), vctx.clone(), a.clone(), ta.clone())
+    pub fn interp(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, a: CRef<'_>, ta: &CTyp) -> Self {
+        TypeError::Interp(kctx.clone(), vctx.clone(), a.to_expr(), ta.clone())
     }
     /// Reports that unary `eval` operand `a` has non-polynomial type `ta`.
     pub fn evaluate_grid(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
-        a: &CExp,
+        a: CRef<'_>,
         ta: &CTyp,
     ) -> Self {
-        TypeError::EvaluateGrid(kctx.clone(), vctx.clone(), a.clone(), ta.clone())
+        TypeError::EvaluateGrid(kctx.clone(), vctx.clone(), a.to_expr(), ta.clone())
     }
     /// Reports that the index of `e` (`a[b]`), of type `tb`, may be out of bounds for `a` of
     /// type `ta`.
     pub fn ram(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
-        e: &CExp,
+        e: CRef<'_>,
         ta: CTyp,
         tb: CTyp,
     ) -> Self {
@@ -621,9 +632,9 @@ impl TypeError {
         TypeError::Ram(
             kctx.clone(),
             vctx.clone(),
-            e.clone(),
-            Spanned::new(ta, a.span.clone()),
-            Spanned::new(tb, b.span.clone()),
+            e.to_expr(),
+            Spanned::new(ta, a.span().clone()),
+            Spanned::new(tb, b.span().clone()),
         )
     }
     /// Reports that the index of `e` (`a[b]`), of type `tb`, depends on runtime data; `a` has
@@ -631,7 +642,7 @@ impl TypeError {
     pub fn ram_dynamic_index(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
-        e: &CExp,
+        e: CRef<'_>,
         ta: CTyp,
         tb: CTyp,
     ) -> Self {
@@ -639,29 +650,29 @@ impl TypeError {
         TypeError::RamDynamicIndex(
             kctx.clone(),
             vctx.clone(),
-            e.clone(),
-            Spanned::new(ta, a.span.clone()),
-            Spanned::new(tb, b.span.clone()),
+            e.to_expr(),
+            Spanned::new(ta, a.span().clone()),
+            Spanned::new(tb, b.span().clone()),
         )
     }
     /// Reports that the protocol body ends in `e`, of type `t` rather than unit.
-    pub fn unit(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, t: &CTyp) -> Self {
-        TypeError::Unit(kctx.clone(), vctx.clone(), e.clone(), t.clone())
+    pub fn unit(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: CRef<'_>, t: &CTyp) -> Self {
+        TypeError::Unit(kctx.clone(), vctx.clone(), e.to_expr(), t.clone())
     }
     /// Reports a constraint `lhs == rhs` whose sides have incompatible types `ta` and `tb`.
     pub fn constraint_mismatch(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
-        lhs: &CExp,
-        rhs: &CExp,
+        lhs: CRef<'_>,
+        rhs: CRef<'_>,
         ta: &CTyp,
         tb: &CTyp,
     ) -> Self {
         TypeError::ConstraintMismatch(
             kctx.clone(),
             vctx.clone(),
-            lhs.clone(),
-            rhs.clone(),
+            lhs.to_expr(),
+            rhs.to_expr(),
             ta.clone(),
             tb.clone(),
         )
@@ -672,9 +683,9 @@ impl TypeError {
         tied: Vec<CSig>,
         id: &Spanned<Vid>,
         params: CTyps,
-        args: &CExps,
+        args: &[CExpr],
     ) -> Self {
-        TypeError::AppMultiple(kctx.clone(), tied, id.clone(), params, args.clone())
+        TypeError::AppMultiple(kctx.clone(), tied, id.clone(), params, args.to_vec())
     }
 
     /// Reports that call `id(params)` matches no signature in `fctx`; `unresolved` are the
@@ -684,7 +695,7 @@ impl TypeError {
         fctx: &Set<CSig>,
         id: &Spanned<Vid>,
         params: CTyps,
-        args: &CExps,
+        args: &[CExpr],
         unresolved: Vec<(CSig, SigError)>,
     ) -> Self {
         TypeError::FuncNotFound(
@@ -692,7 +703,7 @@ impl TypeError {
             fctx.clone(),
             id.clone(),
             params,
-            args.clone(),
+            args.to_vec(),
             unresolved,
         )
     }
@@ -702,7 +713,7 @@ impl TypeError {
     pub fn func_ret(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
-        e: &CExp,
+        e: CRef<'_>,
         id: &Vid,
         t: &Spanned<CTyp>,
         r: &CTyp,
@@ -710,7 +721,7 @@ impl TypeError {
         TypeError::FuncRet(
             kctx.clone(),
             vctx.clone(),
-            e.clone(),
+            e.to_expr(),
             id.clone(),
             t.clone(),
             r.clone(),
@@ -721,17 +732,17 @@ impl TypeError {
     pub fn pair(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
-        t: &CExp,
+        t: CRef<'_>,
         ta: &CTyp,
-        e: &CExp,
+        e: CRef<'_>,
         te: &CTyp,
     ) -> Self {
         TypeError::Pair(
             kctx.clone(),
             vctx.clone(),
-            t.clone(),
+            t.to_expr(),
             ta.clone(),
-            e.clone(),
+            e.to_expr(),
             te.clone(),
         )
     }
@@ -740,10 +751,10 @@ impl TypeError {
     pub fn field_not_found(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
-        e: &CExp,
+        e: CRef<'_>,
         field: &str,
     ) -> Self {
-        TypeError::FieldNotFound(kctx.clone(), vctx.clone(), e.clone(), field.to_string())
+        TypeError::FieldNotFound(kctx.clone(), vctx.clone(), e.to_expr(), field.to_string())
     }
 
     /// Reports that the value `e` of type `value`, stored into `field` of type `field_typ`,
@@ -751,7 +762,7 @@ impl TypeError {
     pub fn field_update(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
-        e: &CExp,
+        e: CRef<'_>,
         field: &str,
         field_typ: &CTyp,
         value: &CTyp,
@@ -759,7 +770,7 @@ impl TypeError {
         TypeError::FieldUpdate(
             kctx.clone(),
             vctx.clone(),
-            e.clone(),
+            e.to_expr(),
             field.to_string(),
             field_typ.clone(),
             value.clone(),
@@ -767,8 +778,13 @@ impl TypeError {
     }
 
     /// Reports that `e` has type `t`, which is not a record, so projection is ill-typed.
-    pub fn not_a_record(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, t: &CTyp) -> Self {
-        TypeError::NotARecord(kctx.clone(), vctx.clone(), e.clone(), t.clone())
+    pub fn not_a_record(
+        kctx: &Ctx<Tid, CKind>,
+        vctx: &Ctx<Vid, CTyp>,
+        e: CRef<'_>,
+        t: &CTyp,
+    ) -> Self {
+        TypeError::NotARecord(kctx.clone(), vctx.clone(), e.to_expr(), t.clone())
     }
 }
 
@@ -877,7 +893,7 @@ fn primary_label(cause: &TypeError) -> String {
 /// suggestions specific to `cause`.
 fn decorate(cause: &TypeError, mut d: Diagnostic) -> Diagnostic {
     // "`x` has type F (Field)", under `x`.
-    let has_type = |d: Diagnostic, span: &std::ops::Range<usize>, e: &CExp, t: String| {
+    let has_type = |d: Diagnostic, span: &std::ops::Range<usize>, e: CRef<'_>, t: String| {
         if span.is_empty() {
             d
         } else {
@@ -885,29 +901,31 @@ fn decorate(cause: &TypeError, mut d: Diagnostic) -> Diagnostic {
         }
     };
     match cause {
-        TypeError::Bin(kctx, _, CExp::Bin(_, x, y), op, a, b, _) => {
+        TypeError::Bin(kctx, _, e, op, a, b, _) => {
+            let CExp::Bin(_, x, y) = e.node() else {
+                unreachable!("`TypeError::bin` holds a binary expression")
+            };
             // Point at the operator: the source between the two operands.
             if !a.span.is_empty() && !b.span.is_empty() && a.span.end <= b.span.start {
                 d.span = a.span.end..b.span.start;
             }
             d.primary_label = format!("`{}` is not defined for these operands", op);
-            d = has_type(d, &a.span, &x.node, kinded(a, kctx));
-            has_type(d, &b.span, &y.node, kinded(b, kctx))
+            d = has_type(d, &a.span, e.exprs.at(*x), kinded(a, kctx));
+            has_type(d, &b.span, e.exprs.at(*y), kinded(b, kctx))
         }
         TypeError::Vec(kctx, _, elem, first, _, elem_exp, first_exp) => {
             d.primary_label = "in this vector".to_string();
-            d = has_type(d, &first.span, first_exp, kinded(first, kctx));
-            has_type(d, &elem.span, elem_exp, kinded(elem, kctx))
+            d = has_type(d, &first.span, first_exp.root(), kinded(first, kctx));
+            has_type(d, &elem.span, elem_exp.root(), kinded(elem, kctx))
         }
         TypeError::Ram(kctx, _, e, ta, tb) | TypeError::RamDynamicIndex(kctx, _, e, ta, tb) => {
-            let (a, i) = ram_parts(e);
+            let (a, i) = ram_parts(e.root());
             // The caret goes on the index; the vector gets its own label.
             if !tb.span.is_empty() {
                 d.span = tb.span.clone();
             }
             if matches!(cause, TypeError::RamDynamicIndex(..)) {
-                d.primary_label =
-                    format!("`{:.MESSAGE_DEPTH$}` has type {}", i.node, kinded(tb, kctx));
+                d.primary_label = format!("`{i:.MESSAGE_DEPTH$}` has type {}", kinded(tb, kctx));
                 return d;
             }
             let which = if matches!(tb.node, CTyp::Vec(..)) {
@@ -915,15 +933,15 @@ fn decorate(cause: &TypeError, mut d: Diagnostic) -> Diagnostic {
             } else {
                 "index"
             };
-            d.primary_label = format!("{which} `{:.MESSAGE_DEPTH$}`", i.node);
-            if a.span.is_empty() {
+            d.primary_label = format!("{which} `{i:.MESSAGE_DEPTH$}`");
+            if a.span().is_empty() {
                 return d;
             }
             let vector = match &ta.node {
-                CTyp::Vec(_, n) => format!("`{:.MESSAGE_DEPTH$}` has length {n}", a.node),
-                _ => format!("`{:.MESSAGE_DEPTH$}` has type {}", a.node, kinded(ta, kctx)),
+                CTyp::Vec(_, n) => format!("`{a:.MESSAGE_DEPTH$}` has length {n}"),
+                _ => format!("`{a:.MESSAGE_DEPTH$}` has type {}", kinded(ta, kctx)),
             };
-            d.secondary_label(a.span.clone(), &vector)
+            d.secondary_label(a.span().clone(), &vector)
         }
         TypeError::FuncRet(kctx, _, _, id, declared, _) => {
             let must_return = format!("`{id}` must return {}", kinded(declared, kctx));
@@ -956,8 +974,8 @@ fn decorate(cause: &TypeError, mut d: Diagnostic) -> Diagnostic {
                     "several definitions take these argument types"
                 }
                 .to_string();
-                for (arg, t) in args.0.iter().zip(ts.iter()) {
-                    d = has_type(d, &arg.span, &arg.node, kinded(t, kctx));
+                for (arg, t) in args.iter().zip(ts.iter()) {
+                    d = has_type(d, arg.span(), arg.root(), kinded(t, kctx));
                 }
             } else {
                 // No declaration has this name: point at the name, like an undefined variable.
@@ -1090,7 +1108,7 @@ fn fun_body_message(vars: usize, t: &str) -> String {
 
 /// Message for the indexing expression `e` into a vector of type `ta` with an index of type
 /// `tb`.
-fn index_message(e: &CExp, ta: &CTyp, tb: &CTyp, kctx: &Ctx<Tid, CKind>) -> String {
+fn index_message(e: &CExpr, ta: &CTyp, tb: &CTyp, kctx: &Ctx<Tid, CKind>) -> String {
     let i = ram_index_text(e);
     match (ta, tb) {
         (CTyp::Vec(_, n), CTyp::Fin(_) | CTyp::Vec(..)) => {
@@ -1105,16 +1123,16 @@ fn index_message(e: &CExp, ta: &CTyp, tb: &CTyp, kctx: &Ctx<Tid, CKind>) -> Stri
 }
 
 /// The vector and index of the indexing expression `e` (`a[i]`).
-fn ram_parts(e: &CExp) -> (&Spanned<CExp>, &Spanned<CExp>) {
-    let CExp::Ram(a, i) = e else {
+fn ram_parts(e: CRef<'_>) -> (CRef<'_>, CRef<'_>) {
+    let CExp::Ram(a, i) = e.node() else {
         unreachable!("index errors are only raised for indexing expressions")
     };
-    (a, i)
+    (e.at(*a), e.at(*i))
 }
 
 /// The index of the indexing expression `e`, as shown in messages.
-fn ram_index_text(e: &CExp) -> String {
-    format!("{:.MESSAGE_DEPTH$}", ram_parts(e).1.node)
+fn ram_index_text(e: &CExpr) -> String {
+    format!("{:.MESSAGE_DEPTH$}", ram_parts(e.root()).1)
 }
 
 /// Message for a call to `id` with arguments of types `ts` that no declaration accepts.
@@ -1153,5 +1171,5 @@ fn body_result(r: &CTyp, kctx: &Ctx<Tid, CKind>) -> String {
 }
 
 /// How many levels of an expression a message shows; deeper parts print as `…` (see the
-/// precision on [`CExp`]'s `Display`).
+/// precision on [`ExpRef`](crate::ast::ExpRef)'s `Display`).
 const MESSAGE_DEPTH: usize = 3;

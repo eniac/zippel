@@ -3,19 +3,19 @@
 use super::*;
 use crate::ast::range::CRange;
 
-impl CExp {
+impl CRef<'_> {
     #[inline(never)]
     pub(super) fn infer_interpolate(
-        &self,
-        points_opt: Option<&Spanned<CExp>>,
-        evals: &Spanned<CExp>,
+        self,
+        points_opt: Option<CRef<'_>>,
+        evals: CRef<'_>,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        cx: &Cx<'_>,
     ) -> Result<CTyp, TypeError> {
         let evals_typ = evals
-            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .infer_in(kctx, fctx, vctx, cx)
             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
         match points_opt {
@@ -40,7 +40,7 @@ impl CExp {
             },
             Some(points) => {
                 let points_typ = points
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
+                    .infer_in(kctx, fctx, vctx, cx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match (points_typ, evals_typ) {
@@ -80,15 +80,15 @@ impl CExp {
 
     #[inline(never)]
     pub(super) fn infer_poly(
-        &self,
-        v: &Spanned<CExp>,
+        self,
+        v: CRef<'_>,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        cx: &Cx<'_>,
     ) -> Result<CTyp, TypeError> {
         let typ = v
-            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .infer_in(kctx, fctx, vctx, cx)
             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
         match typ {
@@ -106,15 +106,15 @@ impl CExp {
 
     #[inline(never)]
     pub(super) fn infer_coef(
-        &self,
-        p: &Spanned<CExp>,
+        self,
+        p: CRef<'_>,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        cx: &Cx<'_>,
     ) -> Result<CTyp, TypeError> {
         let typ = p
-            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .infer_in(kctx, fctx, vctx, cx)
             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
         match typ {
@@ -155,17 +155,17 @@ impl CExp {
     #[allow(clippy::too_many_arguments)]
     #[inline(never)]
     pub(super) fn infer_evaluate(
-        &self,
-        p: &Spanned<CExp>,
+        self,
+        p: CRef<'_>,
         selector: Option<&CRange>,
-        opt_points: Option<&Spanned<CExp>>,
+        opt_points: Option<CRef<'_>>,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        cx: &Cx<'_>,
     ) -> Result<CTyp, TypeError> {
         let p_typ = p
-            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .infer_in(kctx, fctx, vctx, cx)
             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
         match (selector, opt_points) {
@@ -202,7 +202,7 @@ impl CExp {
             // Binary form: eval(p, points) — point or vector evaluation.
             (None, Some(x)) => {
                 let x_typ = x
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
+                    .infer_in(kctx, fctx, vctx, cx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match (p_typ, x_typ) {
@@ -255,7 +255,7 @@ impl CExp {
             // Selected form: eval<range>(p, fixed).
             (Some(range), Some(fixed)) => {
                 let fixed_typ = fixed
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
+                    .infer_in(kctx, fctx, vctx, cx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 let fail = || TypeError::evaluate_selected(kctx, vctx, p, fixed, range.clone());
@@ -291,16 +291,16 @@ impl CExp {
 
     #[inline(never)]
     pub(super) fn infer_mle(
-        &self,
-        v: &Spanned<CExp>,
+        self,
+        v: CRef<'_>,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        cx: &Cx<'_>,
     ) -> Result<CTyp, TypeError> {
         // It must be a vector of fields, or a vector of Fin
         let typ = v
-            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .infer_in(kctx, fctx, vctx, cx)
             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
         match typ {
@@ -318,13 +318,13 @@ impl CExp {
 
     #[inline(never)]
     pub(super) fn infer_fun(
-        &self,
+        self,
         vars: &[Spanned<Vid>],
-        body: &Spanned<CExp>,
+        body: CRef<'_>,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        cx: &Cx<'_>,
     ) -> Result<CTyp, TypeError> {
         // Create a new variable context with the parameters
         let mut new_vctx = vctx.clone();
@@ -344,7 +344,7 @@ impl CExp {
             }
 
             // Infer the type of the body - should get Poly(F, 1, N) where N is the degree
-            let body_type = body.infer_with_calls(kctx, fctx, &new_vctx, on_call)?;
+            let body_type = body.infer_in(kctx, fctx, &new_vctx, cx)?;
 
             // Extract the degree from the inferred type
             match body_type {
@@ -354,12 +354,12 @@ impl CExp {
                 t @ (CTyp::Fin(_) | CTyp::FieldLiteral) => match t.to_scalar(kctx) {
                     Some(tid) => Ok(CTyp::uni(&tid, 0)),
                     None => Err(TypeError::located(
-                        &body.span,
+                        body.span(),
                         TypeError::fun_body(kctx, vctx, self, vars.len(), &t),
                     )),
                 },
                 t => Err(TypeError::located(
-                    &body.span,
+                    body.span(),
                     TypeError::fun_body(kctx, vctx, self, vars.len(), &t),
                 )),
             }
@@ -369,7 +369,7 @@ impl CExp {
                 new_vctx.insert(&var.node, &CTyp::Base(field_tid.clone()));
             }
 
-            let body_type = body.infer_with_calls(kctx, fctx, &new_vctx, on_call)?;
+            let body_type = body.infer_in(kctx, fctx, &new_vctx, cx)?;
 
             match body_type {
                 CTyp::Base(tid) if kctx.get(&tid).map(|k| k.is_scalar()).unwrap_or(false) => {
@@ -384,7 +384,7 @@ impl CExp {
                     Ok(CTyp::mle(&tid, vars.len()))
                 }
                 t => Err(TypeError::located(
-                    &body.span,
+                    body.span(),
                     TypeError::fun_body(kctx, vctx, self, vars.len(), &t),
                 )),
             }

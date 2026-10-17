@@ -1,23 +1,23 @@
 //! Vectors: literals, comprehensions, `reduce` and indexing.
 
 use super::*;
-use crate::ast::CExps;
 use crate::typ::CTyps;
 
-impl CExp {
+impl CRef<'_> {
     #[inline(never)]
     pub(super) fn infer_vec(
-        &self,
-        v: &CExps,
+        self,
+        v: &Exps,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        cx: &Cx<'_>,
     ) -> Result<CTyp, TypeError> {
         let ts: CTyps = v
             .iter()
             .map(|aexp| {
-                aexp.infer_with_calls(kctx, fctx, vctx, on_call)
+                self.at(aexp)
+                    .infer_in(kctx, fctx, vctx, cx)
                     .map(Spanned::dummy)
             })
             .collect::<Result<_, _>>()
@@ -34,7 +34,15 @@ impl CExp {
         // Unify types of all elements in the vector to [t]
         for (i, tx) in ts.0.iter().enumerate().skip(1) {
             t = CTyp::lub_equ(&t, tx, kctx).map_err(|e| {
-                TypeError::vec(kctx, vctx, &v.0[i], tx, &v.0[0], &ts.0[0], e.into())
+                TypeError::vec(
+                    kctx,
+                    vctx,
+                    self.at(v[i]),
+                    tx,
+                    self.at(v[0]),
+                    &ts.0[0],
+                    e.into(),
+                )
             })?;
         }
 
@@ -48,18 +56,18 @@ impl CExp {
     #[allow(clippy::too_many_arguments)]
     #[inline(never)]
     pub(super) fn infer_map(
-        &self,
-        x: &Spanned<CExp>,
+        self,
+        x: CRef<'_>,
         id: &Spanned<Vid>,
-        r: &Spanned<CExp>,
+        r: CRef<'_>,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        cx: &Cx<'_>,
     ) -> Result<CTyp, TypeError> {
         // Type infer the range expression
         let tr = r
-            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .infer_in(kctx, fctx, vctx, cx)
             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
         match tr {
@@ -72,27 +80,27 @@ impl CExp {
 
                 // Type infer the expression [x] with the new context
                 let tx = x
-                    .infer_with_calls(kctx, fctx, &innerctx, on_call)
+                    .infer_in(kctx, fctx, &innerctx, cx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 Ok(CTyp::vec(&tx, n.node))
             }
-            _ => Err(TypeError::map(kctx, vctx, &x.node, &id.node, &r.node, &tr)),
+            _ => Err(TypeError::map(kctx, vctx, x, &id.node, r, &tr)),
         }
     }
 
     #[inline(never)]
     pub(super) fn infer_reduce(
-        &self,
+        self,
         op: BinOp,
-        v: &Spanned<CExp>,
+        v: CRef<'_>,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        cx: &Cx<'_>,
     ) -> Result<CTyp, TypeError> {
         let tv = v
-            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .infer_in(kctx, fctx, vctx, cx)
             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
         match tv {
@@ -127,7 +135,7 @@ impl CExp {
                             kctx.clone(),
                             vctx.clone(),
                             op,
-                            self.clone(),
+                            self.to_expr(),
                             elem.node.clone(),
                             result,
                         ),
@@ -143,19 +151,19 @@ impl CExp {
 
     #[inline(never)]
     pub(super) fn infer_ram(
-        &self,
-        a: &Spanned<CExp>,
-        b: &Spanned<CExp>,
+        self,
+        a: CRef<'_>,
+        b: CRef<'_>,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        cx: &Cx<'_>,
     ) -> Result<CTyp, TypeError> {
         let ta = a
-            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .infer_in(kctx, fctx, vctx, cx)
             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
         let tb = b
-            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .infer_in(kctx, fctx, vctx, cx)
             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
         // The index must be a compile-time known integer (Fin type).
@@ -171,8 +179,8 @@ impl CExp {
         match (&ta, &tb) {
             // An integer beyond the finite-index range is never reduced to an index.
             (_, CTyp::FieldLiteral) => Err(TypeError::located(
-                &b.span,
-                TypeError::FiniteIndexOverflow(kctx.clone(), vctx.clone(), self.clone()),
+                b.span(),
+                TypeError::FiniteIndexOverflow(kctx.clone(), vctx.clone(), self.to_expr()),
             )),
             (CTyp::Vec(typ, n), CTyp::Fin(r)) => {
                 if in_bounds(r, n.node) {

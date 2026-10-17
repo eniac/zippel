@@ -132,7 +132,7 @@ fn format_decl(
                 gap_space(where_gap, style)
             };
 
-            let relation = format_relation(relation, cursor, style);
+            let relation = format_relation(relation.root(), cursor, style);
 
             let open_gap = cursor.advance_to_token(end, |token| matches!(token, Token::LBrace));
 
@@ -145,7 +145,7 @@ fn format_decl(
             };
             let open_comments = format_gap(open_gap, open, None, Some(ALLOC.line()), style);
 
-            let body = format_body(body.as_ref(), cursor, end, style);
+            let body = format_body(body.as_ref().map(|b| b.root()), cursor, end, style);
 
             ALLOC.concat([
                 gap_none(keyword_gap, style),
@@ -200,7 +200,7 @@ fn format_decl(
             // via their own inner group.
             let args_ret = ALLOC.concat([args, ret]).group();
 
-            let body = format_body(body.as_ref(), cursor, end, style);
+            let body = format_body(body.as_ref().map(|b| b.root()), cursor, end, style);
 
             ALLOC.concat([
                 gap_none(keyword_gap, style),

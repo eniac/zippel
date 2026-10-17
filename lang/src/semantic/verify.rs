@@ -6,7 +6,7 @@ use std::ops::Range;
 
 use crate::ast::decl::{Body, UDecl};
 use crate::ast::spanned::Spanned;
-use crate::ast::{Exp, UExp};
+use crate::ast::{Exp, URef};
 use crate::diagnostic::Diagnostic;
 use lang_derive::Diagnostic as DiagnosticDerive;
 
@@ -34,16 +34,15 @@ struct BodyFacts {
     calls: HashSet<String>,
 }
 
-fn collect(exp: &Spanned<UExp>, facts: &mut BodyFacts) {
-    match &exp.node {
-        Exp::Verify(_) => facts.verifies = true,
-        Exp::App(id, _) => {
-            facts.calls.insert(id.node.0.clone());
+fn collect(exp: URef<'_>, facts: &mut BodyFacts) {
+    for node in exp.subexps() {
+        match node {
+            Exp::Verify(_) => facts.verifies = true,
+            Exp::App(id, _) => {
+                facts.calls.insert(id.node.0.clone());
+            }
+            _ => {}
         }
-        _ => {}
-    }
-    for child in exp.node.children() {
-        collect(child, facts);
     }
 }
 
@@ -56,7 +55,7 @@ pub fn check_proto_verify(decls: &[Spanned<UDecl>]) -> Vec<Diagnostic> {
     let facts = |body: &Body<crate::ast::Size>| {
         let mut f = BodyFacts::default();
         if let Body::Proto { body: Some(b), .. } | Body::Func { body: Some(b) } = body {
-            collect(b, &mut f);
+            collect(b.root(), &mut f);
         }
         f
     };

@@ -123,6 +123,7 @@ pub(crate) fn format_typ(
             let mut list = DelimList::new(style, ",", true);
             format_field_items(
                 &fields,
+                |typ| typ.span.end,
                 |typ, cursor, end, style| format_typ(&typ.node, cursor, end, style),
                 cursor,
                 end,
@@ -277,8 +278,9 @@ fn format_poly(
 
 /// Format a list of `name: value` fields as comma-terminated items.
 /// Used by both Typ::Record and Exp::Record.
-pub(crate) fn format_field_items<N, T, F>(
-    fields: &[(&N, &Spanned<T>)],
+pub(crate) fn format_field_items<N, V, F>(
+    fields: &[(&N, V)],
+    value_end: impl Fn(&V) -> usize,
     format_value: F,
     cursor: &mut TokenCursor,
     end: usize,
@@ -286,7 +288,7 @@ pub(crate) fn format_field_items<N, T, F>(
     list: &mut DelimList<'_>,
 ) where
     N: std::fmt::Display,
-    F: Fn(&Spanned<T>, &mut TokenCursor, usize, &Style) -> (TriviaGap, Doc<'static>),
+    F: Fn(&V, &mut TokenCursor, usize, &Style) -> (TriviaGap, Doc<'static>),
 {
     for (index, (name, value)) in fields.iter().enumerate() {
         let name_gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
@@ -294,7 +296,7 @@ pub(crate) fn format_field_items<N, T, F>(
             cursor.advance_to_token(end, |token| matches!(token, Token::Colon)),
             style,
         );
-        let (value_gap, value_doc) = format_value(value, cursor, value.span.end, style);
+        let (value_gap, value_doc) = format_value(value, cursor, value_end(value), style);
         let field = ALLOC.concat([
             ALLOC.as_string(name),
             colon,

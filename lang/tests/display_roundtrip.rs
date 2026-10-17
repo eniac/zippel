@@ -37,7 +37,7 @@ fn body_at_depth(src: &str, depth: usize) -> String {
     else {
         panic!("expected a protocol with a body")
     };
-    format!("{:.*}", depth, body.node)
+    format!("{:.*}", depth, body)
 }
 
 #[test]

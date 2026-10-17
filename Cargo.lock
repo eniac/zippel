@@ -2694,6 +2694,7 @@ dependencies = [
  "im",
  "libc",
  "log",
+ "stacker",
  "windows-sys",
 ]
 
