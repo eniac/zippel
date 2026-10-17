@@ -15,13 +15,12 @@ use std::process::ExitCode;
 
 use backend::ArkBls12_381;
 use clap::Parser;
-use graph::UDags;
-use lang::ast::{CModule, MAX_DEFAULT_SIZE, SizeSearchError, UModule, minimal_sizes};
+use graph::{Relations, UDags};
+use lang::ast::{MAX_DEFAULT_SIZE, SizeSearchError, TypedModule, UModule, minimal_sizes};
 use lang::diagnostic::{Diagnostic, Phase, Severity, render_diagnostic};
 use lang::id::Tid;
 use lang::typ::Kind;
 use share::Ctx;
-use share::thread;
 
 /// Graph construction and projection are curve-independent; this backend just has to support
 /// every operation, including pairings.
@@ -99,7 +98,8 @@ fn check_file(path: &str, given: &Ctx<Tid, usize>) -> Option<Report> {
             return None;
         }
     };
-    let report = thread::run("zippel-check", || check(&src, given));
+    // A panic is a compiler bug: report it for this file and go on to the next.
+    let report = std::panic::catch_unwind(|| check(&src, given));
     let Ok(report) = report else {
         eprintln!("error: internal compiler error while checking {path}");
         return None;
@@ -212,12 +212,11 @@ fn check(src: &str, given: &Ctx<Tid, usize>) -> Report {
 
     match module.concretize(&sizes) {
         Err(e) => report.diagnostics.push(e.into()),
-        Ok(cmodule) => {
-            report.diagnostics.extend(cmodule.typecheck());
-            if report.errors() == 0 {
-                report.diagnostics.extend(lower(&cmodule));
-            }
-        }
+        Ok(cmodule) => match cmodule.typecheck() {
+            Err(diagnostics) => report.diagnostics.extend(diagnostics),
+            Ok(typed) if report.errors() == 0 => report.diagnostics.extend(lower(&typed)),
+            Ok(_) => {}
+        },
     }
     report
         .diagnostics
@@ -260,8 +259,8 @@ fn no_default_sizes(
 
 /// Build the Graph IR and project the prover and verifier of every protocol, as
 /// compilation followed by explicit projection does for one.
-fn lower(module: &CModule) -> Vec<Diagnostic> {
-    let dags = match UDags::<Backend>::from_module(module.clone()) {
+fn lower(module: &TypedModule) -> Vec<Diagnostic> {
+    let dags = match UDags::<Backend>::lower(module, Relations::Lower) {
         Ok(dags) => dags,
         Err(e) => return vec![e.into()],
     };

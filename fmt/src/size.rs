@@ -4,30 +4,31 @@ use lang::ast::{Range, Size, Spanned};
 use lang::parser::Token;
 use pretty::DocAllocator;
 
-use crate::ctx::{ALLOC, Doc, parenthesize};
-use crate::style::Style;
-use crate::trivia::{TokenCursor, TriviaGap, gap_none, gap_space};
+use crate::ctx::{Doc, Formatter, parenthesize};
+use crate::trivia::{TriviaGap, gap_none, gap_space};
 
-pub(crate) fn format_size(
-    size: &Size,
-    cursor: &mut TokenCursor,
-    end: usize,
-    style: &Style,
-) -> (TriviaGap, Doc<'static>) {
-    match size {
-        Size::Var(id) => {
-            let gap = cursor.advance_to_token(end, |token| matches!(token, Token::Id(_)));
-            (gap, ALLOC.as_string(id))
+impl<'doc> Formatter<'doc, '_> {
+    pub(crate) fn format_size(&mut self, size: &Size, end: usize) -> (TriviaGap, Doc<'doc>) {
+        let alloc = self.alloc;
+        match size {
+            Size::Var(id) => {
+                let gap = self
+                    .cursor
+                    .advance_to_token(end, |token| matches!(token, Token::Id(_)));
+                (gap, alloc.as_string(id))
+            }
+            Size::Lit(value) => {
+                let gap = self
+                    .cursor
+                    .advance_to_token(end, |token| matches!(token, Token::Positive(_)));
+                (gap, alloc.as_string(value))
+            }
+            Size::Add(lhs, rhs) => self.format_size_binary(lhs, rhs, size, end),
+            Size::Sub(lhs, rhs) => self.format_size_binary(lhs, rhs, size, end),
+            Size::Mul(lhs, rhs) => self.format_size_binary(lhs, rhs, size, end),
+            Size::Div(lhs, rhs) => self.format_size_binary(lhs, rhs, size, end),
+            Size::Pow(lhs, rhs) => self.format_size_binary(lhs, rhs, size, end),
         }
-        Size::Lit(value) => {
-            let gap = cursor.advance_to_token(end, |token| matches!(token, Token::Positive(_)));
-            (gap, ALLOC.as_string(value))
-        }
-        Size::Add(lhs, rhs) => format_size_binary(lhs, rhs, size, cursor, end, style),
-        Size::Sub(lhs, rhs) => format_size_binary(lhs, rhs, size, cursor, end, style),
-        Size::Mul(lhs, rhs) => format_size_binary(lhs, rhs, size, cursor, end, style),
-        Size::Div(lhs, rhs) => format_size_binary(lhs, rhs, size, cursor, end, style),
-        Size::Pow(lhs, rhs) => format_size_binary(lhs, rhs, size, cursor, end, style),
     }
 }
 
@@ -42,91 +43,98 @@ fn size_op_str(size: &Size) -> &'static str {
     }
 }
 
-fn format_size_binary(
-    lhs: &Spanned<Size>,
-    rhs: &Spanned<Size>,
-    parent: &Size,
-    cursor: &mut TokenCursor,
-    end: usize,
-    style: &Style,
-) -> (TriviaGap, Doc<'static>) {
-    let op = size_op_str(parent);
-    let (lhs_gap, lhs_doc) = format_size(&lhs.node, cursor, lhs.span.end, style);
-    let lhs = parenthesize(lhs_doc, parent.lhs_needs_paren(&lhs.node));
-    let op_gap = cursor.advance_to_token(end, |token| matches_size_op(op, token));
-    let (rhs_gap, rhs_doc) = format_size(&rhs.node, cursor, rhs.span.end, style);
-    let rhs = parenthesize(rhs_doc, parent.rhs_needs_paren(&rhs.node));
+impl<'doc> Formatter<'doc, '_> {
+    fn format_size_binary(
+        &mut self,
+        lhs: &Spanned<Size>,
+        rhs: &Spanned<Size>,
+        parent: &Size,
+        end: usize,
+    ) -> (TriviaGap, Doc<'doc>) {
+        let alloc = self.alloc;
+        let style = self.style;
+        let op = size_op_str(parent);
+        let (lhs_gap, lhs_doc) = self.format_size(&lhs.node, lhs.span.end);
+        let lhs = parenthesize(alloc, lhs_doc, parent.lhs_needs_paren(&lhs.node));
+        let op_gap = self
+            .cursor
+            .advance_to_token(end, |token| matches_size_op(op, token));
+        let (rhs_gap, rhs_doc) = self.format_size(&rhs.node, rhs.span.end);
+        let rhs = parenthesize(alloc, rhs_doc, parent.rhs_needs_paren(&rhs.node));
 
-    let doc = ALLOC.concat([
-        lhs,
-        gap_space(op_gap, style),
-        ALLOC.text(op),
-        gap_space(rhs_gap, style),
-        rhs,
-    ]);
-    (lhs_gap, doc)
-}
-
-pub(crate) fn format_range(
-    range: &Range<Size>,
-    cursor: &mut TokenCursor,
-    end: usize,
-    style: &Style,
-) -> (TriviaGap, Doc<'static>) {
-    let (start_gap, start_doc) = format_range_size(&range.start, cursor, end, style);
-    if let Some(step) = &range.step {
-        let comma = gap_none(
-            cursor.advance_to_token(end, |token| matches!(token, Token::Comma)),
-            style,
-        );
-        let (step_gap, step_doc) = format_range_size(step, cursor, end, style);
-        let dots = gap_none(
-            cursor.advance_to_token(end, |token| matches!(token, Token::DotDot)),
-            style,
-        );
-        let last = range.end.as_ref().expect("stepped ranges have an end");
-        let (last_gap, last_doc) = format_range_size(last, cursor, end, style);
-        let doc = ALLOC.concat([
-            start_doc,
-            comma,
-            ALLOC.text(","),
-            gap_space(step_gap, style),
-            step_doc,
-            dots,
-            ALLOC.text(".."),
-            gap_none(last_gap, style),
-            last_doc,
+        let doc = alloc.concat([
+            lhs,
+            gap_space(alloc, op_gap, style),
+            alloc.text(op),
+            gap_space(alloc, rhs_gap, style),
+            rhs,
         ]);
-        (start_gap, doc)
-    } else if let Some(last) = &range.end {
-        let dots = gap_none(
-            cursor.advance_to_token(end, |token| matches!(token, Token::DotDot)),
-            style,
-        );
-        let (last_gap, last_doc) = format_range_size(last, cursor, end, style);
-        let doc = ALLOC.concat([
-            start_doc,
-            dots,
-            ALLOC.text(".."),
-            gap_none(last_gap, style),
-            last_doc,
-        ]);
-        (start_gap, doc)
-    } else {
-        (start_gap, start_doc)
+        (lhs_gap, doc)
     }
-}
 
-fn format_range_size(
-    size: &Spanned<Size>,
-    cursor: &mut TokenCursor,
-    end: usize,
-    style: &Style,
-) -> (TriviaGap, Doc<'static>) {
-    if size.span.start == size.span.end {
-        format_size(&size.node, cursor, end, style)
-    } else {
-        format_size(&size.node, cursor, size.span.end, style)
+    pub(crate) fn format_range(
+        &mut self,
+        range: &Range<Size>,
+        end: usize,
+    ) -> (TriviaGap, Doc<'doc>) {
+        let alloc = self.alloc;
+        let style = self.style;
+        let (start_gap, start_doc) = self.format_range_size(&range.start, end);
+        if let Some(step) = &range.step {
+            let comma = gap_none(
+                alloc,
+                self.cursor
+                    .advance_to_token(end, |token| matches!(token, Token::Comma)),
+                style,
+            );
+            let (step_gap, step_doc) = self.format_range_size(step, end);
+            let dots = gap_none(
+                alloc,
+                self.cursor
+                    .advance_to_token(end, |token| matches!(token, Token::DotDot)),
+                style,
+            );
+            let last = range.end.as_ref().expect("stepped ranges have an end");
+            let (last_gap, last_doc) = self.format_range_size(last, end);
+            let doc = alloc.concat([
+                start_doc,
+                comma,
+                alloc.text(","),
+                gap_space(alloc, step_gap, style),
+                step_doc,
+                dots,
+                alloc.text(".."),
+                gap_none(alloc, last_gap, style),
+                last_doc,
+            ]);
+            (start_gap, doc)
+        } else if let Some(last) = &range.end {
+            let dots = gap_none(
+                alloc,
+                self.cursor
+                    .advance_to_token(end, |token| matches!(token, Token::DotDot)),
+                style,
+            );
+            let (last_gap, last_doc) = self.format_range_size(last, end);
+            let doc = alloc.concat([
+                start_doc,
+                dots,
+                alloc.text(".."),
+                gap_none(alloc, last_gap, style),
+                last_doc,
+            ]);
+            (start_gap, doc)
+        } else {
+            (start_gap, start_doc)
+        }
+    }
+
+    fn format_range_size(&mut self, size: &Spanned<Size>, end: usize) -> (TriviaGap, Doc<'doc>) {
+        if size.span.start == size.span.end {
+            self.format_size(&size.node, end)
+        } else {
+            self.format_size(&size.node, size.span.end)
+        }
     }
 }
 

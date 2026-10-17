@@ -91,16 +91,13 @@ fn run_soundness_snapshot(entry: &SoundnessEntry) -> Result<(), Failed> {
     let sizes = entry.sizes.to_vec();
     let l_vec = entry.l_vec.to_vec();
 
-    let normalized = share::thread::run("gb-soundness", move || {
-        let dag = compile_to_dag(&path, &sizes);
-        let inputs = SpecialSoundnessAnalysis::build_inputs(&dag, l_vec)
-            .map_err(|e| Failed::from(e.to_string()))?;
-        let mut sa = SpecialSoundnessAnalysis::try_from_inputs(inputs, backend)
-            .map_err(|e| Failed::from(e.to_string()))?;
-        sa.run().map_err(|e| Failed::from(e.to_string()))?;
-        Ok::<String, Failed>(normalize_basis(&sa.search_gb.polys))
-    })
-    .expect("thread panicked")?;
+    let dag = compile_to_dag(&path, &sizes);
+    let inputs = SpecialSoundnessAnalysis::build_inputs(&dag, l_vec)
+        .map_err(|e| Failed::from(e.to_string()))?;
+    let mut sa = SpecialSoundnessAnalysis::try_from_inputs(inputs, backend)
+        .map_err(|e| Failed::from(e.to_string()))?;
+    sa.run().map_err(|e| Failed::from(e.to_string()))?;
+    let normalized = normalize_basis(&sa.search_gb.polys);
 
     assert_named_snapshot(&snap_name, &normalized);
     Ok(())

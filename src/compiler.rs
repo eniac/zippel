@@ -2,9 +2,9 @@
 
 use crate::{CompiledProver, CompiledVerifier};
 use backend::{ArkConfig, HasOpFactory};
-use graph::{UDag, UDags};
+use graph::{Relations, UDag, UDags};
 use lang::{
-    ast::{CModule, UModule},
+    ast::{TypedModule, UModule},
     diagnostic::{Diagnostic, Phase, Severity, render_diagnostic},
     id::Tid,
 };
@@ -108,25 +108,23 @@ impl ParsedModule {
     pub fn parse(name: impl Into<String>, source: impl Into<String>) -> Result<Self, CompileError> {
         let name = name.into();
         let source: Arc<str> = Arc::from(source.into());
-        share::thread::run_or_panic("zippel-parse", || {
-            let (module, diagnostics) = UModule::parse(&source);
-            if let Some(module) = module
-                && !has_errors(&diagnostics)
-            {
-                Ok(Self {
-                    name,
-                    source,
-                    module,
-                    diagnostics,
-                })
-            } else {
-                Err(CompileError::Diagnostics {
-                    name,
-                    source,
-                    diagnostics,
-                })
-            }
-        })
+        let (module, diagnostics) = UModule::parse(&source);
+        if let Some(module) = module
+            && !has_errors(&diagnostics)
+        {
+            Ok(Self {
+                name,
+                source,
+                module,
+                diagnostics,
+            })
+        } else {
+            Err(CompileError::Diagnostics {
+                name,
+                source,
+                diagnostics,
+            })
+        }
     }
 
     /// Filename or logical name attached to this source.
@@ -162,56 +160,46 @@ impl ParsedModule {
     /// Returns source diagnostics for invalid sizes, types, graphs or protocol selection.
     ///
     /// # Panics
-    /// If an internal compiler invariant fails or the compiler thread cannot be spawned.
+    /// If an internal compiler invariant fails.
     pub fn compile<C: ArkConfig + HasOpFactory>(
         &self,
         sizes: &Ctx<Tid, usize>,
         options: CompileOptions,
     ) -> Result<CompiledProtocol<C>, CompileError> {
-        share::thread::run_or_panic("zippel-compile", || {
-            let concrete = self
-                .module
-                .concretize(sizes)
-                .map_err(|e| self.error(vec![e.into()]))?;
-            let diagnostics = concrete.typecheck();
-            if has_errors(&diagnostics) {
-                return Err(self.error(diagnostics));
-            }
-            let graphs = UDags::<C>::from_module_for_execution(concrete.clone())
-                .map_err(|e| self.error(vec![e.into()]))?;
-            let graph = options
-                .protocol
-                .as_ref()
-                .map_or_else(
-                    || graphs.protocols().first().copied(),
-                    |name| graphs.protocol(name),
-                )
-                .ok_or_else(|| {
-                    let message = options.protocol.as_ref().map_or_else(
-                        || "No protocols found".to_owned(),
-                        |name| format!("Protocol {name} not found"),
-                    );
-                    self.error(vec![Diagnostic::error(Phase::Semantic, 0..0, &message)])
-                })?;
-            self.module
-                .check_protocol_instances(&concrete, &graph.name(), sizes)
-                .map_err(|e| self.error(vec![e.into()]))?;
-            Ok(CompiledProtocol {
-                source_name: self.name.clone(),
-                source: Arc::clone(&self.source),
-                protocol_name: graph.name().0,
-                domain_separator_session: options
-                    .domain_separator_session
-                    .unwrap_or_else(|| self.name.clone()),
-                concrete_module: concrete,
-                graph: graph.clone(),
-                diagnostics: self
-                    .diagnostics
-                    .iter()
-                    .cloned()
-                    .chain(diagnostics)
-                    .collect(),
-            })
+        let concrete = self
+            .module
+            .concretize(sizes)
+            .map_err(|e| self.error(vec![e.into()]))?;
+        let typed = concrete.typecheck().map_err(|d| self.error(d))?;
+        let graphs =
+            UDags::<C>::lower(&typed, Relations::Skip).map_err(|e| self.error(vec![e.into()]))?;
+        let graph = options
+            .protocol
+            .as_ref()
+            .map_or_else(
+                || graphs.protocols().first().copied(),
+                |name| graphs.protocol(name),
+            )
+            .ok_or_else(|| {
+                let message = options.protocol.as_ref().map_or_else(
+                    || "No protocols found".to_owned(),
+                    |name| format!("Protocol {name} not found"),
+                );
+                self.error(vec![Diagnostic::error(Phase::Semantic, 0..0, &message)])
+            })?;
+        self.module
+            .check_protocol_instances(typed.module(), &graph.name(), sizes)
+            .map_err(|e| self.error(vec![e.into()]))?;
+        Ok(CompiledProtocol {
+            source_name: self.name.clone(),
+            source: Arc::clone(&self.source),
+            protocol_name: graph.name().0,
+            domain_separator_session: options
+                .domain_separator_session
+                .unwrap_or_else(|| self.name.clone()),
+            graph: graph.clone(),
+            typed,
+            diagnostics: self.diagnostics.clone(),
         })
     }
 
@@ -237,7 +225,7 @@ pub struct CompiledProtocol<C: ArkConfig> {
     pub(super) source: Arc<str>,
     pub(super) protocol_name: String,
     pub(super) domain_separator_session: String,
-    pub(super) concrete_module: CModule,
+    pub(super) typed: TypedModule,
     pub(super) graph: UDag<C>,
     diagnostics: Vec<Diagnostic>,
 }
@@ -266,13 +254,13 @@ impl<C: ArkConfig + HasOpFactory> CompiledProtocol<C> {
     /// Project an owned prover that can execute independently of this protocol.
     ///
     /// # Panics
-    /// If an internal projection invariant fails or the compiler thread cannot be spawned.
+    /// If an internal projection invariant fails.
     #[must_use]
     pub fn project_prover(&self) -> CompiledProver<C> {
-        share::thread::run_or_panic("zippel-project-prover", || CompiledProver {
+        CompiledProver {
             graph: self.graph.project_prover().0,
             domain_separator_session: self.domain_separator_session.clone(),
-        })
+        }
     }
 
     /// Project an owned verifier that can execute independently of this protocol.
@@ -281,21 +269,19 @@ impl<C: ArkConfig + HasOpFactory> CompiledProtocol<C> {
     /// Returns source diagnostics if a verifier check depends on private inputs or randomness.
     ///
     /// # Panics
-    /// If an internal projection invariant fails or the compiler thread cannot be spawned.
+    /// If an internal projection invariant fails.
     pub fn project_verifier(&self) -> Result<CompiledVerifier<C>, CompileError> {
-        share::thread::run_or_panic("zippel-project-verifier", || {
-            let graph =
-                self.graph
-                    .project_verifier()
-                    .map_err(|error| CompileError::Diagnostics {
-                        name: self.source_name.clone(),
-                        source: Arc::clone(&self.source),
-                        diagnostics: vec![error.into()],
-                    })?;
-            Ok(CompiledVerifier {
-                graph,
-                domain_separator_session: self.domain_separator_session.clone(),
-            })
+        let graph = self
+            .graph
+            .project_verifier()
+            .map_err(|error| CompileError::Diagnostics {
+                name: self.source_name.clone(),
+                source: Arc::clone(&self.source),
+                diagnostics: vec![error.into()],
+            })?;
+        Ok(CompiledVerifier {
+            graph,
+            domain_separator_session: self.domain_separator_session.clone(),
         })
     }
 }

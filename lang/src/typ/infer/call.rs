@@ -2,67 +2,64 @@
 //! among overloaded declarations.
 
 use super::*;
-use crate::ast::CExps;
 use crate::ast::sig::SigError;
 use crate::typ::CTyps;
 use crate::typ::instantiate::CallError;
 
-impl CExp {
-    #[inline(never)]
+impl CRef<'_> {
     pub(super) fn infer_app(
-        &self,
+        self,
         id: &Spanned<Vid>,
-        params: &CExps,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
-        vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        params: &Exps,
+        env: &Env<'_>,
+        call: &mut Option<ResolvedCall>,
     ) -> Result<CTyp, TypeError> {
-        // type inference for each parameter
+        let Cx { kctx, fctx } = env.cx;
+        let vctx = env.vctx;
         let param_types: CTyps = params
             .iter()
-            .map(|p| {
-                p.infer_with_calls(kctx, fctx, vctx, on_call)
-                    .map(Spanned::dummy)
-            })
-            .collect::<Result<_, _>>()
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map(|p| Spanned::new(env.typ(self.at(p)), self.at(p).span().clone()))
+            .collect();
 
         // Is it a polynomial, MLE, or a function?
         match vctx.get(&id.node) {
             Some(CTyp::Poly(tbase, m, _)) if m.node == 1 => {
                 // It is a univariate polynomial
-                let k = kctx.get(tbase).ok_or(TypeError::lub(
-                    TypeError::exp(kctx, vctx, self),
-                    LubError::kind_not_found(tbase),
-                ))?;
+                let k = kctx
+                    .get(tbase)
+                    .ok_or(TypeError::from(LubError::kind_not_found(tbase)))?;
 
                 // Only field elements can be evaluated and only 1 argument can be given
                 if !k.is_scalar() || param_types.len() != 1 {
-                    return Err(TypeError::uni(kctx, vctx, &id.node, params, &param_types));
+                    return Err(TypeError::Uni(
+                        kctx.clone(),
+                        id.node.clone(),
+                        param_types.clone(),
+                    ));
                 }
 
                 // The argument must fit the polynomial's field (integers embed)
                 if param_types.0[0].node.fits(&CTyp::Base(tbase.clone()), kctx) {
                     Ok(CTyp::base(tbase))
                 } else {
-                    Err(TypeError::uni(kctx, vctx, &id.node, params, &param_types))
+                    Err(TypeError::Uni(
+                        kctx.clone(),
+                        id.node.clone(),
+                        param_types.clone(),
+                    ))
                 }
             }
             Some(CTyp::Poly(tbase, n, d)) if d.node == 1 => {
                 // It is a multilinear extension
-                let k = kctx.get(tbase).ok_or(TypeError::lub(
-                    TypeError::exp(kctx, vctx, self),
-                    LubError::kind_not_found(tbase),
-                ))?;
+                let k = kctx
+                    .get(tbase)
+                    .ok_or(TypeError::from(LubError::kind_not_found(tbase)))?;
                 // Only field elements can be evaluated and only 1 argument can be given
                 if !k.is_scalar() || param_types.len() != 1 {
-                    return Err(TypeError::mle_app(
-                        kctx,
-                        vctx,
-                        &id.node,
-                        params,
-                        &param_types,
+                    return Err(TypeError::MleApp(
+                        kctx.clone(),
+                        id.node.clone(),
+                        param_types.clone(),
                     ));
                 }
 
@@ -90,12 +87,10 @@ impl CExp {
                         let rem = n.node - m.node;
                         Ok(CTyp::mle(tbase, rem))
                     }
-                    _ => Err(TypeError::mle_app(
-                        kctx,
-                        vctx,
-                        &id.node,
-                        params,
-                        &param_types,
+                    _ => Err(TypeError::MleApp(
+                        kctx.clone(),
+                        id.node.clone(),
+                        param_types.clone(),
                     )),
                 }
             }
@@ -103,9 +98,14 @@ impl CExp {
                 // It is a function: resolve the call among the declarations of this name.
                 let decls = fctx.iter().filter(|sig| sig.name.node == id.node);
                 let cause = match CSig::resolve_call(decls, &param_types, kctx) {
-                    Ok((decl, sig, _)) => {
-                        on_call(decl);
-                        return Ok(sig.ret.map_or(CTyp::Unit, |r| r.node));
+                    Ok((decl, sig, instantiation)) => {
+                        let ret = sig.ret.as_ref().map_or(CTyp::Unit, |r| r.node.clone());
+                        *call = Some(ResolvedCall {
+                            declaration: decl.clone(),
+                            signature: sig,
+                            instantiation,
+                        });
+                        return Ok(ret);
                     }
                     Err(CallError::NoMatch(failures)) => {
                         // Declarations that fit the arguments but whose type parameters
@@ -121,23 +121,22 @@ impl CExp {
                             .collect();
                         if unresolved.len() == 1 {
                             let (_, e) = unresolved.pop().expect("one element");
-                            TypeError::Call(kctx.clone(), id.clone(), e)
+                            TypeError::Call(id.clone(), Box::new(e))
                         } else {
-                            TypeError::func_not_found(
-                                kctx,
-                                fctx,
-                                id,
+                            TypeError::FuncNotFound(
+                                kctx.clone(),
+                                fctx.clone(),
+                                id.clone(),
                                 param_types,
-                                params,
                                 unresolved,
                             )
                         }
                     }
                     Err(CallError::Ambiguous(tied)) => {
-                        TypeError::app_multiple(kctx, tied, id, param_types, params)
+                        TypeError::AppMultiple(kctx.clone(), tied, id.clone(), param_types)
                     }
                 };
-                Err(TypeError::next(TypeError::exp(kctx, vctx, self), cause))
+                Err(cause)
             }
         }
     }

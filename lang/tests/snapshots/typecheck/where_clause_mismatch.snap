@@ -1,5 +1,6 @@
 ---
 source: lang/tests/typecheck.rs
+assertion_line: 289
 ---
 error: Cannot compare G (Group) and F (Scalar<G>)
    ╭─[ test.zippel:2:69 ]
@@ -8,7 +9,7 @@ error: Cannot compare G (Group) and F (Scalar<G>)
    │                                                                    ┬──┬─┬  
    │                                                                    │  ╰──── `==` is not defined for these operands
    │                                                                    │    │  
-   │                                                                    ╰─────── `h` has type G (Group)
+   │                                                                    ╰─────── has type G (Group)
    │                                                                         │  
-   │                                                                         ╰── `x` has type F (Scalar<G>)
+   │                                                                         ╰── has type F (Scalar<G>)
 ───╯

@@ -65,23 +65,6 @@ pub trait ToTraversal2<A>: Sized {
         self.traverse2::<Z, ()>(&mut |x| Ok(f(x))).unwrap()
     }
 }
-/// Traversal over the *third* free type parameter of a structure.
-///
-/// Deliberately has no `map3` convenience method; the third parameter is only ever
-/// rewritten by fallible passes.
-pub trait ToTraversal3<A> {
-    /// The same container shape with its focused `A` positions replaced by `Z`.
-    type Output<Z>;
-    /// Traverses the third free type parameter of `self`, mapping each `A` to a `Z`.
-    ///
-    /// # Errors
-    /// Returns the first `E` produced by `f`.
-    fn traverse3<Z: Clone, E>(
-        self,
-        f: &mut dyn FnMut(A) -> Result<Z, E>,
-    ) -> Result<Self::Output<Z>, E>;
-}
-
 /// How to traverse vectors
 pub struct VecTraversal<A>(std::marker::PhantomData<A>);
 impl<A, B> Traversal<A, B> for VecTraversal<A> {

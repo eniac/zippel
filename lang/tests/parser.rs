@@ -7,6 +7,8 @@ mod common;
 
 use common::{assert_snap, render_all};
 use lang::ast::module::UModule;
+use lang::ast::{Exp, Size};
+use lang::diagnostic::{Diagnostic, Severity};
 
 const SNAP_DIR: &str = "snapshots/parser";
 
@@ -121,9 +123,13 @@ fn numeric_literal_domain_boundaries() {
         decls
     };
     for digits in ["34545435435435435435435", "4294967296"] {
-        let decls = parses(&format!("fn f<F: Field>() -> F {{ {digits} }}"));
-        let shown = decls[0].node.to_string();
-        assert!(shown.contains(&format!("{{ {digits} }}")), "{shown}");
+        let mut decls = parses(&format!("fn f<F: Field>() -> F {{ {digits} }}"));
+        let body = decls.remove(0).node.body.body().expect("a body");
+        assert!(
+            matches!(body.node(), Exp::Lit(Size::Lit(n)) if n.to_string() == digits),
+            "{:?}",
+            body.node()
+        );
     }
     // A size above `u32::MAX` is still a valid 64-bit shape.
     if usize::BITS == 64 {
@@ -145,4 +151,48 @@ fn numeric_literal_domain_boundaries() {
             "`{src}`: {diags:?}"
         );
     }
+}
+
+// ── Nested brackets ─────────────────────────────────────────────────────
+
+/// `fn f` whose body binds `v` to `exp`.
+fn body_with(exp: &str) -> String {
+    format!("fn f<F: Field>(instance a: F) -> F {{ let _v = {exp}; a }}")
+}
+
+/// The error diagnostics of parsing `src`, except the missing `proto` (E0001).
+fn parse_errors(src: &str) -> Vec<Diagnostic> {
+    let (_, diags) = UModule::parse(src);
+    diags
+        .into_iter()
+        .filter(|d| d.severity == Severity::Error && d.code.as_deref() != Some("E0001"))
+        .collect()
+}
+
+#[test]
+fn nested_vectors_parse_in_linear_time() {
+    // Each `[` used to be parsed twice, as a comprehension and then as a vector: 2^depth.
+    let depth = 64;
+    let src = body_with(&format!("{}a{}", "[".repeat(depth), "]".repeat(depth)));
+    let errors = parse_errors(&src);
+    assert!(errors.is_empty(), "{errors:?}");
+    // A malformed element deep inside fails once, not at every level twice.
+    let src = body_with(&format!("{}a +{}", "[".repeat(depth), "]".repeat(depth)));
+    assert!(!parse_errors(&src).is_empty());
+}
+
+#[test]
+fn bracket_forms() {
+    for ok in [
+        "[]",
+        "[a]",
+        "[a, a,]",
+        "[a for x in [a]]",
+        "[let y = a; y for x in [a]]",
+    ] {
+        let errors = parse_errors(&body_with(ok));
+        assert!(errors.is_empty(), "{ok}: {errors:?}");
+    }
+    // A sequence is a comprehension body, never a vector element.
+    assert!(!parse_errors(&body_with("[let y = a; y, a]")).is_empty());
 }

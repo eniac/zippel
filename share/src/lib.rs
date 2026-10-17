@@ -9,16 +9,13 @@ mod context;
 pub mod macros;
 /// Launch an external program so that it dies with the process that launched it.
 pub mod process;
-/// Run a closure on a scoped thread with a larger-than-default stack.
-pub mod thread;
+/// Grow the stack on demand in recursive passes.
+pub mod stack;
 /// Generic structure-to-subfield walkers, used by the `lang` and `graph` passes.
 pub mod traversal;
 
-pub use context::{Ctx, CtxValueTraversal, Set};
+pub use context::{Ctx, CtxValueTraversal, ScopedCtx, Set};
 pub use traversal::Traversal;
-
-/// Re-export im::ordmap iterator types for downstream crates
-pub use im::ordmap::ConsumingIter as CtxConsumingIter;
 
 /// Logarithm with "remainder"
 /// ex: log2(12) = (2, 3)    [means 2^2 * 3]

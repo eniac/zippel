@@ -13,8 +13,7 @@ use std::collections::HashSet;
 use std::ops::Range;
 
 use crate::ast::decl::UDecl;
-use crate::ast::spanned::Spanned;
-use crate::ast::{Exp, Exps};
+use crate::ast::{Exp, URef, Visit};
 use crate::diagnostic::{Applicability, Diagnostic, Phase};
 use crate::id::Vid;
 
@@ -85,14 +84,14 @@ pub fn check_scope(decl: &UDecl) -> Vec<Diagnostic> {
     // Check the body based on declaration kind
     match &decl.body {
         crate::ast::Body::Proto { body, relation } => {
-            check_exp_scope(relation, &initial_scope, &mut undefined);
+            check_exp_scope(relation.root(), &initial_scope, &mut undefined);
             if let Some(body) = body {
-                check_exp_scope(body, &initial_scope, &mut undefined);
+                check_exp_scope(body.root(), &initial_scope, &mut undefined);
             }
         }
         crate::ast::Body::Func { body } => {
             if let Some(body) = body {
-                check_exp_scope(body, &initial_scope, &mut undefined);
+                check_exp_scope(body.root(), &initial_scope, &mut undefined);
             }
         }
         crate::ast::Body::TypeAlias => {}
@@ -127,145 +126,30 @@ pub fn check_scope(decl: &UDecl) -> Vec<Diagnostic> {
     errors
 }
 
-/// Recursively check an expression for undefined variable references.
-/// `scope` is the list of (name, definition_span) currently in scope.
-/// `undefined` collects occurrences for all undefined references; the caller
-/// groups them by name to emit one diagnostic per name.
+/// Check an expression for undefined variable references. `scope` is what is in scope around
+/// it (name, definition span); `undefined` collects every undefined occurrence, which the
+/// caller groups by name into one diagnostic each.
 fn check_exp_scope(
-    exp: &Spanned<Exp<crate::ast::Size>>,
+    exp: URef<'_>,
     scope: &[(Vid, Range<usize>)],
     undefined: &mut Vec<UndefinedOccurrence>,
 ) {
-    match &exp.node {
-        Exp::Var(name) => {
-            if !scope.iter().any(|(n, _)| n == &name.node) {
-                undefined.push(UndefinedOccurrence {
-                    name: name.node.clone(),
-                    use_span: name.span.clone(),
-                    scope: scope.to_vec(),
-                });
-            }
+    let mut walk = exp.walk();
+    while let Some(visit) = walk.next() {
+        if let Visit::Enter(e) = visit
+            && let Exp::Var(name) = e.node()
+            && !walk.is_bound(&name.node)
+            && !scope.iter().any(|(n, _)| n == &name.node)
+        {
+            let bound = walk
+                .bound()
+                .iter()
+                .map(|x| (x.node.clone(), x.span.clone()));
+            undefined.push(UndefinedOccurrence {
+                name: name.node.clone(),
+                use_span: name.span.clone(),
+                scope: scope.iter().cloned().chain(bound).collect(),
+            });
         }
-
-        Exp::Lit(_) | Exp::Unit | Exp::Range(_) => {}
-
-        Exp::Random(_, x) | Exp::Challenge(_, x) => {
-            if let Some(v) = x.as_ref().and_then(|x| x.values()) {
-                check_exp_scope(v, scope, undefined);
-            }
-        }
-
-        Exp::App(_, args) => {
-            check_exps_scope(args, scope, undefined);
-        }
-
-        Exp::Interpolate(po, e) => {
-            if let Some(p) = po {
-                check_exp_scope(p, scope, undefined);
-            }
-            check_exp_scope(e, scope, undefined);
-        }
-
-        Exp::Poly(p) | Exp::Coef(p) | Exp::Mle(p) | Exp::Reduce(_, p) => {
-            check_exp_scope(p, scope, undefined);
-        }
-
-        Exp::Evaluate(p, _, ox) => {
-            check_exp_scope(p, scope, undefined);
-            if let Some(x) = ox {
-                check_exp_scope(x, scope, undefined);
-            }
-        }
-
-        Exp::Vec(es) => check_exps_scope(es, scope, undefined),
-
-        Exp::Bin(_, a, b) => {
-            check_exp_scope(a, scope, undefined);
-            check_exp_scope(b, scope, undefined);
-        }
-
-        Exp::Neg(a) => check_exp_scope(a, scope, undefined),
-
-        Exp::Map(body, var, iter) => {
-            // The iterator is evaluated in the outer scope
-            check_exp_scope(iter, scope, undefined);
-            // The body is evaluated with `var` in scope
-            let mut inner_scope = scope.to_vec();
-            inner_scope.push((var.node.clone(), var.span.clone()));
-            check_exp_scope(body, &inner_scope, undefined);
-        }
-
-        Exp::Ram(a, b) => {
-            check_exp_scope(a, scope, undefined);
-            check_exp_scope(b, scope, undefined);
-        }
-
-        Exp::Pair(a, b) => {
-            check_exp_scope(a, scope, undefined);
-            check_exp_scope(b, scope, undefined);
-        }
-
-        Exp::Let(name, val, cont) => {
-            // The value is evaluated in the outer scope
-            check_exp_scope(val, scope, undefined);
-            // The continuation is evaluated with `name` in scope (if named)
-            if let Some(cont) = cont {
-                if let Some(name) = name {
-                    let mut inner_scope = scope.to_vec();
-                    inner_scope.push((name.node.clone(), name.span.clone()));
-                    check_exp_scope(cont, &inner_scope, undefined);
-                } else {
-                    check_exp_scope(cont, scope, undefined);
-                }
-            }
-        }
-
-        Exp::Log(name, val, cont) => {
-            // The value is evaluated in the outer scope
-            check_exp_scope(val, scope, undefined);
-            // The continuation is evaluated with `name` in scope
-            if let Some(cont) = cont {
-                let mut inner_scope = scope.to_vec();
-                inner_scope.push((name.node.clone(), name.span.clone()));
-                check_exp_scope(cont, &inner_scope, undefined);
-            }
-        }
-
-        Exp::Verify(a) => {
-            check_exp_scope(a, scope, undefined);
-        }
-
-        Exp::Fun(params, body) => {
-            // Function parameters are in scope in the body
-            let mut inner_scope = scope.to_vec();
-            for p in params {
-                inner_scope.push((p.node.clone(), p.span.clone()));
-            }
-            check_exp_scope(body, &inner_scope, undefined);
-        }
-
-        Exp::Record(fields) => {
-            for (_, e) in fields.iter() {
-                check_exp_scope(e, scope, undefined);
-            }
-        }
-
-        Exp::Proj(e, _) => check_exp_scope(e, scope, undefined),
-
-        Exp::SetRecord(e, _, val) => {
-            check_exp_scope(e, scope, undefined);
-            check_exp_scope(val, scope, undefined);
-        }
-    }
-}
-
-/// Check a list of expressions for scope errors.
-fn check_exps_scope(
-    exps: &Exps<crate::ast::Size>,
-    scope: &[(Vid, Range<usize>)],
-    undefined: &mut Vec<UndefinedOccurrence>,
-) {
-    for e in &exps.0 {
-        check_exp_scope(e, scope, undefined);
     }
 }

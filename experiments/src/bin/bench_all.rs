@@ -133,8 +133,8 @@ struct Row {
     baselines: Vec<Baseline>,
     /// Graph IR node counts (prover graph, verifier graph) at this row's
     /// `log_size` -- independent of `threads`, so the same pair repeats
-    /// across a thread sweep at a fixed size. See docs/ARTIFACT_PLAN.md's
-    /// Figure 7 (graph-size table).
+    /// across a thread sweep at a fixed size. They feed the graph sizes
+    /// reported with the paper's Figure 7.
     prover_nodes: usize,
     verifier_nodes: usize,
 }

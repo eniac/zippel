@@ -4,7 +4,7 @@
 //! then builds an expected graph manually and asserts structural equality
 //! via the `PartialEq` (graph isomorphism) implementation.
 
-use super::test_helpers::parse_and_concretize;
+use super::test_helpers::lowered;
 use crate::node::ArgKind;
 use crate::{
     Dep, DepType, GOp, GraphError, HOp, Node, Nothing, Op, PrivateValue, Ref, UDag, UDags, mk,
@@ -23,14 +23,12 @@ type B = ArkBls12_381;
 
 /// Parse a `.zippel` source string and build graphs via from_module.
 fn parse_and_build(src: &str) -> UDags<B> {
-    let m = parse_and_concretize(src, &Ctx::new());
-    UDags::<B>::from_module(m).unwrap()
+    lowered(src, &Ctx::new()).unwrap()
 }
 
 /// Parse and build, returning Result to allow testing error paths.
 fn try_parse_and_build(src: &str) -> Result<UDags<B>, GraphError> {
-    let m = parse_and_concretize(src, &Ctx::new());
-    UDags::<B>::from_module(m)
+    lowered(src, &Ctx::new())
 }
 
 /// Phase B: an `Inp`/`Rel` marker is followed by one `Node::Arg` per source
@@ -286,7 +284,7 @@ fn pin_challenge() {
 // ============================================================================
 
 /// Let binding: `let c = a + b; c`.
-/// Tests: CExp::Let(Some), variable context update, op_from_var maps Vid → Ref(arg_or_node).
+/// Tests: Stmt::Let, variable context update, op_from_var maps Vid → Ref(arg_or_node).
 #[test]
 fn pin_let_named() {
     let src = r#"
@@ -323,7 +321,7 @@ fn pin_let_named() {
 }
 
 /// Anonymous let: `let _ = a + b; a * b`.
-/// Tests: CExp::Let(None), both sides evaluated, second is the result.
+/// Tests: Stmt::Discard, both sides evaluated, second is the result.
 #[test]
 fn pin_let_anon() {
     let src = r#"
@@ -400,7 +398,7 @@ fn pin_verify() {
 // ============================================================================
 
 /// Log with existing node reference: `a <- s + s; verify(a == s)`.
-/// Tests: CExp::Log (first branch), set_transcript, Node::Transcr.
+/// Tests: Stmt::Log (first branch), set_transcript, Node::Transcr.
 #[test]
 fn pin_log_node_ref() {
     let src = r#"
@@ -464,7 +462,7 @@ fn pin_log_node_ref() {
 }
 
 /// Log with non-node value: `a <- 1; verify(s == s)`.
-/// Tests: CExp::Log (second branch), new Transcr node creation.
+/// Tests: Stmt::Log (second branch), new Transcr node creation.
 #[test]
 fn pin_log_new_transcr() {
     let src = r#"
@@ -2476,7 +2474,7 @@ fn pin_error_fun_unbound_var() {
 // ============================================================================
 
 /// Deep nested let chain: verifies correct dependency chain.
-/// Tests: multiple CExp::Let(Some, ...) in sequence.
+/// Tests: multiple Stmt::Let in sequence.
 #[test]
 fn pin_nested_let_chain() {
     let src = r#"
@@ -2705,6 +2703,43 @@ fn pin_app_mle() {
 // ── Stress tests (verify no stack overflow with iterative builder) ──
 
 // ── Reduce operation tests ──
+
+/// A field of any record-valued expression, here a call's result, lowers like a variable's.
+#[test]
+fn pin_proj_of_call_result() {
+    let gs = parse_and_build(
+        "fn mk<F: Field>(instance a: F) -> { x: F, y: F } { {| x: a, y: a + a |} }\n\
+         fn f<F: Field>(instance a: F) -> F { mk(a).y }",
+    );
+    let g = &gs[1];
+    // `mk` is inlined; the field is its `a + a` node, with no projection left.
+    assert!(
+        g.node_indices().any(
+            |n| matches!(&g[n], Node::Op(op, _) if matches!(op.get(), Op::Bin(BinOp::Add, ..)))
+        )
+    );
+}
+
+/// Fusing `[f(t) for t in [g(y) for y in v]]` would lower `f`'s body under the inner binder `y`.
+/// When `f` reads an outer `y`, that argument must stay read instead of being captured.
+#[test]
+fn pin_reduce_map_fusion_keeps_outer_variable() {
+    let gs = parse_and_build(
+        "fn f<G: Group, F: Scalar<G>>(instance g: G, instance y: G, instance v: [F; 2]) -> G \
+         { reduce(+, [g * t + y for t in [y * 2 for y in v]]) }",
+    );
+    let g = &gs[0];
+    let y = g
+        .node_indices()
+        .find(|&n| matches!(&g[n], Node::Arg(v, ..) if v.0 == "y"))
+        .expect("argument `y`");
+    assert!(
+        g.neighbors_directed(y, Direction::Outgoing)
+            .next()
+            .is_some(),
+        "the outer `y` is never read"
+    );
+}
 
 /// Reduce with addition: `reduce(+, [a, b, c])` creates a single Reduce node.
 #[test]
@@ -3016,4 +3051,35 @@ fn pin_inlined_body_uses_the_callers_type_for_a_parameter() {
         .collect();
     assert_eq!(random_types, [arg_type("s")]);
     assert_ne!(arg_type("s"), arg_type("g"));
+}
+
+#[test]
+fn nested_resolved_calls_can_lower_the_same_typed_module_twice() {
+    let src = "
+        fn inner<T: Field>(instance p: Uni<T, 2>, instance x: T) -> T { p(x) }
+        fn inner<T: Field>(instance p: Uni<T, 4>, instance x: T) -> T { p(x) + 1 }
+        fn outer<U: Field>(instance p: Uni<U, 2>, instance x: U) -> U { inner(p, x) }
+        proto test<F: Field>(instance a: F)
+        where outer(poly([a]), a) == a {
+            verify(outer(poly([a]), a) == a)
+        }
+    ";
+    let typed = super::test_helpers::parse_and_check(src, &Ctx::new());
+    let lower = || UDags::<B>::lower(&typed, crate::Relations::Lower).unwrap();
+    let first = lower();
+    let second = lower();
+    assert_eq!(first.iter().len(), second.iter().len());
+    for (a, b) in first.iter().zip(second.iter()) {
+        assert!(a == b);
+        assert_eq!(
+            a.graph.node_weights().map(|n| &n.span).collect::<Vec<_>>(),
+            b.graph.node_weights().map(|n| &n.span).collect::<Vec<_>>(),
+        );
+    }
+    // The broader overload adds one; nested inlining must keep the more specific choice.
+    let expected = parse_and_build(&src.replace(
+        "fn inner<T: Field>(instance p: Uni<T, 4>, instance x: T) -> T { p(x) + 1 }",
+        "",
+    ));
+    assert!(first.protocols()[0] == expected.protocols()[0]);
 }

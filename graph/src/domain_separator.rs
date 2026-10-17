@@ -7,9 +7,7 @@ use spongefish::{Encoding, domain_separator, session_id_from_str};
 use std::marker::PhantomData;
 
 #[cfg(test)]
-use crate::UDags;
-#[cfg(test)]
-use crate::tests::test_helpers::parse_and_concretize;
+use crate::tests::test_helpers::lowered;
 #[cfg(test)]
 use backend::ArkBls12_381;
 #[cfg(test)]
@@ -128,8 +126,7 @@ fn test_domain_separator() {
         verify(g*z == u + h*c)
     }
 "#;
-    let m = parse_and_concretize(ex, &Ctx::new());
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
     let domain_separator = ZippelDomainSeparator::new("test_domain_separator", &gs[0]);
     let _prover = domain_separator.prover_state();
     debug!("Domain Separator created successfully");

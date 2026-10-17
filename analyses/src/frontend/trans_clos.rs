@@ -508,16 +508,15 @@ impl<C: ArkConfig> fmt::Display for TransClos<C> {
 mod tests {
     use super::*;
     use crate::QualifierPropagation;
-    use crate::tests::parse_and_concretize;
+    use crate::tests::lowered;
     use backend::ArkBls12_381;
-    use graph::{QDag, UDags};
+    use graph::QDag;
     use share::{Ctx, unwrap};
     use std::collections::HashSet;
 
     #[track_caller]
     fn make_qualified_dag(ex: &str) -> QDag<ArkBls12_381> {
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         QualifierPropagation::from_dag(&gs[0])
     }
 

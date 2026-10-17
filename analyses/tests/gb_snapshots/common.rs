@@ -4,7 +4,7 @@
 use analyses::QualifierPropagation;
 use analyses::frontend::Polynomial;
 use backend::{ArkBls12_381, ArkConfig};
-use graph::UDags;
+use graph::{Relations, UDags};
 use lang::ast::{SizeSearchError, UModule, minimal_sizes};
 use lang::diagnostic::Severity;
 use lang::id::Tid;
@@ -112,7 +112,10 @@ pub(crate) fn compile_to_dag(path: &Path, sizes: &[(&str, usize)]) -> AnalysisDa
     let concrete = module
         .concretize(&ctx)
         .unwrap_or_else(|e| panic!("failed to concretize {}: {e}", path.display()));
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(concrete));
+    let typed = concrete
+        .typecheck()
+        .unwrap_or_else(|e| panic!("{} does not type-check: {e:?}", path.display()));
+    let gs = unwrap!(UDags::<ArkBls12_381>::lower(&typed, Relations::Lower));
     let proto = gs
         .protocols()
         .into_iter()

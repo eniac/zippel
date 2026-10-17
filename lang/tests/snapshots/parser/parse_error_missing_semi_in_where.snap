@@ -1,13 +1,12 @@
 ---
 source: lang/tests/parser.rs
-assertion_line: 88
 ---
-error: expected one of operator, ',', '..', call arguments, '[', ..., found 'c'
+error: expected one of call arguments, operator, '..', ';', '[', ..., found 'c'
    ╭─[ test.zippel:1:47 ]
    │
  1 │ proto p<F: Field>(instance a: F) where a == b c == d { () }
    │                                        ───┬── ┬  
-   │                                           │   ╰── expected one of operator, ',', '..', call arguments, '[', ...
+   │                                           │   ╰── expected one of call arguments, operator, '..', ';', '[', ...
    │                                           │      
    │                                           ╰────── while parsing this expression
 ───╯

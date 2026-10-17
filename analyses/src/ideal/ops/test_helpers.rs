@@ -11,7 +11,7 @@ use backend::ATyp;
 use backend::ArkBls12_381;
 use backend::op::mk;
 
-use graph::{Op, Ref, UDags};
+use graph::{Op, Ref};
 
 use lang::ast::BinOp;
 
@@ -20,12 +20,11 @@ use share::unwrap;
 
 use super::{Ideal, IdealBuilder};
 
-use crate::tests::parse_and_concretize;
+use crate::tests::lowered;
 
 #[track_caller]
 pub fn trans_clos_from_src(src: &str) -> TransClos<ArkBls12_381> {
-    let m = parse_and_concretize(src, &Ctx::new());
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let gs = unwrap!(lowered::<ArkBls12_381>(src, &Ctx::new()));
     let g = QualifierPropagation::from_dag(&gs[0]);
 
     TransClos::verifier(&g)
@@ -36,8 +35,7 @@ pub fn trans_clos_from_src_sized(
     src: &str,
     sizes: &share::Ctx<lang::id::Tid, usize>,
 ) -> TransClos<ArkBls12_381> {
-    let m = parse_and_concretize(src, sizes);
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let gs = unwrap!(lowered::<ArkBls12_381>(src, sizes));
     let g = QualifierPropagation::from_dag(&gs[0]);
 
     TransClos::verifier(&g)

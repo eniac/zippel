@@ -58,10 +58,10 @@ fn check_polys<C: ArkConfig + HasOpFactory>(
 #[cfg(test)]
 mod tests {
     use crate::ideal::IdealBuilder;
-    use crate::tests::parse_and_concretize;
+    use crate::tests::lowered;
     use crate::{QualifierPropagation, TransClos};
     use backend::ArkBls12_381;
-    use graph::UDags;
+
     use share::{Ctx, unwrap};
 
     /// What the relation asserts is a condition, not a generator.
@@ -71,8 +71,7 @@ mod tests {
             proto p<F: Field>(witness x: F, instance y: F) where y == x * x {
                 verify(y == y)
             }"#;
-        let m = parse_and_concretize(src, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(src, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let mut relation = IdealBuilder::new().build(TransClos::relation(&g));
         relation.substitute_definitions();

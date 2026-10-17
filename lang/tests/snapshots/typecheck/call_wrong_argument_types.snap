@@ -1,5 +1,6 @@
 ---
 source: lang/tests/typecheck.rs
+assertion_line: 275
 ---
 error: No definition of `f` accepts arguments of type G (Group)
    ╭─[ test.zippel:4:12 ]
@@ -8,7 +9,7 @@ error: No definition of `f` accepts arguments of type G (Group)
    │            ──┬─  
    │              ╰─── no definition takes these argument types
    │              │   
-   │              ╰─── `g` has type G (Group)
+   │              ╰─── has type G (Group)
    │              │   
    │              ╰─── note: `f` takes F (Scalar<G>)
 ───╯

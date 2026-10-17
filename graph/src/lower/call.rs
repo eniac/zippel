@@ -1,0 +1,152 @@
+//! Function and polynomial applications: evaluation by call syntax and call inlining.
+
+use super::*;
+
+impl<C: HasOpFactory> UDag<C> {
+    pub(super) fn lower_app(
+        &mut self,
+        scope: &mut Scope<'_, C>,
+        id: ExpId,
+        fid: Spanned<Vid>,
+        params: Exps,
+        expected: &mut Option<ATyp>,
+    ) -> Result<ExpId, GraphError> {
+        let span = scope.exprs.span(id).clone();
+        // Is it a polynomial, MLE, or a function?
+        match scope.vctx.get(&fid.node) {
+            Some(CTyp::Poly(tbase, m, _n)) if m.node == 1 => {
+                // It is a univariate polynomial
+                let k = scope.kctx.get(tbase).unwrap();
+
+                // Only field elements can be evaluated and only 1 argument can be given
+                assert!(k.is_scalar());
+                assert_eq!(params.len(), 1);
+
+                // Phase B: desugar `p(x)` directly to
+                // `evaluate(p, x)` using `Op::Evaluate`. The
+                // pre-Phase-B route went through
+                // `dot(p, [x^0, x^1, ..., x^n])` which required
+                // implicitly reinterpreting the polynomial as a
+                // coefficient list — that lub_dot(Poly, Vec) arm
+                // has been removed.
+                let poly = scope.exprs.push(Exp::Var(fid.clone()), span.clone());
+                let eval_exp = scope
+                    .exprs
+                    .push(Exp::Evaluate(poly, None, Some(params[0])), span);
+                // Trampoline
+                Ok(eval_exp)
+            }
+            Some(CTyp::Poly(tbase, n, d)) if d.node == 1 => {
+                // It is a multilinear extension
+                let k = scope.kctx.get(tbase).unwrap();
+
+                // Only field elements can be evaluated and only 1 argument can be given
+                assert!(k.is_scalar());
+                assert_eq!(params.len(), 1);
+
+                // https://github.com/microsoft/Nova/blob/ad4d77ac89d6bbe9ef943056806e65ceb4ba3b3e/src/spartan/polys/multilinear.rs#L58
+                let mid = 1_usize
+                    .checked_shl(
+                        n.node
+                            .checked_sub(1)
+                            .expect("mle_app: n - 1 underflow (n < 1)")
+                            .try_into()
+                            .expect("mle_app: n - 1 exceeds u32"),
+                    )
+                    .expect("mle_app: 1 << (n-1) overflow");
+                let end = 1_usize
+                    .checked_shl(n.node.try_into().expect("mle_app: n exceeds u32"))
+                    .expect("mle_app: 1 << n overflow");
+                let coef_var = Vid::internal(&format!("coef_{}", fid.node));
+
+                let mut push = |node| scope.exprs.push(node, span.clone());
+                let coefs = Exp::Var(Spanned::new(coef_var.clone(), span.clone()));
+                let (low, high) = (push(coefs.clone()), push(coefs));
+                let low_range = push(Exp::Range(CRange::from_raw(0, 1, mid)));
+                let high_range = push(Exp::Range(CRange::from_raw(mid, 1, end)));
+                let mle_l = push(Exp::Ram(low, low_range));
+                let mle_r = push(Exp::Ram(high, high_range));
+
+                // mle_l + (mle_r - mle_l) * params[0]
+                let diff = push(Exp::Bin(BinOp::Sub, mle_r, mle_l));
+                let scaled = push(Exp::Bin(BinOp::Mul, params[0], diff));
+                let fold = push(Exp::Bin(BinOp::Add, mle_l, scaled));
+
+                let poly = push(Exp::Var(fid.clone()));
+                let coef = push(Exp::Coef(poly));
+                let let_coef = Spanned::new(
+                    Stmt::Let(Spanned::new(coef_var, span.clone()), coef),
+                    span.clone(),
+                );
+                let bound_exp = push(Exp::Block(Block {
+                    stmts: vec![let_coef],
+                    tail: Some(fold),
+                }));
+
+                // Trampoline
+                Ok(bound_exp)
+            }
+            _ => {
+                let call = scope
+                    .exprs
+                    .types
+                    .call(id)
+                    .expect("inference recorded the function call");
+                let sig = call.signature.clone();
+                let mut body = scope
+                    .fctx
+                    .get(&call.declaration)
+                    .expect("a declaration has a body")
+                    .clone();
+                call.instantiation
+                    .apply(&mut body)
+                    .expect("a resolved signature declares every parameter");
+
+                // First add the arguments to the graph, each taking its formal's
+                // type (integers passed for field formals become field elements)
+                let oparams: Vec<GOp<C>> = params
+                    .into_iter()
+                    .zip(sig.args.iter())
+                    .map(|(p, arg)| {
+                        let formal = ATyp::from_ctyp(&arg.typ, scope.kctx);
+                        self.add_exp(scope, p, formal)
+                    })
+                    .collect::<Result<_, _>>()?;
+                // The inlined body's value takes the caller's expected type, else
+                // the callee's declared return type.
+                if expected.is_none() {
+                    *expected = sig
+                        .ret
+                        .as_ref()
+                        .and_then(|r| ATyp::from_ctyp(&r.node, scope.kctx));
+                }
+
+                // Trampoline: bind the parameters and continue with the body. The enclosing
+                // `add_exp` unbinds them when the call's value is lowered.
+                for (vid, typ) in sig.args.to_ctx().iter() {
+                    scope.vctx.insert(vid, typ);
+                }
+                for (arg, op) in sig.args.iter().zip(oparams.iter()) {
+                    scope.vars.insert(&arg.id.node, op);
+                }
+                let fn_kctx = sig.typevars.to_ctx();
+                for (tid, kind) in fn_kctx.iter() {
+                    if let CKind::Range(r) = kind
+                        && r.step() == 1
+                        && r.end() == r.start() + 1
+                    {
+                        let vid = Vid::new(&tid.0);
+                        scope.vctx.insert(&vid, &CTyp::Fin(r.clone()));
+                        scope
+                            .vars
+                            .insert(&vid, &GOp::Value(Value::Index(r.start())));
+                    }
+                }
+                Ok(match body.body() {
+                    Some(tree) => scope.exprs.append(tree),
+                    None => scope.exprs.push(CExp::Unit, span),
+                })
+            }
+        }
+    }
+}

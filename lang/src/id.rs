@@ -1,14 +1,4 @@
-use share::Set;
 use std::fmt;
-
-/// Generate a new identifier not in the set
-pub trait Fresh: Ord + Sized {
-    /// Mint an identifier based on `root` that does not collide with any
-    /// member of `s`, inserting the new identifier into `s`.
-    ///
-    /// Freshening appends/increments a numeric suffix on `root`.
-    fn fresh(root: &str, s: &mut Set<Self>) -> Self;
-}
 
 /// Type variable identifier
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
@@ -45,20 +35,6 @@ impl Default for Tid {
     }
 }
 
-/// Fresh variable generator
-impl Fresh for Vid {
-    fn fresh(root: &str, s: &mut Set<Self>) -> Self {
-        let (root, mut i) = split_alphanumeric(root);
-        loop {
-            i += 1;
-            let id = Vid(format!("{}{}", root, i));
-            if !s.contains(&id) {
-                s.insert(id.clone());
-                return id;
-            }
-        }
-    }
-}
 /// Arbitrary instance for Tid
 #[cfg(test)]
 use arbitrary::{Arbitrary, Unstructured};
@@ -115,89 +91,15 @@ impl<'a> Arbitrary<'a> for Vid {
 }
 
 impl Vid {
-    /// Wrap a string as an expression variable without freshening it.
+    /// Wrap a string as an expression variable.
     pub fn new(s: &str) -> Self {
         Vid(s.to_string())
     }
-}
 
-fn split_alphanumeric(input: &str) -> (String, i32) {
-    let last_non_digit_pos = input
-        .char_indices()
-        .rfind(|(_, c)| !c.is_numeric())
-        .map(|(i, c)| (i, c.len_utf8()));
-
-    match last_non_digit_pos {
-        Some((pos, len)) => {
-            // There is at least one non-digit, check if there are digits after it
-            if pos + len < input.len() {
-                // There are trailing digits after the last non-digit
-                let alpha_part = &input[..pos + len];
-                let numeric_part = input[pos + len..].parse::<i32>().unwrap_or(0);
-                (alpha_part.to_string(), numeric_part)
-            } else {
-                // The string ends with a non-digit
-                (input.to_string(), 0)
-            }
-        }
-        None => {
-            // The entire string is digits (or empty, which parses to 0)
-            ("".to_string(), input.parse::<i32>().unwrap_or(0))
-        }
+    /// A variable named after `root` that no source program can write (`#` is not an
+    /// identifier character), for bindings that lowering introduces. It neither captures nor
+    /// is captured by a source variable.
+    pub fn internal(root: &str) -> Self {
+        Vid(format!("{root}#"))
     }
-}
-
-#[test]
-fn test_simple_alphanumeric() {
-    assert_eq!(split_alphanumeric("a32"), ("a".to_string(), 32));
-}
-
-#[test]
-fn test_only_alpha() {
-    assert_eq!(split_alphanumeric("abc"), ("abc".to_string(), 0));
-}
-
-#[test]
-fn test_only_numeric() {
-    assert_eq!(split_alphanumeric("123"), ("".to_string(), 123));
-}
-
-#[test]
-fn test_alpha_numeric_alpha() {
-    assert_eq!(split_alphanumeric("a3a"), ("a3a".to_string(), 0));
-}
-
-#[test]
-fn test_complex_pattern() {
-    assert_eq!(
-        split_alphanumeric("abc123def"),
-        ("abc123def".to_string(), 0)
-    );
-}
-
-#[test]
-fn test_alpha_ending_with_numeric() {
-    assert_eq!(split_alphanumeric("abc123"), ("abc".to_string(), 123));
-}
-
-#[test]
-fn test_empty_string() {
-    assert_eq!(split_alphanumeric(""), ("".to_string(), 0));
-}
-
-#[test]
-fn test_special_characters_with_trailing_number() {
-    assert_eq!(split_alphanumeric("a-_!@#123"), ("a-_!@#".to_string(), 123));
-}
-
-#[test]
-fn test_utf8_split_alphanumeric() {
-    assert_eq!(split_alphanumeric("α32"), ("α".to_string(), 32));
-}
-
-#[test]
-fn vid_fresh() {
-    let mut bound = Set::from(vec![Vid("v".to_string()), Vid("v1".to_string())]);
-    let t = Vid::fresh("v", &mut bound);
-    assert_eq!(t, Vid("v2".to_string()));
 }

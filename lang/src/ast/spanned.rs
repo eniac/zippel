@@ -136,12 +136,6 @@ impl<T: crate::id::TidSubst> crate::id::TidSubst for Spanned<T> {
     }
 }
 
-impl<T: crate::ast::FreeVars> crate::ast::FreeVars for Spanned<T> {
-    fn freevars(&self) -> share::Set<crate::id::Vid> {
-        self.node.freevars()
-    }
-}
-
 impl<T: Clone, N: Clone> crate::typ::RangeTraversal<N> for Spanned<T>
 where
     T: crate::typ::RangeTraversal<N>,

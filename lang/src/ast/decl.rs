@@ -1,14 +1,13 @@
 use num::BigUint;
-use std::fmt;
 use thiserror::Error;
 
 use crate::ast::Size;
 use crate::ast::exp::{ExpLiteral, ExpTraversal};
 use crate::ast::size::EvalError;
 use crate::ast::spanned::Spanned;
-use crate::ast::{CSig, Exp, FreeVars, GArgs, Sig};
+use crate::ast::{CSig, Expr, GArgs, Sig};
 use crate::id::{Tid, TidSubst, Vid};
-use crate::typ::infer::{TypeError, Typeable};
+use crate::typ::infer::{Cx, TypeError, TypeTable, VarTypes};
 use crate::typ::lub::Lub;
 use crate::typ::subst::SubstError;
 use crate::typ::{
@@ -34,10 +33,10 @@ pub enum Body<N: ExpLiteral> {
     Proto {
         /// Executable part of the protocol, lowered into the DAG; `None`
         /// for an empty body `{}`.
-        body: Option<Spanned<Exp<N>>>,
+        body: Option<Expr<N>>,
         /// The `Bool` relation this protocol must satisfy; the graph
         /// builder turns it into the protocol's assertion.
-        relation: Spanned<Exp<N>>,
+        relation: Expr<N>,
     },
 
     /// A function body declaration
@@ -48,7 +47,7 @@ pub enum Body<N: ExpLiteral> {
     Func {
         /// The body of the function. `None` for an empty body `{}`,
         /// which is semantically equivalent to `Unit`.
-        body: Option<Spanned<Exp<N>>>,
+        body: Option<Expr<N>>,
     },
 
     /// A type alias declaration (e.g., `type Point = { x: F, y: F };`)
@@ -101,7 +100,7 @@ impl<N: ExpLiteral> Body<N> {
     /// # Panics
     /// Panics on `Body::TypeAlias`, which has no expression; callers must
     /// guard with [`Body::is_type_alias`].
-    pub fn body(self) -> Option<Spanned<Exp<N>>> {
+    pub fn body(self) -> Option<Expr<N>> {
         match self {
             Body::Proto { body, .. } => body,
             Body::Func { body } => body,
@@ -110,24 +109,10 @@ impl<N: ExpLiteral> Body<N> {
     }
     /// Consumes the body and returns the protocol relation, or `None` for
     /// function bodies and type aliases.
-    pub fn relation(self) -> Option<Spanned<Exp<N>>> {
+    pub fn relation(self) -> Option<Expr<N>> {
         match self {
             Body::Proto { relation, .. } => Some(relation),
             _ => None,
-        }
-    }
-}
-
-impl FreeVars for CBody {
-    fn freevars(&self) -> Set<Vid> {
-        match self {
-            Body::Proto { body, relation } => body
-                .as_ref()
-                .map(|b| b.freevars())
-                .unwrap_or_default()
-                .union(relation.freevars()),
-            Body::Func { body } => body.as_ref().map(|b| b.freevars()).unwrap_or_default(),
-            Body::TypeAlias => Set::new(),
         }
     }
 }
@@ -140,8 +125,8 @@ impl<N: ExpLiteral> Decl<N> {
         name: Spanned<Vid>,
         typevars: Spanned<TypeVars<N::Size>>,
         args: Spanned<GArgs<N::Size>>,
-        relation: Spanned<Exp<N>>,
-        body: Option<Spanned<Exp<N>>>,
+        relation: Expr<N>,
+        body: Option<Expr<N>>,
     ) -> Self {
         let sig = Sig {
             name,
@@ -159,7 +144,7 @@ impl<N: ExpLiteral> Decl<N> {
         typevars: Spanned<TypeVars<N::Size>>,
         args: Spanned<GArgs<N::Size>>,
         ret: Option<Spanned<GTyp<N::Size>>>,
-        body: Option<Spanned<Exp<N>>>,
+        body: Option<Expr<N>>,
     ) -> Self {
         let sig = Sig {
             name,
@@ -282,7 +267,7 @@ impl<N: ExpLiteral> FromIterator<Decl<N>> for Decls<N> {
 
 impl CBody {
     /// Type-checks this body against its own (concretized) signature and the
-    /// set of visible function signatures `fctx`.
+    /// set of visible function signatures `fctx`, returning the type of every node.
     ///
     /// The kind context is taken from the signature's type variables, and
     /// singleton `Range` type variables are additionally bound as `Fin` values
@@ -294,17 +279,8 @@ impl CBody {
     /// `Verify`); if the relation does not infer to `Bool`; if a
     /// protocol body does not infer to `Unit`; or if a function body's type has
     /// no least upper bound with the declared return type.
-    pub fn typecheck(&self, sig: CSig, fctx: &Set<CSig>) -> Result<(), TypeError> {
-        self.typecheck_with_calls(sig, fctx, &|_| {})
-    }
-
-    /// Type-checks the declaration while recording resolved function calls.
-    pub(crate) fn typecheck_with_calls(
-        &self,
-        sig: CSig,
-        fctx: &Set<CSig>,
-        on_call: &dyn Fn(&CSig),
-    ) -> Result<(), TypeError> {
+    pub fn typecheck(&self, sig: CSig, fctx: &Set<CSig>) -> Result<BodyTypes, TypeError> {
+        let mut types = BodyTypes::default();
         // Kind context
         let kctx = sig.typevars.node.to_ctx();
         // Add arguments to [vctx] and [vars]
@@ -317,41 +293,48 @@ impl CBody {
                 vctx.insert(&Vid::new(&tid.0), &CTyp::Fin(r.clone()));
             }
         }
+        let mut vctx = VarTypes::new(vctx);
         match self {
             Body::Proto { body, relation } => {
                 // Relation must be relation-pure (no Challenge/Log/Verify)
-                if !relation.node.is_relation_pure() {
+                if !relation.root().is_relation_pure() {
                     return Err(TypeError::decl(
                         &sig.name,
-                        TypeError::located(&relation.span, TypeError::not_pure_rel(&relation.node)),
+                        TypeError::located(relation.span(), TypeError::NotPureRel),
                     ));
                 }
                 // Relation must infer to Bool (the relation IS the assertion)
-                let rel_typ = relation.infer_with_calls(&kctx, fctx, &vctx, on_call)?;
+                let rel_typ = relation.root().infer(
+                    &Cx { kctx: &kctx, fctx },
+                    &mut vctx,
+                    &mut types.relation,
+                )?;
                 if !matches!(rel_typ, CTyp::Bool) {
                     return Err(TypeError::decl(
                         &sig.name,
                         TypeError::located(
-                            &relation.span,
-                            TypeError::relation_not_bool(&kctx, &rel_typ, &relation.node),
+                            relation.span(),
+                            TypeError::RelationNotBool(kctx.clone(), rel_typ.clone()),
                         ),
                     ));
                 }
                 // Body must infer to Unit (empty body is Unit)
                 if let Some(body) = body {
-                    let br = body.infer_with_calls(&kctx, fctx, &vctx, on_call)?;
+                    let br =
+                        body.root()
+                            .infer(&Cx { kctx: &kctx, fctx }, &mut vctx, &mut types.body)?;
                     if br != CTyp::Unit {
-                        let last = crate::typ::infer::tail(body);
+                        let last = crate::typ::infer::tail(body.root());
                         return Err(TypeError::decl(
                             &sig.name,
                             TypeError::located(
-                                &last.span,
-                                TypeError::unit(&kctx, &vctx, &last.node, &br),
+                                last.span(),
+                                TypeError::Unit(kctx.clone(), br.clone()),
                             ),
                         ));
                     }
                 }
-                Ok(())
+                Ok(types)
             }
             Body::Func { body } => {
                 // The declared return type, at its annotation (`Unit`, unlocated, if omitted).
@@ -361,21 +344,23 @@ impl CBody {
                     .unwrap_or_else(|| Spanned::dummy(CTyp::Unit));
                 match body {
                     Some(body) => {
-                        let br = body.infer_with_calls(&kctx, fctx, &vctx, on_call)?;
+                        let br = body.root().infer(
+                            &Cx { kctx: &kctx, fctx },
+                            &mut vctx,
+                            &mut types.body,
+                        )?;
                         if br.fits(&ret.node, &kctx) {
-                            Ok(())
+                            Ok(types)
                         } else {
                             Err(TypeError::decl(
                                 &sig.name,
                                 TypeError::located(
-                                    &body.span,
-                                    TypeError::func_ret(
-                                        &kctx,
-                                        &vctx,
-                                        &body.node,
-                                        &sig.name.node,
-                                        &ret,
-                                        &br,
+                                    body.span(),
+                                    TypeError::FuncRet(
+                                        kctx.clone(),
+                                        sig.name.node.clone(),
+                                        ret.clone(),
+                                        br.clone(),
                                     ),
                                 ),
                             ))
@@ -384,18 +369,16 @@ impl CBody {
                     None => {
                         // Empty body `{}` is semantically Unit.
                         match CTyp::lub_equ(&CTyp::Unit, &ret.node, &kctx) {
-                            Ok(_) => Ok(()),
+                            Ok(_) => Ok(types),
                             Err(_) => Err(TypeError::decl(
                                 &sig.name,
                                 TypeError::located(
                                     &sig.ret.as_ref().map_or(0..0, |r| r.span.clone()),
-                                    TypeError::func_ret(
-                                        &kctx,
-                                        &vctx,
-                                        &Spanned::new(Exp::Unit, 0..0),
-                                        &sig.name.node,
-                                        &ret,
-                                        &CTyp::Unit,
+                                    TypeError::FuncRet(
+                                        kctx.clone(),
+                                        sig.name.node.clone(),
+                                        ret.clone(),
+                                        CTyp::Unit,
                                     ),
                                 ),
                             )),
@@ -403,9 +386,18 @@ impl CBody {
                     }
                 }
             }
-            Body::TypeAlias => Ok(()),
+            Body::TypeAlias => Ok(types),
         }
     }
+}
+
+/// The types inference gave the nodes of a body's trees (see [`CBody::typecheck`]).
+#[derive(Debug, Default, Clone)]
+pub struct BodyTypes {
+    /// The `where` clause's nodes.
+    pub relation: TypeTable,
+    /// The body's nodes.
+    pub body: TypeTable,
 }
 
 impl<N: ExpLiteral> ExpTraversal<N> for Body<N> {
@@ -432,14 +424,14 @@ impl TidSubst for CBody {
     fn map_tids(&mut self, f: &dyn Fn(&Tid) -> Option<Tid>) {
         match self {
             Body::Proto { relation, body } => {
-                relation.node.map_tids(f);
+                relation.map_tids(f);
                 if let Some(body) = body {
-                    body.node.map_tids(f);
+                    body.map_tids(f);
                 }
             }
             Body::Func { body } => {
                 if let Some(body) = body {
-                    body.node.map_tids(f);
+                    body.map_tids(f);
                 }
             }
             Body::TypeAlias => {}
@@ -480,78 +472,5 @@ where
             sig: self.sig.type_inline(ctx),
             body: self.body.type_inline(ctx),
         }
-    }
-}
-
-/// `where relation { body }` for a protocol, `{ body }` for a function. `{}` prints on one
-/// line; `{:#}` puts the body's statements on their own lines, indented.
-impl<N: ExpLiteral + fmt::Display> fmt::Display for Body<N>
-where
-    N::Size: fmt::Display,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let block = |f: &mut fmt::Formatter<'_>, body: &Option<Spanned<Exp<N>>>| match body {
-            None => f.write_str("{}"),
-            Some(body) if f.alternate() => {
-                let lines = format!("{:#}", body.node).replace('\n', "\n  ");
-                write!(f, "{{\n  {lines}\n}}")
-            }
-            Some(body) => write!(f, "{{ {} }}", body.node),
-        };
-        match self {
-            Body::Proto { relation, body } => {
-                if f.alternate() {
-                    write!(f, "where {:#} ", relation.node)?;
-                } else {
-                    write!(f, "where {} ", relation.node)?;
-                }
-                block(f, body)
-            }
-            Body::Func { body } => block(f, body),
-            Body::TypeAlias => Ok(()),
-        }
-    }
-}
-
-/// Source syntax; `{:#}` prints the body on several lines.
-impl<N: ExpLiteral + fmt::Display> fmt::Display for Decl<N>
-where
-    N::Size: fmt::Display,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_decl(f, &self.sig, &self.body)
-    }
-}
-
-/// One declaration per line with `{:#}`; space-separated with `{}`.
-impl<N: ExpLiteral + fmt::Display> fmt::Display for Decls<N>
-where
-    N::Size: fmt::Display,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, decl) in self.0.iter().enumerate() {
-            if i > 0 {
-                f.write_str(if f.alternate() { "\n" } else { " " })?;
-            }
-            write_decl(f, &decl.sig, &decl.body)?;
-        }
-        Ok(())
-    }
-}
-
-/// `proto`/`fn`, the signature, and the body, in `f`'s one-line or multi-line mode.
-pub(crate) fn write_decl<N: ExpLiteral + fmt::Display>(
-    f: &mut fmt::Formatter<'_>,
-    sig: &Sig<N::Size>,
-    body: &Body<N>,
-) -> fmt::Result
-where
-    N::Size: fmt::Display,
-{
-    let keyword = if body.is_proto() { "proto" } else { "fn" };
-    if f.alternate() {
-        write!(f, "{keyword} {sig} {body:#}")
-    } else {
-        write!(f, "{keyword} {sig} {body}")
     }
 }

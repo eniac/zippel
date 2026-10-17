@@ -24,7 +24,7 @@ use analyses::{
 };
 use backend::ArkBls12_381;
 use clap::{Parser, ValueEnum};
-use graph::{QDag, UDags};
+use graph::{QDag, Relations, UDags};
 use lang::ast::{SizeSearchError, UModule, minimal_sizes};
 use lang::diagnostic::Severity;
 use lang::id::Tid;
@@ -200,7 +200,8 @@ fn load_dag(target: &Target) -> Result<QDag<ArkBls12_381>, String> {
         .concretize(&ctx)
         .map_err(|e| format!("concretize failed: {e}"))?;
 
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(concrete));
+    let typed = concrete.typecheck().expect("type-checks");
+    let gs = unwrap!(UDags::<ArkBls12_381>::lower(&typed, Relations::Lower));
     let proto = gs
         .protocols()
         .into_iter()
@@ -339,17 +340,14 @@ fn main() {
     let name = target.name.clone();
 
     memory::install_oom_hook();
-    // Run in a thread with a large stack to avoid stack overflow.
-    let result = share::thread::run("analysis-bench", move || run_bench(&target)).unwrap_or_else(
-        |payload| {
-            // See `memory::LIMIT_ACTIVE` for what this checks.
-            let status = if memory::limit_active() {
-                Status::Oom
-            } else {
-                Status::Crashed
-            };
-            BenchOutput::line(&name, status, Some(panic_message(&*payload)))
-        },
-    );
+    let result = std::panic::catch_unwind(move || run_bench(&target)).unwrap_or_else(|payload| {
+        // See `memory::LIMIT_ACTIVE` for what this checks.
+        let status = if memory::limit_active() {
+            Status::Oom
+        } else {
+            Status::Crashed
+        };
+        BenchOutput::line(&name, status, Some(panic_message(&*payload)))
+    });
     println!("{result}");
 }

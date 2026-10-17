@@ -442,7 +442,11 @@ proto p<G: Group, F: Scalar<G>, N: Size>(instance x: F, instance g: G) where x =
     let module = UModule::parse(src).0.unwrap();
     let error = exhausted(ast::minimal_sizes(&module, &Ctx::new()).unwrap_err());
     assert_eq!(error.stage, SizeSearchStage::Typecheck);
-    let expected = module.concretize(&error.candidate).unwrap().typecheck();
+    let expected = module
+        .concretize(&error.candidate)
+        .unwrap()
+        .typecheck()
+        .unwrap_err();
     assert_eq!(error.diagnostics[0].span, expected[0].span);
     assert!(error.diagnostics[0].summary.contains("Cannot add"));
 }
@@ -469,7 +473,7 @@ proto p<F: Field, N: Size>(instance a: [F; N], instance b: [F; 2]) where weights
             .concretize(&error.candidate)
             .unwrap()
             .typecheck()
-            .is_empty()
+            .is_ok()
     );
     assert_eq!(error.diagnostics.len(), 1);
     assert!(error.diagnostics[0].summary.contains("not covered"));
@@ -608,7 +612,7 @@ proto p<F: Field>(instance x: F) where x == x { verify(x == x) }
 ";
     let module = UModule::parse(src).0.unwrap();
     let fixed = Ctx::singleton(Tid::new("N"), 3);
-    assert!(module.concretize(&fixed).unwrap().typecheck().is_empty());
+    assert!(module.concretize(&fixed).unwrap().typecheck().is_ok());
     assert_eq!(
         exhausted(ast::minimal_sizes(&module, &fixed).unwrap_err()).stage,
         SizeSearchStage::Ranges
@@ -644,7 +648,7 @@ proto p<F: Field, X: Size, Y: Size>(instance a: [F; X], instance b: [F; Y]) wher
             sizes.insert(&Tid::new("Y"), &y);
             module
                 .concretize(&sizes)
-                .is_ok_and(|module| module.typecheck().is_empty())
+                .is_ok_and(|module| module.typecheck().is_ok())
                 .then_some(sizes)
         })
         .unwrap();

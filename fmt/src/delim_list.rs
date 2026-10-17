@@ -2,7 +2,7 @@
 
 use pretty::DocAllocator;
 
-use crate::ctx::{ALLOC, Doc};
+use crate::ctx::{Arena, Doc};
 use crate::style::Style;
 use crate::trivia::TriviaElement;
 use crate::trivia::{TokenCursor, TriviaGap, format_gap, gap_none};
@@ -24,22 +24,29 @@ use crate::trivia::{TokenCursor, TriviaGap, format_gap, gap_none};
 /// trims internally; `take_separator_gap_split` trims the after-sep
 /// gap). Blank lines around separators and delimiters are treated as
 /// noise when no comments are present.
-pub(crate) struct DelimList<'a> {
-    items: Vec<Doc<'static>>,
+pub(crate) struct DelimList<'doc, 'style> {
+    alloc: &'doc Arena<'doc>,
+    items: Vec<Doc<'doc>>,
     is_first: bool,
     separator: &'static str,
     trailing_sep: bool,
-    style: &'a Style,
+    style: &'style Style,
 }
 
-impl<'a> DelimList<'a> {
+impl<'doc, 'style> DelimList<'doc, 'style> {
     /// Create a new `DelimList`.
     ///
     /// - `separator`: the delimiter between items (e.g. `","`, `";"`).
     /// - `trailing_sep`: whether to emit a trailing separator in broken mode
     ///   (e.g. trailing comma in multi-line arg lists).
-    pub(crate) fn new(style: &'a Style, separator: &'static str, trailing_sep: bool) -> Self {
+    pub(crate) fn new(
+        alloc: &'doc Arena<'doc>,
+        style: &'style Style,
+        separator: &'static str,
+        trailing_sep: bool,
+    ) -> Self {
         Self {
+            alloc,
             items: Vec::new(),
             is_first: true,
             separator,
@@ -51,13 +58,14 @@ impl<'a> DelimList<'a> {
     /// Push an item with a leading gap. The gap is rendered with
     /// `gap_list` for the first item (with `trim_start` to strip blank
     /// lines after the open delimiter), `gap_none` for subsequent items.
-    pub(crate) fn push(&mut self, gap: TriviaGap, doc: Doc<'static>) {
+    pub(crate) fn push(&mut self, gap: TriviaGap, doc: Doc<'doc>) {
+        let alloc = self.alloc;
         let gap = if self.is_first {
-            gap_list(gap.trim_start(), self.style)
+            gap_list(alloc, gap.trim_start(), self.style)
         } else {
-            gap_none(gap, self.style)
+            gap_none(alloc, gap, self.style)
         };
-        self.items.push(ALLOC.concat([gap, doc]));
+        self.items.push(alloc.concat([gap, doc]));
         self.is_first = false;
     }
 
@@ -67,17 +75,19 @@ impl<'a> DelimList<'a> {
     pub(crate) fn push_sep(
         &mut self,
         gap: TriviaGap,
-        doc: Doc<'static>,
+        doc: Doc<'doc>,
         before_sep: TriviaGap,
         after_sep: TriviaGap,
     ) {
+        let alloc = self.alloc;
         let gap = if self.is_first {
-            gap_list(gap.trim_start(), self.style)
+            gap_list(alloc, gap.trim_start(), self.style)
         } else {
-            gap_none(gap, self.style)
+            gap_none(alloc, gap, self.style)
         };
-        let item = ALLOC.concat([gap, doc]);
+        let item = alloc.concat([gap, doc]);
         self.items.push(sep_terminated_item(
+            alloc,
             item,
             self.separator,
             before_sep,
@@ -102,7 +112,7 @@ impl<'a> DelimList<'a> {
         open: &'static str,
         close: &'static str,
         close_comments: TriviaGap,
-    ) -> Doc<'static> {
+    ) -> Doc<'doc> {
         self.finish_impl(open, close, close_comments, true)
     }
 
@@ -114,7 +124,7 @@ impl<'a> DelimList<'a> {
         open: &'static str,
         close: &'static str,
         close_comments: TriviaGap,
-    ) -> Doc<'static> {
+    ) -> Doc<'doc> {
         self.finish_impl(open, close, close_comments, false)
     }
 
@@ -124,7 +134,8 @@ impl<'a> DelimList<'a> {
         close: &'static str,
         close_comments: TriviaGap,
         grouped: bool,
-    ) -> Doc<'static> {
+    ) -> Doc<'doc> {
+        let alloc = self.alloc;
         let style = self.style;
         let items = self.items;
         let indent = style.indent_width() as isize;
@@ -132,32 +143,39 @@ impl<'a> DelimList<'a> {
         let close_comments = close_comments.trim_end();
         let close_needs_break = close_comments.needs_end_newline();
         let close_sep = if close_needs_break {
-            ALLOC.hardline()
+            alloc.hardline()
         } else {
-            ALLOC.line_()
+            alloc.line_()
         };
         let close_end = if close_needs_break {
-            Some(ALLOC.hardline())
+            Some(alloc.hardline())
         } else {
-            Some(ALLOC.line_())
+            Some(alloc.line_())
         };
         // Before close delimiter: auto open (hardline for at_line_start,
         // space for inline). The `line_()` sep is inside the group and may
         // not break in flat mode, but auto open provides explicit `hardline`
         // for at_line_start comments regardless.
-        let close_gap = format_gap(close_comments, None, close_end, Some(close_sep), style);
+        let close_gap = format_gap(
+            alloc,
+            close_comments,
+            None,
+            close_end,
+            Some(close_sep),
+            style,
+        );
 
         let trailing = if self.trailing_sep {
-            ALLOC.text(self.separator).flat_alt(ALLOC.nil())
+            alloc.text(self.separator).flat_alt(alloc.nil())
         } else {
-            ALLOC.nil()
+            alloc.nil()
         };
 
-        let inner = ALLOC.concat([ALLOC
-            .concat([ALLOC.line_(), ALLOC.concat(items), trailing, close_gap])
+        let inner = alloc.concat([alloc
+            .concat([alloc.line_(), alloc.concat(items), trailing, close_gap])
             .nest(indent)]);
         let inner = if grouped { inner.group() } else { inner };
-        ALLOC.text(open).append(inner).append(ALLOC.text(close))
+        alloc.text(open).append(inner).append(alloc.text(close))
     }
 }
 
@@ -168,13 +186,14 @@ impl<'a> DelimList<'a> {
 /// 1. **Multiline gap** — comma first, all comments after.
 /// 2. **Inline gap, flat mode** — preserve source positions.
 /// 3. **Inline gap, broken mode** — comma first, A on same line, B on own line.
-fn sep_terminated_item(
-    item: Doc<'static>,
+fn sep_terminated_item<'doc>(
+    alloc: &'doc Arena<'doc>,
+    item: Doc<'doc>,
     separator: &'static str,
     before_sep: TriviaGap,
     after_sep: TriviaGap,
     style: &Style,
-) -> Doc<'static> {
+) -> Doc<'doc> {
     // Check multiline without cloning — has_source_line_break on the
     // joined gap is equivalent to checking each gap separately (join
     // only coalesces adjacent BlankLines at the boundary, which doesn't
@@ -186,19 +205,19 @@ fn sep_terminated_item(
         let combined = before_sep.join(after_sep);
         let needs_break = combined.needs_end_newline();
         let sep = if needs_break {
-            ALLOC.hardline()
+            alloc.hardline()
         } else {
-            ALLOC.line()
+            alloc.line()
         };
         let end = if needs_break {
-            Some(ALLOC.hardline())
+            Some(alloc.hardline())
         } else {
-            Some(ALLOC.line())
+            Some(alloc.line())
         };
-        ALLOC.concat([
+        alloc.concat([
             item,
-            ALLOC.text(separator),
-            format_gap(combined, None, end, Some(sep), style),
+            alloc.text(separator),
+            format_gap(alloc, combined, None, end, Some(sep), style),
         ])
     } else {
         // Rule 2/3: Inline gap. Use flat_alt to switch between
@@ -211,20 +230,22 @@ fn sep_terminated_item(
 
         // --- Flat layout: preserve source positions ---
         let before_flat = format_gap(
+            alloc,
             before_sep.clone(),
-            Some(ALLOC.text(" ")), // space before /*A*/
-            Some(ALLOC.nil()),     // no trailing space — comma follows
-            Some(ALLOC.nil()),     // no sep — separator text follows
+            Some(alloc.text(" ")), // space before /*A*/
+            Some(alloc.nil()),     // no trailing space — comma follows
+            Some(alloc.nil()),     // no sep — separator text follows
             style,
         );
         let after_flat = format_gap(
+            alloc,
             after_sep.clone(),
-            Some(ALLOC.text(" ")), // space before /*B*/
+            Some(alloc.text(" ")), // space before /*B*/
             None,                  // auto end (space for inline block)
-            Some(ALLOC.line()),    // space after comma for empty gap
+            Some(alloc.line()),    // space after comma for empty gap
             style,
         );
-        let flat = ALLOC.concat([item.clone(), before_flat, ALLOC.text(separator), after_flat]);
+        let flat = alloc.concat([item.clone(), before_flat, alloc.text(separator), after_flat]);
 
         // --- Broken layout: comma first, A on same line, B on own line ---
         //
@@ -243,28 +264,30 @@ fn sep_terminated_item(
         // provides the break — either via its open hardline (when comments
         // are present) or as a bare hardline (when empty).
         let before_broken = if before_sep.is_empty() {
-            ALLOC.nil()
+            alloc.nil()
         } else {
             format_gap(
+                alloc,
                 before_sep,
-                Some(ALLOC.text(" ")), // space before /*A*/ after comma
-                Some(ALLOC.nil()),     // no trailing break — after_broken provides it
-                Some(ALLOC.nil()),
+                Some(alloc.text(" ")), // space before /*A*/ after comma
+                Some(alloc.nil()),     // no trailing break — after_broken provides it
+                Some(alloc.nil()),
                 style,
             )
         };
         let after_broken = if after_sep.is_empty() {
-            ALLOC.hardline()
+            alloc.hardline()
         } else {
             format_gap(
+                alloc,
                 after_sep,
-                Some(ALLOC.hardline()), // /*B*/ on its own line
-                Some(ALLOC.hardline()), // hardline after /*B*/
-                Some(ALLOC.nil()),
+                Some(alloc.hardline()), // /*B*/ on its own line
+                Some(alloc.hardline()), // hardline after /*B*/
+                Some(alloc.nil()),
                 style,
             )
         };
-        let broken = ALLOC.concat([item, ALLOC.text(separator), before_broken, after_broken]);
+        let broken = alloc.concat([item, alloc.text(separator), before_broken, after_broken]);
 
         broken.flat_alt(flat)
     }
@@ -294,10 +317,10 @@ pub(crate) fn take_separator_gap_split(
 /// the comment). Safe to use inside `DelimList` where the list's break
 /// mode always provides a hardline when needed — a line comment forces
 /// `has_source_line_break()` which forces the list to break.
-fn gap_list(gap: TriviaGap, style: &Style) -> Doc<'static> {
+fn gap_list<'doc>(alloc: &'doc Arena<'doc>, gap: TriviaGap, style: &Style) -> Doc<'doc> {
     let open = match gap.first() {
-        Some(TriviaElement::Comment(_)) => Some(ALLOC.nil()),
+        Some(TriviaElement::Comment(_)) => Some(alloc.nil()),
         _ => None,
     };
-    format_gap(gap, open, None, None, style)
+    format_gap(alloc, gap, open, None, None, style)
 }

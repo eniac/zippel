@@ -1,4 +1,5 @@
-//! Proc macro for declarative diagnostic definitions.
+//! Proc macros for `lang`: declarative diagnostic definitions, and [`stack_guard`] for
+//! recursive passes.
 //!
 //! `#[derive(Diagnostic)]` generates a `build(self) -> Diagnostic` method
 //! on the struct, using the builder API from `lang::diagnostic`.
@@ -42,7 +43,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use syn::{DeriveInput, Field, parse_macro_input};
+use syn::{DeriveInput, Field, ItemFn, parse_macro_input, parse_quote};
 
 mod parse;
 
@@ -219,4 +220,21 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             }
         }
     })
+}
+
+/// Runs the function's body through `share::stack::ensure_sufficient_stack`, so a recursive
+/// walk continues on a heap-allocated stack segment instead of overflowing (issue #252).
+///
+/// Put it on a function every level of a recursion passes through. The body becomes a
+/// closure: `return` and `?` keep their meaning, and the using crate must depend on `share`.
+#[proc_macro_attribute]
+pub fn stack_guard(attr: TokenStream, item: TokenStream) -> TokenStream {
+    if !attr.is_empty() {
+        let attr = TokenStream2::from(attr);
+        return quote!(compile_error!("`stack_guard` takes no arguments"); #attr).into();
+    }
+    let mut f = parse_macro_input!(item as ItemFn);
+    let body = &f.block;
+    f.block = parse_quote!({ ::share::stack::ensure_sufficient_stack(move || #body) });
+    quote!(#f).into()
 }

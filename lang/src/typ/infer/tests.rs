@@ -1,137 +1,161 @@
 use super::*;
 use crate::ast::range::{CRange, Range};
 use crate::ast::spanned::Spanned;
-use crate::ast::{Args, BinOp, CArg, CExp, Exp, ExpLiteral, Exps, Sig};
+use crate::ast::{Args, BinOp, Block, CArg, CExp, Exp, ExpLiteral, Expr, Exprs, Exps, Sig, Stmt};
 use crate::id::{Tid, Vid};
 use crate::typ::{CTyp, Kind, TypeVar, TypeVars};
 use lazy_static::lazy_static;
 use share::{Ctx, Set};
 
-fn lit<N: ExpLiteral>(value: usize) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Lit(N::lit(value)))
+fn leaf<N: ExpLiteral>(node: Exp<N>) -> Expr<N> {
+    Expr::leaf(node, 0..0)
 }
-fn varstr<N: ExpLiteral>(x: &str) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Var(Spanned::dummy(Vid::from(x))))
+fn lit<N: ExpLiteral>(value: usize) -> Expr<N> {
+    leaf(Exp::Lit(N::lit(value)))
 }
-fn range<N: ExpLiteral>(r: Range<N::Size>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Range(r))
+fn varstr<N: ExpLiteral>(x: &str) -> Expr<N> {
+    leaf(Exp::Var(Spanned::dummy(Vid::from(x))))
 }
-fn challenge<N: ExpLiteral>(t: Tid) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Challenge(Spanned::dummy(t), None))
+fn range<N: ExpLiteral>(r: Range<N::Size>) -> Expr<N> {
+    leaf(Exp::Range(r))
 }
-fn random<N: ExpLiteral>(t: Tid) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Random(Spanned::dummy(t), None))
+fn challenge<N: ExpLiteral>(t: Tid) -> Expr<N> {
+    leaf(Exp::Challenge(Spanned::dummy(t), None))
 }
-fn bin<N: ExpLiteral>(op: BinOp, l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Bin(op, Box::new(l), Box::new(r)))
+fn random<N: ExpLiteral>(t: Tid) -> Expr<N> {
+    leaf(Exp::Random(Spanned::dummy(t), None))
 }
-fn add<N: ExpLiteral>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn bin<N: ExpLiteral>(op: BinOp, l: Expr<N>, r: Expr<N>) -> Expr<N> {
+    Expr::compose([l, r], 0..0, |c| Exp::Bin(op, c[0], c[1]))
+}
+fn add<N: ExpLiteral>(l: Expr<N>, r: Expr<N>) -> Expr<N> {
     bin(BinOp::Add, l, r)
 }
-fn sub<N: ExpLiteral>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn sub<N: ExpLiteral>(l: Expr<N>, r: Expr<N>) -> Expr<N> {
     bin(BinOp::Sub, l, r)
 }
-fn mul<N: ExpLiteral>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn mul<N: ExpLiteral>(l: Expr<N>, r: Expr<N>) -> Expr<N> {
     bin(BinOp::Mul, l, r)
 }
-fn div<N: ExpLiteral>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn div<N: ExpLiteral>(l: Expr<N>, r: Expr<N>) -> Expr<N> {
     bin(BinOp::Div, l, r)
 }
-fn pow<N: ExpLiteral>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn pow<N: ExpLiteral>(l: Expr<N>, r: Expr<N>) -> Expr<N> {
     bin(BinOp::Pow, l, r)
 }
-fn dot<N: ExpLiteral>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn dot<N: ExpLiteral>(l: Expr<N>, r: Expr<N>) -> Expr<N> {
     bin(BinOp::Dot, l, r)
 }
-fn rem<N: ExpLiteral>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn rem<N: ExpLiteral>(l: Expr<N>, r: Expr<N>) -> Expr<N> {
     bin(BinOp::Rem, l, r)
 }
-fn concat<N: ExpLiteral>(l: Spanned<Exp<N>>, r: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
+fn concat<N: ExpLiteral>(l: Expr<N>, r: Expr<N>) -> Expr<N> {
     bin(BinOp::Concat, l, r)
 }
-fn poly<N: ExpLiteral>(a: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Poly(Box::new(a)))
+fn poly<N: ExpLiteral>(a: Expr<N>) -> Expr<N> {
+    Expr::compose([a], 0..0, |c| Exp::Poly(c[0]))
 }
-fn mle<N: ExpLiteral>(a: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Mle(Box::new(a)))
+fn mle<N: ExpLiteral>(a: Expr<N>) -> Expr<N> {
+    Expr::compose([a], 0..0, |c| Exp::Mle(c[0]))
 }
-fn coef<N: ExpLiteral>(a: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Coef(Box::new(a)))
+fn coef<N: ExpLiteral>(a: Expr<N>) -> Expr<N> {
+    Expr::compose([a], 0..0, |c| Exp::Coef(c[0]))
 }
-fn vec<N: ExpLiteral>(v: Vec<Spanned<Exp<N>>>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Vec(Exps(v)))
+fn vec<N: ExpLiteral>(v: Vec<Expr<N>>) -> Expr<N> {
+    Expr::compose(v, 0..0, |c| Exp::Vec(Exps(c.to_vec())))
 }
-fn map<N: ExpLiteral>(l: Spanned<Exp<N>>, x: Vid, range: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Map(Box::new(l), Spanned::dummy(x), Box::new(range)))
+fn map<N: ExpLiteral>(l: Expr<N>, x: Vid, range: Expr<N>) -> Expr<N> {
+    Expr::compose([l, range], 0..0, |c| {
+        Exp::Map(c[0], Spanned::dummy(x), c[1])
+    })
 }
-fn reduce<N: ExpLiteral>(op: BinOp, a: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Reduce(op, Box::new(a)))
+fn reduce<N: ExpLiteral>(op: BinOp, a: Expr<N>) -> Expr<N> {
+    Expr::compose([a], 0..0, |c| Exp::Reduce(op, c[0]))
 }
-fn ram<N: ExpLiteral>(v: Spanned<Exp<N>>, i: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Ram(Box::new(v), Box::new(i)))
+fn ram<N: ExpLiteral>(v: Expr<N>, i: Expr<N>) -> Expr<N> {
+    Expr::compose([v, i], 0..0, |c| Exp::Ram(c[0], c[1]))
 }
-fn interpolate_at<N: ExpLiteral>(
-    points: Spanned<Exp<N>>,
-    evals: Spanned<Exp<N>>,
-) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Interpolate(Some(Box::new(points)), Box::new(evals)))
+fn interpolate_at<N: ExpLiteral>(points: Expr<N>, evals: Expr<N>) -> Expr<N> {
+    Expr::compose([points, evals], 0..0, |c| {
+        Exp::Interpolate(Some(c[0]), c[1])
+    })
 }
-fn interpolate_grid<N: ExpLiteral>(evals: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Interpolate(None, Box::new(evals)))
+fn interpolate_grid<N: ExpLiteral>(evals: Expr<N>) -> Expr<N> {
+    Expr::compose([evals], 0..0, |c| Exp::Interpolate(None, c[0]))
 }
-fn evaluate_at<N: ExpLiteral>(p: Spanned<Exp<N>>, points: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Evaluate(Box::new(p), None, Some(Box::new(points))))
+fn evaluate_at<N: ExpLiteral>(p: Expr<N>, points: Expr<N>) -> Expr<N> {
+    Expr::compose([p, points], 0..0, |c| Exp::Evaluate(c[0], None, Some(c[1])))
 }
-fn evaluate_grid<N: ExpLiteral>(p: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Evaluate(Box::new(p), None, None))
+fn evaluate_grid<N: ExpLiteral>(p: Expr<N>) -> Expr<N> {
+    Expr::compose([p], 0..0, |c| Exp::Evaluate(c[0], None, None))
 }
-fn evaluate_selected<N: ExpLiteral>(
-    range: Range<N::Size>,
-    p: Spanned<Exp<N>>,
-    fixed: Spanned<Exp<N>>,
-) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Evaluate(
-        Box::new(p),
-        Some(range),
-        Some(Box::new(fixed)),
-    ))
+fn evaluate_selected<N: ExpLiteral>(range: Range<N::Size>, p: Expr<N>, fixed: Expr<N>) -> Expr<N> {
+    Expr::compose([p, fixed], 0..0, |c| {
+        Exp::Evaluate(c[0], Some(range), Some(c[1]))
+    })
 }
-fn verify_eq<N: ExpLiteral>(lhs: Spanned<Exp<N>>, rhs: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
-    let equ = Spanned::dummy(Exp::Bin(BinOp::Equ, Box::new(lhs), Box::new(rhs)));
-    Spanned::dummy(Exp::Verify(Box::new(equ)))
+fn verify_eq<N: ExpLiteral>(lhs: Expr<N>, rhs: Expr<N>) -> Expr<N> {
+    let equ = bin(BinOp::Equ, lhs, rhs);
+    Expr::compose([equ], 0..0, |c| Exp::Verify(c[0]))
 }
-fn letx<N: ExpLiteral>(a: Vid, d: Spanned<Exp<N>>, e: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Let(
-        Some(Spanned::dummy(a)),
-        Box::new(d),
-        Some(Box::new(e)),
-    ))
+/// A statement of a test block, before its value is placed in the block's arena.
+enum TStmt<N: ExpLiteral> {
+    Let(Vid, Expr<N>),
+    Log(Vid, Expr<N>),
+    Exp(Expr<N>),
 }
-fn logx<N: ExpLiteral>(a: Vid, d: Spanned<Exp<N>>, e: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Log(Spanned::dummy(a), Box::new(d), Some(Box::new(e))))
+/// A block of `stmts` evaluating to `e`.
+fn block<N: ExpLiteral>(stmts: Vec<TStmt<N>>, e: Expr<N>) -> Expr<N> {
+    let mut exprs = Exprs::new();
+    let stmts = stmts
+        .into_iter()
+        .map(|stmt| {
+            let stmt = match stmt {
+                TStmt::Let(name, value) => Stmt::Let(Spanned::dummy(name), exprs.append(value)),
+                TStmt::Log(name, value) => Stmt::Log(Spanned::dummy(name), exprs.append(value)),
+                TStmt::Exp(value) => Stmt::Discard(exprs.append(value)),
+            };
+            Spanned::dummy(stmt)
+        })
+        .collect();
+    let tail = Some(exprs.append(e));
+    let root = exprs.push(Exp::Block(Block { stmts, tail }), 0..0);
+    Expr { exprs, root }
 }
-fn seq<N: ExpLiteral>(a: Spanned<Exp<N>>, b: Spanned<Exp<N>>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Let(None, Box::new(a), Some(Box::new(b))))
+fn letx<N: ExpLiteral>(a: Vid, d: Expr<N>, e: Expr<N>) -> Expr<N> {
+    block(vec![TStmt::Let(a, d)], e)
 }
-fn app<N: ExpLiteral>(id: Vid, args: Exps<N>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::App(Spanned::dummy(id), args))
+fn logx<N: ExpLiteral>(a: Vid, d: Expr<N>, e: Expr<N>) -> Expr<N> {
+    block(vec![TStmt::Log(a, d)], e)
 }
-fn record<N: ExpLiteral>(fields: Ctx<Spanned<String>, Spanned<Exp<N>>>) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Record(fields))
+fn seq<N: ExpLiteral>(a: Expr<N>, b: Expr<N>) -> Expr<N> {
+    block(vec![TStmt::Exp(a)], b)
 }
-fn proj<N: ExpLiteral>(exp: Spanned<Exp<N>>, field: String) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::Proj(Box::new(exp), Spanned::dummy(field)))
+fn app<N: ExpLiteral>(id: Vid, args: Vec<Expr<N>>) -> Expr<N> {
+    Expr::compose(args, 0..0, |c| {
+        Exp::App(Spanned::dummy(id), Exps(c.to_vec()))
+    })
 }
-fn set_record<N: ExpLiteral>(
-    record: Spanned<Exp<N>>,
-    field: String,
-    value: Spanned<Exp<N>>,
-) -> Spanned<Exp<N>> {
-    Spanned::dummy(Exp::SetRecord(
-        Box::new(record),
-        Spanned::dummy(field),
-        Box::new(value),
-    ))
+fn record<N: ExpLiteral>(fields: Ctx<Spanned<String>, Expr<N>>) -> Expr<N> {
+    let names: Vec<_> = fields.iter().map(|(name, _)| name.clone()).collect();
+    let values: Vec<_> = fields.iter().map(|(_, v)| v.clone()).collect();
+    Expr::compose(values, 0..0, |c| {
+        Exp::Record(
+            names
+                .iter()
+                .zip(c)
+                .map(|(name, &v)| (name.clone(), v))
+                .collect(),
+        )
+    })
+}
+fn proj<N: ExpLiteral>(exp: Expr<N>, field: String) -> Expr<N> {
+    Expr::compose([exp], 0..0, |c| Exp::Proj(c[0], Spanned::dummy(field)))
+}
+fn set_record<N: ExpLiteral>(record: Expr<N>, field: String, value: Expr<N>) -> Expr<N> {
+    Expr::compose([record, value], 0..0, |c| {
+        Exp::SetRecord(c[0], Spanned::dummy(field), c[1])
+    })
 }
 
 lazy_static! {
@@ -688,7 +712,7 @@ fn test_app() {
     // Create a function application fun(2, f1, g1)
     let app1 = app(
         "fun".into(),
-        Exps::from([lit(2), varstr("f1"), varstr("g1")]),
+        Vec::from([lit(2), varstr("f1"), varstr("g1")]),
     );
 
     assert!(app1.infer(&KIND_CTX, &Set::new(), &vctx).is_err());
@@ -698,21 +722,21 @@ fn test_app() {
     );
 
     // Create a function application fun(1, 2)
-    let app2 = app("fun".into(), Exps::from([lit(1), lit(2)]));
+    let app2 = app("fun".into(), Vec::from([lit(1), lit(2)]));
     assert!(app2.infer(&KIND_CTX, &fctx, &vctx).is_err());
 
     // A polynomial application to scalar
-    let uni_app = app("p".into(), Exps::from([lit(1)]));
+    let uni_app = app("p".into(), Vec::from([lit(1)]));
     assert_eq!(
         uni_app.infer(&KIND_CTX, &fctx, &vctx),
         Ok(CTyp::Base(Tid::from("F")))
     );
 
-    let uni_app_vec = app("p".into(), Exps::from([varstr("v1")]));
+    let uni_app_vec = app("p".into(), Vec::from([varstr("v1")]));
     assert!(uni_app_vec.infer(&KIND_CTX, &fctx, &vctx).is_err());
 
     // A MLE application to scalar and vector of scalars
-    let mle_app = app("m".into(), Exps::from([lit(1)]));
+    let mle_app = app("m".into(), Vec::from([lit(1)]));
     assert_eq!(
         mle_app.infer(&KIND_CTX, &fctx, &vctx),
         Ok(CTyp::Poly(
@@ -722,7 +746,7 @@ fn test_app() {
         ))
     );
 
-    let mle_app_vec = app("m".into(), Exps::from([varstr("v1")]));
+    let mle_app_vec = app("m".into(), Vec::from([varstr("v1")]));
     assert_eq!(
         mle_app_vec.infer(&KIND_CTX, &fctx, &vctx),
         Ok(CTyp::Poly(
@@ -853,7 +877,7 @@ fn test_phase14_mle_rejects_non_pow2_sweep() {
         let e = mle(varstr(vname.as_str()));
         let result = e.infer(&KIND_CTX, &fctx, &vctx);
         assert!(
-            matches!(result, Err(TypeError::Mle(_, _, _))),
+            matches!(result, Err(TypeError::Mle)),
             "mle([F; {k}]) (non-pow2) must be rejected with TypeError::Mle. \
                  Got: {result:?}",
         );
@@ -902,7 +926,7 @@ fn test_phase14_evaluate_grid_reject_sweep() {
         let e = evaluate_grid(varstr(pname.as_str()));
         let result = e.infer(&KIND_CTX, &fctx, &vctx);
         assert!(
-            matches!(result, Err(TypeError::EvaluateGridNotPow2(_, _, _, _, _))),
+            matches!(result, Err(TypeError::EvaluateGridNotPow2(_))),
             "eval(Poly<F, 1, {m}>) has {} coefficients (not pow2); infer() \
                  must reject with EvaluateGridNotPow2. Got: {result:?}",
             m + 1,
@@ -944,7 +968,7 @@ fn test_phase14_interpolate_unary_reject_sweep() {
         let e = interpolate_grid(v);
         let result = e.infer(&KIND_CTX, &fctx, &vctx);
         assert!(
-            matches!(result, Err(TypeError::InterpolateUnaryNotPow2(_, _, _, _))),
+            matches!(result, Err(TypeError::InterpolateUnaryNotPow2(_))),
             "interpolate([F; {n}]) (non-pow2) must be rejected with \
                  InterpolateUnaryNotPow2. Got: {result:?}",
         );
@@ -1497,7 +1521,7 @@ fn test_eval_univariate_vector_rejected() {
     assert!(
         matches!(
             banned.infer(&KIND_CTX, &fctx, &vctx),
-            Err(TypeError::EvaluateUnivariateVector(_, _, _, _))
+            Err(TypeError::EvaluateUnivariateVector)
         ),
         "eval(Poly<F,1,_>, [F; k]) must be rejected with EvaluateUnivariateVector, got {:?}",
         banned.infer(&KIND_CTX, &fctx, &vctx)
@@ -1662,15 +1686,15 @@ fn test_range_rejection() {
     let vctx = VAR_CTX.clone();
 
     // start > end
-    let bad_range1 = CExp::Range(CRange::from_raw(5, 1, 1));
+    let bad_range1 = leaf::<BigUint>(CExp::Range(CRange::from_raw(5, 1, 1)));
     assert!(bad_range1.infer(&KIND_CTX, &fctx, &vctx).is_err());
 
     // step == 0
-    let bad_range2 = CExp::Range(CRange::from_raw(0, 0, 5));
+    let bad_range2 = leaf::<BigUint>(CExp::Range(CRange::from_raw(0, 0, 5)));
     assert!(bad_range2.infer(&KIND_CTX, &fctx, &vctx).is_err());
 
     // step does not cleanly divide distance
-    let bad_range3 = CExp::Range(CRange::from_raw(0, 3, 5));
+    let bad_range3 = leaf::<BigUint>(CExp::Range(CRange::from_raw(0, 3, 5)));
     assert!(bad_range3.infer(&KIND_CTX, &fctx, &vctx).is_err());
 }
 
@@ -1825,9 +1849,9 @@ fn test_type_alias_cycle_returns_error_instead_of_overflow() {
     assert!(!diags.is_empty());
 }
 
-/// `let x_i = x_{i-1} + 1` for `i` in `1..=n` from `x_0 = f1`, with every third statement a `<-`
-/// and every fifth followed by a `verify;` statement, ending in `x_n`.
-fn let_chain(n: usize) -> Spanned<CExp> {
+/// A block of `let x_i = x_{i-1} + 1` for `i` in `1..=n` from `x_0 = f1`, with every third
+/// statement a `<-` and every fifth followed by a `verify` statement, ending in `x_n`.
+fn let_chain(n: usize) -> Expr<BigUint> {
     let x = |i: usize| -> Vid {
         if i == 0 {
             Vid::from("f1")
@@ -1835,24 +1859,24 @@ fn let_chain(n: usize) -> Spanned<CExp> {
             Vid::from(format!("x{i}").as_str())
         }
     };
-    let mut e = varstr(&x(n).0);
-    for i in (1..=n).rev() {
-        if i % 5 == 0 {
-            e = seq(verify_eq(varstr(&x(i).0), varstr(&x(i).0)), e);
-        }
+    let mut stmts = Vec::new();
+    for i in 1..=n {
         let d = add(varstr(&x(i - 1).0), lit(1));
-        e = if i % 3 == 0 {
-            logx(x(i), d, e)
+        stmts.push(if i % 3 == 0 {
+            TStmt::Log(x(i), d)
         } else {
-            letx(x(i), d, e)
-        };
+            TStmt::Let(x(i), d)
+        });
+        if i % 5 == 0 {
+            stmts.push(TStmt::Exp(verify_eq(varstr(&x(i).0), varstr(&x(i).0))));
+        }
     }
-    e
+    block(stmts, varstr(&x(n).0))
 }
 
 #[test]
 fn test_long_let_chain_infers_on_small_stack() {
-    // Each statement must not add an inference frame: 1000 statements on a 2 MiB stack.
+    // A statement must not add an inference frame: 1000 statements on a 2 MiB stack.
     let result = std::thread::Builder::new()
         .stack_size(2 << 20)
         .spawn(|| let_chain(1000).infer(&KIND_CTX, &Set::new(), &VAR_CTX))
@@ -1863,33 +1887,106 @@ fn test_long_let_chain_infers_on_small_stack() {
 }
 
 #[test]
-fn test_let_chain_error_located_at_innermost_statement() {
-    // A spanless failure in a statement is located at the innermost spanned chain node.
-    let stmt = |d: Spanned<CExp>, e: Spanned<CExp>, span| {
-        Spanned::new(
-            CExp::Let(
-                Some(Spanned::dummy(Vid::from("y"))),
-                Box::new(d),
-                Some(Box::new(e)),
-            ),
-            span,
-        )
-    };
-    let unbound = varstr("missing");
-    let third = stmt(unbound, varstr("y"), 20..30);
-    let second = stmt(
-        varstr("f1"),
-        Spanned::new(seq(lit(0), third).node, 0..0),
-        10..20,
+fn test_block_error_located_at_statement() {
+    // A spanless failure in a statement is located at that statement.
+    let var =
+        |a: &mut Exprs<BigUint>, x: &str| a.push(Exp::Var(Spanned::dummy(Vid::from(x))), 0..0);
+    let y = || Spanned::dummy(Vid::from("y"));
+    let mut a = Exprs::new();
+    let (f1, missing) = (var(&mut a, "f1"), var(&mut a, "missing"));
+    let zero = a.push(Exp::Lit(BigUint::from(0u8)), 0..0);
+    let value = var(&mut a, "y");
+    let stmts = vec![
+        Spanned::new(Stmt::Let(y(), f1), 0..10),
+        Spanned::new(Stmt::Discard(zero), 10..20),
+        Spanned::new(Stmt::Let(y(), missing), 20..30),
+    ];
+    let root = a.push(
+        CExp::Block(Block {
+            stmts,
+            tail: Some(value),
+        }),
+        0..40,
     );
-    let first = stmt(varstr("f1"), second, 0..40);
-    let err = first.infer(&KIND_CTX, &Set::new(), &VAR_CTX).unwrap_err();
+    let body = Expr { exprs: a, root };
+    let err = body.infer(&KIND_CTX, &Set::new(), &VAR_CTX).unwrap_err();
     assert_eq!(err.span(), Some(20..30));
 
-    // With no spanned chain node below the root, the root's span applies.
-    let inner = stmt(varstr("missing"), varstr("y"), 0..0);
-    let err = stmt(varstr("f1"), inner, 5..9)
-        .infer(&KIND_CTX, &Set::new(), &VAR_CTX)
-        .unwrap_err();
+    // A statement without a span leaves the failure to the block's span.
+    let mut a = Exprs::new();
+    let (missing, value) = (var(&mut a, "missing"), var(&mut a, "y"));
+    let stmts = vec![Spanned::dummy(Stmt::Let(y(), missing))];
+    let root = a.push(
+        CExp::Block(Block {
+            stmts,
+            tail: Some(value),
+        }),
+        5..9,
+    );
+    let body = Expr { exprs: a, root };
+    let err = body.infer(&KIND_CTX, &Set::new(), &VAR_CTX).unwrap_err();
     assert_eq!(err.span(), Some(5..9));
+}
+
+#[test]
+fn test_deep_nesting_infers_on_small_stack() {
+    // Inference walks the tree iteratively: a million levels on 256 KiB.
+    let typ = std::thread::Builder::new()
+        .stack_size(256 << 10)
+        .spawn(|| {
+            let mut a = Exprs::new();
+            let mut e = a.push(Exp::Lit(BigUint::from(1u8)), 0..0);
+            for _ in 0..1_000_000 {
+                e = a.push(Exp::Neg(e), 0..0);
+            }
+            let tree = Expr { exprs: a, root: e };
+            tree.infer(&KIND_CTX, &Set::new(), &VAR_CTX)
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(typ, Ok(CTyp::FieldLiteral));
+}
+
+#[test]
+fn resolved_calls_keep_declaration_signature_and_substitution() {
+    let src = "fn f<T: Field>(instance x: T) -> T { random<T> }\n\
+               fn g<F: Field>(instance p: Uni<F, 2>, instance x: F) -> F { f(p(x)) }";
+    let (decls, errors) = crate::parser::parse_decls(src);
+    assert!(errors.is_empty(), "{errors:?}");
+    let decls: Vec<_> = decls
+        .into_iter()
+        .map(|d| {
+            d.node
+                .concretize(&crate::typ::subst::SizeSubsts::new())
+                .unwrap()
+        })
+        .collect();
+    let fctx = decls.iter().map(|d| d.sig.clone()).collect();
+    let tree = decls[1].body.clone().body().unwrap();
+    let cx = Cx {
+        kctx: &decls[1].sig.typevars.to_ctx(),
+        fctx: &fctx,
+    };
+    let mut vctx = VarTypes::new(decls[1].sig.args.to_ctx());
+    let mut types = TypeTable::new();
+    tree.root().infer(&cx, &mut vctx, &mut types).unwrap();
+    assert_eq!(
+        types.calls().len(),
+        1,
+        "polynomial calls have no function resolution"
+    );
+    let (id, call) = &types.calls()[0];
+    assert_eq!(call.declaration, decls[0].sig);
+    assert_eq!(
+        call.signature.ret.as_ref().unwrap().node,
+        CTyp::base(&Tid::from("F"))
+    );
+    let mut body = decls[0].body.clone();
+    call.instantiation.apply(&mut body).unwrap();
+    assert!(matches!(body.body().unwrap().node(), Exp::Random(t, _) if t.node == Tid::from("F")));
+    assert_eq!(types.call(*id).unwrap().signature, call.signature);
+    // Cached inference neither resolves again nor creates duplicate records.
+    tree.root().infer(&cx, &mut vctx, &mut types).unwrap();
+    assert_eq!(types.calls().len(), 1);
 }

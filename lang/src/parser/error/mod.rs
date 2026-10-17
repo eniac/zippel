@@ -32,7 +32,22 @@ pub(super) fn rich_to_diagnostic(e: &RichError<'_>) -> Diagnostic {
         .found()
         .map(|token| format!("'{token}'"))
         .unwrap_or_else(|| "end of input".to_string());
-    let expected = format_expected(&e.expected().map(ToString::to_string).collect::<Vec<_>>());
+    let mut expected: Vec<String> = e.expected().map(ToString::to_string).collect();
+    // Chumsky lists patterns in the order the grammar tried them, which shifts with any
+    // change to the grammar; only the first few are shown, so sort them: names (`operator`,
+    // `type`), then quoted tokens, then `end of input`, each alphabetically.
+    expected.sort_by_key(|item| {
+        let rank = if item.starts_with('\'') {
+            1
+        } else if item == "end of input" {
+            2
+        } else {
+            0
+        };
+        (rank, item.clone())
+    });
+    expected.dedup();
+    let expected = format_expected(&expected);
 
     let summary = format!("expected {expected}, found {found}");
     let primary_label = format!("expected {expected}");

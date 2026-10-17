@@ -8,7 +8,7 @@
 /// Bridge from source types to the `arkworks`-flavoured base types.
 pub mod ark;
 mod distribution;
-/// Kind-directed type inference (`Typeable`, `TypeError`).
+/// Kind-directed type inference (`TypeTable`, `TypeError`).
 pub mod infer;
 pub mod instantiate;
 mod kind;
@@ -29,7 +29,7 @@ use crate::id::{Tid, TidSubst};
 
 pub use ark::Ark;
 pub use distribution::Distribution;
-pub use infer::{TypeError, Typeable};
+pub use infer::{TypeError, TypeTable};
 pub use kind::{CKind, Kind, UKind};
 pub use lub::LubError;
 pub use nothing::Nothing;

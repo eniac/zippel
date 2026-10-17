@@ -1,5 +1,6 @@
 ---
 source: lang/tests/typecheck.rs
+assertion_line: 406
 ---
 error: Function `f` must return F (Scalar<G>), but its body has type G (Group)
    ╭─[ test.zippel:3:5 ]
@@ -20,7 +21,7 @@ error: Cannot add F (Scalar<G>) and G (Group)
    │            ┬─┬─┬  
    │            │ ╰──── `+` is not defined for these operands
    │            │   │  
-   │            ╰────── `x` has type F (Scalar<G>)
+   │            ╰────── has type F (Scalar<G>)
    │                │  
-   │                ╰── `g` has type G (Group)
+   │                ╰── has type G (Group)
 ───╯

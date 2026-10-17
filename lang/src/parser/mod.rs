@@ -12,9 +12,10 @@ pub use label::{Context, Terminal};
 pub use lexer::{Token, lex_iter};
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 use chumsky::error::Rich;
-use chumsky::input::{Stream, ValueInput};
+use chumsky::input::{MapExtra, Stream, ValueInput};
 use chumsky::pratt::{self, Associativity};
 use chumsky::prelude::*;
 use chumsky::span::SimpleSpan;
@@ -24,7 +25,7 @@ use num::{BigUint, ToPrimitive};
 use crate::ast::arg::Args;
 use crate::ast::decl::{Decl, UDecl};
 use crate::ast::spanned::Spanned;
-use crate::ast::{BinOp, Exclusion, Exps, GArg, UExp};
+use crate::ast::{BinOp, Block, Exclusion, ExpId, Exprs, Exps, GArg, Stmt, UExp};
 use crate::ast::{ExpLiteral, Size};
 use crate::diagnostic::Diagnostic;
 use crate::id::{Tid, Vid};
@@ -35,11 +36,30 @@ use error::rich_to_diagnostic;
 /// Native chumsky error type alias — no wrapper.
 type RichError<'src> = Rich<'src, Token<'src>, SimpleSpan>;
 
+/// What every parser here carries: rich errors, and the [`State`] of the parse.
+type Extra<'src> = extra::Full<RichError<'src>, extra::SimpleState<State>, ()>;
+
+/// What a parse accumulates besides its output.
+struct State {
+    /// The arena the expressions go into.
+    exprs: Exprs<Size>,
+}
+
+/// Pushes `node` into the parse's arena, spanning the input `e` was parsed from. Abandoned
+/// alternatives leave their nodes behind; each declaration extracts only its own trees.
+fn push<'src, I>(e: &mut MapExtra<'src, '_, I, Extra<'src>>, node: UExp) -> ExpId
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
+{
+    let span: SimpleSpan = e.span();
+    e.state().exprs.push(node, span.into_range())
+}
+
 // ── Token matching helpers ─────────────────────────────────────────────
 
 /// Match an identifier, returning its name as a `Spanned<Vid>`.
 fn id_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>()
--> impl Parser<'src, I, Spanned<Vid>, extra::Err<RichError<'src>>> + Clone {
+-> impl Parser<'src, I, Spanned<Vid>, Extra<'src>> + Clone {
     select! { Token::Id(s) => s }
         .labelled(Terminal::Identifier)
         .map_with(|s, e| {
@@ -50,7 +70,7 @@ fn id_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>()
 
 /// Match an identifier, returning its name as a `Spanned<Tid>`.
 fn tid_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>()
--> impl Parser<'src, I, Spanned<Tid>, extra::Err<RichError<'src>>> + Clone {
+-> impl Parser<'src, I, Spanned<Tid>, Extra<'src>> + Clone {
     select! { Token::Id(s) => s }
         .labelled(Terminal::Identifier)
         .map_with(|s, e| {
@@ -61,7 +81,7 @@ fn tid_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>()
 
 /// Match a decimal literal, returning its exact value.
 fn positive_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>()
--> impl Parser<'src, I, BigUint, extra::Err<RichError<'src>>> + Clone {
+-> impl Parser<'src, I, BigUint, Extra<'src>> + Clone {
     select! { Token::Positive(s) => s }
         .labelled(Terminal::PositiveInteger)
         .map(|s| {
@@ -75,7 +95,7 @@ fn positive_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan
 /// An oversized literal is reported at its token as a non-fatal error (so a surrounding
 /// label cannot replace the message) and kept whole, so evaluating it as a size fails too.
 fn positive_size_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>>()
--> impl Parser<'src, I, Spanned<Size>, extra::Err<RichError<'src>>> + Clone {
+-> impl Parser<'src, I, Spanned<Size>, Extra<'src>> + Clone {
     positive_tok().validate(|n, e, emitter| {
         let span: SimpleSpan = e.span();
         if n.to_usize().is_none() {
@@ -94,8 +114,7 @@ fn positive_size_tok<'src, I: ValueInput<'src, Token = Token<'src>, Span = Simpl
 /// Mirrors `size_ty` in the pest grammar:
 ///   size_ty = { size_ty_term ~ (size_bin_op ~ size_ty_term)* }
 ///   size_ty_term = _{ "(" ~ size_ty ~ ")" | positive | size_var }
-fn size_ty_parser<'src, I>()
--> impl Parser<'src, I, Spanned<Size>, extra::Err<RichError<'src>>> + Clone
+fn size_ty_parser<'src, I>() -> impl Parser<'src, I, Spanned<Size>, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -164,7 +183,7 @@ where
 ///   range = { step_r | unit_r }
 ///   step_r = { size_ty ~ "," ~ size_ty ~ ".." ~ size_ty }
 ///   unit_r = { size_ty ~ ".." ~ size_ty }
-fn range_parser<'src, I>() -> impl Parser<'src, I, Range<Size>, extra::Err<RichError<'src>>> + Clone
+fn range_parser<'src, I>() -> impl Parser<'src, I, Range<Size>, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -192,13 +211,82 @@ where
     ))
 }
 
+/// `exp`, or a stepped range `start, step..end`. Only an index and a comprehension's domain
+/// take one: anywhere else the `,` separates list items.
+fn stepped<'src, I>(exp: ExpParser<'src, I>) -> impl Parser<'src, I, ExpId, Extra<'src>> + Clone
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
+{
+    exp.clone()
+        .then(just(Token::Comma).ignored().ignore_then(exp).or_not())
+        .try_map_with(|(start, rest), e| {
+            let Some(rest) = rest else { return Ok(start) };
+            let exprs = &e.state().exprs;
+            let UExp::Range(Range {
+                start: step,
+                step: None,
+                end,
+            }) = &exprs[rest]
+            else {
+                let span = exprs.span(rest).clone();
+                return Err(Rich::custom(
+                    span.into(),
+                    "expected a range `step..end` after `,`",
+                ));
+            };
+            let range = Range {
+                start: size_of(exprs, start)?,
+                step: Some(step.clone()),
+                end: end.clone(),
+            };
+            Ok(push(e, UExp::Range(range)))
+        })
+}
+
+/// The size an expression spells: names, literals, `+ - * / ^` and parentheses, which leave
+/// no node. Built children first, without recursion.
+fn size_of<'src>(exprs: &Exprs<Size>, root: ExpId) -> Result<Spanned<Size>, RichError<'src>> {
+    let mut built: HashMap<ExpId, Spanned<Size>> = HashMap::new();
+    let nodes: Vec<_> = exprs.at(root).subexps().collect();
+    // Reversed pre-order puts every node after its descendants.
+    for e in nodes.into_iter().rev() {
+        let mut child = |id: &ExpId| built.remove(id).map(Box::new).expect("built first");
+        let size = match e.node() {
+            UExp::Lit(n) => n.clone(),
+            UExp::Var(x) => Size::Var(Tid::from(x.node.0.as_str())),
+            UExp::Bin(op, a, b) => {
+                let (a, b) = (child(a), child(b));
+                match op {
+                    BinOp::Add => Size::Add(a, b),
+                    BinOp::Sub => Size::Sub(a, b),
+                    BinOp::Mul => Size::Mul(a, b),
+                    BinOp::Div => Size::Div(a, b),
+                    BinOp::Pow => Size::Pow(a, b),
+                    _ => return Err(not_a_size(exprs, e.id())),
+                }
+            }
+            _ => return Err(not_a_size(exprs, e.id())),
+        };
+        built.insert(e.id(), Spanned::new(size, e.span().clone()));
+    }
+    Ok(built.remove(&root).expect("the root is built"))
+}
+
+/// A range bound at `id` that is not a size.
+fn not_a_size<'src>(exprs: &Exprs<Size>, id: ExpId) -> RichError<'src> {
+    Rich::custom(
+        exprs.span(id).clone().into(),
+        "a range bound is a size: names, literals, `+ - * / ^` and parentheses",
+    )
+}
+
 // ── Kind parser ────────────────────────────────────────────────────────
 
 /// Parse a kind (type variable kind annotation).
 /// Mirrors `kind_ty` in the pest grammar:
 ///   kind_ty = { field_ty | group_ty | range_ty | pairing_ty | scalar_ty | size_var_ty | size_ref_ty }
 /// A bare positive literal is a `size_ref_ty`, checked against `usize` like every size literal.
-fn kind_parser<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<RichError<'src>>> + Clone
+fn kind_parser<'src, I>() -> impl Parser<'src, I, Kind<Size>, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -223,26 +311,26 @@ where
     .as_context()
 }
 
-fn kw_field<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<RichError<'src>>> + Clone
+fn kw_field<'src, I>() -> impl Parser<'src, I, Kind<Size>, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     just(Token::KwField).ignored().to(Kind::Field)
 }
-fn kw_group<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<RichError<'src>>> + Clone
+fn kw_group<'src, I>() -> impl Parser<'src, I, Kind<Size>, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     just(Token::KwGroup).ignored().to(Kind::Group)
 }
-fn kw_size<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<RichError<'src>>> + Clone
+fn kw_size<'src, I>() -> impl Parser<'src, I, Kind<Size>, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     just(Token::KwSize).ignored().to(Kind::SizeVar)
 }
 
-fn pairing_kind<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<RichError<'src>>> + Clone
+fn pairing_kind<'src, I>() -> impl Parser<'src, I, Kind<Size>, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -258,7 +346,7 @@ where
 }
 
 /// Scalar<ids> — takes a comma-separated list of group type variables.
-fn scalar_kind<'src, I>() -> impl Parser<'src, I, Kind<Size>, extra::Err<RichError<'src>>> + Clone
+fn scalar_kind<'src, I>() -> impl Parser<'src, I, Kind<Size>, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -280,8 +368,7 @@ where
 /// Parse a type.
 /// Mirrors `typ` in the pest grammar:
 ///   typ = _{ poly_ty | uni_ty | mle_ty | vec_ty | fin_ty | unit_ty | bool_ty | base_ty | record_ty }
-fn typ_parser<'src, I>()
--> impl Parser<'src, I, Spanned<GTyp<Size>>, extra::Err<RichError<'src>>> + Clone
+fn typ_parser<'src, I>() -> impl Parser<'src, I, Spanned<GTyp<Size>>, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -429,8 +516,7 @@ where
 
 /// Parse a type variable declaration.
 /// Mirrors `tvar = { id ~ ":" ~ kind_ty }`
-fn tvar_parser<'src, I>()
--> impl Parser<'src, I, Spanned<TypeVar<Size>>, extra::Err<RichError<'src>>> + Clone
+fn tvar_parser<'src, I>() -> impl Parser<'src, I, Spanned<TypeVar<Size>>, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -445,8 +531,7 @@ where
 
 /// Parse a list of type variables.
 /// Mirrors `tvars = { tvar ~ ("," ~ tvar)* }`
-fn tvars_parser<'src, I>()
--> impl Parser<'src, I, Spanned<TypeVars<Size>>, extra::Err<RichError<'src>>> + Clone
+fn tvars_parser<'src, I>() -> impl Parser<'src, I, Spanned<TypeVars<Size>>, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -466,8 +551,7 @@ where
 
 /// Parse a qualifier.
 /// Mirrors `qualifier = { instance | witness | extra }`
-fn qualifier_parser<'src, I>()
--> impl Parser<'src, I, Spanned<Qualifier>, extra::Err<RichError<'src>>> + Clone
+fn qualifier_parser<'src, I>() -> impl Parser<'src, I, Spanned<Qualifier>, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -484,8 +568,7 @@ where
 
 /// Parse an argument.
 /// Mirrors `arg = { qualifier? ~ id ~ ":" ~ typ }`
-fn arg_parser<'src, I>()
--> impl Parser<'src, I, Spanned<GArg<Size>>, extra::Err<RichError<'src>>> + Clone
+fn arg_parser<'src, I>() -> impl Parser<'src, I, Spanned<GArg<Size>>, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -514,7 +597,7 @@ where
 
 /// Parse a binary operator token.
 /// Mirrors `bin_op = _{ concat_op | add_op | sub_op | mul_op | div_op | pow_op | rem_op }`
-fn bin_op_parser<'src, I>() -> impl Parser<'src, I, BinOp, extra::Err<RichError<'src>>> + Clone
+fn bin_op_parser<'src, I>() -> impl Parser<'src, I, BinOp, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -534,18 +617,30 @@ where
 
 /// Type alias for a boxed expression parser — needed to break the mutual
 /// recursion cycle between exp_atom, exp_no_seq, and exp.
-type ExpParser<'src, I> = Boxed<'src, 'src, I, Spanned<UExp>, extra::Err<RichError<'src>>>;
+type ExpParser<'src, I> = Boxed<'src, 'src, I, ExpId, Extra<'src>>;
+
+/// A full expression, and whether it is a sequence of statements (see [`exp_items_parser`]).
+type ItemsParser<'src, I> = Boxed<'src, 'src, I, (ExpId, bool), Extra<'src>>;
+
+/// What follows the first expression in brackets.
+enum Bracket {
+    /// `for x in iter`: a comprehension.
+    Map((Spanned<Vid>, ExpId)),
+    /// The other elements of a vector, after `,`.
+    Vec(Vec<ExpId>),
+}
 
 /// Parse an expression atom (the primary/operand for pratt parsing).
 /// Takes boxed recursive references to break the mutual recursion cycle.
 /// Mirrors `exp_term` in the pest grammar (lines 65-90).
 fn exp_atom<'src, I>(
     exp_no_seq: ExpParser<'src, I>,
-    exp: ExpParser<'src, I>,
-) -> impl Parser<'src, I, Spanned<UExp>, extra::Err<RichError<'src>>> + Clone
+    exp_items: ItemsParser<'src, I>,
+) -> impl Parser<'src, I, ExpId, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
+    let exp = exp_items.clone().map(|(e, _)| e);
     // What a sample excludes: `- v` or `- roots_of_unity(n)`, spanned from
     // the `-`
     let exclusion = just(Token::Minus)
@@ -555,7 +650,7 @@ where
                     size_ty_parser().delimited_by(just(Token::LParen), just(Token::RParen)),
                 )
                 .map(Exclusion::RootsOfUnity),
-            exp_no_seq.clone().map(|v| Exclusion::Values(Box::new(v))),
+            exp_no_seq.clone().map(Exclusion::Values),
         )))
         .map_with(|x, e| {
             let sp: SimpleSpan = e.span();
@@ -563,20 +658,11 @@ where
         })
         .or_not();
     choice((
-        // Range expression: 0..N or 0,1..N
-        // Must come before parenthesized expression so (M-1)..(M-1) is parsed as a range, not (M-1)
-        range_parser().map_with(|r, e| {
-            let sp: SimpleSpan = e.span();
-            Spanned::new(UExp::Range(r), sp.into_range())
-        }),
         // Unit value: ()
         just(Token::LParen)
             .ignored()
             .then(just(Token::RParen).ignored())
-            .map_with(|_, e| {
-                let sp: SimpleSpan = e.span();
-                Spanned::new(UExp::Unit, sp.into_range())
-            }),
+            .map_with(|_, e| push(e, UExp::Unit)),
         // Parenthesized expression: ( exp )
         just(Token::LParen)
             .ignored()
@@ -595,12 +681,7 @@ where
             .then_ignore(just(Token::RParen).ignored())
             .then_ignore(just(Token::FatArrow).ignored())
             .then(exp.clone())
-            .map_with(|(vars, body), e| {
-                Spanned::new(UExp::Fun(vars, Box::new(body)), {
-                    let sp: SimpleSpan = e.span();
-                    sp.into_range()
-                })
-            }),
+            .map_with(|(vars, body), e| push(e, UExp::Fun(vars, body))),
         // interpolate(exp) or interpolate(exp, exp)
         just(Token::KwInterpolate)
             .ignored()
@@ -621,13 +702,10 @@ where
             )
             .map_with(|(first, second), e| {
                 let node = match second {
-                    None => UExp::Interpolate(None, Box::new(first)),
-                    Some(s) => UExp::Interpolate(Some(Box::new(first)), Box::new(s)),
+                    None => UExp::Interpolate(None, first),
+                    Some(s) => UExp::Interpolate(Some(first), s),
                 };
-                Spanned::new(node, {
-                    let sp: SimpleSpan = e.span();
-                    sp.into_range()
-                })
+                push(e, node)
             }),
         // poly(exp)
         just(Token::KwPoly)
@@ -641,7 +719,7 @@ where
                     .labelled(Context::CallArgs)
                     .as_context(),
             )
-            .map_with(|e, sp| Spanned::new(UExp::Poly(Box::new(e)), sp.span().into_range())),
+            .map_with(|e, sp| push(sp, UExp::Poly(e))),
         // coef(exp)
         just(Token::KwCoef)
             .ignored()
@@ -654,7 +732,7 @@ where
                     .labelled(Context::CallArgs)
                     .as_context(),
             )
-            .map_with(|e, sp| Spanned::new(UExp::Coef(Box::new(e)), sp.span().into_range())),
+            .map_with(|e, sp| push(sp, UExp::Coef(e))),
         // mle(exp)
         just(Token::KwMle)
             .ignored()
@@ -667,7 +745,7 @@ where
                     .labelled(Context::CallArgs)
                     .as_context(),
             )
-            .map_with(|e, sp| Spanned::new(UExp::Mle(Box::new(e)), sp.span().into_range())),
+            .map_with(|e, sp| push(sp, UExp::Mle(e))),
         // dot(exp, exp) — dot product → Bin(Dot, a, b)
         just(Token::KwDot)
             .ignored()
@@ -682,12 +760,7 @@ where
                     .labelled(Context::CallArgs)
                     .as_context(),
             )
-            .map_with(|(a, b), e| {
-                Spanned::new(UExp::Bin(BinOp::Dot, Box::new(a), Box::new(b)), {
-                    let sp: SimpleSpan = e.span();
-                    sp.into_range()
-                })
-            }),
+            .map_with(|(a, b), e| push(e, UExp::Bin(BinOp::Dot, a, b))),
         // random<T>, optionally with an exclusion
         just(Token::KwRandom)
             .ignored()
@@ -695,12 +768,7 @@ where
             .ignore_then(tid_tok())
             .then(exclusion.clone())
             .then_ignore(just(Token::RAngle).ignored())
-            .map_with(|(t, x), e| {
-                Spanned::new(UExp::Random(t, x), {
-                    let sp: SimpleSpan = e.span();
-                    sp.into_range()
-                })
-            }),
+            .map_with(|(t, x), e| push(e, UExp::Random(t, x))),
         // challenge<T>, optionally with an exclusion
         just(Token::KwChallenge)
             .ignored()
@@ -708,26 +776,45 @@ where
             .ignore_then(tid_tok())
             .then(exclusion)
             .then_ignore(just(Token::RAngle).ignored())
-            .map_with(|(t, x), e| {
-                Spanned::new(UExp::Challenge(t, x), {
-                    let sp: SimpleSpan = e.span();
-                    sp.into_range()
-                })
-            }),
-        // [exp for x in exp] (map comprehension)
+            .map_with(|(t, x), e| push(e, UExp::Challenge(t, x))),
+        // [exp for x in exp] (map comprehension) or [exp, exp, ...] (vector). The first
+        // expression is parsed once, then `for` or `,`/`]` decides: trying each form in
+        // turn would parse it twice, at every nesting level (exponential in depth).
         just(Token::LBrack)
             .ignored()
-            .ignore_then(exp.clone())
-            .then_ignore(just(Token::KwFor).ignored())
-            .then(id_tok())
-            .then_ignore(just(Token::KwIn).ignored())
-            .then(exp_no_seq.clone())
+            .ignore_then(
+                exp_items
+                    .then(choice((
+                        just(Token::KwFor)
+                            .ignored()
+                            .ignore_then(id_tok())
+                            .then_ignore(just(Token::KwIn).ignored())
+                            .then(stepped(exp_no_seq.clone()))
+                            .map(Bracket::Map),
+                        just(Token::Comma)
+                            .ignored()
+                            .ignore_then(exp_no_seq.clone())
+                            .repeated()
+                            .collect::<Vec<_>>()
+                            .then_ignore(just(Token::Comma).ignored().or_not())
+                            .map(Bracket::Vec),
+                    )))
+                    .or_not(),
+            )
             .then_ignore(just(Token::RBrack).ignored())
-            .map_with(|((body, var), iter), e| {
-                Spanned::new(UExp::Map(Box::new(body), var, Box::new(iter)), {
-                    let sp: SimpleSpan = e.span();
-                    sp.into_range()
-                })
+            .try_map_with(|contents, e| match contents {
+                None => Ok(push(e, UExp::Vec(Exps(Vec::new())))),
+                Some(((first, _), Bracket::Map((var, iter)))) => {
+                    Ok(push(e, UExp::Map(first, var, iter)))
+                }
+                // Only a comprehension body may be a sequence of statements.
+                Some(((_, true), Bracket::Vec(_))) => {
+                    Err(Rich::custom(e.span(), "expected `for` after a sequence"))
+                }
+                Some(((first, false), Bracket::Vec(rest))) => {
+                    let elems = std::iter::once(first).chain(rest).collect();
+                    Ok(push(e, UExp::Vec(Exps(elems))))
+                }
             }),
         // reduce(op, exp)
         just(Token::KwReduce)
@@ -743,26 +830,7 @@ where
                     .labelled(Context::CallArgs)
                     .as_context(),
             )
-            .map_with(|(op, e), sp| {
-                Spanned::new(UExp::Reduce(op, Box::new(e)), sp.span().into_range())
-            }),
-        // [exp, exp, ...] (vector)
-        just(Token::LBrack)
-            .ignored()
-            .ignore_then(
-                exp_no_seq
-                    .clone()
-                    .separated_by(just(Token::Comma).ignored())
-                    .allow_trailing()
-                    .collect::<Vec<_>>(),
-            )
-            .then_ignore(just(Token::RBrack).ignored())
-            .map_with(|v: Vec<_>, e| {
-                Spanned::new(UExp::Vec(Exps(v)), {
-                    let sp: SimpleSpan = e.span();
-                    sp.into_range()
-                })
-            }),
+            .map_with(|(op, e), sp| push(sp, UExp::Reduce(op, e))),
         // pair(exp, exp)
         just(Token::KwPair)
             .ignored()
@@ -777,12 +845,7 @@ where
                     .labelled(Context::CallArgs)
                     .as_context(),
             )
-            .map_with(|(a, b), e| {
-                Spanned::new(UExp::Pair(Box::new(a), Box::new(b)), {
-                    let sp: SimpleSpan = e.span();
-                    sp.into_range()
-                })
-            }),
+            .map_with(|(a, b), e| push(e, UExp::Pair(a, b))),
         // verify(exp) — single bool expression
         just(Token::KwVerify)
             .ignored()
@@ -790,12 +853,7 @@ where
             .ignore_then(exp_no_seq.clone())
             .then_ignore(just(Token::Comma).or_not().ignored())
             .then_ignore(just(Token::RParen).ignored())
-            .map_with(|exp, e| {
-                Spanned::new(UExp::Verify(Box::new(exp)), {
-                    let sp: SimpleSpan = e.span();
-                    sp.into_range()
-                })
-            }),
+            .map_with(|exp, e| push(e, UExp::Verify(exp))),
         // eval<range>(exp) or eval<size>(exp) or eval(exp) or eval(exp, exp)
         eval_exp_parser(exp_no_seq.clone()),
         // Record construction: {| field: val, ... |}
@@ -810,24 +868,16 @@ where
                     .collect::<Vec<_>>(),
             )
             .then_ignore(just(Token::BarRBrace).ignored())
-            .map_with(|fields: Vec<(Spanned<Vid>, Spanned<UExp>)>, e| {
+            .map_with(|fields: Vec<(Spanned<Vid>, ExpId)>, e| {
                 let mut ctx = share::Ctx::new();
                 for (name, val) in fields {
                     let field_name = Spanned::new(name.node.0.clone(), name.span.clone());
                     ctx.insert(&field_name, &val);
                 }
-                Spanned::new(UExp::Record(ctx), {
-                    let sp: SimpleSpan = e.span();
-                    sp.into_range()
-                })
+                push(e, UExp::Record(ctx))
             }),
         // Positive literal
-        positive_tok().map_with(|n, e| {
-            Spanned::new(UExp::Lit(Size::Lit(n)), {
-                let sp: SimpleSpan = e.span();
-                sp.into_range()
-            })
-        }),
+        positive_tok().map_with(|n, e| push(e, UExp::Lit(Size::Lit(n)))),
         // app_exp: id(exps) — function application
         id_tok()
             .then(
@@ -844,25 +894,14 @@ where
                     .labelled(Context::CallArgs)
                     .as_context(),
             )
-            .map_with(|(id, args), e| {
-                Spanned::new(UExp::App(id, Exps(args)), {
-                    let sp: SimpleSpan = e.span();
-                    sp.into_range()
-                })
-            }),
+            .map_with(|(id, args), e| push(e, UExp::App(id, Exps(args)))),
         // ram_exp: id[exp] — array access
         id_tok()
-            .map_with(|id, e| {
-                let sp: SimpleSpan = e.span();
-                Spanned::new(UExp::Var(id), sp.into_range())
-            })
+            .map_with(|id, e| push(e, UExp::Var(id)))
             .then_ignore(just(Token::LBrack).ignored())
-            .then(exp_no_seq.clone())
+            .then(stepped(exp_no_seq.clone()))
             .then_ignore(just(Token::RBrack).ignored())
-            .map_with(|(id_var, idx), e| {
-                let sp: SimpleSpan = e.span();
-                Spanned::new(UExp::Ram(Box::new(id_var), Box::new(idx)), sp.into_range())
-            }),
+            .map_with(|(id_var, idx), e| push(e, UExp::Ram(id_var, idx))),
         // Bare identifier: uppercase → Size::Var, lowercase → Exp::Var
         id_tok().map_with(|id, e| {
             let node = if id.node.0.starts_with(|c: char| c.is_uppercase()) {
@@ -870,10 +909,7 @@ where
             } else {
                 UExp::Var(id)
             };
-            Spanned::new(node, {
-                let sp: SimpleSpan = e.span();
-                sp.into_range()
-            })
+            push(e, node)
         }),
     ))
 }
@@ -882,7 +918,7 @@ where
 /// Mirrors `eval_exp = { "eval" ~ eval_selector? ~ "(" ~ exp_no_seq ~ ("," ~ exp_no_seq)? ~ ")" }`
 fn eval_exp_parser<'src, I>(
     exp_no_seq: ExpParser<'src, I>,
-) -> impl Parser<'src, I, Spanned<UExp>, extra::Err<RichError<'src>>> + Clone
+) -> impl Parser<'src, I, ExpId, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -923,260 +959,245 @@ where
         )
         .map_with(|(sel, (poly, second)), e| {
             let node = match (sel, second) {
-                (None, None) => UExp::Evaluate(Box::new(poly), None, None),
-                (None, Some(s)) => UExp::Evaluate(Box::new(poly), None, Some(Box::new(s))),
-                (Some(r), Some(f)) => UExp::Evaluate(Box::new(poly), Some(r), Some(Box::new(f))),
-                (Some(_), None) => UExp::Evaluate(Box::new(poly), None, None),
+                (None, None) => UExp::Evaluate(poly, None, None),
+                (None, Some(s)) => UExp::Evaluate(poly, None, Some(s)),
+                (Some(r), Some(f)) => UExp::Evaluate(poly, Some(r), Some(f)),
+                (Some(_), None) => UExp::Evaluate(poly, None, None),
             };
-            Spanned::new(node, {
-                let sp: SimpleSpan = e.span();
-                sp.into_range()
-            })
+            push(e, node)
         })
 }
 
 /// Parse an expression without `;` sequencing, using pratt parsing.
 /// Mirrors `exp_no_seq = { exp_term ~ (record_set_op | proj_op | bin_op ~ exp_term)* }`
-fn exp_no_seq_parser<'src, I>()
--> impl Parser<'src, I, Spanned<UExp>, extra::Err<RichError<'src>>> + Clone
+fn exp_no_seq_parser<'src, I>() -> impl Parser<'src, I, ExpId, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
     recursive(|exp_no_seq_rec| {
         // Build the exp parser using the recursive exp_no_seq reference
-        let exp = exp_parser_inner(exp_no_seq_rec.clone().boxed()).boxed();
-        let atom = exp_atom(exp_no_seq_rec.clone().boxed(), exp);
+        let exp_items = exp_items_parser(exp_no_seq_rec.clone().boxed()).boxed();
+        let atom = exp_atom(exp_no_seq_rec.clone().boxed(), exp_items);
 
-        atom.pratt((
-            // Lowest precedence first (matches AEXP_PARSER order)
-            // && (logical AND) — precedence 0, left-associative
-            pratt::infix(
-                Associativity::Left(0),
-                just(Token::AmpAmp).ignored().labelled(Terminal::Operator),
-                |a, _, b, sp| {
-                    let sp: SimpleSpan = sp.span();
-                    Spanned::new(
-                        UExp::Bin(BinOp::And, Box::new(a), Box::new(b)),
-                        sp.into_range(),
-                    )
-                },
-            ),
-            // == (equality) — precedence 1, left-associative
-            pratt::infix(
-                Associativity::Left(1),
-                just(Token::EqEq).ignored().labelled(Terminal::Operator),
-                |a, _, b, sp| {
-                    let sp: SimpleSpan = sp.span();
-                    Spanned::new(
-                        UExp::Bin(BinOp::Equ, Box::new(a), Box::new(b)),
-                        sp.into_range(),
-                    )
-                },
-            ),
-            pratt::infix(
-                Associativity::Left(2),
-                just(Token::Plus).ignored().labelled(Terminal::Operator),
-                |a, _, b, sp| {
-                    let sp: SimpleSpan = sp.span();
-                    Spanned::new(
-                        UExp::Bin(BinOp::Add, Box::new(a), Box::new(b)),
-                        sp.into_range(),
-                    )
-                },
-            ),
-            pratt::infix(
-                Associativity::Left(2),
-                just(Token::Minus).ignored().labelled(Terminal::Operator),
-                |a, _, b, sp| {
-                    let sp: SimpleSpan = sp.span();
-                    Spanned::new(
-                        UExp::Bin(BinOp::Sub, Box::new(a), Box::new(b)),
-                        sp.into_range(),
-                    )
-                },
-            ),
-            pratt::infix(
-                Associativity::Left(3),
-                just(Token::Star).ignored().labelled(Terminal::Operator),
-                |a, _, b, sp| {
-                    let sp: SimpleSpan = sp.span();
-                    Spanned::new(
-                        UExp::Bin(BinOp::Mul, Box::new(a), Box::new(b)),
-                        sp.into_range(),
-                    )
-                },
-            ),
-            pratt::infix(
-                Associativity::Left(3),
-                just(Token::Slash).ignored().labelled(Terminal::Operator),
-                |a, _, b, sp| {
-                    let sp: SimpleSpan = sp.span();
-                    Spanned::new(
-                        UExp::Bin(BinOp::Div, Box::new(a), Box::new(b)),
-                        sp.into_range(),
-                    )
-                },
-            ),
-            pratt::infix(
-                Associativity::Left(3),
-                just(Token::Percent).ignored().labelled(Terminal::Operator),
-                |a, _, b, sp| {
-                    let sp: SimpleSpan = sp.span();
-                    Spanned::new(
-                        UExp::Bin(BinOp::Rem, Box::new(a), Box::new(b)),
-                        sp.into_range(),
-                    )
-                },
-            ),
-            pratt::infix(
-                Associativity::Left(4),
-                just(Token::PlusPlus).ignored().labelled(Terminal::Operator),
-                |a, _, b, sp| {
-                    let sp: SimpleSpan = sp.span();
-                    Spanned::new(
-                        UExp::Bin(BinOp::Concat, Box::new(a), Box::new(b)),
-                        sp.into_range(),
-                    )
-                },
-            ),
-            pratt::infix(
-                Associativity::Right(5),
-                just(Token::Caret).ignored().labelled(Terminal::Operator),
-                |a, _, b, sp| {
-                    let sp: SimpleSpan = sp.span();
-                    Spanned::new(
-                        UExp::Bin(BinOp::Pow, Box::new(a), Box::new(b)),
-                        sp.into_range(),
-                    )
-                },
-            ),
-            // Prefix: unary minus → Exp::Neg(x)
-            // Precedence 4 — tighter than `*`/`/`/`%` (3), looser than `^` (5).
-            // So `-a * b` = `(-a) * b` and `-a ^ 2` = `-(a ^ 2)`.
-            pratt::prefix(
-                4,
-                just(Token::Minus).ignored().labelled(Terminal::Operator),
-                |_, rhs, sp| {
-                    let sp: SimpleSpan = sp.span();
-                    Spanned::new(UExp::Neg(Box::new(rhs)), sp.into_range())
-                },
-            ),
-            // Postfix: record set r.set(field, val) — must come before projection
-            // so that `.set(` is not consumed as projection `.set`.
-            // record_set_op = { "." ~ "set" ~ "(" ~ id ~ "," ~ exp_no_seq ~ ")" }
-            pratt::postfix(
-                6,
-                just(Token::Dot)
-                    .ignored()
-                    .labelled(Terminal::Operator)
-                    .ignore_then(
-                        select! { Token::Id(s) => s }
-                            .labelled(Terminal::Set)
-                            .filter(|s: &Cow<'_, str>| s == "set"),
-                    )
-                    .ignore_then(just(Token::LParen).ignored())
-                    .ignore_then(id_tok())
-                    .then_ignore(just(Token::Comma).ignored())
-                    .then(exp_no_seq_rec.clone().boxed())
-                    .then_ignore(just(Token::Comma).ignored().or_not())
-                    .then_ignore(just(Token::RParen).ignored()),
-                |lhs, (field, val): (Spanned<Vid>, Spanned<UExp>), sp| {
-                    let sp: SimpleSpan = sp.span();
-                    let field_name = Spanned::new(field.node.0.clone(), field.span.clone());
-                    Spanned::new(
-                        UExp::SetRecord(Box::new(lhs), field_name, Box::new(val)),
-                        sp.into_range(),
-                    )
-                },
-            ),
-            // Postfix: projection r.field
-            pratt::postfix(
-                6,
-                just(Token::Dot)
-                    .ignored()
-                    .labelled(Terminal::Operator)
-                    .ignore_then(id_tok()),
-                |lhs, field: Spanned<Vid>, sp| {
-                    let sp: SimpleSpan = sp.span();
-                    let field_name = Spanned::new(field.node.0.clone(), field.span.clone());
-                    Spanned::new(UExp::Proj(Box::new(lhs), field_name), sp.into_range())
-                },
-            ),
-        ))
+        let operand = atom
+            .pratt((
+                // Lowest precedence first (matches AEXP_PARSER order)
+                // && (logical AND) — precedence 0, left-associative
+                pratt::infix(
+                    Associativity::Left(0),
+                    just(Token::AmpAmp).ignored().labelled(Terminal::Operator),
+                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::And, a, b)),
+                ),
+                // == (equality) — precedence 1, left-associative
+                pratt::infix(
+                    Associativity::Left(1),
+                    just(Token::EqEq).ignored().labelled(Terminal::Operator),
+                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Equ, a, b)),
+                ),
+                pratt::infix(
+                    Associativity::Left(2),
+                    just(Token::Plus).ignored().labelled(Terminal::Operator),
+                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Add, a, b)),
+                ),
+                pratt::infix(
+                    Associativity::Left(2),
+                    just(Token::Minus).ignored().labelled(Terminal::Operator),
+                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Sub, a, b)),
+                ),
+                pratt::infix(
+                    Associativity::Left(3),
+                    just(Token::Star).ignored().labelled(Terminal::Operator),
+                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Mul, a, b)),
+                ),
+                pratt::infix(
+                    Associativity::Left(3),
+                    just(Token::Slash).ignored().labelled(Terminal::Operator),
+                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Div, a, b)),
+                ),
+                pratt::infix(
+                    Associativity::Left(3),
+                    just(Token::Percent).ignored().labelled(Terminal::Operator),
+                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Rem, a, b)),
+                ),
+                pratt::infix(
+                    Associativity::Left(4),
+                    just(Token::PlusPlus).ignored().labelled(Terminal::Operator),
+                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Concat, a, b)),
+                ),
+                pratt::infix(
+                    Associativity::Right(5),
+                    just(Token::Caret).ignored().labelled(Terminal::Operator),
+                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Pow, a, b)),
+                ),
+                // Prefix: unary minus → Exp::Neg(x)
+                // Precedence 4 — tighter than `*`/`/`/`%` (3), looser than `^` (5).
+                // So `-a * b` = `(-a) * b` and `-a ^ 2` = `-(a ^ 2)`.
+                pratt::prefix(
+                    4,
+                    just(Token::Minus).ignored().labelled(Terminal::Operator),
+                    |_, rhs, sp| push(sp, UExp::Neg(rhs)),
+                ),
+                // Postfix: record set r.set(field, val) — must come before projection
+                // so that `.set(` is not consumed as projection `.set`.
+                // record_set_op = { "." ~ "set" ~ "(" ~ id ~ "," ~ exp_no_seq ~ ")" }
+                pratt::postfix(
+                    6,
+                    just(Token::Dot)
+                        .ignored()
+                        .labelled(Terminal::Operator)
+                        .ignore_then(
+                            select! { Token::Id(s) => s }
+                                .labelled(Terminal::Set)
+                                .filter(|s: &Cow<'_, str>| s == "set"),
+                        )
+                        .ignore_then(just(Token::LParen).ignored())
+                        .ignore_then(id_tok())
+                        .then_ignore(just(Token::Comma).ignored())
+                        .then(exp_no_seq_rec.clone().boxed())
+                        .then_ignore(just(Token::Comma).ignored().or_not())
+                        .then_ignore(just(Token::RParen).ignored()),
+                    |lhs, (field, val): (Spanned<Vid>, ExpId), sp| {
+                        let field_name = Spanned::new(field.node.0.clone(), field.span.clone());
+                        push(sp, UExp::SetRecord(lhs, field_name, val))
+                    },
+                ),
+                // Postfix: projection r.field
+                pratt::postfix(
+                    6,
+                    just(Token::Dot)
+                        .ignored()
+                        .labelled(Terminal::Operator)
+                        .ignore_then(id_tok()),
+                    |lhs, field: Spanned<Vid>, sp| {
+                        let field_name = Spanned::new(field.node.0.clone(), field.span.clone());
+                        push(sp, UExp::Proj(lhs, field_name))
+                    },
+                ),
+            ))
+            .boxed();
+        // `start..end`, below every operator: both bounds are parsed as expressions, then read
+        // as sizes, so a range needs no lookahead to be told from arithmetic.
+        operand
+            .clone()
+            .then(just(Token::DotDot).ignored().ignore_then(operand).or_not())
+            .try_map_with(|(start, end), e| {
+                let Some(end) = end else { return Ok(start) };
+                let exprs = &e.state().exprs;
+                let range = Range {
+                    start: size_of(exprs, start)?,
+                    step: None,
+                    end: Some(size_of(exprs, end)?),
+                };
+                Ok(push(e, UExp::Range(range)))
+            })
     })
     .labelled(Context::Expression)
     .as_context()
 }
 
+/// One item of a block, before the `;` that may follow it.
+enum Item {
+    Stmt(Stmt),
+    Exp(ExpId),
+}
+
 /// Inner exp parser — takes the recursive exp_no_seq reference.
 /// Mirrors `exp = { let_exp | log_exp | seq_exp | exp_no_seq }`
-fn exp_parser_inner<'src, I>(
+///
+/// Statements are parsed as a list into an [`Exp::Block`](crate::ast::Exp::Block),
+/// so the parser's stack depth does not grow with their number (issue #252).
+/// Each statement spans its own tokens, through its `;`. A block is
+/// `item (; item)* ;?`: each item is parsed once, and the `;` after it decides
+/// whether it is a statement or the block's value. Trying `e;` and then `e`
+/// would parse `e` twice, at every nesting level (exponential in depth).
+fn exp_items_parser<'src, I>(
     exp_no_seq: ExpParser<'src, I>,
-) -> impl Parser<'src, I, Spanned<UExp>, extra::Err<RichError<'src>>> + Clone
+) -> impl Parser<'src, I, (ExpId, bool), Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
-    recursive(|exp_rec| {
-        choice((
-            // let x = exp_no_seq; exp?
-            just(Token::KwLet)
-                .ignored()
-                .ignore_then(id_tok())
-                .then(
-                    just(Token::Colon)
-                        .ignored()
-                        .ignore_then(typ_parser())
-                        .or_not(),
-                )
-                .then_ignore(just(Token::Eq).ignored())
-                .then(exp_no_seq.clone())
-                .then_ignore(just(Token::Semi).ignored())
-                .then(exp_rec.clone().or_not())
-                .map_with(|(((var, _typ), val), body), e| {
-                    let sp: SimpleSpan = e.span();
-                    Spanned::new(
-                        UExp::Let(Some(var), Box::new(val), body.map(Box::new)),
-                        sp.into_range(),
-                    )
-                }),
-            // id <- exp_no_seq; exp?  (transcript log)
-            id_tok()
-                .then_ignore(just(Token::LArrow).ignored())
-                .then(exp_no_seq.clone())
-                .then_ignore(just(Token::Semi).ignored())
-                .then(exp_rec.clone().or_not())
-                .map_with(|((id, val), body), e| {
-                    let sp: SimpleSpan = e.span();
-                    Spanned::new(
-                        UExp::Log(id, Box::new(val), body.map(Box::new)),
-                        sp.into_range(),
-                    )
-                }),
-            // exp_no_seq; exp?  (sequencing)
-            exp_no_seq
-                .clone()
-                .then_ignore(just(Token::Semi).ignored())
-                .then(exp_rec.clone().or_not())
-                .map_with(|(lhs, rhs), e| {
-                    let sp: SimpleSpan = e.span();
-                    Spanned::new(
-                        UExp::Let(None, Box::new(lhs), rhs.map(Box::new)),
-                        sp.into_range(),
-                    )
-                }),
-            // exp_no_seq (no sequencing)
-            exp_no_seq.clone(),
-        ))
-    })
+    // A binding needs its `;`: requiring it here, without consuming it, reports a missing one
+    // where the binding ends, as an error of the binding.
+    let semi_ahead = just(Token::Semi).ignored().rewind();
+    let item = choice((
+        // let x = exp_no_seq, before its `;`
+        just(Token::KwLet)
+            .ignored()
+            .ignore_then(id_tok())
+            .then(
+                just(Token::Colon)
+                    .ignored()
+                    .ignore_then(typ_parser())
+                    .or_not(),
+            )
+            .then_ignore(just(Token::Eq).ignored())
+            .then(exp_no_seq.clone())
+            .then_ignore(semi_ahead.clone())
+            .map(|((var, _typ), val)| Item::Stmt(Stmt::Let(var, val))),
+        // id <- exp_no_seq, before its `;`  (transcript log)
+        id_tok()
+            .then_ignore(just(Token::LArrow).ignored())
+            .then(exp_no_seq.clone())
+            .then_ignore(semi_ahead)
+            .map(|(id, val)| Item::Stmt(Stmt::Log(id, val))),
+        // exp_no_seq: sequencing before a `;`, else the block's value
+        exp_no_seq.map(Item::Exp),
+    ))
+    .map_with(|item, e| (item, e.span()));
+    let semi = just(Token::Semi).map_with(|_, e| e.span());
+    item.clone()
+        .then(semi.clone().then(item).repeated().collect::<Vec<_>>())
+        .then(semi.or_not())
+        .try_map_with(|((first, rest), last_semi), e| {
+            // Pair each item with the `;` after it.
+            let (semis, mut items): (Vec<_>, Vec<_>) = rest.into_iter().unzip();
+            items.insert(0, first);
+            let semis = semis.into_iter().map(Some).chain([last_semi]);
+            let mut stmts = Vec::with_capacity(items.len());
+            let mut tail = None;
+            for ((item, item_span), semi) in items.into_iter().zip(semis) {
+                let Some(semi) = semi else {
+                    // The last item has no `;`, so it is an expression (a binding parses only
+                    // before a `;`): the block's value.
+                    let Item::Exp(value) = item else {
+                        return Err(Rich::custom(item_span, "expected ';'"));
+                    };
+                    tail = Some(value);
+                    break;
+                };
+                let stmt = match item {
+                    Item::Stmt(stmt) => stmt,
+                    Item::Exp(val) => Stmt::Discard(val),
+                };
+                stmts.push(Spanned::new(stmt, item_span.start..semi.end));
+            }
+            if stmts.is_empty() {
+                // A lone expression is itself, not a block.
+                return Ok((tail.expect("an item without `;`"), false));
+            }
+            // A parenthesized block as the value continues this block: it binds into
+            // what follows it, which is nothing, so splicing it keeps one flat block.
+            let tail = match tail {
+                Some(value) => match e.state().exprs[value].clone() {
+                    UExp::Block(inner) => {
+                        stmts.extend(inner.stmts);
+                        inner.tail
+                    }
+                    _ => Some(value),
+                },
+                None => None,
+            };
+            Ok((push(e, UExp::Block(Block { stmts, tail })), true))
+        })
 }
 
 /// Parse a top-level expression (allows `;` sequencing).
 /// Public entry point — builds the full exp parser from exp_no_seq.
-fn exp_parser<'src, I>() -> impl Parser<'src, I, Spanned<UExp>, extra::Err<RichError<'src>>> + Clone
+fn exp_parser<'src, I>() -> impl Parser<'src, I, ExpId, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
-    exp_parser_inner(exp_no_seq_parser().boxed())
+    exp_items_parser(exp_no_seq_parser().boxed()).map(|(e, _)| e)
 }
 
 // ── Declaration parser ─────────────────────────────────────────────────
@@ -1184,8 +1205,7 @@ where
 /// Parse a comma-separated argument list inside `(...)`.
 /// Labelled with `Context::ArgumentList` so error reporting can distinguish
 /// errors inside the argument list from errors in generic params or body.
-fn arg_list_parser<'src, I>()
--> impl Parser<'src, I, Vec<Spanned<GArg<Size>>>, extra::Err<RichError<'src>>> + Clone
+fn arg_list_parser<'src, I>() -> impl Parser<'src, I, Vec<Spanned<GArg<Size>>>, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -1199,8 +1219,7 @@ where
 
 /// Parse a declaration.
 /// Mirrors `decl = { proto_decl | func_decl | type_decl }`
-fn decl_parser<'src, I>()
--> impl Parser<'src, I, Spanned<UDecl>, extra::Err<RichError<'src>>> + Clone
+fn decl_parser<'src, I>() -> impl Parser<'src, I, Spanned<UDecl>, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -1223,6 +1242,8 @@ where
             .map_with(|((((name, tvars), args), relation), body), e| {
                 let span: SimpleSpan = e.span();
                 let range = span.into_range();
+                let relation = e.state().exprs.extract(relation);
+                let body = body.map(|b| e.state().exprs.extract(b));
                 Spanned::new(
                     Decl::proto(
                         name,
@@ -1256,6 +1277,7 @@ where
             .map_with(|((((name, tvars), args), ret), body), e| {
                 let span: SimpleSpan = e.span();
                 let range = span.into_range();
+                let body = body.map(|b| e.state().exprs.extract(b));
                 Spanned::new(
                     Decl::func(
                         name,
@@ -1337,7 +1359,10 @@ pub fn parse_decls(src: &str) -> (Vec<Spanned<UDecl>>, Vec<Diagnostic>) {
         .repeated()
         .collect::<Vec<Option<Spanned<UDecl>>>>();
 
-    let result = recovery_parser.parse(input);
+    let mut state = extra::SimpleState(State {
+        exprs: Exprs::new(),
+    });
+    let result = recovery_parser.parse_with_state(input, &mut state);
     let (output, errs) = result.into_output_errors();
     let errors: Vec<Diagnostic> = errs.iter().map(rich_to_diagnostic).collect();
 
@@ -1400,10 +1425,10 @@ mod tests {
             Body::Func { body: Some(body) } => {
                 // Should be Mul(Neg(a), a) = (-a)*a
                 // NOT Neg(Mul(a, a)) = -(a*a)
-                match &body.node {
+                match body.node() {
                     Exp::Bin(op, lhs, _) => {
                         assert_eq!(*op, BinOp::Mul, "top should be Mul");
-                        match &**lhs.as_ref() {
+                        match &body.exprs[*lhs] {
                             Exp::Neg(_) => {}
                             other => panic!("expected Neg on lhs, got {:?}", other),
                         }
@@ -1503,6 +1528,68 @@ mod tests {
         let (decls, errors) = parse_decls(src);
         assert!(errors.is_empty(), "errors: {:?}", errors);
         assert_eq!(decls.len(), 1);
+    }
+
+    /// `..` reads its bounds as sizes at any length, and a stepped range only exists where
+    /// `,` cannot separate items.
+    #[test]
+    fn parse_ranges() {
+        let parse = |exp: &str| {
+            let src = format!("fn f<F: Field, M: Size>(instance x: [F; M]) -> F {{ {exp} }}");
+            parse_decls(&src)
+        };
+        let body = |exp: &str| {
+            let (mut decls, errors) = parse(exp);
+            assert!(errors.is_empty(), "{exp}: {errors:?}");
+            decls.remove(0).node.body.body().expect("a body")
+        };
+        let long = ["(M - M)"; 6].join(" + ");
+        for (exp, step) in [
+            (format!("x[{long}..M]"), false),
+            (format!("x[{long}, {long} + 1..M]"), true),
+            (format!("x[0, {long} + 1..M]"), true),
+            (
+                format!("x[((((((((((((((((({long})))))))))))))))))..M]"),
+                false,
+            ),
+        ] {
+            let tree = body(&exp);
+            let UExp::Ram(_, index) = tree.node() else {
+                panic!("expected an index: {exp}");
+            };
+            let UExp::Range(range) = &tree.exprs[*index] else {
+                panic!("expected a range: {exp}");
+            };
+            assert_eq!(range.step.is_some(), step, "{exp}");
+        }
+        // A size not followed by `..` is an expression.
+        let tree = body(&format!("x[{long}]"));
+        let UExp::Ram(_, index) = tree.node() else {
+            panic!("expected an index");
+        };
+        assert!(matches!(tree.exprs[*index], UExp::Bin(..)));
+        // Outside an index or a domain, `,` separates items: never a stepped range.
+        for exp in [
+            format!("[{long}, {long}]"),
+            "[x, 1..3]".into(),
+            "[0, 2..M]".into(),
+        ] {
+            let tree = body(&exp);
+            assert!(
+                matches!(tree.node(), UExp::Vec(elems) if elems.len() == 2),
+                "{exp}"
+            );
+        }
+        // A comprehension's domain takes a stepped range.
+        let tree = body("[i for i in 0, 2..M]");
+        let UExp::Map(_, _, domain) = tree.node() else {
+            panic!("expected a comprehension");
+        };
+        assert!(matches!(&tree.exprs[*domain], UExp::Range(r) if r.step.is_some()));
+        // A bound must be a size, and `,` in an index must start a stepped range.
+        for exp in ["x[f(M)..M]", "x[0, 1]"] {
+            assert!(!parse(exp).1.is_empty(), "{exp}");
+        }
     }
 
     #[test]

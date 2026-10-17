@@ -6,7 +6,7 @@ use analyses::{
     SpecialSoundnessAnalysis,
 };
 use backend::{ArkConfig, HasOpFactory};
-use graph::{Dag, UDags};
+use graph::{Dag, Relations, UDags};
 use lang::typ::Qualifier;
 use std::sync::Arc;
 
@@ -50,22 +50,20 @@ impl<C: ArkConfig + HasOpFactory> CompiledProtocol<C> {
     /// Returns source diagnostics if full graph construction fails.
     ///
     /// # Panics
-    /// If an internal compiler invariant fails or the compiler thread cannot be spawned.
+    /// If an internal compiler invariant fails.
     pub fn prepare_analysis(&self) -> Result<PreparedAnalysis<C>, CompileError> {
-        share::thread::run_or_panic("zippel-analysis-prepare", || {
-            let graphs = UDags::<C>::from_module(self.concrete_module.clone()).map_err(|e| {
-                CompileError::Diagnostics {
-                    name: self.source_name.clone(),
-                    source: Arc::clone(&self.source),
-                    diagnostics: vec![e.into()],
-                }
-            })?;
-            let graph = graphs
-                .protocol(&self.protocol_name)
-                .expect("compiled protocol exists");
-            Ok(PreparedAnalysis {
-                graph: QualifierPropagation::from_dag(graph),
-            })
+        let graphs = UDags::<C>::lower(&self.typed, Relations::Lower).map_err(|e| {
+            CompileError::Diagnostics {
+                name: self.source_name.clone(),
+                source: Arc::clone(&self.source),
+                diagnostics: vec![e.into()],
+            }
+        })?;
+        let graph = graphs
+            .protocol(&self.protocol_name)
+            .expect("compiled protocol exists");
+        Ok(PreparedAnalysis {
+            graph: QualifierPropagation::from_dag(graph),
         })
     }
 }

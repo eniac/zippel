@@ -5,8 +5,7 @@ use crate::eval::eval_op;
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkBls12_381, ArkConfig, ArkScalarOps, Value};
 use graph::{ArgKind, Dep, GOp, Node, Op, Ref, UDag, mk};
-use lang::ast::{CModule, UModule};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use lang::typ::{Distribution, Nothing, Qualifier};
 use petgraph::graph::NodeIndex;
 use rand::rngs::ThreadRng;
@@ -16,33 +15,7 @@ use std::collections::{HashMap, HashSet};
 /// Type alias for test configuration (BLS12-381 curve)
 pub type TestConfig = ArkBls12_381;
 
-/// Parse source text and concretize with the given sizes.
-/// Panics on parse or concretize errors (test-only).
-#[track_caller]
-pub fn parse_and_concretize(src: &str, sizes: &Ctx<Tid, usize>) -> CModule {
-    let (module, diags) = UModule::parse(src);
-    let errors: Vec<_> = diags
-        .iter()
-        // E0001 (NoProtoDeclaration) is a file-structure rule, not relevant
-        // to unit tests using fn-only sources. Suppress by error code.
-        .filter(|d| {
-            d.severity == lang::diagnostic::Severity::Error && d.code.as_deref() != Some("E0001")
-        })
-        .collect();
-    assert!(
-        errors.is_empty(),
-        "unexpected errors parsing test source:\n{}",
-        errors
-            .iter()
-            .map(|d| d.summary.clone())
-            .collect::<Vec<_>>()
-            .join("\n")
-    );
-    module
-        .expect("parse returned no module but no errors")
-        .concretize(sizes)
-        .expect("concretize failed")
-}
+pub use graph::testing::lowered;
 
 /// Helper to create a simple DAG for testing operations
 pub struct GraphBuilder<C: ArkConfig> {
@@ -303,7 +276,6 @@ mod tests {
 
     #[test]
     fn test_execute_multiple_checks() {
-        use graph::UDags;
         use share::Ctx;
 
         // Protocol with two separate verify statements → two Check nodes
@@ -313,8 +285,7 @@ mod tests {
                 verify(y == y)
             }
         "#;
-        let m = parse_and_concretize(src, &Ctx::new());
-        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let gs = lowered::<TestConfig>(src, &Ctx::new()).unwrap();
         let dag = &gs[0];
 
         let checks = dag.find_verify();
@@ -341,7 +312,6 @@ mod tests {
 
     #[test]
     fn test_execute_scattered_checks() {
-        use graph::UDags;
         use share::Ctx;
 
         // Protocol with scattered verify statements throughout the body
@@ -353,8 +323,7 @@ mod tests {
                 verify(b == b)
             }
         "#;
-        let m = parse_and_concretize(src, &Ctx::new());
-        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let gs = lowered::<TestConfig>(src, &Ctx::new()).unwrap();
         let dag = &gs[0];
 
         let checks = dag.find_verify();
@@ -381,7 +350,6 @@ mod tests {
 
     #[test]
     fn test_execute_checks_negative_second_fails() {
-        use graph::UDags;
         use share::Ctx;
 
         // Second verify has a false condition (x != y)
@@ -391,8 +359,7 @@ mod tests {
                 verify(x == y)
             }
         "#;
-        let m = parse_and_concretize(src, &Ctx::new());
-        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let gs = lowered::<TestConfig>(src, &Ctx::new()).unwrap();
         let dag = &gs[0];
 
         let checks = dag.find_verify();
@@ -413,7 +380,6 @@ mod tests {
 
     #[test]
     fn test_execute_checks_negative_first_fails() {
-        use graph::UDags;
         use share::Ctx;
 
         // First verify has a false condition (x != y)
@@ -423,8 +389,7 @@ mod tests {
                 verify(y == y)
             }
         "#;
-        let m = parse_and_concretize(src, &Ctx::new());
-        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let gs = lowered::<TestConfig>(src, &Ctx::new()).unwrap();
         let dag = &gs[0];
 
         let checks = dag.find_verify();
@@ -447,7 +412,6 @@ mod tests {
     /// fn checked(x) { verify(x == x); x } inlined into protocol → both checks true.
     #[test]
     fn test_execute_cross_fn_verify_positive() {
-        use graph::UDags;
         use share::Ctx;
 
         let src = r#"
@@ -460,8 +424,7 @@ mod tests {
                 verify(a == v)
             }
         "#;
-        let m = parse_and_concretize(src, &Ctx::new());
-        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let gs = lowered::<TestConfig>(src, &Ctx::new()).unwrap();
 
         let proto = gs.protocols()[0];
         let checks = proto.find_verify();
@@ -488,7 +451,6 @@ mod tests {
     /// fn checked(x, y) { verify(x == y); x } — when x ≠ y the inlined check fails.
     #[test]
     fn test_execute_cross_fn_verify_negative() {
-        use graph::UDags;
         use share::Ctx;
 
         let src = r#"
@@ -501,8 +463,7 @@ mod tests {
                 verify(r == a)
             }
         "#;
-        let m = parse_and_concretize(src, &Ctx::new());
-        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let gs = lowered::<TestConfig>(src, &Ctx::new()).unwrap();
 
         let proto = gs.protocols()[0];
         let checks = proto.find_verify();
@@ -533,7 +494,6 @@ mod tests {
     /// Direct `verify(() == ())` — Unit == Unit, trivially true.
     #[test]
     fn test_execute_verify_unit_eq_unit() {
-        use graph::UDags;
         use share::Ctx;
 
         let src = r#"
@@ -541,8 +501,7 @@ mod tests {
                 verify(() == ())
             }
         "#;
-        let m = parse_and_concretize(src, &Ctx::new());
-        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let gs = lowered::<TestConfig>(src, &Ctx::new()).unwrap();
         let dag = &gs[0];
 
         let checks = dag.find_verify();
@@ -564,7 +523,6 @@ mod tests {
     /// as its continuation, preventing direct `let` binding.
     #[test]
     fn test_execute_verify_let_check_then_unit_eq() {
-        use graph::UDags;
         use share::Ctx;
 
         let src = r#"
@@ -576,8 +534,7 @@ mod tests {
                 verify(a == ())
             }
         "#;
-        let m = parse_and_concretize(src, &Ctx::new());
-        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let gs = lowered::<TestConfig>(src, &Ctx::new()).unwrap();
         let dag = &gs[0];
 
         let checks = dag.find_verify();

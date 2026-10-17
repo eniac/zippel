@@ -45,20 +45,21 @@ that examples and external users call into.
 | [`backend/`](backend) | Concrete algebraic types and operations backed by `arkworks` (`ark-ff`, `ark-ec`, `ark-poly`, ...): field/group/pairing config (`config.rs`, `types.rs`), runtime values (`values.rs`), the operator implementations (`op.rs`), polynomial representations (`poly_variant.rs`, `virtual_polynomial.rs`). `nothing/` is a no-op backend used where no concrete curve is needed (e.g., some analysis paths). |
 | [`runtime/`](runtime) | Executes a projected Graph IR DAG: work-stealing scheduler (`queue.rs`), graph execution and transcript/Fiat-Shamir handling (`graph.rs`), the single-operation interpreter (`eval/`; `eval/graph_tests/` executes lowered graphs), error types (`error.rs`). |
 | [`analyses/`](analyses) | Completeness (`completeness.rs`) and (generalized) special-soundness (`soundness.rs`) analyses, plus zero-knowledge/qualifier propagation (`knowledge.rs`, `qualifier.rs`). Encodes Graph IR as polynomial ideals (`ideal/`, `frontend/`) and checks ideal membership via a Gröbner-basis backend (`backend/`, including an optional Singular integration in `backend/singular.rs`). `extractor.rs` builds candidate knowledge extractors for the soundness check. |
-| [`share/`](share) | Small utilities shared across the workspace: a generic `Ctx` map keyed by identifiers (`context.rs`), tree traversal helpers (`traversal.rs`), pretty-printing (`pretty.rs`), macros (`macros.rs`). |
+| [`share/`](share) | Small utilities shared across the workspace: a generic `Ctx` map keyed by identifiers and `ScopedCtx`, a `Ctx` with an undo log for lexical environments (`context.rs`), stack growth for recursive passes (`stack.rs`), tree traversal helpers (`traversal.rs`), pretty-printing (`pretty.rs`), macros (`macros.rs`). |
 | [`fmt/`](fmt) | `zippel-fmt`, the source formatter for `.zippel` files (binary in `fmt/src/bin/zippel-fmt.rs`). |
 | [`check/`](check) | `zippel-check`: every compile-time check, no harness or inputs. A thin driver (`check/src/main.rs`) over the same stages and diagnostics as compilation plus explicit projection: `UModule::parse`, `UModule::concretize`, `CModule::typecheck`, and Graph IR construction/projection, with every error turned into a `Diagnostic` via `From` (`TypeError`, `ModuleError`, `GraphError`); it only adds default sizes (`lang::ast::minimal_sizes`). `check/tests/examples.rs` runs it over every example using automatic defaults. |
 | [`experiments/`](experiments) | The `experiments` crate: Zippel against existing (native/upstream) implementations of the same protocols. Vendored baselines (`*_upstream/` subdirs), Zippel harnesses, the `bench_all` time/memory driver behind the paper's Figure 7 (the artifact's Experiment 1), and cross-verification tests. Not a default workspace member (see below). Distinct from `benches/`, the Criterion benchmarks of Zippel alone. |
+| [`tools/`](tools) | Internal developer tools, not shipped. `stack-probe` measures the compile stages' stack use: `min-stack` binary-searches the smallest thread stack that compiles generated deep inputs (a child process per attempt, since an overflow aborts), and `frames` lists the largest prologue frames of a debug binary via objdump (x86-64). A minimum that grows with input size means some pass recurses per statement or nesting level. |
 | [`examples/`](examples) | 30+ protocol implementations. Each `examples/<name>/` has a `<name>.zippel` source file and a `main.rs` harness that compiles it against a concrete curve and runs prover/verifier/analyses. `examples/main.rs` is the single dispatch binary (`cargo zrun run <name> --size NAME=VALUE ...`; `cargo zrun analyze <name> [completeness|zk|soundness]`). Each module registers `spec()` with its source, curve, size defaults, input generator and analyses (soundness owns its round parameters). `examples/common/cli.rs` handles common size/backend arguments; `examples/common/mod.rs` owns size resolution, execution, analysis and uniform reporting. It prepares the analysis graph before timing passes. |
 | [`artifact/`](artifact) | Docker image and scripts (`artifact/scripts/`) to reproduce the paper's compilation/runtime benchmarks and completeness/soundness analysis results. |
 | [`docs/`](docs/library-usage.md) | How to depend on Zippel as a library from an external crate. |
 | `paper.pdf` | The design/evaluation paper this repo implements. |
 
 Workspace members (`Cargo.toml`): `lang`, `lang/lang-derive`, `runtime`,
-`share`, `graph`, `backend`, `analyses`, `fmt`, `check`, `experiments`. Only a
-subset are **default members** (`.`, `lang`, `runtime`, `share`, `graph`,
-`backend`, `analyses`, `check`) — `fmt` and `experiments` require `--workspace`
-or `-p <crate>` explicitly, and `experiments` additionally needs `gcc`, `m4`,
+`share`, `graph`, `backend`, `analyses`, `fmt`, `check`, `experiments`, `tools`.
+Only a subset are **default members** (`.`, `lang`, `runtime`, `share`, `graph`,
+`backend`, `analyses`, `check`) — `fmt`, `experiments` and `tools` require
+`--workspace` or `-p <crate>` explicitly, and `experiments` additionally needs `gcc`, `m4`,
 `pkg-config` (arkworks/GMP) and pulls in upstream comparison libraries.
 
 ## Language quick reference
@@ -152,6 +153,31 @@ unused helpers are still typechecked. Use `--size` to check specific sizes.
   top-level `<crate>/tests/` integration tests (snapshot tests for
   `lang`, `fmt`, `analyses` live under `tests/snapshots` /
   `tests/gb_snapshots`).
+- Expressions live in an append-only arena (`lang::ast::Exprs`, children before
+  parents, nodes never rewritten in place). `Exp::Block` owns a `Block` with
+  `Vec<Spanned<Stmt>>` and an optional tail expression. `Stmt::{Let, Log, Discard}`
+  hold expression IDs; statements themselves never go in the arena. `lang` has no
+  expression printer: diagnostics label spans. A pass that doesn't depend on what a
+  node means uses `lang/src/ast/walk.rs` instead of matching every `Exp` variant:
+  `Exp::for_each_child`/`for_each_child_mut`, or `ExpRef::walk` (iterative, evaluation
+  order, resolves names to their bindings). The binder rules live only there.
+  Direct syntactic effects for purity queries and relation diagnostics are
+  described in `ast/effect.rs`; their different purity policies remain explicit.
+  Type inference is such a walk too: each rule in `lang/src/typ/infer/` types a
+  node from its children's types (`Env::typ`). The `TypeTable` also stores resolved
+  calls (declaration, instantiated signature and substitution); lowering reads
+  these records and infers fresh records for appended bodies. Lowering borrows
+  immutable definitions and shares a signature set across scopes. Only lowering
+  and `zippel-fmt` recurse, under `#[lang::stack_guard]`. The formatter's methods
+  share a cursor/style context; documents borrow its per-call arena independently
+  of the context's mutable borrow.
+- No pass relies on a large thread stack: walks are iterative, the rest recurse
+  under `#[lang::stack_guard]`, and the workspace sets no `RUST_MIN_STACK` or
+  big worker threads. Environments that enter and leave scopes (inference's and
+  lowering's variables) bind into a `share::ScopedCtx` and roll back to a mark
+  instead of cloning a map; `Ctx` is a plain `BTreeMap`, so its clones copy.
+  `tools`' `stack-probe min-stack` shows whether a change made stack use grow
+  with input size.
 - The `nothing` module in `backend` is a placeholder/no-op curve
   implementation, not a real backend — don't confuse it with
   `ArkBls12_381` etc. when picking a concrete type for new code.

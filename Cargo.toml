@@ -10,6 +10,7 @@ members = [
   "fmt",
   "check",
   "experiments",
+  "tools",
 ]
 default-members = [
   ".",
