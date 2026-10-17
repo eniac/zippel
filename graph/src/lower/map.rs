@@ -1,7 +1,9 @@
 //! Persistent `Map`/`ReduceMap` templates for pure loop bodies.
 
 use super::*;
-use lang::ast::{CRef, ExpId, Exprs, Exps};
+use std::collections::HashMap;
+
+use lang::ast::{ExpId, Exprs, Visit};
 
 impl<C: HasOpFactory> UDag<C> {
     /// Lower a Map/ReduceMap body to an inline `GOp` op-tree (no graph nodes).
@@ -205,70 +207,73 @@ impl<C: HasOpFactory> UDag<C> {
         }
     }
 
-    /// Capture-avoiding substitution of `replacement` for free `target` in
-    /// `exp`, as new nodes of `exprs` (unchanged subtrees are shared, not copied).
-    /// Handles pure value/arithmetic/polynomial forms precisely; any
-    /// binder-introducing or effectful form is kept verbatim when it does not
-    /// mention `target`, else declines (`None`) so composition stays safe.
-    #[stack_guard]
+    /// Capture-avoiding substitution of `replacement` for free `target` in `exp`, as new
+    /// nodes of `exprs`, each spanning the node it rewrites; unchanged subtrees are shared,
+    /// not copied. Substitutes through the pure forms that bind nothing (arithmetic,
+    /// vectors, polynomials, projections); any other form is kept as is when it does not read
+    /// `target`, else the substitution declines (`None`), so composition stays safe.
     pub(super) fn substitute_var(
         exprs: &mut Exprs<BigUint>,
         exp: ExpId,
         target: &Vid,
         replacement: ExpId,
     ) -> Option<ExpId> {
-        let go = |e: ExpId, exprs: &mut Exprs<BigUint>| {
-            Self::substitute_var(exprs, e, target, replacement)
+        let substitutes_through = |node: &CExp| {
+            matches!(
+                node,
+                CExp::Var(_)
+                    | CExp::Lit(_)
+                    | CExp::Unit
+                    | CExp::Range(_)
+                    | CExp::Bin(..)
+                    | CExp::Ram(..)
+                    | CExp::Pair(..)
+                    | CExp::Vec(_)
+                    | CExp::Evaluate(..)
+                    | CExp::Poly(_)
+                    | CExp::Coef(_)
+                    | CExp::Mle(_)
+                    | CExp::Interpolate(..)
+                    | CExp::Proj(..)
+            )
         };
-        let node = match exprs[exp].clone() {
-            CExp::Var(id) => return Some(if id.node == *target { replacement } else { exp }),
-            CExp::Lit(_) | CExp::Unit | CExp::Range(_) => return Some(exp),
-            CExp::Bin(op, a, b) => {
-                let a = go(a, exprs)?;
-                CExp::Bin(op, a, go(b, exprs)?)
-            }
-            CExp::Ram(a, b) => {
-                let a = go(a, exprs)?;
-                CExp::Ram(a, go(b, exprs)?)
-            }
-            CExp::Pair(a, b) => {
-                let a = go(a, exprs)?;
-                CExp::Pair(a, go(b, exprs)?)
-            }
-            CExp::Vec(xs) => {
-                let mut out = Vec::with_capacity(xs.len());
-                for e in xs.iter() {
-                    out.push(go(e, exprs)?);
+        // The nodes to rebuild, children first. They bind nothing, so `target` is free in
+        // every one of them.
+        let mut rebuild = Vec::new();
+        let mut walk = exprs.at(exp).walk();
+        while let Some(visit) = walk.next() {
+            match visit {
+                Visit::Enter(e) if !substitutes_through(e.node()) => {
+                    if e.reads_free(target) {
+                        return None;
+                    }
+                    walk.skip_children();
                 }
-                CExp::Vec(Exps(out))
+                Visit::Leave(e) if substitutes_through(e.node()) => rebuild.push(e.id()),
+                _ => {}
             }
-            CExp::Evaluate(p, sel, pts) => {
-                let p = go(p, exprs)?;
-                let pts = match pts {
-                    Some(x) => Some(go(x, exprs)?),
-                    None => None,
-                };
-                CExp::Evaluate(p, sel, pts)
+        }
+        let mut new: HashMap<ExpId, ExpId> = HashMap::new();
+        for id in rebuild {
+            let node = exprs[id].clone();
+            if matches!(&node, CExp::Var(x) if x.node == *target) {
+                new.insert(id, replacement);
+                continue;
             }
-            CExp::Poly(p) => CExp::Poly(go(p, exprs)?),
-            CExp::Coef(p) => CExp::Coef(go(p, exprs)?),
-            CExp::Mle(p) => CExp::Mle(go(p, exprs)?),
-            CExp::Interpolate(pts, evals) => {
-                let pts = match pts {
-                    Some(p) => Some(go(p, exprs)?),
-                    None => None,
-                };
-                CExp::Interpolate(pts, go(evals, exprs)?)
-            }
-            CExp::Proj(p, field) => CExp::Proj(go(p, exprs)?, field),
-            _ => {
-                if Self::exp_mentions_free_var(exprs.at(exp), target) {
-                    return None;
+            let mut changed = false;
+            let node = node.map_ids(|c| match new.get(&c) {
+                Some(&n) => {
+                    changed = true;
+                    n
                 }
-                return Some(exp);
+                None => c,
+            });
+            if changed {
+                let span = exprs.span(id).clone();
+                new.insert(id, exprs.push(node, span));
             }
-        };
-        Some(exprs.push(node, 0..0))
+        }
+        Some(new.get(&exp).copied().unwrap_or(exp))
     }
 
     /// Fuse `reduce(rop, [f(x) for x in [g(y) for y in D]])` into a single
@@ -345,39 +350,5 @@ impl<C: HasOpFactory> UDag<C> {
             return Ok(None);
         };
         Ok(Some(GOp::reduce_map(rop, domain_op, body_op)))
-    }
-
-    #[stack_guard]
-    pub(super) fn exp_mentions_free_var(exp: CRef<'_>, target: &Vid) -> bool {
-        let at = |id: &ExpId| exp.at(*id);
-        match exp.node() {
-            CExp::Var(id) => id.node == *target,
-            CExp::Map(body, binder, domain) => {
-                Self::exp_mentions_free_var(at(domain), target)
-                    || (binder.node != *target && Self::exp_mentions_free_var(at(body), target))
-            }
-            // A statement binding `target` shadows it in the rest of the block.
-            CExp::Block(stmts, tail) => {
-                for stmt in stmts {
-                    if Self::exp_mentions_free_var(exp.at(stmt.node.value()), target) {
-                        return true;
-                    }
-                    if stmt.node.binder().is_some_and(|id| id.node == *target) {
-                        return false;
-                    }
-                }
-                tail.as_ref()
-                    .is_some_and(|t| Self::exp_mentions_free_var(at(t), target))
-            }
-            CExp::Fun(vars, body) => {
-                !vars.iter().any(|v| v.node == *target)
-                    && Self::exp_mentions_free_var(at(body), target)
-            }
-            // Every other form binds nothing: it mentions `target` if a child does.
-            node => node
-                .children()
-                .into_iter()
-                .any(|c| Self::exp_mentions_free_var(exp.at(c), target)),
-        }
     }
 }

@@ -21,7 +21,7 @@ impl CRef<'_> {
                     .map(Spanned::dummy)
             })
             .collect::<Result<_, _>>()
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
 
         // Vectors cannot be empty for type inference to work
         if ts.is_empty() {
@@ -68,7 +68,7 @@ impl CRef<'_> {
         // Type infer the range expression
         let tr = r
             .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
 
         match tr {
             CTyp::Vec(inner, n) if n.node > 0 => {
@@ -81,7 +81,7 @@ impl CRef<'_> {
                 // Type infer the expression [x] with the new context
                 let tx = x
                     .infer_in(kctx, fctx, &innerctx, cx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                    .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
 
                 Ok(CTyp::vec(&tx, n.node))
             }
@@ -101,7 +101,7 @@ impl CRef<'_> {
     ) -> Result<CTyp, TypeError> {
         let tv = v
             .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
 
         match tv {
             CTyp::Vec(elem, n) if n.node > 0 => {
@@ -161,10 +161,10 @@ impl CRef<'_> {
     ) -> Result<CTyp, TypeError> {
         let ta = a
             .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
         let tb = b
             .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
 
         // The index must be a compile-time known integer (Fin type).
         // Fin types arise from literals, ranges, size parameters, and

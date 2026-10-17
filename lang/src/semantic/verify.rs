@@ -36,7 +36,7 @@ struct BodyFacts {
 
 fn collect(exp: URef<'_>, facts: &mut BodyFacts) {
     for node in exp.subexps() {
-        match node {
+        match node.node() {
             Exp::Verify(_) => facts.verifies = true,
             Exp::App(id, _) => {
                 facts.calls.insert(id.node.0.clone());

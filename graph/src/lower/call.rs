@@ -13,6 +13,7 @@ impl<C: HasOpFactory> UDag<C> {
     ) -> Result<Lowered<C>, GraphError> {
         let Step {
             exprs,
+            span,
             transcr,
             edge_type,
             kctx,
@@ -45,8 +46,8 @@ impl<C: HasOpFactory> UDag<C> {
                 // implicitly reinterpreting the polynomial as a
                 // coefficient list — that lub_dot(Poly, Vec) arm
                 // has been removed.
-                let poly = exprs.push(Exp::Var(fid.clone()), 0..0);
-                let eval_exp = exprs.push(Exp::Evaluate(poly, None, Some(params[0])), 0..0);
+                let poly = exprs.push(Exp::Var(fid.clone()), span.clone());
+                let eval_exp = exprs.push(Exp::Evaluate(poly, None, Some(params[0])), span);
                 // Trampoline
                 Ok(Lowered::Rewrite(eval_exp))
             }
@@ -74,7 +75,7 @@ impl<C: HasOpFactory> UDag<C> {
                 let mut bound_vars = vctx.keys();
                 let coef_var = Vid::fresh(&format!("__coef_{}", fid), &mut bound_vars);
 
-                let mut push = |node| exprs.push(node, 0..0);
+                let mut push = |node| exprs.push(node, span.clone());
                 let coefs = Exp::Var(Spanned::dummy(coef_var.clone()));
                 let (low, high) = (push(coefs.clone()), push(coefs));
                 let low_range = push(Exp::Range(CRange::from_raw(0, 1, mid)));
@@ -151,7 +152,7 @@ impl<C: HasOpFactory> UDag<C> {
                 }
                 let body = match body.body() {
                     Some(tree) => exprs.append(tree),
-                    None => exprs.push(CExp::Unit, 0..0),
+                    None => exprs.push(CExp::Unit, span),
                 };
                 Ok(Lowered::Inline {
                     body,

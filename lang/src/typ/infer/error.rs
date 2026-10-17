@@ -340,6 +340,30 @@ impl TypeError {
     pub fn next(a: Self, b: Self) -> Self {
         TypeError::Next(Box::new(a), Box::new(b))
     }
+    /// `e`, raised while inferring a subexpression of `parent`, with `parent` attached for
+    /// `Debug`. Only the innermost enclosing expression is attached: one per level would copy
+    /// every enclosing tree into the error (quadratic in nesting depth) and nest the error as
+    /// deep as the expression.
+    pub fn within(
+        kctx: &Ctx<Tid, CKind>,
+        vctx: &Ctx<Vid, CTyp>,
+        parent: CRef<'_>,
+        e: Self,
+    ) -> Self {
+        if e.has_parent() {
+            e
+        } else {
+            Self::next(Self::exp(kctx, vctx, parent), e)
+        }
+    }
+    /// Whether [`Self::within`] has attached an enclosing expression to `self`.
+    fn has_parent(&self) -> bool {
+        match self {
+            TypeError::Located(_, e) | TypeError::Decl(_, e) => e.has_parent(),
+            TypeError::Next(a, b) => matches!(**a, TypeError::CExp(..)) || b.has_parent(),
+            _ => false,
+        }
+    }
     /// Reports that specification relation `e` is not pure.
     pub fn not_pure_rel(e: CRef<'_>) -> Self {
         TypeError::NotPureRel(e.to_expr())

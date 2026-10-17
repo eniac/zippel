@@ -152,6 +152,11 @@ unused helpers are still typechecked. Use `--size` to check specific sizes.
   top-level `<crate>/tests/` integration tests (snapshot tests for
   `lang`, `fmt`, `analyses` live under `tests/snapshots` /
   `tests/gb_snapshots`).
+- Expressions live in an append-only arena (`lang::ast::Exprs`, children before
+  parents, nodes never rewritten in place). A pass that doesn't depend on what a
+  node means uses `lang/src/ast/walk.rs` instead of matching every `Exp` variant:
+  `Exp::children`/`for_each_child_mut`, or `ExpRef::walk` (iterative, evaluation
+  order, resolves names to their bindings). The binder rules live only there.
 - The `nothing` module in `backend` is a placeholder/no-op curve
   implementation, not a real backend — don't confuse it with
   `ArkBls12_381` etc. when picking a concrete type for new code.

@@ -2,11 +2,13 @@
 
 use super::*;
 use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePolynomial};
+use lang::ast::Visit;
 
 impl<C: HasOpFactory> UDag<C> {
-    /// Convert a Fun expression body to a PolyVariant
-    /// Only polynomial operations (Add, Sub, Mul with scalars, Var, Lit) are allowed
-    #[stack_guard]
+    /// The polynomial a `fun` body over `vars` denotes. Only `+`, `-`, `*`, negation, the
+    /// fun's parameters and literals may occur; a factor built from literals alone scales the
+    /// other factor. One post-order pass over the body, each subtree a constant or a
+    /// polynomial on a value stack, so long bodies take linear time and bounded stack.
     pub(super) fn exp_to_poly_variant(
         exp: CRef<'_>,
         vars: &[Vid],
@@ -14,109 +16,114 @@ impl<C: HasOpFactory> UDag<C> {
     ) -> Result<PolyVariant<C::F>, GraphError> {
         use ark_ff::{One, Zero};
 
-        let non_poly = |msg: String| GraphError::NonPolynomialFun(msg, exp.span().clone());
+        /// A subtree's value: a field constant until it meets a parameter.
+        enum Value<F: PrimeField> {
+            Const(F),
+            Poly(PolyVariant<F>),
+        }
+        let non_poly =
+            |e: CRef<'_>, msg: String| GraphError::NonPolynomialFun(msg, e.span().clone());
         // Evaluation-table length of a multilinear fun over `vars`.
-        let table_len = || {
+        let table_len = |e: CRef<'_>| {
             u32::try_from(vars.len())
                 .ok()
                 .and_then(|n| 1usize.checked_shl(n))
-                .ok_or_else(|| non_poly("too many variables in a multilinear fun".to_string()))
+                .ok_or_else(|| non_poly(e, "too many variables in a multilinear fun".to_string()))
         };
-        let at = |id: &ExpId| exp.at(*id);
-        match exp.node() {
-            CExp::Lit(n) => {
-                // Field constant, in the shape of the fun's other leaves.
-                let scalar = field_from_literal::<C>(n);
-                if vars.len() < 2 {
-                    Ok(PolyVariant::from_scalar(scalar))
-                } else {
-                    let evals = vec![scalar; table_len()?];
-                    Ok(PolyVariant::DenseMle(
-                        DenseMultilinearExtension::from_evaluations_vec(vars.len(), evals),
-                    ))
+        // A constant in the shape of the fun's other leaves.
+        let poly = |e: CRef<'_>, v: Value<C::F>| match v {
+            Value::Poly(p) => Ok(p),
+            Value::Const(c) if vars.len() < 2 => Ok(PolyVariant::from_scalar(c)),
+            Value::Const(c) => Ok(PolyVariant::DenseMle(
+                DenseMultilinearExtension::from_evaluations_vec(vars.len(), vec![c; table_len(e)?]),
+            )),
+        };
+        let mut values: Vec<Value<C::F>> = Vec::new();
+        for visit in exp.walk() {
+            let e = match visit {
+                Visit::Enter(e) => {
+                    if !matches!(
+                        e.node(),
+                        CExp::Lit(_)
+                            | CExp::Var(_)
+                            | CExp::Neg(_)
+                            | CExp::Bin(BinOp::Add | BinOp::Sub | BinOp::Mul, ..)
+                    ) {
+                        return Err(non_poly(
+                            e,
+                            format!(
+                                "`{e}` is not an addition, subtraction, multiplication, or negation"
+                            ),
+                        ));
+                    }
+                    continue;
                 }
-            }
-            CExp::Var(vid) => {
-                // Check if this is a bound variable
-                if let Some(&var_idx) = var_map.get(&vid.node) {
-                    // Create a polynomial with variable
-                    if vars.len() == 1 {
-                        // Univariate: create polynomial [0, 1] representing x
-                        let poly =
-                            DensePolynomial::from_coefficients_vec(vec![C::F::zero(), C::F::one()]);
-                        Ok(PolyVariant::DenseUni(poly))
+                Visit::Bind(_) => continue,
+                Visit::Leave(e) => e,
+            };
+            let value = match e.node() {
+                CExp::Lit(n) => Value::Const(field_from_literal::<C>(n)),
+                CExp::Var(vid) => {
+                    let Some(&var_idx) = var_map.get(&vid.node) else {
+                        return Err(non_poly(
+                            e,
+                            format!("variable `{vid}` is not a parameter of the fun"),
+                        ));
+                    };
+                    Value::Poly(if vars.len() == 1 {
+                        // Univariate: x
+                        PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![
+                            C::F::zero(),
+                            C::F::one(),
+                        ]))
                     } else {
-                        // Multilinear: create a basis polynomial
-                        let num_vars = vars.len();
-                        let mut evals = vec![C::F::zero(); table_len()?];
-                        // Set evaluation at the point corresponding to this variable
-                        for (i, e) in evals.iter_mut().enumerate() {
+                        // Multilinear: the basis polynomial of this variable
+                        let mut evals = vec![C::F::zero(); table_len(e)?];
+                        for (i, x) in evals.iter_mut().enumerate() {
                             if (i >> var_idx) & 1 == 1 {
-                                *e = C::F::one();
+                                *x = C::F::one();
                             }
                         }
-                        let mle = DenseMultilinearExtension::from_evaluations_vec(num_vars, evals);
-                        Ok(PolyVariant::DenseMle(mle))
+                        PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(
+                            vars.len(),
+                            evals,
+                        ))
+                    })
+                }
+                CExp::Neg(_) => match values.pop().expect("operand") {
+                    Value::Const(c) => Value::Const(-c),
+                    Value::Poly(p) => Value::Poly(p.poly_neg()),
+                },
+                CExp::Bin(op, ..) => {
+                    let b = values.pop().expect("right operand");
+                    let a = values.pop().expect("left operand");
+                    match (op, a, b) {
+                        (BinOp::Add, Value::Const(a), Value::Const(b)) => Value::Const(a + b),
+                        (BinOp::Sub, Value::Const(a), Value::Const(b)) => Value::Const(a - b),
+                        (BinOp::Mul, Value::Const(a), Value::Const(b)) => Value::Const(a * b),
+                        (BinOp::Mul, Value::Const(s), Value::Poly(p))
+                        | (BinOp::Mul, Value::Poly(p), Value::Const(s)) => {
+                            Value::Poly(p.poly_mul_scalar(s))
+                        }
+                        (op, a, b) => {
+                            let (a, b) = (poly(e, a)?, poly(e, b)?);
+                            let result = match op {
+                                BinOp::Add => a.poly_add(&b),
+                                BinOp::Sub => a.poly_sub(&b),
+                                _ => a.poly_mul(&b),
+                            };
+                            Value::Poly(
+                                result
+                                    .map_err(|err| non_poly(e, format!("{op:?} failed: {err}")))?,
+                            )
+                        }
                     }
-                } else {
-                    Err(non_poly(format!(
-                        "variable `{}` is not a parameter of the fun",
-                        vid
-                    )))
                 }
-            }
-            CExp::Bin(BinOp::Add, a, b) => {
-                let pa = Self::exp_to_poly_variant(at(a), vars, var_map)?;
-                let pb = Self::exp_to_poly_variant(at(b), vars, var_map)?;
-                pa.poly_add(&pb)
-                    .map_err(|e| non_poly(format!("Add failed: {}", e)))
-            }
-            CExp::Bin(BinOp::Sub, a, b) => {
-                let pa = Self::exp_to_poly_variant(at(a), vars, var_map)?;
-                let pb = Self::exp_to_poly_variant(at(b), vars, var_map)?;
-                pa.poly_sub(&pb)
-                    .map_err(|e| non_poly(format!("Sub failed: {}", e)))
-            }
-            CExp::Bin(BinOp::Mul, a, b) => {
-                // A constant factor scales the other one, whatever its encoding.
-                if let Some(s) = Self::scalar_constant_in_fun(at(a)) {
-                    return Ok(Self::exp_to_poly_variant(at(b), vars, var_map)?.poly_mul_scalar(s));
-                }
-                if let Some(s) = Self::scalar_constant_in_fun(at(b)) {
-                    return Ok(Self::exp_to_poly_variant(at(a), vars, var_map)?.poly_mul_scalar(s));
-                }
-                let pa = Self::exp_to_poly_variant(at(a), vars, var_map)?;
-                let pb = Self::exp_to_poly_variant(at(b), vars, var_map)?;
-                pa.poly_mul(&pb)
-                    .map_err(|e| non_poly(format!("Mul failed: {}", e)))
-            }
-            CExp::Neg(a) => Ok(Self::exp_to_poly_variant(at(a), vars, var_map)?.poly_neg()),
-            _ => Err(non_poly(format!(
-                "`{}` is not an addition, subtraction, multiplication, or negation",
-                exp
-            ))),
+                _ => unreachable!("checked on entry"),
+            };
+            values.push(value);
         }
-    }
-
-    /// The field value of a variable-free fun subexpression built from literals with `-`,
-    /// `+`, `-` and `*`; `None` for anything else.
-    #[stack_guard]
-    pub(super) fn scalar_constant_in_fun(exp: CRef<'_>) -> Option<C::F> {
-        let at = |id: &ExpId| exp.at(*id);
-        match exp.node() {
-            CExp::Lit(n) => Some(field_from_literal::<C>(n)),
-            CExp::Neg(a) => Self::scalar_constant_in_fun(at(a)).map(|c| -c),
-            CExp::Bin(BinOp::Add, a, b) => {
-                Some(Self::scalar_constant_in_fun(at(a))? + Self::scalar_constant_in_fun(at(b))?)
-            }
-            CExp::Bin(BinOp::Sub, a, b) => {
-                Some(Self::scalar_constant_in_fun(at(a))? - Self::scalar_constant_in_fun(at(b))?)
-            }
-            CExp::Bin(BinOp::Mul, a, b) => {
-                Some(Self::scalar_constant_in_fun(at(a))? * Self::scalar_constant_in_fun(at(b))?)
-            }
-            _ => None,
-        }
+        poly(exp, values.pop().expect("the body's value"))
     }
 
     #[inline(never)]

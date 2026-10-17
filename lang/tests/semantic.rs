@@ -117,6 +117,29 @@ fn semantic_impure_verify_in_where() {
 }
 
 #[test]
+fn semantic_impure_constructs_anywhere_in_where() {
+    // Every impure construct is reported, wherever it is: inside a record update, and each
+    // `<-` of a block, not only the first.
+    let cases = [
+        (
+            "{| v: a |}.set(v, challenge<F>) == {| v: a |}",
+            &["challenge"][..],
+        ),
+        ("(x <- a; y <- a; x == y)", &["log", "log"][..]),
+    ];
+    for (relation, constructs) in cases {
+        let src = format!("proto p<F: Field>(instance a: F) where {relation} {{ verify(a == a) }}");
+        let rendered = render_errors(&src);
+        let found: Vec<&str> = rendered
+            .lines()
+            .filter_map(|l| l.strip_prefix("error: impure construct `"))
+            .filter_map(|l| l.split('`').next())
+            .collect();
+        assert_eq!(found, constructs, "{rendered}");
+    }
+}
+
+#[test]
 fn semantic_circular_typevar_ref() {
     // V: Pairing<G> and G: Pairing<V> — circular kind reference.
     let src = "proto p<V: Pairing<G, G>, G: Pairing<V, V>>(instance a: V) where a == a { verify(a == a) }";

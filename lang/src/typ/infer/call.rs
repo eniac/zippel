@@ -26,7 +26,7 @@ impl CRef<'_> {
                     .map(Spanned::dummy)
             })
             .collect::<Result<_, _>>()
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
 
         // Is it a polynomial, MLE, or a function?
         match vctx.get(&id.node) {
@@ -149,7 +149,7 @@ impl CRef<'_> {
                         TypeError::app_multiple(kctx, tied, id, param_types, &self.trees(params))
                     }
                 };
-                Err(TypeError::next(TypeError::exp(kctx, vctx, self), cause))
+                Err(TypeError::within(kctx, vctx, self, cause))
             }
         }
     }

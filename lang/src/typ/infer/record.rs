@@ -19,7 +19,7 @@ impl CRef<'_> {
             let field_typ = self
                 .at(*field_exp)
                 .infer_in(kctx, fctx, vctx, cx)
-                .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
             field_types.insert(field_name, &Spanned::dummy(field_typ));
         }
 
@@ -39,7 +39,7 @@ impl CRef<'_> {
         // Infer the type of the record expression
         let record_typ = record_exp
             .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
 
         match record_typ {
             CTyp::Record(fields) => {
@@ -76,7 +76,7 @@ impl CRef<'_> {
         // Infer the type of the record expression (must be a record)
         let record_typ = record_exp
             .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
         let CTyp::Record(fields) = &record_typ else {
             return Err(TypeError::next(
                 TypeError::exp(kctx, vctx, self),
@@ -92,7 +92,7 @@ impl CRef<'_> {
         })?;
         let value_typ = value_exp
             .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
         if !value_typ.fits(field_typ, kctx) {
             return Err(TypeError::next(
                 TypeError::exp(kctx, vctx, self),
