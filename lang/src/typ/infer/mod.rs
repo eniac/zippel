@@ -11,6 +11,9 @@ mod vector;
 pub use error::TypeError;
 
 use num::{BigUint, ToPrimitive};
+use std::collections::HashMap;
+
+use crate::typ::instantiate::Instantiation;
 
 use crate::ast::range::Range;
 use crate::ast::sig::CSig;
@@ -20,6 +23,17 @@ use crate::id::{Tid, Vid};
 use crate::typ::lub::{Lub, LubError};
 use crate::typ::{CKind, CTyp};
 use share::{Ctx, Set};
+
+/// The result of resolving an ordinary function call during inference.
+#[derive(Debug, Clone)]
+pub struct ResolvedCall {
+    /// The original declaration, used to find its body.
+    pub declaration: CSig,
+    /// Its signature with type parameters instantiated in the caller's scope.
+    pub signature: CSig,
+    /// The same substitution, used to instantiate its body.
+    pub instantiation: Instantiation,
+}
 
 /// The types of the nodes of one arena, indexed by node, filled as inference leaves each node.
 /// Inferring a node again, or a new node built over typed ones, then reads its children's types
@@ -31,8 +45,9 @@ use share::{Ctx, Set};
 #[derive(Debug, Default, Clone)]
 pub struct TypeTable {
     types: Vec<Option<CTyp>>,
-    /// Resolved declarations, keyed by their call nodes, in typing order.
-    calls: Vec<(ExpId, CSig)>,
+    /// Resolved calls in typing order, with an index for lowering.
+    calls: Vec<(ExpId, ResolvedCall)>,
+    call_indices: HashMap<ExpId, usize>,
 }
 
 impl TypeTable {
@@ -42,9 +57,16 @@ impl TypeTable {
         Self::default()
     }
 
-    /// The call nodes and the declarations they resolved to, in typing order.
-    pub fn calls(&self) -> &[(ExpId, CSig)] {
+    /// The call nodes and their resolutions, in typing order.
+    pub fn calls(&self) -> &[(ExpId, ResolvedCall)] {
         &self.calls
+    }
+
+    /// The resolution of an ordinary function call. Polynomial applications have no record.
+    pub fn call(&self, id: ExpId) -> Option<&ResolvedCall> {
+        self.call_indices
+            .get(&id)
+            .map(|&index| &self.calls[index].1)
     }
 
     fn get(&self, id: ExpId) -> Option<&CTyp> {
@@ -127,6 +149,8 @@ impl CRef<'_> {
         // The nodes entered and not yet left, each with the variable context to restore when
         // it is left, if it binds variables.
         let mut open: Vec<(CRef<'_>, Option<Ctx<Vid, CTyp>>)> = Vec::new();
+        // Expression and statement locations, innermost last, for diagnostic fallbacks.
+        let mut locations = Vec::new();
         // The node left last: a binder takes its type from it.
         let mut last = self;
         let mut walk = self.walk();
@@ -143,13 +167,18 @@ impl CRef<'_> {
         }
         while let Some(visit) = walk.next() {
             match visit {
+                Visit::EnterStmt(stmt) => locations.push(&stmt.span),
+                Visit::LeaveStmt(_) => {
+                    locations.pop();
+                }
                 Visit::Enter(e) => {
+                    locations.push(e.span());
                     let binds = matches!(e.node(), CExp::Block(..) | CExp::Map(..) | CExp::Fun(..));
                     open.push((e, binds.then(|| vctx.clone())));
                     if types.get(e.id()).is_some() {
                         walk.skip_children();
                     } else if let Err(err) = e.enter(&env!(&vctx)) {
-                        return Err(Self::locate(err, &open));
+                        return Err(Self::locate(err, &locations));
                     }
                 }
                 Visit::Bind(x) => {
@@ -165,19 +194,21 @@ impl CRef<'_> {
                         let mut call = None;
                         let typed = e.infer_node(&env!(&vctx), &mut call);
                         if let Some(sig) = call {
+                            types.call_indices.insert(e.id(), types.calls.len());
                             types.calls.push((e.id(), sig));
                         }
                         match typed {
                             Ok(t) => types.insert(e.id(), t),
-                            Err(err) => return Err(Self::locate(err, &open)),
+                            Err(err) => return Err(Self::locate(err, &locations)),
                         }
                     }
                     open.pop();
+                    locations.pop();
                     last = e;
                     if let Some((parent, _)) = open.last()
                         && let Err(err) = parent.after_child(e, &env!(&vctx))
                     {
-                        return Err(Self::locate(err, &open));
+                        return Err(Self::locate(err, &locations));
                     }
                 }
             }
@@ -185,17 +216,14 @@ impl CRef<'_> {
         Ok(types.get(self.id()).cloned().expect("the root is typed"))
     }
 
-    /// `err`, raised typing the innermost node of `open`, located there or else at the nearest
+    /// `err`, raised at the innermost location, located there or else at the nearest
     /// enclosing node with a span (a statement, then its block, ...).
-    fn locate(err: TypeError, open: &[(CRef<'_>, Option<Ctx<Vid, CTyp>>)]) -> TypeError {
-        let mut nodes = open.iter().rev().map(|(node, _)| *node);
-        let failed = nodes.next().expect("the failing node is open");
-        let mut err = TypeError::located(failed.span(), err);
-        for node in nodes {
+    fn locate(mut err: TypeError, locations: &[&std::ops::Range<usize>]) -> TypeError {
+        for span in locations.iter().rev() {
             if err.span().is_some() {
                 break;
             }
-            err = TypeError::located(node.span(), err);
+            err = TypeError::located(span, err);
         }
         err
     }
@@ -243,7 +271,7 @@ impl CRef<'_> {
 
 impl CRef<'_> {
     /// The type of this node, from its children's types.
-    fn infer_node(self, env: &Env<'_>, call: &mut Option<CSig>) -> Result<CTyp, TypeError> {
+    fn infer_node(self, env: &Env<'_>, call: &mut Option<ResolvedCall>) -> Result<CTyp, TypeError> {
         let Env { vctx, .. } = *env;
         let at = |id: &ExpId| self.at(*id);
         match self.node() {
@@ -319,10 +347,7 @@ impl CRef<'_> {
             CExp::Verify(exp) => self.infer_verify(at(exp), env),
 
             // A block has its value's type, `()` without one.
-            CExp::Block(_, tail) => Ok(tail.map_or(CTyp::Unit, |tail| env.typ(at(&tail)))),
-
-            // A statement has its value's type, which its binder takes.
-            CExp::Let(_, v) | CExp::Log(_, v) | CExp::Discard(v) => Ok(env.typ(at(v))),
+            CExp::Block(block) => Ok(block.tail.map_or(CTyp::Unit, |tail| env.typ(at(&tail)))),
 
             CExp::Fun(vars, body) => self.infer_fun(vars, at(body), env),
 
@@ -442,7 +467,10 @@ impl CRef<'_> {
 
 /// The expression a block ends in, through nested blocks: its value is the block's value.
 pub(crate) fn tail(mut e: CRef<'_>) -> CRef<'_> {
-    while let CExp::Block(_, Some(value)) = e.node() {
+    while let CExp::Block(crate::ast::Block {
+        tail: Some(value), ..
+    }) = e.node()
+    {
         e = e.at(*value);
     }
     e

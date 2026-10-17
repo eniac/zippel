@@ -25,7 +25,7 @@ use num::{BigUint, ToPrimitive};
 use crate::ast::arg::Args;
 use crate::ast::decl::{Decl, UDecl};
 use crate::ast::spanned::Spanned;
-use crate::ast::{BinOp, Exclusion, ExpId, Exprs, Exps, GArg, UExp};
+use crate::ast::{BinOp, Block, Exclusion, ExpId, Exprs, Exps, GArg, Stmt, UExp};
 use crate::ast::{ExpLiteral, Size};
 use crate::diagnostic::Diagnostic;
 use crate::id::{Tid, Vid};
@@ -1152,8 +1152,7 @@ where
 
 /// One item of a block, before the `;` that may follow it.
 enum Item {
-    Let(Spanned<Vid>, ExpId),
-    Log(Spanned<Vid>, ExpId),
+    Stmt(Stmt),
     Exp(ExpId),
 }
 
@@ -1189,13 +1188,13 @@ where
             .then_ignore(just(Token::Eq).ignored())
             .then(exp_no_seq.clone())
             .then_ignore(semi_ahead.clone())
-            .map(|((var, _typ), val)| Item::Let(var, val)),
+            .map(|((var, _typ), val)| Item::Stmt(Stmt::Let(var, val))),
         // id <- exp_no_seq, before its `;`  (transcript log)
         id_tok()
             .then_ignore(just(Token::LArrow).ignored())
             .then(exp_no_seq.clone())
             .then_ignore(semi_ahead)
-            .map(|(id, val)| Item::Log(id, val)),
+            .map(|(id, val)| Item::Stmt(Stmt::Log(id, val))),
         // exp_no_seq: sequencing before a `;`, else the block's value
         exp_no_seq.map(Item::Exp),
     ))
@@ -1222,11 +1221,10 @@ where
                     break;
                 };
                 let stmt = match item {
-                    Item::Let(var, val) => UExp::Let(var, val),
-                    Item::Log(id, val) => UExp::Log(id, val),
-                    Item::Exp(val) => UExp::Discard(val),
+                    Item::Stmt(stmt) => stmt,
+                    Item::Exp(val) => Stmt::Discard(val),
                 };
-                stmts.push(e.state().exprs.push(stmt, item_span.start..semi.end));
+                stmts.push(Spanned::new(stmt, item_span.start..semi.end));
             }
             if stmts.is_empty() {
                 // A lone expression is itself, not a block.
@@ -1236,15 +1234,15 @@ where
             // what follows it, which is nothing, so splicing it keeps one flat block.
             let tail = match tail {
                 Some(value) => match e.state().exprs[value].clone() {
-                    UExp::Block(inner, inner_tail) => {
-                        stmts.extend(inner);
-                        inner_tail
+                    UExp::Block(inner) => {
+                        stmts.extend(inner.stmts);
+                        inner.tail
                     }
                     _ => Some(value),
                 },
                 None => None,
             };
-            Ok(push(e, UExp::Block(Exps(stmts), tail)))
+            Ok(push(e, UExp::Block(Block { stmts, tail })))
         })
 }
 

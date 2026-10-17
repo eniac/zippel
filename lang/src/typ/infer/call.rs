@@ -12,7 +12,7 @@ impl CRef<'_> {
         id: &Spanned<Vid>,
         params: &Exps,
         env: &Env<'_>,
-        call: &mut Option<CSig>,
+        call: &mut Option<ResolvedCall>,
     ) -> Result<CTyp, TypeError> {
         let Env {
             kctx, fctx, vctx, ..
@@ -99,9 +99,14 @@ impl CRef<'_> {
                 // It is a function: resolve the call among the declarations of this name.
                 let decls = fctx.iter().filter(|sig| sig.name.node == id.node);
                 let cause = match CSig::resolve_call(decls, &param_types, kctx) {
-                    Ok((decl, sig, _)) => {
-                        *call = Some(decl.clone());
-                        return Ok(sig.ret.map_or(CTyp::Unit, |r| r.node));
+                    Ok((decl, sig, instantiation)) => {
+                        let ret = sig.ret.as_ref().map_or(CTyp::Unit, |r| r.node.clone());
+                        *call = Some(ResolvedCall {
+                            declaration: decl.clone(),
+                            signature: sig,
+                            instantiation,
+                        });
+                        return Ok(ret);
                     }
                     Err(CallError::NoMatch(failures)) => {
                         // Declarations that fit the arguments but whose type parameters

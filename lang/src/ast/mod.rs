@@ -2,6 +2,8 @@
 pub mod arena;
 /// Function/protocol parameters: qualifier, distribution, name and type.
 pub mod arg;
+/// Flat blocks and their typed statements.
+pub mod block;
 /// Declaration bodies: protocols, functions and type aliases.
 pub mod decl;
 /// What a `random` or `challenge` sample excludes.
@@ -24,6 +26,7 @@ pub mod walk;
 
 pub use arena::{ExpId, ExpRef, Expr, Exprs};
 pub use arg::{Arg, Args, CArg, CArgs, GArg, GArgs};
+pub use block::{Block, Stmt};
 pub use decl::{Body, BodyTypes, CBody};
 pub use exclusion::Exclusion;
 pub use exp::{

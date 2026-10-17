@@ -5,12 +5,12 @@ use std::ops::Index;
 
 use share::traversal::ToTraversal1;
 
-use crate::ast::Size;
 use crate::ast::arena::{ExpId, ExpRef, Expr, Exprs};
 use crate::ast::exclusion::Exclusion;
 use crate::ast::range::{Range, RangeTraversal};
 use crate::ast::spanned::Spanned;
 use crate::ast::walk::Visit;
+use crate::ast::{Block, Size, Stmt};
 use crate::id::{Tid, TidSubst, Vid};
 
 /// The carrier of an [`Exp`]'s numeric literals, paired with the size type of its ranges
@@ -244,8 +244,7 @@ pub enum Exp<N: ExpLiteral> {
     ///     ```
     Challenge(Spanned<Tid>, Option<Spanned<ExpExclusion<N>>>),
 
-    ///     A block: statements in order (each a [`Exp::Let`], [`Exp::Log`] or
-    ///     [`Exp::Discard`]), then the expression it evaluates to; a block without one
+    ///     A block: typed statements in order, then the expression it evaluates to; a block without one
     ///     evaluates to `()`. A statement's binding is in scope in the rest of its block.
     ///     **Zippel Code:**
     ///     ```zippel
@@ -253,16 +252,7 @@ pub enum Exp<N: ExpLiteral> {
     ///     p <- interpolate(v, [0,1,2]);
     ///     verify(x == 8)
     ///     ```
-    Block(Exps, Option<ExpId>),
-
-    ///     Statement `let x = e;`: binds `x` to `e`.
-    Let(Spanned<Vid>, ExpId),
-
-    ///     Statement `x <- e;`: sends `e` to the transcript and binds `x` to it.
-    Log(Spanned<Vid>, ExpId),
-
-    ///     Statement `e;`: evaluates `e` and discards its value.
-    Discard(ExpId),
+    Block(Block),
 
     ///     Verifier check: verifies that the expression is true.
     ///     The expression must be `Bool`.
@@ -333,12 +323,13 @@ impl<N: ExpLiteral> ExpRef<'_, N> {
     /// sampling and no `verify`. Purity is what lets the graph
     /// builder duplicate, hoist or drop a subexpression freely.
     pub fn is_pure(self) -> bool {
-        self.subexps().all(|e| {
-            let e = e.node();
-            !matches!(
-                e,
-                Exp::Challenge(..) | Exp::Random(..) | Exp::Verify(_) | Exp::Log(..)
-            )
+        self.walk().all(|visit| match visit {
+            Visit::Enter(e) => !matches!(
+                e.node(),
+                Exp::Challenge(..) | Exp::Random(..) | Exp::Verify(_)
+            ),
+            Visit::EnterStmt(stmt) => !matches!(stmt.node, Stmt::Log(..)),
+            _ => true,
         })
     }
 
@@ -348,9 +339,10 @@ impl<N: ExpLiteral> ExpRef<'_, N> {
     /// Rejects: `Challenge` (verifier oracle), `<-` (transcript),
     /// `Verify` (verifier-side check).
     pub fn is_relation_pure(self) -> bool {
-        self.subexps().all(|e| {
-            let e = e.node();
-            !matches!(e, Exp::Challenge(..) | Exp::Verify(_) | Exp::Log(..))
+        self.walk().all(|visit| match visit {
+            Visit::Enter(e) => !matches!(e.node(), Exp::Challenge(..) | Exp::Verify(_)),
+            Visit::EnterStmt(stmt) => !matches!(stmt.node, Stmt::Log(..)),
+            _ => true,
         })
     }
 }
@@ -400,29 +392,13 @@ impl<N: ExpLiteral> Exp<N> {
             Exp::Map(a, x, b) => Exp::Map(a, x, b),
             Exp::Reduce(op, a) => Exp::Reduce(op, a),
             Exp::Ram(a, b) => Exp::Ram(a, b),
-            Exp::Block(stmts, tail) => Exp::Block(stmts, tail),
-            Exp::Let(x, v) => Exp::Let(x, v),
-            Exp::Log(x, v) => Exp::Log(x, v),
-            Exp::Discard(v) => Exp::Discard(v),
+            Exp::Block(block) => Exp::Block(block),
             Exp::Verify(a) => Exp::Verify(a),
             Exp::Fun(vars, a) => Exp::Fun(vars, a),
             Exp::Record(fields) => Exp::Record(fields),
             Exp::Proj(a, field) => Exp::Proj(a, field),
             Exp::SetRecord(a, field, b) => Exp::SetRecord(a, field, b),
         })
-    }
-
-    /// Whether this is a statement: it occurs only in a block's statement list.
-    pub const fn is_stmt(&self) -> bool {
-        matches!(self, Exp::Let(..) | Exp::Log(..) | Exp::Discard(_))
-    }
-
-    /// The variable this statement binds in the rest of its block, if any.
-    pub const fn binder(&self) -> Option<&Spanned<Vid>> {
-        match self {
-            Exp::Let(x, _) | Exp::Log(x, _) => Some(x),
-            _ => None,
-        }
     }
 }
 

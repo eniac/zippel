@@ -13,17 +13,6 @@ impl<C: HasOpFactory> UDag<C> {
         expected: &mut Option<ATyp>,
     ) -> Result<Lowered<C>, GraphError> {
         let span = scope.exprs.span(id).clone();
-        // type inference for each parameter
-        let param_types: CTyps = params
-            .iter()
-            .map(|p| {
-                scope
-                    .exprs
-                    .infer(p, scope.kctx, &scope.vctx)
-                    .map(Spanned::dummy)
-            })
-            .collect::<Result<_, _>>()?;
-
         // Is it a polynomial, MLE, or a function?
         match scope.vctx.get(&fid.node) {
             Some(CTyp::Poly(tbase, m, _n)) if m.node == 1 => {
@@ -32,7 +21,7 @@ impl<C: HasOpFactory> UDag<C> {
 
                 // Only field elements can be evaluated and only 1 argument can be given
                 assert!(k.is_scalar());
-                assert_eq!(param_types.len(), 1);
+                assert_eq!(params.len(), 1);
 
                 // Phase B: desugar `p(x)` directly to
                 // `evaluate(p, x)` using `Op::Evaluate`. The
@@ -54,7 +43,7 @@ impl<C: HasOpFactory> UDag<C> {
 
                 // Only field elements can be evaluated and only 1 argument can be given
                 assert!(k.is_scalar());
-                assert_eq!(param_types.len(), 1);
+                assert_eq!(params.len(), 1);
 
                 // https://github.com/microsoft/Nova/blob/ad4d77ac89d6bbe9ef943056806e65ceb4ba3b3e/src/spartan/polys/multilinear.rs#L58
                 let mid = 1_usize
@@ -87,24 +76,30 @@ impl<C: HasOpFactory> UDag<C> {
 
                 let poly = push(Exp::Var(fid.clone()));
                 let coef = push(Exp::Coef(poly));
-                let let_coef = push(Exp::Let(Spanned::dummy(coef_var), coef));
-                let bound_exp = push(Exp::Block(Exps(vec![let_coef]), Some(fold)));
+                let let_coef =
+                    Spanned::new(Stmt::Let(Spanned::dummy(coef_var), coef), span.clone());
+                let bound_exp = push(Exp::Block(Block {
+                    stmts: vec![let_coef],
+                    tail: Some(fold),
+                }));
 
                 // Trampoline
                 Ok(Lowered::Rewrite(bound_exp))
             }
             _ => {
-                // Type checking resolved this call already, so it resolves here.
-                let decls = scope
+                let call = scope
+                    .exprs
+                    .types
+                    .call(id)
+                    .expect("inference recorded the function call");
+                let sig = call.signature.clone();
+                let mut body = scope
                     .fctx
-                    .iter()
-                    .map(|(sig, _)| sig)
-                    .filter(|sig| sig.name.node == fid.node);
-                let (decl, sig, inst) = CSig::resolve_call(decls, &param_types, scope.kctx)
-                    .expect("type checking resolved this call");
-                let body = scope.fctx.get(decl).expect("a declaration has a body");
-                let mut body = body.clone();
-                inst.apply(&mut body)
+                    .get(&call.declaration)
+                    .expect("a declaration has a body")
+                    .clone();
+                call.instantiation
+                    .apply(&mut body)
                     .expect("a resolved signature declares every parameter");
 
                 // First add the arguments to the graph, each taking its formal's

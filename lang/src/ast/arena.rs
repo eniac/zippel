@@ -1,5 +1,6 @@
 //! The arena expression trees live in: nodes stored flat, children by [`ExpId`].
 
+use std::collections::HashMap;
 use std::ops::Index;
 
 use super::exp::{Exp, ExpLiteral};
@@ -22,10 +23,10 @@ impl ExpId {
 /// any depth of the trees in it (issue #252). Equality and ordering ignore spans, as
 /// [`Spanned`](super::Spanned)'s do.
 ///
-/// Statements ([`Exp::Let`], [`Exp::Log`], [`Exp::Discard`]) occur exactly in blocks'
-/// statement lists. Outside this module nodes are only added, never changed, and each comes
-/// after its children: the arena is acyclic by construction, and a node's id names the same tree for
-/// the arena's lifetime, which is what per-node side tables such as inferred types rely on.
+/// Only expressions live in the arena; blocks own their typed statements. Outside this
+/// module nodes are only added, never changed, and each comes after its children: the arena
+/// is acyclic by construction, and a node's id names the same tree for the arena's lifetime,
+/// which is what per-node side tables such as inferred types rely on.
 #[derive(Debug, Clone)]
 pub struct Exprs<N: ExpLiteral> {
     // Visible to `ast` for the whole-tree rewrites of leaf data (sizes, type variables) in
@@ -56,16 +57,6 @@ impl<N: ExpLiteral> Exprs<N> {
     pub fn push(&mut self, node: Exp<N>, span: std::ops::Range<usize>) -> ExpId {
         let id = ExpId(u32::try_from(self.nodes.len()).expect("fewer than 2^32 expressions"));
         debug_assert!(node.children().all(|c| c < id), "a child after its parent");
-        debug_assert!(
-            match &node {
-                Exp::Block(stmts, value) => {
-                    stmts.iter().all(|s| self[s].is_stmt())
-                        && value.is_none_or(|v| !self[v].is_stmt())
-                }
-                node => node.children().all(|c| !self[c].is_stmt()),
-            },
-            "statements occur exactly in blocks' statement lists"
-        );
         self.nodes.push(node);
         self.spans.push(span);
         id
@@ -105,18 +96,18 @@ impl<N: ExpLiteral> Exprs<N> {
     /// source order, before their parent), so equal trees copy to equal arenas.
     pub fn extract(&self, root: ExpId) -> Expr<N> {
         let mut out = Exprs::new();
-        let mut copied: Vec<Option<ExpId>> = vec![None; self.nodes.len()];
+        // Only reachable nodes need remapping. The parser arena also contains prior
+        // declarations and abandoned alternatives; their count must not affect extraction.
+        let mut copied = HashMap::new();
         // (node, whether its children are copied)
         let mut stack = vec![(root, false)];
         while let Some((id, ready)) = stack.pop() {
-            if copied[id.index()].is_some() {
+            if copied.contains_key(&id) {
                 continue;
             }
             if ready {
-                let node = self[id]
-                    .clone()
-                    .map_ids(|c| copied[c.index()].expect("child first"));
-                copied[id.index()] = Some(out.push(node, self.span(id).clone()));
+                let node = self[id].clone().map_ids(|c| copied[&c]);
+                copied.insert(id, out.push(node, self.span(id).clone()));
             } else {
                 stack.push((id, true));
                 let first = stack.len();
@@ -126,7 +117,7 @@ impl<N: ExpLiteral> Exprs<N> {
         }
         Expr {
             exprs: out,
-            root: copied[root.index()].expect("root copied"),
+            root: copied[&root],
         }
     }
 }

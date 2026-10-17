@@ -153,15 +153,21 @@ unused helpers are still typechecked. Use `--size` to check specific sizes.
   `lang`, `fmt`, `analyses` live under `tests/snapshots` /
   `tests/gb_snapshots`).
 - Expressions live in an append-only arena (`lang::ast::Exprs`, children before
-  parents, nodes never rewritten in place). Statements are nodes too
-  (`Exp::Let`/`Log`/`Discard`), and occur exactly in a block's statement list
-  (debug-asserted). `lang` has no expression printer: diagnostics label spans. A pass that doesn't depend on what a
+  parents, nodes never rewritten in place). `Exp::Block` owns a `Block` with
+  `Vec<Spanned<Stmt>>` and an optional tail expression. `Stmt::{Let, Log, Discard}`
+  hold expression IDs; statements themselves never go in the arena. `lang` has no
+  expression printer: diagnostics label spans. A pass that doesn't depend on what a
   node means uses `lang/src/ast/walk.rs` instead of matching every `Exp` variant:
   `Exp::children`/`for_each_child_mut`, or `ExpRef::walk` (iterative, evaluation
   order, resolves names to their bindings). The binder rules live only there.
   Type inference is such a walk too: each rule in `lang/src/typ/infer/` types a
-  node from its children's types (`Env::typ`). Only lowering and `zippel-fmt`
-  recurse, under `#[lang::stack_guard]`.
+  node from its children's types (`Env::typ`). The `TypeTable` also stores resolved
+  calls (declaration, instantiated signature and substitution); lowering reads
+  these records and infers fresh records for appended bodies. Lowering borrows
+  immutable definitions and shares a signature set across scopes. Only lowering
+  and `zippel-fmt` recurse, under `#[lang::stack_guard]`. The formatter's methods
+  share a cursor/style context; documents borrow its per-call arena independently
+  of the context's mutable borrow.
 - The `nothing` module in `backend` is a placeholder/no-op curve
   implementation, not a real backend — don't confuse it with
   `ArkBls12_381` etc. when picking a concrete type for new code.

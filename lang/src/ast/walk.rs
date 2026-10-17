@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use super::exp::{Exp, ExpLiteral, Exps};
 use super::spanned::Spanned;
-use super::{ExpId, ExpRef};
+use super::{ExpId, ExpRef, Stmt};
 use crate::id::Vid;
 
 /// The children of a node, in source order (see [`Exp::children`]).
@@ -16,13 +16,11 @@ pub struct Children<'a>(Inner<'a>);
 
 enum Inner<'a> {
     Fixed(std::iter::Flatten<std::array::IntoIter<Option<ExpId>, 2>>),
-    /// A list, then possibly one more: a block's statements and value.
-    List(
-        std::iter::Chain<
-            std::iter::Copied<std::slice::Iter<'a, ExpId>>,
-            std::option::IntoIter<ExpId>,
-        >,
-    ),
+    List(std::iter::Copied<std::slice::Iter<'a, ExpId>>),
+    Block {
+        stmts: std::slice::Iter<'a, Spanned<Stmt>>,
+        tail: Option<ExpId>,
+    },
     Record(Box<dyn Iterator<Item = ExpId> + 'a>),
 }
 
@@ -33,6 +31,10 @@ impl Iterator for Children<'_> {
         match &mut self.0 {
             Inner::Fixed(ids) => ids.next(),
             Inner::List(ids) => ids.next(),
+            Inner::Block { stmts, tail } => stmts
+                .next()
+                .map(|stmt| stmt.node.value())
+                .or_else(|| tail.take()),
             Inner::Record(ids) => ids.next(),
         }
     }
@@ -43,16 +45,17 @@ impl<N: ExpLiteral> Exp<N> {
     /// order.
     pub fn children<'a>(&'a self) -> Children<'a> {
         let fixed = |a, b| Children(Inner::Fixed([a, b].into_iter().flatten()));
-        let list = |ids: &'a Exps, last: Option<ExpId>| {
-            Children(Inner::List(ids.0.iter().copied().chain(last)))
-        };
+        let list = |ids: &'a Exps| Children(Inner::List(ids.0.iter().copied()));
         match self {
             Exp::Lit(_) | Exp::Unit | Exp::Var(_) | Exp::Range(_) => fixed(None, None),
             Exp::Random(_, x) | Exp::Challenge(_, x) => {
                 fixed(x.as_ref().and_then(|x| x.values()).copied(), None)
             }
-            Exp::App(_, args) | Exp::Vec(args) => list(args, None),
-            Exp::Block(stmts, tail) => list(stmts, *tail),
+            Exp::App(_, args) | Exp::Vec(args) => list(args),
+            Exp::Block(block) => Children(Inner::Block {
+                stmts: block.stmts.iter(),
+                tail: block.tail,
+            }),
             Exp::Map(a, _, b)
             | Exp::Bin(_, a, b)
             | Exp::Pair(a, b)
@@ -67,10 +70,7 @@ impl<N: ExpLiteral> Exp<N> {
             | Exp::Reduce(_, a)
             | Exp::Verify(a)
             | Exp::Fun(_, a)
-            | Exp::Proj(a, _)
-            | Exp::Let(_, a)
-            | Exp::Log(_, a)
-            | Exp::Discard(a) => fixed(Some(*a), None),
+            | Exp::Proj(a, _) => fixed(Some(*a), None),
             Exp::Record(fields) => {
                 Children(Inner::Record(Box::new(fields.iter().map(|(_, e)| *e))))
             }
@@ -91,9 +91,11 @@ impl<N: ExpLiteral> Exp<N> {
                 }
             }
             Exp::App(_, args) | Exp::Vec(args) => args.0.iter_mut().for_each(f),
-            Exp::Block(stmts, tail) => {
-                stmts.0.iter_mut().for_each(&mut f);
-                tail.iter_mut().for_each(f);
+            Exp::Block(block) => {
+                for stmt in &mut block.stmts {
+                    f(stmt.node.value_mut());
+                }
+                block.tail.iter_mut().for_each(f);
             }
             Exp::Map(a, _, b)
             | Exp::Bin(_, a, b)
@@ -118,10 +120,7 @@ impl<N: ExpLiteral> Exp<N> {
             | Exp::Reduce(_, a)
             | Exp::Verify(a)
             | Exp::Fun(_, a)
-            | Exp::Proj(a, _)
-            | Exp::Let(_, a)
-            | Exp::Log(_, a)
-            | Exp::Discard(a) => f(a),
+            | Exp::Proj(a, _) => f(a),
             Exp::Record(fields) => fields.modify(|_, e| f(e)),
         }
     }
@@ -138,8 +137,11 @@ impl<N: ExpLiteral> Exp<N> {
 pub enum Visit<'a, N: ExpLiteral> {
     /// A node, before its children.
     Enter(ExpRef<'a, N>),
-    /// A variable comes into scope. It stays bound until the [`Visit::Leave`] of the node that
-    /// binds it: the rest of a block for a statement, the body for a comprehension or `fun`.
+    /// A statement, before its value is evaluated.
+    EnterStmt(&'a Spanned<Stmt>),
+    /// A statement, after its value is evaluated, before its binder comes into scope.
+    LeaveStmt(&'a Spanned<Stmt>),
+    /// A variable comes into scope until its block, comprehension or `fun` is left.
     Bind(&'a Spanned<Vid>),
     /// A node, after its children.
     Leave(ExpRef<'a, N>),
@@ -157,6 +159,8 @@ pub struct Walk<'a, N: ExpLiteral> {
 
 enum Step<'a> {
     Enter(ExpId),
+    EnterStmt(&'a Spanned<Stmt>),
+    LeaveStmt(&'a Spanned<Stmt>),
     /// The children of a node just entered, still to be scheduled.
     Expand(ExpId),
     Bind(&'a Spanned<Vid>),
@@ -167,8 +171,9 @@ enum Step<'a> {
 impl<'a, N: ExpLiteral> ExpRef<'a, N> {
     /// Walks the tree under this node: each node is entered, then its children are walked in
     /// evaluation order, then it is left. A comprehension's domain comes before its binder
-    /// and body; a block's statements come in order, each binding after its value and only
-    /// when something follows it. [`Walk::resolve`] answers which binding a name refers to.
+    /// and body; a block's statements come in order, each with statement enter/leave events
+    /// around its value, binding afterward only when something follows it. [`Walk::resolve`]
+    /// answers which binding a name refers to.
     pub fn walk(self) -> Walk<'a, N> {
         Walk {
             root: self,
@@ -178,7 +183,8 @@ impl<'a, N: ExpLiteral> ExpRef<'a, N> {
         }
     }
 
-    /// This node and all its descendants, in pre-order.
+    /// This expression and all its subexpressions, in pre-order. Use [`Self::walk`] to also
+    /// visit the statements a block owns.
     pub fn subexps(self) -> impl Iterator<Item = ExpRef<'a, N>> {
         let mut todo = vec![self.id()];
         std::iter::from_fn(move || {
@@ -229,16 +235,20 @@ impl<'a, N: ExpLiteral> Walk<'a, N> {
                 todo.extend(params.iter().map(Step::Bind));
                 todo.push(Step::Enter(*body));
             }
-            Exp::Block(stmts, tail) => {
-                for (i, &stmt) in stmts.0.iter().enumerate() {
-                    todo.push(Step::Enter(stmt));
-                    if let Some(x) = self.root.at(stmt).node().binder()
-                        && (i + 1 < stmts.len() || tail.is_some())
+            Exp::Block(block) => {
+                for (i, stmt) in block.stmts.iter().enumerate() {
+                    todo.extend([
+                        Step::EnterStmt(stmt),
+                        Step::Enter(stmt.node.value()),
+                        Step::LeaveStmt(stmt),
+                    ]);
+                    if let Some(x) = stmt.node.binder()
+                        && (i + 1 < block.stmts.len() || block.tail.is_some())
                     {
                         todo.push(Step::Bind(x));
                     }
                 }
-                todo.extend(tail.map(Step::Enter));
+                todo.extend(block.tail.map(Step::Enter));
             }
             node => todo.extend(node.children().map(Step::Enter)),
         }
@@ -269,6 +279,8 @@ impl<'a, N: ExpLiteral> Iterator for Walk<'a, N> {
                     return Some(Visit::Enter(self.root.at(id)));
                 }
                 Step::Expand(id) => self.expand(id),
+                Step::EnterStmt(stmt) => return Some(Visit::EnterStmt(stmt)),
+                Step::LeaveStmt(stmt) => return Some(Visit::LeaveStmt(stmt)),
                 Step::Bind(x) => {
                     self.by_name
                         .entry(&x.node)
@@ -289,7 +301,7 @@ impl<'a, N: ExpLiteral> Iterator for Walk<'a, N> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{BinOp, Exclusion, Exprs, Exps, Size, UExp, UExpr};
+    use crate::ast::{BinOp, Block, Exclusion, Exprs, Exps, Size, UExp, UExpr};
     use crate::id::Tid;
     use share::Ctx;
 
@@ -322,9 +334,6 @@ mod tests {
             UExp::Pair(a, b),
             UExp::Random(t(), Some(Spanned::new(Exclusion::Values(c), 0..0))),
             UExp::Challenge(t(), None),
-            UExp::Let(x(), a),
-            UExp::Log(x(), b),
-            UExp::Discard(c),
             UExp::Verify(a),
             UExp::Fun(vec![x()], a),
             UExp::Record(record),
@@ -332,13 +341,17 @@ mod tests {
             UExp::SetRecord(a, field("p"), b),
         ];
         let mut ids: Vec<ExpId> = nodes.into_iter().map(|n| exprs.push(n, 0..0)).collect();
-        // A block of the statements above, then `a`.
-        let stmts = ids
-            .iter()
-            .copied()
-            .filter(|&id| exprs[id].is_stmt())
+        let stmts = vec![Stmt::Let(x(), a), Stmt::Log(x(), b), Stmt::Discard(c)]
+            .into_iter()
+            .map(Spanned::dummy)
             .collect();
-        ids.push(exprs.push(UExp::Block(Exps(stmts), Some(a)), 0..0));
+        ids.push(exprs.push(
+            UExp::Block(Block {
+                stmts,
+                tail: Some(a),
+            }),
+            0..0,
+        ));
         (exprs, ids)
     }
 
@@ -369,7 +382,7 @@ mod tests {
                         depth += 1;
                     }
                     Visit::Leave(_) => depth -= 1,
-                    Visit::Bind(_) => {}
+                    Visit::Bind(_) | Visit::EnterStmt(_) | Visit::LeaveStmt(_) => {}
                 }
             }
             let mut expected = children;
@@ -423,6 +436,64 @@ mod tests {
             reads(&t),
             [("a", None), ("p", Some(1)), ("q", Some(2)), ("a", None)]
                 .map(|(n, i)| (n.to_string(), i))
+        );
+    }
+
+    #[test]
+    fn nested_statement_bindings_end_with_their_block() {
+        let t = tree("let x = a; let y = (let x = x; x); x + y");
+        assert_eq!(
+            reads(&t),
+            [
+                ("a", None),
+                ("x", Some(0)),
+                ("x", Some(1)),
+                ("x", Some(0)),
+                ("y", Some(1))
+            ]
+            .map(|(name, binding)| (name.to_string(), binding))
+        );
+    }
+
+    #[test]
+    fn statement_events_wrap_values_before_binding() {
+        let t = tree("let x = a; x <- x; x; x");
+        let events: Vec<_> = t
+            .root()
+            .walk()
+            .filter_map(|visit| match visit {
+                Visit::EnterStmt(stmt) => Some(match stmt.node {
+                    Stmt::Let(..) => "enter let",
+                    Stmt::Log(..) => "enter log",
+                    Stmt::Discard(_) => "enter discard",
+                }),
+                Visit::LeaveStmt(_) => Some("leave statement"),
+                Visit::Enter(e) if matches!(e.node(), Exp::Var(..)) => Some("enter value"),
+                Visit::Leave(e) if matches!(e.node(), Exp::Var(..)) => Some("leave value"),
+                Visit::Bind(_) => Some("bind"),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            events,
+            [
+                "enter let",
+                "enter value",
+                "leave value",
+                "leave statement",
+                "bind",
+                "enter log",
+                "enter value",
+                "leave value",
+                "leave statement",
+                "bind",
+                "enter discard",
+                "enter value",
+                "leave value",
+                "leave statement",
+                "enter value",
+                "leave value",
+            ]
         );
     }
 

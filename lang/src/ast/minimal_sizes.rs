@@ -309,7 +309,7 @@ fn check_candidate(
     let mut edges = vec![Set::new(); instances.len()];
     for (caller, _, types) in typed.iter() {
         for (_, callee) in types.relation.calls().iter().chain(types.body.calls()) {
-            edges[instances[caller].0].insert(instances[callee]);
+            edges[instances[caller].0].insert(instances[&callee.declaration]);
         }
     }
     check_coverage(&expanded, sources, edges)

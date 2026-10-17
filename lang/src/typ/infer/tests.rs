@@ -1,7 +1,7 @@
 use super::*;
 use crate::ast::range::{CRange, Range};
 use crate::ast::spanned::Spanned;
-use crate::ast::{Args, BinOp, CArg, CExp, Exp, ExpLiteral, Expr, Exprs, Exps, Sig};
+use crate::ast::{Args, BinOp, Block, CArg, CExp, Exp, ExpLiteral, Expr, Exprs, Exps, Sig, Stmt};
 use crate::id::{Tid, Vid};
 use crate::typ::{CTyp, Kind, TypeVar, TypeVars};
 use lazy_static::lazy_static;
@@ -106,17 +106,21 @@ enum TStmt<N: ExpLiteral> {
 }
 /// A block of `stmts` evaluating to `e`.
 fn block<N: ExpLiteral>(stmts: Vec<TStmt<N>>, e: Expr<N>) -> Expr<N> {
-    let stmt = |stmt| match stmt {
-        TStmt::Let(x, v) => Expr::compose([v], 0..0, |c| Exp::Let(Spanned::dummy(x), c[0])),
-        TStmt::Log(x, v) => Expr::compose([v], 0..0, |c| Exp::Log(Spanned::dummy(x), c[0])),
-        TStmt::Exp(v) => Expr::compose([v], 0..0, |c| Exp::Discard(c[0])),
-    };
-    let mut parts: Vec<Expr<N>> = stmts.into_iter().map(stmt).collect();
-    parts.push(e);
-    Expr::compose(parts, 0..0, |c| {
-        let (value, stmts) = c.split_last().expect("the value");
-        Exp::Block(Exps(stmts.to_vec()), Some(*value))
-    })
+    let mut exprs = Exprs::new();
+    let stmts = stmts
+        .into_iter()
+        .map(|stmt| {
+            let stmt = match stmt {
+                TStmt::Let(name, value) => Stmt::Let(Spanned::dummy(name), exprs.append(value)),
+                TStmt::Log(name, value) => Stmt::Log(Spanned::dummy(name), exprs.append(value)),
+                TStmt::Exp(value) => Stmt::Discard(exprs.append(value)),
+            };
+            Spanned::dummy(stmt)
+        })
+        .collect();
+    let tail = Some(exprs.append(e));
+    let root = exprs.push(Exp::Block(Block { stmts, tail }), 0..0);
+    Expr { exprs, root }
 }
 fn letx<N: ExpLiteral>(a: Vid, d: Expr<N>, e: Expr<N>) -> Expr<N> {
     block(vec![TStmt::Let(a, d)], e)
@@ -1893,11 +1897,17 @@ fn test_block_error_located_at_statement() {
     let zero = a.push(Exp::Lit(BigUint::from(0u8)), 0..0);
     let value = var(&mut a, "y");
     let stmts = vec![
-        a.push(CExp::Let(y(), f1), 0..10),
-        a.push(CExp::Discard(zero), 10..20),
-        a.push(CExp::Let(y(), missing), 20..30),
+        Spanned::new(Stmt::Let(y(), f1), 0..10),
+        Spanned::new(Stmt::Discard(zero), 10..20),
+        Spanned::new(Stmt::Let(y(), missing), 20..30),
     ];
-    let root = a.push(CExp::Block(Exps(stmts), Some(value)), 0..40);
+    let root = a.push(
+        CExp::Block(Block {
+            stmts,
+            tail: Some(value),
+        }),
+        0..40,
+    );
     let body = Expr { exprs: a, root };
     let err = body.infer(&KIND_CTX, &Set::new(), &VAR_CTX).unwrap_err();
     assert_eq!(err.span(), Some(20..30));
@@ -1905,8 +1915,14 @@ fn test_block_error_located_at_statement() {
     // A statement without a span leaves the failure to the block's span.
     let mut a = Exprs::new();
     let (missing, value) = (var(&mut a, "missing"), var(&mut a, "y"));
-    let stmts = vec![a.push(CExp::Let(y(), missing), 0..0)];
-    let root = a.push(CExp::Block(Exps(stmts), Some(value)), 5..9);
+    let stmts = vec![Spanned::dummy(Stmt::Let(y(), missing))];
+    let root = a.push(
+        CExp::Block(Block {
+            stmts,
+            tail: Some(value),
+        }),
+        5..9,
+    );
     let body = Expr { exprs: a, root };
     let err = body.infer(&KIND_CTX, &Set::new(), &VAR_CTX).unwrap_err();
     assert_eq!(err.span(), Some(5..9));
@@ -1930,4 +1946,47 @@ fn test_deep_nesting_infers_on_small_stack() {
         .join()
         .unwrap();
     assert_eq!(typ, Ok(CTyp::FieldLiteral));
+}
+
+#[test]
+fn resolved_calls_keep_declaration_signature_and_substitution() {
+    let src = "fn f<T: Field>(instance x: T) -> T { random<T> }\n\
+               fn g<F: Field>(instance p: Uni<F, 2>, instance x: F) -> F { f(p(x)) }";
+    let (decls, errors) = crate::parser::parse_decls(src);
+    assert!(errors.is_empty(), "{errors:?}");
+    let decls: Vec<_> = decls
+        .into_iter()
+        .map(|d| {
+            d.node
+                .concretize(&crate::typ::subst::SizeSubsts::new())
+                .unwrap()
+        })
+        .collect();
+    let fctx = decls.iter().map(|d| d.sig.clone()).collect();
+    let tree = decls[1].body.clone().body().unwrap();
+    let cx = Cx {
+        kctx: &decls[1].sig.typevars.to_ctx(),
+        fctx: &fctx,
+        vctx: &decls[1].sig.args.to_ctx(),
+    };
+    let mut types = TypeTable::new();
+    tree.root().infer(&cx, &mut types).unwrap();
+    assert_eq!(
+        types.calls().len(),
+        1,
+        "polynomial calls have no function resolution"
+    );
+    let (id, call) = &types.calls()[0];
+    assert_eq!(call.declaration, decls[0].sig);
+    assert_eq!(
+        call.signature.ret.as_ref().unwrap().node,
+        CTyp::base(&Tid::from("F"))
+    );
+    let mut body = decls[0].body.clone();
+    call.instantiation.apply(&mut body).unwrap();
+    assert!(matches!(body.body().unwrap().node(), Exp::Random(t, _) if t.node == Tid::from("F")));
+    assert_eq!(types.call(*id).unwrap().signature, call.signature);
+    // Cached inference neither resolves again nor creates duplicate records.
+    tree.root().infer(&cx, &mut types).unwrap();
+    assert_eq!(types.calls().len(), 1);
 }

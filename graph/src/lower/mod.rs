@@ -3,17 +3,19 @@
 use super::*;
 use ark_ff::PrimeField;
 use backend::{ABase, ATyp, Value, VirtualPolynomial};
+use lang::ast::arg::CArg;
 use lang::ast::range::CRange;
 use lang::ast::{
-    BinOp, BodyTypes, CBody, CExp, CRef, CSig, Exp, ExpExclusion, ExpId, ExpLiteral, Expr, Exprs,
-    Exps, TypedModule,
+    BinOp, Block, BodyTypes, CBody, CExp, CRef, CSig, Exp, ExpExclusion, ExpId, ExpLiteral, Exprs,
+    Exps, Stmt, TypedModule,
 };
 use lang::id::{Fresh, Tid};
 use lang::stack_guard;
 use lang::typ::infer::{Cx, TypeTable};
-use lang::typ::{CKind, CTyp, CTyps, Distribution};
+use lang::typ::{CKind, CTyp};
 use num::{BigUint, ToPrimitive};
 use share::traversal::ToTraversal1;
+use std::collections::BTreeMap;
 
 mod call;
 mod map;
@@ -26,30 +28,11 @@ mod vector;
 pub(super) struct Arena {
     exprs: Exprs<BigUint>,
     types: TypeTable,
-    /// The signatures calls resolve among.
-    sigs: Set<CSig>,
 }
 
 impl Arena {
-    fn new(exprs: Exprs<BigUint>, types: TypeTable, sigs: Set<CSig>) -> Self {
-        Self { exprs, types, sigs }
-    }
-
-    /// The type of node `id`, under the given contexts if it is not typed yet.
-    fn infer(
-        &mut self,
-        id: ExpId,
-        kctx: &Ctx<Tid, CKind>,
-        vctx: &Ctx<Vid, CTyp>,
-    ) -> Result<CTyp, TypeError> {
-        self.exprs.at(id).infer(
-            &Cx {
-                kctx,
-                fctx: &self.sigs,
-                vctx,
-            },
-            &mut self.types,
-        )
+    fn new(exprs: Exprs<BigUint>, types: TypeTable) -> Self {
+        Self { exprs, types }
     }
 }
 
@@ -197,16 +180,13 @@ impl<C: HasOpFactory> UDags<C> {
     /// representation, or a `fun` body outside the polynomial fragment. With
     /// [`Relations::Skip`], errors only lowering a relation would raise go unreported.
     pub fn lower(m: &TypedModule, relations: Relations) -> Result<Self, GraphError> {
-        let fctx = m
-            .module()
-            .iter()
-            .map(|(sig, body)| (sig.clone(), body.clone()))
-            .collect::<Ctx<CSig, CBody>>();
+        let fctx = &m.module().0;
+        let sigs = fctx.keys();
         let mut gs = UDags::new();
         for (sig, body, types) in m.iter() {
             debug!("Adding declaration: {}", sig);
             let mut g = UDag::new();
-            g.add_decl(sig.clone(), body.clone(), types.clone(), &fctx, relations)
+            g.add_decl(sig, body, types, fctx, &sigs, relations)
                 .map_err(|e| e.located(&sig.name.span))?;
             gs.0.push(g);
         }
@@ -303,10 +283,11 @@ impl<C: HasOpFactory> UDag<C> {
     /// added.
     fn add_decl(
         &mut self,
-        sig: CSig,
-        body: CBody,
-        types: BodyTypes,
+        sig: &CSig,
+        body: &CBody,
+        types: &BodyTypes,
         fctx: &Ctx<CSig, CBody>,
+        sigs: &Set<CSig>,
         relations: Relations,
     ) -> Result<(), GraphError> {
         // Kind context
@@ -314,18 +295,8 @@ impl<C: HasOpFactory> UDag<C> {
         // Add arguments to [vctx] and [vars]
         let mut vctx = Ctx::new();
 
-        // Source bindings of the arguments, recorded on their nodes for diagnostics.
-        let arg_ids: HashMap<&Vid, &Spanned<Vid>> =
-            sig.args.iter().map(|arg| (&arg.id.node, &arg.id)).collect();
-        // Build a lookup from arg name → (qualifier, distribution) for Node::Arg construction.
-        let arg_meta: HashMap<&Vid, (Qualifier, Distribution)> = sig
-            .args
-            .iter()
-            .map(|arg| (&arg.id.node, (arg.qualifier.node, arg.distribution.node)))
-            .collect();
-
-        // Add arguments to type and fft contexts
-        let mut atyps = Ctx::new();
+        // Keep argument metadata together, in the graph's existing name order.
+        let mut args = BTreeMap::new();
         for arg in sig.args.iter() {
             let at = ATyp::from_ctyp(&arg.typ, &kctx).ok_or_else(|| {
                 TypeError::decl(
@@ -336,7 +307,7 @@ impl<C: HasOpFactory> UDag<C> {
                     ),
                 )
             })?;
-            atyps.insert(&arg.id.node, &at);
+            args.insert(&arg.id.node, (&arg.node, at));
             vctx.insert(&arg.id.node, &arg.typ.node);
         }
         // Expose singleton range typevars (e.g. N: 4) as term-level constants.
@@ -356,44 +327,17 @@ impl<C: HasOpFactory> UDag<C> {
                 // Start node (input marker)
                 let mut start =
                     self.add_node(Node::inp(sig.name.node.clone()), sig.name.span.clone());
-                let mut vars: Ctx<Vid, GOp<C>> = Ctx::new();
-                for (id, typ) in atyps.iter() {
-                    let (qualifier, distribution) = arg_meta
-                        .get(id)
-                        .copied()
-                        .expect("arg meta must be present for every sig arg");
-                    let arg_node = self.add_node(
-                        Node::arg(
-                            id.clone(),
-                            typ.clone(),
-                            qualifier,
-                            distribution,
-                            ArgKind::Input,
-                        ),
-                        arg_ids[id].span.clone(),
-                    );
-                    self.graph.add_edge(start, arg_node, Dep::data());
-                    self.bind(arg_node, arg_ids[id]);
-                    vars.insert(id, &GOp::var(id, arg_node, typ.clone()));
-                }
-                for (tid, kind) in kctx.iter() {
-                    if let CKind::Range(r) = kind
-                        && r.step() == 1
-                        && r.end() == r.start() + 1
-                    {
-                        let vid = Vid::new(&tid.0);
-                        vars.insert(&vid, &GOp::Value(Value::Index(r.start())));
-                    }
-                }
+                let vars = self.add_arguments(start, ArgKind::Input, &args, &kctx);
                 if let Some(body) = body {
-                    let Expr { exprs, root } = body;
-                    let mut arena = Arena::new(exprs, types.body, fctx.keys());
+                    let root = body.root;
+                    let mut arena = Arena::new(body.exprs.clone(), types.body.clone());
                     let mut scope = Scope {
                         exprs: &mut arena,
                         transcr: &mut start,
                         edge_type: DepType::Data,
                         kctx: &kctx,
                         fctx,
+                        sigs,
                         vctx: vctx.clone(),
                         vars,
                     };
@@ -405,51 +349,21 @@ impl<C: HasOpFactory> UDag<C> {
                 let where_span = relation.span().clone();
                 start = self.add_node(Node::rel(sig.name.node.clone()), where_span.clone());
                 if relations == Relations::Lower {
-                    let mut vars: Ctx<Vid, GOp<C>> = Ctx::new();
-                    for (id, typ) in atyps.iter() {
-                        let (qualifier, distribution) = arg_meta
-                            .get(id)
-                            .copied()
-                            .expect("arg meta must be present for every sig arg");
-                        let arg_node = self.add_node(
-                            Node::arg(
-                                id.clone(),
-                                typ.clone(),
-                                qualifier,
-                                distribution,
-                                ArgKind::Relation,
-                            ),
-                            arg_ids[id].span.clone(),
-                        );
-                        self.graph.add_edge(start, arg_node, Dep::data());
-                        self.bind(arg_node, arg_ids[id]);
-                        vars.insert(id, &GOp::var(id, arg_node, typ.clone()));
-                    }
-                    for (tid, kind) in kctx.iter() {
-                        if let CKind::Range(r) = kind
-                            && r.step() == 1
-                            && r.end() == r.start() + 1
-                        {
-                            let vid = Vid::new(&tid.0);
-                            vars.insert(&vid, &GOp::Value(Value::Index(r.start())));
-                        }
-                    }
+                    let vars = self.add_arguments(start, ArgKind::Relation, &args, &kctx);
                     // Lower the relation as a single Bool expression and wrap it
                     // in an Assert node. The `where` clause infers to Bool, and
                     // this is the only Assert in the graph: `assert` is not part
                     // of the language, so the analyses never meet a condition the
                     // developer states.
-                    let Expr {
-                        exprs: relation_exprs,
-                        root: relation,
-                    } = relation;
-                    let mut arena = Arena::new(relation_exprs, types.relation, fctx.keys());
+                    let mut arena = Arena::new(relation.exprs.clone(), types.relation.clone());
+                    let relation = relation.root;
                     let mut scope = Scope {
                         exprs: &mut arena,
                         transcr: &mut start,
                         edge_type: DepType::Data,
                         kctx: &kctx,
                         fctx,
+                        sigs,
                         vctx: vctx.clone(),
                         vars,
                     };
@@ -461,49 +375,22 @@ impl<C: HasOpFactory> UDag<C> {
             CBody::Func { body } => {
                 let mut start =
                     self.add_node(Node::inp(sig.name.node.clone()), sig.name.span.clone());
-                let mut vars: Ctx<Vid, GOp<C>> = Ctx::new();
-                for (id, typ) in atyps.iter() {
-                    let (qualifier, distribution) = arg_meta
-                        .get(id)
-                        .copied()
-                        .expect("arg meta must be present for every sig arg");
-                    let arg_node = self.add_node(
-                        Node::arg(
-                            id.clone(),
-                            typ.clone(),
-                            qualifier,
-                            distribution,
-                            ArgKind::Input,
-                        ),
-                        arg_ids[id].span.clone(),
-                    );
-                    self.graph.add_edge(start, arg_node, Dep::data());
-                    self.bind(arg_node, arg_ids[id]);
-                    vars.insert(id, &GOp::var(id, arg_node, typ.clone()));
-                }
-                for (tid, kind) in kctx.iter() {
-                    if let CKind::Range(r) = kind
-                        && r.step() == 1
-                        && r.end() == r.start() + 1
-                    {
-                        let vid = Vid::new(&tid.0);
-                        vars.insert(&vid, &GOp::Value(Value::Index(r.start())));
-                    }
-                }
+                let vars = self.add_arguments(start, ArgKind::Input, &args, &kctx);
                 if let Some(body) = body {
                     // The body's value takes the declared return type.
                     let ret = sig
                         .ret
                         .as_ref()
                         .and_then(|ret| ATyp::from_ctyp(&ret.node, &kctx));
-                    let Expr { exprs, root } = body;
-                    let mut arena = Arena::new(exprs, types.body, fctx.keys());
+                    let root = body.root;
+                    let mut arena = Arena::new(body.exprs.clone(), types.body.clone());
                     let mut scope = Scope {
                         exprs: &mut arena,
                         transcr: &mut start,
                         edge_type: DepType::Data,
                         kctx: &kctx,
                         fctx,
+                        sigs,
                         vctx: vctx.clone(),
                         vars,
                     };
@@ -517,6 +404,41 @@ impl<C: HasOpFactory> UDag<C> {
         }
 
         Ok(())
+    }
+
+    /// Fresh argument nodes for one body or relation, followed by singleton size constants.
+    fn add_arguments(
+        &mut self,
+        start: NodeIndex,
+        kind: ArgKind,
+        args: &BTreeMap<&Vid, (&CArg, ATyp)>,
+        kctx: &Ctx<Tid, CKind>,
+    ) -> Ctx<Vid, GOp<C>> {
+        let mut vars = Ctx::new();
+        for (&id, (arg, typ)) in args {
+            let node = self.add_node(
+                Node::arg(
+                    id.clone(),
+                    typ.clone(),
+                    arg.qualifier.node,
+                    arg.distribution.node,
+                    kind,
+                ),
+                arg.id.span.clone(),
+            );
+            self.graph.add_edge(start, node, Dep::data());
+            self.bind(node, &arg.id);
+            vars.insert(id, &GOp::var(id, node, typ.clone()));
+        }
+        for (tid, kind) in kctx.iter() {
+            if let CKind::Range(r) = kind
+                && r.step() == 1
+                && r.end() == r.start() + 1
+            {
+                vars.insert(&Vid::new(&tid.0), &GOp::Value(Value::Index(r.start())));
+            }
+        }
+        vars
     }
 
     /// Variables to operations by lookup in [vars]
@@ -660,20 +582,17 @@ impl<C: HasOpFactory> UDag<C> {
                 },
                 // Statements in order, each binding its variable for the rest of the block;
                 // then the trampoline continues with the block's value.
-                CExp::Block(stmts, tail) => {
-                    for stmt in stmts {
-                        self.lower_stmt(scope, stmt)?;
+                CExp::Block(block) => {
+                    for stmt in block.stmts {
+                        self.lower_stmt(scope, stmt.node)?;
                     }
-                    match tail {
+                    match block.tail {
                         Some(tail) => {
                             id = tail;
                             continue;
                         }
                         None => return Ok(GOp::Value(backend::Value::Unit)),
                     }
-                }
-                CExp::Let(..) | CExp::Log(..) | CExp::Discard(_) => {
-                    unreachable!("statements are lowered with their block")
                 }
                 CExp::Verify(exp) => return self.lower_verify(scope, id, exp),
                 CExp::Fun(fun_vars, body) => return Self::lower_fun(scope.exprs, fun_vars, body),
@@ -699,13 +618,22 @@ struct Scope<'a, C: HasOpFactory> {
     edge_type: DepType,
     kctx: &'a Ctx<Tid, CKind>,
     fctx: &'a Ctx<CSig, CBody>,
+    sigs: &'a Set<CSig>,
     vctx: Ctx<Vid, CTyp>,
     vars: Ctx<Vid, GOp<C>>,
 }
 
 impl<C: HasOpFactory> Scope<'_, C> {
     fn infer(&mut self, id: ExpId) -> Result<CTyp, TypeError> {
-        self.exprs.infer(id, self.kctx, &self.vctx)
+        let Arena { exprs, types } = self.exprs;
+        exprs.at(id).infer(
+            &Cx {
+                kctx: self.kctx,
+                fctx: self.sigs,
+                vctx: &self.vctx,
+            },
+            types,
+        )
     }
 
     fn nested(&mut self) -> Scope<'_, C> {
@@ -715,6 +643,7 @@ impl<C: HasOpFactory> Scope<'_, C> {
             edge_type: self.edge_type,
             kctx: self.kctx,
             fctx: self.fctx,
+            sigs: self.sigs,
             vctx: self.vctx.clone(),
             vars: self.vars.clone(),
         }
@@ -740,16 +669,13 @@ impl<C: HasOpFactory> UDag<C> {
     /// Lowers one statement of a block, binding its variable in `vctx` and `vars` for the rest
     /// of the block.
     #[inline(never)]
-    fn lower_stmt(&mut self, scope: &mut Scope<'_, C>, stmt: ExpId) -> Result<(), GraphError> {
-        let node = scope.exprs[stmt].clone();
-        let (CExp::Let(_, value) | CExp::Log(_, value) | CExp::Discard(value)) = node else {
-            unreachable!("a block's statements are statements")
-        };
+    fn lower_stmt(&mut self, scope: &mut Scope<'_, C>, stmt: Stmt) -> Result<(), GraphError> {
+        let value = stmt.value();
         let op = self.add_exp(scope, value, None)?;
-        let Some(x) = node.binder() else {
+        let Some(x) = stmt.binder() else {
             return Ok(());
         };
-        let op = if matches!(node, CExp::Log(..)) {
+        let op = if matches!(stmt, Stmt::Log(..)) {
             // A transcript node comes from the value sent.
             let sent = scope.exprs.span(value).clone();
             self.log_transcript(scope.transcr, x, &op, sent)
@@ -760,8 +686,8 @@ impl<C: HasOpFactory> UDag<C> {
             }
             op
         };
-        // A statement has its value's type.
-        let typ = scope.infer(stmt)?;
+        // A binding takes its value's type.
+        let typ = scope.infer(value)?;
         scope.vctx.insert(&x.node, &typ);
         scope.vars.insert(&x.node, &op);
         Ok(())
