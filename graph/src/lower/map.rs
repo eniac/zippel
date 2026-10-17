@@ -263,6 +263,10 @@ impl<C: HasOpFactory> UDag<C> {
             if !exprs.at(body).is_pure() || !exprs.at(g).is_pure() {
                 break;
             }
+            // The composed body is bound by `y`, so `body` must not read another `y`.
+            if y.node != binder && exprs.at(body).reads_free(&y.node) {
+                break;
+            }
             let Some(b2) = Self::substitute_var(exprs, body, &binder, g) else {
                 break;
             };

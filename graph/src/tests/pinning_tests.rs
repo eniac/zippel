@@ -2704,6 +2704,27 @@ fn pin_app_mle() {
 
 // ── Reduce operation tests ──
 
+/// Fusing `[f(t) for t in [g(y) for y in v]]` would lower `f`'s body under the inner binder `y`.
+/// When `f` reads an outer `y`, that argument must stay read instead of being captured.
+#[test]
+fn pin_reduce_map_fusion_keeps_outer_variable() {
+    let gs = parse_and_build(
+        "fn f<G: Group, F: Scalar<G>>(instance g: G, instance y: G, instance v: [F; 2]) -> G \
+         { reduce(+, [g * t + y for t in [y * 2 for y in v]]) }",
+    );
+    let g = &gs[0];
+    let y = g
+        .node_indices()
+        .find(|&n| matches!(&g[n], Node::Arg(v, ..) if v.0 == "y"))
+        .expect("argument `y`");
+    assert!(
+        g.neighbors_directed(y, Direction::Outgoing)
+            .next()
+            .is_some(),
+        "the outer `y` is never read"
+    );
+}
+
 /// Reduce with addition: `reduce(+, [a, b, c])` creates a single Reduce node.
 #[test]
 fn pin_reduce_add() {

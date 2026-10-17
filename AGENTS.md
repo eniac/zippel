@@ -158,7 +158,7 @@ unused helpers are still typechecked. Use `--size` to check specific sizes.
   hold expression IDs; statements themselves never go in the arena. `lang` has no
   expression printer: diagnostics label spans. A pass that doesn't depend on what a
   node means uses `lang/src/ast/walk.rs` instead of matching every `Exp` variant:
-  `Exp::children`/`for_each_child_mut`, or `ExpRef::walk` (iterative, evaluation
+  `Exp::for_each_child`/`for_each_child_mut`, or `ExpRef::walk` (iterative, evaluation
   order, resolves names to their bindings). The binder rules live only there.
   Direct syntactic effects for purity queries and relation diagnostics are
   described in `ast/effect.rs`; their different purity policies remain explicit.

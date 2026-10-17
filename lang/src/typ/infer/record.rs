@@ -25,7 +25,7 @@ impl CRef<'_> {
         field_name: &Spanned<String>,
         env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        let Env { kctx, .. } = *env;
+        let Cx { kctx, .. } = env.cx;
         // Infer the type of the record expression
         let record_typ = env.typ(record_exp);
 
@@ -49,7 +49,7 @@ impl CRef<'_> {
         field_name: &Spanned<String>,
         env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        let Env { kctx, .. } = *env;
+        let Cx { kctx, .. } = env.cx;
         let record_typ = env.typ(record_exp);
         let CTyp::Record(fields) = &record_typ else {
             return Err(TypeError::NotARecord(kctx.clone(), record_typ.clone()));
@@ -69,7 +69,7 @@ impl CRef<'_> {
         value_exp: CRef<'_>,
         env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        let Env { kctx, .. } = *env;
+        let Cx { kctx, .. } = env.cx;
         let field_typ = self.record_field(record_exp, field_name, env)?;
         let value_typ = env.typ(value_exp);
         if !value_typ.fits(&field_typ, kctx) {

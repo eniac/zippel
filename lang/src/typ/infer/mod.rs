@@ -96,9 +96,7 @@ pub struct Cx<'a> {
 /// its children among them.
 #[derive(Clone, Copy)]
 pub(crate) struct Env<'a> {
-    kctx: &'a Ctx<Tid, CKind>,
-    fctx: &'a Set<CSig>,
-    vctx: &'a Ctx<Vid, CTyp>,
+    cx: Cx<'a>,
     types: &'a TypeTable,
 }
 
@@ -144,8 +142,7 @@ impl CRef<'_> {
     /// # Errors
     /// As [`CExpr::infer`].
     pub fn infer(self, cx: &Cx<'_>, types: &mut TypeTable) -> Result<CTyp, TypeError> {
-        let Cx { kctx, fctx, vctx } = *cx;
-        let mut vctx = vctx.clone();
+        let mut vctx = cx.vctx.clone();
         // The nodes entered and not yet left, each with the variable context to restore when
         // it is left, if it binds variables.
         let mut open: Vec<(CRef<'_>, Option<Ctx<Vid, CTyp>>)> = Vec::new();
@@ -158,9 +155,7 @@ impl CRef<'_> {
         macro_rules! env {
             ($vctx:expr) => {
                 Env {
-                    kctx,
-                    fctx,
-                    vctx: $vctx,
+                    cx: Cx { vctx: $vctx, ..*cx },
                     types: &*types,
                 }
             };
@@ -272,7 +267,7 @@ impl CRef<'_> {
 impl CRef<'_> {
     /// The type of this node, from its children's types.
     fn infer_node(self, env: &Env<'_>, call: &mut Option<ResolvedCall>) -> Result<CTyp, TypeError> {
-        let Env { vctx, .. } = *env;
+        let Cx { vctx, .. } = env.cx;
         let at = |id: &ExpId| self.at(*id);
         match self.node() {
             // A literal that is a valid finite index has the singleton type `Fin<n>`; a larger
@@ -372,7 +367,7 @@ impl CRef<'_> {
         b: CRef<'_>,
         env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        let Env { kctx, .. } = *env;
+        let Cx { kctx, .. } = env.cx;
         let (ta, tb) = (env.typ(a), env.typ(b));
         let t = CTyp::lub_op(op, &ta, &tb, kctx).map_err(|_| {
             TypeError::Bin(
@@ -388,7 +383,7 @@ impl CRef<'_> {
     }
 
     fn infer_pair(self, t: CRef<'_>, e: CRef<'_>, env: &Env<'_>) -> Result<CTyp, TypeError> {
-        let Env { kctx, .. } = *env;
+        let Cx { kctx, .. } = env.cx;
         CTyp::lub_pair(&env.typ(t), &env.typ(e), kctx).map_err(TypeError::from)
     }
 
@@ -406,7 +401,7 @@ impl CRef<'_> {
         x: Option<&Spanned<ExpExclusion<BigUint>>>,
         env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        let Env { kctx, .. } = *env;
+        let Cx { kctx, .. } = env.cx;
         // What kind of [t]?
         let k = kctx
             .get(&t.node)
@@ -433,7 +428,7 @@ impl CRef<'_> {
         x: Option<&Spanned<ExpExclusion<BigUint>>>,
         env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        let Env { kctx, .. } = *env;
+        let Cx { kctx, .. } = env.cx;
         let typ = self.sample_typ(t, x, env)?;
         // What it excludes: a vector of `t` values.
         if let Some(Exclusion::Values(v)) = x.map(|x| &x.node) {
@@ -452,7 +447,7 @@ impl CRef<'_> {
     }
 
     fn infer_verify(self, exp: CRef<'_>, env: &Env<'_>) -> Result<CTyp, TypeError> {
-        let Env { kctx, .. } = *env;
+        let Cx { kctx, .. } = env.cx;
         let t = env.typ(exp);
         // The operand must be Bool (not Vec<Bool>)
         if t != CTyp::Bool {

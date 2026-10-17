@@ -117,7 +117,7 @@ fn check_tree(exp: URef<'_>, args: &mut [Binding], out: &mut Vec<Diagnostic>) {
                     Exp::Block(block) => {
                         for (i, stmt) in block.stmts.iter().enumerate() {
                             if let Stmt::Discard(v) = &stmt.node
-                                && (i + 1 < block.stmts.len() || block.tail.is_some())
+                                && block.is_followed(i)
                                 && is_pure_no_app(e.at(*v))
                             {
                                 dead.insert(*v);

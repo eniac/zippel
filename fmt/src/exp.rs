@@ -6,9 +6,9 @@
 //! - `format_body` — owns the gap after `{` (or between `{` and `}`).
 //! - `format_relation` — owns the gap after `where`.
 //! - `format_relation_inner` — does NOT own a leading gap; called by
-//!   `format_relation` after the leading gap is consumed, and
-//!   recursively for `;`-separated relations (where `gap_hard` after
-//!   `;` provides the break).
+//!   `format_relation` after the leading gap is consumed. `;`-separated
+//!   relations are a block, which `format_stmts` formats in one loop
+//!   (`gap_hard` after each `;` provides the break).
 
 use lang::ast::ExpId;
 use lang::ast::exp::{BinOp, Exp, Exps, URef};

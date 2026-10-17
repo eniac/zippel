@@ -27,6 +27,7 @@ mod lower;
 mod node;
 mod pdf;
 mod project;
+#[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
 #[cfg(test)]

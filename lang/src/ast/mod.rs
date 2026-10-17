@@ -44,4 +44,4 @@ pub use range::{CRange, Range, RangeError, RangeTraversal};
 pub use sig::{CSig, Sig};
 pub use size::{EvalError, Size};
 pub use spanned::Spanned;
-pub use walk::{Children, Visit, Walk};
+pub use walk::{Visit, Walk};

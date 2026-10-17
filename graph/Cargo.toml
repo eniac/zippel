@@ -21,6 +21,10 @@ spongefish = { version = "0.7", features = [
     "blake3",
 ] }
 
+[features]
+# Test helpers (`graph::testing`) for this and other workspace crates' tests.
+testing = []
+
 [dev-dependencies]
 rand = { version = "0.8", features = ["std"] }
 arbitrary = { version = "1.4.1", features = ["derive"] }
