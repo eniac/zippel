@@ -2,7 +2,7 @@
 //! / `Op::LoopParam` and the streaming reduce-map evaluator.
 
 use crate::eval::eval_op;
-use crate::eval::graph_tests::helpers::{parse_and_concretize, scalar};
+use crate::eval::graph_tests::helpers::{lowered, scalar};
 use ark_ff::{One, Zero};
 use backend::{ATyp, ArkBls12_381, Value};
 use graph::{GOp, Op, Ref, UDags, mk};
@@ -16,8 +16,7 @@ use std::collections::HashMap;
 type B = ArkBls12_381;
 
 fn parse_and_build(src: &str) -> UDags<B> {
-    let module = parse_and_concretize(src, &Ctx::new());
-    UDags::<B>::from_module(module).unwrap()
+    lowered::<B>(src, &Ctx::new()).unwrap()
 }
 
 /// Count op nodes across all graphs matching `pred`.

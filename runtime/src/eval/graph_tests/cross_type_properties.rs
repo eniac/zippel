@@ -243,8 +243,7 @@ mod mle_differential_tests {
                 p(x)
             }
         "#;
-        let m = parse_and_concretize(src, &Ctx::new());
-        let dags = graph::UDags::<C>::from_module(m).unwrap();
+        let dags = lowered::<C>(src, &Ctx::new()).unwrap();
         let dag = &dags[0];
 
         let mut rng = ark_std::test_rng();

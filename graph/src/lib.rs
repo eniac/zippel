@@ -27,6 +27,7 @@ mod lower;
 mod node;
 mod pdf;
 mod project;
+pub mod testing;
 
 #[cfg(test)]
 mod tests;
@@ -34,10 +35,10 @@ mod tests;
 pub use backend::op::{GOp, HOp, HasOpFactory, Op, OpExclusion, Ref, mk};
 pub use dep::{Dep, DepType};
 use log::debug;
+pub use lower::Relations;
 pub use node::{ArgKind, Node};
 
 use backend::{ArkConfig, PolyVariant};
-use lang::ast::CModule;
 use lang::ast::spanned::Spanned;
 use lang::diagnostic::{Diagnostic, Phase};
 use lang::id::Vid;
@@ -868,7 +869,7 @@ impl<C: ArkConfig, A> Index<usize> for Dags<C, A> {
 }
 
 #[cfg(test)]
-use crate::tests::test_helpers::parse_and_concretize;
+use crate::tests::test_helpers::{lowered, parse_and_check};
 #[cfg(test)]
 use backend::ArkBls12_381;
 #[cfg(test)]
@@ -883,9 +884,9 @@ fn graph_sum() {
         fn sum<F: Field>(instance a: [F; 1]) -> F {
            a[0]
         }"#;
-    let m = parse_and_concretize(ex, &Ctx::new());
-    assert_eq!(m.len(), 4);
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let m = parse_and_check(ex, &Ctx::new());
+    assert_eq!(m.module().len(), 4);
+    let gs = unwrap!(UDags::<ArkBls12_381>::lower(&m, Relations::Lower));
     gs.write_pdf("graph_sum").unwrap_or_else(|e| {
         debug!(
             "Error writing to PDF, maybe [dot] is not installed? \n\n {}",
@@ -905,8 +906,7 @@ fn graph_foo() {
             x <- v[1..5];
             verify(a * s == b * x[3])
         }"#;
-    let m = parse_and_concretize(ex, &Ctx::new());
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
     // Output graph
     gs.write_pdf("graph_foo").unwrap_or_else(|e| {
         debug!(
@@ -924,8 +924,7 @@ fn graph_poly() {
             let p = a * b;
             verify(p(r) == (a(r) * b(r)))
         }"#;
-    let m = parse_and_concretize(ex, &Ctx::new());
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
     gs.write_pdf("graph_poly").unwrap_or_else(|e| {
         debug!(
             "Error writing to PDF, maybe [dot] is not installed? \n\n {}",
@@ -940,8 +939,7 @@ fn graph_reduce() {
         fn reduction_foo<F: Field>(instance a: [F; 10]) -> F {
             reduce(+, a)
         }"#;
-    let m = parse_and_concretize(ex, &Ctx::new());
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
     gs.write_pdf("graph_reduce").unwrap_or_else(|e| {
         debug!(
             "Error writing to PDF, maybe [dot] is not installed? \n\n {}",
@@ -959,8 +957,7 @@ fn graph_fn_call_in_where() {
         where double(a) == a + a {
             verify(a == a)
         }"#;
-    let m = parse_and_concretize(ex, &Ctx::new());
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
     gs.write_pdf("graph_fn_in_where").unwrap_or_else(|e| {
         debug!(
             "Error writing to PDF, maybe [dot] is not installed? \n\n {}",

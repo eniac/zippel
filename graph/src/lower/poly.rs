@@ -127,200 +127,154 @@ impl<C: HasOpFactory> UDag<C> {
     #[inline(never)]
     pub(super) fn lower_evaluate(
         &mut self,
-        step: Step<'_, C>,
+        scope: &mut Scope<'_, C>,
+        id: ExpId,
         p: ExpId,
         selector: Option<CRange>,
         opt_points: Option<ExpId>,
     ) -> Result<GOp<C>, GraphError> {
-        let Step {
-            exprs,
-            id,
-            typ,
-            span,
-            transcr,
-            edge_type,
-            kctx,
-            fctx,
-            vctx,
-            vars,
-            ..
-        } = step;
-        let vp = self.add_exp(exprs, p, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
+        let typ = scope.infer(id)?;
+        let span = scope.exprs.span(id).clone();
+        let vp = self.add_exp(scope, p, None)?;
         match (selector, opt_points) {
             // Unary form: eval(p) -> materialized merged Op::Evaluate(p, None, None).
             // This preserves the old Node::fft sharing behavior for reusable bindings.
             (None, None) => {
                 let neval = self.add_node(Node::evaluate_grid(&vp), span.clone());
-                self.add_edges(edge_type, neval, vp);
+                self.add_edges(scope.edge_type, neval, vp);
 
                 Ok(GOp::underscore(
                     neval,
-                    ATyp::from_ctyp(typ, kctx)
-                        .ok_or_else(|| ark_error(kctx, vctx, exprs.at(id), typ))?,
+                    ATyp::from_ctyp(&typ, scope.kctx)
+                        .ok_or_else(|| ark_error(scope.kctx, scope.exprs.at(id), &typ))?,
                 ))
             }
             // Binary form: eval(p, points) -> Op::Evaluate(p, None, Some(points)).
             (None, Some(x)) => {
-                let vx =
-                    self.add_exp(exprs, x, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
-                let atyp = ATyp::from_ctyp(typ, kctx)
-                    .ok_or_else(|| ark_error(kctx, vctx, exprs.at(id), typ))?;
-                Ok(self.materialize(GOp::evaluate(vp, vx), edge_type, atyp, span.clone()))
+                let vx = self.add_exp(scope, x, None)?;
+                let atyp = ATyp::from_ctyp(&typ, scope.kctx)
+                    .ok_or_else(|| ark_error(scope.kctx, scope.exprs.at(id), &typ))?;
+                Ok(self.materialize(GOp::evaluate(vp, vx), scope.edge_type, atyp, span.clone()))
             }
             // Selected form: eval<range>(p, fixed).
             (Some(range), Some(fixed)) => {
-                let vfixed = self.add_exp(
-                    exprs, fixed, transcr, edge_type, kctx, fctx, vctx, vars, None,
-                )?;
-                let atyp = ATyp::from_ctyp(typ, kctx)
-                    .ok_or_else(|| ark_error(kctx, vctx, exprs.at(id), typ))?;
+                let vfixed = self.add_exp(scope, fixed, None)?;
+                let atyp = ATyp::from_ctyp(&typ, scope.kctx)
+                    .ok_or_else(|| ark_error(scope.kctx, scope.exprs.at(id), &typ))?;
                 Ok(self.materialize(
                     GOp::evaluate_selected(vp, range, vfixed),
-                    edge_type,
+                    scope.edge_type,
                     atyp,
                     span.clone(),
                 ))
             }
             // Parser conversion rejects this; inference is defensive too.
-            (Some(range), None) => {
-                Err(
-                    TypeError::evaluate_selector_without_points(kctx, vctx, exprs.at(p), range)
-                        .into(),
-                )
-            }
+            (Some(range), None) => Err(TypeError::EvaluateSelectorWithoutPoints(range).into()),
         }
     }
 
     #[inline(never)]
-    pub(super) fn lower_poly(&mut self, step: Step<'_, C>, v: ExpId) -> Result<GOp<C>, GraphError> {
-        let Step {
-            exprs,
-            id,
-            typ,
-            span,
-            transcr,
-            edge_type,
-            kctx,
-            fctx,
-            vctx,
-            vars,
-            ..
-        } = step;
-        let child = self.add_exp(exprs, v, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
+    pub(super) fn lower_poly(
+        &mut self,
+        scope: &mut Scope<'_, C>,
+        id: ExpId,
+        v: ExpId,
+    ) -> Result<GOp<C>, GraphError> {
+        let typ = scope.infer(id)?;
+        let span = scope.exprs.span(id).clone();
+        let child = self.add_exp(scope, v, None)?;
 
         let npoly = self.add_node(Node::poly(&child), span.clone());
 
-        self.add_edges(edge_type, npoly, child);
+        self.add_edges(scope.edge_type, npoly, child);
 
         Ok(GOp::underscore(
             npoly,
-            ATyp::from_ctyp(typ, kctx).ok_or_else(|| ark_error(kctx, vctx, exprs.at(id), typ))?,
+            ATyp::from_ctyp(&typ, scope.kctx)
+                .ok_or_else(|| ark_error(scope.kctx, scope.exprs.at(id), &typ))?,
         ))
     }
 
     #[inline(never)]
-    pub(super) fn lower_coef(&mut self, step: Step<'_, C>, v: ExpId) -> Result<GOp<C>, GraphError> {
-        let Step {
-            exprs,
-            id,
-            typ,
-            span,
-            transcr,
-            edge_type,
-            kctx,
-            fctx,
-            vctx,
-            vars,
-            ..
-        } = step;
-        let child = self.add_exp(exprs, v, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
+    pub(super) fn lower_coef(
+        &mut self,
+        scope: &mut Scope<'_, C>,
+        id: ExpId,
+        v: ExpId,
+    ) -> Result<GOp<C>, GraphError> {
+        let typ = scope.infer(id)?;
+        let span = scope.exprs.span(id).clone();
+        let child = self.add_exp(scope, v, None)?;
 
         let npoly = self.add_node(Node::coef(&child), span.clone());
 
-        self.add_edges(edge_type, npoly, child);
+        self.add_edges(scope.edge_type, npoly, child);
 
         Ok(GOp::underscore(
             npoly,
-            ATyp::from_ctyp(typ, kctx).ok_or_else(|| ark_error(kctx, vctx, exprs.at(id), typ))?,
+            ATyp::from_ctyp(&typ, scope.kctx)
+                .ok_or_else(|| ark_error(scope.kctx, scope.exprs.at(id), &typ))?,
         ))
     }
 
     #[inline(never)]
     pub(super) fn lower_interpolate(
         &mut self,
-        step: Step<'_, C>,
+        scope: &mut Scope<'_, C>,
+        id: ExpId,
         points_opt: Option<ExpId>,
         evals: ExpId,
     ) -> Result<GOp<C>, GraphError> {
-        let Step {
-            exprs,
-            id,
-            typ,
-            span,
-            transcr,
-            edge_type,
-            kctx,
-            fctx,
-            vctx,
-            vars,
-            ..
-        } = step;
-        let evals_op = self.add_exp(
-            exprs, evals, transcr, edge_type, kctx, fctx, vctx, vars, None,
-        )?;
+        let typ = scope.infer(id)?;
+        let span = scope.exprs.span(id).clone();
+        let evals_op = self.add_exp(scope, evals, None)?;
         match points_opt {
             // Unary: interpolate(evs) → Op::Ifft(evs)  (FFT-grid interpolation)
             None => {
                 let nifft = self.add_node(Node::ifft(&evals_op), span.clone());
-                self.add_edges(edge_type, nifft, evals_op);
+                self.add_edges(scope.edge_type, nifft, evals_op);
 
                 Ok(GOp::underscore(
                     nifft,
-                    ATyp::from_ctyp(typ, kctx)
-                        .ok_or_else(|| ark_error(kctx, vctx, exprs.at(id), typ))?,
+                    ATyp::from_ctyp(&typ, scope.kctx)
+                        .ok_or_else(|| ark_error(scope.kctx, scope.exprs.at(id), &typ))?,
                 ))
             }
             // Binary: interpolate(pts, evs) → Op::Interpolate(pts, evs)
             Some(p) => {
-                let points_op =
-                    self.add_exp(exprs, p, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
+                let points_op = self.add_exp(scope, p, None)?;
                 let ninterp = self.add_node(Node::interpolate(&points_op, &evals_op), span.clone());
-                self.add_edges(edge_type, ninterp, points_op);
-                self.add_edges(edge_type, ninterp, evals_op);
+                self.add_edges(scope.edge_type, ninterp, points_op);
+                self.add_edges(scope.edge_type, ninterp, evals_op);
 
                 Ok(GOp::underscore(
                     ninterp,
-                    ATyp::from_ctyp(typ, kctx)
-                        .ok_or_else(|| ark_error(kctx, vctx, exprs.at(id), typ))?,
+                    ATyp::from_ctyp(&typ, scope.kctx)
+                        .ok_or_else(|| ark_error(scope.kctx, scope.exprs.at(id), &typ))?,
                 ))
             }
         }
     }
 
     #[inline(never)]
-    pub(super) fn lower_mle(&mut self, step: Step<'_, C>, v: ExpId) -> Result<GOp<C>, GraphError> {
-        let Step {
-            exprs,
-            id,
-            typ,
-            span,
-            transcr,
-            edge_type,
-            kctx,
-            fctx,
-            vctx,
-            vars,
-            ..
-        } = step;
-        let child = self.add_exp(exprs, v, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
+    pub(super) fn lower_mle(
+        &mut self,
+        scope: &mut Scope<'_, C>,
+        id: ExpId,
+        v: ExpId,
+    ) -> Result<GOp<C>, GraphError> {
+        let typ = scope.infer(id)?;
+        let span = scope.exprs.span(id).clone();
+        let child = self.add_exp(scope, v, None)?;
 
         let nmle = self.add_node(Node::mle(&child), span.clone());
 
-        self.add_edges(edge_type, nmle, child);
+        self.add_edges(scope.edge_type, nmle, child);
 
         Ok(GOp::underscore(
             nmle,
-            ATyp::from_ctyp(typ, kctx).ok_or_else(|| ark_error(kctx, vctx, exprs.at(id), typ))?,
+            ATyp::from_ctyp(&typ, scope.kctx)
+                .ok_or_else(|| ark_error(scope.kctx, scope.exprs.at(id), &typ))?,
         ))
     }
 

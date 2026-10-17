@@ -12,32 +12,30 @@ impl CRef<'_> {
         id: &Spanned<Vid>,
         params: &Exps,
         env: &Env<'_>,
+        call: &mut Option<CSig>,
     ) -> Result<CTyp, TypeError> {
         let Env {
             kctx, fctx, vctx, ..
         } = *env;
         let param_types: CTyps = params
             .iter()
-            .map(|p| Spanned::dummy(env.typ(self.at(p))))
+            .map(|p| Spanned::new(env.typ(self.at(p)), self.at(p).span().clone()))
             .collect();
 
         // Is it a polynomial, MLE, or a function?
         match vctx.get(&id.node) {
             Some(CTyp::Poly(tbase, m, _)) if m.node == 1 => {
                 // It is a univariate polynomial
-                let k = kctx.get(tbase).ok_or(TypeError::lub(
-                    TypeError::exp(kctx, vctx, self),
-                    LubError::kind_not_found(tbase),
-                ))?;
+                let k = kctx
+                    .get(tbase)
+                    .ok_or(TypeError::from(LubError::kind_not_found(tbase)))?;
 
                 // Only field elements can be evaluated and only 1 argument can be given
                 if !k.is_scalar() || param_types.len() != 1 {
-                    return Err(TypeError::uni(
-                        kctx,
-                        vctx,
-                        &id.node,
-                        &self.trees(params),
-                        &param_types,
+                    return Err(TypeError::Uni(
+                        kctx.clone(),
+                        id.node.clone(),
+                        param_types.clone(),
                     ));
                 }
 
@@ -45,29 +43,24 @@ impl CRef<'_> {
                 if param_types.0[0].node.fits(&CTyp::Base(tbase.clone()), kctx) {
                     Ok(CTyp::base(tbase))
                 } else {
-                    Err(TypeError::uni(
-                        kctx,
-                        vctx,
-                        &id.node,
-                        &self.trees(params),
-                        &param_types,
+                    Err(TypeError::Uni(
+                        kctx.clone(),
+                        id.node.clone(),
+                        param_types.clone(),
                     ))
                 }
             }
             Some(CTyp::Poly(tbase, n, d)) if d.node == 1 => {
                 // It is a multilinear extension
-                let k = kctx.get(tbase).ok_or(TypeError::lub(
-                    TypeError::exp(kctx, vctx, self),
-                    LubError::kind_not_found(tbase),
-                ))?;
+                let k = kctx
+                    .get(tbase)
+                    .ok_or(TypeError::from(LubError::kind_not_found(tbase)))?;
                 // Only field elements can be evaluated and only 1 argument can be given
                 if !k.is_scalar() || param_types.len() != 1 {
-                    return Err(TypeError::mle_app(
-                        kctx,
-                        vctx,
-                        &id.node,
-                        &self.trees(params),
-                        &param_types,
+                    return Err(TypeError::MleApp(
+                        kctx.clone(),
+                        id.node.clone(),
+                        param_types.clone(),
                     ));
                 }
 
@@ -95,12 +88,10 @@ impl CRef<'_> {
                         let rem = n.node - m.node;
                         Ok(CTyp::mle(tbase, rem))
                     }
-                    _ => Err(TypeError::mle_app(
-                        kctx,
-                        vctx,
-                        &id.node,
-                        &self.trees(params),
-                        &param_types,
+                    _ => Err(TypeError::MleApp(
+                        kctx.clone(),
+                        id.node.clone(),
+                        param_types.clone(),
                     )),
                 }
             }
@@ -109,7 +100,7 @@ impl CRef<'_> {
                 let decls = fctx.iter().filter(|sig| sig.name.node == id.node);
                 let cause = match CSig::resolve_call(decls, &param_types, kctx) {
                     Ok((decl, sig, _)) => {
-                        (env.on_call)(decl);
+                        *call = Some(decl.clone());
                         return Ok(sig.ret.map_or(CTyp::Unit, |r| r.node));
                     }
                     Err(CallError::NoMatch(failures)) => {
@@ -126,23 +117,22 @@ impl CRef<'_> {
                             .collect();
                         if unresolved.len() == 1 {
                             let (_, e) = unresolved.pop().expect("one element");
-                            TypeError::Call(kctx.clone(), id.clone(), e)
+                            TypeError::Call(id.clone(), Box::new(e))
                         } else {
-                            TypeError::func_not_found(
-                                kctx,
-                                fctx,
-                                id,
+                            TypeError::FuncNotFound(
+                                kctx.clone(),
+                                fctx.clone(),
+                                id.clone(),
                                 param_types,
-                                &self.trees(params),
                                 unresolved,
                             )
                         }
                     }
                     Err(CallError::Ambiguous(tied)) => {
-                        TypeError::app_multiple(kctx, tied, id, param_types, &self.trees(params))
+                        TypeError::AppMultiple(kctx.clone(), tied, id.clone(), param_types)
                     }
                 };
-                Err(TypeError::within(kctx, vctx, self, cause))
+                Err(cause)
             }
         }
     }

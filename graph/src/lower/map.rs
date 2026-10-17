@@ -21,21 +21,15 @@ impl<C: HasOpFactory> UDag<C> {
     ///
     /// `expected` is the type the body's value must take, if any: finite-index leaves it
     /// declares field elements are embedded into the field (see [`coerce_field_op`]).
-    #[allow(clippy::too_many_arguments)]
     #[stack_guard]
     pub(super) fn lower_loop_body_template(
         &mut self,
-        exprs: &mut Arena,
+        scope: &mut Scope<'_, C>,
         id: ExpId,
         binders: &[(Vid, ATyp)],
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Ctx<CSig, CBody>,
-        vctx: &Ctx<Vid, CTyp>,
-        vars: &Ctx<Vid, GOp<C>>,
         expected: Option<&ATyp>,
     ) -> Result<Option<GOp<C>>, GraphError> {
-        let op = self
-            .lower_loop_body_template_raw(exprs, id, binders, kctx, fctx, vctx, vars, expected)?;
+        let op = self.lower_loop_body_template_raw(scope, id, binders, expected)?;
         Ok(match expected {
             Some(target) => op.map(|op| coerce_field_op(op, target, binders.len())),
             None => op,
@@ -44,16 +38,11 @@ impl<C: HasOpFactory> UDag<C> {
 
     /// [`Self::lower_loop_body_template`] before the final coercion to `expected`, which
     /// only steers literals and the elements of vectors, records and map outputs.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_loop_body_template_raw(
         &mut self,
-        exprs: &mut Arena,
+        scope: &mut Scope<'_, C>,
         id: ExpId,
         binders: &[(Vid, ATyp)],
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Ctx<CSig, CBody>,
-        vctx: &Ctx<Vid, CTyp>,
-        vars: &Ctx<Vid, GOp<C>>,
         expected: Option<&ATyp>,
     ) -> Result<Option<GOp<C>>, GraphError> {
         // The element type the expectation declares for a vector's entries.
@@ -64,17 +53,15 @@ impl<C: HasOpFactory> UDag<C> {
         // A subexpression's template, declining (`None`) when it declines.
         macro_rules! sub {
             ($e:expr, $expected:expr) => {
-                match self.lower_loop_body_template(
-                    exprs, $e, binders, kctx, fctx, vctx, vars, $expected,
-                )? {
+                match self.lower_loop_body_template(scope, $e, binders, $expected)? {
                     Some(op) => op,
                     None => return Ok(None),
                 }
             };
         }
-        match exprs[id].clone() {
+        match scope.exprs[id].clone() {
             CExp::Lit(n) => {
-                let typ = exprs.infer(id, kctx, vctx)?;
+                let typ = scope.infer(id)?;
                 let field = expected.is_some_and(ATyp::is_scalar);
                 Ok(Some(GOp::Value(literal_value::<C>(&n, &typ, field))))
             }
@@ -84,14 +71,14 @@ impl<C: HasOpFactory> UDag<C> {
                 if let Some(level) = binders.iter().rposition(|(b, _)| *b == v.node) {
                     Ok(Some(GOp::loop_param(level, binders[level].1.clone())))
                 } else {
-                    Ok(Some(Self::op_from_var(&v, vars)?))
+                    Ok(Some(Self::op_from_var(&v, &scope.vars)?))
                 }
             }
             CExp::Bin(op, a, b) => {
                 let la = sub!(a, None);
                 let lb = sub!(b, None);
-                let ctyp = exprs.infer(id, kctx, vctx)?;
-                let Some(atyp) = ATyp::from_ctyp(&ctyp, kctx) else {
+                let ctyp = scope.infer(id)?;
+                let Some(atyp) = ATyp::from_ctyp(&ctyp, scope.kctx) else {
                     return Ok(None);
                 };
                 Ok(Some(field_bin(op, la, lb, atyp)))
@@ -138,8 +125,8 @@ impl<C: HasOpFactory> UDag<C> {
             }
             CExp::Proj(r, field) => {
                 let lr = sub!(r, None);
-                let ctyp = exprs.infer(id, kctx, vctx)?;
-                let Some(atyp) = ATyp::from_ctyp(&ctyp, kctx) else {
+                let ctyp = scope.infer(id)?;
+                let Some(atyp) = ATyp::from_ctyp(&ctyp, scope.kctx) else {
                     return Ok(None);
                 };
                 Ok(Some(Op::Proj(mk::<C>(lr), field.node, atyp)))
@@ -157,27 +144,23 @@ impl<C: HasOpFactory> UDag<C> {
                 Ok(Some(Op::Record(out)))
             }
             CExp::Map(body, binder, domain) => {
-                let domain_typ = exprs.infer(domain, kctx, vctx)?;
+                let domain_typ = scope.infer(domain)?;
                 let (elem_ctyp, _) = match domain_typ {
                     CTyp::Vec(deref!(e), n) => (e, n),
                     _ => return Ok(None),
                 };
-                let Some(binder_atyp) = ATyp::from_ctyp(&elem_ctyp, kctx) else {
+                let Some(binder_atyp) = ATyp::from_ctyp(&elem_ctyp, scope.kctx) else {
                     return Ok(None);
                 };
                 let ld = sub!(domain, None);
                 let mut inner_binders = binders.to_vec();
                 inner_binders.push((binder.node.clone(), binder_atyp));
-                let mut inner_vctx = vctx.clone();
-                inner_vctx.insert(&binder.node, &elem_ctyp);
+                let mut inner_scope = scope.nested();
+                inner_scope.vctx.insert(&binder.node, &elem_ctyp);
                 let Some(lb) = self.lower_loop_body_template(
-                    exprs,
+                    &mut inner_scope,
                     body,
                     &inner_binders,
-                    kctx,
-                    fctx,
-                    &inner_vctx,
-                    vars,
                     expected_elem,
                 )?
                 else {
@@ -186,19 +169,8 @@ impl<C: HasOpFactory> UDag<C> {
                 Ok(Some(GOp::map(ld, lb)))
             }
             CExp::Reduce(rop, v) => {
-                if let CExp::Map(body, binder, domain) = exprs[v].clone() {
-                    self.try_build_reduce_map(
-                        exprs,
-                        rop,
-                        body,
-                        binder.node,
-                        domain,
-                        binders,
-                        kctx,
-                        fctx,
-                        vctx,
-                        vars,
-                    )
+                if let CExp::Map(body, binder, domain) = scope.exprs[v].clone() {
+                    self.try_build_reduce_map(scope, rop, body, binder.node, domain, binders)
                 } else {
                     Ok(None)
                 }
@@ -304,48 +276,34 @@ impl<C: HasOpFactory> UDag<C> {
     /// Build an inline `Op::ReduceMap` for `reduce(rop, [body for binder in
     /// domain])`. Fuses nested-map domains, then lowers domain and body via the
     /// template. Declines (`None`) if any sub-lowering declines.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn try_build_reduce_map(
         &mut self,
-        exprs: &mut Arena,
+        scope: &mut Scope<'_, C>,
         rop: BinOp,
         body: ExpId,
         binder: Vid,
         domain: ExpId,
         binders: &[(Vid, ATyp)],
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Ctx<CSig, CBody>,
-        vctx: &Ctx<Vid, CTyp>,
-        vars: &Ctx<Vid, GOp<C>>,
     ) -> Result<Option<GOp<C>>, GraphError> {
-        let (body, binder, domain) = Self::compose_nested_map_domain(exprs, body, binder, domain);
-        let domain_typ = exprs.infer(domain, kctx, vctx)?;
+        let (body, binder, domain) =
+            Self::compose_nested_map_domain(scope.exprs, body, binder, domain);
+        let domain_typ = scope.infer(domain)?;
         let (elem_ctyp, _) = match domain_typ {
             CTyp::Vec(deref!(e), n) => (e, n),
             _ => return Ok(None),
         };
-        let Some(binder_atyp) = ATyp::from_ctyp(&elem_ctyp, kctx) else {
+        let Some(binder_atyp) = ATyp::from_ctyp(&elem_ctyp, scope.kctx) else {
             return Ok(None);
         };
-        let Some(domain_op) =
-            self.lower_loop_body_template(exprs, domain, binders, kctx, fctx, vctx, vars, None)?
-        else {
+        let Some(domain_op) = self.lower_loop_body_template(scope, domain, binders, None)? else {
             return Ok(None);
         };
         let mut body_binders = binders.to_vec();
         body_binders.push((binder.clone(), binder_atyp));
-        let mut body_vctx = vctx.clone();
-        body_vctx.insert(&binder, &elem_ctyp);
-        let Some(body_op) = self.lower_loop_body_template(
-            exprs,
-            body,
-            &body_binders,
-            kctx,
-            fctx,
-            &body_vctx,
-            vars,
-            None,
-        )?
+        let mut inner_scope = scope.nested();
+        inner_scope.vctx.insert(&binder, &elem_ctyp);
+        let Some(body_op) =
+            self.lower_loop_body_template(&mut inner_scope, body, &body_binders, None)?
         else {
             return Ok(None);
         };

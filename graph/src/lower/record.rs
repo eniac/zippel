@@ -6,43 +6,24 @@ impl<C: HasOpFactory> UDag<C> {
     #[inline(never)]
     pub(super) fn lower_record(
         &mut self,
-        step: Step<'_, C>,
+        scope: &mut Scope<'_, C>,
+        id: ExpId,
         fields: Ctx<Spanned<String>, ExpId>,
+        expected: Option<&ATyp>,
     ) -> Result<GOp<C>, GraphError> {
-        let Step {
-            exprs,
-            id,
-            typ,
-            span,
-            transcr,
-            edge_type,
-            kctx,
-            fctx,
-            vctx,
-            vars,
-            expected,
-            ..
-        } = step;
-        let atyp =
-            ATyp::from_ctyp(typ, kctx).ok_or_else(|| ark_error(kctx, vctx, exprs.at(id), typ))?;
+        let typ = scope.infer(id)?;
+        let span = scope.exprs.span(id).clone();
+        let atyp = ATyp::from_ctyp(&typ, scope.kctx)
+            .ok_or_else(|| ark_error(scope.kctx, scope.exprs.at(id), &typ))?;
         // Fields take the expected field types, else the record's own.
-        let ATyp::Record(targets) = expected.as_ref().unwrap_or(&atyp).clone() else {
+        let ATyp::Record(targets) = expected.unwrap_or(&atyp).clone() else {
             unreachable!("a record expression has a record type")
         };
         let mut field_ops: Ctx<String, HOp<C>> = Ctx::new();
 
         for (field_name, field_exp) in fields.iter() {
-            let field_op = self.add_exp(
-                exprs,
-                *field_exp,
-                transcr,
-                edge_type,
-                kctx,
-                fctx,
-                vctx,
-                vars,
-                targets.get(&field_name.node).cloned(),
-            )?;
+            let field_op =
+                self.add_exp(scope, *field_exp, targets.get(&field_name.node).cloned())?;
             let hop = mk::<C>(field_op);
             field_ops.insert(field_name, &hop);
         }
@@ -53,65 +34,46 @@ impl<C: HasOpFactory> UDag<C> {
         } else {
             atyp
         };
-        Ok(self.materialize(record_op, edge_type, atyp, span.clone()))
+        Ok(self.materialize(record_op, scope.edge_type, atyp, span.clone()))
     }
 
     #[inline(never)]
     pub(super) fn lower_proj(
         &mut self,
-        step: Step<'_, C>,
+        scope: &mut Scope<'_, C>,
+        id: ExpId,
         record_exp: ExpId,
         field_name: Spanned<String>,
     ) -> Result<GOp<C>, GraphError> {
-        let Step {
-            exprs,
-            id,
-            typ,
-            span,
-            transcr,
-            edge_type,
-            kctx,
-            fctx,
-            vctx,
-            vars,
-            ..
-        } = step;
+        let typ = scope.infer(id)?;
+        let span = scope.exprs.span(id).clone();
         // For projection, we need to extract the field from the record
         // Check if the record expression is a Record literal
-        match exprs[record_exp].clone() {
+        match scope.exprs[record_exp].clone() {
             CExp::Record(fields) => {
                 let field_exp = fields.get(&field_name).ok_or_else(|| {
-                    GraphError::from(TypeError::field_not_found(
-                        kctx,
-                        vctx,
-                        exprs.at(record_exp),
-                        field_name.as_str(),
-                    ))
+                    GraphError::from(TypeError::FieldNotFound((field_name.as_str()).to_string()))
                 })?;
 
                 // Add the field expression to the graph
-                self.add_exp(
-                    exprs, *field_exp, transcr, edge_type, kctx, fctx, vctx, vars, None,
-                )
+                self.add_exp(scope, *field_exp, None)
             }
             CExp::Var(var) => {
                 let id_clone = var.clone();
-                let record_op = vars.get(&id_clone).ok_or_else(|| {
-                    GraphError::from(TypeError::exp(kctx, vctx, exprs.at(record_exp)))
-                })?;
+                let record_op = scope
+                    .vars
+                    .get(&id_clone)
+                    .ok_or_else(|| GraphError::from(TypeError::IllTyped))?;
 
                 // Try to infer the record type to verify the field exists
-                let record_typ = exprs.infer(record_exp, kctx, vctx)?;
+                let record_typ = scope.exprs.infer(record_exp, scope.kctx, &scope.vctx)?;
 
                 match &record_typ {
                     CTyp::Record(fields) => {
                         // Verify the field exists and get its type
                         let field_typ_ctyp = fields.get(&field_name).ok_or_else(|| {
-                            GraphError::from(TypeError::field_not_found(
-                                kctx,
-                                vctx,
-                                exprs.at(record_exp),
-                                field_name.as_str(),
+                            GraphError::from(TypeError::FieldNotFound(
+                                (field_name.as_str()).to_string(),
                             ))
                         })?;
 
@@ -122,11 +84,8 @@ impl<C: HasOpFactory> UDag<C> {
                                 record_fields
                                     .get(&field_name)
                                     .ok_or_else(|| {
-                                        GraphError::from(TypeError::field_not_found(
-                                            kctx,
-                                            vctx,
-                                            exprs.at(record_exp),
-                                            field_name.as_str(),
+                                        GraphError::from(TypeError::FieldNotFound(
+                                            (field_name.as_str()).to_string(),
                                         ))
                                     })
                                     .map(|op| (**op).clone())
@@ -141,15 +100,13 @@ impl<C: HasOpFactory> UDag<C> {
                                     return Ok(field_op.get().clone());
                                 }
                                 // Record produced by a node (e.g. a record-typed op); add Proj node
-                                let field_typ_atyp = ATyp::from_ctyp(field_typ_ctyp, kctx)
+                                let field_typ_atyp = ATyp::from_ctyp(field_typ_ctyp, scope.kctx)
                                     .ok_or_else(|| {
                                         GraphError::from(TypeError::located(
-                                            exprs.span(id),
-                                            TypeError::ark(
-                                                kctx,
-                                                vctx,
-                                                exprs.at(record_exp),
-                                                field_typ_ctyp,
+                                            scope.exprs.span(id),
+                                            TypeError::Ark(
+                                                (scope.kctx).clone(),
+                                                field_typ_ctyp.node.clone(),
                                             ),
                                         ))
                                     })?;
@@ -163,50 +120,45 @@ impl<C: HasOpFactory> UDag<C> {
                                     Node::proj(record_op, &field_name, &field_typ_atyp),
                                     span.clone(),
                                 );
-                                self.add_edges(edge_type, proj_node, record_op.clone());
+                                self.add_edges(scope.edge_type, proj_node, record_op.clone());
                                 Ok(Op::Ref(Ref(proj_node), field_typ_atyp))
                             }
-                            _ => Err(GraphError::from(TypeError::not_a_record(
-                                kctx,
-                                vctx,
-                                exprs.at(record_exp),
-                                &record_typ,
+                            _ => Err(GraphError::from(TypeError::NotARecord(
+                                (scope.kctx).clone(),
+                                record_typ.clone(),
                             ))),
                         }
                     }
-                    _ => Err(GraphError::from(TypeError::not_a_record(
-                        kctx,
-                        vctx,
-                        exprs.at(record_exp),
-                        &record_typ,
+                    _ => Err(GraphError::from(TypeError::NotARecord(
+                        (scope.kctx).clone(),
+                        record_typ.clone(),
                     ))),
                 }
             }
             _ => {
                 // For other expressions, try to infer the record type
-                let record_typ = exprs.infer(record_exp, kctx, vctx)?;
+                let record_typ = scope.infer(record_exp)?;
 
                 match record_typ {
                     CTyp::Record(fields) => {
                         // Get the field type
                         let _field_typ = fields.get(&field_name).ok_or_else(|| {
-                            GraphError::from(TypeError::field_not_found(
-                                kctx,
-                                vctx,
-                                exprs.at(record_exp),
-                                field_name.as_str(),
+                            GraphError::from(TypeError::FieldNotFound(
+                                (field_name.as_str()).to_string(),
                             ))
                         })?;
 
                         // For complex expressions, we'd need to evaluate them first
                         // For now, return an error indicating this isn't fully supported
-                        Err(GraphError::from(ark_error(kctx, vctx, exprs.at(id), typ)))
+                        Err(GraphError::from(ark_error(
+                            scope.kctx,
+                            scope.exprs.at(id),
+                            &typ,
+                        )))
                     }
-                    _ => Err(GraphError::from(TypeError::not_a_record(
-                        kctx,
-                        vctx,
-                        exprs.at(record_exp),
-                        &record_typ,
+                    _ => Err(GraphError::from(TypeError::NotARecord(
+                        (scope.kctx).clone(),
+                        record_typ.clone(),
                     ))),
                 }
             }
@@ -216,36 +168,25 @@ impl<C: HasOpFactory> UDag<C> {
     #[inline(never)]
     pub(super) fn lower_set_record(
         &mut self,
-        step: Step<'_, C>,
+        scope: &mut Scope<'_, C>,
+        id: ExpId,
         record_exp: ExpId,
         field_name: Spanned<String>,
         value_exp: ExpId,
     ) -> Result<GOp<C>, GraphError> {
-        let Step {
-            exprs,
-            span,
-            transcr,
-            edge_type,
-            kctx,
-            fctx,
-            vctx,
-            vars,
-            ..
-        } = step;
+        let span = scope.exprs.span(id).clone();
         // The new record keeps the original record's type: every field is taken
         // from `record_exp` except `field_name`, whose value takes the field's
         // declared type (an integer stored into a field element is embedded).
-        let record_typ = exprs.infer(record_exp, kctx, vctx)?;
+        let record_typ = scope.infer(record_exp)?;
         if !matches!(record_typ, CTyp::Record(_)) {
-            return Err(GraphError::from(TypeError::not_a_record(
-                kctx,
-                vctx,
-                exprs.at(record_exp),
-                &record_typ,
+            return Err(GraphError::from(TypeError::NotARecord(
+                (scope.kctx).clone(),
+                record_typ.clone(),
             )));
         }
-        let record_atyp = ATyp::from_ctyp(&record_typ, kctx)
-            .ok_or_else(|| ark_error(kctx, vctx, exprs.at(record_exp), &record_typ))?;
+        let record_atyp = ATyp::from_ctyp(&record_typ, scope.kctx)
+            .ok_or_else(|| ark_error(scope.kctx, scope.exprs.at(record_exp), &record_typ))?;
         let ATyp::Record(field_atyps) = &record_atyp else {
             unreachable!("a record type converts to a record ATyp")
         };
@@ -254,24 +195,19 @@ impl<C: HasOpFactory> UDag<C> {
             let field_exp = if *fname == field_name.node {
                 value_exp
             } else {
-                exprs.push(
+                scope.exprs.push(
                     CExp::Proj(record_exp, Spanned::dummy(fname.clone())),
                     span.clone(),
                 )
             };
-            let field_op = self.add_exp(
-                exprs,
-                field_exp,
-                transcr,
-                edge_type,
-                kctx,
-                fctx,
-                vctx,
-                vars,
-                Some(fatyp.clone()),
-            )?;
+            let field_op = self.add_exp(scope, field_exp, Some(fatyp.clone()))?;
             field_ops.insert(fname, &mk::<C>(field_op));
         }
-        Ok(self.materialize(GOp::Record(field_ops), edge_type, record_atyp, span.clone()))
+        Ok(self.materialize(
+            GOp::Record(field_ops),
+            scope.edge_type,
+            record_atyp,
+            span.clone(),
+        ))
     }
 }

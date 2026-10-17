@@ -2,7 +2,7 @@
 
 use std::ops::Index;
 
-use super::exp::{Exp, ExpLiteral, Exps};
+use super::exp::{Exp, ExpLiteral};
 
 // ── The arena ───────────────────────────────────────────────────────────
 
@@ -245,16 +245,6 @@ impl<'a, N: ExpLiteral> ExpRef<'a, N> {
             exprs: self.exprs,
             id,
         }
-    }
-
-    /// The tree under this node, copied out of the arena.
-    pub fn to_expr(self) -> Expr<N> {
-        self.exprs.extract(self.id)
-    }
-
-    /// The trees under `exps`, nodes of this arena, copied out of it.
-    pub fn trees(self, exps: &Exps) -> Vec<Expr<N>> {
-        exps.iter().map(|e| self.exprs.extract(e)).collect()
     }
 }
 

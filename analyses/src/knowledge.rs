@@ -229,9 +229,9 @@ mod tests {
     use super::KnowledgeAnalysis;
     use crate::GbBackendKind;
     use crate::QualifierPropagation;
-    use crate::tests::parse_and_concretize;
+    use crate::tests::lowered;
     use backend::ArkBls12_381;
-    use graph::UDags;
+
     use graph::WritePdf;
     use log::debug;
     use share::{Ctx, unwrap};
@@ -250,8 +250,7 @@ mod tests {
             z <- r + x * c;
             verify(z == z)
         }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let inputs = KnowledgeAnalysis::<ArkBls12_381>::build_inputs(&g);
         let has_definedness =
@@ -282,8 +281,7 @@ mod tests {
         }"#;
 
         debug!("Parsing example: {}", ex);
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
 
         gs.write_pdf("groebner_foo").unwrap_or_else(|e| {
             debug!(
@@ -317,8 +315,7 @@ mod tests {
         }"#;
 
         debug!("Parsing example: {}", ex);
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
 
         gs.write_pdf("groebner_bar").unwrap_or_else(|e| {
             debug!(
@@ -352,8 +349,7 @@ mod tests {
             verify(a == b)
         }"#;
 
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
 
         gs.write_pdf("groebner_baz").unwrap_or_else(|e| {
             debug!(
@@ -395,8 +391,7 @@ mod tests {
             d <- g * b;
             verify(c == d)
         }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
 
         gs.write_pdf("groebner_ex3").unwrap_or_else(|e| {
             debug!(
@@ -450,8 +445,7 @@ mod tests {
             z <- r + x*c;
             verify(g*z == u + h*c)
         }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
@@ -476,8 +470,7 @@ mod tests {
             z <- r + x*c;
             verify(g*z == u + h*c)
         }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
@@ -504,8 +497,7 @@ mod tests {
             d <- x + y;
             verify(d == d)
         }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
@@ -529,8 +521,7 @@ mod tests {
             z <- x * c;
             verify(g*z == h*c)
         }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
@@ -554,8 +545,7 @@ mod tests {
             b <- t + y;
             verify(a == b)
         }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
@@ -584,8 +574,7 @@ mod tests {
             z <- r + x*c;
             verify(g*z == u + h*c)
         }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
@@ -613,8 +602,7 @@ mod tests {
             verify(a == a);
             verify(b == b)
         }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
@@ -643,8 +631,7 @@ mod tests {
             verify(x == y);
             verify(u == v)
         }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
@@ -679,8 +666,7 @@ mod tests {
 
         let mut sizes = Ctx::new();
         sizes.insert(&Tid::new("N"), &2);
-        let m = parse_and_concretize(ex, &sizes);
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &sizes));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(
@@ -706,8 +692,7 @@ mod tests {
             let z = p / d;
             verify(z == q)
         }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut kz = KnowledgeAnalysis::<ArkBls12_381>::try_from_inputs(

@@ -742,8 +742,7 @@ mod op_integration {
         name: &str,
         inputs: share::Ctx<lang::id::Vid, Value<B>>,
     ) -> Value<B> {
-        let module = parse_and_concretize(src, &share::Ctx::new());
-        let dags = graph::UDags::<B>::from_module(module).unwrap();
+        let dags = lowered::<B>(src, &share::Ctx::new()).unwrap();
         let dag = dags
             .functions()
             .into_iter()
@@ -862,12 +861,11 @@ mod op_integration {
         assert_field::<B>(&fun_at("fun(x, y) => 19 * 2", "[0, 0]"), f::<B>(4));
         assert_field::<B>(&fun_at("fun(x, y) => 19 * x", "[1, 0]"), f::<B>(2));
         assert_field::<B>(&fun_at("fun(x, y) => (19 + 1) * x", "[1, 0]"), f::<B>(3));
-        let module = parse_and_concretize(
-            "fn f<F: Field>() -> F { let p = (fun(x, y) => x * x); eval(p, [0, 0]) }",
-            &share::Ctx::new(),
-        );
         assert!(matches!(
-            graph::UDags::<B>::from_module(module),
+            lowered::<B>(
+                "fn f<F: Field>() -> F { let p = (fun(x, y) => x * x); eval(p, [0, 0]) }",
+                &share::Ctx::new(),
+            ),
             Err(graph::GraphError::NonPolynomialFun(..))
         ));
 
@@ -886,8 +884,7 @@ mod op_integration {
                        s <- r.set(a, 18);
                        verify(s.a == 1)
                    }";
-        let module = parse_and_concretize(src, &share::Ctx::new());
-        let dags = graph::UDags::<B>::from_module(module).unwrap();
+        let dags = lowered::<B>(src, &share::Ctx::new()).unwrap();
         let dag = dags.protocols()[0];
         let mut inputs = share::Ctx::new();
         inputs.insert(

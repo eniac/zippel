@@ -24,7 +24,7 @@ use analyses::{
 };
 use backend::ArkBls12_381;
 use clap::{Parser, ValueEnum};
-use graph::{QDag, UDags};
+use graph::{QDag, Relations, UDags};
 use lang::ast::{SizeSearchError, UModule, minimal_sizes};
 use lang::diagnostic::Severity;
 use lang::id::Tid;
@@ -200,7 +200,8 @@ fn load_dag(target: &Target) -> Result<QDag<ArkBls12_381>, String> {
         .concretize(&ctx)
         .map_err(|e| format!("concretize failed: {e}"))?;
 
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(concrete));
+    let typed = concrete.typecheck().expect("type-checks");
+    let gs = unwrap!(UDags::<ArkBls12_381>::lower(&typed, Relations::Lower));
     let proto = gs
         .protocols()
         .into_iter()

@@ -5,12 +5,12 @@ use ark_ff::PrimeField;
 use backend::{ABase, ATyp, Value, VirtualPolynomial};
 use lang::ast::range::CRange;
 use lang::ast::{
-    BinOp, BodyTypes, CBody, CExp, CExpr, CRef, CSig, Exp, ExpExclusion, ExpId, ExpLiteral, Expr,
-    Exprs, Exps, ModuleTypes,
+    BinOp, BodyTypes, CBody, CExp, CRef, CSig, Exp, ExpExclusion, ExpId, ExpLiteral, Expr, Exprs,
+    Exps, TypedModule,
 };
 use lang::id::{Fresh, Tid};
 use lang::stack_guard;
-use lang::typ::infer::TypeTable;
+use lang::typ::infer::{Cx, TypeTable};
 use lang::typ::{CKind, CTyp, CTyps, Distribution};
 use num::{BigUint, ToPrimitive};
 use share::traversal::ToTraversal1;
@@ -42,9 +42,14 @@ impl Arena {
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
     ) -> Result<CTyp, TypeError> {
-        self.exprs
-            .at(id)
-            .infer_cached(kctx, &self.sigs, vctx, &mut self.types)
+        self.exprs.at(id).infer(
+            &Cx {
+                kctx,
+                fctx: &self.sigs,
+                vctx,
+            },
+            &mut self.types,
+        )
     }
 }
 
@@ -62,19 +67,8 @@ impl std::ops::DerefMut for Arena {
 }
 
 /// `exp`, of type `typ`, has no Arkworks type; located at `exp`.
-fn ark_error(
-    kctx: &Ctx<Tid, CKind>,
-    vctx: &Ctx<Vid, CTyp>,
-    exp: CRef<'_>,
-    typ: &CTyp,
-) -> TypeError {
-    TypeError::located(
-        exp.span(),
-        TypeError::next(
-            TypeError::exp(kctx, vctx, exp),
-            TypeError::ark(kctx, vctx, exp, typ),
-        ),
-    )
+fn ark_error(kctx: &Ctx<Tid, CKind>, exp: CRef<'_>, typ: &CTyp) -> TypeError {
+    TypeError::located(exp.span(), TypeError::Ark(kctx.clone(), typ.clone()))
 }
 
 /// The literal `n` in the field `C::F`, reduced modulo its prime from the complete magnitude.
@@ -182,86 +176,38 @@ fn field_bin<C: HasOpFactory>(op: BinOp, a: GOp<C>, b: GOp<C>, result: ATyp) -> 
     }
 }
 
+/// Whether lowering includes each protocol's `where` clause.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Relations {
+    /// Lower it under the protocol's `Node::Rel` marker: the static analyses read it.
+    Lower,
+    /// Keep only the marker. Enough to project and run the prover and verifier, which never
+    /// read the relation; a relation can be far larger than its protocol's body (one that
+    /// ranges over every witness element lowers to a node per element).
+    Skip,
+}
+
 /// A collection of DAGs without annotations
 impl<C: HasOpFactory> UDags<C> {
-    /// Create a collection of Dags from a module
-    ///
-    /// One DAG is built per declaration, in module order. The full signature to
-    /// body map is passed to every lowering so that calls can be inlined.
+    /// One DAG per declaration of `m`, in module order. The full signature to body map is
+    /// passed to every lowering so that calls can be inlined.
     ///
     /// # Errors
-    /// Returns a [`GraphError`] if any declaration fails to lower — an unbound
-    /// variable, a `lang`-level type error surfaced during inference, or a
-    /// `fun` body outside the polynomial fragment.
-    pub fn from_module(m: CModule) -> Result<Self, GraphError> {
-        Self::build(m, None, true)
-    }
-
-    /// [`Self::from_module`] for a module already type-checked: `types` are what
-    /// [`CModule::typecheck_with_types`] gave it, so no body is checked again.
-    ///
-    /// # Errors
-    /// As [`Self::from_module`]; a declaration without types is checked here.
-    pub fn from_checked(m: CModule, types: ModuleTypes) -> Result<Self, GraphError> {
-        Self::build(m, Some(types), true)
-    }
-
-    /// [`Self::from_module_for_execution`] for a module already type-checked (see
-    /// [`Self::from_checked`]).
-    ///
-    /// # Errors
-    /// As [`Self::from_module_for_execution`].
-    pub fn from_checked_for_execution(m: CModule, types: ModuleTypes) -> Result<Self, GraphError> {
-        Self::build(m, Some(types), false)
-    }
-
-    /// [`Self::from_module`] without lowering any protocol's `where` clause:
-    /// each protocol keeps its `Node::Rel` marker but not the relation
-    /// under it. Enough to project and run the prover and verifier, which
-    /// never read the relation; the static analyses need the full graphs.
-    ///
-    /// A relation can be far larger than its protocol's body (one that
-    /// ranges over every witness element lowers to a node per element), so
-    /// this is what to build when only execution is wanted.
-    ///
-    /// # Errors
-    /// As [`Self::from_module`], except that errors only lowering a relation
-    /// would raise go unreported.
-    pub fn from_module_for_execution(m: CModule) -> Result<Self, GraphError> {
-        Self::build(m, None, false)
-    }
-
-    fn build(
-        m: CModule,
-        mut types: Option<ModuleTypes>,
-        lower_relations: bool,
-    ) -> Result<Self, GraphError> {
-        let mut gs = UDags::new();
-
+    /// Returns a [`GraphError`] if a declaration fails to lower: a type without an Arkworks
+    /// representation, or a `fun` body outside the polynomial fragment. With
+    /// [`Relations::Skip`], errors only lowering a relation would raise go unreported.
+    pub fn lower(m: &TypedModule, relations: Relations) -> Result<Self, GraphError> {
         let fctx = m
+            .module()
             .iter()
             .map(|(sig, body)| (sig.clone(), body.clone()))
             .collect::<Ctx<CSig, CBody>>();
-
-        debug!(
-            "fctx: {:?}",
-            fctx.keys()
-                .iter()
-                .map(|sig| &sig.name.node)
-                .collect::<Vec<_>>()
-        );
-        for (sig, body) in m.into_iter() {
+        let mut gs = UDags::new();
+        for (sig, body, types) in m.iter() {
             debug!("Adding declaration: {}", sig);
             let mut g = UDag::new();
-            let body_types = types.as_mut().and_then(|types| types.remove(&sig));
-            g.add_decl(
-                sig.clone(),
-                body.clone(),
-                body_types,
-                &fctx,
-                lower_relations,
-            )
-            .map_err(|e| e.located(&sig.name.span))?;
+            g.add_decl(sig.clone(), body.clone(), types.clone(), &fctx, relations)
+                .map_err(|e| e.located(&sig.name.span))?;
             gs.0.push(g);
         }
         Ok(gs)
@@ -298,26 +244,18 @@ impl<C: HasOpFactory> UDag<C> {
 
     /// Adds the vector a sample excludes, if it lists one, as a node or a
     /// literal, and returns the exclusion for the sample's operation.
-    #[allow(clippy::too_many_arguments)]
     fn add_exclusion(
         &mut self,
-        exprs: &mut Arena,
+        scope: &mut Scope<'_, C>,
         exclusion: Option<Spanned<ExpExclusion<BigUint>>>,
-        transcr: &mut NodeIndex,
-        edge_type: DepType,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Ctx<CSig, CBody>,
-        vctx: &Ctx<Vid, CTyp>,
-        vars: &Ctx<Vid, GOp<C>>,
     ) -> Result<Option<OpExclusion<C>>, GraphError> {
         exclusion
             .map(|x| {
                 x.node.try_map_values(|v| {
-                    let span = exprs.span(v).clone();
-                    let v =
-                        self.add_exp(exprs, v, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
+                    let span = scope.exprs.span(v).clone();
+                    let v = self.add_exp(scope, v, None)?;
                     let typ = v.typ();
-                    Ok(mk::<C>(self.materialize(v, edge_type, typ, span)))
+                    Ok(mk::<C>(self.materialize(v, scope.edge_type, typ, span)))
                 })
             })
             .transpose()
@@ -344,32 +282,15 @@ impl<C: HasOpFactory> UDag<C> {
 
     /// Add a new top-level expression to the graph; `expected` is the declared type its
     /// value must take (a function's return type), if any.
-    #[allow(clippy::too_many_arguments)]
     fn add_top_exp(
         &mut self,
-        exp: CExpr,
-        types: TypeTable,
-        start: &mut NodeIndex,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Ctx<CSig, CBody>,
-        vctx: &Ctx<Vid, CTyp>,
-        vars: &Ctx<Vid, GOp<C>>,
+        scope: &mut Scope<'_, C>,
+        root: ExpId,
         expected: Option<ATyp>,
     ) -> Result<(), GraphError> {
-        debug!("Adding top-level expression at {:?}", exp.span());
-        let span = exp.span().clone();
-        let Expr { exprs, root } = exp;
-        let op = self.add_exp(
-            &mut Arena::new(exprs, types, fctx.keys()),
-            root,
-            start,
-            DepType::Data,
-            kctx,
-            fctx,
-            vctx,
-            vars,
-            expected,
-        )?;
+        let span = scope.exprs.span(root).clone();
+        debug!("Adding top-level expression at {:?}", span);
+        let op = self.add_exp(scope, root, expected)?;
         if !op.is_ref() {
             let nr = self.add_node(Node::ret(&op), span);
             self.add_edges(DepType::Data, nr, op);
@@ -384,9 +305,9 @@ impl<C: HasOpFactory> UDag<C> {
         &mut self,
         sig: CSig,
         body: CBody,
-        types: Option<BodyTypes>,
+        types: BodyTypes,
         fctx: &Ctx<CSig, CBody>,
-        lower_relation: bool,
+        relations: Relations,
     ) -> Result<(), GraphError> {
         // Kind context
         let kctx = sig.typevars.to_ctx();
@@ -411,12 +332,7 @@ impl<C: HasOpFactory> UDag<C> {
                     &sig.name,
                     TypeError::located(
                         &arg.id.span,
-                        TypeError::ark(
-                            &kctx,
-                            &vctx,
-                            Expr::leaf(Exp::Var(arg.id.clone()), 0..0).root(),
-                            &arg.typ,
-                        ),
+                        TypeError::Ark(kctx.clone(), arg.typ.node.clone()),
                     ),
                 )
             })?;
@@ -432,13 +348,6 @@ impl<C: HasOpFactory> UDag<C> {
                 vctx.insert(&Vid::new(&tid.0), &CTyp::Fin(r.clone()));
             }
         }
-
-        // Typecheck the body with the type signature, unless it has been; lowering starts from
-        // its types.
-        let types = match types {
-            Some(types) => types,
-            None => body.typecheck(sig.clone(), &fctx.keys())?,
-        };
 
         // Add the body to the Graph
         match body {
@@ -477,16 +386,25 @@ impl<C: HasOpFactory> UDag<C> {
                     }
                 }
                 if let Some(body) = body {
-                    self.add_top_exp(
-                        body, types.body, &mut start, &kctx, fctx, &vctx, &vars, None,
-                    )?;
+                    let Expr { exprs, root } = body;
+                    let mut arena = Arena::new(exprs, types.body, fctx.keys());
+                    let mut scope = Scope {
+                        exprs: &mut arena,
+                        transcr: &mut start,
+                        edge_type: DepType::Data,
+                        kctx: &kctx,
+                        fctx,
+                        vctx: vctx.clone(),
+                        vars,
+                    };
+                    self.add_top_exp(&mut scope, root, None)?;
                 }
                 // Relation start: its own per-arg `Node::Arg` children so
                 // walking the relation does not pull in the protocol body
                 // through shared `Arg` nodes.
                 let where_span = relation.span().clone();
                 start = self.add_node(Node::rel(sig.name.node.clone()), where_span.clone());
-                if lower_relation {
+                if relations == Relations::Lower {
                     let mut vars: Ctx<Vid, GOp<C>> = Ctx::new();
                     for (id, typ) in atyps.iter() {
                         let (qualifier, distribution) = arg_meta
@@ -525,17 +443,17 @@ impl<C: HasOpFactory> UDag<C> {
                         exprs: relation_exprs,
                         root: relation,
                     } = relation;
-                    let rel_op = self.add_exp(
-                        &mut Arena::new(relation_exprs, types.relation, fctx.keys()),
-                        relation,
-                        &mut start,
-                        DepType::Data,
-                        &kctx,
+                    let mut arena = Arena::new(relation_exprs, types.relation, fctx.keys());
+                    let mut scope = Scope {
+                        exprs: &mut arena,
+                        transcr: &mut start,
+                        edge_type: DepType::Data,
+                        kctx: &kctx,
                         fctx,
-                        &vctx,
-                        &vars,
-                        None,
-                    )?;
+                        vctx: vctx.clone(),
+                        vars,
+                    };
+                    let rel_op = self.add_exp(&mut scope, relation, None)?;
                     let nassert = self.add_node(Node::assert(&rel_op), where_span);
                     self.add_edges(DepType::Data, nassert, rel_op);
                 }
@@ -578,7 +496,18 @@ impl<C: HasOpFactory> UDag<C> {
                         .ret
                         .as_ref()
                         .and_then(|ret| ATyp::from_ctyp(&ret.node, &kctx));
-                    self.add_top_exp(body, types.body, &mut start, &kctx, fctx, &vctx, &vars, ret)?;
+                    let Expr { exprs, root } = body;
+                    let mut arena = Arena::new(exprs, types.body, fctx.keys());
+                    let mut scope = Scope {
+                        exprs: &mut arena,
+                        transcr: &mut start,
+                        edge_type: DepType::Data,
+                        kctx: &kctx,
+                        fctx,
+                        vctx: vctx.clone(),
+                        vars,
+                    };
+                    self.add_top_exp(&mut scope, root, ret)?;
                 }
             }
             CBody::TypeAlias => {
@@ -619,38 +548,20 @@ impl<C: HasOpFactory> UDag<C> {
     /// elements are embedded into the field, before materializing (see
     /// [`coerce_field_op`]). Inlining a call adopts the callee's return type when the
     /// caller has no expectation.
-    #[allow(clippy::too_many_arguments)]
     #[stack_guard]
     fn add_exp(
         &mut self,
-        exprs: &mut Arena,
+        scope: &mut Scope<'_, C>,
         initial: ExpId,
-        transcr: &mut NodeIndex,
-        edge_type: DepType,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Ctx<CSig, CBody>,
-        vctx: &Ctx<Vid, CTyp>,
-        vars: &Ctx<Vid, GOp<C>>,
-        expected: Option<ATyp>,
+        mut expected: Option<ATyp>,
     ) -> Result<GOp<C>, GraphError> {
-        let span = exprs.span(initial).clone();
-        let mut expected = expected;
-        let op = self.add_exp_raw(
-            exprs,
-            initial,
-            transcr,
-            edge_type,
-            kctx,
-            fctx,
-            vctx,
-            vars,
-            &mut expected,
-        )?;
+        let span = scope.exprs.span(initial).clone();
+        let op = self.add_exp_raw(&mut scope.nested(), initial, &mut expected)?;
         Ok(match expected {
             Some(target) if op.typ() != target => {
                 let op = coerce_field_op(op, &target, 0);
                 let atyp = op.typ();
-                self.materialize(op, edge_type, atyp, span)
+                self.materialize(op, scope.edge_type, atyp, span)
             }
             _ => op,
         })
@@ -658,48 +569,20 @@ impl<C: HasOpFactory> UDag<C> {
 
     /// [`Self::add_exp`] before the final coercion to `expected`, which only steers
     /// literals, the elements of vectors, records and map outputs, and inlined calls.
-    #[allow(clippy::too_many_arguments)]
     fn add_exp_raw(
         &mut self,
-        exprs: &mut Arena,
+        scope: &mut Scope<'_, C>,
         initial: ExpId,
-        transcr: &mut NodeIndex,
-        edge_type: DepType,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Ctx<CSig, CBody>,
-        vctx: &Ctx<Vid, CTyp>,
-        vars: &Ctx<Vid, GOp<C>>,
         expected: &mut Option<ATyp>,
     ) -> Result<GOp<C>, GraphError> {
-        // Own mutable copies for trampoline loop
         let mut id = initial;
-        let mut vctx = vctx.clone();
-        let mut vars = vars.clone();
         loop {
             // Type inference for [self]
-            let typ = exprs.infer(id, kctx, &vctx)?;
+            let typ = scope.infer(id)?;
             // Nodes created for this expression come from its source.
-            let span = exprs.span(id).clone();
-            // The contexts this iteration lowers `exp` under, for the arm helpers.
-            macro_rules! step {
-                () => {
-                    Step {
-                        exprs: &mut *exprs,
-                        id,
-                        typ: &typ,
-                        span: span.clone(),
-                        transcr: &mut *transcr,
-                        edge_type,
-                        kctx,
-                        fctx,
-                        vctx: &vctx,
-                        vars: &vars,
-                        expected: &mut *expected,
-                    }
-                };
-            }
+            let span = scope.exprs.span(id).clone();
             // Convert [CExp] to [Op] while creating the graph
-            match exprs[id].clone() {
+            match scope.exprs[id].clone() {
                 // A literal is an index unless it is field-only or a field element is expected
                 CExp::Lit(n) => {
                     let field = expected.as_ref().is_some_and(ATyp::is_scalar);
@@ -710,56 +593,60 @@ impl<C: HasOpFactory> UDag<C> {
                 CExp::Unit => return Ok(GOp::Value(Value::Unit)),
 
                 // Variables are edges, no new nodes are added
-                CExp::Var(id) => return Self::op_from_var(&id, &vars),
+                CExp::Var(id) => return Self::op_from_var(&id, &scope.vars),
 
                 CExp::Evaluate(p, selector, opt_points) => {
-                    return self.lower_evaluate(step!(), p, selector, opt_points);
+                    return self.lower_evaluate(scope, id, p, selector, opt_points);
                 }
 
-                CExp::Poly(v) => return self.lower_poly(step!(), v),
+                CExp::Poly(v) => return self.lower_poly(scope, id, v),
 
-                CExp::Coef(v) => return self.lower_coef(step!(), v),
+                CExp::Coef(v) => return self.lower_coef(scope, id, v),
 
                 // Lower CExp::Interpolate(opt_points, evals) into either Op::Ifft (unary)
                 // or Op::Interpolate (binary) — monomorphic per variant.
                 CExp::Interpolate(points_opt, evals) => {
-                    return self.lower_interpolate(step!(), points_opt, evals);
+                    return self.lower_interpolate(scope, id, points_opt, evals);
                 }
                 // Create a new [vec] value; elements take the expected element type, else
                 // the vector's own, so integers in a field vector become field elements.
-                CExp::Vec(vs) => return self.lower_vec(step!(), vs),
+                CExp::Vec(vs) => return self.lower_vec(scope, id, vs, expected.as_ref()),
 
                 // MLE is a noop?
-                // CExp::Mle(inner) => self.add_exp(exprs, inner, transcr, edge_type, kctx, fctx, &vctx, &vars),
-                CExp::Mle(v) => return self.lower_mle(step!(), v),
+                // CExp::Mle(inner) => self.add_exp(scope, inner, None),
+                CExp::Mle(v) => return self.lower_mle(scope, id, v),
 
                 // Billinear pairing
-                CExp::Pair(a, b) => return self.lower_pair(step!(), a, b),
+                CExp::Pair(a, b) => return self.lower_pair(scope, id, a, b),
                 // Unary negation of a field element (including a negated integer literal):
                 // `0 - x` in the field, with a finite `x` embedded first. Re-inferring a
                 // rewritten `0 - 1` would subtract indices instead.
-                CExp::Neg(a) if ATyp::from_ctyp(&typ, kctx).is_some_and(|t| t.is_scalar()) => {
-                    return self.lower_neg(step!(), a);
+                CExp::Neg(a)
+                    if ATyp::from_ctyp(&typ, scope.kctx).is_some_and(|t| t.is_scalar()) =>
+                {
+                    return self.lower_neg(scope, id, a);
                 }
                 // Any other unary negation: lower as 0 - x
                 CExp::Neg(a) => {
-                    let zero = exprs.push(Exp::Lit(<BigUint as ExpLiteral>::lit(0)), span.clone());
-                    id = exprs.push(Exp::Bin(BinOp::Sub, zero, a), span);
+                    let zero = scope
+                        .exprs
+                        .push(Exp::Lit(<BigUint as ExpLiteral>::lit(0)), span.clone());
+                    id = scope.exprs.push(Exp::Bin(BinOp::Sub, zero, a), span);
                     continue;
                 }
                 // Create a new [bin] node
-                CExp::Bin(op, a, b) => return self.lower_bin(step!(), op, a, b),
+                CExp::Bin(op, a, b) => return self.lower_bin(scope, id, op, a, b),
 
                 // Create a [range] value, no new nodes added
                 CExp::Range(r) => return Ok(GOp::range(r)),
 
-                CExp::Map(l, x, e) => return self.lower_map(step!(), l, x, e),
+                CExp::Map(l, x, e) => return self.lower_map(scope, id, l, x, e, expected.as_ref()),
 
-                CExp::Reduce(op, v) => return self.lower_reduce(step!(), op, v),
-                CExp::Ram(a, b) => return self.lower_ram(step!(), a, b),
-                CExp::Challenge(_, exclusion) => return self.lower_challenge(step!(), exclusion),
-                CExp::Random(_, exclusion) => return self.lower_random(step!(), exclusion),
-                CExp::App(fid, params) => match self.lower_app(step!(), fid, params)? {
+                CExp::Reduce(op, v) => return self.lower_reduce(scope, id, op, v),
+                CExp::Ram(a, b) => return self.lower_ram(scope, id, a, b),
+                CExp::Challenge(_, exclusion) => return self.lower_challenge(scope, id, exclusion),
+                CExp::Random(_, exclusion) => return self.lower_random(scope, id, exclusion),
+                CExp::App(fid, params) => match self.lower_app(scope, id, fid, params, expected)? {
                     Lowered::Rewrite(next) => id = next,
                     Lowered::Inline {
                         body,
@@ -767,17 +654,15 @@ impl<C: HasOpFactory> UDag<C> {
                         vars: callee_vars,
                     } => {
                         id = body;
-                        vctx = callee_vctx;
-                        vars = callee_vars;
+                        scope.vctx = callee_vctx;
+                        scope.vars = callee_vars;
                     }
                 },
                 // Statements in order, each binding its variable for the rest of the block;
                 // then the trampoline continues with the block's value.
                 CExp::Block(stmts, tail) => {
                     for stmt in stmts {
-                        self.lower_stmt(
-                            exprs, stmt, transcr, edge_type, kctx, fctx, &mut vctx, &mut vars,
-                        )?;
+                        self.lower_stmt(scope, stmt)?;
                     }
                     match tail {
                         Some(tail) => {
@@ -790,35 +675,50 @@ impl<C: HasOpFactory> UDag<C> {
                 CExp::Let(..) | CExp::Log(..) | CExp::Discard(_) => {
                     unreachable!("statements are lowered with their block")
                 }
-                CExp::Verify(exp) => return self.lower_verify(step!(), exp),
-                CExp::Fun(fun_vars, body) => return Self::lower_fun(exprs, fun_vars, body),
-                CExp::Record(fields) => return self.lower_record(step!(), fields),
+                CExp::Verify(exp) => return self.lower_verify(scope, id, exp),
+                CExp::Fun(fun_vars, body) => return Self::lower_fun(scope.exprs, fun_vars, body),
+                CExp::Record(fields) => {
+                    return self.lower_record(scope, id, fields, expected.as_ref());
+                }
                 CExp::Proj(record_exp, field_name) => {
-                    return self.lower_proj(step!(), record_exp, field_name);
+                    return self.lower_proj(scope, id, record_exp, field_name);
                 }
                 CExp::SetRecord(record_exp, field_name, value_exp) => {
-                    return self.lower_set_record(step!(), record_exp, field_name, value_exp);
+                    return self.lower_set_record(scope, id, record_exp, field_name, value_exp);
                 }
             }
         } // end loop
     }
 }
 
-/// One expression in [`UDag::add_exp_raw`]'s loop: the expression, its inferred type and span,
-/// and the contexts it is lowered under. The arm helpers take it so each keeps its own stack
-/// frame out of the loop's (issue #252).
-struct Step<'a, C: HasOpFactory> {
+/// The state shared while lowering a tree. Nested expressions clone the persistent variable
+/// contexts, while sharing the arena and the current transcript node.
+struct Scope<'a, C: HasOpFactory> {
     exprs: &'a mut Arena,
-    id: ExpId,
-    typ: &'a CTyp,
-    span: std::ops::Range<usize>,
     transcr: &'a mut NodeIndex,
     edge_type: DepType,
     kctx: &'a Ctx<Tid, CKind>,
     fctx: &'a Ctx<CSig, CBody>,
-    vctx: &'a Ctx<Vid, CTyp>,
-    vars: &'a Ctx<Vid, GOp<C>>,
-    expected: &'a mut Option<ATyp>,
+    vctx: Ctx<Vid, CTyp>,
+    vars: Ctx<Vid, GOp<C>>,
+}
+
+impl<C: HasOpFactory> Scope<'_, C> {
+    fn infer(&mut self, id: ExpId) -> Result<CTyp, TypeError> {
+        self.exprs.infer(id, self.kctx, &self.vctx)
+    }
+
+    fn nested(&mut self) -> Scope<'_, C> {
+        Scope {
+            exprs: self.exprs,
+            transcr: self.transcr,
+            edge_type: self.edge_type,
+            kctx: self.kctx,
+            fctx: self.fctx,
+            vctx: self.vctx.clone(),
+            vars: self.vars.clone(),
+        }
+    }
 }
 
 /// How lowering continues after an application that [`UDag::add_exp_raw`] does not lower
@@ -839,53 +739,31 @@ enum Lowered<C: HasOpFactory> {
 impl<C: HasOpFactory> UDag<C> {
     /// Lowers one statement of a block, binding its variable in `vctx` and `vars` for the rest
     /// of the block.
-    #[allow(clippy::too_many_arguments)]
     #[inline(never)]
-    fn lower_stmt(
-        &mut self,
-        exprs: &mut Arena,
-        stmt: ExpId,
-        transcr: &mut NodeIndex,
-        edge_type: DepType,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Ctx<CSig, CBody>,
-        vctx: &mut Ctx<Vid, CTyp>,
-        vars: &mut Ctx<Vid, GOp<C>>,
-    ) -> Result<(), GraphError> {
-        match exprs[stmt].clone() {
-            CExp::Let(id, l) => {
-                // Infer the type of [l]
-                let tl = exprs.infer(l, kctx, vctx)?;
-                // Add left-hand side as node
-                let nl =
-                    self.add_exp(exprs, l, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
-                if let GOp::Ref(r, _) = &nl {
-                    self.bind(r.node(), &id);
-                    self.transcript_vars.insert(&r.node(), &false);
-                }
-                // Add [id] to the variable context (clone-on-write)
-                vctx.insert(&id.node, &tl);
-                vars.insert(&id.node, &nl);
+    fn lower_stmt(&mut self, scope: &mut Scope<'_, C>, stmt: ExpId) -> Result<(), GraphError> {
+        let node = scope.exprs[stmt].clone();
+        let (CExp::Let(_, value) | CExp::Log(_, value) | CExp::Discard(value)) = node else {
+            unreachable!("a block's statements are statements")
+        };
+        let op = self.add_exp(scope, value, None)?;
+        let Some(x) = node.binder() else {
+            return Ok(());
+        };
+        let op = if matches!(node, CExp::Log(..)) {
+            // A transcript node comes from the value sent.
+            let sent = scope.exprs.span(value).clone();
+            self.log_transcript(scope.transcr, x, &op, sent)
+        } else {
+            if let GOp::Ref(r, _) = &op {
+                self.bind(r.node(), x);
+                self.transcript_vars.insert(&r.node(), &false);
             }
-            CExp::Discard(l) => {
-                self.add_exp(exprs, l, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
-            }
-            CExp::Log(id, l) => {
-                // A transcript node comes from the value sent.
-                let sent = exprs.span(l).clone();
-                // Infer the type of [l]
-                let tl = exprs.infer(l, kctx, vctx)?;
-                // Add left-hand side as node
-                let ol =
-                    self.add_exp(exprs, l, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
-                // Record transcript interaction
-                let transcr_op = self.log_transcript(transcr, &id, &ol, sent);
-                // Add [id] to the variable context (clone-on-write)
-                vctx.insert(&id.node, &tl);
-                vars.insert(&id.node, &transcr_op);
-            }
-            _ => unreachable!("a block's statements are statements"),
-        }
+            op
+        };
+        // A statement has its value's type.
+        let typ = scope.infer(stmt)?;
+        scope.vctx.insert(&x.node, &typ);
+        scope.vars.insert(&x.node, &op);
         Ok(())
     }
 
@@ -938,125 +816,88 @@ impl<C: HasOpFactory> UDag<C> {
     }
 
     #[inline(never)]
-    fn lower_pair(&mut self, step: Step<'_, C>, a: ExpId, b: ExpId) -> Result<GOp<C>, GraphError> {
-        let Step {
-            exprs,
-            id,
-            typ,
-            span,
-            transcr,
-            edge_type,
-            kctx,
-            fctx,
-            vctx,
-            vars,
-            ..
-        } = step;
-        let va = self.add_exp(exprs, a, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
-        let vb = self.add_exp(exprs, b, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
+    fn lower_pair(
+        &mut self,
+        scope: &mut Scope<'_, C>,
+        id: ExpId,
+        a: ExpId,
+        b: ExpId,
+    ) -> Result<GOp<C>, GraphError> {
+        let typ = scope.infer(id)?;
+        let span = scope.exprs.span(id).clone();
+        let va = self.add_exp(scope, a, None)?;
+        let vb = self.add_exp(scope, b, None)?;
 
-        let atyp =
-            ATyp::from_ctyp(typ, kctx).ok_or_else(|| ark_error(kctx, vctx, exprs.at(id), typ))?;
+        let atyp = ATyp::from_ctyp(&typ, scope.kctx)
+            .ok_or_else(|| ark_error(scope.kctx, scope.exprs.at(id), &typ))?;
 
         Ok(self.materialize(
             GOp::pair(va, vb, atyp.clone()),
-            edge_type,
+            scope.edge_type,
             atyp,
             span.clone(),
         ))
     }
 
     #[inline(never)]
-    fn lower_neg(&mut self, step: Step<'_, C>, a: ExpId) -> Result<GOp<C>, GraphError> {
-        let Step {
-            exprs,
-            span,
-            transcr,
-            edge_type,
-            kctx,
-            fctx,
-            vctx,
-            vars,
-            ..
-        } = step;
-        let child = self.add_exp(
-            exprs,
-            a,
-            transcr,
-            edge_type,
-            kctx,
-            fctx,
-            vctx,
-            vars,
-            Some(ATyp::scalar()),
-        )?;
+    fn lower_neg(
+        &mut self,
+        scope: &mut Scope<'_, C>,
+        id: ExpId,
+        a: ExpId,
+    ) -> Result<GOp<C>, GraphError> {
+        let span = scope.exprs.span(id).clone();
+        let child = self.add_exp(scope, a, Some(ATyp::scalar()))?;
         let zero = GOp::Value(Value::Scalar(C::F::from(0u64)));
         let bop = GOp::bin(BinOp::Sub, zero, child, ATyp::scalar());
-        Ok(self.add_bin(bop, edge_type, ATyp::scalar(), span.clone()))
+        Ok(self.add_bin(bop, scope.edge_type, ATyp::scalar(), span.clone()))
     }
 
     #[inline(never)]
     fn lower_bin(
         &mut self,
-        step: Step<'_, C>,
+        scope: &mut Scope<'_, C>,
+        id: ExpId,
         op: BinOp,
         a: ExpId,
         b: ExpId,
     ) -> Result<GOp<C>, GraphError> {
-        let Step {
-            exprs,
-            id,
-            typ,
-            span,
-            transcr,
-            edge_type,
-            kctx,
-            fctx,
-            vctx,
-            vars,
-            ..
-        } = step;
+        let typ = scope.infer(id)?;
+        let span = scope.exprs.span(id).clone();
         // Add children first
-        let vl = self.add_exp(exprs, a, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
-        let vr = self.add_exp(exprs, b, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
+        let vl = self.add_exp(scope, a, None)?;
+        let vr = self.add_exp(scope, b, None)?;
 
         // Convert type [typ] to [ATyp]
-        let atyp =
-            ATyp::from_ctyp(typ, kctx).ok_or_else(|| ark_error(kctx, vctx, exprs.at(id), typ))?;
+        let atyp = ATyp::from_ctyp(&typ, scope.kctx)
+            .ok_or_else(|| ark_error(scope.kctx, scope.exprs.at(id), &typ))?;
 
         let bop = field_bin(op, vl, vr, atyp.clone());
-        Ok(self.add_bin(bop, edge_type, atyp, span.clone()))
+        Ok(self.add_bin(bop, scope.edge_type, atyp, span.clone()))
     }
 
     #[inline(never)]
     fn lower_challenge(
         &mut self,
-        step: Step<'_, C>,
+        scope: &mut Scope<'_, C>,
+        id: ExpId,
         exclusion: Option<Spanned<ExpExclusion<BigUint>>>,
     ) -> Result<GOp<C>, GraphError> {
-        let Step {
-            exprs,
-            id,
-            typ,
-            span,
-            transcr,
-            edge_type,
-            kctx,
-            fctx,
-            vctx,
-            vars,
-            ..
-        } = step;
-        let at =
-            ATyp::from_ctyp(typ, kctx).ok_or_else(|| ark_error(kctx, vctx, exprs.at(id), typ))?;
-        let exclusion =
-            self.add_exclusion(exprs, exclusion, transcr, edge_type, kctx, fctx, vctx, vars)?;
+        let typ = scope.infer(id)?;
+        let span = scope.exprs.span(id).clone();
+        let at = ATyp::from_ctyp(&typ, scope.kctx)
+            .ok_or_else(|| ark_error(scope.kctx, scope.exprs.at(id), &typ))?;
+        let exclusion = self.add_exclusion(scope, exclusion)?;
         let nchallenge = self.add_node(Node::challenge(&at, exclusion.clone()), span.clone());
-        self.add_edges(edge_type, nchallenge, GOp::Challenge(at.clone(), exclusion));
+        self.add_edges(
+            scope.edge_type,
+            nchallenge,
+            GOp::Challenge(at.clone(), exclusion),
+        );
         // Add transcript edge to [nchallenge]
-        self.add_edge(*transcr, nchallenge, Dep::transcript());
+        self.add_edge(*scope.transcr, nchallenge, Dep::transcript());
         // Update transcript node
-        *transcr = nchallenge;
+        *scope.transcr = nchallenge;
 
         Ok(GOp::underscore(nchallenge, at))
     }
@@ -1064,48 +905,32 @@ impl<C: HasOpFactory> UDag<C> {
     #[inline(never)]
     fn lower_random(
         &mut self,
-        step: Step<'_, C>,
+        scope: &mut Scope<'_, C>,
+        id: ExpId,
         exclusion: Option<Spanned<ExpExclusion<BigUint>>>,
     ) -> Result<GOp<C>, GraphError> {
-        let Step {
-            exprs,
-            id,
-            typ,
-            span,
-            transcr,
-            edge_type,
-            kctx,
-            fctx,
-            vctx,
-            vars,
-            ..
-        } = step;
-        let at =
-            ATyp::from_ctyp(typ, kctx).ok_or_else(|| ark_error(kctx, vctx, exprs.at(id), typ))?;
-        let exclusion =
-            self.add_exclusion(exprs, exclusion, transcr, edge_type, kctx, fctx, vctx, vars)?;
+        let typ = scope.infer(id)?;
+        let span = scope.exprs.span(id).clone();
+        let at = ATyp::from_ctyp(&typ, scope.kctx)
+            .ok_or_else(|| ark_error(scope.kctx, scope.exprs.at(id), &typ))?;
+        let exclusion = self.add_exclusion(scope, exclusion)?;
         let nrand = self.add_node(Node::random(&at, exclusion.clone()), span.clone());
-        self.add_edges(edge_type, nrand, GOp::Random(at.clone(), exclusion));
+        self.add_edges(scope.edge_type, nrand, GOp::Random(at.clone(), exclusion));
         Ok(GOp::underscore(nrand, at))
     }
 
     #[inline(never)]
-    fn lower_verify(&mut self, step: Step<'_, C>, exp: ExpId) -> Result<GOp<C>, GraphError> {
-        let Step {
-            exprs,
-            span,
-            transcr,
-            edge_type,
-            kctx,
-            fctx,
-            vctx,
-            vars,
-            ..
-        } = step;
-        let oa = self.add_exp(exprs, exp, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
+    fn lower_verify(
+        &mut self,
+        scope: &mut Scope<'_, C>,
+        id: ExpId,
+        exp: ExpId,
+    ) -> Result<GOp<C>, GraphError> {
+        let span = scope.exprs.span(id).clone();
+        let oa = self.add_exp(scope, exp, None)?;
         // Add new node
         let nverify = self.add_node(Node::verify(&oa), span.clone());
-        self.add_edges(edge_type, nverify, oa);
+        self.add_edges(scope.edge_type, nverify, oa);
         // No transcript edge — the Op::Verify variant itself
         // marks the node as a verifier check.
         // Returns Unit value; sequencing via Let(None, ...) discards it.

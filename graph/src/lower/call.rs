@@ -6,33 +6,29 @@ impl<C: HasOpFactory> UDag<C> {
     #[inline(never)]
     pub(super) fn lower_app(
         &mut self,
-        step: Step<'_, C>,
+        scope: &mut Scope<'_, C>,
+        id: ExpId,
         fid: Spanned<Vid>,
         params: Exps,
+        expected: &mut Option<ATyp>,
     ) -> Result<Lowered<C>, GraphError> {
-        let Step {
-            exprs,
-            span,
-            transcr,
-            edge_type,
-            kctx,
-            fctx,
-            vctx,
-            vars,
-            expected,
-            ..
-        } = step;
+        let span = scope.exprs.span(id).clone();
         // type inference for each parameter
         let param_types: CTyps = params
             .iter()
-            .map(|p| exprs.infer(p, kctx, vctx).map(Spanned::dummy))
+            .map(|p| {
+                scope
+                    .exprs
+                    .infer(p, scope.kctx, &scope.vctx)
+                    .map(Spanned::dummy)
+            })
             .collect::<Result<_, _>>()?;
 
         // Is it a polynomial, MLE, or a function?
-        match &vctx.get(&fid.node) {
+        match scope.vctx.get(&fid.node) {
             Some(CTyp::Poly(tbase, m, _n)) if m.node == 1 => {
                 // It is a univariate polynomial
-                let k = kctx.get(tbase).unwrap();
+                let k = scope.kctx.get(tbase).unwrap();
 
                 // Only field elements can be evaluated and only 1 argument can be given
                 assert!(k.is_scalar());
@@ -45,14 +41,16 @@ impl<C: HasOpFactory> UDag<C> {
                 // implicitly reinterpreting the polynomial as a
                 // coefficient list — that lub_dot(Poly, Vec) arm
                 // has been removed.
-                let poly = exprs.push(Exp::Var(fid.clone()), span.clone());
-                let eval_exp = exprs.push(Exp::Evaluate(poly, None, Some(params[0])), span);
+                let poly = scope.exprs.push(Exp::Var(fid.clone()), span.clone());
+                let eval_exp = scope
+                    .exprs
+                    .push(Exp::Evaluate(poly, None, Some(params[0])), span);
                 // Trampoline
                 Ok(Lowered::Rewrite(eval_exp))
             }
             Some(CTyp::Poly(tbase, n, d)) if d.node == 1 => {
                 // It is a multilinear extension
-                let k = kctx.get(tbase).unwrap();
+                let k = scope.kctx.get(tbase).unwrap();
 
                 // Only field elements can be evaluated and only 1 argument can be given
                 assert!(k.is_scalar());
@@ -71,10 +69,10 @@ impl<C: HasOpFactory> UDag<C> {
                 let end = 1_usize
                     .checked_shl(n.node.try_into().expect("mle_app: n exceeds u32"))
                     .expect("mle_app: 1 << n overflow");
-                let mut bound_vars = vctx.keys();
+                let mut bound_vars = scope.vctx.keys();
                 let coef_var = Vid::fresh(&format!("__coef_{}", fid), &mut bound_vars);
 
-                let mut push = |node| exprs.push(node, span.clone());
+                let mut push = |node| scope.exprs.push(node, span.clone());
                 let coefs = Exp::Var(Spanned::dummy(coef_var.clone()));
                 let (low, high) = (push(coefs.clone()), push(coefs));
                 let low_range = push(Exp::Range(CRange::from_raw(0, 1, mid)));
@@ -97,13 +95,14 @@ impl<C: HasOpFactory> UDag<C> {
             }
             _ => {
                 // Type checking resolved this call already, so it resolves here.
-                let decls = fctx
+                let decls = scope
+                    .fctx
                     .iter()
                     .map(|(sig, _)| sig)
                     .filter(|sig| sig.name.node == fid.node);
-                let (decl, sig, inst) = CSig::resolve_call(decls, &param_types, kctx)
+                let (decl, sig, inst) = CSig::resolve_call(decls, &param_types, scope.kctx)
                     .expect("type checking resolved this call");
-                let body = fctx.get(decl).expect("a declaration has a body");
+                let body = scope.fctx.get(decl).expect("a declaration has a body");
                 let mut body = body.clone();
                 inst.apply(&mut body)
                     .expect("a resolved signature declares every parameter");
@@ -114,8 +113,8 @@ impl<C: HasOpFactory> UDag<C> {
                     .into_iter()
                     .zip(sig.args.iter())
                     .map(|(p, arg)| {
-                        let formal = ATyp::from_ctyp(&arg.typ, kctx);
-                        self.add_exp(exprs, p, transcr, edge_type, kctx, fctx, vctx, vars, formal)
+                        let formal = ATyp::from_ctyp(&arg.typ, scope.kctx);
+                        self.add_exp(scope, p, formal)
                     })
                     .collect::<Result<_, _>>()?;
                 // The inlined body's value takes the caller's expected type, else
@@ -124,15 +123,15 @@ impl<C: HasOpFactory> UDag<C> {
                     *expected = sig
                         .ret
                         .as_ref()
-                        .and_then(|r| ATyp::from_ctyp(&r.node, kctx));
+                        .and_then(|r| ATyp::from_ctyp(&r.node, scope.kctx));
                 }
 
                 // Trampoline: replace context and continue with body
-                let mut next_vctx = vctx.clone();
+                let mut next_vctx = scope.vctx.clone();
                 for (vid, typ) in sig.args.to_ctx().iter() {
                     next_vctx.insert(vid, typ);
                 }
-                let mut next_vars = vars.clone();
+                let mut next_vars = scope.vars.clone();
                 for (arg, op) in sig.args.iter().zip(oparams.iter()) {
                     next_vars.insert(&arg.id.node, op);
                 }
@@ -148,8 +147,8 @@ impl<C: HasOpFactory> UDag<C> {
                     }
                 }
                 let body = match body.body() {
-                    Some(tree) => exprs.append(tree),
-                    None => exprs.push(CExp::Unit, span),
+                    Some(tree) => scope.exprs.append(tree),
+                    None => scope.exprs.push(CExp::Unit, span),
                 };
                 Ok(Lowered::Inline {
                     body,

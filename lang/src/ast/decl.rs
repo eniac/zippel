@@ -5,9 +5,9 @@ use crate::ast::Size;
 use crate::ast::exp::{ExpLiteral, ExpTraversal};
 use crate::ast::size::EvalError;
 use crate::ast::spanned::Spanned;
-use crate::ast::{CSig, Exp, Expr, GArgs, Sig};
+use crate::ast::{CSig, Expr, GArgs, Sig};
 use crate::id::{Tid, TidSubst, Vid};
-use crate::typ::infer::{TypeError, TypeTable};
+use crate::typ::infer::{Cx, TypeError, TypeTable};
 use crate::typ::lub::Lub;
 use crate::typ::subst::SubstError;
 use crate::typ::{
@@ -280,16 +280,6 @@ impl CBody {
     /// protocol body does not infer to `Unit`; or if a function body's type has
     /// no least upper bound with the declared return type.
     pub fn typecheck(&self, sig: CSig, fctx: &Set<CSig>) -> Result<BodyTypes, TypeError> {
-        self.typecheck_with_calls(sig, fctx, &|_| {})
-    }
-
-    /// Type-checks the declaration while recording resolved function calls.
-    pub(crate) fn typecheck_with_calls(
-        &self,
-        sig: CSig,
-        fctx: &Set<CSig>,
-        on_call: &dyn Fn(&CSig),
-    ) -> Result<BodyTypes, TypeError> {
         let mut types = BodyTypes::default();
         // Kind context
         let kctx = sig.typevars.node.to_ctx();
@@ -309,38 +299,44 @@ impl CBody {
                 if !relation.root().is_relation_pure() {
                     return Err(TypeError::decl(
                         &sig.name,
-                        TypeError::located(
-                            relation.span(),
-                            TypeError::not_pure_rel(relation.root()),
-                        ),
+                        TypeError::located(relation.span(), TypeError::NotPureRel),
                     ));
                 }
                 // Relation must infer to Bool (the relation IS the assertion)
-                let rel_typ =
-                    relation
-                        .root()
-                        .infer_in(&kctx, fctx, &vctx, on_call, &mut types.relation)?;
+                let rel_typ = relation.root().infer(
+                    &Cx {
+                        kctx: &kctx,
+                        fctx,
+                        vctx: &vctx,
+                    },
+                    &mut types.relation,
+                )?;
                 if !matches!(rel_typ, CTyp::Bool) {
                     return Err(TypeError::decl(
                         &sig.name,
                         TypeError::located(
                             relation.span(),
-                            TypeError::relation_not_bool(&kctx, &rel_typ, relation.root()),
+                            TypeError::RelationNotBool(kctx.clone(), rel_typ.clone()),
                         ),
                     ));
                 }
                 // Body must infer to Unit (empty body is Unit)
                 if let Some(body) = body {
-                    let br = body
-                        .root()
-                        .infer_in(&kctx, fctx, &vctx, on_call, &mut types.body)?;
+                    let br = body.root().infer(
+                        &Cx {
+                            kctx: &kctx,
+                            fctx,
+                            vctx: &vctx,
+                        },
+                        &mut types.body,
+                    )?;
                     if br != CTyp::Unit {
                         let last = crate::typ::infer::tail(body.root());
                         return Err(TypeError::decl(
                             &sig.name,
                             TypeError::located(
                                 last.span(),
-                                TypeError::unit(&kctx, &vctx, last, &br),
+                                TypeError::Unit(kctx.clone(), br.clone()),
                             ),
                         ));
                     }
@@ -355,9 +351,14 @@ impl CBody {
                     .unwrap_or_else(|| Spanned::dummy(CTyp::Unit));
                 match body {
                     Some(body) => {
-                        let br =
-                            body.root()
-                                .infer_in(&kctx, fctx, &vctx, on_call, &mut types.body)?;
+                        let br = body.root().infer(
+                            &Cx {
+                                kctx: &kctx,
+                                fctx,
+                                vctx: &vctx,
+                            },
+                            &mut types.body,
+                        )?;
                         if br.fits(&ret.node, &kctx) {
                             Ok(types)
                         } else {
@@ -365,13 +366,11 @@ impl CBody {
                                 &sig.name,
                                 TypeError::located(
                                     body.span(),
-                                    TypeError::func_ret(
-                                        &kctx,
-                                        &vctx,
-                                        body.root(),
-                                        &sig.name.node,
-                                        &ret,
-                                        &br,
+                                    TypeError::FuncRet(
+                                        kctx.clone(),
+                                        sig.name.node.clone(),
+                                        ret.clone(),
+                                        br.clone(),
                                     ),
                                 ),
                             ))
@@ -385,13 +384,11 @@ impl CBody {
                                 &sig.name,
                                 TypeError::located(
                                     &sig.ret.as_ref().map_or(0..0, |r| r.span.clone()),
-                                    TypeError::func_ret(
-                                        &kctx,
-                                        &vctx,
-                                        Expr::leaf(Exp::Unit, 0..0).root(),
-                                        &sig.name.node,
-                                        &ret,
-                                        &CTyp::Unit,
+                                    TypeError::FuncRet(
+                                        kctx.clone(),
+                                        sig.name.node.clone(),
+                                        ret.clone(),
+                                        CTyp::Unit,
                                     ),
                                 ),
                             )),
@@ -405,7 +402,7 @@ impl CBody {
 }
 
 /// The types inference gave the nodes of a body's trees (see [`CBody::typecheck`]).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct BodyTypes {
     /// The `where` clause's nodes.
     pub relation: TypeTable,

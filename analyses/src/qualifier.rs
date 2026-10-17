@@ -198,10 +198,10 @@ impl QualifierPropagation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::parse_and_concretize;
+    use crate::tests::lowered;
     use backend::ArkBls12_381;
     use backend::op::mk;
-    use graph::{Node, UDags};
+    use graph::Node;
     use lang::typ::Qualifier;
     use share::unwrap;
 
@@ -214,8 +214,7 @@ mod tests {
                 b <- r * s';
                 verify(a == b)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
 
         let g = QualifierPropagation::from_dag(&gs[0]);
         assert!(g.node_count() > 0);
@@ -262,8 +261,7 @@ mod tests {
                 z <- x + y;
                 verify(z == x + y)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let check_nodes = g.find_verify();
@@ -280,8 +278,7 @@ mod tests {
                 z <- x + y;
                 verify(z == x + y)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let check_nodes = g.find_verify();
@@ -298,8 +295,7 @@ mod tests {
                 z <- x * y;
                 verify(z == x * y)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         assert!(g.node_count() > 0);
@@ -311,8 +307,7 @@ mod tests {
             proto simple<F: Field>(witness x: F) where 1 == 1 {
                 verify(x == x)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let check = g.find_verify();
@@ -326,8 +321,7 @@ mod tests {
                 verify(x == x);
                 verify(y == y)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let checks = g.find_verify();
@@ -345,8 +339,7 @@ mod tests {
                 verify(x == x);
                 verify(y == y)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let checks = g.find_verify();
@@ -375,8 +368,7 @@ mod tests {
                 verify(y == y);
                 verify(z == z)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let checks = g.find_verify();
@@ -396,8 +388,7 @@ mod tests {
                 b <- a + y;
                 verify(b == b)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let checks = g.find_verify();
@@ -509,8 +500,7 @@ mod tests {
                 a <- r * s;
                 verify(a == a)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let r_node = find_node_by_name(&g, "r").expect("r node should exist");
@@ -532,8 +522,7 @@ mod tests {
                 a <- r * s;
                 verify(a == a)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         // Find the `a` transcript node, then walk back to the `r * s` op node.
@@ -566,8 +555,7 @@ mod tests {
                 a <- r * s;
                 verify(a == a)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         for n in g.node_indices() {
@@ -593,8 +581,7 @@ mod tests {
                 a <- t + s;
                 verify(a == a)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let r_node = find_node_by_name(&g, "r");
@@ -623,8 +610,7 @@ mod tests {
                 z <- r + x*c;
                 verify(g*z == u + h*c)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         // The relation-side g*x computation should be Witness.
@@ -676,8 +662,7 @@ mod tests {
                 z <- r + x*c;
                 verify(g*z == u + h*c)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         // Find the check node, then walk to its predecessors to find g*z.
@@ -711,8 +696,7 @@ mod tests {
                 a <- t + s;
                 verify(a == x)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         // `t` is let-bound to `r * r`. Find the op node for `r * r`.

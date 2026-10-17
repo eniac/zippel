@@ -4,7 +4,7 @@
 //! then builds an expected graph manually and asserts structural equality
 //! via the `PartialEq` (graph isomorphism) implementation.
 
-use super::test_helpers::parse_and_concretize;
+use super::test_helpers::lowered;
 use crate::node::ArgKind;
 use crate::{
     Dep, DepType, GOp, GraphError, HOp, Node, Nothing, Op, PrivateValue, Ref, UDag, UDags, mk,
@@ -23,14 +23,12 @@ type B = ArkBls12_381;
 
 /// Parse a `.zippel` source string and build graphs via from_module.
 fn parse_and_build(src: &str) -> UDags<B> {
-    let m = parse_and_concretize(src, &Ctx::new());
-    UDags::<B>::from_module(m).unwrap()
+    lowered(src, &Ctx::new()).unwrap()
 }
 
 /// Parse and build, returning Result to allow testing error paths.
 fn try_parse_and_build(src: &str) -> Result<UDags<B>, GraphError> {
-    let m = parse_and_concretize(src, &Ctx::new());
-    UDags::<B>::from_module(m)
+    lowered(src, &Ctx::new())
 }
 
 /// Phase B: an `Inp`/`Rel` marker is followed by one `Node::Arg` per source

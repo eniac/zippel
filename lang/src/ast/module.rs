@@ -1,7 +1,7 @@
 use crate::ast::decl::{BodyTypes, DeclError, UDecl};
 use crate::ast::exp::ExpLiteral;
 use crate::ast::spanned::Spanned;
-use crate::ast::{Body, CSig, Sig};
+use crate::ast::{Body, CBody, CSig, Sig};
 use crate::diagnostic::{Diagnostic, Phase};
 use crate::id::{Tid, Vid};
 use crate::semantic::{
@@ -279,21 +279,24 @@ impl CModule {
     /// Range-kinded type variables expand one declaration into several instances that share
     /// source spans, so an error common to several instances is reported once, naming the
     /// first failing instance.
-    pub fn typecheck(&self) -> Vec<Diagnostic> {
-        self.typecheck_with_calls(&|_, _| {}).0
+    ///
+    /// # Errors
+    /// The diagnostics, if any declaration fails to type-check.
+    pub fn typecheck(self) -> Result<TypedModule, Vec<Diagnostic>> {
+        let (diagnostics, types) = self.check();
+        if diagnostics.is_empty() {
+            Ok(TypedModule {
+                module: self,
+                types,
+            })
+        } else {
+            Err(diagnostics)
+        }
     }
 
-    /// [`Self::typecheck`], also returning the types of the nodes of every declaration that
-    /// checks, for lowering to start from.
-    pub fn typecheck_with_types(&self) -> (Vec<Diagnostic>, ModuleTypes) {
-        self.typecheck_with_calls(&|_, _| {})
-    }
-
-    /// The shared checking pass reports direct selected calls without rechecking bodies.
-    pub(super) fn typecheck_with_calls(
-        &self,
-        on_call: &dyn Fn(&CSig, &CSig),
-    ) -> (Vec<Diagnostic>, ModuleTypes) {
+    /// The diagnostics of every declaration that fails to type-check, and the types of every
+    /// one that checks.
+    fn check(&self) -> (Vec<Diagnostic>, ModuleTypes) {
         let fctx: Set<CSig> = self.iter().map(|(sig, _)| sig.clone()).collect();
         let mut instances: HashMap<&str, usize> = HashMap::new();
         for (sig, _) in self.iter() {
@@ -303,9 +306,7 @@ impl CModule {
         let mut diags = Vec::new();
         let mut types = ModuleTypes::new();
         for (sig, body) in self.iter() {
-            let e = match body.typecheck_with_calls(sig.clone(), &fctx, &|callee| {
-                on_call(sig, callee);
-            }) {
+            let e = match body.typecheck(sig.clone(), &fctx) {
                 Ok(body_types) => {
                     types.insert(sig.clone(), body_types);
                     continue;
@@ -327,16 +328,37 @@ impl CModule {
         //     `semantic::verify` implements it but resolves calls by name, ignoring overloads,
         //     so it is not enabled.
         //   - check_dead_code (uncalled function)
-        // They need the typed call graph; infer_with_calls can record resolved signatures,
-        // as the default-size coverage check does.
+        // They need the typed call graph, which the type tables record, as the
+        // default-size coverage check reads it.
         diags.sort_by_key(|d| d.span.start);
         (diags, types)
     }
 }
 
-/// The types of the nodes of a module's declarations, by signature (see
-/// [`CModule::typecheck_with_types`]).
-pub type ModuleTypes = std::collections::BTreeMap<CSig, BodyTypes>;
+/// The types of the nodes of a module's declarations, by signature.
+type ModuleTypes = std::collections::BTreeMap<CSig, BodyTypes>;
+
+/// A module whose declarations all type-check, with the types of their nodes: what lowering
+/// takes.
+#[derive(Debug, Clone)]
+pub struct TypedModule {
+    module: CModule,
+    types: ModuleTypes,
+}
+
+impl TypedModule {
+    /// The module.
+    pub const fn module(&self) -> &CModule {
+        &self.module
+    }
+
+    /// Each declaration, with the types of its nodes and the declarations its calls resolve to.
+    pub fn iter(&self) -> impl Iterator<Item = (&CSig, &CBody, &BodyTypes)> {
+        self.module
+            .iter()
+            .map(|(sig, body)| (sig, body, &self.types[sig]))
+    }
+}
 
 /// Polymorphic module with symbolic sizes
 impl UModule {
