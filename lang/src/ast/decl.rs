@@ -8,7 +8,7 @@ use crate::ast::size::EvalError;
 use crate::ast::spanned::Spanned;
 use crate::ast::{CSig, Exp, Expr, GArgs, Sig};
 use crate::id::{Tid, TidSubst, Vid};
-use crate::typ::infer::{TypeError, Typeable};
+use crate::typ::infer::{TypeError, TypeTable};
 use crate::typ::lub::Lub;
 use crate::typ::subst::SubstError;
 use crate::typ::{
@@ -268,7 +268,7 @@ impl<N: ExpLiteral> FromIterator<Decl<N>> for Decls<N> {
 
 impl CBody {
     /// Type-checks this body against its own (concretized) signature and the
-    /// set of visible function signatures `fctx`.
+    /// set of visible function signatures `fctx`, returning the type of every node.
     ///
     /// The kind context is taken from the signature's type variables, and
     /// singleton `Range` type variables are additionally bound as `Fin` values
@@ -280,7 +280,7 @@ impl CBody {
     /// `Verify`); if the relation does not infer to `Bool`; if a
     /// protocol body does not infer to `Unit`; or if a function body's type has
     /// no least upper bound with the declared return type.
-    pub fn typecheck(&self, sig: CSig, fctx: &Set<CSig>) -> Result<(), TypeError> {
+    pub fn typecheck(&self, sig: CSig, fctx: &Set<CSig>) -> Result<BodyTypes, TypeError> {
         self.typecheck_with_calls(sig, fctx, &|_| {})
     }
 
@@ -290,7 +290,8 @@ impl CBody {
         sig: CSig,
         fctx: &Set<CSig>,
         on_call: &dyn Fn(&CSig),
-    ) -> Result<(), TypeError> {
+    ) -> Result<BodyTypes, TypeError> {
+        let mut types = BodyTypes::default();
         // Kind context
         let kctx = sig.typevars.node.to_ctx();
         // Add arguments to [vctx] and [vars]
@@ -316,7 +317,10 @@ impl CBody {
                     ));
                 }
                 // Relation must infer to Bool (the relation IS the assertion)
-                let rel_typ = relation.infer_with_calls(&kctx, fctx, &vctx, on_call)?;
+                let rel_typ =
+                    relation
+                        .root()
+                        .infer_in(&kctx, fctx, &vctx, on_call, &mut types.relation)?;
                 if !matches!(rel_typ, CTyp::Bool) {
                     return Err(TypeError::decl(
                         &sig.name,
@@ -328,7 +332,9 @@ impl CBody {
                 }
                 // Body must infer to Unit (empty body is Unit)
                 if let Some(body) = body {
-                    let br = body.infer_with_calls(&kctx, fctx, &vctx, on_call)?;
+                    let br = body
+                        .root()
+                        .infer_in(&kctx, fctx, &vctx, on_call, &mut types.body)?;
                     if br != CTyp::Unit {
                         let last = crate::typ::infer::tail(body.root());
                         return Err(TypeError::decl(
@@ -340,7 +346,7 @@ impl CBody {
                         ));
                     }
                 }
-                Ok(())
+                Ok(types)
             }
             Body::Func { body } => {
                 // The declared return type, at its annotation (`Unit`, unlocated, if omitted).
@@ -350,9 +356,11 @@ impl CBody {
                     .unwrap_or_else(|| Spanned::dummy(CTyp::Unit));
                 match body {
                     Some(body) => {
-                        let br = body.infer_with_calls(&kctx, fctx, &vctx, on_call)?;
+                        let br =
+                            body.root()
+                                .infer_in(&kctx, fctx, &vctx, on_call, &mut types.body)?;
                         if br.fits(&ret.node, &kctx) {
-                            Ok(())
+                            Ok(types)
                         } else {
                             Err(TypeError::decl(
                                 &sig.name,
@@ -373,7 +381,7 @@ impl CBody {
                     None => {
                         // Empty body `{}` is semantically Unit.
                         match CTyp::lub_equ(&CTyp::Unit, &ret.node, &kctx) {
-                            Ok(_) => Ok(()),
+                            Ok(_) => Ok(types),
                             Err(_) => Err(TypeError::decl(
                                 &sig.name,
                                 TypeError::located(
@@ -392,9 +400,18 @@ impl CBody {
                     }
                 }
             }
-            Body::TypeAlias => Ok(()),
+            Body::TypeAlias => Ok(types),
         }
     }
+}
+
+/// The types inference gave the nodes of a body's trees (see [`CBody::typecheck`]).
+#[derive(Debug, Default)]
+pub struct BodyTypes {
+    /// The `where` clause's nodes.
+    pub relation: TypeTable,
+    /// The body's nodes.
+    pub body: TypeTable,
 }
 
 impl<N: ExpLiteral> ExpTraversal<N> for Body<N> {

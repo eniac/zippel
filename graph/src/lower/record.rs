@@ -101,7 +101,7 @@ impl<C: HasOpFactory> UDag<C> {
                 })?;
 
                 // Try to infer the record type to verify the field exists
-                let record_typ = exprs.infer(record_exp, kctx, fctx, vctx)?;
+                let record_typ = exprs.infer(record_exp, kctx, vctx)?;
 
                 match &record_typ {
                     CTyp::Record(fields) => {
@@ -184,7 +184,7 @@ impl<C: HasOpFactory> UDag<C> {
             }
             _ => {
                 // For other expressions, try to infer the record type
-                let record_typ = exprs.infer(record_exp, kctx, fctx, vctx)?;
+                let record_typ = exprs.infer(record_exp, kctx, vctx)?;
 
                 match record_typ {
                     CTyp::Record(fields) => {
@@ -235,7 +235,7 @@ impl<C: HasOpFactory> UDag<C> {
         // The new record keeps the original record's type: every field is taken
         // from `record_exp` except `field_name`, whose value takes the field's
         // declared type (an integer stored into a field element is embedded).
-        let record_typ = exprs.infer(record_exp, kctx, fctx, vctx)?;
+        let record_typ = exprs.infer(record_exp, kctx, vctx)?;
         if !matches!(record_typ, CTyp::Record(_)) {
             return Err(GraphError::from(TypeError::not_a_record(
                 kctx,

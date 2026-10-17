@@ -21,33 +21,30 @@ mod poly;
 mod record;
 mod vector;
 
-/// The arena a tree is lowered in, with the types inferred for its nodes so far: lowering
-/// infers every node it lowers, and new nodes are built over old ones, so each subtree is
-/// inferred once rather than once per enclosing node.
+/// The arena a tree is lowered in, with the types of its nodes: those the type check found,
+/// and those of the nodes lowering adds, inferred from their children's.
 pub(super) struct Arena {
     exprs: Exprs<BigUint>,
     types: TypeTable,
+    /// The signatures calls resolve among.
+    sigs: Set<CSig>,
 }
 
 impl Arena {
-    fn new(exprs: Exprs<BigUint>) -> Self {
-        Self {
-            exprs,
-            types: TypeTable::new(),
-        }
+    fn new(exprs: Exprs<BigUint>, types: TypeTable, sigs: Set<CSig>) -> Self {
+        Self { exprs, types, sigs }
     }
 
-    /// The type of node `id` under the given contexts.
+    /// The type of node `id`, under the given contexts if it is not typed yet.
     fn infer(
         &mut self,
         id: ExpId,
         kctx: &Ctx<Tid, CKind>,
-        fctx: &Ctx<CSig, CBody>,
         vctx: &Ctx<Vid, CTyp>,
     ) -> Result<CTyp, TypeError> {
         self.exprs
             .at(id)
-            .infer_cached(kctx, &fctx.keys(), vctx, &mut self.types)
+            .infer_cached(kctx, &self.sigs, vctx, &mut self.types)
     }
 }
 
@@ -316,6 +313,7 @@ impl<C: HasOpFactory> UDag<C> {
     fn add_top_exp(
         &mut self,
         exp: CExpr,
+        types: TypeTable,
         start: &mut NodeIndex,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Ctx<CSig, CBody>,
@@ -327,7 +325,7 @@ impl<C: HasOpFactory> UDag<C> {
         let span = exp.span().clone();
         let Expr { exprs, root } = exp;
         let op = self.add_exp(
-            &mut Arena::new(exprs),
+            &mut Arena::new(exprs, types, fctx.keys()),
             root,
             start,
             DepType::Data,
@@ -399,8 +397,8 @@ impl<C: HasOpFactory> UDag<C> {
             }
         }
 
-        // Typecheck the body with the type signature
-        body.typecheck(sig.clone(), &fctx.keys())?;
+        // Typecheck the body with the type signature; lowering starts from its types.
+        let types = body.typecheck(sig.clone(), &fctx.keys())?;
 
         // Add the body to the Graph
         match body {
@@ -439,7 +437,9 @@ impl<C: HasOpFactory> UDag<C> {
                     }
                 }
                 if let Some(body) = body {
-                    self.add_top_exp(body, &mut start, &kctx, fctx, &vctx, &vars, None)?;
+                    self.add_top_exp(
+                        body, types.body, &mut start, &kctx, fctx, &vctx, &vars, None,
+                    )?;
                 }
                 // Relation start: its own per-arg `Node::Arg` children so
                 // walking the relation does not pull in the protocol body
@@ -486,7 +486,7 @@ impl<C: HasOpFactory> UDag<C> {
                         root: relation,
                     } = relation;
                     let rel_op = self.add_exp(
-                        &mut Arena::new(relation_exprs),
+                        &mut Arena::new(relation_exprs, types.relation, fctx.keys()),
                         relation,
                         &mut start,
                         DepType::Data,
@@ -538,7 +538,7 @@ impl<C: HasOpFactory> UDag<C> {
                         .ret
                         .as_ref()
                         .and_then(|ret| ATyp::from_ctyp(&ret.node, &kctx));
-                    self.add_top_exp(body, &mut start, &kctx, fctx, &vctx, &vars, ret)?;
+                    self.add_top_exp(body, types.body, &mut start, &kctx, fctx, &vctx, &vars, ret)?;
                 }
             }
             CBody::TypeAlias => {
@@ -637,7 +637,7 @@ impl<C: HasOpFactory> UDag<C> {
         let mut vars = vars.clone();
         loop {
             // Type inference for [self]
-            let typ = exprs.infer(id, kctx, fctx, &vctx)?;
+            let typ = exprs.infer(id, kctx, &vctx)?;
             // Nodes created for this expression come from its source.
             let span = exprs.span(id).clone();
             // The contexts this iteration lowers `exp` under, for the arm helpers.
@@ -812,7 +812,7 @@ impl<C: HasOpFactory> UDag<C> {
         match stmt {
             Stmt::Let(id, l) => {
                 // Infer the type of [l]
-                let tl = exprs.infer(l, kctx, fctx, vctx)?;
+                let tl = exprs.infer(l, kctx, vctx)?;
                 // Add left-hand side as node
                 let nl =
                     self.add_exp(exprs, l, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
@@ -831,7 +831,7 @@ impl<C: HasOpFactory> UDag<C> {
                 // A transcript node comes from the value sent.
                 let sent = exprs.span(l).clone();
                 // Infer the type of [l]
-                let tl = exprs.infer(l, kctx, fctx, vctx)?;
+                let tl = exprs.infer(l, kctx, vctx)?;
                 // Add left-hand side as node
                 let ol =
                     self.add_exp(exprs, l, transcr, edge_type, kctx, fctx, vctx, vars, None)?;

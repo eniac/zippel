@@ -26,7 +26,7 @@ impl<C: HasOpFactory> UDag<C> {
         // type inference for each parameter
         let param_types: CTyps = params
             .iter()
-            .map(|p| exprs.infer(p, kctx, fctx, vctx).map(Spanned::dummy))
+            .map(|p| exprs.infer(p, kctx, vctx).map(Spanned::dummy))
             .collect::<Result<_, _>>()?;
 
         // Is it a polynomial, MLE, or a function?
