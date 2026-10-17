@@ -22,7 +22,7 @@ use crate::ast::{BinOp, CExp, CExpr, CRef, Exclusion, ExpExclusion, ExpId, Exps,
 use crate::id::{Tid, Vid};
 use crate::typ::lub::{Lub, LubError};
 use crate::typ::{CKind, CTyp};
-use share::{Ctx, Set};
+use share::{Ctx, ScopedCtx, Set};
 
 /// The result of resolving an ordinary function call during inference.
 #[derive(Debug, Clone)]
@@ -88,15 +88,18 @@ pub struct Cx<'a> {
     pub kctx: &'a Ctx<Tid, CKind>,
     /// Visible function signatures.
     pub fctx: &'a Set<CSig>,
-    /// Types of the variables in scope.
-    pub vctx: &'a Ctx<Vid, CTyp>,
 }
+
+/// The types of the variables in scope. Inference binds into it and undoes its bindings
+/// when it leaves their scope, so callers lend their environment instead of copying it.
+pub type VarTypes = ScopedCtx<Vid, CTyp>;
 
 /// What a typing rule sees: the contexts at its node, and the types of the nodes already left,
 /// its children among them.
 #[derive(Clone, Copy)]
 pub(crate) struct Env<'a> {
     cx: Cx<'a>,
+    vctx: &'a VarTypes,
     types: &'a TypeTable,
 }
 
@@ -125,8 +128,11 @@ impl CExpr {
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
     ) -> Result<CTyp, TypeError> {
-        self.root()
-            .infer(&Cx { kctx, fctx, vctx }, &mut TypeTable::new())
+        self.root().infer(
+            &Cx { kctx, fctx },
+            &mut VarTypes::new(vctx.clone()),
+            &mut TypeTable::new(),
+        )
     }
 }
 
@@ -139,23 +145,43 @@ impl CRef<'_> {
     /// between them (see [`Self::enter`] and [`Self::after_child`]), as a recursive checker
     /// would, so the first error reported is the same.
     ///
+    /// `vctx` holds the variables in scope at this node. It is left as it was, also on error.
+    ///
     /// # Errors
     /// As [`CExpr::infer`].
-    pub fn infer(self, cx: &Cx<'_>, types: &mut TypeTable) -> Result<CTyp, TypeError> {
-        let mut vctx = cx.vctx.clone();
-        // The nodes entered and not yet left, each with the variable context to restore when
-        // it is left, if it binds variables.
-        let mut open: Vec<(CRef<'_>, Option<Ctx<Vid, CTyp>>)> = Vec::new();
+    pub fn infer(
+        self,
+        cx: &Cx<'_>,
+        vctx: &mut VarTypes,
+        types: &mut TypeTable,
+    ) -> Result<CTyp, TypeError> {
+        let outside = vctx.mark();
+        let typed = self.infer_in(cx, vctx, types);
+        vctx.rollback(outside);
+        typed
+    }
+
+    /// [`Self::infer`], leaving the bindings of the nodes still open on error in `vctx`.
+    fn infer_in(
+        self,
+        cx: &Cx<'_>,
+        vctx: &mut VarTypes,
+        types: &mut TypeTable,
+    ) -> Result<CTyp, TypeError> {
+        // The nodes entered and not yet left, each with the point to roll the variables back
+        // to when it is left, if it binds variables.
+        let mut open: Vec<(CRef<'_>, Option<usize>)> = Vec::new();
         // Expression and statement locations, innermost last, for diagnostic fallbacks.
         let mut locations = Vec::new();
         // The node left last: a binder takes its type from it.
         let mut last = self;
         let mut walk = self.walk();
-        // The environment of a rule, at variable context `$vctx`.
+        // The environment of a rule, at the variables in scope now.
         macro_rules! env {
-            ($vctx:expr) => {
+            () => {
                 Env {
-                    cx: Cx { vctx: $vctx, ..*cx },
+                    cx: *cx,
+                    vctx: &*vctx,
                     types: &*types,
                 }
             };
@@ -169,25 +195,33 @@ impl CRef<'_> {
                 Visit::Enter(e) => {
                     locations.push(e.span());
                     let binds = matches!(e.node(), CExp::Block(..) | CExp::Map(..) | CExp::Fun(..));
-                    open.push((e, binds.then(|| vctx.clone())));
-                    if types.get(e.id()).is_some() {
+                    open.push((e, binds.then(|| vctx.mark())));
+                    if let Some(cached) = types.get(e.id()) {
+                        // A node's type is reused by id, which is sound only while the node keeps
+                        // its bindings. Lowering infers every variable it lowers, so a node moved
+                        // under a binder that captures one of its variables shows up here.
+                        debug_assert!(
+                            !matches!(e.node(), CExp::Var(x) if vctx.get(&x.node) != Some(cached)),
+                            "stale type for `{:?}`: a typed node was moved under another binding",
+                            e.node()
+                        );
                         walk.skip_children();
-                    } else if let Err(err) = e.enter(&env!(&vctx)) {
+                    } else if let Err(err) = e.enter(&env!()) {
                         return Err(Self::locate(err, &locations));
                     }
                 }
                 Visit::Bind(x) => {
                     let (binder, _) = open.last().expect("a binder is open");
-                    let t = binder.bind(last, &env!(&vctx));
+                    let t = binder.bind(last, &env!());
                     vctx.insert(&x.node, &t);
                 }
                 Visit::Leave(e) => {
-                    if let Some(outer) = open.last_mut().and_then(|(_, saved)| saved.take()) {
-                        vctx = outer;
+                    if let Some(mark) = open.last_mut().and_then(|(_, mark)| mark.take()) {
+                        vctx.rollback(mark);
                     }
                     if types.get(e.id()).is_none() {
                         let mut call = None;
-                        let typed = e.infer_node(&env!(&vctx), &mut call);
+                        let typed = e.infer_node(&env!(), &mut call);
                         if let Some(sig) = call {
                             types.call_indices.insert(e.id(), types.calls.len());
                             types.calls.push((e.id(), sig));
@@ -201,7 +235,7 @@ impl CRef<'_> {
                     locations.pop();
                     last = e;
                     if let Some((parent, _)) = open.last()
-                        && let Err(err) = parent.after_child(e, &env!(&vctx))
+                        && let Err(err) = parent.after_child(e, &env!())
                     {
                         return Err(Self::locate(err, &locations));
                     }
@@ -267,7 +301,7 @@ impl CRef<'_> {
 impl CRef<'_> {
     /// The type of this node, from its children's types.
     fn infer_node(self, env: &Env<'_>, call: &mut Option<ResolvedCall>) -> Result<CTyp, TypeError> {
-        let Cx { vctx, .. } = env.cx;
+        let vctx = env.vctx;
         let at = |id: &ExpId| self.at(*id);
         match self.node() {
             // A literal that is a valid finite index has the singleton type `Fin<n>`; a larger

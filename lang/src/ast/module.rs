@@ -663,7 +663,7 @@ impl UModule {
 
 impl<N: ExpLiteral> IntoIterator for Module<N> {
     type Item = (Sig<N::Size>, Body<N>);
-    type IntoIter = share::CtxConsumingIter<(Sig<N::Size>, Body<N>)>;
+    type IntoIter = std::collections::btree_map::IntoIter<Sig<N::Size>, Body<N>>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }

@@ -21,7 +21,6 @@ use lang::diagnostic::{Diagnostic, Phase, Severity, render_diagnostic};
 use lang::id::Tid;
 use lang::typ::Kind;
 use share::Ctx;
-use share::thread;
 
 /// Graph construction and projection are curve-independent; this backend just has to support
 /// every operation, including pairings.
@@ -99,7 +98,8 @@ fn check_file(path: &str, given: &Ctx<Tid, usize>) -> Option<Report> {
             return None;
         }
     };
-    let report = thread::run("zippel-check", || check(&src, given));
+    // A panic is a compiler bug: report it for this file and go on to the next.
+    let report = std::panic::catch_unwind(|| check(&src, given));
     let Ok(report) = report else {
         eprintln!("error: internal compiler error while checking {path}");
         return None;

@@ -393,7 +393,7 @@ fn f<F: Field>(instance a: F) -> F {
 
 #[test]
 fn record_literal_preserves_source_order() {
-    // Fields stored in Ctx (OrdMap, key-sorted) but formatter must
+    // Fields stored in Ctx (a key-sorted map) but formatter must
     // output in source order: zebra, apple, mango.
     assert_ok(
         "fn f<F: Field>(instance a: F) -> F { {| zebra: a, apple: a, mango: a |} }",

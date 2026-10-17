@@ -340,17 +340,14 @@ fn main() {
     let name = target.name.clone();
 
     memory::install_oom_hook();
-    // Run in a thread with a large stack to avoid stack overflow.
-    let result = share::thread::run("analysis-bench", move || run_bench(&target)).unwrap_or_else(
-        |payload| {
-            // See `memory::LIMIT_ACTIVE` for what this checks.
-            let status = if memory::limit_active() {
-                Status::Oom
-            } else {
-                Status::Crashed
-            };
-            BenchOutput::line(&name, status, Some(panic_message(&*payload)))
-        },
-    );
+    let result = std::panic::catch_unwind(move || run_bench(&target)).unwrap_or_else(|payload| {
+        // See `memory::LIMIT_ACTIVE` for what this checks.
+        let status = if memory::limit_active() {
+            Status::Oom
+        } else {
+            Status::Crashed
+        };
+        BenchOutput::line(&name, status, Some(panic_message(&*payload)))
+    });
     println!("{result}");
 }

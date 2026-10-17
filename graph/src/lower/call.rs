@@ -3,7 +3,6 @@
 use super::*;
 
 impl<C: HasOpFactory> UDag<C> {
-    #[inline(never)]
     pub(super) fn lower_app(
         &mut self,
         scope: &mut Scope<'_, C>,
@@ -11,7 +10,7 @@ impl<C: HasOpFactory> UDag<C> {
         fid: Spanned<Vid>,
         params: Exps,
         expected: &mut Option<ATyp>,
-    ) -> Result<Lowered<C>, GraphError> {
+    ) -> Result<ExpId, GraphError> {
         let span = scope.exprs.span(id).clone();
         // Is it a polynomial, MLE, or a function?
         match scope.vctx.get(&fid.node) {
@@ -35,7 +34,7 @@ impl<C: HasOpFactory> UDag<C> {
                     .exprs
                     .push(Exp::Evaluate(poly, None, Some(params[0])), span);
                 // Trampoline
-                Ok(Lowered::Rewrite(eval_exp))
+                Ok(eval_exp)
             }
             Some(CTyp::Poly(tbase, n, d)) if d.node == 1 => {
                 // It is a multilinear extension
@@ -58,11 +57,10 @@ impl<C: HasOpFactory> UDag<C> {
                 let end = 1_usize
                     .checked_shl(n.node.try_into().expect("mle_app: n exceeds u32"))
                     .expect("mle_app: 1 << n overflow");
-                let mut bound_vars = scope.vctx.keys();
-                let coef_var = Vid::fresh(&format!("__coef_{}", fid), &mut bound_vars);
+                let coef_var = Vid::internal(&format!("coef_{}", fid.node));
 
                 let mut push = |node| scope.exprs.push(node, span.clone());
-                let coefs = Exp::Var(Spanned::dummy(coef_var.clone()));
+                let coefs = Exp::Var(Spanned::new(coef_var.clone(), span.clone()));
                 let (low, high) = (push(coefs.clone()), push(coefs));
                 let low_range = push(Exp::Range(CRange::from_raw(0, 1, mid)));
                 let high_range = push(Exp::Range(CRange::from_raw(mid, 1, end)));
@@ -76,15 +74,17 @@ impl<C: HasOpFactory> UDag<C> {
 
                 let poly = push(Exp::Var(fid.clone()));
                 let coef = push(Exp::Coef(poly));
-                let let_coef =
-                    Spanned::new(Stmt::Let(Spanned::dummy(coef_var), coef), span.clone());
+                let let_coef = Spanned::new(
+                    Stmt::Let(Spanned::new(coef_var, span.clone()), coef),
+                    span.clone(),
+                );
                 let bound_exp = push(Exp::Block(Block {
                     stmts: vec![let_coef],
                     tail: Some(fold),
                 }));
 
                 // Trampoline
-                Ok(Lowered::Rewrite(bound_exp))
+                Ok(bound_exp)
             }
             _ => {
                 let call = scope
@@ -121,14 +121,13 @@ impl<C: HasOpFactory> UDag<C> {
                         .and_then(|r| ATyp::from_ctyp(&r.node, scope.kctx));
                 }
 
-                // Trampoline: replace context and continue with body
-                let mut next_vctx = scope.vctx.clone();
+                // Trampoline: bind the parameters and continue with the body. The enclosing
+                // `add_exp` unbinds them when the call's value is lowered.
                 for (vid, typ) in sig.args.to_ctx().iter() {
-                    next_vctx.insert(vid, typ);
+                    scope.vctx.insert(vid, typ);
                 }
-                let mut next_vars = scope.vars.clone();
                 for (arg, op) in sig.args.iter().zip(oparams.iter()) {
-                    next_vars.insert(&arg.id.node, op);
+                    scope.vars.insert(&arg.id.node, op);
                 }
                 let fn_kctx = sig.typevars.to_ctx();
                 for (tid, kind) in fn_kctx.iter() {
@@ -137,18 +136,15 @@ impl<C: HasOpFactory> UDag<C> {
                         && r.end() == r.start() + 1
                     {
                         let vid = Vid::new(&tid.0);
-                        next_vctx.insert(&vid, &CTyp::Fin(r.clone()));
-                        next_vars.insert(&vid, &GOp::Value(Value::Index(r.start())));
+                        scope.vctx.insert(&vid, &CTyp::Fin(r.clone()));
+                        scope
+                            .vars
+                            .insert(&vid, &GOp::Value(Value::Index(r.start())));
                     }
                 }
-                let body = match body.body() {
+                Ok(match body.body() {
                     Some(tree) => scope.exprs.append(tree),
                     None => scope.exprs.push(CExp::Unit, span),
-                };
-                Ok(Lowered::Inline {
-                    body,
-                    vctx: next_vctx,
-                    vars: next_vars,
                 })
             }
         }

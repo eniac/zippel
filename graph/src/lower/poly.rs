@@ -124,7 +124,6 @@ impl<C: HasOpFactory> UDag<C> {
         poly(exp, values.pop().expect("the body's value"))
     }
 
-    #[inline(never)]
     pub(super) fn lower_evaluate(
         &mut self,
         scope: &mut Scope<'_, C>,
@@ -173,7 +172,6 @@ impl<C: HasOpFactory> UDag<C> {
         }
     }
 
-    #[inline(never)]
     pub(super) fn lower_poly(
         &mut self,
         scope: &mut Scope<'_, C>,
@@ -195,7 +193,6 @@ impl<C: HasOpFactory> UDag<C> {
         ))
     }
 
-    #[inline(never)]
     pub(super) fn lower_coef(
         &mut self,
         scope: &mut Scope<'_, C>,
@@ -217,7 +214,6 @@ impl<C: HasOpFactory> UDag<C> {
         ))
     }
 
-    #[inline(never)]
     pub(super) fn lower_interpolate(
         &mut self,
         scope: &mut Scope<'_, C>,
@@ -256,7 +252,6 @@ impl<C: HasOpFactory> UDag<C> {
         }
     }
 
-    #[inline(never)]
     pub(super) fn lower_mle(
         &mut self,
         scope: &mut Scope<'_, C>,
@@ -278,7 +273,6 @@ impl<C: HasOpFactory> UDag<C> {
         ))
     }
 
-    #[inline(never)]
     pub(super) fn lower_fun(
         exprs: &Exprs<BigUint>,
         fun_vars: Vec<Spanned<Vid>>,

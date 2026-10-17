@@ -2704,6 +2704,22 @@ fn pin_app_mle() {
 
 // ── Reduce operation tests ──
 
+/// A field of any record-valued expression, here a call's result, lowers like a variable's.
+#[test]
+fn pin_proj_of_call_result() {
+    let gs = parse_and_build(
+        "fn mk<F: Field>(instance a: F) -> { x: F, y: F } { {| x: a, y: a + a |} }\n\
+         fn f<F: Field>(instance a: F) -> F { mk(a).y }",
+    );
+    let g = &gs[1];
+    // `mk` is inlined; the field is its `a + a` node, with no projection left.
+    assert!(
+        g.node_indices().any(
+            |n| matches!(&g[n], Node::Op(op, _) if matches!(op.get(), Op::Bin(BinOp::Add, ..)))
+        )
+    );
+}
+
 /// Fusing `[f(t) for t in [g(y) for y in v]]` would lower `f`'s body under the inner binder `y`.
 /// When `f` reads an outer `y`, that argument must stay read instead of being captured.
 #[test]

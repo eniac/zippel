@@ -1,13 +1,13 @@
-use im::OrdMap;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::hash::Hash;
 use std::ops::Index;
 
 use crate::traversal::Traversal;
 
-/// General ordered map context backed by im::OrdMap for O(1) structural-sharing clones
-pub struct Ctx<K, V>(OrdMap<K, V>);
+/// General ordered map context. Cloning copies the map; code that enters and leaves scopes
+/// uses [`ScopedCtx`] instead of cloning.
+pub struct Ctx<K, V>(BTreeMap<K, V>);
 
 impl<K: Clone, V: Clone> Clone for Ctx<K, V> {
     fn clone(&self) -> Self {
@@ -51,7 +51,7 @@ impl<K: Ord + fmt::Debug, V: fmt::Debug> fmt::Debug for Ctx<K, V> {
 impl<K: Ord + fmt::Display, V: fmt::Display> fmt::Display for Ctx<K, V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("{\n")?;
-        for (k, v) in self.0.iter() {
+        for (k, v) in &self.0 {
             writeln!(f, "  {k}: {v}")?;
         }
         f.write_str("}")
@@ -72,22 +72,18 @@ impl<K: Ord + Clone, V1: Clone, V2: Clone> Traversal<V1, V2> for CtxValueTravers
 }
 
 /// IntoIterator instance for Ctx
-impl<K: Ord + Clone, V: Clone> IntoIterator for Ctx<K, V> {
+impl<K, V> IntoIterator for Ctx<K, V> {
     type Item = (K, V);
-    type IntoIter = im::ordmap::ConsumingIter<(K, V)>;
+    type IntoIter = std::collections::btree_map::IntoIter<K, V>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-impl<K, V> FromIterator<(K, V)> for Ctx<K, V>
-where
-    K: Ord + Clone,
-    V: Clone,
-{
+impl<K: Ord, V> FromIterator<(K, V)> for Ctx<K, V> {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
-        Ctx(OrdMap::from_iter(iter))
+        Ctx(BTreeMap::from_iter(iter))
     }
 }
 
@@ -108,29 +104,22 @@ impl<K: Ord, V> Index<K> for Ctx<K, V> {
 /// Special and wrapper methods for Ctx
 impl<K, V> Ctx<K, V> {
     /// Creates an empty context.
-    pub fn new() -> Self
-    where
-        K: Ord,
-    {
-        Ctx(OrdMap::new())
+    pub const fn new() -> Self {
+        Ctx(BTreeMap::new())
     }
 
     /// Creates a context holding the single binding `k` to `v`.
     pub fn singleton(k: K, v: V) -> Self
     where
-        K: Ord + Clone,
-        V: Clone,
+        K: Ord,
     {
-        let mut m = OrdMap::new();
-        m.insert(k, v);
-        Ctx(m)
+        Ctx(BTreeMap::from([(k, v)]))
     }
 
     /// Returns the first binding, in key order, satisfying `f`.
     pub fn find<FF>(&self, f: FF) -> Option<(&K, &V)>
     where
         FF: Fn(&K, &V) -> bool,
-        K: Ord,
     {
         self.0.iter().find(|(k, v)| f(k, v))
     }
@@ -139,24 +128,17 @@ impl<K, V> Ctx<K, V> {
     pub fn find_map<FF, Y>(&self, f: FF) -> Option<Y>
     where
         FF: Fn(&K, &V) -> Option<Y>,
-        K: Ord,
     {
         self.0.iter().find_map(|(k, v)| f(k, v))
     }
 
     /// Returns the binding with the smallest key.
-    pub fn first(&self) -> Option<(&K, &V)>
-    where
-        K: Ord,
-    {
+    pub fn first(&self) -> Option<(&K, &V)> {
         self.0.iter().next()
     }
 
     /// Returns the binding with the largest key.
-    pub fn last(&self) -> Option<(&K, &V)>
-    where
-        K: Ord,
-    {
+    pub fn last(&self) -> Option<(&K, &V)> {
         self.0.iter().next_back()
     }
 
@@ -165,19 +147,15 @@ impl<K, V> Ctx<K, V> {
     /// Used to drain a context as a work queue in deterministic key order.
     pub fn pop_first(&mut self) -> Option<(K, V)>
     where
-        K: Ord + Clone,
-        V: Clone,
+        K: Ord,
     {
-        let (result, new_map) = self.0.without_min_with_key();
-        self.0 = new_map;
-        result
+        self.0.pop_first()
     }
 
     /// Reports whether any binding satisfies `f`.
     pub fn any<FF>(&self, f: FF) -> bool
     where
         FF: Fn(&K, &V) -> bool,
-        K: Ord,
     {
         self.find(f).is_some()
     }
@@ -212,8 +190,7 @@ impl<K, V> Ctx<K, V> {
     /// because the collision is a genuine redeclaration rather than shadowing.
     pub fn insert_with<E, FF>(&mut self, k: K, v: V, f: &FF) -> Result<(), E>
     where
-        K: Ord + Clone,
-        V: Clone + Eq,
+        K: Ord,
         FF: Fn(&K, &V, &V) -> Result<K, E>,
     {
         match self.0.get(&k) {
@@ -234,19 +211,18 @@ impl<K, V> Ctx<K, V> {
         K: Ord + Clone,
         V: Clone,
     {
-        for (k, v) in other.0.iter() {
-            self.0.insert(k.clone(), v.clone());
-        }
+        self.0
+            .extend(other.0.iter().map(|(k, v)| (k.clone(), v.clone())));
     }
     /// Returns the union of `self` and `other`; on a shared key `other`'s value wins.
-    ///
-    /// Neither operand is modified: `Ctx` clones are `O(1)` thanks to structural sharing.
     pub fn union(&self, other: &Ctx<K, V>) -> Ctx<K, V>
     where
         K: Ord + Clone,
         V: Clone,
     {
-        Ctx(other.0.clone().union(self.0.clone()))
+        let mut union = self.clone();
+        union.append(other);
+        union
     }
 
     /// Reports whether the context has no bindings.
@@ -261,12 +237,10 @@ impl<K, V> Ctx<K, V> {
         self.0.get(k)
     }
 
-    /// Looks up the value bound to `k` for in-place mutation, cloning the affected path
-    /// out of any shared structure first.
+    /// Looks up the value bound to `k` for in-place mutation.
     pub fn get_mut(&mut self, k: &K) -> Option<&mut V>
     where
-        K: Ord + Clone,
-        V: Clone,
+        K: Ord,
     {
         self.0.get_mut(k)
     }
@@ -274,8 +248,7 @@ impl<K, V> Ctx<K, V> {
     /// Removes the binding for `k` and returns its value.
     pub fn remove(&mut self, k: &K) -> Option<V>
     where
-        K: Ord + Clone,
-        V: Clone,
+        K: Ord,
     {
         self.0.remove(k)
     }
@@ -291,7 +264,6 @@ impl<K, V> Ctx<K, V> {
     pub fn values(&self) -> Vec<V>
     where
         V: Clone,
-        K: Ord,
     {
         self.0.values().cloned().collect()
     }
@@ -303,49 +275,30 @@ impl<K, V> Ctx<K, V> {
         self.0.contains_key(k)
     }
     /// Iterates over the bindings in ascending key order.
-    pub fn iter(&self) -> impl DoubleEndedIterator<Item = (&K, &V)>
-    where
-        K: Ord,
-    {
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = (&K, &V)> {
         self.0.iter()
     }
     /// Rewrites every value in place, preserving the key set and ordering.
     pub fn modify<F>(&mut self, mut f: F)
     where
-        K: Ord + Clone,
-        V: Clone,
         F: FnMut(&K, &mut V),
     {
-        let old = std::mem::replace(&mut self.0, OrdMap::new());
-        let mut new_map = OrdMap::new();
-        for (k, v) in old {
-            let mut v = v;
-            f(&k, &mut v);
-            new_map.insert(k, v);
+        for (k, v) in &mut self.0 {
+            f(k, v);
         }
-        self.0 = new_map;
     }
     /// Drops every binding for which `f` returns `false`.
     pub fn retain(&mut self, f: impl Fn(&K, &V) -> bool)
     where
-        K: Ord + Clone,
-        V: Clone,
+        K: Ord,
     {
-        let old = std::mem::replace(&mut self.0, OrdMap::new());
-        let mut new_map = OrdMap::new();
-        for (k, v) in old {
-            if f(&k, &v) {
-                new_map.insert(k, v);
-            }
-        }
-        self.0 = new_map;
+        self.0.retain(|k, v| f(k, v));
     }
 
     /// Returns the underlying map entry for `k`, for insert-or-update in one lookup.
-    pub fn entry(&mut self, k: K) -> im::ordmap::Entry<'_, K, V>
+    pub fn entry(&mut self, k: K) -> std::collections::btree_map::Entry<'_, K, V>
     where
-        K: Ord + Clone,
-        V: Clone,
+        K: Ord,
     {
         self.0.entry(k)
     }
@@ -356,61 +309,107 @@ impl<K, V> Ctx<K, V> {
     /// ambiguity and absence uniformly (e.g. overload resolution that must be unique).
     pub fn find_one(&self, f: impl Fn(&K, &V) -> bool) -> Option<(K, V)>
     where
-        K: Ord + Clone,
+        K: Clone,
         V: Clone,
     {
-        let res: Vec<(K, V)> = self
-            .0
-            .iter()
-            .filter(|(k, v)| f(k, v))
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        if res.len() == 1 {
-            Some(res[0].clone())
-        } else {
-            None
+        let mut matches = self.0.iter().filter(|(k, v)| f(k, v));
+        match (matches.next(), matches.next()) {
+            (Some((k, v)), None) => Some((k.clone(), v.clone())),
+            _ => None,
         }
     }
 
     /// Removes every binding satisfying `f` from `self` and returns them as a new context.
     pub fn extract_if(&mut self, f: impl Fn(&K, &V) -> bool) -> Ctx<K, V>
     where
-        K: Ord + Clone,
-        V: Clone,
+        K: Ord,
     {
-        let mut c = Ctx::new();
-        for (k, v) in self.0.clone().into_iter() {
-            if f(&k, &v) {
-                c.insert(&k, &v);
-            }
-        }
-        self.retain(|k, _| !c.contains(k));
-        c
+        let (taken, kept) = std::mem::take(&mut self.0)
+            .into_iter()
+            .partition(|(k, v)| f(k, v));
+        self.0 = kept;
+        Ctx(taken)
     }
 }
 
-impl<K: Ord, V> Default for Ctx<K, V> {
+impl<K, V> Default for Ctx<K, V> {
     fn default() -> Self {
-        Ctx(OrdMap::new())
+        Ctx(BTreeMap::new())
     }
 }
 
 /// From instance
-impl<X, Y, K: From<X> + Ord + Clone, V: From<Y> + Clone, const N: usize> From<[(X, Y); N]>
-    for Ctx<K, V>
-{
+impl<X, Y, K: From<X> + Ord, V: From<Y>, const N: usize> From<[(X, Y); N]> for Ctx<K, V> {
     fn from(v: [(X, Y); N]) -> Self {
-        Ctx(OrdMap::from_iter(
-            v.into_iter().map(|(k, v)| (K::from(k), V::from(v))),
-        ))
+        v.into_iter()
+            .map(|(k, v)| (K::from(k), V::from(v)))
+            .collect()
     }
 }
 
-impl<X, Y, K: From<X> + Ord + Clone, V: From<Y> + Clone> From<Vec<(X, Y)>> for Ctx<K, V> {
+impl<X, Y, K: From<X> + Ord, V: From<Y>> From<Vec<(X, Y)>> for Ctx<K, V> {
     fn from(v: Vec<(X, Y)>) -> Self {
-        Ctx(OrdMap::from_iter(
-            v.into_iter().map(|(k, v)| (K::from(k), V::from(v))),
-        ))
+        v.into_iter()
+            .map(|(k, v)| (K::from(k), V::from(v)))
+            .collect()
+    }
+}
+
+/// A [`Ctx`] for a lexical environment: bindings made inside a scope are undone when it is
+/// left, without copying the map on entry. Each insertion records the value it shadowed;
+/// [`Self::rollback`] restores the map to an earlier [`Self::mark`].
+#[derive(Clone)]
+pub struct ScopedCtx<K, V> {
+    map: Ctx<K, V>,
+    /// Inserted keys with the values they replaced, oldest first.
+    undo: Vec<(K, Option<V>)>,
+}
+
+impl<K: Ord + fmt::Debug, V: fmt::Debug> fmt::Debug for ScopedCtx<K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.map.fmt(f)
+    }
+}
+
+impl<K: Ord + Clone, V: Clone> ScopedCtx<K, V> {
+    /// An environment holding `map`'s bindings.
+    pub const fn new(map: Ctx<K, V>) -> Self {
+        ScopedCtx {
+            map,
+            undo: Vec::new(),
+        }
+    }
+
+    /// Looks up the innermost binding of `k`.
+    pub fn get(&self, k: &K) -> Option<&V> {
+        self.map.get(k)
+    }
+
+    /// Binds `k` to `v` until the scope that made the binding is rolled back.
+    pub fn insert(&mut self, k: &K, v: &V) {
+        let old = self.map.0.insert(k.clone(), v.clone());
+        self.undo.push((k.clone(), old));
+    }
+
+    /// The point to [`Self::rollback`] to: the bindings made so far.
+    pub fn mark(&self) -> usize {
+        self.undo.len()
+    }
+
+    /// Undoes every binding made since `mark`, newest first.
+    pub fn rollback(&mut self, mark: usize) {
+        while self.undo.len() > mark {
+            let (k, old) = self.undo.pop().expect("longer than mark");
+            match old {
+                Some(v) => self.map.0.insert(k, v),
+                None => self.map.0.remove(&k),
+            };
+        }
+    }
+
+    /// The current bindings.
+    pub const fn ctx(&self) -> &Ctx<K, V> {
+        &self.map
     }
 }
 
@@ -661,6 +660,21 @@ fn set_extract_if() {
 #[cfg(test)]
 mod additional_tests {
     use super::*;
+
+    #[test]
+    fn scoped_ctx_rolls_back_to_marks() {
+        let mut env = ScopedCtx::new(Ctx::from(vec![("x", 1)]));
+        let outer = env.mark();
+        env.insert(&"x", &2); // shadows
+        env.insert(&"y", &3);
+        let inner = env.mark();
+        env.insert(&"x", &4);
+        assert_eq!(env.get(&"x"), Some(&4));
+        env.rollback(inner);
+        assert_eq!((env.get(&"x"), env.get(&"y")), (Some(&2), Some(&3)));
+        env.rollback(outer);
+        assert_eq!(env.ctx(), &Ctx::from(vec![("x", 1)]));
+    }
 
     // Ctx tests
     #[test]

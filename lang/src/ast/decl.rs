@@ -7,7 +7,7 @@ use crate::ast::size::EvalError;
 use crate::ast::spanned::Spanned;
 use crate::ast::{CSig, Expr, GArgs, Sig};
 use crate::id::{Tid, TidSubst, Vid};
-use crate::typ::infer::{Cx, TypeError, TypeTable};
+use crate::typ::infer::{Cx, TypeError, TypeTable, VarTypes};
 use crate::typ::lub::Lub;
 use crate::typ::subst::SubstError;
 use crate::typ::{
@@ -293,6 +293,7 @@ impl CBody {
                 vctx.insert(&Vid::new(&tid.0), &CTyp::Fin(r.clone()));
             }
         }
+        let mut vctx = VarTypes::new(vctx);
         match self {
             Body::Proto { body, relation } => {
                 // Relation must be relation-pure (no Challenge/Log/Verify)
@@ -304,11 +305,8 @@ impl CBody {
                 }
                 // Relation must infer to Bool (the relation IS the assertion)
                 let rel_typ = relation.root().infer(
-                    &Cx {
-                        kctx: &kctx,
-                        fctx,
-                        vctx: &vctx,
-                    },
+                    &Cx { kctx: &kctx, fctx },
+                    &mut vctx,
                     &mut types.relation,
                 )?;
                 if !matches!(rel_typ, CTyp::Bool) {
@@ -322,14 +320,9 @@ impl CBody {
                 }
                 // Body must infer to Unit (empty body is Unit)
                 if let Some(body) = body {
-                    let br = body.root().infer(
-                        &Cx {
-                            kctx: &kctx,
-                            fctx,
-                            vctx: &vctx,
-                        },
-                        &mut types.body,
-                    )?;
+                    let br =
+                        body.root()
+                            .infer(&Cx { kctx: &kctx, fctx }, &mut vctx, &mut types.body)?;
                     if br != CTyp::Unit {
                         let last = crate::typ::infer::tail(body.root());
                         return Err(TypeError::decl(
@@ -352,11 +345,8 @@ impl CBody {
                 match body {
                     Some(body) => {
                         let br = body.root().infer(
-                            &Cx {
-                                kctx: &kctx,
-                                fctx,
-                                vctx: &vctx,
-                            },
+                            &Cx { kctx: &kctx, fctx },
+                            &mut vctx,
                             &mut types.body,
                         )?;
                         if br.fits(&ret.node, &kctx) {
