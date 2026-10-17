@@ -173,11 +173,11 @@ impl ParsedModule {
                 .module
                 .concretize(sizes)
                 .map_err(|e| self.error(vec![e.into()]))?;
-            let diagnostics = concrete.typecheck();
+            let (diagnostics, types) = concrete.typecheck_with_types();
             if has_errors(&diagnostics) {
                 return Err(self.error(diagnostics));
             }
-            let graphs = UDags::<C>::from_module_for_execution(concrete.clone())
+            let graphs = UDags::<C>::from_checked_for_execution(concrete.clone(), types)
                 .map_err(|e| self.error(vec![e.into()]))?;
             let graph = options
                 .protocol

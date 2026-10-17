@@ -1,7 +1,7 @@
 use super::*;
 use crate::ast::range::{CRange, Range};
 use crate::ast::spanned::Spanned;
-use crate::ast::{Args, BinOp, CArg, CExp, Exp, ExpLiteral, Expr, Exprs, Exps, Sig, Stmt};
+use crate::ast::{Args, BinOp, CArg, CExp, Exp, ExpLiteral, Expr, Exprs, Exps, Sig};
 use crate::id::{Tid, Vid};
 use crate::typ::{CTyp, Kind, TypeVar, TypeVars};
 use lazy_static::lazy_static;
@@ -106,31 +106,16 @@ enum TStmt<N: ExpLiteral> {
 }
 /// A block of `stmts` evaluating to `e`.
 fn block<N: ExpLiteral>(stmts: Vec<TStmt<N>>, e: Expr<N>) -> Expr<N> {
-    let mut binders = Vec::new();
-    let mut values = Vec::new();
-    for stmt in stmts {
-        let (binder, value) = match stmt {
-            TStmt::Let(x, v) => (Some((x, false)), v),
-            TStmt::Log(x, v) => (Some((x, true)), v),
-            TStmt::Exp(v) => (None, v),
-        };
-        binders.push(binder);
-        values.push(value);
-    }
-    values.push(e);
-    Expr::compose(values, 0..0, |c| {
-        let stmts = binders
-            .into_iter()
-            .zip(c)
-            .map(|(binder, &v)| {
-                Spanned::dummy(match binder {
-                    Some((x, false)) => Stmt::Let(Spanned::dummy(x), v),
-                    Some((x, true)) => Stmt::Log(Spanned::dummy(x), v),
-                    None => Stmt::Exp(v),
-                })
-            })
-            .collect();
-        Exp::Block(stmts, Some(c[c.len() - 1]))
+    let stmt = |stmt| match stmt {
+        TStmt::Let(x, v) => Expr::compose([v], 0..0, |c| Exp::Let(Spanned::dummy(x), c[0])),
+        TStmt::Log(x, v) => Expr::compose([v], 0..0, |c| Exp::Log(Spanned::dummy(x), c[0])),
+        TStmt::Exp(v) => Expr::compose([v], 0..0, |c| Exp::Discard(c[0])),
+    };
+    let mut parts: Vec<Expr<N>> = stmts.into_iter().map(stmt).collect();
+    parts.push(e);
+    Expr::compose(parts, 0..0, |c| {
+        let (value, stmts) = c.split_last().expect("the value");
+        Exp::Block(Exps(stmts.to_vec()), Some(*value))
     })
 }
 fn letx<N: ExpLiteral>(a: Vid, d: Expr<N>, e: Expr<N>) -> Expr<N> {
@@ -1908,11 +1893,11 @@ fn test_block_error_located_at_statement() {
     let zero = a.push(Exp::Lit(BigUint::from(0u8)), 0..0);
     let value = var(&mut a, "y");
     let stmts = vec![
-        Spanned::new(Stmt::Let(y(), f1), 0..10),
-        Spanned::new(Stmt::Exp(zero), 10..20),
-        Spanned::new(Stmt::Let(y(), missing), 20..30),
+        a.push(CExp::Let(y(), f1), 0..10),
+        a.push(CExp::Discard(zero), 10..20),
+        a.push(CExp::Let(y(), missing), 20..30),
     ];
-    let root = a.push(CExp::Block(stmts, Some(value)), 0..40);
+    let root = a.push(CExp::Block(Exps(stmts), Some(value)), 0..40);
     let body = Expr { exprs: a, root };
     let err = body.infer(&KIND_CTX, &Set::new(), &VAR_CTX).unwrap_err();
     assert_eq!(err.span(), Some(20..30));
@@ -1920,17 +1905,17 @@ fn test_block_error_located_at_statement() {
     // A statement without a span leaves the failure to the block's span.
     let mut a = Exprs::new();
     let (missing, value) = (var(&mut a, "missing"), var(&mut a, "y"));
-    let stmts = vec![Spanned::new(Stmt::Let(y(), missing), 0..0)];
-    let root = a.push(CExp::Block(stmts, Some(value)), 5..9);
+    let stmts = vec![a.push(CExp::Let(y(), missing), 0..0)];
+    let root = a.push(CExp::Block(Exps(stmts), Some(value)), 5..9);
     let body = Expr { exprs: a, root };
     let err = body.infer(&KIND_CTX, &Set::new(), &VAR_CTX).unwrap_err();
     assert_eq!(err.span(), Some(5..9));
 }
 
 #[test]
-fn test_deep_nesting_infers_and_prints_on_small_stack() {
-    // Inference and printing walk the tree iteratively: a million levels on 256 KiB.
-    let (typ, text) = std::thread::Builder::new()
+fn test_deep_nesting_infers_on_small_stack() {
+    // Inference walks the tree iteratively: a million levels on 256 KiB.
+    let typ = std::thread::Builder::new()
         .stack_size(256 << 10)
         .spawn(|| {
             let mut a = Exprs::new();
@@ -1939,12 +1924,10 @@ fn test_deep_nesting_infers_and_prints_on_small_stack() {
                 e = a.push(Exp::Neg(e), 0..0);
             }
             let tree = Expr { exprs: a, root: e };
-            let typ = tree.infer(&KIND_CTX, &Set::new(), &VAR_CTX);
-            (typ, tree.to_string())
+            tree.infer(&KIND_CTX, &Set::new(), &VAR_CTX)
         })
         .unwrap()
         .join()
         .unwrap();
     assert_eq!(typ, Ok(CTyp::FieldLiteral));
-    assert_eq!(text, format!("{}1", "-".repeat(1_000_000)));
 }

@@ -82,7 +82,7 @@ fn block_and_statement_spans() {
             |v| range(src, v).end,
         );
         assert_eq!(block.span(), &(range(src, texts[0]).start..end), "{src}");
-        let spans: Vec<_> = stmts.iter().map(|s| s.span.clone()).collect();
+        let spans: Vec<_> = stmts.iter().map(|s| block.exprs.span(s).clone()).collect();
         let expected: Vec<_> = texts.iter().map(|t| range(src, t)).collect();
         assert_eq!(spans, expected, "{src}");
         assert_eq!(

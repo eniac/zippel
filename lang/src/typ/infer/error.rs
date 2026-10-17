@@ -205,7 +205,7 @@ pub enum TypeError {
 
     /// A vector index is not a `Fin` type bounded by the vector's length, so the access cannot
     /// be proven in range.
-    #[error("{}", index_message(.2, .3, .4, .0))]
+    #[error("{}", index_message(.3, .4, .0))]
     Ram(
         Ctx<Tid, CKind>,
         Ctx<Vid, CTyp>,
@@ -216,7 +216,7 @@ pub enum TypeError {
 
     /// A vector index depends on runtime data; indices must be compile-time literals or ranges
     /// because the DAG is statically shaped.
-    #[error("Index `{}` must be a compile-time constant, but has type {}", ram_index_text(.2), kinded(.4, .0))]
+    #[error("The index must be a compile-time constant, but has type {}", kinded(.4, .0))]
     RamDynamicIndex(
         Ctx<Tid, CKind>,
         Ctx<Vid, CTyp>,
@@ -881,54 +881,51 @@ fn primary_label(cause: &TypeError) -> String {
 /// Labels the parts of the failing expression with their types, and adds the notes and
 /// suggestions specific to `cause`.
 fn decorate(cause: &TypeError, mut d: Diagnostic) -> Diagnostic {
-    // "`x` has type F (Field)", under `x`.
-    let has_type = |d: Diagnostic, span: &std::ops::Range<usize>, e: CRef<'_>, t: String| {
+    // "has type F (Field)", under the expression that has it.
+    let has_type = |d: Diagnostic, span: &std::ops::Range<usize>, t: String| {
         if span.is_empty() {
             d
         } else {
-            d.secondary_label(span.clone(), &format!("`{e:.MESSAGE_DEPTH$}` has type {t}"))
+            d.secondary_label(span.clone(), &format!("has type {t}"))
         }
     };
     match cause {
-        TypeError::Bin(kctx, _, e, op, a, b, _) => {
-            let CExp::Bin(_, x, y) = e.node() else {
-                unreachable!("`TypeError::bin` holds a binary expression")
-            };
+        TypeError::Bin(kctx, _, _, op, a, b, _) => {
             // Point at the operator: the source between the two operands.
             if !a.span.is_empty() && !b.span.is_empty() && a.span.end <= b.span.start {
                 d.span = a.span.end..b.span.start;
             }
             d.primary_label = format!("`{}` is not defined for these operands", op);
-            d = has_type(d, &a.span, e.exprs.at(*x), kinded(a, kctx));
-            has_type(d, &b.span, e.exprs.at(*y), kinded(b, kctx))
+            d = has_type(d, &a.span, kinded(a, kctx));
+            has_type(d, &b.span, kinded(b, kctx))
         }
-        TypeError::Vec(kctx, _, elem, first, _, elem_exp, first_exp) => {
+        TypeError::Vec(kctx, _, elem, first, ..) => {
             d.primary_label = "in this vector".to_string();
-            d = has_type(d, &first.span, first_exp.root(), kinded(first, kctx));
-            has_type(d, &elem.span, elem_exp.root(), kinded(elem, kctx))
+            d = has_type(d, &first.span, kinded(first, kctx));
+            has_type(d, &elem.span, kinded(elem, kctx))
         }
         TypeError::Ram(kctx, _, e, ta, tb) | TypeError::RamDynamicIndex(kctx, _, e, ta, tb) => {
-            let (a, i) = ram_parts(e.root());
+            let (a, _) = ram_parts(e.root());
             // The caret goes on the index; the vector gets its own label.
             if !tb.span.is_empty() {
                 d.span = tb.span.clone();
             }
             if matches!(cause, TypeError::RamDynamicIndex(..)) {
-                d.primary_label = format!("`{i:.MESSAGE_DEPTH$}` has type {}", kinded(tb, kctx));
+                d.primary_label = format!("has type {}", kinded(tb, kctx));
                 return d;
             }
-            let which = if matches!(tb.node, CTyp::Vec(..)) {
-                "indices"
+            d.primary_label = if matches!(tb.node, CTyp::Vec(..)) {
+                "these indices"
             } else {
-                "index"
-            };
-            d.primary_label = format!("{which} `{i:.MESSAGE_DEPTH$}`");
+                "this index"
+            }
+            .to_string();
             if a.span().is_empty() {
                 return d;
             }
             let vector = match &ta.node {
-                CTyp::Vec(_, n) => format!("`{a:.MESSAGE_DEPTH$}` has length {n}"),
-                _ => format!("`{a:.MESSAGE_DEPTH$}` has type {}", kinded(ta, kctx)),
+                CTyp::Vec(_, n) => format!("has length {n}"),
+                _ => format!("has type {}", kinded(ta, kctx)),
             };
             d.secondary_label(a.span().clone(), &vector)
         }
@@ -964,7 +961,7 @@ fn decorate(cause: &TypeError, mut d: Diagnostic) -> Diagnostic {
                 }
                 .to_string();
                 for (arg, t) in args.iter().zip(ts.iter()) {
-                    d = has_type(d, arg.span(), arg.root(), kinded(t, kctx));
+                    d = has_type(d, arg.span(), kinded(t, kctx));
                 }
             } else {
                 // No declaration has this name: point at the name, like an undefined variable.
@@ -1095,17 +1092,15 @@ fn fun_body_message(vars: usize, t: &str) -> String {
     }
 }
 
-/// Message for the indexing expression `e` into a vector of type `ta` with an index of type
-/// `tb`.
-fn index_message(e: &CExpr, ta: &CTyp, tb: &CTyp, kctx: &Ctx<Tid, CKind>) -> String {
-    let i = ram_index_text(e);
+/// Message for indexing a vector of type `ta` with an index of type `tb`.
+fn index_message(ta: &CTyp, tb: &CTyp, kctx: &Ctx<Tid, CKind>) -> String {
     match (ta, tb) {
         (CTyp::Vec(_, n), CTyp::Fin(_) | CTyp::Vec(..)) => {
-            format!("Index `{i}` is out of bounds for a vector of length {n}")
+            format!("The index is out of bounds for a vector of length {n}")
         }
-        (_, CTyp::Fin(_)) => format!("Index `{i}` is out of bounds for {}", kinded(ta, kctx)),
+        (_, CTyp::Fin(_)) => format!("The index is out of bounds for {}", kinded(ta, kctx)),
         _ => format!(
-            "Index `{i}` must be a compile-time integer, but has type {}",
+            "The index must be a compile-time integer, but has type {}",
             kinded(tb, kctx)
         ),
     }
@@ -1117,11 +1112,6 @@ fn ram_parts(e: CRef<'_>) -> (CRef<'_>, CRef<'_>) {
         unreachable!("index errors are only raised for indexing expressions")
     };
     (e.at(*a), e.at(*i))
-}
-
-/// The index of the indexing expression `e`, as shown in messages.
-fn ram_index_text(e: &CExpr) -> String {
-    format!("{:.MESSAGE_DEPTH$}", ram_parts(e.root()).1)
 }
 
 /// Message for a call to `id` with arguments of types `ts` that no declaration accepts.
@@ -1158,7 +1148,3 @@ fn body_result(r: &CTyp, kctx: &Ctx<Tid, CKind>) -> String {
         _ => format!("its body has type {}", kinded(r, kctx)),
     }
 }
-
-/// How many levels of an expression a message shows; deeper parts print as `…` (see the
-/// precision on [`ExpRef`](crate::ast::ExpRef)'s `Display`).
-const MESSAGE_DEPTH: usize = 3;

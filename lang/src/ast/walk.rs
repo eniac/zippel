@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use super::exp::{Exp, ExpLiteral, Stmt};
+use super::exp::{Exp, ExpLiteral, Exps};
 use super::spanned::Spanned;
 use super::{ExpId, ExpRef};
 use crate::id::Vid;
@@ -16,8 +16,13 @@ pub struct Children<'a>(Inner<'a>);
 
 enum Inner<'a> {
     Fixed(std::iter::Flatten<std::array::IntoIter<Option<ExpId>, 2>>),
-    List(std::iter::Copied<std::slice::Iter<'a, ExpId>>),
-    Block(std::slice::Iter<'a, Spanned<Stmt>>, Option<ExpId>),
+    /// A list, then possibly one more: a block's statements and value.
+    List(
+        std::iter::Chain<
+            std::iter::Copied<std::slice::Iter<'a, ExpId>>,
+            std::option::IntoIter<ExpId>,
+        >,
+    ),
     Record(Box<dyn Iterator<Item = ExpId> + 'a>),
 }
 
@@ -28,9 +33,6 @@ impl Iterator for Children<'_> {
         match &mut self.0 {
             Inner::Fixed(ids) => ids.next(),
             Inner::List(ids) => ids.next(),
-            Inner::Block(stmts, tail) => {
-                stmts.next().map(|s| s.node.value()).or_else(|| tail.take())
-            }
             Inner::Record(ids) => ids.next(),
         }
     }
@@ -39,15 +41,18 @@ impl Iterator for Children<'_> {
 impl<N: ExpLiteral> Exp<N> {
     /// The direct subexpressions of this node, in source order; a record's fields in field
     /// order.
-    pub fn children(&self) -> Children<'_> {
+    pub fn children<'a>(&'a self) -> Children<'a> {
         let fixed = |a, b| Children(Inner::Fixed([a, b].into_iter().flatten()));
+        let list = |ids: &'a Exps, last: Option<ExpId>| {
+            Children(Inner::List(ids.0.iter().copied().chain(last)))
+        };
         match self {
             Exp::Lit(_) | Exp::Unit | Exp::Var(_) | Exp::Range(_) => fixed(None, None),
             Exp::Random(_, x) | Exp::Challenge(_, x) => {
                 fixed(x.as_ref().and_then(|x| x.values()).copied(), None)
             }
-            Exp::App(_, args) | Exp::Vec(args) => Children(Inner::List(args.0.iter().copied())),
-            Exp::Block(stmts, tail) => Children(Inner::Block(stmts.iter(), *tail)),
+            Exp::App(_, args) | Exp::Vec(args) => list(args, None),
+            Exp::Block(stmts, tail) => list(stmts, *tail),
             Exp::Map(a, _, b)
             | Exp::Bin(_, a, b)
             | Exp::Pair(a, b)
@@ -62,7 +67,10 @@ impl<N: ExpLiteral> Exp<N> {
             | Exp::Reduce(_, a)
             | Exp::Verify(a)
             | Exp::Fun(_, a)
-            | Exp::Proj(a, _) => fixed(Some(*a), None),
+            | Exp::Proj(a, _)
+            | Exp::Let(_, a)
+            | Exp::Log(_, a)
+            | Exp::Discard(a) => fixed(Some(*a), None),
             Exp::Record(fields) => {
                 Children(Inner::Record(Box::new(fields.iter().map(|(_, e)| *e))))
             }
@@ -84,10 +92,7 @@ impl<N: ExpLiteral> Exp<N> {
             }
             Exp::App(_, args) | Exp::Vec(args) => args.0.iter_mut().for_each(f),
             Exp::Block(stmts, tail) => {
-                for stmt in stmts {
-                    let (Stmt::Let(_, v) | Stmt::Log(_, v) | Stmt::Exp(v)) = &mut stmt.node;
-                    f(v);
-                }
+                stmts.0.iter_mut().for_each(&mut f);
                 tail.iter_mut().for_each(f);
             }
             Exp::Map(a, _, b)
@@ -113,7 +118,10 @@ impl<N: ExpLiteral> Exp<N> {
             | Exp::Reduce(_, a)
             | Exp::Verify(a)
             | Exp::Fun(_, a)
-            | Exp::Proj(a, _) => f(a),
+            | Exp::Proj(a, _)
+            | Exp::Let(_, a)
+            | Exp::Log(_, a)
+            | Exp::Discard(a) => f(a),
             Exp::Record(fields) => fields.modify(|_, e| f(e)),
         }
     }
@@ -222,9 +230,9 @@ impl<'a, N: ExpLiteral> Walk<'a, N> {
                 todo.push(Step::Enter(*body));
             }
             Exp::Block(stmts, tail) => {
-                for (i, stmt) in stmts.iter().enumerate() {
-                    todo.push(Step::Enter(stmt.node.value()));
-                    if let Some(x) = stmt.node.binder()
+                for (i, &stmt) in stmts.0.iter().enumerate() {
+                    todo.push(Step::Enter(stmt));
+                    if let Some(x) = self.root.at(stmt).node().binder()
                         && (i + 1 < stmts.len() || tail.is_some())
                     {
                         todo.push(Step::Bind(x));
@@ -314,21 +322,23 @@ mod tests {
             UExp::Pair(a, b),
             UExp::Random(t(), Some(Spanned::new(Exclusion::Values(c), 0..0))),
             UExp::Challenge(t(), None),
-            UExp::Block(
-                vec![
-                    Spanned::new(Stmt::Let(x(), a), 0..0),
-                    Spanned::new(Stmt::Log(x(), b), 0..0),
-                    Spanned::new(Stmt::Exp(c), 0..0),
-                ],
-                Some(a),
-            ),
+            UExp::Let(x(), a),
+            UExp::Log(x(), b),
+            UExp::Discard(c),
             UExp::Verify(a),
             UExp::Fun(vec![x()], a),
             UExp::Record(record),
             UExp::Proj(a, field("p")),
             UExp::SetRecord(a, field("p"), b),
         ];
-        let ids = nodes.into_iter().map(|n| exprs.push(n, 0..0)).collect();
+        let mut ids: Vec<ExpId> = nodes.into_iter().map(|n| exprs.push(n, 0..0)).collect();
+        // A block of the statements above, then `a`.
+        let stmts = ids
+            .iter()
+            .copied()
+            .filter(|&id| exprs[id].is_stmt())
+            .collect();
+        ids.push(exprs.push(UExp::Block(Exps(stmts), Some(a)), 0..0));
         (exprs, ids)
     }
 
@@ -347,15 +357,21 @@ mod tests {
             assert_eq!(children, seen, "{node:?}");
             // Replacing every child by itself rebuilds the node.
             assert_eq!(&node.clone().map_ids(|c| c), node);
-            // The walk enters exactly the children (a map's domain before its body).
-            let entered: Vec<ExpId> = exprs
-                .at(id)
-                .walk()
-                .filter_map(|v| match v {
-                    Visit::Enter(e) if e.id() != id => Some(e.id()),
-                    _ => None,
-                })
-                .collect();
+            // The walk enters exactly the children, one level down (a map's domain before its body).
+            let mut depth = 0;
+            let mut entered = Vec::new();
+            for visit in exprs.at(id).walk() {
+                match visit {
+                    Visit::Enter(e) => {
+                        if depth == 1 {
+                            entered.push(e.id());
+                        }
+                        depth += 1;
+                    }
+                    Visit::Leave(_) => depth -= 1,
+                    Visit::Bind(_) => {}
+                }
+            }
             let mut expected = children;
             if matches!(node, Exp::Map(..)) {
                 expected.reverse();

@@ -16,7 +16,7 @@ use std::process::ExitCode;
 use backend::ArkBls12_381;
 use clap::Parser;
 use graph::UDags;
-use lang::ast::{CModule, MAX_DEFAULT_SIZE, SizeSearchError, UModule, minimal_sizes};
+use lang::ast::{CModule, MAX_DEFAULT_SIZE, ModuleTypes, SizeSearchError, UModule, minimal_sizes};
 use lang::diagnostic::{Diagnostic, Phase, Severity, render_diagnostic};
 use lang::id::Tid;
 use lang::typ::Kind;
@@ -213,9 +213,10 @@ fn check(src: &str, given: &Ctx<Tid, usize>) -> Report {
     match module.concretize(&sizes) {
         Err(e) => report.diagnostics.push(e.into()),
         Ok(cmodule) => {
-            report.diagnostics.extend(cmodule.typecheck());
+            let (diagnostics, types) = cmodule.typecheck_with_types();
+            report.diagnostics.extend(diagnostics);
             if report.errors() == 0 {
-                report.diagnostics.extend(lower(&cmodule));
+                report.diagnostics.extend(lower(cmodule, types));
             }
         }
     }
@@ -260,8 +261,8 @@ fn no_default_sizes(
 
 /// Build the Graph IR and project the prover and verifier of every protocol, as
 /// compilation followed by explicit projection does for one.
-fn lower(module: &CModule) -> Vec<Diagnostic> {
-    let dags = match UDags::<Backend>::from_module(module.clone()) {
+fn lower(module: CModule, types: ModuleTypes) -> Vec<Diagnostic> {
+    let dags = match UDags::<Backend>::from_checked(module, types) {
         Ok(dags) => dags,
         Err(e) => return vec![e.into()],
     };

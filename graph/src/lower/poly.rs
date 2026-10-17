@@ -51,9 +51,7 @@ impl<C: HasOpFactory> UDag<C> {
                     ) {
                         return Err(non_poly(
                             e,
-                            format!(
-                                "`{e}` is not an addition, subtraction, multiplication, or negation"
-                            ),
+                            "not an addition, subtraction, multiplication, or negation".to_string(),
                         ));
                     }
                     continue;

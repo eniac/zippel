@@ -135,7 +135,7 @@ proto p<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) wher
 }
 
 #[test]
-fn typecheck_long_operand_is_shortened() {
+fn typecheck_long_operand() {
     let src = r"
 proto p<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance v: [F; 4]) where g == g {
     verify(reduce(+, [v[i] * x + v[i] * x * x for i in 0..4]) + g == g)

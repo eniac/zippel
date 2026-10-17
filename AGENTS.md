@@ -153,7 +153,9 @@ unused helpers are still typechecked. Use `--size` to check specific sizes.
   `lang`, `fmt`, `analyses` live under `tests/snapshots` /
   `tests/gb_snapshots`).
 - Expressions live in an append-only arena (`lang::ast::Exprs`, children before
-  parents, nodes never rewritten in place). A pass that doesn't depend on what a
+  parents, nodes never rewritten in place). Statements are nodes too
+  (`Exp::Let`/`Log`/`Discard`), and occur exactly in a block's statement list
+  (debug-asserted). `lang` has no expression printer: diagnostics label spans. A pass that doesn't depend on what a
   node means uses `lang/src/ast/walk.rs` instead of matching every `Exp` variant:
   `Exp::children`/`for_each_child_mut`, or `ExpRef::walk` (iterative, evaluation
   order, resolves names to their bindings). The binder rules live only there.

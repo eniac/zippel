@@ -885,7 +885,6 @@ fn graph_sum() {
         }"#;
     let m = parse_and_concretize(ex, &Ctx::new());
     assert_eq!(m.len(), 4);
-    debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     gs.write_pdf("graph_sum").unwrap_or_else(|e| {
         debug!(
@@ -907,7 +906,6 @@ fn graph_foo() {
             verify(a * s == b * x[3])
         }"#;
     let m = parse_and_concretize(ex, &Ctx::new());
-    debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     // Output graph
     gs.write_pdf("graph_foo").unwrap_or_else(|e| {
@@ -927,7 +925,6 @@ fn graph_poly() {
             verify(p(r) == (a(r) * b(r)))
         }"#;
     let m = parse_and_concretize(ex, &Ctx::new());
-    debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     gs.write_pdf("graph_poly").unwrap_or_else(|e| {
         debug!(
@@ -944,7 +941,6 @@ fn graph_reduce() {
             reduce(+, a)
         }"#;
     let m = parse_and_concretize(ex, &Ctx::new());
-    debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     gs.write_pdf("graph_reduce").unwrap_or_else(|e| {
         debug!(
@@ -964,7 +960,6 @@ fn graph_fn_call_in_where() {
             verify(a == a)
         }"#;
     let m = parse_and_concretize(ex, &Ctx::new());
-    debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     gs.write_pdf("graph_fn_in_where").unwrap_or_else(|e| {
         debug!(
