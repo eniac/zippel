@@ -1,18 +1,24 @@
 //! Corpus test: every bundled `.zippel` example must survive a formatting round trip.
 //!
 //! Each example is formatted twice; the second pass must be a fixed point of the first, which is
-//! the formatter's idempotency contract. Failures are collected across the whole corpus so one
+//! the formatter's idempotency contract, and the formatted text must parse to the same module. Failures are collected across the whole corpus so one
 //! run reports every offending example rather than stopping at the first.
 
 mod common;
 
 use common::{fmt, zippel_examples};
 
-/// Parse source, format it, parse the output, format again, check idempotency.
+/// Parse source, format it, parse the output, format again, check idempotency; formatting must
+/// not change the module (spans aside).
 fn round_trip_check(name: &str, src: &str) {
     let out1 = fmt(src);
     let out2 = fmt(&out1);
     assert_eq!(out1, out2, "{}: not idempotent", name);
+    let parse = |src: &str| lang::ast::UModule::parse(src).0.expect("parses");
+    assert!(
+        parse(src) == parse(&out1),
+        "{name}: formatting changed the module"
+    );
 }
 
 #[test]

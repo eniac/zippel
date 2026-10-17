@@ -24,17 +24,17 @@ pub mod walk;
 
 pub use arena::{ExpId, ExpRef, Expr, Exprs};
 pub use arg::{Arg, Args, CArg, CArgs, GArg, GArgs};
-pub use decl::{Body, CBody};
+pub use decl::{Body, BodyTypes, CBody};
 pub use exclusion::Exclusion;
 pub use exp::{
-    BinOp, CExp, CExpr, CExps, CRef, Exp, ExpExclusion, ExpLiteral, ExpTraversal, Exps, Stmt, UExp,
+    BinOp, CExp, CExpr, CExps, CRef, Exp, ExpExclusion, ExpLiteral, ExpTraversal, Exps, UExp,
     UExpr, UExps, URef,
 };
 pub use minimal_sizes::{
     MAX_DEFAULT_SIZE, SizeRejection, SizeSearchError, SizeSearchLimit, SizeSearchStage,
     minimal_sizes,
 };
-pub use module::{CModule, Module, UModule};
+pub use module::{CModule, Module, ModuleTypes, UModule};
 pub use range::{CRange, Range, RangeError, RangeTraversal};
 pub use sig::{CSig, Sig};
 pub use size::{EvalError, Size};

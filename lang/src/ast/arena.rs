@@ -22,8 +22,9 @@ impl ExpId {
 /// any depth of the trees in it (issue #252). Equality and ordering ignore spans, as
 /// [`Spanned`](super::Spanned)'s do.
 ///
-/// Outside this module nodes are only added, never changed, and each comes after its
-/// children: the arena is acyclic by construction, and a node's id names the same tree for
+/// Statements ([`Exp::Let`], [`Exp::Log`], [`Exp::Discard`]) occur exactly in blocks'
+/// statement lists. Outside this module nodes are only added, never changed, and each comes
+/// after its children: the arena is acyclic by construction, and a node's id names the same tree for
 /// the arena's lifetime, which is what per-node side tables such as inferred types rely on.
 #[derive(Debug, Clone)]
 pub struct Exprs<N: ExpLiteral> {
@@ -55,6 +56,16 @@ impl<N: ExpLiteral> Exprs<N> {
     pub fn push(&mut self, node: Exp<N>, span: std::ops::Range<usize>) -> ExpId {
         let id = ExpId(u32::try_from(self.nodes.len()).expect("fewer than 2^32 expressions"));
         debug_assert!(node.children().all(|c| c < id), "a child after its parent");
+        debug_assert!(
+            match &node {
+                Exp::Block(stmts, value) => {
+                    stmts.iter().all(|s| self[s].is_stmt())
+                        && value.is_none_or(|v| !self[v].is_stmt())
+                }
+                node => node.children().all(|c| !self[c].is_stmt()),
+            },
+            "statements occur exactly in blocks' statement lists"
+        );
         self.nodes.push(node);
         self.spans.push(span);
         id
@@ -244,5 +255,28 @@ impl<'a, N: ExpLiteral> ExpRef<'a, N> {
     /// The trees under `exps`, nodes of this arena, copied out of it.
     pub fn trees(self, exps: &Exps) -> Vec<Expr<N>> {
         exps.iter().map(|e| self.exprs.extract(e)).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::spanned::Spanned;
+    use crate::ast::{BinOp, Size};
+    use crate::id::Vid;
+
+    #[test]
+    fn extract_lays_out_in_post_order() {
+        // Composition and extraction agree, so trees compare by structure.
+        let var = |x: &str| Expr::leaf(Exp::Var(Spanned::dummy(Vid::from(x))), 0..0);
+        let bin = |op, l, r| Expr::compose([l, r], 0..0, |c| Exp::Bin(op, c[0], c[1]));
+        let built: Expr<Size> = bin(BinOp::Add, bin(BinOp::Mul, var("a"), var("b")), var("c"));
+        let mut arena = Exprs::new();
+        let c = arena.push(Exp::Var(Spanned::dummy(Vid::from("c"))), 0..0);
+        let a = arena.push(Exp::Var(Spanned::dummy(Vid::from("a"))), 0..0);
+        let b = arena.push(Exp::Var(Spanned::dummy(Vid::from("b"))), 0..0);
+        let ab = arena.push(Exp::Bin(BinOp::Mul, a, b), 0..0);
+        let root = arena.push(Exp::Bin(BinOp::Add, ab, c), 0..0);
+        assert_eq!(arena.extract(root), built);
     }
 }

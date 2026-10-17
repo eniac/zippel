@@ -304,7 +304,7 @@ fn check_candidate(
         .map(|(id, (sig, _))| (sig.clone(), InstanceId(id)))
         .collect();
     let edges = RefCell::new(vec![Set::new(); instances.len()]);
-    let diagnostics = expanded.module.typecheck_with_calls(&|caller, callee| {
+    let (diagnostics, _) = expanded.module.typecheck_with_calls(&|caller, callee| {
         edges.borrow_mut()[instances[caller].0].insert(instances[callee]);
     });
     if diagnostics.iter().any(|d| d.severity == Severity::Error) {

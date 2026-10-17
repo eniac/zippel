@@ -5,8 +5,8 @@ use ark_ff::PrimeField;
 use backend::{ABase, ATyp, Value, VirtualPolynomial};
 use lang::ast::range::CRange;
 use lang::ast::{
-    BinOp, CBody, CExp, CExpr, CRef, CSig, Exp, ExpExclusion, ExpId, ExpLiteral, Expr, Exprs, Exps,
-    Stmt,
+    BinOp, BodyTypes, CBody, CExp, CExpr, CRef, CSig, Exp, ExpExclusion, ExpId, ExpLiteral, Expr,
+    Exprs, Exps, ModuleTypes,
 };
 use lang::id::{Fresh, Tid};
 use lang::stack_guard;
@@ -194,7 +194,25 @@ impl<C: HasOpFactory> UDags<C> {
     /// variable, a `lang`-level type error surfaced during inference, or a
     /// `fun` body outside the polynomial fragment.
     pub fn from_module(m: CModule) -> Result<Self, GraphError> {
-        Self::build(m, true)
+        Self::build(m, None, true)
+    }
+
+    /// [`Self::from_module`] for a module already type-checked: `types` are what
+    /// [`CModule::typecheck_with_types`] gave it, so no body is checked again.
+    ///
+    /// # Errors
+    /// As [`Self::from_module`]; a declaration without types is checked here.
+    pub fn from_checked(m: CModule, types: ModuleTypes) -> Result<Self, GraphError> {
+        Self::build(m, Some(types), true)
+    }
+
+    /// [`Self::from_module_for_execution`] for a module already type-checked (see
+    /// [`Self::from_checked`]).
+    ///
+    /// # Errors
+    /// As [`Self::from_module_for_execution`].
+    pub fn from_checked_for_execution(m: CModule, types: ModuleTypes) -> Result<Self, GraphError> {
+        Self::build(m, Some(types), false)
     }
 
     /// [`Self::from_module`] without lowering any protocol's `where` clause:
@@ -210,10 +228,14 @@ impl<C: HasOpFactory> UDags<C> {
     /// As [`Self::from_module`], except that errors only lowering a relation
     /// would raise go unreported.
     pub fn from_module_for_execution(m: CModule) -> Result<Self, GraphError> {
-        Self::build(m, false)
+        Self::build(m, None, false)
     }
 
-    fn build(m: CModule, lower_relations: bool) -> Result<Self, GraphError> {
+    fn build(
+        m: CModule,
+        mut types: Option<ModuleTypes>,
+        lower_relations: bool,
+    ) -> Result<Self, GraphError> {
         let mut gs = UDags::new();
 
         let fctx = m
@@ -221,12 +243,25 @@ impl<C: HasOpFactory> UDags<C> {
             .map(|(sig, body)| (sig.clone(), body.clone()))
             .collect::<Ctx<CSig, CBody>>();
 
-        debug!("fctx: {}", fctx);
+        debug!(
+            "fctx: {:?}",
+            fctx.keys()
+                .iter()
+                .map(|sig| &sig.name.node)
+                .collect::<Vec<_>>()
+        );
         for (sig, body) in m.into_iter() {
             debug!("Adding declaration: {}", sig);
             let mut g = UDag::new();
-            g.add_decl(sig.clone(), body.clone(), &fctx, lower_relations)
-                .map_err(|e| e.located(&sig.name.span))?;
+            let body_types = types.as_mut().and_then(|types| types.remove(&sig));
+            g.add_decl(
+                sig.clone(),
+                body.clone(),
+                body_types,
+                &fctx,
+                lower_relations,
+            )
+            .map_err(|e| e.located(&sig.name.span))?;
             gs.0.push(g);
         }
         Ok(gs)
@@ -321,7 +356,7 @@ impl<C: HasOpFactory> UDag<C> {
         vars: &Ctx<Vid, GOp<C>>,
         expected: Option<ATyp>,
     ) -> Result<(), GraphError> {
-        debug!("Adding top-level expression: {exp}");
+        debug!("Adding top-level expression at {:?}", exp.span());
         let span = exp.span().clone();
         let Expr { exprs, root } = exp;
         let op = self.add_exp(
@@ -349,6 +384,7 @@ impl<C: HasOpFactory> UDag<C> {
         &mut self,
         sig: CSig,
         body: CBody,
+        types: Option<BodyTypes>,
         fctx: &Ctx<CSig, CBody>,
         lower_relation: bool,
     ) -> Result<(), GraphError> {
@@ -397,8 +433,12 @@ impl<C: HasOpFactory> UDag<C> {
             }
         }
 
-        // Typecheck the body with the type signature; lowering starts from its types.
-        let types = body.typecheck(sig.clone(), &fctx.keys())?;
+        // Typecheck the body with the type signature, unless it has been; lowering starts from
+        // its types.
+        let types = match types {
+            Some(types) => types,
+            None => body.typecheck(sig.clone(), &fctx.keys())?,
+        };
 
         // Add the body to the Graph
         match body {
@@ -736,7 +776,7 @@ impl<C: HasOpFactory> UDag<C> {
                 CExp::Block(stmts, tail) => {
                     for stmt in stmts {
                         self.lower_stmt(
-                            exprs, stmt.node, transcr, edge_type, kctx, fctx, &mut vctx, &mut vars,
+                            exprs, stmt, transcr, edge_type, kctx, fctx, &mut vctx, &mut vars,
                         )?;
                     }
                     match tail {
@@ -746,6 +786,9 @@ impl<C: HasOpFactory> UDag<C> {
                         }
                         None => return Ok(GOp::Value(backend::Value::Unit)),
                     }
+                }
+                CExp::Let(..) | CExp::Log(..) | CExp::Discard(_) => {
+                    unreachable!("statements are lowered with their block")
                 }
                 CExp::Verify(exp) => return self.lower_verify(step!(), exp),
                 CExp::Fun(fun_vars, body) => return Self::lower_fun(exprs, fun_vars, body),
@@ -801,7 +844,7 @@ impl<C: HasOpFactory> UDag<C> {
     fn lower_stmt(
         &mut self,
         exprs: &mut Arena,
-        stmt: Stmt,
+        stmt: ExpId,
         transcr: &mut NodeIndex,
         edge_type: DepType,
         kctx: &Ctx<Tid, CKind>,
@@ -809,8 +852,8 @@ impl<C: HasOpFactory> UDag<C> {
         vctx: &mut Ctx<Vid, CTyp>,
         vars: &mut Ctx<Vid, GOp<C>>,
     ) -> Result<(), GraphError> {
-        match stmt {
-            Stmt::Let(id, l) => {
+        match exprs[stmt].clone() {
+            CExp::Let(id, l) => {
                 // Infer the type of [l]
                 let tl = exprs.infer(l, kctx, vctx)?;
                 // Add left-hand side as node
@@ -824,10 +867,10 @@ impl<C: HasOpFactory> UDag<C> {
                 vctx.insert(&id.node, &tl);
                 vars.insert(&id.node, &nl);
             }
-            Stmt::Exp(l) => {
+            CExp::Discard(l) => {
                 self.add_exp(exprs, l, transcr, edge_type, kctx, fctx, vctx, vars, None)?;
             }
-            Stmt::Log(id, l) => {
+            CExp::Log(id, l) => {
                 // A transcript node comes from the value sent.
                 let sent = exprs.span(l).clone();
                 // Infer the type of [l]
@@ -841,6 +884,7 @@ impl<C: HasOpFactory> UDag<C> {
                 vctx.insert(&id.node, &tl);
                 vars.insert(&id.node, &transcr_op);
             }
+            _ => unreachable!("a block's statements are statements"),
         }
         Ok(())
     }

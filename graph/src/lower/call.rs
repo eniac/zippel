@@ -1,7 +1,6 @@
 //! Function and polynomial applications: evaluation by call syntax and call inlining.
 
 use super::*;
-use lang::ast::Stmt;
 
 impl<C: HasOpFactory> UDag<C> {
     #[inline(never)]
@@ -90,10 +89,8 @@ impl<C: HasOpFactory> UDag<C> {
 
                 let poly = push(Exp::Var(fid.clone()));
                 let coef = push(Exp::Coef(poly));
-                let bound_exp = push(Exp::Block(
-                    vec![Spanned::dummy(Stmt::Let(Spanned::dummy(coef_var), coef))],
-                    Some(fold),
-                ));
+                let let_coef = push(Exp::Let(Spanned::dummy(coef_var), coef));
+                let bound_exp = push(Exp::Block(Exps(vec![let_coef]), Some(fold)));
 
                 // Trampoline
                 Ok(Lowered::Rewrite(bound_exp))

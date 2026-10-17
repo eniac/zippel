@@ -1,4 +1,4 @@
-use crate::ast::decl::{DeclError, UDecl};
+use crate::ast::decl::{BodyTypes, DeclError, UDecl};
 use crate::ast::exp::ExpLiteral;
 use crate::ast::spanned::Spanned;
 use crate::ast::{Body, CSig, Sig};
@@ -280,11 +280,20 @@ impl CModule {
     /// source spans, so an error common to several instances is reported once, naming the
     /// first failing instance.
     pub fn typecheck(&self) -> Vec<Diagnostic> {
+        self.typecheck_with_calls(&|_, _| {}).0
+    }
+
+    /// [`Self::typecheck`], also returning the types of the nodes of every declaration that
+    /// checks, for lowering to start from.
+    pub fn typecheck_with_types(&self) -> (Vec<Diagnostic>, ModuleTypes) {
         self.typecheck_with_calls(&|_, _| {})
     }
 
     /// The shared checking pass reports direct selected calls without rechecking bodies.
-    pub(super) fn typecheck_with_calls(&self, on_call: &dyn Fn(&CSig, &CSig)) -> Vec<Diagnostic> {
+    pub(super) fn typecheck_with_calls(
+        &self,
+        on_call: &dyn Fn(&CSig, &CSig),
+    ) -> (Vec<Diagnostic>, ModuleTypes) {
         let fctx: Set<CSig> = self.iter().map(|(sig, _)| sig.clone()).collect();
         let mut instances: HashMap<&str, usize> = HashMap::new();
         for (sig, _) in self.iter() {
@@ -292,11 +301,16 @@ impl CModule {
         }
         let mut seen = HashSet::new();
         let mut diags = Vec::new();
+        let mut types = ModuleTypes::new();
         for (sig, body) in self.iter() {
-            let Err(e) =
-                body.typecheck_with_calls(sig.clone(), &fctx, &|callee| on_call(sig, callee))
-            else {
-                continue;
+            let e = match body.typecheck_with_calls(sig.clone(), &fctx, &|callee| {
+                on_call(sig, callee);
+            }) {
+                Ok(body_types) => {
+                    types.insert(sig.clone(), body_types);
+                    continue;
+                }
+                Err(e) => e,
             };
             // Fall back to the declaration's name when inference located nothing.
             let mut d = Diagnostic::from(TypeError::located(&sig.name.span, e));
@@ -316,9 +330,13 @@ impl CModule {
         // They need the typed call graph; infer_with_calls can record resolved signatures,
         // as the default-size coverage check does.
         diags.sort_by_key(|d| d.span.start);
-        diags
+        (diags, types)
     }
 }
+
+/// The types of the nodes of a module's declarations, by signature (see
+/// [`CModule::typecheck_with_types`]).
+pub type ModuleTypes = std::collections::BTreeMap<CSig, BodyTypes>;
 
 /// Polymorphic module with symbolic sizes
 impl UModule {
@@ -635,23 +653,6 @@ impl<N: ExpLiteral> FromIterator<(Sig<N::Size>, Body<N>)> for Module<N> {
     }
 }
 
-/// Source syntax: declarations separated by blank lines with `{:#}` (bodies on several
-/// lines), by spaces with `{}`.
-impl<N: ExpLiteral + fmt::Display> fmt::Display for Module<N>
-where
-    N::Size: fmt::Display,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, (sig, body)) in self.0.iter().enumerate() {
-            if i > 0 {
-                f.write_str(if f.alternate() { "\n\n" } else { " " })?;
-            }
-            crate::ast::decl::write_decl(f, sig, body)?;
-        }
-        Ok(())
-    }
-}
-
 fn one_line(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -802,22 +803,6 @@ fn test_concretize_size_var() {
             5
         ))
     );
-}
-
-#[test]
-fn test_module_round_trip() {
-    let ex = concat!(
-        "fn f<F: Field>(instance a: F) -> F {\n",
-        "    a\n",
-        "}\n",
-        "fn g<F: Field>(instance a: F) -> F {\n",
-        "    a\n",
-        "}\n"
-    );
-    let umod1 = UModule::parse(ex).0.unwrap();
-    let formatted = umod1.to_string();
-    let umod2 = UModule::parse(&formatted).0.unwrap();
-    assert_eq!(umod1, umod2);
 }
 
 #[test]

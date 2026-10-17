@@ -7,6 +7,7 @@ mod common;
 
 use common::{assert_snap, render_all};
 use lang::ast::module::UModule;
+use lang::ast::{Exp, Size};
 
 const SNAP_DIR: &str = "snapshots/parser";
 
@@ -121,9 +122,13 @@ fn numeric_literal_domain_boundaries() {
         decls
     };
     for digits in ["34545435435435435435435", "4294967296"] {
-        let decls = parses(&format!("fn f<F: Field>() -> F {{ {digits} }}"));
-        let shown = decls[0].node.to_string();
-        assert!(shown.contains(&format!("{{ {digits} }}")), "{shown}");
+        let mut decls = parses(&format!("fn f<F: Field>() -> F {{ {digits} }}"));
+        let body = decls.remove(0).node.body.body().expect("a body");
+        assert!(
+            matches!(body.node(), Exp::Lit(Size::Lit(n)) if n.to_string() == digits),
+            "{:?}",
+            body.node()
+        );
     }
     // A size above `u32::MAX` is still a valid 64-bit shape.
     if usize::BITS == 64 {

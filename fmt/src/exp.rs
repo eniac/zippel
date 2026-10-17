@@ -11,7 +11,7 @@
 //!   `;` provides the break).
 
 use lang::ast::ExpId;
-use lang::ast::exp::{BinOp, Exp, Exps, Stmt, URef};
+use lang::ast::exp::{BinOp, Exp, Exps, URef};
 use lang::ast::{Exclusion, Size, Spanned};
 use lang::id::Tid;
 use lang::parser::Token;
@@ -331,6 +331,9 @@ fn format_exp(exp: URef<'_>, cursor: &mut TokenCursor, style: &Style) -> (Trivia
             end,
             style,
         ),
+        Exp::Let(..) | Exp::Log(..) | Exp::Discard(_) => {
+            unreachable!("statements are formatted with their block")
+        }
         Exp::Block(_, _) => {
             // Reached only from operand (`exp_no_seq`) positions, where the
             // source must have parenthesized the sequence: without parens
@@ -854,7 +857,7 @@ fn gap_before_semi(gap: TriviaGap, style: &Style) -> Doc<'static> {
 /// block to the body's.
 fn format_stmts(
     block: URef<'_>,
-    stmts: &[Spanned<Stmt>],
+    stmts: &Exps,
     tail: Option<URef<'_>>,
     cursor: &mut TokenCursor,
     style: &Style,
@@ -862,10 +865,11 @@ fn format_stmts(
 ) -> Doc<'static> {
     let mut docs = Vec::new();
     for (i, stmt) in stmts.iter().enumerate() {
-        let end = stmt.span.end;
-        relation &= !matches!(stmt.node, Stmt::Log(..));
-        docs.push(match &stmt.node {
-            Stmt::Let(var, value) => {
+        let stmt = block.at(stmt);
+        let end = stmt.span().end;
+        relation &= !matches!(stmt.node(), Exp::Log(..));
+        docs.push(match stmt.node() {
+            Exp::Let(var, value) => {
                 let keyword = gap_none(
                     cursor.advance_to_token(end, |token| matches!(token, Token::KwLet)),
                     style,
@@ -886,18 +890,18 @@ fn format_stmts(
             }
             // The value is an operand (`exp_no_seq`): a block there was parenthesized in the
             // source and must stay so, which `format_exp` does.
-            Stmt::Exp(value) if relation => {
+            Exp::Discard(value) if relation => {
                 let (value_gap, value_doc) = format_exp(block.at(*value), cursor, style);
                 ALLOC.concat([
                     format_gap(value_gap, Some(ALLOC.nil()), None, None, style),
                     value_doc,
                 ])
             }
-            Stmt::Exp(value) => {
+            Exp::Discard(value) => {
                 let (value_gap, value_doc) = format_exp(block.at(*value), cursor, style);
                 ALLOC.concat([gap_none(value_gap, style), value_doc])
             }
-            Stmt::Log(var, value) => {
+            Exp::Log(var, value) => {
                 let name = gap_none(
                     cursor.advance_to_token(end, |token| matches!(token, Token::Id(_))),
                     style,
@@ -914,13 +918,15 @@ fn format_stmts(
                     value_doc,
                 ])
             }
+            _ => unreachable!("a block's statements are statements"),
         });
         let before_semi = cursor.advance_to_token(end, |token| matches!(token, Token::Semi));
         docs.push(gap_before_semi(before_semi, style));
         docs.push(ALLOC.text(";"));
         let next = stmts
+            .0
             .get(i + 1)
-            .map(|s| s.span.start)
+            .map(|&s| block.at(s).span().start)
             .or(tail.map(|t| t.span().start));
         if let Some(next) = next {
             docs.push(gap_hard(cursor.advance_to(next), style));

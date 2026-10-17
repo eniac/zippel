@@ -1,5 +1,4 @@
 use num::BigUint;
-use std::fmt;
 use thiserror::Error;
 
 use crate::ast::Size;
@@ -486,78 +485,5 @@ where
             sig: self.sig.type_inline(ctx),
             body: self.body.type_inline(ctx),
         }
-    }
-}
-
-/// `where relation { body }` for a protocol, `{ body }` for a function. `{}` prints on one
-/// line; `{:#}` puts the body's statements on their own lines, indented.
-impl<N: ExpLiteral + fmt::Display> fmt::Display for Body<N>
-where
-    N::Size: fmt::Display,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let block = |f: &mut fmt::Formatter<'_>, body: &Option<Expr<N>>| match body {
-            None => f.write_str("{}"),
-            Some(body) if f.alternate() => {
-                let lines = format!("{body:#}").replace('\n', "\n  ");
-                write!(f, "{{\n  {lines}\n}}")
-            }
-            Some(body) => write!(f, "{{ {body} }}"),
-        };
-        match self {
-            Body::Proto { relation, body } => {
-                if f.alternate() {
-                    write!(f, "where {relation:#} ")?;
-                } else {
-                    write!(f, "where {relation} ")?;
-                }
-                block(f, body)
-            }
-            Body::Func { body } => block(f, body),
-            Body::TypeAlias => Ok(()),
-        }
-    }
-}
-
-/// Source syntax; `{:#}` prints the body on several lines.
-impl<N: ExpLiteral + fmt::Display> fmt::Display for Decl<N>
-where
-    N::Size: fmt::Display,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_decl(f, &self.sig, &self.body)
-    }
-}
-
-/// One declaration per line with `{:#}`; space-separated with `{}`.
-impl<N: ExpLiteral + fmt::Display> fmt::Display for Decls<N>
-where
-    N::Size: fmt::Display,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, decl) in self.0.iter().enumerate() {
-            if i > 0 {
-                f.write_str(if f.alternate() { "\n" } else { " " })?;
-            }
-            write_decl(f, &decl.sig, &decl.body)?;
-        }
-        Ok(())
-    }
-}
-
-/// `proto`/`fn`, the signature, and the body, in `f`'s one-line or multi-line mode.
-pub(crate) fn write_decl<N: ExpLiteral + fmt::Display>(
-    f: &mut fmt::Formatter<'_>,
-    sig: &Sig<N::Size>,
-    body: &Body<N>,
-) -> fmt::Result
-where
-    N::Size: fmt::Display,
-{
-    let keyword = if body.is_proto() { "proto" } else { "fn" };
-    if f.alternate() {
-        write!(f, "{keyword} {sig} {body:#}")
-    } else {
-        write!(f, "{keyword} {sig} {body}")
     }
 }

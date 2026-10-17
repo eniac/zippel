@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use crate::ast::{Exp, Stmt, UExpr, URef};
+use crate::ast::{Exp, UExpr, URef};
 use crate::diagnostic::Diagnostic;
 use lang_derive::Diagnostic as DiagnosticDerive;
 
@@ -31,12 +31,7 @@ fn find_impure_constructs(exp: URef<'_>) -> Vec<(Range<usize>, &'static str)> {
         match e.node() {
             Exp::Challenge(..) => found.push((e.span().clone(), "challenge")),
             Exp::Verify(_) => found.push((e.span().clone(), "verify")),
-            Exp::Block(stmts, _) => found.extend(
-                stmts
-                    .iter()
-                    .filter(|s| matches!(s.node, Stmt::Log(..)))
-                    .map(|s| (s.span.clone(), "log")),
-            ),
+            Exp::Log(..) => found.push((e.span().clone(), "log")),
             _ => {}
         }
     }

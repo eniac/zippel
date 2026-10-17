@@ -232,31 +232,25 @@ impl CRef<'_> {
         Ok(types.get(self.id()).cloned().expect("the root is typed"))
     }
 
-    /// `err`, raised typing the innermost node of `open`, located there, or else at the nearest
-    /// enclosing statement or node with a span, with the enclosing node attached.
+    /// `err`, raised typing the innermost node of `open`, located there or else at the nearest
+    /// enclosing node with a span (a statement, then its block, ...), with its parent attached.
     fn locate(
         err: TypeError,
         open: &[(CRef<'_>, Option<Ctx<Vid, CTyp>>)],
         vctx: &Ctx<Vid, CTyp>,
         kctx: &Ctx<Tid, CKind>,
     ) -> TypeError {
-        let (failed, _) = open.last().expect("the failing node is open");
+        let mut nodes = open.iter().rev().map(|(node, _)| *node);
+        let failed = nodes.next().expect("the failing node is open");
         let mut err = TypeError::located(failed.span(), err);
-        let mut child = *failed;
-        for (node, _) in open.iter().rev().skip(1) {
-            if child.id() == failed.id() {
-                err = TypeError::within(kctx, vctx, *node, err);
-            }
-            if let CExp::Block(stmts, _) = node.node()
-                && let Some(stmt) = stmts.iter().find(|s| s.node.value() == child.id())
-            {
-                err = TypeError::located(&stmt.span, err);
-            }
-            err = TypeError::located(node.span(), err);
+        if let Some(parent) = open.iter().rev().nth(1) {
+            err = TypeError::within(kctx, vctx, parent.0, err);
+        }
+        for node in nodes {
             if err.span().is_some() {
                 break;
             }
-            child = *node;
+            err = TypeError::located(node.span(), err);
         }
         err
     }
@@ -384,6 +378,9 @@ impl CRef<'_> {
             CExp::Verify(exp) => self.infer_verify(at(exp), env),
 
             CExp::Block(_, tail) => self.infer_block(tail.as_ref().map(at), env),
+
+            // A statement has its value's type, which its binder takes.
+            CExp::Let(_, v) | CExp::Log(_, v) | CExp::Discard(v) => Ok(env.typ(at(v))),
 
             CExp::Fun(vars, body) => self.infer_fun(vars, at(body), env),
 

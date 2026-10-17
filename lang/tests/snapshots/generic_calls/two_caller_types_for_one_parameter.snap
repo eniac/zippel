@@ -1,5 +1,6 @@
 ---
 source: lang/tests/generic_calls.rs
+assertion_line: 151
 ---
 error: No definition of `same` accepts arguments of type F (Field), K (Field)
    ╭─[ test.zippel:6:12 ]
@@ -8,9 +9,9 @@ error: No definition of `same` accepts arguments of type F (Field), K (Field)
    │            ─────┬──┬─  
    │                 ╰────── no definition takes these argument types
    │                 │  │   
-   │                 ╰────── `a` has type F (Field)
+   │                 ╰────── has type F (Field)
    │                 │  │   
-   │                 │  ╰─── `b` has type K (Field)
+   │                 │  ╰─── has type K (Field)
    │                 │      
    │                 ╰────── note: `same` takes T (Field), T (Field)
 ───╯

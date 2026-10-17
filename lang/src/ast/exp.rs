@@ -244,16 +244,25 @@ pub enum Exp<N: ExpLiteral> {
     ///     ```
     Challenge(Spanned<Tid>, Option<Spanned<ExpExclusion<N>>>),
 
-    ///     A block: statements in order, then the expression it evaluates to; a block
-    ///     without one evaluates to `()`. Statements are a list, not nested expressions,
-    ///     so no pass recurses once per statement.
+    ///     A block: statements in order (each a [`Exp::Let`], [`Exp::Log`] or
+    ///     [`Exp::Discard`]), then the expression it evaluates to; a block without one
+    ///     evaluates to `()`. A statement's binding is in scope in the rest of its block.
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let x = 5 + 3;
     ///     p <- interpolate(v, [0,1,2]);
     ///     verify(x == 8)
     ///     ```
-    Block(Vec<Spanned<Stmt>>, Option<ExpId>),
+    Block(Exps, Option<ExpId>),
+
+    ///     Statement `let x = e;`: binds `x` to `e`.
+    Let(Spanned<Vid>, ExpId),
+
+    ///     Statement `x <- e;`: sends `e` to the transcript and binds `x` to it.
+    Log(Spanned<Vid>, ExpId),
+
+    ///     Statement `e;`: evaluates `e` and discards its value.
+    Discard(ExpId),
 
     ///     Verifier check: verifies that the expression is true.
     ///     The expression must be `Bool`.
@@ -293,34 +302,6 @@ pub enum Exp<N: ExpLiteral> {
     SetRecord(ExpId, Spanned<String>, ExpId),
 }
 
-/// A statement of an [`Exp::Block`]. A binding is in scope in the rest of its block.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Stmt {
-    ///     `let x = e;`
-    Let(Spanned<Vid>, ExpId),
-    ///     `x <- e;` sends `e` to the transcript.
-    Log(Spanned<Vid>, ExpId),
-    ///     `e;` evaluates `e` and discards its value.
-    Exp(ExpId),
-}
-
-impl Stmt {
-    /// The expression the statement evaluates.
-    pub const fn value(&self) -> ExpId {
-        match self {
-            Self::Let(_, v) | Self::Log(_, v) | Self::Exp(v) => *v,
-        }
-    }
-
-    /// The variable the statement binds in the rest of its block, if any.
-    pub const fn binder(&self) -> Option<&Spanned<Vid>> {
-        match self {
-            Self::Let(x, _) | Self::Log(x, _) => Some(x),
-            Self::Exp(_) => None,
-        }
-    }
-}
-
 /// A sequence of expressions: a vector literal's elements or a call's actual arguments.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Exps(pub Vec<ExpId>);
@@ -354,7 +335,10 @@ impl<N: ExpLiteral> ExpRef<'_, N> {
     pub fn is_pure(self) -> bool {
         self.subexps().all(|e| {
             let e = e.node();
-            !matches!(e, Exp::Challenge(..) | Exp::Random(..) | Exp::Verify(_)) && !e.logs()
+            !matches!(
+                e,
+                Exp::Challenge(..) | Exp::Random(..) | Exp::Verify(_) | Exp::Log(..)
+            )
         })
     }
 
@@ -366,7 +350,7 @@ impl<N: ExpLiteral> ExpRef<'_, N> {
     pub fn is_relation_pure(self) -> bool {
         self.subexps().all(|e| {
             let e = e.node();
-            !matches!(e, Exp::Challenge(..) | Exp::Verify(_)) && !e.logs()
+            !matches!(e, Exp::Challenge(..) | Exp::Verify(_) | Exp::Log(..))
         })
     }
 }
@@ -417,6 +401,9 @@ impl<N: ExpLiteral> Exp<N> {
             Exp::Reduce(op, a) => Exp::Reduce(op, a),
             Exp::Ram(a, b) => Exp::Ram(a, b),
             Exp::Block(stmts, tail) => Exp::Block(stmts, tail),
+            Exp::Let(x, v) => Exp::Let(x, v),
+            Exp::Log(x, v) => Exp::Log(x, v),
+            Exp::Discard(v) => Exp::Discard(v),
             Exp::Verify(a) => Exp::Verify(a),
             Exp::Fun(vars, a) => Exp::Fun(vars, a),
             Exp::Record(fields) => Exp::Record(fields),
@@ -425,9 +412,17 @@ impl<N: ExpLiteral> Exp<N> {
         })
     }
 
-    /// Whether this is a block with a `<-` statement.
-    pub fn logs(&self) -> bool {
-        matches!(self, Exp::Block(stmts, _) if stmts.iter().any(|s| matches!(s.node, Stmt::Log(..))))
+    /// Whether this is a statement: it occurs only in a block's statement list.
+    pub const fn is_stmt(&self) -> bool {
+        matches!(self, Exp::Let(..) | Exp::Log(..) | Exp::Discard(_))
+    }
+
+    /// The variable this statement binds in the rest of its block, if any.
+    pub const fn binder(&self) -> Option<&Spanned<Vid>> {
+        match self {
+            Exp::Let(x, _) | Exp::Log(x, _) => Some(x),
+            _ => None,
+        }
     }
 }
 
@@ -645,332 +640,5 @@ impl fmt::Display for BinOp {
             BinOp::Equ => "==",
             BinOp::And => "&&",
         })
-    }
-}
-
-/// Source syntax, parenthesized only where needed to parse back to the same tree. `{}`
-/// prints a block on one line; `{:#}` puts each statement on its own line.
-///
-/// A precision limits the depth for use in messages: `{:.3}` prints three levels of the tree,
-/// writes deeper subexpressions as `…` (variables, literals, and ranges are always printed),
-/// and shortens lists to their first [`MAX_LISTED`] elements followed by `…`.
-/// Source syntax, one line; `{:#}` puts a block's statements on their own lines; a precision
-/// `{:.n}` prints `n` levels and elides deeper subexpressions as `…`. Printed from a stack of
-/// pieces, so deep trees take bounded stack.
-impl<N: ExpLiteral + fmt::Display> fmt::Display for ExpRef<'_, N>
-where
-    N::Size: fmt::Display,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let alternate = f.alternate();
-        let mut todo = vec![Piece::Exp(*self, f.precision())];
-        while let Some(piece) = todo.pop() {
-            match piece {
-                Piece::Text(s) => f.write_str(s)?,
-                Piece::Show(x) => write!(f, "{x}")?,
-                Piece::Exp(e, depth) => {
-                    let first = todo.len();
-                    e.pieces(depth, alternate, &mut todo);
-                    todo[first..].reverse();
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-/// The tree, as its root prints.
-impl<N: ExpLiteral + fmt::Display> fmt::Display for Expr<N>
-where
-    N::Size: fmt::Display,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.root(), f)
-    }
-}
-
-/// How many elements of a list a depth-limited expression display shows before `…`.
-pub const MAX_LISTED: usize = 4;
-
-/// A piece of an expression's text.
-enum Piece<'a, N: ExpLiteral> {
-    Text(&'static str),
-    Show(&'a dyn fmt::Display),
-    /// A subexpression, printed with at most this many more levels (`None`: all of them).
-    Exp(ExpRef<'a, N>, Option<usize>),
-}
-
-impl<'a, N: ExpLiteral + fmt::Display> ExpRef<'a, N>
-where
-    N::Size: fmt::Display,
-{
-    /// Appends the pieces this node prints as, with `depth` levels left, to `out`; children
-    /// print one level shallower.
-    fn pieces(self, depth: Option<usize>, alternate: bool, out: &mut Vec<Piece<'a, N>>) {
-        use Piece::{Show, Text};
-        if depth == Some(0) && !self.node().is_leaf() {
-            return out.push(Text("…"));
-        }
-        let sub = |id: &ExpId| Piece::Exp(self.at(*id), depth.map(|d| d.saturating_sub(1)));
-        // Comma-separated subexpressions; with a depth limit, the first few then `…`.
-        let list = |out: &mut Vec<Piece<'a, N>>, exps: &'a Exps| {
-            let limit = depth.map_or(usize::MAX, |_| MAX_LISTED);
-            for (i, e) in exps.0.iter().enumerate() {
-                if i > 0 {
-                    out.push(Text(", "));
-                }
-                if i == limit {
-                    return out.push(Text("…"));
-                }
-                out.push(sub(e));
-            }
-        };
-        let sample = |out: &mut Vec<Piece<'a, N>>, name, t: &'a Spanned<Tid>, x: &'a Option<_>| {
-            out.extend([Text(name), Show(t)]);
-            match x.as_ref().map(|x: &Spanned<ExpExclusion<N>>| &x.node) {
-                Some(Exclusion::Values(v)) => out.extend([Text(" - "), sub(v)]),
-                Some(Exclusion::RootsOfUnity(n)) => {
-                    out.extend([Text(" - roots_of_unity("), Show(n), Text(")")]);
-                }
-                None => {}
-            }
-            out.push(Text(">"));
-        };
-        match self.node() {
-            Exp::Lit(p) => out.push(Show(p)),
-            Exp::Unit => out.push(Text("()")),
-            Exp::Interpolate(None, ev) => out.extend([Text("interpolate("), sub(ev), Text(")")]),
-            Exp::Interpolate(Some(points), evals) => out.extend([
-                Text("interpolate("),
-                sub(points),
-                Text(", "),
-                sub(evals),
-                Text(")"),
-            ]),
-            Exp::Poly(p) => out.extend([Text("poly("), sub(p), Text(")")]),
-            Exp::Coef(p) => out.extend([Text("coef("), sub(p), Text(")")]),
-            Exp::Evaluate(p, range, x) => {
-                out.push(Text("eval"));
-                if let Some(range) = range {
-                    out.extend([Text("<"), Show(range), Text(">")]);
-                }
-                out.extend([Text("("), sub(p)]);
-                if let Some(x) = x {
-                    out.extend([Text(", "), sub(x)]);
-                }
-                out.push(Text(")"));
-            }
-            Exp::Mle(p) => out.extend([Text("mle("), sub(p), Text(")")]),
-            Exp::Vec(ts) => {
-                out.push(Text("["));
-                list(out, ts);
-                out.push(Text("]"));
-            }
-            // Dot products are written as a call, not infix.
-            Exp::Bin(BinOp::Dot, a, b) => {
-                out.extend([Text("dot("), sub(a), Text(", "), sub(b), Text(")")]);
-            }
-            Exp::Bin(op, a, b) => {
-                let operand = |out: &mut Vec<Piece<'a, N>>, id, parens| {
-                    if parens {
-                        out.extend([Text("("), sub(id), Text(")")]);
-                    } else {
-                        out.push(sub(id));
-                    }
-                };
-                operand(out, a, op.lhs_needs_paren(self.at(*a).node()));
-                out.extend([Text(" "), Show(op), Text(" ")]);
-                operand(out, b, op.rhs_needs_paren(self.at(*b).node()));
-            }
-            Exp::Neg(a) if self.at(*a).node().needs_paren_under_neg() => {
-                out.extend([Text("-("), sub(a), Text(")")]);
-            }
-            Exp::Neg(a) => out.extend([Text("-"), sub(a)]),
-            Exp::Map(x, id, range) => out.extend([
-                Text("["),
-                sub(x),
-                Text(" for "),
-                Show(id),
-                Text(" in "),
-                sub(range),
-                Text("]"),
-            ]),
-            Exp::Reduce(op, a) => {
-                out.extend([Text("reduce("), Show(op), Text(", "), sub(a), Text(")")])
-            }
-            Exp::Var(x) => out.push(Show(x)),
-            Exp::Challenge(t, x) => sample(out, "challenge<", t, x),
-            Exp::Random(t, x) => sample(out, "random<", t, x),
-            Exp::Pair(t, u) => out.extend([Text("pair("), sub(t), Text(", "), sub(u), Text(")")]),
-            Exp::Range(r) => out.push(Show(r)),
-            Exp::App(x, d) => {
-                out.extend([Show(x), Text("(")]);
-                list(out, d);
-                out.push(Text(")"));
-            }
-            Exp::Ram(x, i) => out.extend([sub(x), Text("["), sub(i), Text("]")]),
-            Exp::Block(stmts, tail) => {
-                let sep = Text(if alternate { "\n" } else { " " });
-                for (i, s) in stmts.iter().enumerate() {
-                    if i > 0 {
-                        out.push(Text(if alternate { "\n" } else { " " }));
-                    }
-                    match &s.node {
-                        Stmt::Let(x, v) => out.extend([Text("let "), Show(x), Text(" = "), sub(v)]),
-                        Stmt::Log(x, v) => out.extend([Show(x), Text(" <- "), sub(v)]),
-                        Stmt::Exp(v) => out.push(sub(v)),
-                    }
-                    out.push(Text(";"));
-                }
-                // The block's value prints at the block's depth: it is a sibling of the
-                // statements, not their child.
-                if let Some(value) = tail {
-                    out.extend([sep, Piece::Exp(self.at(*value), depth)]);
-                }
-            }
-            Exp::Verify(a) => out.extend([Text("verify("), sub(a), Text(")")]),
-            Exp::Fun(vars, body) => {
-                out.push(Text("fun "));
-                for (i, v) in vars.iter().enumerate() {
-                    if i > 0 {
-                        out.push(Text(", "));
-                    }
-                    out.push(Show(&v.node));
-                }
-                out.extend([Text(" => "), sub(body)]);
-            }
-            Exp::Record(fields) => {
-                out.push(Text("{|"));
-                let limit = depth.map_or(usize::MAX, |_| MAX_LISTED);
-                for (i, (name, v)) in fields.iter().enumerate() {
-                    if i > 0 {
-                        out.push(Text(", "));
-                    }
-                    if i == limit {
-                        out.push(Text("…"));
-                        break;
-                    }
-                    out.extend([Show(&name.node), Text(": "), sub(v)]);
-                }
-                out.push(Text("|}"));
-            }
-            Exp::Proj(r, field) => out.extend([sub(r), Text("."), Show(&field.node)]),
-            Exp::SetRecord(record, field, value) => out.extend([
-                sub(record),
-                Text(".set("),
-                Show(&field.node),
-                Text(", "),
-                sub(value),
-                Text(")"),
-            ]),
-        }
-    }
-}
-
-impl<N: ExpLiteral> Exp<N> {
-    /// Whether `self` prints in full at any depth.
-    fn is_leaf(&self) -> bool {
-        match self {
-            Exp::Lit(_) | Exp::Unit | Exp::Var(_) | Exp::Range(_) => true,
-            Exp::Challenge(_, x) | Exp::Random(_, x) => {
-                !matches!(x.as_ref().map(|x| &x.node), Some(Exclusion::Values(_)))
-            }
-            _ => false,
-        }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use crate::ast::Size;
-    use crate::ast::spanned::Spanned;
-    use crate::id::Vid;
-
-    fn varstr(x: &str) -> Expr<Size> {
-        Expr::leaf(Exp::Var(Spanned::dummy(Vid::from(x))), 0..0)
-    }
-    fn bin(op: BinOp, l: Expr<Size>, r: Expr<Size>) -> Expr<Size> {
-        Expr::compose([l, r], 0..0, |c| Exp::Bin(op, c[0], c[1]))
-    }
-    fn add(l: Expr<Size>, r: Expr<Size>) -> Expr<Size> {
-        bin(BinOp::Add, l, r)
-    }
-    fn sub(l: Expr<Size>, r: Expr<Size>) -> Expr<Size> {
-        bin(BinOp::Sub, l, r)
-    }
-    fn mul(l: Expr<Size>, r: Expr<Size>) -> Expr<Size> {
-        bin(BinOp::Mul, l, r)
-    }
-    fn pow(l: Expr<Size>, r: Expr<Size>) -> Expr<Size> {
-        bin(BinOp::Pow, l, r)
-    }
-    fn rem(l: Expr<Size>, r: Expr<Size>) -> Expr<Size> {
-        bin(BinOp::Rem, l, r)
-    }
-    fn concat(l: Expr<Size>, r: Expr<Size>) -> Expr<Size> {
-        bin(BinOp::Concat, l, r)
-    }
-    fn pair(t: Expr<Size>, e: Expr<Size>) -> Expr<Size> {
-        Expr::compose([t, e], 0..0, |c| Exp::Pair(c[0], c[1]))
-    }
-
-    #[test]
-    fn pretty_bin_parens() {
-        // (a + b) * c must print with parens, not as "a + b * c"
-        let expr = mul(add(varstr("a"), varstr("b")), varstr("c"));
-        assert_eq!(format!("{}", expr), "(a + b) * c");
-
-        // a * b + c needs no parens (higher prec child on left of lower prec parent)
-        let expr = add(mul(varstr("a"), varstr("b")), varstr("c"));
-        assert_eq!(format!("{}", expr), "a * b + c");
-
-        // a - (b - c) needs rhs parens (left-assoc, same prec)
-        let expr = sub(varstr("a"), sub(varstr("b"), varstr("c")));
-        assert_eq!(format!("{}", expr), "a - (b - c)");
-
-        // a - b - c needs no parens (left-assoc, left child same prec)
-        let expr = sub(sub(varstr("a"), varstr("b")), varstr("c"));
-        assert_eq!(format!("{}", expr), "a - b - c");
-
-        // a ^ b ^ c needs no rhs parens (right-assoc)
-        let expr = pow(varstr("a"), pow(varstr("b"), varstr("c")));
-        assert_eq!(format!("{}", expr), "a ^ b ^ c");
-
-        // (a ^ b) ^ c needs lhs parens (right-assoc, left child same prec)
-        let expr = pow(pow(varstr("a"), varstr("b")), varstr("c"));
-        assert_eq!(format!("{}", expr), "(a ^ b) ^ c");
-
-        // a % b + c — Rem is same prec as Mul (AEXP_PARSER level 2), higher than Add
-        let expr = add(rem(varstr("a"), varstr("b")), varstr("c"));
-        assert_eq!(format!("{}", expr), "a % b + c");
-
-        // (a + b) ++ c — Concat is higher prec than Add
-        let expr = concat(add(varstr("a"), varstr("b")), varstr("c"));
-        assert_eq!(format!("{}", expr), "(a + b) ++ c");
-
-        // (a + b) + (c + d) — left-assoc: lhs no parens, rhs parens
-        let expr = add(add(varstr("a"), varstr("b")), add(varstr("c"), varstr("d")));
-        assert_eq!(format!("{}", expr), "a + b + (c + d)");
-    }
-
-    #[test]
-    fn pretty_pair() {
-        // pair(t, e) not t pair(e)
-        let expr = pair(varstr("g1"), varstr("g2"));
-        assert_eq!(format!("{}", expr), "pair(g1, g2)");
-    }
-
-    #[test]
-    fn extract_lays_out_in_post_order() {
-        // Composition and extraction agree, so trees compare by structure.
-        let built = add(mul(varstr("a"), varstr("b")), varstr("c"));
-        let mut arena = Exprs::new();
-        let c = arena.push(Exp::Var(Spanned::dummy(Vid::from("c"))), 0..0);
-        let a = arena.push(Exp::Var(Spanned::dummy(Vid::from("a"))), 0..0);
-        let b = arena.push(Exp::Var(Spanned::dummy(Vid::from("b"))), 0..0);
-        let ab = arena.push(Exp::Bin(BinOp::Mul, a, b), 0..0);
-        let root = arena.push(Exp::Bin(BinOp::Add, ab, c), 0..0);
-        assert_eq!(arena.extract(root), built);
     }
 }

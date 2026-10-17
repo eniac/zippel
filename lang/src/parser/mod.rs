@@ -25,7 +25,7 @@ use num::{BigUint, ToPrimitive};
 use crate::ast::arg::Args;
 use crate::ast::decl::{Decl, UDecl};
 use crate::ast::spanned::Spanned;
-use crate::ast::{BinOp, Exclusion, ExpId, Exprs, Exps, GArg, Stmt, UExp};
+use crate::ast::{BinOp, Exclusion, ExpId, Exprs, Exps, GArg, UExp};
 use crate::ast::{ExpLiteral, Size};
 use crate::diagnostic::Diagnostic;
 use crate::id::{Tid, Vid};
@@ -1221,15 +1221,12 @@ where
                     tail = Some(value);
                     break;
                 };
-                let span = item_span.start..semi.end;
-                stmts.push(Spanned::new(
-                    match item {
-                        Item::Let(var, val) => Stmt::Let(var, val),
-                        Item::Log(id, val) => Stmt::Log(id, val),
-                        Item::Exp(val) => Stmt::Exp(val),
-                    },
-                    span,
-                ));
+                let stmt = match item {
+                    Item::Let(var, val) => UExp::Let(var, val),
+                    Item::Log(id, val) => UExp::Log(id, val),
+                    Item::Exp(val) => UExp::Discard(val),
+                };
+                stmts.push(e.state().exprs.push(stmt, item_span.start..semi.end));
             }
             if stmts.is_empty() {
                 // A lone expression is itself, not a block.
@@ -1247,7 +1244,7 @@ where
                 },
                 None => None,
             };
-            Ok(push(e, UExp::Block(stmts, tail)))
+            Ok(push(e, UExp::Block(Exps(stmts), tail)))
         })
 }
 
