@@ -4,24 +4,12 @@ use super::*;
 use crate::typ::CTyps;
 
 impl CRef<'_> {
-    #[inline(never)]
-    pub(super) fn infer_vec(
-        self,
-        v: &Exps,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
-        vctx: &Ctx<Vid, CTyp>,
-        cx: &Cx<'_>,
-    ) -> Result<CTyp, TypeError> {
+    pub(super) fn infer_vec(self, v: &Exps, env: &Env<'_>) -> Result<CTyp, TypeError> {
+        let Env { kctx, vctx, .. } = *env;
         let ts: CTyps = v
             .iter()
-            .map(|aexp| {
-                self.at(aexp)
-                    .infer_in(kctx, fctx, vctx, cx)
-                    .map(Spanned::dummy)
-            })
-            .collect::<Result<_, _>>()
-            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
+            .map(|e| Spanned::dummy(env.typ(self.at(e))))
+            .collect();
 
         // Vectors cannot be empty for type inference to work
         if ts.is_empty() {
@@ -53,55 +41,38 @@ impl CRef<'_> {
         Ok(CTyp::vec(&t, n))
     }
 
-    #[allow(clippy::too_many_arguments)]
-    #[inline(never)]
-    pub(super) fn infer_map(
+    /// The type of the binder `id` of comprehension `[x for id in r]`: an element of the
+    /// nonempty vector `r`; checked once `r` is typed, before `x` is.
+    pub(super) fn map_elem(
         self,
         x: CRef<'_>,
         id: &Spanned<Vid>,
         r: CRef<'_>,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
-        vctx: &Ctx<Vid, CTyp>,
-        cx: &Cx<'_>,
+        env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        // Type infer the range expression
-        let tr = r
-            .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
-
-        match tr {
-            CTyp::Vec(inner, n) if n.node > 0 => {
-                // Clone the context
-                let mut innerctx = vctx.clone();
-
-                // Add variable [id] to the context with type [inner]
-                innerctx.insert(&id.node, &inner);
-
-                // Type infer the expression [x] with the new context
-                let tx = x
-                    .infer_in(kctx, fctx, &innerctx, cx)
-                    .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
-
-                Ok(CTyp::vec(&tx, n.node))
-            }
-            _ => Err(TypeError::map(kctx, vctx, x, &id.node, r, &tr)),
+        let Env { kctx, vctx, .. } = *env;
+        match env.typ(r) {
+            CTyp::Vec(inner, n) if n.node > 0 => Ok(inner.node),
+            tr => Err(TypeError::map(kctx, vctx, x, &id.node, r, &tr)),
         }
     }
 
-    #[inline(never)]
+    /// `[x for id in r]`: a vector of `x`s, one per element of `r`.
+    pub(super) fn infer_map(self, x: CRef<'_>, r: CRef<'_>, env: &Env<'_>) -> CTyp {
+        let CTyp::Vec(_, n) = env.typ(r) else {
+            unreachable!("checked by `map_elem`")
+        };
+        CTyp::vec(&env.typ(x), n.node)
+    }
+
     pub(super) fn infer_reduce(
         self,
         op: BinOp,
         v: CRef<'_>,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
-        vctx: &Ctx<Vid, CTyp>,
-        cx: &Cx<'_>,
+        env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        let tv = v
-            .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
+        let Env { kctx, vctx, .. } = *env;
+        let tv = env.typ(v);
 
         match tv {
             CTyp::Vec(elem, n) if n.node > 0 => {
@@ -149,22 +120,15 @@ impl CRef<'_> {
         }
     }
 
-    #[inline(never)]
     pub(super) fn infer_ram(
         self,
         a: CRef<'_>,
         b: CRef<'_>,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
-        vctx: &Ctx<Vid, CTyp>,
-        cx: &Cx<'_>,
+        env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        let ta = a
-            .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
-        let tb = b
-            .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
+        let Env { kctx, vctx, .. } = *env;
+        let ta = env.typ(a);
+        let tb = env.typ(b);
 
         // The index must be a compile-time known integer (Fin type).
         // Fin types arise from literals, ranges, size parameters, and

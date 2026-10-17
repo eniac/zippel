@@ -2,8 +2,11 @@
 //! instead of the thread's stack size (issue #252). This is rustc's `ensure_sufficient_stack`
 //! pattern, on the same `stacker` crate.
 //!
-//! Call [`ensure_sufficient_stack`] at a point every level of a recursive walk passes through:
-//! for an AST pass, the `Spanned<T>` impl or the function each child is visited with.
+//! Walks that need only a node's children and bindings are iterative instead
+//! (`lang::ast::ExpRef::walk`), and so is type inference. What still recurses is what builds
+//! its result from context passed down the tree, lowering and the formatter: they call
+//! [`ensure_sufficient_stack`], through `#[lang::stack_guard]`, in the function each child is
+//! visited with.
 
 /// Stack left below which a guarded call continues on a new segment. Generous because debug
 /// builds keep large frames between guards (a match dispatcher plus its arm and the `im` map

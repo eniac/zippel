@@ -7,26 +7,19 @@ use crate::typ::CTyps;
 use crate::typ::instantiate::CallError;
 
 impl CRef<'_> {
-    #[inline(never)]
     pub(super) fn infer_app(
         self,
         id: &Spanned<Vid>,
         params: &Exps,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
-        vctx: &Ctx<Vid, CTyp>,
-        cx: &Cx<'_>,
+        env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        // type inference for each parameter
+        let Env {
+            kctx, fctx, vctx, ..
+        } = *env;
         let param_types: CTyps = params
             .iter()
-            .map(|p| {
-                self.at(p)
-                    .infer_in(kctx, fctx, vctx, cx)
-                    .map(Spanned::dummy)
-            })
-            .collect::<Result<_, _>>()
-            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
+            .map(|p| Spanned::dummy(env.typ(self.at(p))))
+            .collect();
 
         // Is it a polynomial, MLE, or a function?
         match vctx.get(&id.node) {
@@ -116,7 +109,7 @@ impl CRef<'_> {
                 let decls = fctx.iter().filter(|sig| sig.name.node == id.node);
                 let cause = match CSig::resolve_call(decls, &param_types, kctx) {
                     Ok((decl, sig, _)) => {
-                        (cx.on_call)(decl);
+                        (env.on_call)(decl);
                         return Ok(sig.ret.map_or(CTyp::Unit, |r| r.node));
                     }
                     Err(CallError::NoMatch(failures)) => {

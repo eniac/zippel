@@ -1926,3 +1926,25 @@ fn test_block_error_located_at_statement() {
     let err = body.infer(&KIND_CTX, &Set::new(), &VAR_CTX).unwrap_err();
     assert_eq!(err.span(), Some(5..9));
 }
+
+#[test]
+fn test_deep_nesting_infers_and_prints_on_small_stack() {
+    // Inference and printing walk the tree iteratively: a million levels on 256 KiB.
+    let (typ, text) = std::thread::Builder::new()
+        .stack_size(256 << 10)
+        .spawn(|| {
+            let mut a = Exprs::new();
+            let mut e = a.push(Exp::Lit(BigUint::from(1u8)), 0..0);
+            for _ in 0..1_000_000 {
+                e = a.push(Exp::Neg(e), 0..0);
+            }
+            let tree = Expr { exprs: a, root: e };
+            let typ = tree.infer(&KIND_CTX, &Set::new(), &VAR_CTX);
+            (typ, tree.to_string())
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(typ, Ok(CTyp::FieldLiteral));
+    assert_eq!(text, format!("{}1", "-".repeat(1_000_000)));
+}

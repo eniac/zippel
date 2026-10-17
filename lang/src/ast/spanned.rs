@@ -1,5 +1,3 @@
-use crate::stack_guard;
-
 /// A value paired with its source span.
 ///
 /// Used by the parser to attach byte-offset spans to AST nodes for
@@ -8,23 +6,12 @@ use crate::stack_guard;
 /// Does NOT derive `PartialEq` — spans are source positions that differ
 /// between formatted and original text. Compare `.node` for structural
 /// equality.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Spanned<T> {
     /// The wrapped AST node.
     pub node: T,
     /// Byte offsets of the node in the source text, as produced by `pest`.
     pub span: std::ops::Range<usize>,
-}
-
-/// Cloning a tree recurses once per level through here, so it is guarded (issue #252).
-impl<T: Clone> Clone for Spanned<T> {
-    #[stack_guard]
-    fn clone(&self) -> Self {
-        Self {
-            node: self.node.clone(),
-            span: self.span.clone(),
-        }
-    }
 }
 
 impl<T> Spanned<T> {
@@ -144,15 +131,8 @@ where
 }
 
 impl<T: crate::id::TidSubst> crate::id::TidSubst for Spanned<T> {
-    #[stack_guard]
     fn map_tids(&mut self, f: &dyn Fn(&crate::id::Tid) -> Option<crate::id::Tid>) {
         self.node.map_tids(f);
-    }
-}
-
-impl<T: crate::ast::FreeVars> crate::ast::FreeVars for Spanned<T> {
-    fn freevars(&self) -> share::Set<crate::id::Vid> {
-        self.node.freevars()
     }
 }
 
@@ -160,7 +140,6 @@ impl<T: Clone, N: Clone> crate::typ::RangeTraversal<N> for Spanned<T>
 where
     T: crate::typ::RangeTraversal<N>,
 {
-    #[stack_guard]
     fn range_traverse<E>(
         self,
         f: &mut dyn FnMut(crate::typ::Range<N>) -> Result<crate::typ::Range<N>, E>,

@@ -39,7 +39,7 @@ impl Arena {
 
     /// The type of node `id` under the given contexts.
     fn infer(
-        &self,
+        &mut self,
         id: ExpId,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Ctx<CSig, CBody>,
@@ -47,7 +47,7 @@ impl Arena {
     ) -> Result<CTyp, TypeError> {
         self.exprs
             .at(id)
-            .infer_cached(kctx, &fctx.keys(), vctx, &self.types)
+            .infer_cached(kctx, &fctx.keys(), vctx, &mut self.types)
     }
 }
 
