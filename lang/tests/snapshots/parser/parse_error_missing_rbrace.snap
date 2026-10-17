@@ -1,13 +1,12 @@
 ---
 source: lang/tests/parser.rs
-assertion_line: 67
 ---
-error: expected one of call arguments, operator, ',', '..', ';', ..., found end of input
+error: expected one of call arguments, operator, '..', ';', '<-', ..., found end of input
    ╭─[ test.zippel:1:39 ]
    │
  1 │ fn f<F: Field>(instance a: F) -> F { a
    │ ───────────────────┬──────────────────│ 
-   │                    │                  ╰─ expected one of call arguments, operator, ',', '..', ';', ...
+   │                    │                  ╰─ expected one of call arguments, operator, '..', ';', '<-', ...
    │                    │                    
    │                    ╰──────────────────── while parsing this declaration
 ───╯

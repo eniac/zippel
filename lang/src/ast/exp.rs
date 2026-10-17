@@ -527,7 +527,8 @@ impl BinOp {
         match lhs {
             // `-x op y` parses as `(-x) op y` only when `op` binds looser than prefix minus.
             Exp::Neg(_) => self.precedence() >= NEG_PRECEDENCE,
-            Exp::Range(_) => self.is_size_operator(),
+            // `..` binds looser than every operator.
+            Exp::Range(_) => true,
             Exp::Bin(child, _, _) => {
                 child.precedence() < self.precedence()
                     || (child.precedence() == self.precedence() && self.is_right_assoc())
@@ -541,7 +542,7 @@ impl BinOp {
         match rhs {
             // Prefix minus is allowed in any operand position.
             Exp::Neg(_) => false,
-            Exp::Range(_) => self.is_size_operator(),
+            Exp::Range(_) => true,
             Exp::Bin(child, _, _) => {
                 child.precedence() < self.precedence()
                     || (child.precedence() == self.precedence() && !self.is_right_assoc())
@@ -549,22 +550,14 @@ impl BinOp {
             _ => false,
         }
     }
-
-    /// Operators that range bounds also accept, so an unparenthesized range operand would
-    /// absorb them into its bound.
-    fn is_size_operator(&self) -> bool {
-        matches!(
-            self,
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow
-        )
-    }
 }
 
 impl<N: ExpLiteral> Exp<N> {
     /// Whether `self` must be parenthesized as the operand of prefix `-`: a binary operator
-    /// that binds looser than `-` would otherwise take `-` into its left operand.
+    /// that binds looser than `-`, or a range, would otherwise take `-` into its left operand.
     pub fn needs_paren_under_neg(&self) -> bool {
         matches!(self, Exp::Bin(op, _, _) if op.precedence() < NEG_PRECEDENCE)
+            || matches!(self, Exp::Range(_))
     }
 }
 

@@ -49,16 +49,17 @@ that examples and external users call into.
 | [`fmt/`](fmt) | `zippel-fmt`, the source formatter for `.zippel` files (binary in `fmt/src/bin/zippel-fmt.rs`). |
 | [`check/`](check) | `zippel-check`: every compile-time check, no harness or inputs. A thin driver (`check/src/main.rs`) over the same stages and diagnostics as compilation plus explicit projection: `UModule::parse`, `UModule::concretize`, `CModule::typecheck`, and Graph IR construction/projection, with every error turned into a `Diagnostic` via `From` (`TypeError`, `ModuleError`, `GraphError`); it only adds default sizes (`lang::ast::minimal_sizes`). `check/tests/examples.rs` runs it over every example using automatic defaults. |
 | [`experiments/`](experiments) | The `experiments` crate: Zippel against existing (native/upstream) implementations of the same protocols. Vendored baselines (`*_upstream/` subdirs), Zippel harnesses, the `bench_all` time/memory driver behind the paper's Figure 7 (the artifact's Experiment 1), and cross-verification tests. Not a default workspace member (see below). Distinct from `benches/`, the Criterion benchmarks of Zippel alone. |
+| [`tools/`](tools) | Internal developer tools, not shipped. `stack-probe` measures the compile stages' stack use: `min-stack` binary-searches the smallest thread stack that compiles generated deep inputs (a child process per attempt, since an overflow aborts), and `frames` lists the largest prologue frames of a debug binary via objdump (x86-64). A minimum that grows with input size means some pass recurses per statement or nesting level. |
 | [`examples/`](examples) | 30+ protocol implementations. Each `examples/<name>/` has a `<name>.zippel` source file and a `main.rs` harness that compiles it against a concrete curve and runs prover/verifier/analyses. `examples/main.rs` is the single dispatch binary (`cargo zrun run <name> --size NAME=VALUE ...`; `cargo zrun analyze <name> [completeness|zk|soundness]`). Each module registers `spec()` with its source, curve, size defaults, input generator and analyses (soundness owns its round parameters). `examples/common/cli.rs` handles common size/backend arguments; `examples/common/mod.rs` owns size resolution, execution, analysis and uniform reporting. It prepares the analysis graph before timing passes. |
 | [`artifact/`](artifact) | Docker image and scripts (`artifact/scripts/`) to reproduce the paper's compilation/runtime benchmarks and completeness/soundness analysis results. |
 | [`docs/`](docs/library-usage.md) | How to depend on Zippel as a library from an external crate. |
 | `paper.pdf` | The design/evaluation paper this repo implements. |
 
 Workspace members (`Cargo.toml`): `lang`, `lang/lang-derive`, `runtime`,
-`share`, `graph`, `backend`, `analyses`, `fmt`, `check`, `experiments`. Only a
-subset are **default members** (`.`, `lang`, `runtime`, `share`, `graph`,
-`backend`, `analyses`, `check`) — `fmt` and `experiments` require `--workspace`
-or `-p <crate>` explicitly, and `experiments` additionally needs `gcc`, `m4`,
+`share`, `graph`, `backend`, `analyses`, `fmt`, `check`, `experiments`, `tools`.
+Only a subset are **default members** (`.`, `lang`, `runtime`, `share`, `graph`,
+`backend`, `analyses`, `check`) — `fmt`, `experiments` and `tools` require
+`--workspace` or `-p <crate>` explicitly, and `experiments` additionally needs `gcc`, `m4`,
 `pkg-config` (arkworks/GMP) and pulls in upstream comparison libraries.
 
 ## Language quick reference
