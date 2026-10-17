@@ -56,7 +56,8 @@ impl<N: ExpLiteral> Exprs<N> {
     /// If the arena already holds `u32::MAX` nodes.
     pub fn push(&mut self, node: Exp<N>, span: std::ops::Range<usize>) -> ExpId {
         let id = ExpId(u32::try_from(self.nodes.len()).expect("fewer than 2^32 expressions"));
-        debug_assert!(node.children().all(|c| c < id), "a child after its parent");
+        #[cfg(debug_assertions)]
+        node.for_each_child(|c| debug_assert!(c < id, "a child after its parent"));
         self.nodes.push(node);
         self.spans.push(span);
         id
@@ -111,7 +112,7 @@ impl<N: ExpLiteral> Exprs<N> {
             } else {
                 stack.push((id, true));
                 let first = stack.len();
-                stack.extend(self[id].children().map(|c| (c, false)));
+                self[id].for_each_child(|c| stack.push((c, false)));
                 stack[first..].reverse();
             }
         }
@@ -194,7 +195,7 @@ impl<N: ExpLiteral> Expr<N> {
     }
 }
 
-/// A node of an arena, with the arena: what recursive passes walk.
+/// A node of an arena, with the arena: what passes read a tree through.
 #[derive(Debug)]
 pub struct ExpRef<'a, N: ExpLiteral> {
     exprs: &'a Exprs<N>,

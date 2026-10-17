@@ -17,6 +17,7 @@ log = "0.4.27"
 spongefish =  { version = "0.7", features = ["ark-ff", "ark-ec"] }
 
 [dev-dependencies]
+graph = { path = "../graph", features = ["testing"] }
 ark-poly = { version = "0.6", features = ["parallel"] }
 serial_test = "3.2.0"
 ark-std = { version = "0.6.0", features = ["parallel"] }

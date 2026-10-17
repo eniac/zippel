@@ -10,7 +10,7 @@ impl CRef<'_> {
         evals: CRef<'_>,
         env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        let Env { kctx, .. } = *env;
+        let Cx { kctx, .. } = env.cx;
         let evals_typ = env.typ(evals);
 
         match points_opt {
@@ -68,7 +68,7 @@ impl CRef<'_> {
     }
 
     pub(super) fn infer_poly(self, v: CRef<'_>, env: &Env<'_>) -> Result<CTyp, TypeError> {
-        let Env { kctx, .. } = *env;
+        let Cx { kctx, .. } = env.cx;
         let typ = env.typ(v);
 
         match typ {
@@ -85,7 +85,7 @@ impl CRef<'_> {
     }
 
     pub(super) fn infer_coef(self, p: CRef<'_>, env: &Env<'_>) -> Result<CTyp, TypeError> {
-        let Env { kctx, .. } = *env;
+        let Cx { kctx, .. } = env.cx;
         let typ = env.typ(p);
 
         match typ {
@@ -126,7 +126,7 @@ impl CRef<'_> {
         opt_points: Option<CRef<'_>>,
         env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        let Env { kctx, .. } = *env;
+        let Cx { kctx, .. } = env.cx;
         let p_typ = env.typ(p);
 
         match (selector, opt_points) {
@@ -239,7 +239,7 @@ impl CRef<'_> {
     }
 
     pub(super) fn infer_mle(self, v: CRef<'_>, env: &Env<'_>) -> Result<CTyp, TypeError> {
-        let Env { kctx, .. } = *env;
+        let Cx { kctx, .. } = env.cx;
         // It must be a vector of fields, or a vector of Fin
         let typ = env.typ(v);
 
@@ -259,7 +259,7 @@ impl CRef<'_> {
     /// The field a `fun`'s parameters range over: the scalar type variable in scope; checked
     /// before the body is typed.
     pub(super) fn fun_field(self, env: &Env<'_>) -> Result<Tid, TypeError> {
-        let Env { kctx, .. } = *env;
+        let Cx { kctx, .. } = env.cx;
         kctx.iter()
             .find(|(_, k)| k.is_scalar())
             .map(|(tid, _)| tid.clone())
@@ -275,7 +275,7 @@ impl CRef<'_> {
         body: CRef<'_>,
         env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        let Env { kctx, .. } = *env;
+        let Cx { kctx, .. } = env.cx;
         let not_poly = |t: &CTyp| {
             TypeError::located(
                 body.span(),

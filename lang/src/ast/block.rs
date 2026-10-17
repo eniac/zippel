@@ -13,6 +13,14 @@ pub struct Block {
     pub tail: Option<ExpId>,
 }
 
+impl Block {
+    /// Whether statement `i` has something after it, a statement or the tail. Only then does
+    /// its binder scope over anything.
+    pub fn is_followed(&self, i: usize) -> bool {
+        i + 1 < self.stmts.len() || self.tail.is_some()
+    }
+}
+
 /// A statement owned by a block. Only its value is an expression in the arena.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Stmt {
@@ -29,13 +37,6 @@ impl Stmt {
     pub const fn value(&self) -> ExpId {
         match self {
             Self::Let(_, value) | Self::Log(_, value) | Self::Discard(value) => *value,
-        }
-    }
-
-    /// The expression id, for the arena's child rewrites.
-    pub(super) const fn value_mut(&mut self) -> &mut ExpId {
-        match self {
-            Self::Let(_, value) | Self::Log(_, value) | Self::Discard(value) => value,
         }
     }
 

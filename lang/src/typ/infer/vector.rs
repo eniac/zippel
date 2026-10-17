@@ -5,7 +5,7 @@ use crate::typ::CTyps;
 
 impl CRef<'_> {
     pub(super) fn infer_vec(self, v: &Exps, env: &Env<'_>) -> Result<CTyp, TypeError> {
-        let Env { kctx, .. } = *env;
+        let Cx { kctx, .. } = env.cx;
         let ts: CTyps = v
             .iter()
             .map(|e| Spanned::dummy(env.typ(self.at(e))))
@@ -40,7 +40,7 @@ impl CRef<'_> {
     /// The type of the binder `id` of comprehension `[x for id in r]`: an element of the
     /// nonempty vector `r`; checked once `r` is typed, before `x` is.
     pub(super) fn map_elem(self, r: CRef<'_>, env: &Env<'_>) -> Result<CTyp, TypeError> {
-        let Env { kctx, .. } = *env;
+        let Cx { kctx, .. } = env.cx;
         match env.typ(r) {
             CTyp::Vec(inner, n) if n.node > 0 => Ok(inner.node),
             tr => Err(TypeError::Map(kctx.clone(), tr.clone())),
@@ -61,7 +61,7 @@ impl CRef<'_> {
         v: CRef<'_>,
         env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        let Env { kctx, .. } = *env;
+        let Cx { kctx, .. } = env.cx;
         let tv = env.typ(v);
 
         match tv {
@@ -103,7 +103,7 @@ impl CRef<'_> {
         b: CRef<'_>,
         env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        let Env { kctx, .. } = *env;
+        let Cx { kctx, .. } = env.cx;
         let ta = env.typ(a);
         let tb = env.typ(b);
 

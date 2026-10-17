@@ -1,85 +1,22 @@
 //! The shape of expression nodes, described once: which children a node has
-//! ([`Exp::children`], [`Exp::for_each_child_mut`]), and which variables each child sees bound
+//! ([`Exp::for_each_child`], [`Exp::for_each_child_mut`]), and which variables each child sees bound
 //! ([`ExpRef::walk`]). Passes that don't depend on a node's meaning use these rather than
 //! matching every [`Exp`] variant, so a new variant, or a new binder, is a change here only.
 //! Walks keep their work on the heap, so they take bounded stack at any depth (issue #252).
 
 use std::collections::HashMap;
 
-use super::exp::{Exp, ExpLiteral, Exps};
+use super::exp::{Exp, ExpLiteral};
 use super::spanned::Spanned;
 use super::{ExpId, ExpRef, Stmt};
 use crate::id::Vid;
 
-/// The children of a node, in source order (see [`Exp::children`]).
-pub struct Children<'a>(Inner<'a>);
-
-enum Inner<'a> {
-    Fixed(std::iter::Flatten<std::array::IntoIter<Option<ExpId>, 2>>),
-    List(std::iter::Copied<std::slice::Iter<'a, ExpId>>),
-    Block {
-        stmts: std::slice::Iter<'a, Spanned<Stmt>>,
-        tail: Option<ExpId>,
-    },
-    Record(Box<dyn Iterator<Item = ExpId> + 'a>),
-}
-
-impl Iterator for Children<'_> {
-    type Item = ExpId;
-
-    fn next(&mut self) -> Option<ExpId> {
-        match &mut self.0 {
-            Inner::Fixed(ids) => ids.next(),
-            Inner::List(ids) => ids.next(),
-            Inner::Block { stmts, tail } => stmts
-                .next()
-                .map(|stmt| stmt.node.value())
-                .or_else(|| tail.take()),
-            Inner::Record(ids) => ids.next(),
-        }
-    }
-}
-
-impl<N: ExpLiteral> Exp<N> {
-    /// The direct subexpressions of this node, in source order; a record's fields in field
-    /// order.
-    pub fn children<'a>(&'a self) -> Children<'a> {
-        let fixed = |a, b| Children(Inner::Fixed([a, b].into_iter().flatten()));
-        let list = |ids: &'a Exps| Children(Inner::List(ids.0.iter().copied()));
-        match self {
-            Exp::Lit(_) | Exp::Unit | Exp::Var(_) | Exp::Range(_) => fixed(None, None),
-            Exp::Random(_, x) | Exp::Challenge(_, x) => {
-                fixed(x.as_ref().and_then(|x| x.values()).copied(), None)
-            }
-            Exp::App(_, args) | Exp::Vec(args) => list(args),
-            Exp::Block(block) => Children(Inner::Block {
-                stmts: block.stmts.iter(),
-                tail: block.tail,
-            }),
-            Exp::Map(a, _, b)
-            | Exp::Bin(_, a, b)
-            | Exp::Pair(a, b)
-            | Exp::Ram(a, b)
-            | Exp::SetRecord(a, _, b) => fixed(Some(*a), Some(*b)),
-            Exp::Interpolate(a, b) => fixed(*a, Some(*b)),
-            Exp::Evaluate(a, _, b) => fixed(Some(*a), *b),
-            Exp::Neg(a)
-            | Exp::Coef(a)
-            | Exp::Poly(a)
-            | Exp::Mle(a)
-            | Exp::Reduce(_, a)
-            | Exp::Verify(a)
-            | Exp::Fun(_, a)
-            | Exp::Proj(a, _) => fixed(Some(*a), None),
-            Exp::Record(fields) => {
-                Children(Inner::Record(Box::new(fields.iter().map(|(_, e)| *e))))
-            }
-        }
-    }
-
-    /// Calls `f` on each child id, in [`Exp::children`] order, to read or replace it.
-    pub fn for_each_child_mut(&mut self, mut f: impl FnMut(&mut ExpId)) {
-        match self {
+/// Calls `$f` on a reference to each child id of `$node`, in source order; a record's fields
+/// in field order. With `mut`, the references are mutable. The one description of which
+/// fields of a node are children.
+macro_rules! each_child {
+    ($node:expr, $f:ident $(, $m:tt)?) => {
+        match $node {
             Exp::Lit(_) | Exp::Unit | Exp::Var(_) | Exp::Range(_) => {}
             Exp::Random(_, x) | Exp::Challenge(_, x) => {
                 if let Some(Spanned {
@@ -87,31 +24,43 @@ impl<N: ExpLiteral> Exp<N> {
                     ..
                 }) = x
                 {
-                    f(v);
+                    $f(v);
                 }
             }
-            Exp::App(_, args) | Exp::Vec(args) => args.0.iter_mut().for_each(f),
-            Exp::Block(block) => {
-                for stmt in &mut block.stmts {
-                    f(stmt.node.value_mut());
+            Exp::App(_, args) | Exp::Vec(args) => {
+                for a in &$($m)? args.0 {
+                    $f(a);
                 }
-                block.tail.iter_mut().for_each(f);
+            }
+            Exp::Block(block) => {
+                for stmt in &$($m)? block.stmts {
+                    match &$($m)? stmt.node {
+                        Stmt::Let(_, v) | Stmt::Log(_, v) | Stmt::Discard(v) => $f(v),
+                    }
+                }
+                if let Some(tail) = &$($m)? block.tail {
+                    $f(tail);
+                }
             }
             Exp::Map(a, _, b)
             | Exp::Bin(_, a, b)
             | Exp::Pair(a, b)
             | Exp::Ram(a, b)
             | Exp::SetRecord(a, _, b) => {
-                f(a);
-                f(b);
+                $f(a);
+                $f(b);
             }
             Exp::Interpolate(a, b) => {
-                a.iter_mut().for_each(&mut f);
-                f(b);
+                if let Some(a) = a {
+                    $f(a);
+                }
+                $f(b);
             }
             Exp::Evaluate(a, _, b) => {
-                f(a);
-                b.iter_mut().for_each(f);
+                $f(a);
+                if let Some(b) = b {
+                    $f(b);
+                }
             }
             Exp::Neg(a)
             | Exp::Coef(a)
@@ -120,12 +69,34 @@ impl<N: ExpLiteral> Exp<N> {
             | Exp::Reduce(_, a)
             | Exp::Verify(a)
             | Exp::Fun(_, a)
-            | Exp::Proj(a, _) => f(a),
-            Exp::Record(fields) => fields.modify(|_, e| f(e)),
+            | Exp::Proj(a, _) => $f(a),
+            Exp::Record(fields) => each_child!(@record fields, $f $(, $m)?),
         }
+    };
+    (@record $fields:ident, $f:ident) => {
+        for (_, e) in $fields.iter() {
+            $f(e);
+        }
+    };
+    (@record $fields:ident, $f:ident, mut) => {
+        $fields.modify(|_, e| $f(e))
+    };
+}
+
+impl<N: ExpLiteral> Exp<N> {
+    /// Calls `f` on each direct subexpression of this node, in source order; a record's fields
+    /// in field order.
+    pub fn for_each_child(&self, mut f: impl FnMut(ExpId)) {
+        let mut f = |id: &ExpId| f(*id);
+        each_child!(self, f);
     }
 
-    /// The same node with each child id replaced by `f` of it, in [`Exp::children`] order.
+    /// Calls `f` on each child id, in [`Exp::for_each_child`] order, to read or replace it.
+    pub fn for_each_child_mut(&mut self, mut f: impl FnMut(&mut ExpId)) {
+        each_child!(self, f, mut);
+    }
+
+    /// The same node with each child id replaced by `f` of it, in [`Exp::for_each_child`] order.
     #[must_use]
     pub fn map_ids(mut self, mut f: impl FnMut(ExpId) -> ExpId) -> Self {
         self.for_each_child_mut(|id| *id = f(*id));
@@ -190,7 +161,7 @@ impl<'a, N: ExpLiteral> ExpRef<'a, N> {
         std::iter::from_fn(move || {
             let e = self.at(todo.pop()?);
             let first = todo.len();
-            todo.extend(e.node().children());
+            e.node().for_each_child(|c| todo.push(c));
             todo[first..].reverse();
             Some(e)
         })
@@ -243,14 +214,14 @@ impl<'a, N: ExpLiteral> Walk<'a, N> {
                         Step::LeaveStmt(stmt),
                     ]);
                     if let Some(x) = stmt.node.binder()
-                        && (i + 1 < block.stmts.len() || block.tail.is_some())
+                        && block.is_followed(i)
                     {
                         todo.push(Step::Bind(x));
                     }
                 }
                 todo.extend(block.tail.map(Step::Enter));
             }
-            node => todo.extend(node.children().map(Step::Enter)),
+            node => node.for_each_child(|c| todo.push(Step::Enter(c))),
         }
         // The `Leave` stays first, so it comes last.
         self.todo[first + 1..].reverse();
@@ -360,7 +331,8 @@ mod tests {
         let (exprs, ids) = every_parent();
         for id in ids {
             let node = &exprs[id];
-            let children: Vec<ExpId> = node.children().collect();
+            let mut children = Vec::new();
+            node.for_each_child(|c| children.push(c));
             assert!(
                 !children.is_empty() || matches!(node, Exp::Challenge(..)),
                 "{node:?}"
