@@ -15,7 +15,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use chumsky::error::Rich;
-use chumsky::input::{InputRef, MapExtra, Stream, ValueInput};
+use chumsky::input::{MapExtra, Stream, ValueInput};
 use chumsky::pratt::{self, Associativity};
 use chumsky::prelude::*;
 use chumsky::span::SimpleSpan;
@@ -43,9 +43,6 @@ type Extra<'src> = extra::Full<RichError<'src>, extra::SimpleState<State>, ()>;
 struct State {
     /// The arena the expressions go into.
     exprs: Exprs<Size>,
-    /// Whether a long range starts at a token, by the token's source offset (see
-    /// [`long_range_start`]).
-    long_ranges: HashMap<usize, bool>,
 }
 
 /// Pushes `node` into the parse's arena, spanning the input `e` was parsed from. Abandoned
@@ -214,166 +211,73 @@ where
     ))
 }
 
-/// A token's part in a size.
-#[derive(Clone, Copy)]
-enum SizeToken {
-    Operand,
-    Open,
-    Close,
-    Operator,
+/// `exp`, or a stepped range `start, step..end`. Only an index and a comprehension's domain
+/// take one: anywhere else the `,` separates list items.
+fn stepped<'src, I>(exp: ExpParser<'src, I>) -> impl Parser<'src, I, ExpId, Extra<'src>> + Clone
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
+{
+    exp.clone()
+        .then(just(Token::Comma).ignored().ignore_then(exp).or_not())
+        .try_map_with(|(start, rest), e| {
+            let Some(rest) = rest else { return Ok(start) };
+            let exprs = &e.state().exprs;
+            let UExp::Range(Range {
+                start: step,
+                step: None,
+                end,
+            }) = &exprs[rest]
+            else {
+                let span = exprs.span(rest).clone();
+                return Err(Rich::custom(
+                    span.into(),
+                    "expected a range `step..end` after `,`",
+                ));
+            };
+            let range = Range {
+                start: size_of(exprs, start)?,
+                step: Some(step.clone()),
+                end: end.clone(),
+            };
+            Ok(push(e, UExp::Range(range)))
+        })
 }
 
-impl SizeToken {
-    fn of(token: &Token<'_>) -> Option<Self> {
-        match token {
-            Token::Id(_) | Token::Positive(_) => Some(Self::Operand),
-            Token::LParen => Some(Self::Open),
-            Token::RParen => Some(Self::Close),
-            Token::Plus | Token::Minus | Token::Star | Token::Slash | Token::Caret => {
-                Some(Self::Operator)
+/// The size an expression spells: names, literals, `+ - * / ^` and parentheses, which leave
+/// no node. Built children first, without recursion.
+fn size_of<'src>(exprs: &Exprs<Size>, root: ExpId) -> Result<Spanned<Size>, RichError<'src>> {
+    let mut built: HashMap<ExpId, Spanned<Size>> = HashMap::new();
+    let nodes: Vec<_> = exprs.at(root).subexps().collect();
+    // Reversed pre-order puts every node after its descendants.
+    for e in nodes.into_iter().rev() {
+        let mut child = |id: &ExpId| built.remove(id).map(Box::new).expect("built first");
+        let size = match e.node() {
+            UExp::Lit(n) => n.clone(),
+            UExp::Var(x) => Size::Var(Tid::from(x.node.0.as_str())),
+            UExp::Bin(op, a, b) => {
+                let (a, b) = (child(a), child(b));
+                match op {
+                    BinOp::Add => Size::Add(a, b),
+                    BinOp::Sub => Size::Sub(a, b),
+                    BinOp::Mul => Size::Mul(a, b),
+                    BinOp::Div => Size::Div(a, b),
+                    BinOp::Pow => Size::Pow(a, b),
+                    _ => return Err(not_a_size(exprs, e.id())),
+                }
             }
-            _ => None,
-        }
+            _ => return Err(not_a_size(exprs, e.id())),
+        };
+        built.insert(e.id(), Spanned::new(size, e.span().clone()));
     }
-
-    /// Whether a size can continue with `next` after `self`, ignoring paren depth.
-    const fn precedes(self, next: Self) -> bool {
-        matches!(
-            (self, next),
-            (Self::Operand | Self::Close, Self::Operator | Self::Close)
-                | (Self::Open | Self::Operator, Self::Operand | Self::Open)
-        )
-    }
+    Ok(built.remove(&root).expect("the root is built"))
 }
 
-/// The number of tokens, up to `cap`, of the size-shaped run at the input (operands,
-/// `+ - * / ^`, parens), and whether that run is a complete size: it ends after an operand
-/// with its parens closed.
-fn skim_size<'src, 'parse, I>(
-    inp: &mut InputRef<'src, 'parse, I, Extra<'src>>,
-    cap: usize,
-) -> (usize, bool)
-where
-    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
-{
-    let (mut len, mut depth, mut operand) = (0, 0usize, true);
-    while len < cap
-        && let Some(token) = inp.peek().as_ref().and_then(SizeToken::of)
-    {
-        match (operand, token) {
-            (true, SizeToken::Operand) => operand = false,
-            (true, SizeToken::Open) => depth += 1,
-            (false, SizeToken::Operator) => operand = true,
-            (false, SizeToken::Close) if depth > 0 => depth -= 1,
-            _ => break,
-        }
-        inp.skip();
-        len += 1;
-    }
-    (len, !operand && depth == 0)
-}
-
-/// Size-shaped runs up to this many tokens are always tried as a range start: the attempt is
-/// cheap, and its failure contributes `,`, `..` and size operands to the expected tokens of a
-/// parse error there.
-const SHORT_SIZE: usize = 16;
-
-/// Succeeds, consuming nothing, where a range might start: before a short size-shaped run
-/// (see [`SHORT_SIZE`]), or before a longer size followed by `..` or `, size ..` (see
-/// [`long_range_start`]). Elsewhere the range attempt would parse a long size only to fail,
-/// again at each level of the expression it is part of: quadratic, with a deep size tree
-/// built and dropped each time.
-fn could_be_range<'src, I>() -> impl Parser<'src, I, (), Extra<'src>> + Clone
-where
-    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
-{
-    custom(|inp| {
-        let start = inp.save();
-        let before = inp.cursor();
-        let (len, _) = skim_size(inp, SHORT_SIZE + 1);
-        let span = inp.span_since(&before);
-        inp.rewind(start);
-        if len <= SHORT_SIZE || long_range_start(inp) {
-            Ok(())
-        } else {
-            Err(Rich::custom(span, "not a range"))
-        }
-    })
-}
-
-/// Whether a size followed by `..` or `, size ..` starts at the input, consuming nothing.
-///
-/// Asking at each operand of a long expression by skimming the size from there would be
-/// quadratic, so the first question in a run of size tokens answers for every position of
-/// the rest of the run, in one pass, and the answers are kept. A size from position `p`
-/// reaches the end of the run, and is complete there, when each token can follow the one
-/// before it (independent of `p`), its parens never close below their depth at `p`, it ends
-/// at that depth, and it ends after an operand. A size ending before the run does is followed
-/// by a size token, never `..` or `,`.
-fn long_range_start<'src, 'parse, I>(inp: &mut InputRef<'src, 'parse, I, Extra<'src>>) -> bool
-where
-    I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
-{
-    let start = inp.save();
-    // The run of size tokens from here, with their source offsets.
-    let mut run = Vec::new();
-    while let Some(token) = inp.peek().as_ref().and_then(SizeToken::of) {
-        let before = inp.cursor();
-        inp.skip();
-        let offset = inp.span_since(&before).start;
-        if run.is_empty()
-            && let Some(&known) = inp.state().long_ranges.get(&offset)
-        {
-            inp.rewind(start);
-            return known;
-        }
-        run.push((offset, token));
-    }
-    let ends_range = match inp.next() {
-        Some(Token::DotDot) => true,
-        Some(Token::Comma) => {
-            skim_size(inp, usize::MAX).1 && matches!(inp.next(), Some(Token::DotDot))
-        }
-        _ => false,
-    };
-    inp.rewind(start);
-
-    // `depth[i]`: the paren depth before token `i`, from the start of the run.
-    let mut depth = Vec::with_capacity(run.len() + 1);
-    depth.push(0isize);
-    for (i, (_, token)) in run.iter().enumerate() {
-        depth.push(
-            depth[i]
-                + match token {
-                    SizeToken::Open => 1,
-                    SizeToken::Close => -1,
-                    SizeToken::Operand | SizeToken::Operator => 0,
-                },
-        );
-    }
-    let end = depth[run.len()];
-    let complete =
-        ends_range && matches!(run.last(), Some((_, SizeToken::Operand | SizeToken::Close)));
-    // From the end of the run back: whether the tokens after `p` each follow the one before,
-    // and the lowest depth after `p`.
-    let (mut follows, mut lowest) = (true, end);
-    let mut starts = vec![false; run.len()];
-    for p in (0..run.len()).rev() {
-        starts[p] = complete
-            && follows
-            && matches!(run[p].1, SizeToken::Operand | SizeToken::Open)
-            && lowest >= depth[p]
-            && end == depth[p];
-        if p > 0 {
-            follows &= run[p - 1].1.precedes(run[p].1);
-        }
-        lowest = lowest.min(depth[p]);
-    }
-    let long_ranges = &mut inp.state().long_ranges;
-    for ((offset, _), &range) in run.iter().zip(&starts) {
-        long_ranges.insert(*offset, range);
-    }
-    starts.first().copied().unwrap_or(false)
+/// A range bound at `id` that is not a size.
+fn not_a_size<'src>(exprs: &Exprs<Size>, id: ExpId) -> RichError<'src> {
+    Rich::custom(
+        exprs.span(id).clone().into(),
+        "a range bound is a size: names, literals, `+ - * / ^` and parentheses",
+    )
 }
 
 // ── Kind parser ────────────────────────────────────────────────────────
@@ -715,16 +619,28 @@ where
 /// recursion cycle between exp_atom, exp_no_seq, and exp.
 type ExpParser<'src, I> = Boxed<'src, 'src, I, ExpId, Extra<'src>>;
 
+/// A full expression, and whether it is a sequence of statements (see [`exp_items_parser`]).
+type ItemsParser<'src, I> = Boxed<'src, 'src, I, (ExpId, bool), Extra<'src>>;
+
+/// What follows the first expression in brackets.
+enum Bracket {
+    /// `for x in iter`: a comprehension.
+    Map((Spanned<Vid>, ExpId)),
+    /// The other elements of a vector, after `,`.
+    Vec(Vec<ExpId>),
+}
+
 /// Parse an expression atom (the primary/operand for pratt parsing).
 /// Takes boxed recursive references to break the mutual recursion cycle.
 /// Mirrors `exp_term` in the pest grammar (lines 65-90).
 fn exp_atom<'src, I>(
     exp_no_seq: ExpParser<'src, I>,
-    exp: ExpParser<'src, I>,
+    exp_items: ItemsParser<'src, I>,
 ) -> impl Parser<'src, I, ExpId, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
+    let exp = exp_items.clone().map(|(e, _)| e);
     // What a sample excludes: `- v` or `- roots_of_unity(n)`, spanned from
     // the `-`
     let exclusion = just(Token::Minus)
@@ -742,11 +658,6 @@ where
         })
         .or_not();
     choice((
-        // Range expression: 0..N or 0,1..N
-        // Must come before parenthesized expression so (M-1)..(M-1) is parsed as a range, not (M-1)
-        could_be_range()
-            .ignore_then(range_parser())
-            .map_with(|r, e| push(e, UExp::Range(r))),
         // Unit value: ()
         just(Token::LParen)
             .ignored()
@@ -866,16 +777,45 @@ where
             .then(exclusion)
             .then_ignore(just(Token::RAngle).ignored())
             .map_with(|(t, x), e| push(e, UExp::Challenge(t, x))),
-        // [exp for x in exp] (map comprehension)
+        // [exp for x in exp] (map comprehension) or [exp, exp, ...] (vector). The first
+        // expression is parsed once, then `for` or `,`/`]` decides: trying each form in
+        // turn would parse it twice, at every nesting level (exponential in depth).
         just(Token::LBrack)
             .ignored()
-            .ignore_then(exp.clone())
-            .then_ignore(just(Token::KwFor).ignored())
-            .then(id_tok())
-            .then_ignore(just(Token::KwIn).ignored())
-            .then(exp_no_seq.clone())
+            .ignore_then(
+                exp_items
+                    .then(choice((
+                        just(Token::KwFor)
+                            .ignored()
+                            .ignore_then(id_tok())
+                            .then_ignore(just(Token::KwIn).ignored())
+                            .then(stepped(exp_no_seq.clone()))
+                            .map(Bracket::Map),
+                        just(Token::Comma)
+                            .ignored()
+                            .ignore_then(exp_no_seq.clone())
+                            .repeated()
+                            .collect::<Vec<_>>()
+                            .then_ignore(just(Token::Comma).ignored().or_not())
+                            .map(Bracket::Vec),
+                    )))
+                    .or_not(),
+            )
             .then_ignore(just(Token::RBrack).ignored())
-            .map_with(|((body, var), iter), e| push(e, UExp::Map(body, var, iter))),
+            .try_map_with(|contents, e| match contents {
+                None => Ok(push(e, UExp::Vec(Exps(Vec::new())))),
+                Some(((first, _), Bracket::Map((var, iter)))) => {
+                    Ok(push(e, UExp::Map(first, var, iter)))
+                }
+                // Only a comprehension body may be a sequence of statements.
+                Some(((_, true), Bracket::Vec(_))) => {
+                    Err(Rich::custom(e.span(), "expected `for` after a sequence"))
+                }
+                Some(((first, false), Bracket::Vec(rest))) => {
+                    let elems = std::iter::once(first).chain(rest).collect();
+                    Ok(push(e, UExp::Vec(Exps(elems))))
+                }
+            }),
         // reduce(op, exp)
         just(Token::KwReduce)
             .ignored()
@@ -891,18 +831,6 @@ where
                     .as_context(),
             )
             .map_with(|(op, e), sp| push(sp, UExp::Reduce(op, e))),
-        // [exp, exp, ...] (vector)
-        just(Token::LBrack)
-            .ignored()
-            .ignore_then(
-                exp_no_seq
-                    .clone()
-                    .separated_by(just(Token::Comma).ignored())
-                    .allow_trailing()
-                    .collect::<Vec<_>>(),
-            )
-            .then_ignore(just(Token::RBrack).ignored())
-            .map_with(|v: Vec<_>, e| push(e, UExp::Vec(Exps(v)))),
         // pair(exp, exp)
         just(Token::KwPair)
             .ignored()
@@ -971,7 +899,7 @@ where
         id_tok()
             .map_with(|id, e| push(e, UExp::Var(id)))
             .then_ignore(just(Token::LBrack).ignored())
-            .then(exp_no_seq.clone())
+            .then(stepped(exp_no_seq.clone()))
             .then_ignore(just(Token::RBrack).ignored())
             .map_with(|(id_var, idx), e| push(e, UExp::Ram(id_var, idx))),
         // Bare identifier: uppercase → Size::Var, lowercase → Exp::Var
@@ -1048,103 +976,120 @@ where
 {
     recursive(|exp_no_seq_rec| {
         // Build the exp parser using the recursive exp_no_seq reference
-        let exp = exp_parser_inner(exp_no_seq_rec.clone().boxed()).boxed();
-        let atom = exp_atom(exp_no_seq_rec.clone().boxed(), exp);
+        let exp_items = exp_items_parser(exp_no_seq_rec.clone().boxed()).boxed();
+        let atom = exp_atom(exp_no_seq_rec.clone().boxed(), exp_items);
 
-        atom.pratt((
-            // Lowest precedence first (matches AEXP_PARSER order)
-            // && (logical AND) — precedence 0, left-associative
-            pratt::infix(
-                Associativity::Left(0),
-                just(Token::AmpAmp).ignored().labelled(Terminal::Operator),
-                |a, _, b, sp| push(sp, UExp::Bin(BinOp::And, a, b)),
-            ),
-            // == (equality) — precedence 1, left-associative
-            pratt::infix(
-                Associativity::Left(1),
-                just(Token::EqEq).ignored().labelled(Terminal::Operator),
-                |a, _, b, sp| push(sp, UExp::Bin(BinOp::Equ, a, b)),
-            ),
-            pratt::infix(
-                Associativity::Left(2),
-                just(Token::Plus).ignored().labelled(Terminal::Operator),
-                |a, _, b, sp| push(sp, UExp::Bin(BinOp::Add, a, b)),
-            ),
-            pratt::infix(
-                Associativity::Left(2),
-                just(Token::Minus).ignored().labelled(Terminal::Operator),
-                |a, _, b, sp| push(sp, UExp::Bin(BinOp::Sub, a, b)),
-            ),
-            pratt::infix(
-                Associativity::Left(3),
-                just(Token::Star).ignored().labelled(Terminal::Operator),
-                |a, _, b, sp| push(sp, UExp::Bin(BinOp::Mul, a, b)),
-            ),
-            pratt::infix(
-                Associativity::Left(3),
-                just(Token::Slash).ignored().labelled(Terminal::Operator),
-                |a, _, b, sp| push(sp, UExp::Bin(BinOp::Div, a, b)),
-            ),
-            pratt::infix(
-                Associativity::Left(3),
-                just(Token::Percent).ignored().labelled(Terminal::Operator),
-                |a, _, b, sp| push(sp, UExp::Bin(BinOp::Rem, a, b)),
-            ),
-            pratt::infix(
-                Associativity::Left(4),
-                just(Token::PlusPlus).ignored().labelled(Terminal::Operator),
-                |a, _, b, sp| push(sp, UExp::Bin(BinOp::Concat, a, b)),
-            ),
-            pratt::infix(
-                Associativity::Right(5),
-                just(Token::Caret).ignored().labelled(Terminal::Operator),
-                |a, _, b, sp| push(sp, UExp::Bin(BinOp::Pow, a, b)),
-            ),
-            // Prefix: unary minus → Exp::Neg(x)
-            // Precedence 4 — tighter than `*`/`/`/`%` (3), looser than `^` (5).
-            // So `-a * b` = `(-a) * b` and `-a ^ 2` = `-(a ^ 2)`.
-            pratt::prefix(
-                4,
-                just(Token::Minus).ignored().labelled(Terminal::Operator),
-                |_, rhs, sp| push(sp, UExp::Neg(rhs)),
-            ),
-            // Postfix: record set r.set(field, val) — must come before projection
-            // so that `.set(` is not consumed as projection `.set`.
-            // record_set_op = { "." ~ "set" ~ "(" ~ id ~ "," ~ exp_no_seq ~ ")" }
-            pratt::postfix(
-                6,
-                just(Token::Dot)
-                    .ignored()
-                    .labelled(Terminal::Operator)
-                    .ignore_then(
-                        select! { Token::Id(s) => s }
-                            .labelled(Terminal::Set)
-                            .filter(|s: &Cow<'_, str>| s == "set"),
-                    )
-                    .ignore_then(just(Token::LParen).ignored())
-                    .ignore_then(id_tok())
-                    .then_ignore(just(Token::Comma).ignored())
-                    .then(exp_no_seq_rec.clone().boxed())
-                    .then_ignore(just(Token::Comma).ignored().or_not())
-                    .then_ignore(just(Token::RParen).ignored()),
-                |lhs, (field, val): (Spanned<Vid>, ExpId), sp| {
-                    let field_name = Spanned::new(field.node.0.clone(), field.span.clone());
-                    push(sp, UExp::SetRecord(lhs, field_name, val))
-                },
-            ),
-            // Postfix: projection r.field
-            pratt::postfix(
-                6,
-                just(Token::Dot)
-                    .ignored()
-                    .labelled(Terminal::Operator)
-                    .ignore_then(id_tok()),
-                |lhs, field: Spanned<Vid>, sp| {
-                    let field_name = Spanned::new(field.node.0.clone(), field.span.clone());
-                    push(sp, UExp::Proj(lhs, field_name))
-                },
-            ),
-        ))
+        let operand = atom
+            .pratt((
+                // Lowest precedence first (matches AEXP_PARSER order)
+                // && (logical AND) — precedence 0, left-associative
+                pratt::infix(
+                    Associativity::Left(0),
+                    just(Token::AmpAmp).ignored().labelled(Terminal::Operator),
+                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::And, a, b)),
+                ),
+                // == (equality) — precedence 1, left-associative
+                pratt::infix(
+                    Associativity::Left(1),
+                    just(Token::EqEq).ignored().labelled(Terminal::Operator),
+                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Equ, a, b)),
+                ),
+                pratt::infix(
+                    Associativity::Left(2),
+                    just(Token::Plus).ignored().labelled(Terminal::Operator),
+                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Add, a, b)),
+                ),
+                pratt::infix(
+                    Associativity::Left(2),
+                    just(Token::Minus).ignored().labelled(Terminal::Operator),
+                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Sub, a, b)),
+                ),
+                pratt::infix(
+                    Associativity::Left(3),
+                    just(Token::Star).ignored().labelled(Terminal::Operator),
+                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Mul, a, b)),
+                ),
+                pratt::infix(
+                    Associativity::Left(3),
+                    just(Token::Slash).ignored().labelled(Terminal::Operator),
+                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Div, a, b)),
+                ),
+                pratt::infix(
+                    Associativity::Left(3),
+                    just(Token::Percent).ignored().labelled(Terminal::Operator),
+                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Rem, a, b)),
+                ),
+                pratt::infix(
+                    Associativity::Left(4),
+                    just(Token::PlusPlus).ignored().labelled(Terminal::Operator),
+                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Concat, a, b)),
+                ),
+                pratt::infix(
+                    Associativity::Right(5),
+                    just(Token::Caret).ignored().labelled(Terminal::Operator),
+                    |a, _, b, sp| push(sp, UExp::Bin(BinOp::Pow, a, b)),
+                ),
+                // Prefix: unary minus → Exp::Neg(x)
+                // Precedence 4 — tighter than `*`/`/`/`%` (3), looser than `^` (5).
+                // So `-a * b` = `(-a) * b` and `-a ^ 2` = `-(a ^ 2)`.
+                pratt::prefix(
+                    4,
+                    just(Token::Minus).ignored().labelled(Terminal::Operator),
+                    |_, rhs, sp| push(sp, UExp::Neg(rhs)),
+                ),
+                // Postfix: record set r.set(field, val) — must come before projection
+                // so that `.set(` is not consumed as projection `.set`.
+                // record_set_op = { "." ~ "set" ~ "(" ~ id ~ "," ~ exp_no_seq ~ ")" }
+                pratt::postfix(
+                    6,
+                    just(Token::Dot)
+                        .ignored()
+                        .labelled(Terminal::Operator)
+                        .ignore_then(
+                            select! { Token::Id(s) => s }
+                                .labelled(Terminal::Set)
+                                .filter(|s: &Cow<'_, str>| s == "set"),
+                        )
+                        .ignore_then(just(Token::LParen).ignored())
+                        .ignore_then(id_tok())
+                        .then_ignore(just(Token::Comma).ignored())
+                        .then(exp_no_seq_rec.clone().boxed())
+                        .then_ignore(just(Token::Comma).ignored().or_not())
+                        .then_ignore(just(Token::RParen).ignored()),
+                    |lhs, (field, val): (Spanned<Vid>, ExpId), sp| {
+                        let field_name = Spanned::new(field.node.0.clone(), field.span.clone());
+                        push(sp, UExp::SetRecord(lhs, field_name, val))
+                    },
+                ),
+                // Postfix: projection r.field
+                pratt::postfix(
+                    6,
+                    just(Token::Dot)
+                        .ignored()
+                        .labelled(Terminal::Operator)
+                        .ignore_then(id_tok()),
+                    |lhs, field: Spanned<Vid>, sp| {
+                        let field_name = Spanned::new(field.node.0.clone(), field.span.clone());
+                        push(sp, UExp::Proj(lhs, field_name))
+                    },
+                ),
+            ))
+            .boxed();
+        // `start..end`, below every operator: both bounds are parsed as expressions, then read
+        // as sizes, so a range needs no lookahead to be told from arithmetic.
+        operand
+            .clone()
+            .then(just(Token::DotDot).ignored().ignore_then(operand).or_not())
+            .try_map_with(|(start, end), e| {
+                let Some(end) = end else { return Ok(start) };
+                let exprs = &e.state().exprs;
+                let range = Range {
+                    start: size_of(exprs, start)?,
+                    step: None,
+                    end: Some(size_of(exprs, end)?),
+                };
+                Ok(push(e, UExp::Range(range)))
+            })
     })
     .labelled(Context::Expression)
     .as_context()
@@ -1165,9 +1110,9 @@ enum Item {
 /// `item (; item)* ;?`: each item is parsed once, and the `;` after it decides
 /// whether it is a statement or the block's value. Trying `e;` and then `e`
 /// would parse `e` twice, at every nesting level (exponential in depth).
-fn exp_parser_inner<'src, I>(
+fn exp_items_parser<'src, I>(
     exp_no_seq: ExpParser<'src, I>,
-) -> impl Parser<'src, I, ExpId, Extra<'src>> + Clone
+) -> impl Parser<'src, I, (ExpId, bool), Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
@@ -1228,7 +1173,7 @@ where
             }
             if stmts.is_empty() {
                 // A lone expression is itself, not a block.
-                return Ok(tail.expect("an item without `;`"));
+                return Ok((tail.expect("an item without `;`"), false));
             }
             // A parenthesized block as the value continues this block: it binds into
             // what follows it, which is nothing, so splicing it keeps one flat block.
@@ -1242,7 +1187,7 @@ where
                 },
                 None => None,
             };
-            Ok(push(e, UExp::Block(Block { stmts, tail })))
+            Ok((push(e, UExp::Block(Block { stmts, tail })), true))
         })
 }
 
@@ -1252,7 +1197,7 @@ fn exp_parser<'src, I>() -> impl Parser<'src, I, ExpId, Extra<'src>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = SimpleSpan>,
 {
-    exp_parser_inner(exp_no_seq_parser().boxed())
+    exp_items_parser(exp_no_seq_parser().boxed()).map(|(e, _)| e)
 }
 
 // ── Declaration parser ─────────────────────────────────────────────────
@@ -1416,7 +1361,6 @@ pub fn parse_decls(src: &str) -> (Vec<Spanned<UDecl>>, Vec<Diagnostic>) {
 
     let mut state = extra::SimpleState(State {
         exprs: Exprs::new(),
-        long_ranges: HashMap::new(),
     });
     let result = recovery_parser.parse_with_state(input, &mut state);
     let (output, errs) = result.into_output_errors();
@@ -1586,13 +1530,16 @@ mod tests {
         assert_eq!(decls.len(), 1);
     }
 
-    /// Sizes longer than [`SHORT_SIZE`] tokens decide whether they start a range in one pass
-    /// over their run of size tokens: ranges must still be ranges there, and nothing else.
+    /// `..` reads its bounds as sizes at any length, and a stepped range only exists where
+    /// `,` cannot separate items.
     #[test]
-    fn parse_long_range_starts() {
-        let body = |exp: &str| {
+    fn parse_ranges() {
+        let parse = |exp: &str| {
             let src = format!("fn f<F: Field, M: Size>(instance x: [F; M]) -> F {{ {exp} }}");
-            let (mut decls, errors) = parse_decls(&src);
+            parse_decls(&src)
+        };
+        let body = |exp: &str| {
+            let (mut decls, errors) = parse(exp);
             assert!(errors.is_empty(), "{exp}: {errors:?}");
             decls.remove(0).node.body.body().expect("a body")
         };
@@ -1615,14 +1562,34 @@ mod tests {
             };
             assert_eq!(range.step.is_some(), step, "{exp}");
         }
-        // A long size not followed by `..` or `, size ..` is an expression.
+        // A size not followed by `..` is an expression.
         let tree = body(&format!("x[{long}]"));
         let UExp::Ram(_, index) = tree.node() else {
             panic!("expected an index");
         };
         assert!(matches!(tree.exprs[*index], UExp::Bin(..)));
-        let tree = body(&format!("[{long}, {long}]"));
-        assert!(matches!(tree.node(), UExp::Vec(elems) if elems.len() == 2));
+        // Outside an index or a domain, `,` separates items: never a stepped range.
+        for exp in [
+            format!("[{long}, {long}]"),
+            "[x, 1..3]".into(),
+            "[0, 2..M]".into(),
+        ] {
+            let tree = body(&exp);
+            assert!(
+                matches!(tree.node(), UExp::Vec(elems) if elems.len() == 2),
+                "{exp}"
+            );
+        }
+        // A comprehension's domain takes a stepped range.
+        let tree = body("[i for i in 0, 2..M]");
+        let UExp::Map(_, _, domain) = tree.node() else {
+            panic!("expected a comprehension");
+        };
+        assert!(matches!(&tree.exprs[*domain], UExp::Range(r) if r.step.is_some()));
+        // A bound must be a size, and `,` in an index must start a stepped range.
+        for exp in ["x[f(M)..M]", "x[0, 1]"] {
+            assert!(!parse(exp).1.is_empty(), "{exp}");
+        }
     }
 
     #[test]

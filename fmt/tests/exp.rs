@@ -176,14 +176,13 @@ fn f<F: Field, N: Size>(instance x: [F; N]) -> [F; N] {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn range_concat_no_paren() {
-    // 0..3 ++ 0..2 — Concat is not a size_ty operator, so the range
-    // parser stops at ++ and the Bin applies correctly. No parens needed.
+fn range_concat_needs_paren() {
+    // `..` binds looser than every operator, so a range operand keeps its parens.
     assert_ok(
         "fn f<F: Field>(instance a: [F; 4]) -> F { (0..3) ++ (0..2) }",
         "\
 fn f<F: Field>(instance a: [F; 4]) -> F {
-    0..3 ++ 0..2
+    (0..3) ++ (0..2)
 }
 ",
     );

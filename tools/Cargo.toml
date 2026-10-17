@@ -1,0 +1,17 @@
+[package]
+name = "tools"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+# Internal developer tools; not part of the user-facing workspace binaries.
+[dependencies]
+lang = { path = "../lang" }
+share = { path = "../share" }
+graph = { path = "../graph" }
+backend = { path = "../backend" }
+
+[[bin]]
+# Stack use of the compile stages: minimum thread stack, largest frames.
+name = "stack-probe"
+path = "src/bin/stack-probe.rs"

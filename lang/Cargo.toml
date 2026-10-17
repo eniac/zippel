@@ -8,7 +8,6 @@ authors = ["Lef Ioannidis <elefthei@seas.upenn.edu>", "Alireza Shirzad <alrshir@
 share = { path = "../share" }
 lazy_static = "1.4.0"
 thiserror = "1.0.58"
-arbitrary = "1.4.1"
 num = "0.4.3"
 rand = { version = "0.8", features = ["std"] }
 logos = "0.14"
@@ -18,6 +17,7 @@ yansi = "1.0"
 lang-derive = { path = "./lang-derive" }
 
 [dev-dependencies]
+arbitrary = "1.4.1"
 arbtest = "0.3.1"
 insta = { version = "1.48", features = ["yaml"] }
 
