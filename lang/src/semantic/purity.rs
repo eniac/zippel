@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use crate::ast::{Exp, UExpr, URef};
+use crate::ast::{Exp, Stmt, UExpr, URef, Visit};
 use crate::diagnostic::Diagnostic;
 use lang_derive::Diagnostic as DiagnosticDerive;
 
@@ -27,11 +27,16 @@ struct ImpureRelation {
 /// span, in walk order.
 fn find_impure_constructs(exp: URef<'_>) -> Vec<(Range<usize>, &'static str)> {
     let mut found = Vec::new();
-    for e in exp.subexps() {
-        match e.node() {
-            Exp::Challenge(..) => found.push((e.span().clone(), "challenge")),
-            Exp::Verify(_) => found.push((e.span().clone(), "verify")),
-            Exp::Log(..) => found.push((e.span().clone(), "log")),
+    for visit in exp.walk() {
+        match visit {
+            Visit::Enter(e) => match e.node() {
+                Exp::Challenge(..) => found.push((e.span().clone(), "challenge")),
+                Exp::Verify(_) => found.push((e.span().clone(), "verify")),
+                _ => {}
+            },
+            Visit::EnterStmt(stmt) if matches!(stmt.node, Stmt::Log(..)) => {
+                found.push((stmt.span.clone(), "log"));
+            }
             _ => {}
         }
     }

@@ -20,7 +20,7 @@ use std::ops::Range;
 
 use crate::ast::decl::{Body, UDecl};
 use crate::ast::spanned::Spanned;
-use crate::ast::{Exp, ExpId, URef, Visit};
+use crate::ast::{Exp, ExpId, Stmt, URef, Visit};
 use crate::diagnostic::Diagnostic;
 use crate::id::Vid;
 use lang_derive::Diagnostic as DiagnosticDerive;
@@ -114,10 +114,10 @@ fn check_tree(exp: URef<'_>, args: &mut [Binding], out: &mut Vec<Diagnostic>) {
                     Exp::App(f, _) => mark_used(&f.node),
                     // `e;` with something after it discards a pure `e`: dead computation. A
                     // block's value, and a `<-`, are never dead.
-                    Exp::Block(stmts, tail) => {
-                        for (i, stmt) in stmts.iter().enumerate() {
-                            if let Exp::Discard(v) = e.at(stmt).node()
-                                && (i + 1 < stmts.len() || tail.is_some())
+                    Exp::Block(block) => {
+                        for (i, stmt) in block.stmts.iter().enumerate() {
+                            if let Stmt::Discard(v) = &stmt.node
+                                && (i + 1 < block.stmts.len() || block.tail.is_some())
                                 && is_pure_no_app(e.at(*v))
                             {
                                 dead.insert(*v);
@@ -127,6 +127,7 @@ fn check_tree(exp: URef<'_>, args: &mut [Binding], out: &mut Vec<Diagnostic>) {
                     _ => {}
                 }
             }
+            Visit::EnterStmt(_) | Visit::LeaveStmt(_) => {}
             Visit::Bind(x) => bound.push(Binding::new(x)),
             Visit::Leave(_) => {
                 while bound.len() > walk.bound().len() {

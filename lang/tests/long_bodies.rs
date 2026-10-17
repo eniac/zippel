@@ -74,7 +74,7 @@ fn block_and_statement_spans() {
     };
     for (src, texts, value) in cases {
         let block = body(src);
-        let Exp::Block(stmts, tail) = block.node() else {
+        let Exp::Block(block_body) = block.node() else {
             panic!("expected a block, got {:?}", block.node());
         };
         let end = value.map_or_else(
@@ -82,11 +82,11 @@ fn block_and_statement_spans() {
             |v| range(src, v).end,
         );
         assert_eq!(block.span(), &(range(src, texts[0]).start..end), "{src}");
-        let spans: Vec<_> = stmts.iter().map(|s| block.exprs.span(s).clone()).collect();
+        let spans: Vec<_> = block_body.stmts.iter().map(|s| s.span.clone()).collect();
         let expected: Vec<_> = texts.iter().map(|t| range(src, t)).collect();
         assert_eq!(spans, expected, "{src}");
         assert_eq!(
-            tail.map(|t| block.exprs.span(t).clone()),
+            block_body.tail.map(|t| block.exprs.span(t).clone()),
             value.map(|v| range(src, v)),
             "{src}"
         );

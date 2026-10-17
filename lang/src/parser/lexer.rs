@@ -92,7 +92,7 @@ pub enum Token<'src> {
     /// `..` — range separator in `start..end` and `start, step..end` size
     /// ranges (see `Fin<..>`).
     DotDot,
-    /// `<-` — transcript log binding, parsed into `UExp::Log`.
+    /// `<-` — transcript log binding, parsed into `Stmt::Log`.
     LArrow,
     /// `{|` — opens a record construction literal.
     LBraceBar,

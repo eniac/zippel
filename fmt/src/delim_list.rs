@@ -55,11 +55,6 @@ impl<'doc, 'style> DelimList<'doc, 'style> {
         }
     }
 
-    /// The arena this list's documents borrow.
-    pub(crate) fn allocator(&self) -> &'doc Arena<'doc> {
-        self.alloc
-    }
-
     /// Push an item with a leading gap. The gap is rendered with
     /// `gap_list` for the first item (with `trim_start` to strip blank
     /// lines after the open delimiter), `gap_none` for subsequent items.

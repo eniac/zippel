@@ -59,14 +59,13 @@ impl<C: HasOpFactory> UDag<C> {
                 self.add_exp(scope, *field_exp, None)
             }
             CExp::Var(var) => {
+                // Try to infer the record type to verify the field exists
+                let record_typ = scope.infer(record_exp)?;
                 let id_clone = var.clone();
                 let record_op = scope
                     .vars
                     .get(&id_clone)
                     .ok_or_else(|| GraphError::from(TypeError::IllTyped))?;
-
-                // Try to infer the record type to verify the field exists
-                let record_typ = scope.exprs.infer(record_exp, scope.kctx, &scope.vctx)?;
 
                 match &record_typ {
                     CTyp::Record(fields) => {

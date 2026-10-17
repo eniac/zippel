@@ -56,7 +56,7 @@ impl<C: HasOpFactory> UDag<C> {
                     }
                     continue;
                 }
-                Visit::Bind(_) => continue,
+                Visit::Bind(_) | Visit::EnterStmt(_) | Visit::LeaveStmt(_) => continue,
                 Visit::Leave(e) => e,
             };
             let value = match e.node() {

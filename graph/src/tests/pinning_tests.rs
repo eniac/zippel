@@ -284,7 +284,7 @@ fn pin_challenge() {
 // ============================================================================
 
 /// Let binding: `let c = a + b; c`.
-/// Tests: CExp::Let(Some), variable context update, op_from_var maps Vid → Ref(arg_or_node).
+/// Tests: Stmt::Let, variable context update, op_from_var maps Vid → Ref(arg_or_node).
 #[test]
 fn pin_let_named() {
     let src = r#"
@@ -321,7 +321,7 @@ fn pin_let_named() {
 }
 
 /// Anonymous let: `let _ = a + b; a * b`.
-/// Tests: CExp::Let(None), both sides evaluated, second is the result.
+/// Tests: Stmt::Discard, both sides evaluated, second is the result.
 #[test]
 fn pin_let_anon() {
     let src = r#"
@@ -398,7 +398,7 @@ fn pin_verify() {
 // ============================================================================
 
 /// Log with existing node reference: `a <- s + s; verify(a == s)`.
-/// Tests: CExp::Log (first branch), set_transcript, Node::Transcr.
+/// Tests: Stmt::Log (first branch), set_transcript, Node::Transcr.
 #[test]
 fn pin_log_node_ref() {
     let src = r#"
@@ -462,7 +462,7 @@ fn pin_log_node_ref() {
 }
 
 /// Log with non-node value: `a <- 1; verify(s == s)`.
-/// Tests: CExp::Log (second branch), new Transcr node creation.
+/// Tests: Stmt::Log (second branch), new Transcr node creation.
 #[test]
 fn pin_log_new_transcr() {
     let src = r#"
@@ -2474,7 +2474,7 @@ fn pin_error_fun_unbound_var() {
 // ============================================================================
 
 /// Deep nested let chain: verifies correct dependency chain.
-/// Tests: multiple CExp::Let(Some, ...) in sequence.
+/// Tests: multiple Stmt::Let in sequence.
 #[test]
 fn pin_nested_let_chain() {
     let src = r#"
@@ -3014,4 +3014,35 @@ fn pin_inlined_body_uses_the_callers_type_for_a_parameter() {
         .collect();
     assert_eq!(random_types, [arg_type("s")]);
     assert_ne!(arg_type("s"), arg_type("g"));
+}
+
+#[test]
+fn nested_resolved_calls_can_lower_the_same_typed_module_twice() {
+    let src = "
+        fn inner<T: Field>(instance p: Uni<T, 2>, instance x: T) -> T { p(x) }
+        fn inner<T: Field>(instance p: Uni<T, 4>, instance x: T) -> T { p(x) + 1 }
+        fn outer<U: Field>(instance p: Uni<U, 2>, instance x: U) -> U { inner(p, x) }
+        proto test<F: Field>(instance a: F)
+        where outer(poly([a]), a) == a {
+            verify(outer(poly([a]), a) == a)
+        }
+    ";
+    let typed = super::test_helpers::parse_and_check(src, &Ctx::new());
+    let lower = || UDags::<B>::lower(&typed, crate::Relations::Lower).unwrap();
+    let first = lower();
+    let second = lower();
+    assert_eq!(first.iter().len(), second.iter().len());
+    for (a, b) in first.iter().zip(second.iter()) {
+        assert!(a == b);
+        assert_eq!(
+            a.graph.node_weights().map(|n| &n.span).collect::<Vec<_>>(),
+            b.graph.node_weights().map(|n| &n.span).collect::<Vec<_>>(),
+        );
+    }
+    // The broader overload adds one; nested inlining must keep the more specific choice.
+    let expected = parse_and_build(&src.replace(
+        "fn inner<T: Field>(instance p: Uni<T, 4>, instance x: T) -> T { p(x) + 1 }",
+        "",
+    ));
+    assert!(first.protocols()[0] == expected.protocols()[0]);
 }
