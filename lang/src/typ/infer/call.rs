@@ -2,27 +2,27 @@
 //! among overloaded declarations.
 
 use super::*;
-use crate::ast::CExps;
 use crate::ast::sig::SigError;
 use crate::typ::CTyps;
 use crate::typ::instantiate::CallError;
 
-impl CExp {
+impl CRef<'_> {
     #[inline(never)]
     pub(super) fn infer_app(
-        &self,
+        self,
         id: &Spanned<Vid>,
-        params: &CExps,
+        params: &Exps,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        cx: &Cx<'_>,
     ) -> Result<CTyp, TypeError> {
         // type inference for each parameter
         let param_types: CTyps = params
             .iter()
             .map(|p| {
-                p.infer_with_calls(kctx, fctx, vctx, on_call)
+                self.at(p)
+                    .infer_in(kctx, fctx, vctx, cx)
                     .map(Spanned::dummy)
             })
             .collect::<Result<_, _>>()
@@ -39,14 +39,26 @@ impl CExp {
 
                 // Only field elements can be evaluated and only 1 argument can be given
                 if !k.is_scalar() || param_types.len() != 1 {
-                    return Err(TypeError::uni(kctx, vctx, &id.node, params, &param_types));
+                    return Err(TypeError::uni(
+                        kctx,
+                        vctx,
+                        &id.node,
+                        &self.trees(params),
+                        &param_types,
+                    ));
                 }
 
                 // The argument must fit the polynomial's field (integers embed)
                 if param_types.0[0].node.fits(&CTyp::Base(tbase.clone()), kctx) {
                     Ok(CTyp::base(tbase))
                 } else {
-                    Err(TypeError::uni(kctx, vctx, &id.node, params, &param_types))
+                    Err(TypeError::uni(
+                        kctx,
+                        vctx,
+                        &id.node,
+                        &self.trees(params),
+                        &param_types,
+                    ))
                 }
             }
             Some(CTyp::Poly(tbase, n, d)) if d.node == 1 => {
@@ -61,7 +73,7 @@ impl CExp {
                         kctx,
                         vctx,
                         &id.node,
-                        params,
+                        &self.trees(params),
                         &param_types,
                     ));
                 }
@@ -94,7 +106,7 @@ impl CExp {
                         kctx,
                         vctx,
                         &id.node,
-                        params,
+                        &self.trees(params),
                         &param_types,
                     )),
                 }
@@ -104,7 +116,7 @@ impl CExp {
                 let decls = fctx.iter().filter(|sig| sig.name.node == id.node);
                 let cause = match CSig::resolve_call(decls, &param_types, kctx) {
                     Ok((decl, sig, _)) => {
-                        on_call(decl);
+                        (cx.on_call)(decl);
                         return Ok(sig.ret.map_or(CTyp::Unit, |r| r.node));
                     }
                     Err(CallError::NoMatch(failures)) => {
@@ -128,13 +140,13 @@ impl CExp {
                                 fctx,
                                 id,
                                 param_types,
-                                params,
+                                &self.trees(params),
                                 unresolved,
                             )
                         }
                     }
                     Err(CallError::Ambiguous(tied)) => {
-                        TypeError::app_multiple(kctx, tied, id, param_types, params)
+                        TypeError::app_multiple(kctx, tied, id, param_types, &self.trees(params))
                     }
                 };
                 Err(TypeError::next(TypeError::exp(kctx, vctx, self), cause))

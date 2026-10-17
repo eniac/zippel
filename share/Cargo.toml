@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 im = "15"
+stacker = "0.1"
 
 # A launched program dies with its launcher: a parent-death signal on Linux,
 # a kill-on-close Job Object on Windows (`src/process.rs`).

@@ -2,22 +2,23 @@
 
 use super::*;
 
-impl CExp {
+impl CRef<'_> {
     #[inline(never)]
     pub(super) fn infer_record(
-        &self,
-        fields: &Ctx<Spanned<String>, Spanned<CExp>>,
+        self,
+        fields: &Ctx<Spanned<String>, ExpId>,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        cx: &Cx<'_>,
     ) -> Result<CTyp, TypeError> {
         let mut field_types = Ctx::new();
 
         // Infer the type of each field
         for (field_name, field_exp) in fields.iter() {
-            let field_typ = field_exp
-                .infer_with_calls(kctx, fctx, vctx, on_call)
+            let field_typ = self
+                .at(*field_exp)
+                .infer_in(kctx, fctx, vctx, cx)
                 .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
             field_types.insert(field_name, &Spanned::dummy(field_typ));
         }
@@ -27,17 +28,17 @@ impl CExp {
 
     #[inline(never)]
     pub(super) fn infer_proj(
-        &self,
-        record_exp: &Spanned<CExp>,
+        self,
+        record_exp: CRef<'_>,
         field_name: &Spanned<String>,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        cx: &Cx<'_>,
     ) -> Result<CTyp, TypeError> {
         // Infer the type of the record expression
         let record_typ = record_exp
-            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .infer_in(kctx, fctx, vctx, cx)
             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
         match record_typ {
@@ -63,18 +64,18 @@ impl CExp {
     #[allow(clippy::too_many_arguments)]
     #[inline(never)]
     pub(super) fn infer_set_record(
-        &self,
-        record_exp: &Spanned<CExp>,
+        self,
+        record_exp: CRef<'_>,
         field_name: &Spanned<String>,
-        value_exp: &Spanned<CExp>,
+        value_exp: CRef<'_>,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        cx: &Cx<'_>,
     ) -> Result<CTyp, TypeError> {
         // Infer the type of the record expression (must be a record)
         let record_typ = record_exp
-            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .infer_in(kctx, fctx, vctx, cx)
             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
         let CTyp::Record(fields) = &record_typ else {
             return Err(TypeError::next(
@@ -90,17 +91,17 @@ impl CExp {
             )
         })?;
         let value_typ = value_exp
-            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .infer_in(kctx, fctx, vctx, cx)
             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
         if !value_typ.fits(field_typ, kctx) {
             return Err(TypeError::next(
                 TypeError::exp(kctx, vctx, self),
                 TypeError::located(
-                    &value_exp.span,
+                    value_exp.span(),
                     TypeError::field_update(
                         kctx,
                         vctx,
-                        &value_exp.node,
+                        value_exp,
                         &field_name.node,
                         field_typ,
                         &value_typ,

@@ -10,13 +10,16 @@ mod vector;
 
 pub use error::TypeError;
 
+use std::cell::RefCell;
+
 use num::{BigUint, ToPrimitive};
 
 use crate::ast::range::Range;
 use crate::ast::sig::CSig;
 use crate::ast::spanned::Spanned;
-use crate::ast::{BinOp, CBody, CExp, Exclusion, ExpExclusion};
+use crate::ast::{BinOp, CBody, CExp, CExpr, CRef, Exclusion, ExpExclusion, ExpId, Exps, Stmt};
 use crate::id::{Tid, Vid};
+use crate::stack_guard;
 use crate::typ::lub::{Lub, LubError};
 use crate::typ::{CKind, CTyp};
 use share::{Ctx, Set};
@@ -65,25 +68,44 @@ pub trait Typeable {
     ) -> Result<CTyp, TypeError>;
 }
 
-/// Recursive calls on spanned children resolve here (auto-deref stops at `Spanned<T>`), so a
-/// failure is tagged with the span of the innermost spanned expression on its path.
-impl<T: Typeable> Typeable for Spanned<T> {
-    type Context = T::Context;
-    fn infer_with_calls(
-        &self,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Set<CSig>,
-        vctx: &Self::Context,
-        on_call: &dyn Fn(&CSig),
-    ) -> Result<CTyp, TypeError> {
-        self.node
-            .infer_with_calls(kctx, fctx, vctx, on_call)
-            .map_err(|e| TypeError::located(&self.span, e))
+/// The types of the nodes of one arena, recorded as inference reaches them, so that inferring a
+/// node again, or a new node built over them, does not re-infer their subtrees. Lowering infers
+/// every node it lowers; without the table that is quadratic in the nesting depth.
+///
+/// A node is looked up by id alone, so every inference sharing a table must see each node
+/// under the same contexts, as lowering does: a node's scope is fixed by its place in the tree.
+#[derive(Debug, Default)]
+pub struct TypeTable(RefCell<Vec<Option<CTyp>>>);
+
+impl TypeTable {
+    /// An empty table.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn get(&self, id: ExpId) -> Option<CTyp> {
+        self.0.borrow().get(id.index()).cloned().flatten()
+    }
+
+    fn insert(&self, id: ExpId, typ: &CTyp) {
+        let mut types = self.0.borrow_mut();
+        if types.len() <= id.index() {
+            types.resize(id.index() + 1, None);
+        }
+        types[id.index()] = Some(typ.clone());
     }
 }
 
-/// Type inference for [CExp]
-impl Typeable for CExp {
+/// What inference carries to every node besides the typing contexts.
+pub(crate) struct Cx<'a> {
+    /// Told the declaration each function call resolves to.
+    on_call: &'a dyn Fn(&CSig),
+    /// Types already inferred, when the caller keeps them.
+    types: Option<&'a TypeTable>,
+}
+
+impl Typeable for CRef<'_> {
     type Context = Ctx<Vid, CTyp>;
     fn infer_with_calls(
         &self,
@@ -92,7 +114,90 @@ impl Typeable for CExp {
         vctx: &Self::Context,
         on_call: &dyn Fn(&CSig),
     ) -> Result<CTyp, TypeError> {
-        match self {
+        self.infer_in(
+            kctx,
+            fctx,
+            vctx,
+            &Cx {
+                on_call,
+                types: None,
+            },
+        )
+    }
+}
+
+impl CRef<'_> {
+    /// [`Typeable::infer`], reusing and extending `types`.
+    ///
+    /// # Errors
+    /// Returns the same errors as [`Typeable::infer`].
+    pub fn infer_cached(
+        self,
+        kctx: &Ctx<Tid, CKind>,
+        fctx: &Set<CSig>,
+        vctx: &Ctx<Vid, CTyp>,
+        types: &TypeTable,
+    ) -> Result<CTyp, TypeError> {
+        self.infer_in(
+            kctx,
+            fctx,
+            vctx,
+            &Cx {
+                on_call: &|_| {},
+                types: Some(types),
+            },
+        )
+    }
+
+    /// Every node is inferred through here: it guards the stack, which recursion on nested
+    /// expressions grows (issue #252), and tags a failure with the span of the innermost
+    /// spanned expression on its path.
+    #[stack_guard]
+    fn infer_in(
+        self,
+        kctx: &Ctx<Tid, CKind>,
+        fctx: &Set<CSig>,
+        vctx: &Ctx<Vid, CTyp>,
+        cx: &Cx<'_>,
+    ) -> Result<CTyp, TypeError> {
+        if let Some(typ) = cx.types.and_then(|types| types.get(self.id())) {
+            return Ok(typ);
+        }
+        let typ = self
+            .infer_node(kctx, fctx, vctx, cx)
+            .map_err(|e| TypeError::located(self.span(), e))?;
+        if let Some(types) = cx.types {
+            types.insert(self.id(), &typ);
+        }
+        Ok(typ)
+    }
+}
+
+/// A tree is inferred from its root.
+impl Typeable for CExpr {
+    type Context = Ctx<Vid, CTyp>;
+    fn infer_with_calls(
+        &self,
+        kctx: &Ctx<Tid, CKind>,
+        fctx: &Set<CSig>,
+        vctx: &Self::Context,
+        on_call: &dyn Fn(&CSig),
+    ) -> Result<CTyp, TypeError> {
+        self.root().infer_with_calls(kctx, fctx, vctx, on_call)
+    }
+}
+
+impl CRef<'_> {
+    /// The type of this node, its children inferred under the same contexts.
+    fn infer_node(
+        self,
+        kctx: &Ctx<Tid, CKind>,
+        fctx: &Set<CSig>,
+        vctx: &Ctx<Vid, CTyp>,
+        cx: &Cx<'_>,
+    ) -> Result<CTyp, TypeError> {
+        let at = |id: &ExpId| self.at(*id);
+        match self.node() {
             // A literal that is a valid finite index has the singleton type `Fin<n>`; a larger
             // one is only meaningful in a field, so its full value is kept for lowering.
             CExp::Lit(n) => Ok(match n.to_usize() {
@@ -105,40 +210,40 @@ impl Typeable for CExp {
 
             // Unary: FFT-grid interpolation; binary: explicit points + evaluations
             CExp::Interpolate(points_opt, evals) => {
-                self.infer_interpolate(points_opt.as_deref(), evals, kctx, fctx, vctx, on_call)
+                self.infer_interpolate(points_opt.as_ref().map(at), at(evals), kctx, fctx, vctx, cx)
             }
 
             // `poly(v: [F; k])` with `k >= 1` yields `Poly<F, 1, k - 1>`
             // (degree convention: `m = k - 1`).
-            CExp::Poly(v) => self.infer_poly(v, kctx, fctx, vctx, on_call),
+            CExp::Poly(v) => self.infer_poly(at(v), kctx, fctx, vctx, cx),
 
             // `coef(p: Poly<F, 1, m>)` yields `[F; m + 1]` (coefficient count
             // is degree + 1 under the Phase 14 degree convention).
-            CExp::Coef(p) => self.infer_coef(p, kctx, fctx, vctx, on_call),
+            CExp::Coef(p) => self.infer_coef(at(p), kctx, fctx, vctx, cx),
 
             CExp::Evaluate(p, selector, opt_points) => self.infer_evaluate(
-                p,
+                at(p),
                 selector.as_ref(),
-                opt_points.as_deref(),
+                opt_points.as_ref().map(at),
                 kctx,
                 fctx,
                 vctx,
-                on_call,
+                cx,
             ),
 
             // Infer the type of an MLE from 2^n evaluations in a bool hypercube (as a vector)
-            CExp::Mle(v) => self.infer_mle(v, kctx, fctx, vctx, on_call),
+            CExp::Mle(v) => self.infer_mle(at(v), kctx, fctx, vctx, cx),
 
             // Infer the type of a (nonempty) vector by unifying the types of its elements
-            CExp::Vec(v) => self.infer_vec(v, kctx, fctx, vctx, on_call),
+            CExp::Vec(v) => self.infer_vec(v, kctx, fctx, vctx, cx),
 
-            CExp::Pair(t, e) => self.infer_pair(t, e, kctx, fctx, vctx, on_call),
+            CExp::Pair(t, e) => self.infer_pair(at(t), at(e), kctx, fctx, vctx, cx),
 
-            CExp::Bin(op, a, b) => self.infer_bin(*op, a, b, kctx, fctx, vctx, on_call),
+            CExp::Bin(op, a, b) => self.infer_bin(*op, at(a), at(b), kctx, fctx, vctx, cx),
 
             // Unary negation: a negated integer is only meaningful in a field; every other
             // operand keeps its type.
-            CExp::Neg(a) => self.infer_neg(a, kctx, fctx, vctx, on_call),
+            CExp::Neg(a) => self.infer_neg(at(a), kctx, fctx, vctx, cx),
 
             // Range expression
             CExp::Range(r) => {
@@ -150,9 +255,9 @@ impl Typeable for CExp {
             }
 
             // Map comprehension
-            CExp::Map(x, id, r) => self.infer_map(x, id, r, kctx, fctx, vctx, on_call),
+            CExp::Map(x, id, r) => self.infer_map(at(x), id, at(r), kctx, fctx, vctx, cx),
 
-            CExp::Reduce(op, v) => self.infer_reduce(*op, v, kctx, fctx, vctx, on_call),
+            CExp::Reduce(op, v) => self.infer_reduce(*op, at(v), kctx, fctx, vctx, cx),
             // Variable context lookup
             CExp::Var(id) => vctx
                 .get(&id.node)
@@ -161,97 +266,90 @@ impl Typeable for CExp {
 
             // Random oracle challenge
             CExp::Challenge(t, x) | CExp::Random(t, x) => {
-                self.infer_sample(t, x.as_ref(), kctx, fctx, vctx, on_call)
+                self.infer_sample(t, x.as_ref(), kctx, fctx, vctx, cx)
             }
 
             // Random access into vectors
-            CExp::Ram(a, b) => self.infer_ram(a, b, kctx, fctx, vctx, on_call),
+            CExp::Ram(a, b) => self.infer_ram(at(a), at(b), kctx, fctx, vctx, cx),
 
             // Function or polynomial application
-            CExp::App(id, params) => self.infer_app(id, params, kctx, fctx, vctx, on_call),
+            CExp::App(id, params) => self.infer_app(id, params, kctx, fctx, vctx, cx),
 
-            CExp::Verify(exp) => self.infer_verify(exp, kctx, fctx, vctx, on_call),
+            CExp::Verify(exp) => self.infer_verify(at(exp), kctx, fctx, vctx, cx),
 
-            CExp::Let(..) | CExp::Log(..) => self.infer_chain(kctx, fctx, vctx, on_call),
+            CExp::Block(stmts, tail) => {
+                self.infer_block(stmts, tail.as_ref().map(at), kctx, fctx, vctx, cx)
+            }
 
-            CExp::Fun(vars, body) => self.infer_fun(vars, body, kctx, fctx, vctx, on_call),
+            CExp::Fun(vars, body) => self.infer_fun(vars, at(body), kctx, fctx, vctx, cx),
 
-            CExp::Record(fields) => self.infer_record(fields, kctx, fctx, vctx, on_call),
+            CExp::Record(fields) => self.infer_record(fields, kctx, fctx, vctx, cx),
 
             CExp::Proj(record_exp, field_name) => {
-                self.infer_proj(record_exp, field_name, kctx, fctx, vctx, on_call)
+                self.infer_proj(at(record_exp), field_name, kctx, fctx, vctx, cx)
             }
 
-            CExp::SetRecord(record_exp, field_name, value_exp) => {
-                self.infer_set_record(record_exp, field_name, value_exp, kctx, fctx, vctx, on_call)
-            }
+            CExp::SetRecord(record_exp, field_name, value_exp) => self.infer_set_record(
+                at(record_exp),
+                field_name,
+                at(value_exp),
+                kctx,
+                fctx,
+                vctx,
+                cx,
+            ),
         }
     }
 }
 
-/// The match arms of [`CExp::infer_with_calls`], one function each (the larger groups live in
+/// The match arms of `CRef::infer_node`, one function each (the larger groups live in
 /// the `call`, `poly`, `record` and `vector` submodules). Debug builds give every arm's locals
 /// their own stack slots, so keeping them out of the dispatcher keeps each level of expression
 /// nesting to a small frame (issue #252).
-impl CExp {
-    /// Infers a `let`/`<-`/`;` chain in a loop, so stack depth does not grow with its length.
-    /// A failure is located as the `Spanned` wrapper of each chain node would locate it, at the
-    /// innermost non-empty span among the nodes below `self` (the caller's wrapper adds `self`'s).
+impl CRef<'_> {
+    /// Infers a block: each statement in order, with its `let`/`<-` variable bound for the rest
+    /// of the block, then the block's value (`()` without one). A failure without a span of its
+    /// own is located at its statement.
     #[inline(never)]
-    fn infer_chain(
-        &self,
+    fn infer_block(
+        self,
+        stmts: &[Spanned<Stmt>],
+        tail: Option<CRef<'_>>,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        cx: &Cx<'_>,
     ) -> Result<CTyp, TypeError> {
         let mut vctx = vctx.clone();
-        let mut span = 0..0;
-        let mut exp = self;
-        loop {
-            let (var, left, right) = match exp {
-                CExp::Let(var, left, right) => (var.as_ref(), left, right),
-                CExp::Log(var, left, right) => (Some(var), left, right),
-                // The chain's tail: its value is the chain's value.
-                _ => {
-                    return exp
-                        .infer_with_calls(kctx, fctx, &vctx, on_call)
-                        .map_err(|e| TypeError::located(&span, e));
-                }
-            };
-            let tleft = left
-                .infer_with_calls(kctx, fctx, &vctx, on_call)
-                .map_err(|e| TypeError::located(&span, e))?;
-            if let Some(var) = var {
-                vctx.insert(&var.node, &tleft);
+        for stmt in stmts {
+            let t = self
+                .at(stmt.node.value())
+                .infer_in(kctx, fctx, &vctx, cx)
+                .map_err(|e| TypeError::located(&stmt.span, e))?;
+            if let Some(var) = stmt.node.binder() {
+                vctx.insert(&var.node, &t);
             }
-            let Some(right) = right else {
-                return Ok(CTyp::Unit);
-            };
-            if !right.span.is_empty() {
-                span = right.span.clone();
-            }
-            exp = &right.node;
         }
+        tail.map_or(Ok(CTyp::Unit), |tail| tail.infer_in(kctx, fctx, &vctx, cx))
     }
 
     #[allow(clippy::too_many_arguments)]
     #[inline(never)]
     fn infer_bin(
-        &self,
+        self,
         op: BinOp,
-        a: &Spanned<CExp>,
-        b: &Spanned<CExp>,
+        a: CRef<'_>,
+        b: CRef<'_>,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        cx: &Cx<'_>,
     ) -> Result<CTyp, TypeError> {
         let ta = a
-            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .infer_in(kctx, fctx, vctx, cx)
             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
         let tb = b
-            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .infer_in(kctx, fctx, vctx, cx)
             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
         let t = CTyp::lub_op(op, &ta, &tb, kctx)
@@ -263,19 +361,19 @@ impl CExp {
 
     #[inline(never)]
     fn infer_pair(
-        &self,
-        t: &Spanned<CExp>,
-        e: &Spanned<CExp>,
+        self,
+        t: CRef<'_>,
+        e: CRef<'_>,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        cx: &Cx<'_>,
     ) -> Result<CTyp, TypeError> {
         let ta = t
-            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .infer_in(kctx, fctx, vctx, cx)
             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
         let tb = e
-            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .infer_in(kctx, fctx, vctx, cx)
             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
         CTyp::lub_pair(&ta, &tb, kctx)
@@ -284,15 +382,15 @@ impl CExp {
 
     #[inline(never)]
     fn infer_neg(
-        &self,
-        a: &Spanned<CExp>,
+        self,
+        a: CRef<'_>,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        cx: &Cx<'_>,
     ) -> Result<CTyp, TypeError> {
         let t = a
-            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .infer_in(kctx, fctx, vctx, cx)
             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
         Ok(match t {
             CTyp::Fin(_) | CTyp::FieldLiteral => CTyp::FieldLiteral,
@@ -302,13 +400,13 @@ impl CExp {
 
     #[inline(never)]
     fn infer_sample(
-        &self,
+        self,
         t: &Spanned<Tid>,
         x: Option<&Spanned<ExpExclusion<BigUint>>>,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        cx: &Cx<'_>,
     ) -> Result<CTyp, TypeError> {
         // What kind of [t]?
         let k = kctx.get(&t.node).ok_or(TypeError::lub(
@@ -331,14 +429,15 @@ impl CExp {
             }
             // A vector of `t` values.
             Some((Exclusion::Values(v), _)) => {
+                let v = self.at(*v);
                 let tv = v
-                    .infer_with_calls(kctx, fctx, vctx, on_call)
+                    .infer_in(kctx, fctx, vctx, cx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let of_typ =
                     |elem: &CTyp| CTyp::lub_equ(elem, &typ, kctx).is_ok_and(|elem| elem == typ);
                 if !matches!(&tv, CTyp::Vec(elem, _) if of_typ(&elem.node)) {
                     return Err(TypeError::located(
-                        &v.span,
+                        v.span(),
                         TypeError::exclusion_type(kctx, vctx, &t.node, &tv),
                     ));
                 }
@@ -350,21 +449,21 @@ impl CExp {
 
     #[inline(never)]
     fn infer_verify(
-        &self,
-        exp: &Spanned<CExp>,
+        self,
+        exp: CRef<'_>,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
         vctx: &Ctx<Vid, CTyp>,
-        on_call: &dyn Fn(&CSig),
+        cx: &Cx<'_>,
     ) -> Result<CTyp, TypeError> {
         let t = exp
-            .infer_with_calls(kctx, fctx, vctx, on_call)
+            .infer_in(kctx, fctx, vctx, cx)
             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
         // The operand must be Bool (not Vec<Bool>)
         if t != CTyp::Bool {
             return Err(TypeError::located(
-                &exp.span,
+                exp.span(),
                 TypeError::condition(kctx, vctx, self, &t),
             ));
         }
@@ -394,9 +493,10 @@ impl Typeable for CBody {
                 if let Some(body) = body {
                     let tbody = body.infer_with_calls(kctx, fctx, &vctx.clone(), on_call)?;
                     if tbody != CTyp::Unit {
+                        let last = tail(body.root());
                         return Err(TypeError::located(
-                            &tail(body).span,
-                            TypeError::unit(kctx, vctx, tail(body), &tbody),
+                            last.span(),
+                            TypeError::unit(kctx, vctx, last, &tbody),
                         ));
                     }
                 }
@@ -412,10 +512,10 @@ impl Typeable for CBody {
     }
 }
 
-/// The expression a `let`/`<-`/`;` chain ends in: its value is the chain's value.
-pub(crate) fn tail(mut e: &Spanned<CExp>) -> &Spanned<CExp> {
-    while let CExp::Let(_, _, Some(rest)) | CExp::Log(_, _, Some(rest)) = &e.node {
-        e = rest;
+/// The expression a block ends in, through nested blocks: its value is the block's value.
+pub(crate) fn tail(mut e: CRef<'_>) -> CRef<'_> {
+    while let CExp::Block(_, Some(value)) = e.node() {
+        e = e.at(*value);
     }
     e
 }

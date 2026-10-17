@@ -10,6 +10,8 @@ pub mod macros;
 /// Launch an external program so that it dies with the process that launched it.
 pub mod process;
 /// Run a closure on a scoped thread with a larger-than-default stack.
+pub mod stack;
+
 pub mod thread;
 /// Generic structure-to-subfield walkers, used by the `lang` and `graph` passes.
 pub mod traversal;

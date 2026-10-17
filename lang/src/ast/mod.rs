@@ -22,7 +22,8 @@ pub use arg::{Arg, Args, CArg, CArgs, GArg, GArgs};
 pub use decl::{Body, CBody};
 pub use exclusion::Exclusion;
 pub use exp::{
-    BinOp, CExp, CExps, Exp, ExpExclusion, ExpLiteral, ExpTraversal, Exps, FreeVars, UExp, UExps,
+    BinOp, CExp, CExpr, CExps, CRef, Exp, ExpExclusion, ExpId, ExpLiteral, ExpRef, ExpTraversal,
+    Expr, Exprs, Exps, FreeVars, Stmt, UExp, UExpr, UExps, URef,
 };
 pub use minimal_sizes::{
     MAX_DEFAULT_SIZE, SizeRejection, SizeSearchError, SizeSearchLimit, SizeSearchStage,

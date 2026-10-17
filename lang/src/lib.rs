@@ -24,3 +24,4 @@ pub mod semantic;
 /// Source-level types, kinds, least-upper-bounds, unification, and inference.
 pub mod typ;
 pub use ast::spanned::Spanned;
+pub use lang_derive::stack_guard;
