@@ -873,7 +873,7 @@ fn test_phase14_mle_rejects_non_pow2_sweep() {
         let e = mle(varstr(vname.as_str()));
         let result = e.infer(&KIND_CTX, &fctx, &vctx);
         assert!(
-            matches!(result, Err(TypeError::Mle(_, _, _))),
+            matches!(result, Err(TypeError::Mle)),
             "mle([F; {k}]) (non-pow2) must be rejected with TypeError::Mle. \
                  Got: {result:?}",
         );
@@ -922,7 +922,7 @@ fn test_phase14_evaluate_grid_reject_sweep() {
         let e = evaluate_grid(varstr(pname.as_str()));
         let result = e.infer(&KIND_CTX, &fctx, &vctx);
         assert!(
-            matches!(result, Err(TypeError::EvaluateGridNotPow2(_, _, _, _, _))),
+            matches!(result, Err(TypeError::EvaluateGridNotPow2(_))),
             "eval(Poly<F, 1, {m}>) has {} coefficients (not pow2); infer() \
                  must reject with EvaluateGridNotPow2. Got: {result:?}",
             m + 1,
@@ -964,7 +964,7 @@ fn test_phase14_interpolate_unary_reject_sweep() {
         let e = interpolate_grid(v);
         let result = e.infer(&KIND_CTX, &fctx, &vctx);
         assert!(
-            matches!(result, Err(TypeError::InterpolateUnaryNotPow2(_, _, _, _))),
+            matches!(result, Err(TypeError::InterpolateUnaryNotPow2(_))),
             "interpolate([F; {n}]) (non-pow2) must be rejected with \
                  InterpolateUnaryNotPow2. Got: {result:?}",
         );
@@ -1517,7 +1517,7 @@ fn test_eval_univariate_vector_rejected() {
     assert!(
         matches!(
             banned.infer(&KIND_CTX, &fctx, &vctx),
-            Err(TypeError::EvaluateUnivariateVector(_, _, _, _))
+            Err(TypeError::EvaluateUnivariateVector)
         ),
         "eval(Poly<F,1,_>, [F; k]) must be rejected with EvaluateUnivariateVector, got {:?}",
         banned.infer(&KIND_CTX, &fctx, &vctx)

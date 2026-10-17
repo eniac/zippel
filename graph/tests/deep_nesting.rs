@@ -2,7 +2,7 @@
 //! a small thread's and time linear in the nesting depth (issue #252).
 
 use backend::ArkBls12_381;
-use graph::UDags;
+use graph::{Relations, UDags};
 use lang::ast::UModule;
 use share::Ctx;
 
@@ -34,9 +34,8 @@ fn module_compiles_on_small_stack(src: String) {
                 .expect("parses")
                 .concretize(&Ctx::new())
                 .expect("concretizes");
-            let diags = module.typecheck();
-            assert!(diags.is_empty(), "{diags:?}");
-            let dags = UDags::<ArkBls12_381>::from_module(module).expect("lowers");
+            let module = module.typecheck().expect("type-checks");
+            let dags = UDags::<ArkBls12_381>::lower(&module, Relations::Lower).expect("lowers");
             for dag in dags.protocols() {
                 dag.project_prover();
                 dag.project_verifier().expect("projects");
@@ -98,7 +97,7 @@ fn deep_type_error_is_reported() {
                 .expect("parses")
                 .concretize(&Ctx::new())
                 .expect("concretizes");
-            let diags = module.typecheck();
+            let diags = module.typecheck().expect_err("a type error");
             assert_eq!(diags.len(), 1, "{diags:?}");
             // Located at the failing `g + r`, not the whole sum.
             let start = src.find("g + r").expect("in the source");

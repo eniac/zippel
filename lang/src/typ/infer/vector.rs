@@ -5,7 +5,7 @@ use crate::typ::CTyps;
 
 impl CRef<'_> {
     pub(super) fn infer_vec(self, v: &Exps, env: &Env<'_>) -> Result<CTyp, TypeError> {
-        let Env { kctx, vctx, .. } = *env;
+        let Env { kctx, .. } = *env;
         let ts: CTyps = v
             .iter()
             .map(|e| Spanned::dummy(env.typ(self.at(e))))
@@ -13,7 +13,7 @@ impl CRef<'_> {
 
         // Vectors cannot be empty for type inference to work
         if ts.is_empty() {
-            return Err(TypeError::vec_empty(kctx, vctx));
+            return Err(TypeError::VecEmpty);
         }
 
         // For reference, the type of the first element
@@ -21,15 +21,11 @@ impl CRef<'_> {
 
         // Unify types of all elements in the vector to [t]
         for (i, tx) in ts.0.iter().enumerate().skip(1) {
-            t = CTyp::lub_equ(&t, tx, kctx).map_err(|e| {
-                TypeError::vec(
-                    kctx,
-                    vctx,
-                    self.at(v[i]),
-                    tx,
-                    self.at(v[0]),
-                    &ts.0[0],
-                    e.into(),
+            t = CTyp::lub_equ(&t, tx, kctx).map_err(|_| {
+                TypeError::Vec(
+                    kctx.clone(),
+                    Spanned::new(tx.node.clone(), self.at(v[i]).span().clone()),
+                    Spanned::new(ts.0[0].node.clone(), self.at(v[0]).span().clone()),
                 )
             })?;
         }
@@ -43,17 +39,11 @@ impl CRef<'_> {
 
     /// The type of the binder `id` of comprehension `[x for id in r]`: an element of the
     /// nonempty vector `r`; checked once `r` is typed, before `x` is.
-    pub(super) fn map_elem(
-        self,
-        x: CRef<'_>,
-        id: &Spanned<Vid>,
-        r: CRef<'_>,
-        env: &Env<'_>,
-    ) -> Result<CTyp, TypeError> {
-        let Env { kctx, vctx, .. } = *env;
+    pub(super) fn map_elem(self, r: CRef<'_>, env: &Env<'_>) -> Result<CTyp, TypeError> {
+        let Env { kctx, .. } = *env;
         match env.typ(r) {
             CTyp::Vec(inner, n) if n.node > 0 => Ok(inner.node),
-            tr => Err(TypeError::map(kctx, vctx, x, &id.node, r, &tr)),
+            tr => Err(TypeError::Map(kctx.clone(), tr.clone())),
         }
     }
 
@@ -71,7 +61,7 @@ impl CRef<'_> {
         v: CRef<'_>,
         env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        let Env { kctx, vctx, .. } = *env;
+        let Env { kctx, .. } = *env;
         let tv = env.typ(v);
 
         match tv {
@@ -82,41 +72,28 @@ impl CRef<'_> {
                     && let CTyp::Poly(_, _, d) = &elem.node
                 {
                     // Validate the pairwise multiplication under the kind context first.
-                    let res_t = CTyp::lub_op(op, &elem, &elem, kctx)
-                        .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+                    let res_t = CTyp::lub_op(op, &elem, &elem, kctx).map_err(TypeError::from)?;
                     if let CTyp::Poly(res_a, num_vars, _) = res_t {
                         let degree = d.checked_mul(n.node).ok_or_else(|| {
-                            TypeError::lub(
-                                TypeError::exp(kctx, vctx, self),
-                                LubError::DegreeOverflow(d.node, n.node),
-                            )
+                            TypeError::from(LubError::DegreeOverflow(d.node, n.node))
                         })?;
                         return Ok(CTyp::Poly(res_a, num_vars, Spanned::dummy(degree)));
                     }
                 }
 
-                let result = CTyp::lub_op(op, &elem, &elem, kctx)
-                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+                let result = CTyp::lub_op(op, &elem, &elem, kctx).map_err(TypeError::from)?;
                 if result == elem.node {
                     Ok(elem.node.clone())
                 } else {
-                    Err(TypeError::next(
-                        TypeError::exp(kctx, vctx, self),
-                        TypeError::ReduceAcc(
-                            kctx.clone(),
-                            vctx.clone(),
-                            op,
-                            self.to_expr(),
-                            elem.node.clone(),
-                            result,
-                        ),
+                    Err(TypeError::ReduceAcc(
+                        kctx.clone(),
+                        op,
+                        elem.node.clone(),
+                        result,
                     ))
                 }
             }
-            _ => Err(TypeError::next(
-                TypeError::exp(kctx, vctx, self),
-                TypeError::reduce(kctx, vctx, op, v, &tv),
-            )),
+            _ => Err(TypeError::Reduce(kctx.clone(), tv.clone())),
         }
     }
 
@@ -126,7 +103,7 @@ impl CRef<'_> {
         b: CRef<'_>,
         env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        let Env { kctx, vctx, .. } = *env;
+        let Env { kctx, .. } = *env;
         let ta = env.typ(a);
         let tb = env.typ(b);
 
@@ -142,26 +119,37 @@ impl CRef<'_> {
         };
         match (&ta, &tb) {
             // An integer beyond the finite-index range is never reduced to an index.
-            (_, CTyp::FieldLiteral) => Err(TypeError::located(
-                b.span(),
-                TypeError::FiniteIndexOverflow(kctx.clone(), vctx.clone(), self.to_expr()),
-            )),
+            (_, CTyp::FieldLiteral) => {
+                Err(TypeError::located(b.span(), TypeError::FiniteIndexOverflow))
+            }
             (CTyp::Vec(typ, n), CTyp::Fin(r)) => {
                 if in_bounds(r, n.node) {
                     Ok(typ.node.clone())
                 } else {
-                    Err(TypeError::ram(kctx, vctx, self, ta, tb))
+                    Err(TypeError::Ram(
+                        kctx.clone(),
+                        Spanned::new(ta.clone(), a.span().clone()),
+                        Spanned::new(tb.clone(), b.span().clone()),
+                    ))
                 }
             }
             (CTyp::Vec(typ, n), CTyp::Vec(CTyp::Fin(r), m)) => {
                 if in_bounds(r, n.node) {
                     Ok(CTyp::vec(&typ.node, m.node))
                 } else {
-                    Err(TypeError::ram(kctx, vctx, self, ta, tb))
+                    Err(TypeError::Ram(
+                        kctx.clone(),
+                        Spanned::new(ta.clone(), a.span().clone()),
+                        Spanned::new(tb.clone(), b.span().clone()),
+                    ))
                 }
             }
             // Index is not Fin-typed → dynamic RAM, unsupported.
-            _ => Err(TypeError::ram_dynamic_index(kctx, vctx, self, ta, tb)),
+            _ => Err(TypeError::RamDynamicIndex(
+                kctx.clone(),
+                Spanned::new(ta.clone(), a.span().clone()),
+                Spanned::new(tb.clone(), b.span().clone()),
+            )),
         }
     }
 }

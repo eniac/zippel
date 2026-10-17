@@ -25,7 +25,7 @@ impl CRef<'_> {
         field_name: &Spanned<String>,
         env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        let Env { kctx, vctx, .. } = *env;
+        let Env { kctx, .. } = *env;
         // Infer the type of the record expression
         let record_typ = env.typ(record_exp);
 
@@ -35,21 +35,12 @@ impl CRef<'_> {
                 fields
                     .get(field_name)
                     .map(|f| f.node.clone())
-                    .ok_or_else(|| {
-                        TypeError::next(
-                            TypeError::exp(kctx, vctx, self),
-                            TypeError::field_not_found(kctx, vctx, record_exp, &field_name.node),
-                        )
-                    })
+                    .ok_or_else(|| TypeError::FieldNotFound(field_name.node.clone()))
             }
-            _ => Err(TypeError::next(
-                TypeError::exp(kctx, vctx, self),
-                TypeError::not_a_record(kctx, vctx, record_exp, &record_typ),
-            )),
+            _ => Err(TypeError::NotARecord(kctx.clone(), record_typ.clone())),
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     /// The type of field `field_name` of record `record_exp`, which a `.set` updates; checked
     /// once the record is typed, before the new value is.
     pub(super) fn record_field(
@@ -58,23 +49,15 @@ impl CRef<'_> {
         field_name: &Spanned<String>,
         env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        let Env { kctx, vctx, .. } = *env;
+        let Env { kctx, .. } = *env;
         let record_typ = env.typ(record_exp);
         let CTyp::Record(fields) = &record_typ else {
-            return Err(TypeError::next(
-                TypeError::exp(kctx, vctx, self),
-                TypeError::not_a_record(kctx, vctx, record_exp, &record_typ),
-            ));
+            return Err(TypeError::NotARecord(kctx.clone(), record_typ.clone()));
         };
         fields
             .get(field_name)
             .map(|f| f.node.clone())
-            .ok_or_else(|| {
-                TypeError::next(
-                    TypeError::exp(kctx, vctx, self),
-                    TypeError::field_not_found(kctx, vctx, record_exp, &field_name.node),
-                )
-            })
+            .ok_or_else(|| TypeError::FieldNotFound(field_name.node.clone()))
     }
 
     /// `record_exp.set(field_name, value_exp)`: the same record, with a value that fits the
@@ -86,22 +69,17 @@ impl CRef<'_> {
         value_exp: CRef<'_>,
         env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
-        let Env { kctx, vctx, .. } = *env;
+        let Env { kctx, .. } = *env;
         let field_typ = self.record_field(record_exp, field_name, env)?;
         let value_typ = env.typ(value_exp);
         if !value_typ.fits(&field_typ, kctx) {
-            return Err(TypeError::next(
-                TypeError::exp(kctx, vctx, self),
-                TypeError::located(
-                    value_exp.span(),
-                    TypeError::field_update(
-                        kctx,
-                        vctx,
-                        value_exp,
-                        &field_name.node,
-                        &field_typ,
-                        &value_typ,
-                    ),
+            return Err(TypeError::located(
+                value_exp.span(),
+                TypeError::FieldUpdate(
+                    kctx.clone(),
+                    field_name.node.clone(),
+                    field_typ.clone(),
+                    value_typ.clone(),
                 ),
             ));
         }

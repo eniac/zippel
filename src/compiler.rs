@@ -2,9 +2,9 @@
 
 use crate::{CompiledProver, CompiledVerifier};
 use backend::{ArkConfig, HasOpFactory};
-use graph::{UDag, UDags};
+use graph::{Relations, UDag, UDags};
 use lang::{
-    ast::{CModule, UModule},
+    ast::{TypedModule, UModule},
     diagnostic::{Diagnostic, Phase, Severity, render_diagnostic},
     id::Tid,
 };
@@ -173,11 +173,8 @@ impl ParsedModule {
                 .module
                 .concretize(sizes)
                 .map_err(|e| self.error(vec![e.into()]))?;
-            let (diagnostics, types) = concrete.typecheck_with_types();
-            if has_errors(&diagnostics) {
-                return Err(self.error(diagnostics));
-            }
-            let graphs = UDags::<C>::from_checked_for_execution(concrete.clone(), types)
+            let typed = concrete.typecheck().map_err(|d| self.error(d))?;
+            let graphs = UDags::<C>::lower(&typed, Relations::Skip)
                 .map_err(|e| self.error(vec![e.into()]))?;
             let graph = options
                 .protocol
@@ -194,7 +191,7 @@ impl ParsedModule {
                     self.error(vec![Diagnostic::error(Phase::Semantic, 0..0, &message)])
                 })?;
             self.module
-                .check_protocol_instances(&concrete, &graph.name(), sizes)
+                .check_protocol_instances(typed.module(), &graph.name(), sizes)
                 .map_err(|e| self.error(vec![e.into()]))?;
             Ok(CompiledProtocol {
                 source_name: self.name.clone(),
@@ -203,14 +200,9 @@ impl ParsedModule {
                 domain_separator_session: options
                     .domain_separator_session
                     .unwrap_or_else(|| self.name.clone()),
-                concrete_module: concrete,
                 graph: graph.clone(),
-                diagnostics: self
-                    .diagnostics
-                    .iter()
-                    .cloned()
-                    .chain(diagnostics)
-                    .collect(),
+                typed,
+                diagnostics: self.diagnostics.clone(),
             })
         })
     }
@@ -237,7 +229,7 @@ pub struct CompiledProtocol<C: ArkConfig> {
     pub(super) source: Arc<str>,
     pub(super) protocol_name: String,
     pub(super) domain_separator_session: String,
-    pub(super) concrete_module: CModule,
+    pub(super) typed: TypedModule,
     pub(super) graph: UDag<C>,
     diagnostics: Vec<Diagnostic>,
 }

@@ -26,7 +26,7 @@ fn render_type_errors(src: &str, sizes: &[(&str, usize)]) -> String {
         ctx.insert(&Tid::new(name), value);
     }
     let cmodule = module.unwrap().concretize(&ctx).unwrap();
-    let diags = cmodule.typecheck();
+    let diags = cmodule.typecheck().err().unwrap_or_default();
     assert!(!diags.is_empty(), "expected a type error");
     diags
         .iter()
@@ -48,7 +48,7 @@ proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G
 ";
     let (module, _) = UModule::parse(src);
     let cmodule = module.unwrap().concretize(&Ctx::new()).unwrap();
-    assert!(cmodule.typecheck().is_empty());
+    assert!(cmodule.typecheck().is_ok());
 }
 
 /// A helper declared `-> Bool` can be used in a `where` clause. `Bool` used
@@ -67,7 +67,7 @@ proto t<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G, inst
 ";
     let (module, _) = UModule::parse(src);
     let cmodule = module.unwrap().concretize(&Ctx::new()).unwrap();
-    assert!(cmodule.typecheck().is_empty());
+    assert!(cmodule.typecheck().is_ok());
 }
 
 /// A body of higher degree than the declared return type is rejected.
@@ -196,14 +196,14 @@ fn typecheck_strided_index_bounds_use_the_last_element() {
         module.unwrap().concretize(&Ctx::new()).unwrap().typecheck()
     };
     assert!(
-        typecheck("1, 2..5").is_empty(),
+        typecheck("1, 2..5").is_ok(),
         "odd entries of a length-4 vector"
     );
     assert!(
-        typecheck("0, 2..4").is_empty(),
+        typecheck("0, 2..4").is_ok(),
         "even entries of a length-4 vector"
     );
-    assert!(!typecheck("1, 2..7").is_empty(), "a[5] is out of bounds");
+    assert!(typecheck("1, 2..7").is_err(), "a[5] is out of bounds");
 }
 
 #[test]
@@ -261,7 +261,7 @@ proto p<F: Field>(instance a: F) where assert(a, a) {
         "{diags:?}"
     );
     let cmodule = module.unwrap().concretize(&Ctx::new()).unwrap();
-    assert!(cmodule.typecheck().is_empty());
+    assert!(cmodule.typecheck().is_ok());
 }
 
 #[test]
@@ -413,7 +413,13 @@ fn type_diagnostics(src: &str) -> Vec<lang::diagnostic::Diagnostic> {
         diags.iter().all(|d| d.severity == Severity::Warning),
         "expected no parse/semantic errors: {diags:?}"
     );
-    module.unwrap().concretize(&Ctx::new()).unwrap().typecheck()
+    module
+        .unwrap()
+        .concretize(&Ctx::new())
+        .unwrap()
+        .typecheck()
+        .err()
+        .unwrap_or_default()
 }
 
 /// An integer is a vector index only within the finite-index range; beyond it, or negated,
@@ -470,4 +476,17 @@ fn numeric_literal_finite_index_boundary() {
              instance p: Uni<F, 1>, instance m: Mle<F, 2>, instance y: F,
          ) where p({BIG}) == y && eval(m, [{BIG}, 0]) == y {{}}"
     ));
+}
+
+#[test]
+fn typecheck_rejects_ill_typed_pair_and_sum() {
+    // `pair` needs elements of pairing-friendly groups; `+` needs operands of one type.
+    for src in [
+        "fn f<F: Field, G1: Group, G2: Group, GT: Pairing<G1, G2>>(instance a: F, instance b: G2) -> GT { pair(a, b) }",
+        "fn f<F: Field, G: Group>(instance a: F, instance b: G) -> G { a + b }",
+    ] {
+        let (module, _) = UModule::parse(src);
+        let cmodule = module.unwrap().concretize(&Ctx::new()).unwrap();
+        assert!(cmodule.typecheck().is_err(), "{src}");
+    }
 }

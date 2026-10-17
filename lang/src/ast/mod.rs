@@ -34,7 +34,7 @@ pub use minimal_sizes::{
     MAX_DEFAULT_SIZE, SizeRejection, SizeSearchError, SizeSearchLimit, SizeSearchStage,
     minimal_sizes,
 };
-pub use module::{CModule, Module, ModuleTypes, UModule};
+pub use module::{CModule, Module, TypedModule, UModule};
 pub use range::{CRange, Range, RangeError, RangeTraversal};
 pub use sig::{CSig, Sig};
 pub use size::{EvalError, Size};

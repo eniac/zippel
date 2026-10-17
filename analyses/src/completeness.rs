@@ -210,9 +210,8 @@ mod tests {
     use crate::backend::GbBackendKind;
     use crate::error::AnalysisError;
     use crate::frontend::Polynomial;
-    use crate::tests::parse_and_concretize;
+    use crate::tests::lowered;
     use backend::ArkBls12_381;
-    use graph::UDags;
 
     use share::Ctx;
     use share::unwrap;
@@ -225,8 +224,7 @@ mod tests {
 
     /// The DAG of the first protocol in `ex`.
     fn dag_of(ex: &str) -> graph::QDag<ArkBls12_381> {
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         QualifierPropagation::from_dag(gs.protocols()[0])
     }
 
@@ -246,8 +244,7 @@ mod tests {
             }"#;
 
         log::debug!("Parsing example: {}", ex);
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
 
         let g = QualifierPropagation::from_dag(&gs[0]);
 
@@ -270,8 +267,7 @@ mod tests {
                 verify(g*z == u + h*c)
             }"#;
 
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -288,8 +284,7 @@ mod tests {
                 verify(x == y)
             }"#;
 
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -310,8 +305,7 @@ mod tests {
                 verify(x == y)
             }"#;
 
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -335,8 +329,7 @@ mod tests {
                 verify(u == v)
             }"#;
 
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -357,8 +350,7 @@ mod tests {
                 verify(x == 0)
             }"#;
 
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -383,8 +375,7 @@ mod tests {
                 verify(z == y)
             }"#;
 
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
 
         let caller = gs.protocols()[0];
         assert_eq!(
@@ -454,8 +445,7 @@ mod tests {
                 verify(r == 0)
             }"#;
 
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -475,8 +465,7 @@ mod tests {
                 verify(x == y); verify(c == 0)
             }"#;
 
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -502,8 +491,7 @@ mod tests {
 
         let mut sizes = Ctx::new();
         sizes.insert(&Tid::new("N"), &2);
-        let m = parse_and_concretize(ex, &sizes);
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &sizes));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -523,8 +511,7 @@ mod tests {
                 x <- c1 * c2;
                 verify(x == rr)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -548,8 +535,7 @@ mod tests {
 
         let mut sizes = Ctx::new();
         sizes.insert(&Tid::new("N"), &2);
-        let m = parse_and_concretize(ex, &sizes);
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &sizes));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -569,8 +555,7 @@ mod tests {
 
         let mut sizes = Ctx::new();
         sizes.insert(&Tid::new("N"), &2);
-        let m = parse_and_concretize(ex, &sizes);
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &sizes));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -591,8 +576,7 @@ mod tests {
             }"#;
 
         let sizes = Ctx::new();
-        let m = parse_and_concretize(ex, &sizes);
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &sizes));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -613,8 +597,7 @@ mod tests {
             }"#;
 
         let sizes = Ctx::new();
-        let m = parse_and_concretize(ex, &sizes);
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &sizes));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let tc = crate::frontend::TransClos::verifier(&g);
@@ -648,8 +631,7 @@ mod tests {
 
         let mut sizes = Ctx::new();
         sizes.insert(&Tid::new("N"), &4);
-        let m = parse_and_concretize(ex, &sizes);
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &sizes));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -677,8 +659,7 @@ mod tests {
 
         let mut sizes = Ctx::new();
         sizes.insert(&Tid::new("N"), &1);
-        let m = parse_and_concretize(ex, &sizes);
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &sizes));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -743,8 +724,7 @@ mod tests {
                 let u = eval(p);
                 verify(u == v)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -767,8 +747,7 @@ mod tests {
                 let vc = eval(c);
                 verify(vc == va + vb)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -791,8 +770,7 @@ mod tests {
                 let pw = interpolate(w);
                 verify(pw == pu + pv)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -810,8 +788,7 @@ mod tests {
                 let s = reduce(+, v);
                 verify(s == a + b + c)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -829,8 +806,7 @@ mod tests {
                 let p = reduce(*, v);
                 verify(p == a * b * c)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -848,8 +824,7 @@ mod tests {
                 let s = reduce(-, v);
                 verify(s == a - b - c)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -866,8 +841,7 @@ mod tests {
                 let c = 7;
                 verify(c == 7)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -886,8 +860,7 @@ mod tests {
                 let rhs = pair(p, a * q);
                 verify(lhs == rhs)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -906,8 +879,7 @@ mod tests {
                 let rhs = pair(p1, q) + pair(p2, q);
                 verify(lhs == rhs)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -925,8 +897,7 @@ mod tests {
                 let u = pair(p, q);
                 verify(u == u)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -945,8 +916,7 @@ mod tests {
                 let rhs = pair(a * p, b * q);
                 verify(lhs == rhs)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -972,8 +942,7 @@ mod tests {
                 let q = prod / d;
                 verify(q == p)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -1017,8 +986,7 @@ mod tests {
                 let r = p % d;
                 verify(p == d * q + r)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -1046,8 +1014,7 @@ mod tests {
                 let r = p % d;
                 verify(r == poly([0, 0]))
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -1091,8 +1058,7 @@ mod tests {
                 let rc = coef(r);
                 verify(rc[0] == b0 - b0)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -1112,8 +1078,7 @@ mod tests {
                 verify(y == c)
             }"#;
 
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -1131,8 +1096,7 @@ mod tests {
                 verify(c == a * b)
             }"#;
 
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -1157,8 +1121,7 @@ mod tests {
                 verify(g*(z + z + z) == v + h*(c + c + c))
             }"#;
 
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let inputs = CompletenessAnalysis::build_inputs(&g);
@@ -1197,8 +1160,7 @@ mod tests {
                 verify(z == m + n)
             }"#;
 
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let inputs = CompletenessAnalysis::build_inputs(&g);
@@ -1222,8 +1184,7 @@ mod tests {
                 verify(g*(z + z + z) == v + h*c)
             }"#;
 
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);
@@ -1240,8 +1201,7 @@ mod tests {
                 t <- x;
                 verify(t == t)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let mut ca = from_input(&g);

@@ -692,9 +692,9 @@ mod tests {
     use crate::Var;
     use crate::backend::GbBackendKind;
     use crate::error::{AnalysisError, ExtractorRejection};
-    use crate::tests::parse_and_concretize;
+    use crate::tests::lowered;
     use backend::ArkBls12_381;
-    use graph::UDags;
+
     use share::Set;
     use share::{Ctx, unwrap};
 
@@ -711,8 +711,7 @@ mod tests {
         proto: &str,
         l_vec: Vec<usize>,
     ) -> Result<(), AnalysisError<ArkBls12_381>> {
-        let m = parse_and_concretize(proto, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(proto, &Ctx::new()));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
         from_input(&g, l_vec)?.run()
@@ -730,8 +729,7 @@ mod tests {
 
     #[test]
     fn schnorr_special_soundness_l2() {
-        let m = parse_and_concretize(SCHNORR_PROTO, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(SCHNORR_PROTO, &Ctx::new()));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
         let result = from_input(&g, vec![2]).and_then(|mut sa| sa.run());
@@ -825,8 +823,7 @@ mod tests {
 
     #[test]
     fn schnorr_namespace_l2() {
-        let m = parse_and_concretize(SCHNORR_PROTO, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(SCHNORR_PROTO, &Ctx::new()));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
         from_input(&g, vec![2]).unwrap().run().unwrap();
@@ -1059,8 +1056,7 @@ mod tests {
 
     #[test]
     fn schnorr_vec_witness_slot_expansion() {
-        let m = parse_and_concretize(SCHNORR_PROTO, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(SCHNORR_PROTO, &Ctx::new()));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
         from_input(&g, vec![2]).unwrap().run().unwrap();
@@ -1094,8 +1090,7 @@ mod tests {
                 verify(g*z0 == u0 + h1*c); verify(g*z1 == u1 + h2*c)
             }
         "#;
-        let m = parse_and_concretize(proto, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(proto, &Ctx::new()));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = g_inp;
         let result = from_input(&g, vec![2]).and_then(|mut sa| sa.run());

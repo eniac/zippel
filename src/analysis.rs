@@ -6,7 +6,7 @@ use analyses::{
     SpecialSoundnessAnalysis,
 };
 use backend::{ArkConfig, HasOpFactory};
-use graph::{Dag, UDags};
+use graph::{Dag, Relations, UDags};
 use lang::typ::Qualifier;
 use std::sync::Arc;
 
@@ -53,7 +53,7 @@ impl<C: ArkConfig + HasOpFactory> CompiledProtocol<C> {
     /// If an internal compiler invariant fails or the compiler thread cannot be spawned.
     pub fn prepare_analysis(&self) -> Result<PreparedAnalysis<C>, CompileError> {
         share::thread::run_or_panic("zippel-analysis-prepare", || {
-            let graphs = UDags::<C>::from_module(self.concrete_module.clone()).map_err(|e| {
+            let graphs = UDags::<C>::lower(&self.typed, Relations::Lower).map_err(|e| {
                 CompileError::Diagnostics {
                     name: self.source_name.clone(),
                     source: Arc::clone(&self.source),

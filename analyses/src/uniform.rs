@@ -455,8 +455,7 @@ mod tests {
     /// The distribution `from_dag` gives the one `random` of `src`, whose
     /// exclusion lowering puts behind a reference.
     fn distribution_of_random(src: &str) -> Distribution {
-        let m = parse_and_concretize(src, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(src, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let random = g
             .node_indices()
@@ -480,9 +479,9 @@ mod tests {
         );
         assert_eq!(dist, Distribution::Nonuniform);
     }
-    use crate::tests::parse_and_concretize;
+    use crate::tests::lowered;
     use backend::ArkBls12_381;
-    use graph::UDags;
+
     use petgraph::graph::NodeIndex;
     use share::unwrap;
 
@@ -495,8 +494,7 @@ mod tests {
                 b <- r * x;
                 verify(a == b)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
 
         let g = QualifierPropagation::from_dag(&gs[0]);
         let up = UniformityPropagation::from_dag(&g);
@@ -511,8 +509,7 @@ mod tests {
             proto simple<F: Field>(witness x: F) where 1 == 1 {
                 verify(x == x)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let result = UniformityPropagation::from_dag(&g);
 
@@ -529,8 +526,7 @@ mod tests {
                 verify(a == a);
                 verify(b == b)
             }"#;
-        let m = parse_and_concretize(ex, &Ctx::new());
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let gs = unwrap!(lowered::<ArkBls12_381>(ex, &Ctx::new()));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let checks = g.find_verify();
         assert_eq!(

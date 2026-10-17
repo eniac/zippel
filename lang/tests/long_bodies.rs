@@ -32,7 +32,7 @@ fn long_body_checks_on_small_stack() {
                 .expect("parses")
                 .concretize(&Ctx::new())
                 .expect("concretizes");
-            let diags = module.typecheck();
+            let diags = module.typecheck().err().unwrap_or_default();
             assert!(diags.is_empty(), "{diags:?}");
         })
         .unwrap()

@@ -20,6 +20,8 @@ fn type_errors(src: &str) -> String {
     let cmodule = module.unwrap().concretize(&Ctx::new()).unwrap();
     cmodule
         .typecheck()
+        .err()
+        .unwrap_or_default()
         .iter()
         .map(|d| render_diagnostic(d, "test.zippel", src))
         .collect::<Vec<_>>()

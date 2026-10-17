@@ -11,7 +11,7 @@ use super::exp::ExpTraversal;
 use super::module::{ExpandedModule, ExpansionFailure, UModule};
 use super::{Sig, Size};
 use crate::ast::module::DeclId;
-use crate::diagnostic::{Diagnostic, Phase, Severity};
+use crate::diagnostic::{Diagnostic, Phase};
 use crate::id::{Tid, Vid};
 
 /// The largest value searched for an unset `Size` parameter.
@@ -303,17 +303,16 @@ fn check_candidate(
         .enumerate()
         .map(|(id, (sig, _))| (sig.clone(), InstanceId(id)))
         .collect();
-    let edges = RefCell::new(vec![Set::new(); instances.len()]);
-    let (diagnostics, _) = expanded.module.typecheck_with_calls(&|caller, callee| {
-        edges.borrow_mut()[instances[caller].0].insert(instances[callee]);
-    });
-    if diagnostics.iter().any(|d| d.severity == Severity::Error) {
-        return Err(CandidateFailure::Rejected(
-            SizeSearchStage::Typecheck,
-            diagnostics,
-        ));
+    let typed = expanded.module.clone().typecheck().map_err(|diagnostics| {
+        CandidateFailure::Rejected(SizeSearchStage::Typecheck, diagnostics)
+    })?;
+    let mut edges = vec![Set::new(); instances.len()];
+    for (caller, _, types) in typed.iter() {
+        for (_, callee) in types.relation.calls().iter().chain(types.body.calls()) {
+            edges[instances[caller].0].insert(instances[callee]);
+        }
     }
-    check_coverage(&expanded, sources, edges.into_inner())
+    check_coverage(&expanded, sources, edges)
         .map_err(|diagnostics| CandidateFailure::Rejected(SizeSearchStage::Coverage, diagnostics))
 }
 

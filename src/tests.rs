@@ -462,7 +462,8 @@ fn execution_matches_full_relation_lowering() {
     let (module, diagnostics) = UModule::parse(SCHNORR);
     assert!(diagnostics.is_empty());
     let concrete = module.unwrap().concretize(&Ctx::new()).unwrap();
-    let graphs = graph::UDags::<ArkBls12_381>::from_module(concrete).unwrap();
+    let typed = concrete.typecheck().unwrap();
+    let graphs = graph::UDags::<ArkBls12_381>::lower(&typed, graph::Relations::Lower).unwrap();
     let graph = graphs.protocol(&"schnorr".to_owned()).unwrap();
     full.graph = graph.clone();
     let full_prover = full.project_prover();

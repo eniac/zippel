@@ -3,8 +3,7 @@ mod runtime_tests {
     use crate::{MutexGraph, ResultKind, RunResult};
     use backend::Value;
     use backend::config::ArkBls12_381;
-    use graph::UDags;
-    use lang::ast::{CModule, UModule};
+
     use lang::id::Tid;
     use lang::id::Vid;
     use share::Ctx;
@@ -13,25 +12,7 @@ mod runtime_tests {
 
     type TestConfig = ArkBls12_381;
 
-    #[track_caller]
-    fn parse_and_concretize(src: &str, sizes: &Ctx<Tid, usize>) -> CModule {
-        let (module, diags) = UModule::parse(src);
-        let errors: Vec<_> = diags
-            .iter()
-            // E0001 (NoProtoDeclaration) is a file-structure rule, not relevant
-            // to unit tests using fn-only sources. Suppress by error code.
-            .filter(|d| {
-                d.severity == lang::diagnostic::Severity::Error
-                    && d.code.as_deref() != Some("E0001")
-            })
-            .collect();
-        assert!(
-            errors.is_empty(),
-            "unexpected errors: {:?}",
-            errors.iter().map(|d| &d.summary).collect::<Vec<_>>()
-        );
-        module.unwrap().concretize(sizes).unwrap()
-    }
+    use graph::testing::lowered;
 
     #[test]
     fn test_runtime_concurrency_and_evaluation() {
@@ -44,8 +25,7 @@ mod runtime_tests {
                 verify(t == c * (x + y))
             }
         "#;
-        let m = parse_and_concretize(src, &Ctx::new());
-        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let gs = lowered::<TestConfig>(src, &Ctx::new()).unwrap();
         let dag = gs.protocols()[0].clone();
 
         // Prover graph
@@ -152,8 +132,7 @@ mod runtime_tests {
         let n = 2048;
         let mut sizes = Ctx::new();
         sizes.insert(&Tid::from("N"), &n);
-        let m = parse_and_concretize(src, &sizes);
-        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let gs = lowered::<TestConfig>(src, &sizes).unwrap();
         let dag = gs.protocols()[0].clone();
         let (prover, _) = dag.project_prover();
         let widest = prover
@@ -195,8 +174,7 @@ mod runtime_tests {
                 verify(x4 == x4)
             }
         "#;
-        let m = parse_and_concretize(src, &Ctx::new());
-        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let gs = lowered::<TestConfig>(src, &Ctx::new()).unwrap();
         let dag = gs.protocols()[0].clone();
         let (prover, _) = dag.project_prover();
 
