@@ -10,16 +10,17 @@
 //!
 //! ## Implementation
 //!
-//! Uses a single iterative AST walk with an explicit work stack (no recursion,
-//! so no stack overflow on deeply nested expressions). A scope stack tracks
-//! bindings; when a `Var` reference is encountered, the innermost matching
-//! binding is marked used. This correctly handles shadowing — a reference to
-//! `x` resolves to the innermost `let x = ...`, not an outer one.
+//! One [`ExpRef::walk`](crate::ast::ExpRef::walk) per tree (iterative, so deep nesting
+//! cannot overflow the stack). The walk says which binding a `Var` resolves to, so
+//! shadowing is handled: a reference to `x` marks the innermost `let x = ...` used, not an
+//! outer one. A binding left unused when the walk leaves the node that binds it is reported.
 
+use std::collections::HashSet;
 use std::ops::Range;
 
 use crate::ast::decl::{Body, UDecl};
-use crate::ast::{Exp, Stmt, URef};
+use crate::ast::spanned::Spanned;
+use crate::ast::{Exp, ExpId, Stmt, URef, Visit};
 use crate::diagnostic::Diagnostic;
 use crate::id::Vid;
 use lang_derive::Diagnostic as DiagnosticDerive;
@@ -48,239 +49,91 @@ struct DeadComputation {
     _note: (),
 }
 
-// ── Scope tracking ──────────────────────────────────────────────────────
+// ── The walk ────────────────────────────────────────────────────────────
 
-/// A single binding: name, span, and whether it's been referenced.
+/// A variable binding, and whether anything reads it.
 struct Binding {
     name: Vid,
     span: Range<usize>,
     used: bool,
 }
 
-/// Check if a variable name starts with `_` (intentionally unused).
-fn is_intentionally_unused(name: &Vid) -> bool {
-    name.0.starts_with('_')
-}
-
-/// Scope stack: tracks bindings across nested scopes.
-///
-/// When we encounter `Var(x)`, we search from the innermost scope outward
-/// and mark the first matching binding as used. This correctly handles
-/// shadowing — an inner `let x = ...` shadows an outer `let x = ...`,
-/// so a reference to `x` marks the inner binding, not the outer one.
-struct Scopes(Vec<Vec<Binding>>);
-
-impl Scopes {
-    fn new() -> Self {
-        Self(Vec::new())
-    }
-
-    /// Push a new scope with the given bindings (all initially unused).
-    fn push_scope(&mut self, bindings: Vec<(Vid, Range<usize>)>) {
-        self.0.push(
-            bindings
-                .into_iter()
-                .map(|(name, span)| Binding {
-                    name,
-                    span,
-                    used: false,
-                })
-                .collect(),
-        );
-    }
-
-    /// Pop the innermost scope, emitting warnings for any unused bindings.
-    fn pop_scope(&mut self, out: &mut Vec<Diagnostic>) {
-        let scope = self.0.pop().expect("scope stack underflow");
-        for b in scope {
-            if !b.used && !is_intentionally_unused(&b.name) {
-                out.push(
-                    UnusedVariable {
-                        name: b.name,
-                        span: b.span,
-                    }
-                    .build(),
-                );
-            }
+impl Binding {
+    fn new(name: &Spanned<Vid>) -> Self {
+        Self {
+            name: name.node.clone(),
+            span: name.span.clone(),
+            used: false,
         }
     }
 
-    /// Mark the innermost binding of `name` as used.
-    /// If no binding matches, the variable is free (not our concern).
-    fn mark_used(&mut self, name: &Vid) {
-        for scope in self.0.iter_mut().rev() {
-            for b in scope.iter_mut() {
-                if &b.name == name {
-                    b.used = true;
-                    return;
+    /// Reports the binding if it is unused and not marked intentionally unused (`_x`).
+    fn report(self, out: &mut Vec<Diagnostic>) {
+        if !self.used && !self.name.0.starts_with('_') {
+            out.push(
+                UnusedVariable {
+                    name: self.name,
+                    span: self.span,
+                }
+                .build(),
+            );
+        }
+    }
+}
+
+/// Checks one tree, with `args` (the declaration's arguments) in scope around it.
+fn check_tree(exp: URef<'_>, args: &mut [Binding], out: &mut Vec<Diagnostic>) {
+    let mut walk = exp.walk();
+    // The bindings `walk` is inside, as in `walk.bound()`.
+    let mut bound: Vec<Binding> = Vec::new();
+    // Statement values whose result is discarded, reported when the walk reaches them.
+    let mut dead: HashSet<ExpId> = HashSet::new();
+    while let Some(visit) = walk.next() {
+        let mut mark_used = |name: &Vid| match walk.resolve(name) {
+            Some(i) => bound[i].used = true,
+            None => {
+                if let Some(arg) = args.iter_mut().find(|a| &a.name == name) {
+                    arg.used = true;
+                }
+            }
+        };
+        match visit {
+            Visit::Enter(e) => {
+                if dead.remove(&e.id()) {
+                    out.push(
+                        DeadComputation {
+                            span: e.span().clone(),
+                            _note: (),
+                        }
+                        .build(),
+                    );
+                }
+                match e.node() {
+                    Exp::Var(x) => mark_used(&x.node),
+                    // A call of a polynomial variable reads it.
+                    Exp::App(f, _) => mark_used(&f.node),
+                    // `e;` with something after it discards a pure `e`: dead computation. A
+                    // block's value, and a `<-`, are never dead.
+                    Exp::Block(stmts, tail) => {
+                        for (i, stmt) in stmts.iter().enumerate() {
+                            if let Stmt::Exp(v) = stmt.node
+                                && (i + 1 < stmts.len() || tail.is_some())
+                                && is_pure_no_app(e.at(v))
+                            {
+                                dead.insert(v);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Visit::Bind(x) => bound.push(Binding::new(x)),
+            Visit::Leave(_) => {
+                while bound.len() > walk.bound().len() {
+                    bound.pop().expect("longer").report(out);
                 }
             }
         }
-    }
-}
-
-// ── Iterative walk ──────────────────────────────────────────────────────
-
-/// Work item for the iterative AST walk.
-enum Work<'a> {
-    /// Visit this expression.
-    Expr(URef<'a>),
-    /// Push a new scope with the given bindings.
-    PushScope(Vec<(Vid, Range<usize>)>),
-    /// Pop the current scope and check for unused bindings.
-    PopScope,
-    /// Report the pure, discarded statement value at this span.
-    Dead(Range<usize>),
-}
-
-/// Walk an expression iteratively, tracking variable usage through scopes.
-///
-/// `scopes` should already have the argument scope pushed (if any).
-fn walk(expr: URef<'_>, scopes: &mut Scopes, out: &mut Vec<Diagnostic>) {
-    let mut stack: Vec<Work> = vec![Work::Expr(expr)];
-
-    while let Some(item) = stack.pop() {
-        match item {
-            Work::PushScope(bindings) => scopes.push_scope(bindings),
-            Work::PopScope => scopes.pop_scope(out),
-            Work::Dead(span) => out.push(DeadComputation { span, _note: () }.build()),
-            Work::Expr(e) => visit(e, &mut stack, scopes),
-        }
-    }
-}
-
-/// Process a single expression, pushing child work items onto the stack.
-fn visit<'a>(e: URef<'a>, stack: &mut Vec<Work<'a>>, scopes: &mut Scopes) {
-    match e.node() {
-        // ── Variable reference: mark used ───────────────────────────────
-        Exp::Var(id) => scopes.mark_used(&id.node),
-
-        // ── Block: one scope per binding, for the rest of the block ─────
-        // `let x = val; rest` and `x <- val; rest`: x is in scope for rest, not val. A
-        // binding with nothing after it opens no scope. `val; rest`: a pure val is discarded
-        // (dead computation); a final `val` is the block's value, not dead. Log always has a
-        // side effect (transcript), so its value is never dead, but x might be unused.
-        Exp::Block(stmts, tail) => {
-            // Execution order: each value, then its scope, …, the tail, then every scope popped.
-            let mut seq = Vec::new();
-            let mut scopes_opened = 0;
-            for (i, stmt) in stmts.iter().enumerate() {
-                let has_rest = i + 1 < stmts.len() || tail.is_some();
-                match &stmt.node {
-                    Stmt::Let(x, val) | Stmt::Log(x, val) => {
-                        seq.push(Work::Expr(e.at(*val)));
-                        if has_rest {
-                            seq.push(Work::PushScope(vec![(x.node.clone(), x.span.clone())]));
-                            scopes_opened += 1;
-                        }
-                    }
-                    Stmt::Exp(val) => {
-                        if has_rest && is_pure_no_app(e.at(*val)) {
-                            seq.push(Work::Dead(e.at(*val).span().clone()));
-                        }
-                        seq.push(Work::Expr(e.at(*val)));
-                    }
-                }
-            }
-            if let Some(tail) = tail {
-                seq.push(Work::Expr(e.at(*tail)));
-            }
-            seq.extend((0..scopes_opened).map(|_| Work::PopScope));
-            stack.extend(seq.into_iter().rev());
-        }
-
-        // ── Map: comprehension variable scope ───────────────────────────
-        // `[body for x in iter]` — x is in scope for body, not iter.
-        Exp::Map(body, var, iter) => {
-            // Execution order: iter → push scope → body → pop scope.
-            stack.push(Work::PopScope);
-            stack.push(Work::Expr(e.at(*body)));
-            stack.push(Work::PushScope(vec![(var.node.clone(), var.span.clone())]));
-            stack.push(Work::Expr(e.at(*iter)));
-        }
-
-        // ── Fun: lambda parameter scope ─────────────────────────────────
-        // `fun(x, y) body` — x, y in scope for body.
-        Exp::Fun(vars, body) => {
-            // Execution order: push scope → body → pop scope.
-            stack.push(Work::PopScope);
-            stack.push(Work::Expr(e.at(*body)));
-            stack.push(Work::PushScope(
-                vars.iter()
-                    .map(|v| (v.node.clone(), v.span.clone()))
-                    .collect(),
-            ));
-        }
-
-        // ── Binary sub-expressions ──────────────────────────────────────
-        Exp::Verify(a) => {
-            stack.push(Work::Expr(e.at(*a)));
-        }
-        Exp::Bin(_, a, b) => {
-            stack.push(Work::Expr(e.at(*b)));
-            stack.push(Work::Expr(e.at(*a)));
-        }
-        Exp::Pair(a, b) => {
-            stack.push(Work::Expr(e.at(*b)));
-            stack.push(Work::Expr(e.at(*a)));
-        }
-        Exp::Ram(a, b) => {
-            stack.push(Work::Expr(e.at(*b)));
-            stack.push(Work::Expr(e.at(*a)));
-        }
-        Exp::SetRecord(r, _, v) => {
-            stack.push(Work::Expr(e.at(*v)));
-            stack.push(Work::Expr(e.at(*r)));
-        }
-
-        // ── Unary sub-expressions ───────────────────────────────────────
-        Exp::Neg(a) | Exp::Coef(a) | Exp::Poly(a) | Exp::Mle(a) => {
-            stack.push(Work::Expr(e.at(*a)));
-        }
-        Exp::Reduce(_, a) => stack.push(Work::Expr(e.at(*a))),
-        Exp::Proj(a, _) => stack.push(Work::Expr(e.at(*a))),
-
-        // ── Optional second sub-expression ──────────────────────────────
-        Exp::Interpolate(None, evals) => stack.push(Work::Expr(e.at(*evals))),
-        Exp::Interpolate(Some(p), evals) => {
-            stack.push(Work::Expr(e.at(*evals)));
-            stack.push(Work::Expr(e.at(*p)));
-        }
-        Exp::Evaluate(p, _, None) => stack.push(Work::Expr(e.at(*p))),
-        Exp::Evaluate(p, _, Some(x)) => {
-            stack.push(Work::Expr(e.at(*x)));
-            stack.push(Work::Expr(e.at(*p)));
-        }
-
-        // ── Vector / record: iterate children ───────────────────────────
-        Exp::Vec(v) => {
-            for child in v.0.iter().rev() {
-                stack.push(Work::Expr(e.at(*child)));
-            }
-        }
-        Exp::Record(fields) => {
-            for (_, child) in fields.iter().rev() {
-                stack.push(Work::Expr(e.at(*child)));
-            }
-        }
-
-        // ── App: function name is a variable reference ──────────────────
-        Exp::App(fid, args) => {
-            scopes.mark_used(&fid.node);
-            for child in args.0.iter().rev() {
-                stack.push(Work::Expr(e.at(*child)));
-            }
-        }
-
-        // ── Samples: the values they exclude ───────────────────────────
-        Exp::Challenge(_, x) | Exp::Random(_, x) => {
-            if let Some(v) = x.as_ref().and_then(|x| x.values()) {
-                stack.push(Work::Expr(e.at(*v)));
-            }
-        }
-
-        // ── Leaves: no sub-expressions ──────────────────────────────────
-        Exp::Lit(_) | Exp::Unit | Exp::Range(_) => {}
     }
 }
 
@@ -290,7 +143,7 @@ fn visit<'a>(e: URef<'a>, stack: &mut Vec<Work<'a>>, scopes: &mut Scopes) {
 /// Conservative: `is_pure()` treats `App` as pure when args are pure, but the
 /// called function may have side effects. Without a call graph we can't know.
 fn is_pure_no_app(exp: URef<'_>) -> bool {
-    exp.is_pure() && !exp.subexps().any(|e| matches!(e, Exp::App(..)))
+    exp.is_pure() && !exp.subexps().any(|e| matches!(e.node(), Exp::App(..)))
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────
@@ -301,38 +154,25 @@ fn is_pure_no_app(exp: URef<'_>) -> bool {
 /// are checked. Function arguments are in scope for both.
 pub fn check_dead_variables(decl: &UDecl) -> Vec<Diagnostic> {
     let mut out = Vec::new();
-    let mut scopes = Scopes::new();
-
-    // For TypeAlias there's nothing to check.
     let (relation, body) = match &decl.body {
         Body::Proto { relation, body } => (Some(relation), body.as_ref()),
         Body::Func { body } => (None, body.as_ref()),
         Body::TypeAlias => return out,
     };
-
-    // Push arg scope — args are in scope for both relation and body.
-    let arg_bindings: Vec<(Vid, Range<usize>)> = decl
+    // The arguments are in scope in both the relation and the body.
+    let mut args: Vec<Binding> = decl
         .sig
         .args
         .node
         .0
         .iter()
-        .map(|arg| (arg.node.id.node.clone(), arg.node.id.span.clone()))
+        .map(|arg| Binding::new(&arg.node.id))
         .collect();
-    scopes.push_scope(arg_bindings);
-
-    // Walk the relation first (let bindings in `where` clause).
-    if let Some(relation) = relation {
-        walk(relation.root(), &mut scopes, &mut out);
+    for tree in relation.into_iter().chain(body) {
+        check_tree(tree.root(), &mut args, &mut out);
     }
-
-    // Then walk the body.
-    if let Some(body) = body {
-        walk(body.root(), &mut scopes, &mut out);
+    for arg in args {
+        arg.report(&mut out);
     }
-
-    // Pop arg scope — emits warnings for unused args.
-    scopes.pop_scope(&mut out);
-
     out
 }

@@ -703,8 +703,8 @@ impl<C: HasOpFactory> UDag<C> {
                 }
                 // Any other unary negation: lower as 0 - x
                 CExp::Neg(a) => {
-                    let zero = exprs.push(Exp::Lit(<BigUint as ExpLiteral>::lit(0)), 0..0);
-                    id = exprs.push(Exp::Bin(BinOp::Sub, zero, a), 0..0);
+                    let zero = exprs.push(Exp::Lit(<BigUint as ExpLiteral>::lit(0)), span.clone());
+                    id = exprs.push(Exp::Bin(BinOp::Sub, zero, a), span);
                     continue;
                 }
                 // Create a new [bin] node

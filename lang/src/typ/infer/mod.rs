@@ -347,10 +347,10 @@ impl CRef<'_> {
     ) -> Result<CTyp, TypeError> {
         let ta = a
             .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
         let tb = b
             .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
 
         let t = CTyp::lub_op(op, &ta, &tb, kctx)
             .map_err(|e| TypeError::bin(kctx, vctx, self, &ta, &tb, e))?;
@@ -371,10 +371,10 @@ impl CRef<'_> {
     ) -> Result<CTyp, TypeError> {
         let ta = t
             .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
         let tb = e
             .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
 
         CTyp::lub_pair(&ta, &tb, kctx)
             .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
@@ -391,7 +391,7 @@ impl CRef<'_> {
     ) -> Result<CTyp, TypeError> {
         let t = a
             .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
         Ok(match t {
             CTyp::Fin(_) | CTyp::FieldLiteral => CTyp::FieldLiteral,
             t => t,
@@ -432,7 +432,7 @@ impl CRef<'_> {
                 let v = self.at(*v);
                 let tv = v
                     .infer_in(kctx, fctx, vctx, cx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                    .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
                 let of_typ =
                     |elem: &CTyp| CTyp::lub_equ(elem, &typ, kctx).is_ok_and(|elem| elem == typ);
                 if !matches!(&tv, CTyp::Vec(elem, _) if of_typ(&elem.node)) {
@@ -458,7 +458,7 @@ impl CRef<'_> {
     ) -> Result<CTyp, TypeError> {
         let t = exp
             .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
 
         // The operand must be Bool (not Vec<Bool>)
         if t != CTyp::Bool {

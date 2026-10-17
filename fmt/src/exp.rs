@@ -10,7 +10,8 @@
 //!   recursively for `;`-separated relations (where `gap_hard` after
 //!   `;` provides the break).
 
-use lang::ast::exp::{BinOp, Exp, ExpId, Exps, Stmt, URef};
+use lang::ast::ExpId;
+use lang::ast::exp::{BinOp, Exp, Exps, Stmt, URef};
 use lang::ast::{Exclusion, Size, Spanned};
 use lang::id::Tid;
 use lang::parser::Token;

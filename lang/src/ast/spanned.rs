@@ -151,7 +151,6 @@ impl<T: crate::id::TidSubst> crate::id::TidSubst for Spanned<T> {
 }
 
 impl<T: crate::ast::FreeVars> crate::ast::FreeVars for Spanned<T> {
-    #[stack_guard]
     fn freevars(&self) -> share::Set<crate::id::Vid> {
         self.node.freevars()
     }

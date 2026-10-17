@@ -1,14 +1,16 @@
 use num::BigUint;
 use share::Ctx;
 use std::fmt;
-use std::ops::{Index, IndexMut};
+use std::ops::Index;
 
 use share::traversal::ToTraversal1;
 
 use crate::ast::Size;
+use crate::ast::arena::{ExpId, ExpRef, Expr, Exprs};
 use crate::ast::exclusion::Exclusion;
 use crate::ast::range::{Range, RangeTraversal};
 use crate::ast::spanned::Spanned;
+use crate::ast::walk::Visit;
 use crate::id::{Tid, TidSubst, Vid};
 use crate::stack_guard;
 use share::Set;
@@ -319,15 +321,6 @@ impl Stmt {
             Self::Exp(_) => None,
         }
     }
-
-    /// The same statement with its value replaced by `f` of it.
-    fn map_value(self, f: impl FnOnce(ExpId) -> ExpId) -> Self {
-        match self {
-            Self::Let(x, v) => Self::Let(x, f(v)),
-            Self::Log(x, v) => Self::Log(x, f(v)),
-            Self::Exp(v) => Self::Exp(f(v)),
-        }
-    }
 }
 
 /// Value variables that occur free in an expression.
@@ -362,264 +355,14 @@ pub type CExpr = Expr<BigUint>;
 /// A node of a concrete expression tree, for reading it.
 pub type CRef<'a> = ExpRef<'a, BigUint>;
 
-// ── The arena ───────────────────────────────────────────────────────────
-
-/// Index of an expression in its [`Exprs`] arena.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ExpId(u32);
-
-impl ExpId {
-    /// The node's position in its arena.
-    pub const fn index(self) -> usize {
-        self.0 as usize
-    }
-}
-
-/// The nodes of expression trees, stored flat with their spans. Children are [`ExpId`]s into
-/// the same arena, so cloning, dropping and comparing an arena are loops over its nodes, at
-/// any depth of the trees in it (issue #252). Equality and ordering ignore spans, as
-/// [`Spanned`]'s do.
-#[derive(Debug, Clone)]
-pub struct Exprs<N: ExpLiteral> {
-    nodes: Vec<Exp<N>>,
-    spans: Vec<std::ops::Range<usize>>,
-}
-
-impl<N: ExpLiteral> Default for Exprs<N> {
-    fn default() -> Self {
-        Self {
-            nodes: Vec::new(),
-            spans: Vec::new(),
-        }
-    }
-}
-
-impl<N: ExpLiteral> Exprs<N> {
-    /// An empty arena.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Adds `node`, whose children must already be in this arena, and returns its id.
-    ///
-    /// # Panics
-    /// If the arena already holds `u32::MAX` nodes.
-    pub fn push(&mut self, node: Exp<N>, span: std::ops::Range<usize>) -> ExpId {
-        let id = ExpId(u32::try_from(self.nodes.len()).expect("fewer than 2^32 expressions"));
-        self.nodes.push(node);
-        self.spans.push(span);
-        id
-    }
-
-    /// Number of nodes in the arena.
-    pub fn len(&self) -> usize {
-        self.nodes.len()
-    }
-
-    /// Whether the arena holds no nodes.
-    pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
-    }
-
-    /// The source span of node `id`.
-    pub fn span(&self, id: ExpId) -> &std::ops::Range<usize> {
-        &self.spans[id.index()]
-    }
-
-    /// Node `id`, for reading the tree under it.
-    pub const fn at(&self, id: ExpId) -> ExpRef<'_, N> {
-        ExpRef { exprs: self, id }
-    }
-
-    /// Moves the nodes of `tree` into this arena and returns the id of its root here.
-    pub fn append(&mut self, tree: Expr<N>) -> ExpId {
-        let offset = u32::try_from(self.nodes.len()).expect("fewer than 2^32 expressions");
-        let shift = |id: ExpId| ExpId(id.0 + offset);
-        for (node, span) in tree.exprs.nodes.into_iter().zip(tree.exprs.spans) {
-            self.push(node.map_ids(&mut |id| shift(id)), span);
-        }
-        shift(tree.root)
-    }
-
-    /// The tree under `root`, copied into an arena of its own in post-order (children in
-    /// source order, before their parent), so equal trees copy to equal arenas.
-    pub fn extract(&self, root: ExpId) -> Expr<N> {
-        let mut out = Exprs::new();
-        let mut copied: Vec<Option<ExpId>> = vec![None; self.nodes.len()];
-        // (node, whether its children are copied)
-        let mut stack = vec![(root, false)];
-        while let Some((id, ready)) = stack.pop() {
-            if copied[id.index()].is_some() {
-                continue;
-            }
-            if ready {
-                let node = self[id]
-                    .clone()
-                    .map_ids(&mut |c| copied[c.index()].expect("child first"));
-                copied[id.index()] = Some(out.push(node, self.span(id).clone()));
-            } else {
-                stack.push((id, true));
-                stack.extend(self[id].children().into_iter().rev().map(|c| (c, false)));
-            }
-        }
-        Expr {
-            exprs: out,
-            root: copied[root.index()].expect("root copied"),
-        }
-    }
-}
-
-impl<N: ExpLiteral> Index<ExpId> for Exprs<N> {
-    type Output = Exp<N>;
-    fn index(&self, id: ExpId) -> &Exp<N> {
-        &self.nodes[id.index()]
-    }
-}
-
-impl<N: ExpLiteral> IndexMut<ExpId> for Exprs<N> {
-    fn index_mut(&mut self, id: ExpId) -> &mut Exp<N> {
-        &mut self.nodes[id.index()]
-    }
-}
-
-impl<N: ExpLiteral + PartialEq> PartialEq for Exprs<N> {
-    fn eq(&self, other: &Self) -> bool {
-        self.nodes == other.nodes
-    }
-}
-
-impl<N: ExpLiteral + Eq> Eq for Exprs<N> {}
-
-impl<N: ExpLiteral + PartialOrd> PartialOrd for Exprs<N> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.nodes.partial_cmp(&other.nodes)
-    }
-}
-
-impl<N: ExpLiteral + Ord> Ord for Exprs<N> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.nodes.cmp(&other.nodes)
-    }
-}
-
-/// One expression tree, owned: an arena holding exactly the tree, and its root.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Expr<N: ExpLiteral> {
-    /// The tree's nodes.
-    pub exprs: Exprs<N>,
-    /// The tree's root.
-    pub root: ExpId,
-}
-
-impl<N: ExpLiteral> Expr<N> {
-    /// A one-node tree.
-    pub fn leaf(node: Exp<N>, span: std::ops::Range<usize>) -> Self {
-        Self::compose([], span, |_| node)
-    }
-
-    /// The tree whose root `make` builds from the roots of `children`, which are merged
-    /// into one arena in order. Composing children in source order keeps the arena in
-    /// post-order, as [`Exprs::extract`] would lay it out.
-    pub fn compose(
-        children: impl IntoIterator<Item = Expr<N>>,
-        span: std::ops::Range<usize>,
-        make: impl FnOnce(&[ExpId]) -> Exp<N>,
-    ) -> Self {
-        let mut exprs = Exprs::new();
-        let roots: Vec<ExpId> = children.into_iter().map(|c| exprs.append(c)).collect();
-        let root = exprs.push(make(&roots), span);
-        Expr { exprs, root }
-    }
-
-    /// The root, for reading the tree.
-    pub const fn root(&self) -> ExpRef<'_, N> {
-        self.exprs.at(self.root)
-    }
-
-    /// The root's node.
-    pub fn node(&self) -> &Exp<N> {
-        &self.exprs[self.root]
-    }
-
-    /// The root's source span.
-    pub fn span(&self) -> &std::ops::Range<usize> {
-        self.exprs.span(self.root)
-    }
-}
-
-/// A node of an arena, with the arena: what recursive passes walk.
-#[derive(Debug)]
-pub struct ExpRef<'a, N: ExpLiteral> {
-    exprs: &'a Exprs<N>,
-    id: ExpId,
-}
-
-impl<N: ExpLiteral> Clone for ExpRef<'_, N> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<N: ExpLiteral> Copy for ExpRef<'_, N> {}
-
-impl<'a, N: ExpLiteral> ExpRef<'a, N> {
-    /// The node.
-    pub fn node(self) -> &'a Exp<N> {
-        &self.exprs[self.id]
-    }
-
-    /// The node's source span.
-    pub fn span(self) -> &'a std::ops::Range<usize> {
-        self.exprs.span(self.id)
-    }
-
-    /// The node's id in its arena.
-    pub const fn id(self) -> ExpId {
-        self.id
-    }
-
-    /// The arena the node is in.
-    pub const fn exprs(self) -> &'a Exprs<N> {
-        self.exprs
-    }
-
-    /// Node `id` of the same arena, typically a child of this one.
-    pub const fn at(self, id: ExpId) -> Self {
-        ExpRef {
-            exprs: self.exprs,
-            id,
-        }
-    }
-
-    /// The tree under this node, copied out of the arena.
-    pub fn to_expr(self) -> Expr<N> {
-        self.exprs.extract(self.id)
-    }
-
-    /// The trees under `exps`, nodes of this arena, copied out of it.
-    pub fn trees(self, exps: &Exps) -> Vec<Expr<N>> {
-        exps.iter().map(|e| self.exprs.extract(e)).collect()
-    }
-
-    /// This node and all its descendants, in pre-order. Walks an explicit stack, so deep
-    /// nesting costs heap, not call stack; passes that only test or collect nodes should use
-    /// it rather than recursing themselves.
-    pub fn subexps(self) -> impl Iterator<Item = &'a Exp<N>> {
-        let exprs = self.exprs;
-        let mut stack = vec![self.id];
-        std::iter::from_fn(move || {
-            let e = &exprs[stack.pop()?];
-            stack.extend(e.children().into_iter().rev());
-            Some(e)
-        })
-    }
-
+impl<N: ExpLiteral> ExpRef<'_, N> {
     /// Whether evaluating this expression has no protocol-visible effect:
     /// no transcript logging (`log`), no oracle `challenge`, no `random`
     /// sampling and no `verify`. Purity is what lets the graph
     /// builder duplicate, hoist or drop a subexpression freely.
     pub fn is_pure(self) -> bool {
         self.subexps().all(|e| {
+            let e = e.node();
             !matches!(e, Exp::Challenge(..) | Exp::Random(..) | Exp::Verify(_)) && !e.logs()
         })
     }
@@ -630,98 +373,14 @@ impl<'a, N: ExpLiteral> ExpRef<'a, N> {
     /// Rejects: `Challenge` (verifier oracle), `<-` (transcript),
     /// `Verify` (verifier-side check).
     pub fn is_relation_pure(self) -> bool {
-        self.subexps()
-            .all(|e| !matches!(e, Exp::Challenge(..) | Exp::Verify(_)) && !e.logs())
+        self.subexps().all(|e| {
+            let e = e.node();
+            !matches!(e, Exp::Challenge(..) | Exp::Verify(_)) && !e.logs()
+        })
     }
 }
 
 impl<N: ExpLiteral> Exp<N> {
-    /// The direct subexpressions of this expression, in source order.
-    pub fn children(&self) -> Vec<ExpId> {
-        match self {
-            Exp::Lit(_) | Exp::Unit | Exp::Var(_) | Exp::Range(_) => vec![],
-            Exp::Random(_, x) | Exp::Challenge(_, x) => {
-                x.iter().filter_map(|x| x.values()).copied().collect()
-            }
-            Exp::App(_, args) | Exp::Vec(args) => args.0.clone(),
-            Exp::Block(stmts, tail) => stmts.iter().map(|s| s.node.value()).chain(*tail).collect(),
-            Exp::Map(a, _, b)
-            | Exp::Bin(_, a, b)
-            | Exp::Pair(a, b)
-            | Exp::Ram(a, b)
-            | Exp::SetRecord(a, _, b)
-            | Exp::Interpolate(Some(a), b) => vec![*a, *b],
-            Exp::Evaluate(a, _, b) => std::iter::once(*a).chain(*b).collect(),
-            Exp::Neg(a)
-            | Exp::Interpolate(None, a)
-            | Exp::Coef(a)
-            | Exp::Poly(a)
-            | Exp::Mle(a)
-            | Exp::Reduce(_, a)
-            | Exp::Verify(a)
-            | Exp::Fun(_, a)
-            | Exp::Proj(a, _) => vec![*a],
-            Exp::Record(fields) => fields.iter().map(|(_, e)| *e).collect(),
-        }
-    }
-
-    /// The same node with each child id replaced by `f` of it, in [`Exp::children`] order.
-    pub fn map_ids(self, f: &mut impl FnMut(ExpId) -> ExpId) -> Self {
-        match self {
-            Exp::Lit(_) | Exp::Unit | Exp::Var(_) | Exp::Range(_) => self,
-            Exp::Random(t, x) => Exp::Random(t, x.map(|x| x.map(|x| x.map_values(&mut *f)))),
-            Exp::Challenge(t, x) => Exp::Challenge(t, x.map(|x| x.map(|x| x.map_values(&mut *f)))),
-            Exp::App(g, args) => Exp::App(g, Exps(args.0.into_iter().map(&mut *f).collect())),
-            Exp::Vec(args) => Exp::Vec(Exps(args.0.into_iter().map(&mut *f).collect())),
-            Exp::Block(stmts, tail) => Exp::Block(
-                stmts
-                    .into_iter()
-                    .map(|s| Spanned::new(s.node.map_value(&mut *f), s.span))
-                    .collect(),
-                tail.map(&mut *f),
-            ),
-            Exp::Map(a, x, b) => {
-                let a = f(a);
-                Exp::Map(a, x, f(b))
-            }
-            Exp::Bin(op, a, b) => {
-                let a = f(a);
-                Exp::Bin(op, a, f(b))
-            }
-            Exp::Pair(a, b) => {
-                let a = f(a);
-                Exp::Pair(a, f(b))
-            }
-            Exp::Ram(a, b) => {
-                let a = f(a);
-                Exp::Ram(a, f(b))
-            }
-            Exp::SetRecord(a, field, b) => {
-                let a = f(a);
-                Exp::SetRecord(a, field, f(b))
-            }
-            Exp::Interpolate(a, b) => {
-                let a = a.map(&mut *f);
-                Exp::Interpolate(a, f(b))
-            }
-            Exp::Evaluate(a, selector, b) => {
-                let a = f(a);
-                Exp::Evaluate(a, selector, b.map(&mut *f))
-            }
-            Exp::Neg(a) => Exp::Neg(f(a)),
-            Exp::Coef(a) => Exp::Coef(f(a)),
-            Exp::Poly(a) => Exp::Poly(f(a)),
-            Exp::Mle(a) => Exp::Mle(f(a)),
-            Exp::Reduce(op, a) => Exp::Reduce(op, f(a)),
-            Exp::Verify(a) => Exp::Verify(f(a)),
-            Exp::Fun(vars, a) => Exp::Fun(vars, f(a)),
-            Exp::Proj(a, field) => Exp::Proj(f(a), field),
-            Exp::Record(fields) => {
-                Exp::Record(fields.into_iter().map(|(name, e)| (name, f(e))).collect())
-            }
-        }
-    }
-
     /// The same node over the literal carrier `M`: literals mapped by `literal`, range and
     /// selector bounds and root orders by `size`; children keep their ids.
     fn map_leaves<M: ExpLiteral, E>(
@@ -857,25 +516,38 @@ impl TidSubst for CExpr {
     }
 }
 
-impl FreeVars for ExpRef<'_, BigUint> {
-    #[stack_guard]
+/// The variables read and not bound in the tree itself (by a `fun`, a comprehension or an
+/// earlier statement of a block).
+impl<N: ExpLiteral> FreeVars for ExpRef<'_, N> {
     fn freevars(&self) -> Set<Vid> {
-        match self.node() {
-            Exp::Var(id) => Set::singleton(id.node.clone()),
-            Exp::Fun(vars, body) => {
-                let bound_vars: Set<Vid> = vars.iter().map(|v| v.node.clone()).collect();
-                self.at(*body)
-                    .freevars()
-                    .into_iter()
-                    .filter(|v| !bound_vars.iter().any(|bv| bv == v))
-                    .collect()
+        let mut free = Set::new();
+        let mut walk = self.walk();
+        while let Some(visit) = walk.next() {
+            if let Visit::Enter(e) = visit
+                && let Exp::Var(x) = e.node()
+                && !walk.is_bound(&x.node)
+            {
+                free.insert(x.node.clone());
             }
-            // Bindings of blocks and comprehensions are not subtracted.
-            node => node
-                .children()
-                .into_iter()
-                .fold(Set::new(), |acc, c| acc.union(self.at(c).freevars())),
         }
+        free
+    }
+}
+
+impl<N: ExpLiteral> ExpRef<'_, N> {
+    /// Whether the tree reads `name` where the tree itself does not bind it.
+    pub fn reads_free(self, name: &Vid) -> bool {
+        let mut walk = self.walk();
+        while let Some(visit) = walk.next() {
+            if let Visit::Enter(e) = visit
+                && let Exp::Var(x) = e.node()
+                && x.node == *name
+                && !walk.is_bound(name)
+            {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -1030,7 +702,7 @@ where
             precision: f.precision(),
         };
         let sub = |id: ExpId| m.sub(e.at(id));
-        let list = |exps| m.list(e.exprs, exps);
+        let list = |exps| m.list(e.exprs(), exps);
         match e.node() {
             Exp::Lit(p) => write!(f, "{p}"),
             Exp::Unit => f.write_str("()"),

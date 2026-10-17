@@ -16,7 +16,7 @@ impl CRef<'_> {
     ) -> Result<CTyp, TypeError> {
         let evals_typ = evals
             .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
 
         match points_opt {
             None => match evals_typ {
@@ -41,7 +41,7 @@ impl CRef<'_> {
             Some(points) => {
                 let points_typ = points
                     .infer_in(kctx, fctx, vctx, cx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                    .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
 
                 match (points_typ, evals_typ) {
                     (CTyp::Vec(bp, np), CTyp::Vec(be, ne)) if np == ne => {
@@ -89,7 +89,7 @@ impl CRef<'_> {
     ) -> Result<CTyp, TypeError> {
         let typ = v
             .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
 
         match typ {
             CTyp::Vec(b, k) => {
@@ -115,7 +115,7 @@ impl CRef<'_> {
     ) -> Result<CTyp, TypeError> {
         let typ = p
             .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
 
         match typ {
             CTyp::Poly(tid, m_vars, m) if m_vars.node == 1 => {
@@ -166,7 +166,7 @@ impl CRef<'_> {
     ) -> Result<CTyp, TypeError> {
         let p_typ = p
             .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
 
         match (selector, opt_points) {
             // Unary form: eval(p) — evaluation on the FFT grid (n roots of unity).
@@ -203,7 +203,7 @@ impl CRef<'_> {
             (None, Some(x)) => {
                 let x_typ = x
                     .infer_in(kctx, fctx, vctx, cx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                    .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
 
                 match (p_typ, x_typ) {
                     // Univariate polynomial evaluated at a single scalar point.
@@ -256,7 +256,7 @@ impl CRef<'_> {
             (Some(range), Some(fixed)) => {
                 let fixed_typ = fixed
                     .infer_in(kctx, fctx, vctx, cx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                    .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
 
                 let fail = || TypeError::evaluate_selected(kctx, vctx, p, fixed, range.clone());
                 if range.step() != 1 || range.start() >= range.end() {
@@ -301,7 +301,7 @@ impl CRef<'_> {
         // It must be a vector of fields, or a vector of Fin
         let typ = v
             .infer_in(kctx, fctx, vctx, cx)
-            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            .map_err(|e| TypeError::within(kctx, vctx, self, e))?;
 
         match typ {
             CTyp::Vec(b, n) => {

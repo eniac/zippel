@@ -254,7 +254,10 @@ impl<C: HasOpFactory> UDag<C> {
             let field_exp = if *fname == field_name.node {
                 value_exp
             } else {
-                exprs.push(CExp::Proj(record_exp, Spanned::dummy(fname.clone())), 0..0)
+                exprs.push(
+                    CExp::Proj(record_exp, Spanned::dummy(fname.clone())),
+                    span.clone(),
+                )
             };
             let field_op = self.add_exp(
                 exprs,
