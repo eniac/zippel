@@ -53,14 +53,11 @@
 //! same choice). Callers using `line_()` / `line()` (conditional
 //! breaks) should verify idempotency for their specific case.
 
-use crate::ctx::hardlines;
+use crate::ctx::{Arena, Doc, hardlines};
 use crate::style::Style;
 use lang::parser::Token;
-use pretty::{BoxAllocator, DocAllocator, DocBuilder};
+use pretty::DocAllocator;
 use std::ops::Range;
-
-const ALLOC: BoxAllocator = BoxAllocator;
-type Doc<'a> = DocBuilder<'a, BoxAllocator, ()>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommentKind {
@@ -525,15 +522,16 @@ impl TokenCursor {
 /// need custom `open`/`end` positioning that the wrappers don't
 /// provide. See the module-level documentation for idempotency
 /// guarantees.
-pub fn format_gap(
+pub fn format_gap<'doc>(
+    alloc: &'doc Arena<'doc>,
     gap: TriviaGap,
-    open: Option<Doc<'static>>,
-    end: Option<Doc<'static>>,
-    sep: Option<Doc<'static>>,
+    open: Option<Doc<'doc>>,
+    end: Option<Doc<'doc>>,
+    sep: Option<Doc<'doc>>,
     style: &Style,
-) -> Doc<'static> {
+) -> Doc<'doc> {
     if gap.layout.is_empty() {
-        return sep.unwrap_or_else(|| ALLOC.nil());
+        return sep.unwrap_or_else(|| alloc.nil());
     }
 
     // Compute auto open if not explicitly provided. Only applies when
@@ -541,9 +539,9 @@ pub fn format_gap(
     let open = open.or_else(|| match gap.first() {
         Some(e @ TriviaElement::Comment(_)) => {
             if e.needs_start_newline() {
-                Some(ALLOC.hardline())
+                Some(alloc.hardline())
             } else {
-                Some(ALLOC.text(" "))
+                Some(alloc.text(" "))
             }
         }
         _ => None,
@@ -554,9 +552,9 @@ pub fn format_gap(
     let end = end.or_else(|| match gap.last() {
         Some(e @ TriviaElement::Comment(_)) => {
             if e.needs_end_newline() {
-                Some(ALLOC.hardline())
+                Some(alloc.hardline())
             } else {
-                Some(ALLOC.text(" "))
+                Some(alloc.text(" "))
             }
         }
         _ => None,
@@ -580,9 +578,9 @@ pub fn format_gap(
             let prev_is_blank = matches!(prev, TriviaElement::BlankLines(_));
             if !is_blank && !prev_is_blank {
                 if prev.needs_end_newline() || element.needs_start_newline() {
-                    parts.push(ALLOC.hardline());
+                    parts.push(alloc.hardline());
                 } else {
-                    parts.push(ALLOC.text(" "));
+                    parts.push(alloc.text(" "));
                 }
             }
         } else if let Some(open) = open.take()
@@ -600,18 +598,18 @@ pub fn format_gap(
                     // lines — the doc builder's nesting handles indent.
                     let text = std::mem::take(&mut comment.text);
                     let mut lines = text.split('\n');
-                    parts.push(ALLOC.as_string(lines.next().unwrap()));
+                    parts.push(alloc.as_string(lines.next().unwrap()));
                     for line in lines {
-                        parts.push(ALLOC.hardline());
-                        parts.push(ALLOC.as_string(line.trim_start()));
+                        parts.push(alloc.hardline());
+                        parts.push(alloc.as_string(line.trim_start()));
                     }
                 } else {
-                    parts.push(ALLOC.text(std::mem::take(&mut comment.text)));
+                    parts.push(alloc.text(std::mem::take(&mut comment.text)));
                 }
             }
             TriviaElement::BlankLines(blanks) => {
                 let capped = (*blanks).min(style.max_blank_lines);
-                parts.push(hardlines(1 + capped));
+                parts.push(hardlines(alloc, 1 + capped));
             }
         }
     }
@@ -619,30 +617,35 @@ pub fn format_gap(
     if last_is_comment && let Some(end) = end {
         parts.push(end);
     }
-    ALLOC.concat(parts)
+    alloc.concat(parts)
 }
 
 /// Empty gap → nil. Comments → auto open/end.
-pub(crate) fn gap_none(gap: TriviaGap, style: &Style) -> Doc<'static> {
-    format_gap(gap, None, None, None, style)
+pub(crate) fn gap_none<'doc>(alloc: &'doc Arena<'doc>, gap: TriviaGap, style: &Style) -> Doc<'doc> {
+    format_gap(alloc, gap, None, None, None, style)
 }
 
 /// Empty gap → space. Comments → auto open, space after (non-breaking)
 /// or hardline after (breaking).
-pub(crate) fn gap_space(gap: TriviaGap, style: &Style) -> Doc<'static> {
-    format_gap(gap, None, None, Some(ALLOC.text(" ")), style)
+pub(crate) fn gap_space<'doc>(
+    alloc: &'doc Arena<'doc>,
+    gap: TriviaGap,
+    style: &Style,
+) -> Doc<'doc> {
+    format_gap(alloc, gap, None, None, Some(alloc.text(" ")), style)
 }
 
 /// Empty gap → hardline. Comments → auto open (space for inline, nil
 /// for at_line_start), hardline after. Use for structural breaks and
 /// after punctuation (after `;`, between decls) where a line break is
 /// always wanted after the gap but inline comments should stay inline.
-pub(crate) fn gap_hard(gap: TriviaGap, style: &Style) -> Doc<'static> {
+pub(crate) fn gap_hard<'doc>(alloc: &'doc Arena<'doc>, gap: TriviaGap, style: &Style) -> Doc<'doc> {
     format_gap(
+        alloc,
         gap,
         None,
-        Some(ALLOC.hardline()),
-        Some(ALLOC.hardline()),
+        Some(alloc.hardline()),
+        Some(alloc.hardline()),
         style,
     )
 }
