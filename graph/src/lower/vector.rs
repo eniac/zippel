@@ -92,7 +92,7 @@ impl<C: HasOpFactory> UDag<C> {
             return Ok(self.materialize(map_op, edge_type, atyp, span.clone()));
         }
 
-        let te = exprs.infer(e, kctx, fctx, vctx)?;
+        let te = exprs.infer(e, kctx, vctx)?;
 
         // Op for [e]
         let oe = self.add_exp(exprs, e, transcr, edge_type, kctx, fctx, vctx, vars, None)?;

@@ -74,7 +74,7 @@ impl<C: HasOpFactory> UDag<C> {
         }
         match exprs[id].clone() {
             CExp::Lit(n) => {
-                let typ = exprs.infer(id, kctx, fctx, vctx)?;
+                let typ = exprs.infer(id, kctx, vctx)?;
                 let field = expected.is_some_and(ATyp::is_scalar);
                 Ok(Some(GOp::Value(literal_value::<C>(&n, &typ, field))))
             }
@@ -90,7 +90,7 @@ impl<C: HasOpFactory> UDag<C> {
             CExp::Bin(op, a, b) => {
                 let la = sub!(a, None);
                 let lb = sub!(b, None);
-                let ctyp = exprs.infer(id, kctx, fctx, vctx)?;
+                let ctyp = exprs.infer(id, kctx, vctx)?;
                 let Some(atyp) = ATyp::from_ctyp(&ctyp, kctx) else {
                     return Ok(None);
                 };
@@ -138,7 +138,7 @@ impl<C: HasOpFactory> UDag<C> {
             }
             CExp::Proj(r, field) => {
                 let lr = sub!(r, None);
-                let ctyp = exprs.infer(id, kctx, fctx, vctx)?;
+                let ctyp = exprs.infer(id, kctx, vctx)?;
                 let Some(atyp) = ATyp::from_ctyp(&ctyp, kctx) else {
                     return Ok(None);
                 };
@@ -157,7 +157,7 @@ impl<C: HasOpFactory> UDag<C> {
                 Ok(Some(Op::Record(out)))
             }
             CExp::Map(body, binder, domain) => {
-                let domain_typ = exprs.infer(domain, kctx, fctx, vctx)?;
+                let domain_typ = exprs.infer(domain, kctx, vctx)?;
                 let (elem_ctyp, _) = match domain_typ {
                     CTyp::Vec(deref!(e), n) => (e, n),
                     _ => return Ok(None),
@@ -319,7 +319,7 @@ impl<C: HasOpFactory> UDag<C> {
         vars: &Ctx<Vid, GOp<C>>,
     ) -> Result<Option<GOp<C>>, GraphError> {
         let (body, binder, domain) = Self::compose_nested_map_domain(exprs, body, binder, domain);
-        let domain_typ = exprs.infer(domain, kctx, fctx, vctx)?;
+        let domain_typ = exprs.infer(domain, kctx, vctx)?;
         let (elem_ctyp, _) = match domain_typ {
             CTyp::Vec(deref!(e), n) => (e, n),
             _ => return Ok(None),

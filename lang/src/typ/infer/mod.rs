@@ -165,7 +165,7 @@ impl CRef<'_> {
     /// from the field in scope. Some rules check a node before its children are typed, or
     /// between them (see [`Self::enter`] and [`Self::after_child`]), as a recursive checker
     /// would, so the first error reported is the same.
-    fn infer_in(
+    pub(crate) fn infer_in(
         self,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
