@@ -7,7 +7,7 @@
 [Zippel](https://github.com/eniac/zippel/blob/main/docs/tech-report.pdf) is a choreographic language, compiler, and runtime for cryptographic
 proof systems. A single `.zippel` source file describes a protocol the way a
 cryptography paper would, and Zippel compiles it into a computation graph
-(the Graph IR) from which it derives:
+from which it derives:
 
 - optimized, auto-parallelized prover and verifier binaries built on
   [`arkworks`](https://github.com/arkworks-rs), and
@@ -15,10 +15,24 @@ cryptography paper would, and Zippel compiles it into a computation graph
   soundness directly from the protocol's specification, using ideal
   membership over Gröbner bases.
 
-Over 30 proof systems are implemented in `examples/`, ranging from
-textbook Sigma protocols (Schnorr, Chaum-Pedersen) to modern SNARKs and
-polynomial commitment schemes (Groth16, Spartan, HyperPlonk, KZG,
-Bulletproofs, Hyrax, PST13, Dory).
+
+Below is an example of Schnorr's ZKP written in Zippel:
+
+```
+proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G) where h == g * x {
+    let r = random<F>;
+    u <- g * r;
+    c <- challenge<F>;
+    z <- r + x * c;
+    verify(g * z == u + h * c)
+}
+```
+
+We have implemented over 35 proof systems ranging from textbook Sigma protocols 
+(Schnorr, Chaum-Pedersen) to modern SNARKs and polynomial commitment schemes 
+(Groth16, Spartan, HyperPlonk, KZG, Bulletproofs, Hyrax, PST13, Dory).
+
+They are available in `examples/`, 
 
 > **Status: research prototype.** Zippel has not been independently
 > audited. Do not use it to protect anything of value.
