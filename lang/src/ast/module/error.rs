@@ -65,40 +65,44 @@ pub struct ExpandedRange {
 
 impl From<&ModuleError> for Diagnostic {
     fn from(e: &ModuleError) -> Self {
-        if let ModuleError::AmbiguousProtocol {
-            name,
-            ranges,
-            instances,
-        } = e
-        {
-            let mut d = Diagnostic::error(
-                Phase::Type,
-                name.span.clone(),
-                &format!(
-                    "Protocol `{}` concretizes to {instances} instances, so which one to run is ambiguous",
-                    name.node
-                ),
-            )
-            .primary_label("this protocol");
-            for r in ranges {
-                d = d.secondary_label(
-                    r.var.span.clone(),
+        // A failure of one declaration's sizes, located at the declaration.
+        let concretizing = |span: std::ops::Range<usize>, summary: String| {
+            Diagnostic::error(Phase::Type, span, &one_line(&summary))
+                .primary_label("while concretizing sizes for this declaration")
+        };
+        match e {
+            ModuleError::AmbiguousProtocol {
+                name,
+                ranges,
+                instances,
+            } => {
+                let mut d = Diagnostic::error(
+                    Phase::Type,
+                    name.span.clone(),
                     &format!(
-                        "`{}: {}` takes {} values: {}",
-                        r.var.node,
-                        r.range,
-                        r.values.len(),
-                        listed(&r.values)
+                        "Protocol `{}` concretizes to {instances} instances, so which one to run is ambiguous",
+                        name.node
                     ),
-                );
+                )
+                .primary_label("this protocol");
+                for r in ranges {
+                    d = d.secondary_label(
+                        r.var.span.clone(),
+                        &format!(
+                            "`{}: {}` takes {} values: {}",
+                            r.var.node,
+                            r.range,
+                            r.values.len(),
+                            listed(&r.values)
+                        ),
+                    );
+                }
+                d.note(
+                    "a protocol must concretize to one instance; make each range admit one value \
+                     for the given sizes, or declare the variable a `Size`",
+                )
             }
-            return d.note(
-                "a protocol must concretize to one instance; make each range admit one value \
-                 for the given sizes, or declare the variable a `Size`",
-            );
-        }
-        if let ModuleError::SizeForRange { var, range } = e {
-            return Diagnostic::error(
+            ModuleError::SizeForRange { var, range } => Diagnostic::error(
                 Phase::Type,
                 var.span.clone(),
                 &format!(
@@ -110,10 +114,8 @@ impl From<&ModuleError> for Diagnostic {
                 "`{}: {range}` takes every value of its range",
                 var.node
             ))
-            .note("only `Size` variables take values from the sizes");
-        }
-        if let ModuleError::InterchangeableDeclarations(first, second) = e {
-            return Diagnostic::error(
+            .note("only `Size` variables take values from the sizes"),
+            ModuleError::InterchangeableDeclarations(first, second) => Diagnostic::error(
                 Phase::Type,
                 second.name.span.clone(),
                 &format!(
@@ -125,45 +127,33 @@ impl From<&ModuleError> for Diagnostic {
             .secondary_label(
                 first.name.span.clone(),
                 &format!("`{}`", one_line(&first.to_string())),
-            );
-        }
-        let (span, summary) = match e {
-            ModuleError::OverlapDeclaration(sig) => (
+            ),
+            ModuleError::OverlapDeclaration(sig) => concretizing(
                 sig.name.span.clone(),
                 format!(
                     "Declarations of `{}` overlap after size concretization",
                     sig.name.node
                 ),
-            ),
-            ModuleError::DeclarationError(span, DeclError::EvalError(e)) => (
+            )
+            .note(&format!(
+                "both declarations concretize to `{}`",
+                one_line(&sig.to_string())
+            )),
+            ModuleError::DeclarationError(span, DeclError::EvalError(e)) => concretizing(
                 span.clone(),
                 format!("Cannot evaluate a size expression: {e}"),
             ),
-            ModuleError::DeclarationError(span, DeclError::InvalidRange(sig, e)) => (
+            ModuleError::DeclarationError(span, DeclError::InvalidRange(sig, e)) => concretizing(
                 span.clone(),
                 format!("Invalid range in `{}`: {e}", sig.name.node),
             ),
             ModuleError::DeclarationError(span, DeclError::SubstError(e)) => {
-                (span.clone(), e.to_string())
+                concretizing(span.clone(), e.to_string())
             }
             ModuleError::DeclarationNotFound(name) => {
-                (0..0, format!("Declaration `{name}` not found"))
+                concretizing(0..0, format!("Declaration `{name}` not found"))
             }
-            ModuleError::AmbiguousProtocol { .. }
-            | ModuleError::SizeForRange { .. }
-            | ModuleError::InterchangeableDeclarations(..) => {
-                unreachable!("handled above")
-            }
-        };
-        let mut d = Diagnostic::error(Phase::Type, span, &one_line(&summary))
-            .primary_label("while concretizing sizes for this declaration");
-        if let ModuleError::OverlapDeclaration(sig) = e {
-            d = d.note(&format!(
-                "both declarations concretize to `{}`",
-                one_line(&sig.to_string())
-            ));
         }
-        d
     }
 }
 

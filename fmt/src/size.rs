@@ -82,52 +82,46 @@ impl<'doc> Formatter<'doc, '_> {
         let alloc = self.alloc;
         let style = self.style;
         let (start_gap, start_doc) = self.format_range_size(&range.start, end);
-        if let Some(step) = &range.step {
-            let comma = gap_none(
-                alloc,
-                self.cursor
-                    .advance_to_token(end, |token| matches!(token, Token::Comma)),
-                style,
-            );
-            let (step_gap, step_doc) = self.format_range_size(step, end);
-            let dots = gap_none(
-                alloc,
-                self.cursor
-                    .advance_to_token(end, |token| matches!(token, Token::DotDot)),
-                style,
-            );
-            let last = range.end.as_ref().expect("stepped ranges have an end");
-            let (last_gap, last_doc) = self.format_range_size(last, end);
-            let doc = alloc.concat([
-                start_doc,
-                comma,
-                alloc.text(","),
-                gap_space(alloc, step_gap, style),
-                step_doc,
-                dots,
-                alloc.text(".."),
-                gap_none(alloc, last_gap, style),
-                last_doc,
-            ]);
-            (start_gap, doc)
-        } else if let Some(last) = &range.end {
-            let dots = gap_none(
-                alloc,
-                self.cursor
-                    .advance_to_token(end, |token| matches!(token, Token::DotDot)),
-                style,
-            );
-            let (last_gap, last_doc) = self.format_range_size(last, end);
-            let doc = alloc.concat([
-                start_doc,
-                dots,
-                alloc.text(".."),
-                gap_none(alloc, last_gap, style),
-                last_doc,
-            ]);
-            (start_gap, doc)
-        } else {
-            (start_gap, start_doc)
+        match (&range.step, &range.end) {
+            (None, None) => (start_gap, start_doc),
+            (Some(_), None) => unreachable!("a stepped range has an end"),
+            // `start, step..end` or `start..end`.
+            (step, Some(last)) => {
+                let step_doc = match step {
+                    Some(step) => {
+                        let comma = gap_none(
+                            alloc,
+                            self.cursor
+                                .advance_to_token(end, |token| matches!(token, Token::Comma)),
+                            style,
+                        );
+                        let (step_gap, step_doc) = self.format_range_size(step, end);
+                        alloc.concat([
+                            comma,
+                            alloc.text(","),
+                            gap_space(alloc, step_gap, style),
+                            step_doc,
+                        ])
+                    }
+                    None => alloc.nil(),
+                };
+                let dots = gap_none(
+                    alloc,
+                    self.cursor
+                        .advance_to_token(end, |token| matches!(token, Token::DotDot)),
+                    style,
+                );
+                let (last_gap, last_doc) = self.format_range_size(last, end);
+                let doc = alloc.concat([
+                    start_doc,
+                    step_doc,
+                    dots,
+                    alloc.text(".."),
+                    gap_none(alloc, last_gap, style),
+                    last_doc,
+                ]);
+                (start_gap, doc)
+            }
         }
     }
 

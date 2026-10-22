@@ -1111,8 +1111,9 @@ impl<F: PrimeField> VirtualPolynomial<F> {
     /// form whenever possible.
     ///
     /// Typed zeroes and constants are answered directly from the declared
-    /// arity, a product made purely of `DenseMle` factors takes the
-    /// factor-wise fast path, and anything else falls back to normalizing.
+    /// arity, a product made purely of MLE factors (`DenseMle` or `SparseMle`)
+    /// takes the factor-wise fast path, and anything else falls back to
+    /// normalizing.
     ///
     /// # Errors
     /// Returns [`PolyError::DimensionMismatch`] if more points are supplied
@@ -1139,10 +1140,12 @@ impl<F: PrimeField> VirtualPolynomial<F> {
 
         if let Some(num_vars) = self.num_vars()
             && points.len() < num_vars
-            && self
-                .flattened_polys
-                .iter()
-                .all(|poly| matches!(&**poly, PolyVariant::DenseMle(_)))
+            && self.flattened_polys.iter().all(|poly| {
+                matches!(
+                    &**poly,
+                    PolyVariant::DenseMle(_) | PolyVariant::SparseMle { .. }
+                )
+            })
         {
             return self.fix_first_mle_variables_factorwise(points);
         }

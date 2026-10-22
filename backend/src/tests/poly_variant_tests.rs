@@ -1,6 +1,6 @@
 use crate::{PolyVariant, VirtualPolynomial};
 use ark_bls12_381::Fr;
-use ark_ff::One;
+use ark_ff::{One, Zero};
 use ark_poly::{
     DenseMultilinearExtension, DenseUVPolynomial, MultilinearExtension, Polynomial,
     univariate::{DensePolynomial, SparsePolynomial},
@@ -79,7 +79,8 @@ fn fixing_a_sparse_multivariate_polynomial_matches_full_evaluation() {
     }
 }
 
-/// A sparse MLE fixes and evaluates like its dense table.
+/// A sparse MLE fixes and evaluates like its dense table, and a partial evaluation is encoded
+/// by its density (`17` is listed twice).
 #[test]
 fn fixing_a_sparse_mle_matches_its_dense_table() {
     let nv = 6;
@@ -99,11 +100,139 @@ fn fixing_a_sparse_mle_matches_its_dense_table() {
         dense.evaluate_mv(&point).unwrap()
     );
     for k in 0..=nv {
+        let fixed = sparse.evaluate_or_fix(&point[..k]).unwrap();
         assert_eq!(
-            sparse.evaluate_or_fix(&point[..k]).unwrap(),
+            fixed.to_dense(),
             dense.evaluate_or_fix(&point[..k]).unwrap(),
             "k = {k}"
         );
+        if k < nv {
+            assert_encoded_by_density(&fixed, nv - k);
+        }
+    }
+}
+
+/// `poly` is an MLE over `num_vars` variables encoded by density: a `SparseMle` (one entry
+/// per index, in order, no zeros) filling at most a quarter of its indices, else a `DenseMle`.
+fn assert_encoded_by_density(poly: &PolyVariant<Fr>, num_vars: usize) {
+    match poly {
+        PolyVariant::SparseMle { num_vars: n, evals } => {
+            assert_eq!(*n, num_vars);
+            assert!(
+                evals.len() * 4 <= 1 << num_vars,
+                "too full for sparse: {poly}"
+            );
+            assert!(
+                evals.windows(2).all(|w| w[0].0 < w[1].0)
+                    && evals.iter().all(|(_, v)| !v.is_zero()),
+                "not canonical: {evals:?}"
+            );
+        }
+        PolyVariant::DenseMle(mle) => {
+            assert_eq!(mle.num_vars, num_vars);
+            let nonzero = mle.evaluations.iter().filter(|v| !v.is_zero()).count();
+            assert!(
+                nonzero * 4 > 1 << num_vars,
+                "sparse enough to stay sparse: {poly}"
+            );
+        }
+        other => panic!("not an MLE: {other}"),
+    }
+}
+
+fn sparse(num_vars: usize, indices: &[usize]) -> PolyVariant<Fr> {
+    PolyVariant::SparseMle {
+        num_vars,
+        evals: indices
+            .iter()
+            .copied()
+            .zip(rand_vec(indices.len()))
+            .collect(),
+    }
+}
+
+/// Fixing one variable of a 40-variable MLE with three entries stays sparse: a dense result
+/// would have 2^39 entries.
+#[test]
+fn fixing_a_large_sparse_mle_stays_sparse() {
+    let poly = sparse(40, &[0, 5, 1 << 39]);
+    let point = rand_vec(40);
+    let fixed = poly.evaluate_or_fix(&point[..1]).unwrap();
+    assert_encoded_by_density(&fixed, 39);
+    assert_eq!(
+        fixed.evaluate_mv(&point[1..]).unwrap(),
+        poly.evaluate_mv(&point).unwrap()
+    );
+}
+
+/// A selected evaluation (`eval<range>`) of a sparse MLE matches its dense table's and is
+/// encoded by density: few fixed variables leave a sparse result, many a dense one.
+#[test]
+fn restricting_a_sparse_mle_matches_its_dense_table() {
+    use lang::typ::CRange;
+    let nv = 8;
+    let poly = sparse(nv, &[1, 2, 3, 40, 41, 200, 255]);
+    let dense = poly.to_dense();
+    for (free, fixed) in [
+        (CRange::from_raw(0, 1, 7), 1),
+        (CRange::from_raw(2, 1, 4), 6),
+    ] {
+        let point = rand_vec(fixed);
+        let restricted = poly
+            .fix_variables_except_range(nv, free.clone(), &point)
+            .unwrap();
+        assert_encoded_by_density(&restricted, free.len());
+        assert_eq!(
+            restricted.to_dense(),
+            dense.fix_variables_except_range(nv, free, &point).unwrap()
+        );
+    }
+}
+
+/// Adding a sparse MLE: to a sparse one stays sparse while it is, to a dense one is dense;
+/// each matches the dense sum.
+#[test]
+fn adding_sparse_mles_matches_the_dense_sum() {
+    let a = sparse(6, &[1, 9, 9, 33]);
+    let b = sparse(6, &[9, 40]);
+    let sum = a.poly_add(&b).unwrap();
+    assert_encoded_by_density(&sum, 6);
+    assert_eq!(
+        sum.to_dense(),
+        a.to_dense().poly_add(&b.to_dense()).unwrap()
+    );
+    let full = PolyVariant::DenseMle(dense_mle(6));
+    for (x, y) in [(&a, &full), (&full, &a)] {
+        assert_eq!(
+            x.poly_add(y).unwrap(),
+            x.to_dense().poly_add(&y.to_dense()).unwrap()
+        );
+    }
+    assert_eq!(a.poly_add_scalar(Fr::zero()), a);
+}
+
+/// A product of a dense and a sparse MLE fixes its leading variables factor by factor: the
+/// sparse factor stays sparse, and the product is never multiplied out (which fails for MLEs,
+/// as Spartan's prover did). Evaluating the rest gives the product at the whole point.
+#[test]
+fn fixing_a_product_of_dense_and_sparse_mles_keeps_the_factors() {
+    let nv = 4;
+    let dense = PolyVariant::DenseMle(dense_mle(nv));
+    let sparse = PolyVariant::SparseMle {
+        num_vars: nv,
+        evals: [1usize, 6, 6, 11, 15]
+            .iter()
+            .zip(rand_vec(5))
+            .map(|(&i, v)| (i, v))
+            .collect(),
+    };
+    let point = rand_vec(nv);
+    let expected = dense.evaluate_mv(&point).unwrap() * sparse.evaluate_mv(&point).unwrap();
+    let product =
+        VirtualPolynomial::from_poly(dense).poly_mul(&VirtualPolynomial::from_poly(sparse));
+    for k in 1..nv {
+        let fixed = product.evaluate_or_fix(&point[..k]).unwrap();
+        assert_eq!(fixed.evaluate_mv(&point[k..]).unwrap(), expected, "k = {k}");
     }
 }
 
