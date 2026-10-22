@@ -34,15 +34,48 @@ fn fixing_a_dense_mle_matches_arkworks() {
         );
         for k in 0..nv {
             assert_eq!(
-                poly.evaluate_or_fix_mle(&point[..k]).unwrap(),
+                poly.evaluate_or_fix(&point[..k]).unwrap(),
                 PolyVariant::DenseMle(mle.fix_variables(&point[..k])),
                 "nv = {nv}, k = {k}"
             );
         }
         assert_eq!(
-            poly.evaluate_or_fix_mle(&point).unwrap(),
+            poly.evaluate_or_fix(&point).unwrap(),
             PolyVariant::from_scalar(mle.evaluate(&point))
         );
+    }
+}
+
+/// A sparse multivariate polynomial fixes its leading variables: evaluating the rest at the
+/// remaining coordinates gives the full evaluation, for every number of fixed variables.
+#[test]
+fn fixing_a_sparse_multivariate_polynomial_matches_full_evaluation() {
+    use ark_poly::DenseMVPolynomial;
+    use ark_poly::multivariate::{SparsePolynomial as MvPolynomial, SparseTerm, Term};
+    let nv = 3;
+    let c = rand_vec(5);
+    let term = |vars: Vec<(usize, usize)>| SparseTerm::new(vars);
+    let p = MvPolynomial::from_coefficients_vec(
+        nv,
+        vec![
+            (c[0], term(vec![])),
+            (c[1], term(vec![(0, 2)])),
+            (c[2], term(vec![(0, 1), (2, 1)])),
+            (c[3], term(vec![(1, 3), (2, 1)])),
+            (c[4], term(vec![(0, 1), (1, 1), (2, 2)])),
+        ],
+    );
+    let point = rand_vec(nv);
+    let full = p.evaluate(&point);
+    let poly = PolyVariant::SparseMultivariate(p);
+    for k in 0..=nv {
+        let fixed = poly.evaluate_or_fix(&point[..k]).unwrap();
+        let value = if k == nv {
+            fixed.to_scalar().expect("every variable fixed")
+        } else {
+            fixed.evaluate_mv(&point[k..]).unwrap()
+        };
+        assert_eq!(value, full, "k = {k}");
     }
 }
 
@@ -67,8 +100,8 @@ fn fixing_a_sparse_mle_matches_its_dense_table() {
     );
     for k in 0..=nv {
         assert_eq!(
-            sparse.evaluate_or_fix_mle(&point[..k]).unwrap(),
-            dense.evaluate_or_fix_mle(&point[..k]).unwrap(),
+            sparse.evaluate_or_fix(&point[..k]).unwrap(),
+            dense.evaluate_or_fix(&point[..k]).unwrap(),
             "k = {k}"
         );
     }

@@ -1,6 +1,7 @@
 use ark_ff::{Field, PrimeField, Zero};
 use ark_poly::{
-    DenseMultilinearExtension, DenseUVPolynomial, MultilinearExtension, Polynomial,
+    DenseMVPolynomial, DenseMultilinearExtension, DenseUVPolynomial, MultilinearExtension,
+    Polynomial,
     multivariate::{
         SparsePolynomial as MultiSparsePolynomial, SparseTerm as MultiSparseTerm, Term,
     },
@@ -153,7 +154,7 @@ pub enum PolyVariant<F: Field> {
     /// evaluation and partial-evaluation both run in `O(|evals| · num_vars)`
     /// rather than `O(2^num_vars)`. Arithmetic ops on this variant fall
     /// back to `to_dense` first (correct but expensive); the only fast
-    /// paths are `evaluate` and `evaluate_or_fix_mle`.
+    /// paths are `evaluate` and `evaluate_or_fix`.
     SparseMle {
         /// Number of boolean variables of the underlying function; the dense
         /// evaluation table this stands for would have `2^num_vars` entries.
@@ -186,6 +187,32 @@ fn fix_low_variables<F: Field>(evals: &[F], point: &[F]) -> Vec<F> {
         .par_chunks(block)
         .map(|b| evaluate_block(b, point))
         .collect()
+}
+
+/// `p` with variables `0..point.len()` fixed to `point`, the others renumbered from 0: each
+/// term's coefficient takes the fixed variables' powers, and terms that become equal combine.
+fn fix_low_variables_multivariate<F: Field>(
+    p: &SparseMultivariatePolynomial<F>,
+    point: &[F],
+) -> SparseMultivariatePolynomial<F> {
+    let k = point.len();
+    let terms = p
+        .terms
+        .iter()
+        .map(|(coefficient, term)| {
+            let mut coefficient = *coefficient;
+            let mut rest = Vec::new();
+            for &(var, power) in term.iter() {
+                if var < k {
+                    coefficient *= point[var].pow([power as u64]);
+                } else {
+                    rest.push((var - k, power));
+                }
+            }
+            (coefficient, MultiSparseTerm::new(rest))
+        })
+        .collect();
+    SparseMultivariatePolynomial::from_coefficients_vec(p.num_vars - k, terms)
 }
 
 /// Blocks above this many entries evaluate their halves in parallel.
@@ -993,22 +1020,34 @@ impl<F: Field> PolyVariant<F> {
         })
     }
 
-    /// Fix the first `points.len()` variables of a multilinear extension: a
-    /// `DenseMle` in the remaining variables, or a constant once all are fixed.
+    /// Fix the first `points.len()` variables of a multivariate polynomial: of a
+    /// multilinear extension, a `DenseMle` in the remaining variables; of a sparse
+    /// multivariate polynomial, one in the remaining variables, renumbered from 0. A
+    /// constant once all are fixed.
     ///
     /// # Errors
     /// Returns [`PolyError::DimensionMismatch`] if more points are supplied
-    /// than the extension has variables, and [`PolyError::RequiresMle`] for
-    /// any encoding that is not `DenseMle` or `SparseMle`.
-    pub fn evaluate_or_fix_mle(&self, points: &[F]) -> Result<Self, PolyError<F>> {
+    /// than the polynomial has variables, and [`PolyError::RequiresMle`] for
+    /// a univariate encoding.
+    pub fn evaluate_or_fix(&self, points: &[F]) -> Result<Self, PolyError<F>> {
         let num_vars = match self {
-            PolyVariant::DenseMle(_) | PolyVariant::SparseMle { .. } => self.num_vars(),
+            PolyVariant::DenseMle(_)
+            | PolyVariant::SparseMle { .. }
+            | PolyVariant::SparseMultivariate(_) => self.num_vars(),
             _ => return Err(PolyError::RequiresMle),
         };
         if points.len() > num_vars {
             return Err(PolyError::DimensionMismatch {
                 expected: num_vars,
                 actual: points.len(),
+            });
+        }
+        if let PolyVariant::SparseMultivariate(p) = self {
+            let rest = fix_low_variables_multivariate(p, points);
+            return Ok(if points.len() == num_vars {
+                Self::from_scalar(rest.evaluate(&vec![]))
+            } else {
+                PolyVariant::SparseMultivariate(rest)
             });
         }
         let rest = match self {

@@ -1254,6 +1254,75 @@ fn pin_proj_var() {
     assert!(gs[0] == expected);
 }
 
+/// The nodes of `dag` that `keep` selects.
+fn count_nodes(dag: &UDag<B>, keep: impl Fn(&Node<B, Nothing>) -> bool) -> usize {
+    dag.graph
+        .node_indices()
+        .filter(|n| keep(&dag.graph[*n].node))
+        .count()
+}
+
+fn is_random(node: &Node<B, Nothing>) -> bool {
+    matches!(node, Node::Op(op, _) if matches!(op.get(), Op::Random(..)))
+}
+
+/// `.set` lowers its record once: the fields it keeps come from one inlined call, so two fields
+/// bound to the same draw stay equal (each used to inline `mk`, drawing twice).
+#[test]
+fn pin_set_record_lowers_its_record_once() {
+    let src = r#"
+        fn mk<F: Field>(instance x: F) -> { a: F, b: F, c: F } {
+            let s = random<F>;
+            {| a: s, b: s, c: x |}
+        }
+        proto p<F: Field>(instance x: F, instance y: F) where x == x {
+            let r = mk(x).set(c, y);
+            u <- r.a;
+            w <- r.b;
+            verify(u == w)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    assert_eq!(count_nodes(gs.protocols()[0], is_random), 1);
+}
+
+/// Each `.set` in a chain adds a constant number of nodes (it used to re-lower the inner
+/// `.set` once per kept field: exponential in the chain's length).
+#[test]
+fn pin_set_record_chain_is_linear() {
+    let nodes = |depth: usize| {
+        let sets: String = (0..depth)
+            .map(|i| format!(".set({}, y)", ["a", "b", "c"][i % 3]))
+            .collect();
+        let src = format!(
+            "proto p<F: Field>(instance x: F, instance y: F) where x == x {{
+                let s = {{| a: x, b: x, c: x |}}{sets};
+                u <- s.a;
+                verify(u == u)
+            }}"
+        );
+        parse_and_build(&src).protocols()[0].node_count()
+    };
+    let step = nodes(2) - nodes(1);
+    assert_eq!(nodes(8) - nodes(1), 7 * step);
+}
+
+/// Projecting a field of a record literal still lowers the other fields: a `<-` in one is kept
+/// (it used to be dropped).
+#[test]
+fn pin_proj_record_literal_keeps_other_fields_effects() {
+    let src = r#"
+        proto p<F: Field>(instance x: F, instance y: F) where x == x {
+            let v = {| a: x, b: (c <- y; c) |}.a;
+            u <- v;
+            verify(u == u)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let transcript = |node: &Node<B, Nothing>| matches!(node, Node::Transcr(..));
+    assert_eq!(count_nodes(gs.protocols()[0], transcript), 2);
+}
+
 /// SetRecord: `r.set(x, v)` desugars to Record({ x: v, y: r.y }).
 /// Tests: CExp::SetRecord → desugaring into CExp::Record with Proj for unchanged fields.
 #[test]
@@ -2678,8 +2747,7 @@ fn pin_three_declarations() {
     assert!(gs[2].node_count() > 1);
 }
 
-/// MLE application: `p(x)` where `p: Mle<F, 2>`.
-/// Tests: CExp::App with multilinear extension type (the untested App MLE path).
+/// MLE application: `p(x)` where `p: Mle<F, 2>` is `eval(p, [x])`.
 #[test]
 fn pin_app_mle() {
     let src = r#"
@@ -2688,13 +2756,11 @@ fn pin_app_mle() {
     let gs = parse_and_build(src);
 
     let dag = &gs[0];
-    // MLE application desugars to: mle_l + (mle_r - mle_l) * x
-    // where mle_l = p[0..1], mle_r = p[1..2]
-    // This should produce several nodes for the arithmetic
-    assert!(
-        dag.node_count() > 2,
-        "MLE app should produce multiple nodes"
-    );
+    // MLE application is `eval(p, [x])`: one `Evaluate` node, no arithmetic of its own.
+    let evaluate = |node: &Node<B, Nothing>| matches!(node, Node::Op(op, _) if matches!(op.get(), Op::Evaluate(..)));
+    assert_eq!(count_nodes(dag, evaluate), 1);
+    let ram = |node: &Node<B, Nothing>| matches!(node, Node::Op(op, _) if matches!(op.get(), Op::Ram(..)));
+    assert_eq!(count_nodes(dag, ram), 0);
     // Verify it's a function (no check node)
     assert!(dag.find_verify().is_empty());
 }

@@ -1,0 +1,12 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: `p` is a variable of type F (Field), which cannot be applied
+   ╭─[ test.zippel:3:10 ]
+   │
+ 3 │     u <- p(x);
+   │          ┬  
+   │          ╰── has type F (Field)
+   │          │  
+   │          ╰── note: only functions and polynomials can be applied; a variable hides every function of its name
+───╯

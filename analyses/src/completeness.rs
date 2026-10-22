@@ -565,6 +565,27 @@ mod tests {
         );
     }
 
+    /// Applying a polynomial one coordinate at a time is `eval` at the whole point: the
+    /// analysis proves `q(r2) == eval(p, [r1, r2])` for `q = p(r1)`, for an MLE and for a
+    /// general polynomial, so its encoding of application agrees with the run time's.
+    #[test]
+    fn application_one_coordinate_at_a_time_is_eval() {
+        for typ in ["Mle<F, 2>", "Poly<F, 2, 2>"] {
+            let ex = format!(
+                "proto app<F: Field>(instance p: {typ}) where p == p {{
+                    r1 <- challenge<F>;
+                    r2 <- challenge<F>;
+                    let q = p(r1);
+                    verify(q(r2) == eval(p, [r1, r2]))
+                }}"
+            );
+            let gs = unwrap!(lowered::<ArkBls12_381>(&ex, &Ctx::new()));
+            let g = QualifierPropagation::from_dag(&gs[0]);
+            let mut ca = from_input(&g);
+            assert!(ca.run().is_ok(), "{typ}: application should be complete");
+        }
+    }
+
     #[test]
     fn materialized_partial_mle_eval_keeps_inferred_uni_shape() {
         let ex = r#"

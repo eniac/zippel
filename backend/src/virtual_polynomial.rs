@@ -468,7 +468,7 @@ impl<F: PrimeField> VirtualPolynomial<F> {
     /// no products remain.
     ///
     /// # Errors
-    /// Propagates [`PolyVariant::evaluate_or_fix_mle`] failures, i.e.
+    /// Propagates [`PolyVariant::evaluate_or_fix`] failures, i.e.
     /// [`PolyError::DimensionMismatch`] if `points` is longer than a factor's
     /// arity and [`PolyError::RequiresMle`] if a factor is not a multilinear
     /// encoding.
@@ -481,7 +481,7 @@ impl<F: PrimeField> VirtualPolynomial<F> {
         } else {
             self.num_variables.map(|n| n.saturating_sub(points.len()))
         };
-        self.map_factors(|poly| poly.evaluate_or_fix_mle(points), num_variables)
+        self.map_factors(|poly| poly.evaluate_or_fix(points), num_variables)
     }
 
     /// Conservative degree bound for the virtual sum-of-products form.
@@ -1117,8 +1117,8 @@ impl<F: PrimeField> VirtualPolynomial<F> {
     /// # Errors
     /// Returns [`PolyError::DimensionMismatch`] if more points are supplied
     /// than the declared arity, and otherwise propagates
-    /// [`Self::normalize`] and [`PolyVariant::evaluate_or_fix_mle`].
-    pub fn evaluate_or_fix_mle(&self, points: &[F]) -> Result<Self, PolyError<F>> {
+    /// [`Self::normalize`] and [`PolyVariant::evaluate_or_fix`].
+    pub fn evaluate_or_fix(&self, points: &[F]) -> Result<Self, PolyError<F>> {
         if let Some(num_vars) = self.num_variables {
             let constant = if self.is_zero() {
                 Some(F::zero())
@@ -1147,7 +1147,7 @@ impl<F: PrimeField> VirtualPolynomial<F> {
             return self.fix_first_mle_variables_factorwise(points);
         }
 
-        let result = self.normalize()?.evaluate_or_fix_mle(points)?;
+        let result = self.normalize()?.evaluate_or_fix(points)?;
         Ok(VirtualPolynomial::from_poly(result))
     }
 
@@ -1902,7 +1902,7 @@ mod tests {
         let b = create_vp_from_mle(vec![2, 3, 5, 7, 11, 13, 17, 19], 3);
         let product = a.poly_mul(&b);
         let r0 = Fr::from(5u64);
-        let residual = product.evaluate_or_fix_mle(&[r0]).unwrap();
+        let residual = product.evaluate_or_fix(&[r0]).unwrap();
 
         for (x1, x2) in [(0u64, 0u64), (1, 0), (0, 1), (3, 4)] {
             let direct = product
@@ -1923,7 +1923,7 @@ mod tests {
         let product = a.poly_mul(&b);
         let r0 = Fr::from(5u64);
         let r1 = Fr::from(7u64);
-        let residual = product.evaluate_or_fix_mle(&[r0, r1]).unwrap();
+        let residual = product.evaluate_or_fix(&[r0, r1]).unwrap();
         assert!(residual.is_univariate());
 
         for t in [0u64, 1, 6] {
@@ -1944,7 +1944,7 @@ mod tests {
         let prefix: Vec<Fr> = (2u64..=7).map(Fr::from).collect();
         let mut residual = product.clone();
         for r in &prefix {
-            residual = residual.evaluate_or_fix_mle(&[*r]).unwrap();
+            residual = residual.evaluate_or_fix(&[*r]).unwrap();
         }
 
         for (x6, x7) in [(0u64, 0u64), (1, 0), (0, 1), (3, 5)] {
@@ -1972,13 +1972,13 @@ mod tests {
         let prefix: Vec<Fr> = (0..6).map(|_| Fr::rand(&mut rng)).collect();
         let mut curr_poly = product.clone();
         for r in &prefix {
-            curr_poly = curr_poly.evaluate_or_fix_mle(&[*r]).unwrap();
+            curr_poly = curr_poly.evaluate_or_fix(&[*r]).unwrap();
         }
 
         let round_poly = explicit_round_poly(&curr_poly, 2);
         let final_challenge = Fr::rand(&mut rng);
         let prev_eval = round_poly.evaluate_uv(&final_challenge);
-        let final_poly = curr_poly.evaluate_or_fix_mle(&[final_challenge]).unwrap();
+        let final_poly = curr_poly.evaluate_or_fix(&[final_challenge]).unwrap();
         let ev0 = final_poly.evaluate_uv(&Fr::from(0u64));
         let ev1 = final_poly.evaluate_uv(&Fr::from(1u64));
         assert_eq!(prev_eval, ev0 + ev1);
@@ -1996,7 +1996,7 @@ mod tests {
         assert_eq!(explicit_round0, legacy_round0);
 
         let r1 = Fr::from(5u64);
-        let residual = product.evaluate_or_fix_mle(&[r1]).unwrap();
+        let residual = product.evaluate_or_fix(&[r1]).unwrap();
         let explicit_round1 = explicit_round_evals(&residual, 2, max_degree);
         let (legacy_round1, legacy_residual) =
             marginalize::<ArkBls12_381>(&product, 3, max_degree, 1, Some(r1));
@@ -2056,7 +2056,7 @@ mod tests {
         assert_eq!(explicit_round0, legacy_round0);
 
         let r1 = Fr::from(5u64);
-        let residual = product.evaluate_or_fix_mle(&[r1]).unwrap();
+        let residual = product.evaluate_or_fix(&[r1]).unwrap();
         let explicit_round1 = explicit_round_evals(&residual, num_vars - 1, max_degree);
         let (legacy_round1, _) =
             marginalize::<ArkBls12_381>(&product, num_vars, max_degree, 1, Some(r1));
@@ -2100,7 +2100,7 @@ mod tests {
             let challenge = Fr::from((round + 5) as u64);
             prev_eval = Some(g.evaluate_uv(&challenge));
             if current_vars > 1 {
-                curr_poly = curr_poly.evaluate_or_fix_mle(&[challenge]).unwrap();
+                curr_poly = curr_poly.evaluate_or_fix(&[challenge]).unwrap();
                 current_vars -= 1;
             }
         }

@@ -6,8 +6,8 @@ use backend::{ABase, ATyp, Value, VirtualPolynomial};
 use lang::ast::arg::CArg;
 use lang::ast::range::CRange;
 use lang::ast::{
-    BinOp, Block, BodyTypes, CBody, CExp, CRef, CSig, Exp, ExpExclusion, ExpId, ExpLiteral, Exprs,
-    Exps, Stmt, TypedModule,
+    BinOp, BodyTypes, CBody, CExp, CRef, CSig, Exp, ExpExclusion, ExpId, ExpLiteral, Exprs, Exps,
+    Stmt, TypedModule,
 };
 use lang::id::Tid;
 use lang::stack_guard;
@@ -486,13 +486,26 @@ impl<C: HasOpFactory> UDag<C> {
         let span = scope.exprs.span(initial).clone();
         let op = scope.scoped(|scope| self.add_exp_raw(scope, initial, &mut expected))?;
         Ok(match expected {
-            Some(target) if op.typ() != target => {
-                let op = coerce_field_op(op, &target, 0);
-                let atyp = op.typ();
-                self.materialize(op, scope.edge_type, atyp, span)
-            }
-            _ => op,
+            Some(target) => self.coerce(op, &target, scope.edge_type, span),
+            None => op,
         })
+    }
+
+    /// `op` as a value of type `target`: finite-index leaves `target` declares field elements
+    /// are embedded into the field ([`coerce_field_op`]), and the result materialized.
+    fn coerce(
+        &mut self,
+        op: GOp<C>,
+        target: &ATyp,
+        edge_type: DepType,
+        span: std::ops::Range<usize>,
+    ) -> GOp<C> {
+        if op.typ() == *target {
+            return op;
+        }
+        let op = coerce_field_op(op, target, 0);
+        let atyp = op.typ();
+        self.materialize(op, edge_type, atyp, span)
     }
 
     /// [`Self::add_exp`] before the final coercion to `expected`, which only steers

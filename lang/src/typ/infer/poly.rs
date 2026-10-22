@@ -158,56 +158,7 @@ impl CRef<'_> {
                 }
             }
             // Binary form: eval(p, points) — point or vector evaluation.
-            (None, Some(x)) => {
-                let x_typ = env.typ(x);
-
-                match (p_typ, x_typ) {
-                    // Univariate polynomial evaluated at a single scalar point.
-                    // Result is a scalar of the same base type. (The
-                    // pre-Phase-B path desugared `p(x)` into
-                    // `dot(p, [x^0, ..., x^n])`, which routed through
-                    // `lub_dot(Poly, Vec)` — that arm has been
-                    // removed, and the App desugaring now produces
-                    // `evaluate(p, x)` directly.)
-                    (CTyp::Poly(i, m, _n), CTyp::Base(b)) if m.node == 1 && i == b => {
-                        let k = kctx.get(&i).ok_or(TypeError::Evaluate)?;
-                        if !k.is_scalar() {
-                            return Err(TypeError::Evaluate);
-                        }
-                        Ok(CTyp::Base(i))
-                    }
-                    // An integer point embeds into the polynomial's own field.
-                    (CTyp::Poly(i, m, _n), CTyp::Fin(_) | CTyp::FieldLiteral) if m.node == 1 => {
-                        let k = kctx.get(&i).ok_or(TypeError::Evaluate)?;
-                        if !k.is_scalar() {
-                            return Err(TypeError::Evaluate);
-                        }
-                        Ok(CTyp::Base(i))
-                    }
-                    // Univariate polynomial evaluated at a vector of points is a
-                    // hard type error: evaluate at a single scalar via `p(x)`, or
-                    // write `[p(x) for x in points]` to evaluate at many points.
-                    (CTyp::Poly(_i, m, _n), CTyp::Vec(_b, _len)) if m.node == 1 => {
-                        Err(TypeError::EvaluateUnivariateVector)
-                    }
-                    // Multivariate polynomial (MLE, virtual, etc.): n > 1.
-                    (CTyp::Poly(i_poly, n, d), CTyp::Vec(b, len_vec)) if n.node > 1 => {
-                        // Points must fit the polynomial's field (integers embed).
-                        if !b.node.fits(&CTyp::Base(i_poly.clone()), kctx) {
-                            return Err(TypeError::Evaluate);
-                        }
-                        if len_vec == n {
-                            return Ok(CTyp::Base(i_poly.clone()));
-                        }
-                        if len_vec < n {
-                            let rem = n.node - len_vec.node;
-                            return Ok(CTyp::Poly(i_poly.clone(), Spanned::dummy(rem), d));
-                        }
-                        Err(TypeError::EvaluateMleTooManyArguments)
-                    }
-                    _ => Err(TypeError::Evaluate),
-                }
-            }
+            (None, Some(x)) => evaluated_typ(p_typ, env.typ(x), kctx),
             // Selected form: eval<range>(p, fixed).
             (Some(range), Some(fixed)) => {
                 let fixed_typ = env.typ(fixed);
@@ -312,5 +263,55 @@ impl CRef<'_> {
                 t => Err(not_poly(&t)),
             }
         }
+    }
+}
+
+/// The type of `eval(p, x)` with `p : p_typ` and `x : x_typ`: a univariate polynomial at one
+/// scalar, or a multivariate one at a point that fixes some or all of its variables. Applying a
+/// polynomial (`p(x)`) is typed by this rule too.
+pub(super) fn evaluated_typ(
+    p_typ: CTyp,
+    x_typ: CTyp,
+    kctx: &Ctx<Tid, CKind>,
+) -> Result<CTyp, TypeError> {
+    match (p_typ, x_typ) {
+        // Univariate polynomial evaluated at a single scalar point: a scalar of its field.
+        (CTyp::Poly(i, m, _n), CTyp::Base(b)) if m.node == 1 && i == b => {
+            let k = kctx.get(&i).ok_or(TypeError::Evaluate)?;
+            if !k.is_scalar() {
+                return Err(TypeError::Evaluate);
+            }
+            Ok(CTyp::Base(i))
+        }
+        // An integer point embeds into the polynomial's own field.
+        (CTyp::Poly(i, m, _n), CTyp::Fin(_) | CTyp::FieldLiteral) if m.node == 1 => {
+            let k = kctx.get(&i).ok_or(TypeError::Evaluate)?;
+            if !k.is_scalar() {
+                return Err(TypeError::Evaluate);
+            }
+            Ok(CTyp::Base(i))
+        }
+        // Univariate polynomial evaluated at a vector of points is a
+        // hard type error: evaluate at a single scalar via `p(x)`, or
+        // write `[p(x) for x in points]` to evaluate at many points.
+        (CTyp::Poly(_i, m, _n), CTyp::Vec(_b, _len)) if m.node == 1 => {
+            Err(TypeError::EvaluateUnivariateVector)
+        }
+        // Multivariate polynomial (MLE, virtual, etc.): n > 1.
+        (CTyp::Poly(i_poly, n, d), CTyp::Vec(b, len_vec)) if n.node > 1 => {
+            // Points must fit the polynomial's field (integers embed).
+            if !b.node.fits(&CTyp::Base(i_poly.clone()), kctx) {
+                return Err(TypeError::Evaluate);
+            }
+            if len_vec == n {
+                return Ok(CTyp::Base(i_poly.clone()));
+            }
+            if len_vec < n {
+                let rem = n.node - len_vec.node;
+                return Ok(CTyp::Poly(i_poly.clone(), Spanned::dummy(rem), d));
+            }
+            Err(TypeError::EvaluateMleTooManyArguments)
+        }
+        _ => Err(TypeError::Evaluate),
     }
 }

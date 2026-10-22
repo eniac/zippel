@@ -51,6 +51,47 @@ proto schnorr<G: Group, F: Scalar<G>>(witness x: F, instance g: G, instance h: G
     assert!(cmodule.typecheck().is_ok());
 }
 
+/// An argument hides the function of its name: applying the value `p` is an error rather than a
+/// call of `fn p`.
+#[test]
+fn a_variable_hides_a_function_of_its_name() {
+    let src = "fn p<F: Field>(instance a: F) -> F { a }
+proto t<F: Field>(instance p: F, instance x: F) where x == x {
+    u <- p(x);
+    verify(u == u)
+}";
+    assert_snap!(
+        SNAP_DIR,
+        "variable_hides_function",
+        render_type_errors(src, &[])
+    );
+}
+
+/// A polynomial argument named like a function is evaluated, not called: `fn p` returns a
+/// vector, so `p([x, x]) == x` type-checks only as `eval(p, [x, x])`.
+#[test]
+fn a_polynomial_hides_a_function_of_its_name() {
+    let src = "fn p<F: Field>(instance a: [F; 2]) -> [F; 3] { [a[0], a[1], a[0]] }
+proto t<F: Field>(instance p: Poly<F, 2, 2>, instance x: F) where x == x {
+    verify(p([x, x]) == x)
+}";
+    let (module, _) = UModule::parse(src);
+    let cmodule = module.unwrap().concretize(&Ctx::new()).unwrap();
+    assert!(cmodule.typecheck().is_ok());
+}
+
+#[test]
+fn a_value_cannot_be_applied() {
+    let src = "proto t<F: Field>(instance v: F) where v == v {
+    u <- v(v);
+    verify(u == u)
+}";
+    assert!(
+        render_type_errors(src, &[])
+            .contains("`v` is a variable of type F (Field), which cannot be applied")
+    );
+}
+
 // ── Proto `verify` requirement (E0013) ──────────────────────────────────
 
 /// Whether `src`, type-checked under `sizes`, reports E0013.
