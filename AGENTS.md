@@ -160,7 +160,11 @@ unused helpers are still typechecked. Use `--size` to check specific sizes.
   expression printer: diagnostics label spans. A pass that doesn't depend on what a
   node means uses `lang/src/ast/walk.rs` instead of matching every `Exp` variant:
   `Exp::for_each_child`/`for_each_child_mut`, or `ExpRef::walk` (iterative, evaluation
-  order, resolves names to their bindings). The binder rules live only there.
+  order; `Bind`/`Unbind` events mark where each variable's scope starts and ends, each
+  `Bind` saying what the variable is bound to (`Bound`: a statement's value, a
+  comprehension domain's elements, a `fun` parameter), and `InScope` resolves names
+  from them, holding a pass's record per binding). The binder
+  rules live only there.
   Direct syntactic effects for purity queries and relation diagnostics are
   described in `ast/effect.rs`; their different purity policies remain explicit.
   Type inference is such a walk too: each rule in `lang/src/typ/infer/` types a

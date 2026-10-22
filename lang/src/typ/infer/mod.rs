@@ -18,7 +18,7 @@ use crate::typ::instantiate::Instantiation;
 use crate::ast::range::Range;
 use crate::ast::sig::CSig;
 use crate::ast::spanned::Spanned;
-use crate::ast::{BinOp, CExp, CExpr, CRef, Exclusion, ExpExclusion, ExpId, Exps, Visit};
+use crate::ast::{BinOp, Bound, CExp, CExpr, CRef, Exclusion, ExpExclusion, ExpId, Exps, Visit};
 use crate::id::{Tid, Vid};
 use crate::typ::lub::{Lub, LubError};
 use crate::typ::{CKind, CTyp};
@@ -161,20 +161,17 @@ impl CRef<'_> {
         typed
     }
 
-    /// [`Self::infer`], leaving the bindings of the nodes still open on error in `vctx`.
+    /// [`Self::infer`], leaving the variables still in scope on error in `vctx`.
     fn infer_in(
         self,
         cx: &Cx<'_>,
         vctx: &mut VarTypes,
         types: &mut TypeTable,
     ) -> Result<CTyp, TypeError> {
-        // The nodes entered and not yet left, each with the point to roll the variables back
-        // to when it is left, if it binds variables.
-        let mut open: Vec<(CRef<'_>, Option<usize>)> = Vec::new();
+        // The nodes entered and not yet left.
+        let mut open: Vec<CRef<'_>> = Vec::new();
         // Expression and statement locations, innermost last, for diagnostic fallbacks.
         let mut locations = Vec::new();
-        // The node left last: a binder takes its type from it.
-        let mut last = self;
         let mut walk = self.walk();
         // The environment of a rule, at the variables in scope now.
         macro_rules! env {
@@ -194,8 +191,7 @@ impl CRef<'_> {
                 }
                 Visit::Enter(e) => {
                     locations.push(e.span());
-                    let binds = matches!(e.node(), CExp::Block(..) | CExp::Map(..) | CExp::Fun(..));
-                    open.push((e, binds.then(|| vctx.mark())));
+                    open.push(e);
                     if let Some(cached) = types.get(e.id()) {
                         // A node's type is reused by id, which is sound only while the node keeps
                         // its bindings. Lowering infers every variable it lowers, so a node moved
@@ -210,15 +206,13 @@ impl CRef<'_> {
                         return Err(Self::locate(err, &locations));
                     }
                 }
-                Visit::Bind(x) => {
-                    let (binder, _) = open.last().expect("a binder is open");
-                    let t = binder.bind(last, &env!());
-                    vctx.insert(&x.node, &t);
-                }
+                Visit::Bind(x, bound) => match Self::bound_typ(bound, &env!()) {
+                    Ok(t) => vctx.insert(&x.node, &t),
+                    Err(err) => return Err(Self::locate(err, &locations)),
+                },
+                // Bindings end innermost first, so the latest one ends.
+                Visit::Unbind(_) => vctx.rollback(vctx.mark() - 1),
                 Visit::Leave(e) => {
-                    if let Some(mark) = open.last_mut().and_then(|(_, mark)| mark.take()) {
-                        vctx.rollback(mark);
-                    }
                     if types.get(e.id()).is_none() {
                         let mut call = None;
                         let typed = e.infer_node(&env!(), &mut call);
@@ -233,8 +227,7 @@ impl CRef<'_> {
                     }
                     open.pop();
                     locations.pop();
-                    last = e;
-                    if let Some((parent, _)) = open.last()
+                    if let Some(parent) = open.last()
                         && let Err(err) = parent.after_child(e, &env!())
                     {
                         return Err(Self::locate(err, &locations));
@@ -271,7 +264,6 @@ impl CRef<'_> {
     /// Checks made when `child`, a child of this node, has been typed, before the next one is.
     fn after_child(self, child: CRef<'_>, env: &Env<'_>) -> Result<(), TypeError> {
         match self.node() {
-            CExp::Map(_, _, domain) if *domain == child.id() => self.map_elem(child, env).map(drop),
             CExp::SetRecord(record, field, _) if *record == child.id() => {
                 self.record_field(child, field, env).map(drop)
             }
@@ -279,21 +271,24 @@ impl CRef<'_> {
         }
     }
 
-    /// The type of a variable this node binds, `last` being the node the walk left last: a
-    /// statement's value, a comprehension's domain.
-    fn bind(self, last: CRef<'_>, env: &Env<'_>) -> CTyp {
-        match self.node() {
-            CExp::Map(..) => self.map_elem(last, env).expect("checked after the domain"),
-            CExp::Fun(vars, _) => {
-                let field = self.fun_field(env).expect("checked on entry");
-                if vars.len() == 1 {
+    /// The type of a variable bound as `bound`. What it is bound to is typed already: a
+    /// statement's value or a comprehension's domain is left before its variable is bound.
+    fn bound_typ(bound: Bound<'_, BigUint>, env: &Env<'_>) -> Result<CTyp, TypeError> {
+        match bound {
+            Bound::Value(value) => Ok(env.typ(value)),
+            Bound::Element { map, domain } => map.map_elem(domain, env),
+            Bound::Param(fun) => {
+                let CExp::Fun(vars, _) = fun.node() else {
+                    unreachable!("parameters are bound by a `fun`")
+                };
+                let field = fun.fun_field(env)?;
+                Ok(if vars.len() == 1 {
                     // Univariate: degree 1; the body's degree follows from the lub rules.
                     CTyp::uni(&field, 1)
                 } else {
                     CTyp::Base(field)
-                }
+                })
             }
-            _ => env.typ(last),
         }
     }
 }

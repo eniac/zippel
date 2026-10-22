@@ -1,6 +1,6 @@
 //! The shape of expression nodes, described once: which children a node has
-//! ([`Exp::for_each_child`], [`Exp::for_each_child_mut`]), and which variables each child sees bound
-//! ([`ExpRef::walk`]). Passes that don't depend on a node's meaning use these rather than
+//! ([`Exp::for_each_child`], [`Exp::for_each_child_mut`]), and where each variable's scope starts
+//! and ends ([`ExpRef::walk`]; [`InScope`] resolves names from those events). Passes that don't depend on a node's meaning use these rather than
 //! matching every [`Exp`] variant, so a new variant, or a new binder, is a change here only.
 //! Walks keep their work on the heap, so they take bounded stack at any depth (issue #252).
 
@@ -112,20 +112,37 @@ pub enum Visit<'a, N: ExpLiteral> {
     EnterStmt(&'a Spanned<Stmt>),
     /// A statement, after its value is evaluated, before its binder comes into scope.
     LeaveStmt(&'a Spanned<Stmt>),
-    /// A variable comes into scope until its block, comprehension or `fun` is left.
-    Bind(&'a Spanned<Vid>),
+    /// A variable comes into scope, bound as [`Bound`] says. A matching [`Visit::Unbind`]
+    /// ends it.
+    Bind(&'a Spanned<Vid>, Bound<'a, N>),
+    /// A variable goes out of scope: its block, comprehension or `fun` is being left.
+    /// Bindings end innermost first, before that node's [`Visit::Leave`].
+    Unbind(&'a Spanned<Vid>),
     /// A node, after its children.
     Leave(ExpRef<'a, N>),
 }
 
+/// What a [`Visit::Bind`]'s variable is bound to.
+pub enum Bound<'a, N: ExpLiteral> {
+    /// A statement's value: `let x = e;` or `x <- e;` binds `x` to `e`.
+    Value(ExpRef<'a, N>),
+    /// Each element of a comprehension's domain: `[body for x in domain]`.
+    Element {
+        /// The comprehension.
+        map: ExpRef<'a, N>,
+        /// Its domain.
+        domain: ExpRef<'a, N>,
+    },
+    /// A variable of the polynomial a `fun` builds: `fun(x, y) => body`.
+    Param(ExpRef<'a, N>),
+}
+
 /// The walk of a tree: each node entered and left, its children in between in evaluation
-/// order, with the variables bound at each point (see [`ExpRef::walk`]).
+/// order, with variables bound and unbound where their scopes start and end (see
+/// [`ExpRef::walk`]).
 pub struct Walk<'a, N: ExpLiteral> {
     root: ExpRef<'a, N>,
     todo: Vec<Step<'a>>,
-    bound: Vec<&'a Spanned<Vid>>,
-    /// For each bound name, its positions in `bound`, innermost last.
-    by_name: HashMap<&'a Vid, Vec<usize>>,
 }
 
 enum Step<'a> {
@@ -134,23 +151,29 @@ enum Step<'a> {
     LeaveStmt(&'a Spanned<Stmt>),
     /// The children of a node just entered, still to be scheduled.
     Expand(ExpId),
-    Bind(&'a Spanned<Vid>),
-    /// Leave a node, unbinding back to `bound.len() == .1`.
-    Leave(ExpId, usize),
+    Bind(&'a Spanned<Vid>, BoundStep),
+    Unbind(&'a Spanned<Vid>),
+    Leave(ExpId),
+}
+
+/// A [`Bound`] by node ids, while it waits in the walk's work stack.
+#[derive(Clone, Copy)]
+enum BoundStep {
+    Value(ExpId),
+    Element { map: ExpId, domain: ExpId },
+    Param(ExpId),
 }
 
 impl<'a, N: ExpLiteral> ExpRef<'a, N> {
     /// Walks the tree under this node: each node is entered, then its children are walked in
     /// evaluation order, then it is left. A comprehension's domain comes before its binder
     /// and body; a block's statements come in order, each with statement enter/leave events
-    /// around its value, binding afterward only when something follows it. [`Walk::resolve`]
-    /// answers which binding a name refers to.
+    /// around its value, binding afterward only when something follows it. Each binding ends
+    /// when the node that made it is left. [`InScope`] resolves names from these events.
     pub fn walk(self) -> Walk<'a, N> {
         Walk {
             root: self,
             todo: vec![Step::Enter(self.id())],
-            bound: Vec::new(),
-            by_name: HashMap::new(),
         }
     }
 
@@ -168,45 +191,42 @@ impl<'a, N: ExpLiteral> ExpRef<'a, N> {
     }
 }
 
-impl<'a, N: ExpLiteral> Walk<'a, N> {
-    /// Variables bound by the nodes the walk is inside, outermost first.
-    pub fn bound(&self) -> &[&'a Spanned<Vid>] {
-        &self.bound
-    }
-
-    /// The innermost binding of `name` the walk is inside, as a position in [`Self::bound`].
-    pub fn resolve(&self, name: &Vid) -> Option<usize> {
-        self.by_name.get(name).and_then(|at| at.last().copied())
-    }
-
-    /// Whether the walk is inside a binding of `name`.
-    pub fn is_bound(&self, name: &Vid) -> bool {
-        self.resolve(name).is_some()
-    }
-
+impl<N: ExpLiteral> Walk<'_, N> {
     /// Called right after a [`Visit::Enter`]: skips that node's children, so its
     /// [`Visit::Leave`] comes next.
     pub fn skip_children(&mut self) {
         if let Some(Step::Expand(id)) = self.todo.last() {
             let id = *id;
-            *self.todo.last_mut().expect("just checked") = Step::Leave(id, self.bound.len());
+            *self.todo.last_mut().expect("just checked") = Step::Leave(id);
         }
     }
 
-    /// Schedules the children of `id`, in evaluation order, before leaving it.
+    /// Schedules the children of `id`, in evaluation order, before leaving it. The variables
+    /// it binds are unbound, innermost first, just before it is left.
     fn expand(&mut self, id: ExpId) {
         let first = self.todo.len();
-        self.todo.push(Step::Leave(id, self.bound.len()));
+        self.todo.push(Step::Leave(id));
         let todo = &mut self.todo;
         match self.root.at(id).node() {
             Exp::Map(body, var, domain) => {
-                todo.extend([Step::Enter(*domain), Step::Bind(var), Step::Enter(*body)]);
+                let bound = BoundStep::Element {
+                    map: id,
+                    domain: *domain,
+                };
+                todo.extend([
+                    Step::Enter(*domain),
+                    Step::Bind(var, bound),
+                    Step::Enter(*body),
+                    Step::Unbind(var),
+                ]);
             }
             Exp::Fun(params, body) => {
-                todo.extend(params.iter().map(Step::Bind));
+                todo.extend(params.iter().map(|x| Step::Bind(x, BoundStep::Param(id))));
                 todo.push(Step::Enter(*body));
+                todo.extend(params.iter().rev().map(Step::Unbind));
             }
             Exp::Block(block) => {
+                let mut bound = Vec::new();
                 for (i, stmt) in block.stmts.iter().enumerate() {
                     todo.extend([
                         Step::EnterStmt(stmt),
@@ -216,26 +236,17 @@ impl<'a, N: ExpLiteral> Walk<'a, N> {
                     if let Some(x) = stmt.node.binder()
                         && block.is_followed(i)
                     {
-                        todo.push(Step::Bind(x));
+                        todo.push(Step::Bind(x, BoundStep::Value(stmt.node.value())));
+                        bound.push(x);
                     }
                 }
                 todo.extend(block.tail.map(Step::Enter));
+                todo.extend(bound.into_iter().rev().map(Step::Unbind));
             }
             node => node.for_each_child(|c| todo.push(Step::Enter(c))),
         }
         // The `Leave` stays first, so it comes last.
         self.todo[first + 1..].reverse();
-    }
-
-    fn unbind_to(&mut self, len: usize) {
-        while self.bound.len() > len {
-            let x = self.bound.pop().expect("longer than len");
-            let at = self.by_name.get_mut(&x.node).expect("bound");
-            at.pop();
-            if at.is_empty() {
-                self.by_name.remove(&x.node);
-            }
-        }
     }
 }
 
@@ -252,20 +263,89 @@ impl<'a, N: ExpLiteral> Iterator for Walk<'a, N> {
                 Step::Expand(id) => self.expand(id),
                 Step::EnterStmt(stmt) => return Some(Visit::EnterStmt(stmt)),
                 Step::LeaveStmt(stmt) => return Some(Visit::LeaveStmt(stmt)),
-                Step::Bind(x) => {
-                    self.by_name
-                        .entry(&x.node)
-                        .or_default()
-                        .push(self.bound.len());
-                    self.bound.push(x);
-                    return Some(Visit::Bind(x));
+                Step::Bind(x, bound) => {
+                    let at = |id| self.root.at(id);
+                    let bound = match bound {
+                        BoundStep::Value(value) => Bound::Value(at(value)),
+                        BoundStep::Element { map, domain } => Bound::Element {
+                            map: at(map),
+                            domain: at(domain),
+                        },
+                        BoundStep::Param(fun) => Bound::Param(at(fun)),
+                    };
+                    return Some(Visit::Bind(x, bound));
                 }
-                Step::Leave(id, len) => {
-                    self.unbind_to(len);
-                    return Some(Visit::Leave(self.root.at(id)));
-                }
+                Step::Unbind(x) => return Some(Visit::Unbind(x)),
+                Step::Leave(id) => return Some(Visit::Leave(self.root.at(id))),
             }
         }
+    }
+}
+
+/// The variables in scope at a point of a walk, each with what a pass records about it. A pass
+/// feeds it the walk's [`Visit::Bind`] and [`Visit::Unbind`]; a name resolves to its innermost
+/// binding.
+pub struct InScope<'a, T> {
+    /// The bindings in scope with their records, outermost first.
+    bindings: Vec<(&'a Spanned<Vid>, T)>,
+    /// For each bound name, its positions in `bindings`, innermost last.
+    by_name: HashMap<&'a Vid, Vec<usize>>,
+}
+
+impl<T> Default for InScope<'_, T> {
+    fn default() -> Self {
+        InScope {
+            bindings: Vec::new(),
+            by_name: HashMap::new(),
+        }
+    }
+}
+
+impl<'a, T> InScope<'a, T> {
+    /// No variables in scope.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Brings `x` into scope with `record`, shadowing any outer binding of its name.
+    pub fn bind(&mut self, x: &'a Spanned<Vid>, record: T) {
+        self.by_name
+            .entry(&x.node)
+            .or_default()
+            .push(self.bindings.len());
+        self.bindings.push((x, record));
+    }
+
+    /// Ends the innermost binding, which is `x`, and returns its record.
+    ///
+    /// # Panics
+    /// If nothing is in scope.
+    pub fn unbind(&mut self, x: &Spanned<Vid>) -> T {
+        let (y, record) = self.bindings.pop().expect("a binding to end");
+        debug_assert!(std::ptr::eq(x, y), "bindings end innermost first");
+        let at = self.by_name.get_mut(&y.node).expect("bound");
+        at.pop();
+        if at.is_empty() {
+            self.by_name.remove(&y.node);
+        }
+        record
+    }
+
+    /// The record of the binding `name` refers to.
+    pub fn get(&self, name: &Vid) -> Option<&T> {
+        let at = *self.by_name.get(name)?.last()?;
+        Some(&self.bindings[at].1)
+    }
+
+    /// The record of the binding `name` refers to, to update it.
+    pub fn get_mut(&mut self, name: &Vid) -> Option<&mut T> {
+        let at = *self.by_name.get(name)?.last()?;
+        Some(&mut self.bindings[at].1)
+    }
+
+    /// The bindings in scope, outermost first.
+    pub fn iter(&self) -> impl Iterator<Item = (&'a Spanned<Vid>, &T)> {
+        self.bindings.iter().map(|(x, record)| (*x, record))
     }
 }
 
@@ -354,7 +434,10 @@ mod tests {
                         depth += 1;
                     }
                     Visit::Leave(_) => depth -= 1,
-                    Visit::Bind(_) | Visit::EnterStmt(_) | Visit::LeaveStmt(_) => {}
+                    Visit::Bind(..)
+                    | Visit::Unbind(_)
+                    | Visit::EnterStmt(_)
+                    | Visit::LeaveStmt(_) => {}
                 }
             }
             let mut expected = children;
@@ -372,18 +455,107 @@ mod tests {
         decls.remove(0).node.body.body().expect("a body")
     }
 
-    /// Each variable read, in walk order, with the binding it resolves to.
+    /// Each variable read, in walk order, with the binding it resolves to, as that binding's
+    /// position among the bindings in scope when it was made.
     fn reads(tree: &UExpr) -> Vec<(String, Option<usize>)> {
-        let mut walk = tree.root().walk();
+        let mut in_scope = InScope::new();
         let mut out = Vec::new();
-        while let Some(visit) = walk.next() {
-            if let Visit::Enter(e) = visit
-                && let Exp::Var(x) = e.node()
-            {
-                out.push((x.node.0.to_string(), walk.resolve(&x.node)));
+        for visit in tree.root().walk() {
+            match visit {
+                Visit::Bind(x, _) => {
+                    let depth = in_scope.iter().count();
+                    in_scope.bind(x, depth);
+                }
+                Visit::Unbind(x) => {
+                    in_scope.unbind(x);
+                }
+                Visit::Enter(e) => {
+                    if let Exp::Var(x) = e.node() {
+                        out.push((x.node.0.to_string(), in_scope.get(&x.node).copied()));
+                    }
+                }
+                _ => {}
             }
         }
         out
+    }
+
+    #[test]
+    fn each_binding_says_what_it_binds_to() {
+        let t = tree("let x = a; let y = [x for z in [a]]; fun(p, q) => p * q * y");
+        let kind = |e: ExpRef<'_, Size>| match e.node() {
+            Exp::Var(v) => format!("var {}", v.node.0),
+            Exp::Vec(_) => "vector".into(),
+            Exp::Map(..) => "map".into(),
+            Exp::Fun(..) => "fun".into(),
+            _ => "other".into(),
+        };
+        let binds: Vec<_> = t
+            .root()
+            .walk()
+            .filter_map(|visit| match visit {
+                Visit::Bind(x, bound) => Some(format!(
+                    "{}: {}",
+                    x.node.0,
+                    match bound {
+                        Bound::Value(value) => format!("value {}", kind(value)),
+                        Bound::Element { map, domain } => {
+                            format!("element of {} in {}", kind(domain), kind(map))
+                        }
+                        Bound::Param(fun) => format!("param of {}", kind(fun)),
+                    }
+                )),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            binds,
+            [
+                "x: value var a",
+                "z: element of vector in map",
+                "y: value map",
+                "p: param of fun",
+                "q: param of fun",
+            ]
+        );
+    }
+
+    #[test]
+    fn bindings_end_innermost_first_before_their_node_is_left() {
+        let t = tree("let x = a; let y = [x for z in [a]]; fun(p, q) => p * q * y");
+        let events: Vec<_> = t
+            .root()
+            .walk()
+            .filter_map(|visit| match visit {
+                Visit::Bind(x, _) => Some(format!("bind {}", x.node.0)),
+                Visit::Unbind(x) => Some(format!("unbind {}", x.node.0)),
+                Visit::Leave(e) => match e.node() {
+                    Exp::Map(..) => Some("leave map".into()),
+                    Exp::Fun(..) => Some("leave fun".into()),
+                    Exp::Block(..) => Some("leave block".into()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            events,
+            [
+                "bind x",
+                "bind z",
+                "unbind z",
+                "leave map",
+                "bind y",
+                "bind p",
+                "bind q",
+                "unbind q",
+                "unbind p",
+                "leave fun",
+                "unbind y",
+                "unbind x",
+                "leave block",
+            ]
+        );
     }
 
     #[test]
@@ -442,7 +614,7 @@ mod tests {
                 Visit::LeaveStmt(_) => Some("leave statement"),
                 Visit::Enter(e) if matches!(e.node(), Exp::Var(..)) => Some("enter value"),
                 Visit::Leave(e) if matches!(e.node(), Exp::Var(..)) => Some("leave value"),
-                Visit::Bind(_) => Some("bind"),
+                Visit::Bind(..) => Some("bind"),
                 _ => None,
             })
             .collect();
@@ -476,7 +648,7 @@ mod tests {
             .root()
             .walk()
             .filter_map(|v| match v {
-                Visit::Bind(x) => Some(x.node.0.to_string()),
+                Visit::Bind(x, _) => Some(x.node.0.to_string()),
                 _ => None,
             })
             .collect();

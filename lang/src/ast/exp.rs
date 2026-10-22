@@ -9,7 +9,7 @@ use crate::ast::arena::{ExpId, ExpRef, Expr, Exprs};
 use crate::ast::exclusion::Exclusion;
 use crate::ast::range::{Range, RangeTraversal};
 use crate::ast::spanned::Spanned;
-use crate::ast::walk::Visit;
+use crate::ast::walk::{InScope, Visit};
 use crate::ast::{Block, Size};
 use crate::id::{Tid, TidSubst, Vid};
 
@@ -451,14 +451,20 @@ impl TidSubst for CExpr {
 impl<N: ExpLiteral> ExpRef<'_, N> {
     /// Whether the tree reads `name` where the tree itself does not bind it.
     pub fn reads_free(self, name: &Vid) -> bool {
-        let mut walk = self.walk();
-        while let Some(visit) = walk.next() {
-            if let Visit::Enter(e) = visit
-                && let Exp::Var(x) = e.node()
-                && x.node == *name
-                && !walk.is_bound(name)
-            {
-                return true;
+        let mut in_scope = InScope::new();
+        for visit in self.walk() {
+            match visit {
+                Visit::Bind(x, _) => in_scope.bind(x, ()),
+                Visit::Unbind(x) => in_scope.unbind(x),
+                Visit::Enter(e) => {
+                    if let Exp::Var(x) = e.node()
+                        && x.node == *name
+                        && in_scope.get(name).is_none()
+                    {
+                        return true;
+                    }
+                }
+                Visit::EnterStmt(_) | Visit::LeaveStmt(_) | Visit::Leave(_) => {}
             }
         }
         false

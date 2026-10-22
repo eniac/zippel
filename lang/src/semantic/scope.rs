@@ -13,7 +13,7 @@ use std::collections::HashSet;
 use std::ops::Range;
 
 use crate::ast::decl::UDecl;
-use crate::ast::{Exp, URef, Visit};
+use crate::ast::{Exp, InScope, URef, Visit};
 use crate::diagnostic::{Applicability, Diagnostic, Phase};
 use crate::id::Vid;
 
@@ -134,22 +134,27 @@ fn check_exp_scope(
     scope: &[(Vid, Range<usize>)],
     undefined: &mut Vec<UndefinedOccurrence>,
 ) {
-    let mut walk = exp.walk();
-    while let Some(visit) = walk.next() {
-        if let Visit::Enter(e) = visit
-            && let Exp::Var(name) = e.node()
-            && !walk.is_bound(&name.node)
-            && !scope.iter().any(|(n, _)| n == &name.node)
-        {
-            let bound = walk
-                .bound()
-                .iter()
-                .map(|x| (x.node.clone(), x.span.clone()));
-            undefined.push(UndefinedOccurrence {
-                name: name.node.clone(),
-                use_span: name.span.clone(),
-                scope: scope.iter().cloned().chain(bound).collect(),
-            });
+    let mut in_scope = InScope::new();
+    for visit in exp.walk() {
+        match visit {
+            Visit::Bind(x, _) => in_scope.bind(x, ()),
+            Visit::Unbind(x) => in_scope.unbind(x),
+            Visit::Enter(e) => {
+                if let Exp::Var(name) = e.node()
+                    && in_scope.get(&name.node).is_none()
+                    && !scope.iter().any(|(n, _)| n == &name.node)
+                {
+                    let bound = in_scope
+                        .iter()
+                        .map(|(x, ())| (x.node.clone(), x.span.clone()));
+                    undefined.push(UndefinedOccurrence {
+                        name: name.node.clone(),
+                        use_span: name.span.clone(),
+                        scope: scope.iter().cloned().chain(bound).collect(),
+                    });
+                }
+            }
+            Visit::EnterStmt(_) | Visit::LeaveStmt(_) | Visit::Leave(_) => {}
         }
     }
 }
