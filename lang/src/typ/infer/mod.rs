@@ -387,7 +387,9 @@ impl CRef<'_> {
         })
     }
 
-    /// The type a sample of `t` has; checked before what it excludes is typed.
+    /// The type a sample of `t` has: `t` must be a scalar, and a `roots_of_unity` exclusion must
+    /// leave something to sample. Checked when the sample is left, before its excluded values
+    /// are checked against that type.
     fn sample_typ(
         self,
         t: &Spanned<Tid>,

@@ -11,7 +11,7 @@
 //! - Relation purity
 //! - Unused variables and functions
 //!
-//! [`check_instances`] runs the checks that follow resolved calls, on type-checked instances:
+//! `check_instances` runs the checks that follow resolved calls, on type-checked instances:
 //! - Proto `verify` requirement
 //!
 //! [`check_protocol_instances`] checks that a protocol to run concretized to one instance.

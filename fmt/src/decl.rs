@@ -149,7 +149,7 @@ impl<'doc> Formatter<'doc, '_> {
 
                 // Comments before `{` go inside the where group's nest so they
                 // align with the relation body, not at column 0. Same pattern
-                // as relation_leading above.
+                // as the leading gap in `format_relation`.
                 let open = match open_gap.first() {
                     Some(e) if !e.needs_start_newline() => Some(alloc.line()),
                     _ => None,

@@ -79,9 +79,9 @@ fn value_in_range_bound(name: &Vid, use_span: Range<usize>, bound_at: Range<usiz
 /// Returns a list of scope errors (empty if all variables are defined).
 pub fn check_scope(decl: &UDecl) -> Vec<Diagnostic> {
     // Collect argument variable names as the initial scope.
-    // Typevars (F, N, etc.) are NOT included — they're type-level identifiers
-    // that appear in Size::Var positions, never as Exp::Var. The parser already
-    // routes uppercase identifiers to Size::Var, so they can't reach this checker.
+    // Typevars (F, N, etc.) are NOT included: they are not values. The parser
+    // reads an uppercase name in an expression as a size (`Size::Var`); a
+    // lowercase size parameter used as a value is reported undefined here.
     let initial_scope: Vec<(Vid, Range<usize>)> = decl
         .sig
         .args

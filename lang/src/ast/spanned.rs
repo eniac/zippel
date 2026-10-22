@@ -3,14 +3,14 @@
 /// Used by the parser to attach byte-offset spans to AST nodes for
 /// comment-preserving formatting and source-location error reporting.
 ///
-/// Does NOT derive `PartialEq` — spans are source positions that differ
-/// between formatted and original text. Compare `.node` for structural
-/// equality.
+/// Equality, ordering and hashing compare only `.node` (implemented by hand
+/// below): spans are source positions that differ between formatted and
+/// original text.
 #[derive(Debug, Clone)]
 pub struct Spanned<T> {
     /// The wrapped AST node.
     pub node: T,
-    /// Byte offsets of the node in the source text, as produced by `pest`.
+    /// Byte offsets of the node in the source text, as produced by the parser.
     pub span: std::ops::Range<usize>,
 }
 

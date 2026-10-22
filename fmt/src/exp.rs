@@ -510,8 +510,9 @@ impl<'doc> Formatter<'doc, '_> {
     }
 
     /// Format an expression in a position whose grammar rule is the full `exp`
-    /// (comprehension body, `fun` body, relation), where a `let`/`<-` sequence
-    /// needs no parentheses. Everything else goes through `format_exp`.
+    /// (a body, relation, comprehension body or `fun` body), where a block of
+    /// `;`-separated statements needs no parentheses. Everything else goes
+    /// through `format_exp`.
     fn format_seq_exp(&mut self, exp: URef<'_>) -> (TriviaGap, Doc<'doc>) {
         match exp.node() {
             Exp::Block(block) => {

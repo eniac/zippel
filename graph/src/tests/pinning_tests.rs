@@ -1,6 +1,6 @@
-//! Pinning tests for the `from_module` transformation.
+//! Pinning tests for lowering (`UDags::lower`).
 //!
-//! Each test parses a `.zippel` source string, builds a graph via `from_module`,
+//! Each test parses a `.zippel` source string, builds a graph via `UDags::lower`,
 //! then builds an expected graph manually and asserts structural equality
 //! via the `PartialEq` (graph isomorphism) implementation.
 
@@ -21,7 +21,7 @@ use share::Ctx;
 
 type B = ArkBls12_381;
 
-/// Parse a `.zippel` source string and build graphs via from_module.
+/// Parse a `.zippel` source string and build graphs via `UDags::lower`.
 fn parse_and_build(src: &str) -> UDags<B> {
     lowered(src, &Ctx::new()).unwrap()
 }
@@ -1373,10 +1373,9 @@ fn pin_log_var_ref() {
 // Group 12: Additional coverage tests
 // ========================================================================
 
-/// Let(None, ...) from multi-statement body (semicolon separator).
 /// Proj(Var) where the var binds to a GOp::Record (direct field extraction).
 /// `let r = {| x: a, y: b |}; r.x` → Record is stored in vars, r.x extracts field directly.
-/// Tests: L1472-1478 — GOp::Record(record_fields) branch in Proj.
+/// Tests: the `GOp::Record` branch of `lower_proj` (graph/src/lower/record.rs).
 #[test]
 fn pin_proj_var_record() {
     let src = r#"
@@ -1418,7 +1417,7 @@ fn pin_proj_var_record() {
 /// Phase B: desugars to `evaluate(p, x)` using `Op::Evaluate`. The
 /// pre-Phase-B desugaring (`dot(p, [x^0, x^1, x^2])`) was removed because
 /// it relied on the now-removed `lub_dot(Poly, Vec)` arm.
-/// Tests: CExp::App univariate path (graph/src/lib.rs ~L1620).
+/// Tests: the univariate path of `lower_app` (graph/src/lower/call.rs).
 #[test]
 fn pin_app_univariate_poly() {
     let src = r#"
@@ -1450,7 +1449,7 @@ fn pin_app_univariate_poly() {
 
 /// Fun expression (polynomial literal): `fun(x) => x`.
 /// Creates Value::Poly(VirtualPolynomial) representing the identity polynomial [0, 1].
-/// Tests: CExp::Fun path (L1407-1419).
+/// Tests: `lower_fun` (graph/src/lower/poly.rs).
 #[test]
 fn pin_fun_lit() {
     use ark_ff::{One, Zero};
@@ -1817,8 +1816,8 @@ fn pin_find_var_find_ref() {
     let gs = parse_and_build(src);
     let dag = &gs[0];
 
-    // find_var now uses the vctx dictionary (Ctx<NodeIndex, Vid>) on the Dag.
-    // `c <- a + b` creates a transcript node and registers it in vctx.
+    // find_var looks the node up in the Dag's `bindings`.
+    // `c <- a + b` creates a transcript node and binds `c` to it (`Dag::bind`).
     let op_nodes = dag.op_nodes();
     // The transcript node should be findable as variable `c`
     let has_c = op_nodes
@@ -2283,7 +2282,7 @@ fn pin_dags_multiple_verify_protocols() {
 }
 
 /// Inlined verify from a function call creates a Verify node that IS terminal
-/// in the full DAG — the verify result is discarded by Let(None, ...), so nothing
+/// in the full DAG — the verify result is dropped by a `verify(..);` statement, so nothing
 /// consumes it. Both the inlined and protocol's own verify are found by find_verify.
 #[test]
 fn pin_find_verify_cross_function_verify() {

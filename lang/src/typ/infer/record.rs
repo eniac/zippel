@@ -41,8 +41,8 @@ impl CRef<'_> {
         }
     }
 
-    /// The type of field `field_name` of record `record_exp`, which a `.set` updates; checked
-    /// once the record is typed, before the new value is.
+    /// The type of field `field_name` of record `record_exp`, which a `.set` updates; an error if
+    /// `record_exp` is not a record or lacks the field.
     pub(super) fn record_field(
         self,
         record_exp: CRef<'_>,

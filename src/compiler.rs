@@ -247,7 +247,7 @@ impl<C: ArkConfig> CompiledProtocol<C> {
         &self.domain_separator_session
     }
 
-    /// Non-fatal diagnostics from parsing and type-checking.
+    /// Non-fatal diagnostics from parsing.
     #[must_use]
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics

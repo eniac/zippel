@@ -24,7 +24,8 @@ impl ExpId {
 /// [`Spanned`](super::Spanned)'s do.
 ///
 /// Only expressions live in the arena; blocks own their typed statements. Outside this
-/// module nodes are only added, never changed, and each comes after its children: the arena
+/// module nodes are only added, and each comes after its children; substitutions rewrite a
+/// node's leaf data in place (sampled types, range bounds) but never its children: the arena
 /// is acyclic by construction, and a node's id names the same tree for the arena's lifetime,
 /// which is what per-node side tables such as inferred types rely on.
 #[derive(Debug, Clone)]
