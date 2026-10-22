@@ -66,7 +66,7 @@ pub enum BinOp {
 
     ///     **Zippel Code:**
     ///     ```zippel
-    ///     let inner: F = [1,2,3] . [2,4,6];
+    ///     let inner: F = dot([1,2,3], [2,4,6]);
     ///     ```
     Dot,
 
@@ -171,7 +171,7 @@ pub enum Exp<N: ExpLiteral> {
     ///     Multilinear extension of a matrix, polynomial, etc.
     ///     **Zippel Code:**
     ///     ```zippel
-    ///     let g = mle x;
+    ///     let g = mle(x);
     ///     ```
     Mle(ExpId),
 
@@ -265,7 +265,7 @@ pub enum Exp<N: ExpLiteral> {
     ///     Polynomial function definition
     ///     **Zippel Code:**
     ///     ```zippel
-    ///     let p = fun x, y => x^2 + 2*x*y + 3*y^2;
+    ///     let p = fun(x, y) => x^2 + 2*x*y + 3*y^2;
     ///     ```
     Fun(Vec<Spanned<Vid>>, ExpId),
 
@@ -435,7 +435,7 @@ impl<N: ExpLiteral> RangeTraversal<N::Size> for Expr<N> {
     }
 }
 
-/// Traverse `Tid` inside `TExp`: the sampled types, node by node.
+/// Rewrites the `Tid`s in a `CExpr`: the types `random`/`challenge` sample, node by node.
 impl TidSubst for CExpr {
     fn map_tids(&mut self, f: &dyn Fn(&Tid) -> Option<Tid>) {
         for node in &mut self.exprs.nodes {

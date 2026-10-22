@@ -153,7 +153,8 @@ impl<'a> Sources<'a> {
 ///   produce instances. Type-check every expanded instance, including unused helpers,
 ///   using the ordinary rules for calls, vector lengths, indexing and other operators.
 ///   Unused helpers can therefore still constrain sizes through their types and ranges.
-///   Only error diagnostics reject an assignment; warnings allow coverage checking to continue.
+///   Any diagnostic from type checking, including the checks that follow resolved calls
+///   (E0013), rejects the assignment.
 /// - Start coverage only from concrete protocol instances. Follow the actual function
 ///   calls selected during type checking, including calls in protocol relations.
 /// - Group source declarations by function name. Follow the recorded calls between these

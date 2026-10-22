@@ -279,7 +279,7 @@ impl<C: HasOpFactory> UDag<C> {
         Ok(())
     }
 
-    /// Add a new declaration to the graph. With `lower_relation` unset, a
+    /// Add a new declaration to the graph. With [`Relations::Skip`], a
     /// protocol's `where` clause is left out: only its `Node::Rel` marker is
     /// added.
     fn add_decl(
@@ -293,7 +293,8 @@ impl<C: HasOpFactory> UDag<C> {
     ) -> Result<(), GraphError> {
         // Kind context
         let kctx = sig.typevars.to_ctx();
-        // Add arguments to [vctx] and [vars]
+        // The arguments' types, and singleton size constants, go into `vctx`; `add_arguments`
+        // builds `vars` for each body.
         let mut vctx = Ctx::new();
 
         // Keep argument metadata together, in the graph's existing name order.
@@ -442,15 +443,14 @@ impl<C: HasOpFactory> UDag<C> {
         vars
     }
 
-    /// Variables to operations by lookup in [vars]
+    /// The operation `vars` binds the variable `id` to.
     fn op_from_var(id: &Spanned<Vid>, vars: &ScopedCtx<Vid, GOp<C>>) -> Result<GOp<C>, GraphError> {
         vars.get(&id.node)
             .cloned()
             .ok_or_else(|| GraphError::var_not_found(id))
     }
 
-    /// Add an expression [exp] to the graph.
-    /// Convert a `CExp` to a `GOp` while creating the graph.
+    /// Lowers the expression `initial` into the graph, returning the operation for its value.
     ///
     /// # Invariant
     ///
@@ -458,13 +458,18 @@ impl<C: HasOpFactory> UDag<C> {
     /// `Op::Value`. Compound operations that would produce other variants
     /// (e.g., `Op::Bin`, `Op::Vec`, `Op::Record`) are *materialized*: a DAG
     /// node is created, edges are added, and an `Op::Ref` to the new node is
-    /// returned. The sole exception is the trampoline loop body, which may
-    /// produce intermediate non-Ref values that are consumed by later
-    /// iterations (e.g., `CExp::Block` bindings, `CExp::App` inlining).
+    /// returned.
     ///
     /// Downstream consumers (notably `trans_clos_op` and `ref_vars` in the
     /// Groebner analysis) rely on this invariant: every top-level result from
     /// `add_exp` can be assumed to be a `Ref` or `Value`.
+    ///
+    /// # Scope
+    ///
+    /// A block's statements and an inlined call's parameters bind variables for the rest of
+    /// this expression only. [`Self::add_exp_raw`] continues in a loop into a block's value
+    /// or an inlined body instead of recursing, so it never leaves them one by one; this
+    /// method unbinds all of them when it returns ([`Scope::scoped`]).
     ///
     /// `expected` is the declared type the value must take, if known (a function's return
     /// type, a formal argument, a record field): finite-index leaves it declares field
@@ -639,7 +644,7 @@ impl<C: HasOpFactory> Scope<'_, C> {
     }
 }
 
-/// The arms of [`UDag::add_exp_raw`] kept in this module; the larger groups live in the `call`,
+/// The arms of `UDag::add_exp_raw` kept in this module; the larger groups live in the `call`,
 /// `poly`, `record` and `vector` submodules.
 impl<C: HasOpFactory> UDag<C> {
     /// Lowers one statement of a block, binding its variable in `vctx` and `vars` for the rest
@@ -827,7 +832,7 @@ impl<C: HasOpFactory> UDag<C> {
         self.add_edges(scope.edge_type, nverify, oa);
         // No transcript edge — the Op::Verify variant itself
         // marks the node as a verifier check.
-        // Returns Unit value; sequencing via Let(None, ...) discards it.
+        // Returns Unit; a `verify(..);` statement (`Stmt::Discard`) drops it.
         Ok(GOp::Value(backend::Value::Unit))
     }
 }

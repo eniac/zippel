@@ -3,7 +3,7 @@
 //! Warns about:
 //! - Unused function arguments
 //! - Unused `let` bindings
-//! - Dead computations (`let _ = pure_expr; body`)
+//! - Dead computations (`pure_expr;` followed by more statements or a value)
 //! - Unused comprehension/lambda variables
 //!
 //! Variables prefixed with `_` are treated as intentionally unused (Rust convention).

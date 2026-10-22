@@ -2,9 +2,9 @@
 #![allow(clippy::result_large_err)]
 //! Graph intermediate representation for Zippel protocols.
 //!
-//! This crate sits between `lang` and `runtime` in the pipeline: a concretized
-//! `CModule` is lowered into one [`Dag`] per declaration ([`UDags::from_module`]),
-//! static analyses in `graph::analyses` re-annotate it, and the prover and
+//! This crate sits between `lang` and `runtime` in the pipeline: a type-checked
+//! `TypedModule` is lowered into one [`Dag`] per declaration ([`UDags::lower`]),
+//! the static analyses (the `analyses` crate) read it, and the prover and
 //! verifier are obtained as subgraph projections ([`Dag::project_prover`],
 //! [`Dag::project_verifier`]) before scheduling and execution.
 //!

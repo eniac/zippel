@@ -84,7 +84,7 @@ impl<N: ExpLiteral> Module<N> {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
-    /// Iterate over `(signature, body)` pairs in declaration order.
+    /// Iterate over `(signature, body)` pairs, ordered by signature.
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = (&Sig<N::Size>, &Body<N>)> {
         self.0.iter()
     }
@@ -96,15 +96,16 @@ impl<N: ExpLiteral> Module<N> {
 
 /// Module with concrete sizes
 impl CModule {
-    /// Type-check every declaration, returning one diagnostic per failing declaration, sorted
-    /// by source position.
+    /// Type-check every declaration, then, if all do, run the checks that follow resolved calls
+    /// (`semantic::check_instances`, e.g. E0013). Diagnostics are sorted by source position.
     ///
     /// Range-kinded type variables expand one declaration into several instances that share
     /// source spans, so an error common to several instances is reported once, naming the
     /// first failing instance.
     ///
     /// # Errors
-    /// The diagnostics, if any declaration fails to type-check.
+    /// The diagnostics, if any declaration fails to type-check or a check that follows
+    /// resolved calls fails.
     pub fn typecheck(self) -> Result<TypedModule, Vec<Diagnostic>> {
         let (diagnostics, types) = self.check();
         if diagnostics.is_empty() {

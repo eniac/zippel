@@ -16,8 +16,8 @@ impl<C: HasOpFactory> UDag<C> {
     /// top-level `Node::verify` graph nodes (one per element). This ensures
     /// `Op::Verify` never appears nested inside an `Op::Map` or
     /// `Op::ReduceMap` op tree, so `find_verify` (which only inspects
-    /// top-level node ops) and the runtime's `check_results` map (keyed by
-    /// `NodeIndex`) always find every Verify.
+    /// top-level node ops) and the runtime, which collects the `Verify` nodes,
+    /// always find every Verify.
     ///
     /// `expected` is the type the body's value must take, if any: finite-index leaves it
     /// declares field elements are embedded into the field (see [`coerce_field_op`]).

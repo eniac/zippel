@@ -1108,7 +1108,7 @@ enum Item {
 }
 
 /// Inner exp parser — takes the recursive exp_no_seq reference.
-/// Mirrors `exp = { let_exp | log_exp | seq_exp | exp_no_seq }`
+/// `exp = { item ~ (";" ~ item)* ~ ";"? }`, `item = { let_stmt | log_stmt | exp_no_seq }`
 ///
 /// Statements are parsed as a list into an [`Exp::Block`](crate::ast::Exp::Block),
 /// so the parser's stack depth does not grow with their number (issue #252).

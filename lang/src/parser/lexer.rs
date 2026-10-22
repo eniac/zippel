@@ -73,8 +73,8 @@ pub enum Token<'src> {
     RAngle,
     /// `,` — separator inside argument lists, vectors, records, and ranges.
     Comma,
-    /// `;` — statement terminator; sequences a `let`/log binding with its
-    /// continuation expression.
+    /// `;` — statement terminator: ends a `let`, `<-` or discarded expression in a
+    /// block; the item after the last `;`, if any, is the block's value.
     Semi,
     /// `:` — ascription separator between a binder (or record field) and its
     /// type or value.

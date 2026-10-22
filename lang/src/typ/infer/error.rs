@@ -11,15 +11,6 @@ use crate::typ::{CKind, CTyp, CTyps};
 use share::{Ctx, Set};
 use thiserror::Error;
 
-/// User-facing failure of source-level type inference over a concretized module.
-///
-/// One variant exists per surface construct that carries a bespoke typing rule. `Display` is
-/// the one-line message shown to users: the wrappers (`Decl`, `Located`) display their cause,
-/// and no message repeats the offending expression, which a diagnostic's span shows. A variant
-/// holds what its message and labels print: types, with the kind context (`Ctx<Tid, CKind>`)
-/// their kinds come from, names, and the spans of the parts it labels. This is the
-/// `lang`-level, user-directed error channel; shape violations discovered later in the IR are
-/// invariants and panic instead.
 /// What draws a sample: `random<T>` or `challenge<T>`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Sampler {
@@ -38,6 +29,15 @@ impl std::fmt::Display for Sampler {
     }
 }
 
+/// User-facing failure of source-level type inference over a concretized module.
+///
+/// One variant exists per surface construct that carries a bespoke typing rule. `Display` is
+/// the one-line message shown to users: the wrappers (`Decl`, `Located`) display their cause,
+/// and no message repeats the offending expression, which a diagnostic's span shows. A variant
+/// holds what its message and labels print: types, with the kind context (`Ctx<Tid, CKind>`)
+/// their kinds come from, names, and the spans of the parts it labels. This is the
+/// `lang`-level, user-directed error channel; shape violations discovered later in the IR are
+/// invariants and panic instead.
 #[derive(Error, PartialEq, Debug)]
 pub enum TypeError {
     /// Wraps an inner error with the declaration whose body failed to type-check.

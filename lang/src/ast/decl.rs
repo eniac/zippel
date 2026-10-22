@@ -276,13 +276,13 @@ impl CBody {
     /// Returns a `TypeError` if inference of the relation or body fails; if a
     /// protocol relation is not relation-pure (mentions `Challenge`, `Log`, or
     /// `Verify`); if the relation does not infer to `Bool`; if a
-    /// protocol body does not infer to `Unit`; or if a function body's type has
-    /// no least upper bound with the declared return type.
+    /// protocol body does not infer to `Unit`; or if a function body's type
+    /// (`Unit` for `{}`) does not fit the declared return type (`CTyp::fits`).
     pub fn typecheck(&self, sig: CSig, fctx: &Set<CSig>) -> Result<BodyTypes, TypeError> {
         let mut types = BodyTypes::default();
         // Kind context
         let kctx = sig.typevars.node.to_ctx();
-        // Add arguments to [vctx] and [vars]
+        // The arguments' types, and singleton size constants, go into `vctx`.
         let mut vctx = sig.args.node.to_ctx();
         for (tid, kind) in kctx.iter() {
             if let CKind::Range(r) = kind
