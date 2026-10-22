@@ -1,0 +1,10 @@
+---
+source: lang/tests/typecheck.rs
+---
+error: `challenge` draws field elements, but G has kind Group
+   ╭─[ test.zippel:2:13 ]
+   │
+ 2 │     let s = challenge<G>;
+   │             ──────┬─────  
+   │                   ╰─────── G has kind Group
+───╯

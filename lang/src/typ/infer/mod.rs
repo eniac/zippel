@@ -8,7 +8,7 @@ mod record;
 mod tests;
 mod vector;
 
-pub use error::TypeError;
+pub use error::{Sampler, TypeError};
 
 use num::{BigUint, ToPrimitive};
 use std::collections::HashMap;
@@ -141,9 +141,9 @@ impl CRef<'_> {
     /// Each node is typed when the walk leaves it, from its children's types; nodes already in
     /// `types` are not walked again. A binder's type is known when the walk binds it: a
     /// statement's from its value, a comprehension's from its domain, a `fun`'s parameters
-    /// from the field in scope. Some rules check a node before its children are typed, or
-    /// between them (see [`Self::enter`] and [`Self::after_child`]), as a recursive checker
-    /// would, so the first error reported is the same.
+    /// from the field in scope. Each node is checked once, when it is left, including its own
+    /// annotations (a sample's type, a `.set`'s field), so the error reported is the first
+    /// failing check in evaluation order: children before their node, left to right.
     ///
     /// `vctx` holds the variables in scope at this node. It is left as it was, also on error.
     ///
@@ -168,8 +168,6 @@ impl CRef<'_> {
         vctx: &mut VarTypes,
         types: &mut TypeTable,
     ) -> Result<CTyp, TypeError> {
-        // The nodes entered and not yet left.
-        let mut open: Vec<CRef<'_>> = Vec::new();
         // Expression and statement locations, innermost last, for diagnostic fallbacks.
         let mut locations = Vec::new();
         let mut walk = self.walk();
@@ -191,7 +189,6 @@ impl CRef<'_> {
                 }
                 Visit::Enter(e) => {
                     locations.push(e.span());
-                    open.push(e);
                     if let Some(cached) = types.get(e.id()) {
                         // A node's type is reused by id, which is sound only while the node keeps
                         // its bindings. Lowering infers every variable it lowers, so a node moved
@@ -202,8 +199,6 @@ impl CRef<'_> {
                             e.node()
                         );
                         walk.skip_children();
-                    } else if let Err(err) = e.enter(&env!()) {
-                        return Err(Self::locate(err, &locations));
                     }
                 }
                 Visit::Bind(x, bound) => match Self::bound_typ(bound, &env!()) {
@@ -225,13 +220,7 @@ impl CRef<'_> {
                             Err(err) => return Err(Self::locate(err, &locations)),
                         }
                     }
-                    open.pop();
                     locations.pop();
-                    if let Some(parent) = open.last()
-                        && let Err(err) = parent.after_child(e, &env!())
-                    {
-                        return Err(Self::locate(err, &locations));
-                    }
                 }
             }
         }
@@ -248,27 +237,6 @@ impl CRef<'_> {
             err = TypeError::located(span, err);
         }
         err
-    }
-
-    /// Checks made on entering this node, before any child is typed.
-    fn enter(self, env: &Env<'_>) -> Result<(), TypeError> {
-        match self.node() {
-            CExp::Challenge(t, x) | CExp::Random(t, x) => {
-                self.sample_typ(t, x.as_ref(), env).map(drop)
-            }
-            CExp::Fun(..) => self.fun_field(env).map(drop),
-            _ => Ok(()),
-        }
-    }
-
-    /// Checks made when `child`, a child of this node, has been typed, before the next one is.
-    fn after_child(self, child: CRef<'_>, env: &Env<'_>) -> Result<(), TypeError> {
-        match self.node() {
-            CExp::SetRecord(record, field, _) if *record == child.id() => {
-                self.record_field(child, field, env).map(drop)
-            }
-            _ => Ok(()),
-        }
     }
 
     /// The type of a variable bound as `bound`. What it is bound to is typed already: a
@@ -436,7 +404,11 @@ impl CRef<'_> {
             .get(&t.node)
             .ok_or(TypeError::from(LubError::kind_not_found(&t.node)))?;
         if !k.is_scalar() {
-            return Err(TypeError::Challenge(t.node.clone(), k.clone()));
+            let sampler = match self.node() {
+                CExp::Random(..) => Sampler::Random,
+                _ => Sampler::Challenge,
+            };
+            return Err(TypeError::Sample(sampler, t.node.clone(), k.clone()));
         }
         // `x^0 == 1` for every `x`: nothing would be left to sample.
         if let Some(x) = x

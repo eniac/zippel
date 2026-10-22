@@ -20,6 +20,24 @@ use thiserror::Error;
 /// their kinds come from, names, and the spans of the parts it labels. This is the
 /// `lang`-level, user-directed error channel; shape violations discovered later in the IR are
 /// invariants and panic instead.
+/// What draws a sample: `random<T>` or `challenge<T>`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Sampler {
+    /// `random<T>`, a prover's private randomness.
+    Random,
+    /// `challenge<T>`, a Fiat-Shamir challenge.
+    Challenge,
+}
+
+impl std::fmt::Display for Sampler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Sampler::Random => "random",
+            Sampler::Challenge => "challenge",
+        })
+    }
+}
+
 #[derive(Error, PartialEq, Debug)]
 pub enum TypeError {
     /// Wraps an inner error with the declaration whose body failed to type-check.
@@ -149,10 +167,10 @@ pub enum TypeError {
     #[error("Univariate polynomial `{1}` must be evaluated at a single scalar, but got {}", kinded_list(.2, .0))]
     Uni(Ctx<Tid, CKind>, Vid, CTyps),
 
-    /// A Fiat-Shamir `challenge` was asked to produce a non-field value; challenges are drawn
-    /// from the scalar field only.
-    #[error("Challenges must be field elements, but {0} has kind {1}")]
-    Challenge(Tid, CKind),
+    /// A `random` or `challenge` was asked to produce a non-field value; both draw from a
+    /// scalar field only.
+    #[error("`{0}` draws field elements, but {1} has kind {2}")]
+    Sample(Sampler, Tid, CKind),
 
     /// A sample of `t` excludes values that are not a vector of `t`.
     #[error("A sample of {1} can exclude only a vector of {1}, but got {}", kinded(.2, .0))]
@@ -335,7 +353,7 @@ fn primary_label(cause: &TypeError) -> String {
         E::MleApp(kctx, _, ts) | E::Uni(kctx, _, ts) => {
             format!("applied to {}", kinded_list(ts, kctx))
         }
-        E::Challenge(t, k) => format!("{t} has kind {k}"),
+        E::Sample(_, t, k) => format!("{t} has kind {k}"),
         E::ExclusionType(kctx, _, t) => has_type(t, kctx),
         E::ExcludesAll(_) => "excludes every value".to_string(),
         E::VarNotFound(v) => format!("`{v}` is not defined here"),

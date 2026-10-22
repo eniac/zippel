@@ -276,6 +276,8 @@ impl CRef<'_> {
         env: &Env<'_>,
     ) -> Result<CTyp, TypeError> {
         let Cx { kctx, .. } = env.cx;
+        // Its variables, if any, range over the field in scope.
+        self.fun_field(env)?;
         let not_poly = |t: &CTyp| {
             TypeError::located(
                 body.span(),

@@ -798,3 +798,43 @@ fn w0001_log_unused_binding() {
     );
     assert_snap!(SNAP_DIR, "w0001_log_unused_binding", rendered);
 }
+
+// ── Range bounds are sizes ──────────────────────────────────────────────
+
+#[test]
+fn a_value_in_a_range_bound_is_reported_at_its_use() {
+    let src = "fn f<F: Field>(instance x: F, instance v: [F; 4]) -> F { reduce(+, [v[i] for i in 0..x]) }\n\
+               proto p<F: Field>(instance a: F) where a == a { verify(a == a) }";
+    let rendered = render_errors(src);
+    assert!(
+        rendered.contains("error: a range bound is a size, but `x` is a value"),
+        "{rendered}"
+    );
+    // At the use in the bound, not the declaration's name.
+    let at = src.find("0..x").expect("the bound") + 3;
+    let (_, diags) = UModule::parse(src);
+    let d = diags
+        .iter()
+        .find(|d| d.code.as_deref() == Some("E0014"))
+        .expect("E0014");
+    assert_eq!(d.span, at..at + 1);
+    // The mention counts as a use: no unused-variable warning for `x`.
+    assert!(!render_warnings(src).contains("unused variable `x`"));
+}
+
+#[test]
+fn a_size_name_in_a_range_bound_is_not_a_value() {
+    // Lowercase size parameters are sizes, even beside a value of a similar name.
+    let src = "fn f<F: Field, n: Size>(instance x: F, instance v: [F; n]) -> [F; n] { [v[i] for i in 0..n] }\n\
+               proto p<F: Field>(instance a: F) where a == a { verify(a == a) }";
+    assert!(render_errors(src).is_empty(), "{}", render_errors(src));
+}
+
+#[test]
+fn semantic_value_in_range_bound() {
+    let rendered = render_errors(
+        "fn f<F: Field>(instance x: F, instance v: [F; 4]) -> F { reduce(+, [v[i] for i in 0..x]) }\n\
+         proto p<F: Field>(instance a: F) where a == a { verify(a == a) }",
+    );
+    assert_snap!(SNAP_DIR, "value_in_range_bound", rendered);
+}

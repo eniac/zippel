@@ -1,0 +1,14 @@
+---
+source: lang/tests/semantic.rs
+---
+error: a range bound is a size, but `x` is a value
+   ╭─[ test.zippel:1:86 ]
+   │
+ 1 │ fn f<F: Field>(instance x: F, instance v: [F; 4]) -> F { reduce(+, [v[i] for i in 0..x]) }
+   │                         ┬                                                            ┬  
+   │                         │                                                            ╰── `x` is a value here, not a size
+   │                         │                                                            │  
+   │                         ╰─────────────────────────────────────────────────────────────── `x` is bound here as a value
+   │                                                                                      │  
+   │                                                                                      ╰── note: range bounds are sizes: literals, size parameters and `+ - * / ^`
+───╯

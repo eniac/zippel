@@ -490,3 +490,58 @@ fn typecheck_rejects_ill_typed_pair_and_sum() {
         assert!(cmodule.typecheck().is_err(), "{src}");
     }
 }
+
+#[test]
+fn a_sample_of_a_group_names_its_sampler() {
+    for (sampler, sample) in [("random", "random<G>"), ("challenge", "challenge<G>")] {
+        let src = format!(
+            "proto p<G: Group, F: Scalar<G>>(instance g: G) where g == g {{\n    \
+             let s = {sample};\n    u <- g + s;\n    verify(u == g)\n}}\n"
+        );
+        let rendered = render_type_errors(&src, &[]);
+        assert!(
+            rendered.contains(&format!(
+                "`{sampler}` draws field elements, but G has kind Group"
+            )),
+            "{rendered}"
+        );
+    }
+}
+
+/// A Schnorr-shaped `proto` over `G` whose blinding is `sample`.
+fn sampling_proto(sample: &str) -> String {
+    format!(
+        "proto p<G: Group, F: Scalar<G>>(instance g: G, instance a: F) where g == g {{\n    \
+         let s = {sample};\n    u <- g * s;\n    verify(u == g)\n}}\n"
+    )
+}
+
+#[test]
+fn typecheck_random_of_group() {
+    let rendered = render_type_errors(&sampling_proto("random<G>"), &[]);
+    assert_snap!(SNAP_DIR, "random_of_group", rendered);
+}
+
+#[test]
+fn typecheck_challenge_of_group() {
+    let rendered = render_type_errors(&sampling_proto("challenge<G>"), &[]);
+    assert_snap!(SNAP_DIR, "challenge_of_group", rendered);
+}
+
+#[test]
+fn typecheck_sample_exclusion_error_before_kind() {
+    // Both the sampled type and the exclusion are wrong: the exclusion, a child, is checked
+    // before the sample itself.
+    let rendered = render_type_errors(&sampling_proto("random<G - [g + a]>"), &[]);
+    assert_snap!(SNAP_DIR, "sample_exclusion_error_before_kind", rendered);
+}
+
+#[test]
+fn typecheck_set_value_error_before_field() {
+    // Both the field and the value are wrong: the value is computed before the update.
+    let src = "fn f<G: Group, F: Scalar<G>>(instance a: F, instance g: G) -> { p: F } {\n    \
+               {| p: a |}.set(z, g + a)\n}\n\
+               proto p<F: Field>(instance a: F) where a == a { verify(a == a) }\n";
+    let rendered = render_type_errors(src, &[]);
+    assert_snap!(SNAP_DIR, "set_value_error_before_field", rendered);
+}
